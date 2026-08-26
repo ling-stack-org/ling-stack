@@ -1,9 +1,11 @@
+import { createHash } from "node:crypto";
 import type {
   CommitConversationContextSummaryResult,
   ConversationContextSummarySourceFence,
   RunStore,
 } from "@ling-stack/core";
 import type {
+  CompactionCheckpoint,
   ConversationContextSummary,
   ConversationDomainRef,
   ConversationItemV1,
@@ -79,7 +81,8 @@ export type CoordinateConversationSummaryResult =
   | { readonly status: "not_needed" }
   | { readonly status: "generator_unavailable"; readonly plan: ConversationSummaryPlan }
   | { readonly status: "generation_failed"; readonly plan: ConversationSummaryPlan; readonly error: unknown }
-  | { readonly status: "completed"; readonly plan: ConversationSummaryPlan; readonly commit: CommitConversationContextSummaryResult };
+  | { readonly status: "checkpoint_failed"; readonly plan: ConversationSummaryPlan; readonly commit: CommitConversationContextSummaryResult; readonly error: unknown }
+  | { readonly status: "completed"; readonly plan: ConversationSummaryPlan; readonly commit: CommitConversationContextSummaryResult; readonly checkpoint?: CompactionCheckpoint };
 
 export function planConversationContextSummary(input: {
   readonly store: RunStore;
@@ -227,11 +230,48 @@ export async function executeConversationSummaryPlan(input: {
     expectedActiveSummaryId: plan.activeSummary?.id ?? null,
     sourceFence: plan.sourceFence,
   }, input.now ?? new Date().toISOString());
-  return { status: "completed", plan, commit };
+  if (commit.status !== "committed") return { status: "completed", plan, commit };
+  const sourceTurnIds = [...new Set(plan.sourceItems.flatMap((item) => item.turnId ? [item.turnId] : []))];
+  let checkpoint: CompactionCheckpoint;
+  try {
+    checkpoint = input.store.createCompactionCheckpoint({
+      threadId: plan.projection.metadata.threadId,
+      channelId: plan.sourceItems.find((item) => item.channelId)?.channelId,
+      sourceTurnId: plan.projection.metadata.turnId,
+      contextViewId: plan.projection.metadata.contextViewId,
+      contextViewCreatedAt: plan.projection.metadata.contextViewCreatedAt,
+      coveredItemSeqFrom: plan.coveredFromSequence,
+      coveredItemSeqTo: plan.coveredThroughSequence,
+      coveredTurnIds: sourceTurnIds.length > 0 ? sourceTurnIds : [plan.projection.metadata.turnId],
+      summaryIds: [commit.summary.id, ...(plan.activeSummary ? [plan.activeSummary.id] : [])],
+      summaryContentSha256: hashSummaryContent(commit.summary),
+      sourceRefs: plan.sourceRefs,
+      workspaceProvenanceWatermark: input.store.getLatestWorkspaceProvenanceWatermark(),
+      compactionPolicyVersion: CONVERSATION_SUMMARY_POLICY_VERSION,
+      createdAt: input.now ?? new Date().toISOString(),
+    });
+  } catch (error) {
+    // The summary commit is durable evidence, but it is not a recovery
+    // authority until the checkpoint install succeeds. Keep the installed
+    // checkpoint absent and make the failed boundary explicit to callers.
+    return { status: "checkpoint_failed", plan, commit, error };
+  }
+  return { status: "completed", plan, commit, checkpoint };
 }
 
 function throwIfSummaryAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) throw signal.reason ?? new Error("Conversation summary generation aborted.");
+}
+
+function hashSummaryContent(summary: ConversationContextSummary): string {
+  return createHash("sha256").update(JSON.stringify({
+    objective: summary.objective ?? null,
+    decisions: summary.decisions,
+    constraints: summary.constraints,
+    openQuestions: summary.openQuestions,
+    activeWorkRefs: summary.activeWorkRefs,
+    sourceRefs: summary.sourceRefs,
+  }), "utf8").digest("hex");
 }
 
 function stableCompletedPrefix(store: RunStore, items: readonly ConversationItemV1[]): ConversationItemV1[] {

@@ -49,6 +49,12 @@ test("summary coordinator compacts stable turns, preserves a raw tail, and advan
   assert.equal(first.status, "completed");
   assert.equal(first.commit.status, "committed");
   assert.equal(first.commit.summary.coveredThroughSequence, firstBatch[9].item.sequence);
+  assert.ok(first.checkpoint);
+  assert.equal(first.checkpoint.sourceTurnId, firstPlan.projection.metadata.turnId);
+  assert.deepEqual(first.checkpoint.summaryIds, [first.commit.summary.id]);
+  assert.match(first.checkpoint.summaryContentSha256, /^[0-9a-f]{64}$/u);
+  assert.equal(first.checkpoint.coveredItemSeqFrom, firstBatch[0].item.sequence);
+  assert.equal(first.checkpoint.coveredItemSeqTo, firstBatch[9].item.sequence);
 
   const secondBatch = [];
   for (let index = 0; index < 10; index += 1) {
@@ -70,6 +76,37 @@ test("summary coordinator compacts stable turns, preserves a raw tail, and advan
   assert.equal(second.commit.summary.sourceRefs.some((ref) =>
     ref.type === "context_summary" && ref.id === first.commit.summary.id), true);
   assert.equal(fixture.store.getConversationContextSummary(first.commit.summary.id)?.status, "superseded");
+  assert.ok(second.checkpoint);
+  assert.deepEqual(second.checkpoint.summaryIds, [second.commit.summary.id, first.commit.summary.id]);
+});
+
+test("summary commit remains evidence when checkpoint installation fails", async (t) => {
+  const fixture = await createFixture(t, "checkpoint-failure");
+  const turns = [];
+  for (let index = 0; index < 10; index += 1) {
+    turns.push(addCompletedTurn(fixture, `checkpoint-failure-${index}`, `Decision ${index}`));
+  }
+  const failingStore = new Proxy(fixture.store, {
+    get(target, property) {
+      if (property === "createCompactionCheckpoint") {
+        return () => { throw new Error("simulated checkpoint install failure"); };
+      }
+      const value = Reflect.get(target, property, target);
+      return typeof value === "function" ? value.bind(target) : value;
+    },
+  });
+  const result = await coordinateConversationContextSummary({
+    store: failingStore,
+    sourceItemId: turns.at(-1).item.id,
+    inputBudgetTokens: 16_000,
+    policy: summaryPolicy,
+    generate: mergeDraft,
+    now: "2026-08-10T05:30:00.000Z",
+  });
+  assert.equal(result.status, "checkpoint_failed");
+  assert.equal(result.commit.status, "committed");
+  assert.deepEqual(fixture.store.listCompactionCheckpoints({ threadId: fixture.thread.id }), []);
+  assert.ok(fixture.store.getConversationContextSummary(result.commit.summary.id));
 });
 
 test("summary coordinator selects the hard trigger and discards a late assignment result", async (t) => {
@@ -119,6 +156,8 @@ test("summary coordinator selects the hard trigger and discards a late assignmen
   });
   assert.equal(result.status, "completed");
   assert.deepEqual(result.commit, { status: "discarded_stale", reason: "assignments_changed" });
+  assert.equal(result.checkpoint, undefined);
+  assert.deepEqual(fixture.store.listCompactionCheckpoints({ threadId: fixture.thread.id }), []);
 });
 
 test("summary coordinator counts the active summary in the hard budget and bounds its replacement", async (t) => {

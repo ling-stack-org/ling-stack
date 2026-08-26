@@ -168,7 +168,8 @@ export interface ConversationArtifactStripChangeArtifact {
 
 export type ConversationWorkspaceRecoveryTarget =
   | { readonly kind: "run"; readonly id: string }
-  | { readonly kind: "workflow"; readonly id: string };
+  | { readonly kind: "workflow"; readonly id: string }
+  | { readonly kind: "turn"; readonly id: string };
 
 export interface ConversationArtifactStripItem {
   readonly id: string;

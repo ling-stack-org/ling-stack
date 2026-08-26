@@ -125,6 +125,7 @@ export interface WorkflowStepRunContextPackSnapshot {
     readonly id: string;
     readonly role: string;
     readonly priority: string;
+    readonly compactionSurvival?: string;
     readonly estimatedTokens?: number;
     readonly sourceRefIds?: readonly string[];
     readonly metadata?: Record<string, unknown>;
@@ -896,6 +897,7 @@ export function prepareWorkflowStepStart(
         id: "workflow_role_evidence",
         role: "memory" as const,
         priority: "medium" as const,
+        compactionSurvival: "summarize" as const,
         title: "workflow_role_evidence",
         text: renderedMemory.prompt,
         sourceRefIds: renderedMemory.memoryIds,
@@ -1311,6 +1313,7 @@ function snapshotWorkflowStepContextPack(pack: ContextPack): WorkflowStepRunCont
       id: section.id,
       role: section.role,
       priority: section.priority,
+      compactionSurvival: section.compactionSurvival,
       estimatedTokens: section.estimatedTokens,
       sourceRefIds: section.sourceRefIds,
       metadata: section.metadata,

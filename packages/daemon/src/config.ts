@@ -13,6 +13,19 @@ export interface DaemonConfig {
   readonly channels?: ChannelFeatureConfig;
   readonly cuaDriver?: CuaDriverFeatureConfig;
   readonly remoteAccess?: RemoteAccessFeatureConfig;
+  readonly workspaceSnapshots?: WorkspaceSnapshotFeatureConfig;
+}
+
+export interface WorkspaceSnapshotFeatureConfig {
+  readonly captureEnabled?: boolean;
+  readonly restoreEnabled?: boolean;
+  readonly restoreUiEnabled?: boolean;
+  readonly gcEnabled?: boolean;
+  readonly maxEntries?: number;
+  readonly maxBytes?: number;
+  readonly maxFileBytes?: number;
+  readonly maxSnapshots?: number;
+  readonly retentionDays?: number;
 }
 
 export interface RemoteAccessFeatureConfig {
@@ -149,6 +162,7 @@ export interface ResolvedDaemonConfig {
     readonly listenerPort: number;
     readonly managementAllowedOrigins: readonly string[];
   };
+  readonly workspaceSnapshots: Required<WorkspaceSnapshotFeatureConfig>;
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -208,7 +222,25 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
         "app://ling",
       ],
     },
+    workspaceSnapshots: {
+      captureEnabled: config.workspaceSnapshots?.captureEnabled ?? readBooleanEnv(process.env.LING_STACK_WORKSPACE_SNAPSHOT_CAPTURE, false),
+      restoreEnabled: config.workspaceSnapshots?.restoreEnabled ?? readBooleanEnv(process.env.LING_STACK_WORKSPACE_SNAPSHOT_RESTORE, false),
+      restoreUiEnabled: config.workspaceSnapshots?.restoreUiEnabled ?? readBooleanEnv(process.env.LING_STACK_WORKSPACE_SNAPSHOT_UI, false),
+      gcEnabled: config.workspaceSnapshots?.gcEnabled ?? readBooleanEnv(process.env.LING_STACK_WORKSPACE_SNAPSHOT_GC, false),
+      maxEntries: boundedPositive(config.workspaceSnapshots?.maxEntries, 200_000, 200_000),
+      maxBytes: boundedPositive(config.workspaceSnapshots?.maxBytes, 2 * 1024 * 1024 * 1024, 2 * 1024 * 1024 * 1024),
+      maxFileBytes: boundedPositive(config.workspaceSnapshots?.maxFileBytes, 256 * 1024 * 1024, 256 * 1024 * 1024),
+      maxSnapshots: boundedPositive(config.workspaceSnapshots?.maxSnapshots, 8, 8),
+      retentionDays: boundedPositive(config.workspaceSnapshots?.retentionDays, 30, 3650),
+    },
   };
+}
+
+function boundedPositive(value: number | undefined, fallback: number, hardMax: number): number {
+  if (value === undefined || !Number.isSafeInteger(value) || value <= 0) {
+    return fallback;
+  }
+  return Math.min(value, hardMax);
 }
 
 function readBooleanEnv(value: string | undefined, fallback: boolean): boolean {

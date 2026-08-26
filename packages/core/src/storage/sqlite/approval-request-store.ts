@@ -20,6 +20,7 @@ export interface SqliteApprovalRequestStorePorts {
   readonly createApprovalCheckpoint: (approval: ApprovalRequest, now: string) => void;
   readonly syncApprovalCheckpointForApproval: (approval: ApprovalRequest, now: string) => void;
   readonly rebuildLingThreadMetadataForApproval: (approval: ApprovalRequest | undefined, now: string) => void;
+  readonly assertWorkspaceSnapshotFence?: (cwd: string) => void;
 }
 
 export class SqliteApprovalRequestStore {
@@ -49,6 +50,10 @@ export class SqliteApprovalRequestStore {
     }
     if (runId && !this.ports.hasRun(runId)) {
       throw new Error(`Run not found: ${runId}`);
+    }
+    if (runId) {
+      const run = this.context.database.prepare("SELECT cwd FROM run_sessions WHERE id = ?").get(runId) as { cwd?: unknown } | undefined;
+      if (typeof run?.cwd === "string") this.ports.assertWorkspaceSnapshotFence?.(run.cwd);
     }
     if (mediaJobId && !this.ports.hasMediaJob(mediaJobId)) {
       throw new Error(`Media job not found: ${mediaJobId}`);

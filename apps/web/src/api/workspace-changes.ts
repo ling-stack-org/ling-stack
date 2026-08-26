@@ -1,17 +1,54 @@
 import type {
   RunWorkspaceChangesResponse,
+  TurnWorkspaceChangesResponse,
   WorkflowWorkspaceChangesResponse,
   WorkspaceChangesResponse,
   WorkspaceFileOpenOptionsResponse,
   WorkspaceFileOpenRequest,
   WorkspaceFileOpenResponse,
   WorkspaceFileOpenTarget,
+  WorkspaceSnapshotManifest,
+  WorkspaceSnapshotPreview,
+  SnapshotRestoreConfirmation,
+  SnapshotRestoreRequest,
 } from "../types.js";
 import { daemonClient } from "./client.js";
 import { channelWorkCellDemoWorkflowRecovery } from "../lib/work-cell-demo-fixture.js";
 
 export function getWorkspaceChanges(cwd: string): Promise<WorkspaceChangesResponse> {
   return daemonClient.getWorkspaceChanges(cwd);
+}
+
+export function listWorkspaceSnapshots(cwd: string): Promise<{ readonly cwd: string; readonly snapshots: readonly WorkspaceSnapshotManifest[]; readonly restoreUiEnabled?: boolean }> {
+  return daemonClient.listWorkspaceSnapshots(cwd);
+}
+
+export function createWorkspaceSnapshot(cwd: string): Promise<{ readonly manifest: WorkspaceSnapshotManifest }> {
+  return daemonClient.createWorkspaceSnapshot(cwd);
+}
+
+export function getWorkspaceSnapshot(cwd: string, snapshotId: string): Promise<WorkspaceSnapshotPreview> {
+  return daemonClient.getWorkspaceSnapshot(cwd, snapshotId);
+}
+
+export function createWorkspaceSnapshotAnchor(cwd: string, snapshotId: string): Promise<import("@ling-stack/contracts").WorkspaceSnapshotRestoreAnchor> {
+  return daemonClient.createWorkspaceSnapshotAnchor(cwd, snapshotId);
+}
+
+export function createWorkspaceSnapshotConfirmation(cwd: string, snapshotId: string, anchorId: string): Promise<SnapshotRestoreConfirmation> {
+  return daemonClient.createWorkspaceSnapshotConfirmation(cwd, snapshotId, { anchorId });
+}
+
+export function confirmWorkspaceSnapshotRestore(cwd: string, confirmationId: string): Promise<SnapshotRestoreConfirmation> {
+  return daemonClient.confirmWorkspaceSnapshotRestore(cwd, confirmationId);
+}
+
+export function restoreWorkspaceSnapshot(cwd: string, snapshotId: string, input: { readonly idempotencyKey: string; readonly anchorId: string; readonly confirmationId: string; readonly expectedWorkspaceFingerprint?: string; readonly expectedProvenanceWatermark?: string }): Promise<SnapshotRestoreRequest> {
+  return daemonClient.restoreWorkspaceSnapshot(cwd, snapshotId, input);
+}
+
+export function getWorkspaceSnapshotRestore(cwd: string, requestId: string): Promise<SnapshotRestoreRequest> {
+  return daemonClient.getWorkspaceSnapshotRestore(cwd, requestId);
 }
 
 export function getRunWorkspaceChanges(cwd: string, runId: string): Promise<RunWorkspaceChangesResponse> {
@@ -24,6 +61,18 @@ export function undoRunWorkspaceChanges(cwd: string, runId: string): Promise<Run
 
 export function reapplyRunWorkspaceChanges(cwd: string, runId: string): Promise<RunWorkspaceChangesResponse> {
   return daemonClient.reapplyRunWorkspaceChanges(runId, cwd);
+}
+
+export function getTurnWorkspaceChanges(cwd: string, turnId: string): Promise<TurnWorkspaceChangesResponse> {
+  return daemonClient.getTurnWorkspaceChanges(turnId, cwd);
+}
+
+export function undoTurnWorkspaceChanges(cwd: string, turnId: string, idempotencyKey: string): Promise<TurnWorkspaceChangesResponse> {
+  return daemonClient.undoTurnWorkspaceChanges(turnId, idempotencyKey, cwd);
+}
+
+export function reapplyTurnWorkspaceChanges(cwd: string, turnId: string, idempotencyKey: string): Promise<TurnWorkspaceChangesResponse> {
+  return daemonClient.reapplyTurnWorkspaceChanges(turnId, idempotencyKey, cwd);
 }
 
 export function getWorkflowWorkspaceChanges(cwd: string, workflowId: string): Promise<WorkflowWorkspaceChangesResponse> {

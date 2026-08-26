@@ -298,6 +298,7 @@ import {
   type ListRunsOptions,
   type RunArtifact,
   type RunEventEnvelope,
+  type RunEventDataByType,
   type RunEventType,
   type RunContinuationReason,
   type RunIntervention,
@@ -312,6 +313,36 @@ import {
   type UpdateProposedPlanArtifactInput,
   type UpdateRunInterventionStatusInput,
 } from "../run-types.js";
+import type {
+  CompactionCheckpoint,
+  CreateCompactionCheckpointInput,
+  CreateWorkspaceMutationRecordInput,
+  ListCompactionCheckpointsOptions,
+  ListWorkspaceMutationRecordsOptions,
+  WorkspaceMutationRecord,
+  PostCompactionUndoRecord,
+  UpdatePostCompactionUndoRecordInput,
+  CreatePostCompactionUndoRecordInput,
+  ListPostCompactionUndoRecordsOptions,
+  CreateWorkspaceSnapshotEntryInput,
+  CreateWorkspaceSnapshotManifestInput,
+  CreateWorkspaceSnapshotRestoreAnchorInput,
+  CreateSnapshotRestoreJournalEntryInput,
+  CreateSnapshotRestoreRequestInput,
+  CreateSnapshotRestoreConfirmationInput,
+  SnapshotRestoreConfirmation,
+  ListSnapshotRestoreJournalOptions,
+  ListSnapshotRestoreRequestsOptions,
+  ListWorkspaceSnapshotManifestsOptions,
+  SnapshotRestoreJournalEntry,
+  SnapshotRestoreRequest,
+  UpdateSnapshotRestoreRequestInput,
+  UpdateSnapshotRestoreJournalEntryInput,
+  WorkspaceSnapshotBlob,
+  WorkspaceSnapshotEntry,
+  WorkspaceSnapshotManifest,
+  WorkspaceSnapshotRestoreAnchor,
+} from "@ling-stack/contracts";
 import {
   type AcquireRuntimeSemaphoreSlotInput,
   type AppendRuntimeDiagnosticEventInput,
@@ -610,6 +641,9 @@ import { SqliteExternalWorkCiTriageStore } from "./sqlite/external-work-ci-triag
 import { SqliteExternalWorkSchedulerStore } from "./sqlite/external-work-scheduler-store.js";
 import { SqliteExternalWorkWorkflowCoordinator } from "./sqlite/external-work-workflow-coordinator.js";
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
+import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
+import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
+import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
 
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
@@ -700,6 +734,9 @@ export class SqliteRunStore implements RunStore {
   private readonly externalWorkScheduler: SqliteExternalWorkSchedulerStore;
   private readonly externalWorkWorkflows: SqliteExternalWorkWorkflowCoordinator;
   private readonly workItems: SqliteWorkItemStore;
+  private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
+  private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
+  private readonly workspaceSnapshots: SqliteWorkspaceSnapshotStore;
 
   constructor(options: SqliteRunStoreOptions) {
     this.paths = options.paths ?? resolveRuntimePaths(options.cwd);
@@ -708,6 +745,9 @@ export class SqliteRunStore implements RunStore {
     const existed = existsSync(this.paths.databasePath);
     this.database = new DatabaseSync(this.paths.databasePath);
     this.conversationItems = new SqliteConversationItemStore({ database: this.database });
+    this.workspaceProvenance = new SqliteWorkspaceProvenanceStore({ database: this.database });
+    this.postCompactionUndo = new SqlitePostCompactionUndoStore({ database: this.database });
+    this.workspaceSnapshots = new SqliteWorkspaceSnapshotStore({ database: this.database });
     this.conversationTurnIngest = new SqliteConversationTurnIngestStore(
       { database: this.database },
       this.conversationItems,
@@ -744,6 +784,7 @@ export class SqliteRunStore implements RunStore {
           this.approvalCheckpoints.syncApprovalCheckpointForApproval(approval, now);
         },
         rebuildLingThreadMetadataForApproval: (approval, now) => this.tryRebuildLingThreadMetadataForApproval(approval, now),
+        assertWorkspaceSnapshotFence: (cwd) => this.assertWorkspaceSnapshotFence(cwd),
       },
     );
     this.artifacts = new SqliteArtifactStore(
@@ -845,6 +886,7 @@ export class SqliteRunStore implements RunStore {
         recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
         reconcileLingTurnStatusForRun: (runId, now) => this.lingTurns.reconcileLingTurnStatusForRun(runId, now),
         updateLinkedWorkUnitRunId: (workUnitId, runId, now) => this.runtimeWorkUnits.updateLinkedRunId(workUnitId, runId, now),
+        assertWorkspaceSnapshotFence: (cwd) => this.assertWorkspaceSnapshotFence(cwd),
       },
     );
     this.runEvents = new SqliteRunEventStore(
@@ -1629,7 +1671,11 @@ export class SqliteRunStore implements RunStore {
     this.recordRunSkillUsage(this.getRun(runId), "cancelled", endedAt);
   }
 
-  appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope {
+  appendEvent<K extends RunEventType>(
+    runId: string,
+    type: K,
+    data: RunEventDataByType[K],
+  ): Extract<RunEventEnvelope, { readonly type: K }> {
     return this.runEvents.appendEvent(runId, type, data);
   }
 
@@ -1673,6 +1719,171 @@ export class SqliteRunStore implements RunStore {
 
   countEvents(runId: string): number {
     return this.runEvents.countEvents(runId);
+  }
+
+  createWorkspaceMutationRecord(input: CreateWorkspaceMutationRecordInput): WorkspaceMutationRecord {
+    return this.workspaceProvenance.createWorkspaceMutationRecord(input);
+  }
+
+  createWorkspaceMutationRecords(inputs: readonly CreateWorkspaceMutationRecordInput[]): WorkspaceMutationRecord[] {
+    return this.workspaceProvenance.createWorkspaceMutationRecords(inputs);
+  }
+
+  getWorkspaceMutationRecord(id: string): WorkspaceMutationRecord | undefined {
+    return this.workspaceProvenance.getWorkspaceMutationRecord(id);
+  }
+
+  listWorkspaceMutationRecords(options: ListWorkspaceMutationRecordsOptions = {}): WorkspaceMutationRecord[] {
+    return this.workspaceProvenance.listWorkspaceMutationRecords(options);
+  }
+
+  getLatestWorkspaceProvenanceWatermark(workspaceId?: string): string {
+    return this.workspaceProvenance.getLatestWorkspaceProvenanceWatermark(workspaceId);
+  }
+
+  createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint {
+    return this.workspaceProvenance.createCompactionCheckpoint(input);
+  }
+
+  getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined {
+    return this.workspaceProvenance.getCompactionCheckpoint(id);
+  }
+
+  listCompactionCheckpoints(options: ListCompactionCheckpointsOptions = {}): CompactionCheckpoint[] {
+    return this.workspaceProvenance.listCompactionCheckpoints(options);
+  }
+
+  createPostCompactionUndoRecord(input: CreatePostCompactionUndoRecordInput): PostCompactionUndoRecord {
+    return this.postCompactionUndo.create(input);
+  }
+
+  getPostCompactionUndoRecord(id: string): PostCompactionUndoRecord | undefined {
+    return this.postCompactionUndo.get(id);
+  }
+
+  listPostCompactionUndoRecords(options: ListPostCompactionUndoRecordsOptions = {}): PostCompactionUndoRecord[] {
+    return this.postCompactionUndo.list(options);
+  }
+
+  updatePostCompactionUndoRecord(input: UpdatePostCompactionUndoRecordInput): PostCompactionUndoRecord | undefined {
+    return this.postCompactionUndo.update(input);
+  }
+
+  createWorkspaceSnapshotManifest(input: CreateWorkspaceSnapshotManifestInput): WorkspaceSnapshotManifest {
+    return this.workspaceSnapshots.createManifest(input);
+  }
+
+  commitWorkspaceSnapshot(input: CreateWorkspaceSnapshotManifestInput, entries: readonly CreateWorkspaceSnapshotEntryInput[]): { readonly manifest: WorkspaceSnapshotManifest; readonly entries: readonly WorkspaceSnapshotEntry[] } {
+    return this.workspaceSnapshots.createManifestWithEntries(input, entries);
+  }
+
+  getWorkspaceSnapshotManifest(id: string): WorkspaceSnapshotManifest | undefined {
+    return this.workspaceSnapshots.getManifest(id);
+  }
+
+  listWorkspaceSnapshotManifests(options: ListWorkspaceSnapshotManifestsOptions = {}): WorkspaceSnapshotManifest[] {
+    return this.workspaceSnapshots.listManifests(options);
+  }
+
+  createWorkspaceSnapshotEntries(inputs: readonly CreateWorkspaceSnapshotEntryInput[]): WorkspaceSnapshotEntry[] {
+    return this.workspaceSnapshots.createEntries(inputs);
+  }
+
+  listWorkspaceSnapshotEntries(manifestId: string): WorkspaceSnapshotEntry[] {
+    return this.workspaceSnapshots.listEntries(manifestId);
+  }
+
+  getWorkspaceSnapshotBlob(sha256: string): WorkspaceSnapshotBlob | undefined {
+    return this.workspaceSnapshots.getBlob(sha256);
+  }
+
+  listWorkspaceSnapshotBlobs(): WorkspaceSnapshotBlob[] {
+    return this.workspaceSnapshots.listBlobs();
+  }
+
+  upsertWorkspaceSnapshotBlob(input: WorkspaceSnapshotBlob): WorkspaceSnapshotBlob {
+    return this.workspaceSnapshots.upsertBlob(input);
+  }
+
+  createWorkspaceSnapshotRestoreAnchor(input: CreateWorkspaceSnapshotRestoreAnchorInput): WorkspaceSnapshotRestoreAnchor {
+    return this.workspaceSnapshots.createAnchor(input);
+  }
+
+  getWorkspaceSnapshotRestoreAnchor(id: string): WorkspaceSnapshotRestoreAnchor | undefined {
+    return this.workspaceSnapshots.getAnchor(id);
+  }
+
+  createSnapshotRestoreRequest(input: CreateSnapshotRestoreRequestInput): SnapshotRestoreRequest {
+    return this.workspaceSnapshots.createRestoreRequest(input);
+  }
+
+  createSnapshotRestoreConfirmation(input: CreateSnapshotRestoreConfirmationInput): SnapshotRestoreConfirmation {
+    return this.workspaceSnapshots.createConfirmation(input);
+  }
+
+  getSnapshotRestoreConfirmation(id: string): SnapshotRestoreConfirmation | undefined {
+    return this.workspaceSnapshots.getConfirmation(id);
+  }
+
+  resolveSnapshotRestoreConfirmation(id: string, state: "confirmed" | "denied" | "expired", now: string): SnapshotRestoreConfirmation | undefined {
+    return this.workspaceSnapshots.resolveConfirmation(id, state, now);
+  }
+
+  getSnapshotRestoreRequest(id: string): SnapshotRestoreRequest | undefined {
+    return this.workspaceSnapshots.getRestoreRequest(id);
+  }
+
+  listSnapshotRestoreRequests(options: ListSnapshotRestoreRequestsOptions = {}): SnapshotRestoreRequest[] {
+    return this.workspaceSnapshots.listRestoreRequests(options);
+  }
+
+  getSnapshotRestoreRequestByIdempotency(workspaceId: string, idempotencyKey: string): SnapshotRestoreRequest | undefined {
+    return this.workspaceSnapshots.getRestoreRequestByIdempotency(workspaceId, idempotencyKey);
+  }
+
+  updateSnapshotRestoreRequest(input: UpdateSnapshotRestoreRequestInput): SnapshotRestoreRequest | undefined {
+    return this.workspaceSnapshots.updateRestoreRequest(input);
+  }
+
+  createSnapshotRestoreJournalEntries(inputs: readonly CreateSnapshotRestoreJournalEntryInput[]): SnapshotRestoreJournalEntry[] {
+    return this.workspaceSnapshots.createJournalEntries(inputs);
+  }
+
+  listSnapshotRestoreJournalEntries(options: ListSnapshotRestoreJournalOptions): SnapshotRestoreJournalEntry[] {
+    return this.workspaceSnapshots.listJournalEntries(options);
+  }
+
+  updateSnapshotRestoreJournalEntry(input: UpdateSnapshotRestoreJournalEntryInput): SnapshotRestoreJournalEntry | undefined {
+    return this.workspaceSnapshots.updateJournalEntry(input);
+  }
+
+  acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number {
+    return this.workspaceSnapshots.acquireFence(workspaceId, ownerRequestId, now);
+  }
+
+  getWorkspaceSnapshotFence(workspaceId: string): { readonly epoch: number; readonly ownerRequestId?: string } {
+    return this.workspaceSnapshots.getFence(workspaceId);
+  }
+
+  releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): boolean {
+    return this.workspaceSnapshots.releaseFence(workspaceId, ownerRequestId, now);
+  }
+
+  expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined {
+    return this.workspaceSnapshots.expireManifest(id, now);
+  }
+
+  deleteWorkspaceSnapshotManifest(id: string): boolean {
+    return this.workspaceSnapshots.deleteManifest(id);
+  }
+
+  deleteWorkspaceSnapshotBlob(sha256: string): boolean {
+    return this.workspaceSnapshots.deleteBlob(sha256);
+  }
+
+  assertWorkspaceSnapshotFence(_cwd: string): void {
+    const fence = this.workspaceSnapshots.getFence("workspace_default");
+    if (fence.ownerRequestId) throw new Error(`Workspace restore fence is active at epoch ${fence.epoch}.`);
   }
 
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention {

@@ -5,6 +5,7 @@ import {
   type ArtifactType,
   type RunArtifact,
   type RunEventEnvelope,
+  type RunEventEmitter,
   type RunSession,
   type RunStore,
   type ShellOutputSnapshot,
@@ -44,7 +45,7 @@ export function createShellSnapshotWriter(input: {
   readonly run: RunSession;
   readonly request: UnifiedExecRequest;
   readonly environmentSummary: UnifiedExecEnvironmentSummary;
-  readonly appendAndMaybeStream: (type: "artifact_created", data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
   readonly extraSecrets?: readonly (string | undefined)[];
 }): ShellSnapshotWriter {
   if (!input.enabled) {
@@ -320,7 +321,7 @@ function writeSnapshotArtifact(input: {
 function appendSnapshotArtifactEvents(input: {
   readonly artifacts: readonly { readonly artifact: RunArtifact; readonly role: "shell_snapshot" | "shell_snapshot_text" }[];
   readonly snapshot: ShellSnapshot;
-  readonly appendAndMaybeStream: (type: "artifact_created", data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
 }): void {
   for (const item of input.artifacts) {
     input.appendAndMaybeStream("artifact_created", {

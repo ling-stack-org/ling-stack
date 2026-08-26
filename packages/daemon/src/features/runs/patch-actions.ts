@@ -1,12 +1,16 @@
+import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
   APPLY_PATCH_FORMAT,
   ApplyPatchError,
   applyPatchPlan,
+  invertPatchPlan,
   parseApplyPatch,
   planApplyPatch,
   renderPatchPreview,
+  type RunSession,
+  type RunStore,
   type ApprovalPayload,
   type PatchOperation,
   type PatchPlan,
@@ -30,6 +34,13 @@ export interface PatchActionDraft {
 export interface PatchActionApplyOutput {
   readonly handledResult: PiRunnerToolHandledResult;
   readonly resultArtifactContent: string;
+}
+
+export interface PatchProvenanceInput {
+  readonly store: RunStore;
+  readonly run: RunSession;
+  readonly toolCallId?: string;
+  readonly approvalId?: string;
 }
 
 export function createPatchApprovalMetadata(request: PiRunnerApprovalRequest): PatchApprovalMetadata | undefined {
@@ -90,7 +101,13 @@ export async function applyPatchActionDraft(input: {
   readonly cwd: string;
   readonly allowedWritePaths: readonly string[];
   readonly previewArtifactIds?: readonly string[];
+  readonly provenance?: PatchProvenanceInput;
 }): Promise<PatchActionApplyOutput> {
+  const before = new Map(input.draft.plan.touchedPaths.map((path) => [path, readWorkspaceTextFile(input.cwd, path)] as const));
+  const provenanceArtifacts = input.provenance
+    ? createPatchProvenanceArtifacts(input.provenance.store, input.provenance.run, input.draft.plan, new Date().toISOString())
+    : undefined;
+  let patchApplied = false;
   try {
     assertPatchPathsWithinAllowedWritePaths(input.draft.plan.touchedPaths, input.cwd, input.allowedWritePaths);
     assertNoSymlinkEscapes(input.draft.plan.touchedPaths, input.cwd, input.allowedWritePaths);
@@ -100,6 +117,20 @@ export async function applyPatchActionDraft(input: {
       writeFile: (path, content) => atomicWriteWorkspaceTextFile(input.cwd, path, content),
       deleteFile: (path) => deleteWorkspaceFile(input.cwd, path),
     });
+    patchApplied = true;
+    if (input.provenance && provenanceArtifacts) {
+      const after = new Map(input.draft.plan.touchedPaths.map((path) => [path, readWorkspaceTextFile(input.cwd, path)] as const));
+      recordPatchProvenance({
+        ...input.provenance,
+        cwd: input.cwd,
+        plan: input.draft.plan,
+        before,
+        after,
+        forwardPatchArtifactId: provenanceArtifacts.forwardPatchArtifactId,
+        inversePatchArtifactId: provenanceArtifacts.inversePatchArtifactId,
+        now: new Date().toISOString(),
+      });
+    }
     const resultArtifactContent = `${JSON.stringify({
       status: result.status,
       format: APPLY_PATCH_FORMAT,
@@ -127,6 +158,20 @@ export async function applyPatchActionDraft(input: {
       resultArtifactContent,
     };
   } catch (error) {
+    if (patchApplied && input.provenance) {
+      try {
+        await applyPatchPlan({
+          plan: invertPatchPlan(input.draft.plan),
+          readFile: (path) => readWorkspaceTextFile(input.cwd, path),
+          writeFile: (path, content) => atomicWriteWorkspaceTextFile(input.cwd, path, content),
+          deleteFile: (path) => deleteWorkspaceFile(input.cwd, path),
+        });
+      } catch (rollbackError) {
+        const original = error instanceof Error ? error.message : String(error);
+        const rollback = rollbackError instanceof Error ? rollbackError.message : String(rollbackError);
+        error = new ApplyPatchError(`Patch applied without durable provenance and rollback failed: ${original}; ${rollback}`);
+      }
+    }
     const message = error instanceof Error ? error.message : String(error);
     const resultArtifactContent = `${JSON.stringify({
       status: error instanceof ApplyPatchError ? "conflict" : "failed",
@@ -152,6 +197,84 @@ export async function applyPatchActionDraft(input: {
       resultArtifactContent,
     };
   }
+}
+
+function createPatchProvenanceArtifacts(
+  store: RunStore,
+  run: RunSession,
+  plan: PatchPlan,
+  now: string,
+): { readonly forwardPatchArtifactId: string; readonly inversePatchArtifactId: string } {
+  const basePath = `.ling-stack/provenance/${run.id}/${plan.rawPatchSha256}`;
+  const forward = store.createArtifact({
+    runId: run.id,
+    type: "json",
+    path: `${basePath}/forward-plan.json`,
+    title: "Workspace forward patch plan",
+    contentType: "application/json",
+    sealedPayload: plan,
+    createdAt: now,
+  });
+  const inverse = store.createArtifact({
+    runId: run.id,
+    type: "json",
+    path: `${basePath}/inverse-plan.json`,
+    title: "Workspace inverse patch plan",
+    contentType: "application/json",
+    sealedPayload: invertPatchPlan(plan),
+    createdAt: now,
+  });
+  return { forwardPatchArtifactId: forward.id, inversePatchArtifactId: inverse.id };
+}
+
+export function recordPatchProvenance(input: PatchProvenanceInput & {
+  readonly cwd: string;
+  readonly plan: PatchPlan;
+  readonly before: ReadonlyMap<string, string | undefined>;
+  readonly after: ReadonlyMap<string, string | undefined>;
+  readonly forwardPatchArtifactId: string;
+  readonly inversePatchArtifactId: string;
+  readonly now: string;
+}): void {
+  const turn = input.store.getLingTurnForRun(input.run.id);
+  // The sealed forward artifact is allocated per successful apply, so it makes
+  // the plan group unique even when the same patch text is applied twice in one Run.
+  const patchPlanId = `patch_plan_${input.forwardPatchArtifactId}`;
+  const sourceRefs = [
+    { type: "run" as const, id: input.run.id },
+    ...(turn ? [{ type: "turn" as const, id: turn.id }] : []),
+    ...(input.approvalId ? [{ type: "approval" as const, id: input.approvalId }] : []),
+    { type: "artifact" as const, id: input.forwardPatchArtifactId },
+    { type: "artifact" as const, id: input.inversePatchArtifactId },
+  ];
+  input.store.createWorkspaceMutationRecords(input.plan.operations.map((operation, operationIndex) => ({
+    cwd: input.cwd,
+    threadId: input.run.threadId,
+    turnId: turn?.id,
+    runId: input.run.id,
+    toolCallId: input.toolCallId,
+    approvalId: input.approvalId,
+    forwardPatchArtifactId: input.forwardPatchArtifactId,
+    patchPlanId,
+    operationIndex,
+    path: operation.path,
+    operation: operation.kind,
+    beforeSha256: hashWorkspaceContent(input.before.get(operation.path)),
+    afterSha256: hashWorkspaceContent(input.after.get(operation.path)),
+    inversePatchArtifactId: input.inversePatchArtifactId,
+    sourceRefs,
+    createdAt: input.now,
+  })));
+}
+
+export function hashWorkspaceContent(content: string | undefined): string {
+  const hash = createHash("sha256");
+  if (content === undefined) hash.update("missing\\0", "utf8");
+  else {
+    hash.update("text\\0", "utf8");
+    hash.update(content, "utf8");
+  }
+  return hash.digest("hex");
 }
 
 function createPatchApprovalPayload(input: {

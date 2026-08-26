@@ -175,6 +175,8 @@ const PROJECTION_KEYS = new Set([
   "sourceRefs",
   "policyVersion",
   "visibilityFingerprint",
+  "contextViewId",
+  "contextViewCreatedAt",
 ]);
 
 const INTENT_KEYS = new Set([
@@ -411,7 +413,9 @@ export function isConversationContextProjectionMetadata(
     && isTextArray(value.summaryIds)
     && isArrayOf(value.sourceRefs, isConversationDomainRef)
     && isText(value.policyVersion)
-    && isText(value.visibilityFingerprint);
+    && isText(value.visibilityFingerprint)
+    && isOptionalText(value.contextViewId)
+    && isOptionalCanonicalTimestamp(value.contextViewCreatedAt);
 }
 
 export function isChannelIntentDecisionV2(value: unknown): value is ChannelIntentDecisionV2 {

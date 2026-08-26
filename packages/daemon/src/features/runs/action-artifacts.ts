@@ -7,6 +7,7 @@ import {
   type RunExecutionStoreFacet,
   type RunArtifact,
   type RunEventEnvelope,
+  type RunEventEmitter,
   type RunStorePathsFacet,
   type RunSession,
 } from "@ling-stack/core";
@@ -96,7 +97,7 @@ export function appendExecutionActionArtifactEvents(input: {
   readonly artifacts: readonly RunArtifact[];
   readonly approval: ApprovalRequest;
   readonly role: "preview" | "result";
-  readonly appendAndMaybeStream: (type: "artifact_created", data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
 }): void {
   for (const artifact of input.artifacts) {
     input.appendAndMaybeStream("artifact_created", {

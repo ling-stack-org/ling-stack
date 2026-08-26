@@ -13,6 +13,7 @@ import {
   type SkillApprovalProfile,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
+import { isConversationContextProjectionMetadata, type ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import { isRecord } from "../../shared/validation.js";
 import { buildChannelReplyContinuationContext } from "../channels/channel-reply-continuation-context.js";
 import type { RunRequest } from "./schemas.js";
@@ -84,6 +85,7 @@ export function buildRunInterventionContinuationRequest(
     thinkingLevel: readSnapshotThinkingLevel(snapshot, "thinkingLevel"),
     systemPrompt: channelContinuation?.systemPromptInstruction ?? inheritedSystemPrompt,
     appendSystemPrompt,
+    contextProjection: channelContinuation?.contextProjection ?? readSnapshotContextProjection(snapshot),
     agentDir: readSnapshotString(snapshot, "agentDir"),
     skipMemoryRecall: channelContinuation ? true : readSnapshotBoolean(snapshot, "skipMemoryRecall"),
     conversationAttachmentIds: intervention.messagePayload?.attachmentIds ?? [],
@@ -96,6 +98,12 @@ export function buildRunInterventionContinuationRequest(
     interventionId: intervention.id,
     continuationReason: intervention.mode,
   };
+}
+
+function readSnapshotContextProjection(snapshot: Record<string, unknown>): ConversationContextProjectionMetadata | undefined {
+  return isConversationContextProjectionMetadata(snapshot.contextProjection)
+    ? snapshot.contextProjection
+    : undefined;
 }
 
 function renderRunInterventionContinuationPrompt(input: {

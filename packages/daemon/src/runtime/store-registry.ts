@@ -112,6 +112,21 @@ export class RunStoreRegistry {
     return undefined;
   }
 
+  findStoreForTurn(turnId: string, cwd?: string): RunStore | undefined {
+    for (const store of this.storesByCwd.values()) {
+      if (store.getLingTurn(turnId)) return store;
+    }
+    for (const root of this.trustedWorkspaceRoots) {
+      const store = this.getStore(root);
+      if (store.getLingTurn(turnId)) return store;
+    }
+    if (cwd) {
+      const store = this.getStore(cwd);
+      if (store.getLingTurn(turnId)) return store;
+    }
+    return undefined;
+  }
+
   findStoreForArtifact(artifactId: string, cwd?: string): { readonly store: RunStore; readonly artifact: RunArtifact } | undefined {
     for (const store of this.storesByCwd.values()) {
       const artifact = store.getArtifact(artifactId);
