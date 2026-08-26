@@ -306,7 +306,6 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/pi-coding-agent-integration.md` | `CANONICAL_CONTRACT` |
 | `docs/product-design.md` | `CANONICAL_CONTRACT` |
 | `docs/provider-adapters.md` | `CANONICAL_CONTRACT` |
-| `docs/release/cua-driver-self-hosted-runners.md` | `ADR_RELEASE_API` |
 | `docs/release/desktop-windows-release-decisions.md` | `ADR_RELEASE_API` |
 | `docs/release/desktop.md` | `ADR_RELEASE_API` |
 | `docs/release/evidence/README.md` | `ADR_RELEASE_API` |

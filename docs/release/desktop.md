@@ -4,13 +4,9 @@
 “真实平台发布证据”分开，避免把 fake source、unsigned 包或 provider 下载校验误报为
 跨平台完成。
 
-当前内部产品包使用
-[Cua Driver Self-Hosted Native Runners](./cua-driver-self-hosted-runners.md) 中的仓库专用、
-手工 dispatch 路径。`Desktop product artifacts` 每次只能选择 `macos-arm64` 或
-`windows-x64`，同平台只执行一次锁定源码构建，随后直接进入 Ling 产品打包。它不再运行
-A/B、promotion/finalizer、fixture-retention 或跨 job artifact 中转；最终 artifact 只含该
-平台安装包和 `checksums.txt`。这条内部工程路径不替代公测前的 notarization、
-SmartScreen/WDAC 或 Windows 真机验收。
+当前内部产品包使用单独的私有原生发布边界。该边界不属于公开源码仓库，也不由通用 CI
+触发；它可以在受控的 macOS/Windows 主机上执行锁定源码构建、签名和产品打包。原生发布
+证据不替代公测前的 notarization、SmartScreen/WDAC 或 Windows 真机验收。
 
 Windows provider、签名、安装范围和回滚决策见
 [Desktop Windows 发布决策记录](./desktop-windows-release-decisions.md)。
@@ -55,7 +51,7 @@ broker 之间的转发，不包含工作区选择、浏览器业务命令、模�
 
 打包测试必须验证 Host 版本、Native 协议、扩展版本、extension ID、Host SHA、扩展
 manifest SHA、扩展 ZIP SHA 与 source commit 一致。macOS 本机结构检查或 Windows
-self-hosted 构建不能替代 Developer ID/notarization、Authenticode/SmartScreen 和 clean-host
+私有原生构建不能替代 Developer ID/notarization、Authenticode/SmartScreen 和 clean-host
 安装/升级/卸载验收。
 
 开发阶段仓库为 private，不启用应用自动更新。公开后使用 GitHub Releases；无需改变安装包
@@ -128,7 +124,6 @@ node apps/desktop/tests/run-computer-use-smoke.mjs --real
 node apps/desktop/tests/run-computer-use-smoke.mjs --display
 corepack pnpm --filter @ling-stack/desktop performance:computer-use:real
 corepack pnpm --filter @ling-stack/desktop exec electron tests/screenshot-app
-go run github.com/rhysd/actionlint/cmd/actionlint@v1.7.7 .github/workflows/desktop-artifacts.yml
 git diff --check
 ```
 
