@@ -17,6 +17,7 @@ overrides:
   tar@>=7.0.0 <=7.5.20: 7.5.22
   undici@>=7.0.0 <7.29.0: 7.29.0
   uuid@7.0.3: 11.1.1
+  officeparser>pdfjs-dist: 6.2.108
 
 patchedDependencies:
   image-size@1.2.1:
@@ -371,9 +372,6 @@ importers:
       docx:
         specifier: 9.7.1
         version: 9.7.1
-      image-size:
-        specifier: 1.2.1
-        version: 1.2.1(patch_hash=43bb822cac079e46add6c6bbaed80033abe5280c5b09c066254f8354478e6377)
       jszip:
         specifier: 3.10.1
         version: 3.10.1
@@ -5147,8 +5145,8 @@ packages:
     resolution: {integrity: sha512-DlOzet0HO7OEnmUmB6wWGJrrdvbyJKftI1bhMitK7O2N8W2gc757yyYBbINy9IDafXAV9wmKr9t7xsTaNKRG5Q==}
     engines: {node: '>=20.16.0 || >=22.3.0'}
 
-  pdfjs-dist@6.1.200:
-    resolution: {integrity: sha512-o8MolyzirkkLrcdsae/HEOiIcXWI7DS5zGpvqW8xTC2YUsW30rltFw2bDGvw/fskUdEMrQm2br68jzDS5BH2vw==}
+  pdfjs-dist@6.2.108:
+    resolution: {integrity: sha512-YxFb+SQcodN2rnX9Tn3dHYlqfb7NjlzzfONPpJd+AKoKtUjEdevTfbC07d5TcczzOK6261auRkP/M8OBHs9vFQ==}
     engines: {node: '>=22.13.0 || >=24'}
 
   pe-library@0.4.1:
@@ -11829,7 +11827,7 @@ snapshots:
       '@xmldom/xmldom': 0.9.12
       fflate: 0.8.3
       file-type: 22.0.2
-      pdfjs-dist: 6.1.200
+      pdfjs-dist: 6.2.108
       tesseract.js: 7.0.0
     transitivePeerDependencies:
       - encoding
@@ -11943,7 +11941,7 @@ snapshots:
     optionalDependencies:
       '@napi-rs/canvas': 0.1.80
 
-  pdfjs-dist@6.1.200:
+  pdfjs-dist@6.2.108:
     optionalDependencies:
       '@napi-rs/canvas': 1.0.7
 
