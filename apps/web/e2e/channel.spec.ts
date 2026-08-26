@@ -38,6 +38,18 @@ function channelComposerTextbox(scope: Page | Locator): Locator {
   return scope.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
 }
 
+async function openTaskProposalDialog(page: Page, title: string): Promise<Locator> {
+  const dialog = page.getByRole("dialog", { name: "Task confirmation" });
+  if (await dialog.isVisible()) {
+    if ((await dialog.innerText()).includes(title)) return dialog.locator(".channel-execution-proposal-decision");
+    await dialog.getByRole("button", { name: "Close" }).click();
+  }
+  const summary = page.getByLabel("Task proposal summary").filter({ hasText: title });
+  await summary.getByRole("button", { name: "View task" }).click();
+  await expect(dialog).toBeVisible();
+  return dialog.locator(".channel-execution-proposal-decision");
+}
+
 function createLineagePlan(overrides: Partial<ProposedPlanArtifact>): ProposedPlanArtifact {
   return {
     id: "plan_lineage",
@@ -585,7 +597,7 @@ test("channel team metrics stay in settings without a conversation expert summar
 test("global sidebar keeps fixed chrome, scrollable recents, and a true compact rail", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 1280, height: 720 });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [
     createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" }),
     createMockTeammate({ id: "teammate_drawer_research", displayName: "Research" }),
@@ -2173,7 +2185,7 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channels = state.channels.map((channel) =>
     isRecord(channel) && channel.id === "channel_engineering"
       ? { ...channel, defaultTeammateId: "teammate_builtin_engineer", autoReplyMode: "default_teammate" }
@@ -2211,12 +2223,16 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   expect(state.lastChannelTurnRequest).not.toHaveProperty("providerPresetId");
   await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
   await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
-  const proposal = page.getByLabel("Task confirmation");
+  const proposal = await openTaskProposalDialog(page, "Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await expect(proposal).toContainText("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await expect(proposal).toContainText("Engineer");
-  await expect(proposal.locator(".channel-proposal-collaboration")).toContainText("Collaboration 1 records");
-  await expect(proposal).toContainText("Non-direct multi-agent collaboration waits for confirmation");
-  await expect(proposal).toContainText("Starting this task does not approve future runtime actions");
+  await expect(proposal).toContainText("Required permissions");
+  await expect(proposal).toContainText("Read files");
+  await expect(proposal).toContainText("Run commands");
+  await expect(proposal).toContainText("Modify files");
+  await expect(proposal).not.toContainText("Collaboration");
+  await expect(proposal).not.toContainText("Non-direct multi-agent collaboration waits for confirmation");
+  await expect(proposal).not.toContainText("Starting this task does not approve future runtime actions");
   await expect(proposal.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
   await expect(page.getByText("AI teammate is preparing a reply...")).toHaveCount(0);
   await expect.poll(() => {
@@ -2225,7 +2241,7 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   }).toBe("workflow_proposal|accepted|deterministic");
 });
 
-test("task confirmation cards explain bounded tool permission and target", async ({ page }) => {
+test("task confirmation shows only the task, Agent, and product permission labels", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -2307,26 +2323,29 @@ test("task confirmation cards explain bounded tool permission and target", async
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const confirmations = page.getByLabel("Task confirmation");
-  await expect(confirmations).toHaveCount(3);
-  const createCard = confirmations.filter({ hasText: "Create README.md" });
-  await expect(createCard).toContainText("Need write permission to create /tmp/example/README.md for this task.");
-  await expect(createCard).toContainText("Required tool");
-  await expect(createCard).toContainText("write");
-  await expect(createCard).toContainText("Target");
-  await expect(createCard).toContainText("/tmp/example/README.md");
-  await expect(createCard).toContainText("Executor");
+  const summaries = page.getByLabel("Task proposal summary");
+  await expect(summaries).toHaveCount(3);
+  const createCard = await openTaskProposalDialog(page, "Create README.md");
+  await expect(createCard.getByText("Task", { exact: true })).toBeVisible();
+  await expect(createCard.getByText("Agent", { exact: true })).toBeVisible();
+  await expect(createCard.getByText("Required permissions", { exact: true })).toBeVisible();
+  await expect(createCard).toContainText("Modify files");
   await expect(createCard).toContainText("Ling Agent");
+  await expect(createCard).not.toContainText("Need write permission");
+  await expect(createCard).not.toContainText("/tmp/example/README.md");
+  await expect(createCard).not.toContainText(/\bwrite\b/u);
 
-  const editCard = confirmations.filter({ hasText: "Edit docs/guide.md" });
-  await expect(editCard).toContainText("Need edit permission to update docs/guide.md for this task.");
-  await expect(editCard).toContainText("edit");
+  const editCard = await openTaskProposalDialog(page, "Edit docs/guide.md");
+  await expect(editCard).toContainText("Modify files");
+  await expect(editCard).not.toContainText("Need edit permission");
+  await expect(editCard.locator(".channel-proposal-permission-chips")).not.toContainText(/\bedit\b/u);
 
-  const commandCard = confirmations.filter({ hasText: "Run pnpm test" });
-  await expect(commandCard).toContainText("Need bash permission to run pnpm test for this task.");
-  await expect(commandCard).toContainText("bash");
+  const commandCard = await openTaskProposalDialog(page, "Run pnpm test");
+  await expect(commandCard).toContainText("Run commands");
+  await expect(commandCard).not.toContainText("Need bash permission");
+  await expect(commandCard.locator(".channel-proposal-permission-chips")).not.toContainText(/\bbash\b/u);
 
-  await expect(commandCard).toContainText("Starting this task does not approve future runtime actions");
+  await expect(commandCard).not.toContainText("Starting this task does not approve future runtime actions");
   await expect(commandCard.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
 });
 
@@ -2510,9 +2529,14 @@ test("ordinary channel feed hides routing and intent decision internals", async 
   await page.goto("/");
   await openEngineeringChannel(page);
 
+  const autoOpenedProposal = page.getByRole("dialog", { name: /Task confirmation|任务确认/u });
+  if (await autoOpenedProposal.isVisible().catch(() => false)) {
+    await expect(autoOpenedProposal).toContainText("Edit README.md");
+    await autoOpenedProposal.getByRole("button", { name: /Close|关闭/u }).click();
+  }
   const feed = page.locator(".activity-shell");
   await expect(feed.getByText("晚上好")).toBeVisible();
-  await expect(feed.locator(".channel-execution-proposal").filter({ hasText: "Edit README.md" })).toBeVisible();
+  await expect(page.getByLabel(/Task proposal summary|任务提案摘要/u).filter({ hasText: "Edit README.md" })).toBeVisible({ timeout: 10_000 });
   await expect(feed.getByText("未自动回复")).toHaveCount(0);
   await expect(feed.getByText("为什么没回复")).toHaveCount(0);
   await expect(feed.getByText("Ling 未回复")).toHaveCount(0);
@@ -2528,7 +2552,7 @@ test("ordinary channel feed hides routing and intent decision internals", async 
 
 test("channel context inspector exposes safe metadata and recovers from a stale segment correction", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const channelId = "channel_engineering";
   const threadId = "thread_context_inspect";
   const turnId = "turn_msg_context_inspect";
@@ -5434,7 +5458,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
     }
   });
   page.on("pageerror", (error) => runtimeErrors.push(`pageerror:${error.message}`));
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
       id: "provider_ready",
@@ -5562,35 +5586,27 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const proposal = page.getByLabel("Task confirmation");
+  const autoOpenedDialog = page.getByRole("dialog", { name: "Task confirmation" });
+  await expect(autoOpenedDialog).toBeVisible();
+  await autoOpenedDialog.getByRole("button", { name: "Close" }).click();
+  const proposalSummary = page.getByLabel("Task proposal summary").filter({ hasText: "Refine channel workspace copy" });
+  await expect(proposalSummary).toBeVisible();
+  await expect(proposalSummary.locator("xpath=..").locator(".channel-execution-proposal-summary-avatar")).toHaveAttribute("aria-label", "Ling Engineer");
+  await maybeCaptureViewportScreenshot(page, "task-proposal-compact-summary-with-avatar.png");
+
+  const proposal = await openTaskProposalDialog(page, "Refine channel workspace copy");
   await expect(proposal).toContainText("Refine channel workspace copy");
-  await expect(proposal).toContainText("Ling is shaping the task");
-  await expect(proposal).toContainText("Goal");
-  await expect(proposal).toContainText("Participants");
-  await expect(proposal).toContainText("Boundary");
   await expect(proposal).toContainText("Ling Engineer");
-  await expect(proposal).toContainText("Ling Designer");
-  const collaboration = proposal.locator(".channel-proposal-collaboration");
-  await expect(collaboration).not.toHaveAttribute("open", /.+/);
-  await expect(collaboration.locator("summary")).toContainText("Collaboration 2 records");
-  await expect(collaboration.locator("summary")).toContainText("Ling Engineer Summarized discussion into one execution proposal.");
-  await expect(collaboration.locator("summary")).toContainText("Ling Designer Checked visual hierarchy before execution.");
-  const overflowingProposalSections = await proposal.evaluate((element) => {
-    const proposalRect = element.getBoundingClientRect();
-    return Array.from(element.querySelectorAll(":scope > p, .channel-proposal-meta, .channel-proposal-criteria, .channel-proposal-risk, .channel-proposal-collaboration summary"))
-      .filter((node) => {
-        const rect = node.getBoundingClientRect();
-        return rect.left < proposalRect.left - 1 || rect.right > proposalRect.right + 1;
-      })
-      .map((node) => node.className || node.tagName.toLowerCase());
-  });
-  expect(overflowingProposalSections).toEqual([]);
-  await expect(collaboration.locator("li").first()).not.toBeVisible();
-  await collaboration.locator("summary").click();
-  await expect(collaboration.locator("li").first()).toBeVisible();
-  await expect(collaboration).toContainText("Coordinated");
-  await expect(collaboration).toContainText("Reviewed");
-  await expect(collaboration.locator(".channel-proposal-step-source")).toContainText("From Development Council");
+  await expect(proposal).toContainText("Required permissions");
+  await expect(proposal).toContainText("Read files");
+  await expect(proposal).toContainText("Run commands");
+  await expect(proposal).toContainText("Modify files");
+  await expect(proposal).not.toContainText("Ling is shaping the task");
+  await expect(proposal).not.toContainText("Participants");
+  await expect(proposal).not.toContainText("Boundary");
+  await expect(proposal).not.toContainText("Ling Designer");
+  await expect(proposal.locator(".channel-proposal-details, .channel-proposal-collaboration")).toHaveCount(0);
+  await maybeCaptureViewportScreenshot(page, "task-proposal-confirmation-dialog.png");
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth - document.documentElement.clientWidth
   )).toBeLessThanOrEqual(1);
@@ -5662,9 +5678,10 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toHaveCount(0);
 
   await openChannelChatTools(page);
-  const acceptedProposal = feed.getByLabel("Task confirmation").filter({ hasText: "Refine channel workspace copy" });
+  const acceptedProposal = feed.getByLabel("Task proposal summary").filter({ hasText: "Refine channel workspace copy" });
   await expect(acceptedProposal).toBeVisible();
-  await expect(acceptedProposal.getByRole("button", { name: "Open workflow" })).toHaveCount(0);
+  await acceptedProposal.getByRole("button", { name: "View task" }).click();
+  await expect(page.getByRole("dialog", { name: "Task confirmation" }).getByRole("button", { name: "Open workflow" })).toHaveCount(0);
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -5678,6 +5695,7 @@ test("requirement shaping proposal persists clarifications before confirmation",
     localStorage.setItem("ling-stack.themeBootstrapPreference", "dark");
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent" })];
   state.channelMessages = [
     {
       id: "msg_shaping_request",
@@ -5739,43 +5757,43 @@ test("requirement shaping proposal persists clarifications before confirmation",
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
+  const autoOpenedProposal = page.getByRole("dialog", { name: "Task confirmation" });
+  if (await autoOpenedProposal.isVisible()) {
+    await autoOpenedProposal.getByRole("button", { name: "Close" }).click();
+  }
 
   const transcript = page.locator(".conversation-turn-assistant-transcript");
   const shapingBlock = transcript.locator(".transcript-block-view.kind-requirement_shaping");
-  await expect(shapingBlock).toBeVisible();
-  await expect(shapingBlock).toHaveAttribute("aria-label", "Requirement shaping");
-  await expect(shapingBlock.getByRole("button", { name: "Collapse transcript block" })).toHaveAttribute("aria-expanded", "true");
-  await expect(shapingBlock).toContainText("Clarify workspace copy scope before execution.");
-  await expect(shapingBlock).toContainText("Needs user clarification");
-  await expect(shapingBlock).toContainText("ling_agent: Clarify the task, then prepare an executable proposal.");
-  await expect(shapingBlock).not.toContainText("Synced on availability only.");
-  await expect(shapingBlock).toContainText("Only workspace drawer copy is in scope.");
+  await expect(shapingBlock).toHaveCount(0);
   const decisionBlock = transcript.locator(".transcript-block-view.kind-decision_needed");
   await expect(decisionBlock).toBeVisible();
   await expect(decisionBlock).toHaveAttribute("aria-label", "Decision needed");
   await expect(decisionBlock).toContainText("Which copy sections are in scope?");
+  const summary = page.getByLabel("Task proposal summary").filter({ hasText: "Refine workspace copy" });
+  await expect(summary).toHaveCount(1);
+  await expect(summary).toContainText("Ling Agent · Needs input");
+  await expect(page.getByLabel("Channel message feed")).not.toContainText("Requirement shaping");
+  await expect(page.getByLabel("Channel message feed")).not.toContainText("coordinated");
+  await expect(page.getByLabel("Channel message feed")).not.toContainText("ling_agent");
+  await expect(page.getByLabel("Channel message feed")).not.toContainText("Only workspace drawer copy is in scope.");
 
-  const proposal = page.getByLabel("Task confirmation");
-  await expect(proposal).toContainText("Needs user clarification");
-  await expect(proposal).toContainText("Which copy sections are in scope?");
-  await expect(proposal).toContainText("Only workspace drawer copy is in scope.");
+  const proposal = await openTaskProposalDialog(page, "Refine workspace copy");
+  await expect(proposal).toContainText("Refine workspace copy");
+  await expect(proposal).toContainText("Ling Agent");
+  await expect(proposal).toContainText("Read files");
+  await expect(proposal).toContainText("Modify files");
+  await expect(proposal).not.toContainText("Needs user clarification");
+  await expect(proposal).not.toContainText("Which copy sections are in scope?");
+  await expect(proposal).not.toContainText("Only workspace drawer copy is in scope.");
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
-  const proposalSurfaceChannels = await proposal.evaluate((element) => {
-    const readChannels = (node: Element): number[] =>
-      getComputedStyle(node).backgroundColor.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? [];
-    const collaborationSummary = element.querySelector(".channel-proposal-collaboration summary");
-    return [
-      ...readChannels(element),
-      ...(collaborationSummary ? readChannels(collaborationSummary) : []),
-    ];
-  });
-  expect(Math.max(...proposalSurfaceChannels)).toBeLessThanOrEqual(45);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
 
   await page.reload();
   await openEngineeringChannel(page);
-  await expect(proposal).toContainText("Needs user clarification");
-  await expect(proposal).toContainText("Which copy sections are in scope?");
-  await expect(proposal).toContainText("Only workspace drawer copy is in scope.");
+  await openTaskProposalDialog(page, "Refine workspace copy");
+  await expect(proposal).not.toContainText("Needs user clarification");
+  await expect(proposal).not.toContainText("Which copy sections are in scope?");
+  await expect(proposal).not.toContainText("Only workspace drawer copy is in scope.");
 
   await proposal.getByRole("button", { name: "Edit" }).click();
   const editForm = proposal.locator(".channel-proposal-edit-form");
@@ -5783,8 +5801,8 @@ test("requirement shaping proposal persists clarifications before confirmation",
   await editForm.getByLabel("User clarifications").fill("Only workspace drawer copy is in scope.\nKeep provider checks out of this task.");
   await proposal.getByRole("button", { name: "Save" }).click();
   await expect(editForm).toHaveCount(0);
-  await expect(proposal).toContainText("Should QA cover accessibility?");
-  await expect(proposal).toContainText("Keep provider checks out of this task.");
+  await expect(proposal).not.toContainText("Should QA cover accessibility?");
+  await expect(proposal).not.toContainText("Keep provider checks out of this task.");
   await expect.poll(() => {
     const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_shaping");
     if (!isRecord(updated) || !isRecord(updated.shaping)) {
@@ -6002,7 +6020,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
 
   await openChannelChatTools(page);
-  await expect(feed.getByLabel("Task confirmation")).toContainText("Create /Users/example/ling-stack-test/README.md");
+  await expect(feed.getByLabel("Task proposal summary")).toContainText("Create /Users/example/ling-stack-test/README.md");
 });
 
 test("terminal workflow step suppresses stale running run surfaces", async ({ page }) => {
@@ -7035,7 +7053,7 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
   await expect(workCell).not.toContainText("No validation commands recorded.");
 
   await openChannelChatTools(page);
-  await expect(feed.getByLabel("Task confirmation")).toContainText("Create README.md");
+  await expect(feed.getByLabel("Task proposal summary")).toContainText("Create README.md");
 });
 
 test("resolved approval-only workflow stays out of the conversation", async ({ page }) => {
@@ -10758,11 +10776,19 @@ test("failed conversation work cell does not label terminal rows as working", as
   await expect(workCell.getByLabel("Active work stream")).not.toContainText("Working");
 });
 
-test("active conversation work cell renders sparse rows while runtime approvals stay in composer overlay", async ({ page }) => {
+test("active conversation work cell renders sparse rows while runtime approvals stay in a blocking dialog", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [createChatProvider({
+    lastCheck: {
+      ok: true,
+      code: "ready",
+      message: "Provider is reachable.",
+      checkedAt: "2026-05-22T00:00:00.000Z",
+    },
+  })];
   const run = state.runs[0];
   run.threadId = "thread_active_approval";
   run.status = "waiting_for_approval";
@@ -10807,25 +10833,33 @@ test("active conversation work cell renders sparse rows while runtime approvals 
   const workCell = feed.locator(".conversation-work-cell");
   await expect(workCell).toBeVisible();
   await expect(workCell).toHaveAttribute("data-operation-source", "run_thread");
+  await expect(workCell).toHaveAttribute("data-approval-presentation-owner", "dialog");
   await expect(workCell).not.toContainText("Task waiting for approval");
   await expect(workCell).not.toContainText("Waiting for approval to continue.");
-  await expect(workCell.getByLabel("Active work stream")).toContainText("Waiting for approval");
-  await expect(workCell.getByLabel("Active work stream")).toContainText("Approve shell command");
+  await expect(workCell).toContainText("Waiting for approval");
+  await expect(workCell).toContainText("Run command: echo inspect");
+  await expect(workCell).not.toContainText("Approve shell command");
+  await expect(workCell.locator(".conversation-operation-shell-body")).toHaveCount(0);
+  await expect(workCell.locator(".conversation-work-cell-evidence-summary")).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Deny", exact: true })).toHaveCount(0);
 
   const composer = page.getByLabel("Channel composer");
-  const overlay = composer.getByLabel("Composer approval overlay");
-  await expect(overlay).toBeVisible();
-  await expect(overlay).toContainText("Runtime approval needed");
-  await expect(overlay).toContainText("Highest risk: medium");
-  await expect(overlay).toContainText("Approve shell command");
+  const composerHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
+  const dialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Run command: echo inspect");
+  await expect(dialog).not.toContainText("medium");
+  await expect(dialog).not.toContainText("Approve shell command");
+  await expect(composer.locator(".approval-inline-strip")).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
+  await maybeCaptureViewportScreenshot(page, "runtime-approval-dialog-clean-background.png");
 
-  await overlay.getByRole("button", { name: "Approve" }).click();
-  await expect(composer.getByLabel("Composer approval overlay")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Allow" }).click();
+  await expect(dialog).toHaveCount(0);
   await expect(composer).not.toContainText("Approve shell command");
+  expect(await composer.evaluate((element) => element.getBoundingClientRect().height)).toBe(composerHeight);
   expect(state.approvals.find((approval) => isRecord(approval) && approval.id === "approval_1")?.status).toBe("approved");
   expect(state.approvalPolicy.toolDecisions.bash).toBe("ask");
   expect(state.approvalPolicy.toolDecisions.write).toBe("ask");
@@ -11428,7 +11462,7 @@ test("retained channel activity does not flash a loading notice during backgroun
   ))).toBe(0);
 });
 
-test("composer approval overlay groups multiple local approvals and excludes review queue actions", async ({ page }) => {
+test("runtime approval dialog queues multiple local approvals and excludes review queue actions", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -11466,16 +11500,16 @@ test("composer approval overlay groups multiple local approvals and excludes rev
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const overlay = page.getByLabel("Channel composer").getByLabel("Composer approval overlay");
-  await expect(overlay).toContainText("Runtime approvals needed");
-  await expect(overlay).toContainText("Highest risk: high");
-  const primaryApproval = overlay.locator(".inline-approval-item.primary");
-  await expect(primaryApproval).toContainText("Approve file write");
-  await expect(primaryApproval).not.toContainText("Approve shell command");
-  await expect(overlay).not.toContainText("Approve external send");
-
-  await overlay.getByText("Show other approvals").click();
-  await expect(overlay).toContainText("Approve shell command");
+  const dialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(dialog).toContainText("Create file:");
+  await expect(dialog).not.toContainText("Approve file write");
+  await expect(dialog).not.toContainText("pending approvals");
+  await expect(dialog).not.toContainText("Approve shell command");
+  await expect(dialog).not.toContainText("Approve external send");
+  await dialog.getByRole("button", { name: "Deny" }).click();
+  await expect(dialog).toContainText("Run command:");
+  await expect(dialog).not.toContainText("Approve shell command");
+  await expect(dialog).not.toContainText("pending approvals");
 });
 
 test("channel activity derives task run approval transition and workflow events", async ({ page }) => {
@@ -12173,4 +12207,16 @@ async function maybeCaptureConversationScreenshots(
       } : undefined,
     });
   }
+}
+
+async function maybeCaptureViewportScreenshot(page: Page, name: string): Promise<void> {
+  const outputDir = process.env.LING_R32_SCREENSHOTS_DIR;
+  if (!outputDir) {
+    return;
+  }
+  await mkdir(outputDir, { recursive: true });
+  await page.screenshot({
+    animations: "disabled",
+    path: join(outputDir, name),
+  });
 }

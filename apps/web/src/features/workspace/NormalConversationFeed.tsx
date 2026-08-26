@@ -3,6 +3,12 @@ import { ArrowDown, Copy, FileText, Pencil, ThumbsDown, ThumbsUp } from "lucide-
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
+import type { InlineApprovalView } from "../../lib/inline-approvals.js";
+import {
+  buildDialogOwnedApprovalPresentationByRunId,
+  dialogOwnedApprovalPresentationForWorkCell,
+  type DialogOwnedApprovalPresentation,
+} from "../../lib/runtime-approval-presentation.js";
 import {
   ConversationAttachmentStrip,
   ConversationGeneratedMediaBlock,
@@ -36,6 +42,7 @@ export interface NormalConversationFeedProps {
   readonly visibleMessages: readonly ConversationHomeMessage[];
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly detailContext?: ConversationHomeDetailContext;
+  readonly dialogOwnedApprovals: readonly InlineApprovalView[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly projectPath?: string;
   readonly workspaceCwd: string;
@@ -57,6 +64,7 @@ export interface NormalConversationFeedProps {
 
 export function NormalConversationFeed({
   detailContext,
+  dialogOwnedApprovals,
   editSaving,
   editingMessageId,
   latestEditableUserMessageId,
@@ -84,6 +92,10 @@ export function NormalConversationFeed({
   const mountedRef = useRef(false);
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [feedbackById, setFeedbackById] = useState<Record<string, "up" | "down">>({});
+  const dialogOwnedApprovalByRunId = useMemo(
+    () => buildDialogOwnedApprovalPresentationByRunId(dialogOwnedApprovals, t),
+    [dialogOwnedApprovals, t],
+  );
   const feedItems = useMemo(() => projectNormalConversationFeedItems({
     detailContext,
     messages,
@@ -152,6 +164,9 @@ export function NormalConversationFeed({
         renderItem={(item) => (
           <NormalConversationMessageRow
             item={item}
+            dialogOwnedApproval={item.workCell
+              ? dialogOwnedApprovalPresentationForWorkCell(item.workCell, dialogOwnedApprovalByRunId)
+              : undefined}
             generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
             feedback={feedbackById[item.message.id]}
             editing={editingMessageId === item.message.id}
@@ -186,6 +201,7 @@ export function NormalConversationFeed({
 }
 
 function NormalConversationMessageRow({
+  dialogOwnedApproval,
   editSaving,
   editable,
   editing,
@@ -207,6 +223,7 @@ function NormalConversationMessageRow({
   workspaceCwd,
 }: {
   readonly item: NormalConversationFeedItem;
+  readonly dialogOwnedApproval?: DialogOwnedApprovalPresentation;
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly feedback?: "up" | "down";
   readonly editing: boolean;
@@ -296,6 +313,7 @@ function NormalConversationMessageRow({
             <ConversationWorkCell
               model={item.workCell}
               surface="normal_conversation"
+              dialogOwnedApproval={dialogOwnedApproval}
               cwd={item.workCellCwd}
               onOpenRun={onOpenRun}
               onOpenWorkspaceFile={onOpenReportFile}

@@ -39,6 +39,7 @@ import {
   uploadTeammatePrivateAttachment,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
+import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
 import { readSseResponse } from "../../sse.js";
 import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import {
@@ -101,6 +102,8 @@ import { TeammatePermissionsTab } from "./TeammatePermissionsTab.js";
 import { TeammateProfileTab } from "./TeammateProfileTab.js";
 import { TeammatePrivateChatSurface } from "./TeammatePrivateChatSurface.js";
 import { TeammateRenameDialog } from "./TeammateRenameDialog.js";
+import { RuntimeApprovalDialogQueue } from "../approvals/RuntimeApprovalDialogQueue.js";
+import type { ApprovalResolution } from "../approvals/types.js";
 import { TeammateSettingsHeader } from "./TeammateSettingsHeader.js";
 import { TeammateSettingsNavigation } from "./TeammateSettingsNavigation.js";
 import { TeammateSkillsTab } from "./TeammateSkillsTab.js";
@@ -180,6 +183,9 @@ export function TeammateWorkspace({
   workspacePolicyLoading = false,
   workspacePolicyError,
   onRefreshWorkspacePolicy,
+  approvalErrors,
+  resolvingApprovals,
+  onResolveApproval,
   settingsOpenRequest,
   conversationRefreshToken = 0,
   onSettingsOpenRequestConsumed,
@@ -222,6 +228,9 @@ export function TeammateWorkspace({
   readonly workspacePolicyLoading?: boolean;
   readonly workspacePolicyError?: string;
   readonly onRefreshWorkspacePolicy?: () => void;
+  readonly approvalErrors: Readonly<Record<string, string>>;
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => MaybePromise<void>;
   readonly settingsOpenRequest?: {
     readonly teammateId: string;
     readonly requestId: number;
@@ -468,6 +477,13 @@ export function TeammateWorkspace({
       .filter((runId): runId is string => Boolean(runId && teammateRunIds.has(runId))))];
   }, [runs, teammate.id, visibleMessages]);
   const visibleDirectRunKey = visibleDirectRunIds.join("|");
+  const directApprovalViews = useMemo(
+    () => buildInlineApprovalViews(currentDirectRuntime?.approvals ?? [], {
+      activeRunId: runs.find((run) => visibleDirectRunIds.includes(run.id) && run.status === "waiting_for_approval")?.id,
+      visibleRunIds: visibleDirectRunIds,
+    }),
+    [currentDirectRuntime?.approvals, runs, visibleDirectRunKey],
+  );
   const hasActiveVisibleDirectRun = useMemo(() => {
     const visibleRunIds = new Set(visibleDirectRunIds);
     return runs.some((run) => visibleRunIds.has(run.id) && (
@@ -547,6 +563,7 @@ export function TeammateWorkspace({
     estimateSize: () => 112,
     overscan: 8,
     getItemKey: (index) => visibleMessages[index]?.id ?? index,
+    useFlushSync: false,
   });
   const privateMessageFeedVirtualRows = privateMessageFeedVirtualizer.getVirtualItems();
   const directAttachments = useMemo(
@@ -1725,6 +1742,7 @@ export function TeammateWorkspace({
           runs={runs}
           executionActions={directExecutionActions}
           approvals={currentDirectRuntime?.approvals ?? []}
+          dialogOwnedApprovals={directApprovalViews}
           terminalReports={terminalReports}
           dockViewModel={privateDockViewModel}
           providerRecovered={providerRecovered}
@@ -1890,6 +1908,14 @@ export function TeammateWorkspace({
           ) : null}
         </div>
       ) : null}
+      <RuntimeApprovalDialogQueue
+        approvals={workspaceView === "chat" ? directApprovalViews : []}
+        approvalErrors={approvalErrors}
+        resolvingApprovals={resolvingApprovals}
+        onResolve={(approvalId, decision, reason) => {
+          void Promise.resolve(onResolveApproval(approvalId, decision, reason)).then(() => refreshDirectRuntime());
+        }}
+      />
     </div>
   );
 }

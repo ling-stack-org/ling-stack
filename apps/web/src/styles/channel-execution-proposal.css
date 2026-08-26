@@ -12,6 +12,203 @@
   box-shadow: none;
 }
 
+.channel-execution-proposal.embedded {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+}
+
+.channel-execution-proposal-dialog {
+  width: min(700px, calc(100vw - 32px));
+  max-height: min(820px, calc(100vh - 32px));
+}
+
+.channel-execution-proposal-dialog-body {
+  display: grid;
+  gap: 16px;
+  overflow-y: auto;
+}
+
+.channel-execution-proposal-decision {
+  display: grid;
+  gap: 16px;
+  min-width: 0;
+}
+
+.channel-proposal-decision-fields {
+  display: grid;
+  gap: 0;
+  min-width: 0;
+  margin: 0;
+}
+
+.channel-proposal-decision-fields > div {
+  display: grid;
+  grid-template-columns: 116px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  min-width: 0;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--border);
+}
+
+.channel-proposal-decision-fields > div:first-child {
+  padding-top: 0;
+}
+
+.channel-proposal-decision-fields dt,
+.channel-proposal-decision-fields dd {
+  min-width: 0;
+  margin: 0;
+}
+
+.channel-proposal-decision-fields dt {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 20px;
+}
+
+.channel-proposal-decision-fields dd {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 20px;
+  overflow-wrap: anywhere;
+}
+
+.channel-proposal-permission-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.channel-proposal-permission-chips > span {
+  min-height: 24px;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface-panel);
+  color: var(--text);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 18px;
+}
+
+@media (max-width: 600px) {
+  .channel-proposal-decision-fields > div {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+}
+
+.channel-execution-proposal-summary-row {
+  display: grid;
+  grid-template-columns: 34px minmax(0, 1fr);
+  align-items: start;
+  gap: 6px;
+  width: min(660px, 100%);
+  min-width: 0;
+}
+
+.channel-execution-proposal-summary-avatar {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  margin-top: 4px;
+  place-items: center;
+}
+
+.channel-execution-proposal-summary {
+  display: grid;
+  grid-template-columns: 24px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: min(620px, 100%);
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--surface-panel);
+}
+
+.channel-execution-proposal-summary.blocked,
+.channel-execution-proposal-summary.run_failed {
+  border-color: var(--warning-border);
+}
+
+.channel-execution-proposal-summary.accepted {
+  border-color: var(--success-border);
+}
+
+.channel-execution-proposal-summary-icon {
+  display: grid;
+  width: 24px;
+  height: 24px;
+  place-items: center;
+  color: var(--text-muted);
+}
+
+.channel-execution-proposal-summary-copy {
+  display: grid;
+  min-width: 0;
+}
+
+.channel-execution-proposal-summary-copy strong,
+.channel-execution-proposal-summary-copy small {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.channel-execution-proposal-summary-copy strong {
+  color: var(--text-strong);
+  font-size: 13px;
+  line-height: 18px;
+}
+
+.channel-execution-proposal-summary-copy small {
+  color: var(--text-soft);
+  font-size: 11px;
+  line-height: 15px;
+}
+
+.channel-proposal-details {
+  display: grid;
+  gap: 8px;
+}
+
+.channel-proposal-details > summary {
+  width: fit-content;
+  color: var(--text-muted);
+  font-size: 12px;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.channel-proposal-details-body {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding-top: 4px;
+}
+
+.channel-proposal-details-body > p {
+  margin: 0;
+  color: var(--text);
+  font-size: 12px;
+  line-height: 1.5;
+  overflow-wrap: anywhere;
+}
+
 .channel-execution-proposal > * {
   min-width: 0;
   max-width: 100%;
@@ -181,6 +378,9 @@
 .channel-proposal-criteria {
   display: grid;
   gap: 4px;
+  width: 100%;
+  min-width: 0;
+  max-width: 100%;
 }
 
 .channel-proposal-criteria strong {
@@ -192,8 +392,14 @@
 .channel-proposal-criteria ul {
   display: grid;
   gap: 4px;
+  min-width: 0;
   margin: 0;
   padding-left: 18px;
+}
+
+.channel-proposal-criteria li {
+  min-width: 0;
+  max-width: 100%;
 }
 
 .channel-proposal-criteria li {

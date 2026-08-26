@@ -21,6 +21,8 @@
 - 确认以不可读 scope 摘要写入 Web/desktop renderer localStorage，最多保留最近 256 个对话；不保存路径明文、密钥或权限令牌。
 - 不写入 workspace settings、SQLite 或 daemon；存储不可用或损坏时安全降级为重新确认。
 - 每个 full-access 请求仍携带合法 `PermissionConfirmation`；daemon 的 full-access 校验不得跳过或弱化。
+- 当前 scope 完成确认后，默认策略下的 `read`、`edit`、`write`、`bash` 等常规本地工具不再逐项打开运行时审批弹窗。
+- Agent/Skill 的强制 Approval Profile、外部发送、部署、凭据操作和其他独立安全边界仍可要求审批；工作区明确 `deny` 的工具直接阻止，不因 full access 放宽。
 
 ## UI Contract
 
@@ -50,4 +52,4 @@
 - 不增加“始终允许”“记住此工作区”或跨会话复用。
 - 不把频道、普通对话和队友私聊合并为同一授权 scope。
 - 不改变频道权限选择与任务运行时确认行为；主动选择即确认仅适用于普通对话和 AI 队友私聊。
-- Runtime tool approval、外部动作审批和高风险二次确认继续独立生效。
+- Runtime tool approval 仅在更严格的 Agent/Skill Approval Profile 等有效策略仍要求 `ask` 时出现；外部动作及其他专用审批继续独立生效。

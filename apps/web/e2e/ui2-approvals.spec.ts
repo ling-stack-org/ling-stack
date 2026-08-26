@@ -11,7 +11,7 @@ import {
   createPermissionApproval,
   installApprovalsFaults,
 } from "./support/approvals-fixture";
-import { createBaseState, type MockState } from "./support/mock-state";
+import { createBaseState, createChatProvider, type MockState } from "./support/mock-state";
 import { openPendingInbox } from "./support/pending-primary-navigation";
 
 const evidenceDirectory = fileURLToPath(new URL(
@@ -294,38 +294,66 @@ test("A pending external approval becomes executable without executing implicitl
   await runtime.assertClean();
 });
 
-test("Inline Strip deduplicates, sorts highest risk, folds secondary items, and never duplicates Inbox ownership", async ({ page }) => {
+test("Runtime dialog queue deduplicates, sorts highest risk, and preserves composer geometry", async ({ page }) => {
   await prepareSurface(page, "en-US", "light", 1440, 960);
   const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [createChatProvider({
+    lastCheck: {
+      ok: true,
+      code: "ready",
+      message: "Provider is reachable.",
+      checkedAt: "2026-05-22T00:00:00.000Z",
+    },
+  })];
   const runId = state.runs[0]?.id;
   const critical = createPermissionApproval({ id: "inline_critical", runId, channelId: undefined, risk: "critical", title: "Critical runtime permission" });
   const medium = createApproval({ id: "inline_medium", runId, actionType: "bash", risk: "medium", title: "Medium shell approval", payload: { type: "bash", command: "pnpm test" } });
   const low = createApproval({ id: "inline_low", runId, actionType: "edit", risk: "low", title: "Low file approval", payload: { type: "file_edit", path: "README.md" } });
-  state.approvals = [medium, critical, low, { ...critical }];
+  state.approvals = [medium, critical, low, critical];
   await mockDaemon(page, state);
+  let failMediumDeny = true;
+  await page.route(/\/approvals\/inline_medium\/deny(?:\?.*)?$/u, async (route) => {
+    if (failMediumDeny) {
+      failMediumDeny = false;
+      await route.fulfill({ status: 503, json: { error: "mock_approval_failed", message: "Synthetic approval decision failure" } });
+      return;
+    }
+    await route.fallback();
+  });
   const runtime = watchRuntime(page);
   await page.goto("/");
   await page.getByLabel(/Ling Stack navigation|Ling Stack 导航/).getByRole("button", { name: "Engineering" }).first().click();
-  const strip = page.locator(".approval-inline-strip");
-  await expect(strip).toBeVisible();
-  await expect(strip).toContainText("Critical runtime permission");
-  await expect(strip).toContainText("3 pending approvals");
-  await expect(strip.locator('[role="status"]')).toHaveCount(1);
-  await strip.getByRole("button", { name: /Show other approvals/ }).click();
-  await expect(strip.locator(".approval-inline-item")).toHaveCount(3);
-  await assertInlineComposerGeometry(page, strip);
-  await captureEvidence(page, "1440x960-ling-light-inline-approval-strip.png");
+  const composer = page.locator(".channel-composer").first();
+  const dialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(dialog).toBeVisible();
+  await expect(composer.locator(".channel-active-status-strip")).toHaveCount(0);
+  const composerHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
+  await expect(dialog).toContainText("Grant runtime permission: core_tool: Release repair needs one additional editor tool.");
+  await expect(dialog).not.toContainText("Critical runtime permission");
+  await expect(dialog).not.toContainText("pending approvals");
+  await expect(dialog).not.toContainText("Medium shell approval");
+  await expect(dialog.getByLabel("Decision reason")).toHaveCount(0);
+  await expect(dialog.locator("details")).toHaveCount(0);
+  await expect(dialog).not.toContainText(/critical|risk|Run ID|workspace/iu);
+  await expect(page.locator(".approval-inline-strip")).toHaveCount(0);
+  await captureEvidence(page, "1440x960-ling-light-runtime-approval-dialog.png");
 
-  const lowItem = strip.locator(".approval-inline-item").filter({ hasText: "Low file approval" });
-  await lowItem.getByRole("button", { name: "Deny" }).click();
+  await dialog.getByRole("button", { name: "Allow" }).click();
+  await expect.poll(() => state.approvals.find((item) => item.id === "inline_critical")?.status).toBe("approved");
+  await expect(dialog).toContainText("Run command: pnpm test");
+  await expect(dialog).not.toContainText("Medium shell approval");
+  await dialog.getByRole("button", { name: "Deny" }).click();
+  await expect(dialog).toContainText("Synthetic approval decision failure");
+  await expect(dialog.getByRole("button", { name: "Retry" })).toBeVisible();
+  await dialog.getByRole("button", { name: "Retry" }).click();
+  await expect.poll(() => state.approvals.find((item) => item.id === "inline_medium")?.status).toBe("denied");
+  await expect(dialog).toContainText("Modify file: README.md");
+  await expect(dialog).not.toContainText("Low file approval");
+  await dialog.getByRole("button", { name: "Deny" }).click();
   await expect.poll(() => state.approvals.find((item) => item.id === "inline_low")?.status).toBe("denied");
-  await expect(strip).toContainText("2 pending approvals");
-
-  await openPendingInbox(page);
-  const surface = page.locator("[data-approvals-ui2-page]");
-  await expect(surface.getByText("Critical runtime permission")).toHaveCount(0);
-  await expect(surface.getByText("Medium shell approval")).toHaveCount(0);
-  await runtime.assertClean();
+  await expect(dialog).toHaveCount(0);
+  expect(await composer.evaluate((element) => element.getBoundingClientRect().height)).toBe(composerHeight);
+  await runtime.assertClean([503]);
 });
 
 test("Expired long payload stays folded and contained at 1280 Dark Chinese", async ({ page }) => {
@@ -409,23 +437,6 @@ async function assertNoHorizontalOverflow(page: Page, surface: Locator): Promise
     const region = surface.locator(selector);
     if (await region.count()) expect(await region.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   }
-}
-
-async function assertInlineComposerGeometry(page: Page, strip: Locator): Promise<void> {
-  const composer = page.locator(".channel-composer").first();
-  const geometry = await page.evaluate(({ stripSelector, composerSelector }) => {
-    const stripElement = document.querySelector(stripSelector);
-    const composerElement = document.querySelector(composerSelector);
-    if (!stripElement || !composerElement) return undefined;
-    const stripRect = stripElement.getBoundingClientRect();
-    const composerRect = composerElement.getBoundingClientRect();
-    return { stripBottom: stripRect.bottom, composerBottom: composerRect.bottom, stripWidth: stripRect.width, composerWidth: composerRect.width };
-  }, { stripSelector: ".approval-inline-strip", composerSelector: ".channel-composer" });
-  expect(geometry).toBeTruthy();
-  expect(geometry!.stripBottom).toBeLessThanOrEqual(geometry!.composerBottom + 1);
-  expect(geometry!.stripWidth).toBeLessThanOrEqual(geometry!.composerWidth + 1);
-  await expect(strip).toBeVisible();
-  await expect(composer).toBeVisible();
 }
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {

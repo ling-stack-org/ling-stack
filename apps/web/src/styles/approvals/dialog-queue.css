@@ -1,0 +1,21 @@
+.runtime-approval-dialog {
+  width: min(440px, calc(100vw - 32px));
+}
+
+.runtime-approval-dialog-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.runtime-approval-dialog-body {
+  gap: 12px;
+}
+
+.runtime-approval-dialog-summary {
+  margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.55;
+  overflow-wrap: anywhere;
+}

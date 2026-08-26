@@ -173,6 +173,8 @@ import { useWorkspaceSettingsController } from "./use-workspace-settings-control
 import { useDesktopNavigationIntents } from "./use-desktop-navigation-intents.js";
 import { useAppNarrowViewport } from "./use-app-viewport-state.js";
 import { useShellErrorFeedback } from "./use-shell-error-feedback.js";
+import { buildSidebarObjectContextSeeds } from "./sidebar-object-context.js";
+import { useSidebarObjectContexts } from "./use-sidebar-object-contexts.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
@@ -1035,6 +1037,15 @@ export function AppShell(): React.JSX.Element {
     }
     return items;
   }, [run, runs]);
+  const sidebarRuns = useMemo(() => [...runById.values()], [runById]);
+  const sidebarObjectContextSeeds = useMemo(() => buildSidebarObjectContextSeeds({
+    channels,
+    conversationThreads,
+    runs: sidebarRuns,
+    teammates: aiTeammates,
+    workspaceCwd: form.cwd.trim(),
+  }), [aiTeammates, channels, conversationThreads, form.cwd, sidebarRuns]);
+  const sidebarObjectContexts = useSidebarObjectContexts(sidebarObjectContextSeeds);
   const sidebarChannelNotifications = useMemo(
     () => buildSidebarChannelNotifications({
       approvals,
@@ -2366,6 +2377,7 @@ export function AppShell(): React.JSX.Element {
         stale={daemonHealthy === false}
         channelNotifications={sidebarChannelNotifications}
         teammateNotifications={sidebarTeammateNotifications}
+        objectContexts={sidebarObjectContexts}
         recentConversations={recentConversations}
         recentConversationsInitialLoading={conversationThreadsLoading && recentConversations.length === 0}
         recentConversationActionError={conversationSidebarError}
@@ -2525,6 +2537,7 @@ export function AppShell(): React.JSX.Element {
             externalActionDetails={externalActionDetails}
             approvalsLoading={approvalsLoading}
             resolvingApprovals={resolvingApprovals}
+            approvalErrors={approvalErrors}
             resourceLeases={resourceLeases}
             runtimeDiagnostics={runtimeDiagnostics}
             workUnits={workUnits}
@@ -2563,8 +2576,8 @@ export function AppShell(): React.JSX.Element {
             onCreateTask={saveTask}
             onCreateTaskFromSlashCommand={createTaskFromSlashCommand}
             onSendMessage={sendChannelMessage}
-            onConfirmExecutionProposal={(proposal) => void confirmChannelExecutionProposal(proposal)}
-            onCancelExecutionProposal={(proposal) => void cancelChannelExecutionProposal(proposal)}
+            onConfirmExecutionProposal={confirmChannelExecutionProposal}
+            onCancelExecutionProposal={cancelChannelExecutionProposal}
             onUpdateExecutionProposal={markChannelExecutionProposal}
             onUploadAttachments={(files) => uploadChannelFiles(files)}
             onCreateLinkPreview={(url) => addChannelLinkPreview(url)}
@@ -2678,6 +2691,7 @@ export function AppShell(): React.JSX.Element {
                   } : undefined}
                   inlineApprovalViews={normalConversationInlineApprovalViews}
                   resolvingApprovals={resolvingApprovals}
+                  approvalErrors={approvalErrors}
                   conversationIdentity={conversationIdentity}
                   defaultProviderLabel={defaultConversationProviderLabel}
                   defaultProviderPresetId={defaultConversationProviderPresetId}
@@ -2689,16 +2703,6 @@ export function AppShell(): React.JSX.Element {
                   activeRun={activeConversationRun}
                   stopping={Boolean(activeConversationRun && cancellingRunId === activeConversationRun.id)}
                   onOpenRun={(runId) => void openRunFromWorkspace(runId)}
-                  onOpenApproval={(approvalId) => {
-                    const approval = selectedConversationDetail?.approvals.find((candidate) => candidate.id === approvalId)
-                      ?? approvals.find((candidate) => candidate.id === approvalId);
-                    if (approval) {
-                      upsertApprovalRecord(approval);
-                    }
-                    setSelectedApprovalId(approvalId);
-                    void refreshApprovals(form.cwd.trim());
-                    openPlainView("approvals");
-                  }}
                   onOpenModelWorkbench={() => openSettingsWorkspaceTool("providers")}
                   fullAccessConfirmed={fullAccessConfirmation.isConfirmed(normalConversationConfirmationScope)}
                   onConfirmFullAccess={() => fullAccessConfirmation.request(normalConversationConfirmationScope)}
@@ -2821,6 +2825,9 @@ export function AppShell(): React.JSX.Element {
                 workspacePolicyLoading={approvalPolicyLoading}
                 workspacePolicyError={settingsDomain.error?.scope === "load" ? settingsDomain.error.message : undefined}
                 onRefreshWorkspacePolicy={() => void refreshApprovalPolicy()}
+                approvalErrors={approvalErrors}
+                resolvingApprovals={resolvingApprovals}
+                onResolveApproval={resolveApproval}
                 settingsOpenRequest={teammateSettingsOpenRequest}
                 conversationRefreshToken={teammateConversationRefreshToken}
                 onSettingsOpenRequestConsumed={(requestId) => {

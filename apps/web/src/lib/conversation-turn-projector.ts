@@ -372,117 +372,34 @@ function buildRequirementShapingBlocks(
   const blocks: ConversationGenericTranscriptBlock[] = [];
   for (const proposal of proposals.filter((item) => item.shaping && item.status === "draft")) {
     const shaping = proposal.shaping;
-    if (!shaping) {
+    if (!shaping || shaping.status !== "needs_user_clarification" || shaping.openQuestions.length === 0) {
       continue;
     }
-    const contributionLines = [
-      ...proposal.collaborationSteps
-        .filter(requirementShapingContributionAffectsScope)
-        .map((step, index) => ({
-          id: `proposal:${proposal.id}:contribution:${index}`,
-          text: `${step.teammateId}: ${step.summary}`,
-          tone: step.action === "flagged_risk" ? "waiting" as const : "default" as const,
-          meta: step.action,
-        })),
-      ...shaping.clarifications.map((clarification) => ({
-        id: `proposal:${proposal.id}:clarification:${clarification.id}`,
-        text: `${clarification.authorType}: ${clarification.body}`,
-        tone: "muted" as const,
-        meta: "clarification",
-      })),
-    ];
+    const remainingQuestions = shaping.openQuestions.slice(1);
     blocks.push({
-      id: `requirement-shaping:${proposal.id}`,
+      id: `decision-needed:${proposal.id}`,
       turnId,
-      kind: "requirement_shaping",
-      status: requirementShapingTranscriptStatus(shaping.status),
+      kind: "decision_needed",
+      status: "waiting_for_approval",
       revision: 1,
       updatedAt: shaping.updatedAt ?? proposal.updatedAt,
       display: [{
-        id: `display:${proposal.id}:shaping`,
-        text: shaping.summary?.trim() || proposal.title,
-        meta: requirementShapingStatusLabel(shaping.status),
+        id: `display:${proposal.id}:decision`,
+        text: shaping.openQuestions[0] ?? proposal.title,
       }],
-      expanded: {
-        mode: "inline",
-        title: "Requirement shaping",
-        summary: proposal.riskSummary,
-        lines: contributionLines,
-      },
-    });
-    if (shaping.openQuestions.length > 0 && shaping.status === "needs_user_clarification") {
-      blocks.push({
-        id: `decision-needed:${proposal.id}`,
-        turnId,
-        kind: "decision_needed",
-        status: "waiting_for_approval",
-        revision: 1,
-        updatedAt: shaping.updatedAt ?? proposal.updatedAt,
-        display: [{
-          id: `display:${proposal.id}:decision`,
-          text: shaping.openQuestions[0] ?? "Decision needed",
-          meta: shaping.openQuestions.length === 1 ? "1 open question" : `${shaping.openQuestions.length} open questions`,
-        }],
+      ...(remainingQuestions.length > 0 ? {
         expanded: {
-          mode: "inline",
-          title: "Decision needed",
-          lines: shaping.openQuestions.map((question, index) => ({
-            id: `proposal:${proposal.id}:question:${index}`,
+          mode: "inline" as const,
+          lines: remainingQuestions.map((question, index) => ({
+            id: `proposal:${proposal.id}:question:${index + 1}`,
             text: question,
-            tone: "waiting",
+            tone: "waiting" as const,
           })),
         },
-      });
-    }
+      } : {}),
+    });
   }
   return blocks;
-}
-
-function requirementShapingContributionAffectsScope(step: ChannelExecutionProposal["collaborationSteps"][number]): boolean {
-  const summary = step.summary.trim();
-  if (!summary) {
-    return false;
-  }
-  if (step.action === "flagged_risk") {
-    return true;
-  }
-  return /\b(scope|scoped|boundary|requirement|acceptance|criteria|risk|blocker|conflict|decision|decide|approval|clarify|clarification|question|assumption|constraint|permission|security|cost|latency|handoff|owner|proposal)\b|范围|边界|需求|验收|风险|阻塞|冲突|决策|决定|审批|澄清|问题|假设|约束|权限|安全|成本|延迟|交接|负责人|提案/u.test(summary);
-}
-
-function requirementShapingTranscriptStatus(
-  status: NonNullable<ChannelExecutionProposal["shaping"]>["status"],
-): TranscriptBlockStatus {
-  if (status === "needs_user_clarification" || status === "ready_for_confirmation") {
-    return "waiting_for_approval";
-  }
-  if (status === "converted_to_task") {
-    return "succeeded";
-  }
-  if (status === "dismissed") {
-    return "cancelled";
-  }
-  return "running";
-}
-
-function requirementShapingStatusLabel(
-  status: NonNullable<ChannelExecutionProposal["shaping"]>["status"],
-): string {
-  if (status === "collecting_context") {
-    return "Collecting context";
-  }
-  if (status === "collecting_teammate_input") {
-    return "Collecting teammate input";
-  }
-  if (status === "needs_user_clarification") {
-    return "Needs user clarification";
-  }
-  if (status === "ready_for_confirmation") {
-    return "Ready for confirmation";
-  }
-  if (status === "converted_to_task") {
-    return "Converted to task";
-  }
-  return "Dismissed";
 }
 
 function transcriptStatusFromMessage(message: ChannelMessage): TranscriptBlockStatus {

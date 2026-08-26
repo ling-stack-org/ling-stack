@@ -1,30 +1,31 @@
-# Inline Runtime Approval Detailed Design
+# Runtime Approval Dialog Detailed Design
 
 ## Status
 
-Design plan.
+Active contract. The earlier composer-strip interaction is superseded by the blocking
+dialog contract below. Inline transcript history remains valid, but the Composer does
+not own pending approval decisions.
 
-This document defines the Codex-style inline approval experience for local runtime
-permission requests and active-run tool approvals. It is the detailed design for the
-local approval side of
+This document defines the shared runtime approval dialog for local permission requests
+and active-run tool approvals. It is the detailed design for the local approval side of
 [Work Board, Review Queue, and Inline Approval Boundaries](work-board-review-queue.md).
 
 ## Summary
 
-Local runtime approvals are immediate execution decisions. They should appear near the
-active run or channel context, not primarily in Inbox.
+Local runtime approvals are immediate blocking decisions. Channel, normal conversation,
+and teammate private chat use one dialog queue outside the transcript and Composer.
 
 ```text
 approval policy returns ask
 -> daemon creates a durable approval request
 -> active run enters waiting_for_approval
--> inline approval appears near the channel composer, progress popover, or run detail
+-> the owning conversation surface opens the blocking approval dialog
 -> user approves or denies
 -> daemon resumes, blocks, or queues a continuation
 ```
 
-The approval record remains durable. The inline surface is only the primary interaction
-point for active local work.
+The approval record remains durable. The dialog is only the active decision surface;
+compact resolved status and history remain attached to the owning transcript/run.
 
 ## Related Docs
 
@@ -50,12 +51,12 @@ point for active local work.
 
 ## Goals
 
-- Make active local approval requests visible where the user is working.
+- Make active local approval requests visible in all three conversation surfaces.
 - Preserve the existing durable approval system and audit trail.
 - Keep local runtime approval separate from external action review.
-- Let users approve or deny without navigating away from the active channel.
-- Show scope deltas clearly before approval.
-- Make high-risk approvals require an explicit reason and confirmation.
+- Let users approve or deny without navigating away from the active conversation.
+- Show one human-readable action sentence before approval.
+- Keep the decision surface to the action plus explicit allow and deny commands.
 - Keep approved runtime permission grants scoped to the run or continuation.
 
 ## Non-Goals
@@ -68,9 +69,9 @@ point for active local work.
 - No migration to Codex app-server JSON-RPC.
 - No broad permission profile DSL.
 
-## Eligible Inline Approvals
+## Eligible Dialog Approvals
 
-Inline approval should prioritize approvals that are both local and active.
+The dialog queue should prioritize approvals that are both local and active.
 
 Eligible by default:
 
@@ -92,42 +93,61 @@ Not primary inline approvals:
 
 Those should remain visible in Review Queue or the existing approval audit page.
 
-## Inline Surface Hierarchy
+## Decision Surface Hierarchy
 
-### 1. Channel Composer Strip
+### 1. Shared Blocking Dialog
 
-The composer strip is the primary active-channel prompt.
+`RuntimeApprovalDialogQueue` is the primary prompt for channel, normal conversation,
+and teammate private chat.
 
 Placement:
 
 ```text
-conversation / task context
--> progress or latest run summary
--> inline approval strip
--> composer input
+active conversation surface
+-> shared dialog queue
+-> one pending approval decision
 ```
 
 Rules:
 
-- Show only when there is at least one pending inline-eligible approval for the active
-  channel or active run.
-- Use one compact row for a single approval.
-- Use a grouped row when multiple approvals are pending.
-- Do not use a full card layout inside the composer area.
-- Keep the row action-led: approve, deny, open details.
+- Show only when there is at least one pending eligible approval owned by the active
+  surface.
+- Sort with the existing risk-first, oldest-first selection logic and show one approval
+  at a time.
+- Prevent Escape and outside-click dismissal while an approval is pending. The user must
+  approve or deny.
+- Keep allow and deny as separate actions for every eligible risk level. The shared
+  runtime dialog does not collect a decision reason or open a second confirmation.
+- After a successful decision, remove that item and open the next eligible approval.
+- A mutation failure keeps the same dialog open with retry feedback.
+- If a task proposal dialog is also eligible, keep it suspended until the blocking
+  runtime approval queue is empty so only one modal owns focus.
+- The dialog is mounted outside virtual feeds and Composer geometry.
 
-### 2. Channel Progress Popover
+### 2. Compact Transcript And Progress Status
 
-The progress popover should show current approval-needed progress rows, but not
-duplicate the full approval card. Resolved approval history remains in Activity/audit
-logs.
+Transcript cells and progress surfaces show compact immutable approval status, but do
+not duplicate decision controls while the dialog is active. Resolved approval history
+remains in Activity/audit logs.
 
 Rules:
 
-- Show the top pending inline approval with action summary and risk.
-- Link to the run drawer or approval detail for full payload.
-- If approval action is high or critical risk, route to detail before final approval.
+- Treat every pending approval selected by `RuntimeApprovalDialogQueue` as
+  `dialog_owned_pending`. The dialog is the only surface allowed to render its decision
+  controls, payload-derived operation rows, and approval evidence while it is pending.
+- Project one non-interactive transcript marker for the owning Run, using the same
+  localized action sentence as the dialog, for example `Waiting for approval: Run
+  command: pwd`.
+- A `dialog_owned_pending` marker cannot expand. It must not expose approval titles,
+  permission enums, request ids, evidence groups, or internal English lifecycle labels.
+- Do not force the owning WorkCell open merely because its Run status is
+  `waiting_for_approval`.
+- Route explicit review actions to the same dialog or durable approval detail.
 - Keep external action approvals labeled as Review Queue items, not inline run prompts.
+- After resolution, remove dialog ownership. Approved Runs resume their normal operation
+  projection; denied, expired, and failed approvals render one compact immutable result.
+- Preserve the complete approval payload and decision history in Run detail and audit
+  projections. Compacting the transcript never deletes durable data.
 
 ### 3. Run Detail / Timeline
 
@@ -210,30 +230,15 @@ Required fields:
 - approve and deny actions;
 - detail link.
 
-Runtime permission request summary should show:
+Runtime permission request summary must be one localized sentence that names the acting
+Agent and the exact user-relevant action or target, for example `Engineer wants to run
+pwd` or `Ling Agent wants to edit src/App.tsx`. It must not expose Run ids, absolute
+workspace paths, raw payloads, queue counts, policy deltas, technical metadata, or a
+decision-reason field.
 
-- request kind: core tool, write scope, MCP tool, or runner capability;
-- requested scope;
-- current scope summary;
-- proposed continuation mode;
-- reason supplied by the runner.
-
-### Detail View
-
-The detail view should show:
-
-- full payload summary;
-- current scope and requested scope diff;
-- file paths, MCP server/tool names, or runner capability names;
-- risk and approval policy reason;
-- run, task, channel, and tool-call identifiers;
-- audit JSON behind a disclosure.
-
-High-risk and critical approvals must require:
-
-- explicit decision reason before approval;
-- second confirmation;
-- clear copy that the decision is scoped to this run or continuation.
+The durable approval record remains the audit interface for full payload, policy context,
+risk, actor, timestamps, and any historical decision reason. Mutation failures are the
+only additional body content allowed in the active dialog and remain visible for retry.
 
 ## Interaction Rules
 
@@ -268,12 +273,12 @@ silently hiding the problem.
 
 ### Multiple Pending Approvals
 
-When multiple local approvals are pending for the same active run:
+When multiple local approvals are pending for the same active surface:
 
-- show a grouped strip with count and highest risk;
-- display the first blocking approval inline;
-- provide a detail list sorted by risk, then created time;
-- do not allow "approve all" in the first slice.
+- open one decision at a time;
+- sort by risk, then created time;
+- advance only after the current decision resolves;
+- do not provide "approve all".
 
 ## Component Plan
 
@@ -281,16 +286,15 @@ Recommended components:
 
 ```text
 apps/web/src/features/approvals/
-  InlineApprovalStrip.tsx
-  InlineApprovalSummary.tsx
+  RuntimeApprovalDialogQueue.tsx
   RuntimePermissionScopeDelta.tsx
 
 apps/web/src/lib/
   inline-approvals.ts
 ```
 
-`InlineApprovalStrip` should depend on approval data and callbacks, not fetch data
-itself. The domain controller keeps loading and resolving behavior centralized.
+`RuntimeApprovalDialogQueue` depends on view data and callbacks, not fetch logic. The
+domain controller keeps loading, mutation, refresh, and stale-state behavior centralized.
 
 `ApprovalCard` remains the full audit component. It can be reused in drawer/detail
 contexts, but it is too large for the composer strip.
@@ -324,7 +328,7 @@ It should return view-ready approval references, not a new approval model.
 
 ## State And Recovery
 
-Inline approval must tolerate:
+The dialog queue must tolerate:
 
 - approval resolved from another surface;
 - active run no longer present;
@@ -337,7 +341,7 @@ UI behavior:
 
 - disable actions while resolving;
 - refresh approval and run state after resolve;
-- remove non-pending approvals from inline strip;
+- remove non-pending approvals from the dialog queue;
 - show resolved state briefly only in detail surfaces, not as a persistent composer row;
 - route stale or missing run cases to Review Queue or Run History.
 
@@ -345,16 +349,21 @@ UI behavior:
 
 Unit tests:
 
-- inline approval eligibility excludes external action approvals;
+- dialog approval eligibility excludes external action approvals;
 - runtime permission request scope summary renders all four request kinds;
-- high-risk approvals require a reason and second confirmation;
+- low, medium, high, and critical eligible approvals use the same direct allow/deny
+  interaction without a reason field;
 - multiple pending approvals sort by risk and age.
 
 Web integration tests:
 
-- a pending active run approval appears above the channel composer;
+- a pending active run approval opens outside the Composer on channel, normal
+  conversation, and teammate private chat;
 - approving it calls the existing approval endpoint;
-- denying it removes the inline strip and updates run state;
+- denying it removes the dialog item and updates run state;
+- multiple approvals advance one at a time in risk/time order;
+- Escape and outside click cannot dismiss a pending decision;
+- opening or resolving a dialog does not change Composer geometry;
 - external action approvals appear in Review Queue, not the inline strip;
 - background approvals are still reachable from Review Queue.
 
@@ -367,18 +376,19 @@ Daemon tests:
 
 ## Acceptance Criteria
 
-- Active local approvals are visible without leaving the channel.
+- Active local approvals are visible without leaving the owning conversation.
+- Channel, normal conversation, and teammate private chat use one dialog behavior.
+- Pending decisions never resize or displace the Composer or virtual feed.
 - Review Queue is not required for normal active run approval.
 - Existing `ApprovalRequest` records remain the durable source of truth.
 - External action approvals are not shown as normal local runtime prompts.
 - Approving a runtime permission request does not change Settings approval policy.
 - Resolved approvals remain visible in Run History.
 
-## Open Questions
+## Locked Decisions
 
-- Should the composer strip appear only for the selected task/run, or for any active run
-  in the current channel?
-- Should `workflow_step` approvals appear inline when they are pre-run gates, or only in
-  workflow detail?
-- Should `mcp_tool_call` approvals always be inline when run-owned, or should high
-  side-effect MCP tools route to Review Queue by default?
+- The active surface owns only approvals already selected by the existing eligibility
+  logic; no new cross-workspace fan-in is introduced.
+- `workflow_step` and local `mcp_tool_call` keep their existing eligibility rules.
+- Runtime decisions are blocking and non-dismissible; task proposal dialogs are a
+  separate, dismissible product surface.

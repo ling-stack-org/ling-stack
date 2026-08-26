@@ -28,6 +28,7 @@ import { useWorkspaceBottomPanelResizeController } from "./useWorkspaceBottomPan
 import { useWorkspaceRightDockController } from "./useWorkspaceRightDockController.js";
 import { useConversationPanelPresence } from "./useConversationPanelPresence.js";
 import { NormalConversationComposer } from "./NormalConversationComposer.js";
+import { RuntimeApprovalDialogQueue } from "../approvals/RuntimeApprovalDialogQueue.js";
 import { NormalConversationEmptyState } from "./NormalConversationEmptyState.js";
 import { NormalConversationPage } from "./NormalConversationPage.js";
 import {
@@ -88,10 +89,10 @@ export function ConversationHome({
   sending = false,
   activeRun,
   inlineApprovalViews,
+  approvalErrors,
   stopping = false,
   fullAccessConfirmed = false,
   onOpenRun,
-  onOpenApproval,
   onOpenModelWorkbench,
   onConfirmFullAccess,
   onConfirmFullAccessSelection,
@@ -670,8 +671,6 @@ export function ConversationHome({
       selectedThinkingLevel={selectedThinkingLevel}
       sendBusy={sendBusy}
       activeRun={Boolean(activeReply)}
-      inlineApprovalViews={inlineApprovalViews}
-      resolvingApprovals={resolvingApprovals}
       stopping={stopping}
       canSend={(Boolean(activeReply) || activeModelReady) && Boolean(draft.trim() || readyAttachmentIds.length > 0 || composerFileRefs.length > 0)}
       notice={conversationErrorMessage || actionFeedback.message}
@@ -690,7 +689,6 @@ export function ConversationHome({
       onDragLeave={composerDropController.onDragLeave}
       onDrop={composerDropController.onDrop}
       onOpenModelWorkbench={onOpenModelWorkbench}
-      onOpenApproval={onOpenApproval}
       onRemoveAttachment={attachmentController.removeAttachment}
       onPermissionPresetChange={(preset) => {
         if (preset === "full_access") {
@@ -701,14 +699,23 @@ export function ConversationHome({
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
       onSubmit={submitDraft}
-      onResolveApproval={onResolveApproval}
       onStop={activeReply && onStopConversation ? () => onStopConversation(activeReply) : undefined}
+    />
+  );
+
+  const approvalDialogNode = (
+    <RuntimeApprovalDialogQueue
+      approvals={inlineApprovalViews}
+      approvalErrors={approvalErrors}
+      resolvingApprovals={resolvingApprovals}
+      onResolve={onResolveApproval}
     />
   );
 
   if (messages.length > 0) {
     return (
-      <NormalConversationPage
+      <>
+        <NormalConversationPage
         summaryOpen={conversationSummaryOpen}
         onCloseSummary={() => setConversationSummaryOpen(false)}
         summaryDockMotion={conversationSummaryDockMotion}
@@ -748,6 +755,7 @@ export function ConversationHome({
           visibleMessages,
           runById,
           detailContext,
+          dialogOwnedApprovals: inlineApprovalViews,
           generatedMedia: detailContext?.generatedMedia ?? [],
           projectPath: project.projectPath,
           workspaceCwd,
@@ -784,11 +792,18 @@ export function ConversationHome({
           },
           onCloseTerminal: () => setConversationTerminalOpen(false),
         }}
-      />
+        />
+        {approvalDialogNode}
+      </>
     );
   }
 
-  return <NormalConversationEmptyState composerNode={composerNode} onApplyShortcut={applyShortcut} />;
+  return (
+    <>
+      <NormalConversationEmptyState composerNode={composerNode} onApplyShortcut={applyShortcut} />
+      {approvalDialogNode}
+    </>
+  );
 }
 
 function activeReplyStatus(status: string): status is "queued" | "running" | "waiting_for_approval" {

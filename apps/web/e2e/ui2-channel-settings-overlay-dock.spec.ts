@@ -14,7 +14,7 @@ const evidenceDirectory = fileURLToPath(new URL(
 test("channel settings uses shared tabs and stable section boundaries", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openChannelSettings(page);
@@ -126,7 +126,7 @@ test("channel settings changes only the Ling Agent model and keeps teammate mode
 test("channel rename and governance use the shared overlay layer", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.governanceNotifications = [governanceNotification()];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -160,7 +160,7 @@ test("channel rename and governance use the shared overlay layer", async ({ page
 test("channel dock uses shared controls across launcher and deep pages", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -195,7 +195,7 @@ test("channel dock uses shared controls across launcher and deep pages", async (
   expect(runtimeErrors).toEqual([]);
 });
 
-test("channel settings and dock remain contained at 1280 in dark mode", async ({ page }) => {
+test("channel approval dialog, settings, and dock remain contained at 1280 in dark mode", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "pending" });
@@ -215,6 +215,17 @@ test("channel settings and dock remain contained at 1280 in dark mode", async ({
     await route.fallback();
   });
   await page.goto("/");
+  await openEngineeringChannel(page);
+  const approvalDialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(approvalDialog).toBeVisible();
+  await expect(approvalDialog).toHaveAttribute("data-size", "sm");
+  await expect(approvalDialog).toHaveAttribute("data-dismissible", "false");
+  await expectNoDocumentOverflow(page);
+  await captureEvidence(page, "1280x800-ling-dark-runtime-approval-dialog.png");
+  await page.keyboard.press("Escape");
+  await expect(approvalDialog).toBeVisible();
+  await approvalDialog.getByRole("button", { name: "Deny" }).click();
+  await expect(approvalDialog).toHaveCount(0);
   await openChannelSettings(page);
 
   const settings = page.getByRole("region", { name: "Channel settings" });
@@ -229,38 +240,6 @@ test("channel settings and dock remain contained at 1280 in dark mode", async ({
   await captureEvidence(page, "1280x800-ling-dark-channel-settings-members-empty.png");
 
   await page.getByRole("button", { name: "Back to channel" }).click();
-  const approvalOverlay = page.getByRole("region", { name: "Composer approval overlay" });
-  await expect(approvalOverlay).toBeVisible();
-  const approvalTheme = await approvalOverlay.evaluate((element) => {
-    const rootStyle = getComputedStyle(document.documentElement);
-    const resolveColor = (value: string): string => {
-      const probe = document.createElement("span");
-      probe.style.color = value;
-      document.body.append(probe);
-      const resolved = getComputedStyle(probe).color;
-      probe.remove();
-      return resolved;
-    };
-    const resolveBackground = (value: string): string => {
-      const probe = document.createElement("span");
-      probe.style.backgroundColor = value;
-      document.body.append(probe);
-      const resolved = getComputedStyle(probe).backgroundColor;
-      probe.remove();
-      return resolved;
-    };
-    return {
-      background: getComputedStyle(element).backgroundColor,
-      expectedBackground: resolveBackground(rootStyle.getPropertyValue("--ling-status-warning-bg")),
-      title: getComputedStyle(element.querySelector(".inline-approval-strip-head strong")!).color,
-      expectedTitle: resolveColor(rootStyle.getPropertyValue("--ling-status-warning")),
-      itemBackground: getComputedStyle(element.querySelector(".inline-approval-item")!).backgroundColor,
-      expectedItemBackground: resolveBackground(rootStyle.getPropertyValue("--ling-bg-elevated")),
-    };
-  });
-  expect(approvalTheme.background).toBe(approvalTheme.expectedBackground);
-  expect(approvalTheme.title).toBe(approvalTheme.expectedTitle);
-  expect(approvalTheme.itemBackground).toBe(approvalTheme.expectedItemBackground);
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Rename channel" }).click();
   const rename = page.getByRole("dialog", { name: "Rename channel" });
@@ -305,7 +284,7 @@ test("channel settings and dock remain contained at 1280 in dark mode", async ({
 test("channel settings exposes loading, empty, failure, and scoped busy states", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [];
   state.aiCouncils = [];
   await mockDaemon(page, state);
@@ -365,17 +344,17 @@ test("channel settings exposes loading, empty, failure, and scoped busy states",
   expect(runtimeErrors).toEqual([]);
 });
 
-test("channel inline approval detail remains an in-feed inspector", async ({ page }) => {
+test("resolved channel approval detail remains an in-feed inspector", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openChannelChatTools(page);
 
   const approvalBubble = page.locator(".message-bubble")
     .filter({ hasText: "Approval event" })
-    .filter({ hasText: "Approve shell command" });
+    .filter({ hasText: "Approval expired" });
   await approvalBubble.getByRole("button", { name: "Open approval" }).click();
   const inspector = page.locator(".conversation-detail-overlay");
   await expect(inspector).toBeVisible();
@@ -391,10 +370,10 @@ test("channel inline approval detail remains an in-feed inspector", async ({ pag
 test("channel dock reaches loaded, failure, and detail states across every launcher", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.threads = [channelRootThread()];
   state.proposedPlans = [channelPlanFixture()];
-  state.channelMessages = [channelEvidenceMessage()];
+  state.channelMessages = [channelFileReferenceMessage(), channelEvidenceMessage()];
   await mockDaemon(page, state);
   let workspaceChangesRequestCount = 0;
   await page.route(/\/workspace\/changes(?:\?.*)?$/u, async (route) => {
@@ -547,11 +526,6 @@ function channelEvidenceMessage(): MockState["channelMessages"][number] {
     mentions: [],
     attachmentIds: [],
     linkPreviewIds: [],
-    fileRefs: [{
-      path: "apps/web/src/features/workspace/right-dock/WorkspaceRightDock.tsx",
-      label: "WorkspaceRightDock.tsx",
-      line: 1,
-    }],
     status: "ready",
     webEvidence: {
       status: "available",
@@ -571,6 +545,31 @@ function channelEvidenceMessage(): MockState["channelMessages"][number] {
     },
     createdAt: "2026-07-19T03:03:00.000Z",
     updatedAt: "2026-07-19T03:03:00.000Z",
+  };
+}
+
+function channelFileReferenceMessage(): MockState["channelMessages"][number] {
+  return {
+    id: "message_ui2_channel_file_reference",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId: "thread_channel_main_channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "tian",
+    body: "Review the referenced dock implementation.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [{
+      path: "apps/web/src/features/workspace/right-dock/WorkspaceRightDock.tsx",
+      label: "WorkspaceRightDock.tsx",
+      line: 1,
+    }],
+    status: "ready",
+    createdAt: "2026-07-19T03:02:30.000Z",
+    updatedAt: "2026-07-19T03:02:30.000Z",
   };
 }
 

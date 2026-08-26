@@ -787,10 +787,12 @@ CLI output must include:
 Approval panel:
 
 - Pending approvals are visible globally and inside the run viewer.
-- Risk level is visually prominent.
-- Payload preview is specific: command, file path, diff, destination, or media cost.
-- Approve and deny actions require one click plus optional reason.
-- Critical approvals should require a confirmation step.
+- The active runtime dialog shows one exact, human-readable action sentence and direct
+  allow/deny actions; it does not expose raw payload or policy metadata.
+- `ResolveApprovalRequest.reason` remains optional for CLI, specialized review surfaces,
+  and historical compatibility. The shared Web runtime dialog submits no reason.
+- External sends, deploys, credential changes, and other specialized reviews retain their
+  own consequence-matched confirmation surfaces.
 - Resolved approvals remain visible in the run timeline.
 
 The UI must not bury approvals inside raw logs.

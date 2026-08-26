@@ -30,7 +30,6 @@ import {
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
-import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import { useI18n } from "../../i18n.js";
 import {
   ComposerPendingAssetStrip,
@@ -52,8 +51,6 @@ import type {
   LingThreadGoal,
   PermissionPreset,
 } from "../../types.js";
-import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
-import type { ApprovalResolution } from "../approvals/types.js";
 import {
   ChannelComposerFeedback,
   type ChannelComposerInlineFeedback,
@@ -87,7 +84,6 @@ interface ChannelComposerProps {
   readonly dropZoneClassName?: string;
   readonly inputParts: TokenizedComposerInputProps["parts"];
   readonly inputRef: Ref<TokenizedComposerInputHandle>;
-  readonly inlineApprovalViews: readonly InlineApprovalView[];
   readonly isCancellingRun: boolean;
   readonly mentionActiveIndex: number;
   readonly mentionPicker: ActiveMentionPicker | undefined;
@@ -107,7 +103,6 @@ interface ChannelComposerProps {
   readonly goalExpanded: boolean;
   readonly goalChipVisible: boolean;
   readonly channelTeammateIds: ReadonlySet<string>;
-  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly runGuidanceError: string;
   readonly runGuidanceItems: readonly ConversationGuidanceItem[];
   readonly runGuidanceLoading: boolean;
@@ -134,7 +129,6 @@ interface ChannelComposerProps {
   readonly onInputPasteFiles: (files: readonly File[]) => void;
   readonly onInputSelect: (value: string, caret: number) => void;
   readonly onInsertMentionTrigger: () => void;
-  readonly onOpenApproval: (approvalId: string) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onTogglePlanMode: () => void;
   readonly onRevealPlanModeChip: () => void;
@@ -152,7 +146,6 @@ interface ChannelComposerProps {
   readonly onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   readonly onResizePointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   readonly onResizePointerUp: (event: ReactPointerEvent<HTMLButtonElement>) => void;
-  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onRetrySend: () => void;
   readonly onSubmit: () => void;
 }
@@ -168,7 +161,6 @@ export function ChannelComposer({
   composerSlashTargetLabel,
   executableSlashCommandId,
   dropZoneClassName,
-  inlineApprovalViews,
   inputParts,
   inputRef,
   isCancellingRun,
@@ -187,7 +179,6 @@ export function ChannelComposer({
   onInputPasteFiles,
   onInputSelect,
   onInsertMentionTrigger,
-  onOpenApproval,
   onPermissionPresetChange,
   onTogglePlanMode,
   onRevealPlanModeChip,
@@ -205,7 +196,6 @@ export function ChannelComposer({
   onResizePointerDown,
   onResizePointerMove,
   onResizePointerUp,
-  onResolveApproval,
   onRetrySend,
   onSubmit,
   pendingAttachments,
@@ -225,7 +215,6 @@ export function ChannelComposer({
   guidanceModeActive,
   replyTargetActive,
   channelTeammateIds,
-  resolvingApprovals,
   runGuidanceError,
   runGuidanceItems,
   runGuidanceLoading,
@@ -382,14 +371,6 @@ export function ChannelComposer({
           ) : null}
         </>
       ) : null}
-      approvalNode={(
-        <InlineApprovalStrip
-          approvals={inlineApprovalViews}
-          resolvingApprovals={resolvingApprovals}
-          onResolve={onResolveApproval}
-          onOpenApproval={onOpenApproval}
-        />
-      )}
       dropZoneClassName={dropZoneClassName}
       dropZoneStyle={composerDropZoneStyle}
       onDragOver={onDragOver}

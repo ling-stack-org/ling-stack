@@ -1,13 +1,10 @@
 import { useEffect, useState, type ReactNode } from "react";
 import {
   Check,
-  CheckCircle2,
   ChevronDown,
   ChevronUp,
   CircleAlert,
   FileText,
-  History,
-  ListChecks,
   Loader2,
   Play,
   Plus,
@@ -54,32 +51,15 @@ import {
   type ChannelExecutionProposalEditorDraft,
   type ChannelExecutionProposalEditorStep,
 } from "./ChannelExecutionProposalEditor.js";
-import { ChannelWorkflowLinkedStatusIndicators, ChannelWorkflowStatusIndicator, ChannelWorkflowStatusLabel } from "./ChannelWorkflowStatusIndicator.js";
+import { ChannelWorkflowStatusIndicator, ChannelWorkflowStatusLabel } from "./ChannelWorkflowStatusIndicator.js";
 
 function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
-function teammateLabel(
-  teammateId: string | undefined,
-  teammates: readonly ChannelMention[],
-  fallback = "AI teammate",
-): string {
-  if (!teammateId) {
-    return fallback;
-  }
-  return teammates.find((teammate) => teammate.id === teammateId)?.label ?? fallback;
-}
-
 type ChannelProposalStepSource = NonNullable<ChannelExecutionProposal["collaborationSteps"][number]["sources"]>[number];
 type ChannelProposalStepDraft = ChannelExecutionProposalEditorStep<ChannelProposalStepSource>;
 type ChannelProposalEditDraft = ChannelExecutionProposalEditorDraft<ChannelProposalStepSource>;
-type RequirementShapingRow = {
-  readonly id: string;
-  readonly label: string;
-  readonly value: string;
-  readonly tone?: "neutral" | "attention" | "success";
-};
 export function WorkflowQueueCard({
   cwd,
   workflow,
@@ -974,27 +954,20 @@ export function workflowCanCancel(status: ChannelWorkflow["status"]): boolean {
   return status === "draft" || status === "ready" || status === "running" || status === "waiting_for_approval" || status === "blocked";
 }
 
-export function ChannelExecutionProposalCard({
+export function ChannelExecutionProposalDecision({
   proposal,
   assigneeLabel,
   teammates,
-  linkedRun,
-  linkedWorkflow,
-  activeRunId,
-  latestStatus,
   onConfirm,
   onCancel,
   onUpdate,
   onOpenRun,
   onRepairModelBinding,
+  actionBusy = "",
 }: {
   readonly proposal: ChannelExecutionProposal;
   readonly assigneeLabel: string;
   readonly teammates: readonly ChannelMention[];
-  readonly linkedRun: RunSession | undefined;
-  readonly linkedWorkflow: ChannelWorkflow | undefined;
-  readonly activeRunId: string;
-  readonly latestStatus: string;
   readonly onConfirm: () => void;
   readonly onCancel: () => void;
   readonly onUpdate: (
@@ -1003,6 +976,7 @@ export function ChannelExecutionProposalCard({
   ) => Promise<ChannelExecutionProposal | undefined>;
   readonly onOpenRun: (runId: string) => void;
   readonly onRepairModelBinding: (blocker: NonNullable<ChannelExecutionProposal["blocker"]>) => void;
+  readonly actionBusy?: "confirm" | "cancel" | "";
 }): React.JSX.Element {
   const { t } = useI18n();
   const [editing, setEditing] = useState(false);
@@ -1011,15 +985,7 @@ export function ChannelExecutionProposalCard({
   const [draft, setDraft] = useState<ChannelProposalEditDraft>(() => proposalToEditDraft(proposal));
   const canStart = proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed";
   const canEdit = canStart && !proposal.linkedWorkflowId;
-  const collaborationSummary = proposalCollaborationSummary(proposal, teammates, t);
-  const permissionSummary = buildProposalPermissionSummary({ proposal, assigneeLabel, t });
-  const shapingRows = buildRequirementShapingRows({ proposal, assigneeLabel, t });
-  const isRequirementShaping = proposal.status === "draft" && !editing;
-  const statusIcon = proposal.status === "accepted"
-    ? <CheckCircle2 size={14} />
-    : proposal.status === "blocked" || proposal.status === "run_failed"
-      ? <CircleAlert size={14} />
-      : <Play size={14} />;
+  const permissionLabels = proposalPermissionLabels(proposal.requiredTools, t);
   const draftValid = proposalDraftIsValid(draft);
 
   useEffect(() => {
@@ -1088,14 +1054,7 @@ export function ChannelExecutionProposalCard({
   }
 
   return (
-    <div className={`channel-execution-proposal ${proposal.status} ${isRequirementShaping ? "requirement-shaping-card" : ""}`} aria-label={t("Task confirmation")}>
-      <div className="channel-proposal-head">
-        <span>
-          {statusIcon}
-          <strong>{proposal.title}</strong>
-        </span>
-        <small>{t(executionProposalStatusLabel(proposal.status))}</small>
-      </div>
+    <div className={`channel-execution-proposal-decision ${editing ? "editing" : ""}`} aria-label={t("Task confirmation")}>
       {editing ? (
         <ChannelExecutionProposalEditor
           canRemoveStep={draft.collaborationSteps.length > 1}
@@ -1108,62 +1067,25 @@ export function ChannelExecutionProposalCard({
           onRemoveStep={removeStep}
           onStepChange={updateStep}
         />
-      ) : isRequirementShaping ? (
-        <RequirementShapingSummary
-          rows={shapingRows}
-          shaping={proposal.shaping}
-          collaborationSteps={proposal.collaborationSteps}
-          teammates={teammates}
-        />
       ) : (
-        <p>{proposal.prompt}</p>
+        <dl className="channel-proposal-decision-fields">
+          <div>
+            <dt>{t("Task")}</dt>
+            <dd>{proposal.title}</dd>
+          </div>
+          <div>
+            <dt>{t("Agent")}</dt>
+            <dd>{assigneeLabel}</dd>
+          </div>
+          <div>
+            <dt><ShieldCheck aria-hidden="true" size={14} />{t("Required permissions")}</dt>
+            <dd className="channel-proposal-permission-chips">
+              {permissionLabels.map((label) => <span key={label}>{label}</span>)}
+            </dd>
+          </div>
+        </dl>
       )}
-      <div className="channel-proposal-meta">
-        <span>{t("Assignee")}: <strong>{assigneeLabel}</strong></span>
-        {proposal.requiredTools.length > 0 ? <span>{t("Required tools")}: {proposal.requiredTools.join(", ")}</span> : null}
-      </div>
-      <ChannelWorkflowLinkedStatusIndicators linkedRunId={proposal.linkedRunId} linkedWorkflowId={proposal.linkedWorkflowId} linkedRun={linkedRun} linkedWorkflow={linkedWorkflow} activeRunId={activeRunId} latestStatus={latestStatus} />
-      {!editing && canStart ? (
-        <section className="channel-proposal-permission" aria-label={t("Task permission confirmation")}>
-          <div className="channel-proposal-permission-head">
-            <ShieldCheck size={14} />
-            <strong>{t("Task permission confirmation")}</strong>
-          </div>
-          <p>{permissionSummary.sentence}</p>
-          <div className="channel-proposal-permission-grid">
-            <span>
-              <small>{t("Required tool")}</small>
-              <strong>{permissionSummary.toolLabel}</strong>
-            </span>
-            <span>
-              <small>{t("Target")}</small>
-              <strong>{permissionSummary.targetLabel}</strong>
-            </span>
-            <span>
-              <small>{t("Executor")}</small>
-              <strong>{permissionSummary.executorLabel}</strong>
-            </span>
-          </div>
-          <small>{t("Starting this task does not approve future runtime actions. Ling may still ask before file changes, commands, MCP tools, or external actions.")}</small>
-        </section>
-      ) : null}
-      {proposal.acceptanceCriteria.length > 0 ? (
-        <div className="channel-proposal-criteria">
-          <strong>{t("Acceptance criteria")}</strong>
-          <ul>
-            {proposal.acceptanceCriteria.slice(0, 4).map((criterion) => (
-              <li key={criterion}>{criterion}</li>
-            ))}
-          </ul>
-        </div>
-      ) : null}
-      {proposal.riskSummary ? (
-        <div className="channel-proposal-risk">
-          <CircleAlert size={14} />
-          <span>{proposal.riskSummary}</span>
-        </div>
-      ) : null}
-      {proposal.blocker ? (
+      {!editing && proposal.blocker ? (
         <div className="channel-proposal-error">
           <CircleAlert size={14} />
           <span>{proposal.blocker.message}</span>
@@ -1175,44 +1097,11 @@ export function ChannelExecutionProposalCard({
             {t(proposalModelRepairLabel(proposal.blocker.repairTarget))}
           </button>
         </div>
-      ) : proposal.errorMessage ? (
+      ) : !editing && proposal.errorMessage ? (
         <div className="channel-proposal-error">
           <CircleAlert size={14} />
           <span>{proposal.errorMessage}</span>
         </div>
-      ) : null}
-      {proposal.collaborationSteps.length > 0 ? (
-        <details className="channel-proposal-collaboration">
-          <summary>
-            <span className="channel-proposal-collaboration-summary">
-              <History size={14} />
-              <strong>{t("Collaboration {count} records", { count: proposal.collaborationSteps.length })}</strong>
-              {collaborationSummary ? (
-                <>
-                  <span aria-hidden="true">·</span>
-                  <small>{collaborationSummary}</small>
-                </>
-              ) : null}
-            </span>
-          </summary>
-          <ol>
-            {proposal.collaborationSteps.map((step, index) => {
-              const sourceLabel = proposalStepSourceLabel(step, t);
-              return (
-                <li key={`${step.teammateId}-${step.action}-${index}`}>
-                  <strong>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))}</strong>
-                  <span className="channel-proposal-step-meta">
-                    <small>{t(proposalStepActionLabel(step.action))}</small>
-                    {sourceLabel ? (
-                      <small className="channel-proposal-step-source">{sourceLabel}</small>
-                    ) : null}
-                  </span>
-                  <span className="channel-proposal-step-summary">{step.summary}</span>
-                </li>
-              );
-            })}
-          </ol>
-        </details>
       ) : null}
       <div className="channel-proposal-actions">
         {editing ? (
@@ -1227,26 +1116,26 @@ export function ChannelExecutionProposalCard({
             </button>
           </>
         ) : canStart ? (
-          <button className="primary-button compact-button" type="button" onClick={onConfirm}>
-            <Play size={14} />
+          <button className="primary-button compact-button" type="button" onClick={onConfirm} disabled={Boolean(actionBusy)}>
+            {actionBusy === "confirm" ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
             {t("Authorize and start task")}
           </button>
         ) : null}
         {!editing && canEdit ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => setEditing(true)}>
+          <button className="secondary-button compact-button" type="button" onClick={() => setEditing(true)} disabled={Boolean(actionBusy)}>
             <SlidersHorizontal size={14} />
             {t("Edit")}
           </button>
         ) : null}
         {proposal.linkedRunId ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(proposal.linkedRunId ?? "")}>
+          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(proposal.linkedRunId ?? "")} disabled={Boolean(actionBusy)}>
             <SquareTerminal size={14} />
             {t("Open run")}
           </button>
         ) : null}
         {proposal.status === "draft" ? (
-          <button className="secondary-button compact-button" type="button" onClick={onCancel}>
-            <X size={14} />
+          <button className="secondary-button compact-button" type="button" onClick={onCancel} disabled={Boolean(actionBusy)}>
+            {actionBusy === "cancel" ? <Loader2 className="spin" size={14} /> : <X size={14} />}
             {t("Cancel proposal")}
           </button>
         ) : null}
@@ -1255,74 +1144,17 @@ export function ChannelExecutionProposalCard({
   );
 }
 
-function RequirementShapingSummary({
-  rows,
-  shaping,
-  collaborationSteps,
-  teammates,
-}: {
-  readonly rows: readonly RequirementShapingRow[];
-  readonly shaping: ChannelExecutionProposal["shaping"];
-  readonly collaborationSteps: ChannelExecutionProposal["collaborationSteps"];
-  readonly teammates: readonly ChannelMention[];
-}): React.JSX.Element {
-  const { t } = useI18n();
-  const visibleSteps = collaborationSteps.slice(0, 4);
-  const openQuestions = shaping?.openQuestions.slice(0, 4) ?? [];
-  const clarifications = shaping?.clarifications.slice(0, 4) ?? [];
-  return (
-    <section className="requirement-shaping-summary" aria-label={t("Requirement shaping")}>
-      <header>
-        <span>
-          <ListChecks size={15} />
-          <strong>{t("Ling is shaping the task")}</strong>
-        </span>
-        <small>{t(requirementShapingStatusLabel(shaping?.status ?? "ready_for_confirmation"))}</small>
-      </header>
-      <div className="requirement-shaping-grid">
-        {rows.map((row) => (
-          <span key={row.id} className={row.tone ?? "neutral"}>
-            <small>{row.label}</small>
-            <strong>{row.value}</strong>
-          </span>
-        ))}
-      </div>
-      {openQuestions.length > 0 || clarifications.length > 0 ? (
-        <div className="requirement-shaping-notes">
-          {openQuestions.length > 0 ? (
-            <section aria-label={t("Open questions")}>
-              <small>{t("Open questions")}</small>
-              <ul>
-                {openQuestions.map((question) => (
-                  <li key={question}>{question}</li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-          {clarifications.length > 0 ? (
-            <section aria-label={t("User clarifications")}>
-              <small>{t("User clarifications")}</small>
-              <ul>
-                {clarifications.map((clarification) => (
-                  <li key={clarification.id}>{clarification.body}</li>
-                ))}
-              </ul>
-            </section>
-          ) : null}
-        </div>
-      ) : null}
-      {visibleSteps.length > 0 ? (
-        <div className="requirement-shaping-participants" aria-label={t("Shaping participants")}>
-          {visibleSteps.map((step, index) => (
-            <span key={`${step.teammateId}-${step.action}-${index}`}>
-              <small>{teammateLabel(step.teammateId, teammates, t("Deleted teammate"))} · {t(proposalStepActionLabel(step.action))}</small>
-              <strong>{step.summary}</strong>
-            </span>
-          ))}
-        </div>
-      ) : null}
-    </section>
-  );
+function proposalPermissionLabels(
+  tools: ChannelExecutionProposal["requiredTools"],
+  t: Translate,
+): readonly string[] {
+  const labels = tools.map((tool) => {
+    if (tool === "read" || tool === "ls") return t("Read files");
+    if (tool === "grep" || tool === "find") return t("Search files");
+    if (tool === "edit" || tool === "write") return t("Modify files");
+    return t("Run commands");
+  });
+  return [...new Set(labels.length > 0 ? labels : [t("Workspace access")])];
 }
 
 function proposalToEditDraft(proposal: ChannelExecutionProposal): ChannelProposalEditDraft {
@@ -1366,64 +1198,6 @@ function proposalDraftToUpdateInput(proposal: ChannelExecutionProposal, draft: C
   };
 }
 
-function buildRequirementShapingRows(input: {
-  readonly proposal: ChannelExecutionProposal;
-  readonly assigneeLabel: string;
-  readonly t: Translate;
-}): readonly RequirementShapingRow[] {
-  const participantCount = Math.max(1, input.proposal.collaborationSteps.length);
-  const firstCriterion = input.proposal.acceptanceCriteria[0];
-  const openQuestionCount = input.proposal.shaping?.openQuestions.length ?? 0;
-  const clarificationCount = input.proposal.shaping?.clarifications.length ?? 0;
-  const shapingSummary = input.proposal.shaping?.summary;
-  return [
-    {
-      id: "goal",
-      label: input.t("Goal"),
-      value: truncatePreview(shapingSummary || input.proposal.prompt, 180),
-    },
-    {
-      id: "acceptance",
-      label: input.t("Acceptance"),
-      value: firstCriterion
-        ? truncatePreview(firstCriterion, 150)
-        : input.t("Acceptance checks will be clarified before execution."),
-      tone: firstCriterion ? "success" : "attention",
-    },
-    {
-      id: "participants",
-      label: input.t("Participants"),
-      value: input.t("{count} teammate(s), led by {teammate}", {
-        count: participantCount,
-        teammate: input.assigneeLabel,
-      }),
-    },
-    {
-      id: "risk",
-      label: input.t("Boundary"),
-      value: input.proposal.riskSummary
-        ? truncatePreview(input.proposal.riskSummary, 150)
-        : input.t("No additional boundary surfaced yet."),
-      tone: input.proposal.riskSummary ? "attention" : "neutral",
-    },
-    {
-      id: "questions",
-      label: input.t("Open questions"),
-      value: openQuestionCount > 0
-        ? input.t("{count} open question(s)", { count: openQuestionCount })
-        : clarificationCount > 0
-          ? input.t("{count} clarification(s) recorded", { count: clarificationCount })
-          : input.t("No open questions recorded."),
-      tone: openQuestionCount > 0 ? "attention" : clarificationCount > 0 ? "success" : "neutral",
-    },
-    {
-      id: "next",
-      label: input.t("Next action"),
-      value: input.t("Authorize when the scope looks right, or edit the card first."),
-    },
-  ];
-}
-
 function proposalShapingFromEditDraft(
   proposal: ChannelExecutionProposal,
   draft: ChannelProposalEditDraft,
@@ -1463,112 +1237,6 @@ function parseProposalLines(value: string): readonly string[] {
     .filter(Boolean);
 }
 
-interface ProposalPermissionSummary {
-  readonly sentence: string;
-  readonly toolLabel: string;
-  readonly targetLabel: string;
-  readonly executorLabel: string;
-}
-
-function buildProposalPermissionSummary(input: {
-  readonly proposal: ChannelExecutionProposal;
-  readonly assigneeLabel: string;
-  readonly t: Translate;
-}): ProposalPermissionSummary {
-  const { proposal, t } = input;
-  const primaryTool = proposalPermissionPrimaryTool(proposal.requiredTools);
-  const targetLabel = extractProposalPermissionTarget(proposal, primaryTool) ?? t("declared task scope");
-  const toolLabel = proposal.requiredTools.length > 0 ? proposal.requiredTools.join(", ") : t("workspace tools");
-  const sentence = proposalPermissionSentence({
-    tool: primaryTool,
-    targetLabel,
-    t,
-  });
-  return {
-    sentence,
-    toolLabel,
-    targetLabel,
-    executorLabel: input.assigneeLabel,
-  };
-}
-
-function proposalPermissionPrimaryTool(
-  tools: readonly ChannelExecutionProposal["requiredTools"][number][],
-): ChannelExecutionProposal["requiredTools"][number] | undefined {
-  if (tools.includes("write")) {
-    return "write";
-  }
-  if (tools.includes("edit")) {
-    return "edit";
-  }
-  if (tools.includes("bash")) {
-    return "bash";
-  }
-  return tools[0];
-}
-
-function proposalPermissionSentence(input: {
-  readonly tool?: ChannelExecutionProposal["requiredTools"][number];
-  readonly targetLabel: string;
-  readonly t: Translate;
-}): string {
-  if (input.tool === "write") {
-    return input.t("Need write permission to create {target} for this task.", { target: input.targetLabel });
-  }
-  if (input.tool === "edit") {
-    return input.t("Need edit permission to update {target} for this task.", { target: input.targetLabel });
-  }
-  if (input.tool === "bash") {
-    return input.t("Need bash permission to run {target} for this task.", { target: input.targetLabel });
-  }
-  if (input.tool) {
-    return input.t("Need {tool} permission for {target} in this task.", { tool: input.tool, target: input.targetLabel });
-  }
-  return input.t("Confirm this bounded task scope before Ling starts.");
-}
-
-function extractProposalPermissionTarget(
-  proposal: ChannelExecutionProposal,
-  primaryTool?: ChannelExecutionProposal["requiredTools"][number],
-): string | undefined {
-  const sources = [proposal.riskSummary, proposal.prompt, proposal.title].filter((value): value is string => Boolean(value?.trim()));
-  if (primaryTool === "bash") {
-    const command = sources.map(extractProposalCommandTarget).find((value): value is string => Boolean(value));
-    if (command) {
-      return command;
-    }
-  }
-  const path = sources.map(extractProposalPathTarget).find((value): value is string => Boolean(value));
-  if (path) {
-    return path;
-  }
-  return primaryTool === "bash" ? trimPermissionTarget(proposal.title.replace(/^run\s+/iu, "")) : undefined;
-}
-
-function extractProposalCommandTarget(value: string): string | undefined {
-  const explicitCommand = /Command requested by user:\s*([^\n]+)/iu.exec(value)?.[1];
-  if (explicitCommand) {
-    return trimPermissionTarget(explicitCommand);
-  }
-  const riskCommand = /(?:run|运行)\s+(.+?)(?:[；;\n]|$)/iu.exec(value)?.[1];
-  if (riskCommand) {
-    return trimPermissionTarget(riskCommand);
-  }
-  return undefined;
-}
-
-function extractProposalPathTarget(value: string): string | undefined {
-  const matches = value.match(/(?:\/[^\s`"'，。；;:)]+|(?:\.{1,2}\/)?[A-Za-z0-9_.@-]+(?:\/[A-Za-z0-9_.@-]+)*\.[A-Za-z0-9]{1,8})/gu) ?? [];
-  return matches
-    .map(trimPermissionTarget)
-    .find((candidate) => Boolean(candidate && !candidate.startsWith("http://") && !candidate.startsWith("https://")));
-}
-
-function trimPermissionTarget(value: string): string | undefined {
-  const trimmed = value.trim().replace(/^[`"']+/u, "").replace(/[`"',，。；;:)]+$/u, "").replace(/\.$/u, "");
-  return trimmed ? truncatePreview(trimmed, 180) : undefined;
-}
-
 function proposalModelRepairLabel(
   repairTarget: NonNullable<ChannelExecutionProposal["blocker"]>["repairTarget"],
 ): string {
@@ -1585,72 +1253,6 @@ function workflowProviderBindingSourceLabel(
   return "Workspace default";
 }
 
-function executionProposalStatusLabel(status: ChannelExecutionProposal["status"]): string {
-  if (status === "draft") {
-    return "Ready for confirmation";
-  }
-  if (status === "accepted") {
-    return "Accepted";
-  }
-  if (status === "blocked") {
-    return "Proposal blocked";
-  }
-  if (status === "run_failed") {
-    return "Run failed";
-  }
-  if (status === "superseded") {
-    return "Superseded";
-  }
-  return "Cancelled";
-}
-
-function requirementShapingStatusLabel(status: NonNullable<ChannelExecutionProposal["shaping"]>["status"]): string {
-  if (status === "collecting_context") {
-    return "Collecting context";
-  }
-  if (status === "collecting_teammate_input") {
-    return "Collecting teammate input";
-  }
-  if (status === "needs_user_clarification") {
-    return "Needs user clarification";
-  }
-  if (status === "converted_to_task") {
-    return "Converted to task";
-  }
-  if (status === "dismissed") {
-    return "Dismissed";
-  }
-  return "Ready for confirmation";
-}
-
-function proposalStepActionLabel(action: ChannelExecutionProposal["collaborationSteps"][number]["action"]): string {
-  if (action === "coordinated") {
-    return "Coordinated";
-  }
-  if (action === "consulted") {
-    return "Consulted";
-  }
-  if (action === "reviewed") {
-    return "Reviewed";
-  }
-  return "Flagged risk";
-}
-
-function proposalStepSourceLabel(
-  step: ChannelExecutionProposal["collaborationSteps"][number],
-  t: Translate,
-): string {
-  const councilSource = step.sources?.find((source) => source.kind === "council");
-  if (councilSource) {
-    return t("From {source}", { source: councilSource.councilDisplayName ?? t("AI council") });
-  }
-  const directSource = step.sources?.find((source) => source.kind === "direct");
-  if (directSource?.isDefault) {
-    return t("Default channel teammate");
-  }
-  return directSource ? t("Direct channel teammate") : "";
-}
-
 function workflowStepSourceLabel(
   metadata: NonNullable<ChannelWorkflowStep["metadata"]>,
   t: Translate,
@@ -1664,19 +1266,4 @@ function workflowStepSourceLabel(
     return t("Default channel teammate");
   }
   return directSource ? t("Direct channel teammate") : "";
-}
-
-function proposalCollaborationSummary(
-  proposal: ChannelExecutionProposal,
-  teammates: readonly ChannelMention[],
-  t: Translate,
-): string {
-  return proposal.collaborationSteps
-    .slice(0, 2)
-    .map((step) => {
-      const teammate = teammateLabel(step.teammateId, teammates, t("Deleted teammate"));
-      const summary = step.summary.trim() || t(proposalStepActionLabel(step.action));
-      return `${teammate} ${summary}`;
-    })
-    .join(" · ");
 }
