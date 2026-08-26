@@ -40,12 +40,17 @@ function channelComposerTextbox(scope: Page | Locator): Locator {
 
 async function openTaskProposalDialog(page: Page, title: string): Promise<Locator> {
   const dialog = page.getByRole("dialog", { name: "Task confirmation" });
+  const summary = page.getByLabel("Task proposal summary").filter({ hasText: title });
+  await expect.poll(async () => await dialog.isVisible() || await summary.isVisible()).toBe(true);
   if (await dialog.isVisible()) {
     if ((await dialog.innerText()).includes(title)) return dialog.locator(".channel-execution-proposal-decision");
     await dialog.getByRole("button", { name: "Close" }).click();
   }
-  const summary = page.getByLabel("Task proposal summary").filter({ hasText: title });
-  await summary.getByRole("button", { name: "View task" }).click();
+  try {
+    await summary.getByRole("button", { name: "View task" }).click();
+  } catch (error) {
+    if (!await dialog.isVisible()) throw error;
+  }
   await expect(dialog).toBeVisible();
   return dialog.locator(".channel-execution-proposal-decision");
 }
@@ -277,7 +282,7 @@ async function readOverlappingVirtualFeedRows(page: Page): Promise<string[]> {
 
 test("channel governance notifications stay in the header review queue", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.governanceNotifications = [
     {
       id: "gov_memory_candidate_1",
@@ -321,7 +326,7 @@ test("channel governance notifications stay in the header review queue", async (
 
 test("channel header hides empty governance review queue while notifications load", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.governanceNotifications = [];
   state.governanceNotificationDelayMs = 1_000;
   let requestStarted = false;
@@ -414,7 +419,7 @@ test("terminal bottom panel runs commands in the channel workspace", async ({ pa
 
 test("channel team metrics stay in settings without a conversation expert summary", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_team_source",
@@ -815,7 +820,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
 test("narrow channel viewport keeps the conversation column usable", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -1331,7 +1336,8 @@ test("channel environment surface shows read-only context and opens review", asy
     };
   });
 
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
+  const summaryButton = page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" });
+  await summaryButton.click();
   const popover = page.locator(".channel-progress-popover");
   await expect(popover).toBeVisible();
   await expect.poll(async () => Math.round((await popover.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(270);
@@ -1353,7 +1359,7 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(quickEnvironmentPage).toContainText("ling/channel-environment");
   await page.getByRole("button", { name: "Back to channel" }).click();
   await expect(quickEnvironmentPage).toHaveCount(0);
-  await page.getByLabel("Workspace task toolbar").getByRole("button", { name: "Summary" }).click();
+  await summaryButton.click();
   await expect(popover).toBeVisible();
 
   const dock = page.locator(".channel-side-panel");
@@ -1510,11 +1516,14 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.mouse.move(860, expandedResizeHandleBox!.y + 40, { steps: 12 });
   await page.mouse.up();
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(840);
-  await expect(popover).toBeVisible();
+  await expect(popover).toBeHidden();
+  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(560);
   await page.locator(".task-toolbar-panel").click();
   await expect(dock).toHaveCount(0);
   await expect(popover).toBeVisible();
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "true");
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Environment" }).click();
@@ -1760,19 +1769,19 @@ test("conversation motion respects reduced motion preference", async ({ page }) 
 
 test("approval event opens approval detail inside the conversation page", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
 
   await openChannelChatTools(page);
-  const approvalBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
+  const approvalBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approval expired" });
   await expect(approvalBubble).toBeVisible();
   await approvalBubble.getByRole("button", { name: "Open approval" }).click();
 
   const approvalOverlay = page.locator(".conversation-detail-overlay");
   await expect(approvalOverlay).toBeVisible();
   await expect(approvalOverlay).toHaveAttribute("aria-label", "Approval details");
-  await expect(approvalOverlay.locator(".channel-approval-detail-panel")).toContainText("Approve shell command");
+  await expect(approvalOverlay.locator(".channel-approval-detail-panel")).toContainText("Approval expired");
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
 });
 
@@ -1780,7 +1789,7 @@ test("channel drawer does not flash legacy create labels in section headers", as
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -1797,7 +1806,7 @@ test("channel drawer does not flash legacy create labels in section headers", as
 
 test("empty channel drawer opens the new channel dialog", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   configureReadyConversationModel(state);
   state.channels = [];
   state.channelBranches = [];
@@ -1823,7 +1832,7 @@ test("empty channel drawer opens the new channel dialog", async ({ page }) => {
 
 test("new channel dialog selects a project folder before create", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   configureReadyConversationModel(state);
   await mockDaemon(page, state);
   await page.goto("/");
@@ -1857,7 +1866,7 @@ test("new channel dialog selects a project folder before create", async ({ page 
 
 test("new channel dialog shows create failures inline", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   configureReadyConversationModel(state);
   state.failNextChannelCreate = {
     error: "channel_create_failed",
@@ -1964,7 +1973,7 @@ test("channel composer does not render the resource lease active work strip", as
 test("wide channel progress popover does not resize the conversation", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 2048, height: 1140 });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_attention_layout",
@@ -2021,14 +2030,15 @@ test("wide channel progress popover does not resize the conversation", async ({ 
   expect(spacing.gap).toBeGreaterThanOrEqual(48);
   expect(spacing.overlapX).toBe(0);
 
-  await page.locator(".task-toolbar-progress").click();
-  await expect(page.locator(".channel-progress-popover")).toHaveClass(/is-popover-collapsed/);
+  const summaryButton = page.locator(".task-toolbar-progress");
+  await summaryButton.click();
   await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
 });
 
 test("channel runtime policy is visible while preferred specialist controls stay hidden", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   configureReadyConversationModel(state);
   state.aiTeammates = [
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
@@ -2149,7 +2159,7 @@ test("channel runtime policy is visible while preferred specialist controls stay
 
 test("channel reply routing mode is not exposed in ordinary settings", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   configureReadyConversationModel(state);
   state.aiTeammates = [
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
@@ -2786,7 +2796,7 @@ test("channel settings can add and remove teammates without preferred specialist
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channels = state.channels.map((channel) =>
     isRecord(channel) && channel.id === "channel_engineering"
       ? { ...channel, defaultTeammateId: undefined }
@@ -2898,7 +2908,7 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channels = state.channels.map((channel) =>
     isRecord(channel) && channel.id === "channel_engineering"
       ? { ...channel, defaultTeammateId: undefined }
@@ -3003,7 +3013,7 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
 
 test("channel message feed renders AI teammate avatar images", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [
     createMockTeammate({
       id: "teammate_builtin_designer",
@@ -3099,7 +3109,7 @@ test("channel message feed renders AI teammate avatar images", async ({ page }) 
 
 test("channel message feed shows usable web sources and keeps diagnostics in the right dock", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [createMockTeammate({ id: "engineer", displayName: "Ling Engineer" })];
   state.channelMessages = [
     {
@@ -3284,7 +3294,7 @@ test("channel message feed shows usable web sources and keeps diagnostics in the
 
 test("right dock browser evidence exposes failed read URL detail", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [createMockTeammate({ id: "engineer", displayName: "Ling Engineer" })];
   state.channelMessages = [
     {
@@ -3351,7 +3361,7 @@ test("right dock browser evidence exposes failed read URL detail", async ({ page
 
 test("conversation turn transcript omits web diagnostics without usable sources", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_web_turn_user",
@@ -3418,7 +3428,7 @@ test("channel settings manage workspace binding", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -3489,7 +3499,7 @@ test("channel settings manage workspace binding", async ({ page }) => {
 
 test("channel more menu renames the selected channel", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -3515,7 +3525,7 @@ test("channel more menu renames the selected channel", async ({ page }) => {
 
 test("paused channels disable task run actions", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channels = state.channels.map((channel) => isRecord(channel) ? { ...channel, status: "paused" } : channel);
   await mockDaemon(page, state);
   await page.goto("/");
@@ -3530,7 +3540,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({
     lastCheck: {
       ok: true,
@@ -3722,7 +3732,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
 
 test("channel composer snapshots restore draft assets and topic replies across channel switches", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.linkPreviewDelayMs = 50;
   state.channels = [
     ...state.channels,
@@ -4107,7 +4117,7 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       },
     });
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const longJson = [
     "{",
     ...Array.from({ length: 32 }, (_, index) => `  "item${index + 1}": ${index + 1},`),
@@ -4433,7 +4443,7 @@ test("channel composer sends workspace file refs as native message payload", asy
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4456,7 +4466,7 @@ test("channel composer sends workspace file refs as native message payload", asy
   const references = page.getByLabel("References");
   const fileReference = references.getByRole("button", { name: /WorkspaceClientView\.tsx/ });
   await expect(fileReference).toBeVisible();
-  await fileReference.hover();
+  await fileReference.focus();
   await expect(references.getByRole("tooltip")).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
   await fileReference.click();
   const filesDock = page.locator(".channel-side-panel.right-dock");
@@ -4469,7 +4479,7 @@ test("channel composer preserves IME composition until committed", async ({ page
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4510,7 +4520,7 @@ test("channel composer does not render multi-agent slash command tokens as file 
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4534,7 +4544,7 @@ test("channel composer applies plan mode session commands without creating slash
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4624,7 +4634,7 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4747,7 +4757,7 @@ test("channel feed renders proposed_plan blocks as proposed plan cards", async (
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4887,7 +4897,7 @@ test("channel feed renders proposed_plan blocks as proposed plan cards", async (
 
 test("workflow conversion preview infers owners without mutating until save", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4983,7 +4993,7 @@ test("workflow conversion preview infers owners without mutating until save", as
 
 test("plan history groups lineage versions across thread and channel scopes", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -5148,7 +5158,7 @@ test("channel composer supports spaced teammate names before slash commands", as
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent" })];
   state.runs = [];
   state.tasks = [];
@@ -5188,7 +5198,7 @@ test("channel composer opens slash picker for later slash tokens without multi-d
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -5221,7 +5231,7 @@ test("channel composer renders GitHub URLs as inline repo tokens", async ({ page
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -5242,7 +5252,7 @@ test("channel screenshot request shows materialization clarify reply instead of 
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -5284,7 +5294,7 @@ test("channel local link request shows natural clarify copy without debug vocabu
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -6876,7 +6886,7 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(workCell).toBeVisible();
   const operationBubble = workCell.locator(".conversation-operation-bubble");
   await expect(operationBubble).toBeVisible();
-  await expect(operationBubble.locator(".conversation-operation-shell-status")).toContainText("Processed");
+  await expect(operationBubble.locator(".conversation-operation-shell-status")).toContainText("Edited 1 file");
   await expect(operationBubble.locator(".conversation-operation-shell-summary")).toHaveCount(0);
   await expect(operationBubble.getByRole("button", { name: "Copy summary" })).toHaveCount(0);
   await expect(operationBubble).toHaveClass(/collapsed/);
@@ -7362,7 +7372,8 @@ test("progress popover owns workflow status while the right drawer avoids duplic
   await expect(qaSpan).toContainText("Waiting for approval");
   await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("Waiting for approval: Validate progress panel");
 
-  await page.locator(".task-toolbar-progress").click();
+  const summaryButton = page.locator(".task-toolbar-progress");
+  await summaryButton.click();
   const progressPopover = page.locator(".channel-progress-popover");
   await expect(progressPopover).toHaveCount(1);
   await expect(progressPopover).toContainText("Ship workflow UI");
@@ -7375,7 +7386,9 @@ test("progress popover owns workflow status while the right drawer avoids duplic
   await expect(progressPopover).not.toContainText("branch_engineer");
 
   await page.locator(".task-toolbar-panel").click();
-  await expect(progressPopover).toBeVisible();
+  await expect(progressPopover).toBeHidden();
+  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
   const panel = page.locator(".channel-side-panel.right-dock");
   await expect(panel).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(panel).toContainText("Workspace tools");
@@ -8078,7 +8091,7 @@ test("channel workspace utility panel follows dark theme surfaces", async ({ pag
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themePreference", "dark");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -8142,7 +8155,7 @@ test("channel activity filter chips follow dark theme tokens", async ({ page }) 
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themePreference", "dark");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -8173,7 +8186,7 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = Array.from({ length: 36 }, (_, index) => ({
     id: `msg_scroll_${index + 1}`,
     workspaceId: "workspace_default",
@@ -8317,7 +8330,7 @@ test("channel message feed supports focused block shortcuts and safe action menu
       },
     });
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_focus_1",
@@ -8408,7 +8421,7 @@ test("channel message feed stays pinned while AI reply text streams", async ({ p
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
   if (isRecord(channel)) {
     channel.autoReplyMode = "auto_route";
@@ -8450,7 +8463,7 @@ test("channel message feed stays pinned while AI reply text streams", async ({ p
 
 test("channel message feed measures long turns without overlapping the next row", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const longReply = (label: string) => Array.from(
     { length: 18 },
     (_, index) => `${label} paragraph ${index + 1} contains enough text to create a variable-height conversation row.`,
@@ -8569,7 +8582,7 @@ test("channel message feed preserves the visible anchor while active content gro
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     ...Array.from({ length: 36 }, (_, index) => ({
       id: `msg_anchor_${index + 1}`,
@@ -8634,7 +8647,7 @@ test("channel activity paginates long message history and virtualizes visible ro
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = Array.from({ length: 3000 }, (_, index) => ({
     id: `msg_long_${index + 1}`,
     workspaceId: "workspace_default",
@@ -8688,7 +8701,7 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.failNextChannelMessage = true;
   await mockDaemon(page, state);
   await page.goto("/");
@@ -8717,7 +8730,7 @@ test("channel composer moves sent messages into the feed while routing is pendin
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
   if (isRecord(channel)) {
     channel.autoReplyMode = "auto_route";
@@ -8744,7 +8757,7 @@ test("channel composer keeps thinking visible for acknowledged sends before comp
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
   if (isRecord(channel)) {
     channel.autoReplyMode = "mentions_only";
@@ -8785,7 +8798,7 @@ test("channel composer keeps thinking visible for acknowledged sends before comp
 
 test("pending channel reply polling refreshes messages without refreshing global activity", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [{
     id: "msg_pending_background_poll",
     workspaceId: "workspace_default",
@@ -8825,7 +8838,7 @@ test("channel conversation turn shows thinking for empty pending ai replies", as
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
   if (isRecord(channel)) {
     channel.autoReplyMode = "default_teammate";
@@ -8862,7 +8875,7 @@ test("channel URL preview blocked state stays in Activity and still allows sendi
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -8881,7 +8894,7 @@ test("channel attachment uploads support PDF and Office files without AI ingesti
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -8935,7 +8948,7 @@ test("channel run artifacts stay isolated without default drawer leakage", async
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channels.push({
     id: "channel_design",
     workspaceId: "workspace_default",
@@ -9045,7 +9058,7 @@ test("channel review source stays in conversation instead of the legacy context 
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelContextSummaries = [
     {
       id: "summary_seed_context",
@@ -9095,7 +9108,7 @@ test("handoff activity starts workflows without restoring the legacy context dra
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider()];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -9146,7 +9159,7 @@ test("workflow activity uses review source instead of the legacy context run sur
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider()];
   state.channelWorkflows = [
     {
@@ -9747,6 +9760,22 @@ test("control-plane snapshot-required subscribes before refresh and applies an e
     (globalThis as typeof globalThis & { __snapshotHandoff: { urls: string[] } }).__snapshotHandoff.urls.length
   )).toBe(2);
   const itemQueriesBeforeHandoff = state.channelMessageQueries?.length ?? 0;
+  state.channelMessages.push({
+    id: "msg_snapshot_handoff_seq_9",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "tian",
+    body: "Snapshot handoff seq 9 applied",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    status: "ready",
+    createdAt: "2026-08-10T00:01:09.000Z",
+    updatedAt: "2026-08-10T00:01:09.000Z",
+  });
   await page.evaluate(() => {
     const handoff = (globalThis as typeof globalThis & {
       __snapshotHandoff: { eventAfterSnapshot: () => void; replayReady: () => void };
@@ -9755,8 +9784,9 @@ test("control-plane snapshot-required subscribes before refresh and applies an e
     handoff.replayReady();
   });
   await expect.poll(() => state.channelMessageQueries?.length ?? 0, { timeout: 5_000 })
-    .toBeGreaterThan(itemQueriesBeforeHandoff);
-  await page.waitForTimeout(300);
+    .toBeGreaterThanOrEqual(itemQueriesBeforeHandoff + 2);
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByText("Snapshot handoff seq 9 applied")).toBeVisible();
   await page.evaluate(() => {
     (globalThis as typeof globalThis & { __snapshotHandoff: { disconnect: () => void } })
       .__snapshotHandoff.disconnect();
@@ -11516,7 +11546,7 @@ test("channel activity derives task run approval transition and workflow events"
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_timeline",
@@ -11583,9 +11613,10 @@ test("channel activity derives task run approval transition and workflow events"
     title: "Other channel approval leak",
     description: "echo design",
     payload: {},
-    status: "pending",
+    status: "expired",
     createdAt: "2026-05-25T00:03:00.000Z",
-    expiresAt: "2099-01-01T00:01:00.000Z",
+    expiresAt: "2000-01-01T00:01:00.000Z",
+    resolvedAt: "2000-01-01T00:01:00.000Z",
   });
   state.channelWorkflows = [
     {
@@ -11648,7 +11679,7 @@ test("channel activity derives task run approval transition and workflow events"
   const messageBubble = page.locator(".channel-message-row").filter({ hasText: "Timeline source message" });
   const taskEventBubble = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" });
   const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" });
-  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
+  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approval expired" });
   const stateTransitionBubble = page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" });
   const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" });
   const activityDetails = page.getByLabel("Activity details");
@@ -11691,7 +11722,7 @@ test("channel activity derives task run approval transition and workflow events"
   await openChannelChatTools(page);
   await expect(taskEventBubble).toContainText("failed");
   await expect(runEventBubble).toContainText("failed");
-  await expect(approvalEventBubble).toContainText("pending");
+  await expect(approvalEventBubble).toContainText("expired");
   await expect(stateTransitionBubble).toBeVisible();
   await expect(workflowStepBubble).toContainText("Runtime policy is waiting.");
   await expect(taskEventBubble).toHaveClass(/message-bubble-work/);
@@ -11713,7 +11744,7 @@ test("channel activity derives task run approval transition and workflow events"
 
   await openDetailsFrom(taskEventBubble, "Inspect workspace");
   await openDetailsFrom(runEventBubble, "Run run_failed");
-  await openDetailsFrom(approvalEventBubble, "Approve shell command");
+  await openDetailsFrom(approvalEventBubble, "Approval expired");
   await openDetailsFrom(stateTransitionBubble, "task_failed");
   await openDetailsFrom(workflowStepBubble, "Blocked timeline step");
 
@@ -11731,7 +11762,7 @@ test("channel activity derives task run approval transition and workflow events"
 
   await approvalEventBubble.getByRole("button", { name: "Details" }).click();
   await clickActivityDetailsAction("Open approval");
-  await expectApprovalDetailOverlay(page, "Approve shell command");
+  await expect(page.locator(".conversation-detail-overlay").filter({ hasText: "Approval details" })).toContainText("No pending approval");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
 
@@ -11766,8 +11797,8 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(savedViewSelect).toContainText("All (7)");
   await expect(savedViewSelect).toContainText("Needs attention (5)");
   await expect(savedViewSelect).toContainText("Blocked (1)");
-  await expect(savedViewSelect).toContainText("Failed (3)");
-  await expect(savedViewSelect).toContainText("Pending approvals (1)");
+  await expect(savedViewSelect).toContainText("Failed (4)");
+  await expect(savedViewSelect).toContainText("Pending approvals (0)");
   await expect(savedViewSelect).toContainText("Failed work (2)");
   await expect(savedViewSelect).toContainText("Runtime (3)");
   await expect(activityFilters.getByLabel("Activity categories")).toHaveCount(0);
@@ -11783,7 +11814,10 @@ test("channel activity derives task run approval transition and workflow events"
   await page.locator(".task-toolbar-progress").click();
   await expect(page.locator(".channel-progress-popover")).toHaveCount(1);
   await page.getByRole("button", { name: "Show details" }).click();
-  await expect(page.locator(".channel-progress-popover")).toBeVisible();
+  const summaryButton = page.locator(".task-toolbar-progress");
+  await expect(page.locator(".channel-progress-popover")).toBeHidden();
+  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
   const contextPanel = page.locator(".channel-side-panel.right-dock");
   await expect(contextPanel).toHaveAttribute("aria-label", "Channel workspace dock");
   await expect(contextPanel.getByLabel("Attention counts")).toHaveCount(0);
@@ -11795,7 +11829,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
   await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
   await selectSavedView("Pending approvals");
-  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" })).toHaveCount(0);
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toHaveCount(0);
   await selectSavedView("Failed work");
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toBeVisible();
@@ -11820,8 +11854,8 @@ test("channel activity derives task run approval transition and workflow events"
   await searchInput.fill("run_failed");
   await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" })).toBeVisible();
 
-  await searchInput.fill("Approve shell command");
-  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toBeVisible();
+  await searchInput.fill("Approval expired");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "expired" })).toBeVisible();
 
   await searchInput.fill("Wait for runtime recovery");
   await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
@@ -11846,9 +11880,9 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
   await attentionChip("Failed").click();
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "failed" })).toBeVisible();
-  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toHaveCount(0);
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "expired" })).toBeVisible();
   await attentionChip("Pending").click();
-  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" })).toHaveCount(0);
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "failed" })).toHaveCount(0);
   await activityFilters.getByRole("button", { name: /Clear/ }).click();
 
@@ -11919,8 +11953,8 @@ test("channel activity derives task run approval transition and workflow events"
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
-  await page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" }).getByRole("button", { name: "Open approval" }).click();
-  await expectApprovalDetailOverlay(page, "Approve shell command");
+  await page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approval expired" }).getByRole("button", { name: "Open approval" }).click();
+  await expectApprovalDetailOverlay(page, "Approval expired");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
@@ -11932,7 +11966,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_triage",
@@ -12001,7 +12035,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   const activityDetails = page.getByLabel("Activity details");
   const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" });
   const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked triage step" });
-  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
+  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approval expired" });
   const messageBubble = page.locator(".message-bubble").filter({ hasText: "Timeline source message for triage" });
   const openTriageActions = async () => {
     const triageSection = activityDetails.locator(".activity-triage-section");
@@ -12051,10 +12085,10 @@ test("channel activity triage actions create follow-up records and preserve loca
   await approvalEventBubble.getByRole("button", { name: "Details" }).click();
   await openTriageActions();
   await activityDetails.getByRole("button", { name: "Record decision" }).click();
-  await activityDetails.getByLabel("Triage title").fill("Decision: approval stays pending");
-  await activityDetails.getByLabel("Decision text").fill("Keep the approval pending until the user reviews the shell command.");
+  await activityDetails.getByLabel("Triage title").fill("Decision: review the expired approval");
+  await activityDetails.getByLabel("Decision text").fill("Review why the shell command approval expired before retrying.");
   await activityDetails.getByRole("button", { name: "Run triage action" }).click();
-  await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.title === "Decision: approval stays pending")).toBe(true);
+  await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.title === "Decision: review the expired approval")).toBe(true);
   await activityDetails.getByRole("button", { name: "Review created source" }).click();
   await expectConversationReviewSurface(page);
 

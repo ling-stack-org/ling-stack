@@ -19,6 +19,7 @@ export interface ConversationOperationSourceRef {
   readonly kind: string;
   readonly id: string;
   readonly label?: string;
+  readonly path?: string;
   readonly visibility?: "conversation" | "private";
 }
 
@@ -27,6 +28,8 @@ export interface ConversationOperationExecutionView {
   readonly toolCallId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
+  readonly attemptNumber?: number;
+  readonly approvalId?: string;
   readonly turnRunRole?: ConversationTurnRunRole;
   readonly participantId?: string;
   readonly workUnitId?: string;
@@ -34,11 +37,13 @@ export interface ConversationOperationExecutionView {
   readonly actionType: string;
   readonly status: string;
   readonly updatedAt?: string;
+  readonly latestEventSeq?: number;
   readonly sourceRefs: readonly ConversationOperationSourceRef[];
 }
 
 export interface ConversationActivitySummary {
   readonly editedFileCount: number;
+  readonly editedItemCount: number;
   readonly readItemCount: number;
   readonly commandCount: number;
   readonly hasStructuredActions: boolean;
@@ -48,6 +53,11 @@ export interface ConversationCommandExecutionView {
   readonly actionId: string;
   readonly toolCallId?: string;
   readonly runId?: string;
+  readonly attemptId?: string;
+  readonly attemptNumber?: number;
+  readonly approvalId?: string;
+  readonly turnRunRole?: ConversationTurnRunRole;
+  readonly participantId?: string;
   readonly workUnitId?: string;
   readonly workflowStepId?: string;
   readonly actionType: string;
@@ -59,6 +69,7 @@ export interface ConversationCommandExecutionView {
   readonly durationMs?: number;
   readonly exitCode?: number;
   readonly latestEventSeq: number;
+  readonly sourceRefs?: readonly ConversationOperationSourceRef[];
   readonly outputTruncated: boolean;
   readonly stdoutArtifactId?: string;
   readonly stderrArtifactId?: string;
@@ -207,6 +218,7 @@ export interface ConversationCommandBatch {
   readonly actionIds: readonly string[];
   readonly runId?: string;
   readonly attemptId?: string;
+  readonly attemptNumber?: number;
   readonly turnRunRole?: ConversationTurnRunRole;
   readonly participantId?: string;
   readonly workUnitId?: string;
@@ -221,6 +233,7 @@ export interface ConversationExplorationBatch {
   readonly actionIds: readonly string[];
   readonly runId: string;
   readonly attemptId?: string;
+  readonly attemptNumber?: number;
   readonly turnRunRole?: ConversationTurnRunRole;
   readonly participantId?: string;
   readonly workUnitId?: string;

@@ -39,7 +39,7 @@ export function publishTerminalReportPublication(input: {
   if (!workflow || !sourceTurn || sourceItem?.turnId !== sourceTurn.id || sourceItem.threadId !== sourceTurn.threadId) {
     throw new TerminalReportPublicationError("source_turn_conflict", `Workflow publication source lineage is incomplete: ${input.report.id}`);
   }
-  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const expectedCompletion = workflow.metadata?.requiredParticipantManifest
     ? evaluateWorkflowCompletion({ store: input.store, workflow, steps, now: input.now })
     : undefined;

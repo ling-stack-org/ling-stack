@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   workflowCompletionBasisFingerprintV1,
   type ChannelIntentDecisionV2,
+  type WorkflowParticipantCompletionResultV1,
 } from "@ling-stack/contracts";
 import type { ApprovalRequest } from "./approval-types.js";
 import type { RunArtifact, RunSession, RunStore } from "./run-types.js";
@@ -27,6 +28,40 @@ export interface WorkflowCompletionExpectedReadSetV1 {
 export interface WorkflowCompletionEvaluationV1 {
   readonly gate: import("@ling-stack/contracts").WorkflowCompletionGateV1;
   readonly expectedReadSet: WorkflowCompletionExpectedReadSetV1;
+}
+
+/**
+ * Rebuild the completion-gate basis from the durable workflow/step projection.
+ * This is intentionally shared by the daemon evaluator and SQLite commit
+ * boundary so a caller cannot supply a self-consistent but fabricated basis.
+ */
+export function workflowCompletionGateBasisFingerprintV1(input: {
+  readonly workflowId: string;
+  readonly sourceIntentDecisionId: string;
+  readonly manifestFingerprint: string;
+  readonly graphFingerprint: string;
+  readonly participantResults: readonly WorkflowParticipantCompletionResultV1[];
+  readonly steps: readonly ChannelWorkflowStep[];
+}): string {
+  return workflowCompletionBasisFingerprintV1({
+    workflowId: input.workflowId,
+    sourceIntentDecisionId: input.sourceIntentDecisionId,
+    manifestFingerprint: input.manifestFingerprint,
+    graphFingerprint: input.graphFingerprint,
+    participantResults: input.participantResults,
+    steps: [...input.steps].sort((left, right) => left.id.localeCompare(right.id)).map((step) => ({
+      id: step.id,
+      status: step.status,
+      participantId: step.toParticipantId,
+      graphNodeId: step.metadata?.graphNodeId,
+      dependsOnStepIds: [...(step.metadata?.dependsOnStepIds ?? [])].sort(),
+      delegatedOutcome: step.metadata?.delegatedOutcome,
+      delegatedOutcomeBasisFingerprint: step.metadata?.delegatedOutcomeBasisFingerprint,
+      delegatedRequirement: step.metadata?.delegatedRequirement,
+      executionVerification: step.metadata?.executionVerification,
+      outputArtifactId: step.metadata?.outputArtifactId,
+    })),
+  });
 }
 
 export interface WorkflowCompletionEntityReadV1 {
@@ -229,10 +264,10 @@ function collectApprovals(
 ): ApprovalRequest[] {
   const byId = new Map<string, ApprovalRequest>();
   for (const runId of runIds) {
-    for (const approval of store.listApprovalRequests({ runId, limit: 500 })) byId.set(approval.id, approval);
+    for (const approval of store.listApprovalRequests({ runId, complete: true })) byId.set(approval.id, approval);
   }
   for (const step of steps) {
-    for (const approval of store.listApprovalRequests({ workflowStepId: step.id, limit: 500 })) byId.set(approval.id, approval);
+    for (const approval of store.listApprovalRequests({ workflowStepId: step.id, complete: true })) byId.set(approval.id, approval);
   }
   return [...byId.values()];
 }

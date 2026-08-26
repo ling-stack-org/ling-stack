@@ -128,6 +128,56 @@ test("execution action projection reads command completion after the first event
   assert.match(actions[0].commandEvidence.outputTail.map((chunk) => chunk.text).join(""), /final output/u);
 });
 
+test("execution action identity keeps the tool attempt over the run fallback", () => {
+  const runId = "run-attempt-lineage";
+  const toolCallId = "tool-attempt-lineage";
+  const events = [
+    event(4, "tool_end", {
+      toolCallId,
+      toolName: "bash",
+      attemptId: "attempt-tool",
+      result: { content: [{ type: "text", text: "done\n" }] },
+      isError: false,
+    }, runId),
+    event(1, "run_created", { attemptId: "attempt-run" }, runId),
+    event(3, "tool_update", {
+      toolCallId,
+      toolName: "bash",
+      attemptId: "attempt-stale",
+      partialResult: { content: [{ type: "text", text: "stale\n" }] },
+    }, runId),
+    event(2, "tool_start", {
+      toolCallId,
+      toolName: "bash",
+      args: { command: "printf done" },
+    }, runId),
+  ];
+  const run = {
+    id: runId,
+    taskId: "task-attempt-lineage",
+    threadId: "thread-attempt-lineage",
+    workUnitId: "work-unit-attempt-lineage",
+    cwd: "/repo",
+    status: "succeeded",
+    createdAt: events[1].ts,
+    updatedAt: events[0].ts,
+  };
+  const store = {
+    getRun: (id) => id === runId ? run : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [],
+    listEvents: (id) => id === runId ? events : [],
+  };
+
+  const actions = listExecutionActions(store, { runId, limit: 100 });
+
+  assert.equal(actions.length, 1);
+  assert.equal(actions[0].id, `tool:${runId}:${toolCallId}`);
+  assert.equal(actions[0].attemptId, "attempt-tool");
+  assert.equal(actions[0].commandEvidence.latestEventSeq, 4);
+  assert.equal(actions[0].updatedAt, events[0].ts);
+});
+
 test("legacy Pi bash success normalizes exit zero and keeps one final cumulative output", () => {
   const start = event(1, "tool_start", {
     toolCallId: "tool-legacy-success",
@@ -268,6 +318,49 @@ test("incomplete unified exec success does not borrow legacy Pi exit zero", () =
   assert.equal(evidence.exitCode, undefined);
   assert.equal(executionActionStatusFromCommandEvidence(evidence), "failed");
   assert.deepEqual(evidence.outputTail, []);
+});
+
+test("live evidence uses the highest durable event sequence after replay reorders events", () => {
+  const start = event(1, "tool_start", {
+    toolCallId: "tool-reordered",
+    toolName: "bash",
+    args: { command: "printf latest" },
+  });
+  const staleUpdate = event(2, "tool_update", {
+    toolCallId: "tool-reordered",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "stale\n" }] },
+  });
+  const latestUpdate = event(4, "tool_update", {
+    toolCallId: "tool-reordered",
+    toolName: "bash",
+    partialResult: { content: [{ type: "text", text: "latest\n" }] },
+  });
+  const staleEnd = event(3, "tool_end", {
+    toolCallId: "tool-reordered",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "stale-end\n" }] },
+    isError: true,
+  });
+  const latestEnd = event(5, "tool_end", {
+    toolCallId: "tool-reordered",
+    toolName: "bash",
+    result: { content: [{ type: "text", text: "latest-end\n" }] },
+    isError: false,
+  });
+
+  const evidence = deriveExecutionActionCommandEvidence({
+    events: [latestEnd, latestUpdate, staleEnd, staleUpdate, start],
+    toolCallId: "tool-reordered",
+    start,
+    end: staleEnd,
+  });
+
+  assert.ok(evidence);
+  assert.equal(evidence.latestEventSeq, 5);
+  assert.equal(evidence.outcome, "succeeded");
+  assert.equal(evidence.exitCode, 0);
+  assert.equal(evidence.outputTail[0].text, "latest-end\n");
 });
 
 function event(seq, type, data, runId = "run-live") {

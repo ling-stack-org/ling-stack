@@ -267,6 +267,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     WorkspaceTranscriptRenderContext
   >({
     coordinator_message: renderCoordinatorMessageTranscriptBlock,
+    conversation_item: renderConversationItemTranscriptBlock,
     operation: renderOperationTranscriptBlock,
     agent_activity: renderGenericTranscriptBlock,
     approval: renderGenericTranscriptBlock,
@@ -490,6 +491,20 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           onOpenWorkspaceFile={input.onOpenTerminalReportFile}
           onOpenWorkspaceReview={input.onOpenWorkspaceReview}
         />
+      </div>
+    );
+  }
+
+  function renderConversationItemTranscriptBlock({
+    block,
+  }: {
+    readonly turn: ConversationTurnViewModel;
+    readonly block: Extract<ConversationTranscriptBlock, { readonly kind: "conversation_item" }>;
+    readonly context: WorkspaceTranscriptRenderContext;
+  }): ReactNode {
+    return (
+      <div className="conversation-turn-structured-item" key={block.id} data-conversation-item-kind={block.item.kind}>
+        <TranscriptBlockView block={block} cwd={input.cwd} />
       </div>
     );
   }

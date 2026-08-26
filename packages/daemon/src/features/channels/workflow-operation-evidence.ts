@@ -9,7 +9,7 @@ import type {
   RunStore,
   WorkflowStepExecutionVerificationV1,
 } from "@ling-stack/core";
-import { listExecutionActions } from "../runs/execution-actions.js";
+import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 import { commandMatchesPolicy } from "./command-operation-match.js";
 
 export function workflowStepExecutionOperationBindings(
@@ -31,10 +31,10 @@ export function verifyWorkflowStepExecutionOperations(input: {
   const ownedOperations = workflowStepExecutionOperationBindings(input.step);
   if (ownedOperations.length === 0) return undefined;
   const actions = input.step.runId
-    ? listExecutionActions(input.store, { runId: input.step.runId, limit: 500 })
+    ? listAllExecutionActionsForRun(input.store, input.step.runId)
     : [];
-  const workflowActions = input.store.listChannelWorkflowSteps({ workflowId: input.step.workflowId, limit: 500 })
-    .flatMap((step) => step.runId ? listExecutionActions(input.store, { runId: step.runId, limit: 500 }) : []);
+  const workflowActions = input.store.listChannelWorkflowSteps({ workflowId: input.step.workflowId, complete: true })
+    .flatMap((step) => step.runId ? listAllExecutionActionsForRun(input.store, step.runId) : []);
   const cwd = input.step.runId ? input.store.getRun(input.step.runId)?.cwd : undefined;
   const operationResults = ownedOperations.map((operation) =>
     verifyOperation(operation, plan, actions, workflowActions, cwd));

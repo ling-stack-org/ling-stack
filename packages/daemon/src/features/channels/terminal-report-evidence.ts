@@ -24,10 +24,11 @@ import {
   type TerminalReportSourceRef,
   type TerminalReportSurface,
 } from "@ling-stack/core";
-import { listExecutionActions } from "../runs/execution-actions.js";
+import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 import { redactEvidenceText } from "./context-processing/evidence.js";
 import { inferUserLanguage } from "./response-language.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
+import { extractWorkflowStepChangedPaths } from "./workflow-step-packets.js";
 
 export interface TerminalReportEvidenceBudgets {
   readonly steps: number;
@@ -70,7 +71,8 @@ export function collectWorkflowTerminalReportEvidence(
   const budgets = resolveBudgets(options.budgets);
   const sourceRef = sourceRefFor("workflow", evidence.workflow.id, evidence.workflow.title);
   const packetArtifactIds = new Set(evidence.steps.flatMap((item) => item.packetArtifacts.map((artifact) => artifact.id)));
-  const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(evidence.actions);
+  const runCwds = new Map(evidence.steps.flatMap((item) => item.linkedRun ? [[item.linkedRun.id, item.linkedRun.cwd] as const] : []));
+  const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(evidence.actions, runCwds);
   const artifacts = evidence.artifacts.map((artifact) => mapArtifact(
     artifact,
     packetArtifactIds.has(artifact.id),
@@ -80,7 +82,12 @@ export function collectWorkflowTerminalReportEvidence(
   const steps = evidence.steps
     .filter((item) => workflowStepHasActivity(item))
     .map((item) => mapWorkflowStep(item, budgets.summaryCharacters));
-  const operations = evidence.actions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters));
+  const operations = evidence.actions.map((action) => mapOperation(
+    action,
+    artifactsById,
+    budgets.summaryCharacters,
+    action.runId ? runCwds.get(action.runId) : undefined,
+  ));
   const checks = evidence.actions
     .filter(isCheckAction)
     .map((action) => mapCheck(action, budgets.summaryCharacters));
@@ -130,11 +137,11 @@ export function collectRunTerminalReportEvidence(
   const budgets = resolveBudgets(options.budgets);
   const sourceRef = sourceRefFor("run", run.id, task?.title ?? turn?.title ?? "Run");
   const artifactsRaw = store.listArtifacts(run.id);
-  const actions = listExecutionActions(store, { runId: run.id, limit: 500 });
-  const approvalsRaw = store.listApprovalRequests({ runId: run.id, limit: 500 });
+  const actions = listAllExecutionActionsForRun(store, run.id);
+  const approvalsRaw = store.listApprovalRequests({ runId: run.id, complete: true });
   const artifactsById = new Map(artifactsRaw.map((artifact) => [artifact.id, artifact]));
-  const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions);
-  const changedPaths = changedPathsFromActions(actions);
+  const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions, new Map([[run.id, run.cwd]]));
+  const changedPaths = changedPathsFromActions(actions, run.cwd);
   const teammate = run.teammateId ? store.getAiTeammate(run.teammateId) : undefined;
   const workflowStep = run.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
   const rejectedContext = workflowStepResultContextRejected(workflowStep);
@@ -166,7 +173,7 @@ export function collectRunTerminalReportEvidence(
       artifactIds: artifactsRaw.map((artifact) => artifact.id),
       sourceRefs: uniqueRefs([sourceRef, ...artifactsRaw.map((artifact) => artifactRef(artifact))]),
     }],
-    operations: actions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters)),
+    operations: actions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters, run.cwd)),
     checks: actions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters)),
     participants: run.teammateId && runHasAgentActivity(store, run) ? [{
       agentId: run.teammateId,
@@ -210,10 +217,11 @@ export function collectTurnTerminalReportEvidence(
     .map((link) => store.getRun(link.runId))
     .filter((run): run is RunSession => Boolean(run));
   const artifactsRaw = uniqueById(runs.flatMap((run) => store.listArtifacts(run.id)));
-  const actions = uniqueById(runs.flatMap((run) => listExecutionActions(store, { runId: run.id, limit: 500 })));
-  const approvalsRaw = uniqueById(runs.flatMap((run) => store.listApprovalRequests({ runId: run.id, limit: 500 })));
+  const actions = uniqueById(runs.flatMap((run) => listAllExecutionActionsForRun(store, run.id)));
+  const approvalsRaw = uniqueById(runs.flatMap((run) => store.listApprovalRequests({ runId: run.id, complete: true })));
   const artifactsById = new Map(artifactsRaw.map((artifact) => [artifact.id, artifact]));
-  const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions);
+  const runCwds = new Map(runs.map((run) => [run.id, run.cwd] as const));
+  const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions, runCwds);
   const sourceRef = sourceRefFor("turn", turn.id, turn.title);
   const participants = aggregateRunParticipants(store, runs, budgets.summaryCharacters);
 
@@ -237,7 +245,12 @@ export function collectTurnTerminalReportEvidence(
       budgets.summaryCharacters,
       actions.filter((action) => action.runId === run.id),
     )),
-    operations: actions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters)),
+    operations: actions.map((action) => mapOperation(
+      action,
+      artifactsById,
+      budgets.summaryCharacters,
+      action.runId ? runCwds.get(action.runId) : undefined,
+    )),
     checks: actions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters)),
     participants,
     artifacts: artifactsRaw.map((artifact) => mapArtifact(
@@ -362,7 +375,7 @@ function mapTurnRunStep(
     runId: run.id,
     resultSummary: summary ? boundedText(summary, maxCharacters) : undefined,
     blocker: run.errorMessage ? boundedText(run.errorMessage, maxCharacters) : undefined,
-    changedPaths: changedPathsFromActions(actions),
+    changedPaths: changedPathsFromActions(actions, run.cwd),
     artifactIds: artifacts.map((artifact) => artifact.id),
     sourceRefs: uniqueRefs([
       sourceRefFor("turn", turn.id, turn.title),
@@ -376,8 +389,9 @@ function mapOperation(
   action: ExecutionAction,
   artifactsById: ReadonlyMap<string, RunArtifact>,
   maxCharacters: number,
+  cwd?: string,
 ): TerminalReportEvidenceOperation {
-  const changedPaths = operationKind(action) === "edit" ? changedPathsFromActions([action]) : [];
+  const changedPaths = operationKind(action) === "edit" ? changedPathsFromActions([action], cwd) : [];
   const title = action.summary && action.summary !== action.title
     ? `${action.title}: ${action.summary}`
     : action.title;
@@ -445,15 +459,15 @@ function mapArtifact(
 
 function collectWorkspaceFileRefsByArtifactId(
   actions: readonly ExecutionAction[],
+  runCwds: ReadonlyMap<string, string>,
 ): ReadonlyMap<string, readonly TerminalReportSourceRef[]> {
   const refsByArtifactId = new Map<string, TerminalReportSourceRef[]>();
   for (const action of actions) {
-    if (operationKind(action) !== "edit") {
+    if (operationKind(action) !== "edit" || action.status !== "succeeded") {
       continue;
     }
-    const fileRefs = action.targetRefs
-      .map(targetRefToSourceRef)
-      .filter((ref): ref is TerminalReportSourceRef => ref?.kind === "file");
+    const fileRefs = changedPathsFromActions([action], action.runId ? runCwds.get(action.runId) : undefined)
+      .map((path) => sourceRefFor("file", path, path));
     if (fileRefs.length === 0) {
       continue;
     }
@@ -882,12 +896,11 @@ function readRunAssistantSummary(store: RunStore, runId: string, maxCharacters: 
   return text ? boundedText(text, maxCharacters) : undefined;
 }
 
-function changedPathsFromActions(actions: readonly ExecutionAction[]): string[] {
-  return uniqueStrings(actions
-    .filter((action) => operationKind(action) === "edit")
-    .flatMap((action) => action.targetRefs)
-    .filter((ref) => ref.type === "file" && Boolean(ref.path))
-    .map((ref) => ref.path as string))
+function changedPathsFromActions(actions: readonly ExecutionAction[], cwd?: string): string[] {
+  return extractWorkflowStepChangedPaths({
+    actions,
+    cwd,
+  })
     .map((path) => redactEvidenceText(path));
 }
 

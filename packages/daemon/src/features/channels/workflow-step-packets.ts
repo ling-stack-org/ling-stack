@@ -2,12 +2,14 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
+  type ApprovalStoreFacet,
   type ChannelStoreFacet,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type ChannelWorkflowStepContextPacket,
   type ChannelWorkflowStepOutputPacket,
   type DelegatedStepRequirementV1,
+  type ExecutionAction,
   type RunArtifact,
   type RunExecutionStoreFacet,
   type RunnerResolutionAudit,
@@ -23,11 +25,12 @@ import { isRecord } from "../../shared/validation.js";
 import { isWorkflowAgentContextStamp } from "./agent-context-consistency.js";
 import type { WorkflowStepContextCompactionSummary } from "./context-compaction.js";
 import type { WorkflowStepRunRequest } from "./workflows.js";
+import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 
 type WorkflowStepPacketArtifactStore = RunExecutionStoreFacet & RunStorePathsFacet;
 type WorkflowStepPacketDependencyStore = ChannelStoreFacet & RunExecutionStoreFacet;
 type WorkflowStepPacketSourceStore = ChannelStoreFacet & RunExecutionStoreFacet & WorkspaceStoreFacet;
-type WorkflowStepPacketStore = WorkflowStepPacketArtifactStore & WorkflowStepPacketSourceStore;
+type WorkflowStepPacketStore = WorkflowStepPacketArtifactStore & WorkflowStepPacketSourceStore & ApprovalStoreFacet;
 
 export function createWorkflowStepContextArtifact(input: {
   readonly store: WorkflowStepPacketStore;
@@ -200,6 +203,7 @@ export function buildWorkflowStepOutputPacket(input: {
     : undefined;
   const graphId = input.step.metadata?.graphId ?? input.workflow.metadata?.workflowGraphId;
   const graphNodeId = input.step.metadata?.graphNodeId ?? input.step.metadata?.templateStepId;
+  const actions = listAllExecutionActionsForRun(input.store, input.run.id);
   return omitUndefined({
     schemaVersion: 1 as const,
     workflowId: input.workflow.id,
@@ -213,7 +217,7 @@ export function buildWorkflowStepOutputPacket(input: {
     resultSummary: input.step.resultSummary ?? input.run.errorMessage,
     artifactIds: artifacts.map((artifact) => artifact.id),
     blockers: uniqueStrings([input.step.blocker, input.run.errorMessage ?? undefined]),
-    changedPaths: extractWorkflowStepChangedPaths({ artifacts }),
+    changedPaths: extractWorkflowStepChangedPaths({ actions, cwd: input.run.cwd }),
     sourceRefs: buildWorkflowPacketSourceRefs(input),
     agentContext: contextPacket?.agentContext ?? readWorkflowAgentContextFromRunSnapshot(input.run),
     selectorDecisionIds: input.step.metadata?.selectorDecisionIds,
@@ -303,12 +307,36 @@ export function readWorkflowAgentContextFromRunSnapshot(
 }
 
 export function extractWorkflowStepChangedPaths(input: {
-  readonly artifacts: readonly RunArtifact[];
+  readonly actions: readonly Pick<ExecutionAction, "actionType" | "status" | "targetRefs">[];
+  readonly cwd?: string;
 }): readonly string[] {
-  return uniqueStrings(input.artifacts
-    .filter((artifact) => artifact.type === "file" || artifact.type === "diff")
-    .map((artifact) => artifact.path)
-    .filter((path) => !path.startsWith("workflows/")));
+  return uniqueStrings(input.actions
+    .filter((action) => action.status === "succeeded"
+      && (action.actionType === "edit" || action.actionType === "write"))
+    .flatMap((action) => action.targetRefs)
+    .filter((ref) => ref.type === "file" && typeof ref.path === "string")
+    .map((ref) => normalizeWorkspaceChangedPath(ref.path as string, input.cwd))
+    .filter((path): path is string => Boolean(path)));
+}
+
+function normalizeWorkspaceChangedPath(path: string, cwd: string | undefined): string | undefined {
+  const candidate = path.trim().replaceAll("\\", "/");
+  if (!candidate || candidate === "<unknown>" || candidate.includes("\0") || /^[A-Za-z]:\//u.test(candidate)) {
+    return undefined;
+  }
+  if (!cwd) {
+    if (isAbsolute(candidate) || candidate === ".." || candidate.startsWith("../")) {
+      return undefined;
+    }
+    return candidate;
+  }
+  const workspaceRoot = resolvePath(cwd);
+  const resolved = resolvePath(workspaceRoot, candidate);
+  const relativePath = relative(workspaceRoot, resolved).replaceAll("\\", "/");
+  if (!relativePath || relativePath === ".." || relativePath.startsWith("../") || isAbsolute(relativePath)) {
+    return undefined;
+  }
+  return relativePath;
 }
 
 function buildDependencyRefs(
@@ -317,7 +345,7 @@ function buildDependencyRefs(
   step: ChannelWorkflowStep,
 ): WorkflowStepOutputRef[] {
   const stepsById = new Map(
-    store.listChannelWorkflowSteps({ workflowId, limit: 500 }).map((candidate) => [candidate.id, candidate]),
+    store.listChannelWorkflowSteps({ workflowId, complete: true }).map((candidate) => [candidate.id, candidate]),
   );
   return (step.metadata?.dependsOnStepIds ?? [])
     .map((stepId) => stepsById.get(stepId))

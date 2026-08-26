@@ -47,6 +47,9 @@ maintained runtimes execute scoped work; humans remain in control of risky side 
   Model Workbench.
 - **Run auditable agent work:** execute tasks through the Pi coding-agent adapter while
   preserving events, approvals, artifacts, and session history.
+- **Inspect structured channel transcripts:** view tool calls and results, approvals,
+  handoffs, artifacts, operations, and final results as typed content layers while
+  operator-only and agent-private items stay out of the channel transcript.
 - **Control authority:** apply workspace permission presets and require confirmation for
   file writes, shell commands, paid media generation, and other governed actions.
 - **Manage reusable skills:** import, edit, bind, and review skills without treating a
@@ -78,16 +81,24 @@ maintained runtimes execute scoped work; humans remain in control of risky side 
 
 ```mermaid
 flowchart LR
-  Web[Web UI] --> Daemon[Local daemon]
-  Desktop[Electron Desktop] --> Daemon
-  CLI[CLI] --> Daemon
-  Daemon --> Core[Workspace and policy core]
-  Daemon --> Runner[Pi runner adapter]
-  Daemon --> Providers[Model and media adapters]
-  Daemon --> Tools[MCP and local tools]
-  Core --> Store[(SQLite)]
-  Core --> Files[Artifacts and session logs]
-  Runner --> Providers
+  subgraph Clients["Client surfaces"]
+    Web["Web UI"]
+    Desktop["Electron Desktop"]
+    CLI["CLI"]
+  end
+
+  Web --> Daemon["Local daemon"]
+  Desktop --> Daemon
+  CLI --> Daemon
+
+  Daemon --> Core["Workspace, channels, tasks, and AI teammates<br/>Policy, approvals, and durable state"]
+  Daemon --> Runtime["Runtime supervisor<br/>and runner adapters"]
+  Core -. "governs execution" .-> Runtime
+
+  Runtime --> Providers["Model and media providers"]
+  Runtime --> Tools["MCP and local tools"]
+  Core --> Store[("SQLite")]
+  Core --> Evidence["Artifacts, session logs,<br/>and audit evidence"]
 ```
 
 The daemon is the local authority for workspace state, approvals, runs, and recovery.

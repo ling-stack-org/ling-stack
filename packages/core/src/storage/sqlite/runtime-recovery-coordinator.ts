@@ -116,7 +116,7 @@ export class SqliteRuntimeRecoveryCoordinator {
     const workflows = this.ports.listRecoverableChannelWorkflows();
 
     for (const workflow of workflows) {
-      const steps = this.ports.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+      const steps = this.ports.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
       for (const step of steps) {
         if (workflow.metadata?.requiredParticipantManifest && step.status === "running" && step.runId) {
           const run = this.ports.getRun(step.runId);
@@ -333,7 +333,7 @@ export class SqliteRuntimeRecoveryCoordinator {
     if (!workflow || workflow.status === "succeeded" || workflow.status === "failed" || workflow.status === "cancelled") {
       return 0;
     }
-    const steps = this.ports.listChannelWorkflowSteps({ workflowId, limit: 500 });
+    const steps = this.ports.listChannelWorkflowSteps({ workflowId, complete: true });
     if (steps.length > 0 && steps.every((step) => step.status === "succeeded" || step.status === "skipped")) {
       if (workflow.metadata?.requiredParticipantManifest) {
         // Continuity-backed workflows are completed only by the daemon's shared

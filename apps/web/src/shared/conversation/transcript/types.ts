@@ -1,5 +1,6 @@
 export type TranscriptBlockKind =
   | "coordinator_message"
+  | "conversation_item"
   | "operation"
   | "agent_activity"
   | "approval"

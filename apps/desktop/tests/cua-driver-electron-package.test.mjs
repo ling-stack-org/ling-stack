@@ -13,6 +13,7 @@ import {
 
 const execFileAsync = promisify(execFile);
 const desktopRoot = resolve(import.meta.dirname, "..");
+const repositoryRoot = resolve(desktopRoot, "../..");
 const configModule = "./scripts/cua-driver-electron-builder.config.mjs";
 const HOST_AUTHORITY = Object.freeze({
   schemaVersion: 1,
@@ -24,6 +25,11 @@ const HOST_AUTHORITY = Object.freeze({
   distributionChannel: "internal",
   capabilitiesSha256: "a".repeat(64),
   runtimeTrustPolicySha256: "b".repeat(64),
+});
+
+test("repository declares a package.json workspace root for Electron Builder fallback detection", async () => {
+  const rootPackage = JSON.parse(await readFile(join(repositoryRoot, "package.json"), "utf8"));
+  assert.deepEqual(rootPackage.workspaces, ["apps/*", "packages/*"]);
 });
 
 test("Electron Builder config keeps external-only provider authority unchanged by default", async () => {

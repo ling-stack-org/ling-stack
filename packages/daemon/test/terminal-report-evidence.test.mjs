@@ -56,6 +56,9 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
     appendToolAction(store, engineerOne.run.id, "edit_core", "edit", {
       path: "packages/core/src/terminal-report-types.ts",
     }, false, "2026-07-11T02:01:10.000Z", terminalReportTypesArtifact.id);
+    appendToolAction(store, engineerOne.run.id, "edit_ui", "edit", {
+      path: "apps/web/src/lib/terminal-report.ts",
+    }, false, "2026-07-11T02:01:11.000Z");
 
     const qa = createWorkflowRun(store, {
       cwd,
@@ -129,6 +132,9 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
     assert.ok(snapshot.steps.every((step) => !step.changedPaths.some((path) => path.startsWith(`${engineerOne.run.id}/`))));
     assert.deepEqual(snapshot.operations.find((operation) => operation.id.includes("edit_core"))?.changedPaths, [
       "packages/core/src/terminal-report-types.ts",
+    ]);
+    assert.deepEqual(snapshot.operations.find((operation) => operation.id.includes("edit_ui"))?.changedPaths, [
+      "apps/web/src/lib/terminal-report.ts",
     ]);
     assert.ok(snapshot.artifacts.find((artifact) => artifact.id === terminalReportTypesArtifact.id)?.sourceRefs.some((ref) =>
       ref.kind === "file" && ref.id === "packages/core/src/terminal-report-types.ts"
@@ -240,6 +246,42 @@ test("run and turn terminal evidence preserve retry history while latest partici
     assert.equal(turnSnapshot.participants.length, 1);
     assert.equal(turnSnapshot.participants[0]?.status, "completed");
     assert.equal(turnSnapshot.participants[0]?.runIds.length, 2);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("failed edit actions never become changed paths", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-failed-edit-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-07-11T04:00:00.000Z";
+    const channel = store.createChannel({ name: "Failed edit", boundPath: cwd }, now);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Failed edit",
+      objective: "Reject failed path",
+      status: "failed",
+      createdBy: "ling_agent",
+    }, now);
+    const created = createWorkflowRun(store, {
+      cwd,
+      channelId: channel.id,
+      workflowId: workflow.id,
+      teammateId: "engineer",
+      title: "Failed edit",
+      status: "failed",
+      resultSummary: "The edit failed before it changed the workspace.",
+      blocker: "permission denied",
+      runId: "run_terminal_failed_edit",
+      createdAt: now,
+    });
+    appendToolAction(store, created.run.id, "failed_edit", "edit", { path: "src/should-not-count.ts" }, true, now);
+
+    const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, { generatedAt: now });
+    assert.deepEqual(snapshot.steps[0].changedPaths, []);
+    assert.deepEqual(snapshot.operations.find((operation) => operation.id.includes("failed_edit"))?.changedPaths, []);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

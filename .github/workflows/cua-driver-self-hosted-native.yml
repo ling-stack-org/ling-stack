@@ -161,7 +161,7 @@ jobs:
 
       - name: Upload macOS Electron Builder hook traces
         if: steps.package-authorization.outputs.authorized == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cua-driver-self-hosted-electron-builder-macos-${{ github.run_id }}-${{ github.run_attempt }}
           path: apps/desktop/test-results/cua-driver-signing-feasibility
@@ -169,7 +169,7 @@ jobs:
           retention-days: 1
 
       - name: Upload immutable macOS A/B evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cua-driver-self-hosted-macos-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
@@ -240,7 +240,7 @@ jobs:
             --output-dir "$LING_CUA_PROMOTION_ROOT/proposal"
 
       - name: Upload review-only macOS proposal
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cua-driver-self-hosted-promotion-macos-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
@@ -349,7 +349,7 @@ jobs:
 
       - name: Upload Windows Electron Builder hook trace
         if: steps.package-authorization.outputs.authorized == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cua-driver-self-hosted-electron-builder-windows-${{ github.run_id }}-${{ github.run_attempt }}
           path: apps/desktop/test-results/cua-driver-signing-feasibility
@@ -357,7 +357,7 @@ jobs:
           retention-days: 1
 
       - name: Upload immutable Windows A/B evidence
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cua-driver-self-hosted-windows-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error
@@ -423,7 +423,7 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Upload review-only Windows proposal
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: cua-driver-self-hosted-promotion-windows-${{ github.run_id }}-${{ github.run_attempt }}
           if-no-files-found: error

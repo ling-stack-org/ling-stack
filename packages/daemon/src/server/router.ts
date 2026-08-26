@@ -1629,7 +1629,7 @@ export async function routeRequest(
     return {
       proposal: input.store.getChannelExecutionProposal(input.proposalId) ?? confirmed.proposal,
       workflow: orchestration.workflow,
-      workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: confirmed.workflow.id, limit: 500 }),
+      workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: confirmed.workflow.id, complete: true }),
       orchestration,
     };
   };

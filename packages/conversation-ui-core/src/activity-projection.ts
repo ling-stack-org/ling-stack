@@ -118,6 +118,9 @@ export function isExplorationBatchEligible(row: ConversationWorkCellRow): boolea
     row.presentation !== "note" &&
     execution?.actionId &&
     execution.runId &&
+    execution.attemptId &&
+    !execution.approvalId &&
+    execution.turnRunRole &&
     execution.sourceRefs.length > 0 &&
     READ_ACTION_TYPES.has(execution.actionType) &&
     execution.status === "succeeded",
@@ -129,6 +132,7 @@ export function summarizeConversationActivity(
 ): ConversationActivitySummary {
   const seen = new Set<string>();
   let editedFileCount = 0;
+  let editedItemCount = 0;
   let readItemCount = 0;
   let commandCount = 0;
 
@@ -143,6 +147,7 @@ export function summarizeConversationActivity(
     seen.add(execution.actionId);
 
     if (execution.actionType === "write" || execution.actionType === "edit") {
+      editedItemCount += 1;
       const files = uniqueRefs(execution.sourceRefs, "file");
       editedFileCount += files.length;
       continue;
@@ -159,9 +164,10 @@ export function summarizeConversationActivity(
 
   return {
     editedFileCount,
+    editedItemCount,
     readItemCount,
     commandCount,
-    hasStructuredActions: editedFileCount > 0 || readItemCount > 0 || commandCount > 0,
+    hasStructuredActions: editedItemCount > 0 || readItemCount > 0 || commandCount > 0,
   };
 }
 
@@ -198,7 +204,7 @@ function buildExplorationBatch(
     id: `exploration-batch:${stableIdPart(participantScope)}:${stableIdPart(first.runId)}:${stableIdPart(first.actionId)}`,
     revisionKey: actionRows.map((row) => {
       const execution = row.operationExecution;
-      return `${execution?.actionId ?? row.id}:${execution?.status ?? "unknown"}:${execution?.updatedAt ?? ""}`;
+      return `${execution?.actionId ?? row.id}:${execution?.status ?? "unknown"}:${execution?.latestEventSeq ?? 0}:${execution?.updatedAt ?? ""}`;
     }).join("|"),
     actionIds,
     runId: first.runId,

@@ -36,6 +36,7 @@ function mockPrivateCommandAction(
     workspaceId: "workspace_default",
     threadId,
     runId,
+    attemptId: `attempt_${runId}`,
     toolCallId: `tool_${id}`,
     actionType: "bash",
     risk: "low",
@@ -898,6 +899,7 @@ test("AI teammate sidebar menu keeps create action without bulk archive", async 
 });
 
 test("AI teammate private workspace sends blocked chat replies and persists settings", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
   const runtimeErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") runtimeErrors.push(`${message.text()} @ ${message.location().url || "unknown"}`);

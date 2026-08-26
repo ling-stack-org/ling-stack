@@ -865,7 +865,7 @@ export function prepareWorkflowStepStart(
     providerBinding = providerPreflight.binding;
     providerPresetId = providerBinding.providerPresetId;
   }
-  const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${input.taskPrompt ?? step.prompt}`;
   const memoryRecall = store.recallMemory({
     teammateId: assigneeTeammateId,
@@ -1144,7 +1144,7 @@ export function reconcileContinuityWorkflowCompletion(store: RunStore, now = new
         continue;
       }
       if (workflow.status === "succeeded") {
-        const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+        const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
         const gate = evaluateWorkflowCompletionGate({ store, workflow, steps, now });
         if (gate?.status === "verified" && gate.basisFingerprint !== workflow.metadata.completionGate?.basisFingerprint) {
           store.updateChannelWorkflow(workflow.id, { metadata: { ...workflow.metadata, completionGate: gate } }, now);
@@ -1184,7 +1184,7 @@ export function maybeCreateWorkflowTerminalCoordinatorReply(
   const sourceTurnId = workflow.metadata?.sourceTurnId;
   const sourceTurn = sourceTurnId ? store.getLingTurn(sourceTurnId) : undefined;
   if (!sourceItem || !sourceTurn || sourceItem.turnId !== sourceTurn.id) return undefined;
-  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const now = input.now ?? new Date().toISOString();
   const expectedCompletion = workflow.metadata?.requiredParticipantManifest
     ? evaluateWorkflowCompletion({ store, workflow, steps, now })

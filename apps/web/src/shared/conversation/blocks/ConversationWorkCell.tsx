@@ -438,9 +438,21 @@ function completedActivitySummary(
   }
   const summary = model.activitySummary;
   const pieces = [
-    summary.editedFileCount > 0 ? t("Edited {count} files", { count: summary.editedFileCount }) : undefined,
-    summary.readItemCount > 0 ? t("Read {count} items", { count: summary.readItemCount }) : undefined,
-    summary.commandCount > 0 ? t("Ran {count} commands", { count: summary.commandCount }) : undefined,
+    summary.editedFileCount > 0
+      ? summary.editedFileCount === 1
+        ? t("Edited 1 file")
+        : t("Edited {count} files", { count: summary.editedFileCount })
+      : undefined,
+    summary.readItemCount > 0
+      ? summary.readItemCount === 1
+        ? t("Read 1 item")
+        : t("Read {count} items", { count: summary.readItemCount })
+      : undefined,
+    summary.commandCount > 0
+      ? summary.commandCount === 1
+        ? t("Ran 1 command")
+        : t("Ran {count} commands", { count: summary.commandCount })
+      : undefined,
   ].filter((piece): piece is string => Boolean(piece));
   return pieces.length > 0 ? pieces.join(" · ") : undefined;
 }
@@ -501,7 +513,7 @@ function operationShellRevisionKey(
 function activitySummaryRevisionKey(model: ConversationOperationCellViewModel): string {
   const summary = model.activitySummary;
   return summary
-    ? [summary.editedFileCount, summary.readItemCount, summary.commandCount, summary.hasStructuredActions ? "structured" : "plain"].join(":")
+    ? [summary.editedFileCount, summary.editedItemCount, summary.readItemCount, summary.commandCount, summary.hasStructuredActions ? "structured" : "plain"].join(":")
     : "";
 }
 

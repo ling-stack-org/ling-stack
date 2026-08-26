@@ -34,6 +34,23 @@ const exportedGoldenFixture = (
   })
 ).default;
 
+function delegatedLineage(workflowId, workflowStepId, participantId, runId = "run-1", attemptId = "attempt-1", evidenceRefs = []) {
+  return {
+    workflowId,
+    workflowStepId,
+    participantId,
+    runId,
+    attemptId,
+    sourceRefs: [
+      { type: "workflow", id: workflowId },
+      { type: "workflow_step", id: workflowStepId },
+      ...(runId ? [{ type: "run", id: runId }] : []),
+      ...(attemptId ? [{ type: "attempt", id: attemptId }] : []),
+      ...evidenceRefs,
+    ],
+  };
+}
+
 test("Continuity v2 golden fixture is consumable through the public package export", () => {
   assert.deepEqual(exportedGoldenFixture, goldenFixture);
 });
@@ -572,6 +589,7 @@ test("delegated outcomes require typed durable evidence", () => {
     workflowId: "workflow-1",
     workflowStepId: "step-engineer",
     participantId: "teammate_builtin_engineer",
+    lineage: delegatedLineage("workflow-1", "step-engineer", "teammate_builtin_engineer", "run-1", "attempt-1", [{ type: "execution_action", id: "action-1" }]),
     evidenceRefs: [{ kind: "execution_action", id: "action-1" }],
   }), true);
   assert.equal(isDelegatedOutcomeV1({
@@ -579,6 +597,7 @@ test("delegated outcomes require typed durable evidence", () => {
     workflowId: "workflow-1",
     workflowStepId: "step-architect",
     participantId: "teammate_builtin_architect",
+    lineage: delegatedLineage("workflow-1", "step-architect", "teammate_builtin_architect", "run-1", "attempt-1", [{ type: "artifact", id: "artifact-1" }]),
     evidenceRefs: [{ kind: "workflow_output_packet", id: "artifact-1" }],
   }), true);
   assert.equal(isDelegatedOutcomeV1({
@@ -586,6 +605,37 @@ test("delegated outcomes require typed durable evidence", () => {
     workflowId: "workflow-1",
     workflowStepId: "step-engineer",
     participantId: "teammate_builtin_engineer",
+    lineage: delegatedLineage("workflow-1", "step-engineer", "teammate_builtin_engineer"),
+    evidenceRefs: [{ kind: "execution_action", id: "action-1" }],
+  }), false);
+  assert.equal(isDelegatedOutcomeV1({
+    kind: "completed",
+    workflowId: "workflow-1",
+    workflowStepId: "step-engineer",
+    participantId: "teammate_builtin_engineer",
+    lineage: delegatedLineage("workflow-1", "step-engineer", "teammate_builtin_engineer", null, null),
+    evidenceRefs: [],
+  }), false);
+  assert.equal(isDelegatedOutcomeV1({
+    kind: "blocked",
+    workflowId: "workflow-1",
+    workflowStepId: "step-engineer",
+    participantId: "teammate_builtin_engineer",
+    code: "delegated_outcome_missing",
+    reason: "No durable evidence was produced.",
+    missingRequirements: ["execution_action"],
+    lineage: delegatedLineage("workflow-1", "step-engineer", "teammate_builtin_engineer", null, null),
+    evidenceRefs: [],
+  }), true);
+  assert.equal(isDelegatedOutcomeV1({
+    kind: "blocked",
+    workflowId: "workflow-1",
+    workflowStepId: "step-engineer",
+    participantId: "teammate_builtin_engineer",
+    code: "delegated_outcome_missing",
+    reason: "No durable evidence was produced.",
+    missingRequirements: ["execution_action"],
+    lineage: delegatedLineage("workflow-1", "step-engineer", "teammate_builtin_engineer", "run-1", null),
     evidenceRefs: [],
   }), false);
   assert.equal(isDelegatedOutcomeV1({

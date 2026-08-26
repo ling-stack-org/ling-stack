@@ -990,6 +990,36 @@ test("sqlite handoff workflows persist steps, transitions, and workflow-step lea
   }
 });
 
+test("workflow step complete reads are not truncated at the interactive 500-row limit", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-step-complete-read-"));
+  const now = "2026-05-28T04:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Large workflow", boundPath: cwd }, now);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Large workflow",
+      objective: "Exercise canonical complete reads.",
+      createdBy: "system",
+    }, now);
+    for (let index = 0; index < 501; index += 1) {
+      store.createChannelWorkflowStep({
+        workflowId: workflow.id,
+        title: `Step ${index}`,
+        prompt: `Step ${index}`,
+        toParticipantId: "teammate_builtin_engineer",
+        toParticipantLabel: "Engineer",
+        position: index,
+      }, now);
+    }
+    assert.equal(store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }).length, 500);
+    assert.equal(store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }).length, 501);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task CAS claim and idempotency allow only one real transition", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-task-cas-"));
   const now = "2026-05-26T00:00:00.000Z";

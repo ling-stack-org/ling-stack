@@ -252,6 +252,11 @@ export interface ListApprovalRequestsOptions {
   readonly externalWorkActionId?: string;
   readonly workflowStepId?: string;
   readonly limit?: number;
+  /**
+   * Return the complete durable history for the scoped owner instead of the
+   * bounded interactive page. This is reserved for canonical evidence reads.
+   */
+  readonly complete?: boolean;
 }
 
 export const approvalStatuses: readonly ApprovalStatus[] = ["pending", "approved", "denied", "expired", "cancelled"];

@@ -65,6 +65,7 @@ export function createQueuedRunForConflict(input: {
   input.store.appendEvent(run.id, "run_created", {
     taskId: run.taskId,
     workUnitId: input.workUnit.id,
+    attemptId: input.attempt.id,
     threadId: input.thread?.id,
     workspaceCwd: input.workspaceCwd,
     cwd: run.cwd,

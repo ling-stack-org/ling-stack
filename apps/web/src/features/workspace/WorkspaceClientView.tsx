@@ -183,6 +183,7 @@ import type {
   ChannelLinkPreview,
   ChannelMention,
   ChannelMessage,
+  ConversationItemV1,
   ConversationGeneratedMedia,
   ChannelMessageFileRef,
   ChannelReplyPendingEvent,
@@ -396,6 +397,7 @@ export function WorkspaceClientView({
   tasks,
   taskForm,
   channelMessages,
+  channelConversationItems,
   channelGeneratedMedia,
   memoryById,
   usedMemoryEvents,
@@ -562,6 +564,7 @@ export function WorkspaceClientView({
   readonly tasks: readonly Task[];
   readonly taskForm: TaskFormState;
   readonly channelMessages: readonly ChannelMessage[];
+  readonly channelConversationItems: readonly ConversationItemV1[];
   readonly channelGeneratedMedia: readonly ConversationGeneratedMedia[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
@@ -1576,6 +1579,7 @@ export function WorkspaceClientView({
     () => buildConversationTurnProjection({
       channelId: selectedChannelId,
       messages: channelMessagesForDisplay,
+      conversationItems: channelConversationItems,
       proposals: channelExecutionProposals,
       intentDecisions: channelIntentDecisions,
       workflows: channelWorkflowsForDisplay,
@@ -1591,6 +1595,7 @@ export function WorkspaceClientView({
       channelExecutionProposals,
       channelIntentDecisions,
       channelMessagesForDisplay,
+      channelConversationItems,
       channelRuns,
       channelWorkflowStepsForDisplay,
       channelWorkflowsForDisplay,
@@ -1893,32 +1898,41 @@ export function WorkspaceClientView({
         proposal.channelId === selectedChannelId && proposal.id === selectedExecutionProposalTarget.proposalId
       )
     : undefined;
+  const newestActionableExecutionProposal = [...channelExecutionProposals]
+    .filter((proposal) =>
+      proposal.channelId === selectedChannelId &&
+      (proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed")
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.createdAt.localeCompare(left.createdAt))[0];
+  const newestActionableExecutionProposalVersionKey = newestActionableExecutionProposal
+    ? `${selectedChannelId}:${newestActionableExecutionProposal.id}:${newestActionableExecutionProposal.updatedAt}`
+    : undefined;
 
   useEffect(() => {
-    const timer = globalThis.setTimeout(() => {
-      setSelectedExecutionProposalTarget((current) => {
-        if (!selectedChannelId) return undefined;
-        if (current?.channelId === selectedChannelId) {
-          const currentProposal = channelExecutionProposals.find((proposal) =>
-            proposal.channelId === selectedChannelId && proposal.id === current.proposalId
-          );
-          if (currentProposal && currentProposal.status !== "accepted") return current;
-        }
-        const newestActionable = [...channelExecutionProposals]
-          .filter((proposal) =>
-            proposal.channelId === selectedChannelId &&
-            (proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed")
-          )
-          .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.createdAt.localeCompare(left.createdAt))[0];
-        if (!newestActionable) return undefined;
-        const versionKey = `${selectedChannelId}:${newestActionable.id}:${newestActionable.updatedAt}`;
-        if (autoOpenedExecutionProposalVersionsRef.current.has(versionKey)) return undefined;
-        autoOpenedExecutionProposalVersionsRef.current.add(versionKey);
-        return { channelId: selectedChannelId, proposalId: newestActionable.id, versionKey };
-      });
-    }, 0);
-    return () => globalThis.clearTimeout(timer);
-  }, [channelExecutionProposals, selectedChannelId]);
+    const current = selectedExecutionProposalTarget;
+    if (!selectedChannelId) {
+      if (current) setSelectedExecutionProposalTarget(undefined);
+      return;
+    }
+    if (current?.channelId === selectedChannelId && selectedExecutionProposal?.status !== "accepted") return;
+    if (!newestActionableExecutionProposal || !newestActionableExecutionProposalVersionKey) {
+      if (current?.channelId === selectedChannelId && !selectedExecutionProposal) {
+        autoOpenedExecutionProposalVersionsRef.current.delete(current.versionKey);
+      }
+      if (current) setSelectedExecutionProposalTarget(undefined);
+      return;
+    }
+    if (autoOpenedExecutionProposalVersionsRef.current.has(newestActionableExecutionProposalVersionKey)) {
+      if (current) setSelectedExecutionProposalTarget(undefined);
+      return;
+    }
+    autoOpenedExecutionProposalVersionsRef.current.add(newestActionableExecutionProposalVersionKey);
+    setSelectedExecutionProposalTarget({
+      channelId: selectedChannelId,
+      proposalId: newestActionableExecutionProposal.id,
+      versionKey: newestActionableExecutionProposalVersionKey,
+    });
+  }, [newestActionableExecutionProposalVersionKey, selectedChannelId]);
 
   function openExecutionProposal(proposal: ChannelExecutionProposal): void {
     const versionKey = `${proposal.channelId}:${proposal.id}:${proposal.updatedAt}`;
