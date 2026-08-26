@@ -6,6 +6,15 @@ open-source baseline onward.
 The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and future
 release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1.0] - 2026-08-26
+
+### Fixed
+
+- Channel message feeds no longer move sideways when wide execution content is swiped or
+  horizontally scrolled; switching channels and jumping to the latest message also clear
+  any stale horizontal offset.
+- Added browser regression coverage for contained horizontal gestures and offset resets.
+
 ## [0.1.0.0] - 2026-08-25
 
 ### Added
