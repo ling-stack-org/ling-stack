@@ -181,7 +181,7 @@ jobs:
         run: git diff-tree --check --no-commit-id -r HEAD
 
       - name: Upload macOS product
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ling-stack-macos-arm64-${{ github.run_id }}
           if-no-files-found: error
@@ -361,7 +361,7 @@ jobs:
         run: git diff-tree --check --no-commit-id -r HEAD
 
       - name: Upload Windows product
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
           name: ling-stack-windows-x64-${{ github.run_id }}
           if-no-files-found: error
