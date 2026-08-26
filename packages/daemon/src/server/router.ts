@@ -255,6 +255,7 @@ import {
   handleMutateRunWorkspaceChanges,
   handleMutateTurnWorkspaceChanges,
 } from "../features/runs/workspace-change-recovery.js";
+import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
@@ -1453,6 +1454,15 @@ export async function routeRequest(
   const workUnitRoute = parseWorkUnitRoute(url.pathname);
   if (workUnitRoute) {
     handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled, controlPlaneEvents);
+    return;
+  }
+
+  const workspaceSnapshotRoute = parseWorkspaceSnapshotRoute(url.pathname);
+  if (workspaceSnapshotRoute) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleWorkspaceSnapshotRoute(request, response, url, storeRegistry, workspaceSnapshotRoute, config);
     return;
   }
 

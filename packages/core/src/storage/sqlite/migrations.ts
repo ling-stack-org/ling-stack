@@ -8,6 +8,7 @@ import {
 } from "./run-context-view-lineage-migration.js";
 import { applyWorkspaceProvenanceMigration } from "./workspace-provenance-migration.js";
 import { applyPostCompactionUndoMigration } from "./post-compaction-undo-migration.js";
+import { applyWorkspaceSnapshotMigration } from "./workspace-snapshot-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -5660,6 +5661,12 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     recordMigration: context.recordMigration.bind(context),
   });
   applyPostCompactionUndoMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyWorkspaceSnapshotMigration({
     database,
     hasMigration: context.hasMigration.bind(context),
     hasTable: context.hasTable.bind(context),

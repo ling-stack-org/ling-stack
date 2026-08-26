@@ -35,6 +35,8 @@ export interface SqliteRunSessionStorePorts {
   readonly recordStateTransitionEvent: (input: CreateStateTransitionEventInput) => StateTransitionEvent;
   readonly reconcileLingTurnStatusForRun: (runId: string, now: string) => void;
   readonly updateLinkedWorkUnitRunId: (workUnitId: string, runId: string, now: string) => number;
+  /** Reject new/promoted execution while an explicit workspace restore owns the fence. */
+  readonly assertWorkspaceSnapshotFence?: (cwd: string) => void;
 }
 
 export class SqliteRunSessionStore {
@@ -45,6 +47,7 @@ export class SqliteRunSessionStore {
   ) {}
 
   createRun(input: CreateRunInput): RunSession {
+    this.ports.assertWorkspaceSnapshotFence?.(input.cwd);
     const eventLogPath = getRunEventLogPath(this.paths, input.id);
     const redactedTaskSnapshot = redactSecrets(input.taskSnapshot);
     const redactedProviderSnapshot = redactSecrets(input.providerSnapshot);
@@ -248,6 +251,9 @@ export class SqliteRunSessionStore {
     });
     if (!result.ok) {
       return result;
+    }
+    if (["queued", "running", "waiting_for_approval"].includes(result.to)) {
+      this.ports.assertWorkspaceSnapshotFence?.(run.cwd);
     }
 
     const update = this.context.database

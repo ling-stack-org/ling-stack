@@ -324,6 +324,24 @@ import type {
   UpdatePostCompactionUndoRecordInput,
   CreatePostCompactionUndoRecordInput,
   ListPostCompactionUndoRecordsOptions,
+  CreateWorkspaceSnapshotEntryInput,
+  CreateWorkspaceSnapshotManifestInput,
+  CreateWorkspaceSnapshotRestoreAnchorInput,
+  CreateSnapshotRestoreJournalEntryInput,
+  CreateSnapshotRestoreRequestInput,
+  CreateSnapshotRestoreConfirmationInput,
+  SnapshotRestoreConfirmation,
+  ListSnapshotRestoreJournalOptions,
+  ListSnapshotRestoreRequestsOptions,
+  ListWorkspaceSnapshotManifestsOptions,
+  SnapshotRestoreJournalEntry,
+  SnapshotRestoreRequest,
+  UpdateSnapshotRestoreRequestInput,
+  UpdateSnapshotRestoreJournalEntryInput,
+  WorkspaceSnapshotBlob,
+  WorkspaceSnapshotEntry,
+  WorkspaceSnapshotManifest,
+  WorkspaceSnapshotRestoreAnchor,
 } from "@ling-stack/contracts";
 import {
   type AcquireRuntimeSemaphoreSlotInput,
@@ -625,6 +643,7 @@ import { SqliteExternalWorkWorkflowCoordinator } from "./sqlite/external-work-wo
 import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
+import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
 
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
@@ -717,6 +736,7 @@ export class SqliteRunStore implements RunStore {
   private readonly workItems: SqliteWorkItemStore;
   private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
   private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
+  private readonly workspaceSnapshots: SqliteWorkspaceSnapshotStore;
 
   constructor(options: SqliteRunStoreOptions) {
     this.paths = options.paths ?? resolveRuntimePaths(options.cwd);
@@ -727,6 +747,7 @@ export class SqliteRunStore implements RunStore {
     this.conversationItems = new SqliteConversationItemStore({ database: this.database });
     this.workspaceProvenance = new SqliteWorkspaceProvenanceStore({ database: this.database });
     this.postCompactionUndo = new SqlitePostCompactionUndoStore({ database: this.database });
+    this.workspaceSnapshots = new SqliteWorkspaceSnapshotStore({ database: this.database });
     this.conversationTurnIngest = new SqliteConversationTurnIngestStore(
       { database: this.database },
       this.conversationItems,
@@ -763,6 +784,7 @@ export class SqliteRunStore implements RunStore {
           this.approvalCheckpoints.syncApprovalCheckpointForApproval(approval, now);
         },
         rebuildLingThreadMetadataForApproval: (approval, now) => this.tryRebuildLingThreadMetadataForApproval(approval, now),
+        assertWorkspaceSnapshotFence: (cwd) => this.assertWorkspaceSnapshotFence(cwd),
       },
     );
     this.artifacts = new SqliteArtifactStore(
@@ -864,6 +886,7 @@ export class SqliteRunStore implements RunStore {
         recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
         reconcileLingTurnStatusForRun: (runId, now) => this.lingTurns.reconcileLingTurnStatusForRun(runId, now),
         updateLinkedWorkUnitRunId: (workUnitId, runId, now) => this.runtimeWorkUnits.updateLinkedRunId(workUnitId, runId, now),
+        assertWorkspaceSnapshotFence: (cwd) => this.assertWorkspaceSnapshotFence(cwd),
       },
     );
     this.runEvents = new SqliteRunEventStore(
@@ -1742,6 +1765,123 @@ export class SqliteRunStore implements RunStore {
 
   updatePostCompactionUndoRecord(input: UpdatePostCompactionUndoRecordInput): PostCompactionUndoRecord | undefined {
     return this.postCompactionUndo.update(input);
+  }
+
+  createWorkspaceSnapshotManifest(input: CreateWorkspaceSnapshotManifestInput): WorkspaceSnapshotManifest {
+    return this.workspaceSnapshots.createManifest(input);
+  }
+
+  commitWorkspaceSnapshot(input: CreateWorkspaceSnapshotManifestInput, entries: readonly CreateWorkspaceSnapshotEntryInput[]): { readonly manifest: WorkspaceSnapshotManifest; readonly entries: readonly WorkspaceSnapshotEntry[] } {
+    return this.workspaceSnapshots.createManifestWithEntries(input, entries);
+  }
+
+  getWorkspaceSnapshotManifest(id: string): WorkspaceSnapshotManifest | undefined {
+    return this.workspaceSnapshots.getManifest(id);
+  }
+
+  listWorkspaceSnapshotManifests(options: ListWorkspaceSnapshotManifestsOptions = {}): WorkspaceSnapshotManifest[] {
+    return this.workspaceSnapshots.listManifests(options);
+  }
+
+  createWorkspaceSnapshotEntries(inputs: readonly CreateWorkspaceSnapshotEntryInput[]): WorkspaceSnapshotEntry[] {
+    return this.workspaceSnapshots.createEntries(inputs);
+  }
+
+  listWorkspaceSnapshotEntries(manifestId: string): WorkspaceSnapshotEntry[] {
+    return this.workspaceSnapshots.listEntries(manifestId);
+  }
+
+  getWorkspaceSnapshotBlob(sha256: string): WorkspaceSnapshotBlob | undefined {
+    return this.workspaceSnapshots.getBlob(sha256);
+  }
+
+  listWorkspaceSnapshotBlobs(): WorkspaceSnapshotBlob[] {
+    return this.workspaceSnapshots.listBlobs();
+  }
+
+  upsertWorkspaceSnapshotBlob(input: WorkspaceSnapshotBlob): WorkspaceSnapshotBlob {
+    return this.workspaceSnapshots.upsertBlob(input);
+  }
+
+  createWorkspaceSnapshotRestoreAnchor(input: CreateWorkspaceSnapshotRestoreAnchorInput): WorkspaceSnapshotRestoreAnchor {
+    return this.workspaceSnapshots.createAnchor(input);
+  }
+
+  getWorkspaceSnapshotRestoreAnchor(id: string): WorkspaceSnapshotRestoreAnchor | undefined {
+    return this.workspaceSnapshots.getAnchor(id);
+  }
+
+  createSnapshotRestoreRequest(input: CreateSnapshotRestoreRequestInput): SnapshotRestoreRequest {
+    return this.workspaceSnapshots.createRestoreRequest(input);
+  }
+
+  createSnapshotRestoreConfirmation(input: CreateSnapshotRestoreConfirmationInput): SnapshotRestoreConfirmation {
+    return this.workspaceSnapshots.createConfirmation(input);
+  }
+
+  getSnapshotRestoreConfirmation(id: string): SnapshotRestoreConfirmation | undefined {
+    return this.workspaceSnapshots.getConfirmation(id);
+  }
+
+  resolveSnapshotRestoreConfirmation(id: string, state: "confirmed" | "denied" | "expired", now: string): SnapshotRestoreConfirmation | undefined {
+    return this.workspaceSnapshots.resolveConfirmation(id, state, now);
+  }
+
+  getSnapshotRestoreRequest(id: string): SnapshotRestoreRequest | undefined {
+    return this.workspaceSnapshots.getRestoreRequest(id);
+  }
+
+  listSnapshotRestoreRequests(options: ListSnapshotRestoreRequestsOptions = {}): SnapshotRestoreRequest[] {
+    return this.workspaceSnapshots.listRestoreRequests(options);
+  }
+
+  getSnapshotRestoreRequestByIdempotency(workspaceId: string, idempotencyKey: string): SnapshotRestoreRequest | undefined {
+    return this.workspaceSnapshots.getRestoreRequestByIdempotency(workspaceId, idempotencyKey);
+  }
+
+  updateSnapshotRestoreRequest(input: UpdateSnapshotRestoreRequestInput): SnapshotRestoreRequest | undefined {
+    return this.workspaceSnapshots.updateRestoreRequest(input);
+  }
+
+  createSnapshotRestoreJournalEntries(inputs: readonly CreateSnapshotRestoreJournalEntryInput[]): SnapshotRestoreJournalEntry[] {
+    return this.workspaceSnapshots.createJournalEntries(inputs);
+  }
+
+  listSnapshotRestoreJournalEntries(options: ListSnapshotRestoreJournalOptions): SnapshotRestoreJournalEntry[] {
+    return this.workspaceSnapshots.listJournalEntries(options);
+  }
+
+  updateSnapshotRestoreJournalEntry(input: UpdateSnapshotRestoreJournalEntryInput): SnapshotRestoreJournalEntry | undefined {
+    return this.workspaceSnapshots.updateJournalEntry(input);
+  }
+
+  acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number {
+    return this.workspaceSnapshots.acquireFence(workspaceId, ownerRequestId, now);
+  }
+
+  getWorkspaceSnapshotFence(workspaceId: string): { readonly epoch: number; readonly ownerRequestId?: string } {
+    return this.workspaceSnapshots.getFence(workspaceId);
+  }
+
+  releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): boolean {
+    return this.workspaceSnapshots.releaseFence(workspaceId, ownerRequestId, now);
+  }
+
+  expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined {
+    return this.workspaceSnapshots.expireManifest(id, now);
+  }
+
+  deleteWorkspaceSnapshotManifest(id: string): boolean {
+    return this.workspaceSnapshots.deleteManifest(id);
+  }
+
+  deleteWorkspaceSnapshotBlob(sha256: string): boolean {
+    return this.workspaceSnapshots.deleteBlob(sha256);
+  }
+
+  assertWorkspaceSnapshotFence(_cwd: string): void {
+    const fence = this.workspaceSnapshots.getFence("workspace_default");
+    if (fence.ownerRequestId) throw new Error(`Workspace restore fence is active at epoch ${fence.epoch}.`);
   }
 
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention {

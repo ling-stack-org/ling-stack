@@ -17,6 +17,7 @@ import {
   terminalReportFileName,
 } from "../../../shared/conversation/blocks/TerminalReportBlock.js";
 import { WorkspaceFileOpenMenu } from "../../../shared/conversation/blocks/WorkspaceFileOpenMenu.js";
+import { WorkspaceSnapshotRestorePanel } from "./WorkspaceSnapshotRestorePanel.js";
 import {
   Button,
   EmptyState,
@@ -60,6 +61,7 @@ export function WorkspaceChangeReviewPage({
     const frameId = globalThis.requestAnimationFrame(() => scrollToFile(requestedPath));
     return () => globalThis.cancelAnimationFrame(frameId);
   }, [files.length, requestedPath]);
+
 
   function scrollToFile(path: string): void {
     setSelectedPath(path);
@@ -177,6 +179,7 @@ export function WorkspaceChangeReviewPage({
           </aside>
         ) : null}
       </div>
+      {cwd ? <WorkspaceSnapshotRestorePanel cwd={cwd} /> : null}
     </div>
   );
 }

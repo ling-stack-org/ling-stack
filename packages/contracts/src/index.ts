@@ -46,6 +46,7 @@ export type * from "./settings.js";
 export type * from "./workspace-directory.js";
 export type * from "./workspace-terminal.js";
 export * from "./workspace-changes.js";
+export * from "./workspace-snapshots.js";
 export type * from "./terminal-reports.js";
 export type * from "./startup.js";
 export type * from "./profile.js";

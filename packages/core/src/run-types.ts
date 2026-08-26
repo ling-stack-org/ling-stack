@@ -16,6 +16,24 @@ import type {
   PostCompactionUndoRecord,
   UpdatePostCompactionUndoRecordInput,
   WorkspaceMutationRecord,
+  CreateWorkspaceSnapshotEntryInput,
+  CreateWorkspaceSnapshotManifestInput,
+  CreateWorkspaceSnapshotRestoreAnchorInput,
+  CreateSnapshotRestoreJournalEntryInput,
+  CreateSnapshotRestoreRequestInput,
+  ListSnapshotRestoreJournalOptions,
+  ListWorkspaceSnapshotManifestsOptions,
+  SnapshotRestoreJournalEntry,
+  SnapshotRestoreRequest,
+  UpdateSnapshotRestoreRequestInput,
+  UpdateSnapshotRestoreJournalEntryInput,
+  WorkspaceSnapshotBlob,
+  WorkspaceSnapshotEntry,
+  WorkspaceSnapshotManifest,
+  WorkspaceSnapshotRestoreAnchor,
+  CreateSnapshotRestoreConfirmationInput,
+  SnapshotRestoreConfirmation,
+  ListSnapshotRestoreRequestsOptions,
 } from "@ling-stack/contracts";
 import type {
   ApprovalActionType,
@@ -1537,6 +1555,35 @@ export interface RunStore {
   getPostCompactionUndoRecord(id: string): PostCompactionUndoRecord | undefined;
   listPostCompactionUndoRecords(options?: ListPostCompactionUndoRecordsOptions): PostCompactionUndoRecord[];
   updatePostCompactionUndoRecord(input: UpdatePostCompactionUndoRecordInput): PostCompactionUndoRecord | undefined;
+  createWorkspaceSnapshotManifest(input: CreateWorkspaceSnapshotManifestInput): WorkspaceSnapshotManifest;
+  getWorkspaceSnapshotManifest(id: string): WorkspaceSnapshotManifest | undefined;
+  listWorkspaceSnapshotManifests(options?: ListWorkspaceSnapshotManifestsOptions): WorkspaceSnapshotManifest[];
+  createWorkspaceSnapshotEntries(inputs: readonly CreateWorkspaceSnapshotEntryInput[]): WorkspaceSnapshotEntry[];
+  listWorkspaceSnapshotEntries(manifestId: string): WorkspaceSnapshotEntry[];
+  getWorkspaceSnapshotBlob(sha256: string): WorkspaceSnapshotBlob | undefined;
+  listWorkspaceSnapshotBlobs(): WorkspaceSnapshotBlob[];
+  upsertWorkspaceSnapshotBlob(input: WorkspaceSnapshotBlob): WorkspaceSnapshotBlob;
+  createWorkspaceSnapshotRestoreAnchor(input: CreateWorkspaceSnapshotRestoreAnchorInput): WorkspaceSnapshotRestoreAnchor;
+  getWorkspaceSnapshotRestoreAnchor(id: string): WorkspaceSnapshotRestoreAnchor | undefined;
+  createSnapshotRestoreRequest(input: CreateSnapshotRestoreRequestInput): SnapshotRestoreRequest;
+  createSnapshotRestoreConfirmation(input: CreateSnapshotRestoreConfirmationInput): SnapshotRestoreConfirmation;
+  getSnapshotRestoreConfirmation(id: string): SnapshotRestoreConfirmation | undefined;
+  resolveSnapshotRestoreConfirmation(id: string, state: "confirmed" | "denied" | "expired", now: string): SnapshotRestoreConfirmation | undefined;
+  getSnapshotRestoreRequest(id: string): SnapshotRestoreRequest | undefined;
+  listSnapshotRestoreRequests(options?: ListSnapshotRestoreRequestsOptions): SnapshotRestoreRequest[];
+  getSnapshotRestoreRequestByIdempotency(workspaceId: string, idempotencyKey: string): SnapshotRestoreRequest | undefined;
+  updateSnapshotRestoreRequest(input: UpdateSnapshotRestoreRequestInput): SnapshotRestoreRequest | undefined;
+  createSnapshotRestoreJournalEntries(inputs: readonly CreateSnapshotRestoreJournalEntryInput[]): SnapshotRestoreJournalEntry[];
+  listSnapshotRestoreJournalEntries(options: ListSnapshotRestoreJournalOptions): SnapshotRestoreJournalEntry[];
+  updateSnapshotRestoreJournalEntry(input: UpdateSnapshotRestoreJournalEntryInput): SnapshotRestoreJournalEntry | undefined;
+  acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number;
+  getWorkspaceSnapshotFence(workspaceId: string): { readonly epoch: number; readonly ownerRequestId?: string };
+  releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): boolean;
+  expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined;
+  deleteWorkspaceSnapshotManifest(id: string): boolean;
+  deleteWorkspaceSnapshotBlob(sha256: string): boolean;
+  commitWorkspaceSnapshot(input: CreateWorkspaceSnapshotManifestInput, entries: readonly CreateWorkspaceSnapshotEntryInput[]): { readonly manifest: WorkspaceSnapshotManifest; readonly entries: readonly WorkspaceSnapshotEntry[] };
+  assertWorkspaceSnapshotFence(cwd: string): void;
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention;
   getRunIntervention(interventionId: string): RunIntervention | undefined;
   listRunInterventions(options?: ListRunInterventionsOptions): RunIntervention[];
