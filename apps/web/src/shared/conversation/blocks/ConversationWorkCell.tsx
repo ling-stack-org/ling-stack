@@ -3,6 +3,7 @@ import { BookOpen, CheckCircle2, ChevronDown, CircleAlert, Clock3, FilePenLine, 
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
 import { projectConversationActivity, type ConversationAgentActivitySpan, type ConversationArtifactStripItem, type ConversationCommandBatchItem, type ConversationOperationCellViewModel, type ConversationWorkCellEvidenceLink, type ConversationWorkCellGroup, type ConversationWorkCellItem, type ConversationWorkCellRow, type ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
+import type { DialogOwnedApprovalPresentation } from "../../../lib/runtime-approval-presentation.js";
 import type { PreviewContentResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import type { ConversationSurfaceKind, TerminalReportProjectionPolicy } from "../tokens/conversation-surface-policy.js";
@@ -35,12 +36,20 @@ export interface ConversationWorkCellProps {
   readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
   readonly showArtifactStrip?: boolean;
   readonly showTerminalReport?: boolean;
+  readonly dialogOwnedApproval?: DialogOwnedApprovalPresentation;
   readonly terminalReportProjectionPolicy?: Partial<TerminalReportProjectionPolicy>;
   readonly onOpenWorkspaceFile?: (target: TerminalReportFileTarget) => void;
   readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
 }
 
-export function ConversationWorkCell({
+export function ConversationWorkCell(props: ConversationWorkCellProps): React.JSX.Element {
+  if (props.dialogOwnedApproval) {
+    return <DialogOwnedPendingWorkCell model={props.model} approval={props.dialogOwnedApproval} />;
+  }
+  return <ConversationWorkCellContent {...props} />;
+}
+
+function ConversationWorkCellContent({
   model,
   surface,
   cwd,
@@ -256,6 +265,36 @@ export function ConversationWorkCell({
           {evidenceDisclosure}
         </div>
       ) : null}
+    </article>
+  );
+}
+
+function DialogOwnedPendingWorkCell({
+  model,
+  approval,
+}: {
+  readonly model: ConversationOperationCellViewModel;
+  readonly approval: DialogOwnedApprovalPresentation;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  const statusLabel = `${t("Waiting for approval")}: ${approval.actionSentence}`;
+  return (
+    <article
+      className="conversation-work-cell conversation-operation-cell active status-waiting_for_approval no-rail presentation-dialog-owned-pending"
+      data-thread-id={model.threadId}
+      data-operation-source={model.sourceKind}
+      data-approval-presentation-owner="dialog"
+      data-approval-id={approval.approvalId}
+      aria-label={statusLabel}
+    >
+      <span className="visually-hidden" role="status" aria-live="polite">{statusLabel}</span>
+      <div className="conversation-operation-shell conversation-operation-bubble active tone-waiting collapsed">
+        <div className="conversation-dialog-owned-approval-marker">
+          <CircleAlert aria-hidden="true" size={15} />
+          <strong>{t("Waiting for approval")}</strong>
+          <span>{approval.actionSentence}</span>
+        </div>
+      </div>
     </article>
   );
 }

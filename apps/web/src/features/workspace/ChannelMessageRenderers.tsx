@@ -26,7 +26,12 @@ import type { ConversationAgentActivitySpan, ConversationWorkCellViewModel } fro
 import type { ConversationTranscriptBlock, ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
+import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import { attachmentCanPreview, type PreviewRequest } from "../../lib/previews.js";
+import {
+  buildDialogOwnedApprovalPresentationByRunId,
+  dialogOwnedApprovalPresentationForWorkCell,
+} from "../../lib/runtime-approval-presentation.js";
 import { filterUsedMemoryEventsByResponse } from "../../shared/components/index.js";
 import {
   AvatarInitial,
@@ -79,17 +84,16 @@ import type {
   PreviewContentResponse,
   StateTransitionEvent,
   UsedMemoryEvent,
-  UpdateChannelExecutionProposalRequest,
   UserProfile,
 } from "../../types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import {
-  ChannelExecutionProposalCard,
   WorkflowFinalSummary,
   workflowCanAdvance,
   workflowCanCancel,
 } from "./ChannelWorkflowProposalCards.js";
+import { ChannelExecutionProposalSummary } from "./ChannelExecutionProposalPresentation.js";
 import type { ChannelMessageFeedItem, PendingChannelSendPreview } from "./ChannelMessageFeed.js";
 import { ChannelProposedPlanBlock } from "./ChannelProposedPlanBlock.js";
 import { readChannelProposedPlanMessage } from "./channel-proposed-plan-message.js";
@@ -119,6 +123,7 @@ export interface ChannelMessageRenderersInput {
   readonly conversationWorkCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly conversationWorkCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly conversationWorkCellDetailsByKey: Readonly<Record<string, ConversationWorkCellDetailsState>>;
+  readonly dialogOwnedApprovals: readonly InlineApprovalView[];
   readonly cwd: string;
   readonly executionProposalsByMessageId: ReadonlyMap<string, readonly ChannelExecutionProposal[]>;
   readonly formatBytes: (value: number) => string;
@@ -144,9 +149,7 @@ export interface ChannelMessageRenderersInput {
   readonly workflowProgressByWorkflowId: ReadonlyMap<string, unknown>;
   readonly activityActionRow: (activityItemId: string, children?: ReactNode) => React.JSX.Element;
   readonly conversationWorkCellDetailsCacheKey: (threadId: string) => string;
-  readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
-  readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onAcceptProposedPlan: (plan: ProposedPlanArtifact) => void;
   readonly onConvertProposedPlan: (plan: ProposedPlanArtifact) => void;
@@ -155,9 +158,7 @@ export interface ChannelMessageRenderersInput {
   readonly onOpenApprovalDetail: (approval: ApprovalRequest | undefined) => void;
   readonly onOpenContextSummaryInConversationDetail: (summary: ChannelContextSummary) => void;
   readonly onOpenRun: (runId: string) => void;
-  readonly onRepairProposalModelBinding: (
-    blocker: NonNullable<ChannelExecutionProposal["blocker"]>,
-  ) => void;
+  readonly onOpenExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onOpenFileReference: () => void;
   readonly onOpenTerminalReportFile: (target: TerminalReportFileTarget) => void;
   readonly onOpenWorkspaceReview: (target: ConversationWorkspaceReviewTarget) => void;
@@ -177,10 +178,6 @@ export interface ChannelMessageRenderersInput {
   readonly onCancelMessageEdit: () => void;
   readonly onSaveMessageEdit: (message: ChannelMessage, body: string) => void | Promise<void>;
   readonly onRetryMessageReplacement: (message: ChannelMessage) => void | Promise<void>;
-  readonly onUpdateExecutionProposal: (
-    proposal: ChannelExecutionProposal,
-    input: UpdateChannelExecutionProposalRequest,
-  ) => Promise<ChannelExecutionProposal | undefined>;
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
   readonly readRunTitle: (run: RunSession) => string;
   readonly planActionBusyId: string;
@@ -194,6 +191,7 @@ export interface ChannelMessageRenderers {
 
 export function createChannelMessageRenderers(input: ChannelMessageRenderersInput): ChannelMessageRenderers {
   const channelSurface = input.selectedChannelBranchRootThreadId ? "channel_branch" : "channel_root";
+  const dialogOwnedApprovalByRunId = buildDialogOwnedApprovalPresentationByRunId(input.dialogOwnedApprovals, input.t);
   function renderLingAgentAvatar(): ReactNode {
     const teammate = input.allLocalTeammateById.get(LING_AGENT_AUTHOR_ID);
     return (
@@ -228,16 +226,35 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
   }
 
   function renderConversationParticipantAvatar(participantId: string | undefined, label: string): ReactNode {
+    const teammate = resolveConversationParticipantTeammate(participantId, label);
+    return teammate ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact /> : undefined;
+  }
+
+  function resolveConversationParticipantTeammate(participantId: string | undefined, label: string): LocalTeammateDraft | undefined {
     const normalizedParticipantId = participantId?.trim();
     const normalizedLabel = normalizeAgentLabel(label);
-    const teammate = (normalizedParticipantId ? input.allLocalTeammateById.get(normalizedParticipantId) : undefined) ??
+    return (normalizedParticipantId ? input.allLocalTeammateById.get(normalizedParticipantId) : undefined) ??
       input.allLocalTeammateByName.get(label.trim().toLowerCase()) ??
       [...input.allLocalTeammateById.values()].find((candidate) =>
         candidate.templateId === normalizedParticipantId ||
         candidate.roleKey === normalizedParticipantId ||
         normalizeAgentLabel(candidate.displayName) === normalizedLabel,
       );
-    return teammate ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact /> : undefined;
+  }
+
+  function renderExecutionProposalAssigneeAvatar(proposal: ChannelExecutionProposal, assigneeLabel: string): ReactNode {
+    const teammate = resolveConversationParticipantTeammate(proposal.assigneeTeammateId, assigneeLabel);
+    return (
+      <TeammateAvatarView
+        teammate={teammate ?? {
+          displayName: assigneeLabel,
+          roleKey: "custom",
+          avatarTone: "gray",
+        }}
+        cwd={input.cwd}
+        compact
+      />
+    );
   }
 
   function renderConversationAgentAvatar(span: ConversationAgentActivitySpan): ReactNode {
@@ -461,6 +478,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={block.operationCell}
           surface={channelSurface}
+          dialogOwnedApproval={dialogOwnedApprovalPresentationForWorkCell(block.operationCell, dialogOwnedApprovalByRunId)}
           cwd={operationCwd}
           detailsState={context.detailsState}
           onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
@@ -831,21 +849,19 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
   }
 
   function renderExecutionProposalCard(proposal: ChannelExecutionProposal): ReactNode {
+    const assigneeLabel = teammateLabel(
+      proposal.assigneeTeammateId,
+      input.teammateOptions,
+      input.t("Deleted teammate"),
+      input.allLocalTeammateById,
+    );
     return (
-      <ChannelExecutionProposalCard
+      <ChannelExecutionProposalSummary
         key={proposal.id}
         proposal={proposal}
-        assigneeLabel={teammateLabel(proposal.assigneeTeammateId, input.teammateOptions, input.t("Deleted teammate"))}
-        teammates={input.teammateOptions}
-        linkedRun={proposal.linkedRunId ? input.runById.get(proposal.linkedRunId) : undefined}
-        linkedWorkflow={proposal.linkedWorkflowId ? input.channelWorkflows.find((workflow) => workflow.id === proposal.linkedWorkflowId) : undefined}
-        activeRunId={input.activeRunId}
-        latestStatus={input.latestStatus}
-        onConfirm={() => input.onConfirmExecutionProposal(proposal)}
-        onCancel={() => input.onCancelExecutionProposal(proposal)}
-        onUpdate={input.onUpdateExecutionProposal}
-        onOpenRun={input.onOpenRun}
-        onRepairModelBinding={input.onRepairProposalModelBinding}
+        assigneeAvatar={renderExecutionProposalAssigneeAvatar(proposal, assigneeLabel)}
+        assigneeLabel={assigneeLabel}
+        onOpen={() => input.onOpenExecutionProposal(proposal)}
       />
     );
   }
@@ -864,6 +880,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={workCell}
           surface={channelSurface}
+          dialogOwnedApproval={dialogOwnedApprovalPresentationForWorkCell(workCell, dialogOwnedApprovalByRunId)}
           cwd={input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
           onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
@@ -980,6 +997,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={workCell}
           surface={channelSurface}
+          dialogOwnedApproval={dialogOwnedApprovalPresentationForWorkCell(workCell, dialogOwnedApprovalByRunId)}
           cwd={run.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[input.conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
           onOpenRun={input.onOpenRun}

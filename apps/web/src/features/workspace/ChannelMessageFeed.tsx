@@ -148,6 +148,7 @@ export function useChannelMessageFeed({
     overscan: 10,
     paddingEnd: 38,
     getItemKey: (index) => items[index]?.renderKey ?? items[index]?.id ?? index,
+    useFlushSync: false,
   });
   const virtualRows = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();

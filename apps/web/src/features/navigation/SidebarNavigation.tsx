@@ -16,6 +16,7 @@ import {
   Settings,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import { sidebarObjectContextKey, type SidebarObjectContext } from "../../app/sidebar-object-context.js";
 import { Icon, IconButton, InlineFeedback, Input, StatusIndicator } from "../../shared/ui/index.js";
 import {
   channelSidebarTarget,
@@ -27,6 +28,7 @@ import type { AiTeammate, Channel, ChannelBranch } from "../../types.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import { SidebarPrimaryNavigation } from "./SidebarPrimaryNavigation.js";
 import { channelAvatarMeta } from "./sidebar-channel-avatar.js";
+import { SidebarObjectPreview } from "./SidebarObjectPreview.js";
 import { SidebarObjectRow } from "./SidebarObjectRow.js";
 import { SidebarArchiveAllConversationsDialog } from "./SidebarArchiveAllConversationsDialog.js";
 import { SidebarSection, SidebarSectionSkeleton, type SidebarSectionId } from "./SidebarSection.js";
@@ -62,6 +64,7 @@ export function SidebarNavigation({
   stale = false,
   channelNotifications = {},
   teammateNotifications = {},
+  objectContexts = {},
   recentConversations = [],
   recentConversationsInitialLoading = false,
   recentConversationActionError = "",
@@ -97,6 +100,7 @@ export function SidebarNavigation({
   readonly stale?: boolean;
   readonly channelNotifications?: Readonly<Record<string, SidebarNotification>>;
   readonly teammateNotifications?: Readonly<Record<string, SidebarNotification>>;
+  readonly objectContexts?: Readonly<Record<string, SidebarObjectContext>>;
   readonly recentConversations?: readonly SidebarRecentConversation[];
   readonly recentConversationsInitialLoading?: boolean;
   readonly recentConversationActionError?: string;
@@ -257,15 +261,22 @@ export function SidebarNavigation({
 	            const channelAvatar = channelAvatarMeta(channel);
 	            return (
 	              <div key={channel.id} className="sidebar-channel-group">
-	                <SidebarObjectRow
+		                <SidebarObjectRow
 	                  actionsLabel={t("Channel actions")}
 	                  ariaLabel={channel.name}
 	                  icon={<span className={`sidebar-channel-avatar ${channelAvatar.tone}`} aria-hidden="true">{channelAvatar.label}</span>}
 	                  onSelect={() => onSelectChannel(channel.id)}
 	                  selected={channelActive}
 	                  status={renderSidebarNotification(channelNotifications[channel.id], sidebarStatusLabels)}
-	                  statusId={sidebarNotificationId(channelNotifications[channel.id])}
-	                  actions={(
+		                  statusId={sidebarNotificationId(channelNotifications[channel.id])}
+		                  tooltip={(
+		                    <SidebarObjectPreview
+		                      context={objectContexts[sidebarObjectContextKey("channel", channel.id)] ?? { activityAt: channel.updatedAt }}
+		                      title={channel.name}
+		                    />
+		                  )}
+		                  tooltipClassName="sidebar-object-preview-tooltip"
+		                  actions={(
                     <>
                     {onCreateChannelBranch ? (
                       <IconButton
@@ -411,6 +422,13 @@ export function SidebarNavigation({
               selected={activeSidebarTarget === teammateSidebarTarget(teammate.id)}
               status={renderSidebarNotification(teammateNotifications[teammate.id], sidebarStatusLabels)}
               statusId={sidebarNotificationId(teammateNotifications[teammate.id])}
+              tooltip={(
+                <SidebarObjectPreview
+                  context={objectContexts[sidebarObjectContextKey("private_chat", teammate.id)] ?? { activityAt: teammate.updatedAt }}
+                  title={teammate.displayName}
+                />
+              )}
+              tooltipClassName="sidebar-object-preview-tooltip"
               actions={onArchiveTeammate ? (
                 <IconButton
                   className="sidebar-mini-action danger"
@@ -477,11 +495,18 @@ export function SidebarNavigation({
               key={conversation.id}
               ariaLabel={t("Open recent conversation {index}", { index: index + 1 })}
               buttonClassName="sidebar-recent-row"
+              description={conversation.meta}
               icon={<MessageSquare size={14} />}
               onSelect={() => onSelectRecentConversation(conversation)}
               selected={conversation.id === selectedRecentConversationId}
               shellClassName="sidebar-recent-row-shell"
-              tooltip={conversation.label}
+              tooltip={(
+                <SidebarObjectPreview
+                  context={objectContexts[sidebarObjectContextKey("conversation", conversation.id)] ?? { activityAt: conversation.updatedAt }}
+                  title={conversation.label}
+                />
+              )}
+              tooltipClassName="sidebar-object-preview-tooltip"
               status={conversation.primaryStatus
                 ? renderSidebarNotification({ primaryStatus: conversation.primaryStatus }, sidebarStatusLabels)
                 : undefined}
@@ -498,10 +523,7 @@ export function SidebarNavigation({
                 />
               ) : undefined}
             >
-              <span className="sidebar-recent-copy">
-                <strong>{conversation.label}</strong>
-                <small>{conversation.meta}</small>
-              </span>
+              {conversation.label}
             </SidebarObjectRow>
           ))
         )}

@@ -234,7 +234,7 @@ import type {
   UserProfile,
 } from "../../types.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
-import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
+import { RuntimeApprovalDialogQueue } from "../approvals/RuntimeApprovalDialogQueue.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelTeamMetricsPanel } from "./ChannelTeamMetricsPanel.js";
@@ -248,6 +248,7 @@ import {
   type ChannelTeammateRelationFeedback,
 } from "./ChannelSettingsPanels.js";
 import { ChannelComposer } from "./ChannelComposer.js";
+import { ChannelExecutionProposalDialog } from "./ChannelExecutionProposalDialog.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { ChannelFeedLatestControl, ChannelFeedStatus } from "./ChannelFeedChrome.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
@@ -457,6 +458,7 @@ export function WorkspaceClientView({
   externalActionDetails,
   approvalsLoading,
   resolvingApprovals,
+  approvalErrors,
   resourceLeases,
   runtimeDiagnostics,
   workUnits,
@@ -623,6 +625,7 @@ export function WorkspaceClientView({
   readonly externalActionDetails: Readonly<Record<string, ExternalWorkActionView>>;
   readonly approvalsLoading: boolean;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly approvalErrors: Readonly<Record<string, string>>;
   readonly resourceLeases: readonly ResourceLease[];
   readonly runtimeDiagnostics: RuntimeDiagnosticsResponse | undefined;
   readonly workUnits: readonly WorkUnit[];
@@ -674,8 +677,8 @@ export function WorkspaceClientView({
     readonly onReplyLinked?: (target: ConversationActiveReplyTarget) => void;
     readonly onReplyDispatch?: (dispatch: ChannelReplyDispatch) => void;
   }) => Promise<{ readonly errorMessage?: string }>;
-  readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => void;
-  readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => void;
+  readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => Promise<void>;
+  readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => Promise<void>;
   readonly onUpdateExecutionProposal: (
     proposal: ChannelExecutionProposal,
     input: UpdateChannelExecutionProposalRequest,
@@ -1482,26 +1485,7 @@ export function WorkspaceClientView({
   const channelSendLifecycle = useConversationSendLifecycle(
     `channel:${selectedChannelId}:${selectedChannelBranchRootThreadId ?? "root"}`,
   );
-  const channelActiveStatusStrip = pendingApprovalCount > 0 && inlineApprovalViews.length === 0 ? (
-    <ConversationStatusStrip
-      className="channel-active-status-strip conversation-composer-status-strip attention"
-      icon={<ShieldCheck size={15} />}
-      title={t("Pending approvals")}
-      description={selectedApproval?.title ?? t("Approval request")}
-      statusNode={<ChannelActiveStatusIndicator kind="pending-approval" />}
-      metaItems={[
-        { id: "approvals", label: t("Approvals"), value: pendingApprovalCount },
-      ]}
-      actions={[
-        {
-          id: "open-approval",
-          label: t("Open approval"),
-          icon: <ShieldCheck size={14} />,
-          onClick: () => openApprovalDetail(selectedApproval),
-        },
-      ]}
-    />
-  ) : providerBlocker && inlineApprovalViews.length === 0 ? (
+  const channelActiveStatusStrip = providerBlocker && inlineApprovalViews.length === 0 ? (
     <ConversationStatusStrip
       className="channel-active-status-strip conversation-composer-status-strip attention"
       icon={<CircleAlert size={15} />}
@@ -1903,6 +1887,58 @@ export function WorkspaceClientView({
     }
     return proposalsByMessageId;
   }, [channelExecutionProposals]);
+  const [selectedExecutionProposalTarget, setSelectedExecutionProposalTarget] = useState<{
+    readonly channelId: string;
+    readonly proposalId: string;
+    readonly versionKey: string;
+  }>();
+  const autoOpenedExecutionProposalVersionsRef = useRef(new Set<string>());
+  const selectedExecutionProposal = selectedExecutionProposalTarget?.channelId === selectedChannelId
+    ? channelExecutionProposals.find((proposal) =>
+        proposal.channelId === selectedChannelId && proposal.id === selectedExecutionProposalTarget.proposalId
+      )
+    : undefined;
+  const newestActionableExecutionProposal = [...channelExecutionProposals]
+    .filter((proposal) =>
+      proposal.channelId === selectedChannelId &&
+      (proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed")
+    )
+    .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.createdAt.localeCompare(left.createdAt))[0];
+  const newestActionableExecutionProposalVersionKey = newestActionableExecutionProposal
+    ? `${selectedChannelId}:${newestActionableExecutionProposal.id}:${newestActionableExecutionProposal.updatedAt}`
+    : undefined;
+
+  useEffect(() => {
+    const current = selectedExecutionProposalTarget;
+    if (!selectedChannelId) {
+      if (current) setSelectedExecutionProposalTarget(undefined);
+      return;
+    }
+    if (current?.channelId === selectedChannelId && selectedExecutionProposal?.status !== "accepted") return;
+    if (!newestActionableExecutionProposal || !newestActionableExecutionProposalVersionKey) {
+      if (current?.channelId === selectedChannelId && !selectedExecutionProposal) {
+        autoOpenedExecutionProposalVersionsRef.current.delete(current.versionKey);
+      }
+      if (current) setSelectedExecutionProposalTarget(undefined);
+      return;
+    }
+    if (autoOpenedExecutionProposalVersionsRef.current.has(newestActionableExecutionProposalVersionKey)) {
+      if (current) setSelectedExecutionProposalTarget(undefined);
+      return;
+    }
+    autoOpenedExecutionProposalVersionsRef.current.add(newestActionableExecutionProposalVersionKey);
+    setSelectedExecutionProposalTarget({
+      channelId: selectedChannelId,
+      proposalId: newestActionableExecutionProposal.id,
+      versionKey: newestActionableExecutionProposalVersionKey,
+    });
+  }, [newestActionableExecutionProposalVersionKey, selectedChannelId]);
+
+  function openExecutionProposal(proposal: ChannelExecutionProposal): void {
+    const versionKey = `${proposal.channelId}:${proposal.id}:${proposal.updatedAt}`;
+    autoOpenedExecutionProposalVersionsRef.current.add(versionKey);
+    setSelectedExecutionProposalTarget({ channelId: proposal.channelId, proposalId: proposal.id, versionKey });
+  }
   const channelRunsForFiles = channelRuns;
 
   useEffect(() => {
@@ -3344,6 +3380,7 @@ export function WorkspaceClientView({
     conversationWorkCellByThreadId,
     conversationWorkCellByWorkflowId,
     conversationWorkCellDetailsByKey,
+    dialogOwnedApprovals: inlineApprovalViews,
     cwd,
     executionProposalsByMessageId,
     formatBytes,
@@ -3370,9 +3407,7 @@ export function WorkspaceClientView({
     workflowProgressByWorkflowId,
     activityActionRow,
     conversationWorkCellDetailsCacheKey,
-    onCancelExecutionProposal,
     onCancelWorkflow,
-    onConfirmExecutionProposal,
     onCreateTaskFromContextSummary,
     onAcceptProposedPlan: handleAcceptProposedPlan,
     onConvertProposedPlan: handleConvertProposedPlan,
@@ -3381,7 +3416,7 @@ export function WorkspaceClientView({
     onOpenApprovalDetail: openApprovalDetail,
     onOpenContextSummaryInConversationDetail: openContextSummaryInConversationDetail,
     onOpenRun: openRunInPanel,
-    onRepairProposalModelBinding: repairProposalModelBinding,
+    onOpenExecutionProposal: openExecutionProposal,
     onOpenFileReference: () => openRightDockPage("files"),
     onOpenTerminalReportFile: (target) => openRightDockPage("files", target),
     onOpenWorkspaceReview: (target) => openRightDockPage("review", undefined, {
@@ -3410,7 +3445,6 @@ export function WorkspaceClientView({
     },
     onSaveMessageEdit: saveChannelMessageEdit,
     onRetryMessageReplacement: retryChannelMessageReplacement,
-    onUpdateExecutionProposal,
     onUpdateHandoffStatus,
     readRunTitle,
     planActionBusyId: proposedPlanActionBusyId,
@@ -3446,7 +3480,6 @@ export function WorkspaceClientView({
       dropZoneClassName={composerDragActive ? "active" : undefined}
       inputParts={composerInputParts}
       inputRef={composerInputRef}
-      inlineApprovalViews={inlineApprovalViews}
       isCancellingRun={isCancellingRun}
       mentionActiveIndex={mentionActiveIndex}
       mentionPicker={mentionPicker}
@@ -3466,7 +3499,6 @@ export function WorkspaceClientView({
       goalExpanded={channelGoalExpanded}
       goalChipVisible={channelGoalChipVisible}
       channelTeammateIds={channelTeammateIds}
-      resolvingApprovals={resolvingApprovals}
       runGuidanceError={runGuidanceError}
       runGuidanceItems={runGuidanceItems}
       runGuidanceLoading={runGuidanceLoading}
@@ -3498,7 +3530,6 @@ export function WorkspaceClientView({
       onInputPasteFiles={handleComposerPasteFiles}
       onInputSelect={updateMentionPicker}
       onInsertMentionTrigger={insertMentionTrigger}
-      onOpenApproval={(approvalId) => openApprovalDetail(approvals.find((approval) => approval.id === approvalId))}
       onPermissionPresetChange={(preset) => onPermissionModeChange(permissionModeForPreset(preset))}
       onTogglePlanMode={toggleChannelPlanModeFromComposer}
       onRevealPlanModeChip={() => setChannelPlanModeChipVisible(true)}
@@ -3516,7 +3547,6 @@ export function WorkspaceClientView({
       onResizePointerDown={handleComposerResizePointerDown}
       onResizePointerMove={handleComposerResizePointerMove}
       onResizePointerUp={handleComposerResizePointerEnd}
-      onResolveApproval={onResolveApproval}
       onRetrySend={() => {
         void sendMessage();
       }}
@@ -4650,6 +4680,25 @@ export function WorkspaceClientView({
           onClose={() => setChannelBottomPanelOpen(false)}
         />
       ) : null}
+      <RuntimeApprovalDialogQueue
+        approvals={inlineApprovalViews}
+        approvalErrors={approvalErrors}
+        resolvingApprovals={resolvingApprovals}
+        onResolve={onResolveApproval}
+      />
+      <ChannelExecutionProposalDialog
+        proposal={inlineApprovalViews.length === 0 ? selectedExecutionProposal : undefined}
+        assigneeLabel={selectedExecutionProposal
+          ? teammateLabel(selectedExecutionProposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))
+          : ""}
+        teammates={teammateOptions}
+        onClose={() => setSelectedExecutionProposalTarget(undefined)}
+        onConfirm={onConfirmExecutionProposal}
+        onCancel={onCancelExecutionProposal}
+        onUpdate={onUpdateExecutionProposal}
+        onOpenRun={openRunInPanel}
+        onRepairModelBinding={repairProposalModelBinding}
+      />
     </div>
   );
 }

@@ -31,9 +31,6 @@ import {
   normalConversationThinkingOptions,
 } from "./normal-conversation-composer-options.js";
 import type { ConversationHomeModelOption } from "./normal-conversation-types.js";
-import type { InlineApprovalView } from "../../lib/inline-approvals.js";
-import { InlineApprovalStrip } from "../approvals/InlineApprovalStrip.js";
-import type { ApprovalResolution } from "../approvals/types.js";
 
 export interface NormalConversationComposerProps {
   readonly draft: string;
@@ -52,8 +49,6 @@ export interface NormalConversationComposerProps {
   readonly selectedThinkingLevel: ProviderThinkingMode;
   readonly sendBusy: boolean;
   readonly activeRun: boolean;
-  readonly inlineApprovalViews: readonly InlineApprovalView[];
-  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly stopping: boolean;
   readonly canSend: boolean;
   readonly notice: string;
@@ -68,19 +63,16 @@ export interface NormalConversationComposerProps {
   readonly onDragLeave: (event: DragEvent<HTMLDivElement>) => void;
   readonly onDrop: (event: DragEvent<HTMLDivElement>) => void;
   readonly onOpenModelWorkbench?: () => void;
-  readonly onOpenApproval: (approvalId: string) => void;
   readonly onRemoveAttachment: (localId: string) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onModelChange: (option: ConversationHomeModelOption) => void;
   readonly onThinkingLevelChange: (level: ProviderThinkingMode) => void;
   readonly onSubmit: () => void | Promise<void>;
-  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onStop?: () => void | Promise<void>;
 }
 
 export function NormalConversationComposer({
   activeRun,
-  inlineApprovalViews,
   canSend,
   defaultProviderLabel,
   defaultProviderPresetId,
@@ -101,19 +93,16 @@ export function NormalConversationComposer({
   onDraftChange,
   onModelChange,
   onOpenModelWorkbench,
-  onOpenApproval,
   onPermissionPresetChange,
   onRemoveAttachment,
   onStop,
   onSubmit,
-  onResolveApproval,
   onThinkingLevelChange,
   pendingAttachments,
   permissionPreset,
   fullAccessConfirmed,
   selectedProviderPresetId,
   selectedThinkingLevel,
-  resolvingApprovals,
   sendBusy,
   slashActiveIndex,
   slashOptions,
@@ -213,14 +202,6 @@ export function NormalConversationComposer({
           }] : []}
         />
       ) : null}
-      approvalNode={(
-        <InlineApprovalStrip
-          approvals={inlineApprovalViews}
-          resolvingApprovals={resolvingApprovals}
-          onResolve={onResolveApproval}
-          onOpenApproval={onOpenApproval}
-        />
-      )}
       dropZoneClassName={dragActive ? "active" : undefined}
       onDragOver={onDragOver}
       onDragLeave={onDragLeave}

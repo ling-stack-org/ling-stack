@@ -813,8 +813,9 @@ such as `确认需求` or `完成`.
 
 ### Requirement Shaping Presentation
 
-Requirement shaping uses the same operation-cell framework. It must not render as a
-separate top-level collaboration card or as raw teammate messages.
+Requirement shaping is internal proposal evidence. Once a proposal exists, its compact
+proposal summary is the only default feed object. Requirement shaping must not render as
+a second operation cell, collaboration card, or raw teammate transcript.
 
 Target shape:
 
@@ -822,28 +823,30 @@ Target shape:
 ConversationTurn
   UserMessageCell
   LingAgentTranscript
-    OperationCell(presentation=requirement_shaping)
-      coordinator summary
-      participant contribution spans
-      decision-needed rows
-      proposed workflow preview
-      action row
+    ProposalSummary
+      assignee avatar
+      task title
+      assignee
+      product status
+      open-task action
+    DecisionNeededRow?  # only when the user must answer a real question
 ```
 
-The cell is backed by requirement contribution/shaping packets and source refs. Default
-feed rows should show only the user-facing result:
+The proposal remains backed by requirement contribution/shaping packets and source refs.
+The default feed shows only the decision object:
+
+- The proposal assignee owns the summary identity. Resolve its avatar from
+  `assigneeTeammateId` through the same teammate projection used by conversation rows;
+  do not reuse the source message author or reserve an empty avatar gutter.
 
 ```text
-Ling is shaping the request with 3 teammates
-Product clarified scope
-Architect flagged a state-boundary risk
-QA added acceptance checks
-Decision needed: choose whether QA may run artifact-only in parallel
+Design a read-only README check · Engineer · Pending confirmation · View task
 ```
 
-Expanded detail may show each teammate's contribution packet summary, source refs,
-decision records, and workflow preview. Raw packet JSON, selector metadata, prompt text,
-and full internal discussion stay in evidence/debug detail.
+`Requirement shaping`, `coordinated`, internal teammate ids, participant contribution
+summaries, and raw packet metadata stay in evidence/debug detail. When clarification is
+required, a compact decision-needed row shows the actual user question without exposing
+the shaping process.
 
 Conversion rule:
 
@@ -983,7 +986,7 @@ Normalizer rules:
 | coordinator text delta/final | `CoordinatorMessageCell` | natural reply or final result | related operation link | raw model item when debug is enabled |
 | intent/router decision | evidence on turn | hidden | route rationale only if user asked | classifier scores, candidates, payload |
 | workflow created/updated | `OperationCell` / `plan` row | `已规划 N 步` | semantic steps | workflow JSON, ids |
-| requirement shaping started/updated | `OperationCell(presentation=requirement_shaping)` | coordinator summary, participant spans, decisions needed | contribution packet summaries, workflow preview | raw packet JSON, selector metadata |
+| requirement shaping started/updated | proposal evidence | proposal summary status; actual unanswered question only | task confirmation or editor | contribution packets, participant records, raw selector metadata |
 | run started/progress/completed | active `OperationCell` mutation | current task state | row history | run events, attempt ids |
 | tool call start/output/end | `OperationRow` | `读取文件`, `运行检查`, `搜索文档` | command/tool summary and bounded output | full stdout/stderr, tool JSON |
 | file read/context packet | `read` row or evidence ref | hidden unless it explains action | file names, snippets if useful | packet payload, context ids |
@@ -1401,15 +1404,20 @@ Surface-specific copy rules:
 | Explicit raw/debug detail | technical labels and exact payloads | folded sections | repeated coordinator summary |
 | Approval modal | action + scope + consequence | title plus options | vague `continue?` prompts |
 
-Approval copy must be explicit:
+Approval copy must be explicit, for example `等待审批：运行 pnpm install`.
 
-```text
-等待审批：运行 pnpm install。
+Pending runtime approval decisions are owned by a shared blocking dialog outside the
+Composer and virtual transcript. `ApprovalCell` owns only the compact pending marker and
+the immutable approved/denied history after resolution. Channel, normal conversation,
+and teammate private chat must not render approval action cards inside their Composer.
+The dialog handles one decision at a time, preserves the existing risk/time order, and
+cannot be dismissed without approve or deny.
 
-允许本次运行
-允许本会话内同类命令
-拒绝，并说明下一步
-```
+When the dialog owns a pending approval, the owning `OperationCell` is replaced by one
+non-interactive marker that uses the same localized action sentence. It cannot expand
+and cannot expose approval titles, raw permission ids, evidence groups, request ids, or
+duplicate approval controls. This rule is a projection boundary, not a CSS visibility
+rule. Complete data remains available in explicit Run detail and audit surfaces.
 
 Bad approval copy:
 

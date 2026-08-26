@@ -8,6 +8,7 @@ import type {
   UIEvent,
 } from "react";
 import type { ComposerInputPart, PendingAttachmentItem } from "../../shared/components/index.js";
+import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import type {
   AiTeammate,
   ApprovalRequest,
@@ -60,6 +61,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
   readonly approvals: readonly ApprovalRequest[];
+  readonly dialogOwnedApprovals: readonly InlineApprovalView[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly providerRecovered: boolean;
   readonly modelNotice?: TeammatePrivateModelNotice;

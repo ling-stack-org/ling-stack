@@ -119,10 +119,10 @@ export interface ConversationHomeProps {
   readonly activeRun?: RunSession;
   readonly inlineApprovalViews: readonly InlineApprovalView[];
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly approvalErrors: Readonly<Record<string, string>>;
   readonly stopping?: boolean;
   readonly fullAccessConfirmed?: boolean;
   readonly onOpenRun?: (runId: string) => void;
-  readonly onOpenApproval: (approvalId: string) => void;
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenModelWorkbench?: () => void;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;

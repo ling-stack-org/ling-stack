@@ -42,19 +42,51 @@ test("editable Task confirmation uses shared fields and preserves dynamic propos
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createProposalState();
+  state.channelMessages.push(...Array.from({ length: 60 }, (_, index) => ({
+    id: `msg_ui2_virtual_${index}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "ling-local",
+    body: `Virtualized proposal context ${index + 1}`,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    status: "ready",
+    createdAt: `2026-05-25T00:${String(19 + Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
+    updatedAt: `2026-05-25T00:${String(19 + Math.floor(index / 60)).padStart(2, "0")}:${String(index % 60).padStart(2, "0")}.000Z`,
+  })));
   await mockDaemon(page, state);
 
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const proposal = page.getByLabel("Task confirmation");
+  const proposalDialog = page.getByRole("dialog", { name: "Task confirmation" });
+  await expect(proposalDialog).toBeVisible();
+  const initialDecision = proposalDialog.locator(".channel-execution-proposal-decision");
+  await expect(initialDecision).toContainText("Refine channel proposal inputs");
+  await expect(initialDecision).toContainText("Deleted teammate");
+  await expect(initialDecision).toContainText("Read files");
+  await expect(initialDecision).toContainText("Modify files");
+  await expect(initialDecision.locator(".channel-proposal-details, .channel-proposal-collaboration")).toHaveCount(0);
+  const feed = page.getByLabel("Channel message feed");
+  await feed.evaluate((element) => element.scrollTo({ top: 0 }));
+  await expect(proposalDialog).toBeVisible();
+  await proposalDialog.getByRole("button", { name: "Close" }).click();
+  await expect(proposalDialog).toHaveCount(0);
+  const summary = page.getByLabel("Task proposal summary").filter({ hasText: "Refine channel proposal inputs" });
+  await expect.poll(async () => {
+    await feed.evaluate((element) => element.scrollTo({ top: 0 }));
+    return summary.count();
+  }).toBe(1);
+  await summary.getByRole("button", { name: "View task" }).click();
+  const proposal = proposalDialog.locator(".channel-execution-proposal-decision");
   await expect(proposal).toBeVisible();
-  const collaborationSummary = proposal.locator(".channel-proposal-collaboration summary");
-  await expect(collaborationSummary).toBeVisible();
-  const transition = await readTransitionStyle(collaborationSummary);
-  expect(transition.properties).toEqual(["border-color", "background-color", "box-shadow"]);
-  expect(transition.durations.every((duration) => duration === "0.12s")).toBe(true);
-  expect(transition.timingFunctions.every((timingFunction) => timingFunction === "cubic-bezier(0.2, 0, 0, 1)")).toBe(true);
+  await expect(proposal).toContainText("Required permissions");
+  await expect(proposal).not.toContainText("Requirement summary");
+  await expect(proposal).not.toContainText("User clarifications");
   await proposal.getByRole("button", { name: "Edit" }).click();
   const editor = proposal.locator(".channel-proposal-edit-form");
   await expect(editor).toBeVisible();
@@ -163,10 +195,18 @@ test("proposal validation and cancel reset stay contained in dark reduced-motion
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
   expect(await page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
 
-  const proposal = page.getByLabel("Task confirmation");
-  const collaborationSummary = proposal.locator(".channel-proposal-collaboration summary");
-  await expect(collaborationSummary).toBeVisible();
-  expect((await readTransitionStyle(collaborationSummary)).durations.every((duration) => duration === "0s")).toBe(true);
+  const proposalDialog = page.getByRole("dialog", { name: "Task confirmation" });
+  if (!await proposalDialog.isVisible().catch(() => false)) {
+    const summary = page.getByLabel("Task proposal summary").filter({ hasText: "Refine channel proposal inputs" });
+    await expect(summary).toBeVisible();
+    if (!await proposalDialog.isVisible().catch(() => false)) {
+      await summary.getByRole("button", { name: "View task" }).click();
+    }
+  }
+  await expect(proposalDialog).toBeVisible();
+  const proposal = proposalDialog.locator(".channel-execution-proposal-decision");
+  await expect(proposal).toContainText("Refine channel proposal inputs");
+  await expect(proposal.locator(".channel-proposal-details, .channel-proposal-collaboration")).toHaveCount(0);
   await proposal.getByRole("button", { name: "Edit" }).click();
   const editor = proposal.locator(".channel-proposal-edit-form");
   const title = editor.getByLabel("Title");
@@ -384,21 +424,6 @@ async function expectContained(locator: Locator): Promise<void> {
 
 async function expectDocumentContained(page: Page): Promise<void> {
   expect(await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
-}
-
-async function readTransitionStyle(locator: Locator): Promise<{
-  readonly durations: string[];
-  readonly properties: string[];
-  readonly timingFunctions: string[];
-}> {
-  return locator.evaluate((element) => {
-    const styles = getComputedStyle(element);
-    return {
-      durations: styles.transitionDuration.split(", "),
-      properties: styles.transitionProperty.split(", "),
-      timingFunctions: styles.transitionTimingFunction.match(/(?:cubic-bezier|steps)\([^)]*\)|[^,\s]+/gu) ?? [],
-    };
-  });
 }
 
 async function prepareSurface(

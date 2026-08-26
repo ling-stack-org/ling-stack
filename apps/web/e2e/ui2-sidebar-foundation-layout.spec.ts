@@ -63,10 +63,22 @@ test("Sidebar foundation keeps one bounded expanded navigation surface", async (
   const longChannel = navigation.getByRole("button", { name: LONG_CHANNEL_NAME });
   await longChannel.scrollIntoViewIfNeeded();
   const longLabel = longChannel.locator('[data-ling-button-slot="label"]');
-  await expect(longLabel).toHaveCSS("overflow", "hidden");
-  await expect(longLabel).toHaveCSS("text-overflow", "ellipsis");
-  await expect(longLabel).toHaveCSS("white-space", "nowrap");
-  expect(await longLabel.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  const longShell = longChannel.locator("xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' sidebar-row-shell ')][1]");
+  const titleViewport = longChannel.locator(".sidebar-row-title-viewport");
+  const titleTrack = longChannel.locator(".sidebar-row-title-track");
+  await expect(longLabel).toHaveCSS("overflow", "visible");
+  await expect(longLabel).toHaveCSS("text-overflow", "clip");
+  await expect(titleViewport).toHaveCSS("overflow", "hidden");
+  await expect(titleViewport).toHaveCSS("white-space", "nowrap");
+  await expect(longShell).toHaveAttribute("data-sidebar-row-overflow", "true");
+  expect(await titleViewport.evaluate((element) => element.scrollWidth > element.clientWidth)).toBe(true);
+  expect(await longShell.evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/u))).toHaveLength(1);
+  await longShell.hover();
+  await expect.poll(() => titleTrack.evaluate((element) => getComputedStyle(element).transform))
+    .not.toBe("none");
+  await page.mouse.move(1000, 700);
+  await expect.poll(() => titleTrack.evaluate((element) => getComputedStyle(element).transform), { timeout: 5_000 })
+    .toMatch(/^(none|matrix\(1, 0, 0, 1, 0, 0\))$/u);
   await expectInside(navigation, longChannel);
   await expectNoHorizontalOverflow(page.locator("html"));
   await captureEvidence(page, "1440x960-ling-light-expanded-long-row.png");
@@ -85,6 +97,12 @@ test("Sidebar branch draft and section menu stay contained in dark reduced-motio
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
+  const longTeammate = navigation.getByRole("button", { name: "A teammate identity that is intentionally longer than the available Sidebar row" });
+  await longTeammate.scrollIntoViewIfNeeded();
+  const longTeammateShell = longTeammate.locator("xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' sidebar-row-shell ')][1]");
+  await expect(longTeammateShell).toHaveAttribute("data-sidebar-row-overflow", "true");
+  await longTeammateShell.hover();
+  await expect(longTeammate.locator(".sidebar-row-title-track")).toHaveCSS("transform", "none");
   const engineeringGroup = navigation.locator(".sidebar-channel-group").filter({ hasText: "Engineering" });
   await engineeringGroup.locator(".sidebar-row-shell").hover();
   await engineeringGroup.getByRole("button", { name: "Create branch" }).click();
@@ -185,7 +203,7 @@ test("Sidebar foundation preserves shell geometry across the 900 and 901px bound
   expect(runtimeErrors).toEqual([]);
 });
 
-const LONG_CHANNEL_NAME = "Architecture coordination channel with a deliberately long identity that must ellipsize";
+const LONG_CHANNEL_NAME = "Architecture coordination channel with a deliberately long identity that must fade smoothly";
 
 function createDenseSidebarState(): MockState {
   const state = createBaseState({ approvalStatus: "expired" });

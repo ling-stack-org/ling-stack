@@ -38,6 +38,23 @@ function channelComposerTextbox(scope: Page | Locator): Locator {
   return scope.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
 }
 
+async function openTaskProposalDialog(page: Page, title: string): Promise<Locator> {
+  const dialog = page.getByRole("dialog", { name: "Task confirmation" });
+  const summary = page.getByLabel("Task proposal summary").filter({ hasText: title });
+  await expect.poll(async () => await dialog.isVisible() || await summary.isVisible()).toBe(true);
+  if (await dialog.isVisible()) {
+    if ((await dialog.innerText()).includes(title)) return dialog.locator(".channel-execution-proposal-decision");
+    await dialog.getByRole("button", { name: "Close" }).click();
+  }
+  try {
+    await summary.getByRole("button", { name: "View task" }).click();
+  } catch (error) {
+    if (!await dialog.isVisible()) throw error;
+  }
+  await expect(dialog).toBeVisible();
+  return dialog.locator(".channel-execution-proposal-decision");
+}
+
 function createLineagePlan(overrides: Partial<ProposedPlanArtifact>): ProposedPlanArtifact {
   return {
     id: "plan_lineage",
@@ -265,7 +282,7 @@ async function readOverlappingVirtualFeedRows(page: Page): Promise<string[]> {
 
 test("channel governance notifications stay in the header review queue", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.governanceNotifications = [
     {
       id: "gov_memory_candidate_1",
@@ -309,7 +326,7 @@ test("channel governance notifications stay in the header review queue", async (
 
 test("channel header hides empty governance review queue while notifications load", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.governanceNotifications = [];
   state.governanceNotificationDelayMs = 1_000;
   let requestStarted = false;
@@ -402,7 +419,7 @@ test("terminal bottom panel runs commands in the channel workspace", async ({ pa
 
 test("channel team metrics stay in settings without a conversation expert summary", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_team_source",
@@ -585,7 +602,7 @@ test("channel team metrics stay in settings without a conversation expert summar
 test("global sidebar keeps fixed chrome, scrollable recents, and a true compact rail", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 1280, height: 720 });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [
     createMockTeammate({ id: "teammate_drawer_designer", displayName: "Designer" }),
     createMockTeammate({ id: "teammate_drawer_research", displayName: "Research" }),
@@ -803,7 +820,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
 test("narrow channel viewport keeps the conversation column usable", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 390, height: 844 });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -1752,19 +1769,19 @@ test("conversation motion respects reduced motion preference", async ({ page }) 
 
 test("approval event opens approval detail inside the conversation page", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
 
   await openChannelChatTools(page);
-  const approvalBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
+  const approvalBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approval expired" });
   await expect(approvalBubble).toBeVisible();
   await approvalBubble.getByRole("button", { name: "Open approval" }).click();
 
   const approvalOverlay = page.locator(".conversation-detail-overlay");
   await expect(approvalOverlay).toBeVisible();
   await expect(approvalOverlay).toHaveAttribute("aria-label", "Approval details");
-  await expect(approvalOverlay.locator(".channel-approval-detail-panel")).toContainText("Approve shell command");
+  await expect(approvalOverlay.locator(".channel-approval-detail-panel")).toContainText("Approval expired");
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
 });
 
@@ -1772,7 +1789,7 @@ test("channel drawer does not flash legacy create labels in section headers", as
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -1789,7 +1806,7 @@ test("channel drawer does not flash legacy create labels in section headers", as
 
 test("empty channel drawer opens the new channel dialog", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   configureReadyConversationModel(state);
   state.channels = [];
   state.channelBranches = [];
@@ -1815,7 +1832,7 @@ test("empty channel drawer opens the new channel dialog", async ({ page }) => {
 
 test("new channel dialog selects a project folder before create", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   configureReadyConversationModel(state);
   await mockDaemon(page, state);
   await page.goto("/");
@@ -1849,7 +1866,7 @@ test("new channel dialog selects a project folder before create", async ({ page 
 
 test("new channel dialog shows create failures inline", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   configureReadyConversationModel(state);
   state.failNextChannelCreate = {
     error: "channel_create_failed",
@@ -1956,7 +1973,7 @@ test("channel composer does not render the resource lease active work strip", as
 test("wide channel progress popover does not resize the conversation", async ({ page }) => {
   await useEnglishLocale(page);
   await page.setViewportSize({ width: 2048, height: 1140 });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_attention_layout",
@@ -2021,7 +2038,7 @@ test("wide channel progress popover does not resize the conversation", async ({ 
 
 test("channel runtime policy is visible while preferred specialist controls stay hidden", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   configureReadyConversationModel(state);
   state.aiTeammates = [
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
@@ -2142,7 +2159,7 @@ test("channel runtime policy is visible while preferred specialist controls stay
 
 test("channel reply routing mode is not exposed in ordinary settings", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   configureReadyConversationModel(state);
   state.aiTeammates = [
     createMockTeammate({ id: "engineer", displayName: "Ling Engineer" }),
@@ -2178,7 +2195,7 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channels = state.channels.map((channel) =>
     isRecord(channel) && channel.id === "channel_engineering"
       ? { ...channel, defaultTeammateId: "teammate_builtin_engineer", autoReplyMode: "default_teammate" }
@@ -2216,12 +2233,16 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   expect(state.lastChannelTurnRequest).not.toHaveProperty("providerPresetId");
   await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
   await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
-  const proposal = page.getByLabel("Task confirmation");
+  const proposal = await openTaskProposalDialog(page, "Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await expect(proposal).toContainText("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await expect(proposal).toContainText("Engineer");
-  await expect(proposal.locator(".channel-proposal-collaboration")).toContainText("Collaboration 1 records");
-  await expect(proposal).toContainText("Non-direct multi-agent collaboration waits for confirmation");
-  await expect(proposal).toContainText("Starting this task does not approve future runtime actions");
+  await expect(proposal).toContainText("Required permissions");
+  await expect(proposal).toContainText("Read files");
+  await expect(proposal).toContainText("Run commands");
+  await expect(proposal).toContainText("Modify files");
+  await expect(proposal).not.toContainText("Collaboration");
+  await expect(proposal).not.toContainText("Non-direct multi-agent collaboration waits for confirmation");
+  await expect(proposal).not.toContainText("Starting this task does not approve future runtime actions");
   await expect(proposal.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
   await expect(page.getByText("AI teammate is preparing a reply...")).toHaveCount(0);
   await expect.poll(() => {
@@ -2230,7 +2251,7 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   }).toBe("workflow_proposal|accepted|deterministic");
 });
 
-test("task confirmation cards explain bounded tool permission and target", async ({ page }) => {
+test("task confirmation shows only the task, Agent, and product permission labels", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -2312,26 +2333,29 @@ test("task confirmation cards explain bounded tool permission and target", async
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const confirmations = page.getByLabel("Task confirmation");
-  await expect(confirmations).toHaveCount(3);
-  const createCard = confirmations.filter({ hasText: "Create README.md" });
-  await expect(createCard).toContainText("Need write permission to create /tmp/example/README.md for this task.");
-  await expect(createCard).toContainText("Required tool");
-  await expect(createCard).toContainText("write");
-  await expect(createCard).toContainText("Target");
-  await expect(createCard).toContainText("/tmp/example/README.md");
-  await expect(createCard).toContainText("Executor");
+  const summaries = page.getByLabel("Task proposal summary");
+  await expect(summaries).toHaveCount(3);
+  const createCard = await openTaskProposalDialog(page, "Create README.md");
+  await expect(createCard.getByText("Task", { exact: true })).toBeVisible();
+  await expect(createCard.getByText("Agent", { exact: true })).toBeVisible();
+  await expect(createCard.getByText("Required permissions", { exact: true })).toBeVisible();
+  await expect(createCard).toContainText("Modify files");
   await expect(createCard).toContainText("Ling Agent");
+  await expect(createCard).not.toContainText("Need write permission");
+  await expect(createCard).not.toContainText("/tmp/example/README.md");
+  await expect(createCard).not.toContainText(/\bwrite\b/u);
 
-  const editCard = confirmations.filter({ hasText: "Edit docs/guide.md" });
-  await expect(editCard).toContainText("Need edit permission to update docs/guide.md for this task.");
-  await expect(editCard).toContainText("edit");
+  const editCard = await openTaskProposalDialog(page, "Edit docs/guide.md");
+  await expect(editCard).toContainText("Modify files");
+  await expect(editCard).not.toContainText("Need edit permission");
+  await expect(editCard.locator(".channel-proposal-permission-chips")).not.toContainText(/\bedit\b/u);
 
-  const commandCard = confirmations.filter({ hasText: "Run pnpm test" });
-  await expect(commandCard).toContainText("Need bash permission to run pnpm test for this task.");
-  await expect(commandCard).toContainText("bash");
+  const commandCard = await openTaskProposalDialog(page, "Run pnpm test");
+  await expect(commandCard).toContainText("Run commands");
+  await expect(commandCard).not.toContainText("Need bash permission");
+  await expect(commandCard.locator(".channel-proposal-permission-chips")).not.toContainText(/\bbash\b/u);
 
-  await expect(commandCard).toContainText("Starting this task does not approve future runtime actions");
+  await expect(commandCard).not.toContainText("Starting this task does not approve future runtime actions");
   await expect(commandCard.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
 });
 
@@ -2515,9 +2539,14 @@ test("ordinary channel feed hides routing and intent decision internals", async 
   await page.goto("/");
   await openEngineeringChannel(page);
 
+  const autoOpenedProposal = page.getByRole("dialog", { name: /Task confirmation|任务确认/u });
+  if (await autoOpenedProposal.isVisible().catch(() => false)) {
+    await expect(autoOpenedProposal).toContainText("Edit README.md");
+    await autoOpenedProposal.getByRole("button", { name: /Close|关闭/u }).click();
+  }
   const feed = page.locator(".activity-shell");
   await expect(feed.getByText("晚上好")).toBeVisible();
-  await expect(feed.locator(".channel-execution-proposal").filter({ hasText: "Edit README.md" })).toBeVisible();
+  await expect(page.getByLabel(/Task proposal summary|任务提案摘要/u).filter({ hasText: "Edit README.md" })).toBeVisible({ timeout: 10_000 });
   await expect(feed.getByText("未自动回复")).toHaveCount(0);
   await expect(feed.getByText("为什么没回复")).toHaveCount(0);
   await expect(feed.getByText("Ling 未回复")).toHaveCount(0);
@@ -2533,7 +2562,7 @@ test("ordinary channel feed hides routing and intent decision internals", async 
 
 test("channel context inspector exposes safe metadata and recovers from a stale segment correction", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const channelId = "channel_engineering";
   const threadId = "thread_context_inspect";
   const turnId = "turn_msg_context_inspect";
@@ -2767,7 +2796,7 @@ test("channel settings can add and remove teammates without preferred specialist
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channels = state.channels.map((channel) =>
     isRecord(channel) && channel.id === "channel_engineering"
       ? { ...channel, defaultTeammateId: undefined }
@@ -2879,7 +2908,7 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channels = state.channels.map((channel) =>
     isRecord(channel) && channel.id === "channel_engineering"
       ? { ...channel, defaultTeammateId: undefined }
@@ -2984,7 +3013,7 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
 
 test("channel message feed renders AI teammate avatar images", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [
     createMockTeammate({
       id: "teammate_builtin_designer",
@@ -3080,7 +3109,7 @@ test("channel message feed renders AI teammate avatar images", async ({ page }) 
 
 test("channel message feed shows usable web sources and keeps diagnostics in the right dock", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [createMockTeammate({ id: "engineer", displayName: "Ling Engineer" })];
   state.channelMessages = [
     {
@@ -3265,7 +3294,7 @@ test("channel message feed shows usable web sources and keeps diagnostics in the
 
 test("right dock browser evidence exposes failed read URL detail", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [createMockTeammate({ id: "engineer", displayName: "Ling Engineer" })];
   state.channelMessages = [
     {
@@ -3332,7 +3361,7 @@ test("right dock browser evidence exposes failed read URL detail", async ({ page
 
 test("conversation turn transcript omits web diagnostics without usable sources", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_web_turn_user",
@@ -3399,7 +3428,7 @@ test("channel settings manage workspace binding", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -3470,7 +3499,7 @@ test("channel settings manage workspace binding", async ({ page }) => {
 
 test("channel more menu renames the selected channel", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -3496,7 +3525,7 @@ test("channel more menu renames the selected channel", async ({ page }) => {
 
 test("paused channels disable task run actions", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channels = state.channels.map((channel) => isRecord(channel) ? { ...channel, status: "paused" } : channel);
   await mockDaemon(page, state);
   await page.goto("/");
@@ -3511,7 +3540,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider({
     lastCheck: {
       ok: true,
@@ -3703,7 +3732,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
 
 test("channel composer snapshots restore draft assets and topic replies across channel switches", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.linkPreviewDelayMs = 50;
   state.channels = [
     ...state.channels,
@@ -4088,7 +4117,7 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
       },
     });
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const longJson = [
     "{",
     ...Array.from({ length: 32 }, (_, index) => `  "item${index + 1}": ${index + 1},`),
@@ -4414,7 +4443,7 @@ test("channel composer sends workspace file refs as native message payload", asy
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4437,7 +4466,7 @@ test("channel composer sends workspace file refs as native message payload", asy
   const references = page.getByLabel("References");
   const fileReference = references.getByRole("button", { name: /WorkspaceClientView\.tsx/ });
   await expect(fileReference).toBeVisible();
-  await fileReference.hover();
+  await fileReference.focus();
   await expect(references.getByRole("tooltip")).toContainText("apps/web/src/features/workspace/WorkspaceClientView.tsx");
   await fileReference.click();
   const filesDock = page.locator(".channel-side-panel.right-dock");
@@ -4450,7 +4479,7 @@ test("channel composer preserves IME composition until committed", async ({ page
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4491,7 +4520,7 @@ test("channel composer does not render multi-agent slash command tokens as file 
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4515,7 +4544,7 @@ test("channel composer applies plan mode session commands without creating slash
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4605,7 +4634,7 @@ test("channel composer manages goal lifecycle from the floating panel", async ({
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4728,7 +4757,7 @@ test("channel feed renders proposed_plan blocks as proposed plan cards", async (
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4868,7 +4897,7 @@ test("channel feed renders proposed_plan blocks as proposed plan cards", async (
 
 test("workflow conversion preview infers owners without mutating until save", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -4964,7 +4993,7 @@ test("workflow conversion preview infers owners without mutating until save", as
 
 test("plan history groups lineage versions across thread and channel scopes", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -5129,7 +5158,7 @@ test("channel composer supports spaced teammate names before slash commands", as
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent" })];
   state.runs = [];
   state.tasks = [];
@@ -5169,7 +5198,7 @@ test("channel composer opens slash picker for later slash tokens without multi-d
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -5202,7 +5231,7 @@ test("channel composer renders GitHub URLs as inline repo tokens", async ({ page
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -5223,7 +5252,7 @@ test("channel screenshot request shows materialization clarify reply instead of 
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -5265,7 +5294,7 @@ test("channel local link request shows natural clarify copy without debug vocabu
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   state.tasks = [];
   state.approvals = [];
@@ -5439,7 +5468,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
     }
   });
   page.on("pageerror", (error) => runtimeErrors.push(`pageerror:${error.message}`));
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
     createChatProvider({
       id: "provider_ready",
@@ -5567,35 +5596,27 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const proposal = page.getByLabel("Task confirmation");
+  const autoOpenedDialog = page.getByRole("dialog", { name: "Task confirmation" });
+  await expect(autoOpenedDialog).toBeVisible();
+  await autoOpenedDialog.getByRole("button", { name: "Close" }).click();
+  const proposalSummary = page.getByLabel("Task proposal summary").filter({ hasText: "Refine channel workspace copy" });
+  await expect(proposalSummary).toBeVisible();
+  await expect(proposalSummary.locator("xpath=..").locator(".channel-execution-proposal-summary-avatar")).toHaveAttribute("aria-label", "Ling Engineer");
+  await maybeCaptureViewportScreenshot(page, "task-proposal-compact-summary-with-avatar.png");
+
+  const proposal = await openTaskProposalDialog(page, "Refine channel workspace copy");
   await expect(proposal).toContainText("Refine channel workspace copy");
-  await expect(proposal).toContainText("Ling is shaping the task");
-  await expect(proposal).toContainText("Goal");
-  await expect(proposal).toContainText("Participants");
-  await expect(proposal).toContainText("Boundary");
   await expect(proposal).toContainText("Ling Engineer");
-  await expect(proposal).toContainText("Ling Designer");
-  const collaboration = proposal.locator(".channel-proposal-collaboration");
-  await expect(collaboration).not.toHaveAttribute("open", /.+/);
-  await expect(collaboration.locator("summary")).toContainText("Collaboration 2 records");
-  await expect(collaboration.locator("summary")).toContainText("Ling Engineer Summarized discussion into one execution proposal.");
-  await expect(collaboration.locator("summary")).toContainText("Ling Designer Checked visual hierarchy before execution.");
-  const overflowingProposalSections = await proposal.evaluate((element) => {
-    const proposalRect = element.getBoundingClientRect();
-    return Array.from(element.querySelectorAll(":scope > p, .channel-proposal-meta, .channel-proposal-criteria, .channel-proposal-risk, .channel-proposal-collaboration summary"))
-      .filter((node) => {
-        const rect = node.getBoundingClientRect();
-        return rect.left < proposalRect.left - 1 || rect.right > proposalRect.right + 1;
-      })
-      .map((node) => node.className || node.tagName.toLowerCase());
-  });
-  expect(overflowingProposalSections).toEqual([]);
-  await expect(collaboration.locator("li").first()).not.toBeVisible();
-  await collaboration.locator("summary").click();
-  await expect(collaboration.locator("li").first()).toBeVisible();
-  await expect(collaboration).toContainText("Coordinated");
-  await expect(collaboration).toContainText("Reviewed");
-  await expect(collaboration.locator(".channel-proposal-step-source")).toContainText("From Development Council");
+  await expect(proposal).toContainText("Required permissions");
+  await expect(proposal).toContainText("Read files");
+  await expect(proposal).toContainText("Run commands");
+  await expect(proposal).toContainText("Modify files");
+  await expect(proposal).not.toContainText("Ling is shaping the task");
+  await expect(proposal).not.toContainText("Participants");
+  await expect(proposal).not.toContainText("Boundary");
+  await expect(proposal).not.toContainText("Ling Designer");
+  await expect(proposal.locator(".channel-proposal-details, .channel-proposal-collaboration")).toHaveCount(0);
+  await maybeCaptureViewportScreenshot(page, "task-proposal-confirmation-dialog.png");
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth - document.documentElement.clientWidth
   )).toBeLessThanOrEqual(1);
@@ -5667,9 +5688,10 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toHaveCount(0);
 
   await openChannelChatTools(page);
-  const acceptedProposal = feed.getByLabel("Task confirmation").filter({ hasText: "Refine channel workspace copy" });
+  const acceptedProposal = feed.getByLabel("Task proposal summary").filter({ hasText: "Refine channel workspace copy" });
   await expect(acceptedProposal).toBeVisible();
-  await expect(acceptedProposal.getByRole("button", { name: "Open workflow" })).toHaveCount(0);
+  await acceptedProposal.getByRole("button", { name: "View task" }).click();
+  await expect(page.getByRole("dialog", { name: "Task confirmation" }).getByRole("button", { name: "Open workflow" })).toHaveCount(0);
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -5683,6 +5705,7 @@ test("requirement shaping proposal persists clarifications before confirmation",
     localStorage.setItem("ling-stack.themeBootstrapPreference", "dark");
   });
   const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent" })];
   state.channelMessages = [
     {
       id: "msg_shaping_request",
@@ -5744,43 +5767,43 @@ test("requirement shaping proposal persists clarifications before confirmation",
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
+  const autoOpenedProposal = page.getByRole("dialog", { name: "Task confirmation" });
+  if (await autoOpenedProposal.isVisible()) {
+    await autoOpenedProposal.getByRole("button", { name: "Close" }).click();
+  }
 
   const transcript = page.locator(".conversation-turn-assistant-transcript");
   const shapingBlock = transcript.locator(".transcript-block-view.kind-requirement_shaping");
-  await expect(shapingBlock).toBeVisible();
-  await expect(shapingBlock).toHaveAttribute("aria-label", "Requirement shaping");
-  await expect(shapingBlock.getByRole("button", { name: "Collapse transcript block" })).toHaveAttribute("aria-expanded", "true");
-  await expect(shapingBlock).toContainText("Clarify workspace copy scope before execution.");
-  await expect(shapingBlock).toContainText("Needs user clarification");
-  await expect(shapingBlock).toContainText("ling_agent: Clarify the task, then prepare an executable proposal.");
-  await expect(shapingBlock).not.toContainText("Synced on availability only.");
-  await expect(shapingBlock).toContainText("Only workspace drawer copy is in scope.");
+  await expect(shapingBlock).toHaveCount(0);
   const decisionBlock = transcript.locator(".transcript-block-view.kind-decision_needed");
   await expect(decisionBlock).toBeVisible();
   await expect(decisionBlock).toHaveAttribute("aria-label", "Decision needed");
   await expect(decisionBlock).toContainText("Which copy sections are in scope?");
+  const summary = page.getByLabel("Task proposal summary").filter({ hasText: "Refine workspace copy" });
+  await expect(summary).toHaveCount(1);
+  await expect(summary).toContainText("Ling Agent · Needs input");
+  await expect(page.getByLabel("Channel message feed")).not.toContainText("Requirement shaping");
+  await expect(page.getByLabel("Channel message feed")).not.toContainText("coordinated");
+  await expect(page.getByLabel("Channel message feed")).not.toContainText("ling_agent");
+  await expect(page.getByLabel("Channel message feed")).not.toContainText("Only workspace drawer copy is in scope.");
 
-  const proposal = page.getByLabel("Task confirmation");
-  await expect(proposal).toContainText("Needs user clarification");
-  await expect(proposal).toContainText("Which copy sections are in scope?");
-  await expect(proposal).toContainText("Only workspace drawer copy is in scope.");
+  const proposal = await openTaskProposalDialog(page, "Refine workspace copy");
+  await expect(proposal).toContainText("Refine workspace copy");
+  await expect(proposal).toContainText("Ling Agent");
+  await expect(proposal).toContainText("Read files");
+  await expect(proposal).toContainText("Modify files");
+  await expect(proposal).not.toContainText("Needs user clarification");
+  await expect(proposal).not.toContainText("Which copy sections are in scope?");
+  await expect(proposal).not.toContainText("Only workspace drawer copy is in scope.");
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
-  const proposalSurfaceChannels = await proposal.evaluate((element) => {
-    const readChannels = (node: Element): number[] =>
-      getComputedStyle(node).backgroundColor.match(/[\d.]+/g)?.slice(0, 3).map(Number) ?? [];
-    const collaborationSummary = element.querySelector(".channel-proposal-collaboration summary");
-    return [
-      ...readChannels(element),
-      ...(collaborationSummary ? readChannels(collaborationSummary) : []),
-    ];
-  });
-  expect(Math.max(...proposalSurfaceChannels)).toBeLessThanOrEqual(45);
+  await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
 
   await page.reload();
   await openEngineeringChannel(page);
-  await expect(proposal).toContainText("Needs user clarification");
-  await expect(proposal).toContainText("Which copy sections are in scope?");
-  await expect(proposal).toContainText("Only workspace drawer copy is in scope.");
+  await openTaskProposalDialog(page, "Refine workspace copy");
+  await expect(proposal).not.toContainText("Needs user clarification");
+  await expect(proposal).not.toContainText("Which copy sections are in scope?");
+  await expect(proposal).not.toContainText("Only workspace drawer copy is in scope.");
 
   await proposal.getByRole("button", { name: "Edit" }).click();
   const editForm = proposal.locator(".channel-proposal-edit-form");
@@ -5788,8 +5811,8 @@ test("requirement shaping proposal persists clarifications before confirmation",
   await editForm.getByLabel("User clarifications").fill("Only workspace drawer copy is in scope.\nKeep provider checks out of this task.");
   await proposal.getByRole("button", { name: "Save" }).click();
   await expect(editForm).toHaveCount(0);
-  await expect(proposal).toContainText("Should QA cover accessibility?");
-  await expect(proposal).toContainText("Keep provider checks out of this task.");
+  await expect(proposal).not.toContainText("Should QA cover accessibility?");
+  await expect(proposal).not.toContainText("Keep provider checks out of this task.");
   await expect.poll(() => {
     const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_shaping");
     if (!isRecord(updated) || !isRecord(updated.shaping)) {
@@ -6007,7 +6030,7 @@ test("completed workflow hides accepted proposal and leaves final result in defa
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(1);
 
   await openChannelChatTools(page);
-  await expect(feed.getByLabel("Task confirmation")).toContainText("Create /Users/example/ling-stack-test/README.md");
+  await expect(feed.getByLabel("Task proposal summary")).toContainText("Create /Users/example/ling-stack-test/README.md");
 });
 
 test("terminal workflow step suppresses stale running run surfaces", async ({ page }) => {
@@ -7040,7 +7063,7 @@ test("blocked workflow hides accepted proposal and leaves blocker report in defa
   await expect(workCell).not.toContainText("No validation commands recorded.");
 
   await openChannelChatTools(page);
-  await expect(feed.getByLabel("Task confirmation")).toContainText("Create README.md");
+  await expect(feed.getByLabel("Task proposal summary")).toContainText("Create README.md");
 });
 
 test("resolved approval-only workflow stays out of the conversation", async ({ page }) => {
@@ -8068,7 +8091,7 @@ test("channel workspace utility panel follows dark theme surfaces", async ({ pag
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themePreference", "dark");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -8132,7 +8155,7 @@ test("channel activity filter chips follow dark theme tokens", async ({ page }) 
     localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themePreference", "dark");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -8163,7 +8186,7 @@ test("channel activity keeps the composer visible while the message feed scrolls
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = Array.from({ length: 36 }, (_, index) => ({
     id: `msg_scroll_${index + 1}`,
     workspaceId: "workspace_default",
@@ -8307,7 +8330,7 @@ test("channel message feed supports focused block shortcuts and safe action menu
       },
     });
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_focus_1",
@@ -8398,7 +8421,7 @@ test("channel message feed stays pinned while AI reply text streams", async ({ p
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
   if (isRecord(channel)) {
     channel.autoReplyMode = "auto_route";
@@ -8440,7 +8463,7 @@ test("channel message feed stays pinned while AI reply text streams", async ({ p
 
 test("channel message feed measures long turns without overlapping the next row", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const longReply = (label: string) => Array.from(
     { length: 18 },
     (_, index) => `${label} paragraph ${index + 1} contains enough text to create a variable-height conversation row.`,
@@ -8559,7 +8582,7 @@ test("channel message feed preserves the visible anchor while active content gro
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     ...Array.from({ length: 36 }, (_, index) => ({
       id: `msg_anchor_${index + 1}`,
@@ -8624,7 +8647,7 @@ test("channel activity paginates long message history and virtualizes visible ro
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = Array.from({ length: 3000 }, (_, index) => ({
     id: `msg_long_${index + 1}`,
     workspaceId: "workspace_default",
@@ -8678,7 +8701,7 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.failNextChannelMessage = true;
   await mockDaemon(page, state);
   await page.goto("/");
@@ -8707,7 +8730,7 @@ test("channel composer moves sent messages into the feed while routing is pendin
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
   if (isRecord(channel)) {
     channel.autoReplyMode = "auto_route";
@@ -8734,7 +8757,7 @@ test("channel composer keeps thinking visible for acknowledged sends before comp
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
   if (isRecord(channel)) {
     channel.autoReplyMode = "mentions_only";
@@ -8775,7 +8798,7 @@ test("channel composer keeps thinking visible for acknowledged sends before comp
 
 test("pending channel reply polling refreshes messages without refreshing global activity", async ({ page }) => {
   await useEnglishLocale(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [{
     id: "msg_pending_background_poll",
     workspaceId: "workspace_default",
@@ -8815,7 +8838,7 @@ test("channel conversation turn shows thinking for empty pending ai replies", as
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "zh-CN");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
   if (isRecord(channel)) {
     channel.autoReplyMode = "default_teammate";
@@ -8852,7 +8875,7 @@ test("channel URL preview blocked state stays in Activity and still allows sendi
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -8871,7 +8894,7 @@ test("channel attachment uploads support PDF and Office files without AI ingesti
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -8925,7 +8948,7 @@ test("channel run artifacts stay isolated without default drawer leakage", async
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channels.push({
     id: "channel_design",
     workspaceId: "workspace_default",
@@ -9035,7 +9058,7 @@ test("channel review source stays in conversation instead of the legacy context 
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelContextSummaries = [
     {
       id: "summary_seed_context",
@@ -9085,7 +9108,7 @@ test("handoff activity starts workflows without restoring the legacy context dra
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider()];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -9136,7 +9159,7 @@ test("workflow activity uses review source instead of the legacy context run sur
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [createChatProvider()];
   state.channelWorkflows = [
     {
@@ -9737,6 +9760,22 @@ test("control-plane snapshot-required subscribes before refresh and applies an e
     (globalThis as typeof globalThis & { __snapshotHandoff: { urls: string[] } }).__snapshotHandoff.urls.length
   )).toBe(2);
   const itemQueriesBeforeHandoff = state.channelMessageQueries?.length ?? 0;
+  state.channelMessages.push({
+    id: "msg_snapshot_handoff_seq_9",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "tian",
+    body: "Snapshot handoff seq 9 applied",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    status: "ready",
+    createdAt: "2026-08-10T00:01:09.000Z",
+    updatedAt: "2026-08-10T00:01:09.000Z",
+  });
   await page.evaluate(() => {
     const handoff = (globalThis as typeof globalThis & {
       __snapshotHandoff: { eventAfterSnapshot: () => void; replayReady: () => void };
@@ -9745,8 +9784,9 @@ test("control-plane snapshot-required subscribes before refresh and applies an e
     handoff.replayReady();
   });
   await expect.poll(() => state.channelMessageQueries?.length ?? 0, { timeout: 5_000 })
-    .toBeGreaterThan(itemQueriesBeforeHandoff);
-  await page.waitForTimeout(300);
+    .toBeGreaterThanOrEqual(itemQueriesBeforeHandoff + 2);
+  await page.waitForLoadState("networkidle");
+  await expect(page.getByText("Snapshot handoff seq 9 applied")).toBeVisible();
   await page.evaluate(() => {
     (globalThis as typeof globalThis & { __snapshotHandoff: { disconnect: () => void } })
       .__snapshotHandoff.disconnect();
@@ -10766,11 +10806,19 @@ test("failed conversation work cell does not label terminal rows as working", as
   await expect(workCell.getByLabel("Active work stream")).not.toContainText("Working");
 });
 
-test("active conversation work cell renders sparse rows while runtime approvals stay in composer overlay", async ({ page }) => {
+test("active conversation work cell renders sparse rows while runtime approvals stay in a blocking dialog", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
   const state = createBaseState({ approvalStatus: "pending" });
+  state.providers = [createChatProvider({
+    lastCheck: {
+      ok: true,
+      code: "ready",
+      message: "Provider is reachable.",
+      checkedAt: "2026-05-22T00:00:00.000Z",
+    },
+  })];
   const run = state.runs[0];
   run.threadId = "thread_active_approval";
   run.status = "waiting_for_approval";
@@ -10815,25 +10863,33 @@ test("active conversation work cell renders sparse rows while runtime approvals 
   const workCell = feed.locator(".conversation-work-cell");
   await expect(workCell).toBeVisible();
   await expect(workCell).toHaveAttribute("data-operation-source", "run_thread");
+  await expect(workCell).toHaveAttribute("data-approval-presentation-owner", "dialog");
   await expect(workCell).not.toContainText("Task waiting for approval");
   await expect(workCell).not.toContainText("Waiting for approval to continue.");
-  await expect(workCell.getByLabel("Active work stream")).toContainText("Waiting for approval");
-  await expect(workCell.getByLabel("Active work stream")).toContainText("Approve shell command");
+  await expect(workCell).toContainText("Waiting for approval");
+  await expect(workCell).toContainText("Run command: echo inspect");
+  await expect(workCell).not.toContainText("Approve shell command");
+  await expect(workCell.locator(".conversation-operation-shell-body")).toHaveCount(0);
+  await expect(workCell.locator(".conversation-work-cell-evidence-summary")).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Deny", exact: true })).toHaveCount(0);
 
   const composer = page.getByLabel("Channel composer");
-  const overlay = composer.getByLabel("Composer approval overlay");
-  await expect(overlay).toBeVisible();
-  await expect(overlay).toContainText("Runtime approval needed");
-  await expect(overlay).toContainText("Highest risk: medium");
-  await expect(overlay).toContainText("Approve shell command");
+  const composerHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
+  const dialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Run command: echo inspect");
+  await expect(dialog).not.toContainText("medium");
+  await expect(dialog).not.toContainText("Approve shell command");
+  await expect(composer.locator(".approval-inline-strip")).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
+  await maybeCaptureViewportScreenshot(page, "runtime-approval-dialog-clean-background.png");
 
-  await overlay.getByRole("button", { name: "Approve" }).click();
-  await expect(composer.getByLabel("Composer approval overlay")).toHaveCount(0);
+  await dialog.getByRole("button", { name: "Allow" }).click();
+  await expect(dialog).toHaveCount(0);
   await expect(composer).not.toContainText("Approve shell command");
+  expect(await composer.evaluate((element) => element.getBoundingClientRect().height)).toBe(composerHeight);
   expect(state.approvals.find((approval) => isRecord(approval) && approval.id === "approval_1")?.status).toBe("approved");
   expect(state.approvalPolicy.toolDecisions.bash).toBe("ask");
   expect(state.approvalPolicy.toolDecisions.write).toBe("ask");
@@ -11436,7 +11492,7 @@ test("retained channel activity does not flash a loading notice during backgroun
   ))).toBe(0);
 });
 
-test("composer approval overlay groups multiple local approvals and excludes review queue actions", async ({ page }) => {
+test("runtime approval dialog queues multiple local approvals and excludes review queue actions", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -11474,23 +11530,23 @@ test("composer approval overlay groups multiple local approvals and excludes rev
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const overlay = page.getByLabel("Channel composer").getByLabel("Composer approval overlay");
-  await expect(overlay).toContainText("Runtime approvals needed");
-  await expect(overlay).toContainText("Highest risk: high");
-  const primaryApproval = overlay.locator(".inline-approval-item.primary");
-  await expect(primaryApproval).toContainText("Approve file write");
-  await expect(primaryApproval).not.toContainText("Approve shell command");
-  await expect(overlay).not.toContainText("Approve external send");
-
-  await overlay.getByText("Show other approvals").click();
-  await expect(overlay).toContainText("Approve shell command");
+  const dialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(dialog).toContainText("Create file:");
+  await expect(dialog).not.toContainText("Approve file write");
+  await expect(dialog).not.toContainText("pending approvals");
+  await expect(dialog).not.toContainText("Approve shell command");
+  await expect(dialog).not.toContainText("Approve external send");
+  await dialog.getByRole("button", { name: "Deny" }).click();
+  await expect(dialog).toContainText("Run command:");
+  await expect(dialog).not.toContainText("Approve shell command");
+  await expect(dialog).not.toContainText("pending approvals");
 });
 
 test("channel activity derives task run approval transition and workflow events", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_timeline",
@@ -11557,9 +11613,10 @@ test("channel activity derives task run approval transition and workflow events"
     title: "Other channel approval leak",
     description: "echo design",
     payload: {},
-    status: "pending",
+    status: "expired",
     createdAt: "2026-05-25T00:03:00.000Z",
-    expiresAt: "2099-01-01T00:01:00.000Z",
+    expiresAt: "2000-01-01T00:01:00.000Z",
+    resolvedAt: "2000-01-01T00:01:00.000Z",
   });
   state.channelWorkflows = [
     {
@@ -11622,7 +11679,7 @@ test("channel activity derives task run approval transition and workflow events"
   const messageBubble = page.locator(".channel-message-row").filter({ hasText: "Timeline source message" });
   const taskEventBubble = page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" });
   const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" });
-  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
+  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approval expired" });
   const stateTransitionBubble = page.locator(".message-bubble").filter({ hasText: "State change" }).filter({ hasText: "task_failed" });
   const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" });
   const activityDetails = page.getByLabel("Activity details");
@@ -11665,7 +11722,7 @@ test("channel activity derives task run approval transition and workflow events"
   await openChannelChatTools(page);
   await expect(taskEventBubble).toContainText("failed");
   await expect(runEventBubble).toContainText("failed");
-  await expect(approvalEventBubble).toContainText("pending");
+  await expect(approvalEventBubble).toContainText("expired");
   await expect(stateTransitionBubble).toBeVisible();
   await expect(workflowStepBubble).toContainText("Runtime policy is waiting.");
   await expect(taskEventBubble).toHaveClass(/message-bubble-work/);
@@ -11687,7 +11744,7 @@ test("channel activity derives task run approval transition and workflow events"
 
   await openDetailsFrom(taskEventBubble, "Inspect workspace");
   await openDetailsFrom(runEventBubble, "Run run_failed");
-  await openDetailsFrom(approvalEventBubble, "Approve shell command");
+  await openDetailsFrom(approvalEventBubble, "Approval expired");
   await openDetailsFrom(stateTransitionBubble, "task_failed");
   await openDetailsFrom(workflowStepBubble, "Blocked timeline step");
 
@@ -11705,7 +11762,7 @@ test("channel activity derives task run approval transition and workflow events"
 
   await approvalEventBubble.getByRole("button", { name: "Details" }).click();
   await clickActivityDetailsAction("Open approval");
-  await expectApprovalDetailOverlay(page, "Approve shell command");
+  await expect(page.locator(".conversation-detail-overlay").filter({ hasText: "Approval details" })).toContainText("No pending approval");
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
 
@@ -11740,8 +11797,8 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(savedViewSelect).toContainText("All (7)");
   await expect(savedViewSelect).toContainText("Needs attention (5)");
   await expect(savedViewSelect).toContainText("Blocked (1)");
-  await expect(savedViewSelect).toContainText("Failed (3)");
-  await expect(savedViewSelect).toContainText("Pending approvals (1)");
+  await expect(savedViewSelect).toContainText("Failed (4)");
+  await expect(savedViewSelect).toContainText("Pending approvals (0)");
   await expect(savedViewSelect).toContainText("Failed work (2)");
   await expect(savedViewSelect).toContainText("Runtime (3)");
   await expect(activityFilters.getByLabel("Activity categories")).toHaveCount(0);
@@ -11772,7 +11829,7 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
   await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
   await selectSavedView("Pending approvals");
-  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" })).toHaveCount(0);
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toHaveCount(0);
   await selectSavedView("Failed work");
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "Inspect workspace" })).toBeVisible();
@@ -11797,8 +11854,8 @@ test("channel activity derives task run approval transition and workflow events"
   await searchInput.fill("run_failed");
   await expect(page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" })).toBeVisible();
 
-  await searchInput.fill("Approve shell command");
-  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toBeVisible();
+  await searchInput.fill("Approval expired");
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "expired" })).toBeVisible();
 
   await searchInput.fill("Wait for runtime recovery");
   await expect(page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" })).toBeVisible();
@@ -11823,9 +11880,9 @@ test("channel activity derives task run approval transition and workflow events"
   await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
   await attentionChip("Failed").click();
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "failed" })).toBeVisible();
-  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toHaveCount(0);
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "expired" })).toBeVisible();
   await attentionChip("Pending").click();
-  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "pending" })).toBeVisible();
+  await expect(page.locator(".message-bubble").filter({ hasText: "Approval event" })).toHaveCount(0);
   await expect(page.locator(".message-bubble").filter({ hasText: "Task event" }).filter({ hasText: "failed" })).toHaveCount(0);
   await activityFilters.getByRole("button", { name: /Clear/ }).click();
 
@@ -11896,8 +11953,8 @@ test("channel activity derives task run approval transition and workflow events"
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
-  await page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" }).getByRole("button", { name: "Open approval" }).click();
-  await expectApprovalDetailOverlay(page, "Approve shell command");
+  await page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approval expired" }).getByRole("button", { name: "Open approval" }).click();
+  await expectApprovalDetailOverlay(page, "Approval expired");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
@@ -11909,7 +11966,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   state.channelMessages = [
     {
       id: "msg_triage",
@@ -11978,7 +12035,7 @@ test("channel activity triage actions create follow-up records and preserve loca
   const activityDetails = page.getByLabel("Activity details");
   const runEventBubble = page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" });
   const workflowStepBubble = page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked triage step" });
-  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approve shell command" });
+  const approvalEventBubble = page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approval expired" });
   const messageBubble = page.locator(".message-bubble").filter({ hasText: "Timeline source message for triage" });
   const openTriageActions = async () => {
     const triageSection = activityDetails.locator(".activity-triage-section");
@@ -12028,10 +12085,10 @@ test("channel activity triage actions create follow-up records and preserve loca
   await approvalEventBubble.getByRole("button", { name: "Details" }).click();
   await openTriageActions();
   await activityDetails.getByRole("button", { name: "Record decision" }).click();
-  await activityDetails.getByLabel("Triage title").fill("Decision: approval stays pending");
-  await activityDetails.getByLabel("Decision text").fill("Keep the approval pending until the user reviews the shell command.");
+  await activityDetails.getByLabel("Triage title").fill("Decision: review the expired approval");
+  await activityDetails.getByLabel("Decision text").fill("Review why the shell command approval expired before retrying.");
   await activityDetails.getByRole("button", { name: "Run triage action" }).click();
-  await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.title === "Decision: approval stays pending")).toBe(true);
+  await expect.poll(() => state.channelDecisions.some((decision) => isRecord(decision) && decision.title === "Decision: review the expired approval")).toBe(true);
   await activityDetails.getByRole("button", { name: "Review created source" }).click();
   await expectConversationReviewSurface(page);
 
@@ -12184,4 +12241,16 @@ async function maybeCaptureConversationScreenshots(
       } : undefined,
     });
   }
+}
+
+async function maybeCaptureViewportScreenshot(page: Page, name: string): Promise<void> {
+  const outputDir = process.env.LING_R32_SCREENSHOTS_DIR;
+  if (!outputDir) {
+    return;
+  }
+  await mkdir(outputDir, { recursive: true });
+  await page.screenshot({
+    animations: "disabled",
+    path: join(outputDir, name),
+  });
 }

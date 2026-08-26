@@ -27,6 +27,7 @@
 @import "./styles/settings-startup-diagnostics.css";
 @import "./styles/settings-permissions.css";
 @import "./styles/approvals.css";
+@import "./styles/approvals/dialog-queue.css";
 @import "./styles/work-board.css";
 @import "./styles/layout.css";
 @import "./styles/shared/avatar-initial.css";

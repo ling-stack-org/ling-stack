@@ -206,6 +206,42 @@ message/composer/evidence model.
     keyword routing, separate MediaJob state machines, or surface-specific media cards.
     MediaJob remains the artifact owner; the conversation surface consumes a read model
     linked through the parent Run and child WorkUnit.
+23. Pending local runtime approvals are decided in one shared blocking dialog outside the
+    Composer and virtual feed. Channel, normal conversation, and teammate private chat
+    use the same risk/time ordering and direct allow/deny behavior. The dialog shows only
+    one localized action sentence plus necessary mutation feedback; audit metadata and
+    decision reasons do not appear there. Composer slots must not resize when an approval
+    appears or resolves. The same ordered approval read model marks its owning Run as
+    `dialog_owned_pending`: the transcript may show one non-interactive localized status
+    marker, but must not render an expandable WorkCell, approval operation rows, evidence
+    groups, raw permission labels, or duplicate decision controls until the dialog-owned
+    approval resolves. Complete payload and history remain available in Run detail and
+    audit surfaces.
+24. Channel execution proposals render a compact transcript summary. Their editable task
+    scope and authorization actions live in a dismissible dialog mounted outside the
+    virtual feed. A newly actionable proposal may auto-open once and must remain
+    reopenable from its summary. When a proposal exists, that summary is the only default
+    feed representation of requirement shaping. Internal shaping status, teammate ids,
+    and collaboration records remain audit data; only an actual unanswered user question
+    may render as a separate compact decision-needed row. The compact summary is visually
+    owned by `assigneeTeammateId`: it must render the assignee through the canonical
+    teammate-avatar projection, including custom-avatar and deleted-teammate fallback
+    behavior. It must not inherit or duplicate the source message author's avatar.
+25. Channel, teammate-private-chat, and recent-conversation rows use one shared Sidebar
+    object preview. Every preview shows the complete object name and its latest known
+    activity time; it does not repeat the surface type already established by the Sidebar
+    section. It may additionally show repository and
+    branch context only when that object's effective execution workspace resolves to an
+    available Git workspace distinct from the shared global workspace. Conversation
+    context comes from its newest loaded Run; channel context uses its current workspace
+    binding first, then a distinct latest-Run or explicit bound path; teammate-private-chat
+    context uses the newest non-channel Run for that teammate. A shared-workspace Run is
+    activity evidence, not durable object-level Git evidence, because its current branch
+    may differ from the branch used by the historical Run. The
+    Sidebar uses the existing workspace-change projection, deduplicates checks by working
+    directory, never displays an absolute local path, and treats missing/non-Git/error
+    results as absent optional metadata. Git context belongs to the rich preview rather
+    than the title row, so it must not reduce title width or add horizontal scrolling.
 
 ## Surface Capability Matrix
 

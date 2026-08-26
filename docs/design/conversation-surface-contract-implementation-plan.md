@@ -106,6 +106,42 @@ and consumption work.
 - Channel-only teammate routing, topic replies, goals, plans and multi-agent activity remain
   channel-only.
 
+## Active Approval And Proposal Dialog Slice
+
+- Replace Composer-owned pending approval strips with one shared blocking dialog queue.
+  Channel, normal conversation, and teammate private chat keep their existing eligibility
+  projections and domain callbacks; no shared component fetches or mutates daemon state.
+- Reduce the active dialog to one localized action sentence and direct allow/deny actions.
+  Keep raw payload, policy context, ids, risk metadata, and optional decision reasons in
+  durable audit surfaces rather than progressively disclosing them in the dialog.
+- Keep immutable approval outcomes in WorkCell/transcript history and keep external-action
+  approvals in their existing Review Queue path.
+- Replace the large channel execution-proposal feed card with a compact summary and mount
+  the editable, dismissible proposal dialog at `WorkspaceClientView` level. Auto-open only
+  the newest newly actionable proposal once per proposal revision.
+- Make that compact proposal summary the sole default feed projection for requirement
+  shaping. Suppress internal status and collaboration records; preserve only real
+  unanswered user questions as compact decision-needed rows.
+- Preserve existing approval endpoints, proposal endpoints, policy semantics, virtual-feed
+  ownership, and `ConversationComposerShell.approvalNode` API while removing its production
+  consumers.
+- Acceptance requires stable Composer geometry, single-item risk/time queue ordering,
+  mutation retry, focus restoration, proposal dismiss/reopen, and all three conversation
+  surfaces.
+
+## Active Recent Conversation Git Preview Slice
+
+- Project optional repository/branch metadata from the newest loaded Run associated with
+  each of the five visible recent conversations.
+- Deduplicate workspace checks and use the existing `getWorkspaceChanges` API. Keep the
+  check asynchronous and fail-quiet so Sidebar loading, selection, and status projection
+  never wait on Git.
+- Extend the existing rich Sidebar preview with repository and branch rows. Preserve the
+  title row geometry, overflow animation, status/action overlays, and collapsed rail.
+- Verify Git, non-Git, duplicate-workspace, unavailable, light/dark, and horizontal
+  overflow states. Final evidence also includes a real message-submission run in the
+  in-app browser rather than fixture screenshots only.
+
 ## Remaining Work
 
 ### Generated Media Capability
@@ -123,7 +159,7 @@ and consumption work.
 - Finish the shared WorkCell shell and typed operation/result projections.
 - Keep run, approval and artifact state in existing domains; the package receives view
   models and callbacks only.
-- Preserve quiet normal messages and persistent warning/approval surfaces.
+- Preserve quiet normal messages and compact durable warning/approval history.
 
 ### Evidence And Attachments
 
