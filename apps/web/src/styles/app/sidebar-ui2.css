@@ -139,6 +139,27 @@
   transform: translateY(-50%);
 }
 
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] .sidebar-row-main {
+  padding-right: 82px;
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] > .sidebar-row-status {
+  right: 10px;
+  width: auto;
+  max-width: 72px;
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] .sidebar-object-status {
+  width: auto;
+  height: 20px;
+  color: var(--ling-status-success);
+  font-weight: 650;
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] .ling-ui-status-indicator-dot {
+  display: none;
+}
+
 .channel-left-drawer .sidebar-row-shell[data-sidebar-row-actions="true"]:hover > .sidebar-row-status,
 .channel-left-drawer .sidebar-row-shell[data-sidebar-row-actions="true"]:focus-within > .sidebar-row-status {
   opacity: 0;

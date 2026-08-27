@@ -294,7 +294,7 @@ test("A pending external approval becomes executable without executing implicitl
   await runtime.assertClean();
 });
 
-test("Runtime dialog queue deduplicates, sorts highest risk, and preserves composer geometry", async ({ page }) => {
+test("Runtime approval belongs to its channel composer and leaves other conversations usable", async ({ page }) => {
   await prepareSurface(page, "en-US", "light", 1440, 960);
   const state = createBaseState({ approvalStatus: "pending" });
   state.providers = [createChatProvider({
@@ -305,6 +305,12 @@ test("Runtime dialog queue deduplicates, sorts highest risk, and preserves compo
       checkedAt: "2026-05-22T00:00:00.000Z",
     },
   })];
+  state.channels.push({
+    ...state.channels[0],
+    id: "channel_general",
+    name: "General",
+    defaultTeammateId: undefined,
+  });
   const runId = state.runs[0]?.id;
   const critical = createPermissionApproval({ id: "inline_critical", runId, channelId: undefined, risk: "critical", title: "Critical runtime permission" });
   const medium = createApproval({ id: "inline_medium", runId, actionType: "bash", risk: "medium", title: "Medium shell approval", payload: { type: "bash", command: "pnpm test" } });
@@ -322,37 +328,50 @@ test("Runtime dialog queue deduplicates, sorts highest risk, and preserves compo
   });
   const runtime = watchRuntime(page);
   await page.goto("/");
-  await page.getByLabel(/Ling Stack navigation|Ling Stack 导航/).getByRole("button", { name: "Engineering" }).first().click();
-  const composer = page.locator(".channel-composer").first();
-  const dialog = page.getByRole("dialog", { name: "Allow this action?" });
-  await expect(dialog).toBeVisible();
-  await expect(composer.locator(".channel-active-status-strip")).toHaveCount(0);
-  const composerHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
-  await expect(dialog).toContainText("Grant runtime permission: core_tool: Release repair needs one additional editor tool.");
-  await expect(dialog).not.toContainText("Critical runtime permission");
-  await expect(dialog).not.toContainText("pending approvals");
-  await expect(dialog).not.toContainText("Medium shell approval");
-  await expect(dialog.getByLabel("Decision reason")).toHaveCount(0);
-  await expect(dialog.locator("details")).toHaveCount(0);
-  await expect(dialog).not.toContainText(/critical|risk|Run ID|workspace/iu);
-  await expect(page.locator(".approval-inline-strip")).toHaveCount(0);
-  await captureEvidence(page, "1440x960-ling-light-runtime-approval-dialog.png");
+  const navigation = page.getByLabel(/Ling Stack navigation|Ling Stack 导航/);
+  const engineeringButton = navigation.getByRole("button", { name: "Engineering" }).first();
+  const engineeringRow = navigation.locator(".sidebar-row-shell").filter({ hasText: "Engineering" }).first();
+  await expect(engineeringRow).toHaveAttribute("data-sidebar-row-status", "waiting");
+  await expect(engineeringRow).toContainText("Waiting for approval");
 
-  await dialog.getByRole("button", { name: "Allow" }).click();
+  await navigation.getByRole("button", { name: "General" }).click();
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Allow this action?" })).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Allow this action?" })).toHaveCount(0);
+
+  await engineeringButton.click();
+  const gate = page.getByRole("region", { name: "Allow this action?" });
+  await expect(gate).toBeVisible();
+  await expect(page.getByLabel("Channel composer")).toHaveCount(0);
+  await expect(gate).toContainText("Grant runtime permission: core_tool: Release repair needs one additional editor tool.");
+  await expect(gate).not.toContainText("Critical runtime permission");
+  await expect(gate).not.toContainText("pending approvals");
+  await expect(gate).not.toContainText("Medium shell approval");
+  await expect(gate.getByLabel("Decision reason")).toHaveCount(0);
+  await expect(gate.locator("details")).toHaveCount(0);
+  await expect(gate).not.toContainText(/critical|risk|Run ID|workspace/iu);
+  await expect(page.locator(".approval-inline-strip")).toHaveCount(0);
+  await captureEvidence(page, "1440x960-ling-light-runtime-approval-composer-gate.png");
+
+  await navigation.getByRole("button", { name: "General" }).click();
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await engineeringButton.click();
+  await gate.getByRole("button", { name: "Allow once" }).click();
   await expect.poll(() => state.approvals.find((item) => item.id === "inline_critical")?.status).toBe("approved");
-  await expect(dialog).toContainText("Run command: pnpm test");
-  await expect(dialog).not.toContainText("Medium shell approval");
-  await dialog.getByRole("button", { name: "Deny" }).click();
-  await expect(dialog).toContainText("Synthetic approval decision failure");
-  await expect(dialog.getByRole("button", { name: "Retry" })).toBeVisible();
-  await dialog.getByRole("button", { name: "Retry" }).click();
+  await expect(gate).toContainText("Run command: pnpm test");
+  await expect(gate).not.toContainText("Medium shell approval");
+  await gate.getByRole("button", { name: "Deny" }).click();
+  await expect(gate).toContainText("Synthetic approval decision failure");
+  await expect(gate.getByRole("button", { name: "Retry" })).toBeVisible();
+  await gate.getByRole("button", { name: "Retry" }).click();
   await expect.poll(() => state.approvals.find((item) => item.id === "inline_medium")?.status).toBe("denied");
-  await expect(dialog).toContainText("Modify file: README.md");
-  await expect(dialog).not.toContainText("Low file approval");
-  await dialog.getByRole("button", { name: "Deny" }).click();
+  await expect(gate).toContainText("Modify file: README.md");
+  await expect(gate).not.toContainText("Low file approval");
+  await gate.getByRole("button", { name: "Deny" }).click();
   await expect.poll(() => state.approvals.find((item) => item.id === "inline_low")?.status).toBe("denied");
-  await expect(dialog).toHaveCount(0);
-  expect(await composer.evaluate((element) => element.getBoundingClientRect().height)).toBe(composerHeight);
+  await expect(gate).toHaveCount(0);
+  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await expect(engineeringRow).not.toHaveAttribute("data-sidebar-row-status", "waiting");
   await runtime.assertClean([503]);
 });
 

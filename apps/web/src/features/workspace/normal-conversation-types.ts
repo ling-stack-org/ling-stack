@@ -126,7 +126,7 @@ export interface ConversationHomeProps {
   readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenModelWorkbench?: () => void;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
-  readonly onConfirmFullAccessSelection?: () => PermissionConfirmation;
+  readonly onConfirmFullAccessSelection?: () => Promise<PermissionConfirmation | undefined>;
   readonly onFullAccessConversationBound?: (threadId: string) => void;
   readonly onRefreshConversation?: () => void | Promise<void>;
   readonly onStopConversation?: (target: ConversationActiveReplyTarget) => void | Promise<void>;

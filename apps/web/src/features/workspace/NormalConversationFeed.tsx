@@ -5,9 +5,9 @@ import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import {
-  buildDialogOwnedApprovalPresentationByRunId,
-  dialogOwnedApprovalPresentationForWorkCell,
-  type DialogOwnedApprovalPresentation,
+  buildComposerGateApprovalPresentationByRunId,
+  composerGateApprovalPresentationForWorkCell,
+  type ComposerGateApprovalPresentation,
 } from "../../lib/runtime-approval-presentation.js";
 import {
   ConversationAttachmentStrip,
@@ -42,7 +42,7 @@ export interface NormalConversationFeedProps {
   readonly visibleMessages: readonly ConversationHomeMessage[];
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly detailContext?: ConversationHomeDetailContext;
-  readonly dialogOwnedApprovals: readonly InlineApprovalView[];
+  readonly composerGateApprovals: readonly InlineApprovalView[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly projectPath?: string;
   readonly workspaceCwd: string;
@@ -64,7 +64,7 @@ export interface NormalConversationFeedProps {
 
 export function NormalConversationFeed({
   detailContext,
-  dialogOwnedApprovals,
+  composerGateApprovals,
   editSaving,
   editingMessageId,
   latestEditableUserMessageId,
@@ -88,13 +88,14 @@ export function NormalConversationFeed({
 }: NormalConversationFeedProps): React.JSX.Element {
   const { t } = useI18n();
   const feedRef = useRef<HTMLDivElement | null>(null);
+  const contentResizeFrameRef = useRef<number | undefined>(undefined);
   const stickToLatestRef = useRef(true);
   const mountedRef = useRef(false);
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [feedbackById, setFeedbackById] = useState<Record<string, "up" | "down">>({});
-  const dialogOwnedApprovalByRunId = useMemo(
-    () => buildDialogOwnedApprovalPresentationByRunId(dialogOwnedApprovals, t),
-    [dialogOwnedApprovals, t],
+  const composerGateApprovalByRunId = useMemo(
+    () => buildComposerGateApprovalPresentationByRunId(composerGateApprovals, t),
+    [composerGateApprovals, t],
   );
   const feedItems = useMemo(() => projectNormalConversationFeedItems({
     detailContext,
@@ -134,6 +135,39 @@ export function NormalConversationFeed({
     setLatestButtonVisible(distanceFromLatest(feed) > latestThresholdPx);
   }, [itemKey, scrollToLatest]);
 
+  useLayoutEffect(() => {
+    const feed = feedRef.current;
+    if (!feed || typeof ResizeObserver === "undefined") {
+      return undefined;
+    }
+    const observer = new ResizeObserver(() => {
+      if (contentResizeFrameRef.current !== undefined) {
+        return;
+      }
+      contentResizeFrameRef.current = globalThis.requestAnimationFrame(() => {
+        contentResizeFrameRef.current = undefined;
+        const currentFeed = feedRef.current;
+        if (!currentFeed) {
+          return;
+        }
+        if (stickToLatestRef.current) {
+          currentFeed.scrollTop = currentFeed.scrollHeight;
+          setLatestButtonVisible(false);
+          return;
+        }
+        setLatestButtonVisible(distanceFromLatest(currentFeed) > latestThresholdPx);
+      });
+    });
+    Array.from(feed.children).forEach((child) => observer.observe(child));
+    return () => {
+      observer.disconnect();
+      if (contentResizeFrameRef.current !== undefined) {
+        globalThis.cancelAnimationFrame(contentResizeFrameRef.current);
+        contentResizeFrameRef.current = undefined;
+      }
+    };
+  }, [itemKey]);
+
   function handleFeedScroll(event: UIEvent<HTMLDivElement>): void {
     const atLatest = distanceFromLatest(event.currentTarget) <= latestThresholdPx;
     stickToLatestRef.current = atLatest;
@@ -164,8 +198,8 @@ export function NormalConversationFeed({
         renderItem={(item) => (
           <NormalConversationMessageRow
             item={item}
-            dialogOwnedApproval={item.workCell
-              ? dialogOwnedApprovalPresentationForWorkCell(item.workCell, dialogOwnedApprovalByRunId)
+            composerGateApproval={item.workCell
+              ? composerGateApprovalPresentationForWorkCell(item.workCell, composerGateApprovalByRunId)
               : undefined}
             generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
             feedback={feedbackById[item.message.id]}
@@ -201,7 +235,7 @@ export function NormalConversationFeed({
 }
 
 function NormalConversationMessageRow({
-  dialogOwnedApproval,
+  composerGateApproval,
   editSaving,
   editable,
   editing,
@@ -223,7 +257,7 @@ function NormalConversationMessageRow({
   workspaceCwd,
 }: {
   readonly item: NormalConversationFeedItem;
-  readonly dialogOwnedApproval?: DialogOwnedApprovalPresentation;
+  readonly composerGateApproval?: ComposerGateApprovalPresentation;
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly feedback?: "up" | "down";
   readonly editing: boolean;
@@ -313,7 +347,7 @@ function NormalConversationMessageRow({
             <ConversationWorkCell
               model={item.workCell}
               surface="normal_conversation"
-              dialogOwnedApproval={dialogOwnedApproval}
+              composerGateApproval={composerGateApproval}
               cwd={item.workCellCwd}
               onOpenRun={onOpenRun}
               onOpenWorkspaceFile={onOpenReportFile}

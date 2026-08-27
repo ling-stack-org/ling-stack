@@ -206,21 +206,29 @@ message/composer/evidence model.
     keyword routing, separate MediaJob state machines, or surface-specific media cards.
     MediaJob remains the artifact owner; the conversation surface consumes a read model
     linked through the parent Run and child WorkUnit.
-23. Pending local runtime approvals are decided in one shared blocking dialog outside the
-    Composer and virtual feed. Channel, normal conversation, and teammate private chat
-    use the same risk/time ordering and direct allow/deny behavior. The dialog shows only
-    one localized action sentence plus necessary mutation feedback; audit metadata and
-    decision reasons do not appear there. Composer slots must not resize when an approval
-    appears or resolves. The same ordered approval read model marks its owning Run as
-    `dialog_owned_pending`: the transcript may show one non-interactive localized status
-    marker, but must not render an expandable WorkCell, approval operation rows, evidence
-    groups, raw permission labels, or duplicate decision controls until the dialog-owned
-    approval resolves. Complete payload and history remain available in Run detail and
-    audit surfaces.
-24. Channel execution proposals render a compact transcript summary. Their editable task
-    scope and authorization actions live in a dismissible dialog mounted outside the
-    virtual feed. A newly actionable proposal may auto-open once and must remain
-    reopenable from its summary. When a proposal exists, that summary is the only default
+23. Pending local runtime approvals are owned by their conversation surface, not by a
+    global blocking dialog. A background channel, normal conversation, or teammate
+    private chat shows a visible green `Waiting for approval` label on its Sidebar row
+    without interrupting the active conversation. When the user opens the owning session,
+    one shared `RuntimeApprovalComposerGate` replaces that session's Composer and presents
+    one localized action sentence plus direct deny/allow actions. The gate must not mount
+    a page backdrop, trap focus outside the session, disable Sidebar navigation, or affect
+    another session's Composer. The same ordered approval read model marks its owning Run
+    as `composer_gate_pending`: the transcript may show one non-interactive localized
+    status marker, but must not render an expandable WorkCell, approval operation rows,
+    evidence groups, raw permission labels, or duplicate decision controls until the
+    Composer-owned approval resolves. Complete payload and history remain available in
+    Run detail and audit surfaces.
+    Ownership resolution must use the linked Work Unit kind before teammate identity:
+    `conversation_run` is a normal conversation and `teammate_direct_reply` is a private
+    chat. A normal Ling Agent Run may carry `teammateId`, so that field alone must never
+    move its approval into the teammate Sidebar or Composer.
+24. Channel execution proposals render a compact transcript summary. An actionable
+    proposal is a session-owned decision and replaces only its channel Composer, after any
+    runtime approval gate. The shared decision shell shows one sentence naming task,
+    assignee, and localized permission categories, followed only by deny and allow. The
+    summary can select its proposal for the owning Composer. When a proposal exists, that
+    summary is the only default
     feed representation of requirement shaping. Internal shaping status, teammate ids,
     and collaboration records remain audit data; only an actual unanswered user question
     may render as a separate compact decision-needed row. The compact summary is visually
@@ -602,6 +610,11 @@ Rules:
 - generic successful verification summaries such as `1 check passed` do not create a
   WorkCell by themselves,
 - run/thread detail can render the richest version of the same work contract.
+
+The operation shell owns alignment, not content padding. Every visual child is rendered
+through a semantic head, body, or static-content slot. Static status content uses the
+shared operation-cell inline inset on both sides; consumers must not rely on parent padding
+or add screenshot-specific margins.
 
 ## Surface Policies
 
@@ -1106,6 +1119,11 @@ Every future slice touching conversation UI should keep or add focused tests for
   initial channel reply, queued channel continuation and teammate private chat must not turn
   that tool-only result into an empty-response error or synthetic acknowledgement. A successful
   run with neither visible text nor generated-media projection still fails at message level.
+- while a conversation feed is pinned to the latest turn, late layout growth from generated
+  media, previews, fonts, or other asynchronous content must preserve that bottom pin. The
+  complete outer message row must remain scrollable above the Composer boundary; measuring an
+  inner WorkCell or text block is not sufficient overlap evidence. If the user has intentionally
+  scrolled away from the latest turn, asynchronous growth must not pull them back to the bottom.
 
 ## Implementation Slice Status
 

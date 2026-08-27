@@ -74,6 +74,7 @@ import {
   effectiveApprovalStatus,
 } from "../lib/approvals.js";
 import { buildInlineApprovalViews } from "../lib/inline-approvals.js";
+import { resolveRuntimeRunOwner } from "../lib/runtime-approval-ownership.js";
 import {
   channelToForm,
   defaultChannelCreateForm,
@@ -151,6 +152,7 @@ import {
 } from "./app-shell-selectors.js";
 import {
   buildSidebarChannelNotifications,
+  buildSidebarConversationApprovalCounts,
   buildSidebarTeammateNotifications,
   projectSidebarConversationStatus,
 } from "./sidebar-status-projections.js";
@@ -1058,8 +1060,10 @@ export function AppShell(): React.JSX.Element {
       runs: [...runs, ...(run ? [run] : [])],
       selectedChannelId,
       tasks,
+      workUnits,
+      workflowSteps: channelWorkflowSteps,
     }),
-    [approvals, channels, channelUnreadById, run, runs, selectedChannelId, tasks, workspaceSettings?.channelNotifications],
+    [approvals, channelWorkflowSteps, channels, channelUnreadById, run, runs, selectedChannelId, tasks, workUnits, workspaceSettings?.channelNotifications],
   );
   const sidebarTeammateNotifications = useMemo(
     () => buildSidebarTeammateNotifications({
@@ -1067,13 +1071,21 @@ export function AppShell(): React.JSX.Element {
       runs: [...runs, ...(run ? [run] : [])],
       tasks,
       teammates: aiTeammates,
+      workUnits,
     }),
-    [aiTeammates, approvals, run, runs, tasks],
+    [aiTeammates, approvals, run, runs, tasks, workUnits],
+  );
+  const sidebarConversationApprovalCounts = useMemo(
+    () => buildSidebarConversationApprovalCounts(approvals, sidebarRuns, workUnits),
+    [approvals, sidebarRuns, workUnits],
   );
   const recentConversations = useMemo<readonly SidebarRecentConversation[]>(() => {
     const activeThreadIds = new Set([...runs, ...(run ? [run] : [])]
       .filter((item) => item.status === "queued" || item.status === "running")
-      .map((item) => item.threadId)
+      .map((item) => {
+        const owner = resolveRuntimeRunOwner(item, { workUnits });
+        return owner?.kind === "normal_conversation" ? owner.threadId : undefined;
+      })
       .filter((threadId): threadId is string => Boolean(threadId)));
     return conversationThreads
       .map((thread) => ({
@@ -1083,12 +1095,13 @@ export function AppShell(): React.JSX.Element {
         primaryStatus: projectSidebarConversationStatus(
           thread.status,
           activeThreadIds.has(thread.id) || (thread.id === selectedConversationThreadId && conversationStreamBusy),
+          (sidebarConversationApprovalCounts.get(thread.id) ?? 0) > 0,
         ),
         updatedAt: thread.metadata?.lastActivityAt ?? thread.updatedAt,
       }) satisfies SidebarRecentConversation)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 5);
-  }, [conversationStreamBusy, conversationThreads, run, runs, selectedConversationThreadId, t]);
+  }, [conversationStreamBusy, conversationThreads, run, runs, selectedConversationThreadId, sidebarConversationApprovalCounts, t, workUnits]);
   const conversationChatProviders = useMemo(
     () => providers.filter(canUseConversationProvider),
     [providers],
@@ -1153,17 +1166,20 @@ export function AppShell(): React.JSX.Element {
     [selectedConversationDetail?.runs],
   );
   const normalConversationInlineApprovalViews = useMemo(
-    () => buildInlineApprovalViews(
+    () => selectedConversationDetail ? buildInlineApprovalViews(
       [
         ...(selectedConversationDetail?.approvals ?? []),
         ...approvals,
       ],
       {
-        activeRunId: activeConversationRun?.id,
-        visibleRunIds: selectedConversationDetail?.runs.map((candidate) => candidate.id),
+        owner: { kind: "normal_conversation", threadId: selectedConversationDetail.thread.id },
+        runs: sidebarRuns,
+        tasks,
+        workUnits,
+        workflowSteps: channelWorkflowSteps,
       },
-    ),
-    [activeConversationRun?.id, approvals, selectedConversationDetail?.approvals, selectedConversationDetail?.runs],
+    ) : [],
+    [approvals, channelWorkflowSteps, selectedConversationDetail, sidebarRuns, tasks, workUnits],
   );
   const selectedConversationProjectPath = selectedConversationDetail?.defaults.projectPath ?? "";
   const selectedConversationProjectLabel = selectedConversationProjectPath
@@ -1225,20 +1241,16 @@ export function AppShell(): React.JSX.Element {
     if (!selectedChannelId) {
       return new Set<string>();
     }
-    const channelTaskIds = tasks.filter((task) => task.channelId === selectedChannelId).map((task) => task.id);
-    const blockedWorkflowStepIds = channelWorkflowSteps
-      .filter((step) => step.channelId === selectedChannelId && (step.status === "waiting_for_approval" || step.status === "blocked"))
-      .map((step) => step.id);
     return new Set(
       buildInlineApprovalViews(approvals, {
-        activeChannelId: selectedChannelId,
-        activeRunId,
-        visibleRunIds: channelRunsForArtifacts.map((item) => item.id),
-        visibleTaskIds: channelTaskIds,
-        blockedWorkflowStepIds,
+        owner: { kind: "channel", channelId: selectedChannelId },
+        runs: sidebarRuns,
+        tasks,
+        workUnits,
+        workflowSteps: channelWorkflowSteps,
       }).map((item) => item.approval.id),
     );
-  }, [activeRunId, approvals, channelRunsForArtifacts, channelWorkflowSteps, selectedChannelId, tasks]);
+  }, [approvals, channelWorkflowSteps, selectedChannelId, sidebarRuns, tasks, workUnits]);
   const channelTransitionEntityKey = useMemo(
     () => buildChannelTransitionEntities(selectedChannelId, tasks, channelRunsForArtifacts, channelWorkflows, channelWorkflowSteps)
       .map((item) => `${item.entityType}:${item.entityId}:${item.updatedAt}`)
@@ -1288,7 +1300,6 @@ export function AppShell(): React.JSX.Element {
     removeTask,
     moveTaskToReview,
     saveTaskEdit,
-    markChannelExecutionProposal,
     confirmChannelExecutionProposal,
     cancelChannelExecutionProposal,
     runPersistedTask,
@@ -2164,6 +2175,10 @@ export function AppShell(): React.JSX.Element {
 
       case "approval.resolved":
         await refreshApprovals(workspaceCwd, event.runId);
+        await refreshConversationThreads(workspaceCwd);
+        window.setTimeout(() => {
+          void refreshConversationThreads(workspaceCwd);
+        }, 750);
         if (event.runId && selectedConversationDetail?.runs.some((run) => run.id === event.runId)) {
           await refreshSelectedConversation(workspaceCwd);
         }
@@ -2584,7 +2599,6 @@ export function AppShell(): React.JSX.Element {
             onSendMessage={sendChannelMessage}
             onConfirmExecutionProposal={confirmChannelExecutionProposal}
             onCancelExecutionProposal={cancelChannelExecutionProposal}
-            onUpdateExecutionProposal={markChannelExecutionProposal}
             onUploadAttachments={(files) => uploadChannelFiles(files)}
             onCreateLinkPreview={(url) => addChannelLinkPreview(url)}
             onDeleteAttachment={(attachmentId) => void removeChannelAttachment(attachmentId)}
@@ -2634,7 +2648,12 @@ export function AppShell(): React.JSX.Element {
             onSelectTask={setSelectedTaskId}
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
             onRunTask={(task) => void runPersistedTask(task)}
-            onPermissionModeChange={(permissionMode) => setForm((current) => {
+            onPermissionModeChange={async (permissionMode) => {
+              if (permissionMode === "full_access") {
+                const confirmation = await fullAccessConfirmation.request(channelConversationFullAccessScope);
+                if (!confirmation) return;
+              }
+              setForm((current) => {
               const workspaceAccessMode = workspaceAccessModeForPermissionPreset(permissionMode === "full_access"
                 ? "full_access"
                 : permissionMode === "ask_everything"
@@ -2647,7 +2666,8 @@ export function AppShell(): React.JSX.Element {
                 permissionMode: legacy.permissionMode,
                 permissionPreset: legacy.permissionPreset,
               };
-            })}
+              });
+            }}
             onCancelActiveRun={(targetRun) => void cancelRunOrWorkUnit(targetRun)}
             onOpenRun={(runId) => void openRunFromWorkspace(runId)}
             onOpenApprovals={(runId) => openApprovalsFromWorkspace(runId)}
@@ -2712,7 +2732,7 @@ export function AppShell(): React.JSX.Element {
                   onOpenModelWorkbench={() => openSettingsWorkspaceTool("providers")}
                   fullAccessConfirmed={fullAccessConfirmation.isConfirmed(normalConversationConfirmationScope)}
                   onConfirmFullAccess={() => fullAccessConfirmation.request(normalConversationConfirmationScope)}
-                  onConfirmFullAccessSelection={() => fullAccessConfirmation.confirmExplicitSelection(normalConversationConfirmationScope)}
+                  onConfirmFullAccessSelection={() => fullAccessConfirmation.request(normalConversationConfirmationScope)}
                   onFullAccessConversationBound={(threadId) => fullAccessConfirmation.bind(
                     normalConversationConfirmationScope,
                     {
@@ -2797,6 +2817,7 @@ export function AppShell(): React.JSX.Element {
                 workspaceDefaultProviderPresetId={workspaceSettings?.defaultProviderPresetId}
                 channels={channels}
                 runs={runs}
+                workUnits={workUnits}
                 skillPack={builtinSkillPack}
                 onUpdateTeammate={updateAiTeammateSettings}
                 onTeammateUpdated={upsertAiTeammate}
@@ -2824,7 +2845,7 @@ export function AppShell(): React.JSX.Element {
                 onDirectConversationChange={setDesktopTeammateConversationId}
                 fullAccessConfirmed={fullAccessConfirmation.isConfirmed(teammateConversationFullAccessScope)}
                 onConfirmFullAccess={() => fullAccessConfirmation.request(teammateConversationFullAccessScope)}
-                onConfirmFullAccessSelection={() => fullAccessConfirmation.confirmExplicitSelection(teammateConversationFullAccessScope)}
+                onConfirmFullAccessSelection={() => fullAccessConfirmation.request(teammateConversationFullAccessScope)}
                 defaultPermissionMode={workspaceSettings?.defaultPermissionMode}
                 defaultPermissionPreset={workspaceSettings?.defaultPermissionPreset}
                 workspacePolicy={approvalPolicy}

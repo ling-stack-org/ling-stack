@@ -1,6 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
+import { useState, type ReactNode } from "react";
 import {
-  Check,
   ChevronDown,
   ChevronUp,
   CircleAlert,
@@ -9,12 +8,8 @@ import {
   Play,
   Plus,
   RefreshCw,
-  ShieldCheck,
-  SlidersHorizontal,
   Square,
-  SquareTerminal,
   Workflow,
-  X,
 } from "lucide-react";
 import { artifactContentUrl, getChannelWorkflowEvidence } from "../../api.js";
 import { useI18n, type Translate } from "../../i18n.js";
@@ -31,10 +26,8 @@ import type {
   ChannelBrief,
   ChannelContextSummary,
   ChannelDecision,
-  ChannelExecutionProposal,
   ChannelHandoff,
   ChannelLinkPreview,
-  ChannelMention,
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepContextPacket,
@@ -42,24 +35,15 @@ import type {
   EffectiveConversationModelSourceV1,
   RunArtifact,
   RunSession,
-  UpdateChannelExecutionProposalRequest,
   WorkflowContextInspectSummary,
   WorkflowEvidenceDiagnostic,
 } from "../../types.js";
-import {
-  ChannelExecutionProposalEditor,
-  type ChannelExecutionProposalEditorDraft,
-  type ChannelExecutionProposalEditorStep,
-} from "./ChannelExecutionProposalEditor.js";
 import { ChannelWorkflowStatusIndicator, ChannelWorkflowStatusLabel } from "./ChannelWorkflowStatusIndicator.js";
 
 function uniqueStrings(values: readonly string[]): readonly string[] {
   return [...new Set(values.filter(Boolean))];
 }
 
-type ChannelProposalStepSource = NonNullable<ChannelExecutionProposal["collaborationSteps"][number]["sources"]>[number];
-type ChannelProposalStepDraft = ChannelExecutionProposalEditorStep<ChannelProposalStepSource>;
-type ChannelProposalEditDraft = ChannelExecutionProposalEditorDraft<ChannelProposalStepSource>;
 export function WorkflowQueueCard({
   cwd,
   workflow,
@@ -952,297 +936,6 @@ export function workflowCanAdvance(status: ChannelWorkflow["status"]): boolean {
 
 export function workflowCanCancel(status: ChannelWorkflow["status"]): boolean {
   return status === "draft" || status === "ready" || status === "running" || status === "waiting_for_approval" || status === "blocked";
-}
-
-export function ChannelExecutionProposalDecision({
-  proposal,
-  assigneeLabel,
-  teammates,
-  onConfirm,
-  onCancel,
-  onUpdate,
-  onOpenRun,
-  onRepairModelBinding,
-  actionBusy = "",
-}: {
-  readonly proposal: ChannelExecutionProposal;
-  readonly assigneeLabel: string;
-  readonly teammates: readonly ChannelMention[];
-  readonly onConfirm: () => void;
-  readonly onCancel: () => void;
-  readonly onUpdate: (
-    proposal: ChannelExecutionProposal,
-    input: UpdateChannelExecutionProposalRequest,
-  ) => Promise<ChannelExecutionProposal | undefined>;
-  readonly onOpenRun: (runId: string) => void;
-  readonly onRepairModelBinding: (blocker: NonNullable<ChannelExecutionProposal["blocker"]>) => void;
-  readonly actionBusy?: "confirm" | "cancel" | "";
-}): React.JSX.Element {
-  const { t } = useI18n();
-  const [editing, setEditing] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [editError, setEditError] = useState("");
-  const [draft, setDraft] = useState<ChannelProposalEditDraft>(() => proposalToEditDraft(proposal));
-  const canStart = proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed";
-  const canEdit = canStart && !proposal.linkedWorkflowId;
-  const permissionLabels = proposalPermissionLabels(proposal.requiredTools, t);
-  const draftValid = proposalDraftIsValid(draft);
-
-  useEffect(() => {
-    if (!editing) {
-      setDraft(proposalToEditDraft(proposal));
-      setEditError("");
-    }
-  }, [editing, proposal]);
-
-  async function saveEdit(): Promise<void> {
-    if (!draftValid || saving) {
-      return;
-    }
-    setSaving(true);
-    setEditError("");
-    try {
-      const updated = await onUpdate(proposal, proposalDraftToUpdateInput(proposal, draft));
-      if (updated) {
-        setEditing(false);
-      }
-    } catch (error) {
-      setEditError(error instanceof Error ? error.message : String(error));
-    } finally {
-      setSaving(false);
-    }
-  }
-
-  function updateStep(index: number, patch: Partial<ChannelProposalStepDraft>): void {
-    setDraft((current) => ({
-      ...current,
-      collaborationSteps: current.collaborationSteps.map((step, stepIndex) =>
-        stepIndex === index
-          ? {
-              ...step,
-              ...patch,
-              ...(patch.teammateId && patch.teammateId !== step.teammateId ? { sources: undefined } : {}),
-            }
-          : step
-      ),
-    }));
-  }
-
-  function updateDraft(patch: Partial<Omit<ChannelProposalEditDraft, "collaborationSteps">>): void {
-    setDraft((current) => ({ ...current, ...patch }));
-  }
-
-  function removeStep(index: number): void {
-    setDraft((current) => ({
-      ...current,
-      collaborationSteps: current.collaborationSteps.filter((_, stepIndex) => stepIndex !== index),
-    }));
-  }
-
-  function addStep(): void {
-    setDraft((current) => ({
-      ...current,
-      collaborationSteps: [
-        ...current.collaborationSteps,
-        {
-          teammateId: current.assigneeTeammateId || teammates[0]?.id || proposal.assigneeTeammateId,
-          action: "coordinated",
-          summary: "",
-        },
-      ],
-    }));
-  }
-
-  return (
-    <div className={`channel-execution-proposal-decision ${editing ? "editing" : ""}`} aria-label={t("Task confirmation")}>
-      {editing ? (
-        <ChannelExecutionProposalEditor
-          canRemoveStep={draft.collaborationSteps.length > 1}
-          disabled={saving}
-          draft={draft}
-          error={editError}
-          teammates={teammates}
-          onAddStep={addStep}
-          onDraftChange={updateDraft}
-          onRemoveStep={removeStep}
-          onStepChange={updateStep}
-        />
-      ) : (
-        <dl className="channel-proposal-decision-fields">
-          <div>
-            <dt>{t("Task")}</dt>
-            <dd>{proposal.title}</dd>
-          </div>
-          <div>
-            <dt>{t("Agent")}</dt>
-            <dd>{assigneeLabel}</dd>
-          </div>
-          <div>
-            <dt><ShieldCheck aria-hidden="true" size={14} />{t("Required permissions")}</dt>
-            <dd className="channel-proposal-permission-chips">
-              {permissionLabels.map((label) => <span key={label}>{label}</span>)}
-            </dd>
-          </div>
-        </dl>
-      )}
-      {!editing && proposal.blocker ? (
-        <div className="channel-proposal-error">
-          <CircleAlert size={14} />
-          <span>{proposal.blocker.message}</span>
-          <button
-            className="secondary-button compact-button"
-            type="button"
-            onClick={() => proposal.blocker && onRepairModelBinding(proposal.blocker)}
-          >
-            {t(proposalModelRepairLabel(proposal.blocker.repairTarget))}
-          </button>
-        </div>
-      ) : !editing && proposal.errorMessage ? (
-        <div className="channel-proposal-error">
-          <CircleAlert size={14} />
-          <span>{proposal.errorMessage}</span>
-        </div>
-      ) : null}
-      <div className="channel-proposal-actions">
-        {editing ? (
-          <>
-            <button className="primary-button compact-button" type="button" onClick={() => void saveEdit()} disabled={saving || !draftValid}>
-              {saving ? <Loader2 className="spin" size={14} /> : <Check size={14} />}
-              {t("Save")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={() => setEditing(false)} disabled={saving}>
-              <X size={14} />
-              {t("Cancel")}
-            </button>
-          </>
-        ) : canStart ? (
-          <button className="primary-button compact-button" type="button" onClick={onConfirm} disabled={Boolean(actionBusy)}>
-            {actionBusy === "confirm" ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-            {t("Authorize and start task")}
-          </button>
-        ) : null}
-        {!editing && canEdit ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => setEditing(true)} disabled={Boolean(actionBusy)}>
-            <SlidersHorizontal size={14} />
-            {t("Edit")}
-          </button>
-        ) : null}
-        {proposal.linkedRunId ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => onOpenRun(proposal.linkedRunId ?? "")} disabled={Boolean(actionBusy)}>
-            <SquareTerminal size={14} />
-            {t("Open run")}
-          </button>
-        ) : null}
-        {proposal.status === "draft" ? (
-          <button className="secondary-button compact-button" type="button" onClick={onCancel} disabled={Boolean(actionBusy)}>
-            {actionBusy === "cancel" ? <Loader2 className="spin" size={14} /> : <X size={14} />}
-            {t("Cancel proposal")}
-          </button>
-        ) : null}
-      </div>
-    </div>
-  );
-}
-
-function proposalPermissionLabels(
-  tools: ChannelExecutionProposal["requiredTools"],
-  t: Translate,
-): readonly string[] {
-  const labels = tools.map((tool) => {
-    if (tool === "read" || tool === "ls") return t("Read files");
-    if (tool === "grep" || tool === "find") return t("Search files");
-    if (tool === "edit" || tool === "write") return t("Modify files");
-    return t("Run commands");
-  });
-  return [...new Set(labels.length > 0 ? labels : [t("Workspace access")])];
-}
-
-function proposalToEditDraft(proposal: ChannelExecutionProposal): ChannelProposalEditDraft {
-  const collaborationSteps = proposal.collaborationSteps.length > 0
-    ? proposal.collaborationSteps
-    : [{ teammateId: proposal.assigneeTeammateId, action: "coordinated", summary: "Complete the confirmed execution proposal." } satisfies ChannelProposalStepDraft];
-  return {
-    title: proposal.title,
-    prompt: proposal.prompt,
-    assigneeTeammateId: proposal.assigneeTeammateId,
-    acceptanceCriteriaText: proposal.acceptanceCriteria.join("\n"),
-    shapingSummaryText: proposal.shaping?.summary ?? "",
-    shapingOpenQuestionsText: proposal.shaping?.openQuestions.join("\n") ?? "",
-    shapingClarificationsText: proposal.shaping?.clarifications.map((clarification) => clarification.body).join("\n") ?? "",
-    collaborationSteps,
-  };
-}
-
-function proposalDraftIsValid(draft: ChannelProposalEditDraft): boolean {
-  return draft.title.trim().length > 0 &&
-    draft.prompt.trim().length > 0 &&
-    draft.assigneeTeammateId.trim().length > 0 &&
-    parseProposalLines(draft.acceptanceCriteriaText).length > 0 &&
-    draft.collaborationSteps.length > 0 &&
-    draft.collaborationSteps.every((step) => step.teammateId.trim().length > 0 && step.summary.trim().length > 0);
-}
-
-function proposalDraftToUpdateInput(proposal: ChannelExecutionProposal, draft: ChannelProposalEditDraft): UpdateChannelExecutionProposalRequest {
-  return {
-    title: draft.title.trim(),
-    prompt: draft.prompt.trim(),
-    assigneeTeammateId: draft.assigneeTeammateId.trim(),
-    acceptanceCriteria: parseProposalLines(draft.acceptanceCriteriaText),
-    collaborationSteps: draft.collaborationSteps.map((step) => ({
-      teammateId: step.teammateId.trim(),
-      action: step.action,
-      summary: step.summary.trim(),
-      ...(step.sources && step.sources.length > 0 ? { sources: step.sources } : {}),
-    })),
-    shaping: proposalShapingFromEditDraft(proposal, draft),
-  };
-}
-
-function proposalShapingFromEditDraft(
-  proposal: ChannelExecutionProposal,
-  draft: ChannelProposalEditDraft,
-): NonNullable<UpdateChannelExecutionProposalRequest["shaping"]> {
-  const openQuestions = parseProposalLines(draft.shapingOpenQuestionsText);
-  const clarificationBodies = parseProposalLines(draft.shapingClarificationsText);
-  const existingClarifications = proposal.shaping?.clarifications ?? [];
-  const now = new Date().toISOString();
-  return {
-    status: openQuestions.length > 0 ? "needs_user_clarification" : "ready_for_confirmation",
-    summary: draft.shapingSummaryText.trim() || draft.title.trim(),
-    openQuestions,
-    clarifications: clarificationBodies.map((body, index) => {
-      const existing = existingClarifications[index];
-      if (existing?.body === body) {
-        return existing;
-      }
-      return {
-        id: `clarification_${proposal.id}_${index + 1}`,
-        authorType: "local-user",
-        body,
-        sourceMessageId: proposal.sourceMessageId,
-        createdAt: now,
-      };
-    }),
-    sourceRefs: proposal.shaping?.sourceRefs.length
-      ? proposal.shaping.sourceRefs
-      : [{ type: "message", id: proposal.sourceMessageId }],
-    updatedAt: now,
-  };
-}
-
-function parseProposalLines(value: string): readonly string[] {
-  return value
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
-}
-
-function proposalModelRepairLabel(
-  repairTarget: NonNullable<ChannelExecutionProposal["blocker"]>["repairTarget"],
-): string {
-  if (repairTarget === "channel_settings") return "Open Channel Settings";
-  if (repairTarget === "teammate_settings") return "Open teammate settings";
-  return "Open Model Workbench";
 }
 
 function workflowProviderBindingSourceLabel(
