@@ -1,14 +1,14 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildDialogOwnedApprovalPresentationByRunId,
-  dialogOwnedApprovalPresentationForWorkCell,
+  buildComposerGateApprovalPresentationByRunId,
+  composerGateApprovalPresentationForWorkCell,
 } from "../src/lib/runtime-approval-presentation.ts";
 
 const t = (key, values = {}) => key.replace(/\{(\w+)\}/gu, (_, name) => String(values[name] ?? ""));
 
-test("dialog-owned approval projection keeps the queue's first approval per run", () => {
-  const presentations = buildDialogOwnedApprovalPresentationByRunId([
+test("composer-gate approval projection keeps the queue's first approval per run", () => {
+  const presentations = buildComposerGateApprovalPresentationByRunId([
     view({
       id: "approval-critical",
       runId: "run-1",
@@ -30,8 +30,8 @@ test("dialog-owned approval projection keeps the queue's first approval per run"
   });
 });
 
-test("dialog-owned approval projection resolves payload run ids and strips cwd from paths", () => {
-  const presentations = buildDialogOwnedApprovalPresentationByRunId([
+test("composer-gate approval projection resolves payload run ids and strips cwd from paths", () => {
+  const presentations = buildComposerGateApprovalPresentationByRunId([
     view({
       id: "approval-edit",
       actionType: "edit",
@@ -43,7 +43,7 @@ test("dialog-owned approval projection resolves payload run ids and strips cwd f
       },
     }),
   ], t);
-  const presentation = dialogOwnedApprovalPresentationForWorkCell({
+  const presentation = composerGateApprovalPresentationForWorkCell({
     anchorRunId: "run-other",
     runIds: ["run-other", "run-payload"],
   }, presentations);

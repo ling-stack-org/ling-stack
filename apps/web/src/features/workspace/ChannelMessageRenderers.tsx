@@ -29,8 +29,8 @@ import { formatDateTime } from "../../lib/formatting.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import { attachmentCanPreview, type PreviewRequest } from "../../lib/previews.js";
 import {
-  buildDialogOwnedApprovalPresentationByRunId,
-  dialogOwnedApprovalPresentationForWorkCell,
+  buildComposerGateApprovalPresentationByRunId,
+  composerGateApprovalPresentationForWorkCell,
 } from "../../lib/runtime-approval-presentation.js";
 import { filterUsedMemoryEventsByResponse } from "../../shared/components/index.js";
 import {
@@ -123,7 +123,7 @@ export interface ChannelMessageRenderersInput {
   readonly conversationWorkCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly conversationWorkCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly conversationWorkCellDetailsByKey: Readonly<Record<string, ConversationWorkCellDetailsState>>;
-  readonly dialogOwnedApprovals: readonly InlineApprovalView[];
+  readonly composerGateApprovals: readonly InlineApprovalView[];
   readonly cwd: string;
   readonly executionProposalsByMessageId: ReadonlyMap<string, readonly ChannelExecutionProposal[]>;
   readonly formatBytes: (value: number) => string;
@@ -191,7 +191,7 @@ export interface ChannelMessageRenderers {
 
 export function createChannelMessageRenderers(input: ChannelMessageRenderersInput): ChannelMessageRenderers {
   const channelSurface = input.selectedChannelBranchRootThreadId ? "channel_branch" : "channel_root";
-  const dialogOwnedApprovalByRunId = buildDialogOwnedApprovalPresentationByRunId(input.dialogOwnedApprovals, input.t);
+  const composerGateApprovalByRunId = buildComposerGateApprovalPresentationByRunId(input.composerGateApprovals, input.t);
   function renderLingAgentAvatar(): ReactNode {
     const teammate = input.allLocalTeammateById.get(LING_AGENT_AUTHOR_ID);
     return (
@@ -478,7 +478,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={block.operationCell}
           surface={channelSurface}
-          dialogOwnedApproval={dialogOwnedApprovalPresentationForWorkCell(block.operationCell, dialogOwnedApprovalByRunId)}
+          composerGateApproval={composerGateApprovalPresentationForWorkCell(block.operationCell, composerGateApprovalByRunId)}
           cwd={operationCwd}
           detailsState={context.detailsState}
           onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
@@ -880,7 +880,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={workCell}
           surface={channelSurface}
-          dialogOwnedApproval={dialogOwnedApprovalPresentationForWorkCell(workCell, dialogOwnedApprovalByRunId)}
+          composerGateApproval={composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)}
           cwd={input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
           onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
@@ -997,7 +997,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={workCell}
           surface={channelSurface}
-          dialogOwnedApproval={dialogOwnedApprovalPresentationForWorkCell(workCell, dialogOwnedApprovalByRunId)}
+          composerGateApproval={composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)}
           cwd={run.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[input.conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
           onOpenRun={input.onOpenRun}

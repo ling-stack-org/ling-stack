@@ -1402,22 +1402,40 @@ Surface-specific copy rules:
 | Floating run popover | `{actor} · {elapsed} · {latest action}` | one line plus optional action icon | history, logs, completed summaries |
 | Inline expanded detail | semantic evidence bullets | bounded section | unbounded logs, provider metadata |
 | Explicit raw/debug detail | technical labels and exact payloads | folded sections | repeated coordinator summary |
-| Approval modal | action + scope + consequence | title plus options | vague `continue?` prompts |
+| Composer approval gate | action + target | one compact panel | vague `continue?` prompts, technical metadata |
 
 Approval copy must be explicit, for example `等待审批：运行 pnpm install`.
 
-Pending runtime approval decisions are owned by a shared blocking dialog outside the
-Composer and virtual transcript. `ApprovalCell` owns only the compact pending marker and
-the immutable approved/denied history after resolution. Channel, normal conversation,
-and teammate private chat must not render approval action cards inside their Composer.
-The dialog handles one decision at a time, preserves the existing risk/time order, and
-cannot be dismissed without approve or deny.
+Pending runtime approval decisions are owned by the conversation that created them.
+`ApprovalCell` owns only the compact pending marker and the immutable approved/denied
+history after resolution. Channel, normal conversation, and teammate private chat render
+one shared approval gate in the owning Composer slot. The gate handles one decision at a
+time and preserves the existing risk/time order, while Sidebar navigation and unrelated
+conversation Composers remain usable.
 
-When the dialog owns a pending approval, the owning `OperationCell` is replaced by one
+When the Composer gate owns a pending approval, the owning `OperationCell` is replaced by one
 non-interactive marker that uses the same localized action sentence. It cannot expand
 and cannot expose approval titles, raw permission ids, evidence groups, request ids, or
 duplicate approval controls. This rule is a projection boundary, not a CSS visibility
 rule. Complete data remains available in explicit Run detail and audit surfaces.
+
+### Operation-Shell Box Model
+
+`conversation-operation-shell` is a layout-neutral grid and deliberately has no outer
+padding. Its direct visual payload must therefore use one of three owned slots:
+
+- `head` for the toggle/status row;
+- `body` for expandable semantic evidence;
+- `static content` for non-expandable status such as a Composer-owned pending approval.
+
+The static-content slot applies the shared operation-cell inline inset and `min-width: 0`
+before rendering its marker. This guarantees symmetric left/right breathing room without
+changing the alignment of ordinary operation rows. Pending markers must not recover spacing
+with one-off margins, viewport-specific selectors, or parent-state overrides.
+
+Runtime approvals and actionable channel task proposals use the same
+`ConversationDecisionGate` shell in the owning Composer slot. The feed keeps only compact,
+non-interactive state; task proposal decisions do not use a centered Dialog.
 
 Bad approval copy:
 

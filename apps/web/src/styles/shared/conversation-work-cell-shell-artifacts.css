@@ -26,6 +26,15 @@
   box-shadow: none;
 }
 
+.conversation-operation-shell {
+  --conversation-operation-content-inline-inset: 12px;
+}
+
+.conversation-operation-shell-static-content {
+  min-width: 0;
+  padding-inline: var(--conversation-operation-content-inline-inset);
+}
+
 .conversation-operation-bubble-header,
 .conversation-operation-shell-head {
   display: grid;
@@ -99,7 +108,7 @@
   color: var(--conversation-text-strong);
 }
 
-.conversation-dialog-owned-approval-marker {
+.conversation-composer-gate-approval-marker {
   display: grid;
   grid-template-columns: 16px auto minmax(0, 1fr);
   align-items: center;
@@ -111,16 +120,16 @@
   line-height: 18px;
 }
 
-.conversation-dialog-owned-approval-marker > svg {
+.conversation-composer-gate-approval-marker > svg {
   color: var(--conversation-status-waiting);
 }
 
-.conversation-dialog-owned-approval-marker > strong {
+.conversation-composer-gate-approval-marker > strong {
   color: var(--conversation-text-strong);
   font-weight: 600;
 }
 
-.conversation-dialog-owned-approval-marker > span {
+.conversation-composer-gate-approval-marker > span {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;

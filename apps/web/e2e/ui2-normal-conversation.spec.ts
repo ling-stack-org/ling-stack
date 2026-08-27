@@ -43,6 +43,15 @@ for (const fixture of [
     const composer = conversation.locator(".normal-conversation-composer-stack");
 
     await expect(header).toBeVisible();
+    const surfaceTheme = await conversation.evaluate((element) => {
+      const probe = document.createElement("span");
+      probe.style.color = getComputedStyle(document.documentElement).getPropertyValue("--ling-bg-panel");
+      document.body.append(probe);
+      const expected = getComputedStyle(probe).color;
+      probe.remove();
+      return { actual: getComputedStyle(element).backgroundColor, expected };
+    });
+    expect(surfaceTheme.actual).toBe(surfaceTheme.expected);
     await expect(identity).toContainText("Deployment readiness conversation");
     await expectToolbarActions(toolbar, ["search", "summary", "terminal", "details"]);
     expect(Math.round((await header.boundingBox())?.height ?? 0)).toBe(48);

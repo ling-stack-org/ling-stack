@@ -14,7 +14,7 @@
   min-height: 0;
   overflow: hidden;
   color: var(--ling-text-default);
-  background: var(--ling-bg-app);
+  background: var(--ling-bg-panel);
 }
 
 .normal-conversation-header {

@@ -61,7 +61,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
   readonly approvals: readonly ApprovalRequest[];
-  readonly dialogOwnedApprovals: readonly InlineApprovalView[];
+  readonly composerGateApprovals: readonly InlineApprovalView[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly providerRecovered: boolean;
   readonly modelNotice?: TeammatePrivateModelNotice;
@@ -96,6 +96,7 @@ export interface TeammatePrivateChatSurfaceProps {
     readonly occurrenceIndex: number;
   }[];
   readonly composerDragActive: boolean;
+  readonly composerGateNode?: ReactNode;
   readonly onPrivateFeedScroll: (event: UIEvent<HTMLDivElement>) => void;
   readonly onCancelPrivateFeedAutoFollow: () => void;
   readonly onScrollToLatest: () => void;
@@ -131,7 +132,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly onRemovePendingAttachment: (localId: string) => void | Promise<void>;
   readonly workspaceAccessMode: WorkspaceAccessMode;
   readonly onWorkspaceAccessModeChange: (mode: WorkspaceAccessMode) => void;
-  readonly onFullAccessPresetSelected?: () => void;
+  readonly onFullAccessPresetSelected?: () => Promise<PermissionConfirmation | undefined>;
   readonly dockOpen: boolean;
   readonly dockController: WorkspaceRightDockController;
   readonly dockPageRequest?: WorkspaceRightDockPageRequest;

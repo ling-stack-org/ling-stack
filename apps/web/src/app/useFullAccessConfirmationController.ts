@@ -21,7 +21,6 @@ export interface FullAccessConfirmationController {
   readonly open: boolean;
   readonly returnFocusTarget: HTMLElement | null;
   readonly request: (scope: FullAccessConfirmationScope) => Promise<PermissionConfirmation | undefined>;
-  readonly confirmExplicitSelection: (scope: FullAccessConfirmationScope) => PermissionConfirmation;
   readonly bind: (source: FullAccessConfirmationScope, target: FullAccessConfirmationScope) => void;
   readonly isConfirmed: (scope: FullAccessConfirmationScope) => boolean;
   readonly cancel: () => void;
@@ -69,17 +68,6 @@ export function useFullAccessConfirmationController(): FullAccessConfirmationCon
     });
   }, []);
 
-  const confirmExplicitSelection = useCallback((scope: FullAccessConfirmationScope): PermissionConfirmation => {
-    const scopeKey = fullAccessConfirmationScopeStorageId(scope);
-    const existing = confirmedByScopeRef.current!.get(scopeKey);
-    if (existing) return existing;
-    const confirmation = createFullAccessConfirmation();
-    rememberFullAccessConfirmation(confirmedByScopeRef.current!, scopeKey, confirmation);
-    persistFullAccessConfirmations(storageRef.current, confirmedByScopeRef.current!);
-    setConfirmationRevision((current) => current + 1);
-    return confirmation;
-  }, []);
-
   const bind = useCallback((source: FullAccessConfirmationScope, target: FullAccessConfirmationScope): void => {
     const confirmation = confirmedByScopeRef.current!.get(fullAccessConfirmationScopeStorageId(source));
     const targetKey = fullAccessConfirmationScopeStorageId(target);
@@ -103,7 +91,6 @@ export function useFullAccessConfirmationController(): FullAccessConfirmationCon
     open,
     returnFocusTarget: returnFocusTargetRef.current,
     request,
-    confirmExplicitSelection,
     bind,
     isConfirmed,
     cancel: () => settle(false),
