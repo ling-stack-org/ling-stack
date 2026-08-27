@@ -12,6 +12,7 @@ import {
   type TerminalReportEvidenceSnapshot,
   type WorkUnit,
 } from "@ling-stack/core";
+import { formatSynchronousCatalogMessage } from "@ling-stack/localization";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { collectRunTerminalReportEvidence, collectTurnTerminalReportEvidence, collectWorkflowTerminalReportEvidence } from "./terminal-report-evidence.js";
@@ -203,9 +204,10 @@ export async function processWorkflowTerminalReport(
       id: `terminal-report-barrier-timeout:${workflowId}`,
       severity: "warning",
       status: "unverified",
-      summary: snapshot.language === "zh-CN"
-        ? "报告等待窗口已结束，部分尾部操作可能尚未形成完整证据。"
-        : "The reporting barrier expired; some trailing operations may not have complete evidence.",
+      summary: formatSynchronousCatalogMessage(
+        snapshot.language,
+        "terminal_report.evidence.reporting_barrier_expired",
+      ),
       sourceRefs: snapshot.references.filter((ref) => ref.kind === "workflow" && ref.id === workflowId),
     });
   }

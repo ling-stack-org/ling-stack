@@ -10,6 +10,7 @@ import {
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
 import type { ConversationGeneratedMedia, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
 export const cwd = "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
@@ -208,6 +209,7 @@ export interface MockState {
   turns: MockLingTurn[];
   turnRunLinks: MockLingTurnRun[];
   failThreadTurnsForThreadIds: string[];
+  failNextWorkspaceSettingsPatch?: { readonly error: string; readonly message: string; readonly status?: number };
   executionActions: MockExecutionAction[];
   userProfile: UserProfile;
   workspaceSettings: Record<string, unknown>;
@@ -5622,8 +5624,8 @@ function readChannelAutoReplyMode(value: unknown): string {
   return value === "default_teammate" || value === "auto_route" ? value : "mentions_only";
 }
 
-function readChannelResponseLanguage(value: unknown): "workspace" | "follow_user" | "zh-CN" | "en-US" | undefined {
-  return value === "workspace" || value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
+function readChannelResponseLanguage(value: unknown): "workspace" | "follow_user" | SupportedLocale | undefined {
+  return value === "workspace" || value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
 export function createMockTeammate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -7678,6 +7680,15 @@ export async function handleDaemonRoute(
   }
   if (request.method() === "PATCH" && path === "/workspace-settings") {
     const body = await request.postDataJSON() as Record<string, unknown>;
+    if (state.failNextWorkspaceSettingsPatch) {
+      const failure = state.failNextWorkspaceSettingsPatch;
+      state.failNextWorkspaceSettingsPatch = undefined;
+      await route.fulfill({
+        status: failure.status ?? 500,
+        json: { error: failure.error, message: failure.message },
+      });
+      return;
+    }
     const nextSettings = { ...state.workspaceSettings };
     for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "lingConversationTone", "defaultProviderPresetId", "defaultAuthorizationMode", "defaultWorkspaceAccessMode", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy", "mediaGenerationDefaults"] as const) {
       if (body[key] === null) {
@@ -12840,7 +12851,7 @@ export async function handleDaemonRoute(
       updatedAt: now,
       endedAt: now,
     };
-    const responseLanguage = body.responseLanguage === "zh-CN" || body.responseLanguage === "en-US"
+    const responseLanguage = isSupportedLocale(body.responseLanguage)
       ? body.responseLanguage
       : /[\u3400-\u9fff]/u.test(message) ? "zh-CN" : "en-US";
     const attachmentSummary = conversationAttachments.length > 0

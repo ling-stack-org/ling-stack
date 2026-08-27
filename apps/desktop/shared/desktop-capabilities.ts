@@ -1,4 +1,9 @@
 import type { ComputerUseRuntimeStatus } from "@ling-stack/contracts";
+import {
+  SUPPORTED_LOCALES,
+  isSupportedLocale,
+  type SupportedLocale,
+} from "@ling-stack/localization";
 import type {
   DesktopRendererThemeInput,
   DesktopRendererThemeSnapshot,
@@ -7,16 +12,14 @@ import type { DesktopThemePackageCapabilities } from "./theme-package-capabiliti
 
 export type DesktopPlatform = "macos" | "windows" | "linux";
 
-export const COMPUTER_USE_PREVIEW_LOCALES = ["en-US", "zh-CN"] as const;
+export const COMPUTER_USE_PREVIEW_LOCALES = SUPPORTED_LOCALES;
 
-export type ComputerUsePreviewLocale = (typeof COMPUTER_USE_PREVIEW_LOCALES)[number];
+export type ComputerUsePreviewLocale = SupportedLocale;
 
 export const DEFAULT_COMPUTER_USE_PREVIEW_LOCALE: ComputerUsePreviewLocale = "en-US";
 
 export function isComputerUsePreviewLocale(value: unknown): value is ComputerUsePreviewLocale {
-  return typeof value === "string" && COMPUTER_USE_PREVIEW_LOCALES.includes(
-    value as ComputerUsePreviewLocale,
-  );
+  return isSupportedLocale(value);
 }
 
 export interface DesktopDaemonStatus {

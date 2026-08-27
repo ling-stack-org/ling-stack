@@ -7,6 +7,7 @@ import {
   GSTACK_DEFAULT_SKILL_PACK_ID,
   getBuiltinSkillPack,
 } from "@ling-stack/core/builtin-skill-packs";
+import { isSupportedLocale } from "@ling-stack/localization";
 import { useI18n } from "../i18n.js";
 import { useTheme } from "../theme.js";
 import { useLingToast } from "../shared/ui/index.js";
@@ -855,6 +856,7 @@ export function AppShell(): React.JSX.Element {
     effectiveConfig,
     error: workspaceSettingsError,
     updateWorkspaceCwd,
+    updateInterfaceLocale,
     patchWorkspaceSettings,
   } = useWorkspaceSettingsController({
     daemonHealthy,
@@ -3192,6 +3194,7 @@ export function AppShell(): React.JSX.Element {
                     selectedRun={run}
                     onWorkspaceDefaultAuthorizationChange={(defaultAuthorizationMode) => patchWorkspaceSettings({ defaultAuthorizationMode })}
                     onWorkspaceDefaultWorkspaceAccessChange={(defaultWorkspaceAccessMode) => patchWorkspaceSettings({ defaultWorkspaceAccessMode })}
+                    onProductLanguageChange={updateInterfaceLocale}
                     onWorkspaceResponseLanguageChange={(responseLanguage) => patchWorkspaceSettings({ responseLanguage })}
                     onRefreshStartup={() => void refreshStartupDiagnostics()}
                     onRefreshExternalWork={() => void refreshExternalWorkStatus()}
@@ -3430,7 +3433,7 @@ function summarizeConversationProjectPath(path: string): string {
 function resolveConversationResponseLanguage(
   preference: ResponseLanguagePreference | undefined,
 ): ResponseLanguagePreference {
-  if (preference === "follow_user" || preference === "zh-CN" || preference === "en-US") {
+  if (preference === "follow_user" || isSupportedLocale(preference)) {
     return preference;
   }
   return "follow_user";

@@ -1,0 +1,27 @@
+{
+  "name": "@ling-stack/localization",
+  "version": "0.0.0",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./catalogs/*": {
+      "types": "./dist/generated/catalogs/*.d.ts",
+      "default": "./dist/generated/catalogs/*.js"
+    }
+  },
+  "scripts": {
+    "build": "node scripts/compile-catalogs.mjs && tsc -p tsconfig.json",
+    "typecheck": "node scripts/compile-catalogs.mjs && tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"lint not configured yet\"",
+    "test": "node scripts/check-catalogs.mjs && node scripts/compile-catalogs.mjs && tsc -p tsconfig.json && node --test test/*.test.mjs",
+    "catalog:import-legacy": "node scripts/import-legacy-web-catalogs.mjs",
+    "catalog:compile": "node scripts/compile-catalogs.mjs",
+    "catalog:check": "node scripts/check-catalogs.mjs",
+    "catalog:translate": "node scripts/translate-catalogs.mjs"
+  }
+}

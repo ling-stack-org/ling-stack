@@ -1,5 +1,6 @@
 import { Box, Globe2, SquareTerminal, UserRound } from "lucide-react";
 import { useI18n } from "../../i18n.js";
+import { SupportedLocaleOptions } from "../../i18n/SupportedLocaleOptions.js";
 import {
   DataRow,
   Field,
@@ -92,8 +93,7 @@ export function ChannelSettingsGeneralPanel({
                 >
                   <option value="workspace">{t("Workspace default")}</option>
                   <option value="follow_user">{t("Follow user message")}</option>
-                  <option value="zh-CN">{t("Chinese")}</option>
-                  <option value="en-US">{t("English")}</option>
+                  <SupportedLocaleOptions />
                 </Select>
               </Field>
             )}

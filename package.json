@@ -13,6 +13,11 @@
   "scripts": {
     "build": "corepack pnpm --workspace-concurrency=1 -r build",
     "check:docs": "node scripts/check-markdown-links.mjs",
+    "check:i18n": "corepack pnpm --filter @ling-stack/localization test && corepack pnpm --filter @ling-stack/web check:i18n",
+    "i18n:import-legacy": "corepack pnpm --filter @ling-stack/localization catalog:import-legacy",
+    "i18n:translate": "corepack pnpm --filter @ling-stack/localization catalog:translate --",
+    "i18n:check": "corepack pnpm --filter @ling-stack/localization catalog:check",
+    "i18n:compile": "corepack pnpm --filter @ling-stack/localization catalog:compile",
     "check:licenses": "node scripts/check-license-policy.mjs",
     "check:public": "node scripts/check-public-repo-safety.mjs",
     "check:dependency-security": "corepack pnpm --filter @ling-stack/mobile exec node --test test/dependency-security-patches.test.mjs && corepack pnpm --filter @ling-stack/daemon exec node --test test/dependency-security.test.mjs",

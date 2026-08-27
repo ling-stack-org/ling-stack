@@ -434,6 +434,7 @@ test("Desktop IPC scopes privileged actions and strictly validates preview media
     ["setAutoShow", true],
     ["reportLocale", "en-US"],
     ["reportLocale", "zh-CN"],
+    ["reportLocale", "fr-FR"],
     ["reportSelectedDeckOwner", { surfaceKind: "channel", ownerId: "channel-owner" }],
     ["reportFrameReady", "session-preview", 7, 101],
     ["reportFrameActivity", "session-preview", 7, 102],

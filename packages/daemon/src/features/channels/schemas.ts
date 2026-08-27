@@ -39,10 +39,11 @@ import {
   type CreateChannelExecutionProposalInput,
   type CreateChannelBranchInput,
   type CreateChannelInput,
-  type ResponseLanguage,
+  type ResponseLanguagePreference,
   type RunTool,
   type UpdateChannelExecutionProposalInput,
 } from "@ling-stack/core";
+import { isSupportedLocale } from "@ling-stack/localization";
 import {
   isRecord,
   readNullableString,
@@ -64,7 +65,7 @@ export interface ChannelExecutionProposalRequest {
   readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
   readonly requiredTools: readonly RunTool[];
   readonly riskSummary?: string;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly shaping?: ChannelRequirementShaping;
 }
 
@@ -1275,18 +1276,18 @@ function readNullableChannelResponseLanguage(record: Record<string, unknown>, ke
   return value as NonNullable<Channel["responseLanguage"]>;
 }
 
-function readOptionalResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguage | undefined {
+function readOptionalResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguagePreference | undefined {
   const value = readOptionalString(record, key);
   if (value === undefined) {
     return undefined;
   }
-  if (value !== "zh-CN" && value !== "en-US") {
-    throw new Error(`${key} must be one of: zh-CN, en-US`);
+  if (value !== "follow_user" && !isSupportedLocale(value)) {
+    throw new Error(`${key} must be follow_user or a supported locale`);
   }
   return value;
 }
 
-function readNullableResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguage | null | undefined {
+function readNullableResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguagePreference | null | undefined {
   const value = record[key];
   if (value === undefined) {
     return undefined;
@@ -1294,8 +1295,8 @@ function readNullableResponseLanguage(record: Record<string, unknown>, key: stri
   if (value === null) {
     return null;
   }
-  if (value !== "zh-CN" && value !== "en-US") {
-    throw new Error(`${key} must be one of: zh-CN, en-US, or null`);
+  if (typeof value !== "string" || (value !== "follow_user" && !isSupportedLocale(value))) {
+    throw new Error(`${key} must be follow_user, a supported locale, or null`);
   }
   return value;
 }

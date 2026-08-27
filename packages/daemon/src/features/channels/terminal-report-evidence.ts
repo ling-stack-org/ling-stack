@@ -24,9 +24,10 @@ import {
   type TerminalReportSourceRef,
   type TerminalReportSurface,
 } from "@ling-stack/core";
+import { formatSynchronousCatalogMessage, isSupportedLocale } from "@ling-stack/localization";
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 import { redactEvidenceText } from "./context-processing/evidence.js";
-import { inferUserLanguage } from "./response-language.js";
+import { fallbackResponseLanguage } from "./response-language.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { extractWorkflowStepChangedPaths } from "./workflow-step-packets.js";
 
@@ -67,7 +68,7 @@ export function collectWorkflowTerminalReportEvidence(
 ): TerminalReportEvidenceSnapshot {
   const evidence = buildWorkflowEvidence(store, workflowId);
   const terminalState = workflowTerminalState(evidence.workflow.status);
-  const language = options.language ?? evidence.workflow.metadata?.responseLanguage ?? "en-US";
+  const language = options.language ?? fallbackResponseLanguage(evidence.workflow.metadata?.responseLanguage);
   const budgets = resolveBudgets(options.budgets);
   const sourceRef = sourceRefFor("workflow", evidence.workflow.id, evidence.workflow.title);
   const packetArtifactIds = new Set(evidence.steps.flatMap((item) => item.packetArtifacts.map((artifact) => artifact.id)));
@@ -158,7 +159,7 @@ export function collectRunTerminalReportEvidence(
     sourceMessageId: turn?.sourceItemId,
     source: { kind: "run", id: run.id },
     objective: boundedText(workflowStep?.prompt || task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
-    language: options.language ?? languageForRun(run, turn?.userInstruction ?? task?.prompt ?? task?.title) ?? "en-US",
+    language: options.language ?? languageForRun(run) ?? fallbackResponseLanguage(undefined),
     terminalState,
     terminalAt: run.endedAt ?? run.updatedAt,
     steps: [{
@@ -234,7 +235,7 @@ export function collectTurnTerminalReportEvidence(
     sourceMessageId: turn.sourceItemId,
     source: { kind: "turn", id: turn.id },
     objective: boundedText(turn.userInstruction || turn.title, budgets.summaryCharacters),
-    language: options.language ?? runs.map((run) => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction),
+    language: options.language ?? runs.map(languageForRun).find(Boolean) ?? fallbackResponseLanguage(undefined),
     terminalState,
     terminalAt: turn.completedAt ?? turn.updatedAt,
     steps: runs.map((run, index) => mapTurnRunStep(
@@ -876,14 +877,14 @@ function surfaceForThread(kind: string | undefined, channelId: string | undefine
   return kind === "teammate_direct" ? "teammate_private_chat" : "normal_conversation";
 }
 
-function languageForRun(run: RunSession, fallbackText?: string): TerminalReportLanguage | undefined {
+function languageForRun(run: RunSession): TerminalReportLanguage | undefined {
   if (isRecord(run.requestSnapshot)) {
     const value = run.requestSnapshot.responseLanguage;
-    if (value === "zh-CN" || value === "en-US") {
+    if (isSupportedLocale(value)) {
       return value;
     }
   }
-  return fallbackText?.trim() ? inferUserLanguage(fallbackText) : undefined;
+  return undefined;
 }
 
 function readRunAssistantSummary(store: RunStore, runId: string, maxCharacters: number): string | undefined {
@@ -919,9 +920,11 @@ function boundedItems<T>(
     id: `terminal-report-truncated:${name}`,
     severity: "warning",
     status: "unverified",
-    summary: language === "zh-CN"
-      ? `${name} 证据从 ${items.length} 条截断为 ${limit} 条。`
-      : `${name} evidence was truncated from ${items.length} to ${limit} items.`,
+    summary: formatSynchronousCatalogMessage(language, "terminal_report.evidence.truncated", {
+      name,
+      total: items.length,
+      limit,
+    }),
     sourceRefs: [sourceRef],
   });
   return items.slice(0, limit);

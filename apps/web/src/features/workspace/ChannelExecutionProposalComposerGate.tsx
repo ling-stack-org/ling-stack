@@ -21,7 +21,7 @@ export function ChannelExecutionProposalComposerGate({
   const [attemptedAction, setAttemptedAction] = useState<ConversationDecisionAction>();
   const [localError, setLocalError] = useState("");
   const permissionLabels = proposalPermissionLabels(proposal.requiredTools, t);
-  const permissionText = permissionLabels.join(locale === "zh-CN" ? "、" : ", ");
+  const permissionText = new Intl.ListFormat(locale, { style: "short", type: "conjunction" }).format(permissionLabels);
   const description = t("{agent} wants to start task \"{task}\" and needs {permissions}.", {
     agent: assigneeLabel,
     task: proposal.title,

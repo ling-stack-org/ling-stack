@@ -7,6 +7,7 @@ import {
   type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
+import { formatServerCatalogMessage } from "@ling-stack/localization";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { isRunTool } from "../runs/approvals.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
@@ -232,11 +233,12 @@ async function completeAiChannelReply(input: {
       consumerTeammateId: input.canonicalTeammateId,
     });
     const memoryPrompt = renderedMemory.prompt;
-    const responseLanguage = resolveChannelResponseLanguage({
+    const responseLanguageResolution = resolveChannelResponseLanguage({
       store: input.store,
       channel: input.channel,
       sourceText: input.sourceMessage.body,
-    }).language;
+    });
+    const responseLanguage = responseLanguageResolution.language;
     let discussionContextPack = buildChannelReplyContextPack({
       store: input.store,
       channel: input.channel,
@@ -271,7 +273,7 @@ async function completeAiChannelReply(input: {
     const systemPrompt = [
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
-      responseLanguageInstruction(responseLanguage),
+      responseLanguageInstruction(responseLanguageResolution.instructionLanguage),
       planModeActive ? renderPlanModeInstruction() : undefined,
       "Use only attachment/link metadata and preview/extraction text that is explicitly included in the turn envelope. Do not claim to inspect unavailable attachment bodies or web page bodies.",
       "If Ling web context is included, you may use only those web_search/open_url results and must keep cited source URLs visible in the reply.",
@@ -380,9 +382,7 @@ async function completeAiChannelReply(input: {
     }
     const hasGeneratedMedia = runHasConversationGeneratedMedia(input.store, execution.run.id);
     if (!rawReplyText && !hasGeneratedMedia) {
-      const message = responseLanguage === "zh-CN"
-        ? "模型没有返回可显示内容，请重试或切换模型。"
-        : "The model returned no displayable content. Retry or choose another model.";
+      const message = formatServerCatalogMessage(responseLanguage, "daemon.conversation.empty_result");
       const failed = finishChannelMessage(input.store, input.pending.id, {
         body: message,
         status: "failed",

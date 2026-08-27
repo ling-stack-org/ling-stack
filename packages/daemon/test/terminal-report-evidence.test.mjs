@@ -288,7 +288,7 @@ test("failed edit actions never become changed paths", async () => {
   }
 });
 
-test("terminal evidence infers legacy conversation language when the run snapshot has no language", async () => {
+test("terminal evidence uses the safe English fallback when a legacy run has no language snapshot", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-language-fallback-"));
   const store = createSqliteRunStore(cwd);
   try {
@@ -325,8 +325,8 @@ test("terminal evidence infers legacy conversation language when the run snapsho
     appendToolAction(store, run.id, "language_typecheck", "bash", { command: "pnpm typecheck" }, false, now);
     store.markRunSucceeded(run.id, now);
 
-    assert.equal(collectRunTerminalReportEvidence(store, run.id).language, "zh-CN");
-    assert.equal(collectTurnTerminalReportEvidence(store, turn.id).language, "zh-CN");
+    assert.equal(collectRunTerminalReportEvidence(store, run.id).language, "en-US");
+    assert.equal(collectTurnTerminalReportEvidence(store, turn.id).language, "en-US");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

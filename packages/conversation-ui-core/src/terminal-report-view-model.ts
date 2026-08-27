@@ -1,3 +1,7 @@
+import {
+  formatSynchronousCatalogMessage,
+  type SupportedLocale,
+} from "@ling-stack/localization";
 import type {
   ConversationArtifactStripItem,
   ConversationWorkCellEvidenceLink,
@@ -33,7 +37,7 @@ type TerminalReportArtifactKindInput =
 export interface TerminalReportViewInput {
   readonly id: string;
   readonly status: "committed" | "fallback";
-  readonly language: "zh-CN" | "en-US";
+  readonly language: SupportedLocale;
   readonly outcome: TerminalReportSectionInput & {
     readonly status: "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
     readonly title: string;
@@ -288,10 +292,8 @@ function normalizedConversationFilePath(value?: string): string {
 }
 
 function localizedChangedFilesLabel(language: TerminalReportViewInput["language"], count: number): string {
-  if (language === "zh-CN") {
-    return count === 1 ? "已编辑 1 个文件" : `已编辑 ${count} 个文件`;
-  }
-  return count === 1 ? "Edited 1 file" : `Edited ${count} files`;
+  const category = new Intl.PluralRules(language).select(count) === "one" ? "one" : "other";
+  return formatSynchronousCatalogMessage(language, `terminal_report.changed_files.${category}`, { count });
 }
 
 function uniqueSourceRefs(refs: readonly TerminalReportSourceRefInput[]): TerminalReportSourceRefInput[] {
@@ -370,7 +372,11 @@ function changeMeta(
 ): string | undefined {
   const stats = [
     change.paths.length > 0
-      ? language === "zh-CN" ? `${change.paths.length} 个文件` : `${change.paths.length} ${change.paths.length === 1 ? "file" : "files"}`
+      ? formatSynchronousCatalogMessage(
+          language,
+          `terminal_report.file_count.${new Intl.PluralRules(language).select(change.paths.length) === "one" ? "one" : "other"}`,
+          { count: change.paths.length },
+        )
       : undefined,
     change.addedLines !== undefined ? `+${change.addedLines}` : undefined,
     change.deletedLines !== undefined ? `-${change.deletedLines}` : undefined,
@@ -389,23 +395,24 @@ function verificationMeta(
 }
 
 function localizedMeta(language: TerminalReportViewInput["language"], value: string): string {
-  if (language !== "zh-CN") return value;
-  return ZH_CN_META[value] ?? value;
+  return LOCALIZED_META_VALUES.has(value)
+    ? formatSynchronousCatalogMessage(language, `terminal_report.meta.${value}`)
+    : value;
 }
 
-const ZH_CN_META: Readonly<Record<string, string>> = {
-  high: "高置信度",
-  medium: "中等置信度",
-  passed: "已通过",
-  failed: "失败",
-  blocked: "已阻塞",
-  cancelled: "已取消",
-  skipped: "已跳过",
-  not_run: "未运行",
-  unknown: "未知",
-  completed: "已完成",
-  unresolved: "未解决",
-  mitigated: "已缓解",
-  accepted: "已接受",
-  unverified: "未验证",
-};
+const LOCALIZED_META_VALUES = new Set([
+  "high",
+  "medium",
+  "passed",
+  "failed",
+  "blocked",
+  "cancelled",
+  "skipped",
+  "not_run",
+  "unknown",
+  "completed",
+  "unresolved",
+  "mitigated",
+  "accepted",
+  "unverified",
+]);

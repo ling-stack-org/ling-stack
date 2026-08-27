@@ -80,7 +80,7 @@ export interface TerminalReportDto {
   readonly sourceMessageId?: string;
   readonly source: { readonly kind: TerminalReportSourceKind; readonly id: string };
   readonly status: "committed" | "fallback";
-  readonly language: "zh-CN" | "en-US";
+  readonly language: SupportedLocale;
   readonly outcome: {
     readonly status: TerminalReportOutcomeStatus;
     readonly title: string;
@@ -115,3 +115,4 @@ export interface TerminalReportResponse {
 export interface TerminalReportListResponse {
   readonly reports: readonly TerminalReportDto[];
 }
+import type { SupportedLocale } from "@ling-stack/localization";
