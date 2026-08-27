@@ -37,7 +37,7 @@ Passing an earlier boundary does not authorize the next one.
 | Main branch protection | Configured online | PR-only `main`, required CI, one approval, conversation resolution, linear history, and no force-push/delete |
 | Actions policy | Configured online | Default read-only token permissions and full-length SHA pinning are enabled; allowed actions remain temporarily broad for the existing generic CI |
 | Git-history secret scan | Ready locally | Gitleaks v8.30.1 scanned 765 commits and 67.2 MB; 21 reviewed false positives are fingerprint-scoped in `.gitleaksignore` |
-| Public UI screenshots | Ready locally | Neutral deterministic workspace overview is checked in; historical screenshots with maintainer paths were removed |
+| Public UI screenshots | Ready locally | Current homepage capture from a fresh local workspace is checked in; historical screenshots with maintainer paths were removed |
 | Changelog and release policy | Ready locally | `CHANGELOG.md` and `docs/release/README.md` |
 
 ## GitHub Settings Required Before Visibility Change
