@@ -366,7 +366,9 @@ function mapTurnRunStep(
 ): TerminalReportEvidenceStep {
   const task = store.getTask(run.taskId);
   const artifacts = store.listArtifacts(run.id);
-  const summary = readRunAssistantSummary(store, run.id, maxCharacters) ?? run.errorMessage;
+  const summary = readRunEvidenceContribution(store, run, maxCharacters)
+    ?? readRunAssistantSummary(store, run.id, maxCharacters)
+    ?? run.errorMessage;
   return {
     id: `turn-run:${turn.id}:${index + 1}:${run.id}`,
     title: boundedText(task?.title ?? `${turn.title} (${index + 1})`, maxCharacters),
@@ -510,7 +512,11 @@ function aggregateWorkflowParticipants(
       status: participantStatusForStep(item.step.status),
       summary: workflowStepResultContextRejected(item.step)
         ? undefined
-        : item.step.resultSummary ?? item.outputPacket?.resultSummary,
+        : (item.linkedRun
+          ? readRunEvidenceContribution(store, item.linkedRun, maxCharacters)
+          : undefined)
+          ?? item.step.resultSummary
+          ?? item.outputPacket?.resultSummary,
       sourceRefs: uniqueRefs([
         sourceRefFor("workflow_step", item.step.id, item.step.title),
         ...(item.step.runId ? [sourceRefFor("run", item.step.runId, item.step.title)] : []),
@@ -554,7 +560,9 @@ function aggregateRunParticipants(
     }
     const teammate = store.getAiTeammate(run.teammateId);
     const existing = byAgent.get(run.teammateId);
-    const summary = readRunAssistantSummary(store, run.id, maxCharacters) ?? run.errorMessage;
+    const summary = readRunEvidenceContribution(store, run, maxCharacters)
+      ?? readRunAssistantSummary(store, run.id, maxCharacters)
+      ?? run.errorMessage;
     byAgent.set(run.teammateId, {
       agentId: run.teammateId,
       displayName: teammate?.displayName ?? run.teammateId,
@@ -894,6 +902,39 @@ function readRunAssistantSummary(store: RunStore, runId: string, maxCharacters: 
     .replace(/\s+/gu, " ")
     .trim();
   return text ? boundedText(text, maxCharacters) : undefined;
+}
+
+/**
+ * Build a participant contribution from the run's typed Host actions. Model
+ * narration is deliberately only a fallback: it is not allowed to make one
+ * participant appear to have completed another participant's work.
+ */
+function readRunEvidenceContribution(
+  store: RunStore,
+  run: RunSession,
+  maxCharacters: number,
+): string | undefined {
+  const actions = listAllExecutionActionsForRun(store, run.id);
+  if (actions.length === 0) return undefined;
+  const contributions = actions.map((action) => {
+    const subject = action.summary.trim() || action.title.trim() || action.actionType;
+    const label = action.actionType === "bash"
+      ? "Executed command"
+      : action.actionType === "write" || action.actionType === "edit"
+        ? "Changed files"
+        : action.title.trim() || "Completed action";
+    const status = action.status === "succeeded"
+      ? "completed"
+      : action.status === "failed"
+        ? "failed"
+        : action.status === "cancelled"
+          ? "cancelled"
+          : action.status === "waiting_for_approval" || action.status === "denied" || action.status === "expired"
+            ? "blocked"
+            : action.status;
+    return `${label}: ${subject} (${status})`;
+  });
+  return boundedText(contributions.join("; "), maxCharacters);
 }
 
 function changedPathsFromActions(actions: readonly ExecutionAction[], cwd?: string): string[] {

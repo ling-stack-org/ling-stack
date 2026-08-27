@@ -37,7 +37,16 @@ export function terminalReportSourceRefKey(ref: Pick<TerminalReportSourceRef, "k
 export function computeTerminalReportEvidenceFingerprint(
   snapshot: Omit<TerminalReportEvidenceSnapshot, "evidenceFingerprint"> | TerminalReportEvidenceSnapshot,
 ): string {
-  const normalized = { ...snapshot, evidenceFingerprint: undefined };
+  // Snapshot ids and collection timestamps identify an observation, but are not
+  // evidence themselves. Excluding these volatile fields makes repeated
+  // projections of the same canonical run/workflow state compare equal while
+  // still changing the fingerprint whenever a durable fact changes.
+  const normalized = {
+    ...snapshot,
+    id: undefined,
+    generatedAt: undefined,
+    evidenceFingerprint: undefined,
+  };
   return createHash("sha256").update(stableStringify(normalized)).digest("hex");
 }
 

@@ -37,6 +37,7 @@ import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
 import { artifactLooksLikeDiff } from "./diff-summary.js";
 import { executionActionSourceRefs } from "./execution-action-lineage.js";
+import { projectConversationLatestAttemptEvidence } from "./conversation-work-cell-attempts.js";
 
 export {
   normalizeConversationOperationCell,
@@ -465,27 +466,37 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     return undefined;
   }
 
-  const latestRun = runs[0];
+  const latestRun = turnContext?.latestRun ?? runs[0];
   const runIds = runs.map((run) => run.id);
-  const runIdSet = new Set(runIds);
+  // Keep the complete attempt lineage on the model for diagnostics and audit
+  // details, but project the main operation cell from the latest attempt only.
+  // Otherwise a failed retry predecessor leaks its actions, artifacts, checks,
+  // and failure rows into the current successful attempt.
+  const latestAttempt = projectConversationLatestAttemptEvidence({
+    threadId: input.threadId,
+    latestRun,
+    attemptCount: runs.length,
+    artifactsByRun: input.artifactsByRun,
+    executionActions: input.executionActions ?? [],
+  });
+  const latestRuns = latestAttempt.runs;
   const status: ConversationWorkCellStatus = turnContext?.turn.status ?? latestRun.status;
   const approvals = input.approvals
-    .filter((approval) => approval.runId ? runIdSet.has(approval.runId) : false)
+    .filter((approval) => approval.runId === latestRun.id)
     .sort((left, right) => (right.resolvedAt ?? right.createdAt).localeCompare(left.resolvedAt ?? left.createdAt));
   const visibleApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) !== "approved");
-  const artifacts = runIds.flatMap((runId) => input.artifactsByRun[runId] ?? []);
+  const artifacts = latestAttempt.artifacts;
   const artifactsById = artifactsByIdMap(artifacts);
-  const actions = (input.executionActions ?? [])
-    .filter((action) => action.threadId === input.threadId || (action.runId ? runIdSet.has(action.runId) : false))
+  const actions = [...latestAttempt.actions]
     .sort((left, right) => (right.completedAt ?? right.executedAt ?? right.resolvedAt ?? right.createdAt).localeCompare(left.completedAt ?? left.executedAt ?? left.resolvedAt ?? left.createdAt));
   const pendingApprovals = visibleApprovals.filter((approval) => effectiveApprovalStatus(approval) === "pending");
-  const failedRuns = runs.filter((run) => run.status === "failed");
+  const failedRuns = latestRuns.filter((run) => run.status === "failed");
   const failedActions = actions.filter((action) => action.status === "failed" || action.status === "denied" || action.status === "expired");
   const mode: ConversationWorkCellMode = isWorkCellStatusActive(status) ? "active" : "completed";
   const title = turnContext?.turn.title || readRunTitle(latestRun);
   const evidenceLinks = mainFeedArtifactEvidenceLinks(artifacts, input.artifactHref);
   const groups = mainFeedEvidenceGroups(
-    buildWorkCellGroups({ t: input.t, runs, approvals: visibleApprovals, artifacts, artifactsById, actions, failedRuns, failedActions, pendingApprovals }),
+    buildWorkCellGroups({ t: input.t, runs: latestRuns, approvals: visibleApprovals, artifacts, artifactsById, actions, failedRuns, failedActions, pendingApprovals }),
     input.t,
   );
   const terminalReport = input.terminalReport ? terminalReportToViewModel(input.terminalReport) : undefined;
@@ -508,7 +519,15 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   const mergedEvidenceLinks = terminalReport
     ? combinedEvidenceLinks.filter((link) => !link.artifactId || !representedArtifactIds.has(link.artifactId))
     : combinedEvidenceLinks;
-  const operationRows = buildActiveRows({ t: input.t, latestRun, runs, turnRunLinks: input.turnRunLinks, pendingApprovals, artifacts, actions });
+  const operationRows = buildActiveRows({
+    t: input.t,
+    latestRun,
+    attemptCount: runs.length,
+    turnRunLinks: input.turnRunLinks,
+    pendingApprovals,
+    artifacts,
+    actions,
+  });
 
   return normalizeConversationOperationCell({
     id: turnContext ? `work-cell:turn:${turnContext.turn.id}` : `work-cell:${input.threadId}`,
@@ -969,7 +988,11 @@ function traceSpanStatusTone(status: LingTraceSpan["status"]): ConversationWorkC
   return "neutral";
 }
 
-function buildVisibleTurnContext(input: BuildConversationWorkCellInput): { readonly turn: LingTurn; readonly runs: readonly RunSession[] } | undefined {
+function buildVisibleTurnContext(input: BuildConversationWorkCellInput): {
+  readonly turn: LingTurn;
+  readonly runs: readonly RunSession[];
+  readonly latestRun: RunSession;
+} | undefined {
   if (!input.turns || !input.turnRunLinks) {
     return undefined;
   }
@@ -990,12 +1013,15 @@ function buildVisibleTurnContext(input: BuildConversationWorkCellInput): { reado
   for (const turn of turns) {
     const links = [...(linksByTurnId.get(turn.id) ?? [])]
       .sort((left, right) => right.attemptNumber - left.attemptNumber || right.createdAt.localeCompare(left.createdAt));
-    const runs = links
-      .map((link) => runById.get(link.runId))
-      .filter((run): run is RunSession => Boolean(run))
-      .sort((left, right) => compareRunActivity(left, right));
-    if (runs[0]) {
-      candidates.push({ turn, runs, latestRun: runs[0] });
+    const linkedRuns = links
+      .map((link) => ({ link, run: runById.get(link.runId) }))
+      .filter((entry): entry is { readonly link: LingTurnRun; readonly run: RunSession } => Boolean(entry.run));
+    const runs = linkedRuns.map((entry) => entry.run);
+    const latestRun = linkedRuns.find((entry) => entry.run.id === turn.activeRunId)?.run ??
+      linkedRuns.find((entry) => entry.run.id === turn.lastRunId)?.run ??
+      linkedRuns[0]?.run;
+    if (latestRun) {
+      candidates.push({ turn, runs, latestRun });
     }
   }
   candidates.sort((left, right) =>
@@ -1004,7 +1030,7 @@ function buildVisibleTurnContext(input: BuildConversationWorkCellInput): { reado
     right.turn.id.localeCompare(left.turn.id),
   );
   const selected = candidates[0];
-  return selected ? { turn: selected.turn, runs: selected.runs } : undefined;
+  return selected ? { turn: selected.turn, runs: selected.runs, latestRun: selected.latestRun } : undefined;
 }
 
 function filterEvidenceRuns(
@@ -1047,7 +1073,7 @@ function emptyWorkCellGroups(t: Translate): readonly ConversationWorkCellGroup[]
 function buildActiveRows(input: {
   readonly t: Translate;
   readonly latestRun: RunSession;
-  readonly runs: readonly RunSession[];
+  readonly attemptCount: number;
   readonly turnRunLinks?: readonly LingTurnRun[];
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly artifacts: readonly RunArtifact[];
@@ -1087,12 +1113,12 @@ function buildActiveRows(input: {
     });
   }
 
-  if (input.runs.length > 1) {
+  if (input.attemptCount > 1) {
     rows.push({
       id: "attempts",
       kind: "watch",
       title: input.t("Earlier tries"),
-      description: input.t("{count} earlier tries", { count: input.runs.length - 1 }),
+      description: input.t("{count} earlier tries", { count: input.attemptCount - 1 }),
       tone: "neutral",
     });
   }

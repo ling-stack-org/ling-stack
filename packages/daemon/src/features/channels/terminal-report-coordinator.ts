@@ -96,8 +96,21 @@ export function maybeScheduleWorkflowTerminalReport(
     return undefined;
   }
   const published = latestCommittedReport(store, "workflow", workflowId);
-  if (published?.publishedMessageId) {
-    return getChannelMessageView(store, published.publishedMessageId);
+  if (published?.publishedMessageId && published.report) {
+    // A workflow may be retried after a report was already published. Only
+    // reuse the old publication when the current canonical evidence has the
+    // same semantic fingerprint; otherwise schedule a new report revision.
+    let currentFingerprint: string | undefined;
+    try {
+      currentFingerprint = collectWorkflowTerminalReportEvidence(store, workflowId, {
+        generatedAt: options.now ?? new Date().toISOString(),
+      }).evidenceFingerprint;
+    } catch {
+      // The async coordinator will perform the authoritative barrier/read.
+    }
+    if (currentFingerprint === published.report.evidenceFingerprint) {
+      return getChannelMessageView(store, published.publishedMessageId);
+    }
   }
   const active = activeMap(store);
   const activeKey = terminalSourceKey("workflow", workflowId);
@@ -152,10 +165,10 @@ function scheduleTerminalReport(
   sourceId: string,
   process: () => Promise<ProcessTerminalReportResult | undefined>,
 ): void {
-  const existing = latestCommittedReport(store, sourceKind, sourceId);
-  if (existing) {
-    return;
-  }
+  // A terminal Turn may later gain a linked retry/repair Run, and late Host
+  // evidence may complete after an initial terminal projection. Always let the
+  // processor compare semantic evidence fingerprints; it will reuse an
+  // identical committed report and create a new revision only for new facts.
   const active = activeMap(store);
   const activeKey = terminalSourceKey(sourceKind, sourceId);
   if (active.has(activeKey)) {
@@ -249,15 +262,15 @@ async function processTerminalReportSnapshot(
 ): Promise<ProcessTerminalReportResult> {
   const now = options.now ?? new Date().toISOString();
   const existing = latestCommittedReport(store, snapshot.source.kind, snapshot.source.id);
-  if (existing?.report) {
+  if (existing?.report && existing.evidenceFingerprint === snapshot.evidenceFingerprint) {
     const message = publishTerminalReportWithInvalidation(store, existing.report, options.linkedRunId, now);
     return { record: store.getTerminalReport(existing.id) ?? existing, message };
   }
 
   const settings = settingsByStore.get(store);
   const current = latestReport(store, snapshot.source.kind, snapshot.source.id);
-  const generation = current?.status === "failed" ? current.generation + 1 : current?.generation ?? 1;
-  let draft = current && current.status !== "failed"
+  const generation = current ? current.generation + 1 : 1;
+  let draft = current && (current.status === "draft" || current.status === "validating")
     ? current
     : store.createTerminalReportDraft({ generation, evidenceSnapshot: snapshot }, now);
   if (draft.status === "committed" || draft.status === "fallback") {
@@ -391,6 +404,22 @@ function buildModelTerminalReport(
       validationCodes: metadata.validationCodes,
     },
     ...content,
+    // Participant identity and contribution are projected from the canonical
+    // evidence snapshot. The model may narrate the report, but it must not be
+    // able to copy Engineer's prose into QA (or invent a participant).
+    participants: snapshot.participants.map((participant) => {
+      const modelParticipant = content.participants.find((item) => item.agentId === participant.agentId);
+      return {
+        agentId: participant.agentId,
+        displayName: participant.displayName,
+        roleKey: participant.roleKey,
+        status: participant.status,
+        contribution: participant.contributionSummaries.filter(Boolean).join("; ")
+          || modelParticipant?.contribution
+          || `${participant.displayName} produced durable execution evidence.`,
+        sourceRefs: participant.sourceRefs,
+      };
+    }),
     createdAt: draft.createdAt,
     committedAt: metadata.committedAt,
   };
@@ -400,22 +429,35 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
   if (!terminalReportsEnabledForStore(store)) {
     return;
   }
+  const latestPublishedBySource = new Map<string, LingTerminalReportRecord>();
   for (const record of store.listTerminalReports({ limit: 500 })) {
-    if (
-      terminalReportIsEligibleForDisplay(store, record) &&
-      (record.status === "committed" || record.status === "fallback") &&
-      record.report
-    ) {
-      publishTerminalReportWithInvalidation(store, record.report, undefined, new Date().toISOString());
+    if (!terminalReportIsEligibleForDisplay(store, record)
+      || (record.status !== "committed" && record.status !== "fallback")
+      || !record.report) {
+      continue;
     }
+    const sourceKey = `${record.sourceKind}:${record.sourceId}`;
+    const current = latestPublishedBySource.get(sourceKey);
+    if (!current || record.generation > current.generation) {
+      latestPublishedBySource.set(sourceKey, record);
+    }
+  }
+  for (const record of latestPublishedBySource.values()) {
+    publishTerminalReportWithInvalidation(store, record.report!, undefined, new Date().toISOString());
   }
   for (const channel of store.listChannels({ limit: 500 })) {
     for (const workflow of store.listChannelWorkflows({ channelId: channel.id, limit: 500 })) {
       if (workflow.createdAt < TERMINAL_REPORT_ROLLOUT_WATERMARK) {
         continue;
       }
-      if (isTerminalWorkflowStatus(workflow.status) && !latestCommittedReport(store, "workflow", workflow.id)) {
-        await processWorkflowTerminalReport(store, workflow.id);
+      if (isTerminalWorkflowStatus(workflow.status)) {
+        const committed = latestCommittedReport(store, "workflow", workflow.id);
+        const current = collectWorkflowTerminalReportEvidence(store, workflow.id, {
+          generatedAt: new Date().toISOString(),
+        });
+        if (!committed || committed.evidenceFingerprint !== current.evidenceFingerprint) {
+          await processWorkflowTerminalReport(store, workflow.id);
+        }
       }
     }
   }
@@ -431,13 +473,23 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
       const turn = store.getLingTurnForRun(run.id);
       const thread = turn ? store.getLingThread(turn.threadId) : undefined;
       if (turn && thread && (thread.kind === "conversation" || thread.kind === "teammate_direct")) {
-        if (!recoveredTurnIds.has(turn.id) && isTerminalTurnStatus(turn.status) && !latestCommittedReport(store, "turn", turn.id)) {
+        if (!recoveredTurnIds.has(turn.id) && isTerminalTurnStatus(turn.status)) {
           recoveredTurnIds.add(turn.id);
-          await processTurnTerminalReport(store, turn.id);
+          const committed = latestCommittedReport(store, "turn", turn.id);
+          const current = collectTurnTerminalReportEvidence(store, turn.id, {
+            generatedAt: new Date().toISOString(),
+          });
+          if (!committed || committed.evidenceFingerprint !== current.evidenceFingerprint) {
+            await processTurnTerminalReport(store, turn.id);
+          }
         }
         continue;
       }
-      if (!latestCommittedReport(store, "run", run.id)) {
+      const committed = latestCommittedReport(store, "run", run.id);
+      const current = collectRunTerminalReportEvidence(store, run.id, {
+        generatedAt: new Date().toISOString(),
+      });
+      if (!committed || committed.evidenceFingerprint !== current.evidenceFingerprint) {
         await processRunTerminalReport(store, run.id);
       }
     }

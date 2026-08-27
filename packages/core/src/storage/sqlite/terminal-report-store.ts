@@ -132,6 +132,21 @@ export class SqliteTerminalReportStore {
       clauses.push("status = ?");
       params.push(options.status);
     }
+    if (options.effectiveOnly) {
+      // A newer draft or failed synthesis must not hide the last user-visible
+      // report. Effective history is the newest committed/fallback revision
+      // for each logical source.
+      clauses.push(`NOT EXISTS (
+        SELECT 1
+        FROM ling_terminal_reports AS newer
+        WHERE newer.workspace_id = ling_terminal_reports.workspace_id
+          AND newer.source_kind = ling_terminal_reports.source_kind
+          AND newer.source_id = ling_terminal_reports.source_id
+          AND newer.generation > ling_terminal_reports.generation
+          AND newer.status IN ('committed', 'fallback')
+      )`);
+      clauses.push("status IN ('committed', 'fallback')");
+    }
     params.push(Math.min(Math.max(options.limit ?? 100, 1), 500));
     return this.context.database
       .prepare(`${terminalReportSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY created_at DESC, id DESC LIMIT ?`)

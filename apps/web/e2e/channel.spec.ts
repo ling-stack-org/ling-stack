@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { ProposedPlanArtifact } from "@ling-stack/contracts";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
-import { mockDaemon } from "./support/mock-daemon";
+import { mockDaemon, type MockExecutionAction } from "./support/mock-daemon";
 import {
   createBaseState,
   createChatProvider,
@@ -72,6 +72,50 @@ async function useEnglishLocale(page: Page): Promise<void> {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
+}
+
+function mockRetryCommandAction(
+  id: string,
+  threadId: string,
+  runId: string,
+  command: string,
+  startedAt: string,
+  exitCode: number,
+): MockExecutionAction {
+  const completedAt = new Date(Date.parse(startedAt) + 200).toISOString();
+  const status = exitCode === 0 ? "succeeded" : "failed";
+  return {
+    id,
+    workspaceId: "workspace_default",
+    threadId,
+    runId,
+    attemptId: `attempt_${runId}`,
+    toolCallId: `tool_${id}`,
+    actionType: "bash",
+    risk: "low",
+    status,
+    title: "Run command",
+    summary: command,
+    targetRefs: [{ type: "command", label: command }],
+    previewArtifactIds: [],
+    resultArtifactIds: [],
+    commandEvidence: {
+      command,
+      cwd,
+      startedAt,
+      completedAt,
+      durationMs: 200,
+      exitCode,
+      latestEventSeq: 3,
+      outputTail: [],
+      outputByteCount: 0,
+      outputTruncated: false,
+    },
+    createdAt: startedAt,
+    updatedAt: completedAt,
+    executedAt: startedAt,
+    completedAt,
+  };
 }
 
 function configureReadyConversationModel(state: MockState): void {
@@ -10743,6 +10787,21 @@ test("durable Ling turns drive conversation work cell title, status, and attempt
       createdAt: "2026-05-25T00:13:00.000Z",
     },
   ];
+  state.artifactsByRun[firstAttempt.id] = [
+    {
+      id: "artifact_durable_old_attempt",
+      runId: firstAttempt.id,
+      type: "file",
+      path: "old-attempt.txt",
+      title: "old-attempt.txt",
+      contentType: "text/plain",
+      createdAt: "2026-05-25T00:10:30.000Z",
+    },
+  ];
+  state.executionActions = [
+    mockRetryCommandAction("durable_old_attempt", "thread_durable_turn", firstAttempt.id, "echo old attempt evidence", "2026-05-25T00:10:30.000Z", 7),
+    mockRetryCommandAction("durable_retry_command", "thread_durable_turn", secondAttempt.id, "node retry-once.cjs", "2026-05-25T00:13:00.000Z", 0),
+  ];
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
@@ -10762,6 +10821,11 @@ test("durable Ling turns drive conversation work cell title, status, and attempt
   await expect(workCell.getByLabel("Checks")).not.toContainText("succeeded");
   await expect(workCell.getByLabel("Checks")).not.toContainText("failed");
   await expect(workCell).not.toContainText("First attempt failed before retry.");
+  await expect(workCell).toContainText("Earlier tries");
+  await workCell.locator(".conversation-work-cell-row.command-execution .conversation-work-cell-row-main").first().click();
+  await expect(workCell).toContainText("node retry-once.cjs");
+  await expect(workCell).not.toContainText("echo old attempt evidence");
+  await expect(workCell).not.toContainText("old-attempt.txt");
   await expect(workCell.getByRole("region", { name: "Evidence" })).toContainText("sqlite-run-store.ts");
 });
 
