@@ -1,7 +1,7 @@
 {
   "name": "ling-stack",
   "private": true,
-  "version": "0.1.0",
+  "version": "0.1.2-alpha.1",
   "description": "Multilingual local-first AI teammate workspace with first-class domestic AI providers, GPT, Claude, and OpenAI-compatible relays.",
   "license": "MIT",
   "type": "module",

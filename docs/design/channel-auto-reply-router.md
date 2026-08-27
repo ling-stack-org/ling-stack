@@ -12,7 +12,7 @@ Related docs:
 
 - [Conversation Surface Contract](./conversation-surface-contract.md)
 - [Ling Agent Session Control Plane](ling-agent-session.md)
-- [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
+- [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 - [Channel Team Operating System](channel-team-operating-system.md)
 - [Multi-Agent Orchestrator](./multi-agent-orchestrator.md)
 - [Multi-Agent Orchestration Experience](multi-agent-orchestration-experience.md)
@@ -170,8 +170,8 @@ but different internal modules.
 Do not reuse the workflow selector runtime directly for ordinary chat. Reuse only the
 pattern: structured decision, validation, durable evidence, and safe fallback.
 
-The channel-to-workflow entry is specified separately in
-[Channel Intent To Workflow Selector](channel-intent-workflow-selector.md) and is owned
+The channel-to-workflow entry is specified in
+[Channel Conversation Continuity v2](channel-conversation-continuity-v2.md) and is owned
 by [Ling Agent Session Control Plane](ling-agent-session.md). That layer decides whether
 a message should become a clarification, an auto-started executable run, a confirmation
 card, collaboration work, or an ordinary answer. This router handles only the ordinary

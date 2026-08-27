@@ -66,6 +66,7 @@ const typedActionOwners = [
   "src/features/workspace/right-dock/PlanHistoryPage.tsx",
   "src/features/workspace/right-dock/WorkspaceDockToolbar.tsx",
   "src/features/workspace/right-dock/WorkspaceChangeReviewPage.tsx",
+  "src/features/workspace/right-dock/WorkspaceSnapshotRestorePanel.tsx",
 ];
 const frozenGeometryOwners = new Set([
   "src/features/navigation/SidebarNavigation.tsx",

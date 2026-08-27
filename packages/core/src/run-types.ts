@@ -1,8 +1,39 @@
 import { randomUUID } from "node:crypto";
 import type {
   ConversationItemV1,
+  CompactionCheckpoint,
+  CreateCompactionCheckpointInput,
+  CreatePostCompactionUndoRecordInput,
+  CreateWorkspaceMutationRecordInput,
   LingThreadRelationKindV2,
   LingThreadSurfaceKindV2,
+  ListCompactionCheckpointsOptions,
+  ListPostCompactionUndoRecordsOptions,
+  ListWorkspaceMutationRecordsOptions,
+  RunEventDataByType as ContractRunEventDataByType,
+  RunEventEnvelope as ContractRunEventEnvelope,
+  RunEventType as ContractRunEventType,
+  PostCompactionUndoRecord,
+  UpdatePostCompactionUndoRecordInput,
+  WorkspaceMutationRecord,
+  CreateWorkspaceSnapshotEntryInput,
+  CreateWorkspaceSnapshotManifestInput,
+  CreateWorkspaceSnapshotRestoreAnchorInput,
+  CreateSnapshotRestoreJournalEntryInput,
+  CreateSnapshotRestoreRequestInput,
+  ListSnapshotRestoreJournalOptions,
+  ListWorkspaceSnapshotManifestsOptions,
+  SnapshotRestoreJournalEntry,
+  SnapshotRestoreRequest,
+  UpdateSnapshotRestoreRequestInput,
+  UpdateSnapshotRestoreJournalEntryInput,
+  WorkspaceSnapshotBlob,
+  WorkspaceSnapshotEntry,
+  WorkspaceSnapshotManifest,
+  WorkspaceSnapshotRestoreAnchor,
+  CreateSnapshotRestoreConfirmationInput,
+  SnapshotRestoreConfirmation,
+  ListSnapshotRestoreRequestsOptions,
 } from "@ling-stack/contracts";
 import type {
   ApprovalActionType,
@@ -602,39 +633,13 @@ export interface TransitionLingTurnStatusInput {
   readonly now: string;
 }
 
-export type RunEventType =
-  | "run_created"
-  | "run_start"
-  | "turn_start"
-  | "turn_end"
-  | "assistant_text_delta"
-  | "assistant_thinking_delta"
-  | "tool_hydration_request"
-  | "tool_hydration_end"
-  | "message_end"
-  | "tool_start"
-  | "tool_update"
-  | "tool_end"
-  | "run_end"
-  | "run_error"
-  | "run_cancelled"
-  | "approval_requested"
-  | "approval_approved"
-  | "approval_denied"
-  | "approval_expired"
-  | "approval_cancelled"
-  | "artifact_created"
-  | "workspace_change_recovery_started"
-  | "workspace_changes_undone"
-  | "workspace_changes_reapplied"
-  | "run_intervention_created"
-  | "run_followup_queued"
-  | "run_interrupt_requested"
-  | "run_continuation_starting"
-  | "run_continuation_started"
-  | "run_intervention_failed"
-  | "stale_runner_completion_ignored"
-  | "result";
+export type RunEventType = ContractRunEventType;
+export type RunEventDataByType = ContractRunEventDataByType;
+export type RunEventData = RunEventDataByType[RunEventType];
+export type RunEventEmitter = <K extends RunEventType>(
+  type: K,
+  data: RunEventDataByType[K],
+) => RunEventEnvelope | undefined;
 
 export const runInterventionModes = ["queue_followup", "interrupt_redirect"] as const;
 export type RunInterventionMode = (typeof runInterventionModes)[number];
@@ -1123,6 +1128,9 @@ export interface RunSession {
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
+  /** Immutable context projection lineage captured before execution started. */
+  readonly contextViewId?: string;
+  readonly contextViewCreatedAt?: string;
   readonly summaryPath?: string;
   readonly errorMessage?: string;
   readonly createdAt: string;
@@ -1131,14 +1139,7 @@ export interface RunSession {
   readonly updatedAt: string;
 }
 
-export interface RunEventEnvelope {
-  readonly id: string;
-  readonly runId: string;
-  readonly seq: number;
-  readonly ts: string;
-  readonly type: RunEventType;
-  readonly data: unknown;
-}
+export type RunEventEnvelope = ContractRunEventEnvelope;
 
 export interface CreateRunInput {
   readonly id: string;
@@ -1161,6 +1162,8 @@ export interface CreateRunInput {
   readonly parentRunId?: string;
   readonly interventionId?: string;
   readonly continuationReason?: RunContinuationReason;
+  readonly contextViewId?: string;
+  readonly contextViewCreatedAt?: string;
   readonly createdAt: string;
 }
 
@@ -1502,7 +1505,7 @@ export interface RunStore {
   markRunSucceeded(runId: string, endedAt: string, summaryPath?: string): void;
   markRunFailed(runId: string, endedAt: string, errorMessage: string, summaryPath?: string): void;
   markRunCancelled(runId: string, endedAt: string, summaryPath?: string): void;
-  appendEvent(runId: string, type: RunEventType, data: unknown): RunEventEnvelope;
+  appendEvent<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]): Extract<RunEventEnvelope, { readonly type: K }>;
   appendControlPlaneEvent(input: AppendControlPlaneEventInput, now: string): ControlPlaneEvent;
   getControlPlaneEventByIdempotency(workspaceId: string, idempotencyKey: string): ControlPlaneEvent | undefined;
   listControlPlaneEvents(options: ListControlPlaneEventsOptions): ControlPlaneEvent[];
@@ -1541,6 +1544,47 @@ export interface RunStore {
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
   countEvents(runId: string): number;
+  createWorkspaceMutationRecord(input: CreateWorkspaceMutationRecordInput): WorkspaceMutationRecord;
+  createWorkspaceMutationRecords(inputs: readonly CreateWorkspaceMutationRecordInput[]): WorkspaceMutationRecord[];
+  getWorkspaceMutationRecord(id: string): WorkspaceMutationRecord | undefined;
+  listWorkspaceMutationRecords(options?: ListWorkspaceMutationRecordsOptions): WorkspaceMutationRecord[];
+  getLatestWorkspaceProvenanceWatermark(workspaceId?: string): string;
+  createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint;
+  getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined;
+  listCompactionCheckpoints(options?: ListCompactionCheckpointsOptions): CompactionCheckpoint[];
+  createPostCompactionUndoRecord(input: CreatePostCompactionUndoRecordInput): PostCompactionUndoRecord;
+  getPostCompactionUndoRecord(id: string): PostCompactionUndoRecord | undefined;
+  listPostCompactionUndoRecords(options?: ListPostCompactionUndoRecordsOptions): PostCompactionUndoRecord[];
+  updatePostCompactionUndoRecord(input: UpdatePostCompactionUndoRecordInput): PostCompactionUndoRecord | undefined;
+  createWorkspaceSnapshotManifest(input: CreateWorkspaceSnapshotManifestInput): WorkspaceSnapshotManifest;
+  getWorkspaceSnapshotManifest(id: string): WorkspaceSnapshotManifest | undefined;
+  listWorkspaceSnapshotManifests(options?: ListWorkspaceSnapshotManifestsOptions): WorkspaceSnapshotManifest[];
+  createWorkspaceSnapshotEntries(inputs: readonly CreateWorkspaceSnapshotEntryInput[]): WorkspaceSnapshotEntry[];
+  listWorkspaceSnapshotEntries(manifestId: string): WorkspaceSnapshotEntry[];
+  getWorkspaceSnapshotBlob(sha256: string): WorkspaceSnapshotBlob | undefined;
+  listWorkspaceSnapshotBlobs(): WorkspaceSnapshotBlob[];
+  upsertWorkspaceSnapshotBlob(input: WorkspaceSnapshotBlob): WorkspaceSnapshotBlob;
+  createWorkspaceSnapshotRestoreAnchor(input: CreateWorkspaceSnapshotRestoreAnchorInput): WorkspaceSnapshotRestoreAnchor;
+  getWorkspaceSnapshotRestoreAnchor(id: string): WorkspaceSnapshotRestoreAnchor | undefined;
+  createSnapshotRestoreRequest(input: CreateSnapshotRestoreRequestInput): SnapshotRestoreRequest;
+  createSnapshotRestoreConfirmation(input: CreateSnapshotRestoreConfirmationInput): SnapshotRestoreConfirmation;
+  getSnapshotRestoreConfirmation(id: string): SnapshotRestoreConfirmation | undefined;
+  resolveSnapshotRestoreConfirmation(id: string, state: "confirmed" | "denied" | "expired", now: string): SnapshotRestoreConfirmation | undefined;
+  getSnapshotRestoreRequest(id: string): SnapshotRestoreRequest | undefined;
+  listSnapshotRestoreRequests(options?: ListSnapshotRestoreRequestsOptions): SnapshotRestoreRequest[];
+  getSnapshotRestoreRequestByIdempotency(workspaceId: string, idempotencyKey: string): SnapshotRestoreRequest | undefined;
+  updateSnapshotRestoreRequest(input: UpdateSnapshotRestoreRequestInput): SnapshotRestoreRequest | undefined;
+  createSnapshotRestoreJournalEntries(inputs: readonly CreateSnapshotRestoreJournalEntryInput[]): SnapshotRestoreJournalEntry[];
+  listSnapshotRestoreJournalEntries(options: ListSnapshotRestoreJournalOptions): SnapshotRestoreJournalEntry[];
+  updateSnapshotRestoreJournalEntry(input: UpdateSnapshotRestoreJournalEntryInput): SnapshotRestoreJournalEntry | undefined;
+  acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number;
+  getWorkspaceSnapshotFence(workspaceId: string): { readonly epoch: number; readonly ownerRequestId?: string };
+  releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): boolean;
+  expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined;
+  deleteWorkspaceSnapshotManifest(id: string): boolean;
+  deleteWorkspaceSnapshotBlob(sha256: string): boolean;
+  commitWorkspaceSnapshot(input: CreateWorkspaceSnapshotManifestInput, entries: readonly CreateWorkspaceSnapshotEntryInput[]): { readonly manifest: WorkspaceSnapshotManifest; readonly entries: readonly WorkspaceSnapshotEntry[] };
+  assertWorkspaceSnapshotFence(cwd: string): void;
   createRunIntervention(input: CreateRunInterventionInput, now: string): RunIntervention;
   getRunIntervention(interventionId: string): RunIntervention | undefined;
   listRunInterventions(options?: ListRunInterventionsOptions): RunIntervention[];

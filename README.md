@@ -3,6 +3,12 @@
   <h1>Ling Stack</h1>
   <p><strong>A local-first workspace for AI teammates, models, tools, approvals, and auditable work.</strong></p>
   <p>
+    <a href="https://github.com/tianxiaochannel-oss88/ling-stack/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tianxiaochannel-oss88/ling-stack/actions/workflows/ci.yml/badge.svg" /></a>
+    <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
+    <img alt="Node.js 22.15+" src="https://img.shields.io/badge/Node.js-22.15%2B-3c873a.svg" />
+    <img alt="pnpm 10" src="https://img.shields.io/badge/pnpm-10-f69220.svg" />
+  </p>
+  <p>
     <a href="docs/product-design.md">Product</a> ·
     <a href="docs/architecture.md">Architecture</a> ·
     <a href="docs/design/README.md">Design docs</a> ·
@@ -22,6 +28,11 @@ Ling Stack brings conversations, channels, AI teammates, model configuration, sk
 tools, media generation, approvals, artifacts, and runtime history into one local
 workspace. It is designed for work that needs more structure and accountability than a
 standalone chat window.
+
+![Ling Stack local workspace overview](docs/design/assets/ling-stack-workspace-overview.png)
+
+The screenshot above is a deterministic public demo with neutral sample content. It does
+not contain a maintainer workspace, account, provider key, or live task data.
 
 ## Why Ling Stack
 
@@ -62,6 +73,21 @@ maintained runtimes execute scoped work; humans remain in control of risky side 
   external mutations separated behind explicit approval and execution steps.
 - **Use one local control plane:** access the same daemon-backed product from the Web UI,
   CLI, or Electron desktop shell.
+
+## Current Integrations
+
+| Integration | Current boundary |
+| --- | --- |
+| Chrome Extension + Browser Host | Implemented for local development; Chrome Web Store release pending |
+| Plugin Manager | Source alpha with explicit activation, capability, and approval boundaries |
+| Office Documents Native Plugin | Implemented for local Desktop development; signed distribution pending |
+| MCP and local tools | Source alpha; tools are assigned explicitly and remain policy governed |
+| Model providers | Source alpha with capability checks and local secret references |
+
+“Implemented” means the source and focused verification exist on `main`; it does not mean
+that a signed installer, store listing, or stable support commitment is available. See
+[Implementation Status](docs/design/implementation-status.md) for the maintained closure
+gates.
 
 ## Product Principles
 
@@ -118,7 +144,7 @@ evidence model.
 | Providers | `packages/providers` | Chat, search, image, and video adapters |
 | Runner | `packages/runner-pi` | Pi coding-agent integration |
 | UI packages | `packages/ui-react`, `packages/conversation-ui-*` | Shared React components and conversation primitives |
-| Plugin SDK | `packages/plugin-sdk` | Internal plugin contracts and validation |
+| Plugin SDK | `packages/plugin-sdk` | Plugin contracts and validation |
 
 See [Architecture](docs/architecture.md) and the
 [design documentation index](docs/design/README.md) for ownership details.

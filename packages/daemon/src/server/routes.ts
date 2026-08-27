@@ -78,6 +78,35 @@ export function parseRunRoute(
   return undefined;
 }
 
+export function parseTurnRoute(
+  pathname: string,
+):
+  | { readonly kind: "workspace-changes"; readonly turnId: string }
+  | { readonly kind: "workspace-changes-undo"; readonly turnId: string }
+  | { readonly kind: "workspace-changes-reapply"; readonly turnId: string }
+  | undefined {
+  const segments = decodeRouteSegments(pathname);
+  if (!segments) return undefined;
+  if (segments.length === 3 && segments[0] === "turns" && segments[2] === "workspace-changes") {
+    return { kind: "workspace-changes", turnId: segments[1] };
+  }
+  if (segments.length === 4 && segments[0] === "turns" && segments[2] === "workspace-changes" && segments[3] === "undo") {
+    return { kind: "workspace-changes-undo", turnId: segments[1] };
+  }
+  if (segments.length === 4 && segments[0] === "turns" && segments[2] === "workspace-changes" && segments[3] === "reapply") {
+    return { kind: "workspace-changes-reapply", turnId: segments[1] };
+  }
+  return undefined;
+}
+
+function decodeRouteSegments(pathname: string): string[] | undefined {
+  try {
+    return pathname.split("/").filter(Boolean).map(decodeURIComponent);
+  } catch {
+    return undefined;
+  }
+}
+
 export function parseRunInterventionRoute(
   pathname: string,
 ):

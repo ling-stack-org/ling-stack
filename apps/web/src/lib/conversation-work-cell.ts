@@ -498,7 +498,9 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   const artifactStripItems = mergeConversationArtifactStripItems(
     baseArtifactStripItems,
     (terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
-  );
+  ).map((item) => turnContext && item.kind === "changed"
+    ? { ...item, recoveryTarget: { kind: "turn" as const, id: turnContext.turn.id } }
+    : item);
   const representedArtifactIds = new Set(artifactStripItems.flatMap((item) => [
     item.artifactId,
     ...(item.changeArtifacts ?? []).map((artifact) => artifact.artifactId),
@@ -1329,7 +1331,7 @@ function executionActionTranscriptRows(
   const rows: ConversationWorkCellRow[] = [];
   const operationExecution = executionActionExecutionView(action, context);
   const scopeSummary = action.scopeSummary?.trim();
-  if (scopeSummary) {
+  if (scopeSummary && !isInternalExecutionScopeSummary(scopeSummary)) {
     rows.push({
       id: `action-note:${action.id}`,
       kind: "plan",
@@ -1341,6 +1343,26 @@ function executionActionTranscriptRows(
   }
   rows.push(executionActionEvidenceRow(action, artifactsById, t, context));
   return rows;
+}
+
+const INTERNAL_EXECUTION_SCOPES = new Set([
+  "read_only",
+  "workspace_read",
+  "workspace_write",
+  "git_history",
+  "network",
+  "credential",
+  "provider_config",
+  "deployment",
+  "external_system",
+]);
+
+function isInternalExecutionScopeSummary(summary: string): boolean {
+  const scopes = summary
+    .split(",")
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  return scopes.length > 0 && scopes.every((scope) => INTERNAL_EXECUTION_SCOPES.has(scope));
 }
 
 function executionActionExecutionView(

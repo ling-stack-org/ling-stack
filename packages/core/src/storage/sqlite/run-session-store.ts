@@ -35,6 +35,8 @@ export interface SqliteRunSessionStorePorts {
   readonly recordStateTransitionEvent: (input: CreateStateTransitionEventInput) => StateTransitionEvent;
   readonly reconcileLingTurnStatusForRun: (runId: string, now: string) => void;
   readonly updateLinkedWorkUnitRunId: (workUnitId: string, runId: string, now: string) => number;
+  /** Reject new/promoted execution while an explicit workspace restore owns the fence. */
+  readonly assertWorkspaceSnapshotFence?: (cwd: string) => void;
 }
 
 export class SqliteRunSessionStore {
@@ -45,6 +47,7 @@ export class SqliteRunSessionStore {
   ) {}
 
   createRun(input: CreateRunInput): RunSession {
+    this.ports.assertWorkspaceSnapshotFence?.(input.cwd);
     const eventLogPath = getRunEventLogPath(this.paths, input.id);
     const redactedTaskSnapshot = redactSecrets(input.taskSnapshot);
     const redactedProviderSnapshot = redactSecrets(input.providerSnapshot);
@@ -75,13 +78,19 @@ export class SqliteRunSessionStore {
             parent_run_id,
             intervention_id,
             continuation_reason,
+            context_view_id,
+            context_view_created_at,
             summary_path,
             error_message,
             created_at,
             started_at,
             ended_at,
             updated_at
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) VALUES (
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+            ?, ?, ?, ?, ?, ?, ?, ?
+          )
         `)
         .run(
           input.id,
@@ -104,6 +113,8 @@ export class SqliteRunSessionStore {
           input.parentRunId ?? null,
           input.interventionId ?? null,
           input.continuationReason ?? null,
+          input.contextViewId ?? null,
+          input.contextViewCreatedAt ?? null,
           null,
           null,
           input.createdAt,
@@ -240,6 +251,9 @@ export class SqliteRunSessionStore {
     });
     if (!result.ok) {
       return result;
+    }
+    if (["queued", "running", "waiting_for_approval"].includes(result.to)) {
+      this.ports.assertWorkspaceSnapshotFence?.(run.cwd);
     }
 
     const update = this.context.database

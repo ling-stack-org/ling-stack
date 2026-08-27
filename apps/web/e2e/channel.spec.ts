@@ -6851,6 +6851,23 @@ test("workflow context inspect details stay out of main feed expansion", async (
   ];
   state.executionActions = [
     {
+      id: "execution_action_workflow_read",
+      workspaceId: "workspace_default",
+      runId: contextRun.id,
+      actionType: "read",
+      risk: "low",
+      status: "succeeded",
+      title: "Read workflow evidence projection",
+      summary: "Inspect the current workflow evidence projection.",
+      targetRefs: [{ type: "file", path: "apps/web/src/lib/workflow-progress.ts" }],
+      previewArtifactIds: [],
+      resultArtifactIds: [],
+      scopeSummary: "read_only",
+      createdAt: "2026-05-25T00:50:20.000Z",
+      updatedAt: "2026-05-25T00:50:25.000Z",
+      executedAt: "2026-05-25T00:50:20.000Z",
+    },
+    {
       id: "execution_action_workflow_edit",
       workspaceId: "workspace_default",
       runId: contextRun.id,
@@ -6862,6 +6879,7 @@ test("workflow context inspect details stay out of main feed expansion", async (
       targetRefs: [{ type: "file", path: "apps/web/src/lib/workflow-progress.ts" }],
       previewArtifactIds: [],
       resultArtifactIds: ["artifact_context_inspect_file"],
+      scopeSummary: "workspace_write",
       createdAt: "2026-05-25T00:50:30.000Z",
       updatedAt: "2026-05-25T00:51:10.000Z",
       executedAt: "2026-05-25T00:50:35.000Z",
@@ -6878,6 +6896,7 @@ test("workflow context inspect details stay out of main feed expansion", async (
       targetRefs: [{ type: "command", label: "pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow" }],
       previewArtifactIds: [],
       resultArtifactIds: [],
+      scopeSummary: "workspace_write",
       createdAt: "2026-05-25T00:51:20.000Z",
       updatedAt: "2026-05-25T00:51:50.000Z",
       executedAt: "2026-05-25T00:51:20.000Z",
@@ -6918,7 +6937,10 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(operationBubble).toHaveClass(/expanded/);
   await expect(workCell.locator(".conversation-work-cell-agent-span")).toHaveCount(0);
   const activeStream = workCell.locator(".conversation-work-cell-active-stream");
+  await expect(activeStream).toContainText("Read workflow-progress.ts");
   await expect(activeStream).toContainText("Ran command");
+  await expect(activeStream).not.toContainText("read_only");
+  await expect(activeStream).not.toContainText("workspace_write");
   await expect(activeStream).not.toContainText("$ pnpm --filter @ling-stack/web exec playwright test e2e/channel.spec.ts -g workflow");
   const engineerShellRow = activeStream.locator(".conversation-work-cell-row.shell").filter({ hasText: "Ran command" });
   await expect(engineerShellRow.locator(".conversation-work-cell-shell-card")).toHaveCount(0);
@@ -6947,8 +6969,11 @@ test("workflow context inspect details stay out of main feed expansion", async (
   await expect(workCell).not.toContainText("tokens");
   await expect(workCell).not.toContainText("Workflow step runtime boundary:");
   const evidenceRegion = workCell.getByRole("region", { name: "Evidence" });
+  await expect(evidenceRegion).toContainText("Read workflow-progress.ts");
   await expect(evidenceRegion).toContainText("Edited workflow-progress.ts");
   await expect(evidenceRegion).toContainText("Ran command");
+  await expect(evidenceRegion).not.toContainText("read_only");
+  await expect(evidenceRegion).not.toContainText("workspace_write");
   await expect(evidenceRegion).toContainText("Handoff: Engineer -> Reviewer");
   await expect(evidenceRegion).not.toContainText("Approval checkpoint: Resume workflow execution");
   await expect(evidenceRegion).not.toContainText("Resume workflow execution");

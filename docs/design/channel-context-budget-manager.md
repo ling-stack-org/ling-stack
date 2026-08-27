@@ -13,7 +13,7 @@ Related docs:
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
 - [Provider Presets](provider-presets.md)
-- [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
+- [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)
 - [Ling Memory v1](ling-memory-v1.md)
 - [Skill Context Optimization](skill-context-optimization.md)

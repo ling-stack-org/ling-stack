@@ -2,6 +2,7 @@ import type { LingApprovalCheckpoint } from "../../approval-checkpoints.js";
 import type { ApprovalRequest, ListApprovalRequestsOptions } from "../../approval-types.js";
 import {
   type LingThread,
+  type RunEventDataByType,
   type RunEventType,
   type RunSession,
   type UpdateLingThreadInput,
@@ -26,7 +27,7 @@ export interface SqliteRuntimeRecoveryCoordinatorPorts {
   readonly expireResourceLeases: (now: string) => number;
   readonly listRecoverableRunIds: () => string[];
   readonly hasTerminalRunEvent: (runId: string) => boolean;
-  readonly appendRunEvent: (runId: string, type: RunEventType, data: unknown) => unknown;
+  readonly appendRunEvent: <K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]) => unknown;
   readonly markRunFailed: (runId: string, endedAt: string, errorMessage: string) => void;
   readonly getRun: (runId: string) => RunSession | undefined;
   readonly getLingThread: (threadId: string) => LingThread | undefined;

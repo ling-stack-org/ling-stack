@@ -69,6 +69,7 @@ export function buildPrivateChatContextView(input: BuildPrivateChatContextViewIn
     id: "private_chat_prompt",
     role: "user",
     priority: "must_keep",
+    compactionSurvival: "summarize",
     title: "private_chat_prompt",
     text: prompt,
     sourceRefIds: promptSources.map((source) => source.id),

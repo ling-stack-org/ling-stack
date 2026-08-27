@@ -17,6 +17,8 @@ import {
   type EffectiveRunPolicySnapshot,
   type ExternalWorkStoreFacet,
   type RunEventEnvelope,
+  type RunEventDataByType,
+  type RunEventEmitter,
   type RunEventType,
   type RunExecutionStoreFacet,
   type RunSession,
@@ -147,7 +149,7 @@ export function createRunApprovalHandler(options: {
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly approvalPolicy: ApprovalPolicy;
   readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
-  readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
@@ -264,6 +266,11 @@ export function createRunApprovalHandler(options: {
           draft: patchDraft,
           cwd: request.cwd,
           allowedWritePaths: options.approvalPolicy.allowedWritePaths,
+          provenance: {
+            store: options.store,
+            run: options.run,
+            toolCallId: request.toolCallId,
+          },
         });
         return {
           approved: true,
@@ -472,6 +479,12 @@ export function createRunApprovalHandler(options: {
           cwd: request.cwd,
           allowedWritePaths: options.approvalPolicy.allowedWritePaths,
           previewArtifactIds: previewArtifacts.map((artifact) => artifact.id),
+          provenance: {
+            store: options.store,
+            run: options.run,
+            toolCallId: request.toolCallId,
+            approvalId: resolvedApproval.id,
+          },
         });
         handledResult = applied.handledResult;
         const resultArtifact = createExecutionActionResultArtifact({
@@ -757,7 +770,10 @@ function approvalDecisionEventType(approval: ApprovalRequest): Extract<RunEventT
   return "approval_denied";
 }
 
-function approvalRequestEventPayload(approval: ApprovalRequest, previewArtifacts: readonly { readonly id: string }[] = []): Record<string, unknown> {
+function approvalRequestEventPayload(
+  approval: ApprovalRequest,
+  previewArtifacts: readonly { readonly id: string }[] = [],
+): RunEventDataByType["approval_requested"] {
   return {
     approvalId: approval.id,
     toolCallId: approval.toolCallId,
@@ -1033,7 +1049,7 @@ export function streamOrAppendApprovalDecisionEvent(options: {
   readonly store: RunStore;
   readonly approval: ApprovalRequest;
   readonly afterSeq: number;
-  readonly appendAndMaybeStream: (type: RunEventType, data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
   readonly onExistingEvent?: (envelope: RunEventEnvelope) => void;
 }): void {

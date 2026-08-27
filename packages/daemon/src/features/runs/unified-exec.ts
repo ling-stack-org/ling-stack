@@ -6,6 +6,7 @@ import {
   type ArtifactType,
   type RunArtifact,
   type RunEventEnvelope,
+  type RunEventEmitter,
   type RunSession,
   type RunStore,
   type UnifiedExecArtifactSummary,
@@ -35,7 +36,7 @@ export async function executeUnifiedBashTool(input: {
   readonly run: RunSession;
   readonly request: PiRunnerApprovalRequest;
   readonly approvalId?: string;
-  readonly appendAndMaybeStream: (type: "tool_update" | "artifact_created", data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly shellSnapshotEnabled?: boolean;
@@ -116,7 +117,7 @@ async function executeUnifiedExec(input: {
   readonly store: RunStore;
   readonly run: RunSession;
   readonly request: UnifiedExecRequest;
-  readonly appendAndMaybeStream: (type: "tool_update" | "artifact_created", data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly shellSnapshotEnabled?: boolean;
@@ -282,7 +283,7 @@ function writeSyntheticFailureResult(input: {
   readonly store: RunStore;
   readonly run: RunSession;
   readonly request: UnifiedExecRequest;
-  readonly appendAndMaybeStream: (type: "tool_update" | "artifact_created", data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly message: string;
   readonly status: UnifiedExecStatus;
@@ -317,7 +318,7 @@ function writeUnifiedExecResult(input: {
   readonly store: RunStore;
   readonly run: RunSession;
   readonly request: UnifiedExecRequest;
-  readonly appendAndMaybeStream: (type: "tool_update" | "artifact_created", data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly environmentSummary: UnifiedExecEnvironmentSummary;
   readonly startedAt: string;
@@ -447,7 +448,7 @@ function writeUnifiedExecResult(input: {
 function createStreamCapture(
   stream: "stdout" | "stderr",
   toolCallId: string,
-  appendAndMaybeStream: (type: "tool_update", data: unknown) => RunEventEnvelope | undefined,
+  appendAndMaybeStream: RunEventEmitter,
   extraSecrets: readonly (string | undefined)[],
 ): {
   readonly ingest: (chunk: Buffer) => void;
@@ -607,7 +608,7 @@ function writeExecArtifact(input: {
 function appendExecArtifactEvents(input: {
   readonly artifacts: readonly { readonly artifact: RunArtifact; readonly role: "result" | "stdout" | "stderr" }[];
   readonly toolCallId: string;
-  readonly appendAndMaybeStream: (type: "artifact_created", data: unknown) => RunEventEnvelope | undefined;
+  readonly appendAndMaybeStream: RunEventEmitter;
 }): void {
   for (const item of input.artifacts) {
     input.appendAndMaybeStream("artifact_created", {

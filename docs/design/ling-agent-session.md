@@ -7,7 +7,6 @@ Related docs:
 
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 - [Ling Agent Session Implementation Plan](ling-agent-session-implementation-plan.md)
-- [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 - [Codex-Like Execution Experience](codex-like-execution.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
