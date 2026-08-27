@@ -12,6 +12,9 @@
     "./fixtures/channel-conversation-continuity-v2.json": "./fixtures/channel-conversation-continuity-v2.json"
   },
   "scripts": {
+    "build:ci": "tsc -p tsconfig.json",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+    "test:ci": "node --test test/*.test.mjs",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
