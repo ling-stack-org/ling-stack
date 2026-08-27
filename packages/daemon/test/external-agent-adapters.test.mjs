@@ -95,6 +95,34 @@ test("openclaw-acp adapter fails closed before session run when capabilities are
   }
 });
 
+test("openclaw-acp stops on a backend run_error without publishing a successful run_end", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-openclaw-acp-run-error-"));
+  const acp = await startFakeAcpServer({
+    runResult: {
+      taskId: "task_external",
+      events: [{ type: "run_error", data: { taskId: "task_external", message: "Provider message ended with an error." } }],
+      messages: [],
+    },
+  });
+  try {
+    const adapter = createOpenClawAcpAdapter({ endpoint: acp.endpoint });
+    const events = [];
+    await assert.rejects(
+      () => adapter.runTask({
+        ...baseRunOptions(cwd),
+        onEvent: (event) => events.push(event),
+      }),
+      /Provider message ended with an error/,
+    );
+    assert.deepEqual(events.map((event) => event.type), ["run_start", "turn_start", "run_error"]);
+    assert.equal(events.some((event) => event.type === "run_end"), false);
+    assert.deepEqual(readMethods(acp.requests), ["initialize", "session/run"]);
+  } finally {
+    await acp.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("codex-app-server adapter executes fake app-server through dedicated transport", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-codex-app-server-adapter-"));
   const codex = await startFakeCodexAppServer();

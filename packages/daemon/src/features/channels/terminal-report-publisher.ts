@@ -51,6 +51,16 @@ export function publishTerminalReportPublication(input: {
     throw new TerminalReportPublicationError("stale_completion_basis", `Workflow completion gate is stale or unverified: ${workflow.id}`);
   }
 
+  const supersededMessageId = input.store.listTerminalReports({
+    sourceKind: "workflow",
+    sourceId: workflow.id,
+    limit: 500,
+  })
+    .filter((record) => record.generation < (input.store.getTerminalReport(input.report.id)?.generation ?? Number.MAX_SAFE_INTEGER))
+    .sort((left, right) => right.generation - left.generation)
+    .map((record) => record.publishedMessageId)
+    .find((messageId): messageId is string => Boolean(messageId));
+
   const messageId = terminalReportMessageId(input.report.id);
   const result = input.store.commitTerminalReportPublication({
     reportId: input.report.id,
@@ -87,6 +97,7 @@ export function publishTerminalReportPublication(input: {
         ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
       ],
       idempotencyKey: `terminal-report:${input.report.id}`,
+      ...(supersededMessageId ? { supersedesItemId: supersededMessageId } : {}),
     },
     publicationEventIdempotencyKey: `terminal-report:${input.report.id}:published`,
     now: input.now,

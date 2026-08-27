@@ -151,8 +151,14 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
     assert.ok(report.artifacts.find((artifact) => artifact.id === terminalReportTypesArtifact.id)?.sourceRefs.some((ref) =>
       ref.kind === "file" && ref.id === "packages/core/src/terminal-report-types.ts"
     ));
-    assert.ok(report.participants.find((participant) => participant.agentId === "engineer")?.contribution.includes("完成协议和持久化实现"));
-    assert.ok(report.participants.find((participant) => participant.agentId === "engineer")?.contribution.includes("修复类型问题"));
+    const engineerContribution = report.participants.find((participant) => participant.agentId === "engineer")?.contribution ?? "";
+    const qaContribution = report.participants.find((participant) => participant.agentId === "qa")?.contribution ?? "";
+    assert.match(engineerContribution, /Changed files: packages\/core\/src\/terminal-report-types\.ts \(completed\)/u);
+    assert.match(engineerContribution, /Changed files: apps\/web\/src\/lib\/terminal-report\.ts \(completed\)/u);
+    assert.match(engineerContribution, /Executed command: pnpm typecheck \(completed\)/u);
+    assert.match(qaContribution, /Executed command: pnpm typecheck \(failed\)/u);
+    assert.doesNotMatch(qaContribution, /terminal-report-types|terminal-report\.ts/u);
+    assert.doesNotMatch(engineerContribution, /发现类型检查失败/u);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

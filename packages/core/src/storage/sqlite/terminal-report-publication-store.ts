@@ -433,6 +433,7 @@ function samePublicationItem(existing: ConversationItemV1, input: PublicationIte
     && existing.actorId === input.actorId
     && existing.visibility === input.visibility
     && existing.idempotencyKey === input.idempotencyKey
+    && existing.supersedesItemId === input.supersedesItemId
     && JSON.stringify(existing.payload) === JSON.stringify(input.payload)
     && JSON.stringify(existing.domainRefs) === JSON.stringify(input.domainRefs ?? []);
 }

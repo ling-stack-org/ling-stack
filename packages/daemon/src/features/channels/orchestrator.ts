@@ -424,9 +424,16 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
   }
+  const now = new Date().toISOString();
   if (workflow.status === "cancelled") {
+    // Cancellation is idempotent, including after a client reconnects between
+    // the durable status transition and terminal-report publication. Re-run
+    // the publication coordinator so a cancelled source turn/thread cannot
+    // remain open merely because the first request returned early.
+    syncWorkflowSourceTurnProgress(input.store, workflow, now);
+    maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id, { now });
     return {
-      workflow,
+      workflow: input.store.getChannelWorkflow(workflow.id) ?? workflow,
       workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }),
       cancelledRunIds: [],
       cancelledApprovalIds: [],
@@ -436,7 +443,6 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
     throw new HttpError(409, "workflow_not_cancellable", `Workflow ${workflow.id} is already ${workflow.status}.`);
   }
 
-  const now = new Date().toISOString();
   const reason = input.reason ?? "workflow_cancelled";
   const cancelledRunIds: string[] = [];
   const cancelledApprovalIds: string[] = [];
@@ -490,6 +496,15 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
     if (!cancelled.ok && cancelled.currentStatus !== "cancelled") {
       throw new HttpError(409, cancelled.code, `Workflow cancel failed: ${cancelled.code}`);
     }
+  }
+
+  // Cancellation is a terminal workflow outcome too. Route it through the
+  // same durable publication coordinator as success/failure so the source
+  // turn/thread cannot remain open after the user has cancelled the work.
+  const terminalWorkflow = input.store.getChannelWorkflow(workflow.id) ?? latestWorkflow;
+  if (isTerminalWorkflowStatus(terminalWorkflow.status)) {
+    syncWorkflowSourceTurnProgress(input.store, terminalWorkflow, now);
+    maybeCreateWorkflowTerminalCoordinatorReply(input.store, terminalWorkflow.id, { now });
   }
 
   return {
@@ -550,6 +565,11 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
   if (started.kind === "error") {
     throw new HttpError(started.statusCode, started.code, started.message);
   }
+  syncWorkflowSourceTurnProgress(
+    input.store,
+    input.store.getChannelWorkflow(started.workflowId) ?? workflow,
+    new Date().toISOString(),
+  );
 
   const runRequest: WorkflowStepRunRequest = {
     ...started.runRequest,
@@ -1043,6 +1063,24 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
     }
     const run = store.getRun(step.runId);
     if (!run) {
+      continue;
+    }
+    if (run.status === "waiting_for_approval") {
+      const latestWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
+      if (latestWorkflow.status === "running") {
+        const waiting = store.transitionChannelWorkflowStatus({
+          workflowId: workflow.id,
+          expectedStatus: "running",
+          event: "approval_requested",
+          actor: "system",
+          reason: `run:${run.id}:waiting_for_approval`,
+          now: new Date().toISOString(),
+        });
+        if (!waiting.ok) {
+          throw new HttpError(409, waiting.code, `Workflow approval transition failed: ${waiting.code}`);
+        }
+      }
+      syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id) ?? workflow, new Date().toISOString());
       continue;
     }
     if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
