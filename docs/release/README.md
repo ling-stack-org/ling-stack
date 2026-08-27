@@ -5,7 +5,7 @@ Owner: repository maintainers
 Last verified: 2026-08-03
 Document type: release policy
 Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
-`.github/workflows/ci.yml`, `.github/workflows/desktop-artifacts.yml`
+`.github/workflows/ci.yml`
 
 ## Release Classes
 
@@ -26,8 +26,10 @@ changes may occur in minor releases but must still be documented.
 
 - Source prereleases use tags such as `v0.1.0-alpha.1`.
 - Release tags must point to reviewed commits on `main`.
-- Root and Desktop package versions must match the approved tag.
+- `VERSION`, root, and Desktop package versions must match the approved tag.
 - The current `0.0.0` package version is a development sentinel, not a release number.
+- Integration components such as the Chrome Extension and Browser Host have independent
+  compatibility versions; do not rewrite them merely to match the product release tag.
 - Do not create or move a release tag to repair an artifact. Publish a new prerelease.
 
 ## Source Release Checklist
@@ -58,15 +60,15 @@ Desktop binaries additionally require every applicable gate in
 - generated third-party notices and SBOM from the exact packaged inventory;
 - checksums and immutable release evidence.
 
-The existing `Desktop product artifacts` workflow produces internal evidence. Its success
-does not authorize a public release.
+Private native release automation may produce internal evidence. Its success does not
+authorize a public release.
 
-## Self-Hosted Runner Boundary
+## Native Release Boundary
 
-The current Cua Driver runners are repository-scoped, interactive, privileged native
-hosts. They must not remain attached to a public repository. Before changing visibility,
-disable or unregister them and move sensitive native build execution to a separately
-reviewed private boundary. See [Cua Driver Self-Hosted Native Runners](cua-driver-self-hosted-runners.md).
+Native Cua Driver builds, signing, and Desktop artifact publication are not hosted in
+this source repository. They require interactive platform hosts and private credentials,
+so the release lane must live in a separately reviewed private repository or protected
+runner boundary. The public repository intentionally retains only generic hosted CI.
 
 ## Release Notes
 
