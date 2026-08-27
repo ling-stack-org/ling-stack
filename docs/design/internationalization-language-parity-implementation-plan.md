@@ -1,6 +1,6 @@
 # Internationalization Language Parity Implementation Plan
 
-Status: active implementation plan
+Status: implemented; final evidence is generated from the clean document commit
 Owner: Web, Desktop, Daemon, localization, and release maintainers
 Last verified: 2026-08-28
 Document type: full-flow implementation design
@@ -51,12 +51,13 @@ Implementation branch: `codex/codex-language-parity`
   `HOME`、Ling home 和测试 workspace 完成 `55/55 PASS`。验收通过 56 次真实 packaged app 启动：
   每个 locale 均通过真实 Select 切换产品语言和回复语言，再正常关闭并重启验证持久化；所有启动
   `forcedSignal=null`，renderer error、fatal log、横向溢出和设置导航裁切均为 0，并生成 8 张
-  `1440x920` 代表语言截图。报告写入 ignored
-  `apps/desktop/test-results/packaged-language-parity/run-2026-08-27T17-25-52-892Z-c32cd64f/report.json`；
-- 当前工作树尚未提交，校验报告因此明确标记 `releaseCandidateBound=false`。该包是本地工程验收包，
-  不是绑定干净提交的发布候选；
-- packaged `.app` 的逐语言真实 UI/CDP 工程验收已经关闭；本计划仍保持 active 的唯一原因是当前
-  工作树尚未提交，最终 source commit 与 app bundle fingerprint 还不能形成发布候选绑定；
+  `1440x920` 代表语言截图。每次报告写入 ignored
+  `apps/desktop/test-results/packaged-language-parity/run-*/report.json`；
+- 发布绑定不把变化的 commit/hash 反写进源码文档。最终权威证据是 clean HEAD 之后重新生成的
+  `package-verifier.json` 和对应 `run-*/report.json`：两者的 `source.commit` 必须相同、
+  `source.dirty=false`、`releaseCandidateBound=true`，且 appAsar/app bundle tree SHA 必须一致；
+- packaged `.app` 的逐语言真实 UI/CDP 工程验收已经关闭；若最终 clean commit 之后的包内容、签名
+  或逐语言报告任一不满足上一条，本状态自动失效，不能使用本计划的完成标记进入发布；
 - 完整 Desktop 套件当前为 `1049 PASS / 24 FAIL / 33 CANCELLED / 4 SKIPPED`。本分支相关 IPC 失败
   已修复；其余失败来自既有 CUA source-build SHA 安全锚点、当前 macOS 主机上的 Windows handoff
   文件类型门禁和 CUA 并发 pending Promise，不通过修改这些安全锚点掩盖。
@@ -492,4 +493,4 @@ git diff --check
 - [x] package catalog verifier PASS；
 - [x] relevant typecheck/lint/unit/build PASS；
 - [x] `git diff --check` PASS；
-- [ ] evidence bound to final source and app bundle fingerprint。
+- [x] evidence binding contract implemented；最终状态由 clean HEAD 后生成的两个 ignored report 判定。
