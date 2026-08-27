@@ -6,7 +6,7 @@
   "scripts": {
     "build:ci": "echo \"Mobile runtime has no standalone build artifact; workspace dependencies are built by CI.\"",
     "typecheck:ci": "tsc --noEmit",
-    "test:ci": "node --test test/*.test.mjs",
+    "test:ci": "node --experimental-strip-types --test test/*.test.mjs",
     "build:deps": "corepack pnpm --filter @ling-stack/conversation-ui-core build && corepack pnpm --filter @ling-stack/remote-client build",
     "prestart": "corepack pnpm run build:deps",
     "start": "expo start --dev-client",
@@ -18,7 +18,7 @@
     "doctor": "expo-doctor .",
     "verify:native-evidence": "node scripts/verify-native-key-evidence.mjs",
     "typecheck": "corepack pnpm run build:deps && tsc --noEmit",
-    "test": "corepack pnpm run build:deps && node --test test/*.test.mjs"
+    "test": "corepack pnpm run build:deps && node --experimental-strip-types --test test/*.test.mjs"
   },
   "dependencies": {
     "@ling-stack/contracts": "workspace:*",
