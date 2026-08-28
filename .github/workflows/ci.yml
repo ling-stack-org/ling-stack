@@ -301,7 +301,10 @@ jobs:
     needs: [scope, build]
     if: always() && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success'
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    # Daemon tests start an isolated runtime for each integration fixture. As
+    # the suite grows, the heaviest shard can legitimately exceed the generic
+    # 15-minute job budget even when every test is progressing and passing.
+    timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
