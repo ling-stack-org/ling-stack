@@ -39,6 +39,10 @@ import {
   uploadTeammatePrivateAttachment,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
+import {
+  DesktopTitlebarSurface,
+  useDesktopTitlebarPlacement,
+} from "../../app/DesktopTitlebarSurface.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
 import { readSseResponse } from "../../sse.js";
 import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
@@ -242,6 +246,7 @@ export function TeammateWorkspace({
   readonly onSettingsOpenRequestConsumed?: (requestId: number) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const titlebarPlacement = useDesktopTitlebarPlacement();
   const focusRevalidationToken = useFocusRevalidationToken();
   const [workspaceView, setWorkspaceView] = useState<TeammateWorkspaceView>("chat");
   const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("profile");
@@ -1630,10 +1635,12 @@ export function TeammateWorkspace({
         "teammate-workspace",
         `right-dock-motion-${chatDockController.motionState}`,
         workspaceView === "settings" ? "settings-mode" : "chat-mode",
+        `titlebar-${titlebarPlacement}`,
       ].filter(Boolean).join(" ")}
       data-ui2-teammate-settings={workspaceView === "settings" || undefined}
     >
       {workspaceView === "chat" ? (
+        <DesktopTitlebarSurface>
         <TeammateChatHeader
           cwd={cwd}
           teammate={teammate}
@@ -1683,7 +1690,9 @@ export function TeammateWorkspace({
             setChatDockOpen((current) => !current);
           }}
         />
+        </DesktopTitlebarSurface>
       ) : (
+        <DesktopTitlebarSurface>
         <TeammateSettingsHeader
           teammateName={settingsForm.displayName.trim() || teammate.displayName}
           profileActive={activeTab === "profile"}
@@ -1709,6 +1718,7 @@ export function TeammateWorkspace({
             externalToolsController.save(),
           ])}
         />
+        </DesktopTitlebarSurface>
       )}
 
       {renameController.open ? (

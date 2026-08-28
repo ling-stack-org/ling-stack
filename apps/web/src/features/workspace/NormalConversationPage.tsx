@@ -6,6 +6,10 @@ import { NormalConversationHeader } from "./NormalConversationHeader.js";
 import { NormalConversationWorkspacePanels } from "./NormalConversationWorkspacePanels.js";
 import { ConversationSummaryPopover } from "./right-dock/index.js";
 import { conversationSummaryGap, useConversationSummaryLayout } from "./conversation-summary-layout.js";
+import {
+  DesktopTitlebarSurface,
+  useDesktopTitlebarPlacement,
+} from "../../app/DesktopTitlebarSurface.js";
 
 export interface NormalConversationPageProps {
   readonly summaryOpen: boolean;
@@ -29,6 +33,7 @@ export function NormalConversationPage({
   panelsProps,
 }: NormalConversationPageProps): React.JSX.Element {
   const { t } = useI18n();
+  const titlebarPlacement = useDesktopTitlebarPlacement();
   const { dockController, dockViewModel, terminalPresence, terminalResize } = panelsProps;
   const summaryLayout = useConversationSummaryLayout({
     requestedOpen: summaryOpen,
@@ -46,6 +51,7 @@ export function NormalConversationPage({
       }}
       className={[
         "normal-conversation-page",
+        `titlebar-${titlebarPlacement}`,
         `right-dock-motion-${dockController.motionState}`,
         dockController.visible ? "with-right-dock" : "",
         summaryLayout.visible ? "with-conversation-summary" : "",
@@ -59,23 +65,25 @@ export function NormalConversationPage({
       ].filter(Boolean).join(" ")}
       ariaLabel={t("Conversation page")}
       headerNode={(
-        <NormalConversationHeader
-          {...headerProps}
-          summaryExpanded={summaryLayout.visible}
-          summaryNode={(
-            <ConversationSummaryPopover
-              open={summaryLayout.visible}
-              title={t("Environment")}
-              subtitle={dockViewModel.context.workspaceLabel}
-              rows={summaryRows}
-              className="normal-conversation-summary-popover normal-conversation-summary-panel"
-              dockOffset={conversationSummaryGap}
-              dockMotion={summaryDockMotion}
-              motionState={dockController.motionState}
-              onClose={onCloseSummary}
-            />
-          )}
-        />
+        <DesktopTitlebarSurface>
+          <NormalConversationHeader
+            {...headerProps}
+            summaryExpanded={summaryLayout.visible}
+            summaryNode={(
+              <ConversationSummaryPopover
+                open={summaryLayout.visible}
+                title={t("Environment")}
+                subtitle={dockViewModel.context.workspaceLabel}
+                rows={summaryRows}
+                className="normal-conversation-summary-popover normal-conversation-summary-panel"
+                dockOffset={conversationSummaryGap}
+                dockMotion={summaryDockMotion}
+                motionState={dockController.motionState}
+                onClose={onCloseSummary}
+              />
+            )}
+          />
+        </DesktopTitlebarSurface>
       )}
       feedNode={<NormalConversationFeed {...feedProps} />}
       composerNode={(

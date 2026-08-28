@@ -340,6 +340,16 @@
   grid-row: 3;
 }
 
+.normal-conversation-page.titlebar-window > .normal-conversation-feed-frame,
+.normal-conversation-page.titlebar-window.with-right-dock > .normal-conversation-feed-frame {
+  grid-row: 1;
+}
+
+.normal-conversation-page.titlebar-window > .normal-conversation-composer-stack,
+.normal-conversation-page.titlebar-window.with-right-dock > .normal-conversation-composer-stack {
+  grid-row: 2;
+}
+
 @media (max-width: 760px) {
   .normal-conversation-feed-frame,
   .normal-conversation-composer-stack {

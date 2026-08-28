@@ -102,6 +102,7 @@ import { AppPresentationSurfaceBridge } from "./AppPresentationSurfaceBridge.js"
 import { AppConnectionStatus } from "./AppConnectionStatus.js";
 import { AppShellOverlayBoundary } from "./AppShellOverlayBoundary.js";
 import { DesktopWindowChrome } from "./DesktopWindowChrome.js";
+import { DesktopTitlebarProvider, DesktopTitlebarSurface } from "./DesktopTitlebarSurface.js";
 import { FullAccessConfirmationDialog } from "./FullAccessConfirmationDialog.js";
 import { FirstRunDialog, useFirstRunController } from "../features/first-run/index.js";
 import { useConversationDomain } from "../domains/conversations/use-conversation-domain.js";
@@ -2373,6 +2374,7 @@ export function AppShell(): React.JSX.Element {
         : "normal_conversation"
     : undefined;
   return (
+    <DesktopTitlebarProvider>
     <AppShellOverlayBoundary className={shellClassName}>
       <DesktopWindowChrome
         hideSidebarLabel={t("Hide navigation")}
@@ -2809,6 +2811,7 @@ export function AppShell(): React.JSX.Element {
             ) : (
               <>
                 {activeView === "providers" || activeView === "plugins" || activeView === "automations" || activeView === "profile" || activeView === "media" || activeView === "teammates" || activeView === "councils" || activeView === "settings" ? null : (
+                  <DesktopTitlebarSurface>
                   <div className="workspace-head" data-desktop-window-drag-region="true">
                     <div>
                       <h1>{selectedAiTeammate ? selectedAiTeammate.displayName : t(viewTitle(activeView))}</h1>
@@ -2816,6 +2819,7 @@ export function AppShell(): React.JSX.Element {
                     </div>
                     <StatusBadge status={latestStatus} />
                   </div>
+                  </DesktopTitlebarSurface>
                 )}
                 {activeView === "teammates" && selectedAiTeammate ? (
                   <TeammateWorkspace
@@ -3371,6 +3375,7 @@ export function AppShell(): React.JSX.Element {
         onConfirm={fullAccessConfirmation.confirm}
       />
     </AppShellOverlayBoundary>
+    </DesktopTitlebarProvider>
   );
 }
 

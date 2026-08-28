@@ -57,9 +57,9 @@ Settings is a management workspace, not a second copy of the main app.
 - Settings-owned actions must stay inside Settings.
 - Leaving Settings requires `Back to app` or an explicit `Open ... in app`
   label.
-- On macOS, the Settings navigation owns the traffic-light top safe area. `Back to app`
-  sits below that safe area and fills the navigation content width; native clearance
-  must not be implemented by narrowing or horizontally offsetting the button.
+- On macOS, the shared `48px` Desktop titlebar owns the traffic-light safe area. Settings
+  begins below that row, and `Back to app` fills the navigation content width without a
+  separate top offset, narrowing, or horizontal translation.
 - Diagnostics opened from Settings must render inside the Settings shell.
 - Long explanations, policy previews, paths, runner ids, plugin ids, and source
   evidence are collapsed by default.

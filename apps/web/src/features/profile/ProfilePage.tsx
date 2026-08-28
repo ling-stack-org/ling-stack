@@ -4,6 +4,7 @@ import { getUserProfile, updateUserProfile } from "../../api/profile.js";
 import { listRuns } from "../../api/runs.js";
 import { listSkills } from "../../api/skills.js";
 import { useI18n, type Locale } from "../../i18n.js";
+import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import { Button, Field, Input, useLingToast } from "../../shared/ui/index.js";
 import type { RunSession, SkillRegistryEntry, UserProfile } from "../../types.js";
@@ -210,6 +211,7 @@ export function ProfilePage({
 
   return (
     <div className="profile-page">
+      <DesktopTitlebarSurface>
       <header className="profile-topbar" data-desktop-window-drag-region="true">
         <div>
           <p className="profile-kicker">个人资料</p>
@@ -222,6 +224,7 @@ export function ProfilePage({
           </button>
         </div>
       </header>
+      </DesktopTitlebarSurface>
 
       <section className="profile-hero" aria-label="个人资料概览">
         <button

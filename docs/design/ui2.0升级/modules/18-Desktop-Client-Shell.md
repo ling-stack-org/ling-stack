@@ -179,20 +179,22 @@ Native Window Chrome
 ```
 
 - Desktop capability controls enter only through typed slots；they do not alter normal browser UI。
-- macOS traffic-light inset must not overlap Sidebar navigation or the first toolbar control。
+- macOS 使用一个真实的 `48px` 全宽 renderer titlebar row；traffic-light inset、Sidebar toggle 和
+  当前 surface Header 都属于该行，应用主体不得渲染在其后方。
 - Windows system title bar must not duplicate an in-app fake title bar。
-- draggable behavior belongs to Desktop shell CSS；Feature/shared Header 只暴露稳定
-  `data-desktop-window-drag-region` / `data-desktop-window-no-drag` 语义。Settings navigation container
-  通过 `data-desktop-window-traffic-light-clearance` 声明顶部 safe area；safe area 不得减小下方按钮宽度，
-  Feature 不写平台 selector。
+- draggable behavior belongs to Desktop titlebar boundary；Feature/shared Header 通过共享 titlebar
+  surface slot 选择 `window` 或 `inline` placement，并继续用 `data-desktop-window-no-drag` 标记交互控件。
+  Settings 不再拥有独立 traffic-light clearance；Feature 不写平台 selector。
 - window resize must preserve AppShell responsive constraints and never create horizontal page scroll。
 
 ### Main Window Integrated Chrome
 
-- macOS main BrowserWindow 使用 28px transparent hit zones；不恢复旧 Toolbar，不新增 workspace top padding。
-- confirmed-empty Sidebar/Home rectangle 由 focused `DesktopWindowChrome` 提供；真实 Header 作为 drag
-  ancestor，交互后代统一 carve out 为 `no-drag`。
-- 不允许把高 z-index 透明 sibling layer 铺过 Header controls；底层 sibling 的 `no-drag` 不能可靠恢复点击。
+- macOS main BrowserWindow 使用一条 `48px` 的真实 `DesktopWindowChrome` grid row，而不是 transparent
+  overlay 或 workspace top padding。`DesktopWindowChrome` 提供 Sidebar control zone、surface slot 和
+  剩余 drag region；交互后代统一 carve out 为 `no-drag`。
+- 当前 surface Header 在 macOS 只挂载到 titlebar slot；页面 body 必须移除对应 inline Header row，
+  不能留下重复标题或 `48px` 空白。Web/Windows 保持 inline placement。
+- 不允许绝对定位的透明 sibling layer 或 Feature selector 穿过 Header controls。
 - Sidebar collapsed 时保留 `48px` compact rail，不能移除 Home 或 active Header drag target。
 - Sidebar 展开和收缩时，唯一导航开关都由 `DesktopWindowChrome` 的 titlebar 工具槽持有；工具槽
   位于 `76px` traffic-light exclusion 右侧 `8px`，按钮保持 `32x32` 且声明 `no-drag`。
@@ -201,8 +203,8 @@ Native Window Chrome
 - Sidebar collapsed 时 compact rail 的第一个行动为 `New conversation`，保持 `36x36`；rail 不重复
   `Show navigation`。Web 和 Windows 继续由 Sidebar 自身持有导航开关。
 - Settings fullscreen、Media、Channel、普通对话、AI 队友私聊/设置和所有顶级 View 必须有稳定 owner。
-- Settings fullscreen 的 traffic-light clearance 属于 navigation container 顶部空行；`Back to app`
-  位于空行下方并撑满 navigation content box，不得再做横向 offset 或减宽。
+- Settings fullscreen 位于共享 titlebar row 下方；`Back to app` 直接撑满 navigation content box，
+  不得再做顶部 safe-area、横向 offset 或减宽。
 - Web、Windows main window 和 PiP 不挂载该 chrome；Windows 继续 native title bar。
 - Dialog、Drawer、Menu、Popover、Toast、Tooltip 和 scrim 必须始终高于 chrome 并保持 pointer/focus ownership。
 - chrome 没有独立 Show/Hide/Close 行动；随 macOS AppShell mount/unmount，route/theme/Sidebar state 不重建它。

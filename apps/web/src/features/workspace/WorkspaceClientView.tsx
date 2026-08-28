@@ -57,6 +57,7 @@ import {
   listChannelTerminalReports,
 } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
+import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
@@ -4035,6 +4036,7 @@ export function WorkspaceClientView({
       style={taskWorkbenchWindowStyle}
       aria-label={t("Workspace")}
     >
+      <DesktopTitlebarSurface>
       <header
         className={[
           "channel-header task-workbench-header",
@@ -4291,6 +4293,7 @@ export function WorkspaceClientView({
           </div>
         ) : null}
       </header>
+      </DesktopTitlebarSurface>
 
       {teammateManagerOpen ? (
         <section ref={teammateManagerPanelRef} className="workbench-settings-panel channel-teammate-dock" aria-label={t("AI teammate management")}>

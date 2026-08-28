@@ -1,90 +1,101 @@
-.app-shell.desktop-macos {
-  --desktop-window-titlebar-height: 28px;
+.app-shell.desktop-macos[data-ui2-shell-boundary="true"] {
+  --desktop-window-titlebar-height: 48px;
   --desktop-window-traffic-light-width: 76px;
   --desktop-window-sidebar-toggle-gap: 8px;
   --desktop-window-sidebar-toggle-size: 32px;
-  --desktop-window-sidebar-toggle-left: calc(
-    var(--desktop-window-traffic-light-width) + var(--desktop-window-sidebar-toggle-gap)
-  );
   --desktop-window-sidebar-toolbar-end: calc(
-    var(--desktop-window-sidebar-toggle-left)
+    var(--desktop-window-traffic-light-width)
+    + var(--desktop-window-sidebar-toggle-gap)
     + var(--desktop-window-sidebar-toggle-size)
     + var(--desktop-window-sidebar-toggle-gap)
   );
-  --desktop-window-chrome-layer: 2;
+  --desktop-window-titlebar-leading-width: var(--sidebar-expanded-width);
+  --desktop-window-chrome-layer: 24;
+  grid-template-areas:
+    "titlebar titlebar titlebar"
+    "nav workspace inspector";
+  grid-template-rows: var(--desktop-window-titlebar-height) minmax(0, 1fr);
   position: relative;
   height: 100vh;
   min-height: 0;
 }
 
-.app-shell.desktop-macos::after {
-  -webkit-app-region: no-drag;
-  position: absolute;
-  z-index: calc(var(--desktop-window-chrome-layer) + 1);
-  top: 0;
-  left: 0;
-  width: var(--desktop-window-traffic-light-width);
-  height: var(--desktop-window-titlebar-height);
-  pointer-events: none;
-  content: "";
+.app-shell.desktop-macos[data-ui2-shell-boundary="true"].inspector-hidden {
+  grid-template-areas:
+    "titlebar titlebar"
+    "nav workspace";
+}
+
+.app-shell.desktop-macos[data-ui2-shell-boundary="true"].channel-sidebar-collapsed {
+  --desktop-window-titlebar-leading-width: var(--desktop-window-sidebar-toolbar-end);
+}
+
+.app-shell.desktop-macos[data-ui2-shell-boundary="true"].settings-fullscreen-shell,
+.app-shell.desktop-macos[data-ui2-shell-boundary="true"].settings-fullscreen-shell.inspector-hidden,
+.app-shell.desktop-macos[data-ui2-shell-boundary="true"].settings-fullscreen-shell.inspector-collapsed {
+  --desktop-window-titlebar-leading-width: var(--desktop-window-traffic-light-width);
+  grid-template-areas:
+    "titlebar"
+    "workspace";
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-rows: var(--desktop-window-titlebar-height) minmax(0, 1fr);
 }
 
 @supports (height: 100dvh) {
-  .app-shell.desktop-macos {
+  .app-shell.desktop-macos[data-ui2-shell-boundary="true"] {
     height: 100dvh;
   }
 }
 
-.desktop-window-chrome {
-  display: contents;
-}
-
-.app-shell.desktop-macos .desktop-window-chrome-region {
+.app-shell.desktop-macos > .desktop-window-chrome {
   -webkit-app-region: drag;
   -webkit-user-select: none;
-  position: absolute;
+  position: relative;
   z-index: var(--desktop-window-chrome-layer);
-  top: 0;
+  grid-area: titlebar;
+  display: grid;
+  grid-template-columns: var(--desktop-window-titlebar-leading-width) minmax(0, 1fr);
+  width: 100%;
   height: var(--desktop-window-titlebar-height);
-  background: transparent;
+  min-width: 0;
+  min-height: var(--desktop-window-titlebar-height);
+  overflow: visible;
+  border-bottom: 0;
+  background: var(--ling-bg-panel);
+  box-shadow: inset 0 -1px var(--ling-border-default);
   user-select: none;
 }
 
-.app-shell.desktop-macos .desktop-window-chrome-region[data-desktop-window-drag-owner="sidebar"] {
-  left: var(--desktop-window-sidebar-toolbar-end);
-  width: calc(
-    var(--sidebar-expanded-width)
-    - var(--desktop-window-sidebar-toolbar-end)
-  );
+.desktop-window-chrome-leading {
+  position: relative;
+  display: flex;
+  min-width: 0;
+  height: 100%;
+  align-items: center;
+  background: var(--ling-bg-sidebar);
 }
 
-.app-shell.desktop-macos .desktop-window-chrome-region[data-desktop-window-drag-owner="content-fallback"] {
-  right: 0;
-  left: var(--sidebar-expanded-width);
+.app-shell.desktop-macos.channel-sidebar-collapsed .desktop-window-chrome-leading,
+.app-shell.desktop-macos.settings-fullscreen-shell .desktop-window-chrome-leading {
+  background: var(--ling-bg-panel);
 }
 
-.app-shell.desktop-macos.channel-sidebar-collapsed
-  .desktop-window-chrome-region[data-desktop-window-drag-owner="sidebar"],
-.app-shell.desktop-macos.settings-fullscreen-shell
-  .desktop-window-chrome-region[data-desktop-window-drag-owner="sidebar"] {
-  display: none;
-}
-
-.app-shell.desktop-macos.channel-sidebar-collapsed
-  .desktop-window-chrome-region[data-desktop-window-drag-owner="content-fallback"] {
-  left: var(--desktop-window-sidebar-toolbar-end);
+.desktop-window-traffic-light-exclusion {
+  -webkit-app-region: no-drag;
+  flex: 0 0 var(--desktop-window-traffic-light-width);
+  width: var(--desktop-window-traffic-light-width);
+  height: 100%;
+  pointer-events: none;
 }
 
 .app-shell.desktop-macos .desktop-window-chrome-toolbar {
   -webkit-app-region: no-drag;
-  position: absolute;
-  z-index: calc(var(--desktop-window-chrome-layer) + 2);
-  top: 4px;
-  left: var(--desktop-window-sidebar-toggle-left);
   display: grid;
+  flex: 0 0 var(--desktop-window-sidebar-toggle-size);
   place-items: center;
   width: var(--desktop-window-sidebar-toggle-size);
   height: var(--desktop-window-sidebar-toggle-size);
+  margin-left: var(--desktop-window-sidebar-toggle-gap);
 }
 
 .app-shell.desktop-macos .desktop-window-sidebar-toggle {
@@ -112,17 +123,126 @@
   stroke-width: 2.25;
 }
 
-.app-shell.desktop-macos:has(> .workspace [data-desktop-window-drag-region="true"])
-  .desktop-window-chrome-region[data-desktop-window-drag-owner="content-fallback"] {
+.desktop-window-titlebar-surface {
+  position: relative;
+  min-width: 0;
+  height: 100%;
+  overflow: visible;
+  background: var(--ling-bg-panel);
+}
+
+.desktop-window-titlebar-surface > :is(header, nav, section, .workspace-head) {
+  box-sizing: border-box;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  border-bottom: 0;
+  background: transparent;
+}
+
+.desktop-window-titlebar-surface > .workspace-head,
+.desktop-window-titlebar-surface > .page-action-header,
+.desktop-window-titlebar-surface > .teammates-page-header,
+.desktop-window-titlebar-surface > .plugin-manager-header,
+.desktop-window-titlebar-surface > .automation-ui2-header,
+.desktop-window-titlebar-surface > .profile-topbar,
+.desktop-window-titlebar-surface > .provider-workbench-header {
+  align-items: center;
+  padding: 0 18px;
+}
+
+.desktop-window-titlebar-surface :is(
+  .workspace-head p,
+  .page-action-header p,
+  .page-action-header-meta,
+  .teammates-page-header p,
+  .automation-ui2-header-copy p,
+  .profile-kicker,
+  .provider-readiness-summary
+) {
   display: none;
 }
 
-.app-shell.desktop-macos .sidebar-fixed-top {
-  margin-top: var(--desktop-window-titlebar-height);
+.desktop-window-titlebar-surface :is(
+  .workspace-head h1,
+  .page-action-header h1,
+  .teammates-page-header h1,
+  .plugin-manager-header h2,
+  .automation-ui2-header-copy h1,
+  .profile-topbar h1,
+  .provider-workbench-title-block h1
+) {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
 }
 
-.app-shell.desktop-macos [data-desktop-window-drag-region="true"][data-desktop-window-traffic-light-clearance="true"] {
-  padding-top: calc(var(--desktop-window-titlebar-height) + var(--ling-space-2));
+.desktop-window-titlebar-surface > .page-action-header {
+  flex-direction: row;
+}
+
+.desktop-window-titlebar-surface > .provider-workbench-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.desktop-window-titlebar-surface > .plugin-manager-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.desktop-window-titlebar-surface .provider-workbench-header .provider-toolbar-controls {
+  display: flex;
+  flex: 0 0 auto;
+  grid-template-areas: none;
+  grid-template-columns: none;
+  gap: var(--ling-space-3);
+}
+
+.desktop-window-titlebar-surface > .media-production-canvas-toolbar {
+  position: static;
+  z-index: auto;
+  top: auto;
+  left: auto;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  max-width: 100%;
+  justify-content: center;
+  padding: 3px 18px;
+  overflow: hidden;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+  transform: none;
+}
+
+.desktop-window-titlebar-surface > .teammate-settings-header {
+  height: 100%;
+  min-height: 0;
+  padding: 0 18px;
+}
+
+.desktop-window-titlebar-surface > .settings-window-titlebar {
+  display: flex;
+  align-items: center;
+  padding: 0 18px;
+}
+
+.desktop-window-titlebar-surface > .settings-window-titlebar h1 {
+  min-width: 0;
+  margin: 0;
+  overflow: hidden;
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 20px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .app-shell.desktop-macos [data-desktop-window-drag-region="true"] {
@@ -186,5 +306,10 @@ body:has(.app-shell.desktop-macos) :is(
 }
 
 .app-shell.desktop-macos > .workspace > * {
+  max-height: 100%;
+}
+
+.app-shell.desktop-macos.settings-fullscreen-shell .settings-layout {
+  height: 100%;
   max-height: 100%;
 }
