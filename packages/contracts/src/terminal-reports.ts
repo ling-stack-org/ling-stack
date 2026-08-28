@@ -1,6 +1,7 @@
 export type TerminalReportSourceKind = "workflow" | "run" | "turn";
 export type TerminalReportOutcomeStatus = "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
 export type TerminalReportCheckStatus = "passed" | "failed" | "blocked" | "cancelled" | "skipped" | "not_run" | "unknown";
+export type TerminalReportApprovalDecision = "pending" | "approved" | "denied" | "expired" | "cancelled";
 
 export interface TerminalReportSourceRefDto {
   readonly kind: string;
@@ -67,6 +68,7 @@ export interface TerminalReportRiskDto {
   readonly status: "unresolved" | "mitigated" | "accepted" | "unverified";
   readonly summary: string;
   readonly nextAction?: string;
+  readonly approvalDecision?: TerminalReportApprovalDecision;
   readonly sourceRefs: readonly TerminalReportSourceRefDto[];
 }
 

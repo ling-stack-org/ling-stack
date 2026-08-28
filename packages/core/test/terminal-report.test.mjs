@@ -67,6 +67,14 @@ test("terminal report validation rejects unsupported verification and participan
   assert.ok(result.issues.some((item) => item.code === "terminal_report_participant_without_activity"));
 });
 
+test("terminal report validation rejects a successful checked snapshot without verification", () => {
+  const snapshot = buildSnapshot();
+  const content = buildDeterministicTerminalReportContent(snapshot);
+  const result = validateTerminalReportContent({ ...content, verification: [] }, snapshot);
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.some((item) => item.code === "terminal_report_unverified_success_claim"));
+});
+
 test("terminal report validation rejects file refs borrowed from another artifact", () => {
   const snapshot = buildSnapshot();
   const content = buildDeterministicTerminalReportContent(snapshot);

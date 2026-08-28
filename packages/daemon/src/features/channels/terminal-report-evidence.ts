@@ -24,10 +24,13 @@ import {
   type TerminalReportSourceRef,
   type TerminalReportSurface,
 } from "@ling-stack/core";
+import type { ChannelIntentExecutionOperationV1 } from "@ling-stack/contracts";
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 import { redactEvidenceText } from "./context-processing/evidence.js";
 import { inferUserLanguage } from "./response-language.js";
+import { boundedMarkdownText } from "./markdown-text.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
+import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
 import { extractWorkflowStepChangedPaths } from "./workflow-step-packets.js";
 
 export interface TerminalReportEvidenceBudgets {
@@ -88,9 +91,7 @@ export function collectWorkflowTerminalReportEvidence(
     budgets.summaryCharacters,
     action.runId ? runCwds.get(action.runId) : undefined,
   ));
-  const checks = evidence.actions
-    .filter(isCheckAction)
-    .map((action) => mapCheck(action, budgets.summaryCharacters));
+  const checks = collectWorkflowChecks(store, evidence, budgets.summaryCharacters, options.generatedAt ?? evidence.workflow.updatedAt);
   const approvals = evidence.approvals.map(mapApproval);
   const participants = aggregateWorkflowParticipants(store, evidence, budgets.summaryCharacters);
   const risks = collectWorkflowRisks(evidence, checks, budgets.summaryCharacters);
@@ -101,7 +102,7 @@ export function collectWorkflowTerminalReportEvidence(
     channelId: evidence.workflow.channelId,
     sourceMessageId: evidence.workflow.metadata?.sourceMessageId,
     source: { kind: "workflow", id: evidence.workflow.id },
-    objective: boundedText(evidence.workflow.objective || evidence.workflow.title, budgets.summaryCharacters),
+    objective: boundedMarkdownEvidenceText(evidence.workflow.objective || evidence.workflow.title, budgets.summaryCharacters),
     language,
     terminalState,
     terminalAt: evidence.workflow.updatedAt,
@@ -157,7 +158,7 @@ export function collectRunTerminalReportEvidence(
     turnId: turn?.id,
     sourceMessageId: turn?.sourceItemId,
     source: { kind: "run", id: run.id },
-    objective: boundedText(workflowStep?.prompt || task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
+    objective: boundedMarkdownEvidenceText(workflowStep?.prompt || task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
     language: options.language ?? languageForRun(run, turn?.userInstruction ?? task?.prompt ?? task?.title) ?? "en-US",
     terminalState,
     terminalAt: run.endedAt ?? run.updatedAt,
@@ -167,7 +168,7 @@ export function collectRunTerminalReportEvidence(
       status: runStepStatus(run.status),
       teammateId: run.teammateId,
       runId: run.id,
-      resultSummary: resultSummary ? boundedText(resultSummary, budgets.summaryCharacters) : undefined,
+      resultSummary: resultSummary ? boundedMarkdownEvidenceText(resultSummary, budgets.summaryCharacters) : undefined,
       blocker: run.errorMessage ? boundedText(run.errorMessage, budgets.summaryCharacters) : undefined,
       changedPaths,
       artifactIds: artifactsRaw.map((artifact) => artifact.id),
@@ -182,7 +183,7 @@ export function collectRunTerminalReportEvidence(
       status: participantStatusForRun(run.status),
       workflowStepIds: run.workflowStepId ? [run.workflowStepId] : [],
       runIds: [run.id],
-      contributionSummaries: resultSummary ? [boundedText(resultSummary, budgets.summaryCharacters)] : [],
+      contributionSummaries: resultSummary ? [boundedMarkdownEvidenceText(resultSummary, budgets.summaryCharacters)] : [],
       sourceRefs: [sourceRef],
     }] : [],
     artifacts: artifactsRaw.map((artifact) => mapArtifact(
@@ -233,7 +234,7 @@ export function collectTurnTerminalReportEvidence(
     turnId: turn.id,
     sourceMessageId: turn.sourceItemId,
     source: { kind: "turn", id: turn.id },
-    objective: boundedText(turn.userInstruction || turn.title, budgets.summaryCharacters),
+    objective: boundedMarkdownEvidenceText(turn.userInstruction || turn.title, budgets.summaryCharacters),
     language: options.language ?? runs.map((run) => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction),
     terminalState,
     terminalAt: turn.completedAt ?? turn.updatedAt,
@@ -341,7 +342,7 @@ function mapWorkflowStep(item: WorkflowEvidence["steps"][number], maxCharacters:
     status,
     teammateId: step.toParticipantId,
     runId: step.runId,
-    resultSummary: rejectedContext ? undefined : step.resultSummary ? boundedText(step.resultSummary, maxCharacters) : item.outputPacket?.resultSummary ? boundedText(item.outputPacket.resultSummary, maxCharacters) : undefined,
+    resultSummary: rejectedContext ? undefined : step.resultSummary ? boundedMarkdownEvidenceText(step.resultSummary, maxCharacters) : item.outputPacket?.resultSummary ? boundedMarkdownEvidenceText(item.outputPacket.resultSummary, maxCharacters) : undefined,
     blocker: step.blocker ? boundedText(step.blocker, maxCharacters) : undefined,
     changedPaths,
     artifactIds: uniqueStrings([
@@ -375,7 +376,7 @@ function mapTurnRunStep(
     status: runStepStatus(run.status),
     teammateId: run.teammateId,
     runId: run.id,
-    resultSummary: summary ? boundedText(summary, maxCharacters) : undefined,
+    resultSummary: summary ? boundedMarkdownEvidenceText(summary, maxCharacters) : undefined,
     blocker: run.errorMessage ? boundedText(run.errorMessage, maxCharacters) : undefined,
     changedPaths: changedPathsFromActions(actions, run.cwd),
     artifactIds: artifacts.map((artifact) => artifact.id),
@@ -416,10 +417,14 @@ function mapOperation(
   };
 }
 
-function mapCheck(action: ExecutionAction, maxCharacters: number): TerminalReportEvidenceCheck {
+function mapCheck(
+  action: ExecutionAction,
+  maxCharacters: number,
+  overrides: { readonly title?: string } = {},
+): TerminalReportEvidenceCheck {
   return {
     id: action.id,
-    title: boundedText(action.title || "Verification", maxCharacters),
+    title: boundedText(overrides.title || action.title || "Verification", maxCharacters),
     status: action.status === "succeeded" ? "passed"
       : action.status === "failed" ? "failed"
         : action.status === "cancelled" ? "cancelled"
@@ -436,6 +441,84 @@ function mapCheck(action: ExecutionAction, maxCharacters: number): TerminalRepor
       ...(action.runId ? [sourceRefFor("run", action.runId, "Verification run")] : []),
     ]),
   };
+}
+
+/**
+ * Project verification from the same canonical operation evidence used by the
+ * workflow completion gate. A command is a check because the workflow plan
+ * assigned it a run_command operation, not because its display text happens to
+ * match a small list of package-manager commands.
+ */
+function collectWorkflowChecks(
+  store: RunStore,
+  evidence: WorkflowEvidence,
+  maxCharacters: number,
+  checkedAt: string,
+): TerminalReportEvidenceCheck[] {
+  const checksById = new Map<string, TerminalReportEvidenceCheck>();
+  for (const action of evidence.actions) {
+    if (isCheckAction(action)) {
+      checksById.set(action.id, mapCheck(action, maxCharacters));
+    }
+  }
+
+  for (const item of evidence.steps) {
+    const plan = item.step.metadata?.executionPlan;
+    if (!plan || !item.step.runId) {
+      continue;
+    }
+    const verification = verifyWorkflowStepExecutionOperations({
+      store,
+      step: item.step,
+      now: checkedAt,
+    });
+    if (!verification) {
+      continue;
+    }
+    for (const result of verification.operationResults) {
+      const operation = plan.operations.find((candidate) => candidate.id === result.operationId);
+      if (!operation || operation.kind !== "run_command") {
+        continue;
+      }
+      const command = operation.commandMatchPolicy?.kind === "exact_command"
+        ? operation.commandMatchPolicy.command
+        : operation.commandMatchPolicy?.kind === "executable"
+          ? operation.commandMatchPolicy.executable
+          : undefined;
+      const actionIds = result.evidenceActionIds.length > 0
+        ? result.evidenceActionIds
+        : [`workflow-check:${item.step.id}:${operation.id}`];
+      for (const actionId of actionIds) {
+        const action = evidence.actions.find((candidate) => candidate.id === actionId);
+        if (action) {
+          checksById.set(action.id, mapCheck(action, maxCharacters, {
+            title: operation.targetRef.label || item.step.title,
+          }));
+          continue;
+        }
+        const syntheticId = actionId;
+        const status: TerminalReportEvidenceCheck["status"] = result.status === "failed"
+          ? "failed"
+          : result.status === "out_of_order"
+            ? "blocked"
+            : "not_run";
+        checksById.set(syntheticId, {
+          id: syntheticId,
+          title: boundedText(operation.targetRef.label || item.step.title, maxCharacters),
+          status,
+          command: command ? boundedText(command, maxCharacters) : undefined,
+          summary: result.reasonCode ? boundedText(result.reasonCode, maxCharacters) : undefined,
+          runId: item.step.runId,
+          sourceRefs: uniqueRefs([
+            sourceRefFor("check", syntheticId, operation.targetRef.label || item.step.title),
+            sourceRefFor("workflow_step", item.step.id, item.step.title),
+            sourceRefFor("run", item.step.runId, item.step.title),
+          ]),
+        });
+      }
+    }
+  }
+  return [...checksById.values()];
 }
 
 function mapArtifact(
@@ -535,7 +618,7 @@ function aggregateWorkflowParticipants(
       runIds: uniqueStrings([...(existing?.runIds ?? []), row.runId]),
       contributionSummaries: uniqueStrings([
         ...(existing?.contributionSummaries ?? []),
-        row.summary ? boundedText(row.summary, maxCharacters) : undefined,
+        row.summary ? boundedMarkdownEvidenceText(row.summary, maxCharacters) : undefined,
       ]),
       sourceRefs: uniqueRefs([...(existing?.sourceRefs ?? []), ...row.sourceRefs]),
     });
@@ -570,7 +653,7 @@ function aggregateRunParticipants(
       status: participantStatusForRun(run.status),
       workflowStepIds: uniqueStrings([...(existing?.workflowStepIds ?? []), run.workflowStepId]),
       runIds: uniqueStrings([...(existing?.runIds ?? []), run.id]),
-      contributionSummaries: uniqueStrings([...(existing?.contributionSummaries ?? []), summary ? boundedText(summary, maxCharacters) : undefined]),
+      contributionSummaries: uniqueStrings([...(existing?.contributionSummaries ?? []), summary ? boundedMarkdownEvidenceText(summary, maxCharacters) : undefined]),
       sourceRefs: uniqueRefs([...(existing?.sourceRefs ?? []), sourceRefFor("run", run.id, "Participant run")]),
     });
   }
@@ -672,11 +755,26 @@ function collectTurnRisks(
 }
 
 function approvalRisk(approval: ApprovalRequest, maxCharacters: number): TerminalReportEvidenceRisk {
+  const decisionLabel = approval.status === "denied"
+    ? "Approval denied"
+    : approval.status === "expired"
+      ? "Approval expired"
+      : approval.status === "cancelled"
+        ? "Approval cancelled"
+        : "Approval pending";
   return {
     id: `approval-risk:${approval.id}`,
     severity: approval.status === "denied" ? "critical" : "warning",
     status: approval.status === "cancelled" ? "accepted" : approval.status === "pending" ? "unverified" : "unresolved",
-    summary: boundedText(`${approval.title}: ${approval.status}`, maxCharacters),
+    approvalDecision: approval.status,
+    summary: boundedText(`${decisionLabel}: ${approval.title}`, maxCharacters),
+    nextAction: approval.status === "denied"
+      ? "The requested action was not executed."
+      : approval.status === "expired"
+        ? "The requested action was not executed before approval expired."
+        : approval.status === "pending"
+          ? "Resolve the approval before continuing."
+          : undefined,
     sourceRefs: [sourceRefFor("approval", approval.id, approval.title)],
   };
 }
@@ -715,9 +813,17 @@ function isCheckAction(action: ExecutionAction): boolean {
   if (action.actionType !== "bash") {
     return false;
   }
-  const command = action.summary.trim().toLowerCase();
-  return /(?:^|\s)(?:pnpm|npm|yarn|bun)\s+(?:run\s+)?(?:test|typecheck|lint|build|check)(?:\s|$)/u.test(command) ||
-    /(?:^|\s)(?:pytest|vitest|jest|tsc|eslint|cargo\s+test|go\s+test)(?:\s|$)/u.test(command);
+  const command = (action.commandEvidence?.command || action.summary).trim().toLowerCase();
+  if (/(?:^|\s)(?:pnpm|npm|yarn|bun)\s+(?:run\s+)?(?:test|typecheck|lint|build|check)(?:\s|$)/u.test(command) ||
+    /(?:^|\s)(?:pytest|vitest|jest|tsc|eslint|cargo\s+test|go\s+test)(?:\s|$)/u.test(command)) {
+    return true;
+  }
+  // Custom verifier scripts are common in delegated workflows (for example,
+  // `node -e` with an assertion and a non-zero exit on mismatch). Treat them
+  // as checks only when the command contains an explicit assertion/failure
+  // signal, so arbitrary shell commands remain ordinary command evidence.
+  return /(?:^|\s)(?:node|nodejs|python|python3)\s+(?:-e|-c)\b/u.test(command) &&
+    /(?:assert|process\.exit\s*\(\s*[1-9]|sys\.exit\s*\(\s*[1-9]|!==|!=|===|==)/u.test(command);
 }
 
 function operationKind(action: ExecutionAction): TerminalReportEvidenceOperation["kind"] {
@@ -898,10 +1004,8 @@ function readRunAssistantSummary(store: RunStore, runId: string, maxCharacters: 
   const text = store.listEvents(runId, { limit: 1000 })
     .filter((event) => event.type === "assistant_text_delta")
     .map((event) => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
-    .join("")
-    .replace(/\s+/gu, " ")
-    .trim();
-  return text ? boundedText(text, maxCharacters) : undefined;
+    .join("");
+  return text.trim() ? boundedMarkdownEvidenceText(text, maxCharacters) : undefined;
 }
 
 /**
@@ -917,9 +1021,12 @@ function readRunEvidenceContribution(
   const actions = listAllExecutionActionsForRun(store, run.id);
   if (actions.length === 0) return undefined;
   const contributions = actions.map((action) => {
-    const subject = action.summary.trim() || action.title.trim() || action.actionType;
+    const operation = workflowOperationForAction(store, run, action);
+    const subject = action.actionType === "bash"
+      ? operation?.targetRef.label?.trim() || (isCheckAction(action) ? "verification" : "command")
+      : action.summary.trim() || action.title.trim() || action.actionType;
     const label = action.actionType === "bash"
-      ? "Executed command"
+      ? operation?.kind === "run_command" || isCheckAction(action) ? "Verified" : "Executed command"
       : action.actionType === "write" || action.actionType === "edit"
         ? "Changed files"
         : action.title.trim() || "Completed action";
@@ -935,6 +1042,28 @@ function readRunEvidenceContribution(
     return `${label}: ${subject} (${status})`;
   });
   return boundedText(contributions.join("; "), maxCharacters);
+}
+
+/**
+ * Resolve the user-facing semantic operation for a Host action without
+ * exposing the materialized shell command. The exact command remains in the
+ * verification evidence row, where it can be expanded for audit.
+ */
+function workflowOperationForAction(
+  store: RunStore,
+  run: RunSession,
+  action: ExecutionAction,
+): ChannelIntentExecutionOperationV1 | undefined {
+  if (!run.workflowStepId) return undefined;
+  const step = store.getChannelWorkflowStep(run.workflowStepId);
+  const plan = step?.metadata?.executionPlan;
+  if (!plan) return undefined;
+  const verification = step.metadata?.executionVerification?.operationResults.find((result) =>
+    result.evidenceActionIds.includes(action.id));
+  if (verification) {
+    return plan.operations.find((operation) => operation.id === verification.operationId);
+  }
+  return undefined;
 }
 
 function changedPathsFromActions(actions: readonly ExecutionAction[], cwd?: string): string[] {
@@ -988,6 +1117,10 @@ function positiveBudget(value: number | undefined, fallback: number): number {
 function boundedText(value: string, maxCharacters: number): string {
   const redacted = redactEvidenceText(value).replace(/\s+/gu, " ").trim();
   return redacted.length <= maxCharacters ? redacted : `${redacted.slice(0, Math.max(0, maxCharacters - 3))}...`;
+}
+
+function boundedMarkdownEvidenceText(value: string, maxCharacters: number): string {
+  return boundedMarkdownText(redactEvidenceText(value), maxCharacters);
 }
 
 function uniqueRefs(refs: readonly TerminalReportSourceRef[]): TerminalReportSourceRef[] {

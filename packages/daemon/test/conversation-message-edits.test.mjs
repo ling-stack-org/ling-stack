@@ -725,6 +725,64 @@ test("conversation detail prefers streamed text and treats a completely empty ch
   }
 });
 
+test("conversation detail keeps a run error separate from assistant narrative", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-run-error-projection-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.createLingThread({
+      kind: "conversation",
+      teammateId: LING_AGENT_ID,
+      title: "Run error projection",
+      objective: "Run error projection",
+    }, "2026-07-12T09:20:00.000Z");
+    const turn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Keep error typed",
+      userInstruction: "Keep error typed",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T09:20:01.000Z");
+    const run = store.createRun(createRunInput({
+      id: "run_conversation_typed_error",
+      cwd,
+      threadId: thread.id,
+      turnId: turn.id,
+      createdAt: "2026-07-12T09:20:02.000Z",
+    }));
+    assert.equal(store.transitionRunStatus({
+      runId: run.id,
+      expectedStatus: "queued",
+      event: "runner_started",
+      actor: "runner",
+      now: "2026-07-12T09:20:03.000Z",
+      startedAt: "2026-07-12T09:20:03.000Z",
+    }).ok, true);
+    store.appendEvent(run.id, "run_error", {
+      type: "run_error",
+      message: "Provider message ended with an error.",
+    });
+    assert.equal(store.transitionRunStatus({
+      runId: run.id,
+      expectedStatus: "running",
+      event: "runner_failed",
+      actor: "runner",
+      now: "2026-07-12T09:20:04.000Z",
+      endedAt: "2026-07-12T09:20:04.000Z",
+      errorMessage: "Provider message ended with an error.",
+    }).ok, true);
+
+    const assistant = buildConversationDetail(store, cwd, thread).messages
+      .find((message) => message.id === `conversation-assistant:${turn.id}`);
+    assert.equal(assistant?.content, "Ling Agent could not complete this request.");
+    assert.equal(assistant?.errorMessage, "Provider message ended with an error.");
+    assert.equal(assistant?.status, "failed");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 function createRunInput(overrides) {
   return {
     id: overrides.id,

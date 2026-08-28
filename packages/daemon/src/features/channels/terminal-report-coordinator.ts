@@ -10,6 +10,7 @@ import {
   type TerminalReportContent,
   type TerminalReportEvidenceRisk,
   type TerminalReportEvidenceSnapshot,
+  type TerminalReportRisk,
   type WorkUnit,
 } from "@ling-stack/core";
 import type { RunnerRegistry } from "../../runtime/runners.js";
@@ -404,6 +405,9 @@ function buildModelTerminalReport(
       validationCodes: metadata.validationCodes,
     },
     ...content,
+    // Approval decisions are host facts. Preserve/repair them even when the
+    // synthesizer omits the corresponding risk or returns an ambiguous label.
+    risks: mergeCanonicalApprovalRisks(snapshot, content.risks),
     // Participant identity and contribution are projected from the canonical
     // evidence snapshot. The model may narrate the report, but it must not be
     // able to copy Engineer's prose into QA (or invent a participant).
@@ -423,6 +427,47 @@ function buildModelTerminalReport(
     createdAt: draft.createdAt,
     committedAt: metadata.committedAt,
   };
+}
+
+function mergeCanonicalApprovalRisks(
+  snapshot: TerminalReportEvidenceSnapshot,
+  risks: readonly TerminalReportRisk[],
+): readonly TerminalReportRisk[] {
+  const result = risks.map((risk) => ({ ...risk }));
+  for (const approval of snapshot.approvals) {
+    if (approval.status === "approved") {
+      continue;
+    }
+    const existingIndex = result.findIndex((risk) =>
+      risk.id === `approval-risk:${approval.id}` ||
+      risk.sourceRefs.some((ref) => ref.kind === "approval" && ref.id === approval.id),
+    );
+    if (existingIndex >= 0) {
+      result[existingIndex] = {
+        ...result[existingIndex],
+        approvalDecision: approval.status,
+      };
+      continue;
+    }
+    const denied = approval.status === "denied";
+    const expired = approval.status === "expired";
+    result.push({
+      id: `approval-risk:${approval.id}`,
+      severity: denied ? "critical" : "warning",
+      status: approval.status === "cancelled" ? "accepted" : approval.status === "pending" ? "unverified" : "unresolved",
+      approvalDecision: approval.status,
+      summary: `${denied ? "Approval denied" : expired ? "Approval expired" : approval.status === "cancelled" ? "Approval cancelled" : "Approval pending"}: ${approval.title}`,
+      nextAction: denied
+        ? "The requested action was not executed."
+        : expired
+          ? "The requested action was not executed before approval expired."
+          : approval.status === "pending"
+            ? "Resolve the approval before continuing."
+            : undefined,
+      sourceRefs: approval.sourceRefs,
+    });
+  }
+  return result;
 }
 
 export async function recoverTerminalReports(store: RunStore): Promise<void> {

@@ -11,6 +11,7 @@ export type TerminalReportCheckStatus = "passed" | "failed" | "blocked" | "cance
 export type TerminalReportParticipantStatus = "completed" | "failed" | "blocked" | "cancelled";
 export type TerminalReportRiskSeverity = "info" | "warning" | "critical";
 export type TerminalReportRiskStatus = "unresolved" | "mitigated" | "accepted" | "unverified";
+export type TerminalReportApprovalDecision = "pending" | "approved" | "denied" | "expired" | "cancelled";
 
 export type TerminalReportSourceRefKind =
   | "message"
@@ -127,6 +128,8 @@ export interface TerminalReportEvidenceRisk {
   readonly status: TerminalReportRiskStatus;
   readonly summary: string;
   readonly nextAction?: string;
+  /** Set when the risk is derived from a durable approval decision. */
+  readonly approvalDecision?: TerminalReportApprovalDecision;
   readonly sourceRefs: readonly TerminalReportSourceRef[];
 }
 
@@ -220,6 +223,8 @@ export interface TerminalReportRisk {
   readonly status: TerminalReportRiskStatus;
   readonly summary: string;
   readonly nextAction?: string;
+  /** Set when the risk is derived from a durable approval decision. */
+  readonly approvalDecision?: TerminalReportApprovalDecision;
   readonly sourceRefs: readonly TerminalReportSourceRef[];
 }
 
