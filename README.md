@@ -29,11 +29,6 @@ tools, media generation, approvals, artifacts, and runtime history into one loca
 workspace. It is designed for work that needs more structure and accountability than a
 standalone chat window.
 
-![Current Ling Stack homepage](docs/design/assets/ling-stack-workspace-overview.png)
-
-The screenshot above shows the current homepage in a fresh local workspace. It contains no
-maintainer workspace, account, provider key, or live task data.
-
 ## Why Ling Stack
 
 AI work is often split across a chat client, coding-agent CLI, model relay, media tool,
