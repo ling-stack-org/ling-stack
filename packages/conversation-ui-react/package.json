@@ -12,6 +12,9 @@
     "./styles.css": "./dist/styles/index.css"
   },
   "scripts": {
+    "build:ci": "tsc -p tsconfig.json && node scripts/copy-styles.mjs",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+    "test:ci": "node --test test/*.test.mjs",
     "build": "tsc -p tsconfig.json && node scripts/copy-styles.mjs",
     "typecheck": "corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/conversation-ui-core build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
