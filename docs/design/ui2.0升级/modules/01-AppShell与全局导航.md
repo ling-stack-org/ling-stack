@@ -48,11 +48,12 @@ Composer 草稿、运行状态或主题。
 - 归档是低频菜单动作，永久删除只在拥有该能力的管理页面出现。
 - Settings 继续使用全屏 Settings shell 并隐藏主 Sidebar；进入和返回必须直接完成壳层切换，不得经过
   空白、默认壳或 Loading 中间帧。
-- macOS Desktop 展开 Sidebar 时，收起导航按钮使用红黄绿窗口按钮右侧的 titlebar 空行，
-  不与“新建对话”共用一行；必须避开 `76px` traffic-light exclusion，保持 `32x32`
-  尺寸和 `no-drag` 交互所有权。Web 和 Windows 不采用该平台布局。
-- macOS Desktop 的 compact rail 顶部顺序固定为“展开导航”在上、“新建对话”在下；
-  两个按钮均保持 `36x36`，不通过缩小点击区换取空间。
+- macOS Desktop 的展开和收起导航按钮始终由 Desktop Chrome 持有，固定在红黄绿窗口按钮右侧的
+  titlebar 工具槽；展开/收缩 Sidebar 不得改变按钮位置、尺寸、焦点或交互所有权。
+- 工具槽避开 `76px` traffic-light exclusion，按钮保持 `32x32` 和 `no-drag`，按钮前后各保留
+  `8px` 间距，拖拽 sibling 不得覆盖该区域。Web 和 Windows 继续使用页面内 Sidebar 按钮。
+- macOS Desktop 收缩后保留 `48px` compact rail，但 rail 不重复渲染展开按钮；“新建对话”成为
+  rail 的第一个行动并保持 `36x36`。本轮不增加返回、前进或其他无状态支撑的 titlebar 控件。
 
 ## Global State And Overlay
 
@@ -71,5 +72,5 @@ Composer 草稿、运行状态或主题。
 - grid/flex 子项使用 `min-width: 0`；Canvas、表格、列表和 Dock 各自拥有明确滚动边界。
 - resize 不重置 View、选中对象、Drawer、焦点或 ThemeSelection。
 - 页面不可用状态必须保留一个明确恢复行动；正常状态不在 Header 堆积标签。
-- macOS Desktop 展开/收起 Sidebar 时，titlebar 按钮不得与 traffic lights 或“新建对话”
-  重叠；按钮尺寸、键盘顺序和可拖拽区必须由几何回归验证。
+- macOS Desktop 展开/收起 Sidebar 时，titlebar 按钮必须保持同一几何位置，不得与 traffic lights、
+  “新建对话”或透明拖拽层重叠；按钮尺寸、键盘顺序和可拖拽区必须由几何回归验证。

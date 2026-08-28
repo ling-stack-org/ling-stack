@@ -2374,7 +2374,13 @@ export function AppShell(): React.JSX.Element {
     : undefined;
   return (
     <AppShellOverlayBoundary className={shellClassName}>
-      <DesktopWindowChrome />
+      <DesktopWindowChrome
+        hideSidebarLabel={t("Hide navigation")}
+        onSidebarOpenChange={setChannelSidebarOpen}
+        showSidebarLabel={t("Show navigation")}
+        sidebarOpen={channelSidebarOpen}
+        sidebarToggleVisible={!settingsFullscreen}
+      />
       <AppPresentationSurfaceBridge
         activeView={activeView}
         hasSelectedChannel={Boolean(selectedChannelId)}
@@ -2444,6 +2450,7 @@ export function AppShell(): React.JSX.Element {
         onSelectRecentConversation={selectRecentConversation}
         channelDrawer
         channelDrawerOpen={channelSidebarOpen}
+        channelDrawerToggleVisible={desktopPlatform !== "macos"}
         onChannelDrawerOpenChange={setChannelSidebarOpen}
       />
       ) : null}

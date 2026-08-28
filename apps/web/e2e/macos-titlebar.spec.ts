@@ -28,7 +28,7 @@ test("macOS Home chrome overlays content, survives Sidebar collapse, and preserv
   const chrome = shell.locator("[data-desktop-window-chrome='true']");
   const sidebarRegion = chrome.locator("[data-desktop-window-drag-owner='sidebar']");
   const contentFallback = chrome.locator("[data-desktop-window-drag-owner='content-fallback']");
-  const sidebarToggle = page.locator(".channel-sidebar-switch");
+  const sidebarToggle = page.locator(".desktop-window-sidebar-toggle");
   const newConversation = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" });
 
   await expect(shell).toBeVisible();
@@ -45,22 +45,27 @@ test("macOS Home chrome overlays content, survives Sidebar collapse, and preserv
   await expectDragRegion(contentFallback);
   await expect.poll(() => readHomeGeometry(page)).toEqual(webGeometry);
   await expectNoDragControl(sidebarToggle);
+  await expect(page.locator(".channel-sidebar-switch")).toHaveCount(0);
   await expect.poll(async () => {
     const toggleBox = await sidebarToggle.boundingBox();
     const newConversationBox = await newConversation.boundingBox();
     if (!toggleBox || !newConversationBox) return undefined;
     return {
       height: Math.round(toggleBox.height),
-      leftOfTrafficLights: Math.round(toggleBox.x) < 76,
+      left: Math.round(toggleBox.x),
       overlapsNewConversation: rectanglesOverlap(toggleBox, newConversationBox),
+      top: Math.round(toggleBox.y),
       width: Math.round(toggleBox.width),
     };
   }).toEqual({
     height: 32,
-    leftOfTrafficLights: false,
+    left: 84,
     overlapsNewConversation: false,
+    top: 4,
     width: 32,
   });
+
+  const expandedToggleBox = await sidebarToggle.boundingBox();
 
   await sidebarToggle.click();
   await expect(shell).toHaveClass(/channel-sidebar-collapsed/u);
@@ -69,7 +74,25 @@ test("macOS Home chrome overlays content, survives Sidebar collapse, and preserv
     const box = await contentFallback.boundingBox();
     return Boolean(box && box.width > 0 && box.height >= 28);
   }).toBe(true);
-  await expect.poll(async () => Math.round((await contentFallback.boundingBox())?.x ?? -1)).toBe(76);
+  await expect.poll(async () => Math.round((await contentFallback.boundingBox())?.x ?? -1)).toBe(124);
+  await expect.poll(async () => {
+    const collapsedToggleBox = await sidebarToggle.boundingBox();
+    if (!expandedToggleBox || !collapsedToggleBox) return undefined;
+    return {
+      height: Math.round(collapsedToggleBox.height),
+      left: Math.round(collapsedToggleBox.x),
+      samePosition: Math.round(expandedToggleBox.x) === Math.round(collapsedToggleBox.x)
+        && Math.round(expandedToggleBox.y) === Math.round(collapsedToggleBox.y),
+      top: Math.round(collapsedToggleBox.y),
+      width: Math.round(collapsedToggleBox.width),
+    };
+  }).toEqual({
+    height: 32,
+    left: 84,
+    samePosition: true,
+    top: 4,
+    width: 32,
+  });
   await expect.poll(async () => {
     const toggleBox = await sidebarToggle.boundingBox();
     const newConversationBox = await newConversation.boundingBox();
@@ -78,16 +101,13 @@ test("macOS Home chrome overlays content, survives Sidebar collapse, and preserv
       newConversationBelowToggle: newConversationBox.y > toggleBox.y,
       newConversationHeight: Math.round(newConversationBox.height),
       newConversationWidth: Math.round(newConversationBox.width),
-      toggleHeight: Math.round(toggleBox.height),
-      toggleWidth: Math.round(toggleBox.width),
     };
   }).toEqual({
     newConversationBelowToggle: true,
     newConversationHeight: 36,
     newConversationWidth: 36,
-    toggleHeight: 36,
-    toggleWidth: 36,
   });
+  await expect.poll(async () => Math.round((await page.getByLabel("Ling Stack navigation").boundingBox())?.width ?? -1)).toBe(48);
   await expect(page.getByLabel("Conversation home")).toBeVisible();
 });
 
@@ -135,8 +155,11 @@ test("macOS Settings and Media expose stable drag markers without swallowing too
   const backButton = settingsNavigation.getByRole("button", { name: "Back to app" });
   await expectDragRegion(settingsNavigation);
   await expectNoDragControl(backButton);
-  await expect.poll(async () => Math.round((await backButton.boundingBox())?.x ?? -1)).toBeGreaterThanOrEqual(76);
-  await expect.poll(async () => Math.round((await backButton.boundingBox())?.y ?? -1)).toBe(32);
+  await expect.poll(async () => settingsBackGeometry(settingsNavigation, backButton)).toEqual({
+    fillsContentWidth: true,
+    leftAlignedToContent: true,
+    top: 32,
+  });
   await backButton.click();
   await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
 
@@ -287,8 +310,14 @@ for (const host of [
     await page.goto("/");
 
     const shell = page.locator("main.app-shell");
+    const sidebarToggle = page.locator(".channel-sidebar-switch");
     await expect(shell).not.toHaveClass(/desktop-macos/u);
     await expect(page.locator("[data-desktop-window-chrome='true']")).toHaveCount(0);
+    await expect(sidebarToggle).toBeVisible();
+    await sidebarToggle.click();
+    await expect(shell).toHaveClass(/channel-sidebar-collapsed/u);
+    await sidebarToggle.click();
+    await expect(shell).not.toHaveClass(/channel-sidebar-collapsed/u);
 
     await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
     const channelHeader = page.locator(".channel-header[data-desktop-window-drag-region='true']");
@@ -370,6 +399,33 @@ async function readTrafficLightExclusion(page: Page): Promise<{
       width: style.width,
     };
   });
+}
+
+async function settingsBackGeometry(navigation: Locator, button: Locator): Promise<{
+  readonly fillsContentWidth: boolean;
+  readonly leftAlignedToContent: boolean;
+  readonly top: number;
+}> {
+  const navigationBox = await navigation.boundingBox();
+  const buttonBox = await button.boundingBox();
+  if (!navigationBox || !buttonBox) {
+    return { fillsContentWidth: false, leftAlignedToContent: false, top: -1 };
+  }
+  const padding = await navigation.evaluate((element) => {
+    const style = getComputedStyle(element);
+    return {
+      clientWidth: element.clientWidth,
+      left: Number.parseFloat(style.paddingLeft),
+      right: Number.parseFloat(style.paddingRight),
+    };
+  });
+  const expectedLeft = navigationBox.x + padding.left;
+  const expectedWidth = padding.clientWidth - padding.left - padding.right;
+  return {
+    fillsContentWidth: Math.abs(buttonBox.width - expectedWidth) <= 1,
+    leftAlignedToContent: Math.abs(buttonBox.x - expectedLeft) <= 1,
+    top: Math.round(buttonBox.y),
+  };
 }
 
 async function readHomeGeometry(page: Page): Promise<{

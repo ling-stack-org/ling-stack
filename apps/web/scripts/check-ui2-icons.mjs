@@ -3,6 +3,7 @@ import { relative, resolve } from "node:path";
 import { ts, visitTypeScriptNode, withTypeScriptSourceFiles } from "./typescript-ast.mjs";
 
 const typedActionOwners = [
+  "src/app/DesktopWindowChrome.tsx",
   "src/features/automations/AutomationDefinitionRow.tsx",
   "src/features/automations/AutomationDraftList.tsx",
   "src/features/automations/AutomationListPane.tsx",

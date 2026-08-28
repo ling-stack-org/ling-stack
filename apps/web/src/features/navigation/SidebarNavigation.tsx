@@ -87,6 +87,7 @@ export function SidebarNavigation({
   onSelectRecentConversation,
   channelDrawer = false,
   channelDrawerOpen = true,
+  channelDrawerToggleVisible = true,
   onChannelDrawerOpenChange,
 }: {
   readonly activeSidebarTarget: SidebarTarget;
@@ -123,6 +124,7 @@ export function SidebarNavigation({
   readonly onSelectRecentConversation: (conversation: SidebarRecentConversation) => void;
   readonly channelDrawer?: boolean;
   readonly channelDrawerOpen?: boolean;
+  readonly channelDrawerToggleVisible?: boolean;
   readonly onChannelDrawerOpenChange?: (open: boolean) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
@@ -181,12 +183,13 @@ export function SidebarNavigation({
     setBranchDraftName("");
   }
 
+  const sidebarOwnsDrawerToggle = channelDrawer && channelDrawerToggleVisible;
   const SidebarToggleIcon = channelDrawerOpen ? PanelLeftClose : PanelLeftOpen;
 
   return (
     <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label="Ling Stack navigation">
       <div className="sidebar-fixed-top">
-        <div className={channelDrawer ? "sidebar-brand-row has-sidebar-switch" : "sidebar-brand-row"}>
+        <div className={sidebarOwnsDrawerToggle ? "sidebar-brand-row has-sidebar-switch" : "sidebar-brand-row"}>
           <SidebarTooltip label={t("New conversation")}>
             <button
               className="sidebar-command-button sidebar-command-button-top"
@@ -198,7 +201,7 @@ export function SidebarNavigation({
               <span>{t("New conversation")}</span>
             </button>
           </SidebarTooltip>
-          {channelDrawer ? (
+          {sidebarOwnsDrawerToggle ? (
             <IconButton
               className="channel-sidebar-switch"
               label={channelDrawerOpen ? t("Hide navigation") : t("Show navigation")}

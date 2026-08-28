@@ -182,8 +182,9 @@ Native Window Chrome
 - macOS traffic-light inset must not overlap Sidebar navigation or the first toolbar control。
 - Windows system title bar must not duplicate an in-app fake title bar。
 - draggable behavior belongs to Desktop shell CSS；Feature/shared Header 只暴露稳定
-  `data-desktop-window-drag-region` / `data-desktop-window-no-drag` 语义，Settings Back 通过
-  `data-desktop-window-traffic-light-clearance` 暴露唯一 native safe-area exception；Feature 不写平台 selector。
+  `data-desktop-window-drag-region` / `data-desktop-window-no-drag` 语义。Settings navigation container
+  通过 `data-desktop-window-traffic-light-clearance` 声明顶部 safe area；safe area 不得减小下方按钮宽度，
+  Feature 不写平台 selector。
 - window resize must preserve AppShell responsive constraints and never create horizontal page scroll。
 
 ### Main Window Integrated Chrome
@@ -192,14 +193,16 @@ Native Window Chrome
 - confirmed-empty Sidebar/Home rectangle 由 focused `DesktopWindowChrome` 提供；真实 Header 作为 drag
   ancestor，交互后代统一 carve out 为 `no-drag`。
 - 不允许把高 z-index 透明 sibling layer 铺过 Header controls；底层 sibling 的 `no-drag` 不能可靠恢复点击。
-- Sidebar collapsed 时只移除 Sidebar strip，不能移除 Home 或 active Header drag target。
-- Sidebar expanded 时允许将收起按钮放入 Sidebar 所有的 titlebar 空行，但按钮必须在
-  traffic-light exclusion 右侧、保持 `32x32` 且声明 `no-drag`；其余空白区继续属于拖拽层。
-- Sidebar drag sibling 必须在该控件前结束，为 `32px` 控件和相邻间距保留至少 `42px`
-  的真实 pointer gap；不得依赖控件自身 z-index 穿透透明 drag layer。
-- Sidebar collapsed 时 titlebar 不额外塞入控件；compact rail 的首两个行动固定为
-  `Show navigation` / `New conversation`，均保持 `36x36`。
+- Sidebar collapsed 时保留 `48px` compact rail，不能移除 Home 或 active Header drag target。
+- Sidebar 展开和收缩时，唯一导航开关都由 `DesktopWindowChrome` 的 titlebar 工具槽持有；工具槽
+  位于 `76px` traffic-light exclusion 右侧 `8px`，按钮保持 `32x32` 且声明 `no-drag`。
+- titlebar drag sibling 必须在按钮前结束，并在按钮后再保留 `8px` pointer gap；不得依赖控件自身
+  z-index 穿透透明 drag layer。展开/收缩不得创建、卸载或移动第二个按钮。
+- Sidebar collapsed 时 compact rail 的第一个行动为 `New conversation`，保持 `36x36`；rail 不重复
+  `Show navigation`。Web 和 Windows 继续由 Sidebar 自身持有导航开关。
 - Settings fullscreen、Media、Channel、普通对话、AI 队友私聊/设置和所有顶级 View 必须有稳定 owner。
+- Settings fullscreen 的 traffic-light clearance 属于 navigation container 顶部空行；`Back to app`
+  位于空行下方并撑满 navigation content box，不得再做横向 offset 或减宽。
 - Web、Windows main window 和 PiP 不挂载该 chrome；Windows 继续 native title bar。
 - Dialog、Drawer、Menu、Popover、Toast、Tooltip 和 scrim 必须始终高于 chrome 并保持 pointer/focus ownership。
 - chrome 没有独立 Show/Hide/Close 行动；随 macOS AppShell mount/unmount，route/theme/Sidebar state 不重建它。
