@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
-import { createBaseState, createMockTeammate, isRecord, type MockState } from "./support/mock-state";
+import { createBaseState, createChatProvider, createMockTeammate, isRecord, type MockState } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
 test("channel runtime status and guidance use shared controls with a keyboard-safe menu", async ({ page }) => {
@@ -11,20 +11,15 @@ test("channel runtime status and guidance use shared controls with a keyboard-sa
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const status = page.locator(".channel-active-status-strip");
-  await expect(status).toBeVisible();
-  await expect(status).toContainText("Run in progress");
-  const statusActions = status.getByRole("button");
-  await expect(statusActions).toHaveCount(2);
-  await expectMinimumHitArea(statusActions.nth(0), 32);
-  await expectMinimumHitArea(statusActions.nth(1), 32);
+  await expect(page.locator(".channel-active-status-strip")).toHaveCount(0);
+  await expect(page.getByLabel("Channel composer").getByRole("button", { name: "Stop reply" })).toBeVisible();
 
   const guidance = page.getByLabel("Run guidance");
   const row = guidance.locator(".conversation-guidance-row");
   await expect(row).toContainText("KeepThisLongQueuedGuidanceContained");
   const rowActions = row.getByRole("button");
-  await expect(rowActions).toHaveCount(3);
-  for (let index = 0; index < 3; index += 1) {
+  await expect(rowActions).toHaveCount(2);
+  for (let index = 0; index < 2; index += 1) {
     await expectMinimumHitArea(rowActions.nth(index), 32);
   }
 
@@ -47,7 +42,6 @@ test("channel runtime status and guidance use shared controls with a keyboard-sa
   await page.getByRole("textbox", { name: "Message this channel or @ an AI teammate" }).click();
   await expect(page.getByRole("menu")).toHaveCount(0);
 
-  await expectContained(status, page.locator(".channel-composer"));
   await expectContained(row, guidance);
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
@@ -62,9 +56,7 @@ test("channel removes accepted guidance from the queue while its continuation ru
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const guidance = page.getByLabel("Run guidance");
-  await expect(guidance).toBeVisible();
-  await expect(guidance.locator(".conversation-guidance-row").filter({ hasText: "KeepThisLongQueuedGuidanceContained" })).toHaveCount(0);
+  await expect(page.getByLabel("Run guidance")).toHaveCount(0);
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -145,12 +137,60 @@ test("teammate runtime status and queued guidance stay contained in dark reduced
 
 function channelRuntimeFeedbackState(): MockState {
   const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    id: "provider_local",
+    model: "gpt-5.5",
+    lastCheck: { ok: true, message: "Ready", checkedAt: "2026-07-23T09:00:00.000Z" },
+  })];
   const run = state.runs[0];
   run.status = "running";
   run.errorMessage = undefined;
   run.workflowStepId = undefined;
   run.startedAt = "2026-07-23T09:00:00.000Z";
   run.updatedAt = "2026-07-23T09:01:00.000Z";
+  run.threadId = "thread_channel_channel_engineering";
+  run.teammateId = "ling_agent";
+  run.workUnitId = "work_unit_ui2_runtime_feedback";
+  run.requestSnapshot = { sourceMessageId: "message_ui2_runtime_feedback_source" };
+  state.channelMessages = [{
+    id: "message_ui2_runtime_feedback_source",
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    kind: "message",
+    intent: "discuss",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Start the runtime feedback reply.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
+    createdAt: "2026-07-23T08:59:59.000Z",
+    updatedAt: "2026-07-23T08:59:59.000Z",
+  }];
+  state.workUnits = [{
+    id: "work_unit_ui2_runtime_feedback",
+    workspaceId: "workspace_default",
+    kind: "channel_ai_reply",
+    ownerType: "channel_message",
+    ownerId: "message_ui2_runtime_feedback_source",
+    channelId: "channel_engineering",
+    teammateId: "ling_agent",
+    providerPresetId: "provider_local",
+    idempotencyKey: "ui2-runtime-feedback-reply",
+    status: "running",
+    priority: 0,
+    attemptCount: 1,
+    createdByActor: "system",
+    request: { sourceMessageId: "message_ui2_runtime_feedback_source" },
+    timeoutPolicy: { claimTtlMs: 60_000, heartbeatTtlMs: 60_000, cancelGraceMs: 15_000 },
+    linkedRunId: run.id,
+    linkedMessageId: "message_ui2_runtime_feedback_reply",
+    createdAt: "2026-07-23T09:00:00.000Z",
+    updatedAt: "2026-07-23T09:01:00.000Z",
+    startedAt: "2026-07-23T09:00:00.000Z",
+  }];
   state.approvals = [];
   state.tasks = state.tasks.map((task) => isRecord(task) && task.id === run.taskId
     ? { ...task, status: "running", currentRunId: run.id, updatedAt: run.updatedAt }

@@ -3,7 +3,7 @@ import type { TerminalReportDto, TerminalReportSourceRefDto } from "@ling-stack/
 import type { TerminalReport, TerminalReportSourceRef } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
-import { readOptionalIntegerQuery } from "../../shared/request.js";
+import { readOptionalBooleanQuery, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { terminalReportIsEligibleForDisplay } from "./terminal-report-eligibility.js";
 
@@ -61,10 +61,12 @@ export async function handleTerminalReportsCollection(
     return;
   }
   try {
+    const includeHistory = readOptionalBooleanQuery(url, "includeHistory") ?? false;
     const reports = storeRegistry.getStore(cwd).listTerminalReports({
       threadId: url.searchParams.get("threadId") ?? undefined,
       sourceKind: readSourceKind(url.searchParams.get("sourceKind")),
       sourceId: url.searchParams.get("sourceId") ?? undefined,
+      effectiveOnly: !includeHistory,
       limit: readOptionalIntegerQuery(url, "limit", 1),
     })
       .filter((record) => terminalReportIsEligibleForDisplay(storeRegistry.getStore(cwd), record))
@@ -103,11 +105,13 @@ export async function handleChannelTerminalReports(
       writeJson(response, 404, { error: "channel_not_found", message: `Channel not found: ${channelId}` });
       return;
     }
+    const includeHistory = readOptionalBooleanQuery(url, "includeHistory") ?? false;
     const reports = store.listTerminalReports({
       channelId,
       threadId: url.searchParams.get("threadId") ?? undefined,
       sourceKind: readSourceKind(url.searchParams.get("sourceKind")),
       sourceId: url.searchParams.get("sourceId") ?? undefined,
+      effectiveOnly: !includeHistory,
       limit: readOptionalIntegerQuery(url, "limit", 1),
     })
       .filter((record) => terminalReportIsEligibleForDisplay(store, record))

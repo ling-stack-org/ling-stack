@@ -32,14 +32,20 @@
   height: 0;
 }
 
-.normal-conversation-latest-button {
+.normal-conversation-latest-button.message-feed-latest-button {
   position: absolute;
-  right: var(--ling-space-4);
+  left: 50%;
   bottom: var(--ling-space-4);
   z-index: 2;
+  width: 42px;
+  min-width: 42px;
+  height: 42px;
+  padding: 0;
   border-color: var(--ling-border-default);
+  border-radius: var(--ling-radius-pill);
   background: var(--ling-bg-elevated);
-  box-shadow: var(--ling-shadow-medium);
+  box-shadow: var(--ling-shadow-overlay);
+  transform: translateX(-50%);
 }
 
 .normal-conversation-message-row {

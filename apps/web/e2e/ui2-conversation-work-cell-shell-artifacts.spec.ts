@@ -14,7 +14,7 @@ const evidenceDirectory = fileURLToPath(new URL(
   import.meta.url,
 ));
 
-test("Channel WorkCell keeps artifacts, changed files, references, and hover preview contained", async ({ page }) => {
+test("Channel WorkCell keeps terminal report changes, references, and file-path disclosure contained", async ({ page }) => {
   await prepareSurface(page, {
     theme: "dark",
     width: 1280,
@@ -38,12 +38,14 @@ test("Channel WorkCell keeps artifacts, changed files, references, and hover pre
   await expandOperationShell(workCell);
   await expectShellMotionDisabled(workCell);
 
-  const artifactSurface = transcript.locator(".conversation-turn-artifacts");
-  const artifactRows = artifactSurface.locator(".conversation-work-cell-artifact-row");
-  const changedGroup = artifactSurface.locator(".conversation-work-cell-change-group");
-  await expect(artifactSurface).toBeVisible();
-  await expect(artifactRows).toHaveCount(2);
-  await expect(changedGroup).toBeVisible();
+  const externalArtifactSurface = transcript.locator(".conversation-turn-artifacts");
+  const terminalReport = transcript.locator(".terminal-report-block");
+  const changedSection = terminalReport.locator(".terminal-report-section.kind-change");
+  const changedFileReferences = changedSection.locator("[data-terminal-report-file-reference]");
+  await expect(terminalReport).toBeVisible();
+  await expect(changedSection).toBeVisible();
+  await expect(changedFileReferences).toHaveCount(3);
+  await expect(externalArtifactSurface).toHaveCount(0);
 
   const referenceTrigger = workCell.locator(".conversation-work-cell-evidence-summary");
   await expect(referenceTrigger).toHaveAttribute("aria-expanded", "false");
@@ -52,15 +54,15 @@ test("Channel WorkCell keeps artifacts, changed files, references, and hover pre
   await expect(referenceTrigger).toHaveAttribute("aria-expanded", "true");
   await expect(workCell.locator(".conversation-work-cell-evidence-links > *")).not.toHaveCount(0);
 
-  const changedFile = changedGroup.locator(".conversation-work-cell-change-file").first();
-  const changedFileLabel = (await changedFile.locator("code").innerText()).trim();
+  const changedFile = changedFileReferences.first();
+  const changedFilePath = (await changedFile.getAttribute("data-terminal-report-file-reference")) ?? "";
+  expect(changedFilePath).not.toBe("");
   await page.mouse.move(0, 0);
   await changedFile.hover();
-  const hoverPreview = page.locator(".conversation-artifact-hover-preview");
-  await expect(hoverPreview).toBeVisible({ timeout: 4_000 });
-  await expect(hoverPreview).toContainText(changedFileLabel);
-  await expect(hoverPreview.locator(".conversation-artifact-hover-preview-body")).toBeVisible();
-  await captureEvidence(page, "1280x800-ling-dark-channel-artifact-hover.png");
+  const filePathTooltip = changedFile.getByRole("tooltip");
+  await expect(filePathTooltip).toBeVisible({ timeout: 4_000 });
+  await expect(filePathTooltip).toContainText(changedFilePath);
+  await captureEvidence(page, "1280x800-ling-dark-channel-terminal-report-file-path.png");
 
   const composer = page.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
   await composer.fill("Please inspect apps/web/src/features/workspace/WorkspaceClientView.tsx");
@@ -81,9 +83,9 @@ test("Channel WorkCell keeps artifacts, changed files, references, and hover pre
 
   await expectReducedMotion(page, [
     workCell,
-    artifactRows.first(),
-    changedGroup,
-    hoverPreview,
+    changedSection,
+    changedFile,
+    filePathTooltip,
   ]);
   await expectDocumentContained(page);
   expect(runtimeErrors).toEqual([]);
@@ -109,6 +111,72 @@ test("Normal conversation renders the shared WorkCell shell without document ove
   await expectDocumentContained(page);
   await captureEvidence(page, "1440x960-ling-light-normal-work-cell-shell.png");
   expect(runtimeErrors).toEqual([]);
+});
+
+test("Terminal report summaries keep Markdown paragraphs and fenced code", async ({ page }) => {
+  await prepareSurface(page, { theme: "light", width: 1440, height: 960, reducedMotion: true });
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const title = installNormalWorkCellFixture(state);
+  if (!state.terminalReports[0]) throw new Error("Normal WorkCell fixture did not create a terminal report.");
+  state.terminalReports = state.terminalReports.map((report, index) => index === 0
+    ? {
+        ...report,
+        outcome: {
+          ...report.outcome,
+          summary: "完成说明：\n\n- 已创建文件\n- 已验证内容\n\n```bash\nnode app.js\n```",
+        },
+      }
+    : report);
+  await mockDaemon(page, state);
+
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+
+  const reportBlock = page.getByLabel("Conversation page").locator(".terminal-report-block");
+  await expect(reportBlock).toBeVisible();
+  await expect(reportBlock.locator(".message-body-paragraph")).toHaveCount(3);
+  await expect(reportBlock.locator(".message-body-list")).toHaveCount(1);
+  await expect(reportBlock.locator(".message-code-block")).toHaveCount(1);
+  await expect(reportBlock.locator(".message-code-block")).toContainText("node app.js");
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("WorkCell command evidence preserves multiline output formatting", async ({ page }) => {
+  await prepareSurface(page, { theme: "light", width: 1440, height: 960, reducedMotion: true });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const title = installNormalWorkCellFixture(state);
+  const firstAction = state.executionActions.find((action) => action.id.includes("typecheck"));
+  if (!firstAction?.commandEvidence) throw new Error("Normal WorkCell fixture did not create command evidence.");
+  state.executionActions = state.executionActions.map((action) => action.id.includes("typecheck")
+    ? {
+        ...action,
+        commandEvidence: {
+          ...firstAction.commandEvidence,
+          outputTail: [{
+            ...firstAction.commandEvidence.outputTail[0],
+            text: "first output line\nsecond output line\nthird output line\n",
+          }],
+          outputLineCount: 3,
+        },
+      }
+    : action);
+  await mockDaemon(page, state);
+
+  await page.goto("/");
+  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+
+  const workCell = page.getByLabel("Conversation page").locator(".conversation-work-cell");
+  await expandOperationShell(workCell);
+  const commandBatch = workCell.locator(".conversation-command-batch");
+  await commandBatch.getByRole("button", { name: /Expand command batch/u }).click();
+  const commandRow = commandBatch.locator(".conversation-work-cell-row").filter({ hasText: "corepack pnpm --filter @ling-stack/web typecheck" });
+  await commandRow.locator(".conversation-work-cell-row-main").click();
+  const output = workCell.locator(".conversation-work-cell-row-detail code").filter({ hasText: "first output line" }).first();
+  await expect(output).toBeVisible();
+  await expect(output).toHaveCSS("white-space", "pre-wrap");
+  expect(await output.textContent()).toBe("first output line\nsecond output line\nthird output line");
+  expect(await output.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("SFMono-Regular");
 });
 
 test("Teammate conversation renders the shared WorkCell shell in reduced motion", async ({ page }) => {

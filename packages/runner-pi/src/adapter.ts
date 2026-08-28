@@ -89,6 +89,10 @@ export class PiRunnerAdapter {
       throwIfAborted(options.signal);
       await session.prompt(formatTaskPrompt(options.task), { source: "rpc" });
       throwIfAborted(options.signal);
+      const terminalFailure = findTerminalFailure(events);
+      if (terminalFailure) {
+        throw new Error(terminalFailure);
+      }
       emit({
         type: "run_end",
         taskId: options.task.id,
@@ -144,6 +148,28 @@ export class PiRunnerAdapter {
       ],
     });
   }
+}
+
+function findTerminalFailure(events: readonly PiRunnerEvent[]): string | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type === "run_error") {
+      return event.message;
+    }
+  }
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type === "message_end" && event.role === "assistant") {
+      if (event.errorMessage) {
+        return event.errorMessage;
+      }
+      if (event.stopReason?.toLowerCase() === "error") {
+        return "Provider message ended with an error.";
+      }
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 export function createPiRunner(): PiRunnerAdapter {

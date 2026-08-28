@@ -52,6 +52,7 @@ export interface ConversationHomeMessage {
   readonly role: "user" | "assistant" | "system";
   readonly authorLabel?: string;
   readonly content: string;
+  readonly errorMessage?: string;
   readonly attachments?: readonly ConversationAttachment[];
   readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly status?: ConversationTranscriptStatus;

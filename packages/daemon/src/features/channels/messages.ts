@@ -698,23 +698,9 @@ async function dispatchLingAgentChannelMessage(
     return {};
   }
   if (workflowIntent.action === "visible_multi_reply") {
-    if (input.sourceMessage.mentions.filter((mention) => mention.kind === "ai-teammate").length > 1) {
-      return {
-        aiReply: await createAiReply({
-          store: input.store,
-          channel: input.channel,
-          sourceMessage: input.sourceMessage,
-          turnEnvelope,
-          providerPresetId: input.requestedProviderPresetId,
-          teammateId: LING_AGENT_EXECUTOR_ID,
-          proposalMode: "allow",
-        }),
-        replyDispatch: {
-          targetTeammateId: LING_AGENT_EXECUTOR_ID,
-          disposition: "reply_requested",
-        },
-      };
-    }
+    // Explicit multi-agent mentions are a visible fan-out request. Do not
+    // collapse them into a single Ling Agent reply: each selected teammate
+    // receives an independent canonical item and run lineage.
     const aiReplies = workflowIntent.aiReplies ?? await Promise.all(workflowIntent.teammateIds.map((teammateId) => createAiReply({
       store: input.store,
       channel: input.channel,

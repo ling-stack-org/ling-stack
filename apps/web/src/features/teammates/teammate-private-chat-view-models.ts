@@ -1,3 +1,4 @@
+import { projectConversationMessagePresentation } from "@ling-stack/conversation-ui-core";
 import { artifactContentUrl } from "../../api.js";
 import type { Translate } from "../../i18n.js";
 import {
@@ -55,6 +56,7 @@ export interface TeammatePrivateMessageProjection {
   readonly authorType: TeammateDirectMessage["authorType"];
   readonly blocked: boolean;
   readonly body: string;
+  readonly errorText: string;
   readonly copyBody: string;
   readonly userGuidance: boolean;
   readonly pendingAiReply: boolean;
@@ -79,11 +81,6 @@ export function projectTeammatePrivateMessage({
   const pendingAiReply = message.authorType === "ai-teammate" && message.status === "pending";
   const blocked = message.status === "blocked" || message.status === "failed" || message.status === "cancelled";
   const recoveredHistoricalProviderFailure = providerRecovered && isHistoricalProviderPreflightMessage(message);
-  const errorOwnsBody = Boolean(
-    message.errorMessage?.trim() &&
-    message.errorMessage.trim() === message.body.trim() &&
-    (message.status === "blocked" || message.status === "failed"),
-  );
   const guidanceBody = projectUserGuidanceBody(message);
   const authorType = guidanceBody === undefined ? message.authorType : "local-user";
   const authorName = authorType === "ai-teammate"
@@ -91,21 +88,28 @@ export function projectTeammatePrivateMessage({
     : authorType === "system"
       ? t("System")
       : localUserDisplayName;
-  const body = hasStructuredTerminalReport || errorOwnsBody
+  const bodyContent = recoveredHistoricalProviderFailure
+    ? t("Historical model check failed. The model is available now; resend or continue the chat.")
+    : guidanceBody ?? message.body;
+  const messagePresentation = projectConversationMessagePresentation({
+    content: bodyContent,
+    errorMessage: message.errorMessage,
+    status: message.status,
+    streaming: pendingAiReply,
+    streamingPlaceholder: t("AI teammate is replying..."),
+  });
+  const body = hasStructuredTerminalReport && message.authorType === "ai-teammate"
     ? ""
-    : pendingAiReply && !message.body.trim()
-      ? t("AI teammate is replying...")
-      : message.status === "cancelled" && !message.body.trim()
-        ? t("Reply stopped")
-        : recoveredHistoricalProviderFailure
-          ? t("Historical model check failed. The model is available now; resend or continue the chat.")
-          : guidanceBody ?? message.body;
+    : message.status === "cancelled" && !bodyContent.trim()
+    ? t("Reply stopped")
+    : messagePresentation.body;
 
   return {
     authorName,
     authorType,
     blocked,
     body,
+    errorText: recoveredHistoricalProviderFailure ? "" : messagePresentation.errorText,
     copyBody: guidanceBody ?? message.body,
     userGuidance: guidanceBody !== undefined,
     pendingAiReply,

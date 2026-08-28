@@ -80,6 +80,7 @@ export interface TerminalReportViewInput {
     readonly id: string;
     readonly severity: "info" | "warning" | "critical";
     readonly status: "unresolved" | "mitigated" | "accepted" | "unverified";
+    readonly approvalDecision?: "pending" | "approved" | "denied" | "expired" | "cancelled";
     readonly summary: string;
     readonly nextAction?: string;
   })[];
@@ -141,7 +142,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         kind: "watch",
         presentation: "note",
         reportSection: "outcome",
-        title: report.outcome.title,
+        title: compactTerminalReportTitle(report.outcome.title),
         description: report.outcome.summary,
         tone: outcomeTone(report.outcome.status),
       },
@@ -150,7 +151,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         kind: "watch" as const,
         presentation: "note" as const,
         reportSection: "correction" as const,
-        title: correction.correctedFact,
+        title: compactTerminalReportTitle(correction.correctedFact),
         description: correction.originalAssumption,
         meta: localizedMeta(report.language, correction.confidence),
         tone: "neutral" as const,
@@ -159,7 +160,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         id: `${report.id}:change:${change.id}`,
         kind: "edit" as const,
         reportSection: "change" as const,
-        title: change.title,
+        title: compactTerminalReportTitle(change.title),
         description: change.summary,
         meta: changeMeta(change, report.language),
         detailLines: change.paths.map((path) => ({ kind: "file_ref" as const, text: path, path })),
@@ -169,7 +170,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         id: `${report.id}:verification:${verification.id}`,
         kind: "verify" as const,
         reportSection: "verification" as const,
-        title: verification.title,
+        title: compactTerminalReportTitle(verification.title),
         description: verification.summary,
         meta: verificationMeta(verification.status, verification.durationMs, report.language),
         commandText: verification.command,
@@ -189,9 +190,9 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
         id: `${report.id}:risk:${risk.id}`,
         kind: "watch" as const,
         reportSection: "risk" as const,
-        title: risk.summary,
+        title: compactTerminalReportTitle(risk.summary),
         description: risk.nextAction,
-        meta: localizedMeta(report.language, risk.status),
+        meta: localizedMeta(report.language, risk.approvalDecision ?? risk.status),
         tone: riskTone(risk.severity, risk.status),
       })),
     ],
@@ -333,7 +334,22 @@ function isUserVisibleTerminalReportArtifact(artifact: TerminalReportViewInput["
 
 function isInternalTerminalReportArtifactText(value: string): boolean {
   return /^(Generated file metadata|Workflow step context|Workflow step output|Action preview):/iu.test(value.trim()) ||
+    /^Unified exec (?:stdout|stderr|result)\b/iu.test(value.trim()) ||
     /\bcontent log\b/iu.test(value);
+}
+
+/**
+ * Titles are compact labels, not narrative bodies. Keep model output that
+ * accidentally echoes the full workflow prompt from taking over the report;
+ * the complete Markdown remains in the corresponding summary/description.
+ */
+function compactTerminalReportTitle(value: string): string {
+  const normalized = value.replace(/\s+/gu, " ").trim();
+  const wrapped = normalized.match(
+    /(?:原始请求|Original request)\s*[:：]\s*(.+?)(?=\s+(?:执行任务|已物化的执行操作|建议协作步骤|Requested objective|No literal file content|Materialized operations|Participant operation ownership|Permission boundary)\b|$)/iu,
+  )?.[1]?.trim();
+  const candidate = (wrapped || normalized).replace(/^\*+|\*+$/gu, "").trim();
+  return candidate.length > 180 ? `${candidate.slice(0, 177).trimEnd()}...` : candidate;
 }
 
 function outcomeTone(status: TerminalReportViewInput["outcome"]["status"]): ConversationWorkCellRowTone {
@@ -404,6 +420,10 @@ const ZH_CN_META: Readonly<Record<string, string>> = {
   not_run: "未运行",
   unknown: "未知",
   completed: "已完成",
+  pending: "待处理",
+  approved: "已批准",
+  denied: "已拒绝",
+  expired: "已过期",
   unresolved: "未解决",
   mitigated: "已缓解",
   accepted: "已接受",

@@ -50,6 +50,7 @@ import {
 } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 import { resolveChannelConversationSurface } from "./conversation-surface.js";
+import { preserveMarkdownLayout } from "./markdown-text.js";
 import { extractFileTargetCandidate, resolveExecutableFileTarget } from "./target-resolver.js";
 import {
   appendChannelAssistantMessage,
@@ -2575,7 +2576,8 @@ function buildSingleStepExecutablePrompt(
     return [
       "这条用户消息是一个单步可执行请求。",
       "",
-      `原始请求: ${normalizeWhitespace(messageBody)}`,
+      "原始请求:",
+      preserveMarkdownLayout(messageBody),
       "",
       `执行动作: ${executableIntent.actionSummary}`,
       `目标: ${executableIntent.targetLabel}`,
@@ -2590,7 +2592,8 @@ function buildSingleStepExecutablePrompt(
   return [
     "The user message is a single-step executable request.",
     "",
-    `Original request: ${normalizeWhitespace(messageBody)}`,
+    "Original request:",
+    preserveMarkdownLayout(messageBody),
     "",
     `Action: ${executableIntent.actionSummary}`,
     `Target: ${executableIntent.targetLabel}`,
@@ -2635,7 +2638,8 @@ function buildMultiParticipantExecutablePrompt(
   return [
     header,
     "",
-    `${originalLabel}: ${normalizeWhitespace(messageBody)}`,
+    `${originalLabel}:`,
+    preserveMarkdownLayout(messageBody),
     "",
     executableIntent.prompt,
     "",
@@ -2851,7 +2855,8 @@ function buildProposalPrompt(
     return [
       "这条用户消息看起来是一个需要协作执行的工作流请求。",
       "",
-      `原始请求: ${normalizeWhitespace(messageBody)}`,
+      "原始请求:",
+      preserveMarkdownLayout(messageBody),
       "",
       "建议协作步骤:",
       ...steps,
@@ -2863,7 +2868,8 @@ function buildProposalPrompt(
   return [
     "The user message looks like a coordinated workflow request.",
     "",
-    `Original request: ${normalizeWhitespace(messageBody)}`,
+    "Original request:",
+    preserveMarkdownLayout(messageBody),
     "",
     "Proposed collaboration:",
     ...steps,
