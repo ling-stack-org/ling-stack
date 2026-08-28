@@ -1,4 +1,4 @@
-import { CheckCircle2, CircleAlert, FileCode2, FilePenLine, FileText } from "lucide-react";
+import { CheckCircle2, ChevronDown, CircleAlert, FileCode2, FilePenLine, FileText } from "lucide-react";
 import { FaJava } from "react-icons/fa";
 import {
   SiCplusplus,
@@ -25,12 +25,14 @@ import {
 import type { IconType } from "react-icons";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
+import { useI18n } from "../../../i18n.js";
 import {
   getTerminalReportProjectionPolicy,
   type ConversationSurfaceKind,
   type TerminalReportProjectionPolicy,
 } from "../tokens/conversation-surface-policy.js";
 import { TerminalReportParticipants } from "./TerminalReportParticipants.js";
+import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 
 export interface TerminalReportFileTarget {
   readonly cwd?: string;
@@ -45,6 +47,7 @@ export function TerminalReportBlock({
   renderParticipantAvatar,
   surface,
   projectionPolicy,
+  cwd,
   onOpenWorkspaceFile,
 }: {
   readonly blockId: string;
@@ -52,6 +55,7 @@ export function TerminalReportBlock({
   readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
   readonly surface: ConversationSurfaceKind;
   readonly projectionPolicy?: Partial<TerminalReportProjectionPolicy>;
+  readonly cwd?: string;
   readonly onOpenWorkspaceFile?: (target: TerminalReportFileTarget) => void;
 }): React.JSX.Element | null {
   const resolvedProjectionPolicy = getTerminalReportProjectionPolicy(surface, projectionPolicy);
@@ -70,20 +74,20 @@ export function TerminalReportBlock({
   return (
     <section className="terminal-report-block expanded static" data-terminal-report-block={blockId}>
       <div className="terminal-report-summary">
-        <span className="terminal-report-outcome-copy">
+        <div className="terminal-report-outcome-copy">
           <strong>{outcome.title}</strong>
-          {outcome.description ? <span>{outcome.description}</span> : null}
-        </span>
+          {outcome.description ? <MessageBodyRenderer className="terminal-report-rich-copy" text={outcome.description} cwd={cwd} compact onOpenLocalFile={(reference) => openRichFileReference(reference, cwd, onOpenWorkspaceFile)} /> : null}
+        </div>
       </div>
 
-      <TerminalReportParticipants rows={participants} expanded renderParticipantAvatar={renderParticipantAvatar} />
+      <TerminalReportParticipants rows={participants} expanded cwd={cwd} renderParticipantAvatar={renderParticipantAvatar} />
 
       {changes.length + verification.length + corrections.length + risks.length > 0 ? (
         <div className="terminal-report-detail">
-          {corrections.length > 0 ? <TerminalReportRows rows={corrections} kind="correction" onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
-          {changes.length > 0 ? <TerminalReportRows rows={changes} kind="change" onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
-          {verification.length > 0 ? <TerminalReportRows rows={verification} kind="verification" onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
-          {risks.length > 0 ? <TerminalReportRows rows={risks} kind="risk" onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
+          {corrections.length > 0 ? <TerminalReportRows rows={corrections} kind="correction" cwd={cwd} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
+          {changes.length > 0 ? <TerminalReportRows rows={changes} kind="change" cwd={cwd} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
+          {verification.length > 0 ? <TerminalReportRows rows={verification} kind="verification" cwd={cwd} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
+          {risks.length > 0 ? <TerminalReportRows rows={risks} kind="risk" cwd={cwd} onOpenWorkspaceFile={onOpenWorkspaceFile} /> : null}
         </div>
       ) : null}
     </section>
@@ -93,10 +97,12 @@ export function TerminalReportBlock({
 function TerminalReportRows({
   rows,
   kind,
+  cwd,
   onOpenWorkspaceFile,
 }: {
   readonly rows: readonly ConversationWorkCellRow[];
   readonly kind: "correction" | "change" | "verification" | "risk";
+  readonly cwd?: string;
   readonly onOpenWorkspaceFile?: (target: TerminalReportFileTarget) => void;
 }): React.JSX.Element {
   return (
@@ -115,15 +121,15 @@ function TerminalReportRows({
           return (
             <div className={`terminal-report-row tone-${row.tone ?? "neutral"}${fileReferenceOnly ? " file-reference-only" : ""}`} key={row.id}>
               {!fileReferenceOnly ? <span className="terminal-report-row-icon" aria-hidden="true">{reportRowIcon(kind)}</span> : null}
-              <span className="terminal-report-row-copy">
+              <div className="terminal-report-row-copy">
                 {!hideRedundantTitle ? (
                   <span className="terminal-report-row-title">
                     <span>{row.title}</span>
                     {row.meta && kind !== "change" && kind !== "verification" ? <small>{row.meta}</small> : null}
                   </span>
                 ) : null}
-                {row.description && !hideRedundantDescription ? <span className="terminal-report-row-description">{row.description}</span> : null}
-                {row.commandText ? <code>{row.commandText}</code> : null}
+                {row.description && !hideRedundantDescription ? <MessageBodyRenderer className="terminal-report-row-rich-description" text={row.description} cwd={cwd} compact onOpenLocalFile={(reference) => openRichFileReference(reference, cwd, onOpenWorkspaceFile)} /> : null}
+                {row.commandText ? <TerminalReportCommandDisclosure command={row.commandText} /> : null}
                 {row.detailLines?.length ? (
                   <span className="terminal-report-row-paths">
                     {row.detailLines.map((line, index) => line.kind === "file_ref" ? (
@@ -137,13 +143,47 @@ function TerminalReportRows({
                     ))}
                   </span>
                 ) : null}
-              </span>
+              </div>
             </div>
           );
         })}
       </div>
     </section>
   );
+}
+
+function TerminalReportCommandDisclosure({ command }: { readonly command: string }): React.JSX.Element {
+  const { t } = useI18n();
+  return (
+    <details className="terminal-report-command-disclosure" data-terminal-report-command-disclosure>
+      <summary>
+        <ChevronDown size={13} aria-hidden="true" />
+        <span className="terminal-report-command-show-label">{t("Show details")}</span>
+        <span className="terminal-report-command-hide-label">{t("Hide details")}</span>
+      </summary>
+      <code>{command}</code>
+    </details>
+  );
+}
+
+function openRichFileReference(
+  reference: { readonly displayPath: string; readonly location?: string },
+  cwd: string | undefined,
+  onOpenWorkspaceFile: ((target: TerminalReportFileTarget) => void) | undefined,
+): void {
+  if (!onOpenWorkspaceFile) {
+    return;
+  }
+  const path = reference.location
+    ? reference.displayPath.slice(0, -reference.location.length)
+    : reference.displayPath;
+  const lineMatch = reference.location?.match(/(?:#L|:)(\d+)/u);
+  onOpenWorkspaceFile({
+    cwd,
+    path,
+    line: lineMatch ? Number.parseInt(lineMatch[1] ?? "", 10) : undefined,
+    label: reference.displayPath,
+  });
 }
 
 function changeCopyMatchesFileReference(

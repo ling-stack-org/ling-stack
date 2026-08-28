@@ -7545,7 +7545,22 @@ test("completed multi-agent transcript reveals all agent process rows from the p
       intent: "discuss",
       authorType: "ai-teammate",
       authorId: "ling_agent",
-      body: "确认需求：「开始 workflow：产品策略分析登录页 smoke 的目标范围，仅输出结论。Smoke ID: single-product-20260615-2241。」。开始处理。",
+      body: [
+        "**这条用户消息是一个多参与者可执行 workflow。**",
+        "",
+        "原始请求:",
+        "@Engineer @QA 请协作完成一个真实的频道执行任务：Engineer 必须在当前工作区创建 r5-packaged-restart-proof.txt，内容为 PACKAGED_RESTART_OK_20260823；QA 必须在 Engineer 完成后验证文件内容。",
+        "",
+        "执行任务: Engineer 必须在当前工作区创建文件，QA 必须在 Engineer 完成后验证文件内容。",
+        "",
+        "已物化的执行操作:",
+        "- create_file: file_create -> r5-packaged-restart-proof.txt; owner Engineer",
+        "- verify_target: run_command -> verify target; owner QA; depends on create_file",
+        "",
+        "参与者操作归属:",
+        "- Engineer: create_file",
+        "- QA: verify_target",
+      ].join("\n"),
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
@@ -7756,6 +7771,10 @@ test("completed multi-agent transcript reveals all agent process rows from the p
   await expect(feed).not.toContainText("该任务交给 产品策略、QA 处理。");
   await expect(feed).not.toContainText("Smoke ID");
   await expect(feed).not.toContainText("开始 workflow");
+  await expect(feed).not.toContainText("原始请求:");
+  await expect(feed).not.toContainText("已物化的执行操作:");
+  await expect(feed).not.toContainText("参与者操作归属:");
+  await expect(feed).not.toContainText("r5-packaged-restart-proof.txt");
 
   const workCell = assistantTranscript.locator(".conversation-work-cell").first();
   await expandOperationBubbleIfCollapsed(workCell);
@@ -7789,6 +7808,85 @@ test("completed multi-agent transcript reveals all agent process rows from the p
   await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("运行 smoke 验收检查");
   await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web test:e2e -- login-smoke");
   await maybeCaptureR32Screenshot(page, "serial-multi-agent-expanded");
+});
+
+test("channel-root thread metadata still folds internal coordinator prompts into the transcript", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "zh-CN");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  const rootThreadId = "thread_channel_channel_engineering";
+  state.threads = [{
+    id: rootThreadId,
+    workspaceId: "workspace_default",
+    kind: "channel_discussion",
+    channelId: "channel_engineering",
+    title: "Main branch",
+    objective: "Main conversation branch for Engineering.",
+    status: "open",
+    surfaceKind: "channel_root",
+    relationKind: "root",
+    conversationMode: { mode: "default" },
+    createdAt: "2026-05-25T01:10:00.000Z",
+    updatedAt: "2026-05-25T01:10:00.000Z",
+  }];
+  state.channelMessages = [
+    {
+      id: "msg_channel_root_metadata",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: rootThreadId,
+      kind: "message",
+      intent: "discuss",
+      authorType: "local-user",
+      authorId: "tian",
+      body: "请完成一次真实的频道执行任务。",
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T01:10:01.000Z",
+      updatedAt: "2026-05-25T01:10:01.000Z",
+    },
+    {
+      id: "msg_channel_root_internal_prompt",
+      workspaceId: "workspace_default",
+      channelId: "channel_engineering",
+      threadId: rootThreadId,
+      kind: "ai_reply",
+      intent: "discuss",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: [
+        "**这条用户消息是一个多参与者可执行 workflow。**",
+        "",
+        "原始请求:",
+        "请完成一次真实的频道执行任务。",
+        "",
+        "执行任务: 这是内部协调器 prompt，不应作为普通正文展示。",
+        "",
+        "已物化的执行操作:",
+        "- create_file: file_create -> proof.txt; owner Engineer",
+      ].join("\n"),
+      mentions: [],
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-05-25T01:10:02.000Z",
+      updatedAt: "2026-05-25T01:10:02.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const feed = page.locator(".message-feed");
+  await expect(feed).toContainText("请完成一次真实的频道执行任务。");
+  await expect(feed).not.toContainText("这条用户消息是一个多参与者可执行 workflow");
+  await expect(feed).not.toContainText("原始请求:");
+  await expect(feed).not.toContainText("内部协调器 prompt");
 });
 
 test("completed single-step agent span without branch metadata keeps expandable process detail inside one assistant transcript", async ({ page }) => {
@@ -10070,117 +10168,12 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   const teamSummary = assistantTranscript.locator(".channel-team-experts-summary");
   await expect(teamSummary).toHaveCount(0);
   const transcriptArtifacts = assistantTranscript.locator(".conversation-turn-artifacts");
-  const artifactRows = transcriptArtifacts.locator(".conversation-work-cell-artifact-row");
-  await expect(artifactRows).toHaveCount(2);
-  const artifactSurfaceWidth = await transcriptArtifacts.evaluate((element) => Math.round(element.getBoundingClientRect().width));
-  expect(artifactSurfaceWidth).toBeGreaterThan(680);
-  await expect.poll(async () => Math.round((await artifactRows.first().boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
-  const docArtifactRow = artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" });
-  await expect(docArtifactRow).toHaveCount(1);
-  await expect(artifactRows.filter({ hasText: "ConversationWorkCell.tsx" })).toHaveCount(1);
-  await expect(transcriptArtifacts.getByRole("button", { name: "打开方式" })).toHaveCount(2);
-  await docArtifactRow.evaluate((element) => element.scrollIntoView({ block: "end" }));
-  const openOptionsRequest = page.waitForRequest((request) => {
-    const url = new URL(request.url());
-    return url.pathname === "/workspace-files/open-options" &&
-      url.searchParams.get("path") === "docs/design/conversation-work-cell-operation-records.md";
-  });
-  const openWithTrigger = docArtifactRow.getByRole("button", { name: "打开方式" });
-  const feedScrollHeightBeforeOpen = await feed.evaluate((element) => element.scrollHeight);
-  await openWithTrigger.click();
-  await openOptionsRequest;
-  const openMenu = docArtifactRow.locator(".workspace-file-open-popover");
-  await expect(openMenu).toContainText("Visual Studio Code");
-  await expect(openMenu).toContainText("TextEdit");
-  await expect(openMenu).not.toContainText("Default app");
-  const vscodeOpenIcon = openMenu.getByRole("button", { name: "Visual Studio Code", exact: true }).locator(".workspace-file-open-target-icon > img");
-  const textEditOpenIcon = openMenu.getByRole("button", { name: "TextEdit", exact: true }).locator(".workspace-file-open-target-icon > img");
-  await expect(vscodeOpenIcon).toHaveAttribute("src", /\/workspace-files\/open-icons\/vscode\?/u);
-  await expect(textEditOpenIcon).toHaveAttribute("src", /\/workspace-files\/open-icons\/textedit\?/u);
-  await expect.poll(() => vscodeOpenIcon.evaluate((image) => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
-  await expect.poll(() => textEditOpenIcon.evaluate((image) => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
-  await expect(openMenu.locator(".workspace-file-open-target-icon > svg")).toHaveCount(2);
-  await expect(openMenu.locator(".workspace-file-open-target-icon > svg").first()).toBeVisible();
-  const [openWithTriggerBox, openMenuBox] = await Promise.all([
-    openWithTrigger.boundingBox(),
-    openMenu.boundingBox(),
-  ]);
-  expect(openWithTriggerBox).not.toBeNull();
-  expect(openMenuBox).not.toBeNull();
-  expect(openMenuBox!.y + openMenuBox!.height).toBeLessThanOrEqual(openWithTriggerBox!.y - 4);
-  expect(await feed.evaluate((element) => element.scrollHeight)).toBe(feedScrollHeightBeforeOpen);
-  await openWithTrigger.click();
-  await docArtifactRow.evaluate((element) => {
-    const scrollOwner = element.closest<HTMLElement>(".message-feed");
-    if (!scrollOwner) {
-      throw new Error("Message feed scroll owner is missing.");
-    }
-    scrollOwner.scrollTop += element.getBoundingClientRect().top - scrollOwner.getBoundingClientRect().top - 48;
-  });
-  await expect.poll(async () => {
-    const [feedBox, triggerBox] = await Promise.all([feed.boundingBox(), openWithTrigger.boundingBox()]);
-    return feedBox && triggerBox ? Math.round(triggerBox.y - feedBox.y) : -1;
-  }).toBeLessThan(180);
-  await openWithTrigger.click();
-  const [downwardTriggerBox, downwardMenuBox] = await Promise.all([
-    openWithTrigger.boundingBox(),
-    openMenu.boundingBox(),
-  ]);
-  expect(downwardTriggerBox).not.toBeNull();
-  expect(downwardMenuBox).not.toBeNull();
-  expect(downwardMenuBox!.y).toBeGreaterThanOrEqual(downwardTriggerBox!.y + downwardTriggerBox!.height + 4);
-  const openWorkspaceRequest = page.waitForRequest((request) =>
-    request.method() === "POST" && new URL(request.url()).pathname === "/workspace-files/open"
-  );
-  await openMenu.getByRole("button", { name: "TextEdit", exact: true }).click();
-  await openWorkspaceRequest;
-  await expect(openMenu).toHaveCount(0);
-  await expect(transcriptArtifacts).not.toContainText("channel-work-cell-e2e.log");
-  const changedGroup = transcriptArtifacts.locator(".conversation-work-cell-change-group");
-  await expect.poll(async () => Math.round((await changedGroup.boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
-  const changedSummary = changedGroup.locator(".conversation-work-cell-change-summary");
-  await expect(changedSummary).toContainText("已编辑 5 个文件");
-  await expect(changedSummary.locator(".conversation-work-cell-change-stat .add")).toHaveText("+15");
-  await expect(changedSummary.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-4");
-  await expect(changedSummary.locator(":scope > svg")).toHaveCount(0);
-  await expect(changedSummary).not.toHaveAttribute("aria-expanded");
-  const undoButton = changedSummary.getByRole("button", { name: "撤销", exact: true });
-  await expect(undoButton).toBeEnabled();
-  await undoButton.click();
-  let recoveryDialog = page.getByRole("dialog", { name: "撤销对 5 个文件的更改？" });
-  await expect(recoveryDialog).toBeVisible();
-  const undoRequest = page.waitForRequest((request) =>
-    request.method() === "POST" && new URL(request.url()).pathname.startsWith("/workflows/") &&
-      new URL(request.url()).pathname.endsWith("/workspace-changes/undo")
-  );
-  await recoveryDialog.getByRole("button", { name: "撤销", exact: true }).click();
-  await undoRequest;
-  const reapplyButton = changedSummary.getByRole("button", { name: "重新应用", exact: true });
-  await expect(reapplyButton).toBeEnabled();
-  await reapplyButton.click();
-  recoveryDialog = page.getByRole("dialog", { name: "重新应用对 5 个文件的更改？" });
-  await expect(recoveryDialog).toBeVisible();
-  const reapplyRequest = page.waitForRequest((request) =>
-    request.method() === "POST" && new URL(request.url()).pathname.startsWith("/workflows/") &&
-      new URL(request.url()).pathname.endsWith("/workspace-changes/reapply")
-  );
-  await recoveryDialog.getByRole("button", { name: "重新应用", exact: true }).click();
-  await reapplyRequest;
-  await expect(undoButton).toBeEnabled();
-  await expect(changedSummary.getByRole("button", { name: "审核", exact: true })).toBeVisible();
-  const changedFilesList = changedGroup.locator(".conversation-work-cell-change-files");
-  const firstChangedFile = changedFilesList.locator(".conversation-work-cell-change-file").first();
-  const [changedFilesListBox, firstChangedFileBox, firstChangedPathBox] = await Promise.all([
-    changedFilesList.boundingBox(),
-    firstChangedFile.boundingBox(),
-    firstChangedFile.locator("code").boundingBox(),
-  ]);
-  expect(changedFilesListBox).not.toBeNull();
-  expect(firstChangedFileBox).not.toBeNull();
-  expect(firstChangedPathBox).not.toBeNull();
-  expect(Math.round(firstChangedFileBox!.width)).toBe(Math.round(changedFilesListBox!.width));
-  expect(Math.round(firstChangedPathBox!.x - firstChangedFileBox!.x)).toBeLessThanOrEqual(16);
-  await expect(transcriptArtifacts.locator(".conversation-work-cell-artifacts").locator(":scope > *").last()).toHaveClass(/conversation-work-cell-change-group/);
+  await expect(transcriptArtifacts).toHaveCount(0);
+  const reportChangedFiles = terminalReport.locator(".terminal-report-section.kind-change .terminal-report-file-reference");
+  await expect(reportChangedFiles).toHaveCount(3);
+  await expect(reportChangedFiles.nth(0)).toContainText("ConversationWorkCell.tsx");
+  await expect(reportChangedFiles.nth(1)).toContainText("components.css");
+  await expect(reportChangedFiles.nth(2)).toContainText("conversation-work-cell-operation-records.md");
   await expect.poll(() =>
     assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {
       const childClasses = Array.from(element.children).map((child) => child.className.toString());
@@ -10190,14 +10183,14 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
       const actionsIndex = childClasses.findIndex((className) => className.includes("channel-message-row-footer-stack"));
       return {
         operationBeforeReport: operationIndex >= 0 && reportIndex > operationIndex,
-        reportBeforeArtifacts: artifactsIndex > reportIndex,
-        artifactsBeforeActions: actionsIndex > artifactsIndex,
+        noDuplicateArtifacts: artifactsIndex === -1,
+        actionsAreLast: actionsIndex === childClasses.length - 1,
       };
     }),
   ).toEqual({
     operationBeforeReport: true,
-    reportBeforeArtifacts: true,
-    artifactsBeforeActions: true,
+    noDuplicateArtifacts: true,
+    actionsAreLast: true,
   });
 
   await expandOperationBubbleIfCollapsed(workCell);
@@ -10241,7 +10234,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-toggle")).toHaveCount(0);
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-main")).toHaveCSS("padding-left", "0px");
   const thoughtColor = await engineerNoteRow.locator(".conversation-work-cell-row-copy strong").evaluate((element) => getComputedStyle(element).color);
-  const conversationColor = await terminalReport.locator(".terminal-report-outcome-copy > span").evaluate((element) => getComputedStyle(element).color);
+  const conversationColor = await terminalReport.locator(".terminal-report-rich-copy").evaluate((element) => getComputedStyle(element).color);
   expect(thoughtColor).toBe(conversationColor);
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-size", "13px");
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-weight", "550");
@@ -10327,81 +10320,6 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   expect(qaCommandLayout.overflowsHorizontally).toBe(false);
   expect(qaCommandLayout.contentHeight).toBeGreaterThan(qaCommandLayout.lineHeight * 1.5);
 
-  const demoPreviewRequests: string[] = [];
-  page.on("request", (request) => {
-    const url = request.url();
-    if (url.includes("demo_work_cell") && url.includes("/preview") && new URL(url).searchParams.get("maxBytes") === "65536") {
-      demoPreviewRequests.push(url);
-    }
-  });
-  const changedFiles = changedGroup.locator(".conversation-work-cell-change-file");
-  await expect(changedFiles).toHaveCount(3);
-  await expect(changedFiles.nth(0)).toContainText("ConversationWorkCell.tsx");
-  await expect(changedFiles.nth(0).locator(".conversation-work-cell-change-stat .add")).toHaveText("+4");
-  await expect(changedFiles.nth(0).locator(".conversation-work-cell-change-stat .delete")).toHaveText("-1");
-  await expect(changedFiles.nth(1)).toContainText("components.css");
-  await expect(changedFiles.nth(2)).toContainText("channel.spec.ts");
-  const showMoreChanges = changedGroup.locator(".conversation-work-cell-change-more");
-  await expect(showMoreChanges).toContainText("再显示 2 个文件");
-  await showMoreChanges.click();
-  await expect(changedFiles).toHaveCount(5);
-  await expect(changedFiles.nth(3)).toContainText("conversation-work-cell-operation-records.md");
-  await expect(changedFiles.nth(4)).toContainText("zh-CN.ts");
-  await expect(showMoreChanges).toContainText("收起部分文件");
-  await showMoreChanges.click();
-  await expect(changedFiles).toHaveCount(3);
-
-  const hoverPreview = page.locator(".conversation-artifact-hover-preview");
-  await page.mouse.move(0, 0);
-  await changedFiles.nth(0).hover();
-  await page.waitForTimeout(1_850);
-  await expect(hoverPreview).toHaveCount(0);
-  await page.waitForTimeout(250);
-  await expect(hoverPreview).toBeVisible();
-  await expect(hoverPreview).toContainText("ConversationWorkCell.tsx");
-  await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
-  await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(1);
-  await expect(hoverPreview.locator(".diff-line.context")).toHaveCount(6);
-  await expect(hoverPreview.locator(".diff-fold")).toHaveCount(0);
-  await expect(hoverPreview).toContainText("const operationRows = visibleOperationRows(model);");
-  await expect(hoverPreview).toContainText("{operationBody}");
-  const hoverPreviewBody = hoverPreview.locator(".conversation-artifact-hover-preview-body");
-  const hoverDiffViewer = hoverPreview.locator(".diff-viewer");
-  await expect(hoverPreviewBody).toHaveCSS("overflow-y", "auto");
-  await expect(hoverDiffViewer).toHaveCSS("overflow-y", "visible");
-  const hoverScrollRange = await hoverPreviewBody.evaluate((element) => element.scrollHeight - element.clientHeight);
-  expect(hoverScrollRange).toBeGreaterThan(0);
-  await hoverPreviewBody.hover();
-  await page.mouse.wheel(0, 120);
-  await expect.poll(() => hoverPreviewBody.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-  await expect(hoverPreview).toBeVisible();
-  await changedFiles.nth(1).focus();
-  await expect(hoverPreview).toContainText("components.css");
-  await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
-  await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(0);
-  await expect(hoverPreview.locator(".diff-line.context")).toHaveCount(6);
-  await expect(hoverPreview).toContainText("transition: color 120ms ease;");
-  await expect(hoverPreview).toContainText("min-width: 0;");
-  const sourceRowBox = await changedFiles.nth(1).boundingBox();
-  const hoverPreviewBox = await hoverPreview.boundingBox();
-  expect(sourceRowBox).not.toBeNull();
-  expect(hoverPreviewBox).not.toBeNull();
-  expect(hoverPreviewBox!.y + hoverPreviewBox!.height).toBeLessThanOrEqual(sourceRowBox!.y - 6);
-  await hoverPreview.hover();
-  await expect(hoverPreview).toBeVisible();
-  await page.mouse.move(0, 0);
-  await expect(hoverPreview).toHaveCount(0);
-
-  const docArtifactPreview = transcriptArtifacts.getByRole("button", {
-    name: "预览: conversation-work-cell-operation-records.md",
-    exact: true,
-  });
-  await docArtifactPreview.scrollIntoViewIfNeeded();
-  await docArtifactPreview.click();
-  await expect(hoverPreview).toBeVisible();
-  await expect(hoverPreview).toContainText("# Conversation Work Cell Operation Records");
-  await expect(page.locator(".artifact-preview-drawer")).toHaveCount(0);
-  expect(demoPreviewRequests).toHaveLength(0);
   expect(runtimeErrors).toEqual([]);
 });
 

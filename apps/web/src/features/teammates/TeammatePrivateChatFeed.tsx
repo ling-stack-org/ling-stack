@@ -320,9 +320,9 @@ export function TeammatePrivateChatFeed({
                 ) : null}
                 errorNode={(
                   <>
-                    {message.errorMessage && message.status !== "cancelled" && !projection.recoveredHistoricalProviderFailure ? (
+                    {projection.errorText ? (
                       <InlineFeedback className="teammate-message-error" tone="danger">
-                        {message.errorMessage}
+                        {projection.errorText}
                       </InlineFeedback>
                     ) : null}
                     {message.pendingReplacement ? (

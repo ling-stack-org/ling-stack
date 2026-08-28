@@ -96,6 +96,7 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
   const itemsByTurnId = groupBy(conversationItems.filter((item) => Boolean(item.turnId)), (item) => item.turnId ?? "");
   const itemsByThreadId = groupBy(conversationItems, (item) => item.threadId);
   const messagesByTurnId = groupBy(channelMessages.filter((message) => Boolean(message.turnId)), (message) => message.turnId ?? "");
+  const messagesByThreadId = groupBy(channelMessages.filter((message) => Boolean(message.threadId)), (message) => message.threadId ?? "");
   const legacyChildMessagesBySourceItemId = groupBy(
     channelMessages.filter((message) => !message.turnId && Boolean(message.threadId)),
     (message) => message.threadId ?? "",
@@ -136,6 +137,7 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
     const childMessages = uniqueMessages([
       ...(sourceMessage.turnId ? messagesByTurnId.get(sourceMessage.turnId) ?? [] : []),
       ...(legacyChildMessagesBySourceItemId.get(sourceMessage.id) ?? []),
+      ...threadMessagesForSource(sourceMessage, messagesByThreadId),
     ])
       .filter((message) => message.id !== sourceMessage.id)
       .sort(compareByCreatedAtThenId);
@@ -212,7 +214,48 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
 }
 
 function isRootUserMessage(message: ChannelMessage): boolean {
-  return message.authorType === "local-user" && message.kind === "message" && (Boolean(message.turnId) || !message.threadId);
+  // A channel-root user message may carry the channel discussion thread id.
+  // Treat every local message as a turn root and let threadMessagesForSource
+  // assign same-thread coordinator replies to the nearest preceding request.
+  // The previous `!message.threadId` guard left those replies in the activity
+  // feed, where the internal workflow prompt was rendered as user-facing text.
+  return message.authorType === "local-user" && message.kind === "message";
+}
+
+function threadMessagesForSource(
+  sourceMessage: ChannelMessage,
+  messagesByThreadId: ReadonlyMap<string, readonly ChannelMessage[]>,
+): readonly ChannelMessage[] {
+  // A canonical item without a turn id has no reliable parent relation. Do
+  // not infer ownership from adjacency alone: an unrelated assistant message
+  // in the same channel-root thread must remain a standalone activity row.
+  const sourceTurnId = sourceMessage.turnId?.trim();
+  if (!sourceTurnId) {
+    return [];
+  }
+  const threadId = sourceMessage.threadId?.trim();
+  if (!threadId) {
+    return [];
+  }
+  const threadMessages = messagesByThreadId.get(threadId);
+  if (!threadMessages || threadMessages.length === 0) {
+    return [];
+  }
+  const ordered = [...threadMessages].sort(compareByCreatedAtThenId);
+  const sourceIndex = ordered.findIndex((message) => message.id === sourceMessage.id);
+  if (sourceIndex < 0) {
+    return [];
+  }
+  const result: ChannelMessage[] = [];
+  for (const message of ordered.slice(sourceIndex + 1)) {
+    if (message.authorType === "local-user" && message.kind === "message") {
+      break;
+    }
+    if (message.turnId === sourceTurnId) {
+      result.push(message);
+    }
+  }
+  return result;
 }
 
 function uniqueMessages(messages: readonly ChannelMessage[]): readonly ChannelMessage[] {

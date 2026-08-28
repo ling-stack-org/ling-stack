@@ -224,7 +224,7 @@ export function NormalConversationFeed({
       />
       {latestButtonVisible ? (
         <IconButton
-          className="normal-conversation-latest-button"
+          className="message-feed-latest-button normal-conversation-latest-button"
           icon={ArrowDown}
           label={t("Jump to latest message")}
           onClick={() => scrollToLatest()}
