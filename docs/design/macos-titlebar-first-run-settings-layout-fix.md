@@ -15,7 +15,9 @@ Repair three layout ownership failures without changing product behavior:
 1. Keep step icons and labels at content width, give connectors the flexible remainder, and use a compact
    vertical list only when the dialog is genuinely too narrow.
 2. Render one real, full-width `48px` macOS Desktop Chrome row before the application body. Keep one
-   `32x32` Sidebar toggle at `x=84px` and `y=8px`, after the `76px` traffic-light exclusion.
+   `32x32` Sidebar toggle at `x=84px` and `y=8px`, after the `76px` traffic-light exclusion. Set the
+   native traffic-light origin to `x=12px`, `y=17px`, so its `24px` visual center aligns with the
+   Sidebar toggle, active title and all titlebar actions.
 3. Mount the active surface Header into the Desktop Chrome title slot. The Sidebar, compact rail,
    workspace body and inspector all begin below the row; macOS must never render an inline duplicate.
 4. Keep the Web and Windows toggle and Header inside their existing page layouts. Suppress those copies only when macOS Desktop
@@ -35,6 +37,8 @@ Repair three layout ownership failures without changing product behavior:
 
 - Chinese and long-locale step labels remain readable and do not create horizontal overflow.
 - The titlebar is one `48px` layout row spanning the viewport; no body content renders behind it.
+- Native traffic lights, the Sidebar toggle, active title and right-side actions share the same
+  `y=24px` visual centerline; no control group may use the default `hiddenInset` vertical position.
 - The macOS Sidebar toggle keeps identical geometry and behavior before and after collapse, with no duplicate.
 - Home, channel, normal conversation and private chat render at most one Header, in the shared row.
 - Back to app fills the Settings navigation content width below the shared row.

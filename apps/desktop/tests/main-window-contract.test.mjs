@@ -45,7 +45,11 @@ test("main window options freeze the shared geometry and platform chrome contrac
     parseDesktopThemePackageFirstPaintArgument(macOptions.webPreferences?.additionalArguments ?? []),
     themePackageFirstPaint,
   );
-  assert.deepEqual(macOptions, { ...commonOptions, titleBarStyle: "hiddenInset" });
+  assert.deepEqual(macOptions, {
+    ...commonOptions,
+    titleBarStyle: "hiddenInset",
+    trafficLightPosition: { x: 12, y: 17 },
+  });
   assert.deepEqual(windowsOptions, { ...commonOptions, titleBarStyle: "default" });
   assert.equal(
     buildMainWindowOptions({ backgroundColor: "#f6f7f8", daemonBaseUrl, themePackageFirstPaint }, "win32").backgroundColor,
@@ -141,6 +145,7 @@ test("main window removes the default application menu only on Windows", async (
 
   assert.equal(macHarness.removeMenuCount, 0);
   assert.equal(macHarness.capturedOptions.titleBarStyle, "hiddenInset");
+  assert.deepEqual(macHarness.capturedOptions.trafficLightPosition, { x: 12, y: 17 });
 });
 
 test("main window denies every popup and opens only HTTP(S) URLs externally", async () => {

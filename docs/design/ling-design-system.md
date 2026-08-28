@@ -60,6 +60,9 @@ Settings is a management workspace, not a second copy of the main app.
 - On macOS, the shared `48px` Desktop titlebar owns the traffic-light safe area. Settings
   begins below that row, and `Back to app` fills the navigation content width without a
   separate top offset, narrowing, or horizontal translation.
+- The native traffic lights, Sidebar toggle, active title and titlebar actions share the
+  same `y=24px` visual centerline. Native and renderer chrome must not use separate vertical
+  alignment rules.
 - Diagnostics opened from Settings must render inside the Settings shell.
 - Long explanations, policy previews, paths, runner ids, plugin ids, and source
   evidence are collapsed by default.

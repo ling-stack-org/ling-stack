@@ -52,7 +52,9 @@ Composer 草稿、运行状态或主题。
   Desktop Chrome 持有，固定在红黄绿窗口按钮右侧；展开/收缩 Sidebar 不得改变按钮位置、尺寸、
   焦点或交互所有权。
 - 工具槽避开 `76px` traffic-light exclusion，按钮保持 `32x32` 和 `no-drag`，按钮前后各保留
-  `8px` 间距，拖拽 sibling 不得覆盖该区域。Web 和 Windows 继续使用页面内 Sidebar 按钮。
+  `8px` 间距，拖拽 sibling 不得覆盖该区域。macOS 原生交通灯起点为 `x=12px, y=17px`；交通灯、
+  Sidebar 按钮、当前标题和右侧操作的视觉中心统一为 `y=24px`。Web 和 Windows 继续使用页面内
+  Sidebar 按钮。
 - macOS Desktop 收缩后保留 `48px` compact rail，但 rail 不重复渲染展开按钮；“新建对话”成为
   rail 的第一个行动并保持 `36x36`。本轮不增加返回、前进或其他无状态支撑的 titlebar 控件。
 - 当前页面 Header 通过共享 titlebar surface slot 进入同一行；Sidebar、rail、workspace body 和
@@ -78,4 +80,5 @@ Composer 草稿、运行状态或主题。
 - 页面不可用状态必须保留一个明确恢复行动；正常状态不在 Header 堆积标签。
 - macOS Desktop 展开/收起 Sidebar 时，titlebar 必须保持 `0,0` 起始、全宽和 `48px` 高；按钮保持
   同一几何位置，不得与 traffic lights、“新建对话”或拖拽区重叠。正文顶边必须等于 titlebar
-  底边，按钮尺寸、键盘顺序和可拖拽区必须由几何回归验证。
+  底边，原生交通灯和所有 Web titlebar 控件必须共享 `y=24px` 中心线；按钮尺寸、键盘顺序和
+  可拖拽区必须由几何回归验证。

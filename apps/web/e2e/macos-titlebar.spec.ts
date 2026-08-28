@@ -142,9 +142,19 @@ test("macOS normal-conversation and channel headers are draggable while their co
   const titlebarSurface = page.locator("[data-desktop-window-titlebar-surface='true']");
   const normalHeader = titlebarSurface.locator("[data-ui2-normal-conversation-header='true']");
   const searchTrigger = normalHeader.getByRole("button", { name: "Search" });
+  const sidebarToggle = page.locator(".desktop-window-sidebar-toggle");
   await expectDragRegion(normalHeader);
   await expect(conversation.locator("[data-ui2-normal-conversation-header='true']")).toHaveCount(0);
   await expect.poll(async () => roundedBox(normalHeader)).toMatchObject({ height: 48, y: 0 });
+  await expect.poll(async () => ({
+    actionCenters: await roundedCenterYs(normalHeader.getByRole("button")),
+    sidebarToggleCenter: await roundedCenterY(sidebarToggle),
+    titleCenter: await roundedCenterY(normalHeader.getByRole("heading", { name: normalConversationFixtureTitle })),
+  })).toEqual({
+    actionCenters: [24, 24, 24, 24],
+    sidebarToggleCenter: 24,
+    titleCenter: 24,
+  });
   await expectNoDragControl(searchTrigger);
   await captureIfRequested(page, testInfo.outputPath("normal-conversation.png"));
   await searchTrigger.click();
@@ -487,6 +497,19 @@ async function expectNoDragControl(locator: Locator): Promise<void> {
 async function expectSingleTitlebarOwner(titlebarSurface: Locator, heading: string): Promise<void> {
   await expect(titlebarSurface.locator(":scope > *")).toHaveCount(1);
   await expect(titlebarSurface.getByRole("heading", { name: heading })).toBeVisible();
+}
+
+async function roundedCenterY(locator: Locator): Promise<number> {
+  const box = await locator.boundingBox();
+  return Math.round((box?.y ?? -1) + (box?.height ?? 0) / 2);
+}
+
+async function roundedCenterYs(locator: Locator): Promise<number[]> {
+  const centers: number[] = [];
+  for (let index = 0; index < await locator.count(); index += 1) {
+    centers.push(await roundedCenterY(locator.nth(index)));
+  }
+  return centers;
 }
 
 async function appRegion(locator: Locator): Promise<string> {

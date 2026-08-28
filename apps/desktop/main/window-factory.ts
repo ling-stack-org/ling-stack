@@ -3,6 +3,8 @@ import { fileURLToPath } from "node:url";
 import type { DesktopThemePackageFirstPaintState } from "../shared/theme-package-capabilities.js";
 import { encodeDesktopThemePackageFirstPaintArgument } from "../shared/theme-package-first-paint.js";
 
+const macosMainWindowTrafficLightPosition = Object.freeze({ x: 12, y: 17 });
+
 export interface MainWindowFactoryInput {
   readonly backgroundColor?: string;
   readonly daemonBaseUrl: string;
@@ -27,7 +29,12 @@ export function buildMainWindowOptions(
     minHeight: 680,
     backgroundColor: input.backgroundColor ?? "#111315",
     show: false,
-    titleBarStyle: platform === "darwin" ? "hiddenInset" : "default",
+    ...(platform === "darwin"
+      ? {
+          titleBarStyle: "hiddenInset" as const,
+          trafficLightPosition: macosMainWindowTrafficLightPosition,
+        }
+      : { titleBarStyle: "default" as const }),
     webPreferences: {
       preload: fileURLToPath(new URL("../preload/main-window.cjs", import.meta.url)),
       contextIsolation: true,

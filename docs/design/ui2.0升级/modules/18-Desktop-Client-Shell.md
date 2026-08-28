@@ -51,7 +51,8 @@ apps/web/src/styles/app/macos-titlebar.css
 Current main window:
 
 - default `1440x920`；minimum `980x680`；
-- macOS `hiddenInset` title bar，Windows default chrome；
+- macOS `hiddenInset` title bar，并将原生交通灯固定到 `x=12px, y=17px`，使圆心与 `48px`
+  Desktop titlebar 内的标题和操作统一落在 `y=24px`；Windows 使用 default chrome；
 - loads the built shared Web UI；
 - starts or reuses one compatible loopback daemon；
 - uses a native warning Dialog for incompatible daemon recovery；
@@ -59,11 +60,12 @@ Current main window:
 - exposes a narrow preload capability bridge；
 - blocks renderer navigation and opens approved HTTP(S) links externally。
 
-The pre-implementation `hiddenInset` BrowserWindow was correct, but its renderer drag contract covered only
-the expanded Sidebar top area and three Feature Header class selectors。`DESKTOP-SHELL-MAIN-WINDOW-DRAG-001`
-closes that gap with shared Header markers、Home/Sidebar fallback regions、a traffic-light exclusion and portal
-overlay subtraction，without changing BrowserWindow options or adding visible chrome。Detailed ownership、
-geometry and tests are defined below。
+The pre-implementation `hiddenInset` BrowserWindow had two gaps: its renderer drag contract covered only
+the expanded Sidebar top area and three Feature Header class selectors, and its default traffic-light vertical
+position did not align with the shared `48px` renderer titlebar。`DESKTOP-SHELL-MAIN-WINDOW-DRAG-001` closes
+the drag gap with shared Header markers、Home/Sidebar fallback regions、a traffic-light exclusion and portal
+overlay subtraction；the main-window geometry contract sets one native traffic-light position without adding
+visible chrome。Detailed ownership、geometry and tests are defined below。
 
 ## Ownership
 
