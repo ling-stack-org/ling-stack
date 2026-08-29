@@ -53,6 +53,7 @@ export {
   normalizeConversationTimelineItems,
 } from "./transcript-projector.js";
 export {
+  mergeCanonicalTranscriptInputs,
   projectCanonicalConversationTimeline,
 } from "./canonical-transcript-projector.js";
 export type {

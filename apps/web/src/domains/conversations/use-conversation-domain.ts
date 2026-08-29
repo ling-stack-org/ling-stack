@@ -26,6 +26,7 @@ import {
   type ConversationErrorOperation,
 } from "./conversation-error-owner.js";
 import { createConversationDraftIdentity } from "./conversation-surface-identity.js";
+import { mergeConversationDetailSnapshots } from "./conversation-detail-merge.js";
 import { useConversationStreamBusyOwner } from "./use-conversation-stream-busy-owner.js";
 
 export interface ConversationSendInput {
@@ -426,7 +427,7 @@ export function useConversationDomain(input: {
           try {
             const detail = await getConversation(workspaceCwd, requestedThreadId);
             if (requestedThreadId === activeThreadId && canCommitToSurface(requestedThreadId)) {
-              setSelectedConversationDetail((current) => mergeConversationDetailSnapshot(current, detail));
+              setSelectedConversationDetail((current) => mergeConversationDetailSnapshots(current, detail));
             }
           } catch {
             // The terminal refresh remains authoritative if an incremental refresh races startup.
@@ -636,26 +637,6 @@ function conversationEventNeedsDetailRefresh(type: ConversationStreamRunEvent["e
     || type === "run_continuation_starting"
     || type === "run_continuation_started"
     || type === "run_intervention_failed";
-}
-
-function mergeConversationDetailSnapshot(
-  current: ConversationDetailResponse | undefined,
-  snapshot: ConversationDetailResponse,
-): ConversationDetailResponse {
-  if (!current || current.thread.id !== snapshot.thread.id) {
-    return snapshot;
-  }
-  const messages = new Map(snapshot.messages.map((message) => [conversationMessageMergeKey(message), message]));
-  for (const message of current.messages) {
-    messages.set(conversationMessageMergeKey(message), message);
-  }
-  return {
-    ...snapshot,
-    messages: [...messages.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
-    conversationItems: snapshot.conversationItems,
-    runLinks: snapshot.runLinks,
-    artifacts: snapshot.artifacts,
-  };
 }
 
 function formatConversationArchiveError(

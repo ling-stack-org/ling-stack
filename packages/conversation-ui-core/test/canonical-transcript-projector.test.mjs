@@ -711,6 +711,68 @@ test("stable payload equality does not depend on object key order", () => {
   assert.equal(projection.diagnostics.some((entry) => entry.code === "owner_conflict"), false);
 });
 
+test("canonical input merge is order-independent for reconnect and reordered deltas", () => {
+  const initial = {
+    scope,
+    sourceSequence: 2,
+    sourceRevision: "snapshot-2",
+    items: [
+      item("user-1", 1, "user_message", { body: "Inspect", format: "plain_text" }),
+      item("tool-1", 2, "tool_call", { toolCallId: "call-1", toolName: "bash" }),
+    ],
+    actions: [action("run-1", 2, { revision: 2, sourceRefs: [conversationRef("tool-1")] })],
+    turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+  };
+  const update = {
+    ...initial,
+    sourceRevision: "snapshot-3",
+    actions: [action("run-1", 3, { revision: 3, title: "Run command", sourceRefs: [{ id: "tool-1", kind: "conversation_item" }] })],
+  };
+  const forward = projectCanonicalConversationTimeline(mergeCanonicalTranscriptInputs(initial, update));
+  const reversed = projectCanonicalConversationTimeline(mergeCanonicalTranscriptInputs(update, initial));
+  assert.deepEqual(reversed.items, forward.items);
+  assert.deepEqual(reversed.auditItems, forward.auditItems);
+  assert.deepEqual(reversed.terminalEvidence, forward.terminalEvidence);
+  assert.deepEqual(reversed.diagnostics, forward.diagnostics);
+  assert.equal(forward.items.find((entry) => entry.actionId === "run-1")?.revision, 3);
+  assert.equal(forward.sourceRevision, "snapshot-3");
+});
+
+test("canonical input merge ignores lower revisions but rejects equal-revision payload conflicts", () => {
+  const base = {
+    scope,
+    sourceSequence: 1,
+    sourceRevision: "base",
+    items: [item("tool-1", 1, "tool_call", { toolCallId: "call-1", toolName: "bash" })],
+    actions: [action("run-1", 4, { revision: 4, sourceRefs: [conversationRef("tool-1")] })],
+    turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+  };
+  const stale = { ...base, actions: [action("run-1", 2, { revision: 2, title: "stale", sourceRefs: [conversationRef("tool-1")] })] };
+  const staleProjection = projectCanonicalConversationTimeline(mergeCanonicalTranscriptInputs(base, stale));
+  assert.equal(staleProjection.items.find((entry) => entry.actionId === "run-1")?.revision, 4);
+
+  const equalConflict = { ...base, actions: [action("run-1", 4, { revision: 4, title: "conflicting", sourceRefs: [conversationRef("tool-1")] })] };
+  const conflictProjection = projectCanonicalConversationTimeline(mergeCanonicalTranscriptInputs(base, equalConflict));
+  assert.equal(conflictProjection.items.some((entry) => entry.actionId === "run-1"), false);
+  assert.equal(conflictProjection.diagnostics.some((entry) => entry.code === "owner_conflict"), true);
+});
+
+test("stable payload equality does not depend on object key order", () => {
+  const projection = projectCanonicalConversationTimeline({
+    scope,
+    sourceSequence: 1,
+    sourceRevision: "stable-equality",
+    items: [item("tool-1", 1, "tool_call", { toolCallId: "call-1", toolName: "bash" })],
+    actions: [
+      action("run-1", 4, { revision: 4, sourceRefs: [conversationRef("tool-1")], commandEvidence: { command: "node -v", latestEventSeq: 4, outputTail: [], outputTruncated: false } }),
+      action("run-1", 4, { revision: 4, sourceRefs: [conversationRef("tool-1")], commandEvidence: { outputTruncated: false, outputTail: [], latestEventSeq: 4, command: "node -v" } }),
+    ],
+    turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+  });
+  assert.equal(projection.items.filter((entry) => entry.actionId === "run-1").length, 1);
+  assert.equal(projection.diagnostics.some((entry) => entry.code === "owner_conflict"), false);
+});
+
 function item(id, sequence, kind, payload) {
   return {
     id,

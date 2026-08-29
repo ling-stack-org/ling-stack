@@ -257,7 +257,6 @@ test("detail adapter does not guess an action anchor from a lone generic item", 
   assert.equal(projection.items.some((entry) => entry.actionId === "unanchored"), false);
   assert.equal(projection.diagnostics.some((entry) => entry.code === "missing_anchor"), true);
 });
-
 function detailFixture(threadOverrides = {}) {
   const now = "2026-08-29T00:00:00.000Z";
   return {
