@@ -88,9 +88,8 @@ export function NormalConversationFeed({
 }: NormalConversationFeedProps): React.JSX.Element {
   const { t } = useI18n();
   const feedRef = useRef<HTMLDivElement | null>(null);
-  const contentResizeFrameRef = useRef<number | undefined>(undefined);
+  const tailReconciliationFrameRef = useRef<number | undefined>(undefined);
   const stickToLatestRef = useRef(true);
-  const mountedRef = useRef(false);
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [feedbackById, setFeedbackById] = useState<Record<string, "up" | "down">>({});
   const composerGateApprovalByRunId = useMemo(
@@ -107,8 +106,8 @@ export function NormalConversationFeed({
     workspaceCwd,
   }), [detailContext, messages, projectPath, runById, t, visibleMessages, workspaceCwd]);
   const generatedMediaByRunId = useMemo(() => groupGeneratedMediaByRunId(generatedMedia), [generatedMedia]);
-  const itemKey = useMemo(
-    () => feedItems.map((item) => `${item.message.id}:${item.message.updatedAt ?? item.message.createdAt}:${item.message.status ?? "ready"}`).join("|"),
+  const itemIdentityKey = useMemo(
+    () => feedItems.map((item) => item.message.id).join("|"),
     [feedItems],
   );
 
@@ -122,51 +121,55 @@ export function NormalConversationFeed({
     setLatestButtonVisible(false);
   }, []);
 
+  const reconcileTail = useCallback((): void => {
+    const feed = feedRef.current;
+    if (!feed) {
+      return;
+    }
+    if (stickToLatestRef.current) {
+      feed.scrollTop = feed.scrollHeight;
+      setLatestButtonVisible(false);
+      return;
+    }
+    setLatestButtonVisible(distanceFromLatest(feed) > latestThresholdPx);
+  }, []);
+
+  const scheduleTailReconciliation = useCallback((): void => {
+    if (tailReconciliationFrameRef.current !== undefined) {
+      return;
+    }
+    tailReconciliationFrameRef.current = globalThis.requestAnimationFrame(() => {
+      tailReconciliationFrameRef.current = undefined;
+      reconcileTail();
+    });
+  }, [reconcileTail]);
+
   useLayoutEffect(() => {
     const feed = feedRef.current;
     if (!feed) {
       return;
     }
-    if (!mountedRef.current || stickToLatestRef.current) {
-      mountedRef.current = true;
-      const frame = globalThis.requestAnimationFrame(() => scrollToLatest("auto"));
-      return () => globalThis.cancelAnimationFrame(frame);
-    }
-    setLatestButtonVisible(distanceFromLatest(feed) > latestThresholdPx);
-  }, [itemKey, scrollToLatest]);
+    scheduleTailReconciliation();
+  }, [itemIdentityKey, scheduleTailReconciliation]);
 
   useLayoutEffect(() => {
     const feed = feedRef.current;
     if (!feed || typeof ResizeObserver === "undefined") {
       return undefined;
     }
-    const observer = new ResizeObserver(() => {
-      if (contentResizeFrameRef.current !== undefined) {
-        return;
-      }
-      contentResizeFrameRef.current = globalThis.requestAnimationFrame(() => {
-        contentResizeFrameRef.current = undefined;
-        const currentFeed = feedRef.current;
-        if (!currentFeed) {
-          return;
-        }
-        if (stickToLatestRef.current) {
-          currentFeed.scrollTop = currentFeed.scrollHeight;
-          setLatestButtonVisible(false);
-          return;
-        }
-        setLatestButtonVisible(distanceFromLatest(currentFeed) > latestThresholdPx);
-      });
-    });
+    const observer = new ResizeObserver(() => scheduleTailReconciliation());
     Array.from(feed.children).forEach((child) => observer.observe(child));
+    return () => observer.disconnect();
+  }, [itemIdentityKey, scheduleTailReconciliation]);
+
+  useLayoutEffect(() => {
     return () => {
-      observer.disconnect();
-      if (contentResizeFrameRef.current !== undefined) {
-        globalThis.cancelAnimationFrame(contentResizeFrameRef.current);
-        contentResizeFrameRef.current = undefined;
+      if (tailReconciliationFrameRef.current !== undefined) {
+        globalThis.cancelAnimationFrame(tailReconciliationFrameRef.current);
+        tailReconciliationFrameRef.current = undefined;
       }
     };
-  }, [itemKey]);
+  }, []);
 
   function handleFeedScroll(event: UIEvent<HTMLDivElement>): void {
     const atLatest = distanceFromLatest(event.currentTarget) <= latestThresholdPx;
