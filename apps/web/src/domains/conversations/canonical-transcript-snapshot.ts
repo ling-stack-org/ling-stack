@@ -818,7 +818,6 @@ function selectContextSegments(
     return segment ? [[item.id, segment] as const] : [];
   }));
 }
-
 function readString(value: unknown, key: string): string | undefined {
   if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
   const candidate = (value as Record<string, unknown>)[key];
