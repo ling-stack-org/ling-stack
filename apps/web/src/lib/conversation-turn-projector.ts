@@ -393,6 +393,7 @@ function buildTranscriptBlocks(input: {
       operationRef: input.operation.ref,
     });
     if (
+      input.terminalMessages.length === 0 &&
       input.operation.cell.terminalReportId &&
       input.operation.cell.terminalReportRevisionKey &&
       input.operation.cell.terminalReportRows.length > 0

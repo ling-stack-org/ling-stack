@@ -88,7 +88,11 @@ function ConversationWorkCellContent({
       ? singleAgentRows
       : fallbackRows;
   const operationItems = model.operationItems ?? projectConversationActivity(operationRows);
-  const usingCanonicalTimeline = Boolean(model.typedTimelineItems && model.typedTimelineItems.length > 0);
+  // The timeline is the sole visible activity owner. Models that have not yet
+  // received a production canonical snapshot use the typed WorkCell adapter once
+  // at this boundary; they must not revive the old summary/report renderer.
+  const timelineItems = model.typedTimelineItems ?? buildTimelineItems(operationItems, visibleAgentSpans, model.turnId);
+  const usingCanonicalTimeline = timelineItems.length > 0;
   // A successful final agent message is the completion prose. TerminalReport is
   // retained as audit data and only appears inline when the turn needs attention.
   // Canonical typed items own the visible evidence rail. Keeping the legacy
@@ -100,9 +104,6 @@ function ConversationWorkCellContent({
     ? operationItems.filter((item) => item.kind !== "operation" || item.row.kind !== "edit")
     : operationItems;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
-  const timelineItems = model.typedTimelineItems && model.typedTimelineItems.length > 0
-    ? model.typedTimelineItems
-    : buildTimelineItems(visibleOperationItems, visibleAgentSpans, model.turnId);
   const factOwnership = conversationWorkCellFactOwnership({ ...model, operationItems: visibleOperationItems, agentSpans: visibleAgentSpans });
   const visibleArtifactItems = showArtifactStrip && !usingCanonicalTimeline
     ? model.artifactStripItems.filter((item) => !artifactStripItemOwnedByTypedFact(item, factOwnership))

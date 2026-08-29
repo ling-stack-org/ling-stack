@@ -235,6 +235,49 @@ test("turn projection does not duplicate items already represented by a work cel
   assert.equal(turnView.blocks.some((block) => block.kind === "operation"), true);
 });
 
+test("terminal agent prose supersedes the inline terminal report", () => {
+  const operationCell = {
+    id: "work-cell:turn:turn-1",
+    sourceKind: "run_thread",
+    threadId: thread.id,
+    turnId: turn.id,
+    anchorRunId: "run-1",
+    runIds: ["run-1"],
+    mode: "completed",
+    status: "succeeded",
+    title: "Inspect workspace",
+    summary: "Finished",
+    stats: [],
+    operationRows: [],
+    agentSpans: [],
+    agentBranches: [],
+    terminalReportId: "report-1",
+    terminalReportRevisionKey: "report-1:1",
+    terminalReportRows: [{ id: "outcome", kind: "note", title: "Finished", tone: "success", reportSection: "outcome" }],
+    activeRows: [],
+    groups: [],
+    evidenceLinks: [],
+    artifactStripItems: [],
+    updatedAt: "2026-08-10T00:00:05.000Z",
+  };
+  const withTerminalMessage = buildConversationTurnProjection(projectionInput({
+    operationCellByThreadId: new Map([[thread.id, operationCell]]),
+    runs: [{ id: "run-1", threadId: thread.id }],
+    proposals: [{ id: "proposal-1", channelId: "channel-1", sourceMessageId: userItem.id, status: "accepted", linkedRunId: "run-1", updatedAt: "2026-08-10T00:00:04.000Z" }],
+  }));
+  assert.equal(withTerminalMessage.turns[0].blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal"), true);
+  assert.equal(withTerminalMessage.turns[0].blocks.some((block) => block.kind === "final_result"), false);
+
+  const withoutTerminalMessage = buildConversationTurnProjection(projectionInput({
+    messages: [projectMessageItem(userItem, [], thread)],
+    conversationItems: [userItem],
+    operationCellByThreadId: new Map([[thread.id, operationCell]]),
+    runs: [{ id: "run-1", threadId: thread.id }],
+    proposals: [{ id: "proposal-1", channelId: "channel-1", sourceMessageId: userItem.id, status: "accepted", linkedRunId: "run-1", updatedAt: "2026-08-10T00:00:04.000Z" }],
+  }));
+  assert.equal(withoutTerminalMessage.turns[0].blocks.some((block) => block.kind === "final_result"), true);
+});
+
 test("turn projection gives every canonical execution kind a stable structured block", () => {
   const projection = buildConversationTurnProjection(projectionInput({
     conversationItems: [userItem, assistantItem, toolCall, approvalRequest, ...additionalItems],
