@@ -396,7 +396,7 @@ export function useChannelConversationBlockInteractions({
 
 const conversationExpandableSelectors = [
   ".conversation-work-cell-evidence-summary[aria-expanded='false']",
-  ".conversation-work-cell-row-main[aria-expanded='false']",
+  ".conversation-timeline-activity-main[aria-expanded='false']",
   ".transcript-block-view-head[aria-expanded='false']",
 ] as const;
 const conversationExpandableSelector = conversationExpandableSelectors.join(",");

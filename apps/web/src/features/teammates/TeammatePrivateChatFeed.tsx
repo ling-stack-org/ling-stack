@@ -156,7 +156,6 @@ export function TeammatePrivateChatFeed({
             const workCell = workCellByMessageId.get(message.id);
             const messageGeneratedMedia = generatedMediaForDirectMessage(generatedMedia, message);
             const projection = projectTeammatePrivateMessage({
-              hasStructuredTerminalReport: Boolean(workCell?.model.terminalReportRows.length),
               localUserDisplayName,
               message,
               providerRecovered,
@@ -305,6 +304,7 @@ export function TeammatePrivateChatFeed({
                         onOpenWorkspaceFile={onOpenFiles}
                         onOpenWorkspaceReview={onOpenReview}
                         loadPreview={loadPreviewContent}
+                        suppressTerminalReport={Boolean(projection.body.trim())}
                       />
                     ) : null}
                     {message.authorType === "ai-teammate" ? (

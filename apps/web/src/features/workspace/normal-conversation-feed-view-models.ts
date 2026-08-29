@@ -70,18 +70,15 @@ export function projectNormalConversationFeedItems(input: {
       streamingPlaceholder: input.t("Ling Agent is thinking..."),
     });
 
-    const hasStructuredTerminalReport = message.role === "assistant" && Boolean(workCell?.terminalReportRows.length);
-
     return {
       message,
       authorType: conversationMessageAuthorType(message),
       authorName: conversationMessageAuthorName(message, input.t),
       createdAtLabel: formatConversationTimeLabel(message.createdAt),
       className: normalConversationMessageClassName(message),
-      // A committed TerminalReport owns the terminal result in the transcript.
-      // Keep the model narrative available for chat-only turns, but do not
-      // render the same completion twice beside the report/work-cell facts.
-      body: hasStructuredTerminalReport ? "" : messagePresentation.body,
+      // The model message is the narrative owner. TerminalReport/work-cell
+      // evidence remains a separate fact surface and never replaces prose.
+      body: messagePresentation.body,
       bodyStreaming,
       errorText: messagePresentation.errorText,
       workCell,

@@ -35,9 +35,6 @@ test("Channel WorkCell keeps terminal report changes, references, and file-path 
     .first();
   const workCell = transcript.locator('.conversation-work-cell[data-operation-source="workflow"]').first();
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
-  await expectShellMotionDisabled(workCell);
-
   const externalArtifactSurface = transcript.locator(".conversation-turn-artifacts");
   const terminalReport = transcript.locator(".terminal-report-block");
   const changedSection = terminalReport.locator(".terminal-report-section.kind-change");
@@ -81,12 +78,7 @@ test("Channel WorkCell keeps terminal report changes, references, and file-path 
   await fileReference.press("Tab");
   await expect(references.getByRole("tooltip")).toHaveCount(0);
 
-  await expectReducedMotion(page, [
-    workCell,
-    changedSection,
-    changedFile,
-    filePathTooltip,
-  ]);
+  await expectReducedMotion(page, [workCell, changedSection, changedFile, filePathTooltip]);
   await expectDocumentContained(page);
   expect(runtimeErrors).toEqual([]);
 });
@@ -104,10 +96,9 @@ test("Normal conversation renders the shared WorkCell shell without document ove
   const conversation = page.getByLabel("Conversation page");
   const workCell = conversation.locator(".conversation-work-cell");
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
-  await expect(workCell.locator(".conversation-operation-shell")).toBeVisible();
+  await expect(workCell).toHaveAttribute("data-conversation-typed-transcript", "true");
+  await expect(workCell.locator("[data-conversation-timeline]")).toBeVisible();
   await expect(workCell.locator(".conversation-command-batch")).toHaveCount(1);
-  await expectShellMotionTokens(workCell);
   await expectDocumentContained(page);
   await captureEvidence(page, "1440x960-ling-light-normal-work-cell-shell.png");
   expect(runtimeErrors).toEqual([]);
@@ -128,6 +119,9 @@ test("Terminal report summaries keep Markdown paragraphs and fenced code", async
         },
       }
     : report);
+  for (const run of state.runs) {
+    if (run.threadId === "thread_ui2_normal_work_cell") state.eventsByRun[run.id] = [];
+  }
   await mockDaemon(page, state);
 
   await page.goto("/");
@@ -167,15 +161,14 @@ test("WorkCell command evidence preserves multiline output formatting", async ({
   await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
 
   const workCell = page.getByLabel("Conversation page").locator(".conversation-work-cell");
-  await expandOperationShell(workCell);
   const commandBatch = workCell.locator(".conversation-command-batch");
   await commandBatch.getByRole("button", { name: /Expand command batch/u }).click();
-  const commandRow = commandBatch.locator(".conversation-work-cell-row").filter({ hasText: "corepack pnpm --filter @ling-stack/web typecheck" });
-  await commandRow.locator(".conversation-work-cell-row-main").click();
-  const output = workCell.locator(".conversation-work-cell-row-detail code").filter({ hasText: "first output line" }).first();
+  const commandRow = commandBatch.locator('[data-conversation-timeline-kind="commandExecution"]').filter({ hasText: "corepack pnpm --filter @ling-stack/web typecheck" });
+  await commandRow.locator(".conversation-timeline-activity-main").click();
+  const output = workCell.locator(".conversation-timeline-output").filter({ hasText: "first output line" }).first();
   await expect(output).toBeVisible();
   await expect(output).toHaveCSS("white-space", "pre-wrap");
-  expect(await output.textContent()).toBe("first output line\nsecond output line\nthird output line");
+  expect(await output.textContent()).toBe("first output line\nsecond output line\nthird output line\n");
   expect(await output.evaluate((element) => getComputedStyle(element).fontFamily)).toContain("SFMono-Regular");
 });
 
@@ -197,7 +190,6 @@ test("Teammate conversation renders the shared WorkCell shell in reduced motion"
   const feed = page.getByLabel("Private message feed", { exact: true });
   const workCell = feed.locator(".conversation-work-cell");
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
   const commandBatch = workCell.locator(".conversation-command-batch");
   await expect(commandBatch).toHaveCount(1);
   await expectReducedMotion(page, [workCell, commandBatch]);
@@ -226,15 +218,6 @@ async function prepareSurface(page: Page, input: {
   }, { theme: input.theme, workCellDemo: input.workCellDemo });
 }
 
-async function expandOperationShell(workCell: Locator): Promise<void> {
-  const trigger = workCell.locator(".conversation-operation-shell-head");
-  if (await trigger.getAttribute("aria-expanded") === "false") {
-    await trigger.focus();
-    await trigger.press("Enter");
-  }
-  await expect(trigger).toHaveAttribute("aria-expanded", "true");
-}
-
 async function expectReducedMotion(page: Page, locators: readonly Locator[]): Promise<void> {
   await expect.poll(() => page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
   for (const locator of locators) {
@@ -247,31 +230,6 @@ async function expectReducedMotion(page: Page, locators: readonly Locator[]): Pr
     }).filter((entry) => entry.name !== "none" && entry.duration !== "0s"));
     expect(activeAnimations).toEqual([]);
   }
-}
-
-async function expectShellMotionDisabled(workCell: Locator): Promise<void> {
-  const transitioning = await workCell.evaluate((root) => [
-    ...root.querySelectorAll<HTMLElement>([
-      ".conversation-operation-shell-toggle svg",
-      ".conversation-work-cell-evidence-summary svg",
-      ".conversation-work-cell-artifact-strip svg",
-      ".conversation-work-cell-change-more svg",
-    ].join(", ")),
-  ].map((element) => getComputedStyle(element).transitionDuration)
-    .filter((duration) => duration.split(",").some((part) => part.trim() !== "0s")));
-  expect(transitioning).toEqual([]);
-}
-
-async function expectShellMotionTokens(workCell: Locator): Promise<void> {
-  const durations = await workCell.evaluate((root) => {
-    const evidenceToggle = root.querySelector<SVGElement>(".conversation-work-cell-evidence-summary svg");
-    return {
-      shellToggle: getComputedStyle(root.querySelector<SVGElement>(".conversation-operation-shell-toggle svg")!).transitionDuration,
-      evidenceToggle: evidenceToggle ? getComputedStyle(evidenceToggle).transitionDuration : null,
-    };
-  });
-  expect(durations.shellToggle).toBe("0.18s");
-  if (durations.evidenceToggle !== null) expect(durations.evidenceToggle).toBe("0.18s");
 }
 
 async function expectDocumentContained(page: Page): Promise<void> {

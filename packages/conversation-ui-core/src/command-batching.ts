@@ -128,6 +128,7 @@ function buildCommandBatch(
     : undefined;
   return {
     id: `command-batch:${stableIdPart(participantScope)}:${stableIdPart(runId)}:${stableIdPart(first.actionId)}`,
+    revision: aggregateRevision(commands.map((command) => command.row)),
     revisionKey: commands.map((command) => {
       const evidence = command.row.commandExecution;
       return `${command.actionId}:${command.status}:${evidence?.latestEventSeq ?? 0}`;
@@ -148,6 +149,17 @@ function buildCommandBatch(
     sourceRefs: uniqueSourceRefs(commands.flatMap((command) => command.row.operationExecution?.sourceRefs ?? command.row.commandExecution?.sourceRefs ?? [])),
     commands,
   };
+}
+
+function aggregateRevision(rows: readonly ConversationWorkCellRow[]): number {
+  let total = 0;
+  for (const row of rows) {
+    const revision = row.operationExecution?.revision ?? row.commandExecution?.revision ??
+      row.operationExecution?.latestEventSeq ?? row.commandExecution?.latestEventSeq ?? 0;
+    if (!Number.isSafeInteger(revision) || revision < 0) continue;
+    total = Math.min(Number.MAX_SAFE_INTEGER, total + revision + 1);
+  }
+  return total;
 }
 
 function toCommandBatchItem(row: ConversationWorkCellRow, leadingRows: readonly ConversationWorkCellRow[] = []): ConversationCommandBatchItem {

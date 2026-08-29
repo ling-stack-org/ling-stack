@@ -64,14 +64,12 @@ export interface TeammatePrivateMessageProjection {
 }
 
 export function projectTeammatePrivateMessage({
-  hasStructuredTerminalReport,
   localUserDisplayName,
   message,
   providerRecovered,
   teammateDisplayName,
   t,
 }: {
-  readonly hasStructuredTerminalReport: boolean;
   readonly localUserDisplayName: string;
   readonly message: TeammateDirectMessage;
   readonly providerRecovered: boolean;
@@ -98,9 +96,7 @@ export function projectTeammatePrivateMessage({
     streaming: pendingAiReply,
     streamingPlaceholder: t("AI teammate is replying..."),
   });
-  const body = hasStructuredTerminalReport && message.authorType === "ai-teammate"
-    ? ""
-    : message.status === "cancelled" && !bodyContent.trim()
+  const body = message.status === "cancelled" && !bodyContent.trim()
     ? t("Reply stopped")
     : messagePresentation.body;
 

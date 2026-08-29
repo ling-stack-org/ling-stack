@@ -62,12 +62,9 @@ test("copy and expand success use deduped 3000ms global Toast without local stat
     "1440x960-ling-light-copy-success-toast.png",
   );
 
-  const operationToggle = feed.getByRole("button", { name: "Expand operation" }).first();
-  await expect(operationToggle).toBeVisible();
-  await operationToggle.click();
   const expandableBlock = feed.locator([
     "[data-conversation-focus-block='true']:has(.conversation-work-cell-evidence-summary[aria-expanded='false'])",
-    "[data-conversation-focus-block='true']:has(.conversation-work-cell-row-main[aria-expanded='false'])",
+    "[data-conversation-focus-block='true']:has(.conversation-timeline-activity-main[aria-expanded='false'])",
     "[data-conversation-focus-block='true']:has(.transcript-block-view-head[aria-expanded='false'])",
   ].join(",")).first();
   await expect(expandableBlock).toBeVisible();

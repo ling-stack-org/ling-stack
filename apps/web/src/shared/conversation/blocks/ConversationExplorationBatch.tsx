@@ -1,14 +1,20 @@
 import { BookOpen, ChevronDown } from "lucide-react";
+import type { ConversationTimelineExplorationBatchItem, ConversationTimelineExplorationItem } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
-import type { ConversationExplorationBatch as ConversationExplorationBatchModel, ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 
 export function ConversationExplorationBatch({
   batch,
-  renderRow,
+  actionIds,
+  revision,
+  depth = 0,
+  renderItem,
 }: {
-  readonly batch: ConversationExplorationBatchModel;
-  readonly renderRow: (row: ConversationWorkCellRow) => React.ReactNode;
+  readonly batch: ConversationTimelineExplorationBatchItem["batch"];
+  readonly actionIds?: readonly string[];
+  readonly revision?: number;
+  readonly depth?: 0 | 1;
+  readonly renderItem: (item: ConversationTimelineExplorationItem) => React.ReactNode;
 }): React.JSX.Element {
   const { t } = useI18n();
   const disclosure = useConversationBlockView({
@@ -20,7 +26,24 @@ export function ConversationExplorationBatch({
   const batchLabel = t("Read {count} items", { count: batch.targetCount ?? batch.operationCount });
 
   return (
-    <section className={`conversation-exploration-batch ${disclosure.expanded ? "expanded" : "collapsed"}`}>
+    <section
+      className={`conversation-exploration-batch ${disclosure.expanded ? "expanded" : "collapsed"}`}
+      data-conversation-timeline-kind="explorationBatch"
+      data-conversation-timeline-id={batch.id}
+      data-conversation-timeline-revision={revision ?? 0}
+      data-conversation-timeline-status="succeeded"
+      data-conversation-timeline-depth={depth}
+      data-conversation-batch-kind="exploration"
+      data-conversation-batch-count={batch.operationCount}
+      data-conversation-batch-action-ids={(actionIds ?? batch.actionIds).join(",")}
+      data-conversation-action-id={(actionIds ?? batch.actionIds)[0]}
+      data-conversation-run-id={batch.runId}
+      data-conversation-attempt-id={batch.attemptId}
+      data-conversation-work-unit-id={batch.workUnitId}
+      data-conversation-participant-id={batch.participantId}
+      data-conversation-workflow-step-id={batch.workflowStepId}
+      data-conversation-source-refs={batch.sourceRefs.map((ref) => `${ref.kind}:${ref.id}`).join(",")}
+    >
       <button
         className="conversation-exploration-batch-header"
         type="button"
@@ -36,7 +59,7 @@ export function ConversationExplorationBatch({
       </button>
       {disclosure.expanded ? (
         <div className="conversation-exploration-batch-list">
-          {batch.rows.map((row) => renderRow(row))}
+          {batch.children.map((item) => renderItem(item))}
         </div>
       ) : null}
     </section>

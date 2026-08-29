@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
-import type { ConversationAgentActivitySpan, ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { artifactStripItemOwnedByTypedFact, conversationWorkCellFactOwnership, normalizeConversationWorkCellPath, type ConversationAgentActivitySpan, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import type { ConversationTranscriptBlock, ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -328,13 +328,27 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           ? (row.detailLines ?? []).flatMap((line) => line.kind === "file_ref" ? [line.path] : [])
           : []),
     );
+    const typedFactOwnership = turn.operationCell
+      ? conversationWorkCellFactOwnership(turn.operationCell)
+      : { artifactIds: new Set<string>(), filePaths: new Set<string>() };
+    const reportChangedPaths = new Set([...terminalReportChangedPaths].map(normalizeConversationWorkCellPath));
     const externalArtifactItems = terminalSummaryRendered
       ? (turn.operationCell?.artifactStripItems ?? []).filter((item) => {
-        if (item.kind === "changed") {
-          return !terminalReportOwnsChanges;
+        if (artifactStripItemOwnedByTypedFact(item, typedFactOwnership)) {
+          return false;
         }
-        if (item.kind === "artifact" && terminalReportOwnsChanges && item.workspaceFilePath) {
-          return !terminalReportChangedPaths.has(item.workspaceFilePath);
+        if (item.kind === "changed") {
+          return !terminalReportOwnsChanges && ![...(item.changeArtifacts ?? [])]
+            .map((artifact) => artifact.path)
+            .filter((path): path is string => Boolean(path))
+            .map(normalizeConversationWorkCellPath)
+            .some((path) => reportChangedPaths.has(path));
+        }
+        if (item.kind === "artifact" && terminalReportOwnsChanges) {
+          const path = item.workspaceFilePath ?? item.path;
+          if (path && reportChangedPaths.has(normalizeConversationWorkCellPath(path))) {
+            return false;
+          }
         }
         return true;
       })
@@ -509,6 +523,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           renderParticipantAvatar={renderConversationParticipantAvatar}
           showArtifactStrip={!conversationTurnHasTerminalSummary(turn)}
           showTerminalReport={!turn.blocks.some((item) => item.kind === "final_result")}
+          suppressTerminalReport={turn.blocks.some((item) => item.kind === "coordinator_message" && item.phase === "terminal")}
           onOpenWorkspaceFile={input.onOpenTerminalReportFile}
           onOpenWorkspaceReview={input.onOpenWorkspaceReview}
         />

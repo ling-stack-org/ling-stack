@@ -896,6 +896,7 @@ function demoAction(input: {
   const durationMs = Math.max(0, Date.parse(input.completedAt) - Date.parse(input.createdAt));
   return {
     id: input.id,
+    revision: 3,
     workspaceId: input.workspaceId,
     runId: input.runId,
     attemptId: `attempt:${input.runId}`,
@@ -908,6 +909,12 @@ function demoAction(input: {
     targetRefs: input.targetRefs,
     previewArtifactIds: [],
     resultArtifactIds: input.resultArtifactIds ?? [],
+    sourceRefs: input.targetRefs.map((ref) => ({
+      kind: ref.type,
+      id: ref.path ?? ref.id ?? ref.label ?? ref.type,
+      ...(ref.label ? { label: ref.label } : {}),
+      ...(ref.path ? { path: ref.path } : {}),
+    })),
     ...(commandText ? {
       toolCallId: `tool_${input.id}`,
       commandEvidence: {

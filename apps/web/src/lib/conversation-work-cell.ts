@@ -2,6 +2,8 @@ import {
   normalizeConversationOperationCell,
   projectConversationActivity,
   projectConversationCommandBatches,
+  projectConversationSubAgentActivity,
+  projectConversationTimelineItems,
   summarizeConversationActivity,
   terminalReportToViewModel,
   type ConversationAgentActivitySpan,
@@ -15,6 +17,7 @@ import {
   type ConversationOperationCellSourceKind,
   type ConversationOperationCellStatus,
   type ConversationOperationCellViewModel,
+  type ConversationTimelineItem,
   type ConversationOperationExecutionView,
   type ConversationOperationKind,
   type ConversationOperationSourceRef,
@@ -43,6 +46,8 @@ export {
   normalizeConversationOperationCell,
   projectConversationActivity,
   projectConversationCommandBatches,
+  projectConversationSubAgentActivity,
+  projectConversationTimelineItems,
   summarizeConversationActivity,
 };
 export type {
@@ -59,6 +64,7 @@ export type {
   ConversationOperationCellSourceKind,
   ConversationOperationCellStatus,
   ConversationOperationCellViewModel,
+  ConversationTimelineItem,
   ConversationOperationExecutionView,
   ConversationOperationKind,
   ConversationOperationSourceRef,
@@ -77,6 +83,82 @@ export type {
   ConversationWorkCellViewModel,
   ConversationWorkspaceRecoveryTarget,
 } from "@ling-stack/conversation-ui-core";
+
+/**
+ * Projects all WorkCell activity, including participant spans, through the one
+ * typed timeline boundary used by every conversation surface.
+ */
+export function projectConversationWorkCellTimeline(input: {
+  readonly operationItems: readonly ConversationWorkCellItem[];
+  readonly agentSpans: readonly ConversationAgentActivitySpan[];
+  readonly turnId?: string;
+}): readonly ConversationTimelineItem[] {
+  const participantItems = input.agentSpans.map((span) => {
+    const childItems = span.items ?? projectConversationActivity(span.rows, {
+      participantScope: span.participantId ?? span.id,
+    });
+    return projectConversationSubAgentActivity(span, childItems, { turnId: input.turnId });
+  });
+  return projectConversationTimelineItems([...input.operationItems, ...participantItems], { turnId: input.turnId });
+}
+
+export interface ConversationWorkCellFactOwnership {
+  readonly artifactIds: ReadonlySet<string>;
+  readonly filePaths: ReadonlySet<string>;
+}
+
+/** Returns the artifact/path keys already owned by typed file-change items. */
+export function conversationWorkCellFactOwnership(model: ConversationOperationCellViewModel): ConversationWorkCellFactOwnership {
+  const operationItems = model.operationItems ?? projectConversationActivity(model.operationRows);
+  const items = projectConversationWorkCellTimeline({
+    operationItems,
+    agentSpans: model.agentSpans,
+    turnId: model.turnId,
+  });
+  const artifactIds = new Set<string>();
+  const filePaths = new Set<string>();
+  const visit = (item: ConversationTimelineItem): void => {
+    if (item.kind === "fileChange") {
+      if (item.changePreview?.artifactId) artifactIds.add(item.changePreview.artifactId);
+      for (const file of item.files) {
+        if (file.fileRef.path) filePaths.add(normalizeConversationWorkCellPath(file.fileRef.path));
+        if (file.diffRef?.kind === "artifact") artifactIds.add(file.diffRef.id);
+      }
+    }
+    if (item.kind === "commandBatch") {
+      for (const child of item.batch.commands) visit(child);
+    }
+    if (item.kind === "explorationBatch") {
+      for (const child of item.batch.children) visit(child);
+    }
+    if (item.kind === "subAgentActivity") {
+      for (const child of item.childItems) visit(child);
+    }
+  };
+  for (const item of items) visit(item);
+  return { artifactIds, filePaths };
+}
+
+export function normalizeConversationWorkCellPath(path: string): string {
+  return path.trim().replace(/\\/gu, "/").replace(/^\.\//u, "");
+}
+
+export function artifactStripItemOwnedByTypedFact(
+  item: ConversationArtifactStripItem,
+  ownership: ConversationWorkCellFactOwnership,
+): boolean {
+  const ids = [
+    item.artifactId,
+    ...(item.changeArtifacts ?? []).map((artifact) => artifact.artifactId),
+  ].filter((id): id is string => Boolean(id));
+  if (ids.some((id) => ownership.artifactIds.has(id))) return true;
+  const paths = [
+    item.workspaceFilePath,
+    item.path,
+    ...(item.changeArtifacts ?? []).map((artifact) => artifact.path),
+  ].filter((path): path is string => Boolean(path)).map(normalizeConversationWorkCellPath);
+  return paths.some((path) => ownership.filePaths.has(path));
+}
 
 /** @deprecated Use ConversationOperationCellMode from @ling-stack/conversation-ui-core. */
 export type ConversationWorkCellMode = ConversationOperationCellMode;
@@ -1294,6 +1376,7 @@ function executionActionEvidenceRow(
     commandText,
     commandExecution: commandText && action.commandEvidence ? {
       actionId: action.id,
+      revision: action.revision,
       toolCallId: action.toolCallId,
       runId: action.runId,
       attemptId: action.attemptId,
@@ -1301,16 +1384,24 @@ function executionActionEvidenceRow(
       turnRunRole: operationExecution.turnRunRole,
       participantId: operationExecution.participantId,
       workUnitId: action.workUnitId,
-      workflowStepId: action.targetRefs.find((ref) => ref.type === "workflow_step")?.id,
+      workflowStepId: operationExecution.workflowStepId,
       actionType: action.actionType,
       risk: action.risk,
       status: action.status,
       commandText,
+      cwd: action.commandEvidence.cwd,
       startedAt: action.commandEvidence.startedAt,
       completedAt: action.commandEvidence.completedAt,
       durationMs: action.commandEvidence.durationMs,
       exitCode: action.commandEvidence.exitCode,
+      signal: action.commandEvidence.signal,
       latestEventSeq: action.commandEvidence.latestEventSeq,
+      outputTail: action.commandEvidence.outputTail.map((chunk) => ({
+        eventSeq: chunk.eventSeq,
+        stream: chunk.stream,
+        text: chunk.text,
+        redacted: chunk.redacted,
+      })),
       sourceRefs: operationExecution.sourceRefs,
       outputTruncated: action.commandEvidence.outputTruncated,
       stdoutArtifactId: action.commandEvidence.stdoutArtifactId,
@@ -1400,21 +1491,22 @@ function executionActionExecutionView(
     readonly workflowStepId?: string;
   } = {},
 ): ConversationOperationExecutionView {
-  const workflowStepId = context.workflowStepId ?? action.targetRefs.find((ref) => ref.type === "workflow_step")?.id;
+  const workflowStepId = context.workflowStepId ?? action.workflowStepId ?? action.targetRefs.find((ref) => ref.type === "workflow_step")?.id;
   return {
     actionId: action.id,
+    revision: action.revision,
     toolCallId: action.toolCallId,
     runId: action.runId,
     attemptId: action.attemptId,
     approvalId: action.approvalId,
     turnRunRole: context.turnRunRole,
-    participantId: context.participantId,
+    participantId: context.participantId ?? action.participantId,
     workUnitId: action.workUnitId,
     workflowStepId,
     actionType: action.actionType,
     status: action.status,
     updatedAt: action.updatedAt ?? action.completedAt ?? action.executedAt ?? action.createdAt,
-    latestEventSeq: action.commandEvidence?.latestEventSeq,
+    latestEventSeq: action.commandEvidence?.latestEventSeq ?? action.revision,
     sourceRefs: executionActionSourceRefs(action, workflowStepId),
   };
 }

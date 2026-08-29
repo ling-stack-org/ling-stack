@@ -1,26 +1,24 @@
 import type { ReactNode } from "react";
 import {
-  isConversationTimelineItem,
-  projectConversationTimelineItems,
   type ConversationTimelineItem,
-  type ConversationTimelineInput,
-  type ConversationTimelineProjectionOptions,
   type ConversationTimelineSubAgentItem,
 } from "@ling-stack/conversation-ui-core";
-import type { ConversationWorkCellRow } from "@ling-stack/conversation-ui-core";
 import { ChevronDown, CircleAlert, Loader2, UserRound } from "lucide-react";
+import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { renderConversationTimelineItem } from "./renderer-registry.js";
 
 export interface ConversationTimelineProps {
-  /** Existing WorkCell items are accepted during the migration; they are projected once. */
-  readonly items: readonly ConversationTimelineInput[];
+  /** Renderer-facing items. Historical rows are projected before this boundary. */
+  readonly items: readonly ConversationTimelineItem[];
   readonly scope?: "primary" | "agent";
   readonly className?: string;
   readonly dataDensity?: "default" | "dense";
   readonly ariaLabel?: string;
   readonly dataConversationWorkStream?: "primary" | "agent";
-  readonly projectionOptions?: ConversationTimelineProjectionOptions;
-  readonly renderRow: (row: ConversationWorkCellRow, options?: { readonly leading?: boolean }) => ReactNode;
+  readonly depth?: 0 | 1;
+  readonly cwd?: string;
+  readonly loadPreview?: ArtifactPreviewLoader;
+  readonly onOpenSourceRef?: (ref: ConversationTimelineItem["sourceRefs"][number]) => void;
   readonly renderMessage?: (markdown: string) => ReactNode;
   readonly renderSubAgentAvatar?: (item: ConversationTimelineSubAgentItem) => ReactNode;
   readonly emptyLabel?: ReactNode;
@@ -34,8 +32,9 @@ export interface ConversationTimelineProps {
 export function ConversationTimeline({
   items,
   scope = "primary",
-  projectionOptions,
-  renderRow,
+  cwd,
+  loadPreview,
+  onOpenSourceRef,
   renderMessage,
   renderSubAgentAvatar,
   emptyLabel,
@@ -43,28 +42,31 @@ export function ConversationTimeline({
   dataDensity = "default",
   ariaLabel,
   dataConversationWorkStream,
+  depth = 0,
 }: ConversationTimelineProps): React.JSX.Element {
-  const timelineItems = projectItems(items, projectionOptions);
+  const timelineItems = items;
   const className = customClassName ?? (scope === "agent"
     ? "conversation-work-cell-agent-stream conversation-timeline"
     : "conversation-work-cell-active-stream conversation-timeline");
 
   if (timelineItems.length === 0) {
     return (
-      <div className={`${className} empty`} data-conversation-timeline data-conversation-timeline-scope={scope} data-conversation-work-stream={dataConversationWorkStream} data-activity-density={dataDensity} aria-label={ariaLabel}>
+      <div className={`${className} empty`} data-conversation-timeline="true" data-conversation-scope={scope} data-conversation-timeline-scope={scope} data-conversation-timeline-depth={depth} data-conversation-work-stream={dataConversationWorkStream} data-activity-density={dataDensity} aria-label={ariaLabel}>
         {emptyLabel ?? ""}
       </div>
     );
   }
 
   return (
-    <div className={className} data-conversation-timeline data-conversation-timeline-scope={scope} data-conversation-work-stream={dataConversationWorkStream} data-activity-density={dataDensity} aria-label={ariaLabel}>
+    <div className={className} data-conversation-timeline="true" data-conversation-scope={scope} data-conversation-timeline-scope={scope} data-conversation-timeline-depth={depth} data-conversation-work-stream={dataConversationWorkStream} data-activity-density={dataDensity} aria-label={ariaLabel}>
       {timelineItems.map((item) => renderTimelineItem(item, {
-        renderRow,
+        cwd,
+        loadPreview,
+        onOpenSourceRef,
         renderMessage,
         renderSubAgentAvatar,
         scope,
-        projectionOptions,
+        depth,
       }))}
     </div>
   );
@@ -72,11 +74,14 @@ export function ConversationTimeline({
 
 function renderTimelineItem(
   item: ConversationTimelineItem,
-  context: Pick<ConversationTimelineProps, "renderRow" | "renderMessage" | "renderSubAgentAvatar" | "scope" | "projectionOptions">,
+  context: Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderMessage" | "renderSubAgentAvatar" | "scope" | "depth">,
 ): ReactNode {
   return renderConversationTimelineItem(item, {
-    renderRow: context.renderRow,
+    cwd: context.cwd,
+    loadPreview: context.loadPreview,
+    onOpenSourceRef: context.onOpenSourceRef,
     renderMessage: context.renderMessage,
+    depth: context.depth ?? 0,
     renderSubAgent: (subAgent) => <SubAgentTimelineItem key={subAgent.id} item={subAgent} context={context} />,
   });
 }
@@ -86,13 +91,23 @@ function SubAgentTimelineItem({
   context,
 }: {
   readonly item: ConversationTimelineSubAgentItem;
-  readonly context: Pick<ConversationTimelineProps, "renderRow" | "renderMessage" | "renderSubAgentAvatar" | "scope" | "projectionOptions">;
+  readonly context: Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderMessage" | "renderSubAgentAvatar" | "scope" | "depth">;
 }): React.JSX.Element {
   const statusLabel = subAgentStatusLabel(item.lifecycle);
   return (
     <section
       className={["conversation-timeline-sub-agent", `lifecycle-${item.lifecycle}`].join(" ")}
-      data-conversation-timeline-sub-agent
+      data-conversation-timeline-sub-agent="true"
+      data-conversation-timeline-kind="subAgentActivity"
+      data-conversation-timeline-id={item.id}
+      data-conversation-timeline-revision={item.revision}
+      data-conversation-timeline-status={item.status ?? item.lifecycle}
+      data-conversation-timeline-depth={context.depth}
+      data-conversation-participant-id={item.participantId}
+      data-conversation-run-id={item.runId}
+      data-conversation-attempt-id={item.attemptId}
+      data-conversation-workflow-step-id={item.workflowStepId}
+      data-conversation-source-refs={item.sourceRefs.map((ref) => `${ref.kind}:${ref.id}`).join(",")}
       data-agent-participant-id={item.participantId}
       aria-label={`${item.label} ${statusLabel}`}
     >
@@ -112,27 +127,16 @@ function SubAgentTimelineItem({
         <ConversationTimeline
           items={item.childItems}
           scope="agent"
-          projectionOptions={item.participantId ? { ...context.projectionOptions, participantScope: item.participantId } : context.projectionOptions}
-          renderRow={context.renderRow}
+          cwd={context.cwd}
+          loadPreview={context.loadPreview}
+          onOpenSourceRef={context.onOpenSourceRef}
           renderMessage={context.renderMessage}
           renderSubAgentAvatar={context.renderSubAgentAvatar}
+          depth={1}
         />
       ) : null}
     </section>
   );
-}
-
-function projectItems(
-  items: ConversationTimelineProps["items"],
-  options?: ConversationTimelineProjectionOptions,
-): readonly ConversationTimelineItem[] {
-  if (items.length === 0) {
-    return [];
-  }
-  if (items.every(isConversationTimelineItem)) {
-    return items as readonly ConversationTimelineItem[];
-  }
-  return projectConversationTimelineItems(items, options);
 }
 
 function subAgentStatusLabel(lifecycle: ConversationTimelineSubAgentItem["lifecycle"]): string {

@@ -28,12 +28,11 @@ test("Channel multi-agent Activity keeps rows and command batches keyboard-opera
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator('.conversation-work-cell[data-operation-source="workflow"]').first();
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
-  await expect(workCell.locator(".conversation-work-cell-agent-span")).toHaveCount(4);
+  await expect(workCell.locator("[data-conversation-timeline-sub-agent]")).toHaveCount(4);
 
-  const engineer = workCell.locator('.conversation-work-cell-agent-span[data-agent-participant-id="engineer"]');
-  const editRow = engineer.locator(".conversation-work-cell-row").filter({ hasText: /ConversationWorkCell\.tsx/u });
-  const editTrigger = editRow.locator(".conversation-work-cell-row-main");
+  const engineer = workCell.locator('[data-conversation-timeline-sub-agent][data-agent-participant-id="engineer"]');
+  const editRow = engineer.locator('[data-conversation-timeline-kind="fileChange"]').filter({ hasText: /ConversationWorkCell\.tsx/u });
+  const editTrigger = editRow.locator(".conversation-timeline-activity-main");
   await editTrigger.focus();
   await editTrigger.press("Space");
   await expect(editTrigger).toHaveAttribute("aria-expanded", "true");
@@ -43,7 +42,7 @@ test("Channel multi-agent Activity keeps rows and command batches keyboard-opera
   await batchTrigger.focus();
   await batchTrigger.press("Space");
   await expect(batchTrigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(batch.locator('.conversation-command-batch-list [data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
   await expectWorkCellMotionTokens(workCell);
   await batchTrigger.click();
   await batchTrigger.click();
@@ -66,25 +65,24 @@ test("Active WorkCell shimmer pauses offscreen and resumes when visible", async 
   const workCell = feed.locator(`.conversation-work-cell.active[data-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
 
-  const shimmerTarget = workCell.locator([
-    ".conversation-work-cell-row.running .conversation-work-cell-row-copy strong",
-    ".conversation-work-cell-evidence-summary span",
-  ].join(", ")).first();
-  await expect(shimmerTarget).toBeVisible();
+  const runningRow = workCell.locator('.conversation-timeline-activity[data-conversation-timeline-kind="commandExecution"].status-running').first();
+  await expect(runningRow).toBeVisible();
+  const runningIcon = runningRow.locator(".conversation-timeline-activity-main > svg").first();
+  await expect(runningIcon).toBeVisible();
   await expect(workCell).toHaveAttribute("data-work-cell-activity", "running");
-  await expectAnimationName(shimmerTarget, "conversation-active-shimmer");
+  await expectAnimationName(runningIcon, "conversation-active-spin");
 
   const originalTransform = await feed.evaluate((element) => element.style.transform);
   await feed.evaluate((element) => { element.style.transform = "translateY(200vh)"; });
   await expect(workCell).not.toBeInViewport();
   await expect(workCell).toHaveAttribute("data-work-cell-activity", "paused");
-  await expectAnimationName(shimmerTarget, "none");
+  await expectAnimationName(runningIcon, "none");
 
   await feed.evaluate((element, transform) => { element.style.transform = transform; }, originalTransform);
   await workCell.evaluate((element) => element.scrollIntoView({ block: "nearest" }));
   await expect(workCell).toBeVisible();
   await expect(workCell).toHaveAttribute("data-work-cell-activity", "running");
-  await expectAnimationName(shimmerTarget, "conversation-active-shimmer");
+  await expectAnimationName(runningIcon, "conversation-active-spin");
 });
 
 test("Channel Details exposes loading, loaded evidence, and one cached request", async ({ page }) => {
@@ -105,20 +103,19 @@ test("Channel Details exposes loading, loaded evidence, and one cached request",
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
 
   const evidenceTrigger = workCell.locator(".conversation-work-cell-evidence-summary");
   await evidenceTrigger.focus();
   await evidenceTrigger.press("Enter");
   await expect(workCell.locator(".conversation-work-cell-details-state")).toContainText("Loading details");
-  await expect(workCell.locator(".conversation-work-cell-details")).toContainText("Ran command");
+  await expect(workCell.locator(".conversation-work-cell-details")).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
   expect(evidenceRequests).toBe(1);
 
   await evidenceTrigger.click();
   await expect(evidenceTrigger).toHaveAttribute("aria-expanded", "false");
   await evidenceTrigger.click();
   await expect(evidenceTrigger).toHaveAttribute("aria-expanded", "true");
-  await expect(workCell.locator(".conversation-work-cell-details")).toContainText("Ran command");
+  await expect(workCell.locator(".conversation-work-cell-details")).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
   expect(evidenceRequests).toBe(1);
   await expectContained(page, [feed, workCell, workCell.locator(".conversation-work-cell-details")]);
   await captureEvidence(page, "1440x960-ling-light-channel-details-loaded.png");
@@ -149,7 +146,6 @@ test("Channel Details error retries by keyboard and disables WorkCell motion", a
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
 
   const evidenceTrigger = workCell.locator(".conversation-work-cell-evidence-summary");
   await evidenceTrigger.focus();
@@ -161,7 +157,7 @@ test("Channel Details error retries by keyboard and disables WorkCell motion", a
   const retry = failure.getByRole("button", { name: "Retry evidence" });
   await retry.focus();
   await retry.press("Enter");
-  await expect(workCell.locator(".conversation-work-cell-details")).toContainText("Ran command");
+  await expect(workCell.locator(".conversation-work-cell-details")).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
   expect(evidenceRequests).toBe(2);
 
   const batch = workCell.locator(".conversation-command-batch").first();
@@ -188,7 +184,6 @@ test("Normal conversation keeps the completed command batch in the shared WorkCe
   const workCell = conversation.locator(".conversation-work-cell");
   await expect(workCell).toBeVisible();
   await expect(workCell).toHaveAttribute("data-work-cell-activity", "paused");
-  await expandOperationShell(workCell);
   await expectCommandBatchKeyboardFlow(workCell);
   await expectNoWorkCellShimmer(workCell);
   await expectContained(page, [conversation, workCell]);
@@ -209,8 +204,7 @@ test("Completed WorkCell collapses adjacent read actions into an expandable expl
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
-  await expect(workCell.locator(".conversation-operation-shell-status")).toContainText("Read 3 items");
-  await expandOperationShell(workCell);
+  await expect(workCell.getByRole("button", { name: "Read 3 items. Expand read records" })).toBeVisible();
 
   const batch = workCell.locator(".conversation-exploration-batch");
   const trigger = batch.locator(".conversation-exploration-batch-header");
@@ -218,7 +212,7 @@ test("Completed WorkCell collapses adjacent read actions into an expandable expl
   await trigger.focus();
   await trigger.press("Space");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator(".conversation-exploration-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(batch.locator('.conversation-exploration-batch-list [data-conversation-timeline-kind="exploration"]')).toHaveCount(3);
   await expectContained(page, [feed, workCell, batch]);
   expect(runtimeErrors).toEqual([]);
 });
@@ -236,8 +230,7 @@ test("Dense exploration activity stays scrollable after ten atomic rows", async 
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
-  await expect(workCell.locator(".conversation-operation-shell-status")).toContainText("Read 11 items");
-  await expandOperationShell(workCell);
+  await expect(workCell.getByRole("button", { name: "Read 11 items. Expand read records" })).toBeVisible();
 
   const stream = workCell.locator('[data-conversation-work-stream="primary"]');
   await expect(stream).toHaveAttribute("data-activity-density", "dense");
@@ -259,7 +252,7 @@ test("Dense exploration activity stays scrollable after ten atomic rows", async 
   await trigger.focus();
   await trigger.press("Space");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator(".conversation-exploration-batch-list .conversation-work-cell-row")).toHaveCount(11);
+  await expect(batch.locator('.conversation-exploration-batch-list [data-conversation-timeline-kind="exploration"]')).toHaveCount(11);
   await expectContained(page, [feed, workCell, stream, batch]);
   expect(runtimeErrors).toEqual([]);
 });
@@ -276,7 +269,6 @@ test("Teammate conversation keeps command activity contained in dark reduced mot
   const feed = page.getByLabel("Private message feed", { exact: true });
   const workCell = feed.locator(".conversation-work-cell");
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
   await expectCommandBatchKeyboardFlow(workCell);
   await expectWorkCellMotionDisabled(workCell);
   await expectContained(page, [feed, workCell]);
@@ -304,15 +296,6 @@ async function prepareSurface(page: Page, input: {
   }, { theme: input.theme, workCellDemo: input.workCellDemo });
 }
 
-async function expandOperationShell(workCell: Locator): Promise<void> {
-  const trigger = workCell.locator(".conversation-operation-shell-head");
-  if (await trigger.getAttribute("aria-expanded") === "false") {
-    await trigger.focus();
-    await trigger.press("Enter");
-  }
-  await expect(trigger).toHaveAttribute("aria-expanded", "true");
-}
-
 async function expectCommandBatchKeyboardFlow(workCell: Locator): Promise<void> {
   const batch = workCell.locator(".conversation-command-batch");
   const trigger = batch.locator(".conversation-command-batch-header");
@@ -320,15 +303,16 @@ async function expectCommandBatchKeyboardFlow(workCell: Locator): Promise<void> 
   await trigger.focus();
   await trigger.press("Enter");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(batch.locator('.conversation-command-batch-list [data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
 
-  const firstCommand = batch.locator(".conversation-work-cell-row").first();
-  const firstCommandTrigger = firstCommand.locator(".conversation-work-cell-row-main");
-  const firstCommandTitle = (await firstCommand.locator(".conversation-work-cell-row-copy strong").innerText()).trim();
+  const firstCommand = batch.locator('[data-conversation-timeline-kind="commandExecution"]').first();
+  const firstCommandTrigger = firstCommand.locator(".conversation-timeline-activity-main");
+  const firstCommandTitle = (await firstCommand.locator(".conversation-timeline-activity-copy strong").innerText()).trim();
   await firstCommandTrigger.focus();
   await firstCommandTrigger.press("Space");
   await expect(firstCommandTrigger).toHaveAttribute("aria-expanded", "true");
-  await expect(firstCommand.locator(".conversation-work-cell-row-detail")).toContainText(`${firstCommandTitle} passed`);
+  await expect(firstCommand.locator(".conversation-timeline-activity-detail")).toContainText(firstCommandTitle);
+  await expect(firstCommand.locator(".conversation-timeline-activity-detail")).toContainText("exit 0");
 }
 
 async function expectWorkCellMotionDisabled(workCell: Locator): Promise<void> {
@@ -336,10 +320,10 @@ async function expectWorkCellMotionDisabled(workCell: Locator): Promise<void> {
   const animated = await workCell.evaluate((root) => [
     root,
     ...root.querySelectorAll<HTMLElement>([
-      ".conversation-work-cell-row",
+      ".conversation-timeline-activity",
       ".conversation-command-batch",
-      ".conversation-work-cell-agent-span",
-      ".conversation-work-cell-row.running .conversation-work-cell-row-copy strong",
+      ".conversation-timeline-sub-agent",
+      ".conversation-timeline-activity.status-running .conversation-timeline-activity-main > svg",
       ".conversation-work-cell-evidence-summary span",
     ].join(", ")),
   ].map((element) => ({
@@ -349,8 +333,7 @@ async function expectWorkCellMotionDisabled(workCell: Locator): Promise<void> {
   expect(animated).toEqual([]);
   const transitioning = await workCell.evaluate((root) => [
     ...root.querySelectorAll<HTMLElement>([
-      ".conversation-work-cell-row-toggle",
-      ".conversation-work-cell-row-toggle svg",
+      ".conversation-timeline-activity-chevron",
       ".conversation-command-batch-toggle",
       ".conversation-command-batch-toggle svg",
     ].join(", ")),
@@ -360,18 +343,15 @@ async function expectWorkCellMotionDisabled(workCell: Locator): Promise<void> {
 }
 
 async function expectWorkCellMotionTokens(workCell: Locator): Promise<void> {
-  const durations = await workCell.evaluate((root) => ({
-    batchToggle: getComputedStyle(root.querySelector<HTMLElement>(".conversation-command-batch-toggle")!).transitionDuration,
-    batchIcon: getComputedStyle(root.querySelector<SVGElement>(".conversation-command-batch-toggle svg")!).transitionDuration,
-    rowToggle: getComputedStyle(root.querySelector<HTMLElement>(".conversation-work-cell-row-toggle")!).transitionDuration,
-    rowIcon: getComputedStyle(root.querySelector<SVGElement>(".conversation-work-cell-row-toggle svg")!).transitionDuration,
-  }));
-  expect(durations).toEqual({
-    batchToggle: "0.12s, 0.12s",
-    batchIcon: "0.18s",
-    rowToggle: "0.12s, 0.12s",
-    rowIcon: "0.18s",
-  });
+  const durations = await workCell.evaluate((root) => [
+    ...root.querySelectorAll<HTMLElement>([
+      ".conversation-timeline-activity-chevron",
+      ".conversation-command-batch-toggle",
+      ".conversation-command-batch-toggle svg",
+    ].join(", ")),
+  ].map((element) => getComputedStyle(element).transitionDuration));
+  expect(durations.length).toBeGreaterThan(0);
+  expect(durations.every((duration) => duration.split(",").some((part) => part.trim() !== "0s"))).toBe(true);
 }
 
 async function expectAnimationName(element: Locator, expected: string): Promise<void> {
@@ -380,7 +360,7 @@ async function expectAnimationName(element: Locator, expected: string): Promise<
 
 async function expectNoWorkCellShimmer(workCell: Locator): Promise<void> {
   const animationNames = await workCell.locator([
-    ".conversation-work-cell-row.running .conversation-work-cell-row-copy strong",
+    ".conversation-timeline-activity.status-running .conversation-timeline-activity-main > svg",
     ".conversation-work-cell-evidence-summary span",
   ].join(", ")).evaluateAll((elements) => elements.map((element) => getComputedStyle(element).animationName));
   expect(animationNames.every((name) => name === "none")).toBe(true);

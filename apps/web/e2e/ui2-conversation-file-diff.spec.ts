@@ -51,7 +51,7 @@ test("Channel structured and deferred diffs stay keyboard-operable and contained
   const malformedFallback = message.locator(".message-code-block").filter({ hasText: "not actually a unified patch" });
   await expect(malformedFallback).toBeVisible();
 
-  const deferred = message.locator(".message-diff-block.deferred");
+  const deferred = feed.locator(".message-diff-block.deferred").filter({ hasText: "Large diff deferred" });
   await expect(deferred).toContainText("Large diff deferred");
   await expect(deferred.locator(".diff-viewer")).toHaveCount(0);
   const showDetails = deferred.getByRole("button", { name: "Show diff details" });
@@ -98,23 +98,17 @@ test("Durable WorkCell renders a bounded inline diff in dark reduced motion", as
   await expect(workCell).toBeVisible();
   await expect(workCell).toHaveAttribute("data-operation-source", "run_thread");
 
-  const operationToggle = workCell.locator(".conversation-operation-shell-head");
-  if (await operationToggle.getAttribute("aria-expanded") === "false") {
-    await operationToggle.focus();
-    await operationToggle.press("Enter");
-  }
-
-  const editRow = workCell.locator(".conversation-work-cell-active-stream .conversation-work-cell-row")
+  const editRow = workCell.locator('.conversation-timeline-activity[data-conversation-timeline-kind="fileChange"]')
     .filter({ hasText: "Edited FileDiffSurface.tsx" });
-  const rowToggle = editRow.locator(".conversation-work-cell-row-main");
+  const rowToggle = editRow.locator(".conversation-timeline-activity-main");
   await expect(rowToggle).toHaveAttribute("aria-expanded", "false");
   await rowToggle.focus();
   await rowToggle.press("Space");
   await expect(rowToggle).toHaveAttribute("aria-expanded", "true");
 
-  const preview = editRow.locator(".conversation-work-cell-change-preview");
+  const preview = editRow.locator(".conversation-timeline-change-preview");
   await expect(preview).toBeVisible();
-  await expect(preview.locator(".conversation-work-cell-change-preview-file")).toHaveCount(2);
+  await expect(preview.locator(".conversation-timeline-change-preview-file")).toHaveCount(2);
   await expect(preview).toContainText("FileDiffSurface.tsx");
   await expect(preview).toContainText("file-diff-focused.css");
   await expect(preview).not.toContainText("file-diff-not-rendered.ts");

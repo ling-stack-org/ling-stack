@@ -359,6 +359,7 @@ function NormalConversationMessageRow({
               onOpenWorkspaceFile={onOpenReportFile}
               onOpenWorkspaceReview={onOpenReview}
               loadPreview={loadPreviewContent}
+              suppressTerminalReport={Boolean(item.body.trim())}
             />
           ) : null}
           {message.role === "assistant" ? (

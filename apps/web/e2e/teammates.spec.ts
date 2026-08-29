@@ -1188,26 +1188,25 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   const privateFeed = page.getByLabel("Private message feed", { exact: true });
   await expect(privateFeed).toBeVisible();
   await expect(privateFeed.locator(".message-feed-virtualizer")).toBeVisible();
-  const linkedRunPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Private acceptance criteria verified" });
-  await expect(linkedRunPrivateRow.locator(".conversation-work-cell")).toHaveCount(1);
-  const privateWorkCell = linkedRunPrivateRow.locator(".conversation-work-cell");
-  await privateWorkCell.locator(".conversation-operation-shell-head").click();
+  // The final assistant message is the single completion narration. The
+  // terminal report is typed evidence attached to that row and must not be
+  // used as the row's identity (its title may be intentionally compact).
+  const linkedRunPrivateRow = page.locator(".teammate-message-row.ai-teammate").filter({ hasText: "Private acceptance criteria summary." });
+  await expect(linkedRunPrivateRow.locator("[data-conversation-typed-transcript]")).toHaveCount(1);
+  const privateWorkCell = linkedRunPrivateRow.locator("[data-conversation-typed-transcript]");
+  await expect(privateWorkCell.locator('[data-conversation-timeline][data-conversation-timeline-scope="primary"]')).toBeVisible();
   const privateCommandBatch = privateWorkCell.locator(".conversation-command-batch");
   await expect(privateCommandBatch.locator(".conversation-command-batch-header")).toContainText("Ran 3 commands");
   await privateCommandBatch.locator(".conversation-command-batch-header").click();
-  await expect(privateCommandBatch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(privateCommandBatch.locator(".conversation-command-batch-list [data-conversation-timeline-activity]")).toHaveCount(3);
   await expect(privateCommandBatch).toContainText("pnpm test");
-  await expect(linkedRunPrivateRow.getByText("Private acceptance criteria summary.")).toHaveCount(0);
+  await expect(linkedRunPrivateRow.getByText("Private acceptance criteria summary.", { exact: true })).toHaveCount(1);
+  // A successful final message owns completion narration. TerminalReport stays
+  // in the audit model and is not rendered as a second summary card here.
   const privateTerminalReport = linkedRunPrivateRow.locator(".terminal-report-block");
-  await expect(privateTerminalReport).toBeVisible();
-  await expect.poll(() => privateTerminalReport.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  await expect(privateTerminalReport).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
-  await expect(privateTerminalReport.locator(".terminal-report-summary")).not.toHaveAttribute("aria-expanded");
-  await expect(privateTerminalReport.locator(".terminal-report-toggle")).toHaveCount(0);
-  await expect(privateTerminalReport).toContainText("Refined private acceptance criteria");
-  await expect(privateTerminalReport.getByRole("button", { name: "private-acceptance.md", exact: true })).toBeVisible();
-  await expect(privateTerminalReport).toContainText("Acceptance review");
-  await expect(privateTerminalReport.locator(".terminal-report-participants")).toHaveCount(0);
+  await expect(linkedRunPrivateRow).not.toContainText("Acceptance review");
   await expect(linkedRunPrivateRow.locator(".conversation-work-cell-artifact-row").getByRole("button", { name: "Open with" })).toBeVisible();
   await expect(linkedRunPrivateRow.locator(".message-reply-button")).toHaveCount(0);
   const privateToolbar = page.getByLabel("Private chat actions");

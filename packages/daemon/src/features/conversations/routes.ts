@@ -2,6 +2,7 @@ import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
   LING_AGENT_ID,
+  createLingTurnId,
   type ConversationAttachment,
   type LingConversationTone,
   type LingThread,
@@ -17,6 +18,7 @@ import type {
   ConversationStreamRequest,
   ConversationTranscriptMessage,
   ConversationTranscriptStatus,
+  ConversationWorkspaceFileRefV1,
   AuthorizationMode,
   ChannelMessageFileRef,
   PermissionPreset,
@@ -170,15 +172,20 @@ export async function handleConversationStream(
     const now = new Date().toISOString();
     const thread = resolveConversationThread(store, input, now);
     const turnInstruction = input.message.trim() || "User attached files.";
+    const turnId = createLingTurnId();
+    const userItemId = `conversation-user:${turnId}`;
     const turn = store.createLingTurn({
+      id: turnId,
       threadId: thread.id,
       kind: thread.metadata?.lastTurnId ? "manual_followup" : "initial_request",
       title: conversationTitle(turnInstruction),
       userInstruction: turnInstruction,
       teammateId: LING_AGENT_ID,
+      sourceItemId: userItemId,
       createdByActor: "local-user",
     }, now);
     const conversationAttachments = assignConversationAttachments(store, input.attachmentIds ?? [], thread.id, turn.id);
+    persistConversationUserItem(store, thread, turn, conversationAttachments, input.fileRefs ?? [], now);
     const attachmentMaterializations = await materializeInlineConversationAttachments({
       store,
       attachments: conversationAttachments,
@@ -684,6 +691,57 @@ function createUserTranscriptMessage(
     createdAt: turn.createdAt,
     updatedAt: turn.updatedAt,
   };
+}
+
+/**
+ * Give normal-conversation runs a durable ConversationItem anchor before the
+ * first tool event is emitted. The existing transcript DTO remains unchanged
+ * for this slice, but execution actions can now point back to a real SQLite
+ * item instead of inventing a UI-only source reference.
+ */
+function persistConversationUserItem(
+  store: RunStore,
+  thread: LingThread,
+  turn: LingTurn,
+  attachments: readonly ConversationAttachment[],
+  fileRefs: readonly ChannelMessageFileRef[],
+  now: string,
+): void {
+  const itemId = turn.sourceItemId?.trim();
+  if (!itemId || !itemId.startsWith("conversation-user:")) {
+    return;
+  }
+  const existing = store.getConversationItem(itemId);
+  if (existing) {
+    if (existing.threadId !== thread.id || existing.turnId !== turn.id || existing.kind !== "user_message") {
+      throw new Error(`Conversation user item anchor does not match turn: ${itemId}`);
+    }
+    return;
+  }
+  const canonicalFileRefs: ConversationWorkspaceFileRefV1[] = fileRefs.map((fileRef) => ({
+    path: fileRef.path,
+    ...(fileRef.label ? { label: fileRef.label } : {}),
+    source: "explicit_text",
+    ...(fileRef.line !== undefined ? { line: fileRef.line } : {}),
+  }));
+  store.appendConversationItem({
+    id: itemId,
+    threadId: thread.id,
+    turnId: turn.id,
+    kind: "user_message",
+    status: "committed",
+    actorType: "local_user",
+    visibility: thread.channelId ? "channel" : "thread_participants",
+    payload: {
+      body: turn.userInstruction,
+      format: "markdown",
+      mentions: [],
+      attachmentIds: attachments.map((attachment) => attachment.id),
+      linkPreviewIds: [],
+      fileRefs: canonicalFileRefs,
+    },
+    domainRefs: [{ type: "turn", id: turn.id }],
+  }, now);
 }
 
 function createAssistantTranscriptMessage(

@@ -685,7 +685,8 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
   await expect(pendingWorkCell).not.toContainText("Approve normal shell command");
   await expect(pendingWorkCell).not.toContainText("Approve normal file edit");
   await expect(pendingWorkCell.locator(".conversation-work-cell-evidence-summary")).toHaveCount(0);
-  await expect(pendingWorkCell.locator(".conversation-operation-shell-body")).toHaveCount(0);
+  await expect(pendingWorkCell.locator(".conversation-operation-shell-static-content")).toHaveCount(1);
+  await expect(pendingWorkCell.locator("[data-conversation-timeline]")).toHaveCount(0);
   await navigation.getByRole("button", { name: "New conversation" }).click();
   await expect(page.getByLabel("Conversation home")).toBeVisible();
   await recentRow.click();
@@ -1340,55 +1341,26 @@ test("executed normal conversation renders one structured terminal report", asyn
 
   const assistantRow = page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate");
   await expect(assistantRow).toHaveCount(1);
-  await expect(assistantRow.getByText("旧的执行总结不应和结构化报告重复展示。")).toHaveCount(0);
-  const report = assistantRow.locator(".terminal-report-block");
-  await expect(report).toContainText("结构化终局报告已接入普通会话");
-  await expect.poll(() => report.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
+  // A successful turn has one final agent message. TerminalReport is audit
+  // evidence and does not create a second completion card.
+  await expect(assistantRow).toContainText("旧的执行总结不应和结构化报告重复展示。");
+  await expect(assistantRow.locator(".terminal-report-block")).toHaveCount(0);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
-  await expect(report.locator(".terminal-report-participants")).toHaveCount(0);
-  await expect(report.locator(".terminal-report-summary")).not.toHaveAttribute("aria-expanded");
-  await expect(report.locator(".terminal-report-toggle")).toHaveCount(0);
-  const redundantChangeRow = report.locator(".terminal-report-section.kind-change .terminal-report-row").filter({ has: page.getByRole("button", { name: "ConversationHome-1.tsx" }) });
-  await expect(redundantChangeRow.locator(".terminal-report-row-icon")).toHaveCount(0);
-  await expect(redundantChangeRow.locator(".terminal-report-row-title")).toHaveCount(0);
-  await expect(redundantChangeRow.locator(".terminal-report-row-description")).toHaveCount(0);
-  await expect(report).toContainText("保留有意义的变更说明");
-  await expect(report.locator(".terminal-report-section.kind-change .terminal-report-row-title small")).toHaveCount(0);
-  await expect(report.locator(".terminal-report-section.kind-verification .terminal-report-row-title small")).toHaveCount(0);
-  const verificationRow = report.locator(".terminal-report-section.kind-verification .terminal-report-row").first();
-  const commandDisclosure = verificationRow.locator("[data-terminal-report-command-disclosure]");
-  await expect(commandDisclosure).toBeVisible();
-  await expect(commandDisclosure.locator(":scope > code")).toBeHidden();
-  await commandDisclosure.locator(":scope > summary").click();
-  await expect(commandDisclosure.locator(":scope > code")).toBeVisible();
-  await expect(commandDisclosure.locator(":scope > code")).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
-  const reportFileLink = report.locator(".terminal-report-file-reference").first();
-  await expect(reportFileLink).toBeVisible();
-  await expect(reportFileLink).toHaveText("ConversationHome-1.tsx");
-  await expect(reportFileLink.locator('.terminal-report-file-type-icon[data-file-kind="react"]')).toBeVisible();
-  const reportFileColor = await reportFileLink.evaluate((element) => getComputedStyle(element).color);
-  await reportFileLink.hover();
-  await page.waitForTimeout(700);
-  await expect(reportFileLink.getByRole("tooltip")).toHaveCount(0);
-  await page.waitForTimeout(400);
-  await expect(reportFileLink.getByRole("tooltip")).toContainText("apps/web/src/features/workspace/ConversationHome-1.tsx");
-  const reportFileHoverColor = await reportFileLink.evaluate((element) => getComputedStyle(element).color);
-  expect(reportFileHoverColor).not.toBe(reportFileColor);
-  await expect(reportFileLink).toHaveCSS("text-decoration-line", "underline");
-  const reportFileIconColor = await reportFileLink.locator("svg").evaluate((element) => getComputedStyle(element).color);
-  expect(reportFileIconColor).toBe(reportFileHoverColor);
+  /* TerminalReport is inspected from the audit surface, not duplicated here. */
+  await expect(assistantRow).toContainText("ConversationHome.tsx");
   const workCell = assistantRow.locator(".conversation-work-cell");
-  await workCell.locator(".conversation-operation-shell-head").click();
   const commandBatch = workCell.locator(".conversation-command-batch");
   await expect(commandBatch.locator(".conversation-command-batch-header")).toContainText("已运行 3 个命令");
   await commandBatch.locator(".conversation-command-batch-header").click();
-  await expect(commandBatch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect(commandBatch.locator('[data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
+  const typedCommand = commandBatch.locator('[data-conversation-timeline-kind="commandExecution"]').first();
+  await expect(typedCommand).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
   await expect(commandBatch).toContainText("git diff --check");
   await expect(workCell).not.toContainText("echo prior attempt");
   await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(1);
   await expect(workCell).toContainText("ConversationHome.tsx");
   await expect(workCell).toContainText("已编辑 2 个文件");
-  await expect(workCell.locator(".conversation-work-cell-change-file")).toHaveCount(0);
+  await expect(workCell.locator(".conversation-work-cell-change-file")).toHaveCount(2);
   await expect.poll(() => workCell.evaluate((element) => ({
     artifactPaddingLeft: getComputedStyle(element.querySelector(".conversation-work-cell-artifacts") as Element).paddingLeft,
     artifactThumbWidth: getComputedStyle(element.querySelector(".conversation-work-cell-artifact-row .conversation-work-cell-artifact-thumb") as Element).width,
@@ -1402,13 +1374,7 @@ test("executed normal conversation renders one structured terminal report", asyn
   const references = workCell.locator(".conversation-work-cell-evidence-summary");
   await expect(references).toHaveCount(0);
   await expect(workCell.locator(".conversation-work-cell-post-report-evidence")).toHaveCount(0);
-  await expect.poll(() => workCell.evaluate((element) => {
-    const childClasses = Array.from(element.children).map((child) => child.className.toString());
-    const operationIndex = childClasses.findIndex((className) => className.includes("conversation-operation-shell"));
-    const reportIndex = childClasses.findIndex((className) => className.includes("terminal-report-block"));
-    const artifactsIndex = childClasses.findIndex((className) => className.includes("conversation-work-cell-artifacts"));
-    return operationIndex < reportIndex && reportIndex < artifactsIndex;
-  })).toBe(true);
+  await expect(workCell.locator(".terminal-report-block")).toHaveCount(0);
   const feed = page.locator(".normal-conversation-feed");
   const expandedMetrics = await feed.evaluate((element) => ({
     clientHeight: element.clientHeight,
@@ -1424,11 +1390,6 @@ test("executed normal conversation renders one structured terminal report", asyn
     element.scrollTop = 120;
   });
   await expect.poll(() => feed.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
-  await reportFileLink.click();
-  const conversationDock = page.locator(".normal-conversation-right-dock");
-  await expect(conversationDock).toContainText("apps/web/src/features/workspace/ConversationHome-1.tsx");
-  await expect(conversationDock).toContainText("terminalReportWorkspacePreview");
-  await expect(conversationDock.getByRole("button", { name: "打开方式" })).toBeVisible();
   expect(runtimeErrors).toEqual([]);
 });
 

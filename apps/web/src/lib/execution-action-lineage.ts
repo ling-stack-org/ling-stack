@@ -12,6 +12,23 @@ export function executionActionSourceRefs(
   action: ExecutionAction,
   workflowStepId: string | undefined,
 ): readonly ConversationOperationSourceRef[] {
+  const durableRefs = Array.isArray(action.sourceRefs)
+    ? action.sourceRefs
+      .filter((ref): ref is NonNullable<ExecutionAction["sourceRefs"]>[number] => Boolean(
+        ref && typeof ref.kind === "string" && typeof ref.id === "string" && ref.id.trim(),
+      ))
+      .map((ref) => ({
+        kind: ref.kind,
+        id: ref.id,
+        ...(ref.label ? { label: ref.label } : {}),
+        ...(ref.path ? { path: ref.path } : {}),
+      }))
+    : [];
+  if (durableRefs.length > 0) {
+    return uniqueSourceRefs(workflowStepId
+      ? [...durableRefs, { kind: "workflow_step", id: workflowStepId }]
+      : durableRefs);
+  }
   const refs: ConversationOperationSourceRef[] = [
     { kind: "execution_action", id: action.id },
   ];
