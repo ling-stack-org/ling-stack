@@ -113,6 +113,7 @@ export {
 } from "@ling-stack/conversation-ui-core";
 export { ConversationAttachmentStrip, type ConversationAttachmentChip, type ConversationAttachmentStripProps } from "./preview/ConversationAttachmentStrip.js";
 export { ConversationReferenceStrip, type ConversationReferenceItem } from "./preview/ConversationReferenceStrip.js";
+export { ConversationTimeline, type ConversationTimelineProps } from "./timeline/ConversationTimeline.js";
 export { isConversationGuidanceQueueVisible } from "./feedback/conversation-guidance-visibility.js";
 export {
   ConversationSendLifecycleStore,

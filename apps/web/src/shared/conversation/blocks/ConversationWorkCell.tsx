@@ -2,19 +2,19 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BookOpen, CheckCircle2, ChevronDown, CircleAlert, Clock3, FilePenLine, FileText, GitBranch, History, ListChecks, Loader2, RefreshCw, Search, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
-import { projectConversationActivity, type ConversationAgentActivitySpan, type ConversationArtifactStripItem, type ConversationCommandBatchItem, type ConversationOperationCellViewModel, type ConversationWorkCellEvidenceLink, type ConversationWorkCellGroup, type ConversationWorkCellItem, type ConversationWorkCellRow, type ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
+import { projectConversationActivity, type ConversationAgentActivitySpan, type ConversationArtifactStripItem, type ConversationOperationCellViewModel, type ConversationWorkCellEvidenceLink, type ConversationWorkCellGroup, type ConversationWorkCellItem, type ConversationWorkCellRow, type ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
 import type { ComposerGateApprovalPresentation } from "../../../lib/runtime-approval-presentation.js";
 import type { PreviewContentResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import type { ConversationSurfaceKind, TerminalReportProjectionPolicy } from "../tokens/conversation-surface-policy.js";
 import { ConversationArtifactStrip, type ConversationWorkspaceReviewTarget } from "./ConversationArtifactStrip.js";
-import { ConversationCommandBatch } from "./ConversationCommandBatch.js";
-import { ConversationExplorationBatch } from "./ConversationExplorationBatch.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 import { TerminalReportBlock, type TerminalReportFileTarget } from "./TerminalReportBlock.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 import { useWorkCellActivityVisibility } from "./use-work-cell-activity-visibility.js";
+import { ConversationTimeline } from "../timeline/ConversationTimeline.js";
+import { projectConversationSubAgentActivity } from "@ling-stack/conversation-ui-core";
 
 export type ConversationWorkCellDetailsStatus = "not_loaded" | "loading" | "loaded" | "empty" | "error";
 
@@ -594,8 +594,9 @@ function AgentActivitySpanItem({
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
 }): React.JSX.Element {
   const { t } = useI18n();
-  const items = span.items ?? projectConversationActivity(span.rows, { participantScope: span.participantId ?? span.id });
-  const hasDetail = items.length > 0;
+  const childWorkItems = span.items ?? projectConversationActivity(span.rows, { participantScope: span.participantId ?? span.id });
+  const activity = projectConversationSubAgentActivity(span, childWorkItems);
+  const hasDetail = activity.childItems.length > 0;
   const avatar = renderAgentAvatar?.(span);
   const headContent = (
     <>
@@ -619,7 +620,12 @@ function AgentActivitySpanItem({
       </div>
       {hasDetail ? (
         <div className="conversation-work-cell-agent-span-detail" aria-label={t("Agent activity detail")}>
-          <ActiveTurnItemStream items={items} cwd={cwd} loadPreview={loadPreview} scope="agent" />
+          <ConversationTimeline
+            items={activity.childItems}
+            scope="agent"
+            renderRow={(row) => <WorkCellRow key={row.id} row={row} compact cwd={cwd} loadPreview={loadPreview} />}
+            renderMessage={(markdown) => <MessageBodyRenderer text={markdown} cwd={cwd} compact />}
+          />
         </div>
       ) : null}
     </div>
@@ -761,7 +767,6 @@ function ActiveTurnItemStream({
   const className = scope === "agent"
     ? "conversation-work-cell-agent-stream"
     : "conversation-work-cell-active-stream";
-  const ariaLabel = scope === "agent" ? t("Agent activity detail") : t("Active work stream");
   const atomicItemCount = items.reduce((count, item) => {
     if (item.kind === "operation") {
       return count + 1;
@@ -776,65 +781,29 @@ function ActiveTurnItemStream({
   }, 0);
   const density = atomicItemCount > 10 ? "dense" : "default";
   if (items.length === 0) {
-    return (
-      <div
-        className={`${className} empty`}
-        data-activity-density={density}
-        data-conversation-work-stream={scope}
-      >
-        <Clock3 size={13} />
-        <span>{t("Waiting for activity")}</span>
-      </div>
-    );
+    return <ConversationTimeline
+      items={items}
+      scope={scope}
+      className={className}
+      dataDensity={density}
+      ariaLabel={scope === "agent" ? t("Agent activity detail") : t("Active work stream")}
+      dataConversationWorkStream={scope}
+      emptyLabel={<><Clock3 size={13} /><span>{t("Waiting for activity")}</span></>}
+      renderRow={(row) => <WorkCellRow key={row.id} row={row} compact cwd={cwd} loadPreview={loadPreview} />}
+      renderMessage={(markdown) => <MessageBodyRenderer text={markdown} cwd={cwd} compact />}
+    />;
   }
   return (
-    <div
+    <ConversationTimeline
+      items={items}
+      scope={scope}
       className={className}
-      aria-label={ariaLabel}
-      data-activity-density={density}
-      data-conversation-work-stream={scope}
-    >
-      {items.map((item) => {
-        if (item.kind === "command_batch") {
-          return (
-            <ConversationCommandBatch
-              key={item.batch.id}
-              batch={item.batch}
-              renderCommand={(command) => [
-                ...(command.leadingRows ?? []).map((row) => (
-                  <WorkCellRow
-                    key={`leading:${row.id}`}
-                    row={row}
-                    compact
-                    cwd={cwd}
-                    loadPreview={loadPreview}
-                  />
-                )),
-                <WorkCellRow
-                  key={command.id}
-                  row={commandBatchRow(command)}
-                  compact
-                  cwd={cwd}
-                  loadPreview={loadPreview}
-                />,
-              ]}
-            />
-          );
-        }
-        if (item.kind === "exploration_batch") {
-          return (
-            <ConversationExplorationBatch
-              key={item.batch.id}
-              batch={item.batch}
-              renderRow={(row) => (
-                <WorkCellRow key={row.id} row={row} compact cwd={cwd} loadPreview={loadPreview} />
-              )}
-            />
-          );
-        }
-        return <WorkCellRow key={item.row.id} row={item.row} compact cwd={cwd} loadPreview={loadPreview} />;
-      })}
-    </div>
+      dataDensity={density}
+      ariaLabel={scope === "agent" ? t("Agent activity detail") : t("Active work stream")}
+      dataConversationWorkStream={scope}
+      renderRow={(row) => <WorkCellRow key={row.id} row={row} compact cwd={cwd} loadPreview={loadPreview} />}
+      renderMessage={(markdown) => <MessageBodyRenderer text={markdown} cwd={cwd} compact />}
+    />
   );
 }
 
@@ -972,36 +941,6 @@ function WorkCellRow({
       ) : null}
     </div>
   );
-}
-
-function commandBatchRow(command: ConversationCommandBatchItem): ConversationWorkCellRow {
-  const commandText = stripShellPrompt(command.commandText) ?? command.commandText;
-  const detailLines = (command.row.detailLines ?? []).filter((line) => stripShellPrompt(line.text) !== commandText);
-  const meta = [
-    command.exitCode !== undefined ? `exit ${command.exitCode}` : undefined,
-    formatCompactCommandDuration(command.durationMs),
-  ].filter((value): value is string => Boolean(value)).join(" · ");
-  return {
-    ...command.row,
-    id: command.id,
-    title: commandText,
-    description: undefined,
-    commandText: undefined,
-    commandExecution: undefined,
-    detailLines,
-    meta: meta || undefined,
-  };
-}
-
-function formatCompactCommandDuration(durationMs: number | undefined): string | undefined {
-  if (durationMs === undefined || durationMs < 0) {
-    return undefined;
-  }
-  if (durationMs < 1000) {
-    return `${Math.max(1, Math.round(durationMs))}ms`;
-  }
-  const seconds = durationMs / 1000;
-  return seconds < 10 ? `${seconds.toFixed(1)}s` : `${Math.round(seconds)}s`;
 }
 
 interface InlineChangePreviewState {

@@ -44,6 +44,25 @@ export type {
 } from "./work-cell-view-model.js";
 export { normalizeConversationOperationCell } from "./work-cell-view-model.js";
 export {
+  isConversationTimelineItem,
+  projectConversationSubAgentActivity,
+  projectConversationTimelineItems,
+} from "./transcript-item.js";
+export type {
+  ConversationTimelineItem,
+  ConversationTimelineItemBase,
+  ConversationTimelineItemKind,
+  ConversationTimelineItemStatus,
+  ConversationTimelineMessageItem,
+  ConversationTimelineInput,
+  ConversationTimelineProjectionOptions,
+  ConversationTimelineRowItem,
+  ConversationTimelineBatchItem,
+  ConversationTimelineCommandBatchItem,
+  ConversationTimelineExplorationBatchItem,
+  ConversationTimelineSubAgentItem,
+} from "./transcript-item.js";
+export {
   isCommandBatchEligible,
   projectConversationCommandBatches,
 } from "./command-batching.js";

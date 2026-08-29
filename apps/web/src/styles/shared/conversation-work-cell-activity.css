@@ -55,6 +55,71 @@
   background: transparent;
 }
 
+.conversation-timeline {
+  min-width: 0;
+}
+
+.conversation-timeline-message {
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.conversation-timeline-message.agentMessage p {
+  margin: 0;
+}
+
+.conversation-timeline-sub-agent {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  padding: 2px 0 2px 8px;
+  border-left: 1px solid color-mix(in srgb, var(--conversation-border) 60%, transparent);
+}
+
+.conversation-timeline-sub-agent-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 20px;
+}
+
+.conversation-timeline-sub-agent-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 auto;
+  width: 18px;
+  height: 18px;
+  color: var(--info);
+}
+
+.conversation-timeline-sub-agent-head strong {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--info);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-timeline-sub-agent-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--conversation-text-muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-timeline-sub-agent.lifecycle-blocked,
+.conversation-timeline-sub-agent.lifecycle-errored {
+  border-left-color: var(--conversation-status-danger);
+}
+
 .conversation-work-cell-active-stream[data-activity-density="dense"],
 .conversation-work-cell-agent-stream[data-activity-density="dense"] {
   max-height: min(360px, 50vh);
