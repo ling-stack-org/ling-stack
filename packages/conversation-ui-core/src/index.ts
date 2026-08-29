@@ -52,6 +52,28 @@ export {
   mergeConversationTimelineItems,
   normalizeConversationTimelineItems,
 } from "./transcript-projector.js";
+export {
+  projectCanonicalConversationTimeline,
+} from "./canonical-transcript-projector.js";
+export type {
+  CanonicalCommandEvidence,
+  CanonicalApprovalRecord,
+  CanonicalArtifactRecord,
+  CanonicalPlanRecord,
+  CanonicalCompactionRecord,
+  CanonicalParticipantSpan,
+  CanonicalTurnRunLink,
+  CanonicalConversationItem,
+  CanonicalExecutionAction,
+  CanonicalProjectionSourceRef,
+  CanonicalSourceRef,
+  CanonicalTerminalEvidenceRef,
+  CanonicalTranscriptDiagnostic,
+  CanonicalTranscriptDiagnosticCode,
+  CanonicalTranscriptProjection,
+  CanonicalTranscriptProjectionInput,
+  CanonicalTranscriptScope,
+} from "./canonical-transcript-projector.js";
 export type {
   ConversationTimelineItem,
   ConversationTimelineItemBase,
@@ -76,13 +98,16 @@ export type {
   ConversationTimelineToolCallItem,
   ConversationTimelineBatchItem,
   ConversationTimelineCommandBatchItem,
+  ConversationTimelineCommandBatchPayload,
   ConversationTimelineExplorationBatchItem,
+  ConversationTimelineExplorationBatchPayload,
   ConversationTimelineSubAgentItem,
 } from "./transcript-item.js";
 export {
   isCommandBatchEligible,
   projectConversationCommandBatches,
 } from "./command-batching.js";
+export { batchCanonicalTranscriptItems } from "./typed-transcript-batching.js";
 export {
   isExplorationBatchEligible,
   projectConversationActivity,

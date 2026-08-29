@@ -532,10 +532,13 @@ export function buildConversationDetail(
   const latestRun = runs[runs.length - 1];
   const latestSnapshot = readRecord(latestRun?.requestSnapshot);
   const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
+  const conversationItems = listAllConversationItems(store, thread.id, !options.includeSuperseded);
   return {
     cwd,
     thread,
     turns,
+    conversationItems,
+    runLinks,
     runs,
     executionActions: listExecutionActions(store, { threadId: thread.id, limit: 500 }),
     approvals: runtimeProjection.approvals,
@@ -545,6 +548,15 @@ export function buildConversationDetail(
       : filterSupersededTerminalReports(store.listTerminalReports({ threadId: thread.id, limit: 200 }), projection))
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
       .map((record) => projectTerminalReportDto(record.report!)),
+    artifacts: runs.flatMap((run) => store.listArtifacts(run.id)),
+    plans: store.listProposedPlanArtifacts({ threadId: thread.id, limit: 200 }),
+    compactionCheckpoints: store.listCompactionCheckpoints({ threadId: thread.id, limit: 100 }),
+    contextSnapshots: store.listConversationContextSnapshots({ threadId: thread.id, limit: 100 }),
+    contextSummaries: store.listConversationContextSummaries({
+      threadId: thread.id,
+      statuses: ["active", "superseded", "invalidated"],
+      limit: 200,
+    }),
     messages: [...messageById.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)),
     generatedMedia: buildConversationGeneratedMediaProjection({
       store,
@@ -560,6 +572,36 @@ export function buildConversationDetail(
       permissionMode: readPermissionMode(readOptionalRecordString(latestSnapshot, "permissionMode")),
     },
   };
+}
+
+/**
+ * Read the complete canonical item line without imposing the UI's page size on
+ * history. The SQLite store pages newest-first; this helper reverses each page
+ * through the store contract and returns one source-ordered list. No timestamp
+ * or array-arrival order is used as a fallback authority.
+ */
+function listAllConversationItems(
+  store: RunStore,
+  threadId: string,
+  effectiveOnly: boolean,
+): readonly import("@ling-stack/contracts").ConversationItemV1[] {
+  const items: import("@ling-stack/contracts").ConversationItemV1[] = [];
+  let beforeSequence = Number.MAX_SAFE_INTEGER;
+  for (;;) {
+    const page = store.listConversationItemsPage({
+      threadId,
+      beforeSequence,
+      effectiveOnly,
+      limit: 500,
+    });
+    for (const item of page.items) {
+      items.push(item);
+    }
+    const next = page.nextBeforeSequence;
+    if (next === undefined || next >= beforeSequence) break;
+    beforeSequence = next;
+  }
+  return items.sort((left, right) => left.sequence - right.sequence);
 }
 
 function parseConversationStreamRequest(value: unknown): ConversationStreamRequest {

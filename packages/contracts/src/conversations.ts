@@ -4,10 +4,14 @@ import type { AuthorizationMode, ConversationPendingReplacement, PermissionConfi
 import type { ExecutionAction } from "./execution-actions.js";
 import type { ResponseLanguagePreference } from "./settings.js";
 import type { ConversationActiveReplyTarget, RunEventEnvelope, RunIntervention, RunSession } from "./runtime.js";
+import type { ConversationContextSnapshot, ConversationContextSummary, ConversationItemV1 } from "./conversation-continuity.js";
 import type { LingThread } from "./threads.js";
-import type { LingTurn } from "./turns.js";
+import type { LingTurn, LingTurnRun } from "./turns.js";
 import type { TerminalReportDto } from "./terminal-reports.js";
 import type { ConversationGeneratedMedia } from "./media.js";
+import type { RunArtifact } from "./artifacts.js";
+import type { CompactionCheckpoint } from "./workspace-changes.js";
+import type { ProposedPlanArtifact } from "./threads.js";
 
 export type ConversationTranscriptRole = "user" | "assistant" | "system";
 export type ConversationTranscriptStatus = "pending" | "running" | "succeeded" | "failed" | "blocked" | "cancelled";
@@ -87,11 +91,25 @@ export interface ConversationDetailResponse {
   readonly cwd: string;
   readonly thread: LingThread;
   readonly turns: readonly LingTurn[];
+  /** Canonical source-order history. `messages` remains a compatibility view for existing callers. */
+  readonly conversationItems: readonly ConversationItemV1[];
+  /** Durable turn -> run/attempt links used by the typed transcript projector. */
+  readonly runLinks: readonly LingTurnRun[];
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
   readonly approvals: readonly ApprovalRequest[];
   readonly interventions: readonly RunIntervention[];
   readonly terminalReports: readonly TerminalReportDto[];
+  /** Host-owned artifacts used by file, diff, image, and evidence timeline items. */
+  readonly artifacts: readonly RunArtifact[];
+  /** Durable proposed plans; projected into the shared `plan` item when anchored. */
+  readonly plans?: readonly ProposedPlanArtifact[];
+  /** Durable context compaction checkpoints; projected into `contextCompaction`. */
+  readonly compactionCheckpoints?: readonly CompactionCheckpoint[];
+  /** Context snapshots used to preserve contextSegmentId lineage in detail. */
+  readonly contextSnapshots?: readonly ConversationContextSnapshot[];
+  /** Durable summaries referenced by compaction checkpoints; never a second transcript. */
+  readonly contextSummaries?: readonly ConversationContextSummary[];
   readonly messages: readonly ConversationTranscriptMessage[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly defaults: {
