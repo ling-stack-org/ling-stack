@@ -3,17 +3,17 @@ import {
   isConversationTimelineItem,
   projectConversationTimelineItems,
   type ConversationTimelineItem,
+  type ConversationTimelineInput,
   type ConversationTimelineProjectionOptions,
   type ConversationTimelineSubAgentItem,
 } from "@ling-stack/conversation-ui-core";
-import type { ConversationWorkCellItem, ConversationWorkCellRow } from "@ling-stack/conversation-ui-core";
+import type { ConversationWorkCellRow } from "@ling-stack/conversation-ui-core";
 import { ChevronDown, CircleAlert, Loader2, UserRound } from "lucide-react";
-import { ConversationCommandBatch } from "../blocks/ConversationCommandBatch.js";
-import { ConversationExplorationBatch } from "../blocks/ConversationExplorationBatch.js";
+import { renderConversationTimelineItem } from "./renderer-registry.js";
 
 export interface ConversationTimelineProps {
   /** Existing WorkCell items are accepted during the migration; they are projected once. */
-  readonly items: readonly ConversationWorkCellItem[] | readonly ConversationTimelineItem[];
+  readonly items: readonly ConversationTimelineInput[];
   readonly scope?: "primary" | "agent";
   readonly className?: string;
   readonly dataDensity?: "default" | "dense";
@@ -74,40 +74,11 @@ function renderTimelineItem(
   item: ConversationTimelineItem,
   context: Pick<ConversationTimelineProps, "renderRow" | "renderMessage" | "renderSubAgentAvatar" | "scope" | "projectionOptions">,
 ): ReactNode {
-  if (item.kind === "commandBatch") {
-    return (
-      <ConversationCommandBatch
-        key={item.id}
-        batch={item.batch}
-        renderCommand={(command) => [
-          ...(command.leadingRows ?? []).map((row) => context.renderRow(row, { leading: true })),
-          context.renderRow(command.row),
-        ]}
-      />
-    );
-  }
-  if (item.kind === "explorationBatch") {
-    return (
-      <ConversationExplorationBatch
-        key={item.id}
-        batch={item.batch}
-        renderRow={(row) => context.renderRow(row)}
-      />
-    );
-  }
-  if (item.kind === "subAgentActivity") {
-    return <SubAgentTimelineItem key={item.id} item={item} context={context} />;
-  }
-  if (item.kind === "agentMessage" || item.kind === "userMessage") {
-    return (
-      <div key={item.id} className={`conversation-timeline-message ${item.kind}`} data-conversation-timeline-message>
-        {context.renderMessage ? context.renderMessage(item.markdown) : <p>{item.markdown}</p>}
-      </div>
-    );
-  }
-  return "row" in item
-    ? <span key={item.id} data-conversation-timeline-kind={item.kind}>{context.renderRow(item.row)}</span>
-    : null;
+  return renderConversationTimelineItem(item, {
+    renderRow: context.renderRow,
+    renderMessage: context.renderMessage,
+    renderSubAgent: (subAgent) => <SubAgentTimelineItem key={subAgent.id} item={subAgent} context={context} />,
+  });
 }
 
 function SubAgentTimelineItem({
@@ -158,11 +129,10 @@ function projectItems(
   if (items.length === 0) {
     return [];
   }
-  const first = items[0];
-  if (first && isConversationTimelineItem(first)) {
+  if (items.every(isConversationTimelineItem)) {
     return items as readonly ConversationTimelineItem[];
   }
-  return projectConversationTimelineItems(items as readonly ConversationWorkCellItem[], options);
+  return projectConversationTimelineItems(items, options);
 }
 
 function subAgentStatusLabel(lifecycle: ConversationTimelineSubAgentItem["lifecycle"]): string {

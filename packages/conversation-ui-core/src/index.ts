@@ -48,6 +48,10 @@ export {
   projectConversationSubAgentActivity,
   projectConversationTimelineItems,
 } from "./transcript-item.js";
+export {
+  mergeConversationTimelineItems,
+  normalizeConversationTimelineItems,
+} from "./transcript-projector.js";
 export type {
   ConversationTimelineItem,
   ConversationTimelineItemBase,
