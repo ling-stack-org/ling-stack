@@ -3,6 +3,7 @@ import type {
   ConversationTimelineItem,
   ConversationTimelineRowItem,
   ConversationTimelineSubAgentItem,
+  ConversationSurfacePolicy,
 } from "@ling-stack/conversation-ui-core";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { ConversationCommandBatch } from "../blocks/ConversationCommandBatch.js";
@@ -15,6 +16,7 @@ export interface ConversationTimelineRenderContext {
   readonly onOpenSourceRef?: (ref: ConversationTimelineItem["sourceRefs"][number]) => void;
   readonly renderMessage?: (markdown: string) => ReactNode;
   readonly renderSubAgent: (item: ConversationTimelineSubAgentItem) => ReactNode;
+  readonly policy: ConversationSurfacePolicy;
   readonly depth: 0 | 1;
 }
 
@@ -30,18 +32,18 @@ type ConversationTimelineItemRenderer = (
 const RENDERERS = {
   userMessage: renderMessageItem,
   agentMessage: renderMessageItem,
-  reasoningSummary: renderActivityItem,
-  plan: renderActivityItem,
-  commandExecution: renderActivityItem,
-  fileChange: renderActivityItem,
-  exploration: renderActivityItem,
-  mcpToolCall: renderActivityItem,
-  dynamicToolCall: renderActivityItem,
-  collabAgentToolCall: renderActivityItem,
-  approval: renderActivityItem,
-  imageView: renderActivityItem,
-  contextCompaction: renderActivityItem,
-  genericActivity: renderActivityItem,
+  reasoningSummary: renderReasoningItem,
+  plan: renderPlanItem,
+  commandExecution: renderCommandItem,
+  fileChange: renderFileChangeItem,
+  exploration: renderExplorationItem,
+  mcpToolCall: renderMcpToolItem,
+  dynamicToolCall: renderDynamicToolItem,
+  collabAgentToolCall: renderCollabAgentToolItem,
+  approval: renderApprovalItem,
+  imageView: renderImageItem,
+  contextCompaction: renderContextCompactionItem,
+  genericActivity: renderGenericActivityItem,
   commandBatch: renderCommandBatchItem,
   explorationBatch: renderExplorationBatchItem,
   subAgentActivity: renderSubAgentItem,
@@ -90,6 +92,65 @@ function renderActivityItem(
       depth={context.depth}
     />
   );
+}
+
+// R7 starts with one shared fact-row shell. These named renderers intentionally
+// narrow ownership by semantic kind so each kind can later grow its own detail
+// module without reintroducing a route-specific WorkCell switch.
+function renderReasoningItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "reasoningSummary", context);
+}
+
+function renderPlanItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "plan", context);
+}
+
+function renderCommandItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "commandExecution", context);
+}
+
+function renderFileChangeItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "fileChange", context);
+}
+
+function renderExplorationItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "exploration", context);
+}
+
+function renderMcpToolItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "mcpToolCall", context);
+}
+
+function renderDynamicToolItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "dynamicToolCall", context);
+}
+
+function renderCollabAgentToolItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "collabAgentToolCall", context);
+}
+
+function renderApprovalItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "approval", context);
+}
+
+function renderImageItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "imageView", context);
+}
+
+function renderContextCompactionItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "contextCompaction", context);
+}
+
+function renderGenericActivityItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return renderFactKind(item, "genericActivity", context);
+}
+
+function renderFactKind<K extends ConversationTimelineRowItem["kind"]>(
+  item: ConversationTimelineItem,
+  kind: K,
+  context: ConversationTimelineRenderContext,
+): ReactNode {
+  return item.kind === kind ? renderActivityItem(item, context) : null;
 }
 
 function renderCommandBatchItem(

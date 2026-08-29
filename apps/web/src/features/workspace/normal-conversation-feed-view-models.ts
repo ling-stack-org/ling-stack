@@ -1,6 +1,7 @@
 import {
   projectConversationMessagePresentation,
   type ConversationWorkCellViewModel,
+  type ConversationTimelineItem,
 } from "@ling-stack/conversation-ui-core";
 import type { Translate } from "../../i18n.js";
 import { buildConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
@@ -45,6 +46,9 @@ export function projectNormalConversationFeedItems(input: {
     const runApprovals = linkedRun
       ? input.detailContext?.approvals.filter((approval) => approval.runId === linkedRun.id) ?? []
       : [];
+    const typedTimelineItems = linkedRun
+      ? canonicalFactsForMessage(input.detailContext?.timelineProjection?.items ?? [], message, linkedRun.id)
+      : [];
     const workCell = message.role === "assistant" && message.threadId && linkedRun && conversationRunHasVisibleWork({
       run: linkedRun,
       approvals: runApprovals,
@@ -59,6 +63,7 @@ export function projectNormalConversationFeedItems(input: {
       executionActions,
       t: input.t,
       terminalReport,
+      ...(typedTimelineItems.length > 0 ? { typedTimelineItems } : {}),
     }) : undefined;
     const bodyStreaming = message.status === "running" || message.status === "pending";
     const messagePresentation = projectConversationMessagePresentation({
@@ -85,6 +90,17 @@ export function projectNormalConversationFeedItems(input: {
       workCellCwd: linkedRun?.cwd ?? input.workspaceCwd.trim(),
       workspaceMayHaveChanged: runMayHaveWorkspaceChanges(relatedRun),
     };
+  });
+}
+
+function canonicalFactsForMessage(
+  items: readonly ConversationTimelineItem[],
+  message: ConversationHomeMessage,
+  runId: string,
+): readonly ConversationTimelineItem[] {
+  return items.filter((item) => {
+    if (item.kind === "userMessage" || item.kind === "agentMessage") return false;
+    return item.runId === runId || (Boolean(message.turnId) && item.turnId === message.turnId);
   });
 }
 

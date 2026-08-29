@@ -7,6 +7,8 @@ import type {
   ConversationAttachment,
   ConversationPendingReplacement,
   ConversationGeneratedMedia,
+  ConversationItemV1,
+  RunArtifact,
   ConversationTranscriptStatus,
   ExecutionAction,
   LingTurn,
@@ -21,6 +23,7 @@ import type {
 } from "../../types.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import type { ApprovalResolution } from "../approvals/types.js";
+import type { CanonicalTranscriptProjection } from "@ling-stack/conversation-ui-core";
 
 export interface ConversationHomeProjectSelection {
   readonly projectPath?: string;
@@ -65,13 +68,23 @@ export interface ConversationHomeMessage {
 
 export interface ConversationHomeDetailContext {
   readonly threadId?: string;
+  /** Canonical Continuity snapshot; messages remain a compatibility view only. */
+  readonly conversationItems: readonly ConversationItemV1[];
+  readonly runLinks: readonly import("../../types.js").LingTurnRun[];
   readonly turns: readonly LingTurn[];
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
   readonly approvals: readonly ApprovalRequest[];
   readonly interventions: readonly RunIntervention[];
   readonly terminalReports: readonly TerminalReportDto[];
+  readonly artifacts: readonly RunArtifact[];
+  readonly plans?: readonly import("../../types.js").ProposedPlanArtifact[];
+  readonly compactionCheckpoints?: readonly import("../../types.js").CompactionCheckpoint[];
+  readonly contextSnapshots?: readonly import("../../types.js").ConversationContextSnapshot[];
+  readonly contextSummaries?: readonly import("../../types.js").ConversationContextSummary[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
+  /** One canonical typed projection shared by all normal conversation renderers. */
+  readonly timelineProjection?: CanonicalTranscriptProjection;
 }
 
 export interface ConversationHomeSendInput {

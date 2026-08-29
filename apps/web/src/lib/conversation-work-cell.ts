@@ -534,6 +534,7 @@ export interface BuildConversationWorkCellInput {
   readonly t: Translate;
   readonly artifactHref?: (artifact: RunArtifact) => string;
   readonly terminalReport?: TerminalReportDto;
+  readonly typedTimelineItems?: readonly import("@ling-stack/conversation-ui-core").ConversationTimelineItem[];
 }
 
 export function buildConversationWorkCellViewModel(input: BuildConversationWorkCellInput): ConversationWorkCellViewModel | undefined {
@@ -637,6 +638,7 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     elapsedMs: workCellElapsedMs(runs),
     operationRows,
     operationItems: projectConversationActivity(operationRows),
+    ...(input.typedTimelineItems && input.typedTimelineItems.length > 0 ? { typedTimelineItems: input.typedTimelineItems } : {}),
     activitySummary: summarizeConversationActivity(operationRows),
     agentBranches: [],
     terminalReportId: terminalReport?.reportId,

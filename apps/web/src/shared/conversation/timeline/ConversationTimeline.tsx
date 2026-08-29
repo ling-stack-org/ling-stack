@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import {
   type ConversationTimelineItem,
   type ConversationTimelineSubAgentItem,
+  type ConversationSurfacePolicy,
 } from "@ling-stack/conversation-ui-core";
 import { ChevronDown, CircleAlert, Loader2, UserRound } from "lucide-react";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
@@ -10,11 +11,10 @@ import { renderConversationTimelineItem } from "./renderer-registry.js";
 export interface ConversationTimelineProps {
   /** Renderer-facing items. Historical rows are projected before this boundary. */
   readonly items: readonly ConversationTimelineItem[];
-  readonly scope?: "primary" | "agent";
+  readonly policy: ConversationSurfacePolicy;
   readonly className?: string;
   readonly dataDensity?: "default" | "dense";
   readonly ariaLabel?: string;
-  readonly dataConversationWorkStream?: "primary" | "agent";
   readonly depth?: 0 | 1;
   readonly cwd?: string;
   readonly loadPreview?: ArtifactPreviewLoader;
@@ -31,7 +31,7 @@ export interface ConversationTimelineProps {
  */
 export function ConversationTimeline({
   items,
-  scope = "primary",
+  policy,
   cwd,
   loadPreview,
   onOpenSourceRef,
@@ -41,31 +41,29 @@ export function ConversationTimeline({
   className: customClassName,
   dataDensity = "default",
   ariaLabel,
-  dataConversationWorkStream,
   depth = 0,
 }: ConversationTimelineProps): React.JSX.Element {
   const timelineItems = items;
-  const className = customClassName ?? (scope === "agent"
-    ? "conversation-work-cell-agent-stream conversation-timeline"
-    : "conversation-work-cell-active-stream conversation-timeline");
+  const className = customClassName ?? `${depth === 1 ? "conversation-work-cell-agent-stream" : "conversation-work-cell-active-stream"} conversation-timeline`;
+  const legacyScope = depth === 1 ? "agent" : "primary";
 
   if (timelineItems.length === 0) {
     return (
-      <div className={`${className} empty`} data-conversation-timeline="true" data-conversation-scope={scope} data-conversation-timeline-scope={scope} data-conversation-timeline-depth={depth} data-conversation-work-stream={dataConversationWorkStream} data-activity-density={dataDensity} aria-label={ariaLabel}>
+      <div className={`${className} empty`} data-conversation-timeline="true" data-conversation-surface={policy.surface} data-conversation-timeline-scope={legacyScope} data-conversation-work-stream={depth === 0 ? "primary" : undefined} data-conversation-timeline-depth={depth} data-activity-density={dataDensity} aria-label={ariaLabel}>
         {emptyLabel ?? ""}
       </div>
     );
   }
 
   return (
-    <div className={className} data-conversation-timeline="true" data-conversation-scope={scope} data-conversation-timeline-scope={scope} data-conversation-timeline-depth={depth} data-conversation-work-stream={dataConversationWorkStream} data-activity-density={dataDensity} aria-label={ariaLabel}>
+    <div className={className} data-conversation-timeline="true" data-conversation-surface={policy.surface} data-conversation-timeline-scope={legacyScope} data-conversation-work-stream={depth === 0 ? "primary" : undefined} data-conversation-timeline-depth={depth} data-activity-density={dataDensity} aria-label={ariaLabel}>
       {timelineItems.map((item) => renderTimelineItem(item, {
         cwd,
         loadPreview,
         onOpenSourceRef,
         renderMessage,
         renderSubAgentAvatar,
-        scope,
+        policy,
         depth,
       }))}
     </div>
@@ -74,13 +72,14 @@ export function ConversationTimeline({
 
 function renderTimelineItem(
   item: ConversationTimelineItem,
-  context: Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderMessage" | "renderSubAgentAvatar" | "scope" | "depth">,
+  context: Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderMessage" | "renderSubAgentAvatar" | "policy" | "depth">,
 ): ReactNode {
   return renderConversationTimelineItem(item, {
     cwd: context.cwd,
     loadPreview: context.loadPreview,
     onOpenSourceRef: context.onOpenSourceRef,
     renderMessage: context.renderMessage,
+    policy: context.policy,
     depth: context.depth ?? 0,
     renderSubAgent: (subAgent) => <SubAgentTimelineItem key={subAgent.id} item={subAgent} context={context} />,
   });
@@ -91,7 +90,7 @@ function SubAgentTimelineItem({
   context,
 }: {
   readonly item: ConversationTimelineSubAgentItem;
-  readonly context: Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderMessage" | "renderSubAgentAvatar" | "scope" | "depth">;
+  readonly context: Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderMessage" | "renderSubAgentAvatar" | "policy" | "depth">;
 }): React.JSX.Element {
   const statusLabel = subAgentStatusLabel(item.lifecycle);
   return (
@@ -126,7 +125,7 @@ function SubAgentTimelineItem({
       {item.childItems.length > 0 ? (
         <ConversationTimeline
           items={item.childItems}
-          scope="agent"
+          policy={context.policy}
           cwd={context.cwd}
           loadPreview={context.loadPreview}
           onOpenSourceRef={context.onOpenSourceRef}

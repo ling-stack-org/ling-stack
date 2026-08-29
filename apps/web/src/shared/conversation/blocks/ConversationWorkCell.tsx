@@ -4,7 +4,7 @@ import { useI18n, type Translate } from "../../../i18n.js";
 import { artifactStripItemOwnedByTypedFact, conversationWorkCellFactOwnership, projectConversationActivity, projectConversationTimelineItems, projectConversationWorkCellTimeline, type ConversationAgentActivitySpan, type ConversationArtifactStripItem, type ConversationOperationCellViewModel, type ConversationOperationSourceRef, type ConversationWorkCellEvidenceLink, type ConversationWorkCellGroup, type ConversationWorkCellItem, type ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
 import type { ComposerGateApprovalPresentation } from "../../../lib/runtime-approval-presentation.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
-import type { ConversationSurfaceKind, TerminalReportProjectionPolicy } from "../tokens/conversation-surface-policy.js";
+import { getConversationSurfacePolicy, type ConversationSurfaceKind, type TerminalReportProjectionPolicy } from "../tokens/conversation-surface-policy.js";
 import { ConversationArtifactStrip, type ConversationWorkspaceReviewTarget } from "./ConversationArtifactStrip.js";
 import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 import { TerminalReportBlock, type TerminalReportFileTarget } from "./TerminalReportBlock.js";
@@ -67,6 +67,7 @@ function ConversationWorkCellContent({
   onOpenWorkspaceReview,
 }: ConversationWorkCellProps): React.JSX.Element {
   const { t } = useI18n();
+  const timelinePolicy = getConversationSurfacePolicy(surface);
   const active = model.mode === "active";
   const { rootRef, activityVisibility } = useWorkCellActivityVisibility(active);
   const singleAgentSpan = model.agentSpans.length === 1 ? model.agentSpans[0] : undefined;
@@ -87,17 +88,23 @@ function ConversationWorkCellContent({
       ? singleAgentRows
       : fallbackRows;
   const operationItems = model.operationItems ?? projectConversationActivity(operationRows);
+  const usingCanonicalTimeline = Boolean(model.typedTimelineItems && model.typedTimelineItems.length > 0);
   // A successful final agent message is the completion prose. TerminalReport is
   // retained as audit data and only appears inline when the turn needs attention.
-  const terminalReportRendered = showTerminalReport && model.terminalReportRows.length > 0 && (!suppressTerminalReport || model.status !== "succeeded");
+  // Canonical typed items own the visible evidence rail. Keeping the legacy
+  // summary/report shell beside it would create the duplicate completion block
+  // that the Codex-style contract explicitly forbids.
+  const terminalReportRendered = showTerminalReport && !usingCanonicalTimeline && model.terminalReportRows.length > 0 && (!suppressTerminalReport || model.status !== "succeeded");
   const reportOwnsChanges = terminalReportRendered && model.terminalReportRows.some((row) => row.reportSection === "change");
   const visibleOperationItems = reportOwnsChanges
     ? operationItems.filter((item) => item.kind !== "operation" || item.row.kind !== "edit")
     : operationItems;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
-  const timelineItems = buildTimelineItems(visibleOperationItems, visibleAgentSpans, model.turnId);
+  const timelineItems = model.typedTimelineItems && model.typedTimelineItems.length > 0
+    ? model.typedTimelineItems
+    : buildTimelineItems(visibleOperationItems, visibleAgentSpans, model.turnId);
   const factOwnership = conversationWorkCellFactOwnership({ ...model, operationItems: visibleOperationItems, agentSpans: visibleAgentSpans });
-  const visibleArtifactItems = showArtifactStrip
+  const visibleArtifactItems = showArtifactStrip && !usingCanonicalTimeline
     ? model.artifactStripItems.filter((item) => !artifactStripItemOwnedByTypedFact(item, factOwnership))
     : [];
   const artifactStripSummary = showArtifactStrip ? buildArtifactStripSummary(visibleArtifactItems, t) : undefined;
@@ -210,6 +217,7 @@ function ConversationWorkCellContent({
             items={timelineItems}
             cwd={cwd}
             loadPreview={loadPreview}
+            policy={timelinePolicy}
             onOpenSourceRef={onOpenWorkspaceFile ? (ref) => {
               if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
                 onOpenWorkspaceFile({ cwd, path: ref.path, label: ref.label });
@@ -222,7 +230,7 @@ function ConversationWorkCellContent({
             }}
           />
         ) : null}
-        {!terminalReportRendered ? evidenceDisclosure : null}
+        {!terminalReportRendered && !usingCanonicalTimeline ? evidenceDisclosure : null}
       </div>
       {terminalReportRendered ? (
         <TerminalReportBlock
@@ -635,7 +643,7 @@ function WorkCellDetails({
           </header>
           <ConversationTimeline
             items={projectConversationTimelineItems(group.rows, { turnId })}
-            scope="primary"
+            policy={getConversationSurfacePolicy("run_thread")}
             className="conversation-work-cell-details-timeline"
             dataDensity={group.rows.length > 10 ? "dense" : "default"}
             ariaLabel={group.label}
@@ -673,31 +681,28 @@ function ActiveTurnItemStream({
   items,
   cwd,
   loadPreview,
-  scope = "primary",
+  policy,
   onOpenSourceRef,
   renderAgentAvatar,
 }: {
   readonly items: readonly ConversationTimelineItem[];
   readonly cwd?: string;
   readonly loadPreview: ArtifactPreviewLoader;
-  readonly scope?: "primary" | "agent";
+  readonly policy: import("../tokens/conversation-surface-policy.js").ConversationSurfacePolicy;
   readonly onOpenSourceRef?: (ref: ConversationOperationSourceRef) => void;
   readonly renderAgentAvatar?: (item: ConversationTimelineSubAgentItem) => ReactNode;
 }): React.JSX.Element {
   const { t } = useI18n();
-  const className = scope === "agent"
-    ? "conversation-work-cell-agent-stream"
-    : "conversation-work-cell-active-stream";
+  const className = "conversation-work-cell-active-stream";
   const atomicItemCount = countTimelineItems(items);
   const density = atomicItemCount > 10 ? "dense" : "default";
   if (items.length === 0) {
     return <ConversationTimeline
       items={items}
-      scope={scope}
+      policy={policy}
       className={className}
       dataDensity={density}
-      ariaLabel={scope === "agent" ? t("Agent activity detail") : t("Active work stream")}
-      dataConversationWorkStream={scope}
+      ariaLabel={t("Active work stream")}
       emptyLabel={<><Clock3 size={13} /><span>{t("Waiting for activity")}</span></>}
       cwd={cwd}
       loadPreview={loadPreview}
@@ -709,11 +714,10 @@ function ActiveTurnItemStream({
   return (
     <ConversationTimeline
       items={items}
-      scope={scope}
+      policy={policy}
       className={className}
       dataDensity={density}
-      ariaLabel={scope === "agent" ? t("Agent activity detail") : t("Active work stream")}
-      dataConversationWorkStream={scope}
+    ariaLabel={t("Active work stream")}
       cwd={cwd}
       loadPreview={loadPreview}
       onOpenSourceRef={onOpenSourceRef}

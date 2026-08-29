@@ -8,6 +8,7 @@ import {
   getBuiltinSkillPack,
 } from "@ling-stack/core/builtin-skill-packs";
 import { isSupportedLocale } from "@ling-stack/localization";
+import { projectConversationDetailTimeline } from "../domains/conversations/canonical-transcript-snapshot.js";
 import { useI18n } from "../i18n.js";
 import { useTheme } from "../theme.js";
 import { useLingToast } from "../shared/ui/index.js";
@@ -2760,13 +2761,21 @@ export function AppShell(): React.JSX.Element {
                   initialPermissionPreset={selectedConversationDetail?.defaults.permissionPreset ?? workspaceSettings?.defaultPermissionPreset}
                   detailContext={selectedConversationDetail ? {
                     threadId: selectedConversationDetail.thread.id,
+                    conversationItems: selectedConversationDetail.conversationItems,
+                    runLinks: selectedConversationDetail.runLinks,
                     turns: selectedConversationDetail.turns,
                     runs: selectedConversationDetail.runs,
                     executionActions: selectedConversationDetail.executionActions,
                     approvals: selectedConversationDetail.approvals,
                     interventions: selectedConversationDetail.interventions,
                     terminalReports: selectedConversationDetail.terminalReports,
+                    artifacts: selectedConversationDetail.artifacts,
+                    plans: selectedConversationDetail.plans,
+                    compactionCheckpoints: selectedConversationDetail.compactionCheckpoints,
+                    contextSnapshots: selectedConversationDetail.contextSnapshots,
+                    contextSummaries: selectedConversationDetail.contextSummaries,
                     generatedMedia: selectedConversationDetail.generatedMedia,
+                    timelineProjection: projectConversationDetailTimeline(selectedConversationDetail),
                   } : undefined}
                   inlineApprovalViews={normalConversationInlineApprovalViews}
                   resolvingApprovals={resolvingApprovals}

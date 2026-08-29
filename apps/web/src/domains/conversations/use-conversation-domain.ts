@@ -652,6 +652,9 @@ function mergeConversationDetailSnapshot(
   return {
     ...snapshot,
     messages: [...messages.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
+    conversationItems: snapshot.conversationItems,
+    runLinks: snapshot.runLinks,
+    artifacts: snapshot.artifacts,
   };
 }
 
@@ -686,11 +689,18 @@ function mergeConversationMessages(
     cwd: current?.cwd ?? cwd,
     thread: thread ?? current?.thread ?? messagesThreadFallback(messages),
     turns: current?.turns ?? [],
+    conversationItems: current?.conversationItems ?? [],
+    runLinks: current?.runLinks ?? [],
     runs: current?.runs ?? [],
     executionActions: current?.executionActions ?? [],
     approvals: current?.approvals ?? [],
     interventions: current?.interventions ?? [],
     terminalReports: current?.terminalReports ?? [],
+    artifacts: current?.artifacts ?? [],
+    plans: current?.plans ?? [],
+    compactionCheckpoints: current?.compactionCheckpoints ?? [],
+    contextSnapshots: current?.contextSnapshots ?? [],
+    contextSummaries: current?.contextSummaries ?? [],
     messages: [...byId.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     generatedMedia: current?.generatedMedia ?? [],
     defaults: current?.defaults ?? {},
