@@ -103,6 +103,7 @@ import {
   createConversationMediaGenerationToolHandler,
   isConversationMediaGenerationEligible,
 } from "../media/conversation-tool-handler.js";
+import { appendExecutionActionInvalidation } from "./execution-action-invalidation.js";
 import { listConversationMediaGenerationTargets } from "../media/conversation-targets.js";
 import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
 import {
@@ -1064,7 +1065,12 @@ export async function executeRunRequest(
     if (abortController.signal.aborted && type !== "run_cancelled") {
       return undefined;
     }
-    if (store.getRun(run.id)?.status === "cancelled" && type !== "run_cancelled") {
+    const persistedRun = store.getRun(run.id);
+    if (
+      persistedRun &&
+      isTerminalRunStatus(persistedRun.status) &&
+      !(persistedRun.status === "cancelled" && type === "run_cancelled")
+    ) {
       return undefined;
     }
 
@@ -1088,6 +1094,17 @@ export async function executeRunRequest(
       syncWorkUnitForRunEvent(store, workUnit.id, attempt.id, type, envelope);
       appendRuntimeProgressForRunEvent(store, workUnit.id, attempt.id, type, envelope);
       syncLingThreadForRunEvent(store, run, type, envelope);
+      try {
+        appendExecutionActionInvalidation({
+          store,
+          hub: options.controlPlaneEvents,
+          cwd: workspaceCwd,
+          event: envelope,
+        });
+      } catch {
+        // Projection invalidation is rebuildable and cannot invalidate the
+        // authoritative Run event that was already committed above.
+      }
       try {
         computerUseProducer?.observeRunEvent(envelope);
       } catch {
