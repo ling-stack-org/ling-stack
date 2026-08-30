@@ -101,6 +101,12 @@ launch Desktop
 ```
 
 - Main window does not appear as an empty black/white frame while daemon startup is unresolved。
+- Renderer localization bootstrap uses the resolved first-paint Theme Pack as a text-free full-window
+  surface；it must not paint the product name before the translated application tree is ready。
+- macOS custom chrome owns the complete visible title row。The BrowserWindow native title stays empty and
+  ignores renderer page-title updates，so startup and Sidebar transitions cannot expose a duplicate title。
+- Web browser tabs and Windows native chrome continue to use the document title `Ling Stack`；the macOS
+  suppression is a Desktop main-process boundary，not a shared HTML change。
 - Startup status belongs to the OS launch phase；do not show a fake Web loading dashboard before
   the shared app can function。
 - Desktop-owned daemon timeout/exit must fail closed and leave diagnostics in logs；UI 2.0 uses the
@@ -183,7 +189,8 @@ Native Window Chrome
 - Desktop capability controls enter only through typed slots；they do not alter normal browser UI。
 - macOS 使用一个真实的 `48px` 全宽 renderer titlebar row；traffic-light inset、Sidebar toggle 和
   当前 surface Header 都属于该行，应用主体不得渲染在其后方。
-- Windows system title bar must not duplicate an in-app fake title bar。
+- Windows main window uses one frameless renderer titlebar with real minimize、maximize/restore and close
+  capabilities；the native titlebar must not remain behind or above it。
 - draggable behavior belongs to Desktop titlebar boundary；Feature/shared Header 通过共享 titlebar
   surface slot 选择 `window` 或 `inline` placement，并继续用 `data-desktop-window-no-drag` 标记交互控件。
   Settings 不再拥有独立 traffic-light clearance；Feature 不写平台 selector。
@@ -191,25 +198,33 @@ Native Window Chrome
 
 ### Main Window Integrated Chrome
 
-- macOS main BrowserWindow 使用一条 `48px` 的真实 `DesktopWindowChrome` grid row，而不是 transparent
-  overlay 或 workspace top padding。`DesktopWindowChrome` 提供 Sidebar control zone、surface slot 和
-  剩余 drag region；交互后代统一 carve out 为 `no-drag`。
-- 当前 surface Header 在 macOS 只挂载到 titlebar slot；页面 body 必须移除对应 inline Header row，
-  不能留下重复标题或 `48px` 空白。Web/Windows 保持 inline placement。
+- macOS、Windows 和 Web Desktop 使用一条 `48px` 的真实 `DesktopWindowChrome` grid row，而不是
+  transparent overlay 或 workspace top padding。它提供 Sidebar control zone、surface slot、Desktop
+  window controls slot 和剩余 drag region；交互后代统一 carve out 为 `no-drag`。
+- 当前 surface Header 在三个 Desktop host 都挂载到 titlebar slot；页面 body 必须移除对应 inline
+  Header row，不能留下重复标题或 `48px` 空白。
 - 不允许绝对定位的透明 sibling layer 或 Feature selector 穿过 Header controls。
-- Sidebar collapsed 时保留 `48px` compact rail，不能移除 Home 或 active Header drag target。
-- Sidebar 展开和收缩时，唯一导航开关都由 `DesktopWindowChrome` 的 titlebar 工具槽持有；工具槽
-  位于 `76px` traffic-light exclusion 右侧 `8px`，按钮保持 `32x32` 且声明 `no-drag`。
+- Sidebar 展开时固定为 `292px`，收缩时由独立 `48px` compact rail 接管导航列；展开态的文字、
+  对象行和菜单必须卸载，不能被逐帧压缩进 rail。active Header drag target 仍留在共享 titlebar。
+- compact rail 使用 Sidebar 主题背景，保留现有功能的图标入口、Tooltip 与键盘访问，不重复顶部栏
+  的 Sidebar 开关，也不伪造 Back、Forward、Search 或 Notification。
+- Sidebar 展开和收缩时，唯一导航开关都由 `DesktopWindowChrome` 的 titlebar 工具槽持有。macOS
+  工具槽位于 `76px` traffic-light exclusion 右侧 `8px`，按钮保持 `32x32` 且声明 `no-drag`；Web 和
+  Windows 使用平台对应的左侧安全区。
 - titlebar drag sibling 必须在按钮前结束，并在按钮后再保留 `8px` pointer gap；不得依赖控件自身
   z-index 穿透透明 drag layer。展开/收缩不得创建、卸载或移动第二个按钮。
-- Sidebar collapsed 时 compact rail 的第一个行动为 `New conversation`，保持 `36x36`；rail 不重复
-  `Show navigation`。Web 和 Windows 继续由 Sidebar 自身持有导航开关。
+- Sidebar 展开时直接以现有 `New conversation` 开始，不在导航上方增加静态产品名或品牌行；
+  也不增加无功能的 Back、Forward、Search、Notification 或品牌菜单控件。
+- Sidebar 展开时，titlebar leading segment 与左侧整体栏使用同一背景；收缩后，该 titlebar segment
+  必须改为主顶部栏背景，只有 `48px` compact rail 在第二行继续保留 Sidebar 背景。
 - Settings fullscreen、Media、Channel、普通对话、AI 队友私聊/设置和所有顶级 View 必须有稳定 owner。
 - Settings fullscreen 位于共享 titlebar row 下方；`Back to app` 直接撑满 navigation content box，
   不得再做顶部 safe-area、横向 offset 或减宽。
-- Web、Windows main window 和 PiP 不挂载该 chrome；Windows 继续 native title bar。
+- Web 挂载同一应用 chrome 但不显示 OS 窗口按钮；Windows main window 使用 frameless shell 和
+  renderer-owned minimize、maximize/restore、close；PiP 不挂载该 chrome。
 - Dialog、Drawer、Menu、Popover、Toast、Tooltip 和 scrim 必须始终高于 chrome 并保持 pointer/focus ownership。
-- chrome 没有独立 Show/Hide/Close 行动；随 macOS AppShell mount/unmount，route/theme/Sidebar state 不重建它。
+- Windows window controls 只调用 typed Desktop capability；Web/macOS 不渲染这些按钮。共享 chrome
+  随 AppShell mount/unmount，route/theme/Sidebar state 不重建它。
 
 ## Theme Bootstrap
 

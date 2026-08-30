@@ -42,7 +42,7 @@ test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
   );
 });
 
-test("packaged Web entry keeps public assets relative and exposes the shared macOS drag contract", async () => {
+test("packaged Web entry keeps public assets relative and exposes the shared Desktop drag contract", async () => {
   const webDistRoot = resolve(import.meta.dirname, "../../web/dist");
   const html = await readFile(join(webDistRoot, "index.html"), "utf8");
   const scriptPath = entryAssetPath(html, "script", "js");
@@ -67,7 +67,7 @@ test("packaged Web entry keeps public assets relative and exposes the shared mac
   assert.match(javascriptBundles, /data-desktop-window-drag-region/u);
   assert.match(javascriptBundles, /data-desktop-window-no-drag/u);
   assert.match(stylesheet, /\.desktop-window-titlebar-surface/u);
-  assert.match(stylesheet, /\.app-shell\.desktop-macos/u);
+  assert.match(stylesheet, /\.desktop-window-shell/u);
   assert.match(stylesheet, /\[data-desktop-window-drag-region=/u);
   assert.match(stylesheet, /\[data-desktop-window-no-drag=/u);
   assert.match(stylesheet, /grid-area:\s*titlebar/u);

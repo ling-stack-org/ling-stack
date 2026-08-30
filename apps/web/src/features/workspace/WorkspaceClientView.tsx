@@ -724,7 +724,12 @@ export function WorkspaceClientView({
   readonly onCancelWorkUnit: (workUnitId: string) => void;
   readonly onRetryWorkUnit: (workUnitId: string) => void;
   readonly onReconcileWorkUnit: (workUnitId: string) => void;
-  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onResolveApproval: (
+    approvalId: string,
+    decision: ApprovalResolution,
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ) => void;
   readonly onClaimWorkItem: (workItemId: string) => void;
   readonly onHeartbeatWorkItem: (workItemId: string, claimToken: string) => void;
   readonly onReleaseWorkItem: (workItemId: string, claimToken: string) => void;
@@ -4004,6 +4009,9 @@ export function WorkspaceClientView({
     ...channelRightDock.mainStyle,
     ...progressSummaryLayout.style,
   } as CSSProperties;
+  const taskWorkbenchTitlebarStyle = {
+    "--channel-progress-popover-right": `${progressSummaryLayout.dockOffset}px`,
+  } as CSSProperties;
 
   function toggleChannelTeammateManager(): void {
     const nextOpen = !teammateManagerOpen;
@@ -4043,6 +4051,7 @@ export function WorkspaceClientView({
           channelUtilityPageOpen ? "settings-page-header" : "",
           channelHeader.searchOpen && !channelUtilityPageOpen ? "channel-header-searching" : "",
         ].filter(Boolean).join(" ")}
+        style={taskWorkbenchTitlebarStyle}
         data-desktop-window-drag-region="true"
       >
         <div className="channel-title-area">
@@ -4277,9 +4286,11 @@ export function WorkspaceClientView({
             setTeammateManagerOpen(false);
             setChannelBottomPanelOpen(true);
           }}
-          detailsOpen={channelRightDockIntentOpen}
-          detailsLabel={channelRightDockIntentOpen ? t("Hide details") : t("Show details")}
+          detailsOpen={channelRightDockExpanded}
+          detailsDisabled={!channelRightDock.available}
+          detailsLabel={channelRightDockExpanded ? t("Hide details") : t("Show details")}
           onToggleDetails={() => {
+            if (!channelRightDock.available) return;
             if (channelRightDockIntentOpen) {
               closeChannelRightDock();
               return;
@@ -4532,7 +4543,7 @@ export function WorkspaceClientView({
             onOpenTriageResult: openActivityTriageResult,
           } : undefined}
         />
-        {channelRightDockVisible ? (
+        {channelRightDock.resizable ? (
           <button
             className="channel-side-panel-resize-handle"
             type="button"

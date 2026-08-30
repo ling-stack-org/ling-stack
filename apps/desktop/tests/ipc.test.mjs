@@ -1001,6 +1001,71 @@ test("Desktop IPC discards a structured owner buffered for a replaced Open task"
   unregister();
 });
 
+test("Desktop IPC isolates Windows frame controls to the current main renderer", async () => {
+  const ipc = new FakeIpcMain();
+  const calls = [];
+  const windowEvents = new Map();
+  const rendererMessages = [];
+  let maximized = false;
+  const mainWindow = {
+    webContents: {
+      id: 11,
+      isDestroyed: () => false,
+      send: (channel, value) => rendererMessages.push([channel, value]),
+    },
+    isDestroyed: () => false,
+    isMaximized: () => maximized,
+    minimize: () => calls.push("minimize"),
+    maximize: () => {
+      maximized = true;
+      calls.push("maximize");
+      windowEvents.get("maximize")?.();
+    },
+    unmaximize: () => {
+      maximized = false;
+      calls.push("unmaximize");
+      windowEvents.get("unmaximize")?.();
+    },
+    close: () => calls.push("close"),
+    on: (event, listener) => windowEvents.set(event, listener),
+    off: (event, listener) => {
+      if (windowEvents.get(event) === listener) windowEvents.delete(event);
+    },
+  };
+  const unregister = registerDesktopIpc({
+    ipcMainImpl: ipc,
+    runtime: {
+      status: { state: "connected", baseUrl: "http://127.0.0.1:1", ownedByDesktop: true },
+      onStatusChanged: () => () => {},
+    },
+    computerUse: { ownsPreviewWebContents: () => false },
+    getMainWindow: () => mainWindow,
+    windowControlsEnabled: true,
+  });
+  const mainEvent = { sender: { id: 11 } };
+  const foreignEvent = { sender: { id: 33 } };
+
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.windowStateGet, mainEvent), { maximized: false });
+  assert.equal(await ipc.invoke(DESKTOP_IPC_CHANNELS.windowStateGet, foreignEvent), undefined);
+  assert.deepEqual(
+    await ipc.invoke(DESKTOP_IPC_CHANNELS.windowMinimize, foreignEvent),
+    { accepted: false, reason: "unauthorized_or_unsupported_window_control" },
+  );
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.windowMinimize, mainEvent), { accepted: true });
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.windowToggleMaximize, mainEvent), { accepted: true });
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.windowStateGet, mainEvent), { maximized: true });
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.windowToggleMaximize, mainEvent), { accepted: true });
+  assert.deepEqual(await ipc.invoke(DESKTOP_IPC_CHANNELS.windowClose, mainEvent), { accepted: true });
+  assert.deepEqual(calls, ["minimize", "maximize", "unmaximize", "close"]);
+  assert.deepEqual(rendererMessages, [
+    [DESKTOP_IPC_CHANNELS.windowStateChanged, { maximized: true }],
+    [DESKTOP_IPC_CHANNELS.windowStateChanged, { maximized: false }],
+  ]);
+
+  unregister();
+  assert.equal(windowEvents.size, 0);
+});
+
 class FakeIpcMain {
   handlers = new Map();
   listeners = new Map();

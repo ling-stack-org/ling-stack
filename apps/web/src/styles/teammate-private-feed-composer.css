@@ -235,14 +235,3 @@
   min-height: var(--ling-control-sm);
   border-radius: var(--ling-radius-md);
 }
-
-@media (max-width: 900px) {
-  .teammate-private-chat.with-right-dock {
-    grid-template-columns: minmax(0, 1fr);
-  }
-
-  .teammate-private-chat.with-right-dock > .workspace-right-dock-resize-handle,
-  .teammate-private-chat.with-right-dock > .workspace-right-dock-frame {
-    display: none;
-  }
-}

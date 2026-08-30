@@ -165,6 +165,9 @@ export function TeammatePrivateChatFeed({
             });
             const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
             const workCellRun = workCell ? runById.get(workCell.model.anchorRunId) : undefined;
+            const composerGateApproval = workCell
+              ? composerGateApprovalPresentationForWorkCell(workCell.model, composerGateApprovalByRunId)
+              : undefined;
             const messageFeedback = messageController.feedbackById[message.id];
             const taskCreateKey = `message:${message.id}`;
             const taskCreateBusy = taskCreateBusyKeys.has(taskCreateKey);
@@ -295,7 +298,7 @@ export function TeammatePrivateChatFeed({
                       <ConversationWorkCell
                         model={workCell.model}
                         surface="teammate_direct"
-                        composerGateApproval={composerGateApprovalPresentationForWorkCell(workCell.model, composerGateApprovalByRunId)}
+                        composerGateApproval={composerGateApproval}
                         cwd={workCellRun?.cwd ?? cwd.trim()}
                         detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
                         onOpenRun={onOpenRun}
@@ -340,7 +343,7 @@ export function TeammatePrivateChatFeed({
                     ) : null}
                   </>
                 )}
-                actionsNode={!editing ? (
+                actionsNode={!editing && !projection.blocked && !composerGateApproval ? (
                   <MessageActionBar
                     surface="teammate_direct"
                     className="teammate-message-actions"

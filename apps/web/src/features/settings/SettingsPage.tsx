@@ -335,6 +335,7 @@ export function SettingsPage({
 
         {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel
+            cwd={cwd}
             workspaceDefaultAuthorizationMode={workspaceDefaultAuthorizationMode}
             workspaceDefaultWorkspaceAccessMode={workspaceDefaultWorkspaceAccessMode}
             workspaceDefaultPermissionMode={workspaceDefaultPermissionMode}

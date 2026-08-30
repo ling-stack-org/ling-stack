@@ -102,6 +102,9 @@ test("conversation projection preserves actionable thread state across refresh",
   expect(projectSidebarConversationStatus("open", true)).toBe("running");
   expect(projectSidebarConversationStatus("succeeded", false)).toBeUndefined();
   expect(projectSidebarConversationStatus("failed", false, true)).toBe("waiting");
+  expect(projectSidebarConversationStatus("failed", false, false, true)).toBeUndefined();
+  expect(projectSidebarConversationStatus("blocked", false, false, true)).toBeUndefined();
+  expect(projectSidebarConversationStatus("running", false, false, true)).toBe("running");
 });
 
 test("conversation approval ownership follows approval run to its thread", () => {

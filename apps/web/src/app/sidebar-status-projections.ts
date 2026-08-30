@@ -110,9 +110,10 @@ export function projectSidebarConversationStatus(
   status: LingThreadStatus,
   activeRunOrStream: boolean,
   pendingApproval = false,
+  failureAcknowledged = false,
 ): SidebarPrimaryStatus | undefined {
   if (pendingApproval || status === "waiting_for_approval") return "waiting";
-  if (status === "failed" || status === "blocked") return "failed";
+  if ((status === "failed" || status === "blocked") && !failureAcknowledged) return "failed";
   if (status === "running" || activeRunOrStream) return "running";
   return undefined;
 }

@@ -58,6 +58,11 @@
   "desktop.computer_use.hide_action": "Hide",
   "desktop.computer_use.reset_position_action": "Reset position",
   "desktop.computer_use.close_window_action": "Close window",
+  "Window controls": "Window controls",
+  "Minimize window": "Minimize window",
+  "Maximize window": "Maximize window",
+  "Restore window": "Restore window",
+  "Close window": "Close window",
   "desktop.computer_use.screen_settings_action": "Screen settings",
   "desktop.computer_use.retry_capture_action": "Retry capture",
   "desktop.computer_use.try_stop_again_action": "Try Stop again",
@@ -180,5 +185,15 @@
   "daemon.channel.role_summary.release": "Prepare shipping checks and approval-sensitive publication steps.",
   "daemon.channel.role_summary.specialist": "Handle the bounded specialist task after its scope is clear.",
   "daemon.channel.workflow_start.blocked": "I tried to start this workflow, but it was blocked before execution: {message}",
-  "daemon.channel.workflow_start.confirmed": "Confirmed: \"{title}\". Starting now."
+  "daemon.channel.workflow_start.confirmed": "Confirmed: \"{title}\". Starting now.",
+  "Allow options": "Allow options",
+  "Allow similar commands": "Allow similar commands",
+  "Allow commands starting with {command} in this workspace": "Allow commands starting with {command} in this workspace",
+  "Saving command rule": "Saving command rule",
+  "Terminal command rules": "Terminal command rules",
+  "Commands allowed with Allow similar commands in this workspace.": "Commands allowed with Allow similar commands in this workspace.",
+  "Loading command rules": "Loading command rules",
+  "No saved command rules": "No saved command rules",
+  "Allows commands starting with {command}": "Allows commands starting with {command}",
+  "Revoking command rule": "Revoking command rule"
 }

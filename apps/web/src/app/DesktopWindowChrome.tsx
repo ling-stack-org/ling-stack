@@ -1,4 +1,6 @@
-import { PanelLeftClose, PanelLeftOpen } from "lucide-react";
+import { useEffect, useState } from "react";
+import { Copy, Minus, PanelLeftClose, PanelLeftOpen, Square, X } from "lucide-react";
+import { useI18n } from "../i18n.js";
 import { IconButton } from "../shared/ui/index.js";
 import { useDesktopTitlebarHost } from "./DesktopTitlebarSurface.js";
 
@@ -15,13 +17,15 @@ export function DesktopWindowChrome({
   readonly sidebarOpen: boolean;
   readonly sidebarToggleVisible: boolean;
 }): React.JSX.Element | null {
+  const { t } = useI18n();
   const setTitlebarHost = useDesktopTitlebarHost();
-  const isMacosDesktop =
-    typeof window !== "undefined" && window.lingDesktop?.platform === "macos";
+  const windowControls = typeof window === "undefined" ? undefined : window.lingDesktop?.windowControls;
+  const [maximized, setMaximized] = useState(false);
 
-  if (!isMacosDesktop) {
-    return null;
-  }
+  useEffect(() => {
+    if (!windowControls) return undefined;
+    return windowControls.onStateChanged((state) => setMaximized(state.maximized));
+  }, [windowControls]);
 
   return (
     <div
@@ -54,6 +58,33 @@ export function DesktopWindowChrome({
         data-desktop-window-titlebar-surface="true"
         data-desktop-window-drag-region="true"
       />
+      {windowControls ? (
+        <div
+          className="desktop-window-controls"
+          data-desktop-window-no-drag="true"
+          role="toolbar"
+          aria-label={t("Window controls")}
+        >
+          <IconButton
+            className="desktop-window-control desktop-window-minimize"
+            icon={Minus}
+            label={t("Minimize window")}
+            onClick={() => void windowControls.minimize()}
+          />
+          <IconButton
+            className="desktop-window-control desktop-window-maximize"
+            icon={maximized ? Copy : Square}
+            label={maximized ? t("Restore window") : t("Maximize window")}
+            onClick={() => void windowControls.toggleMaximize()}
+          />
+          <IconButton
+            className="desktop-window-control desktop-window-close"
+            icon={X}
+            label={t("Close window")}
+            onClick={() => void windowControls.close()}
+          />
+        </div>
+      ) : null}
     </div>
   );
 }

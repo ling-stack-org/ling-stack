@@ -213,14 +213,3 @@
     text-align: left;
   }
 }
-
-@media (max-width: 900px) {
-  .normal-conversation-page.with-right-dock {
-    grid-template-columns: minmax(0, 1fr) 0 0 0;
-  }
-
-  .normal-conversation-page.with-right-dock > .workspace-right-dock-resize-handle,
-  .normal-conversation-page.with-right-dock > .workspace-right-dock-frame {
-    display: none;
-  }
-}

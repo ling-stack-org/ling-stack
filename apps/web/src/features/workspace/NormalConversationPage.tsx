@@ -5,7 +5,7 @@ import { NormalConversationFeed } from "./NormalConversationFeed.js";
 import { NormalConversationHeader } from "./NormalConversationHeader.js";
 import { NormalConversationWorkspacePanels } from "./NormalConversationWorkspacePanels.js";
 import { ConversationSummaryPopover } from "./right-dock/index.js";
-import { conversationSummaryGap, useConversationSummaryLayout } from "./conversation-summary-layout.js";
+import { useConversationSummaryLayout } from "./conversation-summary-layout.js";
 import {
   DesktopTitlebarSurface,
   useDesktopTitlebarPlacement,
@@ -76,7 +76,7 @@ export function NormalConversationPage({
                 subtitle={dockViewModel.context.workspaceLabel}
                 rows={summaryRows}
                 className="normal-conversation-summary-popover normal-conversation-summary-panel"
-                dockOffset={conversationSummaryGap}
+                dockOffset={summaryLayout.dockOffset}
                 dockMotion={summaryDockMotion}
                 motionState={dockController.motionState}
                 onClose={onCloseSummary}

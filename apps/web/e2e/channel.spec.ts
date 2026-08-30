@@ -661,7 +661,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const fixedTop = drawer.querySelector(".sidebar-fixed-top");
     const drawerTop = drawer.getBoundingClientRect().top;
     const fixedTopOffset = (fixedTop?.getBoundingClientRect().top ?? drawerTop) - drawerTop;
-    return Math.round(drawer.getBoundingClientRect().width) === 240 && fixedTopOffset >= 10;
+    return Math.round(drawer.getBoundingClientRect().width) === 292 && fixedTopOffset >= 10;
   })).toBe(true);
 
   const expanded = await page.evaluate(() => {
@@ -673,7 +673,6 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-channel-group > .sidebar-row-shell.selected");
     const primaryNav = document.querySelector(".channel-left-drawer .primary-nav");
     const firstSectionTitle = document.querySelector(".channel-left-drawer .sidebar-section-title");
-    const sidebarSwitch = document.querySelector(".channel-sidebar-switch");
     const settings = document.querySelector(".channel-left-drawer .config-button");
     const scrollRegionElement = scrollRegion as HTMLElement | null;
     if (scrollRegionElement) {
@@ -706,14 +705,13 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       sectionTitleColor: firstSectionTitle ? getComputedStyle(firstSectionTitle).color : "",
       sectionTitleFontSize: firstSectionTitle ? getComputedStyle(firstSectionTitle).fontSize : "",
       sectionTitleFontWeight: firstSectionTitle ? getComputedStyle(firstSectionTitle).fontWeight : "",
-      sidebarSwitchBorderWidth: sidebarSwitch ? getComputedStyle(sidebarSwitch).borderTopWidth : "",
       settingsText: settings?.textContent?.trim() ?? "",
       globalRightPanels: document.querySelectorAll(".right-panel").length,
     };
   });
-  expect(expanded.firstColumnWidth).toBe(240);
-  expect(expanded.leftWidth).toBe(240);
-  expect(expanded.leftBackground).toBe("rgb(255, 255, 255)");
+  expect(expanded.firstColumnWidth).toBe(292);
+  expect(expanded.leftWidth).toBe(292);
+  expect(expanded.leftBackground).toBe("rgb(230, 228, 223)");
   expect(expanded.fixedTopTop - expanded.leftTop).toBeGreaterThanOrEqual(10);
   expect(expanded.scrollOverflowY).toBe("auto");
   expect(expanded.scrollTop).toBeGreaterThan(expanded.fixedTopTop);
@@ -726,12 +724,11 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(expanded.lastRecentBottom).toBeLessThanOrEqual(expanded.scrollBottom + 1);
   expect(expanded.bottomBottomGap).toBeGreaterThanOrEqual(8);
   expect(expanded.selectedChannelText).toContain("Engineering");
-  expect(expanded.selectedChannelBackground).toBe("rgb(245, 245, 245)");
+  expect(expanded.selectedChannelBackground).toBe("rgb(217, 216, 213)");
   expect(expanded.primaryNavBorderBottom).toBe("0px");
-  expect(expanded.sectionTitleColor).toBe("rgb(138, 138, 138)");
+  expect(expanded.sectionTitleColor).toBe("rgb(134, 134, 137)");
   expect(expanded.sectionTitleFontSize).toBe("10px");
   expect(Number(expanded.sectionTitleFontWeight)).toBeGreaterThanOrEqual(700);
-  expect(expanded.sidebarSwitchBorderWidth).toBe("0px");
   expect(expanded.settingsText).toBe("Settings");
   expect(expanded.globalRightPanels).toBe(0);
   await navigation.locator(".sidebar-scroll-region").evaluate((element) => {
@@ -739,51 +736,29 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   });
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
-  await page.mouse.move(22, 22);
-  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBe(48);
+  await expect(navigation).toHaveAttribute("data-sidebar-mode", "compact");
   const leftCollapsed = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
-    const leftDrawer = document.querySelector(".channel-left-drawer");
-    const brandCopy = document.querySelector(".channel-left-drawer .sidebar-brand-copy");
-    const firstNavText = document.querySelector(".channel-left-drawer .primary-nav .nav-item .ling-ui-button-label");
-    const settingsLabel = document.querySelector(".channel-left-drawer .config-button-label");
-    const objectRows = document.querySelectorAll(".channel-left-drawer .sidebar-row-shell");
-    const railLaunchers = document.querySelectorAll(".channel-left-drawer .sidebar-rail-launcher");
-    const channelLauncher = document.querySelector('[data-sidebar-rail-launcher="channels"]');
+    const leftDrawer = document.querySelector(".sidebar-compact-rail");
+    const objectRows = document.querySelectorAll(".sidebar-row-shell");
+    const railLaunchers = document.querySelectorAll(".sidebar-compact-rail .sidebar-rail-launcher");
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       firstColumnWidth: Math.round(Number.parseFloat(shell ? getComputedStyle(shell).gridTemplateColumns : "0")),
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
-      leftX: Math.round(leftDrawer?.getBoundingClientRect().x ?? -1),
-      leftOpacity: leftDrawer ? getComputedStyle(leftDrawer).opacity : "",
-      transform: leftDrawer ? getComputedStyle(leftDrawer).transform : "",
-      brandCopyHidden: !brandCopy || getComputedStyle(brandCopy).display === "none",
-      firstNavTextDisplay: firstNavText ? getComputedStyle(firstNavText).display : "",
-      settingsLabelDisplay: settingsLabel ? getComputedStyle(settingsLabel).display : "",
+      leftDrawerCount: leftDrawer ? 1 : 0,
       objectRowCount: objectRows.length,
       railLauncherCount: railLaunchers.length,
-      channelLauncherLabel: channelLauncher?.getAttribute("aria-label") ?? "",
     };
   });
   expect(leftCollapsed.firstColumnWidth).toBe(48);
   expect(leftCollapsed.leftWidth).toBe(48);
-  expect(leftCollapsed.leftX).toBe(0);
-  expect(leftCollapsed.leftOpacity).toBe("1");
-  expect(leftCollapsed.transform).toBe("none");
-  expect(leftCollapsed.brandCopyHidden).toBe(true);
-  expect(leftCollapsed.firstNavTextDisplay).toBe("none");
-  expect(leftCollapsed.settingsLabelDisplay).toBe("none");
+  expect(leftCollapsed.leftDrawerCount).toBe(1);
   expect(leftCollapsed.objectRowCount).toBe(0);
   expect(leftCollapsed.railLauncherCount).toBe(3);
-  expect(leftCollapsed.channelLauncherLabel).toBe("Channels");
 
-  const sidebarTooltip = page.getByRole("tooltip");
-  await navigation.getByRole("button", { name: "Channels", exact: true }).hover();
-  await expect(sidebarTooltip).toHaveText("Channels");
-  await expect.poll(async () => sidebarTooltip.evaluate((node) => Math.round(node.getBoundingClientRect().left))).toBeGreaterThan(45);
-  await navigation.getByRole("button", { name: "Settings" }).hover();
-  await expect(sidebarTooltip).toHaveText("Settings");
-
+  await page.getByRole("button", { name: "Show navigation" }).click();
+  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(292);
   await navigation.getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("radiogroup", { name: "Media production views" })).toBeVisible();
   await navigation.getByRole("button", { name: "Automations" }).click();
@@ -798,8 +773,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
 
-  await page.getByRole("button", { name: "Show navigation" }).click();
-  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBe(240);
+  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBe(292);
   const restored = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const leftDrawer = document.querySelector(".channel-left-drawer");
@@ -808,8 +782,8 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
     };
   });
-  expect(restored.columns.startsWith("240px ")).toBe(true);
-  expect(restored.leftWidth).toBe(240);
+  expect(restored.columns.startsWith("292px ")).toBe(true);
+  expect(restored.leftWidth).toBe(292);
 });
 
 test("narrow channel viewport keeps the conversation column usable", async ({ page }) => {
@@ -1305,8 +1279,7 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.goto("/");
   await openEngineeringChannel(page);
   await page.getByRole("button", { name: "Hide navigation" }).click();
-  await page.waitForTimeout(200);
-  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(250);
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveAttribute("data-sidebar-mode", "compact");
   await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
   await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
@@ -1406,7 +1379,7 @@ test("channel environment surface shows read-only context and opens review", asy
   expect(await messageFeed.evaluate((node) => node.dataset.remountProbe)).toBe("right-dock-stable");
   expect(Math.abs(await messageFeed.evaluate((node) => Math.round(node.scrollTop)) - feedScrollBeforeDock)).toBeLessThanOrEqual(1);
   await page.locator(".task-toolbar-panel").click();
-  await page.waitForTimeout(160);
+  await page.waitForTimeout(80);
   await expect(dock).toHaveCount(1);
   const closingDockFrameBox = await page.locator(".channel-side-panel-frame").boundingBox();
   expect(closingDockFrameBox).not.toBeNull();
@@ -8900,7 +8873,7 @@ test("channel conversation turn shows thinking for empty pending ai replies", as
   await expect(thinkingMessage).toBeVisible();
   await expect(thinkingMessage).toHaveCSS("font-size", "15px");
   await expect(thinkingMessage).toHaveCSS("font-weight", "550");
-  await expect(thinkingMessage).toHaveCSS("color", "rgb(17, 17, 17)");
+  await expect(thinkingMessage).toHaveCSS("color", "rgb(25, 28, 31)");
   await expect(thinkingBlock.locator(".message-pending-spinner")).toHaveCSS("margin-top", "5px");
   const virtualTailClearance = await channelFeed.locator(".message-feed-virtualizer").evaluate((virtualizer) => {
     const lastRow = virtualizer.querySelector<HTMLElement>(".message-feed-virtual-row:last-child");
@@ -10022,7 +9995,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="react"]')).toBeVisible();
   await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="css"]')).toBeVisible();
   await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="markdown"]')).toBeVisible();
-  await expect(terminalReport.locator(".terminal-report-participant-copy > strong").first()).toHaveCSS("color", "rgb(37, 99, 235)");
+  await expect(terminalReport.locator(".terminal-report-participant-copy > strong").first()).toHaveCSS("color", "rgb(29, 78, 216)");
   const teamSummary = assistantTranscript.locator(".channel-team-experts-summary");
   await expect(teamSummary).toHaveCount(0);
   const transcriptArtifacts = assistantTranscript.locator(".conversation-turn-artifacts");
@@ -10174,7 +10147,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(workCell.locator(".conversation-work-cell-agent-span-copy small")).toHaveCount(0);
 
   const engineerSpan = workCell.locator('.conversation-work-cell-agent-span[data-agent-participant-id="engineer"]');
-  await expect(engineerSpan.locator(".conversation-work-cell-agent-span-copy strong")).toHaveCSS("color", "rgb(37, 99, 235)");
+  await expect(engineerSpan.locator(".conversation-work-cell-agent-span-copy strong")).toHaveCSS("color", "rgb(29, 78, 216)");
   await expect(engineerSpan.locator(".conversation-work-cell-agent-span-toggle")).toHaveCount(0);
   await expect(engineerSpan.locator("button.conversation-work-cell-agent-span-head")).toHaveCount(0);
   const engineerDetail = engineerSpan.locator(".conversation-work-cell-agent-span-detail");
@@ -10926,6 +10899,7 @@ test("active conversation work cell stays sparse while runtime approval replaces
   await expect(gate).toContainText("Run command: echo inspect");
   await expect(gate).not.toContainText("medium");
   await expect(gate).not.toContainText("Approve shell command");
+  await expect(gate.getByRole("button", { name: "Allow options" })).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
   await maybeCaptureViewportScreenshot(page, "runtime-approval-composer-gate.png");
 

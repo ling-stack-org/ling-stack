@@ -24,10 +24,7 @@ const DesktopTitlebarContext = createContext<DesktopTitlebarContextValue>({
 
 export function DesktopTitlebarProvider({ children }: { readonly children: ReactNode }): React.JSX.Element {
   const [host, setHostState] = useState<HTMLElement | null>(null);
-  const placement: DesktopTitlebarPlacement =
-    typeof window !== "undefined" && window.lingDesktop?.platform === "macos"
-      ? "window"
-      : "inline";
+  const placement: DesktopTitlebarPlacement = "window";
   const setHost = useCallback((nextHost: HTMLElement | null) => {
     setHostState((current) => current === nextHost ? current : nextHost);
   }, []);

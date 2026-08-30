@@ -26,7 +26,7 @@ test("main window options freeze the shared geometry and platform chrome contrac
     height: 920,
     minWidth: 980,
     minHeight: 680,
-    backgroundColor: "#111315",
+    backgroundColor: "#1f1f1f",
     show: false,
     webPreferences: {
       preload: macOptions.webPreferences?.preload,
@@ -47,10 +47,18 @@ test("main window options freeze the shared geometry and platform chrome contrac
   );
   assert.deepEqual(macOptions, {
     ...commonOptions,
+    title: "",
     titleBarStyle: "hiddenInset",
     trafficLightPosition: { x: 12, y: 17 },
   });
-  assert.deepEqual(windowsOptions, { ...commonOptions, titleBarStyle: "default" });
+  assert.deepEqual(windowsOptions, {
+    ...commonOptions,
+    frame: false,
+    hasShadow: true,
+    resizable: true,
+    roundedCorners: true,
+    thickFrame: true,
+  });
   assert.equal(
     buildMainWindowOptions({ backgroundColor: "#f6f7f8", daemonBaseUrl, themePackageFirstPaint }, "win32").backgroundColor,
     "#f6f7f8",
@@ -131,7 +139,10 @@ test("main window removes the default application menu only on Windows", async (
   });
 
   assert.equal(windowsHarness.removeMenuCount, 1);
-  assert.equal(windowsHarness.capturedOptions.titleBarStyle, "default");
+  assert.equal(windowsHarness.capturedOptions.frame, false);
+  assert.equal(windowsHarness.capturedOptions.thickFrame, true);
+  assert.equal(windowsHarness.capturedOptions.resizable, true);
+  assert.equal(windowsHarness.capturedOptions.hasShadow, true);
 
   const macHarness = createWindowHarness();
   await createMainWindow({
@@ -144,8 +155,20 @@ test("main window removes the default application menu only on Windows", async (
   });
 
   assert.equal(macHarness.removeMenuCount, 0);
+  assert.equal(macHarness.setTitleCalls.at(-1), "");
   assert.equal(macHarness.capturedOptions.titleBarStyle, "hiddenInset");
   assert.deepEqual(macHarness.capturedOptions.trafficLightPosition, { x: 12, y: 17 });
+
+  let nativeTitleUpdatePrevented = false;
+  macHarness.windowEvents.get("page-title-updated")({
+    preventDefault: () => {
+      nativeTitleUpdatePrevented = true;
+    },
+  });
+  assert.equal(nativeTitleUpdatePrevented, true);
+  assert.equal(macHarness.webContentsEvents.has("page-title-updated"), false);
+  assert.deepEqual(windowsHarness.setTitleCalls, []);
+  assert.equal(windowsHarness.windowEvents.has("page-title-updated"), false);
 });
 
 test("main window denies every popup and opens only HTTP(S) URLs externally", async () => {
@@ -204,6 +227,7 @@ function createWindowHarness() {
   const windowEvents = new Map();
   let capturedOptions;
   let removeMenuCount = 0;
+  const setTitleCalls = [];
   let showCount = 0;
   let windowOpenHandler;
 
@@ -214,8 +238,14 @@ function createWindowHarness() {
     once: (event, listener) => {
       windowEvents.set(event, listener);
     },
+    on: (event, listener) => {
+      windowEvents.set(event, listener);
+    },
     removeMenu: () => {
       removeMenuCount += 1;
+    },
+    setTitle: (title) => {
+      setTitleCalls.push(title);
     },
     show: () => {
       showCount += 1;
@@ -249,6 +279,7 @@ function createWindowHarness() {
     get removeMenuCount() {
       return removeMenuCount;
     },
+    setTitleCalls,
     webContentsEvents,
     window,
     windowEvents,

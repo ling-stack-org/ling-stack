@@ -1,6 +1,6 @@
-.app-shell.desktop-macos[data-ui2-shell-boundary="true"] {
+.app-shell.desktop-window-shell[data-ui2-shell-boundary="true"] {
   --desktop-window-titlebar-height: 48px;
-  --desktop-window-traffic-light-width: 76px;
+  --desktop-window-traffic-light-width: 0px;
   --desktop-window-sidebar-toggle-gap: 8px;
   --desktop-window-sidebar-toggle-size: 32px;
   --desktop-window-sidebar-toolbar-end: calc(
@@ -11,29 +11,42 @@
   );
   --desktop-window-titlebar-leading-width: var(--sidebar-expanded-width);
   --desktop-window-chrome-layer: 24;
+  --desktop-shell-sidebar-width: var(--sidebar-expanded-width);
   grid-template-areas:
     "titlebar titlebar titlebar"
     "nav workspace inspector";
+  grid-template-columns: var(--desktop-shell-sidebar-width) minmax(0, 1fr) 360px;
   grid-template-rows: var(--desktop-window-titlebar-height) minmax(0, 1fr);
   position: relative;
   height: 100vh;
   min-height: 0;
 }
 
-.app-shell.desktop-macos[data-ui2-shell-boundary="true"].inspector-hidden {
+.app-shell.desktop-window-shell[data-ui2-shell-boundary="true"].desktop-macos {
+  --desktop-window-traffic-light-width: 76px;
+}
+
+.app-shell.desktop-window-shell[data-ui2-shell-boundary="true"].inspector-hidden {
   grid-template-areas:
     "titlebar titlebar"
     "nav workspace";
+  grid-template-columns: var(--desktop-shell-sidebar-width) minmax(0, 1fr);
 }
 
-.app-shell.desktop-macos[data-ui2-shell-boundary="true"].channel-sidebar-collapsed {
+.app-shell.desktop-window-shell[data-ui2-shell-boundary="true"].inspector-collapsed {
+  grid-template-columns: var(--desktop-shell-sidebar-width) minmax(0, 1fr) 44px;
+}
+
+.app-shell.desktop-window-shell[data-ui2-shell-boundary="true"].channel-sidebar-collapsed {
+  --desktop-shell-sidebar-width: var(--sidebar-collapsed-width);
   --desktop-window-titlebar-leading-width: var(--desktop-window-sidebar-toolbar-end);
 }
 
-.app-shell.desktop-macos[data-ui2-shell-boundary="true"].settings-fullscreen-shell,
-.app-shell.desktop-macos[data-ui2-shell-boundary="true"].settings-fullscreen-shell.inspector-hidden,
-.app-shell.desktop-macos[data-ui2-shell-boundary="true"].settings-fullscreen-shell.inspector-collapsed {
-  --desktop-window-titlebar-leading-width: var(--desktop-window-traffic-light-width);
+.app-shell.desktop-window-shell[data-ui2-shell-boundary="true"].settings-fullscreen-shell,
+.app-shell.desktop-window-shell[data-ui2-shell-boundary="true"].settings-fullscreen-shell.inspector-hidden,
+.app-shell.desktop-window-shell[data-ui2-shell-boundary="true"].settings-fullscreen-shell.inspector-collapsed {
+  --desktop-shell-sidebar-width: 0px;
+  --desktop-window-titlebar-leading-width: 0px;
   grid-template-areas:
     "titlebar"
     "workspace";
@@ -41,20 +54,29 @@
   grid-template-rows: var(--desktop-window-titlebar-height) minmax(0, 1fr);
 }
 
+.app-shell.desktop-window-shell.desktop-macos[data-ui2-shell-boundary="true"].settings-fullscreen-shell {
+  --desktop-window-titlebar-leading-width: var(--desktop-window-traffic-light-width);
+}
+
 @supports (height: 100dvh) {
-  .app-shell.desktop-macos[data-ui2-shell-boundary="true"] {
+  .app-shell.desktop-window-shell[data-ui2-shell-boundary="true"] {
     height: 100dvh;
   }
 }
 
-.app-shell.desktop-macos > .desktop-window-chrome {
-  -webkit-app-region: drag;
+@media (min-width: 1121px) and (max-width: 1280px) {
+  .app-shell.desktop-window-shell[data-ui2-shell-boundary="true"]:not(.inspector-hidden):not(.inspector-collapsed) {
+    grid-template-columns: var(--desktop-shell-sidebar-width) minmax(0, 1fr) 340px;
+  }
+}
+
+.app-shell.desktop-window-shell > .desktop-window-chrome {
   -webkit-user-select: none;
   position: relative;
   z-index: var(--desktop-window-chrome-layer);
   grid-area: titlebar;
   display: grid;
-  grid-template-columns: var(--desktop-window-titlebar-leading-width) minmax(0, 1fr);
+  grid-template-columns: var(--desktop-window-titlebar-leading-width) minmax(0, 1fr) auto;
   width: 100%;
   height: var(--desktop-window-titlebar-height);
   min-width: 0;
@@ -75,8 +97,8 @@
   background: var(--ling-bg-sidebar);
 }
 
-.app-shell.desktop-macos.channel-sidebar-collapsed .desktop-window-chrome-leading,
-.app-shell.desktop-macos.settings-fullscreen-shell .desktop-window-chrome-leading {
+.app-shell.desktop-window-shell.channel-sidebar-collapsed .desktop-window-chrome-leading,
+.app-shell.desktop-window-shell.settings-fullscreen-shell .desktop-window-chrome-leading {
   background: var(--ling-bg-panel);
 }
 
@@ -88,7 +110,7 @@
   pointer-events: none;
 }
 
-.app-shell.desktop-macos .desktop-window-chrome-toolbar {
+.app-shell.desktop-window-shell .desktop-window-chrome-toolbar {
   -webkit-app-region: no-drag;
   display: grid;
   flex: 0 0 var(--desktop-window-sidebar-toggle-size);
@@ -98,7 +120,7 @@
   margin-left: var(--desktop-window-sidebar-toggle-gap);
 }
 
-.app-shell.desktop-macos .desktop-window-sidebar-toggle {
+.app-shell.desktop-window-shell .desktop-window-sidebar-toggle {
   -webkit-app-region: no-drag;
   width: var(--desktop-window-sidebar-toggle-size);
   min-width: var(--desktop-window-sidebar-toggle-size);
@@ -111,13 +133,13 @@
   color: var(--text-muted);
 }
 
-.app-shell.desktop-macos .desktop-window-sidebar-toggle:hover,
-.app-shell.desktop-macos .desktop-window-sidebar-toggle:focus-visible {
+.app-shell.desktop-window-shell .desktop-window-sidebar-toggle:hover,
+.app-shell.desktop-window-shell .desktop-window-sidebar-toggle:focus-visible {
   background: var(--surface-selected);
   color: var(--text-strong);
 }
 
-.app-shell.desktop-macos .desktop-window-sidebar-toggle svg {
+.app-shell.desktop-window-shell .desktop-window-sidebar-toggle svg {
   width: 18px;
   height: 18px;
   stroke-width: 2.25;
@@ -129,6 +151,44 @@
   height: 100%;
   overflow: visible;
   background: var(--ling-bg-panel);
+}
+
+.desktop-window-controls {
+  -webkit-app-region: no-drag;
+  display: flex;
+  align-items: stretch;
+  justify-self: end;
+  height: var(--desktop-window-titlebar-height);
+}
+
+.app-shell.desktop-window-shell .desktop-window-control {
+  width: 46px;
+  min-width: 46px;
+  height: var(--desktop-window-titlebar-height);
+  min-height: var(--desktop-window-titlebar-height);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.app-shell.desktop-window-shell .desktop-window-control:hover,
+.app-shell.desktop-window-shell .desktop-window-control:focus-visible {
+  background: var(--surface-hover);
+  color: var(--text-strong);
+}
+
+.app-shell.desktop-window-shell .desktop-window-close:hover,
+.app-shell.desktop-window-shell .desktop-window-close:focus-visible {
+  background: #c42b1c;
+  color: #ffffff;
+}
+
+.app-shell.desktop-window-shell .desktop-window-control svg {
+  width: 14px;
+  height: 14px;
+  stroke-width: 1.75;
 }
 
 .desktop-window-titlebar-surface > :is(header, nav, section, .workspace-head) {
@@ -245,14 +305,14 @@
   white-space: nowrap;
 }
 
-.app-shell.desktop-macos [data-desktop-window-drag-region="true"] {
+.app-shell:is(.desktop-macos, .desktop-windows) [data-desktop-window-drag-region="true"] {
   -webkit-app-region: drag;
   -webkit-user-select: none;
   user-select: none;
 }
 
-.app-shell.desktop-macos [data-desktop-window-no-drag="true"],
-.app-shell.desktop-macos [data-desktop-window-drag-region="true"] :is(
+.app-shell:is(.desktop-macos, .desktop-windows) [data-desktop-window-no-drag="true"],
+.app-shell:is(.desktop-macos, .desktop-windows) [data-desktop-window-drag-region="true"] :is(
   button,
   a,
   input,
@@ -281,7 +341,7 @@
   -webkit-app-region: no-drag;
 }
 
-.app-shell.desktop-macos [data-desktop-window-drag-region="true"] :is(
+.app-shell:is(.desktop-macos, .desktop-windows) [data-desktop-window-drag-region="true"] :is(
   input,
   textarea,
   [contenteditable="true"],
@@ -291,7 +351,7 @@
   user-select: text;
 }
 
-body:has(.app-shell.desktop-macos) :is(
+body:has(.app-shell:is(.desktop-macos, .desktop-windows)) :is(
   [data-ling-overlay],
   [data-ling-overlay-scrim],
   [data-desktop-window-no-drag="true"]
@@ -299,17 +359,21 @@ body:has(.app-shell.desktop-macos) :is(
   -webkit-app-region: no-drag;
 }
 
-.app-shell.desktop-macos > :is(.channel-left-drawer, .workspace, .right-panel) {
+.app-shell.desktop-window-shell > :is(.channel-left-drawer, .workspace, .right-panel) {
   height: 100%;
   min-height: 0;
   max-height: 100%;
 }
 
-.app-shell.desktop-macos > .workspace > * {
+.app-shell.desktop-window-shell > .workspace > * {
   max-height: 100%;
 }
 
-.app-shell.desktop-macos.settings-fullscreen-shell .settings-layout {
+.app-shell.desktop-window-shell > .workspace > .client-window {
+  min-height: 0;
+}
+
+.app-shell.desktop-window-shell.settings-fullscreen-shell .settings-layout {
   height: 100%;
   max-height: 100%;
 }

@@ -11,7 +11,7 @@ export function SidebarTooltip({
   readonly label: ReactNode;
 }): React.JSX.Element {
   return (
-    <Tooltip className={className} content={label} side="right" sideOffset={8}>
+    <Tooltip className={className} collisionPadding={12} content={label} side="right" sideOffset={8}>
       {children}
     </Tooltip>
   );

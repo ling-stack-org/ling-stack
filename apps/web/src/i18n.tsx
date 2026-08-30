@@ -121,7 +121,9 @@ export function I18nProvider({ children }: { readonly children: ReactNode }): Re
 
   return (
     <I18nContext.Provider value={value}>
-      {catalog && fallbackCatalog ? children : <div aria-busy="true" data-i18n-bootstrap>Ling Stack</div>}
+      {catalog && fallbackCatalog
+        ? children
+        : <div aria-busy="true" aria-label="Ling Stack is loading" data-i18n-bootstrap role="status" />}
     </I18nContext.Provider>
   );
 }

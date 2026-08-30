@@ -161,6 +161,18 @@ export interface DesktopCommandResult {
   readonly reason?: string;
 }
 
+export interface DesktopWindowState {
+  readonly maximized: boolean;
+}
+
+export interface DesktopWindowControlCapabilities {
+  getState(): Promise<DesktopWindowState>;
+  minimize(): Promise<DesktopCommandResult>;
+  toggleMaximize(): Promise<DesktopCommandResult>;
+  close(): Promise<DesktopCommandResult>;
+  onStateChanged(listener: (state: DesktopWindowState) => void): () => void;
+}
+
 export type ComputerControlPermissionKind = "accessibility" | "screen_recording";
 
 export interface LockedTaskContinuationPreferences {
@@ -238,6 +250,8 @@ export interface LingDesktopCapabilities {
     reportTheme(theme: DesktopRendererThemeInput): void;
   };
   readonly themePackages: DesktopThemePackageCapabilities;
+  /** Present only when the renderer owns the Windows frame controls. */
+  readonly windowControls?: DesktopWindowControlCapabilities;
   readonly navigation: {
     acknowledgeIntent(requestId: number): Promise<DesktopCommandResult>;
     onIntent(listener: (intent: DesktopNavigationIntent) => void): () => void;

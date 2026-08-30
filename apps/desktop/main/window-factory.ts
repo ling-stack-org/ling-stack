@@ -27,14 +27,23 @@ export function buildMainWindowOptions(
     height: 920,
     minWidth: 980,
     minHeight: 680,
-    backgroundColor: input.backgroundColor ?? "#111315",
+    backgroundColor: input.backgroundColor ?? "#1f1f1f",
     show: false,
     ...(platform === "darwin"
       ? {
+          title: "",
           titleBarStyle: "hiddenInset" as const,
           trafficLightPosition: macosMainWindowTrafficLightPosition,
         }
-      : { titleBarStyle: "default" as const }),
+      : platform === "win32"
+        ? {
+            frame: false,
+            hasShadow: true,
+            resizable: true,
+            roundedCorners: true,
+            thickFrame: true,
+          }
+        : { titleBarStyle: "default" as const }),
     webPreferences: {
       preload: fileURLToPath(new URL("../preload/main-window.cjs", import.meta.url)),
       contextIsolation: true,
@@ -63,6 +72,10 @@ export async function createMainWindow(input: MainWindowFactoryInput): Promise<B
   const window = createWindow(buildMainWindowOptions(input, platform));
   if (platform === "win32") {
     window.removeMenu();
+  }
+  if (platform === "darwin") {
+    window.setTitle("");
+    window.on("page-title-updated", (event) => event.preventDefault());
   }
   input.onWindowCreated?.(window);
   if (input.showWhenReady !== false) {

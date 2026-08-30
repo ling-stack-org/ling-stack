@@ -237,7 +237,12 @@ export function TeammateWorkspace({
   readonly onRefreshWorkspacePolicy?: () => void;
   readonly approvalErrors: Readonly<Record<string, string>>;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
-  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => MaybePromise<void>;
+  readonly onResolveApproval: (
+    approvalId: string,
+    decision: ApprovalResolution,
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ) => MaybePromise<void>;
   readonly settingsOpenRequest?: {
     readonly teammateId: string;
     readonly requestId: number;
@@ -1658,7 +1663,8 @@ export function TeammateWorkspace({
           summaryRows={privateSummaryRows}
           terminalOpen={chatTerminalOpen}
           terminalDisabled={!cwd.trim()}
-          detailsOpen={chatDockOpen}
+          detailsOpen={chatDockController.expanded}
+          detailsDisabled={!chatDockController.available}
           moreButtonRef={renameController.triggerRef}
           onToggleSearch={() => {
             setChatSummaryOpen(false);
@@ -1687,6 +1693,7 @@ export function TeammateWorkspace({
             setChatTerminalOpen((current) => !current);
           }}
           onToggleDetails={() => {
+            if (!chatDockController.available) return;
             setChatDockOpen((current) => !current);
           }}
         />
@@ -1800,8 +1807,13 @@ export function TeammateWorkspace({
               approvalErrors={approvalErrors}
               resolvingApprovals={resolvingApprovals}
               surface="teammate_direct"
-              onResolve={(approvalId, decision, reason) => {
-                void Promise.resolve(onResolveApproval(approvalId, decision, reason)).then(() => refreshDirectRuntime());
+              onResolve={(approvalId, decision, reason, proposedRuleFingerprint) => {
+                void Promise.resolve(onResolveApproval(
+                  approvalId,
+                  decision,
+                  reason,
+                  proposedRuleFingerprint,
+                )).then(() => refreshDirectRuntime());
               }}
             />
           ) : undefined}
@@ -1832,7 +1844,7 @@ export function TeammateWorkspace({
           workspaceAccessMode={selectedWorkspaceAccessMode}
           onWorkspaceAccessModeChange={setSelectedWorkspaceAccessMode}
           onFullAccessPresetSelected={onConfirmFullAccessSelection}
-          dockOpen={chatDockOpen}
+          dockOpen={chatDockController.renderedOpen}
           dockController={chatDockController}
           dockPageRequest={chatDockPageRequest}
           dockActions={(

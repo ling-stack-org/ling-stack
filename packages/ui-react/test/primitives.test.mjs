@@ -47,6 +47,9 @@ import {
   SegmentedControlItem,
   Select,
   Skeleton,
+  SplitButton,
+  SplitButtonPrimary,
+  SplitButtonTrigger,
   StatusIndicator,
   Switch,
   Tabs,
@@ -230,6 +233,25 @@ test("button preserves its label and disables duplicate activation while loading
   assert.match(html, /Loading/u);
   assert.match(html, /data-ling-button-slot="leading"/u);
   assert.match(html, /data-ling-button-slot="label"/u);
+});
+
+test("split button gives both actions one inherited size and one outer control frame", () => {
+  const html = renderToStaticMarkup(createElement(
+    SplitButton,
+    { "aria-label": "Allow options", role: "group", size: "md" },
+    createElement(SplitButtonPrimary, { variant: "primary" }, "Allow once"),
+    createElement(SplitButtonTrigger, {
+      icon: Search,
+      label: "Allow options",
+      variant: "primary",
+    }),
+  ));
+
+  assert.match(html, /data-ling-split-button="true"/u);
+  assert.match(html, /role="group"/u);
+  assert.equal((html.match(/data-size="md"/gu) ?? []).length, 3);
+  assert.match(html, /ling-ui-split-button-primary/u);
+  assert.match(html, /ling-ui-split-button-trigger/u);
 });
 
 test("button asChild composes one interactive element without nested controls", () => {

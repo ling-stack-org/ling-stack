@@ -45,6 +45,7 @@ import type { DomainEvent } from "./domain-events.js";
 import type { ApprovalResolution } from "../features/approvals/types.js";
 import { PageInspector } from "../features/inspector/PageInspector.js";
 import { SidebarNavigation, type SidebarRecentConversation } from "../features/navigation/SidebarNavigation.js";
+import { SidebarCompactRail } from "../features/navigation/SidebarCompactRail.js";
 import { ChannelCreateDialog, type ChannelCreateProjectOption } from "../features/workspace/ChannelCreateDialog.js";
 import { useChannelFeedbackController } from "../features/workspace/useChannelFeedbackController.js";
 import { ConversationHome, type ConversationHomeMessage } from "../features/workspace/ConversationHome.js";
@@ -179,6 +180,12 @@ import { useAppNarrowViewport } from "./use-app-viewport-state.js";
 import { useShellErrorFeedback } from "./use-shell-error-feedback.js";
 import { buildSidebarObjectContextSeeds } from "./sidebar-object-context.js";
 import { useSidebarObjectContexts } from "./use-sidebar-object-contexts.js";
+import {
+  acknowledgeSidebarConversationFailure,
+  hasAcknowledgedSidebarConversationFailure,
+  readSidebarFailureReadState,
+  writeSidebarFailureReadState,
+} from "./sidebar-failure-read-state.js";
 
 const builtinSkillPack = getBuiltinSkillPack(GSTACK_DEFAULT_SKILL_PACK_ID);
 const builtinTeammateTemplates = builtinSkillPack?.teammateTemplates ?? [];
@@ -259,6 +266,7 @@ export function AppShell(): React.JSX.Element {
     transports: { providerWebSocketFallback: false, localWebSocketRpc: false },
   });
   const [channelUnreadById, setChannelUnreadById] = useState<Readonly<Record<string, ChannelUnreadState>>>({});
+  const [sidebarFailureReadState, setSidebarFailureReadState] = useState(readSidebarFailureReadState);
   const channelSeenMessageAtRef = useRef<Record<string, string>>({});
   const [runningWorkflowStepId, setRunningWorkflowStepId] = useState("");
   const [orchestratingWorkflowId, setOrchestratingWorkflowId] = useState("");
@@ -283,6 +291,9 @@ export function AppShell(): React.JSX.Element {
   useEffect(() => {
     if (narrowViewport) setChannelSidebarOpen(false);
   }, [narrowViewport]);
+  useEffect(() => {
+    writeSidebarFailureReadState(sidebarFailureReadState);
+  }, [sidebarFailureReadState]);
   const {
     buildRerunRequest,
     buildRunRequest,
@@ -1082,6 +1093,17 @@ export function AppShell(): React.JSX.Element {
     () => buildSidebarConversationApprovalCounts(approvals, sidebarRuns, workUnits),
     [approvals, sidebarRuns, workUnits],
   );
+  useEffect(() => {
+    if (activeView !== "workspace" || selectedChannelId || !selectedConversationThreadId) return;
+    const selectedThread = conversationThreads.find((thread) => thread.id === selectedConversationThreadId);
+    if (!selectedThread || (selectedThread.status !== "failed" && selectedThread.status !== "blocked")) return;
+    setSidebarFailureReadState((current) => acknowledgeSidebarConversationFailure(
+      current,
+      form.cwd,
+      selectedThread.id,
+      selectedThread.updatedAt,
+    ));
+  }, [activeView, conversationThreads, form.cwd, selectedChannelId, selectedConversationThreadId]);
   const recentConversations = useMemo<readonly SidebarRecentConversation[]>(() => {
     const activeThreadIds = new Set([...runs, ...(run ? [run] : [])]
       .filter((item) => item.status === "queued" || item.status === "running")
@@ -1094,17 +1116,22 @@ export function AppShell(): React.JSX.Element {
       .map((thread) => ({
         id: thread.id,
         label: thread.title || t("Conversation"),
-        meta: t("Conversation"),
         primaryStatus: projectSidebarConversationStatus(
           thread.status,
           activeThreadIds.has(thread.id) || (thread.id === selectedConversationThreadId && conversationStreamBusy),
           (sidebarConversationApprovalCounts.get(thread.id) ?? 0) > 0,
+          hasAcknowledgedSidebarConversationFailure(
+            sidebarFailureReadState,
+            form.cwd,
+            thread.id,
+            thread.updatedAt,
+          ),
         ),
         updatedAt: thread.metadata?.lastActivityAt ?? thread.updatedAt,
       }) satisfies SidebarRecentConversation)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 5);
-  }, [conversationStreamBusy, conversationThreads, run, runs, selectedConversationThreadId, sidebarConversationApprovalCounts, t, workUnits]);
+  }, [conversationStreamBusy, conversationThreads, form.cwd, run, runs, selectedConversationThreadId, sidebarConversationApprovalCounts, sidebarFailureReadState, t, workUnits]);
   const conversationChatProviders = useMemo(
     () => providers.filter(canUseConversationProvider),
     [providers],
@@ -2347,15 +2374,29 @@ export function AppShell(): React.JSX.Element {
   const navigationSelectedRecentConversationId = recentConversations.some((conversation) => conversation.id === conversationIdentity)
     ? conversationIdentity
     : selectedConversationThreadId;
+  const openSidebarView = (view: ViewId): void => {
+    if (view === "workspace") {
+      openConversationHome();
+      return;
+    }
+    if (view === "work_board") {
+      openWorkBoard();
+      return;
+    }
+    openPlainViewWithoutSettingsReturn(view);
+  };
   const shellClassName = [
     "app-shell",
     "channel-drawer-shell",
+    "desktop-window-shell",
     activeView === "workspace" ? "channel-daylight-shell" : "",
     settingsFullscreen ? "settings-fullscreen-shell" : "",
     !channelSidebarOpen ? "channel-sidebar-collapsed" : "",
     showInspector && inspectorCollapsed ? "inspector-collapsed" : "",
     showInspector ? "" : "inspector-hidden",
     desktopPlatform === "macos" ? "desktop-macos" : "",
+    desktopPlatform === "windows" ? "desktop-windows" : "",
+    desktopHosted ? "" : "desktop-web",
   ].filter(Boolean).join(" ");
   const workspaceSurfaceRef = useRef<HTMLElement>(null);
   const desktopSelectedConversationId = selectDesktopComputerUseConversation({
@@ -2394,7 +2435,7 @@ export function AppShell(): React.JSX.Element {
         refreshing={daemonHealthRefreshing}
         onRetry={() => void refreshHealth()}
       />
-      {!settingsFullscreen ? (
+      {!settingsFullscreen && channelSidebarOpen ? (
       <SidebarNavigation
         activeSidebarTarget={navigationActiveSidebarTarget}
         channels={channels}
@@ -2412,17 +2453,7 @@ export function AppShell(): React.JSX.Element {
         recentConversationsInitialLoading={conversationThreadsLoading && recentConversations.length === 0}
         recentConversationActionError={conversationSidebarError}
         selectedRecentConversationId={activeView === "workspace" && !selectedChannelId ? navigationSelectedRecentConversationId : ""}
-        onOpenView={(view) => {
-          if (view === "workspace") {
-            openConversationHome();
-            return;
-          }
-          if (view === "work_board") {
-            openWorkBoard();
-            return;
-          }
-          openPlainViewWithoutSettingsReturn(view);
-        }}
+        onOpenView={openSidebarView}
         onOpenConversationHome={openConversationHome}
         onCreateChannel={openChannelCreatePanel}
         onCreateTeammate={openTeammateCreatePanel}
@@ -2451,10 +2482,15 @@ export function AppShell(): React.JSX.Element {
         }}
         onSelectRecentConversation={selectRecentConversation}
         channelDrawer
-        channelDrawerOpen={channelSidebarOpen}
-        channelDrawerToggleVisible={desktopPlatform !== "macos"}
-        onChannelDrawerOpenChange={setChannelSidebarOpen}
       />
+      ) : !settingsFullscreen ? (
+        <SidebarCompactRail
+          activeSidebarTarget={navigationActiveSidebarTarget}
+          selectedRecentConversationId={activeView === "workspace" && !selectedChannelId ? navigationSelectedRecentConversationId : ""}
+          onExpand={() => setChannelSidebarOpen(true)}
+          onOpenConversationHome={openConversationHome}
+          onOpenView={openSidebarView}
+        />
       ) : null}
       <section
         ref={workspaceSurfaceRef}
@@ -2686,7 +2722,12 @@ export function AppShell(): React.JSX.Element {
             onCancelWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "cancel")}
             onRetryWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "retry")}
             onReconcileWorkUnit={(workUnitId) => void runWorkUnitAction(workUnitId, "reconcile")}
-            onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+            onResolveApproval={(approvalId, decision, reason, proposedRuleFingerprint) => void resolveApproval(
+              approvalId,
+              decision,
+              reason,
+              proposedRuleFingerprint,
+            )}
             onClaimWorkItem={(workItemId) => void claimDurableWorkItem(workItemId)}
             onHeartbeatWorkItem={(workItemId, claimToken) => void heartbeatDurableWorkItem(workItemId, claimToken)}
             onReleaseWorkItem={(workItemId, claimToken) => void releaseDurableWorkItem(workItemId, claimToken)}
@@ -2763,7 +2804,12 @@ export function AppShell(): React.JSX.Element {
                     }
                     if (target.workUnitId) void runWorkUnitAction(target.workUnitId, "cancel");
                   }}
-                  onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
+                  onResolveApproval={(approvalId, decision, reason, proposedRuleFingerprint) => void resolveApproval(
+                    approvalId,
+                    decision,
+                    reason,
+                    proposedRuleFingerprint,
+                  )}
                   onSendConversation={async (input) => {
                     await sendConversationMessage({
                       message: input.message,

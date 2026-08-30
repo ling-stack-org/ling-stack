@@ -58,6 +58,11 @@
   "desktop.computer_use.hide_action": "隐藏",
   "desktop.computer_use.reset_position_action": "重置位置",
   "desktop.computer_use.close_window_action": "关闭窗口",
+  "Window controls": "窗口控制",
+  "Minimize window": "最小化窗口",
+  "Maximize window": "最大化窗口",
+  "Restore window": "还原窗口",
+  "Close window": "关闭窗口",
   "desktop.computer_use.screen_settings_action": "屏幕设置",
   "desktop.computer_use.retry_capture_action": "重试捕获",
   "desktop.computer_use.try_stop_again_action": "再次尝试停止",
@@ -180,5 +185,15 @@
   "daemon.channel.role_summary.release": "准备发布检查和需要审批的发布步骤。",
   "daemon.channel.role_summary.specialist": "在范围清楚后处理有边界的专业任务。",
   "daemon.channel.workflow_start.blocked": "我尝试开始这个工作流，但执行前被阻塞：{message}",
-  "daemon.channel.workflow_start.confirmed": "已确认：“{title}”。现在开始处理。"
+  "daemon.channel.workflow_start.confirmed": "已确认：“{title}”。现在开始处理。",
+  "Allow options": "允许选项",
+  "Allow similar commands": "允许类似命令",
+  "Allow commands starting with {command} in this workspace": "在此工作区中允许以 {command} 开头的命令",
+  "Saving command rule": "正在保存命令规则",
+  "Terminal command rules": "终端命令规则",
+  "Commands allowed with Allow similar commands in this workspace.": "在此工作区中通过“允许类似命令”保存的规则。",
+  "Loading command rules": "正在加载命令规则",
+  "No saved command rules": "暂无已保存的命令规则",
+  "Allows commands starting with {command}": "允许以 {command} 开头的命令",
+  "Revoking command rule": "正在撤销命令规则"
 }
