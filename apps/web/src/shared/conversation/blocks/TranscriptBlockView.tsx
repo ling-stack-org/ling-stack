@@ -102,7 +102,10 @@ function TranscriptDisplayLineView({
 }): React.JSX.Element {
   return (
     <span className={["transcript-block-view-line", line.tone ? `tone-${line.tone}` : ""].filter(Boolean).join(" ")}>
-      <MessageBodyRenderer text={line.text} cwd={cwd} compact />
+      {/* The collapsed header is phrasing content inside a button. Keep it
+          text-only here so a block-level Markdown renderer is not nested in
+          <button>/<span>; expanded details render the full Markdown body. */}
+      <span className="transcript-block-view-line-text">{line.text}</span>
       {line.meta ? <small>{line.meta}</small> : null}
     </span>
   );

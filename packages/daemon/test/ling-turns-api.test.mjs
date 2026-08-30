@@ -1288,6 +1288,27 @@ test("daemon marks active goal usage_limited when provider quota stops a run", a
   }
 });
 
+test("daemon fails a run when the runner reports an assistant provider error", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-assistant-provider-error-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(new AssistantProviderErrorRunner(), stores);
+  try {
+    const result = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_assistant_provider_error"));
+    const store = stores.get(cwd);
+    assert.ok(store);
+    const run = store.getRun(result.runId);
+    assert.ok(run);
+    assert.equal(run.status, "failed");
+    assert.match(run.errorMessage ?? "", /Provider message ended with an error/);
+    assert.equal(store.listEvents(result.runId).some((event) => event.type === "run_error"), true);
+    assert.equal(store.listEvents(result.runId).some((event) => event.type === "runner_succeeded"), false);
+    assert.equal(result.events.some((event) => event.event === "run_end"), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("daemon marks goal blocked only after three matching blockers", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-goal-same-blocker-"));
   const store = createSqliteRunStore(cwd);
@@ -1719,6 +1740,34 @@ class QuotaFailureRunner {
       model: options.provider.model,
     });
     throw Object.assign(new Error("Provider returned status 429: rate limit exceeded"), { code: "rate_limited" });
+  }
+}
+
+class AssistantProviderErrorRunner {
+  async runTask(options) {
+    const start = {
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    };
+    const failedMessage = {
+      type: "message_end",
+      role: "assistant",
+      stopReason: "error",
+      errorMessage: "Provider message ended with an error.",
+    };
+    options.onEvent?.(start);
+    options.onEvent?.({ type: "turn_start" });
+    options.onEvent?.({ type: "message_end", role: "user" });
+    options.onEvent?.(failedMessage);
+    options.onEvent?.({ type: "turn_end" });
+    return {
+      taskId: options.task.id,
+      events: [start, { type: "turn_start" }, { type: "message_end", role: "user" }, failedMessage, { type: "turn_end" }, { type: "run_end", taskId: options.task.id, messageCount: 1 }],
+      messages: [{ role: "assistant", stopReason: "error" }],
+    };
   }
 }
 

@@ -41,6 +41,7 @@ test("T13-P.9EF.B Conversation releases the generic AppShell error contract", as
   expect(domainSource).toContain('scope: "stream"');
   expect(conversationHomeSource).toContain("shouldCommit");
   expect(conversationHomeSource).toContain("useNormalConversationActionFeedback");
+  expect(appShellSource).toContain("errorMessage: message.errorMessage");
 });
 
 test("T13-P.9EF.B Conversation owner isolates identity, scope, stale operations, and unrelated success", () => {
@@ -205,7 +206,18 @@ test("T13-P.9EF.B a late stream failure remains with Alpha and cannot mutate Bet
 function createConversationErrorState(): MockState {
   const state = createBaseState({ approvalStatus: "pending" });
   const providerId = "provider_conversation_error_owner";
-  state.providers = [createChatProvider({ id: providerId, displayName: "Conversation Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({
+    id: providerId,
+    displayName: "Conversation Relay",
+    model: "gpt-5.5",
+    lastCheck: {
+      ok: true,
+      code: "ready",
+      message: "Provider is reachable and accepted the configured model.",
+      checkedAt: "2026-07-27T00:00:00.000Z",
+    },
+  })];
+  state.workspaceSettings.defaultProviderPresetId = providerId;
   installConversation(state, alpha, providerId, "2026-07-27T01:00:00.000Z");
   installConversation(state, beta, providerId, "2026-07-27T02:00:00.000Z");
   return state;

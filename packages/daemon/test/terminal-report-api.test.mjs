@@ -70,7 +70,7 @@ test("terminal report API exposes committed reports without developer synthesis 
     database.close();
   }
 
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 });
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");
@@ -100,6 +100,70 @@ test("terminal report API exposes committed reports without developer synthesis 
     const missing = await requestJson(`${baseUrl}/terminal-reports/missing?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(missing.status, 404);
     assert.equal(missing.body.error, "terminal_report_not_found");
+  } finally {
+    await daemon.stop();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("terminal report API returns only the latest effective generation by default", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-api-history-"));
+  const store = createSqliteRunStore(cwd);
+  const fixture = createTerminalWorkflowFixture(store, cwd, "history");
+  const firstNow = "2026-07-11T09:00:00.000Z";
+  const firstSnapshot = collectWorkflowTerminalReportEvidence(store, fixture.workflow.id, { generatedAt: firstNow });
+  const firstDraft = store.createTerminalReportDraft({ id: "terminal_report_history_1", evidenceSnapshot: firstSnapshot }, firstNow);
+  const firstValidating = store.updateTerminalReportDraft({
+    reportId: firstDraft.id,
+    expectedStatus: "draft",
+    expectedEvidenceFingerprint: firstDraft.evidenceFingerprint,
+    status: "validating",
+    now: firstNow,
+  });
+  const firstReport = buildDeterministicTerminalReport(firstSnapshot, { id: firstDraft.id, committedAt: firstNow });
+  store.commitTerminalReport({
+    reportId: firstDraft.id,
+    expectedStatus: "validating",
+    expectedEvidenceFingerprint: firstValidating.evidenceFingerprint,
+    report: firstReport,
+    synthesisMode: "deterministic_fallback",
+    promptVersion: firstReport.synthesis.promptVersion,
+    attemptCount: 0,
+    now: firstNow,
+  });
+
+  const secondSnapshot = collectWorkflowTerminalReportEvidence(store, fixture.workflow.id, { generatedAt: "2026-07-11T09:01:00.000Z" });
+  const secondDraft = store.createTerminalReportDraft({ id: "terminal_report_history_2", generation: 2, evidenceSnapshot: secondSnapshot }, "2026-07-11T09:01:00.000Z");
+  const secondValidating = store.updateTerminalReportDraft({
+    reportId: secondDraft.id,
+    expectedStatus: "draft",
+    expectedEvidenceFingerprint: secondDraft.evidenceFingerprint,
+    status: "validating",
+    now: "2026-07-11T09:01:00.000Z",
+  });
+  const secondReport = buildDeterministicTerminalReport(secondSnapshot, { id: secondDraft.id, committedAt: "2026-07-11T09:01:00.000Z" });
+  store.commitTerminalReport({
+    reportId: secondDraft.id,
+    expectedStatus: "validating",
+    expectedEvidenceFingerprint: secondValidating.evidenceFingerprint,
+    report: secondReport,
+    synthesisMode: "deterministic_fallback",
+    promptVersion: secondReport.synthesis.promptVersion,
+    attemptCount: 0,
+    now: "2026-07-11T09:01:00.000Z",
+  });
+  store.close();
+
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd });
+  await daemon.start();
+  const address = daemon.server.address();
+  assert.ok(address && typeof address === "object");
+  const baseUrl = `http://127.0.0.1:${address.port}`;
+  try {
+    const current = await getJson(`${baseUrl}/channels/${encodeURIComponent(fixture.channel.id)}/terminal-reports?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(current.reports.map((report) => report.id), [secondReport.id]);
+    const history = await getJson(`${baseUrl}/channels/${encodeURIComponent(fixture.channel.id)}/terminal-reports?cwd=${encodeURIComponent(cwd)}&includeHistory=true`);
+    assert.deepEqual(history.reports.map((report) => report.id).sort(), [firstReport.id, secondReport.id].sort());
   } finally {
     await daemon.stop();
     await rm(cwd, { recursive: true, force: true });

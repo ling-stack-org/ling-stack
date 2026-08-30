@@ -8,6 +8,9 @@
     "ling-stack-daemon": "./dist/cli.js"
   },
   "scripts": {
+    "build:ci": "tsc -p tsconfig.json",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+    "test:ci": "node --test test/*.test.mjs",
     "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json",
     "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",

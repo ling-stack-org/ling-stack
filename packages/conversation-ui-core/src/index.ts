@@ -79,6 +79,11 @@ export type {
   ConversationMessageEditCandidate,
   ConversationMessageEditScope,
 } from "./message-edit-policy.js";
+export { projectConversationMessagePresentation } from "./message-presentation.js";
+export type {
+  ConversationMessagePresentation,
+  ConversationMessagePresentationInput,
+} from "./message-presentation.js";
 export {
   getTerminalReportProjectionPolicy,
 } from "./terminal-report-projection-policy.js";

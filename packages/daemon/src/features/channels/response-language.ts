@@ -51,7 +51,11 @@ export function resolveChannelResponseLanguage(input: ResolveChannelResponseLang
     store: input.store,
     channel: input.channel,
   });
-  return resolveProtocolPreference(protocol.protocol.responseLanguage, protocol.sources.responseLanguage.source);
+  return resolveProtocolPreference(
+    protocol.protocol.responseLanguage,
+    input.sourceText,
+    protocol.sources.responseLanguage.source,
+  );
 }
 
 export function responseLanguageInstruction(language: ResponseLanguagePreference): string {
@@ -66,11 +70,12 @@ export function fallbackResponseLanguage(language: ResponseLanguagePreference | 
 
 function resolveProtocolPreference(
   preference: ResponseLanguagePreference | "workspace",
+  sourceText: string,
   source: ChannelProtocolFieldSource,
 ): ResponseLanguageResolution {
   if (preference === "workspace" || preference === "follow_user") {
     return {
-      language: "en-US",
+      language: inferUserLanguage(sourceText),
       instructionLanguage: "follow_user",
       source: source === "channel_setting"
         ? "channel"
@@ -84,6 +89,10 @@ function resolveProtocolPreference(
     instructionLanguage: preference,
     source: source === "workspace_setting" ? "workspace" : "channel",
   };
+}
+
+export function inferUserLanguage(text: string): ResponseLanguage {
+  return /[\u3400-\u9fff]/u.test(text) ? "zh-CN" : "en-US";
 }
 
 function detectExplicitResponseLanguage(text: string): ResponseLanguage | undefined {

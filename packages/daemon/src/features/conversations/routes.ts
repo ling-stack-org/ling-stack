@@ -249,9 +249,11 @@ export async function handleConversationStream(
             updatedAt: envelope.ts,
           };
         } else if (envelope.type === "run_error") {
+          const errorMessage = readEventError(envelope);
           assistantMessage = {
             ...assistantMessage,
-            content: readEventError(envelope) || assistantMessage.content || conversationRunFailedContent(input.responseLanguage, input.message),
+            content: assistantMessage.content || conversationRunFailedContent(input.responseLanguage, input.message),
+            ...(errorMessage ? { errorMessage } : {}),
             status: "failed",
             updatedAt: envelope.ts,
           };
@@ -272,7 +274,13 @@ export async function handleConversationStream(
       },
       writeError(_statusCode, body) {
         const message = readErrorBodyMessage(body, input.responseLanguage, input.message);
-        assistantMessage = { ...assistantMessage, content: message, status: "failed", updatedAt: new Date().toISOString() };
+        assistantMessage = {
+          ...assistantMessage,
+          content: assistantMessage.content || conversationRunFailedContent(input.responseLanguage, input.message),
+          errorMessage: message,
+          status: "failed",
+          updatedAt: new Date().toISOString(),
+        };
         safeWrite("error", { thread, turn, assistantMessage, error: message });
       },
       end() {
@@ -290,12 +298,21 @@ export async function handleConversationStream(
           content: assistantMessage.content || (terminalStatus === "succeeded" && hasGeneratedMedia
             ? ""
             : fallbackAssistantContent(terminalStatus, input.responseLanguage, input.message)),
+          ...(assistantMessage.errorMessage || latestRun?.errorMessage
+            ? { errorMessage: assistantMessage.errorMessage ?? latestRun?.errorMessage ?? undefined }
+            : {}),
           updatedAt: latestRun?.updatedAt ?? new Date().toISOString(),
         };
         if (latestRun && (terminalStatus === "succeeded" || terminalStatus === "cancelled")) {
           safeWrite("done", { thread: latestThread, turn: latestTurn, run: latestRun, assistantMessage: finalAssistant });
         } else {
-          safeWrite("blocked", { thread: latestThread, turn: latestTurn, run: latestRun, assistantMessage: finalAssistant, error: finalAssistant.content });
+          safeWrite("blocked", {
+            thread: latestThread,
+            turn: latestTurn,
+            run: latestRun,
+            assistantMessage: finalAssistant,
+            error: finalAssistant.errorMessage || latestRun?.errorMessage || finalAssistant.content,
+          });
         }
         if (!closed) {
           response.end();
@@ -676,6 +693,7 @@ function createAssistantTranscriptMessage(
   content: string,
   status: ConversationTranscriptStatus,
   now: string,
+  errorMessage?: string,
 ): ConversationTranscriptMessage {
   return {
     id: conversationAssistantMessageId(turn.id),
@@ -683,6 +701,7 @@ function createAssistantTranscriptMessage(
     authorId: LING_AGENT_ID,
     authorLabel: "Ling Agent",
     content,
+    ...(errorMessage ? { errorMessage } : {}),
     status,
     threadId: thread.id,
     turnId: turn.id,
@@ -709,11 +728,12 @@ function assistantMessageFromRun(store: RunStore, thread: LingThread, turn: Ling
     thread,
     turn,
     run,
-    content || error || (status === "succeeded" && hasGeneratedMedia
+    content || (status === "succeeded" && hasGeneratedMedia
       ? ""
       : fallbackAssistantContent(status, responseLanguage, turn.userInstruction)),
     projectedStatus,
     run.updatedAt,
+    error,
   );
 }
 

@@ -11,6 +11,7 @@ import { ConversationArtifactStrip, type ConversationWorkspaceReviewTarget } fro
 import { ConversationCommandBatch } from "./ConversationCommandBatch.js";
 import { ConversationExplorationBatch } from "./ConversationExplorationBatch.js";
 import { DiffViewer } from "./DiffViewer.js";
+import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 import { TerminalReportBlock, type TerminalReportFileTarget } from "./TerminalReportBlock.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 import { useWorkCellActivityVisibility } from "./use-work-cell-activity-visibility.js";
@@ -86,13 +87,17 @@ function ConversationWorkCellContent({
       ? singleAgentRows
       : fallbackRows;
   const operationItems = model.operationItems ?? projectConversationActivity(operationRows);
-  const showOperationRows = operationItems.length > 0;
   const terminalReportRendered = showTerminalReport && model.terminalReportRows.length > 0;
+  const reportOwnsChanges = terminalReportRendered && model.terminalReportRows.some((row) => row.reportSection === "change");
+  const visibleOperationItems = reportOwnsChanges
+    ? operationItems.filter((item) => item.kind !== "operation" || item.row.kind !== "edit")
+    : operationItems;
+  const showOperationRows = visibleOperationItems.length > 0;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
-  const artifactStripSummary = showArtifactStrip ? buildArtifactStripSummary(model.artifactStripItems, t) : undefined;
   const visibleArtifactItems = showArtifactStrip
     ? model.artifactStripItems.filter((item) => item.kind === "artifact" || item.kind === "changed")
     : [];
+  const artifactStripSummary = showArtifactStrip ? buildArtifactStripSummary(visibleArtifactItems, t) : undefined;
   const recoveryTarget = visibleArtifactItems.find((item) => item.kind === "changed")?.recoveryTarget;
   const referencesOnly = !showArtifactStrip;
   const evidenceSummary = model.terminalReportRows.length > 0
@@ -234,7 +239,7 @@ function ConversationWorkCellContent({
             ) : null}
 
             {showOperationRows ? (
-              <ActiveTurnItemStream items={operationItems} cwd={cwd} loadPreview={loadPreview} />
+              <ActiveTurnItemStream items={visibleOperationItems} cwd={cwd} loadPreview={loadPreview} />
             ) : null}
             {!terminalReportRendered ? evidenceDisclosure : null}
           </div>
@@ -247,6 +252,7 @@ function ConversationWorkCellContent({
           rows={model.terminalReportRows}
           renderParticipantAvatar={renderParticipantAvatar}
           surface={surface}
+          cwd={cwd}
           projectionPolicy={terminalReportProjectionPolicy}
           onOpenWorkspaceFile={onOpenWorkspaceFile ? (target) => onOpenWorkspaceFile({ ...target, cwd }) : undefined}
         />
@@ -255,6 +261,7 @@ function ConversationWorkCellContent({
         <ConversationArtifactStrip
           items={visibleArtifactItems}
           cwd={cwd}
+          hideChangedFileDetails={reportOwnsChanges}
           recoveryTarget={recoveryTarget}
           loadPreview={loadPreview}
           onOpenWorkspaceReview={onOpenWorkspaceReview}
@@ -917,7 +924,7 @@ function WorkCellRow({
         </span>
       ) : null}
       <span className="conversation-work-cell-row-copy">
-        <strong>{row.title}</strong>
+        <strong>{displayableRowTitle(row.title)}</strong>
         {changeSummary ? (
           <span className="conversation-work-cell-change-stat" aria-label={`+${changeSummary.additions} -${changeSummary.deletions}`}>
             <span className="add">+{changeSummary.additions}</span>
@@ -952,7 +959,7 @@ function WorkCellRow({
       {expanded && hasDetail ? (
         <div className={row.presentation === "shell" ? "conversation-work-cell-row-detail conversation-work-cell-shell-detail" : "conversation-work-cell-row-detail"}>
           {shellCommand ? <code className="conversation-work-cell-shell-command">$ {shellCommand}</code> : null}
-          {displayDescription ? <small>{displayDescription}</small> : null}
+          {displayDescription ? <MessageBodyRenderer className="conversation-work-cell-rich-description" text={displayDescription} cwd={cwd} compact /> : null}
           {detailLines.map((line, index) => (
             line.kind === "code"
               ? <code key={`${line.kind}:${index}`}>{line.text}</code>
@@ -1091,6 +1098,11 @@ function displayableRowDescription(title: string, description?: string): string 
     return undefined;
   }
   return trimmed;
+}
+
+function displayableRowTitle(title: string): string {
+  const normalized = title.replace(/\s+/gu, " ").trim();
+  return normalized.length > 180 ? `${normalized.slice(0, 177).trimEnd()}...` : normalized;
 }
 
 function displayableRowMeta(meta?: string): string | undefined {

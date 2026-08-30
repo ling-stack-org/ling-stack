@@ -1355,6 +1355,13 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(report).toContainText("保留有意义的变更说明");
   await expect(report.locator(".terminal-report-section.kind-change .terminal-report-row-title small")).toHaveCount(0);
   await expect(report.locator(".terminal-report-section.kind-verification .terminal-report-row-title small")).toHaveCount(0);
+  const verificationRow = report.locator(".terminal-report-section.kind-verification .terminal-report-row").first();
+  const commandDisclosure = verificationRow.locator("[data-terminal-report-command-disclosure]");
+  await expect(commandDisclosure).toBeVisible();
+  await expect(commandDisclosure.locator(":scope > code")).toBeHidden();
+  await commandDisclosure.locator(":scope > summary").click();
+  await expect(commandDisclosure.locator(":scope > code")).toBeVisible();
+  await expect(commandDisclosure.locator(":scope > code")).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
   const reportFileLink = report.locator(".terminal-report-file-reference").first();
   await expect(reportFileLink).toBeVisible();
   await expect(reportFileLink).toHaveText("ConversationHome-1.tsx");
@@ -1381,14 +1388,13 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(1);
   await expect(workCell).toContainText("ConversationHome.tsx");
   await expect(workCell).toContainText("已编辑 2 个文件");
+  await expect(workCell.locator(".conversation-work-cell-change-file")).toHaveCount(0);
   await expect.poll(() => workCell.evaluate((element) => ({
     artifactPaddingLeft: getComputedStyle(element.querySelector(".conversation-work-cell-artifacts") as Element).paddingLeft,
     artifactThumbWidth: getComputedStyle(element.querySelector(".conversation-work-cell-artifact-row .conversation-work-cell-artifact-thumb") as Element).width,
-    changeFilePaddingLeft: getComputedStyle(element.querySelector(".conversation-work-cell-change-file") as Element).paddingLeft,
   }))).toEqual({
     artifactPaddingLeft: "0px",
     artifactThumbWidth: "30px",
-    changeFilePaddingLeft: "0px",
   });
   await expect(workCell.locator(".conversation-work-cell-artifact-row").getByRole("button", { name: "打开方式" })).toBeVisible();
   await expect(workCell).not.toContainText("Generated file metadata");

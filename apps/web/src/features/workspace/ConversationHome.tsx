@@ -496,16 +496,11 @@ export function ConversationHome({
         },
         failMessage: (message) => {
           if (!shouldCommit()) return;
+          // Once the server has accepted the turn, its typed assistant/evidence
+          // projection owns the failure. Keep composer feedback for transport
+          // failures that happen before a durable message exists only.
+          if (sendBound) return;
           actionFeedback.report("stream", message);
-          setMessages((current) => upsertConversationHomeMessage(current, {
-            id: `conversation-error:${pendingUserMessage.id}`,
-            role: "assistant",
-            authorLabel: "Ling Agent",
-            content: message,
-            status: "failed",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          }));
         },
         onThreadBound,
         shouldCommit,

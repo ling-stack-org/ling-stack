@@ -2,9 +2,9 @@ name: CI
 
 on:
   pull_request:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"
 
 concurrency:
   group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
@@ -17,10 +17,16 @@ env:
   CI: "true"
 
 jobs:
-  quality:
-    name: Typecheck, unit tests, and Web build
+  scope:
+    name: Determine CI scope
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    outputs:
+      mode: ${{ steps.classify.outputs.mode }}
+      packages: ${{ steps.classify.outputs.packages }}
+      test-packages: ${{ steps.classify.outputs.test-packages }}
+      typecheck-packages: ${{ steps.classify.outputs.typecheck-packages }}
+      daemon: ${{ steps.classify.outputs.daemon }}
+      web: ${{ steps.classify.outputs.web }}
     steps:
       - name: Check out repository without retained credentials
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -33,30 +39,62 @@ jobs:
         with:
           node-version: 22.15.0
 
-      - name: Configure isolated Ling home
+      - name: Classify changed files
+        id: classify
         shell: bash
-        run: printf 'LING_STACK_HOME=%s/ling-stack-ci-home\n' "$RUNNER_TEMP" >> "$GITHUB_ENV"
-
-      - name: Install locked dependencies
-        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
         run: |
           set -euo pipefail
-          corepack enable
-          corepack pnpm install --frozen-lockfile
+          if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
+            scope_json="$(node scripts/ci/classify-scope.mjs \
+              --event="$GITHUB_EVENT_NAME" \
+              --base="$BASE_SHA" \
+              --head=HEAD \
+              --force-full="$FORCE_FULL")"
+          else
+            scope_json="$(node scripts/ci/classify-scope.mjs --event="$GITHUB_EVENT_NAME")"
+          fi
+          echo "Scope: $scope_json"
+          SCOPE_JSON="$scope_json" node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
+          const scope = JSON.parse(process.env.SCOPE_JSON);
+          const outputs = {
+            mode: scope.mode,
+            packages: JSON.stringify(scope.packages),
+            "test-packages": JSON.stringify(scope.testPackages),
+            "typecheck-packages": JSON.stringify(scope.typecheckPackages),
+            daemon: String(scope.daemon),
+            web: String(scope.web),
+          };
+          for (const [key, value] of Object.entries(outputs)) console.log(`${key}=${value}`);
+          NODE
+
+  common-fast:
+    name: Common checks (fast lane)
+    needs: scope
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.15.0
 
       - name: Check Markdown links
-        run: corepack pnpm check:docs
-
-      - name: Check dependency license policy
-        run: corepack pnpm check:licenses
+        run: node scripts/check-markdown-links.mjs
 
       - name: Check public repository safety
-        run: corepack pnpm check:public
-
-      - name: Check patched dependency security regressions
-        run: corepack pnpm check:dependency-security
+        run: node scripts/check-public-repo-safety.mjs
 
       - name: Scan Git history for secrets
+        if: needs.scope.outputs.mode != 'docs'
         run: >-
           docker run --rm
           -v "$GITHUB_WORKSPACE:/repo:ro"
@@ -66,35 +104,271 @@ jobs:
           --timeout 600
           /repo
 
-      - name: Check Web architecture and UI rules
-        run: corepack pnpm --filter @ling-stack/web lint
-
-      - name: Check translations
-        run: corepack pnpm --filter @ling-stack/web check:i18n
-
-      - name: Typecheck supported source surfaces
-        run: >-
-          corepack pnpm
-          --workspace-concurrency=1
-          --filter './packages/**'
-          --filter @ling-stack/web
-          --filter @ling-stack/desktop
-          typecheck
-
-      - name: Run package and Web unit tests
-        run: >-
-          corepack pnpm
-          --filter './packages/**'
-          --filter @ling-stack/web
-          test
-
-      - name: Build Web product
-        run: corepack pnpm --filter @ling-stack/web build
-
       - name: Check pull request whitespace
         if: github.event_name == 'pull_request'
         run: git diff --check "${{ github.event.pull_request.base.sha }}...HEAD"
 
-      - name: Check pushed commit whitespace
-        if: github.event_name == 'push'
+      - name: Check pushed or scheduled commit whitespace
+        if: github.event_name != 'pull_request'
         run: git diff-tree --check --no-commit-id -r HEAD
+
+  dependency-policy:
+    name: Dependency policy and security checks
+    needs: scope
+    if: needs.scope.outputs.mode != 'docs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Check dependency license policy
+        run: corepack pnpm check:licenses
+
+      - name: Check patched dependency security regressions
+        run: corepack pnpm check:dependency-security
+
+  build:
+    name: Build selected package graph once
+    needs: scope
+    if: needs.scope.outputs.mode != 'docs'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SELECTED_PACKAGES: ${{ needs.scope.outputs.packages }}
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Build selected graph without nested package builds
+        run: node scripts/ci/run-packages.mjs --task=build:ci --packages="$SELECTED_PACKAGES" --closure=true
+
+      - name: Upload reusable build outputs
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ci-dist
+          if-no-files-found: error
+          retention-days: 1
+          path: |
+            packages/*/dist/**
+            apps/web/dist/**
+            apps/chrome-extension/dist/**
+
+  typecheck:
+    name: Typecheck selected packages
+    needs: [scope, build]
+    if: always() && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      SELECTED_PACKAGES: ${{ needs.scope.outputs.typecheck-packages }}
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Download reusable build outputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ci-dist
+          path: .
+
+      - name: Typecheck selected packages without rebuilding dependencies
+        run: node scripts/ci/run-packages.mjs --task=typecheck:ci --packages="$SELECTED_PACKAGES"
+
+  unit-tests:
+    name: Unit tests and Web checks
+    needs: [scope, build]
+    if: always() && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    env:
+      SELECTED_PACKAGES: ${{ needs.scope.outputs.test-packages }}
+      WEB_SELECTED: ${{ needs.scope.outputs.web }}
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Download reusable build outputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ci-dist
+          path: .
+
+      - name: Run selected unit tests without rebuilding dependencies
+        run: node scripts/ci/run-packages.mjs --task=test:ci --packages="$SELECTED_PACKAGES" --exclude='["@ling-stack/daemon"]'
+
+      - name: Check Web architecture and UI rules
+        if: env.WEB_SELECTED == 'true'
+        run: corepack pnpm --filter @ling-stack/web lint
+
+      - name: Check translations
+        if: env.WEB_SELECTED == 'true'
+        run: corepack pnpm --filter @ling-stack/web check:i18n
+
+  daemon-tests:
+    name: Daemon tests (shard ${{ matrix.shard }})
+    needs: [scope, build]
+    if: always() && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success'
+    runs-on: ubuntu-latest
+    # Daemon tests start an isolated runtime for each integration fixture. As
+    # the suite grows, the heaviest shard can legitimately exceed the generic
+    # 15-minute job budget even when every test is progressing and passing.
+    timeout-minutes: 25
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3]
+    steps:
+      - name: Check out repository without retained credentials
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa
+        with:
+          version: 10.0.0
+          run_install: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.15.0
+          cache: pnpm
+
+      - name: Install locked dependencies
+        shell: bash
+        run: |
+          set -euo pipefail
+          corepack enable
+          corepack pnpm install --frozen-lockfile --prefer-offline
+
+      - name: Download reusable build outputs
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: ci-dist
+          path: .
+
+      - name: Run isolated daemon shard
+        run: node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=4
+
+  quality:
+    name: Typecheck, unit tests, and Web build
+    needs: [scope, common-fast, dependency-policy, build, typecheck, unit-tests, daemon-tests]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require every applicable CI lane to pass
+        env:
+          SCOPE_RESULT: ${{ needs.scope.result }}
+          COMMON_RESULT: ${{ needs.common-fast.result }}
+          DEPENDENCY_RESULT: ${{ needs.dependency-policy.result }}
+          BUILD_RESULT: ${{ needs.build.result }}
+          TYPECHECK_RESULT: ${{ needs.typecheck.result }}
+          UNIT_RESULT: ${{ needs.unit-tests.result }}
+          DAEMON_RESULT: ${{ needs.daemon-tests.result }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          failures=()
+          for lane in SCOPE COMMON DEPENDENCY BUILD TYPECHECK UNIT DAEMON; do
+            result_var="${lane}_RESULT"
+            result="${!result_var}"
+            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
+              failures+=("$lane=$result")
+            fi
+          done
+          if (( ${#failures[@]} > 0 )); then
+            printf 'CI lanes failed: %s\n' "${failures[*]}"
+            exit 1
+          fi
+          echo "All applicable CI lanes passed; skipped lanes were outside this change scope."

@@ -67,6 +67,14 @@ test("terminal report validation rejects unsupported verification and participan
   assert.ok(result.issues.some((item) => item.code === "terminal_report_participant_without_activity"));
 });
 
+test("terminal report validation rejects a successful checked snapshot without verification", () => {
+  const snapshot = buildSnapshot();
+  const content = buildDeterministicTerminalReportContent(snapshot);
+  const result = validateTerminalReportContent({ ...content, verification: [] }, snapshot);
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.some((item) => item.code === "terminal_report_unverified_success_claim"));
+});
+
 test("terminal report validation rejects file refs borrowed from another artifact", () => {
   const snapshot = buildSnapshot();
   const content = buildDeterministicTerminalReportContent(snapshot);
@@ -99,6 +107,21 @@ test("terminal report evidence fingerprint detects snapshot mutation", () => {
   assert.ok(result.issues.some((item) => item.code === "terminal_report_fingerprint_mismatch"));
 });
 
+test("terminal report evidence fingerprint ignores observation identity and timestamp", () => {
+  const snapshot = buildSnapshot();
+  const repeatedObservation = {
+    ...snapshot,
+    id: "snapshot_recollected_after_reconnect",
+    generatedAt: "2026-07-11T00:20:01.000Z",
+  };
+
+  assert.equal(
+    computeTerminalReportEvidenceFingerprint(repeatedObservation),
+    snapshot.evidenceFingerprint,
+  );
+  assert.equal(validateTerminalReportEvidenceSnapshot(repeatedObservation).ok, true);
+});
+
 test("terminal report fallback builds a complete validated report envelope", () => {
   const snapshot = buildSnapshot();
   const report = buildDeterministicTerminalReport(snapshot, {
@@ -108,6 +131,17 @@ test("terminal report fallback builds a complete validated report envelope", () 
   assert.equal(report.status, "fallback");
   assert.equal(report.synthesis.mode, "deterministic_fallback");
   assert.equal(validateTerminalReportContent(report, snapshot).ok, true);
+});
+
+test("terminal report fallback compacts harness-wrapped objectives for the visible title", () => {
+  const snapshot = buildSnapshot();
+  const report = buildDeterministicTerminalReport({
+    ...snapshot,
+    objective: "**这条用户消息是一个多参与者可执行 workflow。 原始请求: @Engineer @QA 完成 retry 小项目；Engineer 创建 retry-once.cjs。 Requested objective from current message objective: full harness transcript No literal file content was supplied.**",
+  });
+
+  assert.equal(report.outcome.title, "@Engineer @QA 完成 retry 小项目；Engineer 创建 retry-once.cjs。");
+  assert.doesNotMatch(report.outcome.title, /Requested objective|No literal file content|workflow transcript/u);
 });
 
 function buildSnapshot() {

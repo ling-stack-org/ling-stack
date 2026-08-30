@@ -582,6 +582,7 @@ export async function listTerminalReports(
     readonly threadId?: string;
     readonly sourceKind?: TerminalReportSourceKind;
     readonly sourceId?: string;
+    readonly includeHistory?: boolean;
     readonly limit?: number;
   } = {},
 ): Promise<TerminalReportListResponse> {
@@ -595,6 +596,7 @@ export async function listChannelTerminalReports(
     readonly threadId?: string;
     readonly sourceKind?: TerminalReportSourceKind;
     readonly sourceId?: string;
+    readonly includeHistory?: boolean;
     readonly limit?: number;
   } = {},
 ): Promise<TerminalReportListResponse> {

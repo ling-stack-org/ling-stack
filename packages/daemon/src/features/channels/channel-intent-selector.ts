@@ -52,6 +52,7 @@ import {
 } from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 import { resolveChannelConversationSurface } from "./conversation-surface.js";
+import { preserveMarkdownLayout } from "./markdown-text.js";
 import { extractFileTargetCandidate, resolveExecutableFileTarget } from "./target-resolver.js";
 import {
   appendChannelAssistantMessage,
@@ -2550,7 +2551,8 @@ function buildSingleStepExecutablePrompt(
   return [
     formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.single_step_header"),
     "",
-    `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.original_request")}: ${normalizeWhitespace(messageBody)}`,
+    `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.original_request")}:`,
+    preserveMarkdownLayout(messageBody),
     "",
     `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.action")}: ${executableIntent.actionSummary}`,
     `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.target")}: ${executableIntent.targetLabel}`,
@@ -2593,7 +2595,8 @@ function buildMultiParticipantExecutablePrompt(
   return [
     header,
     "",
-    `${originalLabel}: ${normalizeWhitespace(messageBody)}`,
+    `${originalLabel}:`,
+    preserveMarkdownLayout(messageBody),
     "",
     executableIntent.prompt,
     "",
@@ -2745,7 +2748,8 @@ function buildProposalPrompt(
   return [
     formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.header"),
     "",
-    `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.original_request")}: ${normalizeWhitespace(messageBody)}`,
+    `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.original_request")}:`,
+    preserveMarkdownLayout(messageBody),
     "",
     `${formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.collaboration")}:`,
     ...steps,

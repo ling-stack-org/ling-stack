@@ -10,6 +10,7 @@
   "scripts": {
     "build": "corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && esbuild ../../packages/daemon/dist/cli.js --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __lingCreateRequire } from 'node:module'; const require = __lingCreateRequire(import.meta.url);\" --outfile=dist/daemon/cli.mjs && vite build --config vite.config.ts",
     "build:office-driver": "node scripts/build-office-driver.mjs",
+    "typecheck:ci": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "typecheck": "corepack pnpm --filter @ling-stack/localization build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/api-client build && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "dev": "corepack pnpm build && electron .",
     "start": "electron .",
