@@ -1,6 +1,6 @@
 # Conversation Codex-Parity Visual Specification
 
-Status: normative visual contract v3.2
+Status: normative visual contract v3.3
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Related: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -152,6 +152,39 @@ renderer key 必须稳定，例如 `message.document`、`fact.command`、`fact.f
 `fact.tool`、`fact.approval`、`batch.command`、`batch.exploration`、`agent.nested`。
 key 是 fingerprint 的一部分；surface 只能改变 policy/chrome，不能改变 key。
 
+### 3.1 组合示例：一个 timeline，四种 row
+
+一个真实 turn 在 UI 中只允许出现以下组合，不再叠加旧 workflow 卡片：
+
+```text
+document lane
+  Agent: 我先检查解析器，然后运行测试。
+
+fact rail
+  ⌁ Read src/parser.ts · Succeeded                 [⌄]
+  ▣ Run pnpm test · Working                         [⌄]
+  ▱ Edited parser.ts · +18 -4                      [⌄]
+
+nested rail (depth=1, same registry)
+  Engineer  我会复核失败用例。
+            ▣ Run pnpm test -- --filter parser · Failed · exit 1  [⌄]
+```
+
+约束如下：
+
+- 文档 lane 不显示 `message-bubble` 外框；段落、list、fence 和 path 由 Markdown/content
+  part 保留结构；
+- fact rail 的首屏文本必须包含动词和状态，不能只显示“执行中”或“已完成”；
+- nested rail 只增加 participant label/rail，子 Agent 的 narration、command、file、
+  tool 仍复用相同 renderer key、row height、disclosure 和 a11y 属性；
+- `agentMessage` 与事实 row 可以相邻，但一个 action 不能在两处重复；
+- summary、TerminalReport、Composer footer 和 EnvironmentPopover 都不能再复制事实
+  row 的正文或输出。
+
+这是视觉验收的最小单元：同一 canonical fixture 在 normal/private/channel/child 中
+必须得到相同的 row 组合和 renderer fingerprint，只允许外围标题、roster、participant
+rail、权限提示不同。
+
 ## 4. Command and output
 
 首屏至少显示真实命令摘要，不允许只写“执行中”：
@@ -238,6 +271,25 @@ participant rail 只占 1px + 8px inset，不改变 child item 的字体、row �
 规则。participant label 在该 span 的第一行显示一次；后续 child rows 不重复头像或
 “队友消息”气泡。child narration 可以是普通 Markdown，也可以和父级一样包含 code、
 path 和 links。
+
+### 7.1 Nested Agent 的状态和事实边界
+
+子 Agent 的 lifecycle（started/running/waiting/completed/blocked/errored）只显示在
+`subAgentActivity` 的 participant rail。子 Agent 的每个真实动作仍单独渲染为
+`commandExecution`、`fileChange`、typed tool 或 `diagnostic`，并携带自己的
+`actionId/runId/attemptId`。父级只能在 required child evidence 到齐或收到结构化
+blocked 后显示 fan-in 结论；“子 Agent 已准备好”不是完成证据。
+
+子 Agent 的 narration 是普通 `agentMessage`，不是系统状态，也不是事实摘要。例如：
+
+```text
+Engineer  我发现 parser.ts 的边界条件可能导致空 token。
+          ▣ Run pnpm test -- --filter parser · Succeeded · exit 0
+          ▱ Edited parser.ts · +6 -1
+```
+
+如果子 Agent 没有产生任何 Host evidence，就只显示 narration 加
+`Activity unavailable · blocked`，不能渲染绿色成功或把 ready 文本提升为动作。
 
 ## 8. EnvironmentPopover
 

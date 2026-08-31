@@ -48,15 +48,16 @@ CI/Release artifacts instead of the default documentation tree.
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 - [Thread-First Work History](thread-first-work-history.md)
 
-### Typed transcript authority (v3.2)
+### Typed transcript authority (v3.3)
 
 The three documents above are the only current entry points for the Codex-style
 transcript work. Read them in this order: data/semantic contract, visual contract,
 then implementation plan. The activity-summary and command-batching documents are
 subordinate projection rules; they may define eligibility and hard boundaries, but
 they must not introduce another timeline, persistence table, renderer, or completion
-authority. v3.2 adds implementation-level renderer, event-idempotency, visual-token,
-and acceptance details without changing the v3.1 storage or ownership decisions.
+authority. v3.3 adds the single timeline mount/composition contract and explicit nested-agent
+row examples while retaining the v3.2 renderer, event-idempotency, visual-token, and
+acceptance details. It does not change the v3.1 storage or ownership decisions.
 
 ## Teammates, Memory, And Skills
 

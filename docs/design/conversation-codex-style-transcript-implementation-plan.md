@@ -1,6 +1,6 @@
-# Codex-style Typed Transcript v3.2：实现计划
+# Codex-style Typed Transcript v3.3：实现计划
 
-Status: implementation plan；设计 v3.2 已冻结，等待设计分支合并后开工
+Status: implementation plan；设计 v3.3 已冻结，等待设计分支合并后开工
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -12,6 +12,10 @@ Visual contract: [Conversation Codex-Parity Visual Specification](conversation-c
 本计划把“好看”限定为可验证的工程约束：文档流不套重卡片，事实行有明确动作和
 状态，详情原地 disclosure，三种会话及 depth-1 子 Agent 使用同一 renderer fingerprint。
 任何视觉优化都不能改变 item kind、顺序、lineage、completion 或 context 语义。
+
+v3.3 新增一条实现硬门槛：所有 surface 和子 Agent 必须通过同一个
+`mountConversationTimeline` 组合入口；不能通过复制 JSX、复用旧 WorkCell 或在 Composer/
+EnvironmentPopover 中补渲染来“看起来统一”。
 
 ## 1.1 开工前置条件（S0 不写业务代码）
 
@@ -248,6 +252,12 @@ channel/topic/branch/child 产生相同 `rendererKeys`、kind、status text、di
 **Codex 风格 review gate**：document lane 不得有 fact-row 外框；fact row 首屏必须有
 动词 + 状态；成功历史默认收敛；active/failed/approval 只展开一层；同一 action 不得
 同时出现在 message、WorkCell、TerminalReport 和 Composer。
+
+**v3.3 组合 gate**：`mountConversationTimeline` 的输入只能是 resolved surface、
+canonical snapshot 和 Host callbacks；输出只能是一个 Timeline 和一个 fingerprint。
+normal/private/channel/topic/branch/child 的 adapter 不得导出 renderer、排序函数、
+batch 函数或第二个 scroll owner。nested depth=1 必须调用同一个 registry，depth=2
+只能产生 `diagnostic(nested_depth_exceeded)`。
 
 ### S4 / R7：surface cutover
 

@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.2；实现前冻结
+Status: normative design v3.3；实现前冻结
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -778,6 +778,81 @@ type TimelineFingerprint = {
 
 这些规则属于 shared timeline，不允许 normal/private/channel 各自实现一份滚动逻辑。
 
+### 10.4 统一 renderer 的组合契约
+
+“统一会话组件”不是让每个 surface 传一份不同的 JSX，而是固定一条组合链：
+
+```text
+ResolvedConversationSurface
+  -> ConversationTimeline(items, policy, callbacks)
+      -> renderTimelineItem(item, depth)
+          -> document renderer / fact renderer / batch renderer / nested renderer
+```
+
+组合契约只有三类输入：
+
+1. `items`：已经完成 scope、owner、attempt、revision 校验的 canonical 或 display-only
+   batch item；
+2. `policy`：可见性、是否允许 retry/open-file/approval，以及 surface 的外围 chrome；
+3. `callbacks`：由 Host 注入的动作入口。renderer 不能自己读取路由、SQLite、SSE 或
+   provider 状态。
+
+每个 item 只能被组合链消费一次，并且只能产生一个 owning row。`agentMessage`、
+`reasoning`、`plan` 和子 Agent narration 进入 document lane；`commandExecution`、
+`fileChange`、tool、approval 和 diagnostic 进入 fact rail；`subAgentActivity` 只增加
+participant rail 并递归调用同一个 `ConversationTimeline`。不得再包一层旧
+`MessageRow`/`WorkCell`，也不得由 surface 在 timeline 外追加 summary、TerminalReport
+或第二个 activity panel。
+
+为避免“看起来统一、实际上分叉”，实现必须提供一个 surface-agnostic factory：
+
+```ts
+type ConversationTimelineMount = {
+  readonly timeline: React.ReactNode;
+  readonly fingerprint: TimelineFingerprint;
+};
+
+function mountConversationTimeline(
+  surface: ResolvedConversationSurface,
+  snapshot: CanonicalConversationSnapshot,
+  callbacks: ConversationTimelineCallbacks,
+): ConversationTimelineMount {
+  const atomic = projectCanonicalItems(snapshot, surface.threadId);
+  const visible = batchCanonicalTranscriptItems(atomic);
+  return {
+    timeline: <ConversationTimeline items={visible} policy={surface.policy}
+      depth={surface.kind === "child" ? 1 : 0} callbacks={callbacks} />,
+    fingerprint: fingerprintTimeline(visible),
+  };
+}
+```
+
+上面的伪代码表达的是所有权而不是要求复制函数名：projection、batch 和 registry
+只能各有一个实现。normal/private/channel/topic/branch/child 只负责构造
+`ResolvedConversationSurface`，不能按 kind 自己分支渲染。相同 fixture 的
+`fingerprint` 必须一致；任何差异都必须能归因到 `policy` 或 shell chrome，并在测试中
+显式列出。
+
+### 10.5 一次动作的可见生命周期
+
+为了让用户始终看到“动作描述 → 进行中 → 结果”，同一 action 的可见生命周期固定为：
+
+```text
+agentMessage（可选叙述）
+  -> commandExecution/tool/file row（Queued/Working）
+      -> 同一 row 的 revision 更新（输出、状态、duration）
+          -> Succeeded/Failed/Cancelled/Blocked
+```
+
+`agentMessage` 只解释意图，不能占据 action 的事实位置。没有 `ExecutionAction` 或
+Host evidence 的“我会执行/已完成”仍是叙述；如果该叙述声称完成而 required evidence
+缺失，projector 追加 `diagnostic(blocked)`，但不生成成功事实行。`tool_update`、retry
+和 reconnect 都更新原 row 的 semantic id，不得插入新的“执行中”或“完成总结”行。
+
+这条生命周期也适用于 depth-1 子 Agent：子 Agent 可以先输出 narration，再产生自己的
+command/file/tool rows，最后由父级 fan-in 根据 atomic evidence 结论。子 Agent 不得用
+一条 ready 文本、一个 plan step 或一个 batch 数量替代事实。
+
 ## 11. 内容和视觉语义
 
 ### 11.1 Markdown、纯文本和代码
@@ -913,5 +988,9 @@ participantId, workflowStepId, revision, status, rendererKey, sourceRefIds
 5. 未发布开发阶段直接切换，不保留旧 renderer 兼容层。
 6. child timeline 最多一层；缺 evidence 返回结构化 blocked。
 7. TerminalReport/fan-in 只读原子 evidence，绝不读取 batch 数量或 ready 文本。
+8. 所有 surface 和 depth-1 子 Agent 通过同一个 timeline mount/renderer registry；
+   surface 只提供 scope、policy、chrome 和 Host callbacks。
+9. 普通消息使用 document lane；动作使用 fact rail；任何旧 workflow skeleton、第二
+   summary owner 或 route-local renderer 都不属于 v3.3。
 
 No unresolved design decisions.
