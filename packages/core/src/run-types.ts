@@ -13,6 +13,7 @@ import type {
   RunEventDataByType as ContractRunEventDataByType,
   RunEventEnvelope as ContractRunEventEnvelope,
   RunEventType as ContractRunEventType,
+  ExecutionActionDiagnostic,
   PostCompactionUndoRecord,
   UpdatePostCompactionUndoRecordInput,
   WorkspaceMutationRecord,
@@ -1050,6 +1051,14 @@ export interface ExecutionActionTargetRef {
   readonly path?: string;
 }
 
+/** Stable lineage references consumed by transcript projections and inspectors. */
+export interface ExecutionActionSourceRef {
+  readonly kind: string;
+  readonly id: string;
+  readonly label?: string;
+  readonly path?: string;
+}
+
 export interface ExecutionActionCommandOutputChunk {
   readonly eventSeq: number;
   readonly stream: "stdout" | "stderr";
@@ -1082,11 +1091,15 @@ export interface ExecutionActionCommandEvidence {
 
 export interface ExecutionAction {
   readonly id: string;
+  /** Monotonic event/approval revision for in-place transcript replacement. */
+  readonly revision: number;
   readonly workspaceId: string;
   readonly threadId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
   readonly workUnitId?: string;
+  readonly participantId?: string;
+  readonly workflowStepId?: string;
   readonly approvalId?: string;
   readonly toolCallId?: string;
   readonly actionType: ExecutionActionType;
@@ -1097,6 +1110,8 @@ export interface ExecutionAction {
   readonly targetRefs: readonly ExecutionActionTargetRef[];
   readonly previewArtifactIds: readonly string[];
   readonly resultArtifactIds: readonly string[];
+  readonly sourceRefs: readonly ExecutionActionSourceRef[];
+  readonly diagnostics?: readonly ExecutionActionDiagnostic[];
   readonly scopes?: readonly ExecutionScope[];
   readonly scopeSummary?: string;
   readonly policySnapshot?: unknown;

@@ -44,8 +44,14 @@ export function deriveExecutionActionCommandEvidence(input: {
   readonly start?: RunEventEnvelope;
   readonly end?: RunEventEnvelope;
 }): ExecutionActionCommandEvidence | undefined {
-  const start = latestToolEvent(input.events, input.toolCallId, "tool_start") ?? input.start;
-  const end = latestToolEvent(input.events, input.toolCallId, "tool_end") ?? input.end;
+  const start = firstToolEvent(input.events, input.toolCallId, "tool_start") ?? input.start;
+  // The first durable tool_end is the terminal fence for one logical call.
+  // A delayed output chunk or duplicate end after this fence is stale and must
+  // not mutate a terminal transcript row during replay/reconnect.
+  const end = start
+    ? firstToolEndAfterStart(input.events, input.toolCallId, start.seq) ??
+      (input.end && input.end.seq >= start.seq ? input.end : undefined)
+    : firstToolEvent(input.events, input.toolCallId, "tool_end") ?? input.end;
   const unifiedExecEnvelopePresent = hasUnifiedExecEnvelope(end);
   const result = readUnifiedExecResult(end);
   const outcome = unifiedExecEnvelopePresent
@@ -57,7 +63,11 @@ export function deriveExecutionActionCommandEvidence(input: {
   }
 
   const updateEvents = input.events
-    .filter((event) => event.type === "tool_update" && readToolCallId(event) === input.toolCallId)
+    .filter((event) =>
+      event.type === "tool_update" &&
+      readToolCallId(event) === input.toolCallId &&
+      (!start || event.seq > start.seq) &&
+      (!end || event.seq < end.seq))
     .sort((left, right) => left.seq - right.seq);
   const structuredStreamedChunks = updateEvents
     .map(readOutputChunk)
@@ -106,16 +116,29 @@ export function deriveExecutionActionCommandEvidence(input: {
   };
 }
 
-function latestToolEvent(
+function firstToolEvent(
   events: readonly RunEventEnvelope[],
   toolCallId: string,
   type: RunEventEnvelope["type"],
 ): RunEventEnvelope | undefined {
-  return events.reduce<RunEventEnvelope | undefined>((latest, event) => {
+  return events.reduce<RunEventEnvelope | undefined>((first, event) => {
     if (event.type !== type || readToolCallId(event) !== toolCallId) {
-      return latest;
+      return first;
     }
-    return !latest || event.seq > latest.seq ? event : latest;
+    return !first || event.seq < first.seq ? event : first;
+  }, undefined);
+}
+
+function firstToolEndAfterStart(
+  events: readonly RunEventEnvelope[],
+  toolCallId: string,
+  startSeq: number,
+): RunEventEnvelope | undefined {
+  return events.reduce<RunEventEnvelope | undefined>((first, event) => {
+    if (event.type !== "tool_end" || readToolCallId(event) !== toolCallId || event.seq < startSeq) {
+      return first;
+    }
+    return !first || event.seq < first.seq ? event : first;
   }, undefined);
 }
 

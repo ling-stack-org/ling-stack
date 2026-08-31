@@ -39,6 +39,30 @@ export interface ExecutionActionTargetRef {
   readonly path?: string;
 }
 
+/**
+ * Stable, redacted references used by projections and UI inspectors.
+ * This is deliberately separate from targetRefs: targetRefs describe what an
+ * action touched, while sourceRefs describe where the fact came from.
+ */
+export interface ExecutionActionSourceRef {
+  readonly kind: string;
+  readonly id: string;
+  readonly label?: string;
+  readonly path?: string;
+}
+
+export type ExecutionActionDiagnosticCode =
+  | "late_event"
+  | "stale_event"
+  | "source_conflict";
+
+/** Non-authoritative evidence rejected from the visible action state. */
+export interface ExecutionActionDiagnostic {
+  readonly code: ExecutionActionDiagnosticCode;
+  readonly message: string;
+  readonly sourceRefs: readonly ExecutionActionSourceRef[];
+}
+
 export interface ExecutionActionCommandOutputChunk {
   readonly eventSeq: number;
   readonly stream: "stdout" | "stderr";
@@ -71,11 +95,15 @@ export interface ExecutionActionCommandEvidence {
 
 export interface ExecutionAction {
   readonly id: string;
+  /** Monotonic event/approval revision for in-place transcript replacement. */
+  readonly revision: number;
   readonly workspaceId: string;
   readonly threadId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
   readonly workUnitId?: string;
+  readonly participantId?: string;
+  readonly workflowStepId?: string;
   readonly approvalId?: string;
   readonly toolCallId?: string;
   readonly actionType: ApprovalActionType;
@@ -86,6 +114,8 @@ export interface ExecutionAction {
   readonly targetRefs: readonly ExecutionActionTargetRef[];
   readonly previewArtifactIds: readonly string[];
   readonly resultArtifactIds: readonly string[];
+  readonly sourceRefs: readonly ExecutionActionSourceRef[];
+  readonly diagnostics?: readonly ExecutionActionDiagnostic[];
   readonly scopes?: readonly ExecutionScope[];
   readonly scopeSummary?: string;
   readonly policySnapshot?: unknown;

@@ -1,12 +1,14 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   DEFAULT_WORKSPACE_ID,
+  LING_AGENT_ID,
   approvalActionTypes,
   type ApprovalStoreFacet,
   type ApprovalActionType,
   type ApprovalRequest,
   type ApprovalStatus,
   type ExecutionAction,
+  type ExecutionActionSourceRef,
   type ExecutionActionStatus,
   type ExecutionActionTargetRef,
   type RunEventEnvelope,
@@ -102,7 +104,7 @@ export function listExecutionActions(store: ExecutionActionStore, options: ListE
     .filter((action) => !options.threadId || action.threadId === options.threadId)
     .filter((action) => !options.actionType || action.actionType === options.actionType);
   const toolActions = listToolActions(store, options, limit);
-  const actions = mergeApprovalToolLifecycles(approvalActions, toolActions);
+  const actions = mergeApprovalToolLifecycles(store, approvalActions, toolActions);
   const ordered = actions
     .filter((action) => !options.status || action.status === options.status)
     .filter((action) => !options.actionType || action.actionType === options.actionType)
@@ -124,13 +126,16 @@ function approvalToExecutionAction(store: ExecutionActionStore, approval: Approv
     ? readRunAttemptId(listAllRunEvents(store, approval.runId))
     : undefined;
   const classified = classifyApprovalAction(approval, run);
-  return {
+  return withExecutionActionLineage(store, {
     id: `approval:${approval.id}`,
+    revision: approvalRevision(approval),
     workspaceId: DEFAULT_WORKSPACE_ID,
     threadId: run?.threadId,
     runId: approval.runId,
     attemptId,
     workUnitId: run?.workUnitId,
+    participantId: run?.teammateId ?? LING_AGENT_ID,
+    workflowStepId: approval.workflowStepId ?? run?.workflowStepId,
     approvalId: approval.id,
     toolCallId: approval.toolCallId,
     actionType: classified.actionType,
@@ -147,7 +152,8 @@ function approvalToExecutionAction(store: ExecutionActionStore, approval: Approv
     createdAt: approval.createdAt,
     resolvedAt: approval.resolvedAt,
     completedAt: approval.status === "approved" ? undefined : approval.resolvedAt,
-  };
+    sourceRefs: [],
+  });
 }
 
 function listToolActions(
@@ -186,9 +192,9 @@ function deriveToolActionsForRun(
       continue;
     }
     if (event.type === "tool_start") {
-      setLatestToolEvent(starts, toolCallId, event);
+      setFirstToolEvent(starts, toolCallId, event);
     } else if (event.type === "tool_end") {
-      setLatestToolEvent(ends, toolCallId, event);
+      setFirstToolEvent(ends, toolCallId, event);
     }
   }
 
@@ -196,7 +202,12 @@ function deriveToolActionsForRun(
   const actions: ExecutionAction[] = [];
   for (const toolCallId of toolCallIds) {
     const start = starts.get(toolCallId);
-    const end = ends.get(toolCallId);
+    const endCandidate = ends.get(toolCallId);
+    // A terminal event that precedes the accepted start is stale evidence. It
+    // remains available to diagnostics, but cannot close the logical action.
+    const end = start
+      ? firstToolEndAfterStart(events, toolCallId, start.seq)
+      : endCandidate;
     const source = start ?? end;
     if (!source) {
       continue;
@@ -216,16 +227,21 @@ function deriveToolActionsForRun(
     const commandEvidence = toolName === "bash"
       ? deriveExecutionActionCommandEvidence({ events, toolCallId, start, end })
       : undefined;
+    const lifecycleSourceRefs = sourceRefsForToolLifecycle(events, toolCallId, start, end);
+    const lifecycleDiagnostics = diagnosticsForToolLifecycle(events, toolCallId, start, end);
     const commandStatus = executionActionStatusFromCommandEvidence(commandEvidence);
-    const latestToolEvent = findLatestToolEvent(events, toolCallId);
+    const latestToolEvent = findLatestAcceptedToolEvent(events, toolCallId, start, end);
     const attemptId = readToolAttemptId(events, toolCallId) ?? runAttemptId;
-    actions.push({
+    actions.push(withExecutionActionLineage(store, {
       id: `tool:${run.id}:${toolCallId}`,
+      revision: latestToolEvent?.seq ?? 0,
       workspaceId: DEFAULT_WORKSPACE_ID,
       threadId: run.threadId,
       runId: run.id,
       attemptId,
       workUnitId: run.workUnitId,
+      participantId: run.teammateId ?? LING_AGENT_ID,
+      workflowStepId: run.workflowStepId ?? classified.targetRefs.find((ref) => ref.type === "workflow_step")?.id,
       toolCallId,
       actionType: classified.actionType,
       risk: classified.risk,
@@ -243,12 +259,18 @@ function deriveToolActionsForRun(
       updatedAt: latestToolEvent?.ts ?? start?.ts ?? end?.ts ?? run.updatedAt,
       executedAt: start?.ts,
       completedAt: end?.ts,
-    });
+      // Keep every accepted lifecycle event reachable from the action. The
+      // first durable tool_end is the terminal fence; later updates/duplicate
+      // ends are stale diagnostics and must not become evidence for this row.
+      sourceRefs: lifecycleSourceRefs,
+      ...(lifecycleDiagnostics.length > 0 ? { diagnostics: lifecycleDiagnostics } : {}),
+    }));
   }
   return actions;
 }
 
 function mergeApprovalToolLifecycles(
+  store: ExecutionActionStore,
   approvalActions: readonly ExecutionAction[],
   toolActions: readonly ExecutionAction[],
 ): ExecutionAction[] {
@@ -267,7 +289,7 @@ function mergeApprovalToolLifecycles(
     const toolAction = toolActionsByCorrelationKey.get(correlationKey);
     if (!toolAction) return approvalAction;
     const executionStarted = approvalAction.status === "approved";
-    return {
+    return withExecutionActionLineage(store, {
       ...approvalAction,
       ...(executionStarted && toolAction.attemptId
         ? { attemptId: toolAction.attemptId }
@@ -285,7 +307,15 @@ function mergeApprovalToolLifecycles(
       ),
       ...(executionStarted && toolAction.executedAt ? { executedAt: toolAction.executedAt } : {}),
       completedAt: executionStarted ? toolAction.completedAt : approvalAction.completedAt,
-    } satisfies ExecutionAction;
+      // Keep approval and tool revisions in one monotonic domain. Using max()
+      // would freeze the row once a timestamp-based approval revision exceeded
+      // the run-event sequence, hiding later tool_update output from clients.
+      revision: approvalAction.revision + toolAction.revision,
+      // Preserve both approval lineage and the tool lifecycle refs when the
+      // approval and execution are represented by one visible action row.
+      sourceRefs: [...approvalAction.sourceRefs, ...toolAction.sourceRefs],
+      diagnostics: [...(approvalAction.diagnostics ?? []), ...(toolAction.diagnostics ?? [])],
+    } satisfies ExecutionAction);
   });
   return [
     ...mergedApprovals.map(failClosedUnverifiedMutation),
@@ -303,6 +333,120 @@ function failClosedUnverifiedMutation(action: ExecutionAction): ExecutionAction 
   const hasFileTarget = action.targetRefs.some((ref) =>
     ref.type === "file" && typeof ref.path === "string" && ref.path.trim().length > 0);
   return action.executedAt && hasFileTarget ? action : { ...action, status: "failed" };
+}
+
+function withExecutionActionLineage(store: ExecutionActionStore, action: ExecutionAction): ExecutionAction {
+  const refs: ExecutionActionSourceRef[] = [
+    { kind: "execution_action", id: action.id },
+  ];
+  if (action.runId) refs.push({ kind: "run", id: action.runId });
+  if (action.workUnitId) refs.push({ kind: "work_unit", id: action.workUnitId });
+  if (action.attemptId) refs.push({ kind: "attempt", id: action.attemptId });
+  if (action.participantId) refs.push({ kind: "participant", id: action.participantId });
+  if (action.workflowStepId) refs.push({ kind: "workflow_step", id: action.workflowStepId });
+  if (action.approvalId) refs.push({ kind: "approval", id: action.approvalId });
+  if (action.toolCallId) refs.push({ kind: "tool_call", id: action.toolCallId });
+  for (const artifactId of [...action.previewArtifactIds, ...action.resultArtifactIds]) {
+    if (artifactId.trim()) refs.push({ kind: "artifact", id: artifactId });
+  }
+  for (const target of action.targetRefs) {
+    const id = target.path ?? target.id ?? target.label;
+    if (!id || target.type === "run" || target.type === "work_unit" || target.type === "workflow_step") {
+      continue;
+    }
+    refs.push({
+      kind: target.type,
+      id,
+      ...(target.label ? { label: target.label } : {}),
+      ...(target.path ? { path: target.path } : {}),
+    });
+  }
+  // `sourceRefs` may contain accepted run-event ids or upstream approval
+  // records. Keep them after stable derived refs so existing consumers retain
+  // their deterministic prefix, while the full evidence lineage remains
+  // inspectable from the same action.
+  refs.push(...action.sourceRefs);
+  refs.push(...conversationItemAnchorRefs(store, action));
+  return { ...action, sourceRefs: uniqueExecutionActionSourceRefs(refs) };
+}
+
+interface ConversationAnchorStore {
+  readonly getLingTurnForRun?: (runId: string) => {
+    readonly id: string;
+    readonly threadId: string;
+    readonly sourceItemId?: string;
+  } | undefined;
+  readonly getConversationItem?: (itemId: string) => ConversationAnchorItem | undefined;
+  readonly listConversationItemsForTurn?: (options: { readonly turnId: string }) => readonly ConversationAnchorItem[];
+}
+
+interface ConversationAnchorItem {
+  readonly id: string;
+  readonly threadId: string;
+  readonly turnId?: string;
+  readonly kind: string;
+  readonly sequence: number;
+  readonly domainRefs?: readonly { readonly type: string; readonly id: string }[];
+}
+
+/**
+ * Resolve the owning ConversationItem without manufacturing one in the read
+ * model. The optional structural methods keep narrow unit-test stores useful;
+ * a real SQLite RunStore implements all three methods.
+ */
+function conversationItemAnchorRefs(
+  store: ExecutionActionStore,
+  action: ExecutionAction,
+): ExecutionActionSourceRef[] {
+  if (!action.runId || !action.threadId) return [];
+  const anchorStore = store as ExecutionActionStore & ConversationAnchorStore;
+  const turn = anchorStore.getLingTurnForRun?.(action.runId);
+  if (!turn || turn.threadId !== action.threadId) return [];
+
+  const candidates: ConversationAnchorItem[] = [];
+  if (turn.sourceItemId) {
+    const source = anchorStore.getConversationItem?.(turn.sourceItemId);
+    if (source) candidates.push(source);
+  }
+  if (anchorStore.listConversationItemsForTurn) {
+    candidates.push(...anchorStore.listConversationItemsForTurn({ turnId: turn.id }));
+  }
+  const item = candidates.find((candidate) =>
+    candidate.threadId === action.threadId &&
+    candidate.turnId === turn.id &&
+    candidate.domainRefs?.some((ref) => ref.type === "run" && ref.id === action.runId),
+  ) ?? candidates.find((candidate) =>
+    candidate.threadId === action.threadId && candidate.turnId === turn.id,
+  );
+  if (!item || !Number.isSafeInteger(item.sequence) || item.sequence < 0) return [];
+  return [{
+    kind: "conversation_item",
+    id: item.id,
+    label: `sequence:${item.sequence}`,
+  }];
+}
+
+function uniqueExecutionActionSourceRefs(refs: readonly ExecutionActionSourceRef[]): ExecutionActionSourceRef[] {
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = `${ref.kind}:${ref.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function approvalRevision(approval: ApprovalRequest): number {
+  const timestamp = Date.parse(approval.resolvedAt ?? approval.createdAt);
+  const safeTimestamp = Number.isFinite(timestamp) ? Math.max(0, timestamp) : 0;
+  const statusRank: Record<ApprovalStatus, number> = {
+    pending: 0,
+    approved: 1,
+    denied: 2,
+    expired: 3,
+    cancelled: 4,
+  };
+  return (safeTimestamp * 8) + statusRank[approval.status];
 }
 
 function executionActionToolCorrelationKey(action: ExecutionAction): string | undefined {
@@ -354,30 +498,135 @@ function fallbackToolActionStatus(
 
 function executionActionsRevision(actions: readonly ExecutionAction[]): string {
   return actions
-    .map((action) => `${action.id}:${action.commandEvidence?.latestEventSeq ?? 0}:${action.updatedAt ?? action.completedAt ?? action.createdAt}`)
+    .map((action) => `${action.id}:${action.revision}:${action.updatedAt ?? action.completedAt ?? action.createdAt}`)
     .sort()
     .join("|");
 }
 
-function findLatestToolEvent(
+function findLatestAcceptedToolEvent(
   events: readonly RunEventEnvelope[],
   toolCallId: string,
+  startEvent: RunEventEnvelope | undefined,
+  terminalEvent: RunEventEnvelope | undefined,
 ): RunEventEnvelope | undefined {
   return events.reduce<RunEventEnvelope | undefined>((latest, event) => {
-    if (readToolCallId(event) !== toolCallId) {
+    if (
+      readToolCallId(event) !== toolCallId ||
+      (startEvent && event.seq < startEvent.seq) ||
+      (terminalEvent && event.seq > terminalEvent.seq)
+    ) {
       return latest;
     }
     return !latest || event.seq > latest.seq ? event : latest;
   }, undefined);
 }
 
-function setLatestToolEvent(
+/**
+ * Return the durable lifecycle events accepted by one logical tool action.
+ * Events are ordered by their persisted sequence rather than transport order.
+ * Once the first tool_end is seen, later updates and duplicate terminal events
+ * are intentionally excluded so replay/reconnect cannot reopen a terminal row.
+ */
+function sourceRefsForToolLifecycle(
+  events: readonly RunEventEnvelope[],
+  toolCallId: string,
+  startEvent: RunEventEnvelope | undefined,
+  terminalEvent: RunEventEnvelope | undefined,
+): ExecutionActionSourceRef[] {
+  const firstStartSeq = startEvent?.seq ?? Number.NEGATIVE_INFINITY;
+  const firstTerminalSeq = terminalEvent?.seq ?? Number.POSITIVE_INFINITY;
+  const accepted = events
+    .filter((event) => {
+      if (readToolCallId(event) !== toolCallId) return false;
+      if (event.type !== "tool_start" && event.type !== "tool_update" && event.type !== "tool_end") return false;
+      // Only the selected lifecycle boundary is accepted into lineage. A
+      // duplicate start/end is still retained by diagnostics, but must not
+      // make an action appear to have two accepted owners after replay.
+      if (event.type === "tool_start" && event.id !== startEvent?.id) return false;
+      if (event.type === "tool_end" && event.id !== terminalEvent?.id) return false;
+      return event.seq >= firstStartSeq && event.seq <= firstTerminalSeq;
+    })
+    .sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));
+  let terminalIncluded = false;
+  const refs: ExecutionActionSourceRef[] = [];
+  for (const event of accepted) {
+    if (event.type === "tool_end") {
+      if (terminalIncluded) continue;
+      terminalIncluded = true;
+    }
+    refs.push({ kind: "run_event", id: event.id, label: event.type });
+  }
+  return refs;
+}
+
+function firstToolEndAfterStart(
+  events: readonly RunEventEnvelope[],
+  toolCallId: string,
+  startSeq: number,
+): RunEventEnvelope | undefined {
+  return events.reduce<RunEventEnvelope | undefined>((first, event) => {
+    if (event.type !== "tool_end" || readToolCallId(event) !== toolCallId || event.seq < startSeq) {
+      return first;
+    }
+    return !first || event.seq < first.seq || (event.seq === first.seq && event.id.localeCompare(first.id) < 0)
+      ? event
+      : first;
+  }, undefined);
+}
+
+/** Keep rejected lifecycle events auditable without allowing them to mutate state. */
+function diagnosticsForToolLifecycle(
+  events: readonly RunEventEnvelope[],
+  toolCallId: string,
+  start: RunEventEnvelope | undefined,
+  terminalEvent: RunEventEnvelope | undefined,
+): Array<{ readonly code: "late_event" | "stale_event" | "source_conflict"; readonly message: string; readonly sourceRefs: ExecutionActionSourceRef[] }> {
+  const firstStartSeq = start?.seq ?? Number.NEGATIVE_INFINITY;
+  const firstTerminalSeq = terminalEvent?.seq ?? Number.POSITIVE_INFINITY;
+  const lifecycle = events
+    .filter((event) =>
+      readToolCallId(event) === toolCallId &&
+      (event.type === "tool_start" || event.type === "tool_update" || event.type === "tool_end"),
+    )
+    .sort((left, right) => left.seq - right.seq || left.id.localeCompare(right.id));
+  const diagnostics: Array<{ readonly code: "late_event" | "stale_event" | "source_conflict"; readonly message: string; readonly sourceRefs: ExecutionActionSourceRef[] }> = [];
+  let terminalSeen = false;
+  for (const event of lifecycle) {
+    const eventRef = { kind: "run_event", id: event.id, label: event.type };
+    if (event.type === "tool_start") {
+      if (start && event.id !== start.id) {
+        diagnostics.push({ code: event.seq < firstStartSeq ? "stale_event" : "source_conflict", message: "Duplicate tool_start was not selected for this action.", sourceRefs: [eventRef] });
+      }
+      continue;
+    }
+    if (event.type === "tool_update") {
+      if (event.seq < firstStartSeq) {
+        diagnostics.push({ code: "stale_event", message: "tool_update arrived before the accepted tool_start.", sourceRefs: [eventRef] });
+      } else if (event.seq > firstTerminalSeq || terminalSeen) {
+        diagnostics.push({ code: "late_event", message: "tool_update arrived after the terminal tool_end.", sourceRefs: [eventRef] });
+      }
+      continue;
+    }
+    if (event.seq < firstStartSeq) {
+      diagnostics.push({ code: "stale_event", message: "tool_end arrived before the accepted tool_start.", sourceRefs: [eventRef] });
+    } else if (event.id !== terminalEvent?.id || terminalSeen) {
+      diagnostics.push({ code: event.seq === firstTerminalSeq ? "source_conflict" : "late_event", message: "A duplicate or late tool_end was not selected for this action.", sourceRefs: [eventRef] });
+    }
+    if (event.id === terminalEvent?.id && event.seq === firstTerminalSeq) terminalSeen = true;
+  }
+  return diagnostics;
+}
+
+function setFirstToolEvent(
   eventsByToolCallId: Map<string, RunEventEnvelope>,
   toolCallId: string,
   event: RunEventEnvelope,
 ): void {
   const current = eventsByToolCallId.get(toolCallId);
-  if (!current || event.seq > current.seq) {
+  // Persisted sequence is the primary order.  A malformed/replayed store may
+  // still expose two lifecycle events with the same sequence; use the stable
+  // event id as a deterministic tie-breaker instead of arrival order.
+  if (!current || event.seq < current.seq || (event.seq === current.seq && event.id.localeCompare(current.id) < 0)) {
     eventsByToolCallId.set(toolCallId, event);
   }
 }
