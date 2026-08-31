@@ -318,6 +318,30 @@ test("timeline fingerprint is stable across nested and batched rendering", () =>
   assert.equal(fingerprint.itemIds[0], "message:note-1");
 });
 
+test("protocol lifecycle records use the shared factual renderer without execution credit", () => {
+  const item = {
+    id: "protocol:workflow:workflow-1",
+    kind: "protocolEvent",
+    protocolKind: "workflow",
+    revision: 1,
+    threadSequence: 4,
+    partIndex: 0,
+    status: "running",
+    sourceRefs: [{ kind: "workflow", id: "workflow-1", visibility: "audit" }],
+    title: "Implement transcript",
+    description: "Render every surface through one registry.",
+  };
+
+  assert.deepEqual(projectConversationTimelineItems([item]), [item]);
+  assert.deepEqual(fingerprintConversationTimeline([item]), {
+    rendererKeys: ["fact.protocol"],
+    itemKinds: ["protocolEvent"],
+    itemIds: ["protocol:workflow:workflow-1"],
+    disclosureCount: 1,
+  });
+  assert.equal("actionId" in item, false);
+});
+
 test("typed timeline maps agent notes to narrative without treating them as evidence", () => {
   const items = projectConversationTimelineItems([
     { id: "note-1", presentation: "note", title: "Inspect parser", description: "I will inspect the parser first." },
