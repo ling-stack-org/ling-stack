@@ -1,6 +1,6 @@
 # Codex-style Typed Transcript v3.3：实现计划
 
-Status: implementation plan；设计 v3.3 已冻结，等待设计分支合并后开工
+Status: implementation plan；设计 v3.3 已冻结，S0/S1 实现进行中
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -23,7 +23,9 @@ EnvironmentPopover 中补渲染来“看起来统一”。
 记录 Node、pnpm、Xcode/macOS target、当前测试基线和 commit SHA。现有 dirty checkout
 与历史实验 worktree 不作为实现输入；候选实现只能按 commit 审查后 cherry-pick。
 
-S0 的唯一产物是 contract/fixture/selector 的失败测试和边界清单：
+S0 的唯一产物是 contract/fixture/selector 的失败测试和边界清单。当前实现 worktree
+为 `/private/tmp/ling-typed-transcript-v3-impl`，首批 contract、renderer registry 和
+surface adapter 已在此基线上落地；后续提交仍按本计划的 P1→P6 切片推进。
 
 | 产物 | 最小内容 | 通过条件 |
 | --- | --- | --- |
@@ -259,6 +261,10 @@ normal/private/channel/topic/branch/child 的 adapter 不得导出 renderer、�
 batch 函数或第二个 scroll owner。nested depth=1 必须调用同一个 registry，depth=2
 只能产生 `diagnostic(nested_depth_exceeded)`。
 
+**实现验收顺序**：先让三种 surface 使用同一个 mount/fingerprint，再删除 route-local
+旧 renderer。不能先删 UI 再靠截图猜测是否仍然保持 item 顺序；每次 cutover 必须同时
+保留 semantic-state 和 lineage fixture，确保视觉简化不会降低事实可追溯性。
+
 ### S4 / R7：surface cutover
 
 所有 surface 只保留 adapter：
@@ -378,7 +384,7 @@ thread/run/attempt、测试输入和是否为 simulation。全量 Web E2E 若含
 
 ## 7. Commit 形状
 
-1. `docs(transcript): lock codex-style v3.2 design`
+1. `docs(transcript): lock codex-style v3.3 design`
 2. `feat(transcript): fold execution evidence and revisions`
 3. `feat(transcript): project canonical items and reversible batches`
 4. `refactor(web): adopt shared timeline renderer registry`

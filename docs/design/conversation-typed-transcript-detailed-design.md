@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.3；实现前冻结
+Status: normative design v3.3；实现中（contract 已冻结）
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -852,6 +852,85 @@ Host evidence 的“我会执行/已完成”仍是叙述；如果该叙述声�
 这条生命周期也适用于 depth-1 子 Agent：子 Agent 可以先输出 narration，再产生自己的
 command/file/tool rows，最后由父级 fan-in 根据 atomic evidence 结论。子 Agent 不得用
 一条 ready 文本、一个 plan step 或一个 batch 数量替代事实。
+
+### 10.6 Shared surface adapter contract（实现接口）
+
+三种会话和 depth-1 子 Agent 的差异只允许存在于 adapter 输入，不能进入 renderer。
+实现时每个 surface 先构造同一形状的 `ResolvedConversationSurface`，再调用唯一的
+`mountConversationTimeline`。下面的接口是约束边界，不要求把类型放进同一个文件：
+
+```ts
+type ResolvedConversationSurface = {
+  readonly kind: "normal" | "private" | "channel_root" | "topic" | "branch" | "child";
+  readonly threadId: string;
+  readonly parentThreadId: string | null;
+  readonly anchorItemId: string | null;
+  readonly workspaceId: string;
+  readonly depth: 0 | 1;
+  readonly policy: ConversationInteractionPolicy;
+};
+
+type ConversationTimelineCallbacks = {
+  readonly openSourceRef?: (ref: ConversationTrustedSourceRef) => void;
+  readonly loadPreview?: (ref: ConversationOperationSourceRef) => Promise<unknown>;
+  readonly renderParticipant?: (participantId: string, label: string) => ReactNode;
+};
+
+type ConversationTimelineMount = {
+  readonly node: ReactNode;
+  /** Stable semantic keys, not a pixel hash. Used for surface parity tests. */
+  readonly fingerprint: {
+    readonly rendererKeys: readonly string[];
+    readonly itemKinds: readonly ConversationTimelineItemKind[];
+    readonly itemIds: readonly string[];
+    readonly disclosureCount: number;
+  };
+};
+```
+
+`mountConversationTimeline` 的实现顺序固定为：
+
+1. 校验 surface scope，并拒绝缺失 `threadId`/`workspaceId` 的 mount；
+2. 从同一 snapshot 取得 canonical atomic items；
+3. 调用唯一的 `batchCanonicalTranscriptItems` 生成可逆 display wrapper；
+4. 将 snapshot 和 callbacks 交给 `ConversationTimeline`，由 exhaustive registry 渲染；
+5. 同时计算 fingerprint，供 normal/private/channel/topic/branch/child 的 parity 测试使用。
+
+adapter 不得导出 renderer、排序器、batch 函数或第二个 scroll owner。它只能提供
+scope、policy、外围 chrome 和 Host callback。`node` 之外的 summary、TerminalReport、
+approval control 或 environment 状态都不能作为 mount 的副产物。
+
+#### 10.6.1 Source-ref upgrade boundary
+
+文件引用分成三个不可混淆的阶段：
+
+```text
+model text / persisted fileRefs
+  -> display-only path ref（basename + tooltip + copy）
+  -> Host adapter 验证 workspace/thread/run/action/permission
+  -> minted trusted ref（open_file/open_diff/open_artifact）
+```
+
+升级函数必须是纯的、可测试的 adapter，输入包括当前 surface scope 和 Host 返回的
+capability；不能根据路径字符串自行添加 `hostTarget`。renderer 只允许把
+`ConversationTrustedSourceRef` 传回 Host，普通 `path` ref 的按钮必须 disabled 或改为
+复制动作。normal、private、channel 和 child 都调用同一升级函数，不能各自实现
+`file://`、cwd 拼接或 callback 参数转换。
+
+#### 10.6.2 Surface parity invariant
+
+同一 fixture 在四个 surface 中必须满足：
+
+```text
+fingerprint.rendererKeys  ==
+fingerprint.itemKinds     ==
+fingerprint.itemIds       ==
+fingerprint.disclosureCount
+```
+
+允许变化的只有 shell title、roster、participant rail 和 policy hints。任何新增差异
+必须先更新本节和对应的 parity fixture；不能通过在某个 route 增加临时 `MessageBubble`
+或 `WorkCell` 来“修”截图。
 
 ## 11. 内容和视觉语义
 
