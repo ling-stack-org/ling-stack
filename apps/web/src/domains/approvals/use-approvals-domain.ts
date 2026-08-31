@@ -38,7 +38,12 @@ export interface ApprovalsActions {
   readonly refreshExternalActionDetails: (cwd: string, sourceApprovals: readonly ApprovalRequest[]) => Promise<void>;
   readonly refreshExternalActionDetailsByIds: (cwd: string, actionIds: readonly string[]) => Promise<void>;
   readonly upsertApproval: (approval: ApprovalRequest) => void;
-  readonly resolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => Promise<void>;
+  readonly resolveApproval: (
+    approvalId: string,
+    decision: ApprovalResolution,
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ) => Promise<void>;
   readonly executeExternalAction: (actionId: string) => Promise<void>;
   readonly cancelExternalAction: (actionId: string, reason?: string) => Promise<void>;
   readonly resetForCwd: () => void;
@@ -193,7 +198,12 @@ export function useApprovalsDomain(input: {
     }
   }
 
-  async function resolveApproval(approvalId: string, decision: ApprovalResolution, reason?: string): Promise<void> {
+  async function resolveApproval(
+    approvalId: string,
+    decision: ApprovalResolution,
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ): Promise<void> {
     if (resolvingApprovalsRef.current.has(approvalId)) {
       return;
     }
@@ -207,8 +217,12 @@ export function useApprovalsDomain(input: {
     try {
       const approvalBeforeResolution = approvals.find((approval) => approval.id === approvalId);
       const response =
-        decision === "approve"
-          ? await approveApproval(cwd, approvalId, reason)
+        decision !== "deny"
+          ? await approveApproval(cwd, approvalId, {
+              reason,
+              decisionKind: decision === "approve_command_rule" ? "approve_command_rule" : "approve_once",
+              proposedRuleFingerprint,
+            })
           : await denyApproval(cwd, approvalId, reason);
       if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;
       setSelectedApprovalId(response.approval.id);

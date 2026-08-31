@@ -62,8 +62,8 @@
 
 - 用途栏以三个紧凑下拉框常显当前值：`聊天模型 [下拉] | 生图目标 [下拉] | 生视频目标 [下拉]`，不要求用户进入
   更多菜单或打开下拉框查看。
-- 自定义兼容入口批量导入的选项只显示具体模型名，不能把入口显示名重复拼到每个模型；非自定义 Provider
-  保留用户可见名称，Workflow 以 `ComfyUI` 标识来源。
+- Provider 选项统一显示具体模型与路由，不能把入口显示名重复拼到每个模型；Workflow 以 `ComfyUI`
+  标识来源。
 - 新导入的自定义兼容模型在注册表中也以具体模型名作为 `displayName`；已有注册记录不做破坏性重写，
   展示层与生成目标 inventory 按同一规则归一化，用户再次导入或编辑时自然收敛。
 - 聊天下拉只包含可运行聊天模型；图片和视频同时包含可运行 generation Provider 与 active
@@ -77,8 +77,19 @@
 - 删除、停用或失效目标时显示需要处理，不按创建时间静默选择另一个目标。
 - 用户在单次对话里明确指定生成目标只覆盖该任务，不改变这里的默认值。
 
+## Model Label Semantics
+
+- 紧凑列表、频道成员、队友创建摘要和运行异常提示只显示实际使用的 `provider.model`。这些表面不重复
+  模型来源，也不拼接 `displayName`。
+- 需要区分同名模型路由的选择控件统一显示“模型 · 路由”。路由优先使用 Base URL 的 host，缺失时使用
+  provider id；路由与模型相同时只显示一次模型名。
+- Provider 名称只在模型工作台详情、明确标注为 Provider 的字段或来源详情中单独展示，不与模型名组成
+  `displayName / model`、`displayName · model` 等非规范标签。
+- 所有产品表面必须使用共享模型标签函数。即使历史记录中的 `displayName` 已包含模型名，也不得再次拼接模型名。
+
 ## Acceptance
 
 覆盖首个模型自动默认、后续模型不抢默认、显式绑定不被默认切换覆盖、引用中删除阻断、检查失败、密钥
 脱敏、generation capability、默认用途常显、Provider/Workflow 混合候选、图片/视频默认目标独立性、长名称、Light/Dark、
-`1440x960`、`1280x800` 和 packaged Desktop。
+`1440x960`、`1280x800` 和 packaged Desktop。模型标签回归必须包含 `displayName` 已含模型名的历史记录，验证紧凑
+表面只显示一次模型名，选择控件显示“模型 · 路由”，且不存在 `displayName / model` 或 `displayName · model` 重复。

@@ -282,11 +282,14 @@ function NormalConversationMessageRow({
 }): React.JSX.Element {
   const { t } = useI18n();
   const { message } = item;
+  const blockedAgentMessage = item.authorType === "ai-teammate"
+    && (Boolean(composerGateApproval) || message.status === "blocked");
   return (
     <MessageRow
       surface="normal_conversation"
       className={item.className}
       authorType={item.authorType}
+      tone={blockedAgentMessage ? "chat-blocked" : item.authorType === "system" ? "system" : "chat"}
       authorName={item.authorName}
       createdAtLabel={item.createdAtLabel}
       statusNode={message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
@@ -382,7 +385,7 @@ function NormalConversationMessageRow({
           ) : null}
         </>
       )}
-      actionsNode={message.content && !editing ? (
+      actionsNode={message.content && !editing && !blockedAgentMessage ? (
         <MessageActionBar
           surface="normal_conversation"
           className="normal-conversation-message-actions"

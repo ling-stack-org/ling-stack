@@ -19,6 +19,14 @@
   background: var(--ling-bg-panel);
 }
 
+.automation-ui2-page.titlebar-window {
+  grid-template-rows: auto auto minmax(0, 1fr);
+}
+
+.automation-ui2-page.titlebar-window > .automation-ui2-main {
+  grid-row: 3;
+}
+
 .automation-ui2-header {
   display: flex;
   min-width: 0;

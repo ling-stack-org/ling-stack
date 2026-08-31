@@ -2,6 +2,7 @@ import { Plus } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { ReactNode } from "react";
 import { useI18n } from "../../i18n.js";
+import { useDesktopTitlebarPlacement } from "../../app/DesktopTitlebarSurface.js";
 import {
   aiCouncilRoutingModeLabel,
   aiCouncilSourceLabel,
@@ -60,6 +61,7 @@ export interface CouncilWorkspacePanelsProps {
 
 export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): React.JSX.Element {
   const { t } = useI18n();
+  const titlebarPlacement = useDesktopTitlebarPlacement();
   const selectedCouncil = props.selectedCouncil;
   const [activeDetailTab, setActiveDetailTab] = useState<CouncilDetailTab>("members");
 
@@ -68,8 +70,11 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): Reac
   }, [props.selectedCouncilId]);
 
   return (
-    <div className={props.settingsToolMode ? "council-workspace-page settings-return-mode" : "council-workspace-page"} aria-label={t("Council Workspace")}>
-      {!props.settingsToolMode ? (
+    <div
+      className={`${props.settingsToolMode ? "council-workspace-page settings-return-mode" : "council-workspace-page"} titlebar-${titlebarPlacement}`}
+      aria-label={t("Council Workspace")}
+    >
+      {!props.settingsToolMode || titlebarPlacement === "window" ? (
         <PageActionHeader
           title={t("Council Workspace")}
           description={t("Manage councils, members, health, and channel usage from one workspace.")}

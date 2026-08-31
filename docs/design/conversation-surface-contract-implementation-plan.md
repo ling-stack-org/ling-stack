@@ -153,6 +153,27 @@ and consumption work.
   overflow states. Final evidence also includes a real message-submission run in the
   in-app browser rather than fixture screenshots only.
 
+## Recent Conversation Failure Acknowledgement Slice
+
+- Keep `failed` and `blocked` on the durable thread and Run records; only the Sidebar
+  attention projection becomes acknowledged.
+- Persist a local watermark keyed by workspace and conversation. Compare it with the
+  thread failure revision so reloads stay quiet while a later failure becomes visible.
+- Acknowledge only after the conversation is actually selected. Failed navigation must
+  leave the red dot visible.
+- Verify initial failure, successful open, reload persistence, later failure reappearance,
+  and preservation of the underlying failed thread state.
+
+## Recent Conversation Single-Line Slice
+
+- Remove redundant conversation-type metadata from the recent-conversation view model and
+  shared object-row markup rather than hiding a second line with CSS.
+- Keep each recent row at `32px`, preserve its icon/title horizontal origin, and assert that
+  both centers differ by no more than one pixel.
+- Keep long-title fading, hover/focus movement, status projection and absolute action overlays
+  unchanged. The shared preview remains viewport-bounded and scrollbar-free; overflowing
+  preview lines move horizontally instead of widening the surface.
+
 ## Remaining Work
 
 ### Generated Media Capability

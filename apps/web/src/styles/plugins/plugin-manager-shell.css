@@ -15,6 +15,10 @@
   overflow: hidden;
 }
 
+.plugin-manager-page > .settings-plugin-manager.titlebar-window {
+  grid-template-rows: 52px minmax(0, 1fr);
+}
+
 .plugin-manager-page {
   background: var(--ling-bg-app);
 }

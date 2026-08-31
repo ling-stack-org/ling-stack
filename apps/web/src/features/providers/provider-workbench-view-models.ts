@@ -5,6 +5,7 @@ import {
   isWorkbenchReadyProvider,
   providerCheckGuidance,
   providerCheckIsPending,
+  providerDisplaySourceLabel,
   providerGenerationRuntimeSummary,
   providerNeedsSecret,
   providerPreflightReady,
@@ -322,21 +323,6 @@ function generationProviderStatusHint({
     return providerGenerationRuntimeSummary(provider, t) ?? rowCheckGuidance;
   }
   return rowCheckGuidance;
-}
-
-function providerDisplaySourceLabel(displayName: string, model: string): string {
-  const normalizedDisplayName = displayName.trim();
-  const normalizedModel = model.trim();
-  if (!normalizedDisplayName || !normalizedModel) {
-    return normalizedDisplayName;
-  }
-  const suffixes = [` · ${normalizedModel}`, ` / ${normalizedModel}`, ` - ${normalizedModel}`];
-  const matchingSuffix = suffixes.find((suffix) =>
-    normalizedDisplayName.toLowerCase().endsWith(suffix.toLowerCase())
-  );
-  return matchingSuffix
-    ? normalizedDisplayName.slice(0, -matchingSuffix.length).trim()
-    : normalizedDisplayName;
 }
 
 export function providerInitial(displayName: string): string {

@@ -52,10 +52,13 @@
 .settings-app-return-button,
 .settings-section-item {
   --ling-button-label-text-align: left;
+  align-items: center;
   width: 100%;
+  height: auto;
+  min-height: var(--ling-control-sm);
   justify-content: flex-start;
   gap: var(--ling-space-4);
-  padding-inline: 10px;
+  padding: 6px 10px;
   color: var(--ling-text-default);
   font-weight: 600;
 }
@@ -67,6 +70,11 @@
 .settings-app-return-button [data-ling-button-slot="label"],
 .settings-section-item [data-ling-button-slot="label"] {
   flex: 1 1 auto;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  hyphens: auto;
+  text-overflow: clip;
+  white-space: normal;
 }
 
 .settings-app-return-button [data-ling-button-slot="leading"],
@@ -84,16 +92,15 @@
 .settings-section-group-label {
   display: block;
   min-width: 0;
-  padding: 0 var(--ling-space-4);
-  overflow: hidden;
+  padding: 3px var(--ling-space-4);
   color: var(--ling-text-soft);
   font-size: var(--ling-font-xs);
   font-weight: 700;
   letter-spacing: 0;
-  line-height: 22px;
-  text-overflow: ellipsis;
+  line-height: 16px;
+  overflow-wrap: anywhere;
+  hyphens: auto;
   text-transform: uppercase;
-  white-space: nowrap;
 }
 
 .settings-section-item {
@@ -197,6 +204,15 @@
   .settings-section-item {
     flex: 0 0 auto;
     width: auto;
+    height: var(--ling-control-sm);
+    min-height: var(--ling-control-sm);
+    padding-block: 0;
+  }
+
+  .settings-app-return-button [data-ling-button-slot="label"],
+  .settings-section-item [data-ling-button-slot="label"] {
+    overflow-wrap: normal;
+    white-space: nowrap;
   }
 
   .settings-section-item[aria-current="page"]::before {

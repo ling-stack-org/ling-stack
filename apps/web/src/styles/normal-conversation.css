@@ -17,6 +17,10 @@
   background: var(--ling-bg-panel);
 }
 
+.normal-conversation-page.titlebar-window {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
 .normal-conversation-header {
   position: relative;
   box-sizing: border-box;

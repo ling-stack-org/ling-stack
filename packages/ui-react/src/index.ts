@@ -1,6 +1,7 @@
 export * from "./controls/Button.js";
 export * from "./controls/Icon.js";
 export * from "./controls/IconButton.js";
+export * from "./controls/SplitButton.js";
 export * from "./controls/Input.js";
 export * from "./controls/Textarea.js";
 export * from "./controls/Select.js";

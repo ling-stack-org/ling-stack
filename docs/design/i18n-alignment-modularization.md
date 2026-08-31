@@ -1,5 +1,14 @@
 # I18n Alignment And Modularization
 
+Status: superseded historical baseline
+Owner: Web maintainers
+Last verified: 2026-08-27
+Canonical replacement: [Ling Internationalization And Language Parity](./internationalization-language-parity.md)
+
+This document records the original two-language extraction baseline. It is no longer the
+implementation contract. The canonical contract now covers 55 product locales, Web,
+Daemon, Desktop, catalog automation, and packaged acceptance.
+
 ## Related Docs
 
 - [Ling UI 2.0 整体升级方案](./ui2.0升级/00-UI2.0整体升级方案.md)

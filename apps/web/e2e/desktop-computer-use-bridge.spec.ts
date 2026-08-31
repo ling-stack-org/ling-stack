@@ -291,9 +291,9 @@ test("reports resolved theme changes through the narrow Desktop appearance capab
     colorScheme: "light",
     presentationProfileId: "ling-standard",
     variables: {
-      "--ling-bg-app": "#f6f7f8",
-      "--ling-compact-window-bg": "#f6f7f8",
-      "--ling-compact-window-text": "#121417",
+      "--ling-bg-app": "#ffffff",
+      "--ling-compact-window-bg": "#ffffff",
+      "--ling-compact-window-text": "#191c1f",
     },
   });
 
@@ -305,8 +305,8 @@ test("reports resolved theme changes through the narrow Desktop appearance capab
     colorScheme: "dark",
     presentationProfileId: "ling-standard",
     variables: {
-      "--ling-bg-app": "#111315",
-      "--ling-compact-window-bg": "#111315",
+      "--ling-bg-app": "#1f1f1f",
+      "--ling-compact-window-bg": "#1f1f1f",
       "--ling-compact-window-text": "#f4f5f6",
     },
   });
@@ -564,6 +564,10 @@ test("reports teammate-direct composer, summary, dock, and terminal obstacles", 
   await openDesktopBridgeTeammate(page);
   await expect.poll(async () => (await desktopControlSnapshot(page)).selectedConversationId)
     .toBe(DESKTOP_BRIDGE_TEAMMATE_THREAD_ID);
+
+  const hideNavigation = page.getByRole("button", { name: "Hide navigation" });
+  await hideNavigation.click();
+  await expect(page.getByLabel("Ling Stack navigation")).toHaveAttribute("data-sidebar-mode", "compact");
 
   const directComposer = page.locator(
     '[data-surface="teammate_direct"][data-computer-use-obstacle-kind="composer"]',

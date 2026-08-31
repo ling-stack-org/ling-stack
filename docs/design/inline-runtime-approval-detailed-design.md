@@ -100,6 +100,18 @@ The default gate contains only:
 - one-line mutation feedback when a decision fails;
 - `Deny` and `Allow once` actions.
 
+For an eligible Bash approval, `Allow once` becomes a split button. Its primary action
+still approves only the current request. The adjacent arrow opens a compact menu with
+`Allow once` and `Allow similar commands`. The second decision persists only the
+daemon-proposed command-prefix rule for the current workspace. It does not grant Bash as
+a whole, does not apply to another workspace, and does not add a second confirmation
+Dialog.
+
+The arrow is absent unless the approval carries a daemon-validated
+`proposedCommandRule` and lists `approve_command_rule` in `availableDecisions`. Web must
+never infer a rule from the displayed command. File, MCP, network, deploy, credential,
+runtime-permission, and task-proposal decisions keep the ordinary two-button layout.
+
 The gate does not show risk badges, Run IDs, workspace absolute paths, approval titles,
 raw payloads, permission deltas, queue counts, decision reasons, technical details, or an
 approve-all action. Full payload and decision history stay in Run detail, Approval Inbox,
@@ -132,6 +144,10 @@ a workspace prefix already established by the session.
 - Sidebar navigation remains available because the gate is not a modal.
 - While a decision request is in flight, both decision buttons are disabled and the
   selected action shows progress.
+- The split menu supports Arrow Up/Down, Enter, Escape, outside-click dismissal, visible
+  focus, and focus return to its arrow. Opening or closing it never resolves an approval.
+- Choosing `Allow similar commands` resolves immediately. A save or fingerprint failure
+  keeps the same approval visible and exposes the existing one-line retry state.
 - A mutation failure keeps the same request visible and changes only the attempted action
   to `Retry`.
 - Returning to a session with a still-pending approval restores the gate, not the
@@ -166,19 +182,21 @@ create runtime approvals after full access is confirmed.
 interface RuntimeApprovalComposerGateProps {
   readonly approvals: readonly InlineApprovalView[];
   readonly approvalErrors: Readonly<Record<string, string>>;
-  readonly resolvingApprovals: Readonly<Record<string, "approve" | "deny">>;
+  readonly resolvingApprovals: Readonly<Record<string,
+    "approve_once" | "approve_command_rule" | "deny">>;
   readonly onResolve: (
     approvalId: string,
-    decision: "approve" | "deny",
+    decision: "approve_once" | "approve_command_rule" | "deny",
     reason?: string,
+    proposedRuleFingerprint?: string,
   ) => void;
 }
 ```
 
 The component consumes view data and callbacks only. It does not fetch, mutate global
-navigation state, inspect another session, or own approval policy.
-
-No daemon API, database, approval DTO, state machine, or audit schema changes are needed.
+navigation state, inspect another session, derive command rules, or own approval policy.
+The command-rule DTO, persistence, matching, and audit authority remain in Core and the
+Daemon.
 
 ## Placement
 
@@ -226,6 +244,10 @@ sidebar
 - a background approval does not open an overlay or disable the active Composer;
 - selecting the owner replaces only that Composer;
 - allow, deny, retry, expiry, stale removal, and ordered multi-item progression work;
+- primary `Allow once` never persists a command rule;
+- eligible Bash approvals expose `Allow similar commands`, persist the proposed prefix,
+  and stop asking for matching commands in the same workspace;
+- ineligible or stale proposals render no arrow and cannot be submitted as a rule;
 - another Sidebar row remains clickable while the gate is visible;
 - the final decision restores the preserved Composer draft and focus.
 - an actionable task proposal uses the same shell only in its owning channel;
@@ -245,12 +267,18 @@ sidebar
 
 - expanded Sidebar shows a clear green `Waiting for approval` label;
 - the Composer gate is contained at `1280x800` and `1440x960` in light and dark themes;
+- the gate shrink-wraps its decision content with equal inline insets and no reserved
+  transcript, footer, or empty-message height below the actions;
+- an eligible Bash split button renders one contiguous primary action plus a fixed arrow
+  segment; labels remain centered and neither segment wraps, overlaps, or separates;
 - no horizontal overflow, page-level backdrop, feed overlap, or Composer flash appears.
 
 ## Non-Goals
 
 - No global notification center or OS push in this slice.
-- No approval-policy change, persistent `Always allow`, or bulk approval.
+- No global Bash allow, session-wide approval, or bulk approval.
+- No persistent rule for file, MCP, network, deploy, credential, runtime-permission, or
+  task-proposal decisions.
 - No external-action review redesign.
 - No task proposal editor or technical-detail surface in the Composer decision path.
 - No mobile acceptance target.

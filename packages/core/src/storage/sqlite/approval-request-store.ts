@@ -1,5 +1,7 @@
 import {
+  createApprovalCommandRuleId,
   createApprovalRequestId,
+  type ApprovalCommandRule,
   type ApprovalRequest,
   type ApprovalStatus,
   type CreateApprovalRequestInput,
@@ -7,9 +9,10 @@ import {
   type ResolveApprovalRequestInput,
 } from "../../approval-types.js";
 import { redactSecrets } from "../../redaction.js";
+import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
-import { mapApprovalRequest } from "./approval-media-mappers.js";
-import { approvalRequestSelectSql } from "./select-sql.js";
+import { mapApprovalCommandRule, mapApprovalRequest } from "./approval-media-mappers.js";
+import { approvalCommandRuleSelectSql, approvalRequestSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 export interface SqliteApprovalRequestStorePorts {
@@ -82,6 +85,8 @@ export class SqliteApprovalRequestStore {
       status: "pending",
       createdAt: now,
       expiresAt: input.expiresAt,
+      availableDecisions: input.availableDecisions ?? ["approve_once", "deny"],
+      proposedCommandRule: input.proposedCommandRule,
     };
 
     this.context.database
@@ -105,8 +110,12 @@ export class SqliteApprovalRequestStore {
           expires_at,
           resolved_at,
           resolved_by,
-          decision_reason
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          decision_reason,
+          available_decisions_json,
+          proposed_command_rule_json,
+          decision_kind,
+          decision_rule_id
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         approval.id,
@@ -126,6 +135,10 @@ export class SqliteApprovalRequestStore {
         approval.createdAt,
         approval.expiresAt ?? null,
         null,
+        null,
+        null,
+        stringifyJson(approval.availableDecisions),
+        approval.proposedCommandRule ? stringifyJson(approval.proposedCommandRule) : null,
         null,
         null,
       );
@@ -186,6 +199,9 @@ export class SqliteApprovalRequestStore {
   }
 
   approveApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
+    if (input.decisionKind === "approve_command_rule") {
+      return this.approveApprovalRequestWithCommandRule(id, input, now);
+    }
     return this.resolveApprovalRequest(id, "approved", input, now);
   }
 
@@ -199,6 +215,130 @@ export class SqliteApprovalRequestStore {
 
   cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
     return this.resolveApprovalRequest(id, "cancelled", input, now);
+  }
+
+  listApprovalCommandRules(options: { readonly includeRevoked?: boolean } = {}): ApprovalCommandRule[] {
+    const whereClause = options.includeRevoked
+      ? "WHERE workspace_id = ? AND tool_name = 'bash'"
+      : "WHERE workspace_id = ? AND tool_name = 'bash' AND revoked_at IS NULL";
+    return this.context.database
+      .prepare(`${approvalCommandRuleSelectSql(whereClause)} ORDER BY created_at DESC`)
+      .all(DEFAULT_WORKSPACE_ID)
+      .map(mapApprovalCommandRule);
+  }
+
+  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[]): ApprovalCommandRule | undefined {
+    if (argv.length === 0) return undefined;
+    return this.listApprovalCommandRules()
+      .filter((rule) => rule.toolName === toolName && rule.prefix.length <= argv.length)
+      .sort((left, right) => right.prefix.length - left.prefix.length)
+      .find((rule) => rule.prefix.every((token, index) => token === argv[index]));
+  }
+
+  revokeApprovalCommandRule(id: string, now: string): ApprovalCommandRule | undefined {
+    const result = this.context.database
+      .prepare(`
+        UPDATE approval_command_rules
+        SET revoked_at = ?
+        WHERE id = ? AND workspace_id = ? AND revoked_at IS NULL
+      `)
+      .run(now, id, DEFAULT_WORKSPACE_ID);
+    if (result.changes === 0) return undefined;
+    const row = this.context.database.prepare(approvalCommandRuleSelectSql("WHERE id = ?")).get(id);
+    return row ? mapApprovalCommandRule(row) : undefined;
+  }
+
+  private approveApprovalRequestWithCommandRule(
+    id: string,
+    input: ResolveApprovalRequestInput,
+    now: string,
+  ): ApprovalRequest | undefined {
+    this.context.database.exec("SAVEPOINT approval_command_rule_resolution");
+    try {
+      const existing = this.getApprovalRequest(id);
+      if (!existing) {
+        this.context.database.exec("RELEASE approval_command_rule_resolution");
+        return undefined;
+      }
+      if (existing.status !== "pending") {
+        throw new Error(`Approval request is not pending: ${id}`);
+      }
+      const proposal = existing.proposedCommandRule;
+      if (
+        existing.actionType !== "bash" ||
+        !proposal ||
+        !existing.availableDecisions?.includes("approve_command_rule") ||
+        input.proposedRuleFingerprint !== proposal.fingerprint
+      ) {
+        throw new Error(`Approval command rule proposal is unavailable or stale: ${id}`);
+      }
+
+      const candidateRuleId = createApprovalCommandRuleId();
+      this.context.database.prepare(`
+        INSERT INTO approval_command_rules (
+          id,
+          workspace_id,
+          tool_name,
+          rule_version,
+          prefix_tokens_json,
+          display,
+          fingerprint,
+          source_approval_id,
+          created_by,
+          created_at,
+          revoked_at
+        ) VALUES (?, ?, 'bash', ?, ?, ?, ?, ?, 'local-user', ?, NULL)
+        ON CONFLICT(workspace_id, tool_name, fingerprint) DO UPDATE SET
+          rule_version = excluded.rule_version,
+          prefix_tokens_json = excluded.prefix_tokens_json,
+          display = excluded.display,
+          source_approval_id = excluded.source_approval_id,
+          created_by = excluded.created_by,
+          created_at = excluded.created_at,
+          revoked_at = NULL
+      `).run(
+        candidateRuleId,
+        DEFAULT_WORKSPACE_ID,
+        proposal.version,
+        stringifyJson(proposal.prefix),
+        proposal.display,
+        proposal.fingerprint,
+        existing.id,
+        now,
+      );
+      const ruleRow = this.context.database
+        .prepare(approvalCommandRuleSelectSql("WHERE workspace_id = ? AND tool_name = 'bash' AND fingerprint = ?"))
+        .get(DEFAULT_WORKSPACE_ID, proposal.fingerprint);
+      if (!ruleRow) {
+        throw new Error(`Approval command rule was not persisted: ${id}`);
+      }
+      const rule = mapApprovalCommandRule(ruleRow);
+      const update = this.context.database.prepare(`
+        UPDATE approval_requests
+        SET
+          status = 'approved',
+          resolved_at = ?,
+          resolved_by = ?,
+          decision_reason = ?,
+          decision_kind = 'approve_command_rule',
+          decision_rule_id = ?
+        WHERE id = ? AND status = 'pending'
+      `).run(now, input.resolvedBy ?? "local-user", input.reason ?? null, rule.id, id);
+      if (update.changes !== 1) {
+        throw new Error(`Approval request is not pending: ${id}`);
+      }
+      const resolved = this.getApprovalRequest(id);
+      if (!resolved) {
+        throw new Error(`Approval request was not persisted after command rule resolution: ${id}`);
+      }
+      this.syncResolvedApproval(resolved, now);
+      this.context.database.exec("RELEASE approval_command_rule_resolution");
+      return resolved;
+    } catch (error) {
+      this.context.database.exec("ROLLBACK TO approval_command_rule_resolution");
+      this.context.database.exec("RELEASE approval_command_rule_resolution");
+      throw error;
+    }
   }
 
   private resolveApprovalRequest(
@@ -215,30 +355,41 @@ export class SqliteApprovalRequestStore {
       throw new Error(`Approval request is not pending: ${id}`);
     }
 
-    this.context.database
+    const decisionKind = status === "approved"
+      ? (input.decisionKind ?? "approve_once")
+      : status === "denied" ? "deny" : undefined;
+    const update = this.context.database
       .prepare(`
         UPDATE approval_requests
         SET
           status = ?,
           resolved_at = ?,
           resolved_by = ?,
-          decision_reason = ?
-        WHERE id = ?
+          decision_reason = ?,
+          decision_kind = ?,
+          decision_rule_id = NULL
+        WHERE id = ? AND status = 'pending'
       `)
       .run(
         status,
         now,
         status === "expired" ? (input.resolvedBy ?? null) : (input.resolvedBy ?? "local-user"),
         input.reason ?? null,
+        decisionKind ?? null,
         id,
       );
+    if (update.changes !== 1) {
+      throw new Error(`Approval request is not pending: ${id}`);
+    }
 
     const resolved = this.getApprovalRequest(id);
-    if (resolved) {
-      this.ports.syncApprovalCheckpointForApproval(resolved, now);
-    }
-    this.ports.rebuildLingThreadMetadataForApproval(resolved, now);
+    if (resolved) this.syncResolvedApproval(resolved, now);
     return resolved;
+  }
+
+  private syncResolvedApproval(resolved: ApprovalRequest, now: string): void {
+    this.ports.syncApprovalCheckpointForApproval(resolved, now);
+    this.ports.rebuildLingThreadMetadataForApproval(resolved, now);
   }
 }
 

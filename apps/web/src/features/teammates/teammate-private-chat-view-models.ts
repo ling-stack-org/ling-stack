@@ -6,7 +6,7 @@ import {
   type ConversationWorkCellViewModel,
 } from "../../lib/conversation-work-cell.js";
 import { conversationRunHasVisibleWork } from "../../lib/conversation-runtime-visibility.js";
-import { providerRunPreflightBlocker } from "../../lib/providers.js";
+import { providerCompactModelLabel, providerRunPreflightBlocker } from "../../lib/providers.js";
 import type { LocalFileReference } from "../../shared/conversation/index.js";
 import type {
   ApprovalRequest,
@@ -47,7 +47,7 @@ export function buildTeammatePrivateModelNotice({
 
   return {
     description,
-    modelLabel: provider ? `${provider.displayName} / ${provider.model}` : t("No model selected"),
+    modelLabel: provider ? providerCompactModelLabel(provider) : t("No model selected"),
   };
 }
 

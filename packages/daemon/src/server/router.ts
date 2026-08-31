@@ -224,6 +224,8 @@ import {
   handleListShellSnapshots,
 } from "../features/runs/shell-snapshots.js";
 import {
+  handleApprovalCommandRuleItem,
+  handleApprovalCommandRulesCollection,
   handleApprovalItem,
   handleApprovalPolicy,
   handleApprovalsCollection,
@@ -308,6 +310,7 @@ import {
   matchSingleSegmentRoute,
   parseRunnerReadinessRoute,
   parseMemoryRoute,
+  parseApprovalCommandRuleRoute,
   parseApprovalRoute,
   parseArtifactRoute,
   parseAiCouncilRoute,
@@ -979,6 +982,11 @@ export async function routeRequest(
 
   if (url.pathname === "/approvals") {
     handleApprovalsCollection(request, response, url, storeRegistry, controlPlaneEvents);
+    return;
+  }
+
+  if (url.pathname === "/approval-command-rules") {
+    handleApprovalCommandRulesCollection(request, response, url, storeRegistry);
     return;
   }
 
@@ -2590,6 +2598,12 @@ export async function routeRequest(
         hooks: mediaJobHooks,
       });
     });
+    return;
+  }
+
+  const approvalCommandRuleRoute = parseApprovalCommandRuleRoute(url.pathname);
+  if (approvalCommandRuleRoute) {
+    handleApprovalCommandRuleItem(request, response, url, storeRegistry, approvalCommandRuleRoute.ruleId);
     return;
   }
 

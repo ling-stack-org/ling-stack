@@ -729,7 +729,8 @@ export function ConversationHome({
           summaryActive: conversationSummaryOpen,
           terminalActive: conversationTerminalOpen,
           terminalDisabled: !workspaceCwd.trim(),
-          detailsActive: conversationDockOpen,
+          detailsActive: conversationDockController.expanded,
+          detailsDisabled: !conversationDockController.available,
           onClearSearch: normalConversationHeader.clearSearch,
           onCloseSearch: () => normalConversationHeader.closeSearch(true),
           onSearchQueryChange: setMessageSearchQuery,
@@ -746,6 +747,7 @@ export function ConversationHome({
             setConversationTerminalOpen((current) => !current);
           },
           onToggleDetails: () => {
+            if (!conversationDockController.available) return;
             if (conversationDockOpen) conversationDockController.close();
             setConversationDockOpen((current) => !current);
           },

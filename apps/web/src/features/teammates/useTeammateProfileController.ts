@@ -264,31 +264,16 @@ export function useTeammateProfileController({
     if (!requestOwner.isActionCurrent(operation)) return false;
     setPersonaBusyAction("apply");
     try {
-      const updated = await onUpdateTeammate(teammate.id, {
+      setSettingsForm((current) => ({
+        ...current,
         displayName: personaDraft.displayName.trim() || teammate.displayName,
         description: personaDraft.description.trim(),
-        systemPrompt: personaDraft.systemPrompt.trim() || null,
-        appendSystemPrompt: personaDraft.appendSystemPrompt,
-      }, "persona-apply");
-      if (!requestOwner.isActionCurrent(operation)) return false;
-      setSettingsForm((current) => ({
-        ...teammateToSettingsForm(updated),
-        modelBindingMode: current.modelBindingMode,
-        providerPresetId: current.providerPresetId,
+        systemPrompt: personaDraft.systemPrompt,
       }));
-      onTeammateUpdated?.(updated);
       setPersonaDraft(undefined);
       setPersonaImportForm({ sourcePath: "", content: "" });
       requestOwner.clearError(operation);
-      showToast({
-        message: t("Persona applied"),
-        scope: `teammate:profile:${operation.teammateId}:persona`,
-        tone: "success",
-      });
       return true;
-    } catch {
-      requestOwner.reportError(operation, t("Persona changes were not saved. Try again."));
-      return false;
     } finally {
       if (requestOwner.isActionCurrent(operation)) setPersonaBusyAction("");
     }

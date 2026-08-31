@@ -57,6 +57,7 @@
 
 .channel-side-panel-frame > .channel-side-panel {
   justify-self: end;
+  border-left: 0;
 }
 
 .task-workbench-main.channel-right-dock-collapsed .channel-side-panel-frame {
