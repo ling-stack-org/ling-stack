@@ -111,4 +111,3 @@ export const TRANSLATION_TARGETS = Object.freeze({
   "zh-HK": "zh-HK",
   "zh-TW": "zh-TW",
 });
-
