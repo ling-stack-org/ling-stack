@@ -14,6 +14,16 @@ Related docs:
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 
+v3.5 note: command batching remains a pure projection consumed by the shared
+`ConversationTimeline` fact renderer. `ConversationWorkCell` references in historical
+sections are migration inputs only; batching never owns completion, fan-in, or a second
+visible action row.
+
+本文件中的 `ConversationWorkCellItem`、`ConversationCommandBatch` 和旧组件名保留用于
+解释既有数据适配，不是 v3.5 的第二套 item union。实现时必须把它们转换为
+`commandExecution`/`commandBatch`，由详细设计定义的唯一 registry 渲染；新代码不得
+再向 `ConversationWorkCell.tsx` 添加 batch、排序或完成判断。
+
 ## 1. Purpose
 
 Ling already renders each meaningful tool action as an auditable operation row. That is

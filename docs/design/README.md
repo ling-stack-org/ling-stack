@@ -48,21 +48,24 @@ CI/Release artifacts instead of the default documentation tree.
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 - [Thread-First Work History](thread-first-work-history.md)
 
-### Typed transcript authority (v3.3)
+### Typed transcript authority (v3.5)
 
 The three documents above are the only current entry points for the Codex-style
 transcript work. Read them in this order: data/semantic contract, visual contract,
 then implementation plan. The activity-summary and command-batching documents are
 subordinate projection rules; they may define eligibility and hard boundaries, but
 they must not introduce another timeline, persistence table, renderer, or completion
-authority. v3.3 adds the single timeline mount/composition contract and explicit nested-agent
-row examples while retaining the v3.2 renderer, event-idempotency, visual-token, and
-acceptance details. It does not change the v3.1 storage or ownership decisions.
+authority. v3.5 adds implementation-level snapshot/identity, Host capability, real
+channel-thread scope, and packaged macOS case contracts on top of the prior single
+timeline mount/composition rules. It does not change the full-history SQLite or
+single-owner decisions.
 
 开工时只需要沿这三份文档执行：先冻结 typed item/evidence contract，再实现共享
 `ConversationTimeline`，最后按实现计划完成 surface cutover 和 packaged macOS 验收。
 “简单好看”的验收不是主观截图评审，而是文档 lane、事实 row、原地 revision、可逆
-disclosure、唯一 scroll owner 和跨 surface fingerprint 的组合约束。
+disclosure、唯一 scroll owner、Host capability 二次校验和跨 surface fingerprint
+的组合约束。v3.5 还明确 UI 状态所有权和迁移顺序：先接 durable evidence，再切换
+shared Timeline，最后删除旧 WorkCell/activity caller；不保留运行时兼容 renderer。
 
 ## Teammates, Memory, And Skills
 

@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.3；实现中（contract 已冻结）
+Status: normative design v3.5；implementation lock（contract 已冻结）
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -71,8 +71,33 @@ SQLite durable records + Host events + SSE deltas
              ▼
  ConversationTimeline + one renderer registry
              │
-   normal / private / channel / topic / branch / child
+  normal / private / channel / topic / branch / child
 ```
+
+### 1.3 “简单好看”的实现定义
+
+v3.5 把审美要求翻译成三个可验收的层次，避免实现者用不同的卡片和文案各自解释
+“像 Codex”：
+
+```text
+document lane  = 叙述和 Markdown，保留段落、列表、代码、路径结构
+fact rail      = 真实动作，一行表达 icon + 动词 + 状态 + 一个 disclosure
+shell chrome   = header / EnvironmentPopover / Composer，不拥有历史事实
+```
+
+实现时必须同时满足：
+
+1. 一条垂直时间线只有一个 scroll owner；document lane、fact rail 和 nested rail
+   只是同一 DOM 流的语义分组，不能变成左右两列或第二个历史面板。
+2. 同一 `actionId` 只有一个 owning row。`tool_update`、SSE 重连和 daemon restart
+   只更新该行的 `revision/status/detail`，不创建“开始/完成”两张卡。
+3. 成功历史默认收敛，进行中、等待、失败、取消和 blocked 才增加细节或操作控件；
+   颜色只作辅助，文本和 icon 始终完整表达状态。
+4. 普通、私聊、频道和子 Agent 使用同一 item union、projector、batch 函数和
+   renderer registry。surface 只能改变 shell chrome、policy 和 participant rail。
+
+因此“右侧方形消息”“Composer 下重复总结”“子 Agent 乱码或只有 ready 文本”都属于
+契约违例，不是可以由 CSS 局部修补的视觉偏好。
 
 ## 2. 明确不做的事
 
@@ -139,7 +164,7 @@ context 语义、审批结果、retry 选择、TerminalReport 或 fan-in。
 userMessage | agentMessage | reasoning | plan
 commandExecution | exploration | fileChange
 mcpToolCall | dynamicToolCall | collabAgentToolCall
-approval | imageView | contextCompaction | subAgentActivity
+approval | imageView | contextCompaction | protocolEvent | subAgentActivity
 commandBatch | explorationBatch | diagnostic
 ```
 
@@ -170,7 +195,7 @@ type ConversationOperationSourceRef = {
   readonly kind:
     | "conversation_item" | "run_event" | "execution_action" | "run" | "attempt"
     | "participant" | "workflow_step" | "work_unit" | "approval" | "artifact"
-    | "file" | "diff" | "image" | "context_snapshot" | "tool_call";
+    | "file" | "path" | "diff" | "image" | "context_snapshot" | "tool_call";
   readonly id: string;
   readonly label?: string;
   readonly path?: string;
@@ -196,8 +221,10 @@ type OperationLineageEnvelope = {
 };
 ```
 
-每个事实行和 batch 都必须保留 `actionId`、`runId`、`attemptId`、`participantId`、
-`workflowStepId`、`sourceRefs`。主 feed 中的事实至少有一个同 thread 的
+每个执行事实行和 batch 都必须保留 `actionId`、`runId`、`attemptId`、`participantId`、
+`workflowStepId`、`sourceRefs`。`approval` 是独立的控制事实，始终保留
+`approvalId`；只有它确实关联某个执行动作时才填写 `actionId/runId/attemptId`，不得
+为了满足 UI 猜造 action。主 feed 中的执行事实至少有一个同 thread 的
 `conversation_item` anchor。缺 anchor、跨 thread 或缺必填 lineage 时，事实仍可
 出现在 audit/detail，但主 feed 只能显示 `diagnostic(blocked)`。
 
@@ -278,9 +305,14 @@ type ToolCallItem = ConversationTimelineItemBase & OperationLineageEnvelope & {
   readonly detailRef?: ConversationOperationSourceRef;
 };
 
-type ApprovalItem = ConversationTimelineItemBase & OperationLineageEnvelope & {
+type ApprovalItem = ConversationTimelineItemBase & {
   readonly kind: "approval";
   readonly approvalId: string;
+  readonly actionId?: string;
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly participantId?: string;
+  readonly workflowStepId?: string | null;
   readonly title: string;
   readonly decision?: "allowed" | "denied" | "expired" | "cancelled";
 };
@@ -316,13 +348,29 @@ type SubAgentActivityItem = ConversationTimelineItemBase & {
 type ActivityBatchItem = ConversationTimelineItemBase & OperationLineageEnvelope & {
   readonly kind: "commandBatch" | "explorationBatch";
   readonly actionIds: readonly string[];
-  readonly children: readonly (CommandExecutionItem | ExplorationItem)[];
+  readonly childActionIds: readonly string[];
+  readonly childItemIds: readonly string[];
+  /** Display-only payload; children remain atomic facts and are never nested batches. */
+  readonly batch: CommandBatchPayload | ExplorationBatchPayload;
 };
 
 type DiagnosticItem = ConversationTimelineItemBase & {
   readonly kind: "diagnostic";
-  readonly code: "missing_lineage" | "scope_mismatch" | "revision_conflict"
-    | "nested_depth_exceeded" | "unknown_item";
+  /** Closed UI reason; provider-specific codes stay behind diagnosticRef. */
+  readonly code:
+    | "missing_lineage"
+    | "missing_anchor"
+    | "scope_mismatch"
+    | "revision_conflict"
+    | "event_conflict"
+    | "stale_revision"
+    | "stale_or_duplicate"
+    | "markdown_parse_failed"
+    | "missing_context_source"
+    | "owner_conflict"
+    | "attempt_order_unknown"
+    | "nested_depth_exceeded"
+    | "unknown_item";
   readonly title: string;
   readonly detail?: string;
 };
@@ -360,7 +408,9 @@ type ConversationTimelineItem =
   | SubAgentActivityItem | ActivityBatchItem | DiagnosticItem;
 ```
 
-`ActivityBatchItem.children` 只能包含已投影的 atomic children，不能嵌套 batch。
+`ActivityBatchItem.batch` 只能引用已投影的 atomic children，不能嵌套 batch；实现层的
+`ConversationTimelineCommandBatchItem`/`ConversationTimelineExplorationBatchItem` 分别
+提供 `batch.commands`/`batch.children`，并同时保留 `childActionIds`、`childItemIds`。
 
 ### 5.7 Renderer 输入契约和稳定语义接口
 
@@ -591,6 +641,25 @@ type RunEvidenceEnvelope = {
 fold 前必须通过 provider/daemon adapter 的 discriminated-union 校验，未识别事件只
 能进入 audit diagnostic。
 
+### 7.6 事件接受矩阵
+
+实现不能让每个 SSE handler 自行决定“追加还是更新”。所有入口都按同一张表处理：
+
+| 输入 | Durable 行为 | 主 Timeline | Audit/diagnostic |
+| --- | --- | --- | --- |
+| 首个 `tool_start` | 创建 entity/action，`revision=1` | 创建一个 pending/running row | 无 |
+| 新 `tool_update` | 追加 bounded evidence，revision 增加 | 原 row 原地更新 | 完整输出仅 artifact |
+| 首个有效 `tool_end` | 写 terminal fence | 原 row 原地变为终态 | 无 |
+| 重复 `eventId` | 幂等忽略 | 不变 | 可计数，不生成第二 row |
+| 低 revision | 不覆盖 | 不变 | `stale_revision` |
+| equal revision 不同 payload | 不覆盖 | 不变 | `revision_conflict` |
+| terminal 后 update/end | 不 reopen | 不变 | `stale_or_duplicate` |
+| SSE reconnect replay | 按 id/revision fold | 保持同 row、focus、disclosure | 仅真实冲突可见 |
+| daemon restart replay | 从 SQLite 重建 | fingerprint 与重启前一致 | 旧 Host capability 失效 |
+
+这张表同时约束普通、私聊、频道和 child。surface adapter 只能提供 scope，不能改变
+事件接受规则。
+
 ## 8. 排序、lineage、owner 和完成
 
 ### 8.1 单 owner
@@ -740,12 +809,11 @@ type ConversationTimelineProps = {
 };
 
 type ConversationTimelineCallbacks = {
-  readonly onToggleDetail(id: string): void;
-  readonly onOpenTrustedFile(ref: ConversationOperationSourceRef): void;
-  readonly onOpenTrustedDiff(ref: ConversationOperationSourceRef): void;
-  readonly onRetry(actionId: string): void;
-  readonly onResolveApproval(approvalId: string, decision: "allow" | "deny"): void;
-  readonly onFocusSource(ref: ConversationOperationSourceRef): void;
+  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
+  readonly loadPreview?: (ref: ConversationOperationSourceRef) => Promise<unknown>;
+  readonly renderSubAgentAvatar?: (item: ConversationTimelineSubAgentItem) => ReactNode;
+  /** Surface controls are rendered in the owning fact-row disclosure. */
+  readonly renderFactActions?: (item: ConversationTimelineRowItem) => ReactNode;
 };
 ```
 
@@ -773,6 +841,7 @@ const RENDERERS: Record<ConversationTimelineItemKind, TimelineRenderer> = {
   approval: renderApproval,
   imageView: renderImage,
   contextCompaction: renderCompaction,
+  protocolEvent: renderProtocolEvent,
   subAgentActivity: renderSubAgent,
   commandBatch: renderCommandBatch,
   explorationBatch: renderExplorationBatch,
@@ -911,9 +980,10 @@ type ResolvedConversationSurface = {
 };
 
 type ConversationTimelineCallbacks = {
-  readonly openSourceRef?: (ref: ConversationTrustedSourceRef) => void;
+  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
   readonly loadPreview?: (ref: ConversationOperationSourceRef) => Promise<unknown>;
-  readonly renderParticipant?: (participantId: string, label: string) => ReactNode;
+  readonly renderSubAgentAvatar?: (item: ConversationTimelineSubAgentItem) => ReactNode;
+  readonly renderFactActions?: (item: ConversationTimelineRowItem) => ReactNode;
 };
 
 type ConversationTimelineMount = {
@@ -930,11 +1000,13 @@ type ConversationTimelineMount = {
 
 `mountConversationTimeline` 的实现顺序固定为：
 
-1. 校验 surface scope，并拒绝缺失 `threadId`/`workspaceId` 的 mount；
-2. 从同一 snapshot 取得 canonical atomic items；
-3. 调用唯一的 `batchCanonicalTranscriptItems` 生成可逆 display wrapper；
-4. 将 snapshot 和 callbacks 交给 `ConversationTimeline`，由 exhaustive registry 渲染；
-5. 同时计算 fingerprint，供 normal/private/channel/topic/branch/child 的 parity 测试使用。
+1. surface adapter 校验 scope，并拒绝缺失 `threadId`/`workspaceId` 的 snapshot；
+2. adapter 从同一 durable snapshot 生成 canonical atomic items；
+3. adapter 至多调用一次 `batchCanonicalTranscriptItems` 生成可逆 display wrapper；
+4. mount 将已经完成校验的 snapshot 和 callbacks 交给 `ConversationTimeline`，由
+   exhaustive registry 渲染；
+5. mount 同时计算 fingerprint，供 normal/private/channel/topic/branch/child 的 parity
+   测试使用。mount 不执行 I/O、排序、完成判断或 capability 签发。
 
 adapter 不得导出 renderer、排序器、batch 函数或第二个 scroll owner。它只能提供
 scope、policy、外围 chrome 和 Host callback。`node` 之外的 summary、TerminalReport、
@@ -957,6 +1029,10 @@ capability；不能根据路径字符串自行添加 `hostTarget`。renderer 只
 复制动作。normal、private、channel 和 child 都调用同一升级函数，不能各自实现
 `file://`、cwd 拼接或 callback 参数转换。
 
+特别是 action lineage helper 不得因为 `file target` 或字符串后缀就预填
+`hostTarget="open_file"`；只有 capability registry 返回的 opaque `capabilityId` 才能
+把 display-only ref 升级为 trusted ref。这样可以避免“看起来像文件”被误当成 Host 事实。
+
 #### 10.6.2 Surface parity invariant
 
 同一 fixture 在四个 surface 中必须满足：
@@ -971,6 +1047,24 @@ fingerprint.disclosureCount
 允许变化的只有 shell title、roster、participant rail 和 policy hints。任何新增差异
 必须先更新本节和对应的 parity fixture；不能通过在某个 route 增加临时 `MessageBubble`
 或 `WorkCell` 来“修”截图。
+
+### 10.7 UI 状态所有权
+
+为了避免同一结果在 Timeline、Composer、浮窗和右侧 dock 重复出现，UI 状态按所有者
+拆分：
+
+| 状态 | 唯一 owner | 是否持久化 | 能否证明完成 |
+| --- | --- | --- | --- |
+| item kind/status/revision/lineage | canonical snapshot | 是 | 是，仅 factual item |
+| batch membership | pure display projector | 否 | 否 |
+| disclosure/focus/scroll anchor | `ConversationTimeline` view state | 否 | 否 |
+| 输入草稿/附件/stop/approval control | Composer | 草稿按现有策略 | 否，approval decision 除外 |
+| 当前 active run 提示 | `EnvironmentPopover` | 否 | 否 |
+| 文件/命令完整详情 | owning row 或 trusted detail dock | durable ref | 只引用，不另判定 |
+
+`TerminalReport` 是 atomic evidence 的投影结论，不是第二份 action list；final
+`agentMessage` 解释结果，但不复制 command output、文件统计或 approval 控件。
+任何新 UI 区域若需要展示已有事实，必须 focus/open owning row，而不是复制正文。
 
 ## 11. 内容和视觉语义
 
@@ -1072,6 +1166,24 @@ apps/desktop
 禁止 shared UI 读取 SQLite、解析 raw SSE、调用 provider、做审批或完成判断。禁止
 surface route 自己维护 `WorkCell`、`MessageBubble` 或第二个 renderer map。
 
+### 13.1 迁移策略：保留事实，替换投影
+
+本轮不是重写 SQLite、Run 或 provider session。迁移采用 adapter-first cutover：
+
+```text
+existing ConversationItem / RunEvent / ExecutionAction
+  -> strict snapshot adapter（先新增并测试）
+  -> shared projector + Timeline（与旧 caller 并行对比 fingerprint）
+  -> normal/private/channel/child 逐一切换 mount
+  -> 删除旧 WorkCell/activity renderer 的 production caller
+  -> 删除只为旧 renderer 服务的兼容 selector/state
+```
+
+允许短期并存的是“旧 caller 与新 Timeline 的测试对照”，不允许用户界面同时渲染
+两份结果。因为产品尚未开源和发布，不保留旧 renderer 的运行时 feature flag；旧
+SQLite 行通过 strict adapter 读取，缺 lineage 时 fail closed。每个 surface cutover
+必须先有 parity fixture，再删除旧 caller，避免一次性大改后无法定位语义回归。
+
 ## 14. 验收标准
 
 - 同一 fixture 在 normal/private/channel/topic/branch/child 得到相同 item kind、顺序、
@@ -1095,8 +1207,214 @@ surface, threadId, turnId, itemId, kind, actionId, runId, attemptId,
 participantId, workflowStepId, revision, status, rendererKey, sourceRefIds
 ```
 
-缺少任一 required lineage 的事实不得被测试标成 succeeded；只能标成
-`blocked`/`diagnostic`，并保留可修复的 source ref。
+缺少任一 required lineage 的执行事实不得被测试标成 succeeded；只能标成
+`blocked`/`diagnostic`，并保留可修复的 source ref。未关联执行动作的 approval 以
+`approvalId` 作为自己的 authority，不得被强行补成 command evidence。
+
+## 14.2 实现级契约（v3.5 增量）
+
+本节把“Codex 风格、简单好看”收敛为实现者可以直接照着写的边界。它不新增
+SQLite 表，也不引入第二套 session；只是把现有 durable records、daemon evidence
+和 shared Timeline 的交接格式固定下来。若实现与本节冲突，先更新本节，再改代码。
+
+### 14.2.1 Snapshot、identity 和刷新
+
+`ConversationTimeline` 只接受一个不可变 `TimelineSnapshot`。surface adapter 必须在
+一次渲染周期内提供同一份 snapshot，禁止分别读取 message、action、approval 再在 JSX
+中拼接：
+
+```ts
+type TimelineSnapshot = {
+  readonly scope: {
+    readonly kind: "normal" | "private" | "channel_root" | "topic" | "branch" | "child";
+    readonly threadId: string;
+    readonly parentThreadId: string | null;
+    readonly anchorItemId: string | null;
+    readonly depth: 0 | 1;
+  };
+  readonly items: readonly ConversationTimelineItem[];
+  readonly activeRun: ActiveRunSnapshot | null;
+  readonly canonicalRevision: number;
+  readonly sseCursor: string | null;
+  readonly contextSegmentIdByItemId: ReadonlyMap<string, string>;
+};
+```
+
+`workspaceId` 仍然是 `ResolvedConversationSurface` 和 Host capability scope 的必填字段，
+但不重复放进 renderer-only 的 `ConversationTimelineScope`；surface adapter 在创建 snapshot
+前完成 workspace/thread 一致性校验。实现包中的字段名保持如下对应关系，避免设计字段
+和 TypeScript DTO 形成第二套语义：`TimelinePosition.sequence` 对应
+`ConversationTimelineItemBase.threadSequence`，`TimelinePosition.conversationItemId`
+对应 `itemId`，而 `partIndex` 保持不变。本文中的 `ConversationSurfacePolicy` 是产品层
+别名，代码统一使用 `ConversationInteractionPolicy`。
+
+`ActiveRunSnapshot` 的最小形状固定如下；它只驱动 EnvironmentPopover，不证明 action
+完成：
+
+```ts
+type ActiveRunSnapshot = {
+  readonly runId: string;
+  readonly status: "pending" | "working" | "waiting" | "reconnecting";
+  readonly workspaceLabel: string;
+  readonly cwd: string | null;
+  readonly branch: string | null;
+  readonly modelLabel: string | null;
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
+};
+```
+
+`ActiveRunSnapshot.status="working"` 是 ambient chrome 文案；事实行仍使用
+`ConversationTimelineItemStatus="running"` 并显示 `Working`。两者指向同一 run，但
+Popover 不拥有 action status，也不能据此完成 TerminalReport。
+
+稳定 identity 的规则是：
+
+```text
+conversation item  -> item.id
+execution fact     -> actionId（同一 action 的 DOM id 永不改变）
+participant span   -> participantSpan.id
+display batch      -> batch kind + participantId + runId + firstActionId
+```
+
+`revision` 只表示同一 identity 的内容更新，不得用来生成新 row。接受的
+`tool_update` 必须触发该 identity 的 invalidation；React key、`data-conversation-timeline-id`
+和展开/focus 状态都保持不变。reconnect 或 daemon restart 只替换 snapshot，不得追加
+“恢复完成”气泡。
+
+### 14.2.2 Host capability 生命周期
+
+本地路径是否可点击不由 Markdown、`file://` 字符串或 `hostTarget` 文案决定，而由
+Host/daemon 签发的短期 capability 决定。流程固定为：
+
+```text
+模型/历史 path（只读）
+        │
+        ▼
+display ref：basename + tooltip + copy
+        │  Host 根据 durable artifact/file/diff 校验后签发
+        ▼
+trusted ref：capabilityId + scope + expiresAt
+        │  用户点击；Host 在 callback 前再次校验
+        ▼
+open_file / open_diff / open_artifact
+```
+
+能力契约：
+
+```ts
+type ConversationHostCapability = {
+  readonly capabilityId: string;       // opaque random id; never model supplied
+  readonly target: "open_file" | "open_diff" | "open_artifact";
+  readonly refId: string;
+  readonly scope: {
+    readonly workspaceId: string;
+    readonly threadId: string;
+    readonly runId: string;
+    readonly actionId: string;
+    readonly participantId: string;
+  };
+  readonly issuedAt: string;
+  readonly expiresAt: string;          // default <= 5 minutes
+  readonly daemonEpoch: string;        // restart invalidates old capabilities
+};
+```
+
+签发条件：路径经过 workspace realpath/symlink 校验，ref 与当前 thread/run/action/
+participant 一致，且 artifact/diff 已存在于 durable records。回调条件：重新读取
+当前 scope、permission 和 realpath，并检查 capability 未过期、`daemonEpoch` 未变化、
+`refId` 仍属于 action。`attemptId` 继续由 canonical item/source lineage 追踪；它不是
+workspace-file callback 的独立授权字段，因为 `actionId` 在当前 `runId` 内已经唯一。
+任一检查失败都显示 `diagnostic(blocked)`，不降级为路径跳转。
+daemon 重启后旧 capability 全部失效；Timeline 仍可恢复事实，用户再次点击时由
+adapter 重新申请 capability。这样既不持久化 token，也不会让历史截图成为授权凭据。
+
+### 14.2.3 频道 scope 与 protocol event
+
+频道协议事件必须绑定真实的 root `LingThread.id`。`channel:<channelId>` 只能作为日志
+或临时诊断字符串，禁止作为 Timeline scope、`threadId` 或 source ref：
+
+```text
+channel root  -> resolved rootThreadId（持久化 LingThread.id）
+topic         -> resolved topicThreadId + parentThreadId + anchorItemId
+branch        -> resolved branchThreadId + forkContextSnapshotId
+protocol row  -> owning threadId + anchorItemId + sourceRefs
+```
+
+`ChannelMessageRenderersInput` 必须提供 `channelRootThreadId`，或调用一个返回同等
+信息的 `resolveChannelThread` adapter。解析不到真实 id 时：
+
+1. 不渲染成功的 protocol fact；
+2. 生成 `diagnostic(scope_mismatch)`，保留 channel/activity source ref；
+3. UI 提供“重新加载频道”而不是静默使用 synthetic id。
+
+频道 root/topic/branch 的 adapter 只负责得到 `ResolvedConversationSurface`，随后走同一
+`mountConversationTimeline`。这样 decision、handoff、summary、workflow/task/run 生命周期
+虽然是 `protocolEvent`，仍然可以从 UI 行回链到实际 SQLite thread 和 anchor。
+
+### 14.2.4 Recovery 和 completion fence
+
+所有输入路径（初始 snapshot、SSE delta、reconnect replay、daemon restart replay）都
+经过同一个 evidence fold。验证顺序固定为：
+
+```text
+eventId 去重
+  -> entityId + revision 合并
+  -> terminal fence 检查
+  -> durable snapshot 更新
+  -> live invalidation
+  -> pure projector
+  -> display batch（可选）
+```
+
+以下状态永远由 atomic evidence 计算，而不是 visible rows：
+
+| 结论 | 必须存在 | 缺失时 |
+| --- | --- | --- |
+| command succeeded | `commandExecution` + exit/status + source ref | `blocked` |
+| participant completed | required participant terminal evidence | `waiting` |
+| participant blocked | structured blocked result + source ref | `blocked` |
+| TerminalReport/fan-in settled | 全部 required participant 结论 | 不发布 settled |
+| retry latest | 新 attempt terminal fence | 旧 attempt 仅 audit |
+
+`ready`、`done`、plan step、batch 数量、最后一个 SSE 或 Composer 文案都不能越过 fence。
+旧 attempt 的迟到 end/update 只写 audit diagnostic；主 lane 继续显示最新 attempt。
+
+### 14.2.5 视觉组件的最小组合
+
+实现只允许下面这一棵树，避免再次出现“外层一套、频道一套、子 Agent 一套”：
+
+```text
+ConversationSurfaceShell
+├─ Header / roster（surface chrome）
+├─ ConversationTimeline（唯一 scroll owner）
+│  ├─ document renderer：user/agent/reasoning/plan
+│  ├─ fact renderer：command/exploration/file/tool/approval/protocol/diagnostic
+│  ├─ batch renderer：display-only disclosure
+│  └─ sub-agent renderer：participant rail + Timeline(depth=1)
+├─ EnvironmentPopover（只绑定 active action）
+└─ Composer（输入、停止、重试、approval control）
+```
+
+首屏只保留三种视觉重量：正文自然排版、事实轻量行、需要处理的状态 tint。事实行
+固定为 `icon + 动作动词 + 文本状态 + 一个 disclosure`；成功历史默认收敛，active/
+failed/waiting/blocked 才展开 bounded detail。Composer、EnvironmentPopover、
+TerminalReport 都不得复制事实正文或输出。子 Agent 只增加 participant label 和 1px
+rail，不能改变 renderer key、row height、字体或 scroll owner。
+
+### 14.2.6 实现完成判定
+
+“代码写完”必须同时通过四层证据，任何一层缺失都不能宣布完成：
+
+1. **Contract**：closed union、strict lineage、真实 `LingThread.id`、Host capability 和
+   exhaustive registry typecheck 通过。
+2. **Semantic**：同一 fixture 在 normal/private/channel/topic/branch/child 的 kind、
+   order、status、renderer key、disclosure count 和 stable id 一致。
+3. **Recovery**：retry、SSE reconnect、daemon restart、approval 和 fan-in 从 durable
+   atomic evidence 收敛到同一 fingerprint。
+4. **Packaged UI**：真实 macOS 客户端保存 screenshot、semantic-state、lineage、
+   redacted logs 四件套；mock 或浏览器截图只能标为 simulation。
+
+视觉 review 只检查是否符合 document/fact/nested 的简单层级，不能覆盖前面三层失败。
 
 ## 15. 已冻结的决策
 
@@ -1110,6 +1428,17 @@ participantId, workflowStepId, revision, status, rendererKey, sourceRefIds
 8. 所有 surface 和 depth-1 子 Agent 通过同一个 timeline mount/renderer registry；
    surface 只提供 scope、policy、chrome 和 Host callbacks。
 9. 普通消息使用 document lane；动作使用 fact rail；任何旧 workflow skeleton、第二
-   summary owner 或 route-local renderer 都不属于 v3.3。
+    summary owner 或 route-local renderer 都不属于 v3.5。
+10. 频道 protocol event 必须使用真实 `LingThread.id`；禁止 `channel:<channelId>` 作为
+    Timeline scope。无法解析时 fail closed 为 `diagnostic(scope_mismatch)`。
+11. trusted file/diff/artifact ref 使用短期 Host capability；daemon restart 使旧 token
+    失效，事实仍从 SQLite 恢复，点击时重新签发。
+12. 所有 surface 与 depth-1 子 Agent 必须通过同一个 `mountConversationTimeline`，并以
+    semantic fingerprint、lineage 和真实 packaged macOS 证据验收。
+13. v3.5 只替换 transcript projection 和 renderer，不重写 durable SQLite/Run 数据；
+    旧 WorkCell 仅可作为迁移期对照，不能作为 production 第二 owner。
+14. “简单好看”固定为 document lane、fact rail、attention state 三档视觉重量；不得
+    为 normal/private/channel/child 新增 surface-specific row grammar。
 
-No unresolved design decisions.
+No unresolved design decisions for v3.5. Implementation deviations must update this
+document before code changes.

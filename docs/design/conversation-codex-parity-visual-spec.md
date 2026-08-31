@@ -1,6 +1,6 @@
 # Conversation Codex-Parity Visual Specification
 
-Status: normative visual contract v3.3
+Status: normative visual contract v3.5
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Related: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -101,6 +101,21 @@ ConversationSurfaceShell
 
 因此，“普通会话显示在右侧”“频道使用另一套卡片”都属于布局回归，而不是可接受的
 surface 差异。
+
+### 1.4 对齐、宽度和视觉重量
+
+Codex 风格的重点是阅读顺序，不是把所有内容都做成气泡：
+
+| 内容 | 对齐 | 首屏容器 | 允许的强调 |
+| --- | --- | --- | --- |
+| `userMessage` | 同一时间线内可右对齐作者块 | 无重边框的轻量文本块，最大 `min(760px, 82%)` | hover/edit 状态 |
+| `agentMessage` / `reasoning` / `plan` | 左对齐 | 文档流，无 card chrome | 标题/列表/代码自身层级 |
+| command/file/tool/approval | 左对齐、占满 timeline column | 28px+ fact row | active/attention tint |
+| depth-1 child | 左对齐，增加 rail + inset | 复用上面两类容器 | participant label |
+
+用户消息可以通过对齐表达作者身份，但不能变成大圆角方框；Agent 叙述和事实行不能被
+推到右侧。任何 surface 都不得通过 `justify-end`、独立 max-width 或 route CSS 改变同一
+item 的 renderer geometry。
 
 ## 2. Row grammar
 
@@ -240,6 +255,20 @@ row 保持可见；completed batch 不包含 active command。
 `Running node …`、`I will run …` 只能是叙述或 pending 状态，不能替代真实 command
 evidence。没有 command、exit 或 Host source ref 时使用 `Activity unavailable`，不伪造
 成功。
+
+动作标题由 typed payload 生成，不从模型叙述复制。标题模板固定为：
+
+| Kind | 动词模板 | 示例 |
+| --- | --- | --- |
+| command | `Run {commandSummary}` | `Run pnpm test` |
+| read | `Read {targetSummary}` | `Read src/parser.ts` |
+| search | `Search {querySummary}` | `Search "terminal fence"` |
+| file create/edit/delete | `{Created|Edited|Deleted} {basename}` | `Edited parser.ts` |
+| MCP/dynamic tool | `{toolVerb} {target}` | `Search GitHub issues` |
+| delegation | `Delegated to {participant}` | `Delegated to QA` |
+
+模板缺少可安全显示的参数时使用 tool label；不得退化成只有 `Running…`、`Done` 或
+provider 原始 JSON 的行。
 
 ## 5. 文件、路径和 diff
 
@@ -411,6 +440,82 @@ detail/popover，Enter 激活已授权的 file/diff ref。滚动容器只有一�
 - reconnect/restart：保留原 row 的状态，显示短暂 `Reconnecting` shell hint，恢复后
   原地清除 hint，不追加第二个 action。
 
+### 10.2 实现级视觉契约
+
+为了让实现和截图验收使用同一套语言，Timeline 的 DOM 结构固定为下面的最小形状。
+类名可以按现有代码命名，但语义属性和层级不能改变：
+
+```html
+<div data-conversation-timeline="true">
+  <article data-conversation-timeline-kind="agentMessage" class="document-item">
+    <div class="markdown-body">…</div>
+  </article>
+  <article data-conversation-timeline-kind="commandExecution"
+           data-conversation-timeline-status="running"
+           data-conversation-timeline-revision="3"
+           class="fact-row">
+    <span class="fact-icon" aria-hidden="true">▣</span>
+    <span class="fact-title">Run pnpm test</span>
+    <span class="fact-status">Working</span>
+    <button aria-expanded="true">Details</button>
+    <div class="fact-detail">…bounded output…</div>
+  </article>
+</div>
+```
+
+实现约束：
+
+1. `document-item` 不使用 fact-row 的边框、背景或右侧 action 区；正文最大宽度为
+   `760px`，段落/list/code/path 按 Markdown 语义排版。
+2. `fact-row` 是单列、全宽、最小高度 `28px` 的轻量行；首屏必须同时出现动作动词和
+   文本状态。唯一 disclosure 使用原生 `button`，详情仍是该 row 的子节点。
+3. active/attention 行只增加 tint、左侧状态标记和 bounded detail，不增加另一张卡；
+   成功历史默认折叠，1–2 个安全动作不强行套 batch 控件。
+4. `subAgentActivity` 只增加 `participant rail (1px)`、label 和 `8px` inset；child
+   row 的 icon、字体、状态文案和 disclosure 与父 timeline 完全相同。
+5. `EnvironmentPopover` 和 Composer 不得出现在 `[data-conversation-timeline]` 的历史
+   DOM 中，也不得复制其文本；它们只通过 stable id focus owning row。
+
+### 10.3 简洁视觉状态表
+
+同一事实行只允许以下状态表达，避免频道、私聊和普通会话各自发明文案：
+
+| 状态 | icon 语义 | 首屏文案 | 默认展开 |
+| --- | --- | --- | --- |
+| queued | clock | `Queued` | 否 |
+| working | spinner/terminal | `Working` | 是（bounded tail） |
+| waiting | shield | `Waiting for approval` | 是 |
+| succeeded | check | `Succeeded` | 否 |
+| failed | alert | `Failed` | 是 |
+| cancelled | stop | `Cancelled` | 否 |
+| blocked | lock/alert | `Activity unavailable` | 是 |
+
+状态颜色只作为 tint；文本、icon、`aria-label` 和 `data-*` 必须同时表达相同语义。
+同一 action 从 `working` 变为终态时只更新 status/revision，不改变 DOM id、行位置或
+用户当前展开状态。
+
+### 10.4 渲染组件拆分
+
+实现组件应按语义拆分，而不是按 surface 拆分：
+
+```text
+ConversationTimeline
+├─ DocumentItem
+│  ├─ MarkdownBody
+│  ├─ CodeBlock
+│  └─ LocalPathRef
+├─ TimelineFactRow
+│  ├─ FactIcon / FactTitle / FactStatus
+│  └─ FactDisclosure -> CommandDetail | DiffDetail | ToolDetail | ApprovalDetail
+├─ TimelineBatchRow -> exact atomic children
+└─ SubAgentActivity -> participant rail + ConversationTimeline(depth=1)
+```
+
+`NormalConversationFeed`、`TeammatePrivateChatFeed` 和频道组件只能传 items、policy、
+callbacks 和 shell chrome，不得各自拥有 `CommandRow`、`FileRow`、Markdown parser 或
+status copy。CSS token 也只从 shared timeline 导出；surface stylesheet 只能调整 header、
+roster、Composer 和页面边距。
+
 ## 11. 禁止的视觉回归
 
 - 叙述被重新包成方形 WorkCell/bubble；
@@ -446,3 +551,7 @@ logs.redacted.txt   app + daemon logs without secrets
 
 截图只证明视觉；semantic state 证明 item kind/status；lineage 证明事实来源。三者缺一
 不能称为“Codex 风格实现完成”。
+
+验收截图至少包含四个视角：普通会话 document + fact、私聊同 fixture、频道多 Agent
+nested rail、active/failed/approval attention state。只展示一个成功 command row 不足以
+证明共享组件、Markdown、批次、恢复和多 Agent 都已正确。

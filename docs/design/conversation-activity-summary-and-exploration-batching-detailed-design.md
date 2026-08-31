@@ -13,6 +13,15 @@ Related docs:
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 
+v3.5 note: this document defines only the pure, display-only batch projection. The
+canonical owner is `ConversationTimeline`; older `ConversationWorkCell` names below
+describe migration inputs and must not remain as a second production renderer.
+
+实现映射固定为：旧 `ConversationWorkCellItem` → canonical typed item →
+`commandBatch`/`explorationBatch` display wrapper。任何 summary、batch 或 disclosure
+都不能写回 `conversation_items`，也不能被 TerminalReport、fan-in 或
+`contextSegmentId` 读取。
+
 ## 1. Purpose
 
 Ling currently preserves each execution action as a visible operation row. That is
@@ -55,7 +64,7 @@ timeline or become another context authority.
 | `ConversationContextProjector` | permission-filtered context views and source refs | not changed by activity grouping |
 | Run / approval / artifact stores | execution and business facts | remain authoritative |
 | `ExecutionAction` and run events | tool action identity, status, and evidence | input to the row projection |
-| `ConversationWorkCell` | user-visible operation rendering | consumes the derived projection |
+| `ConversationTimeline` | user-visible operation rendering | consumes the derived projection |
 | Activity summary and batches | presentation state | reversible, derived, and non-canonical |
 
 Invariants:

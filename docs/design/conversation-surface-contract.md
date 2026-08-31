@@ -1,6 +1,6 @@
 # Conversation Surface Contract
 
-Status: active shell/policy contract; typed transcript authority is v3.1
+Status: active shell/policy contract; typed transcript authority is v3.5
 Date: 2026-06-28
 Updated: 2026-09-01
 Scope: normal conversation, channel root, channel branch, topic reply, teammate private
@@ -24,18 +24,32 @@ Related docs:
 - [Conversation Media Generation Tools](conversation-media-generation-tools.md)
 
 Typed item semantics, evidence ownership, renderer registry, batching, nested Agent
-presentation and completion gates are owned by the v3.1 documents above. This contract
+presentation and completion gates are owned by the v3.5 documents above. This contract
 only defines surface scope, shell chrome, composer policy and Host callback boundaries;
 it must not add a route-local transcript renderer or summary owner.
 
-## Typed transcript override (v3.0)
+## Typed transcript override (v3.5)
 
 For message, activity, command, file, tool, approval, child-agent, batching, and
-completion presentation, v3.0 is the current authority. This surface contract still
+completion presentation, v3.5 is the current authority. This surface contract still
 defines shell and product-policy differences, but it must not add a route-local
 renderer or second completion owner. Normal, teammate-private, and channel surfaces
 must mount the shared `ConversationTimeline`; channel-only differences are roster,
 topic/branch controls, and multi-Agent policy.
+
+Historical sections below still use `MessageRow`, `EvidenceBundlePanel` and
+`ConversationWorkCell` to describe the shipped pre-v3.5 baseline. They are migration
+inputs, not target renderers or independent fact owners. During the v3.5 cutover:
+
+- existing data adapters may be reused to create strict canonical items;
+- production activity rendering moves to the shared `ConversationTimeline` registry;
+- Composer, right dock and EnvironmentPopover may focus/open an owning row but may not
+  duplicate its action summary, output, approval control or completion state;
+- after all surface parity fixtures pass, production WorkCell/activity callers are
+  removed without a legacy renderer feature flag.
+
+If any later paragraph conflicts with this override, the v3.5 typed transcript design
+and visual specification win.
 
 2026-07-30 model ownership update: private chat still has no composer model picker. A
 user-created teammate uses its fixed model; a built-in teammate explicitly follows the
@@ -1329,25 +1343,25 @@ Detailed package boundaries, component migration map, renderer-slot strategy, de
 guards, and validation commands are defined in
 [Conversation UI Package Extraction Implementation Plan](./conversation-surface-contract-implementation-plan.md).
 
-## Open Decisions
+## v3.5 Decision Disposition
 
-No blocker remains for Slice 2A, the current 2B first pass, the focused Slice 2C guard,
-or the core-only Slice 3 extraction.
+The former open transcript decisions are resolved so implementation cannot preserve a
+second UI path by accident:
 
-Deferred decisions:
+- the floating activity surface becomes the shared `EnvironmentPopover` shell slot. It
+  shows only the current ambient run/action and never becomes a channel-only history or
+  summary panel;
+- no `turnId` or thread-level time/text fallback may attach work. Projection requires an
+  explicit turn-run/action relation and a same-thread conversation-item anchor;
+- thread work appears in its owning typed row. Full detail can open through a trusted
+  run/artifact ref; there is no separate thread summary strip;
+- production `ConversationWorkCell` activity rendering is removed after surface parity
+  cutover. Preview, file and diff primitives may later move packages without changing
+  the one Timeline/registry ownership;
+- semantic fingerprint tests are mandatory now. Packaged macOS screenshots plus
+  semantic state, lineage and redacted logs are the release gate; whether pixel snapshots
+  also run on every CI job is tooling policy, not a product-design blocker.
 
-- whether the right floating activity panel becomes a shared shell slot or remains
-  channel-only until the next visual pass,
-- whether `turnId` fallback can be enabled after an explicit turn-run relation and
-  regression tests exist,
-- whether thread-level work belongs under one selected row, a separate thread summary
-  strip, or only run/thread detail,
-- whether second-wave components such as `ConversationWorkCell`, evidence previews,
-  file chips, and code/diff renderers are dependency-clean enough for
-  `packages/conversation-ui-react`,
-- whether screenshot regression becomes mandatory in CI or stays local/manual until the
-  fixtures stabilize.
-
-The approved shared-capability phase has no implementation-blocking product decision.
 Latest-message editing retains current workspace state, stays in the same thread/branch,
 and hides superseded work from the default transcript while preserving audit evidence.
+There are no unresolved product or architecture decisions for the v3.5 implementation.
