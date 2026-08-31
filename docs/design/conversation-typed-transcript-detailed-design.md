@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.1；实现前冻结
+Status: normative design v3.2；实现前冻结
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -322,6 +322,34 @@ type ConversationTimelineItem =
 
 `ActivityBatchItem.children` 只能包含已投影的 atomic children，不能嵌套 batch。
 
+### 5.7 Renderer 输入契约和稳定语义接口
+
+渲染器只接收已经完成 scope、lineage、attempt 和 revision 校验的 item。它不接收
+raw SSE、SQLite handle 或 provider payload。每个 renderer 的输入和输出必须满足：
+
+```ts
+type TimelineRendererProps<T extends ConversationTimelineItem = ConversationTimelineItem> = {
+  readonly item: T;
+  readonly depth: 0 | 1;
+  readonly expanded: boolean;
+  readonly policy: ConversationSurfacePolicy;
+  readonly callbacks: ConversationTimelineCallbacks;
+};
+
+type TimelineSemanticAttrs = {
+  readonly id: `conversation-timeline-${string}`;
+  readonly kind: ConversationTimelineItemKind;
+  readonly status?: string;
+  readonly revision: number;
+  readonly depth: 0 | 1;
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
+};
+```
+
+DOM 必须同时暴露 `data-conversation-timeline-id`、`kind`、`status`、`revision` 和
+`depth`。这些属性是测试和诊断接口，不是权限输入。renderer 不得从 `item.content`
+推断动作状态，也不得根据 surface 名称切换另一套视觉组件。
+
 ## 6. 持久化、上下文和 session 边界
 
 Ling 采用“全部历史持久化、按需投影”的模型，而不是最近 8 条平铺消息：
@@ -493,6 +521,36 @@ fold(snapshot, delta):
 - fold 不依赖内存 batch、可见行数、最后一条 SSE 或模型 ready 文本；
 - 对同一 durable snapshot 重放两次，得到的 item fingerprint 必须完全相同。
 
+### 7.5 事件幂等键和冲突处理
+
+每个 Host 事件都必须带有稳定 `eventId`、`entityId`、`actionId`、`revision`、
+`sequence` 和 `emittedAt`。`eventId` 用于去重，`entityId + revision` 用于同一 action
+的版本合并；`emittedAt` 只能用于诊断，不能参与排序。
+
+```ts
+type RunEvidenceEnvelope = {
+  readonly eventId: string;
+  readonly entityId: string;
+  readonly actionId: string;
+  readonly runId: string;
+  readonly attemptId: string;
+  readonly participantId: string;
+  readonly workflowStepId: string | null;
+  readonly sequence: number;
+  readonly revision: number;
+  readonly kind: "tool_start" | "tool_update" | "tool_end";
+  readonly payload: unknown; // decoded and validated before fold
+  readonly emittedAt: string;
+};
+```
+
+处理顺序固定为：先按 `eventId` 去重，再按 `entityId + revision` 做幂等合并，最后
+按 `sequence` 投影。相同 `eventId` 的 payload 不一致是 `diagnostic(event_conflict)`；
+相同 entity 的 equal revision 不同 payload 是 `diagnostic(revision_conflict)`。这两类
+冲突都不能覆盖已接受事实，也不能让 UI 产生第二个 action row。`payload` 在进入
+fold 前必须通过 provider/daemon adapter 的 discriminated-union 校验，未识别事件只
+能进入 audit diagnostic。
+
 ## 8. 排序、lineage、owner 和完成
 
 ### 8.1 单 owner
@@ -597,6 +655,27 @@ explorationBatch:{participantId}:{runId}:{attemptId}:{firstActionId}
 `batch.actionId = actionIds[0]` 只是显示锚点，不是新事实。batch revision 是 child
 revision 的最大值；completion/fan-in 永远读取 child actions。
 
+### 9.5 批次拆分的确定性算法
+
+批次投影使用单次线性扫描，任何边界都先 flush 再处理当前 item。边界判定不读取
+文案、不读取可见行数，且返回可审计的 `splitReason`：
+
+```text
+for item in atomic:
+  if item is not eligible: flush("kind_or_status")
+  else if lineage(item) != lineage(openBatch): flush("lineage")
+  else if item.sequence != previous.sequence + 1: flush("non_adjacent")
+  else if consequential(item): flush("consequential")
+  append(item)
+flush("end")
+```
+
+`splitReason` 只存在 projection/debug 结果，不落 SQLite，也不显示给普通用户。
+它必须在 component test 中覆盖 agent/run/attempt/workflow step、approval、失败、
+取消、retry、resume、repair、validation、write/edit、commit/push、deploy、MCP、
+browser、artifact、handoff 和缺 source ref 等边界。active item 永远单独显示，不能
+被已经打开的 batch 吸收。
+
 ## 10. 统一渲染架构
 
 ```text
@@ -683,6 +762,21 @@ type TimelineFingerprint = {
 
 同一 fixture 在 normal/private/channel/topic/branch/child 的 fingerprint 必须一致；允许
 变化的只有 surface chrome（标题、roster、mention policy）和 depth-1 participant rail。
+
+### 10.3 Scroll、focus 和 disclosure 不变量
+
+`ConversationTimeline` 是唯一的 scroll owner，并以稳定 item id 保存 anchor：
+
+1. 用户距离底部超过 24px 时，新的 agentMessage 或 tool_update 不得抢滚动位置；
+2. 用户在底部时，新增内容只通过一个 `requestAnimationFrame` 贴底，不能由多个
+   `useEffect` 重复 `scrollTo`；
+3. resize、字体加载或 batch 展开只修正当前 anchor 的相对偏移，不跳到历史顶部；
+4. SSE reconnect、daemon restart 和 retry 只能更新同一 id 的 row，不得触发第二个
+   scroll container；
+5. focus 在 disclosure、trusted file action 和 retry 后仍保持可见，`Escape` 关闭
+   detail/popover 后回到 owning row。
+
+这些规则属于 shared timeline，不允许 normal/private/channel 各自实现一份滚动逻辑。
 
 ## 11. 内容和视觉语义
 
@@ -796,6 +890,19 @@ surface route 自己维护 `WorkCell`、`MessageBubble` 或第二个 renderer ma
 - batch 可以展开恢复原子 child；不会改变 completion、fan-in 或 context semantics。
 - packaged macOS 真实客户端完成命令、文件、审批、失败、取消、retry、SSE reconnect、
   daemon restart、多 Agent fan-in 和 nested narration 验收。
+
+### 14.1 证据可追溯性
+
+任何 UI 截图都必须能通过 `semantic-state.json → item.id → sourceRefs → SQLite/Host
+record` 反查。验收脚本输出以下 fingerprint：
+
+```text
+surface, threadId, turnId, itemId, kind, actionId, runId, attemptId,
+participantId, workflowStepId, revision, status, rendererKey, sourceRefIds
+```
+
+缺少任一 required lineage 的事实不得被测试标成 succeeded；只能标成
+`blocked`/`diagnostic`，并保留可修复的 source ref。
 
 ## 15. 已冻结的决策
 

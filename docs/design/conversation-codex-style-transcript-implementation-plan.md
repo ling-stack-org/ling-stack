@@ -1,6 +1,6 @@
-# Codex-style Typed Transcript v3.1：实现计划
+# Codex-style Typed Transcript v3.2：实现计划
 
-Status: implementation plan；设计 v3.1 已冻结，等待设计分支合并后开工
+Status: implementation plan；设计 v3.2 已冻结，等待设计分支合并后开工
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -12,6 +12,23 @@ Visual contract: [Conversation Codex-Parity Visual Specification](conversation-c
 本计划把“好看”限定为可验证的工程约束：文档流不套重卡片，事实行有明确动作和
 状态，详情原地 disclosure，三种会话及 depth-1 子 Agent 使用同一 renderer fingerprint。
 任何视觉优化都不能改变 item kind、顺序、lineage、completion 或 context 语义。
+
+## 1.1 开工前置条件（S0 不写业务代码）
+
+设计 PR 合并后，先建立一个从同一 `origin/main`/design commit 派生的干净实现 worktree，
+记录 Node、pnpm、Xcode/macOS target、当前测试基线和 commit SHA。现有 dirty checkout
+与历史实验 worktree 不作为实现输入；候选实现只能按 commit 审查后 cherry-pick。
+
+S0 的唯一产物是 contract/fixture/selector 的失败测试和边界清单：
+
+| 产物 | 最小内容 | 通过条件 |
+| --- | --- | --- |
+| contract fixture | 六种 surface、成功/失败/等待/blocked/retry | 所有 item 有 anchor/lineage |
+| semantic selector | id/kind/status/revision/depth/source ref | registry exhaustive |
+| evidence matrix | start/update/end、重连、重启、fan-in | 明确 atomic owner |
+| visual snapshot | document/fact/nested/approval | 无方形 bubble/重复 summary |
+
+S0 不引入 feature flag，也不保留旧 renderer 兼容分支；测试先失败是预期的设计闸门。
 
 ## 1. 成功标准
 
@@ -82,6 +99,25 @@ Host snapshot/SSE
 再改代码。若现有字段无法满足 strict envelope，新增的是 contract adapter 或诊断，
 不能在 projector 中填充猜测值。
 
+### 3.2 实现文件地图
+
+第一轮实现按以下顺序寻找入口，避免在大型 surface 文件里重新堆逻辑：
+
+1. `packages/conversation-ui-core/src/`：item union、纯 projector、排序、batch、
+   fingerprint 和 fixture；
+2. `packages/daemon/src/features/runs/`：evidence envelope、fold、revision、terminal
+   fence、snapshot/replay 和 invalidation；
+3. `apps/web/src/shared/conversation/timeline/`：registry、document lane、fact row、
+   batch disclosure、nested depth、semantic attributes；
+4. `apps/web/src/shared/conversation/`：trusted file/diff adapter 和 source refs；
+5. `apps/web/src/features/workspace/NormalConversationFeed.tsx`、
+   `apps/web/src/features/teammates/TeammatePrivateChatFeed.tsx`、
+   `apps/web/src/features/workspace/ChannelMessageRenderers.tsx`：只保留 surface adapter；
+6. `apps/desktop/`：packaged shell、daemon lifecycle、Host callback 和真实证据采集。
+
+任何文件若同时承担 projection、renderer、approval 或 scroll ownership，先拆边界再
+继续改；不要以“临时兼容”把旧 WorkCell 逻辑塞回 shared timeline。
+
 ## 4. 依赖顺序和交付闸门
 
 ```text
@@ -94,6 +130,9 @@ R0 baseline
   -> S5 recovery + packaged macOS
   -> R8 ship gate
 ```
+
+每个阶段都必须满足“代码、语义测试、视觉/恢复证据”三件套才可进入下一阶段。单元
+测试通过但 semantic fingerprint 不一致，或截图漂亮但 lineage 缺失，都视为阶段失败。
 
 ### S0 / R1：contract 和 fixture 冻结
 
@@ -134,6 +173,10 @@ participantId/workflowStepId/sourceRefs`；无 action 的叙述 item 仍保留 `
 3. 第一个 durable end 是 terminal fence；迟到事件保留 diagnostic/source ref；
 4. 每个接受的 revision 触发 live invalidation，拒绝 stale/equal-conflict；
 5. daemon restart/SSE replay 可以重建相同 action state。
+
+**实现细节**：eventId 先去重，entityId+revision 再合并，terminal fence 后只写 audit；
+`tool_update` 的 accepted revision 必须触发同一 `data-conversation-timeline-id` 的
+invalidation，禁止以追加 message 的方式“看起来有输出”。
 
 **测试**
 
@@ -202,6 +245,10 @@ channel/topic/branch/child 产生相同 `rendererKeys`、kind、status text、di
 只允许 shell title、roster、participant rail 和 policy hints 不同。`ConversationTimeline`
 是唯一 scroll owner，nested depth=1 不得创建新的 `overflow:auto`。
 
+**Codex 风格 review gate**：document lane 不得有 fact-row 外框；fact row 首屏必须有
+动词 + 状态；成功历史默认收敛；active/failed/approval 只展开一层；同一 action 不得
+同时出现在 message、WorkCell、TerminalReport 和 Composer。
+
 ### S4 / R7：surface cutover
 
 所有 surface 只保留 adapter：
@@ -239,6 +286,20 @@ adapter 不允许按 kind 自己分支；`ConversationTimeline` 只接 canonical
 脱敏日志；只有 mock/API 截图时，状态标记为 `simulation`，不能宣称 packaged acceptance。
 SSE reconnect 与 daemon restart 必须在 action 仍为 running 时执行，恢复后比较 action
 fingerprint、terminal fence 和 scroll owner，而不是只看最终文字。
+
+## 4.1 按 PR 的实现切片
+
+| PR/提交 | 内容 | 不包含 |
+| --- | --- | --- |
+| P0 docs | 本组三份设计、fixture 形状、selector 契约 | 业务代码 |
+| P1 evidence | envelope、fold、revision、restart/replay | renderer/layout |
+| P2 projection | canonical projector、attempt/owner、batch | React/CSS |
+| P3 timeline | registry、Markdown/code/path、fact row、nested | route cleanup |
+| P4 surfaces | normal/private/channel/child adapter cutover、删除旧 caller | 新事实模型 |
+| P5 recovery | SSE、daemon restart、retry、approval、fan-in | 视觉重构 |
+| P6 packaged QA | macOS package、真实案例、证据 tuple | mock-only 结论 |
+
+每个 PR 只引入一条 ownership 变化，并在 PR 描述中列出旧 caller、删除项和回滚边界。
 
 ## 5. 回归矩阵
 
@@ -307,7 +368,7 @@ thread/run/attempt、测试输入和是否为 simulation。全量 Web E2E 若含
 
 ## 7. Commit 形状
 
-1. `docs(transcript): lock codex-style v3.1 design`
+1. `docs(transcript): lock codex-style v3.2 design`
 2. `feat(transcript): fold execution evidence and revisions`
 3. `feat(transcript): project canonical items and reversible batches`
 4. `refactor(web): adopt shared timeline renderer registry`
@@ -336,4 +397,5 @@ renderer 和大范围 route cleanup 混成一个不可审查提交。
 - [ ] packaged macOS 每个案例有完整证据 tuple。
 - [ ] `git diff --check`、相关单测、E2E、typecheck、build 全绿。
 
-未决设计：无。实现偏差必须先更新详细设计再改代码。
+未决设计：无。实现偏差必须先更新详细设计再改代码；任何与 Codex 风格相冲突的“临时
+兼容”都必须作为明确的 blocked decision 提交，而不是静默保留旧渲染路径。
