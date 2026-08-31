@@ -592,13 +592,20 @@ test("data display primitives preserve identity, comparison, and inspector seman
     { open: true, summary: "2 files", title: "Evidence" },
     "Inspector content",
   ));
+  const plainInspectorHtml = renderToStaticMarkup(createElement(
+    InspectorSection,
+    { appearance: "plain", title: "Advanced profile" },
+    "Plain inspector content",
+  ));
 
   assert.match(rowHtml, /class="ling-ui-data-row"/u);
   assert.match(rowHtml, /data-selected="true"/u);
   assert.match(tableHtml, /class="ling-ui-table-container"/u);
   assert.match(tableHtml, /scope="col"/u);
-  assert.match(inspectorHtml, /<details open="" class="ling-ui-inspector-section">/u);
+  assert.match(inspectorHtml, /<details open="" class="ling-ui-inspector-section" data-appearance="divided">/u);
   assert.match(inspectorHtml, /Inspector content/u);
+  assert.match(plainInspectorHtml, /data-appearance="plain"/u);
+  assert.match(plainInspectorHtml, /Plain inspector content/u);
 });
 
 test("capability control keeps actions and persistent issues in an anchored owner", () => {

@@ -175,6 +175,19 @@ test("macOS normal-conversation and channel headers are draggable while their co
   await expect(channelMenu).toBeHidden();
   await expect(channelMenuTrigger).toBeFocused();
   await captureIfRequested(page, testInfo.outputPath("channel.png"));
+
+  await channelMenuTrigger.click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  const channelSettingsTitle = channelHeader.locator(".channel-settings-header-title");
+  await expect(channelSettingsTitle.locator("small")).toHaveCount(0);
+  await expect(channelHeader).not.toContainText("#Engineering");
+  await expect.poll(async () => ({
+    headerCenter: await roundedCenterY(channelHeader),
+    titleCenter: await roundedCenterY(channelSettingsTitle),
+  })).toEqual({
+    headerCenter: 24,
+    titleCenter: 24,
+  });
 });
 
 test("macOS Settings and Media stay below or inside the shared titlebar", async ({ page }, testInfo) => {

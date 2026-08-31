@@ -8,11 +8,12 @@ import {
   SegmentedControlItem,
   Select,
 } from "../../shared/ui/index.js";
+import type { ChannelNotificationLevel } from "../../lib/channel-notifications.js";
 import type { ChannelFormState, ProviderPreset } from "../../types.js";
 import { ChannelNameField } from "./ChannelNameField.js";
 import { ChannelExecutionModeSummary, ProviderPresetOptions } from "./WorkspaceControls.js";
 
-export type ChannelNotificationLevel = "all" | "mentions" | "muted";
+export type { ChannelNotificationLevel } from "../../lib/channel-notifications.js";
 
 const channelNotificationLevels: readonly ChannelNotificationLevel[] = ["all", "mentions", "muted"];
 

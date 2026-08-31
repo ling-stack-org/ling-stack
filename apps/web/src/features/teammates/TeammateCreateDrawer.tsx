@@ -2,7 +2,7 @@ import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
 import { ArrowLeft, Check, Plus, Settings } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useI18n } from "../../i18n.js";
-import { canUseConversationProvider, providerPreflightReady } from "../../lib/providers.js";
+import { canUseConversationProvider, providerCompactModelLabel, providerPreflightReady } from "../../lib/providers.js";
 import type { AvatarTone } from "../../shared/components/index.js";
 import {
   Button,
@@ -163,7 +163,7 @@ export function TeammateCreateDrawer({
       avatarTone: selectedTemplate ? undefined : avatarTone,
       avatarFile: selectedTemplate ? undefined : avatarFile,
       providerPresetId,
-      modelLabel: selectedProvider ? `${selectedProvider.displayName} / ${selectedProvider.model}` : t("No model selected"),
+      modelLabel: selectedProvider ? providerCompactModelLabel(selectedProvider) : t("No model selected"),
       channelIds: selectedChannelIds,
     };
   }

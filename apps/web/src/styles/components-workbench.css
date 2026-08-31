@@ -245,6 +245,9 @@
 }
 
 .channel-activity-tools {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-5);
   max-height: min(46vh, 420px);
   overflow: auto;
 }

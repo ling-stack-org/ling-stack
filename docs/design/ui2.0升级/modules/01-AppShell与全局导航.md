@@ -61,6 +61,8 @@ Composer 草稿、运行状态或主题。
   视觉中心统一为 `y=24px`。Web 的开关位于顶部行左端；Windows 的开关与自绘窗口按钮同属该行。
 - 当前页面 Header 通过共享 titlebar surface slot 进入同一行；Sidebar、workspace body 和 inspector
   从该行下方开始。任何平台不得保留页面内重复 Header、空白占位行或绝对定位浮动按钮。
+- 频道设置、频道环境和队友私聊设置的 titlebar 只显示一行页面标题，不重复显示正文已经表达的频道名或
+  队友名。页面标题、图标和操作统一使用 `y=24px` 中心线；删除副标题后不得保留两行高度或顶部偏移。
 - 展开态 titlebar 左段和 Sidebar 使用同一 `background.sidebar`；收起态 compact rail 继续使用
   `background.sidebar`，workspace 从 `x=48px` 开始。Ling 只显示已有可用行动，不复制无真实状态的 Codex Back、Forward、
   Search、Notification 或菜单控件。

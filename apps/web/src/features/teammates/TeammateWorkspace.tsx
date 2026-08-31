@@ -1701,7 +1701,6 @@ export function TeammateWorkspace({
       ) : (
         <DesktopTitlebarSurface>
         <TeammateSettingsHeader
-          teammateName={settingsForm.displayName.trim() || teammate.displayName}
           profileActive={activeTab === "profile"}
           profileDirty={profileController.profileDirty}
           savingProfile={profileController.savingProfile}

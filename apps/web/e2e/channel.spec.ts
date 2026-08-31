@@ -634,7 +634,10 @@ test("channel team metrics stay in settings without a conversation expert summar
   await page.getByRole("menuitem", { name: "Settings" }).click();
   await page.getByRole("tab", { name: "Health" }).click();
   const teamMetrics = page.getByRole("region", { name: "Team metrics" });
-  await expect(teamMetrics).toContainText("attention needed");
+  await expect(teamMetrics).toHaveAttribute("data-health-state", "attention_needed");
+  await expect(teamMetrics.locator(".channel-team-metrics-health")).toHaveCount(0);
+  await expect(teamMetrics.getByRole("region", { name: "Risk review" })).toContainText("Risk1");
+  await expect(teamMetrics.getByRole("region", { name: "Learning queue" })).toContainText("Recommendation1");
   await expect(teamMetrics).toContainText("Architect checked boundaries.");
 });
 
@@ -832,11 +835,11 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
 
 test("narrow channel viewport keeps the conversation column usable", async ({ page }) => {
   await useEnglishLocale(page);
-  await page.setViewportSize({ width: 390, height: 844 });
   const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
+  await page.setViewportSize({ width: 390, height: 844 });
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed).toBeVisible();
@@ -1541,6 +1544,9 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.getByRole("menuitem", { name: "Environment" }).click();
   const environmentPage = page.locator(".channel-environment-page");
   await expect(environmentPage).toBeVisible();
+  await expect(page.locator(".channel-settings-top-title small")).toHaveCount(0);
+  await expect(environmentPage.locator(".channel-environment-page-header > div")).toHaveCount(0);
+  await expect(environmentPage).not.toContainText("#Engineering");
   await expect(environmentPage).toContainText("Local environment");
   await expect(environmentPage).toContainText("Worktree");
   await expect(environmentPage).toContainText("ling/channel-environment");
@@ -1550,6 +1556,26 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(environmentPage).toContainText("1 review item");
   await expect(environmentPage).toContainText("No browser evidence");
   await expect(environmentPage).toContainText("No sources");
+  await expect(environmentPage).toContainText("1 artifact");
+  await expect(environmentPage.locator(".channel-environment-metric")).toHaveCount(3);
+  await expect(environmentPage.locator('[data-environment-row="commit"]')).toBeVisible();
+  const environmentRows = environmentPage.locator(".channel-environment-list > .ling-ui-data-row");
+  const summaryLeftEdges = await environmentRows.locator(".ling-ui-data-row-summary").evaluateAll((elements) =>
+    elements.map((element) => Math.round(element.getBoundingClientRect().left)),
+  );
+  const statusLeftEdges = await environmentRows.locator(".ling-ui-data-row-status").evaluateAll((elements) =>
+    elements.map((element) => Math.round(element.querySelector(".ling-ui-status-indicator")!.getBoundingClientRect().left)),
+  );
+  const actionRightEdges = await environmentRows.locator(".ling-ui-data-row-actions").evaluateAll((elements) =>
+    elements.map((element) => Math.round(element.getBoundingClientRect().right)),
+  );
+  expect(new Set(summaryLeftEdges).size, `summary columns: ${summaryLeftEdges.join(", ")}`).toBe(1);
+  expect(
+    Math.max(...statusLeftEdges) - Math.min(...statusLeftEdges),
+    `status columns: ${statusLeftEdges.join(", ")}`,
+  ).toBeLessThanOrEqual(1);
+  expect(statusLeftEdges).toHaveLength(5);
+  expect(new Set(actionRightEdges).size, `action columns: ${actionRightEdges.join(", ")}`).toBe(1);
 
   const selectedEnvironmentPath = "/Users/example/workspace/projects";
   await environmentPage.getByRole("button", { name: "Change directory" }).click();
@@ -1571,6 +1597,16 @@ test("channel environment surface shows read-only context and opens review", asy
   const localEnvironment = environmentPage.locator('[data-environment-row="workspace"]');
   await expect(localEnvironment).toContainText("Local");
   await expect(localEnvironment).toContainText(selectedEnvironmentPath);
+  const environmentPath = localEnvironment.locator(".channel-environment-path");
+  await expect(environmentPath).toHaveAttribute("title", selectedEnvironmentPath);
+  await expect(environmentPath).toHaveCSS("white-space", "nowrap");
+  await expect(environmentPath).toHaveCSS("text-overflow", "ellipsis");
+  await expect(environmentPath).toHaveCSS("font-family", /mono/u);
+  await expect.poll(async () => {
+    const box = await environmentPath.boundingBox();
+    return Math.round(box?.height ?? 0);
+  }).toBeLessThanOrEqual(20);
+  await expect(localEnvironment.getByRole("button", { name: "Change directory" })).toBeVisible();
 
   await environmentPage.locator('[data-environment-row="commit"]').getByRole("button", { name: "Open" }).click();
   const dialog = page.getByRole("dialog", { name: "Commit or push" });
@@ -1663,6 +1699,8 @@ test("channel environment shows clean git state without review rows", async ({ p
   const environmentPage = page.locator(".channel-environment-page");
   await expect(environmentPage).toContainText("No code changes");
   await expect(environmentPage).toContainText("No review items");
+  await expect(environmentPage.locator('[data-environment-row="review"]')).toBeVisible();
+  await expect(environmentPage.locator(".channel-environment-page-header .ling-ui-status-indicator")).toContainText("Ready");
 });
 
 test("channel environment shows not-git-repo without fake clean state", async ({ page }) => {
@@ -1695,6 +1733,16 @@ test("channel environment shows not-git-repo without fake clean state", async ({
   const environmentPage = page.locator(".channel-environment-page");
   await expect(environmentPage).toContainText("Not a Git repository");
   await expect(environmentPage).not.toContainText("No code changes");
+  await expect(environmentPage.locator(".ling-ui-data-row")).toHaveCount(5);
+  await expect(environmentPage.locator('[data-environment-row="workspace"]')).toBeVisible();
+  await expect(environmentPage.locator('[data-environment-row="changes"]')).toBeVisible();
+  await expect(environmentPage.locator('[data-environment-row="review"]')).toBeVisible();
+  await expect(environmentPage.locator('[data-environment-row="branch"]')).toBeVisible();
+  await expect(environmentPage.locator('[data-environment-row="commit"]')).toBeVisible();
+  await expect(environmentPage.locator(".channel-environment-page-header .ling-ui-status-indicator")).toContainText("Ready");
+  await environmentPage.getByText("Evidence and output", { exact: true }).click();
+  await expect(environmentPage.locator(".channel-environment-evidence-grid")).toBeVisible();
+  await expect(environmentPage).toContainText("No linked resources");
 });
 
 test("channel environment treats git transport failure as unavailable", async ({ page }) => {
@@ -1720,6 +1768,9 @@ test("channel environment treats git transport failure as unavailable", async ({
   const environmentPage = page.locator(".channel-environment-page");
   await expect(environmentPage).toContainText("Git status unavailable");
   await expect(environmentPage).not.toContainText("No code changes");
+  await expect(environmentPage.locator(".channel-environment-page-header .ling-ui-status-indicator")).toContainText("Needs attention");
+  await expect(environmentPage.locator('[data-environment-row="changes"]')).toBeVisible();
+  await expect(environmentPage.locator('[data-environment-row="branch"]')).toBeVisible();
 });
 
 test("conversation motion respects reduced motion preference", async ({ page }) => {
@@ -3080,6 +3131,44 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
   expect(consoleMessages.filter((message) => !message.includes("Failed to load resource"))).toEqual([]);
 });
 
+test("channel council settings hide clear health and redundant compact status dots", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+  });
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.aiTeammates = [
+    createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Ling Engineer" }),
+    createMockTeammate({ id: "teammate_builtin_designer", displayName: "Ling Designer" }),
+    createMockTeammate({ id: "teammate_builtin_qa", displayName: "Ling QA" }),
+  ];
+  state.channelCouncilPolicies = [{
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    attachedCouncilIds: ["council_builtin_development"],
+    preferredCouncilId: "council_builtin_development",
+    createdAt: "2026-06-20T00:00:00.000Z",
+    updatedAt: "2026-06-20T00:00:00.000Z",
+  }];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
+  await settingsTabs.getByRole("tab", { name: "Councils" }).click();
+  const councils = page.getByLabel("Channel AI councils");
+  const council = councils.locator(".channel-council-card").filter({ hasText: "Development Council" });
+
+  await expect(council).toBeVisible();
+  await expect.poll(() => state.aiCouncilHealthRequestCount ?? 0).toBeGreaterThan(0);
+  await expect(councils.getByText("Health clear", { exact: true })).toHaveCount(0);
+  await expect(councils.getByLabel("Council health", { exact: true })).toHaveCount(0);
+  await expect(councils.locator(".channel-settings-section-head .ling-ui-status-indicator")).toHaveCount(0);
+  await expect(council.locator(".ling-ui-data-row-status")).toHaveCount(0);
+  await expect(council.getByRole("button", { name: "Preferred" })).toBeVisible();
+});
+
 test("channel message feed renders AI teammate avatar images", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -3510,8 +3599,10 @@ test("channel settings manage workspace binding", async ({ page }) => {
   await settingsTabs.getByRole("tab", { name: "Workspace" }).click();
   const workspaceSettings = page.getByLabel("Channel workspace settings");
   const workspaceControl = workspaceSettings.getByLabel("Channel workspace");
-  await expect(workspaceControl).toContainText("Local");
-  await expect(workspaceControl.locator(".channel-workspace-control-head .status-badge")).toHaveCount(0);
+  const workspaceMode = workspaceControl.locator(".channel-workspace-mode-label");
+  await expect(workspaceMode).toHaveText("Local");
+  await expect(workspaceControl.locator(".ling-ui-status-indicator")).toHaveCount(0);
+  await expect(workspaceControl.locator(".channel-workspace-summary")).toHaveCount(0);
   const executionPathInput = workspaceSettings.getByLabel("Execution path");
   const manualExecutionPath = "/tmp/manual-channel-path";
   await executionPathInput.fill(manualExecutionPath);
@@ -3548,7 +3639,7 @@ test("channel settings manage workspace binding", async ({ page }) => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.mode : "";
   }).toBe("managed_worktree");
-  await expect(workspaceControl).toContainText("Worktree");
+  await expect(workspaceMode).toHaveText("Worktree");
 
   await workspaceControl.getByPlaceholder("External workspace path").fill("/tmp/external-channel-workspace");
   await workspaceControl.getByRole("button", { name: "Hand off to External" }).click();
@@ -3556,14 +3647,14 @@ test("channel settings manage workspace binding", async ({ page }) => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.executionPath : "";
   }).toBe("/tmp/external-channel-workspace");
-  await expect(workspaceControl).toContainText("External");
+  await expect(workspaceMode).toHaveText("External");
 
   await workspaceControl.getByRole("button", { name: "Hand off to Local" }).click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.mode : "";
   }).toBe("local");
-  await expect(workspaceControl).toContainText("Local");
+  await expect(workspaceMode).toHaveText("Local");
 });
 
 test("channel more menu renames the selected channel", async ({ page }) => {

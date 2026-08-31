@@ -59,6 +59,7 @@ import {
 import { useI18n, type Translate } from "../../i18n.js";
 import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
+import { isChannelNotificationLevel } from "../../lib/channel-notifications.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
 import {
@@ -111,6 +112,7 @@ import {
 import {
   canUseProviderForRun,
   isMediaProvider,
+  providerDisplaySourceLabel,
   providerPreflightReady,
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
@@ -1483,7 +1485,13 @@ export function WorkspaceClientView({
       description={providerBlocker}
       statusNode={<ChannelActiveStatusIndicator kind="provider-blocked" />}
       metaItems={[
-        { id: "provider", label: t("Provider"), value: effectiveProvider?.displayName ?? t("No model selected") },
+        {
+          id: "provider",
+          label: t("Provider"),
+          value: effectiveProvider
+            ? providerDisplaySourceLabel(effectiveProvider.displayName, effectiveProvider.model)
+            : t("No model selected"),
+        },
       ]}
       actions={[
         {
@@ -1854,7 +1862,6 @@ export function WorkspaceClientView({
       setSidePanelOpen(false);
       setChannelSettingsPageOpen(false);
       setChannelEnvironmentPageOpen(false);
-      setEnvironmentCommitDialogOpen(false);
       setProgressPopoverOpen(false);
       setSelectedApprovalId("");
       setCreateTaskOpen(false);
@@ -2044,7 +2051,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
   }, [selectedTask, selectedTaskId]);
 
@@ -2054,7 +2060,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     onSelectTask(taskId);
   }
@@ -2088,7 +2093,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     if (mode === "runtime") {
       onRefreshRuntime();
@@ -2104,7 +2108,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(channelHasProgressPopoverContent);
     setAttentionProgressExpanded(true);
     setCreateTaskOpen(false);
@@ -2118,7 +2121,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setCreateTaskOpen(false);
     setActiveWorkThreadId("");
@@ -2160,7 +2162,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -2396,7 +2397,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setActivityToolsOpen(false);
     setProgressPopoverOpen(false);
     setTeammateManagerOpen(false);
@@ -3552,7 +3552,6 @@ export function WorkspaceClientView({
     channelHeader.closeSearch();
     setChannelSettingsPageOpen(true);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setSidePanelOpen(false);
     setCreateTaskOpen(false);
     setConversationDetailOverlay(undefined);
@@ -3573,7 +3572,6 @@ export function WorkspaceClientView({
     channelHeader.closeSearch();
     setChannelEnvironmentPageOpen(true);
     setChannelSettingsPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setSidePanelOpen(false);
     setCreateTaskOpen(false);
     setConversationDetailOverlay(undefined);
@@ -3642,7 +3640,6 @@ export function WorkspaceClientView({
     onClearChannelFeedback("workspace", selectedChannel.id);
     setChannelRenameOpen(true);
     setChannelMoreOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setConversationDetailOverlay(undefined);
     setProgressPopoverOpen(false);
     setActivityToolsOpen(false);
@@ -3691,7 +3688,6 @@ export function WorkspaceClientView({
     setConversationDetailOverlay(undefined);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setWorkspaceSettingsOpen(false);
@@ -3708,7 +3704,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setConversationDetailOverlay(undefined);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -3735,7 +3730,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -3751,7 +3745,6 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
-    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -3767,18 +3760,23 @@ export function WorkspaceClientView({
       metrics={channelTeamMetricsState.metrics}
       labels={{
         title: t("Team metrics"),
-        subtitle: t("Read-only team activity and evidence"),
         evidence: t("Evidence"),
-        visibleEvidence: t("visible evidence"),
-        teamEvidence: t("team evidence"),
-        health: t("Health"),
+        current: t("Current"),
+        total: t("Total"),
         active: t("Active"),
         delayed: t("Delayed"),
         unavailable: t("Unavailable"),
         riskReview: t("Risk review"),
+        risk: t("Risk"),
+        warnings: t("Warnings"),
+        failed: t("Failed"),
+        critical: t("Critical"),
         learningQueue: t("Learning queue"),
+        recommendation: t("Recommendation"),
+        accepted: t("Accepted"),
+        rejected: t("Rejected"),
+        pending: t("Pending"),
         agentActivity: t("Agent activity"),
-        noAgentActivity: t("No agent evidence yet"),
       }}
     />
   ) : channelTeamMetricsError ? (
@@ -4020,7 +4018,6 @@ export function WorkspaceClientView({
       channelHeader.closeSearch();
       setChannelSettingsPageOpen(false);
       setChannelEnvironmentPageOpen(false);
-      setEnvironmentCommitDialogOpen(false);
       setProgressPopoverOpen(false);
     }
     setWorkspaceSettingsOpen(false);
@@ -4066,7 +4063,6 @@ export function WorkspaceClientView({
                   <SlidersHorizontal size={17} />
                   <strong>{t("Channel settings")}</strong>
                 </span>
-                <small>{selectedChannel?.name ? `#${selectedChannel.name}` : t("No channel selected")}</small>
               </div>
             </div>
           ) : channelEnvironmentPageOpen ? (
@@ -4080,7 +4076,6 @@ export function WorkspaceClientView({
                   <Command size={17} />
                   <strong>{t("Environment")}</strong>
                 </span>
-                <small>{selectedChannel?.name ? `#${selectedChannel.name}` : t("No channel selected")}</small>
               </div>
             </div>
           ) : (
@@ -4159,7 +4154,6 @@ export function WorkspaceClientView({
                         setProgressPopoverOpen(false);
                         setChannelSettingsPageOpen(false);
                         setChannelEnvironmentPageOpen(false);
-                        setEnvironmentCommitDialogOpen(false);
                         setTeammateManagerOpen(false);
                       }}
                     >
@@ -4262,7 +4256,6 @@ export function WorkspaceClientView({
             setChannelSettingsPageOpen(false);
             channelHeader.closeSearch();
             setChannelEnvironmentPageOpen(false);
-            setEnvironmentCommitDialogOpen(false);
             setCreateTaskOpen(false);
             setChannelMoreOpen(false);
             setActivityToolsOpen(false);
@@ -4279,7 +4272,6 @@ export function WorkspaceClientView({
             }
             setChannelSettingsPageOpen(false);
             setChannelEnvironmentPageOpen(false);
-            setEnvironmentCommitDialogOpen(false);
             setCreateTaskOpen(false);
             setChannelMoreOpen(false);
             setActivityToolsOpen(false);
@@ -4386,7 +4378,6 @@ export function WorkspaceClientView({
         ) : channelEnvironmentPageOpen ? (
           <ChannelEnvironmentPage
             summary={channelEnvironmentSummary}
-            channelName={selectedChannel?.name}
             workspacePickerCwd={cwd}
             onChangeWorkspacePath={changeChannelEnvironmentWorkspacePath}
             onOpenReview={() => openRightDockPage("review")}
@@ -4734,10 +4725,6 @@ function clearSavedChannelNotificationLevel(cwd: string, channelId: string): voi
 
 function channelNotificationStorageKey(cwd: string, channelId: string): string {
   return `ling-stack.channelNotifications.${encodeURIComponent(cwd)}.${encodeURIComponent(channelId)}`;
-}
-
-function isChannelNotificationLevel(value: string | null | undefined): value is ChannelNotificationLevel {
-  return value === "all" || value === "mentions" || value === "muted";
 }
 
 function resolveChannelWorkspaceBinding(channel: Channel, cwd: string): ChannelWorkspaceBinding {

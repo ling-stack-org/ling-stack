@@ -213,7 +213,6 @@
   padding: 0;
 }
 
-.teammate-profile-settings-stack > .teammate-danger-panel,
 .teammate-tools-permissions-panel > .teammate-mcp-panel {
   padding-top: var(--ling-space-8);
   border-top: 1px solid var(--ling-border-default);
