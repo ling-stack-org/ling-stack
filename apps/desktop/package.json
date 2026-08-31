@@ -66,10 +66,10 @@
     "@types/react-dom": "^19.2.4",
     "ajv": "8.20.0",
     "ajv-formats": "3.0.1",
-    "electron": "^43.1.1",
+    "electron": "^44.0.0",
     "electron-builder": "^26.15.3",
     "esbuild": "^0.28.1",
-    "resedit": "3.0.2",
+    "resedit": "3.1.0",
     "vite": "^8.2.1"
   },
   "build": {
