@@ -20,6 +20,7 @@
     "@ling-stack/browser-host": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/core": "workspace:*",
+    "@ling-stack/localization": "workspace:*",
     "@ling-stack/plugin-sdk": "workspace:*",
     "@ling-stack/providers": "workspace:*",
     "@ling-stack/remote-protocol": "workspace:*",
@@ -31,6 +32,7 @@
     "officeparser": "7.8.0",
     "pdf-parse": "2.4.5",
     "pptxgenjs": "4.0.1",
+    "shell-quote": "1.10.0",
     "ws": "^8.21.0",
     "xlsx-populate": "1.21.0"
   },

@@ -676,7 +676,7 @@ export interface ChannelExecutionProposal {
   readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
   readonly requiredTools: readonly RunTool[];
   readonly riskSummary?: string;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly shaping?: ChannelRequirementShaping;
   readonly status: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
@@ -698,7 +698,7 @@ export interface CreateChannelExecutionProposalRequest {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly RunTool[];
   readonly riskSummary?: string;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly shaping?: ChannelRequirementShaping;
 }
 
@@ -710,7 +710,7 @@ export interface UpdateChannelExecutionProposalRequest {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly RunTool[];
   readonly riskSummary?: string | null;
-  readonly responseLanguage?: ResponseLanguage | null;
+  readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly shaping?: ChannelRequirementShaping | null;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string | null;

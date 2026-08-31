@@ -25,6 +25,7 @@ import {
   type TerminalReportSurface,
 } from "@ling-stack/core";
 import type { ChannelIntentExecutionOperationV1 } from "@ling-stack/contracts";
+import { formatSynchronousCatalogMessage, isSupportedLocale } from "@ling-stack/localization";
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 import { redactEvidenceText } from "./context-processing/evidence.js";
 import { inferUserLanguage } from "./response-language.js";
@@ -70,7 +71,10 @@ export function collectWorkflowTerminalReportEvidence(
 ): TerminalReportEvidenceSnapshot {
   const evidence = buildWorkflowEvidence(store, workflowId);
   const terminalState = workflowTerminalState(evidence.workflow.status);
-  const language = options.language ?? evidence.workflow.metadata?.responseLanguage ?? "en-US";
+  const configuredLanguage = evidence.workflow.metadata?.responseLanguage;
+  const language = options.language ?? (isSupportedLocale(configuredLanguage)
+    ? configuredLanguage
+    : inferUserLanguage(evidence.workflow.objective || evidence.workflow.title));
   const budgets = resolveBudgets(options.budgets);
   const sourceRef = sourceRefFor("workflow", evidence.workflow.id, evidence.workflow.title);
   const packetArtifactIds = new Set(evidence.steps.flatMap((item) => item.packetArtifacts.map((artifact) => artifact.id)));
@@ -993,7 +997,7 @@ function surfaceForThread(kind: string | undefined, channelId: string | undefine
 function languageForRun(run: RunSession, fallbackText?: string): TerminalReportLanguage | undefined {
   if (isRecord(run.requestSnapshot)) {
     const value = run.requestSnapshot.responseLanguage;
-    if (value === "zh-CN" || value === "en-US") {
+    if (isSupportedLocale(value)) {
       return value;
     }
   }
@@ -1089,9 +1093,11 @@ function boundedItems<T>(
     id: `terminal-report-truncated:${name}`,
     severity: "warning",
     status: "unverified",
-    summary: language === "zh-CN"
-      ? `${name} 证据从 ${items.length} 条截断为 ${limit} 条。`
-      : `${name} evidence was truncated from ${items.length} to ${limit} items.`,
+    summary: formatSynchronousCatalogMessage(language, "terminal_report.evidence.truncated", {
+      name,
+      total: items.length,
+      limit,
+    }),
     sourceRefs: [sourceRef],
   });
   return items.slice(0, limit);

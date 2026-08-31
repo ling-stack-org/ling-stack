@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { SupportedLocale } from "@ling-stack/localization";
 
 export const terminalReportSchemaVersion = 1 as const;
 
@@ -6,7 +7,7 @@ export type TerminalReportSurface = "normal_conversation" | "channel" | "teammat
 export type TerminalReportSourceKind = "workflow" | "run" | "turn";
 export type TerminalReportOutcomeStatus = "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
 export type TerminalReportRecordStatus = "draft" | "validating" | "committed" | "fallback" | "failed";
-export type TerminalReportLanguage = "zh-CN" | "en-US";
+export type TerminalReportLanguage = SupportedLocale;
 export type TerminalReportCheckStatus = "passed" | "failed" | "blocked" | "cancelled" | "skipped" | "not_run" | "unknown";
 export type TerminalReportParticipantStatus = "completed" | "failed" | "blocked" | "cancelled";
 export type TerminalReportRiskSeverity = "info" | "warning" | "critical";

@@ -296,7 +296,7 @@ test("failed edit actions never become changed paths", async () => {
   }
 });
 
-test("terminal evidence infers legacy conversation language when the run snapshot has no language", async () => {
+test("terminal evidence infers the user language when a legacy run has no language snapshot", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-language-fallback-"));
   const store = createSqliteRunStore(cwd);
   try {

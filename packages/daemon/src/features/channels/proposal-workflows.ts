@@ -3,7 +3,7 @@ import {
   type Channel,
   type ChannelExecutionProposal,
   type ChannelExecutionProposalStep,
-  type ResponseLanguage,
+  type ResponseLanguagePreference,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type RunStore,
@@ -411,7 +411,7 @@ function stepPrompt(
   ownedOperations: readonly ChannelIntentExecutionOperationV1[] = [],
 ): string {
   const responseLanguage = proposalResponseLanguage(proposal);
-  const operationBinding = renderOwnedOperationBinding(ownedOperations, responseLanguage);
+  const operationBinding = renderOwnedOperationBinding(ownedOperations);
   return [
     `Confirmed proposal:\n${proposal.title}`,
     `Overall scope:\n${proposal.prompt}`,
@@ -435,7 +435,6 @@ function stepPrompt(
 
 function renderOwnedOperationBinding(
   operations: readonly ChannelIntentExecutionOperationV1[],
-  responseLanguage: ResponseLanguage,
 ): string | undefined {
   if (operations.length === 0) return undefined;
   const lines = operations.map((operation) => {
@@ -450,15 +449,11 @@ function renderOwnedOperationBinding(
         : "";
     return `- ${operation.id}: ${operation.kind} -> ${target}${dependency}${command}`;
   });
-  const header = responseLanguage === "zh-CN"
-    ? "Host 已物化的操作绑定（这是完成判定的权威，不是显示建议）："
-    : "Host-materialized operation bindings (authoritative for completion, not display advice):";
-  const rule = responseLanguage === "zh-CN"
-    ? "只能执行自己拥有的操作。标记为 exact command 的命令必须逐字执行；不能用语义等价的替代命令。若无法按绑定执行，返回结构化 blocked，不要用 ready 或叙述文本代替。"
-    : "Execute only the operations owned by this step. An exact command must be run exactly; do not substitute a semantically equivalent command. If the binding cannot be executed, return structured blocked instead of ready text or narration.";
+  const header = "Host-materialized operation bindings (authoritative for completion, not display advice):";
+  const rule = "Execute only the operations owned by this step. An exact command must be run exactly; do not substitute a semantically equivalent command. If the binding cannot be executed, return structured blocked instead of ready text or narration.";
   return [header, ...lines, rule].join("\n");
 }
 
-function proposalResponseLanguage(proposal: ChannelExecutionProposal): ResponseLanguage {
-  return proposal.responseLanguage ?? (/[\u3400-\u9fff]/u.test(`${proposal.title}\n${proposal.prompt}`) ? "zh-CN" : "en-US");
+function proposalResponseLanguage(proposal: ChannelExecutionProposal): ResponseLanguagePreference {
+  return proposal.responseLanguage ?? "en-US";
 }

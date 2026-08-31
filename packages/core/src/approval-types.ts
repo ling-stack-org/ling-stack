@@ -26,6 +26,26 @@ export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
 
+export const approvalDecisionKinds = ["approve_once", "approve_command_rule", "deny"] as const;
+export type ApprovalDecisionKind = (typeof approvalDecisionKinds)[number];
+
+export interface ApprovalCommandRuleProposal {
+  readonly prefix: readonly string[];
+  readonly display: string;
+  readonly fingerprint: string;
+  readonly version: 1;
+}
+
+export interface ApprovalCommandRule extends ApprovalCommandRuleProposal {
+  readonly id: string;
+  readonly workspaceId: string;
+  readonly toolName: "bash";
+  readonly sourceApprovalId?: string;
+  readonly createdBy: "local-user";
+  readonly createdAt: string;
+  readonly revokedAt?: string;
+}
+
 export type RuntimePermissionRequestKind =
   | "core_tool"
   | "write_scope"
@@ -221,6 +241,10 @@ export interface ApprovalRequest {
   readonly resolvedAt?: string;
   readonly resolvedBy?: "local-user";
   readonly decisionReason?: string;
+  readonly availableDecisions?: readonly ApprovalDecisionKind[];
+  readonly proposedCommandRule?: ApprovalCommandRuleProposal;
+  readonly decisionKind?: ApprovalDecisionKind;
+  readonly decisionRuleId?: string;
 }
 
 export interface CreateApprovalRequestInput {
@@ -238,11 +262,15 @@ export interface CreateApprovalRequestInput {
   readonly payload: ApprovalPayload;
   readonly expiresAt?: string;
   readonly extraSecrets?: readonly (string | undefined)[];
+  readonly availableDecisions?: readonly ApprovalDecisionKind[];
+  readonly proposedCommandRule?: ApprovalCommandRuleProposal;
 }
 
 export interface ResolveApprovalRequestInput {
   readonly reason?: string;
   readonly resolvedBy?: "local-user";
+  readonly decisionKind?: Extract<ApprovalDecisionKind, "approve_once" | "approve_command_rule">;
+  readonly proposedRuleFingerprint?: string;
 }
 
 export interface ListApprovalRequestsOptions {
@@ -283,4 +311,8 @@ export const approvalActionTypes: readonly ApprovalActionType[] = [
 
 export function createApprovalRequestId(): string {
   return `approval_${randomUUID()}`;
+}
+
+export function createApprovalCommandRuleId(): string {
+  return `approval_rule_${randomUUID()}`;
 }

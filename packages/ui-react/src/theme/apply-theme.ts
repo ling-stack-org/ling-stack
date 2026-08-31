@@ -80,7 +80,11 @@ export function applyResolvedTheme(root: HTMLElement, resolved: ResolvedThemeSta
 export function verifyThemeSentinel(root: HTMLElement, resolved: ResolvedThemeState): boolean {
   if (typeof getComputedStyle !== "function") return true;
   const computed = getComputedStyle(root).getPropertyValue("--ling-bg-app").trim();
-  return computed.length > 0 && normalizeCssValue(computed) === normalizeCssValue(resolved.variableMap["--ling-bg-app"]);
+  return computed.length > 0 && cssValuesAreEquivalent(
+    root,
+    computed,
+    resolved.variableMap["--ling-bg-app"],
+  );
 }
 
 function legacyPreference(resolved: ResolvedThemeState): string {
@@ -97,6 +101,25 @@ function nextAnimationFrame(): Promise<void> {
 
 function normalizeCssValue(value: string): string {
   return value.replace(/\s+/gu, " ").trim().toLowerCase();
+}
+
+function cssValuesAreEquivalent(root: HTMLElement, actual: string, expected: string): boolean {
+  const normalizedActual = normalizeCssValue(actual);
+  const normalizedExpected = normalizeCssValue(expected);
+  if (normalizedActual === normalizedExpected) return true;
+
+  const probe = root.ownerDocument?.createElement("span");
+  if (!probe) return false;
+  const canonicalActual = canonicalCssColor(probe, actual);
+  const canonicalExpected = canonicalCssColor(probe, expected);
+  return canonicalActual !== undefined && canonicalActual === canonicalExpected;
+}
+
+function canonicalCssColor(probe: HTMLElement, value: string): string | undefined {
+  probe.style.color = "";
+  probe.style.color = value;
+  const canonical = normalizeCssValue(probe.style.color);
+  return canonical.length > 0 ? canonical : undefined;
 }
 
 interface CapturedThemeState {

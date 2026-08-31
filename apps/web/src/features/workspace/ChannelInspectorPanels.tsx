@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from "react";
 import { LingDaemonError } from "@ling-stack/api-client";
+import { isSupportedLocale, localeDescriptor } from "@ling-stack/localization";
 import {
   Check,
   CircleAlert,
@@ -12,6 +13,7 @@ import {
   Workflow,
 } from "lucide-react";
 import { useI18n, type Translate } from "../../i18n.js";
+import { SupportedLocaleOptions } from "../../i18n/SupportedLocaleOptions.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { correctChannelTurnContext, getChannelTurnContext } from "../../api.js";
 import { InlineFeedback, Select, useLingToast } from "../../shared/ui/index.js";
@@ -572,8 +574,7 @@ function ChannelProtocolEditor({
             >
               <option value="workspace">{t("Workspace default")}</option>
               <option value="follow_user">{t("Follow user")}</option>
-              <option value="zh-CN">{t("Chinese")}</option>
-              <option value="en-US">{t("English")}</option>
+              <SupportedLocaleOptions />
             </Select>
           </label>
           <div className="task-strip-head">
@@ -676,12 +677,7 @@ function responseLanguageLabel(value: NonNullable<Channel["responseLanguage"]>, 
   if (value === "follow_user") {
     return t("Follow user");
   }
-  if (value === "zh-CN") {
-    return t("Chinese");
-  }
-  if (value === "en-US") {
-    return t("English");
-  }
+  if (isSupportedLocale(value)) return localeDescriptor(value).nativeName;
   return t("Follow user");
 }
 

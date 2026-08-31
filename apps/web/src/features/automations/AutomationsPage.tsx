@@ -27,6 +27,7 @@ import { AutomationListPane } from "./AutomationListPane.js";
 import { AutomationScheduleDialog } from "./AutomationScheduleDialog.js";
 import { AutomationSchedulerSummary } from "./AutomationSchedulerSummary.js";
 import { AutomationWorkbenchHeader } from "./AutomationWorkbenchHeader.js";
+import { useDesktopTitlebarPlacement } from "../../app/DesktopTitlebarSurface.js";
 import { useAutomationsPageController } from "./useAutomationsPageController.js";
 
 export interface AutomationsPageProps {
@@ -75,6 +76,7 @@ export interface AutomationsPageProps {
 }
 
 export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element {
+  const titlebarPlacement = useDesktopTitlebarPlacement();
   const { t } = useI18n();
   const { showToast } = useLingToast();
   const controller = useAutomationsPageController({
@@ -135,7 +137,7 @@ export function AutomationsPage(props: AutomationsPageProps): React.JSX.Element 
   }
 
   return (
-    <div className="automations-inbox-page automation-ui2-page" data-automation-ui2-page>
+    <div className={`automations-inbox-page automation-ui2-page titlebar-${titlebarPlacement}`} data-automation-ui2-page>
       <AutomationWorkbenchHeader
         disabled={!props.cwd.trim()}
         summary={controller.summary}

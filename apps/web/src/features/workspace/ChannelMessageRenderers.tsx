@@ -764,6 +764,9 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             surface={channelSurface}
             className={message.status === "blocked" ? "channel-message-row blocked" : "channel-message-row"}
             authorType={message.authorType}
+            tone={message.authorType === "ai-teammate" && message.status === "blocked"
+              ? "chat-blocked"
+              : message.authorType === "system" ? "system" : "chat"}
             avatar={renderChannelMessageAvatar(message)}
             authorName={messageAuthorLabel(message, input.teammateOptions, input.t("Deleted teammate"), input.localUserDisplayName, input.allLocalTeammateById)}
             createdAtLabel={formatDateTime(message.createdAt)}
@@ -828,9 +831,9 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 ) : null}
               </>
             ) : null}
-            actionsNode={!editing && message.authorType === "ai-teammate"
+            actionsNode={!editing && message.status !== "blocked" && message.authorType === "ai-teammate"
               ? renderChannelAiMessageActions(message, message.body)
-              : !editing && message.authorType === "local-user"
+              : !editing && message.status !== "blocked" && message.authorType === "local-user"
                 ? (
                     <MessageActionBar
                       surface={channelSurface}

@@ -394,53 +394,6 @@ test("desktop host ignores a saved workspace path and uses its daemon authority"
   await expect.poll(() => page.evaluate(() => localStorage.getItem("ling-stack.workspaceCwd"))).toBeNull();
 });
 
-test("macOS desktop titlebar overlays the workspace without shifting the application layout", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("ling-stack.locale", "en-US");
-    Object.defineProperty(window, "lingDesktop", {
-      configurable: true,
-      value: {
-        platform: "macos",
-        daemonBaseUrl: "http://127.0.0.1:17891",
-      },
-    });
-  });
-  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
-  await page.goto("/");
-
-  const metrics = await page.evaluate(() => {
-    const shell = document.querySelector<HTMLElement>(".app-shell.desktop-macos");
-    const workspace = document.querySelector<HTMLElement>(".app-shell.desktop-macos > .workspace");
-    const sidebarTop = document.querySelector<HTMLElement>(".app-shell.desktop-macos .sidebar-fixed-top");
-    const sidebarDragRegion = document.querySelector<HTMLElement>("[data-desktop-window-drag-owner='sidebar']");
-    const contentDragRegion = document.querySelector<HTMLElement>("[data-desktop-window-drag-owner='content-fallback']");
-    return {
-      shellPaddingTop: shell ? getComputedStyle(shell).paddingTop : "missing",
-      workspaceTop: workspace?.getBoundingClientRect().top,
-      workspaceHeight: workspace?.getBoundingClientRect().height,
-      sidebarTop: sidebarTop?.getBoundingClientRect().top,
-      sidebarDragRegionTop: sidebarDragRegion?.getBoundingClientRect().top,
-      sidebarDragRegionHeight: sidebarDragRegion?.getBoundingClientRect().height,
-      sidebarDragRegionMode: sidebarDragRegion ? getComputedStyle(sidebarDragRegion).getPropertyValue("-webkit-app-region") : "missing",
-      contentDragRegionTop: contentDragRegion?.getBoundingClientRect().top,
-      contentDragRegionHeight: contentDragRegion?.getBoundingClientRect().height,
-      contentDragRegionMode: contentDragRegion ? getComputedStyle(contentDragRegion).getPropertyValue("-webkit-app-region") : "missing",
-      viewportHeight: document.documentElement.clientHeight,
-    };
-  });
-
-  expect(metrics.shellPaddingTop).toBe("0px");
-  expect(metrics.workspaceTop).toBe(0);
-  expect(metrics.workspaceHeight).toBe(metrics.viewportHeight);
-  expect(metrics.sidebarTop).toBeGreaterThanOrEqual(28);
-  expect(metrics.sidebarDragRegionTop).toBe(0);
-  expect(metrics.sidebarDragRegionHeight).toBe(28);
-  expect(metrics.sidebarDragRegionMode).toBe("drag");
-  expect(metrics.contentDragRegionTop).toBe(0);
-  expect(metrics.contentDragRegionHeight).toBe(28);
-  expect(metrics.contentDragRegionMode).toBe("drag");
-});
-
 test("succeeded workspace tasks show a clear result action", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });

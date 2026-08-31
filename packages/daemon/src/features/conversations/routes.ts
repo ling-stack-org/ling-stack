@@ -26,6 +26,7 @@ import type {
   SessionPermissionMode,
   WorkspaceAccessMode,
 } from "@ling-stack/contracts";
+import { formatServerCatalogMessage, isSupportedLocale } from "@ling-stack/localization";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
@@ -34,7 +35,7 @@ import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js"
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
-import { inferUserLanguage, responseLanguageInstruction } from "../channels/response-language.js";
+import { responseLanguageInstruction } from "../channels/response-language.js";
 import { parseChannelAttachmentRequest, readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
@@ -142,7 +143,6 @@ const permissionPresets: readonly PermissionPreset[] = ["read_only", "workspace_
 const permissionModes: readonly SessionPermissionMode[] = ["ask_everything", "balanced", "workspace_write", "full_access", "custom"];
 const authorizationModes: readonly AuthorizationMode[] = ["ask", "smart", "always"];
 const workspaceAccessModes: readonly WorkspaceAccessMode[] = ["read_only", "workspace_write", "full_access"];
-const responseLanguagePreferences: readonly ResponseLanguagePreference[] = ["follow_user", "zh-CN", "en-US"];
 
 export async function handleConversationStream(
   request: IncomingMessage,
@@ -621,10 +621,14 @@ function buildConversationRunRequest(input: {
   readonly attachmentMaterializations: ReadonlyMap<string, ConversationAttachmentMaterialization>;
 }): RunRequest {
   const toneInstruction = lingConversationToneInstruction(input.lingConversationTone);
-  const responseLanguage = resolveConversationResponseLanguage(input.input.responseLanguage, input.input.message.trim());
+  const responseLanguagePreference = input.input.responseLanguage ?? "follow_user";
+  const responseLanguage = resolveConversationResponseLanguage(
+    responseLanguagePreference,
+    input.input.message,
+  );
   const appendSystemPrompt = [
     toneInstruction,
-    responseLanguageInstruction(responseLanguage),
+    responseLanguageInstruction(responseLanguagePreference),
   ].filter((instruction) => instruction.trim());
   return {
     workspaceCwd: input.workspaceCwd,
@@ -804,26 +808,26 @@ function fallbackAssistantContent(status: ConversationTranscriptStatus, response
   }
   const language = resolveConversationResponseLanguage(responseLanguage, message);
   if (status === "cancelled") {
-    return language === "zh-CN" ? "这次运行已取消。" : "Ling Agent run was cancelled.";
+    return formatServerCatalogMessage(language, "daemon.conversation.cancelled");
   }
   if (status === "succeeded") {
-    return language === "zh-CN"
-      ? "模型没有返回可显示的内容，请重试或切换模型。"
-      : "The model returned no displayable content. Retry or choose another model.";
+    return formatServerCatalogMessage(language, "daemon.conversation.empty_result");
   }
   return conversationRunFailedContent(responseLanguage, message);
 }
 
 function conversationRunFailedContent(responseLanguage: ResponseLanguagePreference | undefined, message: string): string {
-  return resolveConversationResponseLanguage(responseLanguage, message) === "zh-CN"
-    ? "Ling 助手暂时无法完成这次请求。"
-    : "Ling Agent could not complete this request.";
+  return formatServerCatalogMessage(
+    resolveConversationResponseLanguage(responseLanguage, message),
+    "daemon.conversation.failed",
+  );
 }
 
 function conversationRunFailedBeforeStartContent(responseLanguage: ResponseLanguagePreference | undefined, message: string): string {
-  return resolveConversationResponseLanguage(responseLanguage, message) === "zh-CN"
-    ? "Ling 助手还没启动就遇到了问题，请稍后重试。"
-    : "Ling Agent run failed before it started.";
+  return formatServerCatalogMessage(
+    resolveConversationResponseLanguage(responseLanguage, message),
+    "daemon.conversation.failed_before_start",
+  );
 }
 
 function readRecord(value: unknown): Record<string, unknown> {
@@ -873,13 +877,14 @@ function readPermissionConfirmation(value: unknown): ConversationStreamRequest["
 }
 
 function readResponseLanguagePreference(value: string | undefined): ResponseLanguagePreference | undefined {
-  return value && responseLanguagePreferences.includes(value as ResponseLanguagePreference) ? value as ResponseLanguagePreference : undefined;
+  return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
-function resolveConversationResponseLanguage(responseLanguage: ResponseLanguagePreference | undefined, message: string): "zh-CN" | "en-US" {
-  return responseLanguage === "zh-CN" || responseLanguage === "en-US"
-    ? responseLanguage
-    : inferUserLanguage(message);
+function resolveConversationResponseLanguage(
+  responseLanguage: ResponseLanguagePreference | undefined,
+  _message: string,
+): Exclude<ResponseLanguagePreference, "follow_user"> {
+  return responseLanguage && responseLanguage !== "follow_user" ? responseLanguage : "en-US";
 }
 
 function buildConversationRunPrompt(

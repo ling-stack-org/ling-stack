@@ -58,9 +58,19 @@ for (const fixture of [
     await expect(teammateSettings).toBeVisible();
     await expect(settingsNavigation).toBeVisible();
     await expect(settingsNavigation.getByRole("button", { name: "Profile", exact: true })).toHaveAttribute("aria-current", "page");
-    await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Teammate settings" })).toBeVisible();
+    const settingsHeader = page.getByLabel("Single agent settings");
+    const settingsTitle = settingsHeader.locator(".teammate-settings-header-title");
+    await expect(settingsHeader.getByRole("heading", { name: "Teammate settings" })).toBeVisible();
+    await expect(settingsTitle.locator("small")).toHaveCount(0);
+    await expect(settingsHeader).not.toContainText("Ling Research Engineer");
+    await expect.poll(async () => {
+      const headerBox = await settingsHeader.boundingBox();
+      const titleBox = await settingsTitle.boundingBox();
+      if (!headerBox || !titleBox) return undefined;
+      return Math.round((titleBox.y + titleBox.height / 2) - (headerBox.y + headerBox.height / 2));
+    }).toBe(0);
     await expect(page.locator(".teammate-settings-summary-panel")).toHaveCount(0);
-    await expectChannelStyleSettingsShell(teammateSettings, settingsNavigation);
+    await expectChannelStyleSettingsShell(teammateSettings, settingsNavigation, settingsHeader);
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-teammate-settings.png`);
     await page.getByLabel("Single agent settings").getByRole("button", { name: "Back to private chat" }).click();
     await expect(header).toBeVisible();
@@ -136,7 +146,8 @@ for (const fixture of [
     await expect(feed).toContainText("private-architecture.pdf");
     await expectSearchContained(restoredHeader.getByRole("search", { name: "Search private messages" }), restoredHeader);
 
-    const headerTheme = await restoredHeader.evaluate((element) => {
+    const titlebarSurface = page.locator("[data-desktop-window-titlebar-surface='true']");
+    const headerTheme = await titlebarSurface.evaluate((element) => {
       const probe = document.createElement("span");
       probe.style.color = getComputedStyle(document.documentElement).getPropertyValue("--ling-bg-panel");
       document.body.append(probe);
@@ -353,8 +364,12 @@ async function expectCompactIdentityActions(identity: Locator): Promise<void> {
   expect(gap).toBeLessThanOrEqual(8);
 }
 
-async function expectChannelStyleSettingsShell(settings: Locator, navigation: Locator): Promise<void> {
-  const headerBox = await settings.getByLabel("Single agent settings").boundingBox();
+async function expectChannelStyleSettingsShell(
+  settings: Locator,
+  navigation: Locator,
+  header: Locator,
+): Promise<void> {
+  const headerBox = await header.boundingBox();
   const navigationBox = await navigation.boundingBox();
   const content = settings.locator(".teammate-settings-tab-content");
   const contentBox = await content.boundingBox();
@@ -365,7 +380,7 @@ async function expectChannelStyleSettingsShell(settings: Locator, navigation: Lo
   expect(contentBox).not.toBeNull();
   expect(firstTabBox).not.toBeNull();
   expect(lastTabBox).not.toBeNull();
-  expect(Math.round(headerBox!.height)).toBe(58);
+  expect(Math.round(headerBox!.height)).toBe(48);
   expect(Math.abs(firstTabBox!.y - lastTabBox!.y)).toBeLessThanOrEqual(1);
   expect(contentBox!.y).toBeGreaterThanOrEqual(navigationBox!.y + navigationBox!.height - 1);
   await expect(content).toHaveCSS("overflow-y", "auto");

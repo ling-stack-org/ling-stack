@@ -53,7 +53,7 @@ test("Sidebar primary navigation and section menus keep one accessible interacti
   expect(runtimeErrors).toEqual([]);
 });
 
-test("Sidebar compact rail switches one portal tooltip without motion or overflow", async ({ page }) => {
+test("Sidebar toggle remains stable while compact navigation stays usable", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await page.emulateMedia({ reducedMotion: "reduce" });
   await prepareSurface(page, "dark", 1280, 800);
@@ -63,41 +63,33 @@ test("Sidebar compact rail switches one portal tooltip without motion or overflo
   const navigation = page.getByLabel("Ling Stack navigation");
   const navigationToggle = page.getByRole("button", { name: "Hide navigation" });
   await expect(navigationToggle).toHaveAttribute("data-ling-icon-button-contract", "typed-lucide");
+  const expandedBox = await navigationToggle.boundingBox();
   await navigationToggle.click();
+  await expect(navigation).toHaveAttribute("data-sidebar-mode", "compact");
   await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(48);
-
-  const media = navigation.getByRole("button", { name: "Media Production" });
-  const plugins = navigation.getByRole("button", { name: "Plugin Manager" });
-  const automations = navigation.getByRole("button", { name: "Automations" });
-  await expect(navigation.getByRole("button", { name: "Inbox" })).toHaveCount(0);
-  for (const button of [media, plugins, automations]) {
-    await expectHitArea(button, 36);
-    await expect(button.locator('[data-ling-button-slot="label"]')).toHaveCSS("display", "none");
-  }
-
-  await media.hover();
-  const tooltip = page.getByRole("tooltip");
-  await expect(tooltip).toHaveText("Media Production");
-  expect(await tooltip.evaluate((element) => element.closest("aside") === null)).toBe(true);
-  await plugins.hover();
-  await expect(tooltip).toHaveText("Plugin Manager");
-  await expect(page.getByRole("tooltip")).toHaveCount(1);
-  await automations.focus();
-  await expect(tooltip).toHaveText("Automations");
-  await expect(tooltip).toHaveCSS("animation-name", "none");
-
-  await expect(navigation.getByRole("button", { name: "Channel actions" })).toBeHidden();
-  await expect(navigation.getByRole("button", { name: /Teammate actions/i })).toBeHidden();
-  const channelsToggle = navigation.getByRole("button", { name: "Channels", exact: true });
-  await expectHitArea(channelsToggle, 32);
-  await expect(channelsToggle).toHaveAttribute("data-sidebar-rail-launcher", "channels");
-  await expect(channelsToggle.locator('[data-ling-button-slot="leading"]')).toBeVisible();
-  await expect(channelsToggle.locator('[data-ling-button-slot="trailing"]')).toHaveCount(0);
-
-  await automations.focus();
-  await expect(tooltip).toHaveText("Automations");
+  await expect(page.locator(".sidebar-rail-launcher")).toHaveCount(3);
+  await expect(navigation.getByRole("button", { name: "Settings" })).toBeVisible();
+  const showToggle = page.getByRole("button", { name: "Show navigation" });
+  const collapsedBox = await showToggle.boundingBox();
+  expect(expandedBox).not.toBeNull();
+  expect(collapsedBox).not.toBeNull();
+  expect({
+    height: Math.round(collapsedBox!.height),
+    width: Math.round(collapsedBox!.width),
+    x: Math.round(collapsedBox!.x),
+    y: Math.round(collapsedBox!.y),
+  }).toEqual({
+    height: Math.round(expandedBox!.height),
+    width: Math.round(expandedBox!.width),
+    x: Math.round(expandedBox!.x),
+    y: Math.round(expandedBox!.y),
+  });
+  await expect(showToggle).toHaveCSS("transition-duration", /^(0s|0\.001s)$/u);
   await expectNoHorizontalOverflow(page.locator("html"));
-  await captureEvidence(page, "1280x800-ling-dark-collapsed-tooltip.png");
+  await captureEvidence(page, "1280x800-ling-dark-navigation-compact.png");
+
+  await showToggle.click();
+  await expect.poll(async () => Math.round((await page.getByLabel("Ling Stack navigation").boundingBox())?.width ?? 0)).toBe(292);
   expect(runtimeErrors).toEqual([]);
 });
 

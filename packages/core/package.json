@@ -62,6 +62,7 @@
   "dependencies": {
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/plugin-sdk": "workspace:*",
+    "@ling-stack/localization": "workspace:*",
     "yaml": "^2.9.0"
   }
 }

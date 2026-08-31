@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { getConversationMediaGenerationTargets } from "../../api/media.js";
 import { useI18n } from "../../i18n.js";
-import { providerPreflightReady } from "../../lib/providers.js";
+import { providerModelRouteLabel, providerPreflightReady } from "../../lib/providers.js";
 import { Select, StatusIndicator } from "../../shared/ui/index.js";
 import type {
   ConversationMediaGenerationTargetsResponse,
@@ -215,10 +215,8 @@ function targetOptionLabel(
   });
 }
 
-function providerPurposeLabel(provider: Pick<ProviderPreset, "displayName" | "model" | "providerId">): string {
-  return provider.providerId === "custom-openai-compatible"
-    ? provider.model.trim() || provider.displayName.trim()
-    : provider.displayName.trim() || provider.model.trim();
+function providerPurposeLabel(provider: ProviderPreset): string {
+  return providerModelRouteLabel(provider);
 }
 
 function mediaTargetRefKey(ref: MediaGenerationTargetRef): string {

@@ -4,7 +4,7 @@ import type { RunArtifact } from "./artifacts.js";
 import type { ChannelExecutionProposal, ChannelExecutionProposalStepSource, ChannelHandoff } from "./channels.js";
 import type { MemoryObject } from "./memory.js";
 import type { RunSession, RunnerFallbackReason, RunnerRequestSource } from "./runtime.js";
-import type { ResponseLanguage } from "./settings.js";
+import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunTool } from "./shared.js";
 import type { WorkflowParticipantProviderBindingV1 } from "./conversation-model-binding.js";
 import type { Task } from "./tasks.js";
@@ -968,7 +968,7 @@ export interface ChannelWorkflowMetadata {
   readonly workflowGraphFingerprint?: string;
   readonly requiredParticipantManifest?: RequiredParticipantManifestV1;
   readonly completionGate?: WorkflowCompletionGateV1;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
 }
 
 export type WorkflowStepExecutionVerificationStatusV1 = "pending" | "verified" | "blocked" | "failed";
