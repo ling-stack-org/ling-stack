@@ -1,5 +1,6 @@
 import { useMemo } from "react";
 import { ArrowDown, Copy, FileText, Image, Loader2, MessageSquare, Pencil, Plus, ThumbsDown, ThumbsUp } from "lucide-react";
+import { createConversationTimelineMessageItem, getConversationInteractionPolicy, type ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -17,6 +18,7 @@ import {
 } from "../../shared/components/index.js";
 import {
   ConversationAttachmentStrip,
+  ConversationTimeline,
   ConversationGeneratedMediaBlock,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
@@ -27,9 +29,8 @@ import {
   MessageEvidencePanel,
   MessageRow,
 } from "../../shared/conversation/index.js";
-import { ConversationWorkCell } from "../../shared/conversation/blocks/ConversationWorkCell.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import type { ConversationGeneratedMedia, TeammateDirectLinkPreview, TeammatePrivateAttachment } from "../../types.js";
+import type { ConversationGeneratedMedia, TeammateDirectLinkPreview, TeammateDirectMessage, TeammatePrivateAttachment } from "../../types.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import type { TeammatePrivateChatSurfaceProps } from "./teammate-private-chat-types.js";
 import {
@@ -39,8 +40,40 @@ import {
   teammateWebReferenceHost,
   teammateWorkspaceFileTarget,
 } from "./teammate-private-chat-view-models.js";
+import { conversationTimelineItemsForModel } from "../../lib/conversation-work-cell.js";
 import { formatBytes } from "./teammate-workspace-utils.js";
 import type { TeammatePrivateMessageController } from "./useTeammatePrivateMessageController.js";
+
+function privateMessageTimelineItems(input: {
+  readonly message: TeammateDirectMessage;
+  readonly body: string;
+  readonly facts: readonly ConversationTimelineItem[];
+}): readonly ConversationTimelineItem[] {
+  const messageItem = createConversationTimelineMessageItem({
+    id: `message:${input.message.authorType === "local-user" ? "user" : "agent"}:${input.message.id}`,
+    role: input.message.authorType === "local-user" ? "user" : "agent",
+    markdown: input.body,
+    phase: input.message.authorType === "ai-teammate" && input.message.status === "ready" ? "final" : "commentary",
+    revision: input.message.revision,
+    threadSequence: 0,
+    status: privateMessageTimelineStatus(input.message.status),
+    itemId: input.message.id,
+  });
+  return [messageItem, ...input.facts]
+    .filter((candidate, index, all) => all.findIndex((other) => other.id === candidate.id) === index)
+    .sort((left, right) => left.threadSequence - right.threadSequence || left.partIndex - right.partIndex || left.id.localeCompare(right.id));
+}
+
+function privateMessageTimelineStatus(status: TeammateDirectMessage["status"]): ConversationTimelineItem["status"] {
+  switch (status) {
+    case "pending": return "running";
+    case "blocked": return "blocked";
+    case "failed": return "failed";
+    case "cancelled": return "cancelled";
+    case "ready": return "succeeded";
+    default: return "pending";
+  }
+}
 
 export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "approvals"
@@ -164,9 +197,16 @@ export function TeammatePrivateChatFeed({
             });
             const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
             const workCellRun = workCell ? runById.get(workCell.model.anchorRunId) : undefined;
-            const composerGateApproval = workCell
-              ? composerGateApprovalPresentationForWorkCell(workCell.model, composerGateApprovalByRunId)
+            const composerApprovalId = workCell
+              ? composerGateApprovalPresentationForWorkCell(workCell.model, composerGateApprovalByRunId)?.approvalId
               : undefined;
+            const timelineItems = privateMessageTimelineItems({
+              message,
+              body: projection.body,
+              facts: workCell
+                ? conversationTimelineItemsForModel(workCell.model, composerApprovalId)
+                : [],
+            });
             const messageFeedback = messageController.feedbackById[message.id];
             const taskCreateKey = `message:${message.id}`;
             const taskCreateBusy = taskCreateBusyKeys.has(taskCreateKey);
@@ -231,7 +271,23 @@ export function TeammatePrivateChatFeed({
                       </InlineFeedback>
                     ) : null}
                   </div>
-                ) : undefined}
+                ) : (
+                  <ConversationTimeline
+                    items={timelineItems}
+                    policy={getConversationInteractionPolicy("teammate_direct")}
+                    timelineId={`message:${message.id}`}
+                    threadId={message.threadId}
+                    sourceKind="private"
+                    activityMode={projection.pendingAiReply ? "active" : "completed"}
+                    cwd={cwd.trim()}
+                    onOpenSourceRef={(ref) => {
+                      if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
+                        onOpenFiles({ cwd: cwd.trim(), path: ref.path, label: ref.label });
+                      }
+                    }}
+                    ariaLabel={t("Private conversation transcript")}
+                  />
+                )}
                 bodyCwd={cwd}
                 bodyCompact
                 bodyStreaming={projection.pendingAiReply}
@@ -291,22 +347,8 @@ export function TeammatePrivateChatFeed({
                     />
                   </>
                 ) : null}
-                workCellNode={workCell || messageGeneratedMedia.length > 0 ? (
+                workCellNode={messageGeneratedMedia.length > 0 ? (
                   <>
-                    {workCell ? (
-                      <ConversationWorkCell
-                        model={workCell.model}
-                        surface="teammate_direct"
-                        composerGateApproval={composerGateApproval}
-                        cwd={workCellRun?.cwd ?? cwd.trim()}
-                        detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
-                        onOpenRun={onOpenRun}
-                        onOpenWorkspaceFile={onOpenFiles}
-                        onOpenWorkspaceReview={onOpenReview}
-                        loadPreview={loadPreviewContent}
-                        suppressTerminalReport={Boolean(projection.body.trim())}
-                      />
-                    ) : null}
                     {message.authorType === "ai-teammate" ? (
                       <ConversationGeneratedMediaBlock items={messageGeneratedMedia} cwd={cwd.trim()} />
                     ) : null}
@@ -343,7 +385,7 @@ export function TeammatePrivateChatFeed({
                     ) : null}
                   </>
                 )}
-                actionsNode={!editing && !projection.blocked && !composerGateApproval ? (
+                actionsNode={!editing ? (
                   <MessageActionBar
                     surface="teammate_direct"
                     className="teammate-message-actions"

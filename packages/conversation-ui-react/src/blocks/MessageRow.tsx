@@ -1,8 +1,8 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import {
-  getConversationSurfacePolicy,
-  type ConversationSurfaceKind,
+  getConversationInteractionPolicy,
+  type ConversationInteractionSurfaceKind,
   type LocalFileReference,
 } from "@ling-stack/conversation-ui-core";
 import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
@@ -13,7 +13,7 @@ export type MessageRowTone = "chat" | "chat-blocked" | "system";
 export interface MessageRowProps {
   readonly id?: string;
   readonly className?: string;
-  readonly surface: ConversationSurfaceKind;
+  readonly surface: ConversationInteractionSurfaceKind;
   readonly authorType: MessageRowAuthorType;
   readonly avatar?: ReactNode;
   readonly authorName: string;
@@ -60,7 +60,7 @@ export function MessageRow({
   actionsNode,
 }: MessageRowProps): React.JSX.Element {
   const ownMessage = authorType === "local-user";
-  const surfacePolicy = getConversationSurfacePolicy(surface);
+  const surfacePolicy = getConversationInteractionPolicy(surface);
   const avatarAllowed = authorType === "local-user"
     ? surfacePolicy.showUserAvatar
     : authorType === "ai-teammate"

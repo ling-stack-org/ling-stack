@@ -49,6 +49,12 @@ export {
   projectConversationTimelineItems,
 } from "./transcript-item.js";
 export {
+  createConversationTimelineMessageItem,
+} from "./message-item.js";
+export type {
+  ConversationTimelineMessageInput,
+} from "./message-item.js";
+export {
   mergeConversationTimelineItems,
   normalizeConversationTimelineItems,
 } from "./transcript-projector.js";
@@ -88,11 +94,11 @@ export type {
   ConversationTimelineContextCompactionItem,
   ConversationTimelineExplorationItem,
   ConversationTimelineFileChangeItem,
-  ConversationTimelineGenericActivityItem,
+  ConversationTimelineDiagnosticItem,
   ConversationTimelineImageViewItem,
   ConversationTimelineMessageItem,
   ConversationTimelinePlanItem,
-  ConversationTimelineReasoningSummaryItem,
+  ConversationTimelineReasoningItem,
   ConversationTimelineInput,
   ConversationTimelineProjectionOptions,
   ConversationTimelineRowItem,
@@ -121,18 +127,18 @@ export type {
 } from "./terminal-report-view-model.js";
 export { terminalReportToViewModel } from "./terminal-report-view-model.js";
 export type {
-  ConversationEvidenceMode,
-  ConversationRawDetailMode,
-  ConversationSurfaceKind,
-  ConversationSurfacePolicy,
-  ConversationWorkCellMode,
+  ConversationInteractionPolicy,
+  ConversationInteractionSurfaceKind,
+  ConversationTimelineScope,
+  ConversationTimelineScopeKind,
   MessageActionKind,
   SourceIconKind,
 } from "./surface-policy.js";
 export {
   conversationActionAllowedByPolicy,
-  getConversationSurfacePolicy,
-  mergeConversationSurfacePolicy,
+  getConversationInteractionPolicy,
+  mergeConversationInteractionPolicy,
+  resolveTimelineScope,
 } from "./surface-policy.js";
 export {
   findLatestEditableConversationMessage,

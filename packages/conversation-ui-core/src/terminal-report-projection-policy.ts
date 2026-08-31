@@ -1,4 +1,4 @@
-import { getConversationSurfacePolicy, type ConversationSurfaceKind } from "./surface-policy.js";
+import { getConversationInteractionPolicy, type ConversationInteractionSurfaceKind } from "./surface-policy.js";
 
 export type TerminalReportArtifactMode = "inline" | "compact" | "detail";
 
@@ -9,10 +9,10 @@ export interface TerminalReportProjectionPolicy {
 }
 
 export function getTerminalReportProjectionPolicy(
-  surface: ConversationSurfaceKind,
+  surface: ConversationInteractionSurfaceKind,
   override?: Partial<TerminalReportProjectionPolicy>,
 ): TerminalReportProjectionPolicy {
-  const surfacePolicy = getConversationSurfacePolicy(surface);
+  const surfacePolicy = getConversationInteractionPolicy(surface);
   return {
     showParticipants: surfacePolicy.showTerminalReportParticipants,
     showReferences: true,

@@ -1,5 +1,6 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { ArrowDown, Copy, FileText, Pencil, ThumbsDown, ThumbsUp } from "lucide-react";
+import { getConversationInteractionPolicy } from "@ling-stack/conversation-ui-core";
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
@@ -13,9 +14,9 @@ import {
   ConversationAttachmentStrip,
   ConversationGeneratedMediaBlock,
   ConversationFeed,
+  ConversationTimeline,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
-  ConversationWorkCell,
   InlineMessageEditor,
   MessageActionBar,
   MessageRow,
@@ -307,7 +308,27 @@ function NormalConversationMessageRow({
           onCancel={onCancelEdit}
           onSave={onSave}
         />
-      ) : undefined}
+      ) : (
+        <ConversationTimeline
+          items={item.timelineItems}
+          policy={getConversationInteractionPolicy("normal_conversation")}
+          timelineId={`message:${message.id}`}
+          threadId={message.threadId}
+          sourceKind="conversation"
+          activityMode={item.bodyStreaming ? "active" : "completed"}
+          cwd={projectPath?.trim() || workspaceCwd.trim()}
+          onOpenSourceRef={(ref) => {
+            if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
+              onOpenReportFile({
+                cwd: projectPath?.trim() || workspaceCwd.trim(),
+                path: ref.path,
+                label: ref.label,
+              });
+            }
+          }}
+          ariaLabel={t("Conversation transcript")}
+        />
+      )}
       bodyCompact
       bodyStreaming={item.bodyStreaming}
       bodyOnOpenLocalFile={onOpenFiles}
@@ -347,21 +368,8 @@ function NormalConversationMessageRow({
           />
         </>
       ) : null}
-      workCellNode={item.workCell || generatedMedia.length > 0 ? (
+      workCellNode={generatedMedia.length > 0 ? (
         <>
-          {item.workCell ? (
-            <ConversationWorkCell
-              model={item.workCell}
-              surface="normal_conversation"
-              composerGateApproval={composerGateApproval}
-              cwd={item.workCellCwd}
-              onOpenRun={onOpenRun}
-              onOpenWorkspaceFile={onOpenReportFile}
-              onOpenWorkspaceReview={onOpenReview}
-              loadPreview={loadPreviewContent}
-              suppressTerminalReport={Boolean(item.body.trim())}
-            />
-          ) : null}
           {message.role === "assistant" ? (
             <ConversationGeneratedMediaBlock items={generatedMedia} cwd={workspaceCwd.trim()} />
           ) : null}

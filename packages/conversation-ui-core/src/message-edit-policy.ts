@@ -1,10 +1,10 @@
-import { getConversationSurfacePolicy, type ConversationSurfaceKind } from "./surface-policy.js";
+import { getConversationInteractionPolicy, type ConversationInteractionSurfaceKind } from "./surface-policy.js";
 
 export type ConversationMessageEditAuthor = "local-user" | "assistant" | "teammate" | "system";
 
 export interface ConversationMessageEditCandidate {
   readonly id: string;
-  readonly surface: ConversationSurfaceKind;
+  readonly surface: ConversationInteractionSurfaceKind;
   readonly ownerId: string;
   readonly laneId: string;
   readonly author: ConversationMessageEditAuthor;
@@ -14,7 +14,7 @@ export interface ConversationMessageEditCandidate {
 }
 
 export interface ConversationMessageEditScope {
-  readonly surface: ConversationSurfaceKind;
+  readonly surface: ConversationInteractionSurfaceKind;
   readonly ownerId: string;
   readonly laneId: string;
 }
@@ -23,7 +23,7 @@ export function findLatestEditableConversationMessage(
   messages: readonly ConversationMessageEditCandidate[],
   scope: ConversationMessageEditScope,
 ): ConversationMessageEditCandidate | undefined {
-  if (!getConversationSurfacePolicy(scope.surface).allowLatestUserMessageEdit) {
+  if (!getConversationInteractionPolicy(scope.surface).allowLatestUserMessageEdit) {
     return undefined;
   }
 

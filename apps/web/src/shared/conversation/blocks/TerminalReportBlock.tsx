@@ -28,7 +28,7 @@ import type { ConversationWorkCellRow } from "../../../lib/conversation-work-cel
 import { useI18n } from "../../../i18n.js";
 import {
   getTerminalReportProjectionPolicy,
-  type ConversationSurfaceKind,
+  type ConversationInteractionSurfaceKind,
   type TerminalReportProjectionPolicy,
 } from "../tokens/conversation-surface-policy.js";
 import { TerminalReportParticipants } from "./TerminalReportParticipants.js";
@@ -53,7 +53,7 @@ export function TerminalReportBlock({
   readonly blockId: string;
   readonly rows: readonly ConversationWorkCellRow[];
   readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
-  readonly surface: ConversationSurfaceKind;
+  readonly surface: ConversationInteractionSurfaceKind;
   readonly projectionPolicy?: Partial<TerminalReportProjectionPolicy>;
   readonly cwd?: string;
   readonly onOpenWorkspaceFile?: (target: TerminalReportFileTarget) => void;

@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { projectConversationMessagePresentation } from "@ling-stack/conversation-ui-core";
+import { createConversationTimelineMessageItem, getConversationInteractionPolicy, projectConversationMessagePresentation, type ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
 import {
   CheckCircle2,
   ChevronUp,
@@ -23,7 +23,7 @@ import {
 } from "lucide-react";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
-import { artifactStripItemOwnedByTypedFact, conversationWorkCellFactOwnership, normalizeConversationWorkCellPath, type ConversationAgentActivitySpan, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { type ConversationAgentActivitySpan, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import type { ConversationTranscriptBlock, ConversationTurnViewModel } from "../../lib/conversation-turn-projector.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -41,19 +41,17 @@ import {
   UserProfileAvatar,
 } from "../../shared/components/index.js";
 import {
-  ConversationArtifactStripPanel,
   ConversationAttachmentStrip,
   ConversationGeneratedMediaBlock,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
-  ConversationWorkCell,
+  ConversationTimeline,
   InlineMessageEditor,
   MessageActionBar,
   MessageBodyRenderer,
   MessageBubble,
   MessageEvidencePanel,
   MessageRow,
-  TerminalReportBlock,
   TranscriptBlockView,
   createTranscriptBlockRendererRegistry,
   renderTranscriptBlockFromRegistry,
@@ -98,6 +96,43 @@ import { ChannelExecutionProposalSummary } from "./ChannelExecutionProposalPrese
 import type { ChannelMessageFeedItem, PendingChannelSendPreview } from "./ChannelMessageFeed.js";
 import { ChannelProposedPlanBlock } from "./ChannelProposedPlanBlock.js";
 import { readChannelProposedPlanMessage } from "./channel-proposed-plan-message.js";
+import { conversationTimelineItemsForModel } from "../../lib/conversation-work-cell.js";
+
+function channelMessageTimelineItem(
+  message: ChannelMessage,
+  body: string,
+  streaming: boolean,
+): ConversationTimelineItem {
+  const role = message.authorType === "local-user" ? "user" : "agent";
+  return createConversationTimelineMessageItem({
+    id: `message:${role}:${message.id}`,
+    role,
+    markdown: body,
+    phase: role === "agent" && !streaming && message.status === "ready" ? "final" : "commentary",
+    revision: message.revision,
+    threadSequence: 0,
+    status: streaming ? "running" : message.status === "blocked" ? "blocked" : message.status === "failed" ? "failed" : "succeeded",
+    turnId: message.turnId,
+    itemId: message.id,
+  });
+}
+
+function channelTurnTimelineItems(turn: ConversationTurnViewModel, t: (key: string, values?: Record<string, string | number>) => string): readonly ConversationTimelineItem[] {
+  const messages = [...turn.coordinatorStartMessages, ...turn.coordinatorTerminalMessages];
+  const narration = messages
+    // A proposed plan owns its own interactive block (save/refine/implement).
+    // Keep it out of the narration stream so the plan body is not rendered twice.
+    .filter((message) => !readChannelProposedPlanMessage(message.body, message))
+    .map((message, index, visibleMessages) => channelMessageTimelineItem(
+      message,
+      conversationCoordinatorDisplayBody(turn, message, index === visibleMessages.length - 1 ? "terminal" : "start", t),
+      message.status === "pending",
+    ));
+  const facts = conversationTimelineItemsForModel(turn.operationCell);
+  return [...narration, ...facts]
+    .filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index)
+    .sort((left, right) => left.threadSequence - right.threadSequence || left.partIndex - right.partIndex || left.id.localeCompare(right.id));
+}
 
 type FeedbackValue = "up" | "down";
 
@@ -276,7 +311,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     source_summary: renderGenericTranscriptBlock,
     requirement_shaping: renderGenericTranscriptBlock,
     decision_needed: renderGenericTranscriptBlock,
-    final_result: renderFinalResultTranscriptBlock,
+    final_result: renderSuppressedTerminalReportBlock,
     raw_debug_ref: renderGenericTranscriptBlock,
   });
 
@@ -318,49 +353,9 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const createdAt = anchorMessage?.createdAt ?? turn.createdAt;
     const copyText = conversationTurnAssistantCopyText(turn, input.t);
     const transcriptContext: WorkspaceTranscriptRenderContext = { detailsState, onLoadDetails };
-    const terminalSummaryRendered = conversationTurnHasTerminalSummary(turn);
-    const terminalReportOwnsChanges = Boolean(
-      turn.operationCell?.terminalReportRows.some((row) => row.reportSection === "change"),
-    );
-    const terminalReportChangedPaths = new Set(
-      (turn.operationCell?.terminalReportRows ?? []).flatMap((row) =>
-        row.reportSection === "change"
-          ? (row.detailLines ?? []).flatMap((line) => line.kind === "file_ref" ? [line.path] : [])
-          : []),
-    );
-    const typedFactOwnership = turn.operationCell
-      ? conversationWorkCellFactOwnership(turn.operationCell)
-      : { artifactIds: new Set<string>(), filePaths: new Set<string>() };
-    const reportChangedPaths = new Set([...terminalReportChangedPaths].map(normalizeConversationWorkCellPath));
-    const externalArtifactItems = terminalSummaryRendered
-      ? (turn.operationCell?.artifactStripItems ?? []).filter((item) => {
-        if (artifactStripItemOwnedByTypedFact(item, typedFactOwnership)) {
-          return false;
-        }
-        if (item.kind === "changed") {
-          return !terminalReportOwnsChanges && ![...(item.changeArtifacts ?? [])]
-            .map((artifact) => artifact.path)
-            .filter((path): path is string => Boolean(path))
-            .map(normalizeConversationWorkCellPath)
-            .some((path) => reportChangedPaths.has(path));
-        }
-        if (item.kind === "artifact" && terminalReportOwnsChanges) {
-          const path = item.workspaceFilePath ?? item.path;
-          if (path && reportChangedPaths.has(normalizeConversationWorkCellPath(path))) {
-            return false;
-          }
-        }
-        return true;
-      })
-      : [];
-    const hasExternalArtifactContent = externalArtifactItems.some((item) =>
-      item.kind === "artifact" || item.kind === "changed",
-    );
-    const externalArtifactCwd = turn.operationCell
-      ? input.runById.get(turn.operationCell.anchorRunId)?.cwd ?? input.cwd
-      : input.cwd;
     const generatedMedia = anchorMessage ? generatedMediaForMessage(input.generatedMedia, anchorMessage) : [];
 
+    const timelineItems = channelTurnTimelineItems(turn, input.t);
     return (
       <MessageRow
         surface={channelSurface}
@@ -371,22 +366,37 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         createdAtLabel={formatDateTime(createdAt)}
         bodyNode={(
           <div className="conversation-turn-assistant-transcript">
-            {turn.blocks.map((block) => renderTranscriptBlockFromRegistry(conversationTranscriptBlockRenderers, {
-              turn,
-              block,
-              context: transcriptContext,
-            }))}
-            {hasExternalArtifactContent ? (
-              <div className="conversation-turn-artifacts">
-                <ConversationArtifactStripPanel
-                  items={externalArtifactItems}
-                  cwd={externalArtifactCwd}
-                  recoveryTarget={externalArtifactItems.find((item) => item.kind === "changed")?.recoveryTarget}
-                  loadPreview={input.loadPreview}
-                  onOpenWorkspaceReview={input.onOpenWorkspaceReview}
-                />
-              </div>
-            ) : null}
+            {turn.blocks
+              .filter((block) => block.kind === "coordinator_message" && Boolean(readChannelProposedPlanMessage(block.message.body, block.message)))
+              .map((block) => renderTranscriptBlockFromRegistry(conversationTranscriptBlockRenderers, {
+                turn,
+                block,
+                context: transcriptContext,
+              }))}
+            {turn.blocks
+              .filter((block) => block.kind !== "coordinator_message" && block.kind !== "operation")
+              .map((block) => renderTranscriptBlockFromRegistry(conversationTranscriptBlockRenderers, {
+                turn,
+                block,
+                context: transcriptContext,
+              }))}
+            <ConversationTimeline
+              items={timelineItems}
+              policy={getConversationInteractionPolicy(channelSurface)}
+              timelineId={`turn:${turn.id}`}
+              threadId={turn.sourceMessage.threadId}
+              sourceKind="channel"
+              activityMode={turn.sourceMessage.status === "pending" ? "active" : "completed"}
+              cwd={input.cwd}
+              loadPreview={input.loadPreview}
+              onOpenSourceRef={(ref) => {
+                if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
+                  input.onOpenTerminalReportFile({ cwd: input.cwd, path: ref.path, label: ref.label });
+                }
+              }}
+              renderSubAgentAvatar={(item) => renderConversationParticipantAvatar(item.participantId, item.label)}
+              ariaLabel={input.t("Channel conversation transcript")}
+            />
             <ConversationGeneratedMediaBlock items={generatedMedia} cwd={input.cwd} />
             {renderChannelAiMessageActions(turn.sourceMessage, copyText)}
           </div>
@@ -510,22 +520,25 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const operationCwd = input.runById.get(block.operationCell.anchorRunId)?.cwd ?? input.cwd;
     return (
       <div className="conversation-turn-operation" key={block.id}>
-        <ConversationWorkCell
-          model={block.operationCell}
-          surface={channelSurface}
-          composerGateApproval={composerGateApprovalPresentationForWorkCell(block.operationCell, composerGateApprovalByRunId)}
+        <ConversationTimeline
+          items={conversationTimelineItemsForModel(
+            block.operationCell,
+            composerGateApprovalPresentationForWorkCell(block.operationCell, composerGateApprovalByRunId)?.approvalId,
+          )}
+          policy={getConversationInteractionPolicy(channelSurface)}
+          timelineId={block.operationCell.id}
+          threadId={block.operationCell.threadId}
+          sourceKind={block.operationCell.sourceKind}
+          activityMode={block.operationCell.mode}
           cwd={operationCwd}
-          detailsState={context.detailsState}
-          onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
-          onLoadDetails={context.onLoadDetails}
           loadPreview={input.loadPreview}
-          renderAgentAvatar={renderConversationAgentAvatar}
-          renderParticipantAvatar={renderConversationParticipantAvatar}
-          showArtifactStrip={!conversationTurnHasTerminalSummary(turn)}
-          showTerminalReport={!turn.blocks.some((item) => item.kind === "final_result")}
-          suppressTerminalReport={turn.blocks.some((item) => item.kind === "coordinator_message" && item.phase === "terminal")}
-          onOpenWorkspaceFile={input.onOpenTerminalReportFile}
-          onOpenWorkspaceReview={input.onOpenWorkspaceReview}
+          onOpenSourceRef={(ref) => {
+            if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
+              input.onOpenTerminalReportFile({ cwd: operationCwd, path: ref.path, label: ref.label });
+            }
+          }}
+          renderSubAgentAvatar={(item) => renderConversationParticipantAvatar(item.participantId, item.label)}
+          ariaLabel={input.t("Activity")}
         />
       </div>
     );
@@ -545,24 +558,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     );
   }
 
-  function renderFinalResultTranscriptBlock({
-    block,
-  }: {
-    readonly turn: ConversationTurnViewModel;
-    readonly block: Extract<ConversationTranscriptBlock, { readonly kind: "final_result" }>;
-    readonly context: WorkspaceTranscriptRenderContext;
-  }): ReactNode {
-    return (
-      <TerminalReportBlock
-        key={block.id}
-        blockId={block.terminalReportId}
-        rows={block.rows}
-        renderParticipantAvatar={renderConversationParticipantAvatar}
-        surface={channelSurface}
-        cwd={input.cwd}
-        onOpenWorkspaceFile={input.onOpenTerminalReportFile}
-      />
-    );
+  function renderSuppressedTerminalReportBlock(): ReactNode {
+    // TerminalReport is audit data. The final agentMessage and typed fact rows
+    // are the only visible completion owners in the Codex-style transcript.
+    return null;
   }
 
   function renderGenericTranscriptBlock({
@@ -803,7 +802,21 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             ) : (
               <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                 {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-                {messagePresentation.body.trim() ? <MessageBodyRenderer text={messagePresentation.body} cwd={input.cwd} compact streaming={pendingAiReply} onOpenLocalFile={input.onOpenFileReference} /> : null}
+                <ConversationTimeline
+                  items={[channelMessageTimelineItem(message, messagePresentation.body, pendingAiReply)]}
+                  policy={getConversationInteractionPolicy(channelSurface)}
+                  timelineId={`message:${message.id}`}
+                  threadId={message.threadId}
+                  sourceKind="channel"
+                  activityMode={pendingAiReply ? "active" : "completed"}
+                  cwd={input.cwd}
+                  onOpenSourceRef={(ref) => {
+                    if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
+                      input.onOpenFileReference();
+                    }
+                  }}
+                  ariaLabel={input.t("Channel message")}
+                />
                 {proposedPlanBlock ? (
                   <ChannelProposedPlanBlock
                     plan={proposedPlan ?? proposedPlanBlock.plan}
@@ -936,19 +949,25 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       }
       const detailsKey = input.workflowWorkCellDetailsCacheKey(workflow.id);
       return (
-        <ConversationWorkCell
-          model={workCell}
-          surface={channelSurface}
-          composerGateApproval={composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)}
+        <ConversationTimeline
+          items={conversationTimelineItemsForModel(
+            workCell,
+            composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)?.approvalId,
+          )}
+          policy={getConversationInteractionPolicy(channelSurface)}
+          timelineId={workCell.id}
+          threadId={workCell.threadId}
+          sourceKind={workCell.sourceKind}
+          activityMode={workCell.mode}
           cwd={input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd}
-          detailsState={input.conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
-          onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
-          onLoadDetails={input.onLoadWorkflowWorkCellDetails}
           loadPreview={input.loadPreview}
-          renderAgentAvatar={renderConversationAgentAvatar}
-          renderParticipantAvatar={renderConversationParticipantAvatar}
-          onOpenWorkspaceFile={input.onOpenTerminalReportFile}
-          onOpenWorkspaceReview={input.onOpenWorkspaceReview}
+          renderSubAgentAvatar={(item) => renderConversationParticipantAvatar(item.participantId, item.label)}
+          onOpenSourceRef={(ref) => {
+            if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
+              input.onOpenTerminalReportFile({ cwd: input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd, path: ref.path, label: ref.label });
+            }
+          }}
+          ariaLabel={input.t("Activity")}
         />
       );
     }
@@ -1053,19 +1072,25 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         return null;
       }
       return (
-        <ConversationWorkCell
-          model={workCell}
-          surface={channelSurface}
-          composerGateApproval={composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)}
+        <ConversationTimeline
+          items={conversationTimelineItemsForModel(
+            workCell,
+            composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)?.approvalId,
+          )}
+          policy={getConversationInteractionPolicy(channelSurface)}
+          timelineId={workCell.id}
+          threadId={workCell.threadId}
+          sourceKind={workCell.sourceKind}
+          activityMode={workCell.mode}
           cwd={run.cwd}
-          detailsState={input.conversationWorkCellDetailsByKey[input.conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
-          onOpenRun={input.onOpenRun}
-          onLoadDetails={input.onLoadConversationWorkCellDetails}
           loadPreview={input.loadPreview}
-          renderAgentAvatar={renderConversationAgentAvatar}
-          renderParticipantAvatar={renderConversationParticipantAvatar}
-          onOpenWorkspaceFile={input.onOpenTerminalReportFile}
-          onOpenWorkspaceReview={input.onOpenWorkspaceReview}
+          renderSubAgentAvatar={(item) => renderConversationParticipantAvatar(item.participantId, item.label)}
+          onOpenSourceRef={(ref) => {
+            if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
+              input.onOpenTerminalReportFile({ cwd: run.cwd, path: ref.path, label: ref.label });
+            }
+          }}
+          ariaLabel={input.t("Activity")}
         />
       );
     }
@@ -1411,11 +1436,6 @@ function shouldHideStandaloneCoordinatorBody(message: ChannelMessage, body: stri
 
 function trimGeneratedWorkflowDecoration(value: string): string {
   return value.trim().replace(/^(?:[*_`>#-]+\s*)+/u, "");
-}
-
-function conversationTurnHasTerminalSummary(turn: ConversationTurnViewModel): boolean {
-  return Boolean(turn.operationCell?.terminalReportRows.length) ||
-    turn.blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal");
 }
 
 function conversationCoordinatorStartFallback(turn: ConversationTurnViewModel): string {

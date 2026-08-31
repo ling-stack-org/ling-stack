@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import type {
   ConversationTimelineItem,
   ConversationTimelineSubAgentItem,
-  ConversationSurfacePolicy,
+  ConversationInteractionPolicy,
 } from "@ling-stack/conversation-ui-core";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { ConversationCommandBatch } from "../blocks/ConversationCommandBatch.js";
@@ -23,9 +23,8 @@ export interface ConversationTimelineRenderContext {
   readonly cwd?: string;
   readonly loadPreview?: ArtifactPreviewLoader;
   readonly onOpenSourceRef?: (ref: ConversationTimelineItem["sourceRefs"][number]) => void;
-  readonly renderMessage?: (markdown: string) => ReactNode;
   readonly renderSubAgent: (item: ConversationTimelineSubAgentItem) => ReactNode;
-  readonly policy: ConversationSurfacePolicy;
+  readonly policy: ConversationInteractionPolicy;
   readonly depth: 0 | 1;
 }
 
@@ -41,7 +40,7 @@ type ConversationTimelineItemRenderer = (
 const RENDERERS = {
   userMessage: renderMessageItem,
   agentMessage: renderMessageItem,
-  reasoningSummary: renderReasoningItem,
+  reasoning: renderReasoningItem,
   plan: renderPlanItem,
   commandExecution: renderCommandItem,
   fileChange: renderFileChangeItem,
@@ -52,7 +51,7 @@ const RENDERERS = {
   approval: renderApprovalItem,
   imageView: renderImageItem,
   contextCompaction: renderContextCompactionItem,
-  genericActivity: renderGenericActivityItem,
+  diagnostic: renderDiagnosticItem,
   commandBatch: renderCommandBatchItem,
   explorationBatch: renderExplorationBatchItem,
   subAgentActivity: renderSubAgentItem,
@@ -70,11 +69,11 @@ function renderMessageItem(
   context: ConversationTimelineRenderContext,
 ): ReactNode {
   if (item.kind !== "agentMessage" && item.kind !== "userMessage") return null;
-  return <ConversationTimelineMessageRenderer key={item.id} item={item} renderMessage={context.renderMessage} depth={context.depth} />;
+  return <ConversationTimelineMessageRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} />;
 }
 
 function renderReasoningItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "reasoningSummary" ? <ConversationTimelineReasoningRenderer key={item.id} item={item} depth={context.depth} /> : null;
+  return item.kind === "reasoning" ? <ConversationTimelineReasoningRenderer key={item.id} item={item} depth={context.depth} /> : null;
 }
 
 function renderPlanItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
@@ -117,8 +116,8 @@ function renderContextCompactionItem(item: ConversationTimelineItem, context: Co
   return item.kind === "contextCompaction" ? <ConversationTimelineCompactionRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
 }
 
-function renderGenericActivityItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "genericActivity" ? <ConversationTimelineBlockedRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
+function renderDiagnosticItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return item.kind === "diagnostic" ? <ConversationTimelineBlockedRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
 }
 
 function renderCommandBatchItem(
