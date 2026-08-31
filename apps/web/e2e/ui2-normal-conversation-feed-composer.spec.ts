@@ -75,6 +75,7 @@ for (const fixture of [
     await expect(peerMessage.locator(":scope > .message-content > header")).toHaveCSS("clip-path", "inset(50%)");
     await expectMessageFrameContained(ownMessage);
     await expectMessageFrameContained(peerMessage);
+    await expectMessageWidthPolicy(ownMessage, peerMessage);
 
     const composerTheme = await composer.evaluate((element) => {
       const probe = document.createElement("span");
@@ -864,6 +865,21 @@ async function expectAlignedColumns(feed: Locator, composer: Locator): Promise<v
     if (!feedBox || !composerBox) return false;
     return Math.abs(feedBox.x - composerBox.x) <= 1 && Math.abs(feedBox.width - composerBox.width) <= 1;
   }).toBe(true);
+}
+
+async function expectMessageWidthPolicy(ownMessage: Locator, peerMessage: Locator): Promise<void> {
+  const [ownRow, ownContent, peerRow, peerContent] = await Promise.all([
+    ownMessage.boundingBox(),
+    ownMessage.locator(":scope > .message-content").boundingBox(),
+    peerMessage.boundingBox(),
+    peerMessage.locator(":scope > .message-content").boundingBox(),
+  ]);
+  expect(ownRow).not.toBeNull();
+  expect(ownContent).not.toBeNull();
+  expect(peerRow).not.toBeNull();
+  expect(peerContent).not.toBeNull();
+  expect(ownContent!.width).toBeLessThan(ownRow!.width);
+  expect(Math.abs(peerContent!.width - peerRow!.width)).toBeLessThanOrEqual(1);
 }
 
 async function expectInputContained(input: Locator, field: Locator): Promise<void> {
