@@ -49,6 +49,7 @@ function rendererKeyForKind(kind: ConversationTimelineItemKind): string {
   if (kind === "approval") return "fact.approval";
   if (kind === "imageView") return "fact.image";
   if (kind === "contextCompaction") return "system.compaction";
+  if (kind === "protocolEvent") return "fact.protocol";
   if (kind === "subAgentActivity") return "agent.nested";
   if (kind === "commandBatch") return "batch.command";
   if (kind === "explorationBatch") return "batch.exploration";

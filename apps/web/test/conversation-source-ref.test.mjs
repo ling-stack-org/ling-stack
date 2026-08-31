@@ -9,11 +9,12 @@ import {
 test("source-ref adapter matches trusted paths without upgrading display-only refs", () => {
   const refs = [
     { kind: "path", id: "model-path", path: "./src/parser.ts" },
-    { kind: "file", id: "host-file", path: "src\\parser.ts", hostTarget: "open_file" },
+    { kind: "file", id: "host-file", path: "src\\parser.ts", hostTarget: "open_file", capabilityId: "cap-parser", workspaceId: "workspace-1" },
   ];
 
   assert.equal(isTrustedFileSourceRef(refs[0]), false);
   assert.equal(trustedFileSourceRefForPath(refs, "src/parser.ts")?.id, "host-file");
+  assert.equal(trustedFileSourceRefForPath(refs, "src/parser.ts")?.capabilityId, "cap-parser");
   assert.equal(trustedFileSourceRefForPath([refs[0]], "src/parser.ts"), undefined);
 });
 

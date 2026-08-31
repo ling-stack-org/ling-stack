@@ -49,6 +49,11 @@ export interface ExecutionActionSourceRef {
   readonly id: string;
   readonly label?: string;
   readonly path?: string;
+  /** Host-issued navigation target. Display-only refs intentionally omit it. */
+  readonly hostTarget?: "open_file" | "open_diff" | "open_artifact" | "open_run";
+  readonly capabilityId?: string;
+  readonly workspaceId?: string;
+  readonly visibility?: "conversation" | "private" | "audit";
 }
 
 export type ExecutionActionDiagnosticCode =

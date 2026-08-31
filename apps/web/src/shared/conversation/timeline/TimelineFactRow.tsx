@@ -14,6 +14,8 @@ export interface TimelineFactRowProps {
   readonly meta?: ReactNode;
   readonly icon: ReactNode;
   readonly detail?: ReactNode;
+  /** Surface-owned controls rendered inside this fact's single disclosure. */
+  readonly actions?: ReactNode;
   readonly cwd?: string;
   readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
   readonly depth?: 0 | 1;
@@ -30,10 +32,11 @@ export function TimelineFactRow({
   meta,
   icon,
   detail,
+  actions,
   depth = 0,
 }: TimelineFactRowProps): React.JSX.Element {
   const { t } = useI18n();
-  const hasDetail = Boolean(detail);
+  const hasDetail = Boolean(detail || actions);
   const disclosure = useConversationBlockView({
     blockId: `timeline-item:${item.id}`,
     revisionKey: String(item.revision),
@@ -94,7 +97,12 @@ export function TimelineFactRow({
           {status ? <span className="conversation-timeline-activity-status">{status}</span> : null}
         </div>
       )}
-      {expanded ? <div id={detailId} className="conversation-timeline-activity-detail">{detail}</div> : null}
+      {expanded ? (
+        <div id={detailId} className="conversation-timeline-activity-detail">
+          {detail}
+          {actions ? <div className="conversation-timeline-activity-actions">{actions}</div> : null}
+        </div>
+      ) : null}
     </article>
   );
 }

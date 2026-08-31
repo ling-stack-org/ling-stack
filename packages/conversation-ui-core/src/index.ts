@@ -102,6 +102,7 @@ export type {
   ConversationTimelineApprovalItem,
   ConversationTimelineCommandExecutionItem,
   ConversationTimelineContextCompactionItem,
+  ConversationTimelineProtocolEventItem,
   ConversationTimelineExplorationItem,
   ConversationTimelineFileChangeItem,
   ConversationTimelineDiagnosticItem,

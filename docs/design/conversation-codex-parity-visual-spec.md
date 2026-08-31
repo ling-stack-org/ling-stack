@@ -171,6 +171,7 @@ surface 差异。
 | `approval` | shield | `Waiting for approval` | decision |
 | `imageView` | image | caption/basename | bounded preview |
 | `contextCompaction` | layers | `Context compacted` | snapshot/range |
+| `protocolEvent` | protocol | lifecycle/decision title | structured protocol detail |
 | `subAgentActivity` | participant | `Engineer · working` | nested timeline |
 | `commandBatch` | terminal-stack | `Ran 4 commands` | exact children |
 | `explorationBatch` | search-stack | `Read 8 items` | exact children |

@@ -153,7 +153,7 @@ type ConversationTimelineItemKind =
   | "userMessage" | "agentMessage" | "reasoning" | "plan"
   | "commandExecution" | "exploration" | "fileChange"
   | "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall"
-  | "approval" | "imageView" | "contextCompaction" | "subAgentActivity"
+  | "approval" | "imageView" | "contextCompaction" | "protocolEvent" | "subAgentActivity"
   | "commandBatch" | "explorationBatch" | "diagnostic";
 ```
 
@@ -339,10 +339,24 @@ type ContextCompactionItem = ConversationTimelineItemBase & {
   readonly snapshotRef?: ConversationOperationSourceRef;
 };
 
+/**
+ * Channel/workflow lifecycle records use the factual row grammar but are not
+ * execution evidence. They must never claim command/file/tool completion or
+ * invent an operation lineage envelope.
+ */
+type ProtocolEventItem = ConversationTimelineItemBase & {
+  readonly kind: "protocolEvent";
+  readonly protocolKind: "decision" | "handoff" | "summary" | "workflow"
+    | "workflow-step" | "task" | "run" | "state-transition";
+  readonly title: string;
+  readonly meta?: string;
+  readonly description?: string;
+};
+
 type ConversationTimelineItem =
   | MessageItem | ReasoningItem | PlanItem
   | CommandExecutionItem | ExplorationItem | FileChangeItem | ToolCallItem
-  | ApprovalItem | ImageViewItem | ContextCompactionItem
+  | ApprovalItem | ImageViewItem | ContextCompactionItem | ProtocolEventItem
   | SubAgentActivityItem | ActivityBatchItem | DiagnosticItem;
 ```
 

@@ -28,6 +28,7 @@ export type ConversationTimelineItemKind =
   | "imageView"
   | "contextCompaction"
   | "subAgentActivity"
+  | "protocolEvent"
   | "diagnostic"
   | "commandBatch"
   | "explorationBatch";
@@ -191,6 +192,17 @@ export interface ConversationTimelineContextCompactionItem extends ConversationT
   readonly snapshotRef?: ConversationOperationSourceRef;
 }
 
+/**
+ * Non-execution protocol facts (handoff, decision, task/run lifecycle, or
+ * state transition) that are visible in the channel audit projection. They
+ * are factual rows, but they intentionally do not claim command/file/tool
+ * completion and therefore do not require an execution attempt envelope.
+ */
+export interface ConversationTimelineProtocolEventItem extends ConversationTimelineActivityPayload {
+  readonly kind: "protocolEvent";
+  readonly protocolKind: "decision" | "handoff" | "summary" | "workflow" | "workflow-step" | "task" | "run" | "state-transition";
+}
+
 export interface ConversationTimelineDiagnosticItem extends ConversationTimelineActivityPayload {
   readonly kind: "diagnostic";
   /** Stable machine-readable reason for a blocked/failed diagnostic row. */
@@ -209,6 +221,7 @@ export type ConversationTimelineRowItem =
   | ConversationTimelineApprovalItem
   | ConversationTimelineImageViewItem
   | ConversationTimelineContextCompactionItem
+  | ConversationTimelineProtocolEventItem
   | ConversationTimelineDiagnosticItem;
 
 export interface ConversationTimelineCommandBatchItem extends ConversationTimelineOperationItemBase {
@@ -1126,6 +1139,8 @@ export function isConversationTimelineItem(value: unknown): value is Conversatio
       return typeof item.title === "string" && typeof item.alt === "string" && isOperationLineage(item);
     case "diagnostic":
       return typeof item.title === "string";
+    case "protocolEvent":
+      return typeof item.title === "string" && typeof item.protocolKind === "string";
     case "commandBatch":
       return Array.isArray(item.actionIds) && item.actionIds.every((id) => typeof id === "string" && id.length > 0) &&
         isCommandBatchPayload(item.batch);
@@ -1212,6 +1227,7 @@ const TIMELINE_ITEM_KINDS = new Set<ConversationTimelineItemKind>([
   "imageView",
   "contextCompaction",
   "subAgentActivity",
+  "protocolEvent",
   "diagnostic",
   "commandBatch",
   "explorationBatch",

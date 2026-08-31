@@ -6325,4 +6325,9 @@ export const zhCN = {
   "Restoring": "正在恢复",
   "Restore snapshot": "恢复快照",
   "Update": "更新",
+  "Private conversation transcript": "私聊会话记录",
+  "Run for {title}": "运行 {title}",
+  "Conversation transcript": "会话记录",
+  "Collapse details": "收起详情",
+  "Expand details": "展开详情",
 } as const satisfies Readonly<Record<string, string>>;

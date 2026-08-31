@@ -22,6 +22,8 @@ export interface ConversationOperationSourceRef {
   readonly path?: string;
   /** Granted only by the Host adapter; absent refs remain copyable text. */
   readonly hostTarget?: "open_file" | "open_diff" | "open_artifact" | "open_run";
+  readonly capabilityId?: string;
+  readonly workspaceId?: string;
   readonly visibility?: "conversation" | "private" | "audit";
 }
 

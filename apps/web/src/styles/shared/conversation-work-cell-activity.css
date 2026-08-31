@@ -193,6 +193,15 @@
   padding: 2px 0 3px;
 }
 
+.conversation-timeline-activity-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+  min-width: 0;
+  padding-top: 2px;
+}
+
 .conversation-timeline-command,
 .conversation-timeline-output {
   display: block;

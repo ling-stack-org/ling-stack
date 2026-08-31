@@ -43,7 +43,7 @@ S0 不引入 feature flag，也不保留旧 renderer 兼容分支；测试先失
 
 | 已落地 | 证据 | 仍需完成 |
 | --- | --- | --- |
-| closed item union、canonical snapshot、纯 projector | `packages/conversation-ui-core` 与对应 tests | 对所有既有 channel caller 完成 cutover |
+| closed item union、canonical snapshot、纯 projector、`protocolEvent` | `packages/conversation-ui-core` 与对应 tests | 对所有既有 channel caller 完成 cutover |
 | 统一 `ConversationTimeline`、renderer registry、mount/fingerprint | `apps/web/src/shared/conversation/timeline` | 删除残留 route-local activity renderer |
 | `tool_start/update/end` 的 action identity 与 revision 基础 | daemon execution-action 模块 | durable Host capability 签发和二次 scope 校验 |
 | display-only command/exploration batching | core batching tests | recovery、fan-in、TerminalReport 的 atomic 回归 |
@@ -249,6 +249,9 @@ wrapper 都必须携带 child ids 和 lineage，以便 disclosure 后恢复精�
 
 - `ConversationTimeline` 使用 exhaustive registry；消息走 document lane，事实走
   `TimelineFactRow`；
+- 频道 decision、handoff、summary、workflow/task/run 生命周期和 state-transition 先转换为
+  `protocolEvent`，再进入同一 `TimelineFactRow`。它们是可追溯协议事实，不携带 execution
+  completion 语义；旧操作按钮只能由 `renderFactActions` 注入 owning row 的 disclosure。
 - Markdown AST 保留段落/list/fence/link/path；command output 使用 pre-wrap；
 - file/path basename-first，点击前由 Host 授予 trusted ref；
 - `tool_update` 复用稳定 DOM id；active row 与批次 disclosure 不互相覆盖；

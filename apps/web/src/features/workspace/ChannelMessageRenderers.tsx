@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { createConversationTimelineMessageItem, projectConversationMessagePresentation, type ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
+import { createConversationTimelineMessageItem, projectConversationMessagePresentation, type ConversationTimelineItem, type ConversationTimelineProtocolEventItem } from "@ling-stack/conversation-ui-core";
 import {
   CheckCircle2,
   ChevronUp,
@@ -49,7 +49,6 @@ import {
   InlineMessageEditor,
   MessageActionBar,
   MessageBodyRenderer,
-  MessageBubble,
   MessageEvidencePanel,
   MessageRow,
   TranscriptBlockView,
@@ -59,7 +58,7 @@ import {
   type ConversationWorkspaceReviewTarget,
   type TerminalReportFileTarget,
 } from "../../shared/conversation/index.js";
-import { InlineFeedback, Tooltip } from "../../shared/ui/index.js";
+import { InlineFeedback } from "../../shared/ui/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -117,6 +116,150 @@ function channelMessageTimelineItem(
     itemId: message.id,
     fileRefs: message.fileRefs,
   });
+}
+
+/**
+ * The channel audit feed contains protocol records that are not execution
+ * evidence (decision, handoff, task/run lifecycle, workflow, and transitions).
+ * Project them into the same factual rail as normal/private/channel turns so
+ * the surface never falls back to a second MessageBubble renderer.
+ */
+function channelProtocolTimelineItem(
+  item: Exclude<ChannelActivityItem, { readonly kind: "message" }>,
+  t: (key: string, values?: Record<string, string | number>) => string,
+): ConversationTimelineProtocolEventItem {
+  const sourceRefs = [{
+    kind: `channel_${item.kind}`,
+    id: item.record.id,
+    label: item.kind,
+    visibility: "audit" as const,
+  }];
+  const base = {
+    id: `protocol:${item.id}`,
+    kind: "protocolEvent" as const,
+    revision: protocolRevision(item.createdAt),
+    threadSequence: 0,
+    partIndex: 0,
+    sourceRefs,
+  };
+  if (item.kind === "decision") {
+    return {
+      ...base,
+      protocolKind: "decision",
+      title: item.record.title,
+      meta: item.record.status,
+      status: protocolStatus(item.record.status),
+      description: [item.record.decision, item.record.rationale, item.record.alternatives.length > 0 ? item.record.alternatives.join("\n") : undefined]
+        .filter(Boolean)
+        .join("\n\n"),
+    };
+  }
+  if (item.kind === "handoff") {
+    return {
+      ...base,
+      protocolKind: "handoff",
+      title: `${item.record.fromParticipantLabel} → ${item.record.toParticipantLabel}`,
+      meta: item.record.status,
+      status: protocolStatus(item.record.status),
+      description: [item.record.reason, item.record.requiredInput ? t("Required input: {value}", { value: item.record.requiredInput }) : undefined, item.record.expectedOutput ? t("Expected output: {value}", { value: item.record.expectedOutput }) : undefined]
+        .filter(Boolean)
+        .join("\n\n"),
+    };
+  }
+  if (item.kind === "summary") {
+    return {
+      ...base,
+      protocolKind: "summary",
+      title: t("Context summary"),
+      meta: item.record.targetType,
+      status: "succeeded",
+      description: item.record.summary,
+    };
+  }
+  if (item.kind === "workflow") {
+    return {
+      ...base,
+      protocolKind: "workflow",
+      title: item.record.title,
+      meta: item.record.status,
+      status: protocolStatus(item.record.status),
+      description: item.record.objective,
+    };
+  }
+  if (item.kind === "workflow-step") {
+    return {
+      ...base,
+      protocolKind: "workflow-step",
+      title: item.record.title,
+      meta: item.record.status,
+      status: protocolStatus(item.record.status),
+      description: [item.record.prompt, item.record.blocker, item.record.resultSummary].filter(Boolean).join("\n\n"),
+    };
+  }
+  if (item.kind === "task") {
+    return {
+      ...base,
+      protocolKind: "task",
+      title: item.record.title,
+      meta: item.record.status,
+      status: protocolStatus(item.record.status),
+      description: item.record.prompt,
+    };
+  }
+  if (item.kind === "run") {
+    const taskTitle = item.task?.title ?? item.record.taskId;
+    return {
+      ...base,
+      protocolKind: "run",
+      title: t("Run for {title}", { title: taskTitle }),
+      meta: item.record.status,
+      status: protocolStatus(item.record.status),
+      description: item.record.errorMessage ?? item.record.providerName,
+    };
+  }
+  if (item.kind === "approval") {
+    const status = effectiveApprovalStatus(item.record);
+    return {
+      ...base,
+      protocolKind: "state-transition",
+      title: item.record.title,
+      meta: status,
+      status: protocolStatus(status),
+      description: item.record.description,
+    };
+  }
+  return {
+    ...base,
+    protocolKind: "state-transition",
+    title: `${item.record.entityType} ${item.record.entityId}`,
+    meta: item.record.toStatus,
+    status: protocolStatus(item.record.toStatus),
+    description: `${item.record.fromStatus} → ${item.record.toStatus} via ${item.record.event}${item.record.reason ? `\n\n${item.record.reason}` : ""}`,
+  };
+}
+
+function protocolRevision(value: string): number {
+  const parsed = Date.parse(value);
+  return Number.isSafeInteger(parsed) && parsed >= 0 ? parsed : 0;
+}
+
+function protocolStatus(value: string): ConversationTimelineProtocolEventItem["status"] {
+  const normalized = value.trim().toLowerCase();
+  if (normalized.includes("blocked")) return "blocked";
+  if (["failed", "cancelled", "declined", "rejected", "denied", "expired"].includes(normalized)) return "failed";
+  if (["succeeded", "done", "completed", "approved", "accepted", "active"].includes(normalized)) return "succeeded";
+  if (normalized === "waiting_for_approval") return "waiting";
+  if (["queued", "todo", "claimed", "running", "ready", "review", "proposed", "draft"].includes(normalized)) return "pending";
+  return undefined;
+}
+
+function protocolThreadId(
+  item: Exclude<ChannelActivityItem, { readonly kind: "message" }>,
+  channelId: string,
+): string {
+  if (item.kind === "run" && item.record.threadId) return item.record.threadId;
+  if (item.kind === "approval" && item.run?.threadId) return item.run.threadId;
+  return `channel:${channelId}`;
 }
 
 function channelTurnTimelineItems(turn: ConversationTurnViewModel, t: (key: string, values?: Record<string, string | number>) => string): readonly ConversationTimelineItem[] {
@@ -595,70 +738,146 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     };
   }
 
+  function renderProtocolActivityItem(item: Exclude<ChannelActivityItem, { readonly kind: "message" }>): ReactNode {
+    const timelineItem = channelProtocolTimelineItem(item, input.t);
+    return mountConversationTimeline({
+      snapshot: buildSurfaceTimelineSnapshot({
+        surface: channelSurface,
+        threadId: protocolThreadId(item, input.selectedChannelId),
+        anchorItemId: timelineItem.id,
+        items: [timelineItem],
+      }),
+      depth: 0,
+      renderFactActions: () => renderProtocolActivityActions(item),
+      renderSubAgentAvatar: (span) => renderConversationParticipantAvatar(span.participantId, span.label),
+      ariaLabel: input.t("Activity"),
+    }).node;
+  }
+
+  function renderProtocolActivityActions(item: Exclude<ChannelActivityItem, { readonly kind: "message" }>): ReactNode {
+    if (item.kind === "decision") {
+      const decision = item.record;
+      return input.activityActionRow(item.id, <>
+        <button className="secondary-button compact-button" type="button" onClick={() => input.onSupersedeDecision(decision)}>
+          <FileCheck2 size={14} />
+          {input.t("Supersede")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => input.onRejectDecision(decision)}>
+          <CircleAlert size={14} />
+          {input.t("Reject")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}>
+          <CheckCircle2 size={14} />
+          {input.t("Review source")}
+        </button>
+      </>);
+    }
+    if (item.kind === "handoff") {
+      const handoff = item.record;
+      const handoffWorkflow = input.channelWorkflows.find((workflow) => workflow.sourceHandoffId === handoff.id);
+      return input.activityActionRow(item.id, <>
+        <button className="secondary-button compact-button" type="button" onClick={() => input.onStartWorkflowFromHandoff(handoff)} disabled={Boolean(handoffWorkflow)}>
+          <Play size={14} />
+          {handoffWorkflow ? input.t("Workflow started") : input.t("Start workflow")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => input.onUpdateHandoffStatus(handoff, "accepted")}>
+          {input.t("Accept")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => input.onUpdateHandoffStatus(handoff, "completed")}>
+          {input.t("Complete")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}>
+          <CheckCircle2 size={14} />
+          {input.t("Review source")}
+        </button>
+      </>);
+    }
+    if (item.kind === "summary") {
+      const summary = item.record;
+      return input.activityActionRow(item.id, <>
+        <button className="secondary-button compact-button" type="button" onClick={() => input.onCreateTaskFromContextSummary(summary)}>
+          <Plus size={14} />
+          {input.t("Create task")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => input.onOpenContextSummaryInConversationDetail(summary)}>
+          <CheckCircle2 size={14} />
+          {input.t("Review source")}
+        </button>
+      </>);
+    }
+    if (item.kind === "workflow") {
+      const workflow = item.record;
+      const steps = input.channelWorkflowSteps.filter((step) => step.workflowId === workflow.id);
+      return input.activityActionRow(item.id, <>
+        <small>{input.t("{count} steps", { count: steps.length })}</small>
+        {workflow.status === "succeeded" ? <WorkflowFinalSummary workflow={workflow} steps={steps} artifactsByRun={input.channelArtifactsByRun} /> : null}
+        <button className="secondary-button compact-button" type="button" onClick={() => input.onOrchestrateWorkflow(workflow)} disabled={input.orchestratingWorkflowId === workflow.id || !workflowCanAdvance(workflow.status)}>
+          {input.orchestratingWorkflowId === workflow.id ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
+          {input.t("Advance")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={() => input.onCancelWorkflow(workflow)} disabled={input.orchestratingWorkflowId === workflow.id || !workflowCanCancel(workflow.status)}>
+          <Square size={14} />
+          {input.t("Cancel")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}>
+          <CheckCircle2 size={14} />
+          {input.t("Review source")}
+        </button>
+      </>);
+    }
+    if (item.kind === "workflow-step") {
+      const step = item.record;
+      return input.activityActionRow(item.id, step.blocker ? <>
+        <div className="provider-run-notice compact"><CircleAlert size={14} /><span>{step.blocker}</span></div>
+        <button className="secondary-button compact-button" type="button" onClick={() => input.onRetryWorkflowStep(step)} disabled={input.runningWorkflowStepId === step.id || step.status !== "blocked"}>
+          {input.runningWorkflowStepId === step.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
+          {input.t("Retry")}
+        </button>
+        <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}><CheckCircle2 size={14} />{input.t("Review source")}</button>
+      </> : step.taskId ? <>
+        <span>{input.t("Task linked")}</span>
+        <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}><CheckCircle2 size={14} />{input.t("Review source")}</button>
+      </> : <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}><CheckCircle2 size={14} />{input.t("Review source")}</button>);
+    }
+    if (item.kind === "task") {
+      return input.activityActionRow(item.id, <button className="secondary-button compact-button" type="button" onClick={() => input.onRevealTaskFromActivity(item.record.id)}>
+        <SquareTerminal size={14} />
+        {input.t("Show in transcript")}
+      </button>);
+    }
+    if (item.kind === "run") {
+      return input.activityActionRow(item.id, <button className="secondary-button compact-button" type="button" onClick={() => input.onRevealRunFromActivity(item.record.id)}>
+        <History size={14} />
+        {input.t("Show in transcript")}
+      </button>);
+    }
+    if (item.kind === "approval") {
+      return input.activityActionRow(item.id, <button className="secondary-button compact-button" type="button" onClick={() => input.onOpenApprovalDetail(item.record)}>
+        <CheckCircle2 size={14} />
+        {input.t("Open approval")}
+      </button>);
+    }
+    const transition = item.record;
+    return input.activityActionRow(item.id, <button className="secondary-button compact-button" type="button" onClick={() => {
+      if (transition.entityType === "task") input.onRevealTaskFromActivity(transition.entityId);
+      else if (transition.entityType === "run") input.onRevealRunFromActivity(transition.entityId);
+      else if (transition.entityType === "approval") input.onOpenApprovalDetail(input.approvals.find((approval) => approval.id === transition.entityId));
+      else input.onRevealReviewInConversation();
+    }}>
+      {transition.entityType === "task" ? <SquareTerminal size={14} /> : transition.entityType === "run" ? <History size={14} /> : <Workflow size={14} />}
+      {input.t("Open event")}
+    </button>);
+  }
+
   function renderMessageFeedActivityItem(item: ChannelActivityItem): ReactNode {
     if (item.kind === "message") {
       return renderMessageActivityItem(item);
     }
     if (item.kind === "decision") {
-      const decision = item.record;
-      return (
-        <MessageBubble
-          tone="protocol"
-          avatar={<AvatarInitial label="D" tone="violet" />}
-          author={input.t("Decision log")}
-          tag={decision.status}
-          time={formatDateTime(decision.createdAt)}
-          body={`${decision.title}: ${decision.decision}`}
-          action={
-            input.activityActionRow(item.id, <>
-              <button className="secondary-button compact-button" type="button" onClick={() => input.onSupersedeDecision(decision)}>
-                <FileCheck2 size={14} />
-                {input.t("Supersede")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => input.onRejectDecision(decision)}>
-                <CircleAlert size={14} />
-                {input.t("Reject")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}>
-                <CheckCircle2 size={14} />
-                {input.t("Review source")}
-              </button>
-            </>)
-          }
-        />
-      );
+      return renderProtocolActivityItem(item);
     }
     if (item.kind === "handoff") {
-      const handoff = item.record;
-      const handoffWorkflow = input.channelWorkflows.find((workflow) => workflow.sourceHandoffId === handoff.id);
-      return (
-        <MessageBubble
-          tone="protocol"
-          avatar={<AvatarInitial label="H" tone="teal" />}
-          author={input.t("Handoff")}
-          tag={handoff.status}
-          time={formatDateTime(handoff.createdAt)}
-          body={`${handoff.fromParticipantLabel} -> ${handoff.toParticipantLabel}: ${handoff.reason}`}
-          action={
-            input.activityActionRow(item.id, <>
-              <button className="secondary-button compact-button" type="button" onClick={() => input.onStartWorkflowFromHandoff(handoff)} disabled={Boolean(handoffWorkflow)}>
-                <Play size={14} />
-                {handoffWorkflow ? input.t("Workflow started") : input.t("Start workflow")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => input.onUpdateHandoffStatus(handoff, "accepted")}>
-                {input.t("Accept")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={() => input.onUpdateHandoffStatus(handoff, "completed")}>
-                {input.t("Complete")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}>
-                <CheckCircle2 size={14} />
-                {input.t("Review source")}
-              </button>
-            </>)
-          }
-        />
-      );
+      return renderProtocolActivityItem(item);
     }
     if (item.kind === "workflow") {
       return renderWorkflowActivityItem(item);
@@ -667,82 +886,23 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       return renderWorkflowStepActivityItem(item);
     }
     if (item.kind === "task") {
-      const task = item.record;
-      return (
-        <MessageBubble
-          tone="work"
-          avatar={<AvatarInitial label="T" tone="orange" />}
-          author={input.t("Task event")}
-          tag={task.status}
-          time={formatDateTime(task.updatedAt)}
-          body={input.t("Task {title} is {status}.", { title: task.title, status: task.status })}
-          action={
-            input.activityActionRow(item.id, (
-              <button className="secondary-button compact-button" type="button" onClick={() => input.onRevealTaskFromActivity(task.id)}>
-                <SquareTerminal size={14} />
-                {input.t("Show in transcript")}
-              </button>
-            ))
-          }
-        />
-      );
+      return renderProtocolActivityItem(item);
     }
     if (item.kind === "run") {
       return renderRunActivityItem(item);
     }
     if (item.kind === "approval") {
-      const approval = item.record;
-      const approvalStatus = effectiveApprovalStatus(approval);
-      return (
-        <MessageBubble
-          tone="approval"
-          avatar={<AvatarInitial label="A" tone="teal" />}
-          author={input.t("Approval event")}
-          tag={approvalStatus}
-          time={formatDateTime(approval.resolvedAt ?? approval.createdAt)}
-          body={input.t("{title} is {status}.", { title: approval.title, status: approvalStatus })}
-          action={
-            input.activityActionRow(item.id, (
-              <button className="secondary-button compact-button" type="button" onClick={() => input.onOpenApprovalDetail(approval)}>
-                <CheckCircle2 size={14} />
-                {input.t("Open approval")}
-              </button>
-            ))
-          }
-        />
-      );
+      return renderProtocolActivityItem(item);
     }
     if (item.kind === "state-transition") {
       return renderStateTransitionActivityItem(item);
     }
-    const summary = item.record;
-    return (
-      <MessageBubble
-        tone="protocol"
-        avatar={<AvatarInitial label="C" tone="orange" />}
-        author={input.t("Context summary")}
-        tag={summary.targetType}
-        time={formatDateTime(summary.updatedAt)}
-        body={summary.summary}
-        action={
-          input.activityActionRow(item.id, <>
-            <button className="secondary-button compact-button" type="button" onClick={() => input.onCreateTaskFromContextSummary(summary)}>
-              <Plus size={14} />
-              {input.t("Create task")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={() => input.onOpenContextSummaryInConversationDetail(summary)}>
-              <CheckCircle2 size={14} />
-              {input.t("Review source")}
-            </button>
-          </>)
-        }
-      />
-    );
+    return renderProtocolActivityItem(item);
   }
 
   function renderMessageActivityItem(item: Extract<ChannelActivityItem, { readonly kind: "message" }>): ReactNode {
     const message = item.record;
-    const plainChatMessage = message.kind === "message" || message.kind === "ai_reply";
+    const plainChatMessage = message.kind === "message" || message.kind === "ai_reply" || message.kind === "system" || message.kind === "task_link";
     const pendingAiReply = message.kind === "ai_reply" && message.status === "pending";
     const pendingAiReplyBody = pendingAiReply && !message.body.trim() ? input.t("Thinking...") : message.body;
     const executionProposals = (input.executionProposalsByMessageId.get(message.id) ?? [])
@@ -752,9 +912,6 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       <UsedMemorySummary variant="inline" events={messageUsedMemoryEvents} memoryById={input.memoryById} />
     ) : undefined;
     const messageFileRefs = message.fileRefs ?? [];
-    const nonChatAction = message.linkedTaskId
-      ? input.activityActionRow(item.id, <code>{message.linkedTaskId}</code>)
-      : input.activityActionRow(item.id);
     const proposedPlanBlock = message.kind === "ai_reply" && message.authorType === "ai-teammate"
       ? readChannelProposedPlanMessage(pendingAiReplyBody, message)
       : undefined;
@@ -894,34 +1051,9 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         </div>
       );
     }
-    return (
-      <div className="message-group">
-        <MessageBubble
-          tone={message.status === "blocked" ? "chat-blocked" : plainChatMessage ? "chat" : "system"}
-          side={plainChatMessage && message.authorType === "local-user" ? "end" : "start"}
-          avatar={renderChannelMessageAvatar(message)}
-          author={messageAuthorLabel(message, input.teammateOptions, input.t("Deleted teammate"), input.localUserDisplayName, input.allLocalTeammateById)}
-          tag={message.kind === "task_link" ? "Task" : undefined}
-          time={formatDateTime(message.createdAt)}
-          body={pendingAiReplyBody}
-          pending={pendingAiReply}
-          metaAction={plainChatMessage ? (
-            <Tooltip content={input.t("Reply in topic")}>
-              <button
-                className="message-reply-button"
-                type="button"
-                onClick={() => input.onOpenThreadForMessage(message)}
-                aria-label={input.t("Reply in topic")}
-              >
-                <Reply size={11} />
-              </button>
-            </Tooltip>
-          ) : undefined}
-          action={plainChatMessage ? usedMemorySummary : nonChatAction}
-        />
-        {executionProposals.map((proposal) => renderExecutionProposalCard(proposal))}
-      </div>
-    );
+    // ChannelMessageKind is exhaustive above; keep a defensive null for a
+    // future kind until it gets a typed Timeline message adapter.
+    return null;
   }
 
   function renderExecutionProposalCard(proposal: ChannelExecutionProposal): ReactNode {
@@ -949,7 +1081,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     if (progressModel && !input.auditActivityVisible) {
       const workCell = input.conversationWorkCellByWorkflowId.get(workflow.id);
       if (!workCell) {
-        return null;
+        return renderProtocolActivityItem(item);
       }
       const detailsKey = input.workflowWorkCellDetailsCacheKey(workflow.id);
       return (
@@ -975,97 +1107,11 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         }).node
       );
     }
-    return (
-      <MessageBubble
-        tone="runtime"
-        avatar={<AvatarInitial label="W" tone="violet" />}
-        author={input.t("Workflow")}
-        tag={workflow.status}
-        time={formatDateTime(workflow.updatedAt)}
-        body={`${workflow.title}: ${workflow.objective}`}
-        action={
-          input.activityActionRow(item.id, <>
-            <small>{input.t("{count} steps", { count: steps.length })}</small>
-            {workflow.status === "succeeded" ? (
-              <WorkflowFinalSummary
-                workflow={workflow}
-                steps={steps}
-                artifactsByRun={input.channelArtifactsByRun}
-              />
-            ) : null}
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              onClick={() => input.onOrchestrateWorkflow(workflow)}
-              disabled={input.orchestratingWorkflowId === workflow.id || !workflowCanAdvance(workflow.status)}
-            >
-              {input.orchestratingWorkflowId === workflow.id ? <Loader2 className="spin" size={14} /> : <Play size={14} />}
-              {input.t("Advance")}
-            </button>
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              onClick={() => input.onCancelWorkflow(workflow)}
-              disabled={input.orchestratingWorkflowId === workflow.id || !workflowCanCancel(workflow.status)}
-            >
-              <Square size={14} />
-              {input.t("Cancel")}
-            </button>
-            <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}>
-              <CheckCircle2 size={14} />
-              {input.t("Review source")}
-            </button>
-          </>)
-        }
-      />
-    );
+    return renderProtocolActivityItem(item);
   }
 
   function renderWorkflowStepActivityItem(item: Extract<ChannelActivityItem, { readonly kind: "workflow-step" }>): ReactNode {
-    const step = item.record;
-    return (
-      <MessageBubble
-        tone="runtime"
-        avatar={<AvatarInitial label="S" tone="teal" />}
-        author={input.t("Workflow step")}
-        tag={step.status}
-        time={formatDateTime(step.updatedAt)}
-        body={`${step.title}: ${step.prompt}`}
-        action={
-          step.blocker ? (
-            input.activityActionRow(item.id, <>
-              <div className="provider-run-notice compact">
-                <CircleAlert size={14} />
-                <span>{step.blocker}</span>
-              </div>
-              <button className="secondary-button compact-button" type="button" onClick={() => input.onRetryWorkflowStep(step)} disabled={input.runningWorkflowStepId === step.id || step.status !== "blocked"}>
-                {input.runningWorkflowStepId === step.id ? <Loader2 className="spin" size={14} /> : <RefreshCw size={14} />}
-                {input.t("Retry")}
-              </button>
-              <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}>
-                <CheckCircle2 size={14} />
-                {input.t("Review source")}
-              </button>
-            </>)
-          ) : step.taskId ? (
-            input.activityActionRow(item.id, <>
-              <span>{input.t("Task linked")}</span>
-              <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}>
-                <CheckCircle2 size={14} />
-                {input.t("Review source")}
-              </button>
-            </>)
-          ) : (
-            input.activityActionRow(item.id, (
-              <button className="secondary-button compact-button" type="button" onClick={input.onRevealReviewInConversation}>
-                <CheckCircle2 size={14} />
-                {input.t("Review source")}
-              </button>
-            ))
-          )
-        }
-      />
-    );
+    return renderProtocolActivityItem(item);
   }
 
   function renderRunActivityItem(item: Extract<ChannelActivityItem, { readonly kind: "run" }>): ReactNode {
@@ -1098,67 +1144,11 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         }).node
       );
     }
-    const taskTitle = item.task?.title ?? input.readRunTitle(run);
-    return (
-      <MessageBubble
-        tone="work"
-        avatar={<AvatarInitial label="R" tone="violet" />}
-        author={input.t("Run event")}
-        tag={run.status}
-        time={formatDateTime(run.endedAt ?? run.startedAt ?? run.updatedAt)}
-        body={input.t("Run for {title} is {status}.", { title: taskTitle, status: run.status })}
-        action={
-          input.activityActionRow(item.id, (
-            <button className="secondary-button compact-button" type="button" onClick={() => input.onRevealRunFromActivity(run.id)}>
-              <History size={14} />
-              {input.t("Show in transcript")}
-            </button>
-          ))
-        }
-      />
-    );
+    return renderProtocolActivityItem(item);
   }
 
   function renderStateTransitionActivityItem(item: Extract<ChannelActivityItem, { readonly kind: "state-transition" }>): ReactNode {
-    const transition = item.record;
-    return (
-      <MessageBubble
-        tone="runtime"
-        avatar={<AvatarInitial label="S" tone="violet" />}
-        author={input.t("State change")}
-        tag={transition.entityType}
-        time={formatDateTime(transition.createdAt)}
-        body={input.t("{entityType} {entityId}: {fromStatus} -> {toStatus} via {event}.", {
-          entityType: transition.entityType,
-          entityId: transition.entityId,
-          fromStatus: transition.fromStatus,
-          toStatus: transition.toStatus,
-          event: transition.event,
-        })}
-        action={
-          input.activityActionRow(item.id, (
-            <button
-              className="secondary-button compact-button"
-              type="button"
-              onClick={() => {
-                if (transition.entityType === "task") {
-                  input.onRevealTaskFromActivity(transition.entityId);
-                } else if (transition.entityType === "run") {
-                  input.onRevealRunFromActivity(transition.entityId);
-                } else if (transition.entityType === "approval") {
-                  input.onOpenApprovalDetail(input.approvals.find((approval) => approval.id === transition.entityId));
-                } else {
-                  input.onRevealReviewInConversation();
-                }
-              }}
-            >
-              {transition.entityType === "task" ? <SquareTerminal size={14} /> : transition.entityType === "run" ? <History size={14} /> : <Workflow size={14} />}
-              {input.t("Open event")}
-            </button>
-          ))
-        }
-      />
-    );
+    return renderProtocolActivityItem(item);
   }
 
   function renderMessageFeedItem(feedItem: ChannelMessageFeedItem | undefined): ReactNode {

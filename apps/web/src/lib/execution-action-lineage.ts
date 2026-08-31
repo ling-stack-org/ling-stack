@@ -22,6 +22,10 @@ export function executionActionSourceRefs(
         id: ref.id,
         ...(ref.label ? { label: ref.label } : {}),
         ...(ref.path ? { path: ref.path } : {}),
+        ...(ref.hostTarget ? { hostTarget: ref.hostTarget } : {}),
+        ...(ref.capabilityId ? { capabilityId: ref.capabilityId } : {}),
+        ...(ref.workspaceId ? { workspaceId: ref.workspaceId } : {}),
+        ...(ref.visibility ? { visibility: ref.visibility } : {}),
       }))
     : [];
   if (durableRefs.length > 0) {
@@ -65,6 +69,7 @@ export function executionActionSourceRefs(
       id,
       label: target.label ?? target.path,
       ...(target.type === "file" && target.path ? { path: target.path } : {}),
+      ...(target.type === "file" && target.path ? { hostTarget: "open_file" as const, workspaceId: action.workspaceId } : {}),
     });
   }
   return uniqueSourceRefs(refs);

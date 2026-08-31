@@ -3,6 +3,7 @@ import {
   fingerprintConversationTimeline,
   type ConversationTrustedSourceRef,
   type ConversationTimelineItem,
+  type ConversationTimelineRowItem,
   type ConversationTimelineSubAgentItem,
   type TimelineSnapshot,
 } from "@ling-stack/conversation-ui-core";
@@ -21,6 +22,8 @@ export interface ConversationTimelineProps {
   readonly loadPreview?: ArtifactPreviewLoader;
   readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
   readonly renderSubAgentAvatar?: (item: ConversationTimelineSubAgentItem) => ReactNode;
+  /** Surface-owned controls rendered inside the owning fact row disclosure. */
+  readonly renderFactActions?: (item: ConversationTimelineRowItem) => ReactNode;
   readonly emptyLabel?: ReactNode;
 }
 
@@ -36,6 +39,7 @@ export function ConversationTimeline({
   loadPreview,
   onOpenSourceRef,
   renderSubAgentAvatar,
+  renderFactActions,
   emptyLabel,
   className: customClassName,
   ariaLabel,
@@ -70,6 +74,7 @@ export function ConversationTimeline({
         loadPreview,
         onOpenSourceRef,
         renderSubAgentAvatar,
+        renderFactActions,
         snapshot,
         depth,
       }))}
@@ -89,6 +94,7 @@ function countAtomicItems(items: readonly ConversationTimelineItem[]): number {
 type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderSubAgentAvatar"> & {
   readonly snapshot: TimelineSnapshot;
   readonly depth: 0 | 1;
+  readonly renderFactActions?: (item: ConversationTimelineRowItem) => ReactNode;
 };
 
 function renderTimelineItem(item: ConversationTimelineItem, context: TimelineRenderContext): ReactNode {
@@ -98,6 +104,7 @@ function renderTimelineItem(item: ConversationTimelineItem, context: TimelineRen
     onOpenSourceRef: context.onOpenSourceRef,
     depth: context.depth,
     renderSubAgent: (subAgent) => <SubAgentTimelineItem key={subAgent.id} item={subAgent} context={context} />,
+    renderFactActions: context.renderFactActions,
   });
 }
 
@@ -163,6 +170,7 @@ function SubAgentTimelineItem({
           loadPreview={context.loadPreview}
           onOpenSourceRef={context.onOpenSourceRef}
           renderSubAgentAvatar={context.renderSubAgentAvatar}
+          renderFactActions={context.renderFactActions}
           ariaLabel={`${item.label} activity`}
         />
       ) : null}
