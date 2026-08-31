@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  type ConversationTrustedSourceRef,
   type ConversationTimelineItem,
   type ConversationTimelineSubAgentItem,
   type TimelineSnapshot,
@@ -17,7 +18,7 @@ export interface ConversationTimelineProps {
   readonly ariaLabel?: string;
   readonly cwd?: string;
   readonly loadPreview?: ArtifactPreviewLoader;
-  readonly onOpenSourceRef?: (ref: ConversationTimelineItem["sourceRefs"][number]) => void;
+  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
   readonly renderSubAgentAvatar?: (item: ConversationTimelineSubAgentItem) => ReactNode;
   readonly emptyLabel?: ReactNode;
 }

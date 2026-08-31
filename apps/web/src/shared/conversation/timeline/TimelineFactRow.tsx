@@ -2,6 +2,7 @@ import type { ReactNode } from "react";
 import { CheckCircle2, CircleAlert } from "lucide-react";
 import type {
   ConversationOperationSourceRef,
+  ConversationTrustedSourceRef,
   ConversationTimelineRowItem,
 } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
@@ -10,10 +11,11 @@ import { useConversationBlockView } from "../view-store/use-conversation-block-v
 export interface TimelineFactRowProps {
   readonly item: ConversationTimelineRowItem;
   readonly title: string;
+  readonly meta?: ReactNode;
   readonly icon: ReactNode;
   readonly detail?: ReactNode;
   readonly cwd?: string;
-  readonly onOpenSourceRef?: (ref: ConversationOperationSourceRef) => void;
+  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
   readonly depth?: 0 | 1;
 }
 
@@ -25,6 +27,7 @@ export interface TimelineFactRowProps {
 export function TimelineFactRow({
   item,
   title,
+  meta,
   icon,
   detail,
   depth = 0,
@@ -40,16 +43,21 @@ export function TimelineFactRow({
   });
   const expanded = hasDetail && disclosure.expanded;
   const status = timelineStatusLabel(item.status, t);
+  const detailId = `conversation-timeline-detail-${domSafeId(item.id)}`;
 
   return (
-    <div
+    <article
       className={["conversation-timeline-activity", `kind-${item.kind}`, item.status ? `status-${item.status}` : "", expanded ? "expanded" : ""].filter(Boolean).join(" ")}
       data-conversation-timeline-activity
+      data-conversation-timeline-item={item.kind}
       data-conversation-timeline-kind={item.kind}
       data-conversation-timeline-id={item.id}
       data-conversation-timeline-item-id={item.id}
       data-conversation-timeline-revision={item.revision}
+      data-conversation-timeline-thread-sequence={item.threadSequence}
+      data-conversation-timeline-part-index={item.partIndex}
       data-conversation-timeline-status={item.status ?? "unknown"}
+      data-conversation-diagnostic-code={item.kind === "diagnostic" ? item.code : undefined}
       data-conversation-timeline-depth={depth}
       data-conversation-action-id={item.actionId}
       data-conversation-run-id={item.runId}
@@ -64,13 +72,14 @@ export function TimelineFactRow({
           className="conversation-timeline-activity-main"
           type="button"
           aria-expanded={expanded}
+          aria-controls={detailId}
           aria-label={`${title}${status ? ` · ${status}` : ""}. ${expanded ? t("Collapse details") : t("Expand details")}`}
           onClick={disclosure.toggleExpanded}
         >
           <StatusAwareIcon item={item} icon={icon} />
           <span className="conversation-timeline-activity-copy">
             <strong>{title}</strong>
-            {item.meta ? <small>{item.meta}</small> : null}
+            {meta !== undefined || item.meta ? <small>{meta ?? item.meta}</small> : null}
           </span>
           {status ? <span className="conversation-timeline-activity-status">{status}</span> : null}
           <span className="conversation-timeline-activity-chevron" aria-hidden="true">⌄</span>
@@ -80,13 +89,13 @@ export function TimelineFactRow({
           <StatusAwareIcon item={item} icon={icon} />
           <span className="conversation-timeline-activity-copy">
             <strong>{title}</strong>
-            {item.meta ? <small>{item.meta}</small> : null}
+            {meta !== undefined || item.meta ? <small>{meta ?? item.meta}</small> : null}
           </span>
           {status ? <span className="conversation-timeline-activity-status">{status}</span> : null}
         </div>
       )}
-      {expanded ? <div className="conversation-timeline-activity-detail">{detail}</div> : null}
-    </div>
+      {expanded ? <div id={detailId} className="conversation-timeline-activity-detail">{detail}</div> : null}
+    </article>
   );
 }
 
@@ -102,11 +111,15 @@ export function timelineStatusLabel(
 ): string | undefined {
   if (!status) return undefined;
   const labels: Record<NonNullable<ConversationTimelineRowItem["status"]>, string> = {
-    pending: t("Pending"), running: t("Running"), waiting: t("Waiting"), blocked: t("Blocked"), failed: t("Failed"), cancelled: t("Cancelled"), succeeded: t("Done"),
+    pending: t("Pending"), running: t("Working"), waiting: t("Waiting"), blocked: t("Blocked"), failed: t("Failed"), cancelled: t("Cancelled"), succeeded: t("Completed"),
   };
   return labels[status];
 }
 
 function serializeSourceRefs(refs: readonly ConversationOperationSourceRef[]): string {
   return refs.map((ref) => `${ref.kind}:${ref.id}`).join(",");
+}
+
+function domSafeId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]+/gu, "-");
 }

@@ -1,18 +1,20 @@
 import { useEffect, useMemo, useState } from "react";
 import type {
   ConversationOperationSourceRef,
+  ConversationTrustedSourceRef,
   ConversationTimelineFileChangeItem,
 } from "@ling-stack/conversation-ui-core";
 import type { PreviewContentResponse } from "../../../types.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { DiffViewer } from "../blocks/DiffViewer.js";
+import { isTrustedFileSourceRef } from "./source-ref.js";
 
 interface ConversationTimelineFileChangeDetailProps {
   readonly item: ConversationTimelineFileChangeItem;
   readonly cwd?: string;
   readonly loadPreview?: ArtifactPreviewLoader;
-  readonly onOpenSourceRef?: (ref: ConversationOperationSourceRef) => void;
+  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
 }
 
 interface PreviewState {
@@ -88,10 +90,10 @@ export function ConversationTimelineFileReference({
     readonly additions?: number;
     readonly deletions?: number;
   };
-  readonly onOpenSourceRef?: (ref: ConversationOperationSourceRef) => void;
+  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
 }): React.JSX.Element {
   const ref = file.fileRef;
-  const canOpen = Boolean(onOpenSourceRef && (ref.kind === "file" || ref.kind === "path") && ref.path && ref.hostTarget === "open_file");
+  const canOpen = Boolean(onOpenSourceRef && isTrustedFileSourceRef(ref));
   const content = (
     <>
       <span className="conversation-timeline-file-ref-icon" aria-hidden="true">▧</span>
@@ -100,7 +102,9 @@ export function ConversationTimelineFileReference({
     </>
   );
   return canOpen ? (
-    <button className="conversation-timeline-file-ref" type="button" title={ref.path} onClick={() => onOpenSourceRef?.(ref)}>{content}</button>
+    <button className="conversation-timeline-file-ref" type="button" title={ref.path} onClick={() => {
+      if (isTrustedFileSourceRef(ref)) onOpenSourceRef?.(ref);
+    }}>{content}</button>
   ) : (
     <span className="conversation-timeline-file-ref" title={ref.path}>{content}</span>
   );

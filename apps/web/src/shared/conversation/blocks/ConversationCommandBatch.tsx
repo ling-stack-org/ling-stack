@@ -26,10 +26,12 @@ export function ConversationCommandBatch({
   });
   const duration = formatCommandDuration(batch.durationMs);
   const batchLabel = t("Ran {count} commands", { count: batch.commandCount });
+  const detailId = `conversation-command-batch-${domSafeId(batch.id)}`;
+  const density = batch.commandCount > 20 ? "large" : "default";
 
   return (
     <section
-      className={`conversation-command-batch ${disclosure.expanded ? "expanded" : "collapsed"}`}
+      className={`conversation-command-batch density-${density} ${disclosure.expanded ? "expanded" : "collapsed"}`}
       data-conversation-timeline-kind="commandBatch"
       data-conversation-timeline-id={batch.id}
       data-conversation-timeline-revision={revision ?? 0}
@@ -37,7 +39,10 @@ export function ConversationCommandBatch({
       data-conversation-timeline-depth={depth}
       data-conversation-batch-kind="command"
       data-conversation-batch-count={batch.commandCount}
+      data-conversation-batch-density={density}
       data-conversation-batch-action-ids={(actionIds ?? batch.actionIds).join(",")}
+      data-conversation-batch-child-action-ids={batch.childActionIds.join(",")}
+      data-conversation-batch-child-item-ids={batch.childItemIds.join(",")}
       data-conversation-action-id={(actionIds ?? batch.actionIds)[0]}
       data-conversation-run-id={batch.runId}
       data-conversation-attempt-id={batch.attemptId}
@@ -50,6 +55,7 @@ export function ConversationCommandBatch({
         className="conversation-command-batch-header"
         type="button"
         aria-expanded={disclosure.expanded}
+        aria-controls={detailId}
         aria-label={`${batchLabel}. ${disclosure.expanded ? t("Collapse command batch") : t("Expand command batch")}`}
         onClick={disclosure.toggleExpanded}
       >
@@ -61,12 +67,16 @@ export function ConversationCommandBatch({
         </span>
       </button>
       {disclosure.expanded ? (
-        <div className="conversation-command-batch-list">
+        <div id={detailId} className="conversation-command-batch-list">
           {batch.commands.map((command) => renderCommand(command))}
         </div>
       ) : null}
     </section>
   );
+}
+
+function domSafeId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]+/gu, "-");
 }
 
 function formatCommandDuration(durationMs: number | undefined): string | undefined {

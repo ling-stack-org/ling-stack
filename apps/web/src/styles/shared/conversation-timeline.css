@@ -1,0 +1,113 @@
+/*
+ * Shared Codex-style transcript presentation.
+ *
+ * The older conversation-work-cell stylesheet still contains migration-only rules
+ * for unrelated callers. These selectors are the semantic Timeline contract and
+ * intentionally load after it so the new renderer has one quiet visual grammar.
+ */
+
+[data-conversation-timeline="true"] {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* The page/feed owns scrolling.  Never turn a nested Timeline into a second
+ * scroll container just because a run has many facts. */
+[data-conversation-timeline="true"][data-activity-density="dense"] {
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
+  scrollbar-gutter: auto;
+  padding-inline-end: 0;
+}
+
+/* Large display-only batches may scroll inside their disclosed detail.  The
+ * atomic facts remain present in the batch payload and can still be inspected. */
+.conversation-command-batch[data-conversation-batch-density="large"] .conversation-command-batch-list,
+.conversation-exploration-batch[data-conversation-batch-density="large"] .conversation-exploration-batch-list {
+  max-height: min(240px, 35vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-inline-end: 4px;
+}
+
+.conversation-timeline-activity {
+  min-width: 0;
+}
+
+.conversation-timeline-activity-copy {
+  display: grid;
+  align-items: start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.conversation-timeline-activity-copy strong,
+.conversation-timeline-activity-copy small,
+.conversation-timeline-activity-status {
+  min-width: 0;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.conversation-timeline-activity-copy strong {
+  display: block;
+}
+
+.conversation-timeline-message {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.conversation-timeline-message .message-body-renderer {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.conversation-timeline-message .message-body-renderer > * + * {
+  margin-top: 10px;
+}
+
+.conversation-timeline-command,
+.conversation-timeline-output,
+.conversation-timeline-detail-code {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.conversation-timeline-output {
+  max-height: 240px;
+  overflow: auto;
+}
+
+.conversation-timeline-sub-agent {
+  min-width: 0;
+}
+
+@media (max-width: 720px) {
+  .conversation-timeline-activity-main {
+    grid-template-columns: 16px minmax(0, 1fr) 14px;
+  }
+
+  .conversation-timeline-activity-main .conversation-timeline-activity-status {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-conversation-timeline="true"][data-activity-density="dense"] {
+    scroll-behavior: auto;
+  }
+
+  .conversation-command-batch[data-conversation-batch-density="large"] .conversation-command-batch-list,
+  .conversation-exploration-batch[data-conversation-batch-density="large"] .conversation-exploration-batch-list {
+    scroll-behavior: auto;
+  }
+}

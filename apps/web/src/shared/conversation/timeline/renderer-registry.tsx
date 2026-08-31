@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type {
+  ConversationTrustedSourceRef,
   ConversationTimelineItem,
   ConversationTimelineSubAgentItem,
 } from "@ling-stack/conversation-ui-core";
@@ -21,7 +22,7 @@ import { ConversationTimelineBlockedRenderer } from "./ConversationTimelineBlock
 export interface ConversationTimelineRenderContext {
   readonly cwd?: string;
   readonly loadPreview?: ArtifactPreviewLoader;
-  readonly onOpenSourceRef?: (ref: ConversationTimelineItem["sourceRefs"][number]) => void;
+  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
   readonly renderSubAgent: (item: ConversationTimelineSubAgentItem) => ReactNode;
   readonly depth: 0 | 1;
 }

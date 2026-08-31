@@ -24,10 +24,12 @@ export function ConversationExplorationBatch({
     preserveTouchedStateOnRevision: true,
   });
   const batchLabel = t("Read {count} items", { count: batch.targetCount ?? batch.operationCount });
+  const detailId = `conversation-exploration-batch-${domSafeId(batch.id)}`;
+  const density = batch.operationCount > 20 ? "large" : "default";
 
   return (
     <section
-      className={`conversation-exploration-batch ${disclosure.expanded ? "expanded" : "collapsed"}`}
+      className={`conversation-exploration-batch density-${density} ${disclosure.expanded ? "expanded" : "collapsed"}`}
       data-conversation-timeline-kind="explorationBatch"
       data-conversation-timeline-id={batch.id}
       data-conversation-timeline-revision={revision ?? 0}
@@ -35,7 +37,10 @@ export function ConversationExplorationBatch({
       data-conversation-timeline-depth={depth}
       data-conversation-batch-kind="exploration"
       data-conversation-batch-count={batch.operationCount}
+      data-conversation-batch-density={density}
       data-conversation-batch-action-ids={(actionIds ?? batch.actionIds).join(",")}
+      data-conversation-batch-child-action-ids={batch.childActionIds.join(",")}
+      data-conversation-batch-child-item-ids={batch.childItemIds.join(",")}
       data-conversation-action-id={(actionIds ?? batch.actionIds)[0]}
       data-conversation-run-id={batch.runId}
       data-conversation-attempt-id={batch.attemptId}
@@ -48,6 +53,7 @@ export function ConversationExplorationBatch({
         className="conversation-exploration-batch-header"
         type="button"
         aria-expanded={disclosure.expanded}
+        aria-controls={detailId}
         aria-label={`${batchLabel}. ${disclosure.expanded ? t("Collapse read records") : t("Expand read records")}`}
         onClick={disclosure.toggleExpanded}
       >
@@ -58,10 +64,14 @@ export function ConversationExplorationBatch({
         </span>
       </button>
       {disclosure.expanded ? (
-        <div className="conversation-exploration-batch-list">
+        <div id={detailId} className="conversation-exploration-batch-list">
           {batch.children.map((item) => renderItem(item))}
         </div>
       ) : null}
     </section>
   );
+}
+
+function domSafeId(value: string): string {
+  return value.replace(/[^A-Za-z0-9_-]+/gu, "-");
 }
