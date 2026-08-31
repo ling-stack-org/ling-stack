@@ -4,6 +4,11 @@ import type {
   SidebarPrimaryStatus,
 } from "../features/navigation/SidebarNavigation.js";
 import { effectiveApprovalStatus } from "../lib/approvals.js";
+import {
+  channelNotificationAllows,
+  readChannelNotificationLevel,
+  type ChannelNotificationLevel,
+} from "../lib/channel-notifications.js";
 import { resolveRuntimeApprovalOwner, resolveRuntimeRunOwner } from "../lib/runtime-approval-ownership.js";
 import type { ChannelUnreadState } from "./app-shell-selectors.js";
 
@@ -32,7 +37,7 @@ export function buildSidebarChannelNotifications(
 ): Readonly<Record<string, SidebarNotification>> {
   const taskById = new Map(input.tasks.map((item) => [item.id, item]));
   const ownershipContext = { runs: input.runs, tasks: input.tasks, workUnits: input.workUnits, workflowSteps: input.workflowSteps };
-  const pendingByChannel = countPendingApprovals(input.approvals, (approval) => {
+  const pendingByChannel = summarizePendingApprovals(input.approvals, (approval) => {
     const owner = resolveRuntimeApprovalOwner(approval, ownershipContext);
     return owner?.kind === "channel" ? owner.channelId : undefined;
   });
@@ -47,17 +52,22 @@ export function buildSidebarChannelNotifications(
   for (const channel of input.channels) {
     const unreadState = input.channelUnreadById[channel.id];
     const notificationLevel = readChannelNotificationLevel(input.notificationLevels[channel.id]);
-    const unread = channel.id !== input.selectedChannelId && unreadState?.unread === true && (
-      notificationLevel === "all" ||
-      (notificationLevel === "mentions" && unreadState.mentioned)
+    const unread = channel.id !== input.selectedChannelId && unreadState?.unread === true && channelNotificationAllows(
+      notificationLevel,
+      unreadState.mentioned ? "mention" : "message",
     );
-    const count = pendingByChannel.get(channel.id) ?? 0;
-    const primaryStatus = derivePrimaryStatus({
+    const pending = pendingByChannel.get(channel.id) ?? { critical: 0, total: 0 };
+    const primaryStatus = deriveChannelPrimaryStatus({
+      notificationLevel,
       paused: channel.status === "paused",
-      pendingCount: count,
+      pendingCriticalCount: pending.critical,
+      pendingTotalCount: pending.total,
       run: latestRunByChannel.get(channel.id),
       task: latestTaskByChannel.get(channel.id),
     });
+    const count = primaryStatus === "waiting"
+      ? notificationLevel === "muted" ? pending.critical : pending.total
+      : 0;
     if (primaryStatus || unread) {
       notifications[channel.id] = {
         ...(count > 0 ? { count } : {}),
@@ -110,9 +120,10 @@ export function projectSidebarConversationStatus(
   status: LingThreadStatus,
   activeRunOrStream: boolean,
   pendingApproval = false,
+  failureAcknowledged = false,
 ): SidebarPrimaryStatus | undefined {
   if (pendingApproval || status === "waiting_for_approval") return "waiting";
-  if (status === "failed" || status === "blocked") return "failed";
+  if ((status === "failed" || status === "blocked") && !failureAcknowledged) return "failed";
   if (status === "running" || activeRunOrStream) return "running";
   return undefined;
 }
@@ -137,6 +148,24 @@ function countPendingApprovals(
     if (effectiveApprovalStatus(approval) !== "pending") continue;
     const id = ownerId(approval);
     if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+  }
+  return counts;
+}
+
+function summarizePendingApprovals(
+  approvals: readonly ApprovalRequest[],
+  ownerId: (approval: ApprovalRequest) => string | undefined,
+): Map<string, { readonly critical: number; readonly total: number }> {
+  const counts = new Map<string, { readonly critical: number; readonly total: number }>();
+  for (const approval of approvals) {
+    if (effectiveApprovalStatus(approval) !== "pending") continue;
+    const id = ownerId(approval);
+    if (!id) continue;
+    const current = counts.get(id) ?? { critical: 0, total: 0 };
+    counts.set(id, {
+      critical: current.critical + (approval.risk === "critical" ? 1 : 0),
+      total: current.total + 1,
+    });
   }
   return counts;
 }
@@ -174,6 +203,36 @@ function derivePrimaryStatus(input: {
   return undefined;
 }
 
-function readChannelNotificationLevel(value: string | undefined): "all" | "mentions" | "muted" {
-  return value === "all" || value === "muted" ? value : "mentions";
+function deriveChannelPrimaryStatus(input: {
+  readonly notificationLevel: ChannelNotificationLevel;
+  readonly paused: boolean;
+  readonly pendingCriticalCount: number;
+  readonly pendingTotalCount: number;
+  readonly run?: RunSession;
+  readonly task?: Task;
+}): SidebarPrimaryStatus | undefined {
+  const waitingForApproval = input.pendingTotalCount > 0 || input.run?.status === "waiting_for_approval";
+  if (waitingForApproval && channelNotificationAllows(
+    input.notificationLevel,
+    input.pendingCriticalCount > 0 ? "critical_approval" : "approval",
+  )) {
+    return "waiting";
+  }
+  if (input.paused) return "paused";
+  if (
+    (input.run?.status === "failed" || input.task?.status === "failed" || input.task?.status === "blocked") &&
+    channelNotificationAllows(input.notificationLevel, "blocker")
+  ) {
+    return "failed";
+  }
+  if (
+    (
+      input.run?.status === "queued" || input.run?.status === "running" ||
+      input.task?.status === "claimed" || input.task?.status === "running"
+    ) &&
+    channelNotificationAllows(input.notificationLevel, "activity")
+  ) {
+    return "running";
+  }
+  return undefined;
 }

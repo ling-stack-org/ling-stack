@@ -7,6 +7,7 @@ test("styles expose independent themes, stable hit areas, and approved motion", 
   const foundations = await readFile(new URL("../dist/styles/foundation-tokens.css", import.meta.url), "utf8");
   const themes = await readFile(new URL("../dist/styles/themes/built-in-themes.css", import.meta.url), "utf8");
   const buttons = await readFile(new URL("../dist/styles/controls/button.css", import.meta.url), "utf8");
+  const splitButtons = await readFile(new URL("../dist/styles/controls/split-button.css", import.meta.url), "utf8");
   const icons = await readFile(new URL("../dist/styles/controls/icon.css", import.meta.url), "utf8");
   const forms = await readFile(new URL("../dist/styles/controls/form-controls.css", import.meta.url), "utf8");
   const switches = await readFile(new URL("../dist/styles/controls/switch.css", import.meta.url), "utf8");
@@ -33,6 +34,10 @@ test("styles expose independent themes, stable hit areas, and approved motion", 
   assert.match(buttons, /data-icon-only="true"[^}]*gap:\s*0/su);
   assert.match(buttons, /data-icon-only="true"[^}]*width:\s*var\(--ling-control-sm\);[^}]*min-width:\s*var\(--ling-control-sm\)/su);
   assert.match(buttons, /data-icon-only="true"\] \.ling-ui-button-label[^}]*display:\s*none/su);
+  assert.match(index, /controls\/split-button\.css/u);
+  assert.match(splitButtons, /height:\s*var\(--ling-split-button-height\)/u);
+  assert.match(splitButtons, /overflow:\s*hidden/u);
+  assert.match(splitButtons, /> \.ling-ui-button[^}]*height:\s*100%;[^}]*border:\s*0;[^}]*border-radius:\s*0;[^}]*box-shadow:\s*none/su);
   assert.match(index, /controls\/icon\.css/u);
   assert.match(icons, /\.ling-ui-icon\s*\{[^}]*color:\s*currentColor;[^}]*stroke:\s*currentColor;/su);
   assert.match(icons, /data-size="xs"[^}]*--ling-icon-size:\s*14px;[^}]*--ling-icon-stroke-width:\s*2;/su);

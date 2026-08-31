@@ -22,9 +22,11 @@ import type {
   RequiredParticipantRequestedByV1,
 } from "@ling-stack/contracts";
 import { createRequiredParticipantManifestV1 } from "@ling-stack/contracts";
+import { formatServerCatalogMessage } from "@ling-stack/localization";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
+import { renderMaterializationClarifyCopy } from "./materialization/copy.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { listEffectiveChannelAiTeammateEntries, listEffectiveChannelAiTeammates, teammateCanWorkInEffectiveChannel } from "./channel-teammate-availability.js";
@@ -148,8 +150,6 @@ interface ChannelIntentModelExecutionOperation {
 
 interface RoleMatch {
   readonly roleKey: AiTeammate["roleKey"];
-  readonly summary: string;
-  readonly summaryZh: string;
   readonly action: ChannelExecutionProposalStep["action"];
 }
 
@@ -170,7 +170,6 @@ interface SingleStepExecutableIntent {
   readonly requiredTools: readonly RunTool[];
   readonly rolePreferences: readonly AiTeammate["roleKey"][];
   readonly acceptanceCriteria: readonly string[];
-  readonly riskSummary: string;
 }
 
 interface SingleStepExecutableBlocker {
@@ -196,50 +195,34 @@ interface FileContentResolution {
 const roleMatches: readonly RoleMatch[] = [
   {
     roleKey: "architect",
-    summary: "Define implementation boundaries and sequencing before execution.",
-    summaryZh: "执行前先拆解实现边界和步骤顺序。",
     action: "coordinated",
   },
   {
     roleKey: "engineer",
-    summary: "Implement the approved step after the boundary is clear.",
-    summaryZh: "在边界清楚后执行已确认的实现步骤。",
     action: "coordinated",
   },
   {
     roleKey: "qa",
-    summary: "Validate the expected behavior and regression checks.",
-    summaryZh: "验证预期行为和回归检查项。",
     action: "reviewed",
   },
   {
     roleKey: "designer",
-    summary: "Review interaction quality and visible product behavior.",
-    summaryZh: "检查交互质量和可见产品行为。",
     action: "reviewed",
   },
   {
     roleKey: "product",
-    summary: "Clarify product scope and acceptance before execution.",
-    summaryZh: "执行前澄清产品范围和验收标准。",
     action: "consulted",
   },
   {
     roleKey: "security",
-    summary: "Review trust boundaries and approval-sensitive risks.",
-    summaryZh: "审查信任边界和需要审批的风险。",
     action: "flagged_risk",
   },
   {
     roleKey: "docs",
-    summary: "Keep documentation aligned with the shipped behavior.",
-    summaryZh: "保持文档与实际交付行为一致。",
     action: "reviewed",
   },
   {
     roleKey: "release",
-    summary: "Prepare shipping checks and approval-sensitive publication steps.",
-    summaryZh: "准备发布检查和需要审批的发布步骤。",
     action: "coordinated",
   },
 ];
@@ -892,11 +875,12 @@ function createWorkflowProposal(
 
   const assignee = chooseAssignee(input, participants);
   const proposedBy = chooseProposedBy(input, assignee);
-  const responseLanguage = resolveChannelResponseLanguage({
+  const responseLanguageResolution = resolveChannelResponseLanguage({
     store: input.store,
     channel: input.channel,
     sourceText: input.sourceMessage.body,
-  }).language;
+  });
+  const responseLanguage = responseLanguageResolution.language;
   const now = new Date().toISOString();
   const fallbackRecommendations = uniqueStrings(
     participants
@@ -916,7 +900,7 @@ function createWorkflowProposal(
       channelId: input.channel.id,
       sourceMessageId: input.sourceMessage.id,
       proposedByTeammateId: proposedBy.id,
-      title: buildProposalTitle(input.sourceMessage.body, reasonCode),
+      title: buildProposalTitle(input.sourceMessage.body, reasonCode, responseLanguage),
       prompt: buildProposalPrompt(input.sourceMessage.body, participants, responseLanguage, execution),
       assigneeTeammateId: assignee.id,
       acceptanceCriteria: buildAcceptanceCriteria(responseLanguage),
@@ -928,8 +912,8 @@ function createWorkflowProposal(
       })),
       requiredTools,
       riskSummary,
-      responseLanguage,
-      shaping: buildProposalShaping(input, buildProposalTitle(input.sourceMessage.body, reasonCode), now),
+      responseLanguage: responseLanguageResolution.instructionLanguage,
+      shaping: buildProposalShaping(input, buildProposalTitle(input.sourceMessage.body, reasonCode, responseLanguage), now),
       status: "draft",
     },
     now,
@@ -979,11 +963,12 @@ function createSingleStepExecutableProposal(
     operationPlan,
   );
 
-  const responseLanguage = resolveChannelResponseLanguage({
+  const responseLanguageResolution = resolveChannelResponseLanguage({
     store: input.store,
     channel: input.channel,
     sourceText: input.sourceMessage.body,
-  }).language;
+  });
+  const responseLanguage = responseLanguageResolution.language;
   const blocker = executableProposalBlocker(input, executableIntent, participants, participantManifest, responseLanguage, operationPlan);
   const fallbackSpecialistRoleKeys = [...new Set<AiTeammate["roleKey"]>(participants.flatMap((participant) => {
     const fallbackRoleKey = participant.fallbackSpecialistRoleKey
@@ -994,11 +979,16 @@ function createSingleStepExecutableProposal(
   const explicitlyRequested = explicitRequestedParticipantIds(input).length > 0;
   const proposedBy = explicitlyRequested ? assignee : chooseProposedBy(input, assignee);
   const now = new Date().toISOString();
+  const localizedRiskSummary = formatServerCatalogMessage(
+    responseLanguage,
+    "daemon.channel.proposal.risk.permission",
+    { tools: executableIntent.requiredTools.join(", "), target: executableIntent.targetLabel },
+  );
   const riskSummary = blocker
-    ? `${executableIntent.riskSummary}\n\n${blocker.userMessage}`
+    ? `${localizedRiskSummary}\n\n${blocker.userMessage}`
     : fallbackSpecialistRoleKeys.length > 0
-      ? `${executableIntent.riskSummary}\n\n${fallbackSpecialistRoleKeys.map((roleKey) => lingAgentFallbackRecommendation(roleKey, responseLanguage)).join("\n")}`
-      : executableIntent.riskSummary;
+      ? `${localizedRiskSummary}\n\n${fallbackSpecialistRoleKeys.map((roleKey) => lingAgentFallbackRecommendation(roleKey, responseLanguage)).join("\n")}`
+      : localizedRiskSummary;
   const requiredTools = requiredToolsForExecutionOperations(operationPlan.operations);
   const acceptanceCriteria = participants.length > 1
     ? [
@@ -1032,7 +1022,7 @@ function createSingleStepExecutableProposal(
       })),
       requiredTools,
       riskSummary,
-      responseLanguage,
+      responseLanguage: responseLanguageResolution.instructionLanguage,
       ...(blocker ? {} : { shaping: buildProposalShaping(input, executableIntent.title, now) }),
       status: blocker ? "blocked" : "draft",
       errorMessage: blocker?.userMessage,
@@ -1105,9 +1095,7 @@ function createExistingProposalLineageBlocker(
     store: input.store,
     sourceItemId: input.sourceMessage.id,
     actorId: LING_AGENT_EXECUTOR_ID,
-    body: responseLanguage === "zh-CN"
-      ? "这个执行提案的参与者记录不完整，已停止自动执行。原始请求和提案已经保留，请重新发起或修复记录后重试。"
-      : "This execution proposal has incomplete participant lineage, so automatic execution was stopped. The original request and proposal were preserved; retry with a new request or repair the stored lineage.",
+    body: formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal_lineage_incomplete"),
     status: "blocked",
     errorMessage,
     idempotencyKey: `channel-intent-proposal-lineage-blocker:${input.sourceMessage.id}:${proposal.id}`,
@@ -1483,7 +1471,6 @@ function buildOpenLocalTargetExecutableIntent(input: ChannelIntentSelectorInput,
       "No files are created or edited by this step.",
       "No undeclared commands, MCP tools, browser sessions, or external actions are used without a separate runtime permission request.",
     ],
-    riskSummary: `需要 bash 权限打开 ${target}；proposal evidence 只声明本次打开/运行范围，实际副作用仍走 runtime approval。`,
   };
 }
 
@@ -1533,7 +1520,6 @@ function buildFileExecutableIntent(
       "Do not create an empty placeholder file when neither content nor a concrete current objective is available.",
       "No undeclared files, commands, MCP tools, or external actions are used without a separate runtime permission request.",
     ],
-    riskSummary: `需要 ${requiredTools.join(", ")} 权限处理 ${target}；proposal evidence 只声明本次任务的文件操作范围，实际副作用仍走 runtime approval。`,
   };
 }
 
@@ -1760,7 +1746,6 @@ function detectCommandExecutableIntent(text: string): SingleStepExecutableIntent
       `${target} has been run, or a clear blocker explains why it cannot run.`,
       "No undeclared file writes, edits, external actions, or broader commands are used without a separate runtime permission request.",
     ],
-    riskSummary: `需要 bash 权限运行 ${target}；proposal evidence 只声明本次任务的命令范围，实际副作用仍走 runtime approval。`,
   };
 }
 
@@ -1789,7 +1774,6 @@ function detectReleaseExecutableIntent(text: string): SingleStepExecutableIntent
       "Required checks are run or a clear blocker explains why they cannot run.",
       "Git push/merge mutation follows runtime approval policy and is not silently bypassed.",
     ],
-    riskSummary: "需要 bash 权限处理 Git push/merge；proposal evidence 只声明本次任务的发布/合并范围，真正的高风险副作用继续由 runtime approval policy 控制。",
   };
 }
 
@@ -1905,9 +1889,11 @@ function detectMaterializationClarify(input: ChannelIntentSelectorInput): Materi
   if (blockedFileRef) {
     const label = blockedFileRef.label ?? blockedFileRef.path;
     return {
-      body: responseLanguage === "zh-CN"
-        ? `这个路径不在当前工作区内。请换成工作区里的文件，或让我通过受控任务先检查它。`
-        : `That path is outside this workspace. Use a workspace file, or ask me to inspect it as a controlled task.`,
+      body: renderMaterializationClarifyCopy({
+        issue: "workspace_file_outside_root",
+        label,
+        language: responseLanguage,
+      }),
       sourceLabel: label,
       issueKind: "workspace_file_ref_blocked",
       technicalReason: `Workspace file ref is blocked: ${label}${blockedFileRef.blockedReason ? ` (${blockedFileRef.blockedReason})` : ""}`,
@@ -1928,9 +1914,11 @@ function detectMaterializationClarify(input: ChannelIntentSelectorInput): Materi
     if (metadataOnlyLink) {
       const label = metadataOnlyLink.title ?? metadataOnlyLink.url;
       return {
-        body: responseLanguage === "zh-CN"
-          ? `我可以先读取 ${label} 的页面内容，或者你直接把要总结的正文贴出来。`
-          : `I can read ${label} first, or you can paste the text you want summarized.`,
+        body: formatServerCatalogMessage(
+          responseLanguage,
+          "daemon.materialization.link_metadata_only",
+          { label },
+        ),
         sourceLabel: label,
         issueKind: "link_body_unavailable",
         technicalReason: `Link body is metadata-only: ${metadataOnlyLink.url}`,
@@ -1958,42 +1946,23 @@ function buildBlockedLinkMaterializationClarifyBody(
 ): string {
   const localOrPrivate = /localhost|local\/private|local or private|private network|本机|私有|loopback|127\.0\.0\.1|0\.0\.0\.0|::1|10\.|192\.168|172\.(1[6-9]|2\d|3[01])/iu
     .test(`${preview.url} ${preview.reason ?? ""}`);
-  if (responseLanguage === "zh-CN") {
-    return localOrPrivate
-      ? "这个链接看起来是本机或私有地址，我不会自动打开。你可以贴正文，或让我作为受控任务检查它。"
-      : "我没能自动读取这个页面。你可以让我重试，或直接把要处理的正文贴出来。";
-  }
   return localOrPrivate
-    ? "I will not open local/private links automatically. Paste the content, or ask me to inspect it as a controlled task."
-    : "I could not read that page automatically. Ask me to retry, or paste the text you want to use.";
+    ? renderMaterializationClarifyCopy({ issue: "link_private", label: preview.url, language: responseLanguage })
+    : formatServerCatalogMessage(responseLanguage, "daemon.materialization.link_unavailable");
 }
 
 function buildAttachmentMaterializationClarifyBody(
   attachment: LingAgentTurnEnvelope["attachments"][number],
   responseLanguage: ResponseLanguage,
 ): string {
-  if (responseLanguage === "zh-CN") {
-    if (attachment.kind === "image") {
-      return `我没能读取 ${attachment.fileName} 的图片内容。你可以换一个可读图片，或把关键内容贴出来。`;
-    }
-    if (attachment.kind === "pdf") {
-      return `我没能读取 ${attachment.fileName} 的 PDF 内容。你可以换一个可读文件，或把需要处理的内容贴出来。`;
-    }
-    if (attachment.kind === "office") {
-      return `我没能读取 ${attachment.fileName} 的文档内容。你可以换一个可读文件，或把关键内容贴出来。`;
-    }
-    return `我没能读取 ${attachment.fileName}。你可以换一个可读文件，或把需要处理的内容贴出来。`;
-  }
-  if (attachment.kind === "image") {
-    return `I could not read image content from ${attachment.fileName}. Upload a readable image, or paste the relevant details.`;
-  }
-  if (attachment.kind === "pdf") {
-    return `I could not read PDF content from ${attachment.fileName}. Upload a readable file, or paste the section to use.`;
-  }
-  if (attachment.kind === "office") {
-    return `I could not read document content from ${attachment.fileName}. Upload a readable file, or paste the section that matters.`;
-  }
-  return `I could not read ${attachment.fileName}. Upload a readable file, or paste the content to use.`;
+  const issue = attachment.kind === "image"
+    ? "image_unavailable"
+    : attachment.kind === "pdf"
+      ? "pdf_unavailable"
+      : attachment.kind === "office"
+        ? "office_unavailable"
+        : "generic_unavailable";
+  return renderMaterializationClarifyCopy({ issue, label: attachment.fileName, language: responseLanguage });
 }
 
 function attachmentMaterializationBlocker(
@@ -2019,11 +1988,12 @@ function attachmentMaterializationBlocker(
   }
   const reasons = envelope.attachments.length > 0
     ? envelope.attachments.map((attachment) => `${attachment.fileName}: ${attachment.previewStatus}${attachment.reason ? ` (${attachment.reason})` : ""}`).join("; ")
-    : responseLanguage === "zh-CN" ? "当前 turn 没有附件。" : "This turn has no attachments.";
+    : "This turn has no attachments.";
   return {
-    userMessage: responseLanguage === "zh-CN"
-      ? "这个文件任务需要可读的附件内容，但当前附件没有成功读取。你可以换一个可读文件，或直接把要写入的内容贴出来。"
-      : "This file task needs readable attachment content, but the attachment was not read successfully. Upload a readable file, or paste the content to write.",
+    userMessage: formatServerCatalogMessage(
+      responseLanguage,
+      "daemon.materialization.file_task_attachment_unavailable",
+    ),
     technicalReason: `Attachment-dependent file task has no available attachment preview/extraction: ${reasons}`,
   };
 }
@@ -2521,9 +2491,11 @@ function executableProposalBlocker(
   for (const participant of participants) {
     const teammate = participant.teammate;
     if (!teammateCanWorkInEffectiveChannel(input.store, input.channel, teammate.id)) {
-      userMessages.push(responseLanguage === "zh-CN"
-        ? `${teammate.displayName} 当前不在这个频道可执行名单里；请把该队友加入频道或编辑 proposal 的执行人。`
-        : `${teammate.displayName} is not available in this channel; add the teammate to the channel or edit the proposal assignee.`);
+      userMessages.push(formatServerCatalogMessage(
+        responseLanguage,
+        "daemon.channel.teammate_unavailable",
+        { name: teammate.displayName },
+      ));
       technicalReasons.push(`Assignee is not available in channel: ${teammate.id}`);
       errorCode ??= "participant_unavailable_in_channel";
     }
@@ -2535,18 +2507,22 @@ function executableProposalBlocker(
     if (participants.length > 1
       && execution.operations.some((operation) => operation.required)
       && ownedRequiredOperations.length === 0) {
-      userMessages.push(responseLanguage === "zh-CN"
-        ? `${teammate.displayName} 没有可安全分配的必需操作；请明确该参与者负责的执行或验证步骤。`
-        : `${teammate.displayName} has no safely assignable required operation; clarify the execution or verification step this participant owns.`);
+      userMessages.push(formatServerCatalogMessage(
+        responseLanguage,
+        "daemon.channel.participant_no_required_operation",
+        { name: teammate.displayName },
+      ));
       technicalReasons.push(`Required participant ${teammate.id} owns no required execution operation.`);
       errorCode ??= "participant_operation_assignment_incomplete";
     }
     const requiredTools = requiredToolsForExecutionOperations(ownedRequiredOperations);
     const missingTeammateTools = requiredTools.filter((tool) => !teammate.allowedTools.includes(tool));
     if (missingTeammateTools.length > 0) {
-      userMessages.push(responseLanguage === "zh-CN"
-        ? `${teammate.displayName} 缺少所需工具: ${missingTeammateTools.join(", ")}；请调整该队友工具范围或显式更改执行人。`
-        : `${teammate.displayName} is missing required tools: ${missingTeammateTools.join(", ")}. Update this teammate's tool scope or explicitly change the assignee.`);
+      userMessages.push(formatServerCatalogMessage(
+        responseLanguage,
+        "daemon.channel.participant_missing_tools",
+        { name: teammate.displayName, tools: missingTeammateTools.join(", ") },
+      ));
       technicalReasons.push(`Assignee ${teammate.id} is missing required tools: ${missingTeammateTools.join(", ")}`);
       errorCode ??= "participant_required_tools_unavailable";
     }
@@ -2572,37 +2548,20 @@ function buildSingleStepExecutablePrompt(
   executableIntent: SingleStepExecutableIntent,
   responseLanguage: ResponseLanguage,
 ): string {
-  if (responseLanguage === "zh-CN") {
-    return [
-      "这条用户消息是一个单步可执行请求。",
-      "",
-      "原始请求:",
-      preserveMarkdownLayout(messageBody),
-      "",
-      `执行动作: ${executableIntent.actionSummary}`,
-      `目标: ${executableIntent.targetLabel}`,
-      `需要工具: ${executableIntent.requiredTools.join(", ")}`,
-      "",
-      executableIntent.prompt,
-      "",
-      "权限边界: proposal evidence 只声明本次任务的工具和目标；运行中如需未声明工具、路径、命令、MCP 或外部副作用，必须走 runtime permission request。",
-      "开始边界: Ling Agent Session 会在 scope 清楚且所需工具未被 deny 时自动开始；高风险副作用继续由 runtime approval policy 控制，不完整任务必须先澄清。",
-    ].join("\n");
-  }
   return [
-    "The user message is a single-step executable request.",
+    formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.single_step_header"),
     "",
-    "Original request:",
+    `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.original_request")}:`,
     preserveMarkdownLayout(messageBody),
     "",
-    `Action: ${executableIntent.actionSummary}`,
-    `Target: ${executableIntent.targetLabel}`,
-    `Required tools: ${executableIntent.requiredTools.join(", ")}`,
+    `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.action")}: ${executableIntent.actionSummary}`,
+    `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.target")}: ${executableIntent.targetLabel}`,
+    `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.required_tools")}: ${executableIntent.requiredTools.join(", ")}`,
     "",
     executableIntent.prompt,
     "",
-    "Permission boundary: proposal evidence only declares the tools and target for this task; undeclared tools, paths, commands, MCP actions, or external side effects must use runtime permission request.",
-    "Start boundary: Ling Agent Session may auto-start when scope is clear and required tools are not denied; high-risk side effects remain governed by runtime approval policy, and incomplete work must be clarified first.",
+    formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.permission_boundary"),
+    formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.start_boundary"),
   ].join("\n");
 }
 
@@ -2629,12 +2588,10 @@ function buildMultiParticipantExecutablePrompt(
     const owned = ownedExecutionOperations(execution.operations, operationOwners, index);
     return `- ${participant.teammate.displayName}: ${owned.map((operation) => operation.id).join(", ") || "no operation"}`;
   });
-  const header = responseLanguage === "zh-CN"
-    ? "这条用户消息是一个多参与者可执行 workflow。"
-    : "The user message is a multi-participant executable workflow.";
-  const originalLabel = responseLanguage === "zh-CN" ? "原始请求" : "Original request";
-  const operationsLabel = responseLanguage === "zh-CN" ? "已物化的执行操作" : "Materialized execution operations";
-  const participantsLabel = responseLanguage === "zh-CN" ? "参与者操作归属" : "Participant operation ownership";
+  const header = formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.multi_participant_header");
+  const originalLabel = formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.original_request");
+  const operationsLabel = formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.materialized_operations");
+  const participantsLabel = formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.participant_ownership");
   return [
     header,
     "",
@@ -2649,10 +2606,8 @@ function buildMultiParticipantExecutablePrompt(
     `${participantsLabel}:`,
     ...participantLines,
     "",
-    responseLanguage === "zh-CN"
-      ? "每个参与者只能完成自己拥有的操作；后续参与者必须等待依赖操作的 Host evidence。最终成功需要所有 required participant 和 operation evidence 都通过。"
-      : "Each participant may complete only its owned operations; later participants must wait for dependency Host evidence. Final success requires every required participant and operation evidence to verify.",
-    "Permission boundary: undeclared tools, paths, commands, MCP actions, or external side effects require a separate runtime permission request.",
+    formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.multi_participant_rule"),
+    formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.permission_boundary"),
   ].join("\n");
 }
 
@@ -2667,18 +2622,16 @@ function summarizeOwnedExecutionOperations(
   }
   const labels = operations.map((operation) => {
     const target = operation.targetRef.label ?? operation.targetKind;
-    if (responseLanguage === "zh-CN") {
-      if (operation.kind === "file_create") return `创建 ${target}`;
-      if (operation.kind === "file_edit") return `修改 ${target}`;
-      if (operation.kind === "open_local_target") return `读取/检查 ${target}`;
-      return `执行 ${target}`;
-    }
-    if (operation.kind === "file_create") return `create ${target}`;
-    if (operation.kind === "file_edit") return `edit ${target}`;
-    if (operation.kind === "open_local_target") return `read/check ${target}`;
-    return `run ${target}`;
+    const action = operation.kind === "file_create"
+      ? "create"
+      : operation.kind === "file_edit"
+        ? "edit"
+        : operation.kind === "open_local_target"
+          ? "read"
+          : "run";
+    return formatServerCatalogMessage(responseLanguage, `daemon.channel.operation.${action}`, { target });
   });
-  return `${displayName}: ${labels.join(responseLanguage === "zh-CN" ? "，" : ", ")}`;
+  return `${displayName}: ${new Intl.ListFormat(responseLanguage, { style: "short", type: "conjunction" }).format(labels)}`;
 }
 
 function chooseClarifyingTeammate(input: ChannelIntentSelectorInput): AiTeammate | undefined {
@@ -2687,64 +2640,16 @@ function chooseClarifyingTeammate(input: ChannelIntentSelectorInput): AiTeammate
 
 function lingAgentFallbackRecommendation(roleKey: AiTeammate["roleKey"], responseLanguage: ResponseLanguage): string {
   const roleLabel = specialistRoleLabel(roleKey, responseLanguage);
-  return responseLanguage === "zh-CN"
-    ? `没有配置可用的专门 ${roleLabel} 队友；Ling Agent 可以先处理这个有边界的任务，之后也可以添加 ${roleLabel} 队友用于未来任务。`
-    : `No dedicated ${roleLabel} teammate is configured. Ling Agent can handle this bounded task now, or you can add a ${roleLabel} teammate for future runs.`;
+  return formatServerCatalogMessage(responseLanguage, "daemon.channel.fallback_recommendation", { role: roleLabel });
 }
 
 function specialistRoleLabel(roleKey: AiTeammate["roleKey"], responseLanguage: ResponseLanguage): string {
-  if (responseLanguage === "zh-CN") {
-    if (roleKey === "docs") {
-      return "Docs";
-    }
-    if (roleKey === "engineer") {
-      return "Engineer";
-    }
-    if (roleKey === "qa") {
-      return "QA";
-    }
-    if (roleKey === "architect") {
-      return "Architect";
-    }
-    if (roleKey === "designer") {
-      return "Designer";
-    }
-    if (roleKey === "security") {
-      return "Security";
-    }
-    if (roleKey === "product") {
-      return "Product";
-    }
-    if (roleKey === "release") {
-      return "Release";
-    }
-    return "Specialist";
-  }
-  if (roleKey === "docs") {
-    return "Docs";
-  }
-  if (roleKey === "engineer") {
-    return "Engineer";
-  }
-  if (roleKey === "qa") {
-    return "QA";
-  }
-  if (roleKey === "architect") {
-    return "Architect";
-  }
-  if (roleKey === "designer") {
-    return "Designer";
-  }
-  if (roleKey === "security") {
-    return "Security";
-  }
-  if (roleKey === "product") {
-    return "Product";
-  }
-  if (roleKey === "release") {
-    return "Release";
-  }
-  return "specialist";
+  const knownRole = roleKey === "docs" || roleKey === "engineer" || roleKey === "qa"
+    || roleKey === "architect" || roleKey === "designer" || roleKey === "security"
+    || roleKey === "product" || roleKey === "release"
+    ? roleKey
+    : "specialist";
+  return formatServerCatalogMessage(responseLanguage, `daemon.channel.role_label.${knownRole}`);
 }
 
 function textMentionsRole(text: string, roleKey: AiTeammate["roleKey"]): boolean {
@@ -2780,66 +2685,55 @@ function textMentionsAnyRole(text: string): boolean {
 }
 
 function buildClarifyQuestion(reasonCode: ClarifyReasonCode, responseLanguage: ResponseLanguage): string {
-  const chinese = responseLanguage === "zh-CN";
   if (reasonCode === "approval_sensitive_target") {
-    return chinese
-      ? "我需要先确认范围：目标分支/PR 是哪个？是否允许执行会修改远端状态的步骤？完成后用什么检查验收？"
-      : "I need to clarify scope first: which branch or PR is the target, are remote-mutating steps allowed, and what check should verify completion?";
+    return formatServerCatalogMessage(responseLanguage, "daemon.channel.clarify.approval_sensitive_target");
   }
   if (reasonCode === "missing_target") {
-    return chinese
-      ? "我需要先确认目标：要处理的具体对象是什么？完成后用什么结果判断通过？"
-      : "I need to clarify the target first: what exactly should be changed, and what result should count as done?";
+    return formatServerCatalogMessage(responseLanguage, "daemon.channel.clarify.missing_target");
   }
   if (reasonCode === "missing_command") {
     return buildMissingCommandClarifyBody(responseLanguage);
   }
   if (reasonCode === "ambiguous_target") {
-    return chinese
-      ? "我看到多个可能目标。请指定要处理哪一个文件。"
-      : "I found multiple possible targets. Please specify which file I should handle.";
+    return formatServerCatalogMessage(responseLanguage, "daemon.channel.clarify.ambiguous_target");
   }
-  return chinese
-    ? "我需要先确认范围：你希望我处理哪个具体目标？完成后用哪几个检查项验收？"
-    : "I need to clarify scope first: what specific target should I handle, and which checks should verify the result?";
+  return formatServerCatalogMessage(responseLanguage, "daemon.channel.clarify.generic");
 }
 
 function buildMissingCommandClarifyBody(responseLanguage: ResponseLanguage): string {
-  return responseLanguage === "zh-CN"
-    ? "文件操作完成后要运行哪条具体命令？请提供一条有边界的命令，例如 `node app.js`。"
-    : "Which exact command should run after the file operation? Provide one bounded command, for example `node app.js`.";
+  return formatServerCatalogMessage(responseLanguage, "daemon.channel.clarify.missing_command");
 }
 
 function buildAmbiguousFileTargetClarifyBody(candidates: readonly string[], responseLanguage: ResponseLanguage): string {
   const listedCandidates = candidates.slice(0, 5).map((candidate) => `- ${candidate}`).join("\n");
-  if (responseLanguage === "zh-CN") {
-    return [
-      "我看到多个可能的文件目标。请指定要落到哪一个：",
-      listedCandidates,
-    ].join("\n");
-  }
-  return [
-    "I found multiple possible file targets. Specify which one I should use:",
-    listedCandidates,
-  ].join("\n");
+  return formatServerCatalogMessage(
+    responseLanguage,
+    "daemon.channel.clarify.ambiguous_file_targets",
+    { candidates: listedCandidates },
+  );
 }
 
 function buildMissingFileContentClarifyBody(target: string, responseLanguage: ResponseLanguage): string {
-  if (responseLanguage === "zh-CN") {
-    return `我已经识别到目标文件是 ${target}，但当前上下文里没有明确要写入的内容。请把要写入的内容、或要生成的具体页面/功能再发一次。`;
-  }
-  return `I found the target file ${target}, but the current context does not contain clear content to write. Send the content or the concrete page/feature to generate.`;
+  return formatServerCatalogMessage(
+    responseLanguage,
+    "daemon.channel.clarify.missing_file_content",
+    { target },
+  );
 }
 
-function buildProposalTitle(messageBody: string, reasonCode: IntentReasonCode): string {
+function buildProposalTitle(
+  messageBody: string,
+  reasonCode: IntentReasonCode,
+  responseLanguage: ResponseLanguage,
+): string {
   const normalized = normalizeWhitespace(messageBody);
   if (normalized.length > 0) {
     return normalized.length > 72 ? `${normalized.slice(0, 69)}...` : normalized;
   }
   if (reasonCode === "all_teammates_request") {
-    return "Coordinate teammate collaboration";
+    return formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.title.collaboration");
   }
-  return "Coordinate channel workflow";
+  return formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.title.workflow");
 }
 
 function buildProposalPrompt(
@@ -2851,66 +2745,43 @@ function buildProposalPrompt(
   const steps = participants.map((participant, index) => `${index + 1}. ${participant.teammate.displayName}: ${roleSummary(participant.role, responseLanguage)}`);
   const operations = execution?.operations.map((operation) =>
     `- ${operation.id}: ${operation.kind} (${operation.targetRef.label ?? operation.targetKind})${operation.dependsOn.length > 0 ? ` after ${operation.dependsOn.join(", ")}` : ""}`);
-  if (responseLanguage === "zh-CN") {
-    return [
-      "这条用户消息看起来是一个需要协作执行的工作流请求。",
-      "",
-      "原始请求:",
-      preserveMarkdownLayout(messageBody),
-      "",
-      "建议协作步骤:",
-      ...steps,
-      ...(operations && operations.length > 0 ? ["", "已物化的执行操作:", ...operations] : []),
-      "",
-      "多步骤协作默认等待用户确认；清晰可执行任务在所需工具未被 deny 时可由 Ling Agent Session 自动开始，副作用继续由 runtime approval policy 控制。",
-    ].join("\n");
-  }
   return [
-    "The user message looks like a coordinated workflow request.",
+    formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.header"),
     "",
-    "Original request:",
+    `${formatServerCatalogMessage(responseLanguage, "daemon.channel.prompt.original_request")}:`,
     preserveMarkdownLayout(messageBody),
     "",
-    "Proposed collaboration:",
+    `${formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.collaboration")}:`,
     ...steps,
-    ...(operations && operations.length > 0 ? ["", "Materialized operations:", ...operations] : []),
+    ...(operations && operations.length > 0
+      ? ["", `${formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.materialized_operations")}:`, ...operations]
+      : []),
     "",
-    "Multi-step collaboration waits for user confirmation by default; clear executable work may be auto-started by Ling Agent Session when required tools are not denied, while side effects remain governed by runtime approval policy.",
+    formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.rule"),
   ].join("\n");
 }
 
 function buildAcceptanceCriteria(responseLanguage: ResponseLanguage): readonly string[] {
-  return responseLanguage === "zh-CN"
-    ? [
-        "执行前先产生可审计 proposal evidence；多步骤、范围不完整或 policy-denied 的工作需要确认或阻断。",
-        "每个实现步骤都通过现有频道 task/run 路径执行。",
-        "selector、handoff、run、approval 和 artifact 证据都保持可展开查看。",
-      ]
-    : [
-        "Create auditable proposal evidence before execution; multi-step, incomplete-scope, or policy-denied work needs confirmation or blocking.",
-        "Run each implementation step through the existing channel task/run path.",
-        "Keep selector, handoff, run, approval, and artifact evidence expandable.",
-      ];
+  return [
+    formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.acceptance.audit"),
+    formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.acceptance.execution"),
+    formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.acceptance.evidence"),
+  ];
 }
 
 function buildRiskSummary(reasonCode: IntentReasonCode, responseLanguage: ResponseLanguage): string {
   if (reasonCode === "all_teammates_request") {
-    return responseLanguage === "zh-CN"
-      ? "已把全员协作执行请求转换为一个工作流 proposal；纯讨论型全员发言会走可见多队友回复。"
-      : "Converted an all-teammates execution request into one workflow proposal; discussion-only all-teammate requests use visible multi-reply.";
+    return formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.risk.all_teammates");
   }
   if (reasonCode === "explicit_workflow_start") {
-    return responseLanguage === "zh-CN"
-      ? "显式开始 workflow 的请求会先预填为 proposal evidence；Ling Agent Session 会在工具未被 deny 时自动开始，真正的高风险副作用继续由 runtime approval policy 控制。"
-      : "Direct workflow request is prefilled as proposal evidence; Ling Agent Session auto-starts when required tools are not denied, while high-risk side effects remain governed by runtime approval policy.";
+    return formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.risk.explicit_workflow");
   }
-  return responseLanguage === "zh-CN"
-    ? "多 agent 工作只会在确认后开始，并继续沿用现有 workflow/run approval。"
-    : "Multi-agent work starts after confirmation and continues through existing workflow/run approvals.";
+  return formatServerCatalogMessage(responseLanguage, "daemon.channel.proposal.risk.multi_agent");
 }
 
 function roleSummary(role: RoleMatch, responseLanguage: ResponseLanguage): string {
-  return responseLanguage === "zh-CN" ? role.summaryZh : role.summary;
+  const roleKey = role.roleKey === "custom" ? "specialist" : role.roleKey;
+  return formatServerCatalogMessage(responseLanguage, `daemon.channel.role_summary.${roleKey}`);
 }
 
 function persistIntentDecision(

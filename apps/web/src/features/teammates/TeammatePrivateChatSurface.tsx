@@ -95,7 +95,7 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
       composerNode={props.composerGateNode ?? <TeammatePrivateChatComposer {...props} controller={composerController} />}
       sideNode={(
         <>
-          {dockController.visible ? (
+          {dockController.resizable ? (
             <button
               className="workspace-right-dock-resize-handle"
               type="button"

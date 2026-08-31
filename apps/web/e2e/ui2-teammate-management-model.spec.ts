@@ -36,7 +36,9 @@ test("ready model uses one header action owner with reset, guarded save, and exp
   const select = model.getByLabel("Assigned model");
   await expect(select).toHaveClass(/ling-ui-select/u);
   await expect(select).toHaveValue("provider_primary");
+  await expect(select.locator("option:checked")).toContainText("gpt-5.5 · 127.0.0.1:8317");
   await expect(model.getByText("Fixed model · gpt-5.5", { exact: true })).toBeVisible();
+  await expect(model.getByLabel("Model summary")).toHaveCount(0);
   await expect(header.getByRole("button", { name: "Save model" })).toBeDisabled();
   await expect(model.getByRole("button", { name: "Save model" })).toHaveCount(0);
   await captureEvidence(page, "1440x960-ling-light-ready.png");
@@ -64,7 +66,7 @@ test("built-in teammates can follow the workspace default or keep a fixed overri
   await prepareSurface(page, { theme: "light", width: 1440, height: 960, locale: "en-US" });
   const state = createBaseState({ approvalStatus: "expired" });
   state.providers = [
-    readyProvider({ id: "provider_workspace", displayName: "Workspace Relay", model: "gpt-workspace" }),
+    readyProvider({ id: "provider_workspace", displayName: "gpt-workspace · gpt-workspace", model: "gpt-workspace" }),
     readyProvider({ id: "provider_override", displayName: "Override Relay", model: "gpt-override" }),
   ];
   state.workspaceSettings.defaultProviderPresetId = "provider_workspace";
@@ -81,8 +83,10 @@ test("built-in teammates can follow the workspace default or keep a fixed overri
   const select = model.getByLabel("Assigned model");
   const header = page.getByLabel("Single agent settings");
   await expect(select).toHaveValue("__workspace_default__");
-  await expect(select.locator('option[value="__workspace_default__"]')).toContainText("Use workspace default (current: Workspace Relay / gpt-workspace)");
+  await expect(select.locator('option[value="__workspace_default__"]')).toContainText("Use workspace default (current: gpt-workspace · 127.0.0.1:8317)");
   await expect(model.getByText("Workspace default · gpt-workspace", { exact: true })).toBeVisible();
+  await expect(model).not.toContainText("gpt-workspace · gpt-workspace");
+  await captureEvidence(page, "1440x960-ling-light-workspace-default-model-label.png");
 
   await select.selectOption("provider_override");
   await header.getByRole("button", { name: "Save model" }).click();
@@ -187,7 +191,8 @@ test("protected Ling Agent shows the effective workspace default without editabl
   const model = await openModel(page, "Ling Agent", chineseLabels);
   const header = page.getByLabel("单个智能体设置");
   await expect(model.getByText("工作区默认 · gpt-5.5", { exact: true })).toBeVisible();
-  await expect(model).toContainText("工作区模型");
+  await expect(model).not.toContainText("工作区模型");
+  await expect(model.getByLabel("模型摘要")).toHaveCount(0);
   await expect(model.getByLabel("已分配模型")).toHaveCount(0);
   await expect(header.getByRole("button", { name: "重置模型" })).toHaveCount(0);
   await expect(header.getByRole("button", { name: "保存模型" })).toHaveCount(0);
@@ -269,7 +274,10 @@ test("long model identity remains contained in compact dark layout", async ({ pa
   await page.goto("/");
 
   const model = await openModel(page, "Long Model Layout Reviewer");
-  await expect(model.getByText(longModel, { exact: true })).toBeVisible();
+  const assignedModel = model.getByLabel("Assigned model");
+  await expect(assignedModel).toHaveValue("provider_long");
+  await expect(assignedModel.locator("option:checked")).toContainText(longModel);
+  await expect(model.getByLabel("Model summary")).toHaveCount(0);
   await captureEvidence(page, "1280x800-ling-dark-long-model.png");
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);

@@ -48,6 +48,9 @@ importers:
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../../packages/contracts
+      '@ling-stack/localization':
+        specifier: workspace:*
+        version: link:../../packages/localization
       '@ling-stack/ui-react':
         specifier: workspace:*
         version: link:../../packages/ui-react
@@ -197,6 +200,9 @@ importers:
       '@ling-stack/core':
         specifier: workspace:*
         version: link:../../packages/core
+      '@ling-stack/localization':
+        specifier: workspace:*
+        version: link:../../packages/localization
       '@ling-stack/ui-react':
         specifier: workspace:*
         version: link:../../packages/ui-react
@@ -274,10 +280,17 @@ importers:
         specifier: workspace:*
         version: link:../../apps/web
 
-  packages/contracts: {}
+  packages/contracts:
+    dependencies:
+      '@ling-stack/localization':
+        specifier: workspace:*
+        version: link:../localization
 
   packages/conversation-ui-core:
     dependencies:
+      '@ling-stack/localization':
+        specifier: workspace:*
+        version: link:../localization
       remark-gfm:
         specifier: ^4.0.1
         version: 4.0.1
@@ -333,6 +346,9 @@ importers:
       '@ling-stack/contracts':
         specifier: workspace:*
         version: link:../contracts
+      '@ling-stack/localization':
+        specifier: workspace:*
+        version: link:../localization
       '@ling-stack/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
@@ -351,6 +367,9 @@ importers:
       '@ling-stack/core':
         specifier: workspace:*
         version: link:../core
+      '@ling-stack/localization':
+        specifier: workspace:*
+        version: link:../localization
       '@ling-stack/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
@@ -384,6 +403,9 @@ importers:
       pptxgenjs:
         specifier: 4.0.1
         version: 4.0.1
+      shell-quote:
+        specifier: 1.10.0
+        version: 1.10.0
       ws:
         specifier: ^8.21.0
         version: 8.21.3
@@ -397,6 +419,8 @@ importers:
       '@types/ws':
         specifier: ^8.5.13
         version: 8.18.1
+
+  packages/localization: {}
 
   packages/plugin-sdk: {}
 

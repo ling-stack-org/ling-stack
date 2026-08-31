@@ -37,6 +37,7 @@ import type {
 } from "@ling-stack/contracts";
 import type {
   ApprovalActionType,
+  ApprovalCommandRule,
   ApprovalRequest,
   ApprovalRisk,
   CreateApprovalRequestInput,
@@ -2094,6 +2095,9 @@ export interface RunStore {
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   expireApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
+  listApprovalCommandRules(options?: { readonly includeRevoked?: boolean }): ApprovalCommandRule[];
+  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[]): ApprovalCommandRule | undefined;
+  revokeApprovalCommandRule(id: string, now: string): ApprovalCommandRule | undefined;
   createApprovalCheckpoint(input: CreateApprovalCheckpointInput, now: string): LingApprovalCheckpoint;
   getApprovalCheckpoint(id: string): LingApprovalCheckpoint | undefined;
   getApprovalCheckpointForApproval(approvalId: string): LingApprovalCheckpoint | undefined;
@@ -2625,6 +2629,9 @@ export type ApprovalStoreFacet = RunStoreFacet<
   | "denyApprovalRequest"
   | "expireApprovalRequest"
   | "cancelApprovalRequest"
+  | "listApprovalCommandRules"
+  | "findMatchingApprovalCommandRule"
+  | "revokeApprovalCommandRule"
   | "getApprovalPolicy"
   | "updateApprovalPolicy"
 >;

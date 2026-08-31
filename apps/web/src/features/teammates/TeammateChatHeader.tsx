@@ -37,6 +37,7 @@ export function TeammateChatHeader({
   terminalOpen,
   terminalDisabled,
   detailsOpen,
+  detailsDisabled,
   moreButtonRef,
   onToggleSearch,
   onCloseSearch,
@@ -68,6 +69,7 @@ export function TeammateChatHeader({
   readonly terminalOpen: boolean;
   readonly terminalDisabled?: boolean;
   readonly detailsOpen: boolean;
+  readonly detailsDisabled?: boolean;
   readonly moreButtonRef: Ref<HTMLButtonElement>;
   readonly onToggleSearch: () => void;
   readonly onCloseSearch: () => void;
@@ -153,6 +155,7 @@ export function TeammateChatHeader({
         terminalDisabled={terminalDisabled}
         terminalLabel={t("Terminal")}
         detailsActive={detailsOpen}
+        detailsDisabled={detailsDisabled}
         detailsLabel={detailsOpen ? t("Hide details") : t("Show details")}
         onToggleSearch={onToggleSearch}
         onOpenFiles={onOpenAttachments}
