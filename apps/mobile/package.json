@@ -42,7 +42,7 @@
     "react-native-screens": "~4.27.0"
   },
   "devDependencies": {
-    "expo-doctor": "1.20.2",
+    "expo-doctor": "1.20.4",
     "react-types-mobile": "npm:@types/react@19.2.17",
     "typescript": "~7.0.2"
   }
