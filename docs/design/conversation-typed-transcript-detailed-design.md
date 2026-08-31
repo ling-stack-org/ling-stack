@@ -699,6 +699,38 @@ type TimelineFingerprint = {
 - hover/focus 显示完整路径并可复制；只有 `hostTarget=open_file/open_diff` 才可导航。
 - `fileChange` 显示 `+18 -4`；展开是结构化 diff，malformed diff 显示 diagnostic。
 
+#### 11.2.1 Trusted Host ref 约束
+
+`hostTarget` 不是模型可以填写的普通字符串，而是 Host/daemon 在事实折叠阶段签发
+的能力标记。模型正文、模型 tool 参数和未验证的 `fileRefs` 只能产生
+`{ kind: "path", label, path, visibility: "conversation" }`，不能产生可点击 ref。
+只有同时满足以下条件，adapter 才能把它升级为可操作的 `file`/`diff` ref：
+
+1. 路径由 daemon 在当前 workspace 根目录内规范化，拒绝 `..`、符号链接逃逸和
+   workspace 外路径；artifact/diff id 必须存在于当前 `runId` 的 durable records。
+2. ref 的 `threadId`、`runId`、`attemptId`、`participantId` 与当前 snapshot scope
+   一致，并且有同 thread 的 `conversation_item` anchor。
+3. `open_file` 只允许已存在或已由该 action 创建的文件；`open_diff` 只允许
+   `fileChange` action 的结构化 diff；`open_artifact` 只允许已登记 artifact。
+4. Host callback 在执行前再次校验 workspace、thread、run、action 和 permission；
+   前端 DOM 中的 path、label、`data-*` 属性不能作为授权输入。
+
+规范化后的 ref 形状如下：
+
+```ts
+type TrustedHostRef = ConversationOperationSourceRef & {
+  readonly kind: "file" | "diff" | "artifact";
+  readonly hostTarget: "open_file" | "open_diff" | "open_artifact";
+  readonly capabilityId: string; // Host/daemon minted; never model supplied
+  readonly workspaceId: string;
+};
+```
+
+不可升级的模型 path 仍显示 basename、文件图标和完整路径 tooltip，支持复制但没有
+导航动作。升级失败或 scope 不一致时保留 `diagnostic(blocked)`/audit source ref，
+不得静默变成一个猜测的可点击链接。这个边界必须由 normal、private、channel 三个
+surface 共用同一个 adapter 和测试，不允许 route-local 的 `file://` 处理。
+
 ### 11.3 Fact row
 
 每行只有：`icon(16px) + verb title + text status + optional disclosure`。状态必须有

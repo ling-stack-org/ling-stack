@@ -194,7 +194,8 @@ wrapper 都必须携带 child ids 和 lineage，以便 disclosure 后恢复精�
 
 registry exhaustiveness、paragraph/list/code/path、row states、keyboard disclosure、
 reduced motion、dark/light geometry、normal/private/channel parity、nested narration、
-no duplicate summary/action/TerminalReport。
+no duplicate summary/action/TerminalReport；模型随口路径与 Host trusted file/diff ref
+必须分别验证为“可复制不可导航”和“可导航但二次校验”。
 
 **renderer 验收**：registry 对 closed union exhaustive；同一 fixture 在 normal/private/
 channel/topic/branch/child 产生相同 `rendererKeys`、kind、status text、disclosure count；

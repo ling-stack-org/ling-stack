@@ -153,6 +153,12 @@ evidence。没有 command、exit 或 Host source ref 时使用 `Activity unavail
 - 未验证 path 只能作为文本，不能 `file://` 跳转；
 - diff 使用结构化 gutter/hunk，解析失败保留安全文本并显示 diagnostic。
 
+点击能力来自 Host 签发的 capability ref，而不是来自路径字符串本身。模型写出的
+`/workspace/src/app.ts` 与 Host 验证的 `fileRef` 必须拥有不同的 semantic state：前者
+可复制、不可导航；后者才有 `data-conversation-timeline-host-target="open_file"`，
+并且 Host callback 仍需在执行时重做 workspace/scope/permission 校验。三种 surface
+以及 depth-1 child 只能调用这一套 trust adapter。
+
 ## 6. Batches 和 disclosure
 
 ```text
