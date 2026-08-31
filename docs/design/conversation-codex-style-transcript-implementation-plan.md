@@ -1,6 +1,6 @@
-# Codex-style Typed Transcript v3.0：实现计划
+# Codex-style Typed Transcript v3.1：实现计划
 
-Status: implementation plan；等待设计分支合并后开工
+Status: implementation plan；设计 v3.1 已冻结，等待设计分支合并后开工
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -8,6 +8,10 @@ Visual contract: [Conversation Codex-Parity Visual Specification](conversation-c
 
 目标不是重写会话，而是把已有 durable facts 投影成一个简单、可追溯、跨 surface
 一致的 transcript。实现期间不修改用户当前 dirty checkout。
+
+本计划把“好看”限定为可验证的工程约束：文档流不套重卡片，事实行有明确动作和
+状态，详情原地 disclosure，三种会话及 depth-1 子 Agent 使用同一 renderer fingerprint。
+任何视觉优化都不能改变 item kind、顺序、lineage、completion 或 context 语义。
 
 ## 1. 成功标准
 
@@ -62,6 +66,22 @@ Host snapshot/SSE
   -> surface policy/chrome + Host callbacks
 ```
 
+### 3.1 现有代码的接入点
+
+优先复用已有事实来源，不在 Web 端另建 session 或 action store：
+
+| 既有能力 | 接入方式 | 迁移完成条件 |
+| --- | --- | --- |
+| `ConversationItem` / channel item page | `ConversationSnapshotAdapter` 转成 canonical position/source ref | 旧 message list 不再决定排序 |
+| `RunEvent` / `ExecutionAction` | daemon evidence fold，按 `actionId + revision` 合并 | start/update/end 只产生一个 action row |
+| TerminalReport / fan-in | 继续由 daemon 读取 atomic evidence | batch/visible row 不参与完成 |
+| Approval / Artifact / diff | typed source ref + 唯一 owner callback | Composer/dialog 不复制结果 |
+| 现有 surface feed | 只保留 scope/policy/chrome adapter | normal/private/channel 无 route-local renderer |
+
+实现者必须先在每个 adapter 旁写出“输入 → projector → renderer → callback”的边界，
+再改代码。若现有字段无法满足 strict envelope，新增的是 contract adapter 或诊断，
+不能在 projector 中填充猜测值。
+
 ## 4. 依赖顺序和交付闸门
 
 ```text
@@ -90,6 +110,21 @@ R0 baseline
 contract/typecheck green；fixture 含 action/run/attempt/participant/workflow/source anchor，
 没有通过缺字段放宽 projector 的测试。
 
+**统一 fixture 形状**（所有 surface 只替换 scope/chrome）：
+
+```text
+userMessage → plan(2 steps)
+           → agentMessage(narration)
+           → exploration ×3  → commandExecution(start/update/end)
+           → fileChange(+diff) → subAgentActivity(depth=1)
+           → TerminalReport(sourceRefs)
+```
+
+fixture 同时提供：成功、失败、取消、审批等待、缺 evidence、retry supersession、乱序
+delta、重复 end、跨 participant boundary。每个 item 都带 `actionId/runId/attemptId/
+participantId/workflowStepId/sourceRefs`；无 action 的叙述 item 仍保留 `sourceRefs` 到
+其 `conversation_item` anchor。
+
 ### S1 / R5：evidence fold 和 live invalidation
 
 **实现**
@@ -105,6 +140,10 @@ contract/typecheck green；fixture 含 action/run/attempt/participant/workflow/s
 fold replay、duplicate end、late update、terminal immutability、redaction、SQLite lineage
 round-trip、SSE delta merge、invalidation count。
 
+**实现顺序固定为**：先落 durable event，再 fold，再发 invalidation，再投影 UI。禁止先
+渲染 `tool_start` 文本、稍后用 `tool_end` 另插一行；`tool_update` 必须命中同一
+`data-conversation-timeline-id`，terminal fence 后只追加 audit diagnostic。
+
 ### S2 / R6：canonical projector 和 reversible batching
 
 **实现**
@@ -113,7 +152,8 @@ round-trip、SSE delta merge、invalidation count。
 - 验证 scope、conversation-item anchor、owner、attempt supersession、revision conflict；
 - 缺 lineage/anchor 生成 blocked diagnostic，不猜默认值；
 - child span 放在父 anchor 后，只允许 depth 1；
-- `contextSegmentId` 只从 ContextSnapshot/ContextSummary ref 派生；
+- `contextSegmentId` 只从已提交的 `TurnContextAssignment` 及其 ContextSnapshot/
+  ContextSummary lineage 派生；
 - atomic projection 完成后仅调用一次 `batchCanonicalTranscriptItems()`；
 - command/exploration batch 保留 child ids、lineage、source refs，永不进入 completion。
 
@@ -121,6 +161,21 @@ round-trip、SSE delta merge、invalidation count。
 
 乱序 delta 收敛、retry/latest attempt、跨 thread、owner conflict、缺 anchor、context
 segment、每个 hard boundary、batch 展开精确恢复、fan-in partial evidence。
+
+**projection 伪代码**：
+
+```text
+items = snapshot.items
+  .filter(scope == resolvedSurface.threadId)
+  .flatMap(projectConversationItem)
+  .flatMap(projectRunEvidence)
+  .sort(sequence, partIndex, stableId)
+atomic = resolveOwnerAndAttempt(items)
+visible = batchCanonicalTranscriptItems(atomic)
+```
+
+`visible` 只用于绘制；TerminalReport、fan-in、retry 继续读取 `atomic`。任何 batch
+wrapper 都必须携带 child ids 和 lineage，以便 disclosure 后恢复精确顺序。
 
 ### S3 / R7：共享 Timeline 和 renderer registry
 
@@ -141,6 +196,11 @@ registry exhaustiveness、paragraph/list/code/path、row states、keyboard discl
 reduced motion、dark/light geometry、normal/private/channel parity、nested narration、
 no duplicate summary/action/TerminalReport。
 
+**renderer 验收**：registry 对 closed union exhaustive；同一 fixture 在 normal/private/
+channel/topic/branch/child 产生相同 `rendererKeys`、kind、status text、disclosure count；
+只允许 shell title、roster、participant rail 和 policy hints 不同。`ConversationTimeline`
+是唯一 scroll owner，nested depth=1 不得创建新的 `overflow:auto`。
+
 ### S4 / R7：surface cutover
 
 所有 surface 只保留 adapter：
@@ -155,6 +215,13 @@ child       -> parent anchor + depth=1 policy
 adapter 不允许按 kind 自己分支；`ConversationTimeline` 只接 canonical items。禁止保留
 旧 workflow skeleton、第二纵向 activity panel 或 Composer 下方 summary。
 
+开发阶段不保留旧 renderer 兼容路径：
+
+1. 先把旧 caller 迁移到 semantic selectors 和 canonical item fixture；
+2. 删除旧 WorkCell/message-bubble activity renderer 及其 production imports；
+3. 旧 SQLite 行仍可读，但缺 strict lineage 的行只显示 `diagnostic(blocked)`；
+4. 同一 PR 不得通过恢复旧 class/selector 来“修”测试，测试必须迁移到 typed contract。
+
 ### S5 / R8：recovery 和 packaged macOS
 
 依次验证：
@@ -166,6 +233,11 @@ adapter 不允许按 kind 自己分支；`ConversationTimeline` 只接 canonical
 5. daemon restart：从 SQLite 恢复相同 fingerprint；
 6. fan-in：所有 required participant evidence 或结构化 blocked 到齐后才 settle；
 7. packaged macOS：真实客户端操作命令、文件、代码、nested Agent 和环境浮窗。
+
+**真实 UI 证据闸门**：每个案例必须同时保存 screenshot、semantic-state、lineage 和
+脱敏日志；只有 mock/API 截图时，状态标记为 `simulation`，不能宣称 packaged acceptance。
+SSE reconnect 与 daemon restart 必须在 action 仍为 running 时执行，恢复后比较 action
+fingerprint、terminal fence 和 scroll owner，而不是只看最终文字。
 
 ## 5. 回归矩阵
 
@@ -211,9 +283,30 @@ docs/design/ui2.0升级/evidence/conversations/packaged-macos/real-ui-<timestamp
 
 mock/API 截图可以辅助 debug，但不能替代 packaged macOS 证据。
 
+### 6.1 验证命令与证据门槛
+
+每个阶段先跑窄范围，再扩大范围；命令失败必须保留原始输出，不得用截图替代：
+
+```bash
+corepack pnpm --filter @ling-stack/conversation-ui-core test
+corepack pnpm --filter @ling-stack/conversation-ui-react test
+corepack pnpm --filter @ling-stack/web test
+corepack pnpm --filter @ling-stack/web exec playwright test \
+  e2e/ui2-conversation-work-cell-activity.spec.ts \
+  e2e/ui2-conversation-file-diff.spec.ts \
+  e2e/ui2-teammate-conversation-feed-composer.spec.ts
+corepack pnpm check:docs
+corepack pnpm --filter @ling-stack/desktop package:mac
+```
+
+退出 R8 的必要条件是：相关 unit/component/E2E 全绿、`git diff --check` 通过、packaged
+macOS 至少完成一轮真实案例，并且每轮 evidence tuple 的 `case.json` 写明 build hash、
+thread/run/attempt、测试输入和是否为 simulation。全量 Web E2E 若含既有基线失败，必须
+在报告中分开列出，不能混入 typed transcript 的通过结论。
+
 ## 7. Commit 形状
 
-1. `docs(transcript): lock codex-style v3 design`
+1. `docs(transcript): lock codex-style v3.1 design`
 2. `feat(transcript): fold execution evidence and revisions`
 3. `feat(transcript): project canonical items and reversible batches`
 4. `refactor(web): adopt shared timeline renderer registry`
@@ -226,9 +319,15 @@ renderer 和大范围 route cleanup 混成一个不可审查提交。
 ## 8. Definition of done
 
 - [ ] 三份设计文档互相链接、只保留一个 current entry point。
+- [ ] normal/private/channel root/topic/branch/child 的 surface 到 `LingThread` 映射可由
+  fixture 和 lineage 复现；Topic/Branch 不复制 parent transcript。
+- [ ] `contextSegmentId` 由显式选择/结构规则/受限模型提议/服务端 policy 产生，且不受
+  UI batch 影响。
 - [ ] 所有事实行/batch 有完整 lineage，缺失时明确 blocked。
 - [ ] `tool_update` 原地更新；terminal fence 不回退。
 - [ ] command/exploration batch 可逆且不参与完成判断。
+- [ ] plan/agentMessage 只描述意图；真实命令、文件、工具和 TerminalReport 各有唯一
+  factual owner，Composer 不重复 summary。
 - [ ] 普通/私聊/频道/topic/branch/child 使用同一 registry 与滚动 owner。
 - [ ] 无生产 WorkCell/message-bubble activity caller、无重复 summary。
 - [ ] TerminalReport/fan-in/retry 只读取 atomic evidence。

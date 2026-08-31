@@ -1,12 +1,25 @@
 # Conversation Codex-Parity Visual Specification
 
-Status: normative visual contract v3.0
+Status: normative visual contract v3.1
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Related: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 
 这份规范只回答“用户看到什么、点击什么、如何保持简单好看”。数据权威、lineage、
 completion 和 recovery 以详细设计为准。
+
+Codex 的借鉴点是 renderer 分工而不是复制皮肤：消息/Markdown、命令执行、patch、
+MCP 和本地路径各自有清晰的 renderer；Ling 额外加入 participant rail 和 approval
+状态，但仍落入同一 row grammar。参考入口（只借鉴信息架构）：
+
+- `codex-rs/tui/src/history_cell/messages.rs`：user/agent/reasoning 文档流；
+- `codex-rs/tui/src/history_cell/exec.rs`：命令与 stdout/stderr；
+- `codex-rs/tui/src/history_cell/patches.rs`：文件变更与 diff；
+- `codex-rs/tui/src/history_cell/mcp.rs`：MCP 调用；
+- `codex-rs/tui/src/markdown_render.rs`：Markdown、链接、本地路径。
+
+Ling 不复制 TUI 的键盘布局、颜色或 provider session；Web/desktop 只复用“typed item
+→ 专用 renderer → 可折叠详情”的原则。
 
 ## 1. 视觉法则
 
@@ -19,6 +32,24 @@ one page
 
 不要给所有内容套方形卡片。叙述像文档，事实像小型 activity row，详情在原地展开。
 视觉重量只在“需要用户处理”的 waiting/failed/blocked/approval 状态增加。
+
+### 1.1 简单好看的基线
+
+默认状态只保留三种视觉重量：
+
+```text
+document lane   = 正文排版（无外框、自然空白）
+fact rail       = 轻量行（icon + 动作 + status）
+attention       = 同一行的 tint/border + 可恢复控件
+```
+
+实现约束：
+
+- 不给每一段正文套卡片；不把 message、command、summary 叠成多层方框；
+- 同一行最多一个 disclosure，active/attention 行可默认展开一层；
+- 成功历史收敛为一行，失败/等待才增加对比度和详情；
+- 所有颜色都有文本状态和 icon 作为冗余，不能依靠红绿区分；
+- row、batch、nested row 使用同一 8px spacing scale，避免每个 surface 自己调间距。
 
 ## 2. Row grammar
 
@@ -43,6 +74,23 @@ one page
 - fenced code 保留换行、缩进和 language label，默认等宽字体；
 - 流式内容更新同一个 message id，不创建第二个“正在输入”气泡；
 - 本地文件先显示 basename + file icon，hover/focus 才显示完整路径。
+
+### 2.3 Text / code / path 判定
+
+正文不通过“看起来像代码”的关键词猜测类型，而由 content part 或 Markdown AST
+决定：
+
+| 输入 | 首选 renderer | 关键规则 |
+| --- | --- | --- |
+| 普通纯文本/段落 | `paragraph` | 保留段落边界和空行，允许自然换行 |
+| Markdown list/quote/link | 对应 AST renderer | 保留 marker、缩进和可访问名称 |
+| fenced code | `code` | 保留换行/缩进，显示 language label + copy |
+| 未闭合 fence 的流式片段 | plain monospace | 先安全显示，结束后再高亮 |
+| 已验证本地文件 ref | `fileRef` | basename + icon；hover/focus 完整路径；可打开 |
+| 模型随口写出的 path | paragraph | 纯文本，不生成 `file://` 或 Host action |
+
+同一 `agentMessage` 可以包含多个 content part；不能为了渲染方便把它们 flatten 成
+一行，也不能把 code part 误归类为 `commandExecution`。
 
 ## 3. Typed renderer map
 
@@ -82,6 +130,17 @@ one page
 `tool_update` 更新同一 `data-conversation-timeline-id`，不能追加 stdout 气泡。active
 row 保持可见；completed batch 不包含 active command。
 
+每个 command row 的首屏文案必须能回答“做了什么”：
+
+```text
+▣  Run node scripts/check.mjs · Succeeded                 [⌄]
+   exit 0 · 2.4s · apps/web
+```
+
+`Running node …`、`I will run …` 只能是叙述或 pending 状态，不能替代真实 command
+evidence。没有 command、exit 或 Host source ref 时使用 `Activity unavailable`，不伪造
+成功。
+
 ## 5. 文件、路径和 diff
 
 ```text
@@ -119,6 +178,18 @@ QA       ─┘
 子 Agent 是同一个 `ConversationTimeline(depth=1)`，只有 participant label 和 1px rail
 增加层次感。不能生成 child-specific bubble、独立 WorkCell 或第二滚动区域。
 
+子 Agent 的叙述、计划、命令、文件和工具按父级相同顺序渲染；例如：
+
+```text
+Engineer  I will inspect parser.ts.                 (agentMessage)
+          ⌁ Read src/parser.ts · Succeeded          (exploration)
+          ▣ Run pnpm test · Failed · exit 1         (commandExecution)
+          ⚠ Activity blocked · missing artifact     (diagnostic)
+```
+
+只有 `subAgentActivity` 这一层负责 participant label、lifecycle 和 rail；child item 不
+再套一层“队友消息气泡”。深度超过 1 时显示结构化 blocked，而不是继续缩进导致乱码。
+
 ## 8. EnvironmentPopover
 
 浮窗只表达当前 ambient 状态：
@@ -131,6 +202,18 @@ ling-stack · feature/transcript
 最多两行；active revision 原地更新；run settled 后消失。它不能重复 final answer、
 TerminalReport、summary、command output 或 memory footer。source icon 只 focus 对应 row。
 
+Popover 的布局是 shell chrome，不是历史卡片：
+
+```text
+┌ Working · Engineer editing parser.ts ┐
+│ ling-stack · feature/transcript       │
+└───────────────────────────────────────┘
+```
+
+它只绑定当前 active `runId/actionId`。active action 变化时原地更新；terminal fence 或
+run settled 后关闭。任何历史事实、summary 或 approval control 都必须回到 Timeline 的
+唯一 owner，避免浮窗、右侧 dock、Composer 同时重复一份结果。
+
 ## 9. Surface parity
 
 | Surface | 允许的 chrome | 不允许的差异 |
@@ -142,6 +225,14 @@ TerminalReport、summary、command output 或 memory footer。source icon 只 fo
 
 同一 fixture 必须拥有相同 kind、row geometry、状态文案和 disclosure 行为。surface policy
 只能控制权限、可见性和外围 chrome。
+
+视觉回归的最低比较单位是 renderer fingerprint，而不是截图像素完全相同：
+
+```text
+same fixture
+  -> kinds / order / stable ids / status text / disclosure count  (must match)
+  -> shell title / roster / participant rail / policy hints         (may differ)
+```
 
 ## 10. Responsive、density 和 a11y
 
@@ -159,6 +250,11 @@ TerminalReport、summary、command output 或 memory footer。source icon 只 fo
 `data-conversation-timeline-id`、`data-conversation-timeline-kind`、
 `data-conversation-timeline-status`、`data-conversation-timeline-revision`、
 `data-conversation-timeline-depth` 和 source ref 属性是稳定测试接口。
+
+键盘路径必须与鼠标相同：Tab 进入 row，Enter/Space 切换唯一 disclosure，Escape 关闭
+detail/popover，Enter 激活已授权的 file/diff ref。滚动容器只有一个；nested rail 不得
+创建第二个 `overflow:auto` 容器。输出截断时显示 `truncated` 文本和完整 artifact 的
+可访问名称。
 
 ## 11. 禁止的视觉回归
 

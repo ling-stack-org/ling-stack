@@ -48,7 +48,7 @@ CI/Release artifacts instead of the default documentation tree.
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 - [Thread-First Work History](thread-first-work-history.md)
 
-### Typed transcript authority (v3.0)
+### Typed transcript authority (v3.1)
 
 The three documents above are the only current entry points for the Codex-style
 transcript work. Read them in this order: data/semantic contract, visual contract,

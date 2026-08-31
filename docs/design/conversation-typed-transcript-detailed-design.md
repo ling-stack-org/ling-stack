@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.0；实现前冻结
+Status: normative design v3.1；实现前冻结
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -10,6 +10,10 @@ Owner: Conversation UI、conversation-ui-core、daemon runtime maintainers
 [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)，
 工程步骤见
 [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)。
+频道/Topic/Branch 的持久化拓扑见
+[Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)，表面词汇见
+[Conversation Surface Taxonomy](conversation-surface-taxonomy.md)。这两个文档定义存储和路由
+边界；本文件只定义它们如何投影成同一 typed transcript。
 旧版方案保留在 Git 历史，不再作为实现入口。
 
 ## 1. 目标
@@ -342,6 +346,92 @@ LingThread
 - 新 run/attempt 必须显式关联 `threadId`、`turnId`、`runId`、`attemptId`；不再由
   UI 根据时间或文本拼接 session。
 
+### 6.1 Surface 到 `LingThread` 的确定性映射
+
+“普通会话、私聊、频道”是产品入口，不是三套历史存储。进入 Timeline 前，surface
+adapter 必须先解析出一个 canonical `LingThread.id`，再读取同一份 turn/item/evidence
+快照。映射规则如下：
+
+| Surface | `LingThread` 映射 | 允许的父级/锚点 | 不允许 |
+| --- | --- | --- | --- |
+| 普通会话 | 一个 workspace-scoped `surfaceKind="work"` thread | 无；后续 turn 继续该 thread | 以最近 N 条消息临时拼 session |
+| 队友私聊 | 一个 user + teammate scoped `surfaceKind="direct"` thread | 无；同一 pair 继续该 thread | 为每次发送新建 session 或复用频道历史 |
+| 频道 root | 一个 `surfaceKind="channel_root"` thread | channel 是外层容器 | `thread_id = NULL` 的隐式 owner |
+| Topic | `surfaceKind="topic"` 子 thread | `parentThreadId + parentTurnId + anchorItemId` | 把 parent 消息复制进 Topic transcript |
+| Branch/fork | `surfaceKind="branch"` 子 thread | `parentThreadId + parentTurnId + forkContextSnapshotId` | 让 parent 后续写入改写 branch 历史 |
+| depth-1 子 Agent | 父 thread 内的 `ParticipantSpan`/`subAgentActivity` | parent item + participant/run/attempt | 创建第二个可见滚动区或 child-specific session |
+
+Topic 和 Branch 必须由用户或已验证的产品动作显式创建；根 thread 内的语义换话题只
+改变 `contextSegmentId`，不自动创建可见子 thread。Branch 在创建点记录不可变的
+`forkContextSnapshotId`，之后独立追加 turns/items。Topic 的 anchor 仍只在 parent timeline
+显示，子 timeline 通过 `sourceRefs` 回链，而不是渲染一份副本。
+
+surface adapter 的最小输出是：
+
+```ts
+type ResolvedConversationSurface = {
+  readonly threadId: string;
+  readonly kind: "normal" | "private" | "channel_root" | "topic" | "branch" | "child";
+  readonly parentItemId?: string;
+  readonly participantId?: string;
+  readonly policy: ConversationSurfacePolicy;
+};
+```
+
+`ConversationTimeline` 不接收 `channelId`、`anchorItemId` 或模型猜出的 target；它只接收
+解析后的 `threadId` 和 canonical items。这样三种会话可以共享 renderer，而不会把路由
+语义泄漏到渲染层。
+
+### 6.2 `contextSegmentId` 的权威分配
+
+`contextSegmentId` 是 turn 的上下文投影字段，不是 message、batch 或 renderer 字段。
+分配采用“显式优先、结构其次、模型提议、服务端提交”的单向流程：
+
+```text
+user explicit segment/topic/branch
+            │ no
+            ▼
+structural relation (reply, quote, retry, approval, active run)
+            │ no
+            ▼
+permission-filtered model proposal (candidate ids only)
+            ▼
+ContextSegmentationPolicy validates + commits TurnContextAssignment
+```
+
+1. 用户显式选择已有 segment，或显式创建 Topic/Branch 时，选择是最终权威。
+2. 回复、引用、审批、steer、retry、resume、tool result 和明确的 domain correlation
+   由规则确定性继承，不调用模型。
+3. 规则无法判定时，模型只能在服务端提供的 candidate ids 中返回
+   `continue`、`switch_existing`、`propose_new` 或 `uncertain`；模型不能写入 segment，
+   不能发明 id，也不能读取无权限 segment。
+4. `ContextSegmentationPolicy` 校验 scope、权限、置信度和 evidence item ids 后，原子
+   写入 `TurnContextAssignment`。拒绝或不确定时沿用上一有效 segment；若当前 thread
+   没有上一有效 segment，则创建 `provisional` segment，并产生可追溯 diagnostic。绝不
+   因 UI 合并几次 read 而改变 assignment。
+
+### 6.3 全量历史与选择性上下文
+
+SQLite 保存完整 `LingThread → LingTurn → ConversationItem → RunEvent/ExecutionAction`
+历史。UI 可以用 cursor 只加载可见窗口，但分页边界必须由 durable `sequence` 和
+coverage watermark 定义，不能用“最近 8 条”截断事实。模型上下文是对完整历史的选择性
+投影：当前 segment 的摘要、最近相关 turns、显式 source refs 和权限允许的 memory
+facts；摘要缺失时回读原子 items，不把摘要当作命令或文件事实。
+
+因此“聊久了会不会失忆”的答案分成两层：
+
+- **存储层不会失忆**：历史、attempt、revision、artifact 和 source refs 全部可恢复；
+  reload、resume、SSE reconnect、daemon restart 都从同一 durable snapshot 重建。
+- **上下文层不会盲目膨胀**：每个 turn 只投影相关 segment，但任何选择都有
+  `contextSegmentId`、coverage watermark 和 source refs，可审计、可回读、可纠正。
+
+### 6.4 Session 边界不是 provider session
+
+`LingThread` 是产品和持久化连续性；provider 的临时 session、Pi loop 或 adapter
+实例只是某次 Run 的执行资源。provider 重启、切换或失效不创建新的用户会话，也不能
+丢失旧 turn。恢复流程总是：读取 thread/turn → fold durable evidence → 重新创建 provider
+执行上下文（如需要）→ 继续追加同一 thread 的新 attempt。
+
 ## 7. 生命周期、identity 和 evidence fold
 
 ### 7.1 状态机
@@ -369,6 +459,39 @@ pending -> running -> succeeded | failed | cancelled
 - SSE 重连按 entity id + revision 幂等合并，乱序不会改变结果。
 - daemon restart 从 SQLite 重新 fold，不能依赖内存 batch 或最后一条 SSE。
 - equal-revision 不同 payload 是冲突 diagnostic；低 revision 是 stale，不覆盖现值。
+
+### 7.4 Evidence fold 的可执行不变量
+
+所有入口（初始 snapshot、SSE delta、reconnect replay、daemon restart replay）都调用同一
+纯 fold。实现可以使用 Map，但必须满足下面的伪代码和不变量：
+
+```text
+fold(snapshot, delta):
+  for entity in delta ordered by (sequence, revision, entityId):
+    current = state[entity.entityId]
+    if current is terminal:
+      append diagnostic(stale_or_duplicate, source=entity)
+      continue
+    if entity.revision < current.revision:
+      append diagnostic(stale_revision, source=entity)
+      continue
+    if entity.revision == current.revision and entity.payload != current.payload:
+      append diagnostic(revision_conflict, source=entity)
+      continue
+    state[entity.entityId] = mergeEvidence(current, entity)
+    if entity.kind == tool_end:
+      state[entity.entityId].terminalFence = entity.revision
+    emitInvalidation(entity.entityId, entity.revision)
+  return state
+```
+
+硬性不变量：
+
+- 同一 `actionId` 在所有输入顺序下最多有一个可见事实 item 和一个 terminal fence；
+- `revision` 单调递增，equal-revision 冲突不覆盖现值；
+- terminal fence 之后的迟到事件只能进入 audit/diagnostic；
+- fold 不依赖内存 batch、可见行数、最后一条 SSE 或模型 ready 文本；
+- 对同一 durable snapshot 重放两次，得到的 item fingerprint 必须完全相同。
 
 ## 8. 排序、lineage、owner 和完成
 
@@ -405,6 +528,36 @@ required participant ids
 
 “ready”文本、batch 数量、可见行数、最后一个 SSE 事件都不能单独让任务成功。
 缺 required participant evidence 时状态只能是 `waiting` 或结构化 `blocked`。
+
+### 8.3 计划层与事实层的分层
+
+计划（`plan`）和真实执行（`commandExecution`、`fileChange`、typed tool item）都在一条
+canonical timeline 中，但永远不是同一种 item，也不能互相“补完成”：
+
+```text
+agentMessage / plan       叙述：打算做什么、步骤是什么
+        │
+        ▼
+ExecutionAction evidence  事实：命令、cwd、stdout/stderr、exit、diff、tool result
+        │
+        ▼
+TerminalReport / fan-in   结论：只由 required atomic evidence 计算
+        │
+        ▼
+final agentMessage        叙述：向用户解释结果和下一步
+```
+
+规则：
+
+1. `plan` 的 step 状态只由对应 atomic evidence 映射；模型写“已完成”不会改变 step。
+2. 一个 action 只能有一个 fact owner；同一命令不再同时出现在 assistant bubble、旧
+   WorkCell、TerminalReport summary 和 Composer footer。
+3. 没有 evidence 的 ready/完成文本仍作为 `agentMessage` 渲染，并在需要时附加
+   `diagnostic(blocked)`；不得生成绿色成功行。
+4. TerminalReport 是事实结论的唯一可见 owner；它引用 source refs，但不复制 command
+   output。Composer 只拥有 approval control，不拥有完成摘要。
+5. 排序使用 durable `sequence + partIndex`。计划可以先于执行出现，执行结束后 final
+   message 才能解释结果；不得因“后来出现了总结”而把事实行移到别处。
 
 ## 9. Display-only batching
 
@@ -479,6 +632,57 @@ type ConversationTimelineCallbacks = {
 
 Timeline 不接收 SQLite handle、raw SSE、provider payload 或 daemon client；Host action
 由 surface adapter 注入，并在进入 callbacks 前完成 trusted path/permission 检查。
+
+### 10.1 Exhaustive registry 与嵌套规则
+
+registry 是唯一 kind 到 renderer 的映射，新增 kind 必须在编译期被迫补齐：
+
+```ts
+type TimelineRenderer = (props: TimelineRendererProps) => React.ReactNode;
+
+const RENDERERS: Record<ConversationTimelineItemKind, TimelineRenderer> = {
+  userMessage: renderMessage,
+  agentMessage: renderMessage,
+  reasoning: renderReasoning,
+  plan: renderPlan,
+  commandExecution: renderCommand,
+  exploration: renderExploration,
+  fileChange: renderFileChange,
+  mcpToolCall: renderToolCall,
+  dynamicToolCall: renderToolCall,
+  collabAgentToolCall: renderToolCall,
+  approval: renderApproval,
+  imageView: renderImage,
+  contextCompaction: renderCompaction,
+  subAgentActivity: renderSubAgent,
+  commandBatch: renderCommandBatch,
+  explorationBatch: renderExplorationBatch,
+  diagnostic: renderDiagnostic,
+};
+```
+
+TypeScript 不允许新增 union member 却遗漏 registry entry。运行时来自旧数据或未知
+provider 的 kind 只能通过 `diagnostic(unknown_item)`，不能 `as any` 回退到消息气泡。
+`subAgentActivity` 只递归一次：它向 registry 传入 `depth=1`，并在 `depth=2` 生成
+`diagnostic(nested_depth_exceeded)`。递归 child 与父级共享同一个 scroll owner、disclosure
+状态模型和 stable selectors。
+
+### 10.2 统一渲染的最小 fingerprint
+
+为证明三种会话没有暗中分叉，component/E2E fixture 必须记录：
+
+```ts
+type TimelineFingerprint = {
+  readonly kinds: readonly ConversationTimelineItemKind[];
+  readonly ids: readonly string[];
+  readonly rendererKeys: readonly string[];
+  readonly statusTexts: readonly string[];
+  readonly depth: readonly number[];
+};
+```
+
+同一 fixture 在 normal/private/channel/topic/branch/child 的 fingerprint 必须一致；允许
+变化的只有 surface chrome（标题、roster、mention policy）和 depth-1 participant rail。
 
 ## 11. 内容和视觉语义
 

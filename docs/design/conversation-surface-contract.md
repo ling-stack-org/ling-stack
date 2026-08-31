@@ -1,8 +1,8 @@
 # Conversation Surface Contract
 
-Status: active design contract for the shared conversation UI
+Status: active shell/policy contract; typed transcript authority is v3.1
 Date: 2026-06-28
-Updated: 2026-08-06
+Updated: 2026-09-01
 Scope: normal conversation, channel root, channel branch, topic reply, teammate private
 chat, run/thread detail, and future Desktop/PC conversation renderers
 
@@ -22,6 +22,11 @@ Related docs:
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
 - [Conversation Media Generation Tools](conversation-media-generation-tools.md)
+
+Typed item semantics, evidence ownership, renderer registry, batching, nested Agent
+presentation and completion gates are owned by the v3.1 documents above. This contract
+only defines surface scope, shell chrome, composer policy and Host callback boundaries;
+it must not add a route-local transcript renderer or summary owner.
 
 ## Typed transcript override (v3.0)
 
