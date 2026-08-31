@@ -25,6 +25,7 @@ export type {
   ConversationOperationKind,
   ConversationOperationExecutionView,
   ConversationOperationSourceRef,
+  ConversationTrustedSourceRef,
   ConversationExplorationBatch,
   ConversationTurnRunRole,
   ConversationWorkCellBranch,

@@ -195,6 +195,7 @@ function buildExplorationBatch(
     throw new Error("Exploration batches require a run identity.");
   }
   const actionIds = actionRows.map((row) => row.operationExecution?.actionId).filter((id): id is string => Boolean(id));
+  const childItemIds = actionRows.map((row) => row.id);
   const sourceRefs = uniqueSourceRefs(actionRows.flatMap((row) => row.operationExecution?.sourceRefs ?? []));
   const targetCount = actionRows.reduce((count, row) => {
     const files = uniqueRefs(row.operationExecution?.sourceRefs ?? [], "file");
@@ -207,6 +208,8 @@ function buildExplorationBatch(
       return `${execution?.actionId ?? row.id}:${execution?.status ?? "unknown"}:${execution?.latestEventSeq ?? 0}:${execution?.updatedAt ?? ""}`;
     }).join("|"),
     actionIds,
+    childActionIds: actionIds,
+    childItemIds,
     runId: first.runId,
     attemptId: first.attemptId,
     turnRunRole: first.turnRunRole,

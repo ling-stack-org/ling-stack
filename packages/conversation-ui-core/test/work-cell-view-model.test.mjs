@@ -4,6 +4,10 @@ import {
   normalizeConversationOperationCell,
   projectConversationActivity,
   projectConversationCommandBatches,
+  projectConversationSubAgentActivity,
+  projectConversationTimelineItems,
+  mergeConversationTimelineItems,
+  normalizeConversationTimelineItems,
   summarizeConversationActivity,
 } from "../dist/index.js";
 
@@ -103,6 +107,31 @@ test("command batch identity stays stable when another eligible command complete
   assert.notEqual(first.batch.revisionKey, second.batch.revisionKey);
 });
 
+test("typed batch revision is monotonic when a child updates or is appended", () => {
+  const first = projectConversationTimelineItems(projectConversationActivity([
+    commandRow("one", "run-1", "one", 100, { revision: 100 }),
+    commandRow("two", "run-1", "two", 100, { revision: 1 }),
+    commandRow("three", "run-1", "three", 100, { revision: 1 }),
+  ]))[0];
+  const updated = projectConversationTimelineItems(projectConversationActivity([
+    commandRow("one", "run-1", "one", 100, { revision: 100 }),
+    commandRow("two", "run-1", "two", 100, { revision: 2 }),
+    commandRow("three", "run-1", "three", 100, { revision: 1 }),
+  ]))[0];
+  const appended = projectConversationTimelineItems(projectConversationActivity([
+    commandRow("one", "run-1", "one", 100, { revision: 100 }),
+    commandRow("two", "run-1", "two", 100, { revision: 1 }),
+    commandRow("three", "run-1", "three", 100, { revision: 1 }),
+    commandRow("four", "run-1", "four", 100, { revision: 1 }),
+  ]))[0];
+
+  assert.equal(first.kind, "commandBatch");
+  assert.equal(updated.kind, "commandBatch");
+  assert.equal(appended.kind, "commandBatch");
+  assert.ok(updated.revision > first.revision);
+  assert.ok(appended.revision > updated.revision);
+});
+
 test("command batching requires stable run and tool-call identities", () => {
   const missingRun = commandRow("missing-run", "", "one", 100);
   const missingToolCall = commandRow("missing-tool", "run-1", "two", 100, { toolCallId: undefined });
@@ -187,6 +216,23 @@ test("activity projection keeps approval-linked reads standalone", () => {
   assert.deepEqual(items[2].batch.actionIds, ["two", "three", "four"]);
 });
 
+test("activity projection preserves source order when reads and commands are interleaved", () => {
+  const items = projectConversationActivity([
+    readRow("read-a", "run-1", "src/a.ts"),
+    commandRow("command-b", "run-1", "pnpm test", 100),
+    readRow("read-c", "run-1", "src/c.ts"),
+    commandRow("command-d", "run-1", "pnpm lint", 100),
+  ]);
+
+  assert.deepEqual(items.map((item) => item.kind), ["operation", "operation", "operation", "operation"]);
+  assert.deepEqual(items.map((item) => item.row.operationExecution?.actionId ?? item.row.commandExecution?.actionId), [
+    "read-a",
+    "command-b",
+    "read-c",
+    "command-d",
+  ]);
+});
+
 test("activity projection keeps a logical action note with its evidence row", () => {
   const noteExecution = operationExecution("one", "run-1", "read", "succeeded", [fileRef("src/one.ts")]);
   const items = projectConversationActivity([
@@ -241,6 +287,162 @@ test("activity summary counts logical actions once and excludes notes and failur
   });
 });
 
+test("typed timeline keeps batch identity and maps evidence to semantic item kinds", () => {
+  const items = projectConversationTimelineItems(projectConversationActivity([
+    readRow("one", "run-1", "src/one.ts"),
+    readRow("two", "run-1", "src/two.ts"),
+    readRow("three", "run-1", "src/three.ts"),
+    operationRow("edit", "run-1", "edit", "succeeded", [fileRef("src/three.ts")]),
+  ]), { turnId: "turn-1" });
+
+  assert.deepEqual(items.map((item) => item.kind), ["explorationBatch", "fileChange"]);
+  assert.equal(items[0].turnId, "turn-1");
+  assert.equal(items[0].batch.actionIds.length, 3);
+  assert.equal(items[1].actionId, "edit");
+  assert.equal(items[1].sourceRefs[0].id, "src/three.ts");
+});
+
+test("typed timeline maps agent notes to narrative without treating them as evidence", () => {
+  const items = projectConversationTimelineItems([
+    { id: "note-1", presentation: "note", title: "Inspect parser", description: "I will inspect the parser first." },
+    readRow("read-1", "run-1", "src/parser.ts"),
+  ]);
+
+  assert.equal(items[0].kind, "agentMessage");
+  assert.equal(items[0].phase, "commentary");
+  assert.equal(items[0].markdown, "I will inspect the parser first.");
+  assert.equal(items[0].sourceRefs.length, 0);
+  assert.equal(items[1].kind, "exploration");
+});
+
+test("nested agent projection reuses the same typed child timeline", () => {
+  const span = {
+    id: "agent-engineer",
+    participantId: "engineer",
+    label: "Engineer",
+    tone: "running",
+    rows: [],
+  };
+  const nested = projectConversationSubAgentActivity(span, [
+    { id: "note-1", presentation: "note", title: "Plan", description: "I will inspect the parser." },
+    readRow("read-1", "run-1", "src/parser.ts", { participantId: "engineer" }),
+  ]);
+
+  assert.equal(nested.kind, "subAgentActivity");
+  assert.equal(nested.lifecycle, "running");
+  assert.equal(nested.childItems[0].kind, "agentMessage");
+  assert.equal(nested.childItems[1].kind, "exploration");
+  assert.equal(nested.childItems[1].participantId, "engineer");
+});
+
+test("legacy child projection converts a third-level participant into a blocked diagnostic", () => {
+  const nestedAgent = {
+    id: "sub-agent:researcher",
+    kind: "subAgentActivity",
+    revision: 1,
+    threadSequence: 2,
+    partIndex: 0,
+    status: "succeeded",
+    participantId: "researcher",
+    workflowStepId: null,
+    sourceRefs: [{ kind: "participant_span", id: "span-researcher" }],
+    label: "Researcher",
+    lifecycle: "completed",
+    childItems: [],
+  };
+  const projected = projectConversationSubAgentActivity({
+    id: "agent-qa",
+    participantId: "qa",
+    label: "QA",
+    rows: [],
+    tone: "running",
+    sourceRefs: [{ kind: "participant_span", id: "span-qa" }],
+  }, [nestedAgent]);
+
+  assert.equal(projected.childItems[0].kind, "diagnostic");
+  assert.equal(projected.childItems[0].code, "nested_depth_exceeded");
+  assert.equal(projected.childItems[0].status, "blocked");
+  assert.equal(projected.childItems[0].sourceRefs[0].id, "span-researcher");
+});
+
+test("typed timeline prefers action type over legacy row kind", () => {
+  const items = projectConversationTimelineItems([
+    {
+      id: "edit-row",
+      kind: "read",
+      title: "Update settings",
+      operationExecution: operationExecution("edit-1", "run-1", "edit", "succeeded", [fileRef("src/settings.ts")]),
+    },
+    {
+      id: "mcp-row",
+      title: "Fetch issue metadata",
+      operationExecution: operationExecution("mcp-1", "run-1", "mcp_tool_call", "succeeded", [{ kind: "mcp_tool", id: "issues.get" }]),
+    },
+    {
+      id: "plan-row",
+      title: "Implementation plan",
+      operationExecution: operationExecution("plan-1", "run-1", "plan", "succeeded"),
+    },
+    {
+      id: "delegate-row",
+      title: "Delegate verification",
+      operationExecution: operationExecution("delegate-1", "run-1", "spawn_agent", "succeeded", [{ kind: "participant", id: "qa" }]),
+    },
+  ]);
+
+  assert.deepEqual(items.map((item) => item.kind), ["fileChange", "mcpToolCall", "plan", "collabAgentToolCall"]);
+});
+
+test("typed timeline fail-closes malformed rows without crashing the feed", () => {
+  const items = projectConversationTimelineItems([null, { id: "missing-title" }, {
+    id: "unsafe-source",
+    title: "Read file",
+    operationExecution: {
+      ...operationExecution("read-unsafe", "run-1", "read", "succeeded"),
+      sourceRefs: [null, { kind: "file", id: "src/safe.ts" }, { kind: 42, id: "bad" }],
+    },
+  }]);
+
+  assert.equal(items[0].kind, "diagnostic");
+  assert.equal(items[0].status, "blocked");
+  assert.equal(items[1].kind, "diagnostic");
+  assert.equal(items[2].kind, "diagnostic");
+  assert.deepEqual(items[2].sourceRefs, [{ kind: "file", id: "src/safe.ts" }]);
+});
+
+test("typed timeline can be projected again without changing identity", () => {
+  const first = projectConversationTimelineItems([
+    { id: "note-1", presentation: "note", title: "Check output" },
+  ]);
+  const second = projectConversationTimelineItems(first);
+
+  assert.equal(second[0].kind, "agentMessage");
+  assert.equal(second[0].id, first[0].id);
+  assert.equal(second[0].revision, first[0].revision);
+});
+
+test("timeline replay rejects stale revisions and preserves current order", () => {
+  const current = projectConversationTimelineItems([
+    { id: "note-a", presentation: "note", title: "A" },
+    { id: "note-b", presentation: "note", title: "B" },
+  ]);
+  const newer = { ...current[1], revision: current[1].revision + 1, markdown: "B updated" };
+  const merged = mergeConversationTimelineItems(current, [newer, current[0]]);
+
+  assert.deepEqual(merged.map((item) => item.id), ["message:note-b", "message:note-a"]);
+  assert.equal(merged[0].revision, newer.revision);
+  assert.equal(merged[0].kind, "agentMessage");
+  assert.equal(merged[1].revision, current[0].revision);
+});
+
+test("timeline normalization ignores untyped replay payloads", () => {
+  const projected = projectConversationTimelineItems([
+    { id: "note-a", presentation: "note", title: "A" },
+  ]);
+  const normalized = normalizeConversationTimelineItems([projected[0], null, { id: "bad", kind: "agentMessage" }]);
+  assert.deepEqual(normalized.map((item) => item.id), [projected[0].id]);
+});
+
 function commandRow(id, runId, commandText, durationMs, overrides = {}) {
   const status = overrides.status ?? "succeeded";
   const exitCode = "exitCode" in overrides ? overrides.exitCode : 0;
@@ -251,11 +453,13 @@ function commandRow(id, runId, commandText, durationMs, overrides = {}) {
     commandText,
     commandExecution: {
       actionId: id,
+      revision: overrides.revision,
       toolCallId: "toolCallId" in overrides ? overrides.toolCallId : `tool-${id}`,
       runId,
       attemptId: overrides.attemptId ?? (runId ? `attempt-${runId}` : undefined),
       approvalId: overrides.approvalId,
       turnRunRole: overrides.turnRunRole ?? "primary",
+      participantId: overrides.participantId ?? "primary",
       actionType: overrides.actionType ?? "bash",
       risk: overrides.risk ?? "low",
       status,
@@ -264,35 +468,48 @@ function commandRow(id, runId, commandText, durationMs, overrides = {}) {
       exitCode,
       latestEventSeq: 1,
       outputTruncated: false,
+      sourceRefs: overrides.sourceRefs ?? [conversationItemRef(id), { kind: "command", id: commandText, label: commandText }],
     },
   };
 }
 
 function readRow(id, runId, path, overrides = {}) {
-  return operationRow(id, runId, "read", "succeeded", "sourceRefs" in overrides ? overrides.sourceRefs : [fileRef(path)], overrides);
+  return operationRow(id, runId, "read", "succeeded", "sourceRefs" in overrides ? overrides.sourceRefs : [fileRef(path), conversationItemRef(id)], overrides);
 }
 
 function operationRow(id, runId, actionType, status, sourceRefs = [], overrides = {}) {
   return {
     id: `row-${id}`,
     title: `${actionType} ${id}`,
-    operationExecution: operationExecution(id, runId, actionType, status, sourceRefs, overrides),
+    operationExecution: operationExecution(id, runId, actionType, status,
+      sourceRefs.length > 0 && !sourceRefs.some((ref) => ref?.kind === "conversation_item")
+        ? [...sourceRefs, conversationItemRef(id)]
+        : sourceRefs,
+      overrides),
   };
 }
 
 function operationExecution(actionId, runId, actionType, status, sourceRefs = [], overrides = {}) {
+  const anchoredSourceRefs = sourceRefs.length > 0 && !sourceRefs.some((ref) => ref?.kind === "conversation_item")
+    ? [...sourceRefs, conversationItemRef(actionId)]
+    : sourceRefs;
   return {
     actionId,
     runId,
     attemptId: overrides.attemptId ?? (runId ? `attempt-${runId}` : undefined),
     approvalId: overrides.approvalId,
     turnRunRole: overrides.turnRunRole ?? "primary",
+    participantId: overrides.participantId ?? "primary",
     actionType,
     status,
-    sourceRefs,
+    sourceRefs: anchoredSourceRefs,
     updatedAt: "2026-08-25T00:00:00.000Z",
     ...overrides,
   };
+}
+
+function conversationItemRef(id) {
+  return { kind: "conversation_item", id: `item-${id}` };
 }
 
 function fileRef(path) {

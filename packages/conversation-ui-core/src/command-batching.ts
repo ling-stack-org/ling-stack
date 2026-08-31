@@ -136,6 +136,8 @@ function buildCommandBatch(
     durationMs,
     defaultExpanded: false,
     actionIds: commands.map((command) => command.actionId),
+    childActionIds: commands.map((command) => command.actionId),
+    childItemIds: commands.map((command) => command.row.id),
     runId: operation?.runId ?? runId,
     attemptId: operation?.attemptId ?? command?.attemptId,
     attemptNumber: operation?.attemptNumber ?? command?.attemptNumber,

@@ -20,11 +20,26 @@ export interface ConversationOperationSourceRef {
   readonly id: string;
   readonly label?: string;
   readonly path?: string;
-  readonly visibility?: "conversation" | "private";
+  /** Granted only by the Host adapter; absent refs remain copyable text. */
+  readonly hostTarget?: "open_file" | "open_diff" | "open_artifact" | "open_run";
+  readonly visibility?: "conversation" | "private" | "audit";
 }
+
+/**
+ * A source reference that the Host has explicitly authorised for an action.
+ *
+ * Renderers may display every source reference as copyable text, but only this
+ * narrowed shape may cross the UI -> Host callback boundary.  Keeping the
+ * capability in the type makes it impossible for an untrusted model string to
+ * accidentally trigger a file/diff/artifact open operation.
+ */
+export type ConversationTrustedSourceRef = ConversationOperationSourceRef & {
+  readonly hostTarget: "open_file" | "open_diff" | "open_artifact" | "open_run";
+};
 
 export interface ConversationOperationExecutionView {
   readonly actionId: string;
+  readonly revision?: number;
   readonly toolCallId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
@@ -51,6 +66,7 @@ export interface ConversationActivitySummary {
 
 export interface ConversationCommandExecutionView {
   readonly actionId: string;
+  readonly revision?: number;
   readonly toolCallId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
@@ -64,11 +80,19 @@ export interface ConversationCommandExecutionView {
   readonly risk: "low" | "medium" | "high" | "critical";
   readonly status: string;
   readonly commandText: string;
+  readonly cwd?: string;
   readonly startedAt?: string;
   readonly completedAt?: string;
   readonly durationMs?: number;
   readonly exitCode?: number;
+  readonly signal?: string;
   readonly latestEventSeq: number;
+  readonly outputTail?: readonly {
+    readonly eventSeq: number;
+    readonly stream: "stdout" | "stderr";
+    readonly text: string;
+    readonly redacted: boolean;
+  }[];
   readonly sourceRefs?: readonly ConversationOperationSourceRef[];
   readonly outputTruncated: boolean;
   readonly stdoutArtifactId?: string;
@@ -126,6 +150,11 @@ export type ConversationAgentActivitySpanKind = "agent" | "overflow";
 export interface ConversationAgentActivitySpan {
   readonly id: string;
   readonly participantId?: string;
+  /** Parent run lineage for the nested participant span, when available. */
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly workflowStepId?: string;
+  readonly sourceRefs?: readonly ConversationOperationSourceRef[];
   readonly kind?: ConversationAgentActivitySpanKind;
   readonly label: string;
   readonly summary?: string;
@@ -212,11 +241,16 @@ export interface ConversationCommandBatchItem {
 
 export interface ConversationCommandBatch {
   readonly id: string;
+  /** Monotonic aggregate revision of the atomic command children. */
+  readonly revision?: number;
   readonly revisionKey: string;
   readonly commandCount: number;
   readonly durationMs?: number;
   readonly defaultExpanded: boolean;
   readonly actionIds: readonly string[];
+  /** Full atomic membership; actionIds remains as the legacy alias during cutover. */
+  readonly childActionIds?: readonly string[];
+  readonly childItemIds?: readonly string[];
   readonly runId?: string;
   readonly attemptId?: string;
   readonly attemptNumber?: number;
@@ -230,8 +264,13 @@ export interface ConversationCommandBatch {
 
 export interface ConversationExplorationBatch {
   readonly id: string;
+  /** Monotonic aggregate revision of the atomic exploration children. */
+  readonly revision?: number;
   readonly revisionKey: string;
   readonly actionIds: readonly string[];
+  /** Full atomic membership; actionIds remains as the legacy alias during cutover. */
+  readonly childActionIds?: readonly string[];
+  readonly childItemIds?: readonly string[];
   readonly runId: string;
   readonly attemptId?: string;
   readonly attemptNumber?: number;
@@ -278,6 +317,10 @@ export interface ConversationOperationCellViewModel {
   readonly elapsedMs?: number;
   readonly operationRows: readonly ConversationWorkCellRow[];
   readonly operationItems?: readonly ConversationWorkCellItem[];
+  /** Canonical Codex-style typed facts. When present, this is the renderer source of truth. */
+  readonly typedTimelineItems?: readonly import("./transcript-item.js").ConversationTimelineItem[];
+  /** Immutable ContextSnapshot segment lookup used only by display batching. */
+  readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
   readonly activitySummary?: ConversationActivitySummary;
   readonly agentSpans: readonly ConversationAgentActivitySpan[];
   /** @deprecated Use agentSpans. Kept while call sites migrate. */
