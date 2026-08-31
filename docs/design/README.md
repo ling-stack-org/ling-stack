@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-08-27
+Last verified: 2026-08-28
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -97,6 +97,8 @@ part of the current product acceptance scope.
 
 ## Web, Desktop, And UI 2.0
 
+- [Internationalization And Language Parity](internationalization-language-parity.md)
+- [Internationalization Language Parity Implementation Plan](internationalization-language-parity-implementation-plan.md)
 - [UI 2.0 Documentation](ui2.0升级/README.md)
 - [UI 2.0 Product Contract](ui2.0升级/00-UI2.0整体升级方案.md)
 - [UI 2.0 Acceptance Contract](ui2.0升级/03-UI2.0验收总规范.md)

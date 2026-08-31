@@ -30,6 +30,7 @@ test("unified exec bash extension returns daemon handled results", async () => {
   })({ registerTool: (tool) => registered.push(tool) });
 
   assert.equal(registered.length, 1);
+  assert.deepEqual(registered[0].parameters.properties.prefix_rule.items, { type: "string" });
   const result = await registered[0].execute("tool_bash", { command: "echo handled" });
   assert.deepEqual(result.content, [{ type: "text", text: "Command exited 0 in 12ms." }]);
   assert.deepEqual(result.details, { unifiedExec: { status: "succeeded" } });

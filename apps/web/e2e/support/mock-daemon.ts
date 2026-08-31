@@ -10,6 +10,7 @@ import {
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
 import type { ConversationGeneratedMedia, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
 export const cwd = "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
@@ -161,6 +162,12 @@ export interface MockState {
   failNextTaskCreate?: boolean;
   linkPreviewDelayMs?: number;
   approvals: MockApproval[];
+  approvalCommandRules: MockApprovalCommandRule[];
+  approvalDecisionRequests: Array<{
+    readonly approvalId: string;
+    readonly action: "approve" | "deny";
+    readonly body: Record<string, unknown>;
+  }>;
   approvalCheckpoints: LingApprovalCheckpoint[];
   approvalPolicy: MockApprovalPolicy;
   approvalQueryCount?: number;
@@ -208,6 +215,7 @@ export interface MockState {
   turns: MockLingTurn[];
   turnRunLinks: MockLingTurnRun[];
   failThreadTurnsForThreadIds: string[];
+  failNextWorkspaceSettingsPatch?: { readonly error: string; readonly message: string; readonly status?: number };
   executionActions: MockExecutionAction[];
   userProfile: UserProfile;
   workspaceSettings: Record<string, unknown>;
@@ -467,6 +475,29 @@ export interface MockApproval {
   resolvedAt?: string;
   resolvedBy?: "local-user";
   decisionReason?: string;
+  availableDecisions?: Array<"approve_once" | "approve_command_rule" | "deny">;
+  proposedCommandRule?: {
+    prefix: string[];
+    display: string;
+    fingerprint: string;
+    version: 1;
+  };
+  decisionKind?: "approve_once" | "approve_command_rule" | "deny";
+  decisionRuleId?: string;
+}
+
+export interface MockApprovalCommandRule {
+  id: string;
+  workspaceId: string;
+  toolName: "bash";
+  prefix: string[];
+  display: string;
+  fingerprint: string;
+  version: 1;
+  sourceApprovalId?: string;
+  createdBy: "local-user";
+  createdAt: string;
+  revokedAt?: string;
 }
 
 export interface MockApprovalPolicy {
@@ -1119,13 +1150,16 @@ export async function openEngineeringChannel(page: Page): Promise<void> {
     return;
   }
   const navigation = page.getByLabel("Ling Stack navigation");
-  const engineeringChannel = navigation.getByRole("button", { name: "Engineering" }).first();
-  if (!(await engineeringChannel.isVisible().catch(() => false))) {
-    const showNavigation = navigation.getByRole("button", { name: /Show navigation|显示导航/ });
-    if (await showNavigation.isVisible().catch(() => false)) {
-      await showNavigation.click();
-    }
+  const showNavigation = page.getByRole("button", { name: /Show navigation|显示导航/ });
+  await expect.poll(async () => (
+    await navigation.isVisible().catch(() => false)
+    || await showNavigation.isVisible().catch(() => false)
+  )).toBe(true);
+  if (!(await navigation.isVisible().catch(() => false))) {
+    await showNavigation.click();
   }
+  await expect(navigation).toBeVisible();
+  const engineeringChannel = navigation.getByRole("button", { name: "Engineering" }).first();
   await expect(engineeringChannel).toBeVisible();
   await engineeringChannel.click();
   await expect(channelMessageFeed).toBeVisible();
@@ -1297,6 +1331,8 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
         decisionReason: options.approvalStatus === "expired" ? "Approval request expired before a decision was received." : undefined,
       },
     ],
+    approvalCommandRules: [],
+    approvalDecisionRequests: [],
     approvalCheckpoints: [],
     approvalPolicy: {
       workspaceId: "workspace_default",
@@ -5622,8 +5658,8 @@ function readChannelAutoReplyMode(value: unknown): string {
   return value === "default_teammate" || value === "auto_route" ? value : "mentions_only";
 }
 
-function readChannelResponseLanguage(value: unknown): "workspace" | "follow_user" | "zh-CN" | "en-US" | undefined {
-  return value === "workspace" || value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
+function readChannelResponseLanguage(value: unknown): "workspace" | "follow_user" | SupportedLocale | undefined {
+  return value === "workspace" || value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
 export function createMockTeammate(overrides: Record<string, unknown> = {}): Record<string, unknown> {
@@ -7678,6 +7714,15 @@ export async function handleDaemonRoute(
   }
   if (request.method() === "PATCH" && path === "/workspace-settings") {
     const body = await request.postDataJSON() as Record<string, unknown>;
+    if (state.failNextWorkspaceSettingsPatch) {
+      const failure = state.failNextWorkspaceSettingsPatch;
+      state.failNextWorkspaceSettingsPatch = undefined;
+      await route.fulfill({
+        status: failure.status ?? 500,
+        json: { error: failure.error, message: failure.message },
+      });
+      return;
+    }
     const nextSettings = { ...state.workspaceSettings };
     for (const key of ["workspaceCwd", "theme", "locale", "responseLanguage", "lingConversationTone", "defaultProviderPresetId", "defaultAuthorizationMode", "defaultWorkspaceAccessMode", "defaultPermissionMode", "defaultPermissionPreset", "channelNotifications", "channelActivityViews", "skillGovernancePolicy", "mediaGenerationDefaults"] as const) {
       if (body[key] === null) {
@@ -12840,7 +12885,7 @@ export async function handleDaemonRoute(
       updatedAt: now,
       endedAt: now,
     };
-    const responseLanguage = body.responseLanguage === "zh-CN" || body.responseLanguage === "en-US"
+    const responseLanguage = isSupportedLocale(body.responseLanguage)
       ? body.responseLanguage
       : /[\u3400-\u9fff]/u.test(message) ? "zh-CN" : "en-US";
     const attachmentSummary = conversationAttachments.length > 0
@@ -13813,6 +13858,34 @@ export async function handleDaemonRoute(
       (!runId || approval.runId === runId) && (!mediaJobId || approval.mediaJobId === mediaJobId)
     );
     await route.fulfill({ json: { cwd, approvals } });
+    return;
+  }
+  if (request.method() === "GET" && path === "/approval-command-rules") {
+    await route.fulfill({
+      json: {
+        cwd,
+        rules: state.approvalCommandRules.filter((rule) => !rule.revokedAt),
+      },
+    });
+    return;
+  }
+  const approvalCommandRuleMatch = /^\/approval-command-rules\/([^/]+)$/.exec(path);
+  if (request.method() === "DELETE" && approvalCommandRuleMatch) {
+    const ruleId = decodeURIComponent(approvalCommandRuleMatch[1]);
+    const ruleIndex = state.approvalCommandRules.findIndex((rule) => rule.id === ruleId && !rule.revokedAt);
+    if (ruleIndex < 0) {
+      await route.fulfill({
+        status: 404,
+        json: { error: "approval_command_rule_not_found", message: "Active approval command rule not found." },
+      });
+      return;
+    }
+    const revokedRule = {
+      ...state.approvalCommandRules[ruleIndex],
+      revokedAt: "2026-07-20T02:00:04.000Z",
+    };
+    state.approvalCommandRules[ruleIndex] = revokedRule;
+    await route.fulfill({ json: { rule: revokedRule } });
     return;
   }
   if (request.method() === "GET" && path === "/execution-actions") {
@@ -15149,10 +15222,55 @@ export async function handleDaemonRoute(
       await route.fulfill({ status: 400, json: { error: "approval_not_pending", message: "Approval request is not pending." } });
       return;
     }
+    let body: Record<string, unknown> = {};
+    try {
+      const parsed = request.postDataJSON();
+      body = isRecord(parsed) ? parsed : {};
+    } catch {
+      body = {};
+    }
+    state.approvalDecisionRequests.push({
+      approvalId: approval.id,
+      action: approvalDecisionMatch[2] as "approve" | "deny",
+      body,
+    });
+    const decisionKind = approvalDecisionMatch[2] === "deny"
+      ? "deny"
+      : body.decisionKind === "approve_command_rule" ? "approve_command_rule" : "approve_once";
+    if (decisionKind === "approve_command_rule") {
+      const proposal = approval.proposedCommandRule;
+      if (!proposal || body.proposedRuleFingerprint !== proposal.fingerprint) {
+        await route.fulfill({
+          status: 409,
+          json: { error: "approval_command_rule_fingerprint_mismatch", message: "Approval command rule fingerprint does not match the pending proposal." },
+        });
+        return;
+      }
+      const existingIndex = state.approvalCommandRules.findIndex((rule) => rule.fingerprint === proposal.fingerprint);
+      const rule: MockApprovalCommandRule = {
+        id: existingIndex >= 0 ? state.approvalCommandRules[existingIndex].id : `approval_command_rule_${state.approvalCommandRules.length + 1}`,
+        workspaceId: "workspace_default",
+        toolName: "bash",
+        prefix: [...proposal.prefix],
+        display: proposal.display,
+        fingerprint: proposal.fingerprint,
+        version: proposal.version,
+        sourceApprovalId: approval.id,
+        createdBy: "local-user",
+        createdAt: "2026-07-20T02:00:02.000Z",
+      };
+      if (existingIndex >= 0) {
+        state.approvalCommandRules[existingIndex] = rule;
+      } else {
+        state.approvalCommandRules.push(rule);
+      }
+      approval.decisionRuleId = rule.id;
+    }
     approval.status = approvalDecisionMatch[2] === "approve" ? "approved" : "denied";
     approval.resolvedAt = "2026-05-22T00:02:00.000Z";
     approval.resolvedBy = "local-user";
-    approval.decisionReason = "Resolved from Playwright";
+    approval.decisionKind = decisionKind;
+    approval.decisionReason = typeof body.reason === "string" ? body.reason : "Resolved from Playwright";
     if (approval.mediaJobId && approval.actionType === "media_cost") {
       const mediaJob = state.mediaJobs.find((item) => item.id === approval.mediaJobId);
       if (mediaJob) {

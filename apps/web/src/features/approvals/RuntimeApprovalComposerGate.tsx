@@ -16,7 +16,12 @@ export function RuntimeApprovalComposerGate({
   readonly approvalErrors: Readonly<Record<string, string>>;
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly surface: "channel" | "normal_conversation" | "teammate_direct";
-  readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onResolve: (
+    approvalId: string,
+    decision: ApprovalResolution,
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ) => void;
 }): React.JSX.Element | null {
   const { t } = useI18n();
   const uniqueApprovals = [...new Map(approvals.map((item) => [item.approval.id, item])).values()];
@@ -33,13 +38,30 @@ export function RuntimeApprovalComposerGate({
   const approval = current.approval;
   const resolvingDecision = resolvingApprovals[approval.id];
   const actionSentence = runtimeApprovalActionSentence(approval, current.summary, t);
+  const proposedCommandRule = approval.actionType === "bash" && approval.availableDecisions?.includes("approve_command_rule")
+    ? approval.proposedCommandRule
+    : undefined;
+  const attemptedAction = decision.attemptedDecision === "deny"
+    ? "deny"
+    : decision.attemptedDecision === "approve_command_rule"
+      ? "allow_secondary"
+      : decision.attemptedDecision ? "allow" : undefined;
+  const busyAction = resolvingDecision === "deny"
+    ? "deny"
+    : resolvingDecision === "approve_command_rule" ? "allow_secondary" : resolvingDecision ? "allow" : undefined;
 
   return (
     <ConversationDecisionGate
       allowLabel={t("Allow once")}
+      allowMenuLabel={proposedCommandRule ? t("Allow options") : undefined}
+      allowSecondaryDescription={proposedCommandRule
+        ? t("Allow commands starting with {command} in this workspace", { command: proposedCommandRule.display })
+        : undefined}
+      allowSecondaryLabel={proposedCommandRule ? t("Allow similar commands") : undefined}
       allowingLabel={t("Allowing")}
-      attemptedAction={decision.attemptedDecision === "approve" ? "allow" : decision.attemptedDecision}
-      busyAction={resolvingDecision === "approve" ? "allow" : resolvingDecision}
+      allowingSecondaryLabel={proposedCommandRule ? t("Saving command rule") : undefined}
+      attemptedAction={attemptedAction}
+      busyAction={busyAction}
       className="runtime-approval-composer-gate"
       decisionId={approval.id}
       decisionKind="runtime_approval"
@@ -51,7 +73,10 @@ export function RuntimeApprovalComposerGate({
       retryLabel={t("Retry")}
       surface={surface}
       title={t("Allow this action?")}
-      onAllow={() => decision.submit("approve")}
+      onAllow={() => decision.submit("approve_once")}
+      onAllowSecondary={proposedCommandRule
+        ? () => decision.submit("approve_command_rule", proposedCommandRule.fingerprint)
+        : undefined}
       onDeny={() => decision.submit("deny")}
     />
   );

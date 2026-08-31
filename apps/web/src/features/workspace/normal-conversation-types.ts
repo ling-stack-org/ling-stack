@@ -124,7 +124,12 @@ export interface ConversationHomeProps {
   readonly stopping?: boolean;
   readonly fullAccessConfirmed?: boolean;
   readonly onOpenRun?: (runId: string) => void;
-  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly onResolveApproval: (
+    approvalId: string,
+    decision: ApprovalResolution,
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ) => void;
   readonly onOpenModelWorkbench?: () => void;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
   readonly onConfirmFullAccessSelection?: () => Promise<PermissionConfirmation | undefined>;

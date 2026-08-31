@@ -4,6 +4,7 @@ import type { PluginManagerCopy } from "./plugin-manager-copy.js";
 import type { PluginManagerController } from "./usePluginManagerController.js";
 import type { Translate } from "../../i18n.js";
 import { PluginManagerRefreshFeedback } from "./PluginManagerRefreshFeedback.js";
+import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 
 export function PluginManagerHeader({
   controller,
@@ -22,6 +23,7 @@ export function PluginManagerHeader({
 }): React.JSX.Element {
   return (
     <>
+      <DesktopTitlebarSurface>
       <header
         className="plugin-manager-header settings-plugin-manager-head"
         data-desktop-window-drag-region="true"
@@ -38,6 +40,7 @@ export function PluginManagerHeader({
           {t("Add plugin")}
         </Button>
       </header>
+      </DesktopTitlebarSurface>
       <div className="plugin-manager-toolbar" aria-label={t("Plugin Manager")}>
         <Field className="plugin-toolbar-field plugin-toolbar-search" label={copy.searchPlugins}>
           <Input

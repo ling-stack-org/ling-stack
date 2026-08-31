@@ -16,11 +16,6 @@
   max-width: 100%;
 }
 
-.channel-message-row.blocked > .message-content {
-  border-color: var(--ling-status-warning-border);
-  background: var(--ling-status-warning-bg);
-}
-
 .channel-message-row > .message-content > p,
 .channel-message-row .message-body-paragraph {
   margin: 0;

@@ -14,6 +14,7 @@ import {
 } from "../dist/index.js";
 import { RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION } from "../dist/storage/sqlite/runtime-attempt-fence-migration.js";
 import { createRequiredParticipantManifestV1 } from "../../contracts/dist/index.js";
+import { SUPPORTED_LOCALES } from "../../localization/dist/index.js";
 
 test("sqlite channels persist default and edited runtime policy", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-runtime-"));
@@ -104,6 +105,32 @@ test("sqlite workspace settings persist Ling conversation tone", async () => {
       assert.equal(pragmatic.lingConversationTone, "pragmatic");
       const cleared = reopened.updateWorkspaceSettings({ lingConversationTone: null }, "2026-07-05T00:03:00.000Z");
       assert.equal(cleared.lingConversationTone, undefined);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite workspace settings round-trip every supported interface and response locale", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-locales-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    for (const [index, locale] of SUPPORTED_LOCALES.entries()) {
+      const settings = store.updateWorkspaceSettings(
+        { locale, responseLanguage: locale },
+        new Date(Date.UTC(2026, 7, 27, 0, index)).toISOString(),
+      );
+      assert.equal(settings.locale, locale);
+      assert.equal(settings.responseLanguage, locale);
+    }
+    store.close();
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      assert.equal(reopened.getWorkspaceSettings().locale, SUPPORTED_LOCALES.at(-1));
+      assert.equal(reopened.getWorkspaceSettings().responseLanguage, SUPPORTED_LOCALES.at(-1));
     } finally {
       reopened.close();
     }

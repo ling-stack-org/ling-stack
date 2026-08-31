@@ -12,6 +12,7 @@ import {
   parseThemeSelection,
   resolvedThemeToBootstrapSnapshot,
   validateThemeManifest,
+  verifyThemeSentinel,
 } from "../dist/index.js";
 
 test("built-in themes are independent complete manifests with fixed and system resolution", () => {
@@ -115,6 +116,28 @@ test("theme application restores root attributes and variables when verification
   assert.equal(root.dataset.uiTheme, "ling-light");
 });
 
+test("theme sentinel treats equivalent serialized CSS colors as equal", () => {
+  const registry = new ThemeRegistry();
+  const light = registry.resolve({ mode: "fixed", themeId: "ling-light" }, "light");
+  const root = fakeRoot(fakeColorDocument());
+  const previousGetComputedStyle = globalThis.getComputedStyle;
+
+  try {
+    globalThis.getComputedStyle = () => ({
+      getPropertyValue: () => "#fff",
+    });
+    assert.equal(verifyThemeSentinel(root, light), true);
+
+    globalThis.getComputedStyle = () => ({
+      getPropertyValue: () => "#000000",
+    });
+    assert.equal(verifyThemeSentinel(root, light), false);
+  } finally {
+    if (previousGetComputedStyle === undefined) delete globalThis.getComputedStyle;
+    else globalThis.getComputedStyle = previousGetComputedStyle;
+  }
+});
+
 function importedTheme(id, overrides = {}) {
   return {
     ...structuredClone(lingLightTheme),
@@ -125,15 +148,37 @@ function importedTheme(id, overrides = {}) {
   };
 }
 
-function fakeRoot() {
+function fakeRoot(ownerDocument) {
   const values = new Map();
   return {
     dataset: {},
+    ownerDocument,
     style: {
       colorScheme: "",
       getPropertyValue: (name) => values.get(name) ?? "",
       removeProperty: (name) => values.delete(name),
       setProperty: (name, value) => values.set(name, value),
+    },
+  };
+}
+
+function fakeColorDocument() {
+  return {
+    createElement: () => {
+      let color = "";
+      return {
+        style: {
+          get color() {
+            return color;
+          },
+          set color(value) {
+            const normalized = value.trim().toLowerCase();
+            if (normalized === "#fff" || normalized === "#ffffff") color = "rgb(255, 255, 255)";
+            else if (normalized === "#000" || normalized === "#000000") color = "rgb(0, 0, 0)";
+            else color = "";
+          },
+        },
+      };
     },
   };
 }

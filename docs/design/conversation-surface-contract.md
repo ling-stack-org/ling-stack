@@ -250,6 +250,24 @@ message/composer/evidence model.
     directory, never displays an absolute local path, and treats missing/non-Git/error
     results as absent optional metadata. Git context belongs to the rich preview rather
     than the title row, so it must not reduce title width or add horizontal scrolling.
+26. A failed or blocked recent conversation uses the red status dot only as an unreviewed
+    attention signal. Successfully entering that conversation acknowledges the current
+    failure revision and removes the dot without changing the durable thread, Run, error,
+    transcript, or retry state. The acknowledgement is local UI state keyed by workspace,
+    conversation, and failure update time. Reloading the same revision keeps it hidden;
+    a later failed or blocked revision must surface the dot again. Waiting-for-approval
+    and running projections are live state and are never cleared by this acknowledgement.
+27. A recent-conversation Sidebar row is a single-line object row. It renders the title
+    only and must not add a redundant `Conversation` type subtitle. The row remains `32px`
+    high with the icon and title sharing one vertical centerline; removing the subtitle
+    must not move the title's horizontal origin. Its shared preview is viewport-bounded,
+    has no internal scrollbar, and moves an overflowing line horizontally using the same
+    fade-and-hover behavior as the Sidebar title.
+28. Right Dock visibility is a shared projection across channel, normal conversation,
+    and teammate private chat. Above `900px`, Details uses the existing inline resizable
+    column. At `900px` and below, the dock, resize handle, and layout reservation are all
+    absent; an unavailable dock cannot leave an active toolbar state or blank grid column.
+    Surface-specific media queries must not independently hide only part of this state.
 
 ## Surface Capability Matrix
 

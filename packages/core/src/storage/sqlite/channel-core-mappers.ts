@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { isSupportedLocale } from "@ling-stack/localization";
 import type { RunTool } from "../../approval-policy.js";
 import {
   channelBranchStatuses,
@@ -72,5 +73,5 @@ function parseChannelRuntimePolicy(value: string): ChannelRuntimePolicy {
 }
 
 function parseOptionalChannelResponseLanguage(value: unknown): ChannelResponseLanguage | undefined {
-  return value === "workspace" || value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
+  return value === "workspace" || value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }

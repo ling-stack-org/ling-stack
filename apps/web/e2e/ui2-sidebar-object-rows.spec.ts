@@ -9,7 +9,7 @@ const evidenceDirectory = fileURLToPath(new URL(
   import.meta.url,
 ));
 
-test("UI 2.0 Sidebar object rows keep compact identity and actions in the expanded rail", async ({ page }) => {
+test("UI 2.0 Sidebar object rows keep compact identity and actions in the expanded Sidebar", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   let workspaceChangesRequests = 0;
   await prepareSurface(page, "light", 1440, 960);
@@ -43,6 +43,10 @@ test("UI 2.0 Sidebar object rows keep compact identity and actions in the expand
   await expect(channelPreview).not.toContainText("Channel");
   await expect(channelPreview).not.toContainText("ling-stack");
   await expect(channelPreview).not.toContainText("codex/sidebar-approval-dialogs");
+  const channelPreviewBox = await channelPreview.boundingBox();
+  expect(channelPreviewBox).not.toBeNull();
+  expect(channelPreviewBox!.width).toBeLessThanOrEqual(220);
+  expectTooltipInsideViewport(channelPreviewBox!, 1440, 960);
   await captureEvidence(page, "1440x960-ling-light-channel-preview.png");
 
   const teammate = navigation.getByRole("button", { name: "Designer", exact: true });
@@ -71,54 +75,69 @@ test("UI 2.0 Sidebar object rows keep compact identity and actions in the expand
   });
   const recentShell = recent.locator("xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' sidebar-recent-row-shell ')][1]");
   await expect(recent).toContainText("A deliberately long conversation title");
+  await expect(navigation.locator(".sidebar-recent-row .sidebar-row-description")).toHaveCount(0);
   await expect(recentShell).toHaveAttribute("data-sidebar-row-overflow", "true");
   await expect(recent.locator(".sidebar-row-title-viewport")).toHaveCSS("overflow", "hidden");
   await expect(recent.locator(".sidebar-row-title-track")).not.toHaveCSS("text-overflow", "ellipsis");
   expect(await recentShell.evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/u))).toHaveLength(1);
   const recentTools = recentShell.locator(".sidebar-row-tools");
   await expect(recentTools).toHaveCSS("position", "absolute");
+  const recentBox = await recent.boundingBox();
+  const recentShellBox = await recentShell.boundingBox();
+  const recentIconBox = await recent.locator("svg").first().boundingBox();
+  const recentTitleBox = await recent.locator(".sidebar-row-title-viewport").boundingBox();
+  expect(recentBox).not.toBeNull();
+  expect(recentShellBox).not.toBeNull();
+  expect(recentIconBox).not.toBeNull();
+  expect(recentTitleBox).not.toBeNull();
+  expect(Math.round(recentBox!.height)).toBe(32);
+  expect(Math.round(recentShellBox!.height)).toBe(32);
+  expect(Math.abs(
+    (recentIconBox!.y + recentIconBox!.height / 2)
+    - (recentTitleBox!.y + recentTitleBox!.height / 2),
+  )).toBeLessThanOrEqual(1);
   await recent.hover();
   await expect(recentTools).toHaveCSS("opacity", "1");
   await expect(page.getByRole("tooltip")).toContainText("A deliberately long conversation title that must remain inside the Sidebar row");
   await expect(page.getByRole("tooltip")).not.toContainText("Conversation");
   await expect(page.getByRole("tooltip")).toContainText("ling-stack");
   await expect(page.getByRole("tooltip")).toContainText("codex/sidebar-approval-dialogs");
+  const conversationPreviewBox = await page.getByRole("tooltip").boundingBox();
+  expect(conversationPreviewBox).not.toBeNull();
+  expect(conversationPreviewBox!.width).toBeGreaterThan(channelPreviewBox!.width);
+  expect(conversationPreviewBox!.width).toBeLessThanOrEqual(240);
+  expectTooltipInsideViewport(conversationPreviewBox!, 1440, 960);
+  await expectPreviewWithoutScrollbars(page.getByRole("tooltip"));
+  const previewTitle = page.getByRole("tooltip").locator(".sidebar-object-preview-line.is-title");
+  await expect(previewTitle).toHaveAttribute("data-sidebar-preview-overflow", "true");
+  await expect.poll(async () => previewTitle.locator(".sidebar-object-preview-line-track").evaluate((element) => (
+    new DOMMatrixReadOnly(getComputedStyle(element).transform).m41
+  ))).toBeLessThan(-1);
   expect(workspaceChangesRequests).toBe(1);
   await expectNoHorizontalOverflow(navigation);
   await captureEvidence(page, "1440x960-ling-light-conversation-preview.png");
   expect(runtimeErrors).toEqual([]);
 });
 
-test("UI 2.0 Sidebar compact rail keeps object rows behind a section launcher in dark theme", async ({ page }) => {
+test("UI 2.0 Sidebar preview stays inside the minimum desktop window", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
-  await prepareSurface(page, "dark", 1280, 800);
+  await prepareSurface(page, "dark", 980, 680);
   await mockDaemon(page, createSidebarState());
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Engineering" }).click();
-  await expect(page.getByLabel("Channel composer")).toBeVisible();
-  await page.getByRole("button", { name: "Hide navigation" }).click();
-  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(48);
-
-  await expect(navigation.locator(".sidebar-row-shell")).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
-  const channel = navigation.getByRole("button", { name: "Channels", exact: true });
-  await expect(channel).toHaveAttribute("data-sidebar-rail-launcher", "channels");
-  await expect(channel).toHaveAttribute("aria-pressed", "true");
-  await expectHitArea(channel, 36);
-  await expect(navigation.getByRole("button", { name: "Archive channel" })).toBeHidden();
-
-  await channel.hover();
-  const tooltip = page.locator('[role="tooltip"]:visible').filter({ hasText: "Channels" });
-  await expect(tooltip).toBeVisible();
-  await expect(tooltip).toHaveText("Channels");
-  await channel.click();
-  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(240);
-  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expectNoHorizontalOverflow(page.locator("html"));
-  await captureEvidence(page, "1280x800-ling-dark-launcher-expanded.png");
+  const recent = page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({
+    hasText: "A deliberately long conversation title",
+  });
+  await recent.hover();
+  const preview = page.locator('[role="tooltip"]:visible').filter({
+    hasText: "A deliberately long conversation title",
+  });
+  await expect(preview).toBeVisible();
+  const previewBox = await preview.boundingBox();
+  expect(previewBox).not.toBeNull();
+  expect(previewBox!.width).toBeLessThanOrEqual(188);
+  expectTooltipInsideViewport(previewBox!, 980, 680);
+  await expectPreviewWithoutScrollbars(preview);
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -197,6 +216,32 @@ async function expectHitArea(locator: Locator, minimum: number): Promise<void> {
   expect(box).not.toBeNull();
   expect(box!.width).toBeGreaterThanOrEqual(minimum);
   expect(box!.height).toBeGreaterThanOrEqual(minimum);
+}
+
+function expectTooltipInsideViewport(
+  box: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): void {
+  expect(box.x).toBeGreaterThanOrEqual(12);
+  expect(box.y).toBeGreaterThanOrEqual(12);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewportWidth - 12);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewportHeight - 12);
+}
+
+async function expectPreviewWithoutScrollbars(preview: Locator): Promise<void> {
+  const metrics = await preview.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    clientWidth: element.clientWidth,
+    overflowX: getComputedStyle(element).overflowX,
+    overflowY: getComputedStyle(element).overflowY,
+    scrollHeight: element.scrollHeight,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(metrics.overflowX).toBe("hidden");
+  expect(metrics.overflowY).toBe("hidden");
+  expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.clientHeight);
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
 }
 
 async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
