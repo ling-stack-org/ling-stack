@@ -1,5 +1,10 @@
 import { useState } from "react";
 import { FileText, Globe2 } from "lucide-react";
+import type {
+  ConversationOperationSourceRef,
+  ConversationTrustedSourceRef,
+} from "@ling-stack/conversation-ui-core";
+import { isTrustedSourceRef } from "../timeline/source-ref.js";
 
 export interface ConversationReferenceItem {
   readonly id: string;
@@ -9,15 +14,19 @@ export interface ConversationReferenceItem {
   readonly href?: string;
   readonly previewTitle?: string;
   readonly previewText?: string;
+  /** Display-only or Host-issued ref. Raw paths never become navigation. */
+  readonly sourceRef?: ConversationOperationSourceRef;
   readonly onOpen?: () => void;
 }
 
 export function ConversationReferenceStrip({
   references,
   ariaLabel,
+  onOpenSourceRef,
 }: {
   readonly references: readonly ConversationReferenceItem[];
   readonly ariaLabel: string;
+  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
 }): React.JSX.Element | null {
   const [activePreviewId, setActivePreviewId] = useState<string | undefined>();
   if (references.length === 0) {
@@ -27,6 +36,11 @@ export function ConversationReferenceStrip({
   return (
     <div className="conversation-reference-strip" aria-label={ariaLabel}>
       {references.map((reference) => {
+        const trustedSourceRef = isTrustedSourceRef(reference.sourceRef) ? reference.sourceRef : undefined;
+        const sourceRefAction = trustedSourceRef && onOpenSourceRef
+          ? () => onOpenSourceRef(trustedSourceRef)
+          : undefined;
+        const onOpen = reference.sourceRef ? sourceRefAction : reference.onOpen;
         const content = (
           <>
             {reference.kind === "workspace_file" ? <FileText size={13} aria-hidden="true" /> : <Globe2 size={13} aria-hidden="true" />}
@@ -56,10 +70,10 @@ export function ConversationReferenceStrip({
               <button
                 className="conversation-reference-trigger"
                 type="button"
-                onClick={reference.onOpen}
+                onClick={onOpen}
                 onFocus={() => setActivePreviewId(reference.id)}
                 onBlur={() => setActivePreviewId((current) => current === reference.id ? undefined : current)}
-                disabled={!reference.onOpen}
+                disabled={!onOpen}
               >
                 {content}
               </button>

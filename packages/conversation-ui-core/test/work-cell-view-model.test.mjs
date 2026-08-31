@@ -9,6 +9,7 @@ import {
   mergeConversationTimelineItems,
   normalizeConversationTimelineItems,
   summarizeConversationActivity,
+  fingerprintConversationTimeline,
 } from "../dist/index.js";
 
 test("work cell view models normalize legacy row aliases", () => {
@@ -300,6 +301,21 @@ test("typed timeline keeps batch identity and maps evidence to semantic item kin
   assert.equal(items[0].batch.actionIds.length, 3);
   assert.equal(items[1].actionId, "edit");
   assert.equal(items[1].sourceRefs[0].id, "src/three.ts");
+});
+
+test("timeline fingerprint is stable across nested and batched rendering", () => {
+  const items = projectConversationTimelineItems(projectConversationActivity([
+    { id: "note-1", presentation: "note", title: "Inspect parser" },
+    readRow("read-1", "run-1", "src/parser.ts"),
+    readRow("read-2", "run-1", "src/parser.test.ts"),
+    readRow("read-3", "run-1", "src/index.ts"),
+  ]));
+  const fingerprint = fingerprintConversationTimeline(items);
+
+  assert.deepEqual(fingerprint.itemKinds, ["agentMessage", "explorationBatch", "exploration", "exploration", "exploration"]);
+  assert.deepEqual(fingerprint.rendererKeys, ["message.document", "batch.exploration", "fact.exploration", "fact.exploration", "fact.exploration"]);
+  assert.equal(fingerprint.disclosureCount, 4);
+  assert.equal(fingerprint.itemIds[0], "message:note-1");
 });
 
 test("typed timeline maps agent notes to narrative without treating them as evidence", () => {

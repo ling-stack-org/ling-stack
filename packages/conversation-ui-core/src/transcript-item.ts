@@ -636,6 +636,19 @@ function projectConversationTimelineRow(
   } satisfies Omit<ConversationTimelineItemBase, "id" | "kind"> & { id: string; revision: number };
 
   const semanticKind = semanticKindForRow(row, execution, command);
+  // A presentation note is model narration, even when it was emitted beside
+  // an incomplete/legacy operation payload.  Project it before the strict
+  // operation lineage gate so a sentence such as “I will run the tests” can
+  // never become a fabricated blocked command row (or be dropped entirely).
+  if (row.presentation === "note" && (row.description?.trim() || row.title.trim())) {
+    return {
+      ...base,
+      id: `message:${row.id}`,
+      kind: "agentMessage",
+      markdown: row.description?.trim() || row.title.trim(),
+      phase: status === "succeeded" ? "final" : "commentary",
+    };
+  }
   const requiresOperation = semanticKind === "commandExecution" ||
     semanticKind === "fileChange" ||
     semanticKind === "exploration" ||
@@ -673,15 +686,6 @@ function projectConversationTimelineRow(
       meta: row.meta,
       detailLines: row.detailLines,
       steps: [],
-    };
-  }
-  if (row.presentation === "note" && (row.description?.trim() || row.title.trim())) {
-    return {
-      ...base,
-      id: `message:${row.id}`,
-      kind: "agentMessage",
-      markdown: row.description?.trim() || row.title.trim(),
-      phase: status === "succeeded" ? "final" : "commentary",
     };
   }
   if (semanticKind === "commandExecution") {

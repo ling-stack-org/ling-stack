@@ -51,10 +51,18 @@ export {
 export type { ActiveRunSnapshot, TimelineSnapshot } from "./timeline-snapshot.js";
 export { createTimelineSnapshot } from "./timeline-snapshot.js";
 export {
+  fingerprintConversationTimeline,
+} from "./timeline-fingerprint.js";
+export type {
+  ConversationTimelineFingerprint,
+} from "./timeline-fingerprint.js";
+export {
   createConversationTimelineMessageItem,
+  conversationMessageSourceRefs,
 } from "./message-item.js";
 export type {
   ConversationTimelineMessageInput,
+  ConversationTimelineFileRefInput,
 } from "./message-item.js";
 export {
   mergeConversationTimelineItems,

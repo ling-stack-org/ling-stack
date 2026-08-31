@@ -87,6 +87,7 @@ export function projectNormalConversationFeedItems(input: {
       turnId: message.turnId,
       itemId: message.id,
       status: message.status,
+      fileRefs: message.fileRefs,
     });
     const facts = workCell ? conversationTimelineItemsForModel(workCell) : [];
     const timelineItems = messageItem.phase === "final" && facts.length > 0

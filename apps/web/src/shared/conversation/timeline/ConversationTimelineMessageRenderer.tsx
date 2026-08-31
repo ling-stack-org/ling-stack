@@ -3,8 +3,9 @@ import type {
   ConversationTimelineMessageItem,
 } from "@ling-stack/conversation-ui-core";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
+import { LocalFileLink } from "../blocks/LocalFileLink.js";
 import type { LocalFileReference } from "../tokens/message-body.js";
-import { isTrustedFileSourceRef } from "./source-ref.js";
+import { trustedFileSourceRefForPath } from "./source-ref.js";
 
 export interface ConversationTimelineMessageRendererProps {
   readonly item: ConversationTimelineMessageItem;
@@ -21,9 +22,7 @@ export function ConversationTimelineMessageRenderer({
 }: ConversationTimelineMessageRendererProps): React.JSX.Element {
   const onOpenLocalFile = onOpenSourceRef
     ? (reference: LocalFileReference): void => {
-      const trustedRef = item.sourceRefs.find((ref): ref is ConversationTrustedSourceRef =>
-        isTrustedFileSourceRef(ref) && ref.path === reference.displayPath,
-      );
+      const trustedRef = trustedFileSourceRefForPath(item.sourceRefs, reference.displayPath);
       if (trustedRef) onOpenSourceRef(trustedRef);
     }
     : undefined;
@@ -41,6 +40,16 @@ export function ConversationTimelineMessageRenderer({
         text={item.markdown}
         cwd={cwd}
         compact={false}
+        streaming={item.status === "pending" || item.status === "running"}
+        renderLocalFile={({ reference }) => {
+          const trustedRef = trustedFileSourceRefForPath(item.sourceRefs, reference.displayPath);
+          return (
+            <LocalFileLink
+              reference={reference}
+              onOpen={trustedRef && onOpenSourceRef ? () => onOpenSourceRef(trustedRef) : undefined}
+            />
+          );
+        }}
         onOpenLocalFile={onOpenLocalFile}
       />
     </div>

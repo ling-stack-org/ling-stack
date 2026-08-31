@@ -30,3 +30,23 @@ export function isTrustedFileSourceRef(
     typeof ref.path === "string" &&
     ref.path.trim().length > 0;
 }
+
+/**
+ * Resolve a trusted file capability for a displayed path without turning the
+ * path itself into authority. Separators and a leading `./` are normalized only
+ * for matching; the returned value is the original Host-issued capability.
+ */
+export function trustedFileSourceRefForPath(
+  refs: readonly ConversationOperationSourceRef[],
+  path: string,
+): ConversationTrustedSourceRef | undefined {
+  const normalizedPath = normalizeDisplayPath(path);
+  if (!normalizedPath) return undefined;
+  return refs.find((ref): ref is ConversationTrustedSourceRef =>
+    isTrustedFileSourceRef(ref) && normalizeDisplayPath(ref.path) === normalizedPath,
+  );
+}
+
+export function normalizeDisplayPath(path: string | undefined): string {
+  return path?.trim().replace(/\\/gu, "/").replace(/^\.\//u, "") ?? "";
+}

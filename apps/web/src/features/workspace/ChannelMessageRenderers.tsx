@@ -45,7 +45,7 @@ import {
   ConversationGeneratedMediaBlock,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
-  ConversationTimeline,
+  mountConversationTimeline,
   InlineMessageEditor,
   MessageActionBar,
   MessageBodyRenderer,
@@ -115,6 +115,7 @@ function channelMessageTimelineItem(
     status: streaming ? "running" : message.status === "blocked" ? "blocked" : message.status === "failed" ? "failed" : "succeeded",
     turnId: message.turnId,
     itemId: message.id,
+    fileRefs: message.fileRefs,
   });
 }
 
@@ -381,24 +382,24 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 block,
                 context: transcriptContext,
               }))}
-            <ConversationTimeline
-              snapshot={buildSurfaceTimelineSnapshot({
+            {mountConversationTimeline({
+              snapshot: buildSurfaceTimelineSnapshot({
                 surface: channelSurface,
                 threadId: turn.sourceMessage.threadId,
                 anchorItemId: turn.sourceMessage.id,
                 items: timelineItems,
-              })}
-              depth={0}
-              cwd={input.cwd}
-              loadPreview={input.loadPreview}
-              onOpenSourceRef={(ref) => {
+              }),
+              depth: 0,
+              cwd: input.cwd,
+              loadPreview: input.loadPreview,
+              onOpenSourceRef: (ref) => {
                 if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
                   input.onOpenTerminalReportFile({ cwd: input.cwd, path: ref.path, label: ref.label });
                 }
-              }}
-              renderSubAgentAvatar={(item) => renderConversationParticipantAvatar(item.participantId, item.label)}
-              ariaLabel={input.t("Channel conversation transcript")}
-            />
+              },
+              renderSubAgentAvatar: (item) => renderConversationParticipantAvatar(item.participantId, item.label),
+              ariaLabel: input.t("Channel conversation transcript"),
+            }).node}
             <ConversationGeneratedMediaBlock items={generatedMedia} cwd={input.cwd} />
             {renderChannelAiMessageActions(turn.sourceMessage, copyText)}
           </div>
@@ -522,26 +523,26 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const operationCwd = input.runById.get(block.operationCell.anchorRunId)?.cwd ?? input.cwd;
     return (
       <div className="conversation-turn-operation" key={block.id}>
-        <ConversationTimeline
-          snapshot={buildSurfaceTimelineSnapshot({
+        {mountConversationTimeline({
+          snapshot: buildSurfaceTimelineSnapshot({
             surface: channelSurface,
             threadId: block.operationCell.threadId,
             items: conversationTimelineItemsForModel(
               block.operationCell,
               composerGateApprovalPresentationForWorkCell(block.operationCell, composerGateApprovalByRunId)?.approvalId,
             ),
-          })}
-          depth={0}
-          cwd={operationCwd}
-          loadPreview={input.loadPreview}
-          onOpenSourceRef={(ref) => {
+          }),
+          depth: 0,
+          cwd: operationCwd,
+          loadPreview: input.loadPreview,
+          onOpenSourceRef: (ref) => {
             if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
               input.onOpenTerminalReportFile({ cwd: operationCwd, path: ref.path, label: ref.label });
             }
-          }}
-          renderSubAgentAvatar={(item) => renderConversationParticipantAvatar(item.participantId, item.label)}
-          ariaLabel={input.t("Activity")}
-        />
+          },
+          renderSubAgentAvatar: (item) => renderConversationParticipantAvatar(item.participantId, item.label),
+          ariaLabel: input.t("Activity"),
+        }).node}
       </div>
     );
   }
@@ -782,7 +783,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             authorType={message.authorType}
             tone={message.authorType === "ai-teammate" && message.status === "blocked"
               ? "chat-blocked"
-              : message.authorType === "system" ? "system" : "chat"}
+              : message.authorType === "system" ? "system" : "document"}
             avatar={renderChannelMessageAvatar(message)}
             authorName={messageAuthorLabel(message, input.teammateOptions, input.t("Deleted teammate"), input.localUserDisplayName, input.allLocalTeammateById)}
             createdAtLabel={formatDateTime(message.createdAt)}
@@ -804,22 +805,22 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             ) : (
               <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                 {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-                <ConversationTimeline
-                  snapshot={buildSurfaceTimelineSnapshot({
+                {mountConversationTimeline({
+                  snapshot: buildSurfaceTimelineSnapshot({
                     surface: channelSurface,
                     threadId: message.threadId,
                     anchorItemId: message.id,
                     items: [channelMessageTimelineItem(message, messagePresentation.body, pendingAiReply)],
-                  })}
-                  depth={0}
-                  cwd={input.cwd}
-                  onOpenSourceRef={(ref) => {
+                  }),
+                  depth: 0,
+                  cwd: input.cwd,
+                  onOpenSourceRef: (ref) => {
                     if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
                       input.onOpenFileReference();
                     }
-                  }}
-                  ariaLabel={input.t("Channel message")}
-                />
+                  },
+                  ariaLabel: input.t("Channel message"),
+                }).node}
                 {proposedPlanBlock ? (
                   <ChannelProposedPlanBlock
                     plan={proposedPlan ?? proposedPlanBlock.plan}
@@ -952,26 +953,26 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       }
       const detailsKey = input.workflowWorkCellDetailsCacheKey(workflow.id);
       return (
-        <ConversationTimeline
-          snapshot={buildSurfaceTimelineSnapshot({
+        mountConversationTimeline({
+          snapshot: buildSurfaceTimelineSnapshot({
             surface: channelSurface,
             threadId: workCell.threadId,
             items: conversationTimelineItemsForModel(
               workCell,
               composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)?.approvalId,
             ),
-          })}
-          depth={0}
-          cwd={input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd}
-          loadPreview={input.loadPreview}
-          renderSubAgentAvatar={(item) => renderConversationParticipantAvatar(item.participantId, item.label)}
-          onOpenSourceRef={(ref) => {
+          }),
+          depth: 0,
+          cwd: input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd,
+          loadPreview: input.loadPreview,
+          renderSubAgentAvatar: (item) => renderConversationParticipantAvatar(item.participantId, item.label),
+          onOpenSourceRef: (ref) => {
             if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
               input.onOpenTerminalReportFile({ cwd: input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd, path: ref.path, label: ref.label });
             }
-          }}
-          ariaLabel={input.t("Activity")}
-        />
+          },
+          ariaLabel: input.t("Activity"),
+        }).node
       );
     }
     return (
@@ -1075,26 +1076,26 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         return null;
       }
       return (
-        <ConversationTimeline
-          snapshot={buildSurfaceTimelineSnapshot({
+        mountConversationTimeline({
+          snapshot: buildSurfaceTimelineSnapshot({
             surface: channelSurface,
             threadId: workCell.threadId,
             items: conversationTimelineItemsForModel(
               workCell,
               composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)?.approvalId,
             ),
-          })}
-          depth={0}
-          cwd={run.cwd}
-          loadPreview={input.loadPreview}
-          renderSubAgentAvatar={(item) => renderConversationParticipantAvatar(item.participantId, item.label)}
-          onOpenSourceRef={(ref) => {
+          }),
+          depth: 0,
+          cwd: run.cwd,
+          loadPreview: input.loadPreview,
+          renderSubAgentAvatar: (item) => renderConversationParticipantAvatar(item.participantId, item.label),
+          onOpenSourceRef: (ref) => {
             if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
               input.onOpenTerminalReportFile({ cwd: run.cwd, path: ref.path, label: ref.label });
             }
-          }}
-          ariaLabel={input.t("Activity")}
-        />
+          },
+          ariaLabel: input.t("Activity"),
+        }).node
       );
     }
     const taskTitle = item.task?.title ?? input.readRunTitle(run);

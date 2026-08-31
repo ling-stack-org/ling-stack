@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  fingerprintConversationTimeline,
   type ConversationTrustedSourceRef,
   type ConversationTimelineItem,
   type ConversationTimelineSubAgentItem,
@@ -40,6 +41,7 @@ export function ConversationTimeline({
   ariaLabel,
 }: ConversationTimelineProps): React.JSX.Element {
   const timelineItems = snapshot.items;
+  const fingerprint = fingerprintConversationTimeline(timelineItems);
   const effectiveDensity = countAtomicItems(timelineItems) > 10 ? "dense" : "default";
   const className = customClassName ?? `conversation-timeline conversation-timeline-depth-${depth}`;
   const timelineId = `timeline:${snapshot.scope.kind}:${snapshot.scope.threadId}:${snapshot.scope.anchorItemId ?? "root"}`;
@@ -51,6 +53,8 @@ export function ConversationTimeline({
     "data-conversation-timeline-depth": depth,
     "data-conversation-canonical-revision": snapshot.canonicalRevision,
     "data-conversation-sse-cursor": snapshot.sseCursor ?? "none",
+    "data-conversation-timeline-renderer-keys": fingerprint.rendererKeys.join(","),
+    "data-conversation-timeline-disclosure-count": fingerprint.disclosureCount,
     "data-activity-density": effectiveDensity,
     "aria-label": ariaLabel,
   } as const;

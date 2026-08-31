@@ -13,7 +13,7 @@ import {
   ConversationAttachmentStrip,
   ConversationGeneratedMediaBlock,
   ConversationFeed,
-  ConversationTimeline,
+  mountConversationTimeline,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
   InlineMessageEditor,
@@ -290,7 +290,7 @@ function NormalConversationMessageRow({
       surface="normal_conversation"
       className={item.className}
       authorType={item.authorType}
-      tone={blockedAgentMessage ? "chat-blocked" : item.authorType === "system" ? "system" : "chat"}
+      tone={blockedAgentMessage ? "chat-blocked" : item.authorType === "system" ? "system" : "document"}
       authorName={item.authorName}
       createdAtLabel={item.createdAtLabel}
       statusNode={message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
@@ -309,8 +309,8 @@ function NormalConversationMessageRow({
           onSave={onSave}
         />
       ) : (
-        <ConversationTimeline
-          snapshot={buildSurfaceTimelineSnapshot({
+        mountConversationTimeline({
+          snapshot: buildSurfaceTimelineSnapshot({
             surface: "normal_conversation",
             threadId: message.threadId,
             anchorItemId: message.id,
@@ -324,10 +324,10 @@ function NormalConversationMessageRow({
               modelLabel: null,
               sourceRefs: [],
             } : null,
-          })}
-          depth={0}
-          cwd={projectPath?.trim() || workspaceCwd.trim()}
-          onOpenSourceRef={(ref) => {
+          }),
+          depth: 0,
+          cwd: projectPath?.trim() || workspaceCwd.trim(),
+          onOpenSourceRef: (ref) => {
             if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
               onOpenReportFile({
                 cwd: projectPath?.trim() || workspaceCwd.trim(),
@@ -335,9 +335,9 @@ function NormalConversationMessageRow({
                 label: ref.label,
               });
             }
-          }}
-          ariaLabel={t("Conversation transcript")}
-        />
+          },
+          ariaLabel: t("Conversation transcript"),
+        }).node
       )}
       bodyCompact
       bodyStreaming={item.bodyStreaming}

@@ -114,6 +114,11 @@ export {
 export { ConversationAttachmentStrip, type ConversationAttachmentChip, type ConversationAttachmentStripProps } from "./preview/ConversationAttachmentStrip.js";
 export { ConversationReferenceStrip, type ConversationReferenceItem } from "./preview/ConversationReferenceStrip.js";
 export { ConversationTimeline, type ConversationTimelineProps } from "./timeline/ConversationTimeline.js";
+export {
+  mountConversationTimeline,
+  type ConversationTimelineMount,
+  type ConversationTimelineMountInput,
+} from "./timeline/mountConversationTimeline.js";
 export { isConversationGuidanceQueueVisible } from "./feedback/conversation-guidance-visibility.js";
 export {
   ConversationSendLifecycleStore,

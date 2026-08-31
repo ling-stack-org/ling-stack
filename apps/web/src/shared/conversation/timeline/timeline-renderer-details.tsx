@@ -9,7 +9,7 @@ import {
   ConversationTimelineFileReference,
 } from "./ConversationTimelineFileChangeDetail.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
-import { isTrustedFileSourceRef } from "./source-ref.js";
+import { trustedFileSourceRefForPath } from "./source-ref.js";
 
 export function CommandDetail({ item }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "commandExecution" }> }): React.JSX.Element {
   return (
@@ -79,7 +79,7 @@ function DetailLines({ item, cwd, onOpenSourceRef }: { readonly item: Conversati
   return <div className="conversation-timeline-detail-lines">{lines.map((line, index) => {
     if (line.kind === "code") return <code className="conversation-timeline-detail-code" key={`${index}:${line.text}`}>{line.text}</code>;
     if (line.kind === "file_ref") {
-      const trustedRef = item.sourceRefs.find((ref) => isTrustedFileSourceRef(ref) && ref.path === line.path);
+      const trustedRef = trustedFileSourceRefForPath(item.sourceRefs, line.path);
       return trustedRef ? <ConversationTimelineFileReference key={`${index}:${line.path}`} file={{ fileRef: trustedRef, displayName: basename(line.path), change: "edited" }} onOpenSourceRef={onOpenSourceRef} /> : <span className="conversation-timeline-file-ref" title={line.path} key={`${index}:${line.path}`}>{basename(line.path)}</span>;
     }
     return <MessageBodyRenderer key={`${index}:${line.text}`} className="conversation-timeline-rich-detail" text={line.text} cwd={cwd} compact />;

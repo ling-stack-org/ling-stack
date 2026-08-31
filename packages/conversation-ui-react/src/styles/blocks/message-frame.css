@@ -190,6 +190,27 @@
   background: var(--conversation-bg-muted, var(--ling-bg-subtle));
 }
 
+/* Codex-style document lane: narrative and typed timeline rows are not chat
+   bubbles. Keep the row/identity grid for accessibility, but remove the
+   panel treatment so one action cannot look like a second message card. */
+[data-conversation-message-row].message-bubble-document > .message-content {
+  width: 100%;
+  max-width: 100%;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-conversation-message-row].message-bubble-document > .message-content > .message-row-peer-identity {
+  margin-bottom: var(--ling-space-2);
+}
+
+[data-conversation-message-row].message-bubble-document > .message-content > :is(.message-body-shell, .conversation-turn-assistant-transcript) {
+  min-width: 0;
+}
+
 [data-conversation-message-row].message-row-identity-sr-only > .message-content > .message-row-peer-identity {
   position: absolute;
   width: 1px;

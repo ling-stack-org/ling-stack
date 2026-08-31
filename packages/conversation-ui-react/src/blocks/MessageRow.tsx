@@ -8,7 +8,7 @@ import {
 import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 
 export type MessageRowAuthorType = "local-user" | "ai-teammate" | "system";
-export type MessageRowTone = "chat" | "chat-blocked" | "system";
+export type MessageRowTone = "chat" | "chat-blocked" | "document" | "system";
 
 export interface MessageRowProps {
   readonly id?: string;

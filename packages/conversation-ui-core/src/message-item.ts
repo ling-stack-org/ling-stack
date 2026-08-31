@@ -20,7 +20,20 @@ export interface ConversationTimelineMessageInput {
   readonly turnId?: string;
   readonly itemId?: string;
   readonly sourceRefs?: readonly ConversationOperationSourceRef[];
+  /**
+   * Persisted message file references are display-only until the Host has
+   * validated and upgraded them to a trusted source ref.  Keeping them on the
+   * canonical message item prevents each surface from inventing its own path
+   * handling while preserving the no-navigation default.
+   */
+  readonly fileRefs?: readonly ConversationTimelineFileRefInput[];
   readonly phase?: "commentary" | "final";
+}
+
+export interface ConversationTimelineFileRefInput {
+  readonly path: string;
+  readonly label?: string;
+  readonly line?: number;
 }
 
 /**
@@ -32,11 +45,11 @@ export function createConversationTimelineMessageItem(
   input: ConversationTimelineMessageInput,
 ): ConversationTimelineMessageItem {
   const itemId = input.itemId?.trim();
-  const sourceRefs = input.sourceRefs && input.sourceRefs.length > 0
-    ? input.sourceRefs
-    : itemId
-      ? [{ kind: "conversation_item", id: itemId }]
-      : [];
+  const sourceRefs = mergeMessageSourceRefs(
+    input.sourceRefs ?? (itemId ? [{ kind: "conversation_item", id: itemId }] : []),
+    input.fileRefs ?? [],
+    itemId,
+  );
   const revision = input.revision;
   return {
     id: input.id,
@@ -51,4 +64,50 @@ export function createConversationTimelineMessageItem(
     ...(input.itemId ? { itemId: input.itemId } : {}),
     sourceRefs,
   };
+}
+
+/**
+ * Converts message file refs into safe, copyable source refs.  This function
+ * deliberately does not add `hostTarget`: a path supplied by a message is not
+ * proof that the file exists in the current workspace.  A daemon/Host adapter
+ * may later replace the matching ref with a minted trusted capability.
+ */
+export function conversationMessageSourceRefs(
+  itemId: string | undefined,
+  fileRefs: readonly ConversationTimelineFileRefInput[] = [],
+  sourceRefs: readonly ConversationOperationSourceRef[] = [],
+): readonly ConversationOperationSourceRef[] {
+  return mergeMessageSourceRefs(sourceRefs, fileRefs, itemId);
+}
+
+function mergeMessageSourceRefs(
+  sourceRefs: readonly ConversationOperationSourceRef[],
+  fileRefs: readonly ConversationTimelineFileRefInput[],
+  itemId: string | undefined,
+): readonly ConversationOperationSourceRef[] {
+  const refs: ConversationOperationSourceRef[] = [
+    ...(sourceRefs.length > 0
+      ? sourceRefs
+      : itemId
+        ? [{ kind: "conversation_item", id: itemId }]
+        : []),
+  ];
+  for (const fileRef of fileRefs) {
+    const path = fileRef.path.trim();
+    if (!path) continue;
+    refs.push({
+      kind: "path",
+      id: `message-file:${itemId ?? "unknown"}:${path}:${fileRef.line ?? ""}`,
+      path,
+      ...(fileRef.label?.trim() ? { label: fileRef.label.trim() } : {}),
+      visibility: "conversation",
+    });
+  }
+  const seen = new Set<string>();
+  return refs.filter((ref) => {
+    const key = `${ref.kind}:${ref.id}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }

@@ -18,7 +18,7 @@ import {
 } from "../../shared/components/index.js";
 import {
   ConversationAttachmentStrip,
-  ConversationTimeline,
+  mountConversationTimeline,
   ConversationGeneratedMediaBlock,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
@@ -59,6 +59,7 @@ function privateMessageTimelineItems(input: {
     threadSequence: 0,
     status: privateMessageTimelineStatus(input.message.status),
     itemId: input.message.id,
+    fileRefs: input.message.fileRefs,
   });
   return [messageItem, ...input.facts]
     .filter((candidate, index, all) => all.findIndex((other) => other.id === candidate.id) === index)
@@ -244,7 +245,7 @@ export function TeammatePrivateChatFeed({
                 surface="teammate_direct"
                 className={`teammate-message-row ${projection.authorType}${projection.blocked ? " blocked" : ""}`}
                 authorType={projection.authorType}
-                tone={projection.blocked ? "chat-blocked" : undefined}
+                tone={projection.blocked ? "chat-blocked" : projection.authorType === "system" ? "system" : "document"}
                 avatar={projection.authorType === "ai-teammate"
                   ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
                   : projection.authorType === "system"
@@ -273,8 +274,8 @@ export function TeammatePrivateChatFeed({
                     ) : null}
                   </div>
                 ) : (
-                  <ConversationTimeline
-                    snapshot={buildSurfaceTimelineSnapshot({
+                  mountConversationTimeline({
+                    snapshot: buildSurfaceTimelineSnapshot({
                       surface: "teammate_direct",
                       threadId: message.threadId ?? `private:${teammate.id}`,
                       anchorItemId: message.id,
@@ -288,16 +289,16 @@ export function TeammatePrivateChatFeed({
                         modelLabel: null,
                         sourceRefs: [],
                       } : null,
-                    })}
-                    depth={0}
-                    cwd={cwd.trim()}
-                    onOpenSourceRef={(ref) => {
+                    }),
+                    depth: 0,
+                    cwd: cwd.trim(),
+                    onOpenSourceRef: (ref) => {
                       if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
                         onOpenFiles({ cwd: cwd.trim(), path: ref.path, label: ref.label });
                       }
-                    }}
-                    ariaLabel={t("Private conversation transcript")}
-                  />
+                    },
+                    ariaLabel: t("Private conversation transcript"),
+                  }).node
                 )}
                 bodyCwd={cwd}
                 bodyCompact
