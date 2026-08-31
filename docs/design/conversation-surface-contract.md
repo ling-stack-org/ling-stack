@@ -8,6 +8,9 @@ chat, run/thread detail, and future Desktop/PC conversation renderers
 
 Related docs:
 
+- [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+- [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
+- [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
@@ -19,6 +22,15 @@ Related docs:
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
 - [Conversation Media Generation Tools](conversation-media-generation-tools.md)
+
+## Typed transcript override (v3.0)
+
+For message, activity, command, file, tool, approval, child-agent, batching, and
+completion presentation, v3.0 is the current authority. This surface contract still
+defines shell and product-policy differences, but it must not add a route-local
+renderer or second completion owner. Normal, teammate-private, and channel surfaces
+must mount the shared `ConversationTimeline`; channel-only differences are roster,
+topic/branch controls, and multi-Agent policy.
 
 2026-07-30 model ownership update: private chat still has no composer model picker. A
 user-created teammate uses its fixed model; a built-in teammate explicitly follows the

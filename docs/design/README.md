@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-08-28
+Last verified: 2026-09-01
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -37,6 +37,9 @@ CI/Release artifacts instead of the default documentation tree.
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 - [Conversation Activity Summary And Exploration Batching](conversation-activity-summary-and-exploration-batching-detailed-design.md)
+- [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+- [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
+- [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)
 - [Channel Execution Completion Implementation Plan](channel-execution-completion-implementation-plan.md)
 - [Post-Compaction Workspace Undo](post-compaction-undo.md)
 - [Post-Compaction Snapshot Restore](post-compaction-snapshot-restore.md)
@@ -44,6 +47,15 @@ CI/Release artifacts instead of the default documentation tree.
 - [Ling Agent Session](ling-agent-session.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 - [Thread-First Work History](thread-first-work-history.md)
+
+### Typed transcript authority (v3.0)
+
+The three documents above are the only current entry points for the Codex-style
+transcript work. Read them in this order: data/semantic contract, visual contract,
+then implementation plan. The activity-summary and command-batching documents are
+subordinate projection rules; they may define eligibility and hard boundaries, but
+they must not introduce another timeline, persistence table, renderer, or completion
+authority.
 
 ## Teammates, Memory, And Skills
 

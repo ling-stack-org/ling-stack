@@ -1,8 +1,9 @@
 # Conversation Command Execution Batching Detailed Design
 
-Status: implemented on `main`
-Date: 2026-07-13
-Last verified: 2026-08-03
+Status: subordinate projection rule; canonical contract in
+[Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+Date: 2026-09-01
+Last verified: 2026-09-01
 Scope: persisted command evidence, live command output projection, deterministic command
 batching, shared conversation view models, Web rendering, refresh behavior, and tests
 

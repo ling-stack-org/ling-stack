@@ -1,8 +1,9 @@
 # Conversation Activity Summary And Exploration Batching Detailed Design
 
-Status: approved design; implementation pending
-Date: 2026-08-23
-Last verified: 2026-08-25
+Status: subordinate projection rule; canonical contract in
+[Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+Date: 2026-09-01
+Last verified: 2026-09-01
 Scope: completed work-cell activity summaries, read-operation batching, shared
 conversation projections, Continuity v2 integration boundaries, and validation
 
@@ -45,7 +46,7 @@ reference.
 
 ## 2. Continuity v2 Boundary
 
-This feature is downstream of Continuity v2. It must not create a second conversation
+This feature is downstream of the v3 typed transcript design. It must not create a second conversation
 timeline or become another context authority.
 
 | Layer | Authority | This feature's relationship |
