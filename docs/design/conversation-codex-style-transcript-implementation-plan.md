@@ -36,6 +36,23 @@ surface adapter 已在此基线上落地；后续提交仍按本计划的 P1→P
 
 S0 不引入 feature flag，也不保留旧 renderer 兼容分支；测试先失败是预期的设计闸门。
 
+### 1.2 当前基线与剩余工作
+
+本计划不是从空白重写。当前实现 worktree 已经具备第一批基础设施，后续只补齐缺口，
+不另起一套 transcript：
+
+| 已落地 | 证据 | 仍需完成 |
+| --- | --- | --- |
+| closed item union、canonical snapshot、纯 projector | `packages/conversation-ui-core` 与对应 tests | 对所有既有 channel caller 完成 cutover |
+| 统一 `ConversationTimeline`、renderer registry、mount/fingerprint | `apps/web/src/shared/conversation/timeline` | 删除残留 route-local activity renderer |
+| `tool_start/update/end` 的 action identity 与 revision 基础 | daemon execution-action 模块 | durable Host capability 签发和二次 scope 校验 |
+| display-only command/exploration batching | core batching tests | recovery、fan-in、TerminalReport 的 atomic 回归 |
+| source-ref adapter 的前端边界 | `source-ref.ts` 与 tests | daemon/desktop 真实 capability、symlink/跨 workspace 拒绝 |
+
+因此实现顺序必须是“先接真实 evidence，再收口 surface，再做 packaged macOS 验收”。
+不能用一张漂亮截图替代尚未接通的 Host 事实，也不能因为某个 surface 仍有旧 caller
+就复制一个局部 renderer。
+
 ## 1. 成功标准
 
 ```text

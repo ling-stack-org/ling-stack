@@ -74,6 +74,34 @@ attention       = 同一行的 tint/border + 可恢复控件
 任何新组件如果需要自己的 spacing、radius 或 status 色，必须先证明 shared token
 无法表达，否则视为 surface 分叉。
 
+### 1.3 页面级组合
+
+三个 surface 使用同一个页面骨架。`document lane` 和 `fact rail` 是同一条 DOM 流中的
+语义分组，不是左右两列，也不是两个滚动容器：
+
+```text
+ConversationSurfaceShell
+├─ Header（标题、参与者/模型提示）
+├─ ConversationTimeline  ← 唯一 overflow/scroll owner
+│  ├─ document item：自然宽度，最多 760px
+│  ├─ fact row：同一列，动词 + 状态 + disclosure
+│  └─ depth=1 child：左侧 1px rail + 8px inset
+├─ EnvironmentPopover（只绑定 active action）
+└─ Composer（输入和 approval control 的唯一 owner）
+```
+
+页面级硬规则：
+
+- Header、Timeline、Composer 可以是 shell 的三个区域，但只能有一个历史滚动容器；
+  EnvironmentPopover 使用浮层定位，不能建立第二份历史列表。
+- 文档 item 和事实 row 在同一垂直顺序中交错出现，不能把所有事实搬到右侧或底部。
+- 事实 row 的最大内容宽度不受 760px 限制；命令/输出可占满时间线列，但不能撑破窗口。
+- Composer 固定在时间线之后；它只负责输入、停止、重试和审批，不显示 action summary。
+- child rail 只增加层次提示，不改变字体、row height、disclosure 或状态文案。
+
+因此，“普通会话显示在右侧”“频道使用另一套卡片”都属于布局回归，而不是可接受的
+surface 差异。
+
 ## 2. Row grammar
 
 ### 2.1 Fact row

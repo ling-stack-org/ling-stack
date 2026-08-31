@@ -59,6 +59,11 @@ authority. v3.3 adds the single timeline mount/composition contract and explicit
 row examples while retaining the v3.2 renderer, event-idempotency, visual-token, and
 acceptance details. It does not change the v3.1 storage or ownership decisions.
 
+开工时只需要沿这三份文档执行：先冻结 typed item/evidence contract，再实现共享
+`ConversationTimeline`，最后按实现计划完成 surface cutover 和 packaged macOS 验收。
+“简单好看”的验收不是主观截图评审，而是文档 lane、事实 row、原地 revision、可逆
+disclosure、唯一 scroll owner 和跨 surface fingerprint 的组合约束。
+
 ## Teammates, Memory, And Skills
 
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)

@@ -25,6 +25,32 @@ Ling 的会话应当像 Codex 一样安静、清楚、可恢复，同时保留 L
 2. 实际发生了什么（Host 事实）；
 3. 下一步是否需要我处理（审批、失败、阻塞或重试）。
 
+### 1.1 一句话设计
+
+一个垂直时间线承载所有内容；模型只写文档式叙述，Host 只写带 lineage 的事实行；
+同一个动作在 `start → update → end` 期间原地更新，完成后默认收敛为一行，只有需要
+处理的状态才展开详情。普通会话、队友私聊、频道和 depth-1 子 Agent 只是同一时间线
+的不同 scope/chrome，不是不同的渲染系统。
+
+### 1.2 Codex-parity 的可观察结果
+
+实现完成后，任何一个用户动作都应能在首屏形成下面的最小闭环：
+
+```text
+叙述：我先检查 parser.ts，再运行测试。
+事实：▣ Run pnpm test · Working
+事实：▣ Run pnpm test · Succeeded · exit 0
+结果：最终 agentMessage 解释结果，不能复制命令行
+```
+
+“简单好看”不是截图风格，而是四个可测试的不变量：
+
+1. 文档 lane 不套事实卡片；事实 rail 只显示 `icon + 动词 + 状态 + 一个 disclosure`。
+2. 同一 `actionId` 只有一个 owning row；更新只改变 `revision`，不追加第二行。
+3. 成功历史默认折叠，`running/waiting/failed/blocked` 才提高视觉重量。
+4. 三种 surface 和子 Agent 的 `rendererKey/kind/status/order` 相同，差异只来自 chrome、
+   policy 和 participant rail。
+
 目标信息流：
 
 ```text
