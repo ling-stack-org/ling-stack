@@ -20,6 +20,8 @@ export interface CanonicalProjectionSourceRef {
   readonly label?: string;
   readonly path?: string;
   readonly hostTarget?: "open_file" | "open_diff" | "open_artifact" | "open_run";
+  readonly capabilityId?: string;
+  readonly workspaceId?: string;
   readonly visibility?: "conversation" | "private" | "audit";
 }
 
@@ -55,6 +57,8 @@ export interface CanonicalSourceRef {
   readonly label?: string;
   readonly path?: string;
   readonly hostTarget?: "open_file" | "open_diff" | "open_artifact" | "open_run";
+  readonly capabilityId?: string;
+  readonly workspaceId?: string;
   readonly visibility?: "conversation" | "private" | "audit";
 }
 
@@ -1298,6 +1302,8 @@ function toSourceRefs(refs: readonly CanonicalSourceRef[]): CanonicalProjectionS
     ...(ref.label ? { label: ref.label } : {}),
     ...(ref.path ? { path: ref.path } : {}),
     ...(ref.hostTarget ? { hostTarget: ref.hostTarget } : {}),
+    ...(ref.capabilityId ? { capabilityId: ref.capabilityId } : {}),
+    ...(ref.workspaceId ? { workspaceId: ref.workspaceId } : {}),
     ...(ref.visibility ? { visibility: ref.visibility } : {}),
   }));
 }

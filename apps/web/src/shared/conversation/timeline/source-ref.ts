@@ -3,6 +3,28 @@ import type {
   ConversationTrustedSourceRef,
 } from "@ling-stack/conversation-ui-core";
 
+export interface ConversationSourceRefScope {
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly runId?: string;
+  readonly actionId?: string;
+  readonly participantId?: string;
+}
+
+/** A capability minted by the trusted Host/daemon after path validation. */
+export interface ConversationHostSourceCapability {
+  readonly kind: "file" | "diff" | "artifact";
+  readonly id: string;
+  readonly path?: string;
+  readonly hostTarget: "open_file" | "open_diff" | "open_artifact";
+  readonly capabilityId: string;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly runId?: string;
+  readonly actionId?: string;
+  readonly participantId?: string;
+}
+
 /**
  * Host capabilities are intentionally opt-in.  A path or id from model text
  * is display-only until the canonical adapter attaches a supported target.
@@ -49,4 +71,30 @@ export function trustedFileSourceRefForPath(
 
 export function normalizeDisplayPath(path: string | undefined): string {
   return path?.trim().replace(/\\/gu, "/").replace(/^\.\//u, "") ?? "";
+}
+
+/**
+ * Upgrade a display-only ref only when the Host capability matches the current
+ * transcript scope. The frontend cannot mint a capability from a path string.
+ */
+export function upgradeConversationSourceRef(
+  ref: ConversationOperationSourceRef | undefined,
+  capability: ConversationHostSourceCapability | undefined,
+  scope: ConversationSourceRefScope,
+): ConversationTrustedSourceRef | undefined {
+  if (!ref || !capability || !isTrustedSourceRef(capability)) return undefined;
+  if (capability.workspaceId !== scope.workspaceId || capability.threadId !== scope.threadId) return undefined;
+  if (scope.runId && capability.runId !== scope.runId) return undefined;
+  if (scope.actionId && capability.actionId !== scope.actionId) return undefined;
+  if (scope.participantId && capability.participantId !== scope.participantId) return undefined;
+  if (ref.id !== capability.id && normalizeDisplayPath(ref.path) !== normalizeDisplayPath(capability.path)) return undefined;
+  return {
+    ...ref,
+    kind: capability.kind,
+    id: capability.id,
+    ...(capability.path ? { path: capability.path } : {}),
+    hostTarget: capability.hostTarget,
+    capabilityId: capability.capabilityId,
+    workspaceId: capability.workspaceId,
+  };
 }

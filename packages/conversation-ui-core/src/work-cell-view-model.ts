@@ -35,6 +35,9 @@ export interface ConversationOperationSourceRef {
  */
 export type ConversationTrustedSourceRef = ConversationOperationSourceRef & {
   readonly hostTarget: "open_file" | "open_diff" | "open_artifact" | "open_run";
+  /** Present when the Host minted a capability for this ref. */
+  readonly capabilityId?: string;
+  readonly workspaceId?: string;
 };
 
 export interface ConversationOperationExecutionView {
