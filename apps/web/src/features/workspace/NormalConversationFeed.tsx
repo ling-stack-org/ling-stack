@@ -1,6 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { ArrowDown, Copy, FileText, Pencil, ThumbsDown, ThumbsUp } from "lucide-react";
-import { getConversationInteractionPolicy } from "@ling-stack/conversation-ui-core";
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
@@ -35,6 +34,7 @@ import type {
   ConversationHomeDetailContext,
   ConversationHomeMessage,
 } from "./normal-conversation-types.js";
+import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
 
 const latestThresholdPx = 56;
 
@@ -310,12 +310,22 @@ function NormalConversationMessageRow({
         />
       ) : (
         <ConversationTimeline
-          items={item.timelineItems}
-          policy={getConversationInteractionPolicy("normal_conversation")}
-          timelineId={`message:${message.id}`}
-          threadId={message.threadId}
-          sourceKind="conversation"
-          activityMode={item.bodyStreaming ? "active" : "completed"}
+          snapshot={buildSurfaceTimelineSnapshot({
+            surface: "normal_conversation",
+            threadId: message.threadId,
+            anchorItemId: message.id,
+            items: item.timelineItems,
+            activeRun: item.bodyStreaming && message.runId ? {
+              runId: message.runId,
+              status: "working",
+              workspaceLabel: projectPath?.trim() || workspaceCwd.trim(),
+              cwd: projectPath?.trim() || workspaceCwd.trim(),
+              branch: null,
+              modelLabel: null,
+              sourceRefs: [],
+            } : null,
+          })}
+          depth={0}
           cwd={projectPath?.trim() || workspaceCwd.trim()}
           onOpenSourceRef={(ref) => {
             if ((ref.kind === "file" || ref.kind === "path") && ref.path) {

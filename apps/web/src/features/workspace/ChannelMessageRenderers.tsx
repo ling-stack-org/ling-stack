@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { createConversationTimelineMessageItem, getConversationInteractionPolicy, projectConversationMessagePresentation, type ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
+import { createConversationTimelineMessageItem, projectConversationMessagePresentation, type ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
 import {
   CheckCircle2,
   ChevronUp,
@@ -85,6 +85,7 @@ import type {
   UsedMemoryEvent,
   UserProfile,
 } from "../../types.js";
+import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { TeammateAvatarView } from "../teammates/TeammateAvatarView.js";
 import {
@@ -381,12 +382,13 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 context: transcriptContext,
               }))}
             <ConversationTimeline
-              items={timelineItems}
-              policy={getConversationInteractionPolicy(channelSurface)}
-              timelineId={`turn:${turn.id}`}
-              threadId={turn.sourceMessage.threadId}
-              sourceKind="channel"
-              activityMode={turn.sourceMessage.status === "pending" ? "active" : "completed"}
+              snapshot={buildSurfaceTimelineSnapshot({
+                surface: channelSurface,
+                threadId: turn.sourceMessage.threadId,
+                anchorItemId: turn.sourceMessage.id,
+                items: timelineItems,
+              })}
+              depth={0}
               cwd={input.cwd}
               loadPreview={input.loadPreview}
               onOpenSourceRef={(ref) => {
@@ -521,15 +523,15 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     return (
       <div className="conversation-turn-operation" key={block.id}>
         <ConversationTimeline
-          items={conversationTimelineItemsForModel(
-            block.operationCell,
-            composerGateApprovalPresentationForWorkCell(block.operationCell, composerGateApprovalByRunId)?.approvalId,
-          )}
-          policy={getConversationInteractionPolicy(channelSurface)}
-          timelineId={block.operationCell.id}
-          threadId={block.operationCell.threadId}
-          sourceKind={block.operationCell.sourceKind}
-          activityMode={block.operationCell.mode}
+          snapshot={buildSurfaceTimelineSnapshot({
+            surface: channelSurface,
+            threadId: block.operationCell.threadId,
+            items: conversationTimelineItemsForModel(
+              block.operationCell,
+              composerGateApprovalPresentationForWorkCell(block.operationCell, composerGateApprovalByRunId)?.approvalId,
+            ),
+          })}
+          depth={0}
           cwd={operationCwd}
           loadPreview={input.loadPreview}
           onOpenSourceRef={(ref) => {
@@ -803,12 +805,13 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                 {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
                 <ConversationTimeline
-                  items={[channelMessageTimelineItem(message, messagePresentation.body, pendingAiReply)]}
-                  policy={getConversationInteractionPolicy(channelSurface)}
-                  timelineId={`message:${message.id}`}
-                  threadId={message.threadId}
-                  sourceKind="channel"
-                  activityMode={pendingAiReply ? "active" : "completed"}
+                  snapshot={buildSurfaceTimelineSnapshot({
+                    surface: channelSurface,
+                    threadId: message.threadId,
+                    anchorItemId: message.id,
+                    items: [channelMessageTimelineItem(message, messagePresentation.body, pendingAiReply)],
+                  })}
+                  depth={0}
                   cwd={input.cwd}
                   onOpenSourceRef={(ref) => {
                     if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
@@ -950,15 +953,15 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       const detailsKey = input.workflowWorkCellDetailsCacheKey(workflow.id);
       return (
         <ConversationTimeline
-          items={conversationTimelineItemsForModel(
-            workCell,
-            composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)?.approvalId,
-          )}
-          policy={getConversationInteractionPolicy(channelSurface)}
-          timelineId={workCell.id}
-          threadId={workCell.threadId}
-          sourceKind={workCell.sourceKind}
-          activityMode={workCell.mode}
+          snapshot={buildSurfaceTimelineSnapshot({
+            surface: channelSurface,
+            threadId: workCell.threadId,
+            items: conversationTimelineItemsForModel(
+              workCell,
+              composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)?.approvalId,
+            ),
+          })}
+          depth={0}
           cwd={input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd}
           loadPreview={input.loadPreview}
           renderSubAgentAvatar={(item) => renderConversationParticipantAvatar(item.participantId, item.label)}
@@ -1073,15 +1076,15 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       }
       return (
         <ConversationTimeline
-          items={conversationTimelineItemsForModel(
-            workCell,
-            composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)?.approvalId,
-          )}
-          policy={getConversationInteractionPolicy(channelSurface)}
-          timelineId={workCell.id}
-          threadId={workCell.threadId}
-          sourceKind={workCell.sourceKind}
-          activityMode={workCell.mode}
+          snapshot={buildSurfaceTimelineSnapshot({
+            surface: channelSurface,
+            threadId: workCell.threadId,
+            items: conversationTimelineItemsForModel(
+              workCell,
+              composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)?.approvalId,
+            ),
+          })}
+          depth={0}
           cwd={run.cwd}
           loadPreview={input.loadPreview}
           renderSubAgentAvatar={(item) => renderConversationParticipantAvatar(item.participantId, item.label)}

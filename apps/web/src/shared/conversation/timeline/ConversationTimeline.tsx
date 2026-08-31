@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import {
   type ConversationTimelineItem,
   type ConversationTimelineSubAgentItem,
-  type ConversationInteractionPolicy,
+  type TimelineSnapshot,
 } from "@ling-stack/conversation-ui-core";
 import { ChevronDown, CircleAlert, Loader2, UserRound } from "lucide-react";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
@@ -10,17 +10,11 @@ import { ConversationTimelineBlockedRenderer } from "./ConversationTimelineBlock
 import { renderConversationTimelineItem } from "./renderer-registry.js";
 
 export interface ConversationTimelineProps {
-  /** Renderer-facing items. Historical rows are projected before this boundary. */
-  readonly items: readonly ConversationTimelineItem[];
-  readonly policy: ConversationInteractionPolicy;
+  /** Immutable, already-scoped canonical/display projection. */
+  readonly snapshot: TimelineSnapshot;
+  readonly depth: 0 | 1;
   readonly className?: string;
-  readonly timelineId?: string;
-  readonly threadId?: string;
-  readonly sourceKind?: string;
-  readonly activityMode?: "active" | "completed";
-  readonly dataDensity?: "default" | "dense";
   readonly ariaLabel?: string;
-  readonly depth?: 0 | 1;
   readonly cwd?: string;
   readonly loadPreview?: ArtifactPreviewLoader;
   readonly onOpenSourceRef?: (ref: ConversationTimelineItem["sourceRefs"][number]) => void;
@@ -29,53 +23,49 @@ export interface ConversationTimelineProps {
 }
 
 /**
- * One renderer boundary for normal, private, channel, and nested-agent operation
- * streams. Surface components provide data and row callbacks; this component owns item
- * dispatch, disclosure, and nested timeline composition. Items are projected and
- * display-batched before this boundary; this component never sorts or groups facts.
+ * The only production transcript renderer. It dispatches typed items and owns
+ * the single visible nesting composition; it never sorts, groups, fetches, or
+ * infers completion from narration.
  */
 export function ConversationTimeline({
-  items,
-  policy,
+  snapshot,
+  depth,
   cwd,
   loadPreview,
   onOpenSourceRef,
   renderSubAgentAvatar,
   emptyLabel,
   className: customClassName,
-  timelineId,
-  threadId,
-  sourceKind,
-  activityMode,
-  dataDensity = "default",
   ariaLabel,
-  depth = 0,
 }: ConversationTimelineProps): React.JSX.Element {
-  const timelineItems = items;
-  // Density is owned by the shared timeline. Callers may force a mode, but the
-  // default derives from the atomic facts after reversible display batching.
-  const effectiveDensity = dataDensity === "default" && countAtomicItems(timelineItems) > 10
-    ? "dense"
-    : dataDensity;
+  const timelineItems = snapshot.items;
+  const effectiveDensity = countAtomicItems(timelineItems) > 10 ? "dense" : "default";
   const className = customClassName ?? `conversation-timeline conversation-timeline-depth-${depth}`;
-  const timelineScope = depth === 1 ? "child" : "primary";
+  const timelineId = `timeline:${snapshot.scope.kind}:${snapshot.scope.threadId}:${snapshot.scope.anchorItemId ?? "root"}`;
+  const attrs = {
+    "data-conversation-timeline": "true",
+    "data-conversation-timeline-id": timelineId,
+    "data-conversation-thread-id": snapshot.scope.threadId,
+    "data-conversation-timeline-scope": snapshot.scope.kind,
+    "data-conversation-timeline-depth": depth,
+    "data-conversation-canonical-revision": snapshot.canonicalRevision,
+    "data-conversation-sse-cursor": snapshot.sseCursor ?? "none",
+    "data-activity-density": effectiveDensity,
+    "aria-label": ariaLabel,
+  } as const;
 
   if (timelineItems.length === 0) {
-    return (
-      <div className={`${className} empty`} data-conversation-timeline="true" data-conversation-timeline-id={timelineId} data-conversation-thread-id={threadId} data-conversation-source-kind={sourceKind} data-conversation-activity-mode={activityMode} data-conversation-surface={policy.surface} data-conversation-timeline-scope={timelineScope} data-conversation-timeline-depth={depth} data-activity-density={effectiveDensity} aria-label={ariaLabel}>
-        {emptyLabel ?? ""}
-      </div>
-    );
+    return <div className={`${className} empty`} {...attrs}>{emptyLabel ?? ""}</div>;
   }
 
   return (
-    <div className={className} data-conversation-timeline="true" data-conversation-timeline-id={timelineId} data-conversation-thread-id={threadId} data-conversation-source-kind={sourceKind} data-conversation-activity-mode={activityMode} data-conversation-surface={policy.surface} data-conversation-timeline-scope={timelineScope} data-conversation-timeline-depth={depth} data-activity-density={effectiveDensity} aria-label={ariaLabel}>
+    <div className={className} {...attrs}>
       {timelineItems.map((item) => renderTimelineItem(item, {
         cwd,
         loadPreview,
         onOpenSourceRef,
         renderSubAgentAvatar,
-        policy,
+        snapshot,
         depth,
       }))}
     </div>
@@ -91,16 +81,17 @@ function countAtomicItems(items: readonly ConversationTimelineItem[]): number {
   }, 0);
 }
 
-function renderTimelineItem(
-  item: ConversationTimelineItem,
-  context: Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderSubAgentAvatar" | "policy" | "depth">,
-): ReactNode {
+type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderSubAgentAvatar"> & {
+  readonly snapshot: TimelineSnapshot;
+  readonly depth: 0 | 1;
+};
+
+function renderTimelineItem(item: ConversationTimelineItem, context: TimelineRenderContext): ReactNode {
   return renderConversationTimelineItem(item, {
     cwd: context.cwd,
     loadPreview: context.loadPreview,
     onOpenSourceRef: context.onOpenSourceRef,
-    policy: context.policy,
-    depth: context.depth ?? 0,
+    depth: context.depth,
     renderSubAgent: (subAgent) => <SubAgentTimelineItem key={subAgent.id} item={subAgent} context={context} />,
   });
 }
@@ -110,21 +101,27 @@ function SubAgentTimelineItem({
   context,
 }: {
   readonly item: ConversationTimelineSubAgentItem;
-  readonly context: Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderSubAgentAvatar" | "policy" | "depth">;
+  readonly context: TimelineRenderContext;
 }): React.JSX.Element {
-  // Child timelines are intentionally capped at one visible nesting level. A
-  // malformed/replayed payload may still contain a nested participant span;
-  // preserve its lineage as a diagnostic instead of mounting a third timeline.
   if (context.depth === 1) {
-    return (
-      <ConversationTimelineBlockedRenderer
-        item={nestedDepthExceededDiagnostic(item)}
-        cwd={context.cwd}
-        depth={1}
-      />
-    );
+    return <ConversationTimelineBlockedRenderer item={nestedDepthExceededDiagnostic(item)} cwd={context.cwd} depth={1} />;
   }
+
   const statusLabel = subAgentStatusLabel(item.lifecycle);
+  const childScope = {
+    ...context.snapshot.scope,
+    kind: "child" as const,
+    anchorItemId: item.itemId ?? context.snapshot.scope.anchorItemId,
+    depth: 1 as const,
+  };
+  const childSnapshot: TimelineSnapshot = {
+    ...context.snapshot,
+    scope: childScope,
+    items: item.childItems,
+    activeRun: null,
+    canonicalRevision: Math.max(context.snapshot.canonicalRevision, item.revision),
+  };
+
   return (
     <section
       className={["conversation-timeline-sub-agent", `lifecycle-${item.lifecycle}`].join(" ")}
@@ -139,7 +136,6 @@ function SubAgentTimelineItem({
       data-conversation-attempt-id={item.attemptId}
       data-conversation-workflow-step-id={item.workflowStepId}
       data-conversation-source-refs={item.sourceRefs.map((ref) => `${ref.kind}:${ref.id}`).join(",")}
-      data-agent-participant-id={item.participantId}
       aria-label={`${item.label} ${statusLabel}`}
     >
       <header className="conversation-timeline-sub-agent-head">
@@ -156,16 +152,13 @@ function SubAgentTimelineItem({
       </header>
       {item.childItems.length > 0 ? (
         <ConversationTimeline
-          items={item.childItems}
-          policy={context.policy}
+          snapshot={childSnapshot}
+          depth={1}
           cwd={context.cwd}
           loadPreview={context.loadPreview}
           onOpenSourceRef={context.onOpenSourceRef}
           renderSubAgentAvatar={context.renderSubAgentAvatar}
-          timelineId={item.id}
-          sourceKind="participant"
-          activityMode={item.lifecycle === "completed" ? "completed" : "active"}
-          depth={1}
+          ariaLabel={`${item.label} activity`}
         />
       ) : null}
     </section>

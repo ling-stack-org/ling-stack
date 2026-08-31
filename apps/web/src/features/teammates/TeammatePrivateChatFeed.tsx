@@ -1,6 +1,6 @@
 import { useMemo } from "react";
 import { ArrowDown, Copy, FileText, Image, Loader2, MessageSquare, Pencil, Plus, ThumbsDown, ThumbsUp } from "lucide-react";
-import { createConversationTimelineMessageItem, getConversationInteractionPolicy, type ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
+import { createConversationTimelineMessageItem, type ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -43,6 +43,7 @@ import {
 import { conversationTimelineItemsForModel } from "../../lib/conversation-work-cell.js";
 import { formatBytes } from "./teammate-workspace-utils.js";
 import type { TeammatePrivateMessageController } from "./useTeammatePrivateMessageController.js";
+import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
 
 function privateMessageTimelineItems(input: {
   readonly message: TeammateDirectMessage;
@@ -273,12 +274,22 @@ export function TeammatePrivateChatFeed({
                   </div>
                 ) : (
                   <ConversationTimeline
-                    items={timelineItems}
-                    policy={getConversationInteractionPolicy("teammate_direct")}
-                    timelineId={`message:${message.id}`}
-                    threadId={message.threadId}
-                    sourceKind="private"
-                    activityMode={projection.pendingAiReply ? "active" : "completed"}
+                    snapshot={buildSurfaceTimelineSnapshot({
+                      surface: "teammate_direct",
+                      threadId: message.threadId ?? `private:${teammate.id}`,
+                      anchorItemId: message.id,
+                      items: timelineItems,
+                      activeRun: projection.pendingAiReply && message.linkedRunId ? {
+                        runId: message.linkedRunId,
+                        status: "working",
+                        workspaceLabel: cwd.trim(),
+                        cwd: cwd.trim(),
+                        branch: null,
+                        modelLabel: null,
+                        sourceRefs: [],
+                      } : null,
+                    })}
+                    depth={0}
                     cwd={cwd.trim()}
                     onOpenSourceRef={(ref) => {
                       if ((ref.kind === "file" || ref.kind === "path") && ref.path) {

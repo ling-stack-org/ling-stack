@@ -2,7 +2,6 @@ import type { ReactNode } from "react";
 import type {
   ConversationTimelineItem,
   ConversationTimelineSubAgentItem,
-  ConversationInteractionPolicy,
 } from "@ling-stack/conversation-ui-core";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { ConversationCommandBatch } from "../blocks/ConversationCommandBatch.js";
@@ -24,7 +23,6 @@ export interface ConversationTimelineRenderContext {
   readonly loadPreview?: ArtifactPreviewLoader;
   readonly onOpenSourceRef?: (ref: ConversationTimelineItem["sourceRefs"][number]) => void;
   readonly renderSubAgent: (item: ConversationTimelineSubAgentItem) => ReactNode;
-  readonly policy: ConversationInteractionPolicy;
   readonly depth: 0 | 1;
 }
 

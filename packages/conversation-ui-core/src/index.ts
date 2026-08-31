@@ -48,6 +48,8 @@ export {
   projectConversationSubAgentActivity,
   projectConversationTimelineItems,
 } from "./transcript-item.js";
+export type { ActiveRunSnapshot, TimelineSnapshot } from "./timeline-snapshot.js";
+export { createTimelineSnapshot } from "./timeline-snapshot.js";
 export {
   createConversationTimelineMessageItem,
 } from "./message-item.js";
