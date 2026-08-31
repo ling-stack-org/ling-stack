@@ -1,10 +1,11 @@
 import {
+  createConversationTimelineMessageItem,
   projectConversationMessagePresentation,
   type ConversationWorkCellViewModel,
   type ConversationTimelineItem,
 } from "@ling-stack/conversation-ui-core";
 import type { Translate } from "../../i18n.js";
-import { buildConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { buildConversationWorkCellViewModel, conversationTimelineItemsForModel } from "../../lib/conversation-work-cell.js";
 import { conversationRunHasVisibleWork } from "../../lib/conversation-runtime-visibility.js";
 import type { MessageRowAuthorType } from "../../shared/conversation/index.js";
 import type { RunSession, TerminalReportDto } from "../../types.js";
@@ -22,6 +23,7 @@ export interface NormalConversationFeedItem {
   readonly body: string;
   readonly bodyStreaming: boolean;
   readonly errorText: string;
+  readonly timelineItems: readonly ConversationTimelineItem[];
   readonly workCell?: ConversationWorkCellViewModel;
   readonly workCellCwd: string;
   readonly workspaceMayHaveChanged: boolean;
@@ -63,6 +65,7 @@ export function projectNormalConversationFeedItems(input: {
       executionActions,
       t: input.t,
       terminalReport,
+      contextSegmentIdByItemId: input.detailContext?.timelineProjection?.contextSegmentIdByItemId,
       ...(typedTimelineItems.length > 0 ? { typedTimelineItems } : {}),
     }) : undefined;
     const bodyStreaming = message.status === "running" || message.status === "pending";
@@ -74,6 +77,21 @@ export function projectNormalConversationFeedItems(input: {
       streaming: bodyStreaming,
       streamingPlaceholder: input.t("Ling Agent is thinking..."),
     });
+    const messageItem = createConversationTimelineMessageItem({
+      id: `message:${message.role === "user" ? "user" : "agent"}:${message.id}`,
+      role: message.role === "user" ? "user" : "agent",
+      markdown: messagePresentation.body,
+      phase: message.role === "assistant" && (message.status === "succeeded" || relatedRun?.status === "succeeded") ? "final" : "commentary",
+      revision: message.revision,
+      threadSequence: 0,
+      turnId: message.turnId,
+      itemId: message.id,
+      status: message.status,
+    });
+    const facts = workCell ? conversationTimelineItemsForModel(workCell) : [];
+    const timelineItems = messageItem.phase === "final" && facts.length > 0
+      ? [...facts, messageItem]
+      : [messageItem, ...facts];
 
     return {
       message,
@@ -86,6 +104,7 @@ export function projectNormalConversationFeedItems(input: {
       body: messagePresentation.body,
       bodyStreaming,
       errorText: messagePresentation.errorText,
+      timelineItems,
       workCell,
       workCellCwd: linkedRun?.cwd ?? input.workspaceCwd.trim(),
       workspaceMayHaveChanged: runMayHaveWorkspaceChanges(relatedRun),

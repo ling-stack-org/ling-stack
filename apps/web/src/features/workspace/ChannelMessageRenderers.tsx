@@ -129,7 +129,7 @@ function channelTurnTimelineItems(turn: ConversationTurnViewModel, t: (key: stri
       conversationCoordinatorDisplayBody(turn, message, index === visibleMessages.length - 1 ? "terminal" : "start", t),
       message.status === "pending",
     ));
-  const facts = conversationTimelineItemsForModel(turn.operationCell);
+  const facts = turn.operationCell ? conversationTimelineItemsForModel(turn.operationCell) : [];
   return [...narration, ...facts]
     .filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index)
     .sort((left, right) => left.threadSequence - right.threadSequence || left.partIndex - right.partIndex || left.id.localeCompare(right.id));

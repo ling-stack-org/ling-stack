@@ -1,5 +1,6 @@
 import {
   normalizeConversationOperationCell,
+  batchCanonicalTranscriptItems,
   projectConversationActivity,
   projectConversationCommandBatches,
   projectConversationSubAgentActivity,
@@ -43,6 +44,7 @@ import { executionActionSourceRefs } from "./execution-action-lineage.js";
 import { projectConversationLatestAttemptEvidence } from "./conversation-work-cell-attempts.js";
 
 export {
+  batchCanonicalTranscriptItems,
   normalizeConversationOperationCell,
   projectConversationActivity,
   projectConversationCommandBatches,
@@ -100,6 +102,70 @@ export function projectConversationWorkCellTimeline(input: {
     return projectConversationSubAgentActivity(span, childItems, { turnId: input.turnId });
   });
   return projectConversationTimelineItems([...input.operationItems, ...participantItems], { turnId: input.turnId });
+}
+
+/**
+ * Returns the facts for one WorkCell through the shared Timeline contract.
+ *
+ * Canonical snapshots are preferred when a caller has them. Legacy WorkCell
+ * rows are only an adapter fallback; they are projected once and never exposed
+ * to a renderer. Batching is applied only when an explicit ContextSnapshot
+ * lookup is present, because a missing context boundary is not permission to
+ * infer that neighboring operations share model context.
+ *
+ * A pending Composer approval owns its decision controls. Facts carrying that
+ * approval are therefore suppressed from the transcript to avoid showing the
+ * same action as both an expandable row and an approval gate.
+ */
+export function conversationTimelineItemsForModel(
+  model: ConversationOperationCellViewModel,
+  composerApprovalId?: string,
+): readonly ConversationTimelineItem[] {
+  const approvalId = composerApprovalId?.trim();
+  const operationItems = model.operationItems ?? projectConversationActivity(model.operationRows);
+  const fallbackItems = approvalId
+    ? operationItems.filter((item) => !workCellItemMatchesApproval(item, approvalId))
+    : operationItems;
+  const atomicItems = model.typedTimelineItems && model.typedTimelineItems.length > 0
+    ? model.typedTimelineItems
+    : projectConversationWorkCellTimeline({
+        operationItems: fallbackItems,
+        agentSpans: model.agentSpans,
+        turnId: model.turnId,
+      });
+  const visibleItems = approvalId
+    ? atomicItems.filter((item) => !timelineItemMatchesApproval(item, approvalId))
+    : atomicItems;
+  return model.contextSegmentIdByItemId
+    ? batchCanonicalTranscriptItems(visibleItems, {
+        contextSegmentIdByItemId: model.contextSegmentIdByItemId,
+      })
+    : visibleItems;
+}
+
+function workCellItemMatchesApproval(item: ConversationWorkCellItem, approvalId: string): boolean {
+  if (item.kind === "operation") {
+    return item.row.id === `approval:${approvalId}` || item.row.id === `pending:${approvalId}` ||
+      item.row.operationExecution?.approvalId === approvalId || item.row.commandExecution?.approvalId === approvalId;
+  }
+  if (item.kind === "command_batch") {
+    return item.batch.commands.some((command) => workCellItemMatchesApproval({ kind: "operation", row: command.row }, approvalId));
+  }
+  return item.batch.rows.some((row) => workCellItemMatchesApproval({ kind: "operation", row }, approvalId));
+}
+
+function timelineItemMatchesApproval(item: ConversationTimelineItem, approvalId: string): boolean {
+  if (item.approvalId === approvalId) return true;
+  if (item.kind === "commandBatch") {
+    return item.batch.commands.some((command) => timelineItemMatchesApproval(command, approvalId));
+  }
+  if (item.kind === "explorationBatch") {
+    return item.batch.children.some((child) => timelineItemMatchesApproval(child, approvalId));
+  }
+  if (item.kind === "subAgentActivity") {
+    return item.childItems.some((child) => timelineItemMatchesApproval(child, approvalId));
+  }
+  return false;
 }
 
 export interface ConversationWorkCellFactOwnership {
@@ -535,6 +601,8 @@ export interface BuildConversationWorkCellInput {
   readonly artifactHref?: (artifact: RunArtifact) => string;
   readonly terminalReport?: TerminalReportDto;
   readonly typedTimelineItems?: readonly import("@ling-stack/conversation-ui-core").ConversationTimelineItem[];
+  /** Explicit ContextSnapshot-derived segment lookup for display-only batching. */
+  readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
 }
 
 export function buildConversationWorkCellViewModel(input: BuildConversationWorkCellInput): ConversationWorkCellViewModel | undefined {
@@ -639,6 +707,7 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     operationRows,
     operationItems: projectConversationActivity(operationRows),
     ...(input.typedTimelineItems && input.typedTimelineItems.length > 0 ? { typedTimelineItems: input.typedTimelineItems } : {}),
+    ...(input.contextSegmentIdByItemId ? { contextSegmentIdByItemId: input.contextSegmentIdByItemId } : {}),
     activitySummary: summarizeConversationActivity(operationRows),
     agentBranches: [],
     terminalReportId: terminalReport?.reportId,
