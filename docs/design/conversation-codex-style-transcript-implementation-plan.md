@@ -1290,6 +1290,33 @@ capability 时，必须先停止编码并更新本设计和 fixture。开发阶�
 PR 只在对应阶段的测试和证据齐全后进入下一阶段；“截图看起来正确”不能替代事实来源、
 恢复或完成闸门。
 
+## 4.12 v3.9.1-final 开工执行板
+
+从这里开始实现，不再从某个 surface 的 JSX 反推协议。每个阶段都以同一份 canonical
+fixture、同一组 semantic selectors 和同一份 lineage 作为输入；阶段失败就停在该阶段，
+不靠 CSS 隐藏或兼容 renderer 越过闸门。
+
+| 阶段 | 先写的失败测试 | 实现目标 | 退出证据 |
+| --- | --- | --- | --- |
+| D0 | unknown kind、scope mismatch、缺 result anchor | 锁 closed union、lineage、`TimelineSourceSnapshot`/`TimelineSnapshot` 边界 | contracts/typecheck、fixture fingerprint |
+| E1 | 乱序/重复/迟到 `tool_*`、equal revision conflict | `EvidenceFold`、terminal fence、同 action 原地 revision、live invalidation | fold replay + SQLite/SSE lineage |
+| E2 | batch split、expand round-trip、retry/approval boundary | 纯 canonical projector + 可逆 command/exploration batch | atomic evidence 与 display rows 对照 |
+| E3 | Markdown/code/path、bounded output、Host ref 过期 | shared Timeline、exhaustive registry、file/diff capability viewer | component/semantic selectors、单一 scroll owner |
+| E4 | normal/private/channel/topic/branch/child parity | 所有入口只调用一次 shared mount，删除旧 caller | 跨 surface fingerprint 完全一致 |
+| E5 | approval、retry、SSE reconnect、daemon restart、partial fan-in | 原子恢复、latest generation、structured blocked | recovery/fan-in tests + lineage |
+| E6 | packaged client 的真实连续 turn | 只验收 macOS packaged app，采集 UI/语义/事实证据 | `simulation=false` + screenshot/state/lineage/log 四件套 |
+
+实现切片的固定顺序：
+
+```text
+contract/fixture -> evidence fold -> projector/batch -> shared Timeline/viewer
+                -> surface cutover -> recovery/fan-in -> packaged macOS
+```
+
+任何变更若需要新增 item kind、改变 Thread 映射、改变 `contextSegmentId` 归属、让
+Composer/Popover 再拥有历史事实，必须先回到五份设计文档和 fixture 更新；不得直接在
+某个 surface 加局部例外。代码、测试、证据三件套齐全后，才把该阶段标为完成。
+
 ## 5. 回归矩阵
 
 | 领域 | 必测场景 | 证据 |

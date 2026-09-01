@@ -977,3 +977,40 @@ copy affordance，并在 owning row 内显示 blocked detail。
    `renderFactActions` 的注入能力。
 
 任何一个条件未满足都停在 E3/E4 修复，不通过 CSS 隐藏或保留第二套兼容 renderer。
+
+### 26.8 v3.9.1-final 文件级开工契约
+
+这一节把上面的组件树压成实现时可逐项勾选的边界。它不允许 surface 自己拼接
+消息、action、approval 或 report，也不允许 child Agent 重新发明一套聊天组件。
+
+```text
+surface adapter
+  -> ResolvedConversationSurface { threadId, scope, snapshot, policy, callbacks }
+  -> mountConversationTimeline(surface)
+       -> ConversationFeedViewport      (唯一 overflow-y)
+            -> ConversationTimeline     (只接 TimelineSnapshot)
+                 -> registry[item.kind](item, context)
+```
+
+| 文件/模块 | 允许做的事 | 明确禁止 |
+| --- | --- | --- |
+| `canonical-transcript-snapshot.ts` | 从 API/SQLite/SSE 组装有 coverage 的 source snapshot | 把 partial source 当完整历史返回 |
+| `conversation-ui-core` projector/batch | 校验 scope、owner、attempt、revision，生成原子 item 和可逆 display rows | I/O、权限副作用、completion/fan-in 判断 |
+| `shared/conversation/timeline/*` | exhaustive registry、row/detail、disclosure、semantic selectors | 读取 raw source、按文案去重、创建第二个 scroll owner |
+| normal/private/channel/topic/branch adapter | 解析真实 `LingThread.id`、shell/policy、Host callback | 自建 `MessageBubble`、`WorkCell`、activity renderer 或 summary |
+| `SubAgentActivity` | participant label、lifecycle、depth=1 child snapshot、fan-in focus | child-specific renderer、depth=2 Timeline、ready 文案冒充完成 |
+| Composer/approval/EnvironmentPopover/Right Dock | 输入/控制、当前 active ambient、选中 source preview | 复制 action/output/TerminalReport 历史 |
+
+一次 render cycle 只能有一个 owning row：
+
+```text
+same actionId + new revision -> update existing DOM row
+same actionId + SSE replay   -> idempotent no-op
+terminal fence + late event  -> audit diagnostic, never reopen
+missing lineage              -> diagnostic(blocked), never guessed success
+```
+
+组件测试必须从同一 fixture 渲染 normal、private、channel 和 child，并比较
+`kind/order/status/rendererKey/disclosureCount/scrollOwnerCount`。差异只允许来自 shell
+标题、roster、participant rail、policy hint 和 callback 可用性；若某个 surface 需要额外
+renderer、额外状态映射或额外滚动容器，说明 adapter 越界，应退回 E4 修复。

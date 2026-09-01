@@ -115,7 +115,7 @@ E2 的 batching 入口已经锁定为纯 projection：`projectDisplayBatches()` 
 - [Typed Transcript §1.4：实现锁](conversation-typed-transcript-detailed-design.md#14-v391-final-实现锁开工者的一页合同)
 - [Visual Specification §16：视觉实现锁](conversation-codex-parity-visual-spec.md#16-v391-final-视觉实现锁)
 - [Component Design §26：开工细设计](conversation-codex-parity-component-detailed-design.md#26-v391-final-开工细设计)
-- [Implementation Plan §4.11：当前实现接续单](conversation-codex-style-transcript-implementation-plan.md#411-v391-final-当前实现接续单)
+- [Implementation Plan §4.12：开工执行板](conversation-codex-style-transcript-implementation-plan.md#412-v391-final-开工执行板)
 
 #### Implementation brief（给实现者的一页输入）
 
@@ -139,6 +139,31 @@ evidence fold，再做 canonical projection 和可逆 batching，再切统一 re
 viewer，之后才移除旧 WorkCell caller，最后只用 packaged macOS 真实客户端验收。每个
 阶段都必须同时有代码、语义测试和对应证据；只有截图而没有 `semantic-state.json`、
 `lineage.json` 与脱敏日志，不算完成。
+
+#### Codex-parity 开工速查
+
+下面是实现者每天都应该能直接对照的最短版本。它不是新的 contract；如果它与历史
+`v3.7`/`v3.8` 段落冲突，以五份权威文档中的 v3.9.1-final 实现锁为准。
+
+| 用户看到的内容 | 唯一 renderer | 数据权威 | 首屏规则 |
+| --- | --- | --- | --- |
+| 用户/Agent/子 Agent 叙述、reasoning、plan | `document.*` | `conversation_items` + message anchor | 文档流、左对齐、保留 Markdown/代码换行 |
+| 命令、读取、文件、工具、审批 | `fact.*` | `RunEvent`/`ExecutionAction`/Approval/Artifact | `icon + 动词 + 状态 + 一个 disclosure` |
+| execute turn 的最终结果 | `result.terminal` | Completion Gate + atomic evidence | 只显示一个 `terminalReport`，不再追加总结卡 |
+| 子 Agent | `agent.nested` + 同一 Timeline registry | participant span + child atomic evidence | 只增加 participant label/1px rail，最大 depth=1 |
+| 当前环境浮窗 | shell chrome | active run/action | 最多两行 ambient hint，settled 后关闭 |
+
+```text
+Host/SQLite/SSE -> scoped source snapshot -> evidence fold -> atomic projector
+                                      -> reversible display batch -> ConversationTimeline
+                                      -> normal/private/channel/topic/branch/child shell
+```
+
+实现前先回答四个问题：这个 row 的 Host evidence 是什么、`actionId`/`runId`/`attemptId`
+和 `sourceRefs` 是否齐全、它由哪个 renderer 唯一拥有、失败时用户看到的是哪条
+`diagnostic(blocked)`。回答不了就停在 adapter/contract 层，不在 JSX 里补文案或复制旧
+WorkCell。完成判定永远读取 atomic evidence，不读取 batch 数量、plan 进度或模型的
+`ready/done` 叙述。
 
 ## Teammates, Memory, And Skills
 
