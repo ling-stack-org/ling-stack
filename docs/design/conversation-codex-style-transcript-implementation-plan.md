@@ -1,6 +1,6 @@
-# Codex-style Typed Transcript v3.7：实现计划
+# Codex-style Typed Transcript v3.8：实现计划
 
-Status: implementation plan；D0 contract/result-anchor slice 已落地，selector 与 packaged macOS 验收仍待执行；E1–E6 按顺序推进
+Status: implementation plan；v3.8 设计蓝图已锁定，D0 contract/result-anchor slice 已落地；E1–E6 按顺序推进，packaged macOS 验收仍待执行
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（已核对远端无新提交）
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -17,6 +17,11 @@ Surface contract: [Conversation Surface Contract](conversation-surface-contract.
 v3.7 新增一条实现硬门槛：所有 surface 和子 Agent 必须通过同一个
 `mountConversationTimeline` 组合入口；不能通过复制 JSX、复用旧 WorkCell 或在 Composer/
 EnvironmentPopover 中补渲染来“看起来统一”。
+
+v3.8 只补实现细节，不改变 v3.7 的事实权威和存储边界：SQLite 仍是 durable facts，
+batch 仍是 display-only，`terminalReport` 仍是 execute turn 的唯一结果。实现者必须先
+按本文的 work package 交付 evidence、projection、renderer、surface、recovery、packaged
+macOS 六层，不能从某个页面的 CSS 或一段模型文本开始。
 
 ## Canonical phase naming（唯一执行编号）
 
@@ -829,6 +834,136 @@ rg -n "publishedMessageId|renderTerminalReportMarkdown|kind:\s*\"assistant_messa
 频道若仍出现 synthetic `channel:<id>`，或者存在第二个 Timeline owner，阶段直接失败。
 设计层还必须保证 `TimelineSnapshot` 只有一个 canonical 定义；durable 原始记录只能使用
 `TimelineSourceSnapshot`，否则直接判定为 contract drift。
+
+## 4.8 v3.8 实现启动板（从现在开始）
+
+设计已经可以开工。下面是按“先事实、后投影、再视觉、最后真实客户端”排列的执行板；
+每一项都有明确输入、代码边界和退出证据。除当前实现分支已有的 D0 WIP 外，不需要再
+开第二套 transcript 或新建 SQLite 表。
+
+### WP-0：收口 D0 基线（立即执行）
+
+**输入**：`origin/main=63ab7c0e`、v3.8 四份设计、现有 contract/result-anchor WIP。
+
+**动作**：
+
+1. 完成剩余 daemon TerminalReport contract 迁移测试，修正 `resultItemId`、
+   `terminal_report` item 和 partial-lineage fixture；
+2. 更新 `apps/desktop/tests/run-packaged-continuity-smoke.mjs` 中残留的
+   `publishedMessageId/published_message_id` 引用；
+3. 通过 docs link、contract、core、daemon、web typecheck，并记录基线 SHA 和失败日志。
+
+**退出证据**：D0 contract/selector fixture 全绿；`rg` 不再发现生产路径的旧
+`publishedMessageId` 或 TerminalReport-as-assistant renderer；未解决的 daemon 失败必须
+被归类为具体 P1，而不是用“基本通过”带过。
+
+### WP-1：E1 evidence fold
+
+**代码边界**：`packages/daemon` execution-action、RunEvent、invalidation；contracts 中
+的 operation envelope。
+
+**实现顺序**：
+
+```text
+tool_start/update/end
+  -> durable RunEvent/ExecutionAction
+  -> actionId map + dedupe + monotonic revision
+  -> terminal fence
+  -> invalidation(actionId, revision)
+```
+
+**必须覆盖**：重复 start/end、迟到 update、乱序 SSE、equal-revision conflict、输出脱敏
+与 tail 限制、restart replay。任何被拒绝事件只写 audit diagnostic，不重新打开已结束行。
+
+**退出证据**：同一 `actionId` 在所有事件序列中只产生一个 atomic item 和一个 DOM id，
+accepted update 能在同一 render cycle 看到，旧 revision 永不覆盖新 revision。
+
+### WP-2：E2 atomic projection + display batching
+
+**代码边界**：`packages/conversation-ui-core` projector、attempt selection、owner join、
+`commandBatch/explorationBatch`、fingerprint。
+
+**实现顺序**：scope → sequence/part order → action owner → latest attempt → context
+segment → TerminalReport join → atomic items → optional batch。batch 只接受相邻、同
+participant/run/attempt/workflow step、成功终态的 read/command；≥3 才显示 header，
+active/失败/审批/consequential 永远独立。
+
+**退出证据**：同一 fixture 在 normal/private/channel/topic/branch/child 输出相同
+`kind/order/rendererKey/status/disclosureCount`；batch 展开可恢复 exact child order；
+`TerminalReport`、fan-in 和 `contextSegmentId` 的测试只读取 atomic projection。
+
+### WP-3：E3 shared Timeline + Host viewer
+
+**代码边界**：`apps/web/src/shared/conversation/timeline/*` 与 source-ref/capability
+adapter。
+
+**实现**：
+
+- exhaustive renderer registry：document、fact、result、nested、batch、diagnostic；
+- Markdown AST、fenced code、path、file/diff/artifact viewer；
+- fact row 固定 `icon + verb + status + disclosure`，结果 row 固定 `Result · status`；
+- `ConversationFeedViewport` 作为唯一纵向 scroll owner；detail 最大 240px，输出 bounded；
+- capability callback 在 Host 端二次校验 workspace、realpath、permission、epoch、TTL。
+
+**退出证据**：DOM selector/fingerprint 稳定；无右侧方形 bubble、无第二纵向滚动区、无
+Composer/Popover/Right Dock 重复 summary；模型 path 可复制不可导航，trusted ref 才可
+打开。
+
+### WP-4：E4 surface cutover
+
+**代码边界**：normal/private/channel/topic/branch/child surface adapters。
+
+每个入口只构造 `ResolvedConversationSurface` 并调用一次 `mountConversationTimeline`；
+删除生产 WorkCell/activity caller、旧 workflow skeleton、局部 status copy 和 Composer
+summary。频道必须传真实 `LingThread.id`；topic/branch 解析失败只产生
+`diagnostic(scope_mismatch)`。
+
+**退出证据**：`rg` 审计只剩 migration adapter；所有 surface 的 renderer fingerprint
+相同，差异仅 shell/policy/participant rail。
+
+### WP-5：E5 recovery、approval、fan-in
+
+**代码边界**：TerminalReport publication/recovery、retry、approval、fan-in consumers。
+
+**必须覆盖**：failed→retry latest attempt、approval allow/deny/expired、SSE reconnect、
+daemon restart、late terminal event、partial→complete fan-in、ready-only child、depth-2
+child blocked。TerminalReport/report Item/supersedes/invalidation 必须同事务提交；fan-in
+必须等待所有 required evidence 或结构化 blocked。
+
+**退出证据**：旧 attempt 只在 audit；重连/重启得到同一 action fingerprint；不出现第二个
+action row、TerminalReport 或 final summary；缺 participant 时用户看到明确 Waiting/Blocked。
+
+### WP-6：E6 packaged macOS 真实验收
+
+**代码边界**：`apps/desktop` packaged shell 和 evidence harness。Windows、移动端和
+mock-only 浏览器不在本轮范围。
+
+固定执行 `N-01/N-02/P-01/C-01/C-02/A-01/R-01/R-02/R-03/F-01/E-01`，每个案例保存
+`case.json + screen-01.png + screen-02.png + semantic-state.json + lineage.json +
+logs.redacted.txt`。`case.json` 必须写 `simulation=false`、bundle/version/hash、真实
+thread/turn/run/attempt、输入和 daemon epoch。
+
+**退出证据**：macOS packaged app 中可以看到完整 Markdown、真实 command/file/tool、
+nested Agent、batch disclosure、approval、retry、SSE reconnect、daemon restart、fan-in
+和 EnvironmentPopover；四件套缺一只能标为调试证据。
+
+### 4.8.1 开工时的提交形状
+
+按以下顺序提交，每个 commit 可单独回滚，且只 stage 本阶段文件：
+
+```text
+docs: v3.8 Codex-parity blueprint（本次）
+feat(transcript): fold tool evidence and terminal fence
+feat(transcript): project atomic timeline and reversible batches
+refactor(web): mount shared ConversationTimeline and Host viewers
+refactor(web): cut over normal/private/channel/child surfaces
+test(transcript): recovery, approval, fan-in and renderer parity
+test(desktop): packaged macOS evidence cases
+```
+
+如果某一阶段需要改变 `kind`、lineage、Thread 映射、context 分配或 completion authority，
+先修改四份权威设计和 fixture，再修改代码。不能在实现分支里保留“临时兼容”作为第五
+种 renderer。
 
 ## 5. 回归矩阵
 

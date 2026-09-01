@@ -48,7 +48,7 @@ CI/Release artifacts instead of the default documentation tree.
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 - [Thread-First Work History](thread-first-work-history.md)
 
-### Typed transcript authority (v3.7)
+### Typed transcript authority (v3.8)
 
 The current transcript work has four cooperating entry points. Read them in this order:
 
@@ -65,7 +65,7 @@ The activity-summary and command-batching documents are subordinate projection r
 may define eligibility and hard boundaries, but they must not introduce another timeline,
 persistence table, renderer registry, or completion authority. When a historical section in
 those documents mentions `ConversationWorkCell`, it means an adapter or migration input only;
-the v3.7 production owner is always `ConversationTimeline`.
+the v3.8 production owner is always `ConversationTimeline`.
 
 Codex item 到 Ling kind 的逐项映射、事实来源和完成权威见详细设计 §5.1.1；视觉 row
 grammar、EnvironmentPopover 和 disclosure 见视觉规范 §13–15。实现者不应从截图或旧
@@ -77,9 +77,10 @@ dotted `rendererKey`。例如 `terminal_report → terminalReport → result.ter
 只能在 contract adapter 处转换一次，不能让 surface 或 CSS 直接消费 wire kind。详细映射
 和未知 kind 的 fail-closed 规则见详细设计 §5.1.2。
 
-#### Implementation lock（2026-09-01）
+#### Implementation lock（2026-09-01，v3.8）
 
-设计文档已经锁定；D0 的第一段 contract/result-anchor slice 已完成：
+设计文档已经锁定；v3.8 在不改变 v3.7 contract 的前提下补齐了可直接开工的实现蓝图；
+D0 的第一段 contract/result-anchor slice 已完成：
 `terminal_report` 已进入 closed union，assistant 文本带 Host-assigned
 `presentationRole`，SQLite publication 使用 `result_item_id`，canonical projector 会选择
 最高 committed generation 并以 `result.terminal` 渲染；UI-core fixture 已覆盖单一结果、
@@ -88,7 +89,7 @@ summary 抑制、缺 anchor fail-closed。下一步执行 selector smoke，再�
 macOS 验收。只有同时具备 atomic evidence、统一 renderer fingerprint、recovery 结果和
 macOS screenshot/semantic-state/lineage/log 四件套，才可把实现标为完成。
 
-开工时沿这四份文档执行：先完成 v3.7 的 D0 contract gate（区分
+开工时沿这四份文档执行：先完成 v3.8 的 D0 contract gate（区分
 `TimelineSourceSnapshot` 与 `TimelineSnapshot`），建立 parity fixture 和 evidence
 闸门，再实现共享
 `ConversationTimeline`，最后按实现计划完成 surface cutover 和 packaged macOS 验收。
@@ -101,7 +102,7 @@ WorkCell/activity caller；不保留运行时兼容 renderer，也不允许 batc
 
 #### Implementation brief（给实现者的一页输入）
 
-下面这组决定是 v3.7 的不可变输入；如果实现需要改变其中任何一项，先更新四份权威
+下面这组决定是 v3.8 的不可变输入（继承 v3.7 contract）；如果实现需要改变其中任何一项，先更新四份权威
 文档并重新跑 D0，而不是在某个 surface 里加一个局部例外：
 
 | 问题 | v3.7 决定 | 用户可观察结果 |

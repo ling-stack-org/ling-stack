@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.7；design contract 已冻结；D0 contract/result-anchor slice 已实现并通过 package typecheck 与 UI-core fixtures；E1–E6 仍待验收
+Status: normative design v3.8（extends the v3.7 contract）；Codex-parity implementation blueprint 已补齐；D0 contract/result-anchor slice 已实现，E1–E6 仍待验收
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（实现 worktree 已同步；实现进行中）
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -2522,3 +2522,279 @@ D0 必须先用失败测试锁定以下事实，再开始 E1 业务实现：
 
 这组 contract 完成后，TerminalReport 才真正成为与 Codex typed result item 等价的 Ling
 结果层，而不是换了样式的 assistant Markdown。
+
+## 20. v3.8 Codex-parity 实现蓝图
+
+本节是实现者的直接输入。它把“像 Codex 一样简单好看”拆成可编译的类型、唯一的
+数据流、稳定的 DOM 结构和可复现的验收证据。v3.8 不改变 v3.7 已冻结的 SQLite
+拓扑、Thread 映射、`contextSegmentId` 规则或 completion authority；它只把剩余实现
+边界写成不可猜测的工程契约。
+
+### 20.1 一次 turn 的唯一数据流
+
+```text
+Host event / SQLite row / SSE delta
+        │
+        ▼
+TimelineSourceSnapshot（原始事实 + coverage + watermark）
+        │  daemon：scope、redaction、dedupe、revision、terminal fence
+        ▼
+EvidenceFold（每个 actionId 只有一个当前 revision）
+        │
+        ▼
+CanonicalTranscriptProjector（纯函数）
+        │  owner、attempt、context、lineage、order、result anchor
+        ▼
+TimelineSnapshot（只含已校验 atomic typed items）
+        │
+        ├─ optional display-only batching（不落库）
+        ▼
+ConversationTimeline（唯一历史 owner）
+        │
+        ├─ document lane：Markdown / code / path
+        ├─ fact rail：command / file / tool / approval / protocol
+        ├─ result lane：execute turn 的 terminalReport
+        └─ nested rail：depth=1 child，复用同一 registry
+```
+
+`TimelineSourceSnapshot` 不得直接传给 React；`TimelineSnapshot` 不得再执行 I/O、排序、
+完成判断或事实猜测。任何 surface、Composer、EnvironmentPopover 或 Right Dock 都只能
+消费已经投影的 snapshot 或其稳定 source ref。
+
+### 20.2 最小类型形状（实现契约）
+
+以下字段是最小集合，字段名和语义固定；可以增加与产品无关的扩展字段，但不能删除、
+改名或把事实字段降级为可选猜测值：
+
+```ts
+type TimelineSourceSnapshot = {
+  scope: ResolvedConversationSurface;
+  conversationItems: readonly CanonicalConversationItem[];
+  actions: readonly CanonicalExecutionAction[];
+  approvals: readonly CanonicalApprovalRecord[];
+  artifacts: readonly CanonicalArtifactRecord[];
+  participantSpans: readonly CanonicalParticipantSpan[];
+  terminalReports: readonly CanonicalTerminalReportProjection[];
+  sourceRevision: string;
+  sourceSequence: number;
+  sseCursor: string | null;
+};
+
+type TimelineSnapshot = {
+  scope: ConversationTimelineScope;
+  items: readonly ConversationTimelineItem[];
+  activeRun: ActiveRunSnapshot | null;
+  canonicalRevision: number;
+  sseCursor: string | null;
+  contextSegmentIdByItemId: ReadonlyMap<string, string>;
+};
+
+type OperationLineage = {
+  actionId: string;
+  runId: string;
+  attemptId: string;
+  participantId: string;
+  workflowStepId: string | null;
+  sourceRefs: readonly ConversationOperationSourceRef[];
+};
+```
+
+`userMessage`、`agentMessage`、`reasoning`、`plan` 可以只携带自己的
+`conversation_item` anchor；所有 command/file/tool/exploration/child action 必须携带
+完整 `OperationLineage`。缺任一项时 projector 输出 `diagnostic(blocked)`，不得生成
+绿色成功行。
+
+### 20.3 EvidenceFold：start/update/end 原地收敛
+
+```text
+key = actionId
+revision = monotonic integer
+terminalFence = first accepted terminal end
+
+tool_start  -> create {status: running, revision: r}
+tool_update -> replace same key when r > current.revision
+tool_end    -> replace same key and set terminalFence when first terminal end arrives
+late event  -> audit diagnostic; never reopen the row
+equal-conflict / stale -> reject + audit; never append a second row
+```
+
+每个被接受的 update 都必须先写 durable `RunEvent/ExecutionAction`，再发按
+`actionId + revision` 定位的 invalidation。UI 读到的是 fold 后的 atomic action，不是 SSE
+到达顺序。输出只保留脱敏 bounded tail（40 行、8KiB、64 chunks）；完整日志使用
+trusted artifact ref 延迟打开。
+
+### 20.4 Canonical projector：七步纯函数算法
+
+实现必须保持单次线性扫描，且按以下顺序执行：
+
+1. 校验 `workspaceId + real LingThread.id`，过滤 scope 外记录；
+2. 以 `ConversationItem.sequence + partIndex + stable id` 排序，拒绝重复 sequence；
+3. 以 `actionId` 选择最高 revision，校验 action 与 conversation item owner；
+4. 按 `turnId/attemptId/attemptNumber` 选择最新有效 attempt，旧 attempt 留在 audit；
+5. 折叠 tool envelope、approval、artifact 和 participant span，缺 owner 生成 blocked；
+6. 绑定最高 committed TerminalReport 与 `resultItemId`，execute turn 抑制
+   `execution_summary`；reply turn 只保留 `reply_result`；
+7. 得到 atomic items 后，最后一次调用 display-only batching，并生成 fingerprint。
+
+禁止按文本相似度、时间邻近、数组位置、batch 数量或 SSE 到达顺序推断 owner、结果、
+context segment 或完成状态。
+
+### 20.5 Renderer 组合：一条时间线，三类视觉行
+
+`mountConversationTimeline` 的输入和输出固定为：
+
+```ts
+type ConversationTimelineMountProps = {
+  snapshot: TimelineSnapshot;
+  policy: ConversationInteractionPolicy;
+  callbacks: ConversationSurfaceCallbacks;
+  renderChild: (item: ConversationTimelineSubAgentItem) => ReactNode;
+};
+
+// pure composition: no DB, network, sorting, batching or completion logic
+function mountConversationTimeline(props: ConversationTimelineMountProps): ReactNode;
+```
+
+渲染层只做三件事：根据 closed union 选择 exhaustive renderer、把稳定字段写入
+`data-conversation-timeline-*` selector、把唯一的 disclosure/focus callback 传给 owning
+row。它不能创建 action、改变状态、拼接 summary 或决定 approval。
+
+```text
+ConversationTimeline
+├─ DocumentItem       user / agent / reasoning / plan / compaction
+│  ├─ MarkdownBody
+│  ├─ CodeBlock        保留 fence、语言、缩进和 copy
+│  └─ LocalPathRef     basename + icon；trusted ref 才能 open
+├─ TimelineFactRow    command / exploration / file / tool / approval / protocol / diagnostic
+├─ TerminalReportRow  execute turn 唯一 outcome slot
+├─ TimelineBatchRow   只包 exact atomic children
+└─ SubAgentActivity   participant label + 1px rail + depth=1 Timeline
+```
+
+document item 无背景、无右侧气泡、最大宽度 760px；fact row 是最小 28px 的单列轻量行，
+首屏固定为 `icon + 动作动词 + 文本状态 + 一个 disclosure`。成功默认折叠，active、
+waiting、failed、blocked 默认展开一层 bounded detail；任何状态不得只用颜色表达。
+
+### 20.6 三种 surface 和子 Agent 只换 scope/chrome
+
+```text
+normal       -> ResolvedConversationSurface(kind=normal)
+private      -> ResolvedConversationSurface(kind=private)
+channel      -> ResolvedConversationSurface(kind=channel_root|topic|branch)
+child        -> ResolvedConversationSurface(kind=child, depth=1)
+                         │
+                         └── same projector → same batch → same registry
+```
+
+surface adapter 只提供 `threadId/policy/chrome/callbacks`。normal/private/channel/child 在同一
+fixture 上必须得到相同的 `kind/order/rendererKey/status/disclosure`；可以不同的只有标题、
+roster、participant rail 和权限提示。Topic/Branch 必须传真实 `LingThread.id` 与 anchor，
+不能使用 `channel:<id>`、`topic:<id>` 或 message id 充当 transcript thread。
+
+子 Agent 的 narration 是普通 `agentMessage`；真实命令、文件、工具继续是父级相同的 fact
+renderer。`subAgentActivity` 只负责 participant label、lifecycle 和 rail。depth=2 只显示
+`diagnostic(nested_depth_exceeded)`，不再增加缩进或第二个滚动容器。
+
+### 20.7 Codex-parity 内容规则
+
+| 内容 | 首屏 | 展开/点击 | 事实边界 |
+| --- | --- | --- | --- |
+| paragraph/list/quote | Markdown 文档流 | 无需展开 | 只是模型叙述 |
+| fenced code | 等宽、保留换行/缩进、语言标签 | copy + bounded horizontal scroll | 不是命令事实 |
+| 模型路径 | basename + file icon | tooltip/copy 完整路径 | 不可导航、不生成 `file://` |
+| trusted file/diff/artifact | basename + icon + 可访问名称 | Host capability viewer | callback 再校验 scope/realpath/epoch |
+| command/tool | 动作动词 + 状态 | 同一 row disclosure | 必须有 Host evidence |
+| terminalReport | `Result · status · counters` | summary/changes/verification/artifacts | Completion Gate + atomic publication |
+
+未闭合 code fence 在流式阶段用 plain monospace；解析完成后在同一个 message id 内切换，
+不追加第二条消息。Markdown 解析失败保留纯文本并产生 diagnostic。
+
+### 20.8 Batching、滚动和 EnvironmentPopover
+
+批次只在 atomic projection 完成后运行：
+
+```text
+1–2 个相邻安全终态 read/command -> 普通 fact rows
+≥3 个相邻安全终态同 lineage   -> 一个可逆 batch header
+active / waiting / failed / blocked / approval / consequential -> 永远独立
+```
+
+batch header 只显示精确 child 数量（如 `Read 8 items`、`Ran 3 commands`），展开后恢复
+exact child order。它没有 completion state，不写 SQLite，不改变 `contextSegmentId`，也不
+参与 fan-in/TerminalReport。页面只有一个 `ConversationFeedViewport` 纵向滚动 owner；
+detail 预览最多 240px，超出用同一 row 的 `Show more` 或 artifact viewer，不能创建内嵌
+terminal scroll。
+
+EnvironmentPopover 只绑定当前 `activeRunId/actionId`，最多两行：
+
+```text
+Working · Engineer editing parser.ts
+ling-stack · feature/transcript
+```
+
+active revision 原地更新；run 进入 terminal fence 后关闭；reconnect 只显示短暂
+`Reconnecting` shell hint。浮窗、Composer、Right Dock 不得复制 Timeline 的动作、输出、
+summary、TerminalReport 或 approval control；点击 source 只 focus owning row。
+
+### 20.9 Completion、恢复和 fan-in
+
+每个 turn 只有一个 outcome slot：
+
+```text
+reply turn   -> agentMessage(role=reply_result)
+execute turn -> Finalizing result | terminalReport | diagnostic(blocked)
+```
+
+`terminalReport` 必须在同一 publication transaction 中提交 report、result Item、
+supersession link 和 invalidation。只显示最高 committed generation。fan-in 只有在所有
+required participant evidence 到齐，或每个缺失 participant 都有结构化 blocked 后才可
+settle；`ready` 文本、plan step 数量、batch count 和模型总结都不能完成任务。
+
+SSE reconnect 与 daemon restart 都从 durable snapshot 重建同一 `actionId + revision +
+terminalFence`；旧 attempt 只进 audit，晚到 end 只进 diagnostic。任何恢复路径都不能
+追加第二个 action row、第二个 TerminalReport 或重复 final summary。
+
+### 20.10 实现提交与验收证据
+
+每个实现 commit 必须说明下面的映射，并同时提交对应测试：
+
+```text
+typed kind
+  -> source of truth
+  -> projector / fold function
+  -> rendererKey + data-* selector
+  -> owning callback/viewer
+  -> unit/component/integration/packaged evidence
+```
+
+packaged macOS 每个案例固定保存：
+
+```text
+case.json             simulation=false、build、thread/turn/run/attempt、输入
+screen-01.png         active/initial
+screen-02.png         expanded/final/recovery
+semantic-state.json   kind、id、status、revision、rendererKey、scrollOwnerCount
+lineage.json          item/action/run/attempt/participant/workflow/sourceRefs
+logs.redacted.txt     事件类型、状态、revision、错误码；无 token、cookie、secret、文件内容
+```
+
+至少覆盖 normal/private/channel、child narration+command、read batch、file diff、approval、
+failed→retry、SSE reconnect、daemon restart、partial→complete fan-in 和 depth-2 blocked。
+`simulation=true` 或缺少 lineage 的截图只能算调试证据。
+
+### 20.11 迁移和定义完成
+
+开发阶段直接切换到 v3.8 contract：不保留旧 WorkCell/activity renderer、旧
+TerminalReport-as-assistant-message 路径、双写或 feature flag。旧 SQLite 行只通过 strict
+adapter 读取；无法证明 lineage 的记录显示 blocked diagnostic。实现完成必须同时满足：
+
+- 四份权威设计互相链接，使用同一术语和阶段编号；
+- 三种 surface 和 depth-1 child 的 fingerprint 一致；
+- 每个事实行有完整 lineage，action 更新原地收敛；
+- execute turn 只有一个 `terminalReport` outcome，reply turn 只有一个 `reply_result`；
+- batch 可逆、不落库、不参与完成；
+- 单一 scroll owner、无右侧方形 bubble、无 Composer/Popover 重复 summary；
+- E1–E5 相关测试全绿，E6 packaged macOS 证据四件套齐全。
+
+未决设计：无。任何实现偏差必须先修改本节和对应视觉/计划文档，再改代码；不得在
+surface 内加入临时例外。

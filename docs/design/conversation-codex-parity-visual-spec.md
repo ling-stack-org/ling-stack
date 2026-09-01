@@ -1,6 +1,6 @@
 # Conversation Codex-Parity Visual Specification
 
-Status: normative visual contract v3.7；implementation-ready（截图必须附 semantic/lineage 证据）
+Status: normative visual contract v3.8（extends v3.7）；implementation-ready（截图必须附 semantic/lineage 证据）
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Related: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -919,3 +919,57 @@ Right Dock 都不渲染它。outcome slot 的 identity 绑定 `turnId`，从 fin
 结果行仍遵守 Codex 风格的低重量表达：成功是无背景的一行，失败/blocked 才使用轻量
 attention tint；展开显示结构化 changes、verification、artifacts 和 risks，不复制每条
 命令输出。这样“最终说明”和“真实执行事实”在语义上分层，视觉上仍保持一个连续文档流。
+
+### 15.9 v3.8 Codex-parity 视觉实现表
+
+这一表是设计到 CSS/React 的最后一道翻译层。实现者先满足表中的几何和语义，再调整
+品牌色；不能为了复刻截图而恢复旧 WorkCell 或右侧气泡。
+
+| 区域 | 默认几何 | 首屏内容 | 交互/状态 | 明确禁止 |
+| --- | --- | --- | --- | --- |
+| document lane | 左对齐，最大 760px，无背景 | Markdown 段落、list、code、path | 流式在同一 item 原地更新 | bubble、`justify-end`、把换行 flatten |
+| fact rail | 单列、最小 28px、16px icon | 动词 + target + 文本状态 | 一个 disclosure；active/attention 默认开 | 只显示“运行中/完成”、多层卡片 |
+| result lane | 与 fact rail 同列，低重量 | `Result · status · counters` | 一个 disclosure；仅 execute turn | 第二份 summary、Composer 结果卡 |
+| nested rail | 1px rail + 8px inset | participant label 一次 + 同一 item renderer | group disclosure；depth=1 | child bubble、第二滚动容器 |
+| EnvironmentPopover | 浮层、最多两行 | active action + workspace/branch | active revision 原地更新，terminal fence 后关闭 | 历史列表、TerminalReport、approval 控件 |
+| Composer | 时间线之后，固定输入区 | 输入、停止、重试、审批 | 控制动作，不拥有历史事实 | action summary、stdout、结果重复 |
+
+视觉状态只使用 shared mapper 的闭集：`Queued`、`Working`、`Waiting`、`Waiting for
+approval`、`Succeeded`、`Failed`、`Cancelled`、`Blocked`。图标、文本、`aria-label` 和
+`data-conversation-timeline-status` 必须表达同一状态；颜色只是 tint。
+
+#### 15.9.1 首屏信息密度和折叠阈值
+
+```text
+1–2 个相邻安全终态 action  -> 直接显示两行以内的 fact row
+≥3 个相邻、同 lineage、安全终态 read/command -> 一个 batch header
+active/failed/waiting/approval/consequential -> 独立 row + bounded detail
+```
+
+成功历史不设置固定高度；单个 detail 预览最多 240px，stdout/stderr 最多 40 行/8KiB。
+超出部分使用同一 row 的 `Show more` 或 trusted artifact，绝不产生第二个纵向
+`overflow-y`。展开状态只保存在 Timeline view state，以稳定 item/batch id 为 key，刷新、
+重连和 retry 不得丢失用户当前 disclosure。
+
+#### 15.9.2 Codex item 到 Ling renderer 的可见映射
+
+```text
+userMessage / agentMessage / reasoning / plan -> document.*
+command / exploration / file / tool / approval -> fact.*
+terminalReport                              -> result.terminal
+subAgentActivity                            -> agent.nested
+commandBatch / explorationBatch             -> batch.*
+unknown / missing lineage                   -> fact.diagnostic (Blocked)
+```
+
+wire kind、projection kind 和 `rendererKey` 只在 adapter 处转换一次。DOM 不暴露
+`assistant_message`、`terminal_report` 等 SQLite 名称；验收通过
+`data-conversation-timeline-kind`、`data-conversation-timeline-renderer-key`、稳定 id、
+status、revision 和 source ref 检查语义。
+
+#### 15.9.3 三种 surface 的视觉等价性
+
+同一 canonical fixture 在 normal、private、channel/topic/branch 和 child 中必须拥有相同
+的 `kind/order/status/rendererKey/disclosureCount/row geometry`。允许变化的只有 shell
+标题、roster、participant rail、权限提示和可用的 Host callback。任何 surface 重新定义
+`CommandRow`、Markdown parser、status copy、batch 函数或 scroll owner，都视为 parity 失败。
