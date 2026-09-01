@@ -1,6 +1,6 @@
 # Codex-style Typed Transcript v3.8：实现计划
 
-Status: implementation plan；v3.8 设计蓝图已锁定，D0 contract/result-anchor slice 已落地；E1–E6 按顺序推进，packaged macOS 验收仍待执行
+Status: implementation plan；v3.8 设计蓝图已锁定，D0 contract/result-anchor slice 正在实现、尚未验收；E1–E6 按顺序推进，packaged macOS 验收仍待执行
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（已核对远端无新提交）
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -95,13 +95,14 @@ contract adapter 映射为 core 的 `camelCase` projection kind，再映射为�
 标注为 migration input 的章节或明确的兼容别名说明；`node scripts/check-markdown-links.mjs` 和
 `git diff --check` 通过。D0 未通过时不进入 E1，也不删除旧 caller。
 
-**D0 当前状态（2026-09-01）**：四份权威文档已同步到同一套 v3.7 contract；本轮已落地
-`terminal_report` closed-union、Host `presentationRole`、`result_item_id` migration、原子
-publication item、纯 projector 的最高 generation join 和 `result.terminal` renderer key。
-新增的 UI-core fixture 已验证 execute turn 的单一 result、execution summary 抑制、最高
-generation 选择以及缺少 anchor 时 fail-closed。`corepack pnpm check:docs`、`git diff --check`、
-contracts/core/daemon/web typecheck 和 UI-core 88/88 fixtures 均通过，但这仍不能替代真实
-daemon/API 与 packaged macOS 验收。剩余必须补齐：
+**D0 当前状态（2026-09-01）**：四份权威文档已同步到同一套 v3.8 contract；实现 worktree
+已有 `terminal_report` closed-union、Host `presentationRole`、`result_item_id` migration、
+原子 publication item、纯 projector 的最高 generation join 和 `result.terminal` renderer
+key WIP。已通过的最近窄范围证据为 contracts `50/50`、UI-core `88/88`、core `460/460`
+和 daemon 定向测试 `322/322`；Markdown 链接与 `git diff --check` 也通过。当前 Web
+typecheck 仍失败于 `WorkspaceClientView.tsx` 的 `TerminalReportDto` / projection DTO 边界：
+旧 DTO 没有 `resultItemId`。因此 D0 尚未完成，更不能替代真实 daemon/API 与 packaged
+macOS 验收。剩余必须补齐：
 
 1. reply turn 以最终 `agentMessage` 收口；
 2. execute turn 只产生一个 `terminalReport`；

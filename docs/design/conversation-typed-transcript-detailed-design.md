@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.8（extends the v3.7 contract）；Codex-parity implementation blueprint 已补齐；D0 contract/result-anchor slice 已实现，E1–E6 仍待验收
+Status: normative design v3.8（extends the v3.7 contract）；Codex-parity implementation blueprint 已补齐；D0 contract/result-anchor slice 正在实现、尚未验收，E1–E6 仍待完成
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（实现 worktree 已同步；实现进行中）
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -2483,10 +2483,11 @@ sleep 猜 publication 是否完成。
 turn 和 source 的 assistant Item；无法证明关系的旧行保留在 audit，并在主 Timeline
 生成 blocked diagnostic。不得根据 Markdown 标题、时间邻近或正文相似度推断 report。
 
-### 19.5 已落地的 D0 slice（实现基线）
+### 19.5 实现中的 D0 slice（未验收基线）
 
-当前实现分支已经把上述 contract 接入以下边界，后续阶段必须在这些边界上增量实现，
-不能重新引入“报告即 assistant Markdown”的旁路：
+当前实现 worktree 正在把上述 contract 接入以下边界。以下内容描述目标实现形状和当前
+WIP，不表示已经通过完整 typecheck、集成测试或 packaged macOS 验收；后续阶段必须在这些
+边界上增量实现，不能重新引入“报告即 assistant Markdown”的旁路：
 
 1. contracts closed union 包含 `terminal_report`，assistant payload 包含 Host 写入的
    `presentationRole`；旧开发 caller 在写入边界被规范化为 `narration`，不会产生第二种
@@ -2503,7 +2504,8 @@ turn 和 source 的 assistant Item；无法证明关系的旧行保留在 audit�
    execute turn 的 `execution_summary` 在 result commit 后被抑制，reply turn 的
    `reply_result` 仍作为唯一文本结果显示。
 
-这段实现只完成 D0 contract/result-anchor gate，不代表 E1 evidence fold、E4 全 surface
+这段 WIP 只有在 D0 executable gate、Web typecheck 和定向 daemon/API 测试全部通过后，
+才能称为完成 D0 contract/result-anchor gate；它不代表 E1 evidence fold、E4 全 surface
 切换或 E6 packaged macOS 验收已经完成。
 
 ### 19.6 D0 executable gate
