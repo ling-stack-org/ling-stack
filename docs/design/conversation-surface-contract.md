@@ -67,6 +67,26 @@ inputs, not target renderers or independent fact owners. During the v3.7 cutover
 If any later paragraph conflicts with this override, the v3.9.1 typed transcript design
 and visual specification win.
 
+### v3.9.1-final 全 surface parity 速查
+
+普通会话、队友私聊、频道 root/topic/branch 和 depth-1 子 Agent 不是四套会话产品，
+而是同一 `ConversationTimeline` 的不同 scope/chrome。实现者只需记住下面这条组合：
+
+```text
+route state -> real LingThread.id + scope -> TimelineSourceSnapshot
+           -> EvidenceFold -> atomic TimelineSnapshot -> mountConversationTimeline (一次)
+```
+
+| 允许变化 | 必须一致 |
+| --- | --- |
+| 标题、roster、participant rail、topic/branch 控件、权限提示、Host callback 可用性 | item union、rendererKey、排序、状态文案、行高、disclosure、lineage、scroll owner |
+
+私聊保持一对一和权限收敛，但不再保持另一套 transcript renderer；它与 normal/channel
+一样显示 document lane、fact rail、result lane，只有参与者 chrome 和 policy 不同。频道的
+多 Agent 只增加 participant rail 和 child span，不改变 child 的 item renderer。任何旧
+章节中出现的“compact WorkCell”“private-only activity card”均只代表迁移输入，不是
+v3.9.1-final 生产实现。
+
 ### Canonical type names
 
 本文件后面的旧章节仍会出现 `ConversationSurfacePolicy`、`ConversationSurfaceView` 和

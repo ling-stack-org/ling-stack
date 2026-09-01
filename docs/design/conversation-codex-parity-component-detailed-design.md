@@ -1014,3 +1014,67 @@ missing lineage              -> diagnostic(blocked), never guessed success
 `kind/order/status/rendererKey/disclosureCount/scrollOwnerCount`。差异只允许来自 shell
 标题、roster、participant rail、policy hint 和 callback 可用性；若某个 surface 需要额外
 renderer、额外状态映射或额外滚动容器，说明 adapter 越界，应退回 E4 修复。
+
+## 27. v3.9.1-final 组件开工清单
+
+这一节将组件合同转换成可逐项验收的实现任务。任务之间共享同一个 snapshot 和
+fixture；不要从 normal、private 或 channel 任意一个 JSX 文件反向设计协议。
+
+### 27.1 必须存在的模块边界
+
+| 模块 | 输入 | 输出 | 失败时 |
+| --- | --- | --- | --- |
+| `canonical-transcript-snapshot` | API/SQLite/SSE、scope、cursor | `TimelineSourceSnapshot` + coverage | partial，不伪造 complete |
+| `execution-actions` / `EvidenceFold` | `tool_start/update/end` | action map、revision、terminal fence | audit diagnostic，原 row 不回退 |
+| `conversation-ui-core` projector | source snapshot + fold | atomic `TimelineSnapshot` | `diagnostic(blocked)` |
+| `typed-transcript-batching` | atomic items | display rows + split reasons | 原子 item 不丢失 |
+| `shared/conversation/timeline` | immutable `TimelineSnapshot` | Document/Fact/Result/Nested DOM | unknown kind 显式 blocked |
+| surface adapter | route state + real `LingThread.id` | `ResolvedConversationSurface` | `scope_mismatch`，不使用 synthetic id |
+| Host viewer adapter | trusted source ref + lineage | issue/redeem/open | scope/epoch/TTL/realpath 任一失败即 blocked |
+
+### 27.2 唯一 render 入口和回调
+
+```ts
+function mountConversationTimeline(
+  surface: ResolvedConversationSurface,
+): React.ReactElement;
+
+type ConversationTimelineCallbacks = {
+  onFocusItem(itemId: string): void;
+  onOpenSourceRef(
+    ref: ConversationTrustedSourceRef,
+    lineage: ConversationTimelineItemLineage,
+  ): Promise<void>;
+};
+```
+
+`renderFactActions?: ReactNode` 不是目标 API。迁移期若必须保留，只能被 adapter 包装为
+focus/open typed callback；E4 通过后删除任意 ReactNode 注入，审批/stop/retry 由
+Composer/approval gate 各自唯一拥有。
+
+### 27.3 子 Agent 的递归边界
+
+```text
+SubAgentActivity(depth=1)
+  -> participant label + lifecycle
+  -> child Timeline(depth=1)
+       -> agentMessage/reasoning/plan
+       -> command/exploration/file/tool/approval
+       -> terminalReport（若 child execute turn 有结果）
+```
+
+child 可以写正常 `agentMessage`，但 child 的 `ready/done` 只作为叙述。父级 fan-in 只读
+required participant 的 atomic evidence；缺 evidence 显示 `Waiting`，明确不可恢复时显示
+structured `Blocked`。depth=2 只显示一个 `nested_depth_exceeded` diagnostic。
+
+### 27.4 组件验收顺序
+
+1. closed union + exhaustive registry + unknown-kind blocked；
+2. 同一 `actionId` 的 start/update/end、SSE replay、restart replay 原地收敛；
+3. `terminalReport`/reply outcome slot 单一且不被 Composer/Popover 重复；
+4. batch 可逆、split reason 可读、展开恢复 exact child ids；
+5. normal/private/channel/topic/branch/child fingerprint 一致且 `scrollOwnerCount=1`；
+6. Host capability issue/redeem、approval、retry、fan-in 在真实 packaged macOS 中验收。
+
+任何一项失败都停在当前阶段，不能通过隐藏 DOM、保留旧 WorkCell 或新增 surface-specific
+renderer 越过闸门。

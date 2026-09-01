@@ -1317,6 +1317,63 @@ contract/fixture -> evidence fold -> projector/batch -> shared Timeline/viewer
 Composer/Popover 再拥有历史事实，必须先回到五份设计文档和 fixture 更新；不得直接在
 某个 surface 加局部例外。代码、测试、证据三件套齐全后，才把该阶段标为完成。
 
+## 4.13 v3.9.1-final 实现启动包（本次设计更新）
+
+这一节是开工时的执行顺序和文件级边界。它不引入新阶段，也不把旧 WIP 当作已经验收；
+当前代码仍在实现 worktree 中，主 checkout 的 dirty WIP 不参与本计划。
+
+### 4.13.1 六个工作包
+
+| 工作包 | 主要模块 | 先写的失败测试 | 完成证据 |
+| --- | --- | --- | --- |
+| D0 contract lock | `packages/contracts`、`conversation-ui-core` fixtures | unknown kind、缺 lineage、scope mismatch、missing result anchor | closed union、三层 kind 映射、fingerprint fixture |
+| E1 evidence fold | `packages/daemon/src/features/runs`、invalidation | 乱序/重复/低 revision/equal conflict/terminal fence late event | 同 `actionId` 原地 revision，audit 不重开 |
+| E2 projector + batch | `packages/conversation-ui-core`、core projection | owner/attempt/retry、split boundary、expand round-trip | atomic rows 与 display rows 对照，batch 不参与完成 |
+| E3 shared Timeline | `apps/web/src/shared/conversation/timeline`、Host viewer | Markdown/code/path、bounded output、capability 失效 | exhaustive registry、专用 viewer、单 scroll owner |
+| E4 surface cutover | normal/private/channel/topic/branch/child adapters | 同 fixture parity、duplicate owner、synthetic thread id | 所有入口一次 `mountConversationTimeline`，旧 caller 删除 |
+| E5 recovery/fan-in | daemon TerminalReport、approval、retry、SSE/restart | partial fan-in、ready-only child、latest generation、deny/expired | atomic evidence settle，单一 result row |
+| E6 packaged macOS | `apps/desktop`、真实 daemon/Host | 连续 turn、live update、approval、retry、重连/重启 | `simulation=false` screenshot/semantic/lineage/log tuple |
+
+### 4.13.2 开工时的逐文件边界
+
+```text
+source snapshot     = 读 durable/API/SSE + coverage，不做展示判断
+core projector      = scope/owner/attempt/revision/order，不做 I/O
+batch projection    = 只压缩相邻安全终态，不落库、不 completion
+timeline renderer   = closed union -> Document/Fact/Result/Nested，不读 raw source
+surface adapter     = real LingThread + policy/chrome/callbacks，不自建 renderer
+composer/popover    = control/ambient hint，不复制历史事实
+host viewer         = capability issue/redeem + scope/epoch/TTL/realpath 校验
+```
+
+### 4.13.3 依赖和可并行性
+
+```text
+D0
+ ├─ E1 evidence fold
+ └─ E2 projector/batch（纯函数部分可与 E1 的纯测试并行）
+       └─ E3 shared Timeline/viewer
+             └─ E4 surface cutover
+                   └─ E5 recovery/fan-in
+                         └─ E6 packaged macOS
+```
+
+只允许 E1 的 daemon 测试和 E2 的纯 projector 测试在独立 worktree 并行；E3 以后共享
+renderer、fixture 和 surface adapter，必须串行合并，避免两个工作树同时改同一 owner。任何
+工作包都不应把旧 WorkCell、第二个 summary 或 compatibility flag 带回生产路径。
+
+### 4.13.4 每个 PR 的最小交付格式
+
+```text
+contract/fixture -> implementation -> unit/component/integration test
+                 -> semantic selector -> lineage/action evidence
+                 -> 未通过项和下一阶段阻塞原因
+```
+
+PR 的完成条件不是“截图像 Codex”，而是同一 fixture 在 normal/private/channel/topic/branch/
+child 中的 `kind/order/status/rendererKey/disclosure/scrollOwner` 一致，且真实 Host evidence
+能通过 recovery/fan-in/TerminalReport 闸门。开发阶段允许直接切换新合同，不保留旧渲染兼容层。
+
 ## 5. 回归矩阵
 
 | 领域 | 必测场景 | 证据 |

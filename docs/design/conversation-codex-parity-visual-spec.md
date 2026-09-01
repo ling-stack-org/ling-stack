@@ -1063,3 +1063,69 @@ data-conversation-participant-id
 Feed 根节点必须能证明 `scrollOwnerCount=1`。在 normal/private/channel/topic/branch/child
 上使用同一 fixture 时，除 shell/roster/participant rail 外的 DOM fingerprint 必须一致。
 只提供 screenshot、没有 semantic 和 lineage 的结果不能作为 v3.9.1-final 的通过证据。
+
+## 17. v3.9.1-final Codex-style 简洁配方（开工版）
+
+Codex 的可借鉴点是信息分层和 renderer 边界，不是复制 TUI 的颜色。实现时只允许下面
+三种可见 primitive；`NestedRail` 是布局 wrapper，不是第四套消息组件：
+
+```text
+DocumentBlock = author/meta（可选） + Markdown AST
+FactRow       = 16px icon + Host 动词/目标 + 文本状态 + 一个 disclosure
+ResultRow     = check/alert + Result + outcome/counters + 一个 disclosure
+```
+
+### 17.1 首屏与折叠算法
+
+```text
+1–2 个相邻、安全终态、同 lineage 的 read/command -> 普通 fact row（最多两行）
+≥3 个相邻、安全终态、同 lineage 的 read/command -> 一个可逆 batch header
+active / waiting / approval / failed / cancelled / blocked / consequential -> 永不隐藏
+```
+
+单个 detail 的 bounded preview 默认 ≤240px；command stdout/stderr 首屏最多 5 行/800
+字符，失败最多 12 行/1600 字符，完整 tail 由同一 row 的 `Show more` 或 trusted artifact
+打开。任何 detail、batch 或 nested child 都不能创建第二个 `overflow-y`。
+
+### 17.2 统一文案和 icon
+
+| kind | icon | 标题模板 | 状态来源 |
+| --- | --- | --- | --- |
+| command | terminal | `Run {commandSummary}` | Host action/exit |
+| exploration | search | `Read/Search {targetSummary}` | Host read/search |
+| file | file | `{Created/Edited/Deleted} {basename}` | file/diff evidence |
+| tool | plug/bolt/people | `{verb} {target}` / `Delegated to {participant}` | typed tool result |
+| approval | shield | `Waiting for approval` | approval state |
+| terminalReport | check/alert | `Result · {status} · {counters}` | Completion Gate |
+
+标题缺少安全目标时使用 provider/tool label，不能退化成只有 `Running…`、`Done` 或
+`I will run …`。颜色、spinner 和 icon 都是辅助信息，`aria-label`、可见状态和
+`data-conversation-timeline-status` 必须表达同一 machine value。
+
+### 17.3 三种 surface 和 child 的视觉等价性
+
+normal、private、channel/topic/branch 和 depth-1 child 采用同一个 document/fact/result
+row grammar。允许不同的只有 shell title、roster、participant rail、policy hint 和
+callback 可用性。以下内容一律回到同一 Timeline owning row：
+
+- action start/update/end 和命令输出；
+- file/diff/artifact 变化；
+- child Agent narration、command、tool 和 terminalReport；
+- approval、retry、stop 的状态和结果。
+
+Composer 只放输入和控制，EnvironmentPopover 只放当前 active action 的最多两行 ambient
+hint，Right Dock 只放被点击 source ref 的完整预览。它们不得各自复制 summary、output、
+TerminalReport 或历史 activity。
+
+### 17.4 视觉验收的最小证据
+
+每个 surface 用同一 fixture，比较以下字段而不是要求像素完全相同：
+
+```text
+kind / order / stable id / status / revision / rendererKey
+lineage ids / disclosureCount / scrollOwnerCount
+```
+
+截图只证明几何；`semantic-state.json` 证明 typed rows；`lineage.json` 证明事实来源；
+脱敏日志证明 reconnect/restart/approval 的实际事件。缺任一项都不能把“看起来像 Codex”
+标为完成。

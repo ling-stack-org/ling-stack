@@ -73,6 +73,18 @@ Codex item 到 Ling kind 的逐项映射、事实来源和完成权威见详细�
 grammar、EnvironmentPopover 和 disclosure 见视觉规范 §13–16。实现者不应从截图或旧
 WorkCell 名称自行推导新的 item 类型。
 
+本次开工补充设计集中在四个新增小节，避免实现者在长历史文档中自行拼接规则：
+
+- 详细设计 §21：四条可见通道、Codex item 闭合映射、render cycle、Thread/scope、
+  `contextSegmentId` 选择顺序和 fail-closed 状态；
+- 视觉规范 §17：Document/Fact/Result 三种 primitive、首屏折叠阈值、统一 icon/文案和
+  截图 + semantic + lineage 证据；
+- 组件细设计 §27：模块边界、唯一 mount/callback、child 递归边界和组件验收顺序；
+- 实现计划 §4.13：六个工作包、逐文件职责、依赖/并行性和每个 PR 的最小交付格式。
+
+这四节只补充实现接口，不改变 v3.9.1 的事实权威、SQLite 拓扑、completion gate 或
+macOS-only 验收范围。
+
 命名也有固定的三层边界：SQLite/API 使用 `snake_case` wire kind，
 `conversation-ui-core` 使用 `camelCase` projection kind，DOM/fingerprint 使用稳定的
 dotted `rendererKey`。例如 `terminal_report → terminalReport → result.terminal`；三层

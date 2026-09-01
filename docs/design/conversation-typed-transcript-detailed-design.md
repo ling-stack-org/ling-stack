@@ -2968,3 +2968,117 @@ adapter 读取；无法证明 lineage 的记录显示 blocked diagnostic。实�
 
 未决设计：无。任何实现偏差必须先修改本节和对应视觉/计划文档，再改代码；不得在
 surface 内加入临时例外。
+
+## 21. v3.9.1-final 开工补充设计（2026-09-01）
+
+这一节是实现者开始改代码时的最短、最具体输入。它把 Codex 的“typed item + 专用
+renderer”原则落到 Ling 的 durable facts、multi-Agent 和 Host capability 上；如果本节
+与旧版历史段落冲突，以本节和 §1.4 实现锁为准。它不新增 SQLite 表，也不新增 provider
+session。
+
+### 21.1 四条可见通道和唯一 owner
+
+```text
+document lane  = 模型/用户叙述（可读，但不是事实）
+fact rail      = Host 真实动作（可审计，必须有 lineage）
+result lane    = execute turn 的唯一 terminalReport
+shell chrome   = Composer / EnvironmentPopover / viewer（只控制或定位）
+```
+
+| 可见内容 | 唯一来源 | 唯一 renderer | 可以证明什么 | 明确禁止 |
+| --- | --- | --- | --- | --- |
+| `userMessage`、`agentMessage`、`reasoning`、`plan` | `conversation_items`/safe summary/plan snapshot | `document.*` | 叙述、计划或上下文变化 | 证明命令、文件或任务完成 |
+| `commandExecution`、`exploration`、`fileChange`、typed tool、`approval` | `RunEvent`、`ExecutionAction`、Approval、Artifact | `fact.*` | 对应 action 的状态和证据 | 从模型文案或 batch 数量猜成功 |
+| `terminalReport` | Completion Gate + committed report + final-result item | `result.terminal` | execute turn 的最终 outcome | 再追加 assistant summary 或结果卡 |
+| `subAgentActivity` | participant span + child atomic items | `agent.nested` + 同一 registry | participant 生命周期和 child 事实 | 把 `ready/done` 当 fan-in 完成 |
+| `Composer`、`EnvironmentPopover`、Right Dock | 当前 active action / trusted source ref | shell/viewer | 控制、ambient hint、预览 | 复制历史 action/output/report |
+
+任何一条事实无法给出 `actionId/runId/attemptId/participantId/workflowStepId/sourceRefs`
+的完整关系时，主 Timeline 只能显示 `diagnostic(blocked)`；不得退化成绿色成功行。
+
+### 21.2 Codex item 到 Ling 的闭合映射
+
+实现必须一次性通过 contract adapter 完成 `wire kind → projection kind → rendererKey`，
+禁止 surface 直接消费 wire kind 或把未知 kind fallback 为 `agentMessage`：
+
+```text
+user_message             -> userMessage          -> message.document
+assistant_message        -> agentMessage         -> message.document
+reasoning_summary        -> reasoning            -> document.reasoning
+plan_snapshot            -> plan                 -> document.plan
+command_execution        -> commandExecution     -> fact.command
+exploration              -> exploration          -> fact.exploration
+file_change              -> fileChange           -> fact.file
+mcp_tool_call            -> mcpToolCall          -> fact.tool
+dynamic_tool_call        -> dynamicToolCall      -> fact.tool
+collab_agent_tool_call   -> collabAgentToolCall  -> fact.tool
+approval_*               -> approval             -> fact.approval
+image/artifact           -> imageView             -> document.image
+context_compaction       -> contextCompaction     -> document.compaction
+participant_span         -> subAgentActivity     -> agent.nested
+terminal_report          -> terminalReport       -> result.terminal
+unknown/missing lineage  -> diagnostic(blocked)  -> fact.diagnostic
+```
+
+`agentMessage` 可以有多个 content part（段落、list、quote、fenced code、path candidate、
+trusted file ref）。Markdown AST 只决定文档排版；它永远不能创建 `commandExecution`、
+`fileChange` 或 `terminalReport`。
+
+### 21.3 一次 render cycle 的确定性算法
+
+```text
+TimelineSourceSnapshot（可能 partial）
+  1. 校验 thread/scope/cursor coverage
+  2. EvidenceFold：按 actionId 折叠 start/update/end，拒绝旧 revision 和 terminal fence 后事件
+  3. CanonicalTranscriptProjector：按 durable sequence/partIndex 排序，绑定 owner/attempt/lineage
+  4. Completion join：按 turnId 选择最高 committed generation 的 terminalReport
+  5. Display projection：只对相邻、同 lineage、安全终态 item 计算可逆 batch
+  6. renderer registry：每个 visible item 只映射一个 rendererKey
+  7. 输出 semantic DOM + lineage snapshot
+```
+
+这条链是纯函数边界。React 不读取 SQLite/SSE，不排序、不去重、不判断 fan-in；batch
+不改变 `contextSegmentId`、completion、retry 或 approval。相同输入 snapshot 必须得到
+相同 `kind/order/status/rendererKey/disclosureCount`，否则 fixture 失败。
+
+### 21.4 Surface、Thread 和 child 的确定性映射
+
+| surface | `LingThread` 绑定 | 允许的额外 chrome | 不允许的实现 |
+| --- | --- | --- | --- |
+| normal | 当前正常会话真实 `LingThread.id` | 标题、模型/权限提示 | 右侧 bubble、独立 WorkCell |
+| private | 用户与 teammate 的真实私聊 `LingThread.id` | teammate avatar/name、私聊 policy | 私聊专用事实卡、第二 renderer |
+| channel root | channel root 的真实 `LingThread.id` | roster、channel controls | `channel:<id>` synthetic thread |
+| topic | durable topic child `LingThread.id` + `parentThreadId` + `anchorItemId` | topic header/reply control | 用 message id 或 parent feed 代替 topic thread |
+| branch | fork 后真实 `LingThread.id` + immutable fork snapshot | branch header | 把 parent transcript 复制到 branch |
+| child | participant span 的 child snapshot，`depth=1` | participant label + 1px rail | depth=2 Timeline、child-specific renderer |
+
+所有入口先构造 `ResolvedConversationSurface`，再调用一次 `mountConversationTimeline`。
+无法解析真实 thread 或 scope 时返回 `diagnostic(scope_mismatch)`，不猜默认值。
+
+### 21.5 `contextSegmentId` 的选择顺序
+
+```text
+用户显式选择
+  > 结构化规则（topic/branch/turn boundary）
+  > 受权限与 scope 约束的模型候选
+  > 服务端 ContextSegmentationPolicy 提交
+```
+
+只有服务端提交的 `TurnContextAssignment`/`ContextSnapshot` 才能写入
+`contextSegmentIdByItemId`。模型候选未通过 scope、权限或冲突校验时保持 `null` 并显示
+原子 item；UI batch、摘要、相邻文本相似度和 renderer 都不能创建或改写 segment。
+
+### 21.6 状态和失败的唯一表达
+
+事实状态闭集为 `Queued/Working/Waiting/Waiting for approval/Succeeded/Failed/Cancelled/Blocked`。
+`ready`、`done`、`已完成`、`执行中` 等模型文本只能落在 document lane 或 diagnostic
+detail。以下情况统一 fail closed：
+
+- partial source coverage：保留已知事实，缺失部分为 `Waiting`，不提前 settle；
+- missing/跨 scope lineage：`Activity unavailable · Blocked`，保留 sourceRefs 供审计；
+- 同一 generation payload 冲突：原 row 保持原状态，新增 `owner_conflict` diagnostic；
+- terminal fence 后 late event：只写 audit diagnostic，不重开 row 或 result；
+- depth=2 child：`nested_depth_exceeded`，不创建第三个 Timeline。
+
+实现、组件测试、E2E 和 packaged evidence 都必须验证这些 fail-closed 结果，不能只验收
+成功截图。
