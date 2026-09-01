@@ -87,6 +87,13 @@ route state -> real LingThread.id + scope -> TimelineSourceSnapshot
 章节中出现的“compact WorkCell”“private-only activity card”均只代表迁移输入，不是
 v3.9.1-final 生产实现。
 
+这里的“一次”是每个 surface viewport 一次，不是每条 message/activity 一次。当前
+`NormalConversationMessageRow`、`TeammatePrivateChatFeed`、`ChannelMessageRenderers` 内部
+分别 mount shared Timeline 的过渡形态仍然是多个 transcript owner，E4 必须删除。actor、
+附件、引用、feedback/edit/reply/create-task 和 protocol action 进入 shared typed
+presentation/interaction contract；不能靠外层 `MessageRow`、route-local card 或任意
+`ReactNode` slot 维持旧组合。细化见组件设计 §28 和实施计划 §4.14。
+
 ### Canonical type names
 
 本文件后面的旧章节仍会出现 `ConversationSurfacePolicy`、`ConversationSurfaceView` 和

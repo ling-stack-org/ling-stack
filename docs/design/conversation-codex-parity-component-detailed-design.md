@@ -1078,3 +1078,205 @@ structured `Blocked`。depth=2 只显示一个 `nested_depth_exceeded` diagnosti
 
 任何一项失败都停在当前阶段，不能通过隐藏 DOM、保留旧 WorkCell 或新增 surface-specific
 renderer 越过闸门。
+
+## 28. Surface-level single Timeline cutover
+
+前面的“一次 mount”指一个会话 surface 只建立一次 transcript composition，不是每条
+message、workflow、run 或 protocol activity 分别调用一次 `mountConversationTimeline()`。
+后者只能统一局部 row 的外观，仍然留下多个排序 owner、多个 fingerprint 和跨 row
+重复结果的可能性。
+
+### 28.1 2026-09-01 live code audit
+
+当前实现 worktree 已有 shared registry 和局部 Timeline，但 E4 仍未完成：
+
+| 当前 caller | 当前行为 | 目标行为 |
+| --- | --- | --- |
+| `NormalConversationFeed.tsx` | 每个 `NormalConversationMessageRow` mount 一次 Timeline | 整个 real `LingThread` 产生一个 surface snapshot，并由 feed viewport 渲染一次 |
+| `TeammatePrivateChatFeed.tsx` | 每条 private message mount；缺 thread 时回退 `private:<teammateId>` | 只接受真实 `LingThread.id`；缺 scope 显示一个 blocked diagnostic |
+| `ChannelMessageRenderers.tsx` | turn/message/protocol/workflow/run 分别 mount Timeline | channel root/topic/branch 先合并成一个 canonical snapshot，再由一个 Timeline owner 渲染 |
+| `MessageRow`/attachments/evidence/action bar | surface 各自组合 message chrome、附件、引用和操作 | message renderer 读取 typed presentation；交互通过 typed callback，不注入任意 React node |
+
+因此以下断言是 E4 的机械闸门：
+
+```text
+mount calls per surface viewport = 1
+timeline DOM owners per real LingThread = 1
+synthetic transcript thread ids = 0
+route-local item ordering/merge functions = 0
+arbitrary renderer ReactNode action slots = 0
+```
+
+depth-1 child 在该唯一 Timeline 内部递归使用同一个 registry，不计作第二个 surface
+owner；它不得拥有独立 feed、virtualizer、history loader 或 scroll container。
+
+### 28.2 Target composition API
+
+目标入口同时组合 feed viewport、Timeline、typed interaction 和 shell chrome。调用者不再
+逐条 message/activity mount：
+
+```ts
+type ResolvedConversationSurface = {
+  readonly id: string;
+  readonly kind: "normal" | "private" | "channel_root" | "topic" | "branch";
+  readonly workspaceId: string;
+  readonly threadId: string; // verified LingThread.id
+  readonly parentThreadId: string | null;
+  readonly anchorItemId: string | null;
+  readonly source: TimelineSourceSnapshot;
+  readonly policy: ConversationInteractionPolicy;
+  readonly chrome: ConversationSurfaceChrome;
+  readonly interaction: ConversationTimelineInteraction;
+};
+
+type ConversationTimelineInteraction = {
+  readonly message: {
+    readonly editingItemId: string | null;
+    readonly feedbackByItemId: ReadonlyMap<string, "up" | "down">;
+    readonly onCopy: (itemId: string) => void;
+    readonly onEdit?: (itemId: string) => void;
+    readonly onFeedback?: (itemId: string, value: "up" | "down") => void;
+    readonly onReplyTopic?: (itemId: string) => void;
+    readonly onCreateTask?: (itemId: string) => void;
+  };
+  readonly source: {
+    readonly onOpen: (
+      ref: ConversationTrustedSourceRef,
+      lineage: ConversationTimelineItemLineage,
+    ) => Promise<void>;
+    readonly onCopyPath: (ref: ConversationSourceRef) => void;
+  };
+  readonly protocol?: {
+    readonly onInvoke: (
+      itemId: string,
+      action: ConversationProtocolAction,
+    ) => Promise<void>;
+  };
+};
+
+function mountConversationSurface(
+  surface: ResolvedConversationSurface,
+): React.ReactElement;
+```
+
+`mountConversationSurface()` 内部才允许调用一次 `mountConversationTimeline()`。typed
+interaction 只携带状态和 callback，不携带 `ReactNode`、第二份 item 数组或 completion
+结果。callback 缺失表示该 surface/policy 不允许对应操作；renderer 不猜默认权限。
+
+### 28.3 Message presentation contract
+
+为了删除外层 `MessageRow` caller，message item 必须带 renderer 所需的稳定 presentation
+metadata。它们由 canonical item/actor/resource refs 派生，不是第二份历史：
+
+```ts
+type ConversationTimelineMessageItem = ConversationTimelineItemBase & {
+  readonly kind: "userMessage" | "agentMessage";
+  readonly markdown: string;
+  readonly presentationRole: "prompt" | "commentary" | "reply_result";
+  readonly actor: {
+    readonly kind: "local_user" | "ling_agent" | "teammate" | "system";
+    readonly id: string | null;
+    readonly label: string;
+  };
+  readonly createdAt: string;
+  readonly editedAt: string | null;
+  readonly resources: readonly ConversationMessageResource[];
+};
+
+type ConversationMessageResource =
+  | { readonly kind: "attachment"; readonly ref: ConversationSourceRef }
+  | { readonly kind: "path"; readonly ref: ConversationSourceRef }
+  | { readonly kind: "web"; readonly ref: ConversationSourceRef }
+  | { readonly kind: "memory"; readonly ref: ConversationSourceRef };
+```
+
+规则：
+
+- author label/avatar、时间、edited 状态由 shared message renderer 处理；normal/private/
+  channel 不能再套自己的消息几何；
+- attachment、web evidence 和 memory citation 是 message resource/disclosure，不在
+  Timeline 外创建第二张证据卡；
+- Host 生成的 image/media 仍投影为 `imageView`；accepted plan 仍投影为 `plan`；运行错误
+  投影为 `diagnostic`，不塞进 message footer；
+- `presentationRole="reply_result"` 才是 reply turn 的最终文本；execute turn 的
+  `execution_summary` 不进入可见 result slot；
+- copy/edit/feedback/reply/create-task 是 interaction affordance，不落 SQLite、不改变
+  fingerprint 的 canonical item identity。
+
+### 28.4 Typed actions instead of renderer injection
+
+`renderFactActions` 删除后，approval/protocol 仍需要可执行入口，但不能退回 route-local
+按钮 JSX。目标是 item 给出 Host 验证过的 action enum，renderer 通过 typed callback
+执行：
+
+```ts
+type ConversationProtocolAction =
+  | "open_source"
+  | "open_task"
+  | "open_run"
+  | "open_approval"
+  | "start_workflow"
+  | "advance_workflow"
+  | "cancel_workflow"
+  | "retry_step"
+  | "supersede_decision"
+  | "reject_decision";
+
+type ConversationTimelineProtocolEventItem = {
+  // existing lineage and protocol payload
+  readonly availableActions: readonly ConversationProtocolAction[];
+};
+```
+
+按钮或 menu 仍显示在 owning row 的 disclosure/control slot 内，但 registry 只消费 enum 和
+callback。它不能接受任意 React node，也不能让 surface 为同一 protocol fact 再渲染一张
+外部 card。active approval 只在 approval row 中显示 `Waiting for approval`，点击打开唯一
+decision dialog；Composer 不再复制 approval 内容或 summary。
+
+### 28.5 Virtualization and scroll ownership
+
+单一 Timeline 不要求一次创建全部 DOM。长历史由 `ConversationFeedViewport` 按
+`TimelineDisplayItem.id` virtualize，但排序、batch 和 owner 在 virtualizer 之前已完成：
+
+```text
+atomic TimelineSnapshot
+  -> projectDisplayBatches()
+  -> TimelineDisplaySnapshot
+  -> ConversationFeedViewport window/anchor
+  -> registry renderer for visible display items
+```
+
+virtualizer 只能选择可见窗口和测量高度，不能：
+
+- 改变 item 顺序、合并相邻 row 或选择 TerminalReport generation；
+- 以 message/workflow/run 类型选择不同 renderer pipeline；
+- 让 batch/detail/child 建立第二个纵向 overflow；
+- 用数组 index 代替稳定 item/batch identity。
+
+历史向上加载后必须以 durable sequence/cursor 合并 source snapshot，再重新产生同一个
+display projection；visible anchor 按稳定 item id 恢复。
+
+### 28.6 E4 deletion and verification order
+
+E4 采用 strangler cutover，但开发阶段不保留 runtime compatibility path：
+
+1. 先扩充 shared message presentation 和 typed interaction contract；
+2. 建立 fixture-only `mountConversationSurface()`，证明 message/resource/protocol action
+   不依赖 route JSX；
+3. normal 改为 surface-level snapshot/mount，删除 per-message Timeline caller；
+4. private 使用同一 adapter，并删除 `private:<id>` synthetic fallback；
+5. channel root/topic/branch 把 turn/message/protocol/workflow/run 全部接入一个 snapshot，
+   删除 route-local Timeline caller；
+6. child span 复用同一 registry，保留 depth=1；
+7. parity、single-owner、scroll、interaction 回归通过后，删除旧 MessageRow/WorkCell/
+   activity production callers。
+
+每一步都必须比较下面的同 fixture fingerprint：
+
+```text
+item ids + kind + order + status + rendererKey + disclosureCount
++ action owner count + result owner count + Timeline owner count + scroll owner count
+```
+
+截图相似但 `Timeline owner count > 1`、存在 synthetic thread 或 protocol action 仍由
+route-local card 拥有，均判 E4 未完成。

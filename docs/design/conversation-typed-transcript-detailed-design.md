@@ -3082,3 +3082,30 @@ detail。以下情况统一 fail closed：
 
 实现、组件测试、E2E 和 packaged evidence 都必须验证这些 fail-closed 结果，不能只验收
 成功截图。
+
+### 21.7 “调用一次 Timeline”的语义边界
+
+`normal/private/channel/topic/branch` 的“一次”按 surface viewport 计，不按 message、turn、
+workflow、run 或 activity row 计。当前把 shared `ConversationTimeline` 分别嵌入多条
+`MessageRow`/activity caller 的过渡实现仍然有多个 transcript owner，不满足本设计。
+
+目标数据流是：
+
+```text
+one real LingThread
+  -> one TimelineSourceSnapshot
+  -> one atomic/display projection
+  -> one ConversationFeedViewport
+  -> one ConversationTimeline composition
+       -> many document/fact/result rows
+       -> depth-1 child rail (same registry, not another surface)
+```
+
+消息 actor、created/edited metadata、attachment/path/web/memory resources，以及 copy/edit/
+feedback/reply/create-task affordance 必须进入 shared message presentation/typed interaction
+contract。protocol action 必须是 Host 验证过的 enum + typed callback。它们都不能要求
+surface 继续套一层 route-local `MessageRow`、证据卡或任意 `ReactNode` action slot。
+
+E4 只有在每个 viewport 同时满足 `timelineOwnerCount=1`、`scrollOwnerCount=1`、
+`syntheticThreadCount=0`、`actionOwnerCount(actionId)=1`、`resultOwnerCount(turnId)<=1` 后才
+完成。细接口和删除顺序见组件细设计 §28，实现任务和测试文件见实施计划 §4.14。

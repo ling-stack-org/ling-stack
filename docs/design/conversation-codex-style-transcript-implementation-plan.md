@@ -1374,6 +1374,91 @@ PR 的完成条件不是“截图像 Codex”，而是同一 fixture 在 normal/
 child 中的 `kind/order/status/rendererKey/disclosure/scrollOwner` 一致，且真实 Host evidence
 能通过 recovery/fan-in/TerminalReport 闸门。开发阶段允许直接切换新合同，不保留旧渲染兼容层。
 
+## 4.14 Surface-level cutover work package（本次补充）
+
+当前 shared Timeline 已可渲染 typed item，但不能把“每个 row 都调用了 shared renderer”当成
+统一完成。E4 的实现目标是一个真实 `LingThread` 对应一个 Timeline composition；normal、
+private、channel/topic/branch 不再在各自的 MessageRow/activity caller 中重新拼接历史。
+
+### 4.14.1 先改 contract，再改 caller
+
+实现顺序固定为：
+
+```text
+Timeline item presentation metadata
+  -> typed interaction callbacks
+  -> fixture-only mountConversationSurface()
+  -> normal/private/channel surface adapter
+  -> 删除 route-local MessageRow/WorkCell/activity caller
+```
+
+第一步只扩充 projection contract，不切 production UI：
+
+- message item 携带 `presentationRole`、actor、created/edited metadata 和 typed resources；
+- attachment、web evidence、memory citation 通过 message resource/disclosure 表达，不在
+  Timeline 外创建第二张历史证据卡；
+- copy/edit/feedback/reply/create-task 通过 `ConversationTimelineInteraction` 提供状态和
+  callback，禁止传任意 `ReactNode`；
+- protocol item 暴露受 Host 验证的 `availableActions` enum，renderer 通过 typed callback
+  执行，不能由 route 重新绘制 action card；
+- approval row 只呈现状态和 disclosure，decision dialog 是唯一 allow/deny 控制 owner；
+- `mountConversationTimeline` 的目标入参是 `ResolvedConversationSurface`，内部负责一次
+  display projection 和 registry composition；surface 不再传第二份 message/action/report
+  数组。
+
+### 4.14.2 真实 surface cutover
+
+| 顺序 | 模块 | 必须删除的旧路径 | 通过条件 |
+| --- | --- | --- | --- |
+| 1 | normal conversation | `NormalConversationMessageRow` 内 per-message Timeline | 一个 feed viewport 只 mount 一次，历史 message/fact/result 由同一 snapshot 排序 |
+| 2 | teammate private | `TeammatePrivateChatFeed` 内 per-message Timeline；`private:<teammateId>` fallback | 真实 `LingThread.id`，缺 scope 只有一个 blocked diagnostic |
+| 3 | channel root/topic/branch | `ChannelMessageRenderers` 的 turn/message/protocol/workflow/run 多处 mount | 一个 channel surface 一个 snapshot/Timeline；topic/branch 不复制 parent |
+| 4 | child Agent | child-specific renderer 或独立 feed | depth=1 复用 registry，child 不拥有 virtualizer/scroll/history loader |
+| 5 | shell controls | `renderFactActions`、外部重复 summary/output | typed row control 或唯一 dialog；Composer/Popover/Right Dock 不复制事实 |
+
+### 4.14.3 机械验收断言
+
+对同一 fixture，在 normal/private/channel/topic/branch/child 分别收集：
+
+```text
+item id + kind + order + status + rendererKey + disclosureCount
++ action owner count + result owner count + timeline owner count + scroll owner count
+```
+
+必须满足：
+
+- `mount calls per surface viewport = 1`；
+- `timeline owner count = 1`，child 只算 parent Timeline 的 nested rail；
+- `synthetic transcript thread ids = 0`；
+- `route-local ordering/merge/renderFactActions = 0`；
+- message/resource/fact/result 的 fingerprint 只因 shell title、roster、policy hint 和
+  participant rail 改变；
+- virtualizer 只裁剪 visible window，不改变顺序、batch、TerminalReport generation 或
+  stable identity。
+
+### 4.14.4 E4 测试文件和断言
+
+新增/扩展以下测试：
+
+| 测试 | 类型 | 核心断言 |
+| --- | --- | --- |
+| `packages/conversation-ui-core/test/conversation-timeline-surface-parity.test.mjs` | unit | 同 fixture 五种 surface 的 kind/order/status/renderer fingerprint 相同 |
+| `apps/web/test/conversation-surface-single-owner.test.mjs` | component/source contract | 每个 surface 只有一次 mount；无 synthetic private/channel thread；无 `renderFactActions` |
+| `apps/web/test/conversation-timeline-message-presentation.test.mjs` | component | paragraph/list/code/path/resource、copy/edit/feedback callback 不破坏 item identity |
+| `apps/web/test/conversation-timeline-protocol-actions.test.mjs` | component | enum + callback 只在 owning row/control slot 出现，不能生成外部重复卡 |
+| `apps/web/e2e/ui2-conversation-surface-parity.spec.ts` | E2E | normal/private/channel/topic/branch/child 的真实 DOM 只有一个 feed scroll owner |
+
+失败路径必须单独断言：缺真实 Thread、缺 message lineage、过期 capability、未知 kind、
+late event、depth=2、partial fan-in 和 execute 后 duplicate summary 均显示结构化 blocked/
+waiting，而不是静默移除或回退到 agentMessage。
+
+### 4.14.5 与现有 WIP 的关系
+
+当前实现 worktree 的 evidence fold、TerminalReport、atomic projector、batch 和 shared
+renderer 改动继续作为输入；本节不要求重写这些模块，也不改变 SQLite 拓扑。尚未通过的
+surface-level mount、private fallback 删除、channel caller 收口和 packaged macOS 真实验证
+仍属于 E4/E5/E6，不能用已经通过的 unit test 或截图替代。
+
 ## 5. 回归矩阵
 
 | 领域 | 必测场景 | 证据 |

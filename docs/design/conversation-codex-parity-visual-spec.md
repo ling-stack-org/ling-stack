@@ -1129,3 +1129,33 @@ lineage ids / disclosureCount / scrollOwnerCount
 截图只证明几何；`semantic-state.json` 证明 typed rows；`lineage.json` 证明事实来源；
 脱敏日志证明 reconnect/restart/approval 的实际事件。缺任一项都不能把“看起来像 Codex”
 标为完成。
+
+### 17.5 Surface-level document composition
+
+视觉上的“一个文档流”必须对应一个真实 DOM/状态 owner。以下结构不满足规范，即使每个
+局部 row 都使用了同一个 renderer：
+
+```text
+MessageRow -> Timeline(message + facts)
+MessageRow -> Timeline(message + facts)
+ProtocolCard -> Timeline(protocol fact)
+RunCard -> Timeline(run facts)
+```
+
+目标结构是：
+
+```text
+ConversationFeedViewport
+  -> ConversationTimeline (one real LingThread)
+       -> DocumentBlock
+       -> FactRow
+       -> DocumentBlock
+       -> NestedRail (depth=1, same registry)
+       -> ResultRow
+```
+
+author、time、edited、attachments、references 和 message actions 都是 shared
+`DocumentBlock` 的 metadata/resource/interaction，不是外层气泡或第二张卡。protocol
+actions 也必须落在 owning `FactRow` 的 typed control slot 或唯一 dialog；不能在 Timeline
+下面再挂 route-local button strip。视觉验收须同时断言 `timelineOwnerCount=1`，否则不能
+称为 normal/private/channel 已统一。
