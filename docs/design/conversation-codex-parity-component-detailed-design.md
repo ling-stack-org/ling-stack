@@ -1,8 +1,11 @@
 # Conversation Codex-Parity Component Detailed Design
 
 Status: normative component implementation contract v3.9.1-final; implementation is in progress,
-not yet accepted. E2 split-reason/expansion contract is now explicit; E3/E4 cutover remains open.
+not yet accepted. E2 split-reason/expansion contract is explicit and the normal/private/channel
+root/branch/topic Timeline composition slices have web 123/123 contract coverage; the formal D0
+gate, E5 recovery/fan-in and E6 packaged macOS acceptance remain open.
 Date: 2026-09-01
+Design revision: Codex parity handoff 2026-09-01（component tree、row contract、child span 和 EnvironmentPopover 已锁定）
 Base: `origin/main` @ `63ab7c0e`
 Scope: normal conversation, teammate private chat, channel root/topic/branch, depth-1
 sub-Agent activity, packaged macOS
@@ -120,6 +123,19 @@ TerminalReport must not repeat the Timeline's action rows or output.
 `ConversationTimeline` receives one immutable, already-scoped snapshot. It does not accept
 separate message, operation, approval or report arrays.
 
+Channel/topic/branch 的 feed 只挂载一个 `renderVirtualRow -> ConversationTimeline` root。
+旧的 `renderMessageFeedItem` 不属于 `ChannelMessageRenderers` 对外 contract；shared virtual
+feed 也不再提供 `renderItem` fallback。virtualizer 只能调用 `renderVirtualRow`，normal、
+private、channel、topic、branch 和 child 都必须把完整 snapshot 交给同一个 Timeline root。
+fixture 若需要逐行断言，应直接调用纯 projector/registry，不得通过第二个 legacy JSX 入口
+绕过 Timeline。
+
+当一个 surface 的 Timeline root 不与 `items[index]` 一一对应（例如 channel 把
+`older-loader` 和历史消息折叠进同一个 root）时，virtual feed 必须显式提供稳定的
+`virtualRowIdentity={ id, kind }`。这个 identity 只用于焦点、滚动锚点和 semantic selector，
+不能把 loader、batch 数量或任意首条消息冒充 Timeline root；内容变化时 root key 和
+lineage 仍保持不变。
+
 ```ts
 type ConversationTimelineProps = {
   readonly snapshot: TimelineSnapshot;
@@ -143,9 +159,9 @@ type ConversationTimelineCallbacks = {
 ```
 
 The target contract does not expose an arbitrary `renderFactActions` React slot. Such a
-slot lets a surface inject a second approval, retry, completion or summary owner. During
-migration it may exist behind an adapter, but the E4 cutover removes it. Typed shell actions
-remain owned by Composer/approval controls and may only focus the owning Timeline item.
+slot lets a surface inject a second approval, retry, completion or summary owner. It is forbidden
+in production and in parity fixtures; typed shell actions remain owned by Composer/approval
+controls and may only focus the owning Timeline item.
 
 ### 5.1 Snapshot boundary and implementation types
 
@@ -609,12 +625,21 @@ The adapter boundary is intentionally small:
 
 ```ts
 type ResolvedConversationSurface = {
+  /** Real LingThread.id; for a child this is the parent's thread. */
   readonly threadId: string;
   readonly scope: ConversationTimelineScope;
   readonly policy: ConversationSurfacePolicy;
   readonly chrome: ConversationSurfaceChrome;
   readonly snapshot: TimelineSnapshot;
   readonly callbacks: ConversationTimelineCallbacks;
+};
+
+type ConversationChildScope = {
+  readonly kind: "child";
+  readonly threadId: string; // parent LingThread.id; never a synthetic child thread
+  readonly participantId: string;
+  readonly parentItemId: string;
+  readonly depth: 1;
 };
 
 function mountConversationTimeline(
@@ -853,7 +878,8 @@ Stop and update the design before coding when any implementation proposal would:
 ```ts
 type ResolvedConversationSurface = {
   readonly kind: "normal" | "private" | "channel_root" | "topic" | "branch" | "child";
-  readonly threadId: string;              // real LingThread.id
+  /** Real LingThread.id; child uses the parent's id and a participant span. */
+  readonly threadId: string;
   readonly parentThreadId: string | null;
   readonly anchorItemId: string | null;
   readonly depth: 0 | 1;
@@ -861,6 +887,16 @@ type ResolvedConversationSurface = {
   readonly policy: ConversationInteractionPolicy;
   readonly chrome: ConversationSurfaceChrome;
   readonly callbacks: ConversationTimelineCallbacks;
+};
+
+/** Child Agent scope is a span in the parent Thread, not a new visible Thread. */
+type ConversationChildSurface = {
+  readonly kind: "child";
+  readonly threadId: string;
+  readonly parentThreadId: string;
+  readonly anchorItemId: string;
+  readonly participantId: string;
+  readonly depth: 1;
 };
 
 function mountConversationTimeline(
@@ -871,8 +907,9 @@ function mountConversationTimeline(
 `mountConversationTimeline` 内部只做 `snapshot → display projection → registry render`。
 caller 不能传入第二个 message/action/report 数组，也不能传入自己的排序器、状态映射、
 batch 函数、Markdown parser、scroll container 或 completion callback。Topic/Branch 的
-adapter 必须提供真实 child `LingThread.id` 和 anchor；解析失败就返回
-`diagnostic(scope_mismatch)`，禁止回退到 parent feed。
+adapter 必须提供真实的 topic/branch child `LingThread.id` 和 anchor；depth-1 Agent child
+复用 parent `LingThread.id`，只携带 participant span。任一 scope 解析失败就返回
+`diagnostic(scope_mismatch)`，禁止回退到 parent feed 或 synthetic id。
 
 ### 26.2 Registry 和 row renderer
 
@@ -900,8 +937,9 @@ const rendererRegistry: {
 每个 renderer 只构造自己的 `DocumentBlock`、`FactRow` 或 `ResultRow`；不能调用 daemon、
 读 SQLite、判断 fan-in 或创建 side effect。`FactRow` 的标题和状态只能由 typed Host
 payload 生成；缺少 action/lineage/source ref 时返回 `Activity unavailable · Blocked`。
-当前迁移期保留的 `renderFactActions` 必须限定为 focus/open callback；E4 后删除该 slot，
-审批、stop、retry 只在 Composer/approval gate 出现一次。
+旧的 `renderFactActions` 注入 slot 已从当前实现删除；approval、stop、retry 只通过
+typed row action 和唯一的 Composer/approval gate 出现一次，不能再由 surface 注入任意
+`ReactNode`。
 
 ### 26.3 一次 render cycle 的确定性算法
 
@@ -973,8 +1011,9 @@ copy affordance，并在 owning row 内显示 blocked detail。
 3. `tool_update` 原地更新，batch 可展开恢复 exact child ids/source refs；
 4. Composer、Popover、Right Dock 没有 action/result/summary duplicate owner；
 5. Host viewer 的 capability issue/redeem 在真实 callback 上通过 scope/epoch/TTL/realpath；
-6. component/semantic tests 通过后，才移除 `ConversationWorkCell` activity caller 和
-   `renderFactActions` 的注入能力。
+6. 当前实现已移除 `renderFactActions` 注入能力；component/semantic tests 只负责证明
+   该入口和 `ConversationWorkCell` activity caller 不会重新出现，剩余 production caller
+   仍按 E4 surface cutover 的完成条件收口。
 
 任何一个条件未满足都停在 E3/E4 修复，不通过 CSS 隐藏或保留第二套兼容 renderer。
 
@@ -1048,9 +1087,10 @@ type ConversationTimelineCallbacks = {
 };
 ```
 
-`renderFactActions?: ReactNode` 不是目标 API。迁移期若必须保留，只能被 adapter 包装为
-focus/open typed callback；E4 通过后删除任意 ReactNode 注入，审批/stop/retry 由
-Composer/approval gate 各自唯一拥有。
+`renderFactActions?: ReactNode` 不是目标 API，当前实现也不保留这个运行时兼容入口。
+审批、stop、retry 由 typed row action 和唯一的 Composer/approval gate 各自拥有；如果
+某个 surface 缺少能力，返回缺失 callback 的 policy 状态或 `diagnostic(blocked)`，不能
+恢复任意 ReactNode 注入。
 
 ### 27.3 子 Agent 的递归边界
 
@@ -1092,9 +1132,10 @@ message、workflow、run 或 protocol activity 分别调用一次 `mountConversa
 
 | 当前 caller | 当前行为 | 目标行为 |
 | --- | --- | --- |
-| `NormalConversationFeed.tsx` | 每个 `NormalConversationMessageRow` mount 一次 Timeline | 整个 real `LingThread` 产生一个 surface snapshot，并由 feed viewport 渲染一次 |
-| `TeammatePrivateChatFeed.tsx` | 每条 private message mount；缺 thread 时回退 `private:<teammateId>` | 只接受真实 `LingThread.id`；缺 scope 显示一个 blocked diagnostic |
-| `ChannelMessageRenderers.tsx` | turn/message/protocol/workflow/run 分别 mount Timeline | channel root/topic/branch 先合并成一个 canonical snapshot，再由一个 Timeline owner 渲染 |
+| `NormalConversationFeed.tsx` | 已切换为 feed-level snapshot/mount；message row 只提供 chrome | 继续保持整个 real `LingThread` 一个 surface snapshot 和一个 Timeline owner |
+| `TeammatePrivateChatFeed.tsx` | 已切换为 feed-level snapshot/mount；不再回退 `private:<teammateId>` | 继续只接受真实 `LingThread.id`；缺 scope 显示一个 `scope_mismatch` diagnostic |
+| `ChannelMessageRenderers.tsx` | 旧 per-item protocol/activity/workflow/run fact renderer 已切断/删除；message chrome adapter 仍只负责作者、附件和 typed callbacks | channel root/branch 先合并成一个 canonical snapshot，再由一个 Timeline owner 渲染 |
+| `ThreadReplyPanel.tsx` | topic root/replies 通过真实 `resolvedThreadId` 构造一个 `topic_reply` snapshot；消息 chrome 只包作者、编辑、memory 和 retry | 不得恢复逐条 `MessageRow` 列表或用 parent item id 充当 transcript thread |
 | `MessageRow`/attachments/evidence/action bar | surface 各自组合 message chrome、附件、引用和操作 | message renderer 读取 typed presentation；交互通过 typed callback，不注入任意 React node |
 
 因此以下断言是 E4 的机械闸门：
@@ -1109,6 +1150,25 @@ arbitrary renderer ReactNode action slots = 0
 
 depth-1 child 在该唯一 Timeline 内部递归使用同一个 registry，不计作第二个 surface
 owner；它不得拥有独立 feed、virtualizer、history loader 或 scroll container。
+
+### 28.1.1 E4a/E4b 实现切片记录
+
+normal 和 private 的第一批切换已经按上述目标收口：surface 先构造完整 snapshot，再由
+`renderMessageChrome` 包装作者、时间、编辑、附件、反馈和重试等 chrome；message row 本身
+不再创建第二个 Timeline。private virtualizer 的计数也降为一个 root row，只负责测量和
+滚动锚点，不能改变 message/fact 的排序。private scope 只接受 API 返回的真实
+`LingThread.id`，缺失时由 `buildSurfaceTimelineSnapshot()` 产生一个
+`scope_mismatch` diagnostic。
+
+private 的 legacy adapter 若需要把一条消息及其 facts 合并为 surface snapshot，必须先在
+消息内部使用从零开始的 local `threadSequence`，再由 owning surface 用稳定的
+`baseSequence + localSequence` rebasing 一次。不能把 `baseSequence` 同时传进消息 helper；
+否则 message 会被加两次偏移，facts 会落在所属 message 之前。该规则只约束 display adapter，
+canonical durable sequence 仍由 `ConversationItemStore` 提供。
+
+这还不是 E4 完成证明：channel root/branch 的真实 turn、protocol、workflow、run snapshot
+仍需端到端验收，topic 的非消息 item projection 与 typed protocol actions 仍待补齐；后续
+必须按 28.5 的 source audit 和 packaged macOS 证据闸门继续推进。
 
 ### 28.2 Target composition API
 
@@ -1280,3 +1340,195 @@ item ids + kind + order + status + rendererKey + disclosureCount
 
 截图相似但 `Timeline owner count > 1`、存在 synthetic thread 或 protocol action 仍由
 route-local card 拥有，均判 E4 未完成。
+
+## 29. Codex parity 开工级组件锁（2026-09-01）
+
+本节把组件树、输入、状态和验收压缩成实现时不可分叉的一套接口。目标不是重新实现一套
+Codex TUI，而是让 Ling 的 durable facts 经过一套 renderer 后呈现出相同的信息层级：正文
+像正文，动作像动作，结果只出现一次，多 Agent 只是浅层嵌套。
+
+### 29.1 唯一生产组件树
+
+```text
+ConversationSurfaceShell
+├─ ConversationSurfaceHeader           surface chrome only
+├─ ConversationFeedViewport             only vertical scroll owner
+│  └─ ConversationTimeline              one immutable display snapshot
+│     ├─ ConversationDocumentRenderer   message/reasoning/plan/compaction
+│     ├─ ConversationFactRenderer       command/read/file/tool/approval/protocol
+│     ├─ ConversationResultRenderer     terminalReport only
+│     ├─ ConversationBatchRenderer      reversible display wrapper
+│     └─ ConversationSubAgentRenderer   participant rail + same registry(depth=1)
+├─ EnvironmentPopover                   active ambient state only
+└─ ConversationComposer                 draft/stop/retry/approval controls
+```
+
+生产代码不得再导出 `MessageBubble`、`ConversationWorkCell`、route-local `CommandRow`、
+`renderFactActions` 或 `ConversationVirtualFeed.renderItem` 作为 transcript 入口。Fixture
+直接调用 pure projector、fingerprint 或 registry；不为测试保留第二套 JSX。
+
+### 29.2 Display snapshot 与 row contract
+
+```ts
+type ConversationDisplaySnapshot = {
+  readonly scope: ConversationScopeIdentity;
+  readonly atomicItems: readonly ConversationTimelineItem[];
+  readonly displayRows: readonly ConversationTimelineDisplayRow[];
+  readonly activeRun: ActiveRunSnapshot | null;
+  readonly canonicalRevision: number;
+  readonly sseCursor: string | null;
+};
+
+type ConversationTimelineDisplayRow =
+  | { readonly kind: "atomic"; readonly item: ConversationTimelineItem }
+  | { readonly kind: "batch"; readonly item: ActivityBatchItem };
+```
+
+`atomicItems` 是 completion、fan-in、retry 和 TerminalReport 的输入；`displayRows` 只供
+Timeline 绘制。React 不允许从 `displayRows.length`、batch child 数或文案推断完成。每个
+atomic action 只能映射到一个稳定 row id；`tool_update` 只更新该 row 的 revision/status/
+detail，不能插入 start/end 两行。
+
+### 29.3 Scope contract：surface Thread 与 child span 分开
+
+```ts
+type ConversationScopeIdentity =
+  | {
+      readonly kind: "thread";
+      readonly surfaceKind: "normal" | "private" | "channel_root" | "topic" | "branch";
+      readonly threadId: string; // real LingThread.id
+      readonly parentThreadId: string | null;
+      readonly anchorItemId: string | null;
+    }
+  | {
+      readonly kind: "child";
+      readonly threadId: string; // parent's real LingThread.id
+      readonly parentThreadId: string;
+      readonly parentItemId: string;
+      readonly participantId: string;
+      readonly depth: 1;
+    };
+```
+
+Topic/Branch 是真实 child Thread；Agent child 不是。两者都不能使用 `channel:<id>`、
+`private:<id>`、`child:<id>` 或 message id 作为 transcript id。depth-1 child 只过滤父级
+snapshot 中属于该 participant span 的 atomic items，再递归调用同一个 registry。
+
+### 29.4 Document、fact、result 的稳定 renderer 接口
+
+```ts
+type ConversationTimelineRendererContext = {
+  readonly depth: 0 | 1;
+  readonly policy: ConversationInteractionPolicy;
+  readonly disclosure: ConversationDisclosureStore;
+  readonly callbacks: ConversationTimelineCallbacks;
+};
+
+type ConversationTimelineRenderer<K extends ConversationTimelineItemKind> = (
+  item: Extract<ConversationTimelineItem, { readonly kind: K }>,
+  context: ConversationTimelineRendererContext,
+) => React.ReactNode;
+```
+
+renderer 只消费 typed item：
+
+- document renderer 解析 allowlisted Markdown AST，保留 paragraph/list/quote/fence/path；
+- fact renderer 固定输出 `icon + verb title + status text + one disclosure`；
+- result renderer 只接 `terminalReport`，不能再输出命令列表或第二份 final summary；
+- nested renderer 只增加 participant label、1px rail、8px inset；child item 仍回到同一
+  registry；
+- unknown kind、missing lineage、scope mismatch 一律转换为 typed diagnostic，再进入
+  registry，不使用 generic message fallback。
+
+### 29.5 EnvironmentPopover 的精确状态
+
+```ts
+type EnvironmentPopoverState =
+  | { readonly phase: "hidden" }
+  | {
+      readonly phase: "active" | "reconnecting";
+      readonly runId: string;
+      readonly actionId: string;
+      readonly revision: number;
+      readonly primary: string;   // Working · Engineer editing parser.ts
+      readonly secondary: string; // ling-stack · feature/transcript
+    };
+```
+
+`EnvironmentPopover` 最多两行，绑定一个 active action。revision 到来时原地更新；terminal
+fence 或 run settled 后立即进入 `hidden`；reconnect 只改变 `phase`，恢复后回到同一
+action。点击只 focus owning row。它不接收 message、output、TerminalReport、memory 或
+approval payload，也不创建历史项。
+
+### 29.6 组件级停止条件
+
+实现遇到下列任一情况必须停下并回到设计，不得以 CSS 或兼容层绕过：
+
+- 一个 viewport 需要两个 Timeline/scroll owner 才能工作；
+- child Agent 需要新建可见 Thread 或专用 renderer；
+- surface 必须传任意 `ReactNode` 才能执行 approval/protocol action；
+- model path 在没有 Host capability 时需要可点击；
+- execute turn 需要 `terminalReport` 之外的第二个结果 owner；
+- fixture 只能通过 legacy renderer fallback 才能编译或验收。
+
+### 29.7 交互与状态转移（实现级）
+
+交互状态也只有一个 owner：Timeline 保存 disclosure/focus，Composer 保存输入和控制，
+Host 保存动作状态。点击事实行的 disclosure 只能改变本地展开状态，不能重新查询、重新
+排序或创建新的 item：
+
+```text
+pointer/keyboard
+      │
+      ├─ disclosure -> DisclosureStore(itemId, expanded)
+      ├─ source ref -> Host callback(ref, full lineage)
+      ├─ retry/stop/approval -> Composer typed action
+      └─ row focus -> ConversationTimeline focus(itemId)
+
+Host event/revision
+      -> source snapshot watermark
+      -> EvidenceFold
+      -> canonical projector
+      -> same stable row id, new revision/status/detail
+```
+
+所有 callback 必须是闭集命令，而不是任意 `ReactNode` 或字符串事件：
+
+```ts
+type ConversationTimelineAction =
+  | { readonly kind: "open_source_ref"; readonly ref: ConversationTrustedSourceRef }
+  | { readonly kind: "copy_text"; readonly itemId: string }
+  | { readonly kind: "focus_item"; readonly itemId: string };
+
+type ConversationHostAction =
+  | { readonly kind: "stop_run"; readonly runId: string }
+  | { readonly kind: "retry_turn"; readonly turnId: string }
+  | { readonly kind: "approval_decision"; readonly approvalId: string; readonly decision: "allow" | "deny" };
+```
+
+`open_source_ref` 在 daemon 侧再次校验 workspace、scope、realpath、capability TTL 和
+daemon epoch；失败时返回 `diagnostic(source_ref_blocked)`，UI 不把路径渲染成可执行链接。
+   `approval_decision`、`retry_turn` 和 `stop_run` 只由 Composer/approval gate 发起，结果
+   仍通过 Timeline 的 owning fact/result row 回显，不能在输入框下方追加状态卡。
+
+### 29.8 组件验收快照
+
+每个 renderer 的 component test 必须输出同一份最小快照，供 normal/private/channel/child
+做 fingerprint 比对：
+
+```json
+{
+  "timelineOwnerCount": 1,
+  "scrollOwnerCount": 1,
+  "rows": [
+    {"id": "item-msg-1", "kind": "agentMessage", "rendererKey": "message.document"},
+    {"id": "action-1", "kind": "commandExecution", "status": "succeeded", "rendererKey": "fact.command", "disclosureCount": 1},
+    {"id": "result-1", "kind": "terminalReport", "rendererKey": "result.terminal", "disclosureCount": 1}
+  ]
+}
+```
+
+验收必须同时断言：同一 action 的 start/update/end 只有一个 `id`；普通 reply 没有
+`result.terminal`；execute turn 没有第二个 summary；child 只增加 participant rail；未知
+kind、缺 lineage、depth=2 都生成 typed diagnostic。截图只作为几何辅助，不能替代该快照或
+`lineage.json`。

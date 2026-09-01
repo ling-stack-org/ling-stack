@@ -1,7 +1,8 @@
 # Conversation Codex-Parity Visual Specification
 
-Status: normative visual contract v3.9.1-final（extends v3.9）；implementation-ready（截图必须附 semantic/lineage 证据）
+Status: normative visual contract v3.9.1-final（extends v3.9）；implementation-ready（截图必须附 semantic/lineage 证据）；2026-09-01 Codex parity 开工锁已补齐
 Date: 2026-09-01
+Design revision: Codex parity handoff 2026-09-01（Document/Fact/Result primitive 和统一 surface geometry 已锁定）
 Base: `origin/main` @ `63ab7c0e`
 Related: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 Component implementation: [Conversation Codex-Parity Component Detailed Design](conversation-codex-parity-component-detailed-design.md)
@@ -15,13 +16,13 @@ completion 和 recovery 以详细设计为准。
 
 Codex 的借鉴点是 renderer 分工而不是复制皮肤：消息/Markdown、命令执行、patch、
 MCP 和本地路径各自有清晰的 renderer；Ling 额外加入 participant rail 和 approval
-状态，但仍落入同一 row grammar。参考入口（只借鉴信息架构）：
+状态，但仍落入同一 row grammar。参考入口（只借鉴信息架构；链接固定到 Codex 开源仓库的对应 renderer）：
 
-- `codex-rs/tui/src/history_cell/messages.rs`：user/agent/reasoning 文档流；
-- `codex-rs/tui/src/history_cell/exec.rs`：命令与 stdout/stderr；
-- `codex-rs/tui/src/history_cell/patches.rs`：文件变更与 diff；
-- `codex-rs/tui/src/history_cell/mcp.rs`：MCP 调用；
-- `codex-rs/tui/src/markdown_render.rs`：Markdown、链接、本地路径。
+- [`history_cell/messages.rs`](https://github.com/openai/codex/blob/main/codex-rs/tui/src/history_cell/messages.rs)：user/agent/reasoning 文档流；
+- [`history_cell/exec.rs`](https://github.com/openai/codex/blob/main/codex-rs/tui/src/history_cell/exec.rs)：命令与 stdout/stderr；
+- [`history_cell/patches.rs`](https://github.com/openai/codex/blob/main/codex-rs/tui/src/history_cell/patches.rs)：文件变更与 diff；
+- [`history_cell/mcp.rs`](https://github.com/openai/codex/blob/main/codex-rs/tui/src/history_cell/mcp.rs)：MCP 调用；
+- [`markdown_render.rs`](https://github.com/openai/codex/blob/main/codex-rs/tui/src/markdown_render.rs)：Markdown、链接、本地路径。
 
 Ling 不复制 TUI 的键盘布局、颜色或 provider session；Web/desktop 只复用“typed item
 → 专用 renderer → 可折叠详情”的原则。
@@ -1159,3 +1160,66 @@ author、time、edited、attachments、references 和 message actions 都是 sha
 actions 也必须落在 owning `FactRow` 的 typed control slot 或唯一 dialog；不能在 Timeline
 下面再挂 route-local button strip。视觉验收须同时断言 `timelineOwnerCount=1`，否则不能
 称为 normal/private/channel 已统一。
+
+### 17.6 开工锁：简单、统一、可回溯
+
+本轮实现只允许三种可见 primitive：`DocumentBlock`、`FactRow`、`ResultRow`。所有 surface
+（normal/private/channel/topic/branch）和 depth-1 child 共用同一 primitive、同一状态文案、
+同一 row geometry；child 仅增加 participant rail。Topic/Branch 使用真实 child Thread，
+Agent child 复用 parent Thread + participant span，不能把二者都实现成独立聊天窗口。
+
+```text
+Host evidence -> atomic item -> optional reversible batch -> one Timeline row
+model text   -> DocumentBlock only
+active run   -> EnvironmentPopover (最多两行，不进历史)
+```
+
+实现中禁止保留 `renderItem`、旧 WorkCell、右侧方形 bubble、第二滚动区或外层 summary
+兼容入口。未知 kind、缺 lineage 或未授权路径只显示 `Blocked` diagnostic；这比“先显示一
+行、以后再补事实”更接近 Codex 的事实优先行为，也让截图、semantic-state 和 lineage 可以
+逐项对照。
+
+### 17.7 开工用的真实视觉样例
+
+以下样例是组件和 packaged macOS 验收的共同基准。三种 surface 使用同一行几何；频道和
+子 Agent 只在外层增加标题、participant label 和 1px rail：
+
+```text
+Ling / normal                         Ling / channel · 2 participants
+──────────────────────────────       ──────────────────────────────
+我先检查 parser.ts。                  Engineer
+                                      我先检查 parser.ts。
+▣ Read parser.ts · Succeeded [⌄]       ▣ Read parser.ts · Succeeded [⌄]
+                                      QA
+然后运行测试。                         我会复核测试输出。
+▣ Run pnpm test · Working [⌄]          ▣ Run pnpm test · Succeeded · exit 0 [⌄]
+✓ Result · Succeeded · 1 check [⌄]      ✓ Result · Succeeded · 1 check [⌄]
+──────────────────────────────       ──────────────────────────────
+EnvironmentPopover（运行中时）         EnvironmentPopover（运行中时）
+Working · Engineer editing parser.ts   Working · Engineer editing parser.ts
+ling-stack · feature/transcript         ling-stack · feature/transcript
+```
+
+视觉上必须满足：
+
+- 文档行不使用方形气泡或右对齐；段落、列表、代码和路径保持自然阅读顺序；
+- 事实行在同一列显示动作动词和状态，成功时轻量，等待/失败/blocked 时提高对比度；
+- `Result` 只出现一次且位于 owning Timeline 内；输入框下方不再出现重复总结；
+- 子 Agent 的文字、命令、文件和工具与外层使用相同 icon、状态文案、行高和 disclosure，
+  只有 participant rail 发生变化；
+- 浮窗最多两行，随 active action 的 revision 原地更新，run settle 后立即消失。
+
+### 17.8 视觉状态和响应式边界
+
+| 状态 | 首屏表现 | 可操作项 | 禁止行为 |
+| --- | --- | --- | --- |
+| `Queued` | 淡色 icon + 动作 + `Queued` | 无 | 显示“即将完成”或绿色成功 |
+| `Working` | spinner + 动作 + `Working` | Stop（由 Composer 发起） | 把每个 update 追加成新行 |
+| `Waiting` | amber tint + 原因 | 无或 Retry | 隐藏等待原因 |
+| `Waiting for approval` | shield + 明确审批对象 | Allow/Deny（唯一 gate） | 在 row 外复制审批卡 |
+| `Succeeded` | 普通 icon + 一行状态 | disclosure/copy | 默认展开完整日志 |
+| `Failed`/`Blocked` | alert tint + 状态和原因 | Retry、Open source（有 capability 时） | 只显示红色、不提供文字原因 |
+
+窄窗口（<640px）只压缩水平间距，不改变 row 顺序或 renderer；代码/输出只允许水平
+滚动，历史仍只有一个纵向 scroll owner。`prefers-reduced-motion` 时去掉 spinner 动画，
+保留静态 icon 和同一状态文字，确保语义快照不变。

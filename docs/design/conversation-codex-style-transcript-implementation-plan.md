@@ -1,7 +1,8 @@
 # Codex-style Typed Transcript v3.9.1-final：实现计划
 
-Status: implementation plan；v3.9.1-final 组件级细设计已锁定，D0 contract/result-anchor slice 与 E2 split-reason slice 已落地到实现 worktree、尚未验收；E1–E6 按顺序推进，packaged macOS 验收仍待执行
+Status: implementation plan；v3.9.1-final 组件级细设计已锁定，D0 contract/result-anchor slice 与 E2 split-reason slice 已落地到实现 worktree；E4a normal、E4b private、E4c channel root/branch 和 E4d topic composition 已完成代码切片，web 回归 123/123 通过，但 D0 正式闸门、E5 recovery/fan-in 和 packaged macOS 验收仍待执行
 Date: 2026-09-01
+Design revision: Codex parity handoff 2026-09-01（设计先行；实现按 D0→E6 闸门推进）
 Base: `origin/main` @ `63ab7c0e`（已核对远端无新提交）
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 Visual contract: [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
@@ -92,8 +93,9 @@ contract adapter 映射为 core 的 `camelCase` projection kind，再映射为�
   EnvironmentPopover/Composer/Right Dock/TerminalReport 的 owner 规则必须能在
   semantic selector 与视觉 fixture 中逐项验证。
 
-**D0 退出条件**：五份文档互相链接；`TimelineSnapshot` 不再有双重定义；旧类型只出现在
-标注为 migration input 的章节或明确的兼容别名说明；`node scripts/check-markdown-links.mjs` 和
+**D0 退出条件**：五份文档互相链接；`TimelineSnapshot` 不再有双重定义；旧 wire 类型只
+出现在标注为 source/migration input 的章节，不能出现在生产 renderer 或兼容 JSX；
+`node scripts/check-markdown-links.mjs` 和
 `git diff --check` 通过。D0 未通过时不进入 E1，也不删除旧 caller。
 
 **D0 当前状态（2026-09-01）**：五份权威文档已同步到 v3.9.1-final contract；实现 worktree
@@ -241,6 +243,67 @@ D0 design/fixture lock
 设计 PR 合并前不删除旧 caller；E1–E3 完成 parity fixture 后才进入 surface cutover，
 E5 的 recovery/fan-in 通过后才允许执行 E6。这样每个阶段都能单独回滚，也不会把“视觉
 变简单”和“事实来源已接通”混成一个不可定位的改动。
+
+### 0.7 Codex parity 开工交接（本轮新增）
+
+从本节开始，R5–R8 只作为历史讨论的别名，工程实现只使用 `D0 → E1 → E2 → E3 → E4 →
+E5 → E6`。对应关系固定如下：
+
+| 历史说法 | 当前阶段 | 交付目标 |
+| --- | --- | --- |
+| R5 | E1 | Host `tool_start/update/end` 折叠、稳定 action identity、live invalidation |
+| R6 | E2 | atomic projection、owner/attempt/context 校验、可逆 command/exploration batch |
+| R7 | E3 + E4 | Codex-style renderer registry、统一 row grammar、normal/private/channel/topic/branch/child 单一 mount |
+| R8 | E5 + E6 | recovery、approval、fan-in、TerminalReport 和 packaged macOS 真实验收 |
+
+实现切片不是重写 provider session 或新建一套会话存储，而是复用现有 durable records：
+
+```text
+RunEvent/ExecutionAction/Approval/Artifact
+  -> EvidenceFold
+  -> CanonicalTranscriptProjector
+  -> optional display batching
+  -> ConversationTimeline renderer registry
+```
+
+#### 0.7.1 设计到代码的最小边界
+
+| 模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `packages/contracts` | closed item union、wire→projection 映射、lineage/source refs | React JSX、状态文案推断 |
+| `packages/daemon` | durable evidence、revision、terminal fence、invalidation、capability | UI 排序、batch、summary 文案 |
+| `packages/conversation-ui-core` | 纯 projector、attempt/owner/context、display batch、fingerprint | SQLite、网络、fan-in 副作用 |
+| `apps/web/src/shared/conversation/timeline` | exhaustive renderer、Markdown/code/path、fact/result/nested row | raw SSE、DB、completion 判断 |
+| `apps/web/src/features/*` | scope/policy/chrome、一次 mount、typed callbacks | route-local renderer、第二滚动区、第二 summary |
+| `apps/desktop` | packaged shell、daemon lifecycle、真实 macOS smoke | mock 截图冒充验收 |
+
+#### 0.7.2 PR 形状和退出条件
+
+1. **PR-D0 `docs(transcript): lock codex-parity contract`**：更新本组设计文档和 parity
+   fixture；确认 child 使用父 Thread + participant span，移除所有 legacy renderer/fallback
+   入口描述。退出条件是 docs link、`git diff --check`、fixture/selector 通过。
+2. **PR-E1 `feat(transcript): fold host evidence`**：实现 `actionId + revision + terminal
+   fence` 和 live invalidation；重复/乱序/迟到事件进入 audit。退出条件是同一 action 只有
+   一个 atomic row，reconnect/restart fingerprint 不变。
+3. **PR-E2 `feat(transcript): project atomic items and batches`**：完成 scope/owner/attempt/
+   context、TerminalReport join 和可逆 batch。退出条件是 batch 展开恢复 exact child ids，
+   completion/fan-in 只读 atomic。
+4. **PR-E3 `refactor(web): use Codex-style shared renderers`**：实现 document/fact/result/
+   nested/batch/diagnostic renderer、Markdown/code/path、trusted ref、单 scroll owner。
+   退出条件是 semantic fingerprint 稳定，无右侧 bubble、无第二纵向滚动区。
+5. **PR-E4 `refactor(web): cut over all conversation surfaces`**：normal/private/channel/
+   topic/branch/child 只调用一次 `mountConversationTimeline`；Topic/Branch 传真实 child
+   Thread，Agent child 传 parent Thread + participant span。退出条件是
+   `timelineOwnerCount=1`、`syntheticThreadCount=0`、所有旧 production caller 删除。
+6. **PR-E5 `test(transcript): prove recovery and fan-in`**：approval、retry、SSE reconnect、
+   daemon restart、partial/complete fan-in、TerminalReport generation/supersession。退出
+   条件是 ready/plan/batch count 无法提前 settle，缺证据明确 waiting/blocked。
+7. **PR-E6 `test(desktop): record packaged macOS evidence`**：真实 packaged App 执行 N/P/C/
+   A/R/F/E cases，保存 screenshot、semantic-state、lineage、redacted logs。退出条件是
+   每个 case `simulation=false` 且 build/thread/run/attempt 可回链。
+
+PR-D0 先合并；E1/E2 的纯测试可分 lane，E3 之后必须串行，因为共享 registry、callback 和
+surface adapter。任何阶段失败都停在该阶段修复，不以 CSS、截图或兼容层越过闸门。
 
 ## 1. 成功标准
 
@@ -832,7 +895,8 @@ rg -n "publishedMessageId|renderTerminalReportMarkdown|kind:\s*\"assistant_messa
 ```
 
 退出 surface cutover 的条件不是“找到一个 mount”，而是每个 canonical turn 只有一个
-生产 DOM 输出，所有旧 caller 要么删除，要么明确标成 migration adapter 且不再进入 DOM。
+生产 DOM 输出；所有旧 renderer/caller 必须删除。若确有旧 durable wire 行需要读取，只能
+存在于 source adapter，且不得导出 JSX、状态文案或第二个 Timeline 入口，也不得进入生产 DOM。
 频道若仍出现 synthetic `channel:<id>`，或者存在第二个 Timeline owner，阶段直接失败。
 设计层还必须保证 `TimelineSnapshot` 只有一个 canonical 定义；durable 原始记录只能使用
 `TimelineSourceSnapshot`，否则直接判定为 contract drift。
@@ -1057,10 +1121,10 @@ approval、retry/resume/repair、failed/cancelled/active、consequential action�
 
 **特别处理**
 
-当前 `renderFactActions` 仍是迁移期注入点。它允许 surface 注入第二个 action owner，
-所以 E3 先把 callback 限制为 focus/source 控制，E4 parity 通过后删除该 prop 及所有
-route-local action controls。Composer/approval gate 仍保留唯一 allow/deny/stop/retry
-控制。
+旧 `renderFactActions` 注入点和 route-local action controls 已从当前实现删除。E3/E4
+只允许 typed row action + callback；Composer/approval gate 保留唯一 allow/deny/stop/retry
+控制。若后续发现缺少 action，必须补充 closed enum 和 Host callback，不能恢复任意
+`ReactNode` 注入。
 
 ### 4.9.5 E4：surface cutover
 
@@ -1253,8 +1317,8 @@ EnvironmentPopover 只在 action active 时出现两行，终态后关闭；Comp
    daemon restart 的同一 fingerprint 断言。
 2. **E3/E4 真实挂载**：把 normal、teammate-private、channel root/topic/branch 和 child
    的 route adapter 收敛到一次 `mountConversationTimeline()`，删除生产 DOM 中的旧 WorkCell、
-   workflow skeleton、局部 status copy 和第二个 summary owner；迁移期的
-   `renderFactActions` 只允许 focus/source callback，parity 通过后删除。
+   workflow skeleton、局部 status copy 和第二个 summary owner；当前实现不保留
+   `renderFactActions` 运行时兼容入口，所有控制都走 typed row action + 唯一 gate。
 3. **E5/E6 验收闭环**：在真实 daemon/Host 上验证 capability issue/redeem、approval、
    retry、fan-in 和 TerminalReport；再用 packaged macOS 采集完整证据 tuple。Windows 不在
    本轮测试矩阵内。
@@ -1416,6 +1480,42 @@ Timeline item presentation metadata
 | 4 | child Agent | child-specific renderer 或独立 feed | depth=1 复用 registry，child 不拥有 virtualizer/scroll/history loader |
 | 5 | shell controls | `renderFactActions`、外部重复 summary/output | typed row control 或唯一 dialog；Composer/Popover/Right Dock 不复制事实 |
 
+#### E4a/E4b 当前切片（实现 worktree）
+
+已落地的两个切片只改变 surface composition，不改变事实来源：
+
+- normal：整个 feed 先构造一个 `TimelineSnapshot`，通过 `renderMessageChrome` 把既有作者、
+  时间、编辑、附件、反馈和重试 chrome 包回 message item；`NormalConversationMessageRow`
+  不再拥有 per-message Timeline fallback。
+- private：整个私聊 feed 先按真实 `LingThread.id` 构造一个 snapshot，所有 direct message
+  和其 WorkCell facts 在同一时间线排序；virtualizer 只测量一个 Timeline root，消息行仍由
+  surface chrome adapter 提供。没有 verified thread 时只显示一个
+  `diagnostic(scope_mismatch)`，不会生成 `private:<teammateId>` transcript id。
+
+private adapter 的排序退出条件还包括“每条消息 slice 只 rebasing 一次”：slice 内的
+`threadSequence` 从零开始，surface 统一加 `baseSequence`；必须有回归断言防止 message 被
+重复偏移而落到其 facts 后面。这个是显示投影约束，不改变 SQLite 的 canonical sequence。
+
+本轮继续收口 channel 的 surface contract：`ChannelMessageRenderers` 只导出
+`renderUnifiedTimeline`，`WorkspaceClientView` 不再把 `renderMessageFeedItem` 传入 channel
+feed，`ConversationVirtualFeed.renderVirtualRow` 作为 production 唯一 root renderer，
+`renderItem` 不再作为 virtual feed 或 fixture 的第二入口。旧的 channel per-item
+protocol/activity/workflow/run fact renderer 已删除，message chrome adapter 仍只负责作者、
+附件和 typed callbacks，且不改变 durable facts；topic reply panel 也已通过真实
+`resolvedThreadId` 构造一个 `topic_reply` snapshot，不能再直接 map `MessageRow`。退出条件已由
+source-contract 断言确认 channel root/branch/topic 只有 unified Timeline roots，TypeScript
+与 web 回归均通过（123/123）；这仍不替代真实 channel/root/branch/topic 的完整 E4 和
+packaged 验收。
+
+频道 virtualizer 的 root metadata 也已收口：`ConversationVirtualFeed` 使用显式
+`virtualRowIdentity={ id: "channel-timeline-root", kind: "timeline" }`，不会再把
+`older-loader` 或第一条消息作为整个 Timeline 的滚动锚点。该 identity 只服务于 DOM
+semantic selector、焦点和 older-load anchor，不参与 projector、batch 或 completion gate。
+
+这些 surface 切片的退出证据是 typecheck、source audit 和 web 123/123 语义测试通过，尚不能
+代表 E4 完成。channel root/branch 的真实 turn/message/protocol/workflow/run snapshot、topic
+的非消息事实以及 packaged macOS 仍需复核，不能用当前 source contract 通过替代完整 E4/E5/E6。
+
 ### 4.14.3 机械验收断言
 
 对同一 fixture，在 normal/private/channel/topic/branch/child 分别收集：
@@ -1455,9 +1555,66 @@ waiting，而不是静默移除或回退到 agentMessage。
 ### 4.14.5 与现有 WIP 的关系
 
 当前实现 worktree 的 evidence fold、TerminalReport、atomic projector、batch 和 shared
-renderer 改动继续作为输入；本节不要求重写这些模块，也不改变 SQLite 拓扑。尚未通过的
-surface-level mount、private fallback 删除、channel caller 收口和 packaged macOS 真实验证
-仍属于 E4/E5/E6，不能用已经通过的 unit test 或截图替代。
+renderer 改动继续作为输入；本节不要求重写这些模块，也不改变 SQLite 拓扑。normal/private
+surface-level mount 和 private synthetic fallback 已在当前切片收口并通过 web contract；
+尚未通过的是 channel/topic/branch caller 收口、E5 recovery/fan-in 和 packaged macOS 真实
+验证，不能用已经通过的 unit test 或截图替代。
+
+## 4.15 Codex-parity 实现启动计划（本次设计锁定）
+
+下面是从设计到代码的最短闭环。每一步都先写失败测试，再写实现；不允许先改 CSS 或在
+某个 surface 里临时接一套 renderer。人力和 Codex 时间是估算值，实际以当前测试基线为准。
+
+| 阶段 | 代码动作 | 主要模块 | 必须先通过的测试 | 预计投入 |
+| --- | --- | --- | --- | --- |
+| D0 | 冻结 closed union、content part、lineage、surface fingerprint 和 fixtures | `packages/contracts`, `packages/conversation-ui-core` | contract/typecheck、reply/execute、unknown-kind blocked | 人：0.5 天 / Codex：20 分钟 |
+| E1 | 折叠 `tool_start/update/end`，同一 action 原地更新并触发 invalidation | `packages/daemon/src/features/runs` | duplicate/late/equal-revision/terminal-fence | 人：1 天 / Codex：30 分钟 |
+| E2 | 生成 atomic snapshot 和可逆 command/exploration batch | `packages/conversation-ui-core` | split reason、expand identity、completion 隔离 | 人：1 天 / Codex：30 分钟 |
+| E3 | 完成 `mountConversationTimeline`、三种 primitive、Host source viewer | `apps/web/src/shared/conversation/timeline` | exhaustive registry、Markdown/code/path、a11y、single scroll owner | 人：1.5 天 / Codex：45 分钟 |
+| E4 | normal/private/channel/topic/branch/child 只保留一次 surface-level mount | `apps/web/src/features/*` | 同 fixture fingerprint、无旧 caller/synthetic thread | 人：1.5 天 / Codex：45 分钟 |
+| E5 | 接 approval/retry/SSE reconnect/daemon restart/fan-in/TerminalReport | `packages/daemon`, `packages/core` | latest generation、required evidence、structured blocked | 人：2 天 / Codex：1 小时 |
+| E6 | 启动 packaged macOS，执行真实 N/P/C/A/R/F/E 案例并保存证据 tuple | `apps/desktop`, `docs/design/ui2.0升级/evidence` | `simulation=false`、截图+semantic+lineage+脱敏日志 | 人：1 天 / Codex：30 分钟 |
+
+### 4.15.1 第一轮实现的文件边界
+
+第一轮只允许触碰下面的目录；如果发现必须修改 provider session、SQLite 拓扑或业务
+审批策略，先停在 D0 更新设计：
+
+```text
+contracts       -> item union / source refs / terminal result anchor
+daemon          -> evidence fold / revision / snapshot / invalidation
+ui-core         -> pure projector / display batch / fingerprint
+shared/timeline -> DocumentBlock / FactRow / ResultRow / nested rail
+surface adapters-> scope + policy + Host callback（不拥有历史）
+desktop         -> packaged shell + real evidence collector
+```
+
+### 4.15.2 开工任务拆分
+
+- [ ] `T0` 建立同一份 parity fixture：normal、private、channel、topic、branch、child 各自
+  只改变 scope/chrome，并记录三层 kind 名称和 lineage。
+- [ ] `T1` 为每个 action 建立 `actionId/runId/attemptId/participantId/workflowStepId` 的
+  稳定 selector；`tool_update` 只更新 revision，不追加 row。
+- [ ] `T2` 实现 `projectDisplayBatches()`/`expandDisplayBatch()`，所有跨边界条件输出
+  `BatchSplitReason`，且 completion/fan-in 永远读取 `atomicItems`。
+- [ ] `T3` 让 `ConversationTimeline` 只接受 immutable snapshot；实现 Markdown AST、事实行、
+  结果行和 depth-1 nested renderer，删除 generic message fallback。
+- [ ] `T4` 把 normal/private/channel/topic/branch/child 的 caller 收口到一次
+  `mountConversationTimeline()`，并为每个 surface 加 `timelineOwnerCount=1` 断言。
+- [ ] `T5` 接通 Host capability 二次校验和 typed interaction；EnvironmentPopover 只显示
+  active action 的两行，不复制历史。
+- [ ] `T6` 完成 recovery/fan-in/TerminalReport 的 atomic 回归，再做 packaged macOS 实测；
+  没有 `simulation=false` 的完整证据不得勾选完成。
+
+### 4.15.3 开工停止条件
+
+遇到以下任意情况立即停工并回到设计文档，不得靠兼容层继续：
+
+1. 一个 viewport 出现两个 Timeline 或两个纵向 scroll owner；
+2. 子 Agent 需要新建 session、Thread、virtualizer 或专用 renderer；
+3. 只能从模型文本、plan 进度或 batch 数量推断事实/完成；
+4. `terminalReport` 需要在 Timeline 外再追加 summary；
+5. 旧 WorkCell、`renderItem`、`renderFactActions` 或 synthetic thread 仍是生产入口。
 
 ## 5. 回归矩阵
 

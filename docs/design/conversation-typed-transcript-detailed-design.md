@@ -1,7 +1,8 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.9.1-final（extends the v3.9 contract）；Codex-parity component detailed design 已锁定；D0 contract/result-anchor slice 与 E2 display projection 已落地到实现 worktree、尚未验收，E1–E6 仍待完成
+Status: normative design v3.9.1-final（extends the v3.9 contract）；Codex-parity component detailed design 已锁定；D0 contract/result-anchor slice、E2 display projection 与 E4a–E4d normal/private/channel/topic composition slice 已落地，当前 web 回归 123/123 通过；D0 正式闸门、E5 recovery/fan-in 与 E6 packaged macOS 仍待完成
 Date: 2026-09-01
+Design revision: Codex parity handoff 2026-09-01（component、scope、nested child 和无兼容入口已锁定）
 Base: `origin/main` @ `63ab7c0e`（实现 worktree 已同步；实现进行中）
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
 Owner: Conversation UI、conversation-ui-core、daemon runtime maintainers
@@ -204,8 +205,10 @@ label、1px rail 和 8px inset。可见深度最大为 1，depth=2 输出
 
 #### 1.4.5 三种 surface 的唯一差异
 
-normal、teammate-private、channel root/topic/branch 和 child 都解析到真实
-`LingThread.id`，加载同一种 `TimelineSnapshot`，调用一次 `mountConversationTimeline`。
+normal、teammate-private、channel root/topic/branch 解析到各自真实的
+`LingThread.id`；depth-1 child 不创建新的可见 Thread，而是复用父级真实
+`LingThread.id`，再用 `participantId + parentItemId` 形成 child scope。两者都加载同一种
+`TimelineSnapshot`，调用一次 `mountConversationTimeline`。
 允许不同的只有 title、roster、topic/branch chrome、participant rail、权限和 callback
 可用性；`itemKinds/order/status/rendererKey/disclosure/row geometry/scroll owner` 必须
 相同。Topic/Branch 不复制 parent transcript；不得用 `channel:<id>`、`topic:<id>` 或
@@ -226,6 +229,95 @@ D0 contract + fixture
 闸门按顺序关闭，任何一层失败都回到该层修复，不能用 CSS、截图或模型文本遮盖。E6
 只有在每个案例同时拥有 `simulation=false`、build hash、截图、semantic-state、lineage
 和脱敏日志时才通过。Windows 不属于本轮验收范围。
+
+#### 1.4.7 Codex parity 开工锁（2026-09-01）
+
+这一条是对实现者的最终短合同：Ling 借鉴 Codex 的 item 分层和 renderer 分工，但不复制
+Codex 的 provider session、TUI 或存储表。所有 surface 和 child 都走同一条链：
+
+```text
+Host/SQLite facts
+  -> typed adapter（wire kind 只转换一次）
+  -> EvidenceFold（actionId + revision + terminal fence）
+  -> CanonicalTranscriptProjector（scope/owner/attempt/order）
+  -> atomic typed items
+  -> optional reversible display batch
+  -> ConversationTimeline + exhaustive renderer registry
+```
+
+必须同时满足：
+
+1. `userMessage/agentMessage/reasoning/plan` 只进入 document lane；段落、列表、fenced
+   code、路径和链接保留 Markdown 结构，不 flatten 成一行。
+2. `commandExecution/fileChange/exploration/typed tool/approval/protocol` 只由 Host
+   evidence 生成 fact row；首屏固定为 `icon + 动词 + 文本状态 + 一个 disclosure`。
+3. `execute` turn 只有一个 `terminalReport`；`reply` turn 只有一个
+   `agentMessage(presentationRole=reply_result)`。Composer、EnvironmentPopover、Right
+   Dock 都不能复制这两个 outcome owner。
+4. normal/private/channel/topic/branch 使用真实 Thread；child 使用父 Thread + participant
+   span，深度只允许 1。child 的 narration、command、file、tool 复用同一 registry，不能再
+   创建 child feed、child virtualizer 或第二个 scroll owner。
+5. batch 只改变显示密度，不落 SQLite、不改变 `contextSegmentId`、不参与 completion/
+   fan-in/retry/approval。
+6. 开发阶段直接切换到新合同：不保留 legacy renderer、双写、feature flag 或 fallback
+   JSX。无法补齐 lineage 的旧行只通过 strict adapter 变成 `diagnostic(blocked)`。
+
+如果实现提案违反任一条，必须先改本文件、组件细设计和视觉规范，再改代码；不能在某个
+surface 内临时增加第二套 renderer。
+
+#### 1.4.8 Codex-style 内容合同（实现时直接照表）
+
+`agentMessage` 不是一段必须整体渲染的字符串，而是一个保持顺序的 document part
+序列。这样普通文本、列表、代码和路径可以得到正确的排版，同时不会因为“看起来像
+命令”而越过 Host 事实边界：
+
+```ts
+type DocumentPart =
+  | { readonly kind: "paragraph"; readonly markdown: string }
+  | { readonly kind: "list"; readonly ordered: boolean; readonly items: readonly string[] }
+  | { readonly kind: "quote"; readonly markdown: string }
+  | { readonly kind: "code"; readonly language: string | null; readonly code: string }
+  | { readonly kind: "pathCandidate"; readonly basename: string; readonly fullPath: string };
+
+type AgentMessageItem = {
+  readonly kind: "agentMessage";
+  readonly presentationRole: "narration" | "reply_result" | "execution_summary";
+  readonly parts: readonly DocumentPart[];
+};
+```
+
+固定转换规则：
+
+1. Markdown parser 只产生 `DocumentPart`；它不能创建 `commandExecution`、`fileChange`、
+   `mcpToolCall` 或 `terminalReport`。
+2. fenced code 保留原始换行和缩进，未闭合 fence 在流式期间使用安全的 plain-mono
+   renderer；收到闭合 fence 后原地升级，不产生第二条消息。
+3. 路径候选默认是不可执行的 `pathCandidate`，只显示 basename、文件 icon、tooltip 和
+   copy；只有 Host 签发的 `trustedSourceRef` 才能触发 `open_file/open_diff/open_artifact`。
+4. `commandExecution`、`fileChange`、`exploration`、typed tool 和 approval 必须由
+   `RunEvent`/`ExecutionAction`/Approval/Artifact 生成，并携带完整 lineage；模型叙述只
+   能作为相邻文档说明。
+
+同一 turn 的目标输出如下，后续实现和 UI fixture 必须以此为准：
+
+```text
+DocumentBlock  我先检查 parser.ts，再运行测试。
+FactRow        ▣ Run pnpm test · Working                         [⌄]
+FactRow        ▣ Run pnpm test · Succeeded · exit 0               [⌄]
+ResultRow      ✓ Result · Succeeded · 2 files changed · 3 checks  [⌄]
+```
+
+子 Agent 只增加一层 participant rail，内容仍由同一 registry 渲染：
+
+```text
+NestedRail  QA
+  DocumentBlock  我会复核测试输出。
+  FactRow        ▣ Run pnpm test · Succeeded · exit 0              [⌄]
+```
+
+如果 child 只有“我会执行”或 `ready` 文本而没有 Host evidence，不能渲染为成功事实，
+只能进入 `diagnostic(blocked)` 并让 fan-in 保持 waiting/blocked。该规则同时约束 normal、
+private 和 channel，避免子 Agent 拥有另一套聊天语义。
 
 ## 2. 明确不做的事
 
@@ -835,15 +927,36 @@ type ResolvedConversationSurface = {
   readonly depth: 0 | 1;
   readonly policy: ConversationInteractionPolicy;
 };
+
+/**
+ * A child Agent is a participant span inside the parent's Thread, not a new
+ * user-visible Thread. Keeping this distinction explicit prevents a surface
+ * adapter from inventing `child:<id>` or `private:<id>` transcript identities.
+ */
+type ConversationScopeIdentity =
+  | {
+      readonly kind: "thread";
+      readonly threadId: string; // real LingThread.id
+      readonly parentThreadId: string | null;
+      readonly anchorItemId: string | null;
+    }
+  | {
+      readonly kind: "child";
+      readonly threadId: string; // parent's real LingThread.id
+      readonly parentThreadId: string;
+      readonly anchorItemId: string;
+      readonly participantId: string;
+      readonly depth: 1;
+    };
 ```
 
 私聊若解析不到持久化 `LingThread.id` 必须 fail closed：显示
 `diagnostic(scope_mismatch)` 并提供重新加载/创建私聊 thread 的入口。不得把 teammate id、
 route 参数或当前时间拼成临时 thread；否则 reload、resume 和 lineage 会再次分叉。
 
-`ConversationTimeline` 不接收 `channelId`、`anchorItemId` 或模型猜出的 target；它只接收
-解析后的 `threadId` 和 canonical items。这样三种会话可以共享 renderer，而不会把路由
-语义泄漏到渲染层。
+`ConversationTimeline` 不接收 `channelId`、模型猜出的 target 或 synthetic id；它只接收
+解析后的 `ConversationScopeIdentity`（child 时仍指向父级真实 Thread）和 canonical items。
+这样三种会话及嵌套 child 可以共享 renderer，而不会把路由语义泄漏到渲染层。
 
 ### 6.2 `contextSegmentId` 的权威分配
 
@@ -1429,6 +1542,12 @@ type ConversationTimelineMount = {
    exhaustive registry 渲染；
 5. mount 同时计算 fingerprint，供 normal/private/channel/topic/branch/child 的 parity
    测试使用。mount 不执行 I/O、排序、完成判断或 capability 签发。
+
+`ConversationVirtualFeed` 不再提供 `renderItem` fallback。virtualizer 只能调用
+`renderVirtualRow -> ConversationTimeline`，normal/private/channel/topic/branch/child 都把
+完整 snapshot 交给这个唯一 root；fixture 若需逐行断言，应直接调用纯 projector/registry。
+这样不会出现“旧 per-item callback 没有被调用、但仍作为第二条渲染入口存在”的过渡状态，
+也符合开发阶段直接切换新合同的决定。
 
 adapter 不得导出 renderer、排序器、batch 函数或第二个 scroll owner。它只能提供
 scope、policy、外围 chrome 和 Host callback。`node` 之外的 summary、TerminalReport、

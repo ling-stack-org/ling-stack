@@ -13,6 +13,33 @@ security, migration, recovery, API, and release boundaries. Completed implementa
 plans, version-by-version UI history, and screenshot evidence belong in Git history or
 CI/Release artifacts instead of the default documentation tree.
 
+## Current design handoff: Codex-style simple transcript
+
+这次实现的目标不是再做一套“聊天气泡”，而是把 Codex 已验证的信息分层原则落到
+Ling 的统一时间线：模型文本是文档，Host 事件是事实，完成结果是可追溯的结果行。
+普通会话、队友私聊、频道 root/topic/branch 和 depth-1 子 Agent 只共享同一套
+`ConversationTimeline`；surface 只提供 scope、chrome、policy 和 Host callback。
+
+| 用户看到的内容 | 唯一 owner | 视觉形态 | 事实来源 |
+| --- | --- | --- | --- |
+| 用户、Agent、子 Agent 叙述；reasoning；plan | `DocumentBlock` | 左对齐文档流，保留 Markdown/代码换行 | `conversation_items` message anchor |
+| 命令、读取、文件、工具、审批 | `FactRow` | 16px icon + 动词 + 文本状态 + 一个 disclosure | `RunEvent`/`ExecutionAction`/Approval/Artifact |
+| execute turn 最终结论 | `ResultRow` | `Result · status · counters`，可展开但不复制 stdout | Completion Gate + `terminal_report` item |
+| 当前运行环境 | `EnvironmentPopover` | active action 的最多两行浮层 | active run/action snapshot |
+
+实现的唯一数据流：
+
+```text
+SQLite/Host/SSE -> scoped source snapshot -> EvidenceFold
+               -> canonical atomic projector -> reversible display batch
+               -> one ConversationTimeline -> surface shell / child rail
+```
+
+本页其余内容中的历史 `v3.7`/`v3.8` 小节只是决策背景；开工时以五份文档中标记为
+`v3.9.1-final` 的实现锁为准。任何实现如果需要第二个 Timeline、第二个 summary、
+surface-specific renderer、模型文本推断事实，必须先修改设计并重新跑 D0，而不是在
+JSX/CSS 里加入兼容分支。
+
 ## Product And Architecture
 
 - [Implementation Status](implementation-status.md)
@@ -73,21 +100,31 @@ Codex item 到 Ling kind 的逐项映射、事实来源和完成权威见详细�
 grammar、EnvironmentPopover 和 disclosure 见视觉规范 §13–16。实现者不应从截图或旧
 WorkCell 名称自行推导新的 item 类型。
 
-本次开工补充设计集中在六个新增小节，避免实现者在长历史文档中自行拼接规则：
+本次开工补充设计集中在九个锁定小节，避免实现者在长历史文档中自行拼接规则：
 
+- 详细设计 §1.4.7：Codex parity 开工锁，明确 child 使用父 Thread + participant span，
+  以及开发阶段不保留 legacy renderer/fallback；
 - 详细设计 §21：四条可见通道、Codex item 闭合映射、render cycle、Thread/scope、
   `contextSegmentId` 选择顺序和 fail-closed 状态；
 - 视觉规范 §17：Document/Fact/Result 三种 primitive、首屏折叠阈值、统一 icon/文案和
-  截图 + semantic + lineage 证据；
+  截图 + semantic + lineage 证据；§17.6 额外锁定 surface/child 等价性和无兼容入口；
 - 组件细设计 §27：模块边界、唯一 mount/callback、child 递归边界和组件验收顺序；
 - 组件细设计 §28：当前 per-message/per-activity mount 的实况审计、surface-level 单一
   Timeline、typed interaction、message presentation、virtualization 和 E4 删除顺序；
+- 组件细设计 §29：生产组件树、display snapshot/row contract、child scope、
+  EnvironmentPopover 状态和组件级停止条件；
 - 实现计划 §4.13：六个工作包、逐文件职责、依赖/并行性和每个 PR 的最小交付格式；
 - 实现计划 §4.14：把“共享 renderer”收口为真实 surface-level 单一 mount 的实施任务、
   机械断言和测试文件。
+- 实现计划 §0.7：R5–R8 到 E1–E6 的唯一交接、模块边界、PR 形状和退出条件。
 
 这些小节只补充实现接口，不改变 v3.9.1 的事实权威、SQLite 拓扑、completion gate 或
 macOS-only 验收范围。
+
+本轮设计冲突已明确收口：Topic/Branch 是真实 child Thread；Agent child 不是 Thread，
+而是父 Thread 内的 participant span。生产路径不保留 `renderItem`、旧 WorkCell 或任意
+`renderFactActions` fallback；旧 wire 行若仍需读取，只能停留在 source adapter，不能进入
+生产 DOM。
 
 命名也有固定的三层边界：SQLite/API 使用 `snake_case` wire kind，
 `conversation-ui-core` 使用 `camelCase` projection kind，DOM/fingerprint 使用稳定的
@@ -98,7 +135,11 @@ dotted `rendererKey`。例如 `terminal_report → terminalReport → result.ter
 #### Implementation lock（2026-09-01，v3.9.1-final）
 
 设计文档已经锁定；v3.9.1-final 在不改变 v3.9 contract 的前提下补齐了可直接开工的接口级细设计；
-D0 的第一段 contract/result-anchor slice 正在实现、尚未验收：
+D0 的 contract/result-anchor、E2 projection 和 E4a–E4d normal/private/channel/topic 单
+Timeline slices 已落地，当前 web 回归 123/123 通过，但完整 E4/E5/E6 仍未完成验收：
+当前实现还额外切断了 channel 的旧 `renderMessageFeedItem` 外部入口，频道只允许
+`renderUnifiedTimeline`，topic panel 也只接受真实 `resolvedThreadId`；这只是 surface
+composition 收口，不代表 E4/E5/E6 已验收。
 `terminal_report` 已进入 closed union，assistant 文本带 Host-assigned
 `presentationRole`，SQLite publication 使用 `result_item_id`，canonical projector 会选择
 最高 committed generation 并以 `result.terminal` 渲染；UI-core fixture 已覆盖单一结果、
