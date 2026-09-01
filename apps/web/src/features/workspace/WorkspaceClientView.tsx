@@ -343,6 +343,13 @@ function latestTerminalReportMap(
   return result;
 }
 
+function terminalReportResultItemId(report: TerminalReportDto): string {
+  if ("resultItemId" in report && typeof report.resultItemId === "string" && report.resultItemId.length > 0) {
+    return report.resultItemId;
+  }
+  return `result_terminal_report:${report.id}`;
+}
+
 function channelActivityItemBelongsToBranchConversation(
   item: ChannelActivityItem,
   scope: BranchConversationActivityScope,
@@ -1205,8 +1212,8 @@ export function WorkspaceClientView({
     () => latestTerminalReportMap(terminalReportsForDisplay.filter((report) => Boolean(report.threadId)), (report) => report.threadId ?? ""),
     [terminalReportsForDisplay],
   );
-  const terminalReportMessageIds = useMemo(
-    () => new Set(terminalReportsForDisplay.map((report) => `message_${report.id}`)),
+  const terminalReportResultItemIds = useMemo(
+    () => new Set(terminalReportsForDisplay.map(terminalReportResultItemId)),
     [terminalReportsForDisplay],
   );
   const visibleConversationThreadIds = useMemo(() => [...channelRunsByThreadId.keys()], [channelRunsByThreadId]);
@@ -1587,7 +1594,7 @@ export function WorkspaceClientView({
       operationCellByWorkflowId: conversationWorkCellByWorkflowId,
       operationCellByThreadId: conversationWorkCellByThreadId,
       lingAgentAuthorId: LING_AGENT_AUTHOR_ID,
-      terminalReportMessageIds,
+      terminalReportResultItemIds,
     }),
     [
       channelExecutionProposals,
@@ -1600,7 +1607,7 @@ export function WorkspaceClientView({
       conversationWorkCellByThreadId,
       conversationWorkCellByWorkflowId,
       selectedChannelId,
-      terminalReportMessageIds,
+      terminalReportResultItemIds,
       usedMemoryEventsForDisplay,
     ],
   );
