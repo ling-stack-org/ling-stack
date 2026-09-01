@@ -1,6 +1,6 @@
 # Codex-style Typed Transcript v3.7：实现计划
 
-Status: implementation plan；D0 设计文档已锁定，executable contract fixture 与 selector gate 待完成；E1–E6 代码实现及 packaged macOS 验收待执行
+Status: implementation plan；D0 contract/result-anchor slice 已落地，selector 与 packaged macOS 验收仍待执行；E1–E6 按顺序推进
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（已核对远端无新提交）
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -36,9 +36,9 @@ EnvironmentPopover 中补渲染来“看起来统一”。
 依赖关系。实现顺序固定为 `D0 → E1 → E2 → E3 → E4 → E5 → E6`；E1/E2 的纯测试可并行，
 其余按该顺序串行推进。
 
-当前实现 worktree `/private/tmp/ling-typed-transcript-v3-impl` 含未提交 WIP；它只用于
-对照当前代码入口，不代表实现完成，也不改变主 checkout 的 WIP。任何代码提交都必须从
-本文的设计闸门重新核验，不能把未审查的脏工作树当作基线。
+实现 worktree `/private/tmp/ling-typed-transcript-v3-clean` 基于最新 `origin/main`，主
+checkout 与历史实验 worktree 的 dirty WIP 不作为实现输入。任何代码提交都必须从本文的
+设计闸门重新核验，不能把未审查的脏工作树当作基线。
 
 ## 0. 开工前置条件（D0：不切生产 UI）
 
@@ -48,7 +48,7 @@ EnvironmentPopover 中补渲染来“看起来统一”。
 
 `D0` 的唯一产物是 contract/type、fixture/selector 的失败测试和边界清单；允许修改
 closed union、纯 projector contract 和测试，但不切换 production surface。当前实现 worktree
-为 `/private/tmp/ling-typed-transcript-v3-impl`，首批 contract、renderer registry 和
+为 `/private/tmp/ling-typed-transcript-v3-clean`，首批 contract、renderer registry 和
 surface adapter 已在此基线上落地；后续提交按唯一的 E1→E6 切片推进。
 
 当前代码核对还暴露了一个必须在 D0 先锁定的 breaking contract：
@@ -90,14 +90,13 @@ contract adapter 映射为 core 的 `camelCase` projection kind，再映射为�
 标注为 migration input 的章节或明确的兼容别名说明；`node scripts/check-markdown-links.mjs` 和
 `git diff --check` 通过。D0 未通过时不进入 E1，也不删除旧 caller。
 
-**D0 当前状态（2026-09-01）**：四份权威文档已同步到同一套 v3.7 contract，
-`corepack pnpm check:docs`、`git diff --check` 和既有
-`corepack pnpm --filter @ling-stack/conversation-ui-core test`（90/90）均通过。现有可执行
-fixture 位于 `packages/conversation-ui-core/test/codex-parity-fixture.test.mjs`，已经覆盖
-normal/private/channel/topic/branch、plan、narration、read×3、command、file/diff、approval、
-child Agent、display batch 和缺 evidence blocked；但它的终态仍是 `agentMessage`，当前
-closed union、projector、fingerprint 和 registry 也尚未接入 `terminalReport`。因此 90/90
-只能证明既有 typed transcript 基线，不能证明 v3.7 execute-result contract。必须先补齐：
+**D0 当前状态（2026-09-01）**：四份权威文档已同步到同一套 v3.7 contract；本轮已落地
+`terminal_report` closed-union、Host `presentationRole`、`result_item_id` migration、原子
+publication item、纯 projector 的最高 generation join 和 `result.terminal` renderer key。
+新增的 UI-core fixture 已验证 execute turn 的单一 result、execution summary 抑制、最高
+generation 选择以及缺少 anchor 时 fail-closed。`corepack pnpm check:docs`、`git diff --check`、
+contracts/core/daemon/web typecheck 和 UI-core 88/88 fixtures 均通过，但这仍不能替代真实
+daemon/API 与 packaged macOS 验收。剩余必须补齐：
 
 1. reply turn 以最终 `agentMessage` 收口；
 2. execute turn 只产生一个 `terminalReport`；
@@ -123,10 +122,10 @@ D0 不引入 feature flag，也不保留旧 renderer 兼容分支；测试先失
 
 | 已落地 | 证据 | 仍需完成 |
 | --- | --- | --- |
-| closed item union、canonical snapshot、纯 projector、`protocolEvent` | `packages/conversation-ui-core` 与对应 tests | 对所有既有 channel caller 完成 cutover |
+| closed item union、canonical snapshot、纯 projector、`protocolEvent`、`terminalReport` result anchor | `packages/conversation-ui-core` 与对应 tests | 对所有既有 channel caller 完成 cutover |
 | 统一 `ConversationTimeline`、renderer registry、mount/fingerprint | `apps/web/src/shared/conversation/timeline` | 删除残留 route-local activity renderer |
 | shared Timeline CSS/row shell | `apps/web/src/styles/shared/conversation-timeline.css`、`TimelineFactRow.tsx` | 收口状态文案为 `Queued/Working/Waiting/Waiting for approval/Succeeded/Failed/Cancelled/Blocked`，并移除 batch/output 的第二个纵向 scroll owner |
-| `tool_start/update/end` 的 action identity 与 revision 基础 | daemon execution-action 模块 | durable Host capability 签发和二次 scope 校验 |
+| `tool_start/update/end` 的 action identity 与 revision 基础、Host presentation role | daemon execution-action 模块、contracts | durable Host capability 签发和二次 scope 校验 |
 | display-only command/exploration batching | core batching tests | recovery、fan-in、TerminalReport 的 atomic 回归 |
 | source-ref adapter 的前端边界 | `source-ref.ts` 与 tests | daemon/desktop 真实 capability、symlink/跨 workspace 拒绝 |
 
@@ -154,8 +153,9 @@ symlink 拒绝，以及 TerminalReport 的恢复发布。后续任务只补这�
 ### 0.3 本轮交付边界
 
 本轮只交付 typed transcript 的事实投影和统一展示，不改 provider session、SQLite
-持久化拓扑或业务审批策略。实现结果必须能让用户在同一时间线中看懂“说了什么、做了
-什么、现在是否需要处理”：
+持久化拓扑或业务审批策略。D0 允许一次性把 TerminalReport 的 publication anchor 从
+`published_message_id` 收口为 `result_item_id`；除此之外不新增持久化拓扑。实现结果必须
+能让用户在同一时间线中看懂“说了什么、做了什么、现在是否需要处理”：
 
 ```text
 Host/SQLite facts -> one snapshot -> atomic projector -> optional batch -> one Timeline
@@ -169,8 +169,9 @@ Host/SQLite facts -> one snapshot -> atomic projector -> optional batch -> one T
 
 - provider session/schema、Pi loop、Codex/Claude runtime adapter：它们不是 transcript
   projection 的 owner，本轮不改其生命周期；
-- SQLite schema/migration、新增 `session`/`batch`/`activity_summary` 表，或把摘要写回
-  `conversation_items`：已有 durable records 已能提供事实；
+- 新增 `session`/`batch`/`activity_summary` SQLite 表，或把摘要写回
+  `conversation_items`。D0 的 `result_item_id` 一次性 contract migration 属于本计划，
+  但不得借此重写 SQLite 拓扑；已有 durable records 仍是事实来源；
 - Windows 客户端、移动端和跨机器同步：本轮 packaged acceptance 只锁定 macOS；
 - 新的 workflow engine、approval policy 或 fan-in 协议：只修复它们读取 atomic evidence
   的边界，不改变业务规则；
@@ -255,8 +256,8 @@ durable facts -> evidence fold -> pure projector -> atomic timeline -> shared re
 ```bash
 git fetch origin --prune
 git show-ref --verify refs/remotes/origin/main
-git worktree add /private/tmp/ling-typed-transcript-v3-impl \
-  -b codex/typed-transcript-v3-impl origin/main
+git worktree add /private/tmp/ling-typed-transcript-v3-clean \
+  -b codex/typed-transcript-v3-implementation origin/main
 ```
 
 实现分支首个 commit 记录 `origin/main` SHA、Node/pnpm、macOS target 和测试基线。
@@ -576,7 +577,7 @@ fingerprint、terminal fence 和 scroll owner，而不是只看最终文字。
 
 ## 4.2 开工清单（按文件和验收闭环）
 
-下面是从当前 `codex/typed-transcript-v3-impl` 基线继续执行的具体顺序。每一项都要
+下面是从当前 `codex/typed-transcript-v3-implementation` 基线继续执行的具体顺序。每一项都要
 同时提交实现、单测和 semantic evidence；不能先做视觉，再用截图猜事实是否正确。
 
 | 阶段 | 首要文件/模块 | 具体工作 | 退出条件 |

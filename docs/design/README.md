@@ -79,13 +79,14 @@ dotted `rendererKey`。例如 `terminal_report → terminalReport → result.ter
 
 #### Implementation lock（2026-09-01）
 
-设计文档已经锁定；`D0` 的可执行 contract gate 尚未完成。下一步先把
-`terminalReport` 加入 closed union、canonical execute-result fixture、fingerprint 和
-exhaustive renderer fixture，再执行 packaged Web DOM 的 selector smoke；通过后才按
-`E1 → E2 → E3 → E4 → E5 → E6` 推进实现。`D0` 只冻结 contract、fixture 和 selector，
-不接业务 UI；现有实现 worktree 中的代码改动仍是未验收 WIP。只有同时具备
-atomic evidence、统一 renderer fingerprint、recovery 结果和 packaged macOS 的
-screenshot/semantic-state/lineage/log 四件套，才可把实现标为完成。
+设计文档已经锁定；D0 的第一段 contract/result-anchor slice 已完成：
+`terminal_report` 已进入 closed union，assistant 文本带 Host-assigned
+`presentationRole`，SQLite publication 使用 `result_item_id`，canonical projector 会选择
+最高 committed generation 并以 `result.terminal` 渲染；UI-core fixture 已覆盖单一结果、
+summary 抑制、缺 anchor fail-closed。下一步执行 selector smoke，再按
+`E1 → E2 → E3 → E4 → E5 → E6` 接入真实 evidence fold、统一 surface、recovery 和 packaged
+macOS 验收。只有同时具备 atomic evidence、统一 renderer fingerprint、recovery 结果和
+macOS screenshot/semantic-state/lineage/log 四件套，才可把实现标为完成。
 
 开工时沿这四份文档执行：先完成 v3.7 的 D0 contract gate（区分
 `TimelineSourceSnapshot` 与 `TimelineSnapshot`），建立 parity fixture 和 evidence

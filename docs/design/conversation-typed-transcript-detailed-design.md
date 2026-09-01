@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.7；design contract 已冻结；executable D0 contract gate 与 E1–E6 实现待验收
+Status: normative design v3.7；design contract 已冻结；D0 contract/result-anchor slice 已实现并通过 package typecheck 与 UI-core fixtures；E1–E6 仍待验收
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（实现 worktree 已同步；实现进行中）
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -2483,7 +2483,30 @@ sleep 猜 publication 是否完成。
 turn 和 source 的 assistant Item；无法证明关系的旧行保留在 audit，并在主 Timeline
 生成 blocked diagnostic。不得根据 Markdown 标题、时间邻近或正文相似度推断 report。
 
-### 19.5 D0 executable gate
+### 19.5 已落地的 D0 slice（实现基线）
+
+当前实现分支已经把上述 contract 接入以下边界，后续阶段必须在这些边界上增量实现，
+不能重新引入“报告即 assistant Markdown”的旁路：
+
+1. contracts closed union 包含 `terminal_report`，assistant payload 包含 Host 写入的
+   `presentationRole`；旧开发 caller 在写入边界被规范化为 `narration`，不会产生第二种
+   renderer 或第二份历史。
+2. `ling_terminal_reports.result_item_id` 是唯一 publication identity；migration 127
+   将已有开发数据库的 `published_message_id` 原子重命名，且对 result item 建唯一索引。
+3. workflow/run publisher 生成 `result_terminal_report:{reportId}` 的 system Item，payload
+   只保存 report join 校验字段；正文、changes、verification、artifact 仍只从 report
+   DTO 读取。
+4. `conversation-ui-core` 的纯 projector 在同一 source 上选择最高 committed generation，
+   严格校验 result Item 的 generation、source、turn、fingerprint；缺 anchor 或冲突只输出
+   diagnostic，不回退到 assistant 文本。
+5. renderer registry 将 projection kind `terminalReport` 固定映射到 `result.terminal`；
+   execute turn 的 `execution_summary` 在 result commit 后被抑制，reply turn 的
+   `reply_result` 仍作为唯一文本结果显示。
+
+这段实现只完成 D0 contract/result-anchor gate，不代表 E1 evidence fold、E4 全 surface
+切换或 E6 packaged macOS 验收已经完成。
+
+### 19.6 D0 executable gate
 
 D0 必须先用失败测试锁定以下事实，再开始 E1 业务实现：
 
