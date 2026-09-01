@@ -1,6 +1,6 @@
 # Conversation Surface Taxonomy
 
-Status: product vocabulary boundary; typed transcript scope authority v3.9
+Status: product vocabulary boundary; typed transcript scope authority v3.9.1
 Date: 2026-06-25
 Last updated: 2026-09-01
 
@@ -13,14 +13,14 @@ Related docs:
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
 
-> v3.9 authority note: this document defines product vocabulary and surface ownership only.
+> v3.9.1 authority note: this document defines product vocabulary and surface ownership only.
 > Transcript item kinds, evidence ownership, renderer selection, batching, and completion
 > semantics are defined by [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 > and [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md).
 > Mentions of WorkCell below describe the pre-v3.7 migration input and must not be used to
 > create a second production renderer.
 
-> **v3.9 scope override:** a topic reply may still use `ChannelMessage.threadId` for legacy
+> **v3.9.1 scope override:** a topic reply may still use `ChannelMessage.threadId` for legacy
 > channel grouping, but the canonical transcript adapter must resolve it to a real
 > `LingThread.id` (`surfaceKind="topic"`) anchored to the source message. The adapter must
 > never manufacture `channel:<id>`, `topic:<messageId>`, or another string-only thread id.

@@ -1,6 +1,6 @@
-# Codex-style Typed Transcript v3.9：实现计划
+# Codex-style Typed Transcript v3.9.1：实现计划
 
-Status: implementation plan；v3.9 组件级细设计已锁定，D0 contract/result-anchor slice 正在实现、尚未验收；E1–E6 按顺序推进，packaged macOS 验收仍待执行
+Status: implementation plan；v3.9.1 组件级细设计已锁定，D0 contract/result-anchor slice 正在实现、尚未验收；E1–E6 按顺序推进，packaged macOS 验收仍待执行
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（已核对远端无新提交）
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -19,7 +19,7 @@ v3.7 新增一条实现硬门槛：所有 surface 和子 Agent 必须通过同�
 `mountConversationTimeline` 组合入口；不能通过复制 JSX、复用旧 WorkCell 或在 Composer/
 EnvironmentPopover 中补渲染来“看起来统一”。
 
-v3.9 只补组件实现细节，不改变 v3.8 的事实权威和存储边界：SQLite 仍是 durable facts，
+v3.9.1 只补接口级组件实现细节，不改变 v3.9 的事实权威和存储边界：SQLite 仍是 durable facts，
 batch 仍是 display-only，`terminalReport` 仍是 execute turn 的唯一结果。实现者必须先
 按本文的 work package 交付 evidence、projection、renderer、surface、recovery、packaged
 macOS 六层，不能从某个页面的 CSS 或一段模型文本开始。
@@ -96,7 +96,7 @@ contract adapter 映射为 core 的 `camelCase` projection kind，再映射为�
 标注为 migration input 的章节或明确的兼容别名说明；`node scripts/check-markdown-links.mjs` 和
 `git diff --check` 通过。D0 未通过时不进入 E1，也不删除旧 caller。
 
-**D0 当前状态（2026-09-01）**：五份权威文档已同步到 v3.9 contract；实现 worktree
+**D0 当前状态（2026-09-01）**：五份权威文档已同步到 v3.9.1 contract；实现 worktree
 已有 `terminal_report` closed-union、Host `presentationRole`、`result_item_id` migration、
 原子 publication item、纯 projector 的最高 generation join 和 `result.terminal` renderer
 key WIP。已通过的最近窄范围证据为 contracts `50/50`、UI-core `88/88`、core `460/460`
@@ -837,7 +837,7 @@ rg -n "publishedMessageId|renderTerminalReportMarkdown|kind:\s*\"assistant_messa
 设计层还必须保证 `TimelineSnapshot` 只有一个 canonical 定义；durable 原始记录只能使用
 `TimelineSourceSnapshot`，否则直接判定为 contract drift。
 
-## 4.8 v3.9 实现启动板（从现在开始）
+## 4.8 v3.9.1 实现启动板（从现在开始）
 
 设计已经可以开工。下面是按“先事实、后投影、再视觉、最后真实客户端”排列的执行板；
 每一项都有明确输入、代码边界和退出证据。除当前实现分支已有的 D0 WIP 外，不需要再
@@ -845,7 +845,7 @@ rg -n "publishedMessageId|renderTerminalReportMarkdown|kind:\s*\"assistant_messa
 
 ### WP-0：收口 D0 基线（立即执行）
 
-**输入**：`origin/main=63ab7c0e`、v3.9 五份设计、现有 contract/result-anchor WIP。
+**输入**：`origin/main=63ab7c0e`、v3.9.1 五份设计、现有 contract/result-anchor WIP。
 
 **动作**：
 
@@ -954,7 +954,7 @@ nested Agent、batch disclosure、approval、retry、SSE reconnect、daemon rest
 按以下顺序提交，每个 commit 可单独回滚，且只 stage 本阶段文件：
 
 ```text
-docs: v3.9 Codex-parity component design（本次）
+docs: v3.9.1 Codex-parity component design（本次）
 feat(transcript): fold tool evidence and terminal fence
 feat(transcript): project atomic timeline and reversible batches
 refactor(web): mount shared ConversationTimeline and Host viewers
@@ -967,7 +967,7 @@ test(desktop): packaged macOS evidence cases
 先修改五份权威设计和 fixture，再修改代码。不能在实现分支里保留“临时兼容”作为第六
 种 renderer。
 
-## 4.9 v3.9 组件级落地清单
+## 4.9 v3.9.1 组件级落地清单
 
 本节把组件细设计翻译成可执行的文件和测试任务。实现者按阶段逐项勾选，不得把
 所有逻辑塞回 `ConversationWorkCell.tsx` 或某个 surface 页面。
@@ -1138,7 +1138,7 @@ thread/turn/run/attempt、daemon epoch。截图与语义/lineage/log 任一缺�
 按以下 commit 顺序推进，每个 commit 只触碰自身阶段文件：
 
 ```text
-docs(transcript): lock v3.9 component design
+docs(transcript): lock v3.9.1 component design
 feat(transcript): fold host evidence and terminal fence
 feat(transcript): project atomic timeline and reversible batches
 refactor(web): mount shared timeline and host viewers
@@ -1150,6 +1150,95 @@ test(desktop): capture packaged macOS evidence
 任何需要改变 item kind、lineage、Thread 映射、contextSegmentId、completion owner 或
 Host capability 边界的实现，必须先更新五份权威文档和 fixture；不允许在代码里加入
 “临时兼容”作为第六条路径。
+
+### 4.10 v3.9.1 开工细设计（实现者直接照此拆任务）
+
+这一节把组件设计翻译成可执行的模块边界。它是本轮开工输入，不是新的架构层。
+
+#### 4.10.1 一次 turn 的唯一数据流
+
+```text
+Host/SQLite/SSE
+  -> TimelineSourceSnapshot (raw, scoped, coverage)
+  -> EvidenceFold (action identity, revision, terminal fence)
+  -> CanonicalTranscriptProjector (atomic items, owner, attempt, result join)
+  -> DisplayBatchProjector (optional, reversible, display-only)
+  -> mountConversationTimeline (one registry, one viewport)
+```
+
+每个箭头只能在一个模块发生一次。React 不能直接读取 source snapshot；surface 不能
+重新排序或合并；batch 不能回写 SQLite；TerminalReport/fan-in 不能读取 display rows。
+
+#### 4.10.2 模块与职责
+
+| 模块 | 只负责 | 明确不负责 |
+| --- | --- | --- |
+| `packages/core` source readers | durable item/run/report/approval 读取 | 排序、UI 文案、batch |
+| `packages/daemon` evidence fold | action identity、revision、terminal fence、invalidation | Markdown、CSS、完成摘要 |
+| `conversation-ui-core` projector | scope/order/owner/attempt/context/result join | I/O、Host mutation、surface chrome |
+| `conversation-ui-core` batch | 相邻安全终态 grouping、split reason | completion、fan-in、持久化 |
+| `apps/web` shared timeline | renderer registry、disclosure、focus、a11y selector | raw source、排序、权限判定 |
+| surface adapter | `LingThread`/scope/policy/chrome/callbacks | 自建 row、parser、status、scroll |
+| Host viewer | capability issue/redeem、realpath/permission/epoch 校验 | 历史列表、summary、第二 action owner |
+| packaged harness | 真实 macOS 案例与证据 tuple | mock 截图冒充验收 |
+
+#### 4.10.3 关键实现伪代码
+
+```ts
+function projectSurface(source: TimelineSourceSnapshot): TimelineSnapshot {
+  const folded = foldEvidence(source.runEvents);
+  const atomic = projectCanonicalItems({ ...source, folded });
+  const displayItems = projectDisplayBatches(atomic); // never used for completion
+  return createTimelineSnapshot({
+    scope: source.scope,
+    activeRun: source.activeRun ?? null,
+    items: displayItems,
+    canonicalRevision: source.sourceRevision,
+    sseCursor: source.cursor,
+    contextSegmentIdByItemId: source.contextSegmentIdByItemId,
+  });
+}
+
+function renderItem(item: ConversationTimelineItem, ctx: RendererContext): ReactNode {
+  // Exhaustive switch. Unknown wire kinds are blocked before this function.
+  return rendererRegistry[item.kind](item as never, ctx);
+}
+```
+
+`createTimelineSnapshot` 只做不可变快照封装，不复制或重写 item。`fingerprint` 只包含
+`kind/order/status/rendererKey/disclosureCount/lineage ids`，不包含文案、颜色或 shell 标题，
+这样同一 fixture 可以在三个 surface 上做语义 parity 比较。
+
+#### 4.10.4 开工闸门与停止条件
+
+| 闸门 | 先写的失败测试 | 通过后才能做什么 |
+| --- | --- | --- |
+| G0 contract | closed union、unknown kind、scope mismatch | 建立 fixture 与 selector |
+| G1 evidence | start/update/end、乱序、重复、迟到、equal conflict | 接入 live invalidation |
+| G2 projection | owner/attempt/result join、缺 lineage blocked | 接入 batch |
+| G3 display | 3 条安全 action、每类 split reason、展开可逆 | 接 shared Timeline |
+| G4 surface | normal/private/channel/child fingerprint parity | 删除旧 WorkCell caller |
+| G5 recovery | retry、approval、SSE、restart、fan-in | 打包 macOS |
+| G6 packaged | `simulation=false` 四件套完整 | 宣布 Codex-parity 完成 |
+
+任何闸门失败都必须停在该层修复。不得用 CSS 隐藏重复 row，不得用模型文本、plan
+进度、batch 数量或 ready/done 文案填补缺失证据。
+
+#### 4.10.5 真实 UI 的最小验收组合
+
+最终 macOS packaged 验收至少展示一条连续时间线：
+
+```text
+Agent Markdown（段落 + list + fenced code + path）
+  -> Read / Run / Edited（真实 Host facts，成功可折叠）
+  -> child Agent narration + fact rows（depth=1 rail）
+  -> Waiting for approval / Failed / Retry
+  -> partial fan-in Waiting -> single TerminalReport result
+```
+
+同一案例还要在 SSE reconnect、daemon restart 后恢复为同一 action ids/revisions；
+EnvironmentPopover 只在 action active 时出现两行，终态后关闭；Composer 只保留输入和
+控制，不显示第二份 summary。没有这条连续证据链，截图只能算局部组件调试。
 
 ## 5. 回归矩阵
 
@@ -1333,7 +1422,7 @@ renderer 和大范围 route cleanup 混成一个不可审查提交。
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | 未运行；本轮已把 Codex-parity 视觉契约写入 v3.7 规范 |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | 未运行 |
 
-**VERDICT:** DESIGN UPDATED — v3.9 已统一五份权威文档，并新增组件级 component tree、
+**VERDICT:** DESIGN UPDATED — v3.9.1 已统一五份权威文档，并新增组件级 component tree、
 renderer props、状态所有权、source-ref lineage、专用 viewer、唯一 surface cutover、原子
 recovery/fan-in 和执行板。实现尚未完成，
 必须按 E1→E6 清掉 4 个 P1 闸门后，才能称为 Codex-parity 完成。

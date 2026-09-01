@@ -1,6 +1,6 @@
 # Conversation Surface Contract
 
-Status: active shell/policy contract; typed transcript authority is v3.9 (v3.8 contract + component implementation design)
+Status: active shell/policy contract; typed transcript authority is v3.9.1 (v3.9 contract + interface-level component design)
 Original date: 2026-06-28
 Updated: 2026-09-01
 Scope: normal conversation, channel root, channel branch, topic reply, teammate private
@@ -25,14 +25,14 @@ Related docs:
 - [Conversation Media Generation Tools](conversation-media-generation-tools.md)
 
 Typed item semantics, evidence ownership, renderer registry, batching, nested Agent
-presentation and completion gates are owned by the v3.9 documents above. This contract
+presentation and completion gates are owned by the v3.9.1 documents above. This contract
 only defines surface scope, shell chrome, composer policy and Host callback boundaries;
 it must not add a route-local transcript renderer or summary owner.
 
-## Typed transcript override (v3.9)
+## Typed transcript override (v3.9.1)
 
 For message, activity, command, file, tool, approval, child-agent, batching, and
-completion presentation, v3.9 is the current authority. This surface contract still
+completion presentation, v3.9.1 is the current authority. This surface contract still
 defines shell and product-policy differences, but it must not add a route-local
 renderer or second completion owner. Normal, teammate-private, and channel surfaces
 must mount the shared `ConversationTimeline`; channel-only differences are roster,
@@ -64,7 +64,7 @@ inputs, not target renderers or independent fact owners. During the v3.7 cutover
 实现者不得从历史章节复制这些几何或组件边界。若历史描述与本节 override 或视觉规范
 冲突，以 v3.7 规范为准，不需要再保留兼容 CSS。
 
-If any later paragraph conflicts with this override, the v3.7 typed transcript design
+If any later paragraph conflicts with this override, the v3.9.1 typed transcript design
 and visual specification win.
 
 ### Canonical type names

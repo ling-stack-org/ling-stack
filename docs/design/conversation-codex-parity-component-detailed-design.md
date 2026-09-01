@@ -1,6 +1,6 @@
 # Conversation Codex-Parity Component Detailed Design
 
-Status: normative component implementation contract v3.9; implementation is in progress,
+Status: normative component implementation contract v3.9.1; implementation is in progress,
 not yet accepted
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
@@ -146,6 +146,85 @@ The target contract does not expose an arbitrary `renderFactActions` React slot.
 slot lets a surface inject a second approval, retry, completion or summary owner. During
 migration it may exist behind an adapter, but the E4 cutover removes it. Typed shell actions
 remain owned by Composer/approval controls and may only focus the owning Timeline item.
+
+### 5.1 Snapshot boundary and implementation types
+
+The implementation has exactly two snapshot layers. Keeping them separate prevents a React
+component from treating a partially loaded stream as canonical history.
+
+```ts
+type TimelineSourceSnapshot = {
+  readonly threadId: string;
+  readonly scope: ConversationTimelineScope;
+  readonly cursor: string | null;
+  readonly sourceRevision: number;
+  readonly coverage: {
+    readonly items: "complete" | "partial";
+    readonly actions: "complete" | "partial";
+    readonly reports: "complete" | "partial";
+    readonly participants: "complete" | "partial";
+  };
+  readonly items: readonly CanonicalConversationItem[];
+  readonly runEvents: readonly RunEventEnvelope[];
+  readonly terminalReports: readonly CanonicalTerminalReportProjection[];
+  readonly activeRun: ActiveRunSnapshot | null;
+  readonly contextSegmentIdByItemId: ReadonlyMap<string, string>;
+};
+
+type TimelineSnapshot = {
+  readonly scope: ConversationTimelineScope;
+  readonly items: readonly ConversationTimelineItem[];
+  readonly activeRun: ActiveRunSnapshot | null;
+  readonly canonicalRevision: number;
+  readonly sseCursor: string | null;
+  readonly contextSegmentIdByItemId: ReadonlyMap<string, string>;
+};
+```
+
+The only legal conversion is:
+
+```text
+TimelineSourceSnapshot
+  -> EvidenceFold
+  -> CanonicalTranscriptProjector
+  -> TimelineSnapshot.atomic items
+  -> display-only batch projection
+  -> TimelineSnapshot.displayRows
+```
+
+`ConversationTimeline` accepts the immutable `TimelineSnapshot` only. It never receives raw source arrays,
+per-surface message lists, provider JSON or a pre-grouped batch. A snapshot is rejected when
+`threadId`, scope, cursor coverage or lineage does not agree; the adapter emits a blocked
+diagnostic instead of guessing a default scope.
+
+### 5.2 Renderer registry contract
+
+The registry is a closed, exhaustive map. Adding a projection kind requires adding its item
+type, renderer key, semantic fixture and renderer before the code can typecheck.
+
+```ts
+type ConversationTimelineRendererContext = {
+  readonly depth: 0 | 1;
+  readonly density: "default" | "dense";
+  readonly callbacks: ConversationTimelineCallbacks;
+  readonly focusItem: (itemId: string) => void;
+};
+
+type ConversationTimelineRenderer<K extends ConversationTimelineItemKind> = (
+  item: Extract<ConversationTimelineItem, { readonly kind: K }>,
+  context: ConversationTimelineRendererContext,
+) => React.ReactNode;
+
+const rendererRegistry: {
+  readonly [K in ConversationTimelineItemKind]:
+    ConversationTimelineRenderer<K>;
+};
+```
+
+The renderer may derive labels, bounded details and accessibility attributes from its typed
+payload. It may not sort items, fetch data, call a Host mutation, infer a missing action or
+decide whether a turn/fan-in is complete. A Host mutation is initiated only by a callback that
+contains the owning item's lineage.
 
 ## 6. Closed item and renderer contract
 
@@ -333,6 +412,31 @@ The DOM id, action id and disclosure state remain stable across revision updates
 reconnect and daemon restart. A terminal fence accepts one terminal result and rejects
 stale/equal-conflict/late events from the visible projection.
 
+### 10.1 Evidence fold algorithm
+
+`EvidenceFold` is the only place that turns lifecycle events into a live action revision. It is
+deterministic for a given event sequence and can be rebuilt after reconnect or daemon restart.
+
+```text
+for event in events ordered by durable sequence:
+  if event.actionId is absent or lineage is incomplete:
+    append audit diagnostic; do not create a successful row
+  else if event.revision <= current.revision:
+    append duplicate/stale audit; keep current row
+  else if current.terminalFence exists:
+    append late-event audit; keep terminal row closed
+  else:
+    accept event into action state
+    current.revision = event.revision
+    if event.kind == tool_end:
+      current.terminalFence = event.sequence
+```
+
+The fold preserves the first accepted terminal result. An equal-revision event with a different
+payload is a conflict diagnostic, not a last-write-wins update. An accepted `tool_update`
+invalidates by `{threadId, runId, actionId, revision}` so a UI refresh cannot fall back to a
+coarse run key and show stale output.
+
 ## 11. Command output and file diff
 
 - Active command detail is open by default and updates in the same row.
@@ -371,6 +475,30 @@ Batch identity is stable and display-only:
 
 Expanding restores the exact child order and child source refs. Batch count, status and
 visibility never participate in TerminalReport, retry or fan-in.
+
+The implementation returns a split reason for every boundary. This is test/debug data only;
+it is never persisted or shown as a second activity row.
+
+```ts
+type BatchSplitReason =
+  | "narration"
+  | "kind"
+  | "participant"
+  | "run"
+  | "attempt"
+  | "workflow_step"
+  | "context_scope"
+  | "approval"
+  | "retry"
+  | "non_terminal"
+  | "consequential"
+  | "missing_lineage";
+```
+
+The pure projection walks atomic items once. It starts a candidate at the first eligible item,
+flushes on the first split reason, and emits a batch header only when the candidate has at least
+three children. Expanding a header maps directly to the stored atomic item ids, so the operation
+is reversible even if a later source update changes the visible status of a neighboring action.
 
 ## 13. Reply and execute outcome
 
@@ -443,6 +571,28 @@ Forbidden differences:
 - batching thresholds;
 - outcome selection;
 - history scroll ownership.
+
+The adapter boundary is intentionally small:
+
+```ts
+type ResolvedConversationSurface = {
+  readonly threadId: string;
+  readonly scope: ConversationTimelineScope;
+  readonly policy: ConversationSurfacePolicy;
+  readonly chrome: ConversationSurfaceChrome;
+  readonly snapshot: TimelineSnapshot;
+  readonly callbacks: ConversationTimelineCallbacks;
+};
+
+function mountConversationTimeline(
+  surface: ResolvedConversationSurface,
+): React.ReactElement;
+```
+
+Normal, private and channel/topic/branch callers must all invoke this function once. The caller
+may choose a title, roster, permission policy and Host callback availability; it may not provide
+another item array, row renderer, batch function, status mapper or scroll container. This is the
+mechanical check that turns “统一组件” from a visual intention into a code-level boundary.
 
 The parity fixture compares `kind/order/status/rendererKey/disclosureCount/geometry`. A
 surface that passes only a screenshot but produces a different fingerprint fails cutover.
@@ -619,3 +769,41 @@ logs.redacted.txt     event and error evidence without secrets
 Unresolved product or architecture decisions: none. Implementation findings that require a
 different kind, owner, completion rule, Thread mapping or Host permission boundary must update
 the typed transcript design and this document before code diverges.
+
+## 25. v3.9.1 implementation lock
+
+This addendum is the handoff from design to implementation. It does not change the v3.9 data
+model or introduce compatibility behavior.
+
+### 25.1 First implementation slice
+
+Implement in this order and stop after each gate:
+
+1. `ConversationTimelineItemKind` and renderer registry compile exhaustively;
+2. `EvidenceFold` accepts/rejects lifecycle events with stable action identity;
+3. canonical projector produces atomic items and terminal-result join;
+4. display batching consumes atomic items and returns split reasons;
+5. one shared Timeline mounts in a fixture-only surface;
+6. only after fixture parity passes, cut over normal/private/channel/child surfaces.
+
+No CSS change is an acceptable substitute for a failed earlier gate. A phase is complete only
+when its semantic tests and the relevant `data-conversation-timeline-*` selectors pass.
+
+### 25.2 Required fixture shape
+
+The fixture must include one reply turn, one execute turn, a live command update, a file diff,
+an approval, a nested child narration/action, a failed attempt followed by retry, a partial
+fan-in and a depth-2 blocked child. The same fixture is projected for normal, private, channel,
+topic, branch and depth-1 child scopes. The expected fingerprint differs only in the explicitly
+allowed shell/participant fields.
+
+### 25.3 Explicit stop conditions
+
+Stop and update the design before coding when any implementation proposal would:
+
+- add a second SQLite session/batch/summary table;
+- let model text create a fact or completion result;
+- render the same `actionId` outside its owning Timeline row;
+- let batch count, plan progress or `ready/done` text settle fan-in;
+- add a surface-specific renderer, Markdown parser or vertical scroll owner;
+- navigate a path without a Host capability and lineage check.

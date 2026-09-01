@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.9（extends the v3.8 contract）；Codex-parity component detailed design 已补齐；D0 contract/result-anchor slice 正在实现、尚未验收，E1–E6 仍待完成
+Status: normative design v3.9.1（extends the v3.9 contract）；Codex-parity component detailed design 已补齐；D0 contract/result-anchor slice 正在实现、尚未验收，E1–E6 仍待完成
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（实现 worktree 已同步；实现进行中）
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -16,7 +16,9 @@ Owner: Conversation UI、conversation-ui-core、daemon runtime maintainers
 [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)，表面词汇见
 [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)。这两个文档定义存储和路由
 边界；本文件只定义它们如何投影成同一 typed transcript。
-旧版方案保留在 Git 历史，不再作为实现入口。
+旧版方案保留在 Git 历史，不再作为实现入口。组件级快照边界、exhaustive renderer
+registry、EvidenceFold 算法和 surface adapter 的实现接口见组件细设计 §5.1–§5.2、§10.1、
+§15 及 §25；这些接口不改变本文件定义的事实、lineage、completion 或 recovery 权威。
 
 ## 1. 目标
 
