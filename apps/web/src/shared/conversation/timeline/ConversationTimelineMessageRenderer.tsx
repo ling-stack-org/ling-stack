@@ -2,6 +2,7 @@ import type {
   ConversationTrustedSourceRef,
   ConversationTimelineMessageItem,
 } from "@ling-stack/conversation-ui-core";
+import { conversationTimelineRendererKey } from "@ling-stack/conversation-ui-core";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import { LocalFileLink } from "../blocks/LocalFileLink.js";
 import type { LocalFileReference } from "../tokens/message-body.js";
@@ -31,6 +32,7 @@ export function ConversationTimelineMessageRenderer({
       className={`conversation-timeline-message ${item.kind}`}
       data-conversation-timeline-message
       data-conversation-timeline-kind={item.kind}
+      data-conversation-timeline-renderer-key={conversationTimelineRendererKey(item.kind)}
       data-conversation-timeline-id={item.id}
       data-conversation-timeline-revision={item.revision}
       data-conversation-timeline-status={item.status ?? "unknown"}

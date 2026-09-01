@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import {
+  conversationTimelineRendererKey,
   fingerprintConversationTimeline,
   type ConversationTrustedSourceRef,
   type ConversationTimelineItem,
@@ -139,6 +140,7 @@ function SubAgentTimelineItem({
       className={["conversation-timeline-sub-agent", `lifecycle-${item.lifecycle}`].join(" ")}
       data-conversation-timeline-sub-agent="true"
       data-conversation-timeline-kind="subAgentActivity"
+      data-conversation-timeline-renderer-key={conversationTimelineRendererKey("subAgentActivity")}
       data-conversation-timeline-id={item.id}
       data-conversation-timeline-revision={item.revision}
       data-conversation-timeline-status={item.status ?? item.lifecycle}

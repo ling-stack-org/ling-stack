@@ -506,6 +506,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         surface={channelSurface}
         className="channel-message-row conversation-turn-assistant-row"
         authorType="ai-teammate"
+        tone="document"
         avatar={anchorMessage ? renderChannelMessageAvatar(anchorMessage) : renderLingAgentAvatar()}
         authorName={authorName}
         createdAtLabel={formatDateTime(createdAt)}
@@ -1180,6 +1181,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             surface={channelSurface}
             className="channel-message-row pending-send"
             authorType="local-user"
+            tone="document"
             avatar={<UserProfileAvatar profile={input.userProfile} fallbackLabel={input.localUserDisplayName} />}
             authorName={input.localUserDisplayName}
             createdAtLabel={formatDateTime(preview.createdAt)}
@@ -1202,6 +1204,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         surface={channelSurface}
         className="channel-message-row channel-send-thinking-message"
         authorType="ai-teammate"
+        tone="document"
         avatar={renderLingAgentAvatar()}
         authorName={input.t("Ling Agent")}
         body={input.t("Thinking...")}

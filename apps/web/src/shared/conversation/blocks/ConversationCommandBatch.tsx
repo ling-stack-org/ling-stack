@@ -1,6 +1,6 @@
 import { ChevronDown, SquareTerminal } from "lucide-react";
 import type { ReactNode } from "react";
-import type { ConversationTimelineCommandBatchItem } from "@ling-stack/conversation-ui-core";
+import { conversationTimelineRendererKey, type ConversationTimelineCommandBatchItem } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 
@@ -33,6 +33,7 @@ export function ConversationCommandBatch({
     <section
       className={`conversation-command-batch density-${density} ${disclosure.expanded ? "expanded" : "collapsed"}`}
       data-conversation-timeline-kind="commandBatch"
+      data-conversation-timeline-renderer-key={conversationTimelineRendererKey("commandBatch")}
       data-conversation-timeline-id={batch.id}
       data-conversation-timeline-revision={revision ?? 0}
       data-conversation-timeline-status="succeeded"

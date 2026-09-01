@@ -11,6 +11,7 @@
   gap: 10px;
   min-width: 0;
   max-width: 100%;
+  overflow: visible;
 }
 
 /* The page/feed owns scrolling.  Never turn a nested Timeline into a second
@@ -23,15 +24,16 @@
   padding-inline-end: 0;
 }
 
-/* Large display-only batches may scroll inside their disclosed detail.  The
- * atomic facts remain present in the batch payload and can still be inspected. */
+/* Disclosure stays in normal document flow. The feed is the only vertical
+ * scroll owner; full output is bounded by the evidence projector or opens in
+ * the trusted artifact viewer rather than creating a nested terminal. */
 .conversation-command-batch[data-conversation-batch-density="large"] .conversation-command-batch-list,
 .conversation-exploration-batch[data-conversation-batch-density="large"] .conversation-exploration-batch-list {
-  max-height: min(240px, 35vh);
-  overflow-y: auto;
-  overscroll-behavior: contain;
-  scrollbar-gutter: stable;
-  padding-inline-end: 4px;
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
+  scrollbar-gutter: auto;
+  padding-inline-end: 0;
 }
 
 .conversation-timeline-activity {
@@ -82,8 +84,8 @@
 }
 
 .conversation-timeline-output {
-  max-height: 240px;
-  overflow: auto;
+  max-height: none;
+  overflow: visible;
 }
 
 .conversation-timeline-sub-agent {
@@ -106,8 +108,4 @@
     scroll-behavior: auto;
   }
 
-  .conversation-command-batch[data-conversation-batch-density="large"] .conversation-command-batch-list,
-  .conversation-exploration-batch[data-conversation-batch-density="large"] .conversation-exploration-batch-list {
-    scroll-behavior: auto;
-  }
 }

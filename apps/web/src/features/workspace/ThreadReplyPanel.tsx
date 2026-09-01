@@ -92,6 +92,7 @@ export function ThreadReplyPanel({
               key={reply.id}
               className={replyIsOwn ? "thread-reply-item thread-reply-own" : "thread-reply-item"}
               authorType={reply.authorType}
+              tone={reply.authorType === "system" ? "system" : "document"}
               authorName={messageAuthorLabel(reply, teammates)}
               statusNode={reply.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
               bodyNode={editing ? (

@@ -23,7 +23,7 @@ export function fingerprintConversationTimeline(
   const visit = (item: ConversationTimelineItem): void => {
     itemKinds.push(item.kind);
     itemIds.push(item.id);
-    rendererKeys.push(rendererKeyForKind(item.kind));
+    rendererKeys.push(conversationTimelineRendererKey(item.kind));
     if (hasDisclosure(item.kind)) disclosureCount += 1;
     if (item.kind === "commandBatch") {
       item.batch.commands.forEach(visit);
@@ -38,7 +38,8 @@ export function fingerprintConversationTimeline(
   return { rendererKeys, itemKinds, itemIds, disclosureCount };
 }
 
-function rendererKeyForKind(kind: ConversationTimelineItemKind): string {
+/** Stable dotted renderer key shared by fingerprinting and DOM semantics. */
+export function conversationTimelineRendererKey(kind: ConversationTimelineItemKind): string {
   if (kind === "userMessage" || kind === "agentMessage") return "message.document";
   if (kind === "reasoning") return "message.reasoning";
   if (kind === "plan") return "fact.plan";
@@ -49,6 +50,7 @@ function rendererKeyForKind(kind: ConversationTimelineItemKind): string {
   if (kind === "approval") return "fact.approval";
   if (kind === "imageView") return "fact.image";
   if (kind === "contextCompaction") return "system.compaction";
+  if (kind === "terminalReport") return "result.terminal";
   if (kind === "protocolEvent") return "fact.protocol";
   if (kind === "subAgentActivity") return "agent.nested";
   if (kind === "commandBatch") return "batch.command";

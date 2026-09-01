@@ -1,5 +1,8 @@
 import type { ReactNode } from "react";
 import { CheckCircle2, CircleAlert } from "lucide-react";
+import {
+  conversationTimelineRendererKey,
+} from "@ling-stack/conversation-ui-core";
 import type {
   ConversationOperationSourceRef,
   ConversationTrustedSourceRef,
@@ -54,6 +57,7 @@ export function TimelineFactRow({
       data-conversation-timeline-activity
       data-conversation-timeline-item={item.kind}
       data-conversation-timeline-kind={item.kind}
+      data-conversation-timeline-renderer-key={conversationTimelineRendererKey(item.kind)}
       data-conversation-timeline-id={item.id}
       data-conversation-timeline-item-id={item.id}
       data-conversation-timeline-revision={item.revision}

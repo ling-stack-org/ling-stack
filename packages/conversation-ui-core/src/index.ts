@@ -51,6 +51,7 @@ export {
 export type { ActiveRunSnapshot, TimelineSnapshot } from "./timeline-snapshot.js";
 export { createTimelineSnapshot } from "./timeline-snapshot.js";
 export {
+  conversationTimelineRendererKey,
   fingerprintConversationTimeline,
 } from "./timeline-fingerprint.js";
 export type {
