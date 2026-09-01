@@ -9,6 +9,10 @@ export interface ConversationSourceRefScope {
   readonly runId?: string;
   readonly actionId?: string;
   readonly participantId?: string;
+  /** Current daemon epoch; a restart invalidates previously minted refs. */
+  readonly daemonEpoch?: string;
+  /** Injectable clock for deterministic tests; defaults to Date.now(). */
+  readonly now?: string | number | Date;
 }
 
 /** A capability minted by the trusted Host/daemon after path validation. */
@@ -23,6 +27,10 @@ export interface ConversationHostSourceCapability {
   readonly runId?: string;
   readonly actionId?: string;
   readonly participantId?: string;
+  readonly attemptId?: string;
+  readonly issuedAt?: string;
+  readonly expiresAt?: string;
+  readonly daemonEpoch?: string;
 }
 
 /**
@@ -39,7 +47,9 @@ export function isTrustedSourceRef(
     (ref.hostTarget === "open_file" ||
       ref.hostTarget === "open_diff" ||
       ref.hostTarget === "open_artifact" ||
-      ref.hostTarget === "open_run"),
+      ref.hostTarget === "open_run") &&
+    typeof ref.capabilityId === "string" &&
+    ref.capabilityId.trim().length > 0,
   );
 }
 
@@ -83,6 +93,7 @@ export function upgradeConversationSourceRef(
   scope: ConversationSourceRefScope,
 ): ConversationTrustedSourceRef | undefined {
   if (!ref || !capability || !isTrustedSourceRef(capability)) return undefined;
+  if (!isCapabilityActive(capability, scope)) return undefined;
   if (capability.workspaceId !== scope.workspaceId || capability.threadId !== scope.threadId) return undefined;
   if (scope.runId && capability.runId !== scope.runId) return undefined;
   if (scope.actionId && capability.actionId !== scope.actionId) return undefined;
@@ -97,4 +108,28 @@ export function upgradeConversationSourceRef(
     capabilityId: capability.capabilityId,
     workspaceId: capability.workspaceId,
   };
+}
+
+/**
+ * Host capability freshness check shared by all surfaces. The renderer must
+ * not open a stale ref after a daemon restart or a TTL expiry.
+ */
+export function isCapabilityActive(
+  capability: ConversationHostSourceCapability,
+  scope: Pick<ConversationSourceRefScope, "daemonEpoch" | "now"> = {},
+): boolean {
+  if (!capability.capabilityId.trim()) return false;
+  if (capability.expiresAt) {
+    const expiresAt = Date.parse(capability.expiresAt);
+    if (!Number.isFinite(expiresAt) || expiresAt <= nowEpochMs(scope.now)) return false;
+  }
+  if (scope.daemonEpoch && capability.daemonEpoch !== scope.daemonEpoch) return false;
+  return true;
+}
+
+function nowEpochMs(value: string | number | Date | undefined): number {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value === "number") return value;
+  if (typeof value === "string") return Date.parse(value);
+  return Date.now();
 }

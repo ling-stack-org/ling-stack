@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   isTrustedFileSourceRef,
+  isCapabilityActive,
   trustedFileSourceRefForPath,
   upgradeConversationSourceRef,
 } from "../src/shared/conversation/timeline/source-ref.ts";
@@ -48,4 +49,27 @@ test("source-ref adapter refuses a capability from another transcript scope", ()
     threadId: "thread-1",
     runId: "run-1",
   })?.capabilityId, "cap-1");
+});
+
+test("source-ref adapter rejects expired or daemon-stale capabilities", () => {
+  const capability = {
+    kind: "file",
+    id: "host-file",
+    path: "src/parser.ts",
+    hostTarget: "open_file",
+    capabilityId: "cap-1",
+    workspaceId: "workspace-1",
+    threadId: "thread-1",
+    daemonEpoch: "epoch-1",
+    issuedAt: "2026-09-01T00:00:00.000Z",
+    expiresAt: "2026-09-01T00:05:00.000Z",
+  };
+  assert.equal(isCapabilityActive(capability, { daemonEpoch: "epoch-1", now: "2026-09-01T00:04:59.000Z" }), true);
+  assert.equal(isCapabilityActive(capability, { daemonEpoch: "epoch-1", now: "2026-09-01T00:05:00.000Z" }), false);
+  assert.equal(isCapabilityActive(capability, { daemonEpoch: "epoch-2", now: "2026-09-01T00:04:00.000Z" }), false);
+  assert.equal(upgradeConversationSourceRef(
+    { kind: "path", id: "model-path", path: "src/parser.ts" },
+    capability,
+    { workspaceId: "workspace-1", threadId: "thread-1", daemonEpoch: "epoch-2", now: "2026-09-01T00:04:00.000Z" },
+  ), undefined);
 });
