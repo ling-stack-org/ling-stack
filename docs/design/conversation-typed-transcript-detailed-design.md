@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.9.1（extends the v3.9 contract）；Codex-parity component detailed design 已补齐；D0 contract/result-anchor slice 正在实现、尚未验收，E1–E6 仍待完成
+Status: normative design v3.9.1-final（extends the v3.9 contract）；Codex-parity component detailed design 已锁定；D0 contract/result-anchor slice 与 E2 display projection 已落地到实现 worktree、尚未验收，E1–E6 仍待完成
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（实现 worktree 已同步；实现进行中）
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -103,6 +103,129 @@ shell chrome   = header / EnvironmentPopover / Composer，不拥有历史事实
 
 因此“右侧方形消息”“Composer 下重复总结”“子 Agent 乱码或只有 ready 文本”都属于
 契约违例，不是可以由 CSS 局部修补的视觉偏好。
+
+### 1.4 v3.9.1-final 实现锁（开工者的一页合同）
+
+这组规则是实现和 code review 的第一输入。后面的章节提供推导和边界，但不得重新解释
+下面的 owner、顺序或完成权威。开发阶段允许一次性破坏旧的未发布渲染契约：不保留旧
+WorkCell renderer、双写、feature flag 或“先兼容一下”的第二条路径。
+
+#### 1.4.1 唯一数据流
+
+```text
+SQLite conversation_items + RunEvent/ExecutionAction + Approval/Artifact
+                              + SSE delta
+                                      │
+                                      ▼
+                         TimelineSourceSnapshot
+                                      │  scoped coverage/cursor
+                                      ▼
+                               EvidenceFold
+                         actionId/revision/fence
+                                      │
+                                      ▼
+                     CanonicalTranscriptProjector
+                  owner/attempt/order/lineage/result join
+                                      │
+                                      ▼
+                         atomic TimelineSnapshot
+                                      │
+                                      ▼
+                      reversible display projection
+                         (command/exploration batch)
+                                      │
+                                      ▼
+                    ConversationTimeline + registry
+```
+
+每一层只做一件事：source 读事实，fold 折叠生命周期，projector 生成原子 item，batch
+只做展示压缩，Timeline 只渲染。React 不读取 raw source；surface 不排序、拼接或判断
+完成；batch 不参与 completion、retry、fan-in 或 context；Composer/Popover/Right Dock
+不拥有历史事实。
+
+#### 1.4.2 三层命名和一个 owning row
+
+```text
+wire kind（snake_case）
+  -> contract adapter
+projection kind（camelCase closed union）
+  -> renderer registry
+stable rendererKey（dotted key）
+```
+
+所有事实 item 必须带 `actionId + runId + attemptId + participantId + workflowStepId`
+（`workflowStepId=null` 表示 Host 明确没有 step）和 `sourceRefs`。同一 `actionId` 在
+`tool_start → tool_update → tool_end`、SSE 重连和 daemon 重启中只有一个 owning row；
+只更新 `revision/status/detail`。迟到、重复或同 revision 冲突事件进入 audit/diagnostic，
+不得重新打开终态或追加第二行。
+
+#### 1.4.3 统一时间线和视觉配方
+
+```text
+ConversationSurfaceShell
+├─ Header（标题、参与者、policy hint）
+├─ ConversationFeedViewport       唯一 overflow-y/scroll owner
+│  └─ ConversationTimeline         普通文档流
+│     ├─ document lane：user/agent/reasoning/plan/Markdown
+│     ├─ fact rail：command/file/tool/approval/protocol
+│     ├─ result：execute turn 的唯一 terminalReport
+│     └─ nested rail：depth=1 子 Agent，同一 registry
+├─ EnvironmentPopover              只显示 active action 两行
+└─ Composer                        输入、停止、重试、审批控制
+```
+
+文档 lane 左对齐、无气泡卡片；事实 row 使用 `icon + 动作动词 + 文本状态 + 一个
+disclosure`；成功历史默认收敛，`Working/Waiting/Failed/Blocked` 提高视觉重量但不
+改变行类型。代码保留换行和缩进；模型路径只显示 basename + icon + tooltip/copy，只有
+带 Host capability 的 source ref 才能打开文件、diff 或 artifact。任何 row/detail 不得
+创建第二个纵向滚动容器。
+
+#### 1.4.4 Reply、execute 和多 Agent
+
+```text
+reply turn
+  └─ agentMessage(presentationRole=reply_result)
+
+execute turn
+  ├─ narration（可有多条 agentMessage/reasoning/plan）
+  ├─ atomic Host facts（command/file/tool/approval）
+  └─ outcome slot：Finalizing → terminalReport | diagnostic(blocked)
+```
+
+`execution_summary`、plan 进度、batch 数量和“我会执行/ready/done”都是叙述或辅助
+信息，不能证明动作或任务完成。`terminalReport` 只由 Completion Gate 读取 atomic
+evidence 后发布一次；fan-in 只有所有 required participant evidence 到齐，或缺失者均
+有结构化 blocked，才允许 settle。
+
+子 Agent 是 `subAgentActivity` participant span，不是另一套聊天产品。child narration
+是 `agentMessage`，child command/file/tool 复用完全相同的 renderer；只增加 participant
+label、1px rail 和 8px inset。可见深度最大为 1，depth=2 输出
+`diagnostic(nested_depth_exceeded)`，不创建第三个 Timeline 或滚动区。
+
+#### 1.4.5 三种 surface 的唯一差异
+
+normal、teammate-private、channel root/topic/branch 和 child 都解析到真实
+`LingThread.id`，加载同一种 `TimelineSnapshot`，调用一次 `mountConversationTimeline`。
+允许不同的只有 title、roster、topic/branch chrome、participant rail、权限和 callback
+可用性；`itemKinds/order/status/rendererKey/disclosure/row geometry/scroll owner` 必须
+相同。Topic/Branch 不复制 parent transcript；不得用 `channel:<id>`、`topic:<id>` 或
+message id 充当 transcript thread。
+
+#### 1.4.6 实现闸门
+
+```text
+D0 contract + fixture
+  → E1 evidence fold + invalidation
+  → E2 atomic projector + reversible batch
+  → E3 shared Timeline + Host viewer
+  → E4 normal/private/channel/topic/branch/child cutover
+  → E5 approval/retry/reconnect/restart/fan-in recovery
+  → E6 packaged macOS real UI evidence
+```
+
+闸门按顺序关闭，任何一层失败都回到该层修复，不能用 CSS、截图或模型文本遮盖。E6
+只有在每个案例同时拥有 `simulation=false`、build hash、截图、semantic-state、lineage
+和脱敏日志时才通过。Windows 不属于本轮验收范围。
 
 ## 2. 明确不做的事
 

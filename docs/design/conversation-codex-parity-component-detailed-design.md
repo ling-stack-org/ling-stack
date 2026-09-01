@@ -1,7 +1,7 @@
 # Conversation Codex-Parity Component Detailed Design
 
-Status: normative component implementation contract v3.9.1; implementation is in progress,
-not yet accepted. E2 split-reason/expansion contract is now explicit.
+Status: normative component implementation contract v3.9.1-final; implementation is in progress,
+not yet accepted. E2 split-reason/expansion contract is now explicit; E3/E4 cutover remains open.
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Scope: normal conversation, teammate private chat, channel root/topic/branch, depth-1
@@ -840,3 +840,140 @@ Stop and update the design before coding when any implementation proposal would:
 - let batch count, plan progress or `ready/done` text settle fan-in;
 - add a surface-specific renderer, Markdown parser or vertical scroll owner;
 - navigate a path without a Host capability and lineage check.
+
+## 26. v3.9.1-final 开工细设计
+
+本节把上面的组件合同压缩成实现者可以逐个勾选的接口和停止条件。它不增加新的事实
+来源，也不允许在 route 内复制 Timeline。
+
+### 26.1 唯一 mount 入口
+
+所有 surface 先把自己的路由状态解析成 `ResolvedConversationSurface`，再调用一次：
+
+```ts
+type ResolvedConversationSurface = {
+  readonly kind: "normal" | "private" | "channel_root" | "topic" | "branch" | "child";
+  readonly threadId: string;              // real LingThread.id
+  readonly parentThreadId: string | null;
+  readonly anchorItemId: string | null;
+  readonly depth: 0 | 1;
+  readonly snapshot: TimelineSnapshot;
+  readonly policy: ConversationInteractionPolicy;
+  readonly chrome: ConversationSurfaceChrome;
+  readonly callbacks: ConversationTimelineCallbacks;
+};
+
+function mountConversationTimeline(
+  surface: ResolvedConversationSurface,
+): React.ReactElement;
+```
+
+`mountConversationTimeline` 内部只做 `snapshot → display projection → registry render`。
+caller 不能传入第二个 message/action/report 数组，也不能传入自己的排序器、状态映射、
+batch 函数、Markdown parser、scroll container 或 completion callback。Topic/Branch 的
+adapter 必须提供真实 child `LingThread.id` 和 anchor；解析失败就返回
+`diagnostic(scope_mismatch)`，禁止回退到 parent feed。
+
+### 26.2 Registry 和 row renderer
+
+registry 必须 exhaustive；React 层只接受 projection kind，不接受 wire kind：
+
+```ts
+type RendererContext = {
+  readonly depth: 0 | 1;
+  readonly density: "default" | "dense";
+  readonly focusItem: (itemId: string) => void;
+  readonly onOpenSourceRef: (
+    ref: ConversationTrustedSourceRef,
+    lineage: ConversationTimelineItemLineage,
+  ) => Promise<void>;
+};
+
+const rendererRegistry: {
+  readonly [K in ConversationTimelineItemKind]: (
+    item: Extract<ConversationTimelineItem, { readonly kind: K }>,
+    context: RendererContext,
+  ) => React.ReactNode;
+};
+```
+
+每个 renderer 只构造自己的 `DocumentBlock`、`FactRow` 或 `ResultRow`；不能调用 daemon、
+读 SQLite、判断 fan-in 或创建 side effect。`FactRow` 的标题和状态只能由 typed Host
+payload 生成；缺少 action/lineage/source ref 时返回 `Activity unavailable · Blocked`。
+当前迁移期保留的 `renderFactActions` 必须限定为 focus/open callback；E4 后删除该 slot，
+审批、stop、retry 只在 Composer/approval gate 出现一次。
+
+### 26.3 一次 render cycle 的确定性算法
+
+```text
+source snapshot (immutable)
+  -> fold event map by actionId
+  -> project canonical items in threadSequence/partIndex order
+  -> attach highest committed terminalReport by turnId
+  -> project reversible batches (optional)
+  -> map each visible item to exactly one renderer key
+  -> emit semantic DOM selectors
+```
+
+不允许在 renderer 内做 N+1 读取或按文案相似度去重。`fingerprint` 只包含
+`kind/order/status/rendererKey/disclosureCount/lineage ids/scrollOwnerCount`；不包含
+颜色、翻译、标题或 shell。这样 normal/private/channel/topic/branch/child 可以在同一
+fixture 上直接比较语义，而不被表面文案干扰。
+
+### 26.4 交互状态机
+
+```text
+Queued ──start──> Working ──update──> Working
+   │                         │
+   ├─approval──> Waiting for approval ──allow──> Working
+   │                                      ├─deny/expired──> Blocked
+   ├─end(0)──> Succeeded
+   ├─end(non-zero)──> Failed ──retry──> new attempt / old audit
+   └─cancel──> Cancelled
+```
+
+一个 row 的 DOM id 与 `actionId` 不随 revision 改变。terminal fence 后只接受同一终态的
+幂等重放；迟到 event 只产生 audit diagnostic。SSE reconnect/daemon restart 重新 fold
+durable events，恢复同一 id/revision/fence，不追加“已恢复”消息。
+
+### 26.5 子 Agent 组合
+
+```text
+SubAgentActivity(depth=1)
+  ├─ participant label + lifecycle + 1px rail
+  └─ ConversationTimeline(depth=1, child snapshot)
+       ├─ agentMessage / reasoning / plan
+       ├─ command/file/tool fact rows
+       └─ terminalReport（若 child execute turn 有自己的结果）
+```
+
+父级只负责 participant span 和 fan-in；child 可以有正常 `agentMessage` 叙述，但不能用
+`ready/done` 文本代替事实。没有 required evidence 时父级显示 `Waiting`；depth=2 显示
+结构化 `diagnostic(nested_depth_exceeded)`，不得继续嵌套或建立第二个 scroll owner。
+
+### 26.6 Host viewer callback
+
+```text
+display-only path -> basename/icon + tooltip/copy
+trusted source ref -> issue capability -> click -> redeem
+  -> workspace/thread/run/action/participant/step/epoch/TTL/realpath 校验
+  -> file/diff/artifact viewer
+```
+
+callback 必须携带 renderer 当前 item 的完整 lineage，不能只传字符串路径。daemon 重启
+会使旧 capability 失效，但不会删除 Timeline 事实；下一次点击重新签发。失败仍保留
+copy affordance，并在 owning row 内显示 blocked detail。
+
+### 26.7 E3/E4 的机械退出条件
+
+只有同时满足下面条件，才能删除旧 caller：
+
+1. registry 对 closed union exhaustive，未知 kind 和缺 lineage 都是 blocked diagnostic；
+2. 三种 surface 与 child fixture 的 fingerprint 相同，且 Feed `scrollOwnerCount=1`；
+3. `tool_update` 原地更新，batch 可展开恢复 exact child ids/source refs；
+4. Composer、Popover、Right Dock 没有 action/result/summary duplicate owner；
+5. Host viewer 的 capability issue/redeem 在真实 callback 上通过 scope/epoch/TTL/realpath；
+6. component/semantic tests 通过后，才移除 `ConversationWorkCell` activity caller 和
+   `renderFactActions` 的注入能力。
+
+任何一个条件未满足都停在 E3/E4 修复，不通过 CSS 隐藏或保留第二套兼容 renderer。

@@ -1,6 +1,6 @@
-# Codex-style Typed Transcript v3.9.1：实现计划
+# Codex-style Typed Transcript v3.9.1-final：实现计划
 
-Status: implementation plan；v3.9.1 组件级细设计已锁定，D0 contract/result-anchor slice 与 E2 split-reason slice 正在实现、尚未验收；E1–E6 按顺序推进，packaged macOS 验收仍待执行
+Status: implementation plan；v3.9.1-final 组件级细设计已锁定，D0 contract/result-anchor slice 与 E2 split-reason slice 已落地到实现 worktree、尚未验收；E1–E6 按顺序推进，packaged macOS 验收仍待执行
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（已核对远端无新提交）
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -19,7 +19,7 @@ v3.7 新增一条实现硬门槛：所有 surface 和子 Agent 必须通过同�
 `mountConversationTimeline` 组合入口；不能通过复制 JSX、复用旧 WorkCell 或在 Composer/
 EnvironmentPopover 中补渲染来“看起来统一”。
 
-v3.9.1 只补接口级组件实现细节，不改变 v3.9 的事实权威和存储边界：SQLite 仍是 durable facts，
+v3.9.1-final 只补接口级组件实现细节，不改变 v3.9 的事实权威和存储边界：SQLite 仍是 durable facts，
 batch 仍是 display-only，`terminalReport` 仍是 execute turn 的唯一结果。实现者必须先
 按本文的 work package 交付 evidence、projection、renderer、surface、recovery、packaged
 macOS 六层，不能从某个页面的 CSS 或一段模型文本开始。
@@ -96,7 +96,7 @@ contract adapter 映射为 core 的 `camelCase` projection kind，再映射为�
 标注为 migration input 的章节或明确的兼容别名说明；`node scripts/check-markdown-links.mjs` 和
 `git diff --check` 通过。D0 未通过时不进入 E1，也不删除旧 caller。
 
-**D0 当前状态（2026-09-01）**：五份权威文档已同步到 v3.9.1 contract；实现 worktree
+**D0 当前状态（2026-09-01）**：五份权威文档已同步到 v3.9.1-final contract；实现 worktree
 已有 `terminal_report` closed-union、Host `presentationRole`、`result_item_id` migration、
 原子 publication item、纯 projector 的最高 generation join 和 `result.terminal` renderer
 key WIP。已通过的最近窄范围证据为 contracts `50/50`、UI-core `88/88`、core `460/460`
@@ -837,7 +837,7 @@ rg -n "publishedMessageId|renderTerminalReportMarkdown|kind:\s*\"assistant_messa
 设计层还必须保证 `TimelineSnapshot` 只有一个 canonical 定义；durable 原始记录只能使用
 `TimelineSourceSnapshot`，否则直接判定为 contract drift。
 
-## 4.8 v3.9.1 实现启动板（从现在开始）
+## 4.8 v3.9.1-final 实现启动板（从现在开始）
 
 设计已经可以开工。下面是按“先事实、后投影、再视觉、最后真实客户端”排列的执行板；
 每一项都有明确输入、代码边界和退出证据。除当前实现分支已有的 D0 WIP 外，不需要再
@@ -845,7 +845,7 @@ rg -n "publishedMessageId|renderTerminalReportMarkdown|kind:\s*\"assistant_messa
 
 ### WP-0：收口 D0 基线（立即执行）
 
-**输入**：`origin/main=63ab7c0e`、v3.9.1 五份设计、现有 contract/result-anchor WIP。
+**输入**：`origin/main=63ab7c0e`、v3.9.1-final 五份设计、现有 contract/result-anchor WIP。
 
 **动作**：
 
@@ -967,7 +967,7 @@ test(desktop): packaged macOS evidence cases
 先修改五份权威设计和 fixture，再修改代码。不能在实现分支里保留“临时兼容”作为第六
 种 renderer。
 
-## 4.9 v3.9.1 组件级落地清单
+## 4.9 v3.9.1-final 组件级落地清单
 
 本节把组件细设计翻译成可执行的文件和测试任务。实现者按阶段逐项勾选，不得把
 所有逻辑塞回 `ConversationWorkCell.tsx` 或某个 surface 页面。
@@ -1138,7 +1138,7 @@ thread/turn/run/attempt、daemon epoch。截图与语义/lineage/log 任一缺�
 按以下 commit 顺序推进，每个 commit 只触碰自身阶段文件：
 
 ```text
-docs(transcript): lock v3.9.1 component design
+docs(transcript): lock v3.9.1-final component design
 feat(transcript): fold host evidence and terminal fence
 feat(transcript): project atomic timeline and reversible batches
 refactor(web): mount shared timeline and host viewers
@@ -1151,7 +1151,7 @@ test(desktop): capture packaged macOS evidence
 Host capability 边界的实现，必须先更新五份权威文档和 fixture；不允许在代码里加入
 “临时兼容”作为第六条路径。
 
-### 4.10 v3.9.1 开工细设计（实现者直接照此拆任务）
+### 4.10 v3.9.1-final 开工细设计（实现者直接照此拆任务）
 
 这一节把组件设计翻译成可执行的模块边界。它是本轮开工输入，不是新的架构层。
 
@@ -1239,6 +1239,56 @@ Agent Markdown（段落 + list + fenced code + path）
 同一案例还要在 SSE reconnect、daemon restart 后恢复为同一 action ids/revisions；
 EnvironmentPopover 只在 action active 时出现两行，终态后关闭；Composer 只保留输入和
 控制，不显示第二份 summary。没有这条连续证据链，截图只能算局部组件调试。
+
+## 4.11 v3.9.1-final 当前实现接续单
+
+设计已经锁定，下一步不是再开一个新的 v4 会话工程，而是在现有实现 worktree 继续收口。
+当前 worktree 中的未提交 WIP 不自动视为完成，也不应被 reset；实施时只按下面顺序逐片
+审查和提交。
+
+### 4.11.1 先做的三件事
+
+1. **E1 证据审计**：逐个核对 `tool_start/update/end` 的 `actionId`、revision、terminal
+   fence、late/duplicate/equal-conflict 处理和按 action 的 invalidation；补 SSE reconnect、
+   daemon restart 的同一 fingerprint 断言。
+2. **E3/E4 真实挂载**：把 normal、teammate-private、channel root/topic/branch 和 child
+   的 route adapter 收敛到一次 `mountConversationTimeline()`，删除生产 DOM 中的旧 WorkCell、
+   workflow skeleton、局部 status copy 和第二个 summary owner；迁移期的
+   `renderFactActions` 只允许 focus/source callback，parity 通过后删除。
+3. **E5/E6 验收闭环**：在真实 daemon/Host 上验证 capability issue/redeem、approval、
+   retry、fan-in 和 TerminalReport；再用 packaged macOS 采集完整证据 tuple。Windows 不在
+   本轮测试矩阵内。
+
+### 4.11.2 实施者不得改变的合同
+
+```text
+模型文本 = narration
+Host evidence = command/file/tool/approval/completion 的唯一事实
+batch = reversible display projection，不能落库或参与完成
+一个 actionId = 一个 owning row
+一个 execute turn = 一个 terminalReport outcome
+一个 surface = 一个 Feed viewport + 一个 ConversationTimeline
+child = depth-1，同一 registry；depth-2 = structured blocked
+```
+
+任何实现需要增加 session/batch/summary 表、保留双写/旧 renderer、让模型文本证明完成、
+让 batch count 参与 fan-in、让 surface 自己解析 Markdown/排序/滚动，或让 path 绕过 Host
+capability 时，必须先停止编码并更新本设计和 fixture。开发阶段允许直接切换到新合同，
+不接受“为了兼容旧客户端”而引入第六条路径。
+
+### 4.11.3 每个 PR 的最小交付格式
+
+```text
+1. contract/fixture 变化（如有）
+2. 实现代码（单一阶段边界）
+3. 对应 unit/component/integration test
+4. data-* semantic selector 断言
+5. lineage/action/revision evidence
+6. 未通过项和下一阶段阻塞原因
+```
+
+PR 只在对应阶段的测试和证据齐全后进入下一阶段；“截图看起来正确”不能替代事实来源、
+恢复或完成闸门。
 
 ## 5. 回归矩阵
 
@@ -1422,7 +1472,7 @@ renderer 和大范围 route cleanup 混成一个不可审查提交。
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | 未运行；本轮已把 Codex-parity 视觉契约写入 v3.7 规范 |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | 未运行 |
 
-**VERDICT:** DESIGN UPDATED — v3.9.1 已统一五份权威文档，并新增组件级 component tree、
+**VERDICT:** DESIGN UPDATED — v3.9.1-final 已统一五份权威文档，并新增组件级 component tree、
 renderer props、状态所有权、source-ref lineage、专用 viewer、唯一 surface cutover、原子
 recovery/fan-in 和执行板。实现尚未完成，
 必须按 E1→E6 清掉 4 个 P1 闸门后，才能称为 Codex-parity 完成。

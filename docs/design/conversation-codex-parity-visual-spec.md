@@ -1,6 +1,6 @@
 # Conversation Codex-Parity Visual Specification
 
-Status: normative visual contract v3.9.1（extends v3.9）；implementation-ready（截图必须附 semantic/lineage 证据）
+Status: normative visual contract v3.9.1-final（extends v3.9）；implementation-ready（截图必须附 semantic/lineage 证据）
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Related: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -974,3 +974,92 @@ status、revision 和 source ref 检查语义。
 的 `kind/order/status/rendererKey/disclosureCount/row geometry`。允许变化的只有 shell
 标题、roster、participant rail、权限提示和可用的 Host callback。任何 surface 重新定义
 `CommandRow`、Markdown parser、status copy、batch 函数或 scroll owner，都视为 parity 失败。
+
+## 16. v3.9.1-final 视觉实现锁
+
+这一节是 UI 开工时的默认答案，避免把 Codex 的“清楚”误解成复制颜色或把所有内容做成
+卡片。实现者只需要组合下面三种视觉 primitive：`DocumentBlock`、`FactRow`、`ResultRow`。
+`NestedRail` 只是布局 wrapper，不是第四种消息组件。
+
+### 16.1 三种 primitive
+
+```text
+DocumentBlock
+  author/meta（可选）
+  Markdown body（段落、list、quote、code、link、path）
+
+FactRow
+  16px icon · Host-derived verb + safe target · text status · one disclosure
+  optional bounded detail（原地展开）
+
+ResultRow
+  check/alert icon · Result · status · counters · one disclosure
+  execute turn only; reply turn never creates it
+```
+
+`FactRow` 不显示模型叙述，`DocumentBlock` 不伪装命令事实。一个 `actionId` 只能挂在一个
+`FactRow`（或一个可逆 batch header）上；batch 展开后恢复同一 child rows，不产生新的
+owner。`ResultRow` 是 execute turn 的唯一 outcome owner。
+
+### 16.2 详细几何和状态
+
+| 项目 | 固定规则 |
+| --- | --- |
+| 列布局 | 单列；document 和 fact 交错；所有 surface 左对齐 |
+| 正文宽度 | `max-width: 760px`，超宽窗口保持可读行长 |
+| 事实行 | `min-height: 28px`，16px icon，8px 间距，最多一个 disclosure |
+| 成功态 | 轻量无背景行，默认折叠 |
+| active/waiting | 同一行显示 `Working`/`Waiting`，默认打开 bounded detail |
+| failed/blocked | 同一行 attention tint + 文本原因 + 可恢复控件（若有） |
+| command output | 首屏 bounded tail；完整内容走同一行的 Show more 或 artifact viewer |
+| 嵌套 child | 1px 左 rail + 8px inset；最多 depth=1；不改变字号和 row height |
+| 滚动 | 只有 `ConversationFeedViewport` 有 `overflow-y`；Timeline/detail/batch 禁止建立纵向滚动 |
+
+状态文案是闭集：`Queued`、`Working`、`Waiting`、`Waiting for approval`、`Succeeded`、
+`Failed`、`Cancelled`、`Blocked`。icon、文本、`aria-label` 和 `data-*` 必须一致；颜色
+只作为辅助，不能靠红绿或 spinner 让用户猜状态。
+
+### 16.3 文档、代码和本地路径
+
+- 连续空行保留为段落间距；list 使用真实 `ul/ol`，不能用空格伪造缩进。
+- fenced code 保留换行、缩进和语言标签；未闭合 fence 在流式阶段以安全等宽文本原地更新。
+- 普通文本中的本地路径显示 `file icon + basename`，hover/focus 显示完整路径并提供复制。
+- 路径候选不可直接跳转；只有带 workspace/thread/run/action lineage 的 Host capability
+  source ref 才能打开 file/diff/artifact viewer。
+- Markdown 解析失败时保留安全纯文本并增加一行 `Blocked` diagnostic，不把全文压成事实行。
+
+### 16.4 浮窗、输入区和完成结果
+
+```text
+EnvironmentPopover（active action 时存在，最多两行）
+  Working · Engineer editing parser.ts
+  ling-stack · feature/transcript
+
+Composer（固定在 feed 之后）
+  draft / send / stop / retry / approval controls
+```
+
+Popover 只展示 active run 的 ambient hint，terminal fence 后关闭；reconnect 只能短暂显示
+`Reconnecting`。Composer 只拥有控制，不显示 action summary、stdout、文件统计或
+TerminalReport。execute 的 `ResultRow` 必须留在 Timeline 中，不能再在输入框下方追加一份
+“完成总结”。
+
+### 16.5 视觉验收的最小 DOM 证据
+
+每个 owning row 必须同时暴露：
+
+```text
+data-conversation-timeline-id
+data-conversation-timeline-kind
+data-conversation-timeline-renderer-key
+data-conversation-timeline-status
+data-conversation-timeline-revision
+data-conversation-thread-id
+data-conversation-run-id
+data-conversation-attempt-id
+data-conversation-participant-id
+```
+
+Feed 根节点必须能证明 `scrollOwnerCount=1`。在 normal/private/channel/topic/branch/child
+上使用同一 fixture 时，除 shell/roster/participant rail 外的 DOM fingerprint 必须一致。
+只提供 screenshot、没有 semantic 和 lineage 的结果不能作为 v3.9.1-final 的通过证据。
