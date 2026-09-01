@@ -62,6 +62,16 @@
   max-width: 100%;
 }
 
+.normal-conversation-message-row.ai-teammate > .message-content {
+  width: 100%;
+  max-width: 100%;
+}
+
+.normal-conversation-message-row.ai-teammate > .message-content > .message-body-shell,
+.normal-conversation-message-row.ai-teammate > .message-content > .message-body-renderer {
+  width: 100%;
+}
+
 .normal-conversation-message-error {
   margin-top: var(--ling-space-3);
 }
