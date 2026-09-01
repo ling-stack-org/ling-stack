@@ -1,6 +1,6 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.8（extends the v3.7 contract）；Codex-parity implementation blueprint 已补齐；D0 contract/result-anchor slice 正在实现、尚未验收，E1–E6 仍待完成
+Status: normative design v3.9（extends the v3.8 contract）；Codex-parity component detailed design 已补齐；D0 contract/result-anchor slice 正在实现、尚未验收，E1–E6 仍待完成
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（实现 worktree 已同步；实现进行中）
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
@@ -8,6 +8,8 @@ Owner: Conversation UI、conversation-ui-core、daemon runtime maintainers
 
 本文件是 typed transcript 的唯一数据和语义规范。视觉细节见
 [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)，
+组件树、renderer props、状态所有权和迁移边界见
+[Conversation Codex-Parity Component Detailed Design](conversation-codex-parity-component-detailed-design.md)，
 工程步骤见
 [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)。
 频道/Topic/Branch 的持久化拓扑见
@@ -2786,11 +2788,11 @@ failed→retry、SSE reconnect、daemon restart、partial→complete fan-in 和 
 
 ### 20.11 迁移和定义完成
 
-开发阶段直接切换到 v3.8 contract：不保留旧 WorkCell/activity renderer、旧
+开发阶段直接切换到 v3.9 contract：不保留旧 WorkCell/activity renderer、旧
 TerminalReport-as-assistant-message 路径、双写或 feature flag。旧 SQLite 行只通过 strict
 adapter 读取；无法证明 lineage 的记录显示 blocked diagnostic。实现完成必须同时满足：
 
-- 四份权威设计互相链接，使用同一术语和阶段编号；
+- 五份权威设计互相链接，使用同一术语和阶段编号；
 - 三种 surface 和 depth-1 child 的 fingerprint 一致；
 - 每个事实行有完整 lineage，action 更新原地收敛；
 - execute turn 只有一个 `terminalReport` outcome，reply turn 只有一个 `reply_result`；

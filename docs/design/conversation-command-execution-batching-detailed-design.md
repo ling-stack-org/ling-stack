@@ -14,7 +14,7 @@ Related docs:
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 
-v3.7 note: command batching remains a pure projection consumed by the shared
+v3.9 note: command batching remains a pure projection consumed by the shared
 `ConversationTimeline` fact renderer. `ConversationWorkCell` is a migration input only;
 batching never owns completion, fan-in, or a second visible action row.
 

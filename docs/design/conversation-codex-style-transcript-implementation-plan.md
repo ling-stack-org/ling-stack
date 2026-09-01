@@ -1,11 +1,12 @@
-# Codex-style Typed Transcript v3.8：实现计划
+# Codex-style Typed Transcript v3.9：实现计划
 
-Status: implementation plan；v3.8 设计蓝图已锁定，D0 contract/result-anchor slice 正在实现、尚未验收；E1–E6 按顺序推进，packaged macOS 验收仍待执行
+Status: implementation plan；v3.9 组件级细设计已锁定，D0 contract/result-anchor slice 正在实现、尚未验收；E1–E6 按顺序推进，packaged macOS 验收仍待执行
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（已核对远端无新提交）
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 Visual contract: [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
 Surface contract: [Conversation Surface Contract](conversation-surface-contract.md)
+Component design: [Conversation Codex-Parity Component Detailed Design](conversation-codex-parity-component-detailed-design.md)
 
 目标不是重写会话，而是把已有 durable facts 投影成一个简单、可追溯、跨 surface
 一致的 transcript。实现期间不修改用户当前 dirty checkout。
@@ -18,7 +19,7 @@ v3.7 新增一条实现硬门槛：所有 surface 和子 Agent 必须通过同�
 `mountConversationTimeline` 组合入口；不能通过复制 JSX、复用旧 WorkCell 或在 Composer/
 EnvironmentPopover 中补渲染来“看起来统一”。
 
-v3.8 只补实现细节，不改变 v3.7 的事实权威和存储边界：SQLite 仍是 durable facts，
+v3.9 只补组件实现细节，不改变 v3.8 的事实权威和存储边界：SQLite 仍是 durable facts，
 batch 仍是 display-only，`terminalReport` 仍是 execute turn 的唯一结果。实现者必须先
 按本文的 work package 交付 evidence、projection、renderer、surface、recovery、packaged
 macOS 六层，不能从某个页面的 CSS 或一段模型文本开始。
@@ -29,7 +30,7 @@ macOS 六层，不能从某个页面的 CSS 或一段模型文本开始。
 
 | 唯一编号 | 责任 | 退出证据 | 历史文档中的别名（不是新阶段） |
 | --- | --- | --- | --- |
-| `D0` | 设计、contract、parity fixture 和 selector 锁定；不接业务 UI | 四份权威文档一致；reply/execute fixture、closed union、fingerprint 和 selector 全部通过 | `P0`、`S0`、`R0/R1` |
+| `D0` | 设计、contract、parity fixture 和 selector 锁定；不接业务 UI | 五份权威文档一致；reply/execute fixture、closed union、fingerprint 和 selector 全部通过 | `P0`、`S0`、`R0/R1` |
 | `E1` | Host evidence fold：`tool_start/update/end`、revision、terminal fence、invalidation | 同一 `actionId` 原地收敛，乱序/重复/迟到事件有 audit | `P1`、`S1`、`R5` |
 | `E2` | canonical atomic projector、owner/attempt/context 校验、display-only batching | fingerprint、split reason、child lineage 和 completion 隔离 | `P2`、`S2/S3`、`R6` |
 | `E3` | shared Timeline registry、Markdown/fact/nested renderer、Host file/diff/artifact viewer、document row geometry | exhaustive registry、单滚动 owner、capability issue/redeem、无右侧 bubble | `P3`、`S4`、部分 `P1b` |
@@ -78,7 +79,7 @@ contract adapter 映射为 core 的 `camelCase` projection kind，再映射为�
 
 ### D0：设计文档锁定（本轮先完成）
 
-在写业务代码前，先把四份权威文档中的术语和边界锁成同一份实现输入：
+在写业务代码前，先把五份权威文档中的术语和边界锁成同一份实现输入：
 
 - `TimelineSourceSnapshot` 只承载 durable records、coverage 和 revision watermark；
   `TimelineSnapshot` 只承载已完成 scope/owner/attempt/revision 校验的 typed items，
@@ -91,18 +92,18 @@ contract adapter 映射为 core 的 `camelCase` projection kind，再映射为�
   EnvironmentPopover/Composer/Right Dock/TerminalReport 的 owner 规则必须能在
   semantic selector 与视觉 fixture 中逐项验证。
 
-**D0 退出条件**：四份文档互相链接；`TimelineSnapshot` 不再有双重定义；旧类型只出现在
+**D0 退出条件**：五份文档互相链接；`TimelineSnapshot` 不再有双重定义；旧类型只出现在
 标注为 migration input 的章节或明确的兼容别名说明；`node scripts/check-markdown-links.mjs` 和
 `git diff --check` 通过。D0 未通过时不进入 E1，也不删除旧 caller。
 
-**D0 当前状态（2026-09-01）**：四份权威文档已同步到同一套 v3.8 contract；实现 worktree
+**D0 当前状态（2026-09-01）**：五份权威文档已同步到 v3.9 contract；实现 worktree
 已有 `terminal_report` closed-union、Host `presentationRole`、`result_item_id` migration、
 原子 publication item、纯 projector 的最高 generation join 和 `result.terminal` renderer
 key WIP。已通过的最近窄范围证据为 contracts `50/50`、UI-core `88/88`、core `460/460`
-和 daemon 定向测试 `322/322`；Markdown 链接与 `git diff --check` 也通过。当前 Web
-typecheck 仍失败于 `WorkspaceClientView.tsx` 的 `TerminalReportDto` / projection DTO 边界：
-旧 DTO 没有 `resultItemId`。因此 D0 尚未完成，更不能替代真实 daemon/API 与 packaged
-macOS 验收。剩余必须补齐：
+和 daemon 定向测试 `322/322`；Markdown 链接与 `git diff --check` 也通过。Web typecheck
+的 `TerminalReportDto` / projection DTO 边界已由 `terminalReportResultItemId()` 收口。
+daemon 旧 fallback renderer 移除和对应 coordinator 断言仍需完成。因此 D0 尚未完成，更
+不能替代真实 daemon/API 与 packaged macOS 验收。剩余必须补齐：
 
 1. reply turn 以最终 `agentMessage` 收口；
 2. execute turn 只产生一个 `terminalReport`；
@@ -570,7 +571,7 @@ fingerprint、terminal fence 和 scroll owner，而不是只看最终文字。
 
 | PR/提交（唯一阶段） | 内容 | 不包含 |
 | --- | --- | --- |
-| D0 docs/fixture | 四份权威设计、source/canonical snapshot 分层、fixture 形状、selector 契约 | 业务代码 |
+| D0 docs/fixture | 五份权威设计、source/canonical snapshot 分层、fixture 形状、selector 契约 | 业务代码 |
 | E1 evidence | envelope、fold、revision、restart/replay | renderer/layout |
 | E2 projection | canonical projector、attempt/owner、batch | React/CSS |
 | E3 timeline | registry、Markdown/code/path、fact row、nested、Host viewer | route cleanup |
@@ -836,7 +837,7 @@ rg -n "publishedMessageId|renderTerminalReportMarkdown|kind:\s*\"assistant_messa
 设计层还必须保证 `TimelineSnapshot` 只有一个 canonical 定义；durable 原始记录只能使用
 `TimelineSourceSnapshot`，否则直接判定为 contract drift。
 
-## 4.8 v3.8 实现启动板（从现在开始）
+## 4.8 v3.9 实现启动板（从现在开始）
 
 设计已经可以开工。下面是按“先事实、后投影、再视觉、最后真实客户端”排列的执行板；
 每一项都有明确输入、代码边界和退出证据。除当前实现分支已有的 D0 WIP 外，不需要再
@@ -844,7 +845,7 @@ rg -n "publishedMessageId|renderTerminalReportMarkdown|kind:\s*\"assistant_messa
 
 ### WP-0：收口 D0 基线（立即执行）
 
-**输入**：`origin/main=63ab7c0e`、v3.8 四份设计、现有 contract/result-anchor WIP。
+**输入**：`origin/main=63ab7c0e`、v3.9 五份设计、现有 contract/result-anchor WIP。
 
 **动作**：
 
@@ -953,7 +954,7 @@ nested Agent、batch disclosure、approval、retry、SSE reconnect、daemon rest
 按以下顺序提交，每个 commit 可单独回滚，且只 stage 本阶段文件：
 
 ```text
-docs: v3.8 Codex-parity blueprint（本次）
+docs: v3.9 Codex-parity component design（本次）
 feat(transcript): fold tool evidence and terminal fence
 feat(transcript): project atomic timeline and reversible batches
 refactor(web): mount shared ConversationTimeline and Host viewers
@@ -963,8 +964,192 @@ test(desktop): packaged macOS evidence cases
 ```
 
 如果某一阶段需要改变 `kind`、lineage、Thread 映射、context 分配或 completion authority，
-先修改四份权威设计和 fixture，再修改代码。不能在实现分支里保留“临时兼容”作为第五
+先修改五份权威设计和 fixture，再修改代码。不能在实现分支里保留“临时兼容”作为第六
 种 renderer。
+
+## 4.9 v3.9 组件级落地清单
+
+本节把组件细设计翻译成可执行的文件和测试任务。实现者按阶段逐项勾选，不得把
+所有逻辑塞回 `ConversationWorkCell.tsx` 或某个 surface 页面。
+
+### 4.9.1 D0：先冻结输入，不切生产 UI
+
+**代码边界**
+
+- `packages/contracts/src/*conversation*`：wire kind、lineage、TerminalReport
+  projection 的闭集契约；snake_case 只在 adapter 转换一次。
+- `packages/conversation-ui-core/src/transcript-item.ts`、`timeline-snapshot.ts`、
+  `canonical-transcript-projector.ts`：projection kind、snapshot 分层、owner/attempt
+  选择和 blocked fallback。
+- `packages/conversation-ui-core/test/*transcript*`：reply/execute、unknown kind、缺
+  anchor/lineage、最高 generation、fingerprint fixture。
+
+**退出证据**
+
+```text
+wire kind -> projection kind -> rendererKey
+reply     -> agentMessage(reply_result)
+execute   -> terminalReport(result.terminal)
+unknown   -> diagnostic(fact.diagnostic, Blocked)
+```
+
+React 不接入 raw source snapshot；旧类型只在 migration adapter 中出现。
+
+### 4.9.2 E1：证据折叠和刷新
+
+**代码边界**
+
+- `packages/core/src/storage/sqlite/run-event-store.ts`、
+  `conversation-item-run-event-projection.ts`：读取 start/update/end，保留
+  event sequence、bounded tail、artifact ref 和 redaction 标记。
+- `packages/daemon/src/features/channels/workflow-operation-evidence.ts`、
+  `terminal-report-evidence.ts`、执行 action/invalidation 路径：稳定 `actionId`、
+  monotonic revision、terminal fence、重复/迟到事件审计。
+- `packages/contracts/src/terminal-reports.ts`、`packages/core/src/terminal-report-*`：
+  result anchor 与 publication/recovery 输入。
+
+**必须先写的测试**
+
+1. `start → update → end` 只产生一个 action row，DOM id 不变；
+2. update 乱序、重复、equal revision 和 terminal 后迟到 update 都 fail-closed；
+3. tail 受 40 行/8KiB/64 chunks 限制，完整内容只通过 artifact ref；
+4. accepted update 触发按 `actionId + revision` 的 invalidation，旧 run key 不得成为
+   唯一刷新条件；
+5. reconnect/restart replay 后得到相同 `actionId/revision/terminalFence`。
+
+### 4.9.3 E2：原子投影和可逆 batch
+
+**代码边界**
+
+- `packages/conversation-ui-core/src/canonical-transcript-projector.ts`：scope、order、
+  owner、attempt、TerminalReport join 的唯一纯函数入口。
+- `packages/conversation-ui-core/src/typed-transcript-batching.ts`、`command-batching.ts`、
+  `activity-projection.ts`：相邻成功低风险 read/command 的 display-only grouping；输出
+  `splitReason` 供测试和诊断使用，但不落库。
+- `packages/conversation-ui-core/src/timeline-fingerprint.ts`：同 fixture 跨 surface 的
+  kind/order/status/renderer/disclosure fingerprint。
+
+**硬边界**
+
+```text
+same participant + run + attempt + workflow step + source scope
+  -> may batch when safe and terminal
+otherwise
+  -> flush; keep atomic rows
+```
+
+approval、retry/resume/repair、failed/cancelled/active、consequential action、缺 lineage
+均强制拆分。TerminalReport、fan-in、contextSegmentId 只读取 atomic items。
+
+### 4.9.4 E3：一个 Timeline 和 Host viewer
+
+**代码边界**
+
+- `apps/web/src/shared/conversation/timeline/ConversationTimeline.tsx`：只接一个
+  immutable snapshot，负责顺序组合、disclosure、focus 和 semantic selectors。
+- `renderer-registry.tsx`：exhaustive registry；删除 unknown→generic message 的回退。
+- `ConversationTimeline*Renderer.tsx`：document/fact/result/nested/batch/diagnostic 专用
+  renderer；所有 action 标题从 typed payload 生成。
+- `source-ref.ts` 与 Host capability adapter：issue/redeem 时校验 workspace、realpath、
+  thread/run/action、daemon epoch 和 TTL。
+- shared timeline CSS：document 无 bubble，fact 最小 28px，detail 最大 240px，唯一
+  `ConversationFeedViewport` 纵向 scroll owner。
+
+**特别处理**
+
+当前 `renderFactActions` 仍是迁移期注入点。它允许 surface 注入第二个 action owner，
+所以 E3 先把 callback 限制为 focus/source 控制，E4 parity 通过后删除该 prop 及所有
+route-local action controls。Composer/approval gate 仍保留唯一 allow/deny/stop/retry
+控制。
+
+### 4.9.5 E4：surface cutover
+
+**代码边界**
+
+- `apps/web/src/domains/conversations/canonical-transcript-snapshot.ts`、
+  `timeline-snapshot.ts`：统一 snapshot 组装。
+- `NormalConversationFeed.tsx`、`TeammatePrivateChatFeed.tsx`、`ChannelMessageFeed.tsx`
+  和 topic/branch adapters：只解析真实 `LingThread.id`、policy/chrome/callbacks，并
+  调用一次 `mountConversationTimeline()`。
+- `ChannelMessageRenderers.tsx`、`conversation-work-cell.ts`、
+  `collaboration-task-work-cell.ts`、`WorkspaceClientView.tsx`：旧 activity caller 改为
+  strict adapter 后删除，不在 production DOM 中保留 WorkCell、旧 workflow skeleton、
+  activity summary 或 report card。
+
+**退出证据**
+
+```bash
+rg -n "ConversationWorkCell|renderOperationTranscriptBlock|message_workflow_terminal|execution_summary" \
+  apps/web/src/features apps/web/src/shared
+```
+
+结果只允许出现在 migration/test 文档或明确的 adapter；normal/private/channel/topic/
+branch/child 使用同一 fixture 得到相同 fingerprint。
+
+### 4.9.6 E5：恢复、审批、retry 和 fan-in
+
+**代码边界**
+
+- `packages/daemon/src/features/channels/terminal-report-coordinator.ts`、
+  `terminal-report-publisher.ts`、`workflow-completion-gate.ts`：publication transaction、
+  highest committed generation、supersession 和 blocked fallback。
+- `workflow-fanin.ts`、`workflow-evidence.ts`、`workflow-participant-run-profile.ts`：按
+  required participant 的 atomic evidence join，不按 batch/ready/plan 数量。
+- `apps/web` reconnect/invalidation handlers：原地 revision、reconnecting hint、focus 和
+  disclosure 保持。
+
+**测试顺序**
+
+```text
+approval allow/deny/expired
+  -> failed attempt -> retry success
+  -> SSE disconnect/reconnect
+  -> daemon restart replay
+  -> partial fan-in waiting
+  -> complete fan-in terminalReport
+  -> ready-only child => structured blocked
+```
+
+### 4.9.7 E6：packaged macOS 真实验收
+
+只验收 macOS packaged client；Windows、mock fixture 和浏览器截图不能代替本阶段。使用
+`apps/desktop/tests/run-packaged-continuity-smoke.mjs` 扩展下列真实案例：
+
+| Case | 必须看到 |
+| --- | --- |
+| `N-01` | paragraph/list/fenced code/path/link，换行与代码格式不丢 |
+| `N-02` | read batch、live command update、file/diff viewer |
+| `P-01` | private 与 normal 的 renderer fingerprint 相同 |
+| `C-01` | 两个 participant、child narration、command/file/tool，同一 registry |
+| `C-02` | ready-only child 或 depth=2 显示 structured Blocked |
+| `A-01` | approval waiting、allow、deny/expired 只一个控制 owner |
+| `R-01` | failed attempt → retry success，旧 attempt 进 audit |
+| `R-02` | SSE reconnect 后同一 action/revision，不追加第二行 |
+| `R-03` | daemon restart 后同一 fingerprint 和 disclosure |
+| `F-01` | partial fan-in Waiting，证据齐全后单一 TerminalReport |
+| `E-01` | EnvironmentPopover 只有 active action 两行，terminal 后关闭 |
+
+每个 case 必须落盘 `case.json`、`screen-01.png`、`screen-02.png`、`semantic-state.json`、
+`lineage.json`、`logs.redacted.txt`，并写 `simulation=false`、build hash、真实
+thread/turn/run/attempt、daemon epoch。截图与语义/lineage/log 任一缺失都标为调试证据。
+
+### 4.9.8 提交和回滚边界
+
+按以下 commit 顺序推进，每个 commit 只触碰自身阶段文件：
+
+```text
+docs(transcript): lock v3.9 component design
+feat(transcript): fold host evidence and terminal fence
+feat(transcript): project atomic timeline and reversible batches
+refactor(web): mount shared timeline and host viewers
+refactor(web): cut over normal private channel and child surfaces
+test(transcript): recovery approval fan-in and parity matrix
+test(desktop): capture packaged macOS evidence
+```
+
+任何需要改变 item kind、lineage、Thread 映射、contextSegmentId、completion owner 或
+Host capability 边界的实现，必须先更新五份权威文档和 fixture；不允许在代码里加入
+“临时兼容”作为第六条路径。
 
 ## 5. 回归矩阵
 
@@ -1112,7 +1297,7 @@ renderer 和大范围 route cleanup 混成一个不可审查提交。
 
 ## 8. Definition of done
 
-- [ ] 四份权威设计文档互相链接、README 只保留一个 current entry point。
+- [ ] 五份权威设计文档互相链接、README 只保留一个 current entry point。
 - [ ] normal/private/channel root/topic/branch/child 的 surface 到 `LingThread` 映射可由
   fixture 和 lineage 复现；Topic/Branch 不复制 parent transcript。
 - [ ] `contextSegmentId` 由显式选择/结构规则/受限模型提议/服务端 policy 产生，且不受
@@ -1148,8 +1333,9 @@ renderer 和大范围 route cleanup 混成一个不可审查提交。
 | Design Review | `/plan-design-review` | UI/UX gaps | 0 | — | 未运行；本轮已把 Codex-parity 视觉契约写入 v3.7 规范 |
 | DX Review | `/plan-devex-review` | Developer experience gaps | 0 | — | 未运行 |
 
-**VERDICT:** DESIGN UPDATED — v3.7 已统一四份权威文档，并新增 snapshot/mount、source-ref
-lineage、专用 viewer、唯一 surface cutover、原子 recovery/fan-in 和执行板。实现尚未完成，
+**VERDICT:** DESIGN UPDATED — v3.9 已统一五份权威文档，并新增组件级 component tree、
+renderer props、状态所有权、source-ref lineage、专用 viewer、唯一 surface cutover、原子
+recovery/fan-in 和执行板。实现尚未完成，
 必须按 E1→E6 清掉 4 个 P1 闸门后，才能称为 Codex-parity 完成。
 
 **OUTSIDE VOICE:** skipped；本轮没有引入新的外部架构建议，Codex 仅作为已记录的信息架构

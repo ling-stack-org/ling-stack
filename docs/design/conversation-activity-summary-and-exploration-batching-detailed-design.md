@@ -10,10 +10,11 @@ projections, Continuity v2 integration boundaries, and validation
 Related docs:
 
 - [Conversation Command Execution Batching Detailed Design](conversation-command-execution-batching-detailed-design.md)
+- [Conversation Codex-Parity Component Detailed Design](conversation-codex-parity-component-detailed-design.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 
-v3.8 note: this document defines only the pure, display-only batch projection. The
+v3.9 note: this document defines only the pure, display-only batch projection. The
 canonical owner is `ConversationTimeline`; `ConversationWorkCell` is a pre-v3.7
 migration input and must not remain as a production renderer or summary owner.
 
@@ -53,7 +54,7 @@ authoritative execution evidence
 
 Batch headers are display projections only. They never replace, coalesce, rewrite, or
 delete the underlying `ExecutionAction`, run event, artifact, or source reference. A
-cross-kind completed activity summary is not rendered as a second row in v3.8.
+cross-kind completed activity summary is not rendered as a second row in v3.9.
 
 ## 2. Continuity v2 Boundary
 
@@ -89,7 +90,7 @@ canonical channel/item projection directly and must not restore the legacy
 
 ### 3.1 No standalone completed activity summary
 
-v3.8 does not render a cross-kind row such as:
+v3.9 does not render a cross-kind row such as:
 
 ```text
 已编辑 2 个文件 · 已读取 8 项 · 已运行 3 个命令

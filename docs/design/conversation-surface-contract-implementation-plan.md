@@ -1,6 +1,6 @@
 # Conversation Surface Contract Implementation Plan
 
-> **v3.7 authority note (2026-09-01):** transcript item semantics, evidence ownership,
+> **v3.9 authority note (2026-09-01):** transcript item semantics, evidence ownership,
 > renderer sharing, batching, nested Agent presentation, and completion gates are
 > defined by [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 > and [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md).

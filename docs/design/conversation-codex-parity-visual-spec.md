@@ -1,9 +1,10 @@
 # Conversation Codex-Parity Visual Specification
 
-Status: normative visual contract v3.8（extends v3.7）；implementation-ready（截图必须附 semantic/lineage 证据）
+Status: normative visual contract v3.9（extends v3.8）；implementation-ready（截图必须附 semantic/lineage 证据）
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Related: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+Component implementation: [Conversation Codex-Parity Component Detailed Design](conversation-codex-parity-component-detailed-design.md)
 
 Cross-surface ownership and implementation sequencing are defined in
 [Conversation Surface Contract](conversation-surface-contract.md) and

@@ -1,6 +1,6 @@
 # Conversation Surface Contract
 
-Status: active shell/policy contract; typed transcript authority is v3.8 (v3.7 contract + implementation blueprint)
+Status: active shell/policy contract; typed transcript authority is v3.9 (v3.8 contract + component implementation design)
 Original date: 2026-06-28
 Updated: 2026-09-01
 Scope: normal conversation, channel root, channel branch, topic reply, teammate private
@@ -10,6 +10,7 @@ Related docs:
 
 - [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 - [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
+- [Conversation Codex-Parity Component Detailed Design](conversation-codex-parity-component-detailed-design.md)
 - [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
@@ -24,14 +25,14 @@ Related docs:
 - [Conversation Media Generation Tools](conversation-media-generation-tools.md)
 
 Typed item semantics, evidence ownership, renderer registry, batching, nested Agent
-presentation and completion gates are owned by the v3.8 documents above. This contract
+presentation and completion gates are owned by the v3.9 documents above. This contract
 only defines surface scope, shell chrome, composer policy and Host callback boundaries;
 it must not add a route-local transcript renderer or summary owner.
 
-## Typed transcript override (v3.8)
+## Typed transcript override (v3.9)
 
 For message, activity, command, file, tool, approval, child-agent, batching, and
-completion presentation, v3.8 is the current authority. This surface contract still
+completion presentation, v3.9 is the current authority. This surface contract still
 defines shell and product-policy differences, but it must not add a route-local
 renderer or second completion owner. Normal, teammate-private, and channel surfaces
 must mount the shared `ConversationTimeline`; channel-only differences are roster,
