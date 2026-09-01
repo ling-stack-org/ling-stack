@@ -14,15 +14,17 @@ Related docs:
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 
-v3.5 note: command batching remains a pure projection consumed by the shared
-`ConversationTimeline` fact renderer. `ConversationWorkCell` references in historical
-sections are migration inputs only; batching never owns completion, fan-in, or a second
-visible action row.
+v3.7 note: command batching remains a pure projection consumed by the shared
+`ConversationTimeline` fact renderer. `ConversationWorkCell` is a migration input only;
+batching never owns completion, fan-in, or a second visible action row.
 
-本文件中的 `ConversationWorkCellItem`、`ConversationCommandBatch` 和旧组件名保留用于
-解释既有数据适配，不是 v3.5 的第二套 item union。实现时必须把它们转换为
-`commandExecution`/`commandBatch`，由详细设计定义的唯一 registry 渲染；新代码不得
-再向 `ConversationWorkCell.tsx` 添加 batch、排序或完成判断。
+实现时必须把既有 operation rows 转换为 canonical `commandExecution` items，再由唯一
+registry 渲染 `commandBatch`。新代码不得向 `ConversationWorkCell.tsx` 添加 batch、排序、
+状态文案或完成判断；历史提到的旧类型只用于说明 adapter 的输入形状。
+
+该投影只消费 `TimelineSnapshot` 中的 atomic items；daemon 的原始记录属于
+`TimelineSourceSnapshot`，不能直接进入 batching 或 React。这样 live evidence、分页
+coverage 和 UI disclosure 不会被混成同一个快照。
 
 ## 1. Purpose
 
@@ -90,10 +92,11 @@ tail or a useful completed child row.
 
 ### 3.3 Missing Shared Projection
 
-`ConversationOperationCellViewModel` exposes flat operation rows and agent spans. The
-shared contract has no discriminated operation item for a command batch, so batching in
-`ConversationWorkCell.tsx` alone would duplicate policy and diverge across channel,
-ordinary conversation, and teammate-private surfaces.
+The canonical typed union and `typed-transcript-batching.ts` now provide the shared command
+batch shape. The remaining gap is caller migration: legacy operation-row adapters still need
+to feed the canonical projector before the Timeline. Adding another batch implementation in
+`ConversationWorkCell.tsx` would duplicate policy and diverge across channel, ordinary
+conversation, and teammate-private surfaces.
 
 ### 3.4 Refresh Gap
 
@@ -148,17 +151,19 @@ The latest executing command is never included in a completed batch. It renders 
 standalone row with its output detail open by default. The main feed shows a bounded
 rolling tail rather than the full process log.
 
-The first implementation keeps the bounded output in normal document flow and does not
-introduce a nested output viewport or force page scrolling. If a dedicated tail-following
-viewport is added later, user scrolling must pause auto-follow until they return to the
-latest position. Completed output remains available from the associated log artifact.
+The v3.7 implementation keeps the bounded output in normal document flow and does not
+introduce a nested output viewport or force page scrolling. A second vertical scroll owner
+is out of scope for this contract: if a future tail-following viewport is ever proposed, it
+requires a new design decision and must preserve the single `ConversationTimeline` scroll
+owner. Completed output remains available from the associated log artifact.
 
 ### 4.5 Accessibility
 
 - Batch and child disclosures are native buttons with `aria-expanded`.
 - The batch accessible name includes the command count and terminal state.
-- The existing work-cell status live region announces state changes. Raw command chunks
-  are not announced independently.
+- The shared `ConversationTimeline` status live region announces state changes. Raw command
+  chunks are not announced independently, and the historical WorkCell must not become a
+  second live-region or action owner.
 - Exit code and failure state are represented in text, not color alone.
 - Keyboard focus follows the same contrast behavior as pointer hover.
 - `prefers-reduced-motion` disables row insertion and disclosure transition animation.
@@ -213,17 +218,19 @@ This avoids replacing a short, readable sequence with an extra disclosure contro
 
 ### 5.4 Stable Identity
 
-The batch id is derived from its semantic scope and first child, not from the current
-last child:
+The batch display identity is derived from its semantic scope, attempt, and first child,
+not from the current last child. It is a reversible projection key, not a new
+`ExecutionAction`:
 
 ```text
-command-batch:{participantScope}:{runId}:{firstActionId}
+commandBatch:{participantId}:{runId}:{attemptId}:{firstActionId}
 ```
 
 Appending another eligible completed command therefore updates the same batch instead of
 creating a new disclosure identity. The batch revision key includes ordered child ids,
 statuses, and evidence revisions so rendering updates without losing user-controlled
-expanded state.
+expanded state. `actionIds`/`childActionIds` retain the real child action identities; the
+display `actionId` must never be consumed by TerminalReport, fan-in, retry or approval.
 
 ## 6. Runtime Contract
 
@@ -326,47 +333,28 @@ duration from prose such as `Command exited 0 in 123ms`.
 
 ## 7. Shared Conversation View Model
 
-Introduce a discriminated item contract instead of teaching the renderer to inspect row
-titles:
+The command batch is one variant of the canonical typed transcript union. The command
+projection does not define a second `ConversationWorkCellItem` union:
 
 ```ts
-type ConversationWorkCellItem =
-  | {
-      readonly kind: "operation";
-      readonly row: ConversationWorkCellRow;
-    }
-  | {
-      readonly kind: "command_batch";
-      readonly batch: ConversationCommandBatch;
-    };
-
-interface ConversationCommandBatch {
-  readonly id: string;
-  readonly revisionKey: string;
-  readonly commandCount: number;
-  readonly durationMs?: number;
-  readonly defaultExpanded: boolean;
-  readonly commands: readonly ConversationCommandBatchItem[];
-}
-
-interface ConversationCommandBatchItem {
-  readonly id: string;
-  readonly actionId: string;
-  readonly row: ConversationWorkCellRow;
-  readonly commandText: string;
-  readonly status: string;
-  readonly exitCode?: number;
-  readonly durationMs?: number;
-  readonly outputTruncated: boolean;
-  readonly stdoutArtifactId?: string;
-  readonly stderrArtifactId?: string;
-}
+type ConversationTimelineCommandBatchItem = ConversationTimelineOperationItemBase & {
+  readonly kind: "commandBatch";
+  readonly actionIds: readonly string[];
+  readonly childActionIds: readonly string[];
+  readonly childItemIds: readonly string[];
+  readonly batch: {
+    readonly commandCount: number;
+    readonly durationMs?: number;
+    readonly defaultExpanded: boolean;
+    readonly commands: readonly ConversationTimelineCommandExecutionItem[];
+  };
+};
 ```
 
-`ConversationOperationCellViewModel` adds optional `operationItems`. Existing
-`operationRows` remains during migration. When callers have not supplied pre-projected
-items, the shared `ConversationWorkCell` renderer invokes the pure batching projection;
-surface adapters must not implement their own grouping.
+The existing operation-row adapter is converted to canonical atomic items before it reaches
+the Timeline. During the cutover, an adapter may read legacy rows, but the shared
+`ConversationTimeline` invokes the pure batching projection exactly once. Surface adapters
+must not implement their own grouping or expose a second `operationItems` source.
 
 ## 8. Deterministic Projection Algorithm
 
@@ -376,7 +364,7 @@ participant scope:
 ```ts
 function projectCommandBatches(
   candidates: readonly ConversationOperationCandidate[],
-): readonly ConversationWorkCellItem[];
+): readonly ConversationTimelineItem[];
 ```
 
 Algorithm:
@@ -470,19 +458,18 @@ the first Web implementation relies on load guards and bounded active polling in
 | `packages/core/src/run-types.ts` | core mirror until contracts are converged |
 | `packages/daemon/src/features/runs/execution-actions.ts` | event folding and bounded evidence projection |
 | `packages/daemon/src/features/runs/action-classifier.ts` | low-risk projection for plain executed bash actions; consequential classifications stay unchanged |
-| `packages/conversation-ui-core/src/work-cell-view-model.ts` | shared operation-item and batch types |
-| `packages/conversation-ui-core/src/command-batching.ts` | pure eligibility, boundaries, stable ids, and batching algorithm |
-| `apps/web/src/lib/conversation-work-cell.ts` | action-to-candidate projection and surface scope assignment |
-| `apps/web/src/shared/conversation/blocks/ConversationCommandBatch.tsx` | batch and child disclosures |
-| `apps/web/src/shared/conversation/blocks/ConversationWorkCell.tsx` | item-stream composition only |
+| `packages/conversation-ui-core/src/typed-transcript-batching.ts` | pure eligibility, boundaries, stable ids, and batching algorithm |
+| `packages/conversation-ui-core/src/canonical-transcript-projector.ts` | action-to-canonical-item projection and scope/attempt assignment |
+| `apps/web/src/shared/conversation/timeline/renderer-registry.tsx` + `apps/web/src/shared/conversation/blocks/ConversationCommandBatch.tsx` | batch and child disclosures through the shared registry |
+| `apps/web/src/shared/conversation/timeline/ConversationTimeline.tsx` | item-stream composition and the sole scroll owner |
 | `apps/web/src/domains/conversations/use-conversation-domain.ts` | ordinary-conversation throttled persisted refresh and race-safe transcript merge |
 | `apps/web/src/domains/workspace/use-workspace-domain.ts` | channel execution-action snapshots with load guards |
 | `apps/web/src/features/teammates/TeammateWorkspace.tsx` | visible linked-run polling for teammate private chat |
 | `apps/web/src/app/use-control-plane-invalidation.ts` | control-plane persisted refresh trigger |
 
-Do not add batching logic directly to `ConversationWorkCell.tsx`. That file is already a
-large shared renderer; the batch component and pure algorithm need focused modules and
-tests.
+Do not add batching logic directly to `ConversationWorkCell.tsx`. That file is a historical
+adapter during v3.7 cutover; the batch component and pure algorithm belong to focused modules
+and are consumed by the single Timeline registry.
 
 ## 11. Surface Behavior
 
@@ -516,20 +503,27 @@ stateDiagram-v2
 The `Batched` state exists only in the view projection. Runtime actions remain
 `succeeded`.
 
-## 13. Migration And Compatibility
+## 13. Cutover And Compatibility Boundary
 
-- `commandEvidence` and `updatedAt` are optional so older daemon responses remain valid.
-- Actions without command evidence continue through the existing row projection.
-- `operationRows` remains supported while call sites migrate to `operationItems`.
-- Existing disclosure state keys remain unchanged for non-batched rows.
-- A touched batch disclosure preserves its expanded or collapsed state when later
-  eligible commands extend the same stable batch and change its revision key.
+Ling is still in development and v3.7 is a direct renderer cutover. We do not keep a
+runtime legacy renderer or an API compatibility branch merely to preserve the old visual
+model:
+
+- After the new contract lands, `commandExecution` requires validated command evidence;
+  an old row without evidence is projected as `diagnostic(missing_lineage)`/blocked, not
+  rendered through the old WorkCell.
+- The adapter may read legacy persisted event shapes, but it must either normalize them to
+  the canonical envelope or fail closed. It must never invent command, exit code, or
+  source refs.
+- `operationRows` is a migration input only. New call sites consume canonical atomic
+  items and the single `typed-transcript-batching` projection.
+- Existing disclosure keys are retained only when they identify the same canonical item or
+  stable batch id; no compatibility alias may create a second row.
+- A touched batch preserves its expanded/collapsed state when later eligible commands
+  extend the same stable batch and change its revision key.
 - No SQLite migration is required because command evidence is derived from persisted run
-  events and artifacts.
-- The local Work Cell demo fixture must use real command evidence fields rather than
-  title-only fake grouping.
-- This slice does not change approval policy, command execution, sandboxing, or artifact
-  retention.
+  events and artifacts. Approval policy, command execution, sandboxing, and retention are
+  unchanged.
 
 ## 14. Test Matrix
 
@@ -577,21 +571,27 @@ The `Batched` state exists only in the view projection. Runtime actions remain
 - teammate private chat executes tools and receives the same batch UI with teammate
   avatar rules intact;
 - multi-agent channel keeps separate command batches per agent;
-- final `TerminalReport`, participants policy, artifact strip, and workspace review remain
-  in their existing order;
+- execute turns project one `terminalReport` result row inside the shared Timeline; participant
+  policy, artifact refs and workspace review are disclosure details of that row or its trusted
+  viewer, never a second terminal summary;
 - no raw JSON, provider metadata, secret text, or internal ids appear in the main feed.
 
-## 15. Current Implementation Boundary
+## 15. Implementation Target And Evidence Gate
 
-- The command evidence read model folds bounded live updates and final unified-exec results
-  into typed execution actions.
-- One pure shared projection creates deterministic command batches across channel, normal
-  conversation and teammate-private surfaces.
-- Active command output refreshes without reordering committed evidence; completed
-  low-risk bursts can collapse while individual commands remain recoverable.
-- Product and package tests cover real executable cases, accessibility, i18n and refresh.
+The target implementation is:
 
-Run-by-run implementation history and test counts live in Git and CI artifacts.
+- the command evidence read model folds bounded live updates and final unified-exec results
+  into typed execution actions;
+- one pure shared projection creates deterministic command batches across channel, normal
+  conversation, and teammate-private surfaces;
+- active command output refreshes without reordering committed evidence; completed low-risk
+  bursts can collapse while individual commands remain recoverable;
+- product, package, and packaged macOS tests cover executable cases, accessibility, i18n,
+  refresh, reconnect, and restart.
+
+This document does not claim those paths are shipped. The implementation is complete only
+when the test matrix and packaged evidence tuple in the v3.7 implementation plan are
+present; run-by-run counts belong to Git/CI artifacts, not this design doc.
 
 
 ## 16. Non-Goals
@@ -599,8 +599,9 @@ Run-by-run implementation history and test counts live in Git and CI artifacts.
 - Do not merge persisted command events.
 - Do not summarize commands with an LLM.
 - Do not infer grouping from translated titles or command prefixes.
-- Do not batch edits, reads, searches, approvals, failures, or consequential actions in
-  the first implementation.
+- Do not batch edits, searches/MCP calls, approvals, failures, or consequential actions in
+  the command projection; read-family batching is specified separately as
+  `explorationBatch`.
 - Do not expose unlimited stdout/stderr in the conversation.
 - Do not add another outer card, chat bubble, or work-cell disclosure layer.
 - Do not change TerminalReport generation or participant policy.

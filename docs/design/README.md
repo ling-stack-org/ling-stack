@@ -48,24 +48,78 @@ CI/Release artifacts instead of the default documentation tree.
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
 - [Thread-First Work History](thread-first-work-history.md)
 
-### Typed transcript authority (v3.5)
+### Typed transcript authority (v3.7)
 
-The three documents above are the only current entry points for the Codex-style
-transcript work. Read them in this order: data/semantic contract, visual contract,
-then implementation plan. The activity-summary and command-batching documents are
-subordinate projection rules; they may define eligibility and hard boundaries, but
-they must not introduce another timeline, persistence table, renderer, or completion
-authority. v3.5 adds implementation-level snapshot/identity, Host capability, real
-channel-thread scope, and packaged macOS case contracts on top of the prior single
-timeline mount/composition rules. It does not change the full-history SQLite or
-single-owner decisions.
+The current transcript work has four cooperating entry points. Read them in this order:
 
-开工时只需要沿这三份文档执行：先冻结 typed item/evidence contract，再实现共享
+1. [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+   — canonical data, evidence, lineage, context, recovery, and completion semantics;
+2. [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
+   — document/fact/nested layout, row grammar, disclosure, and accessibility;
+3. [Conversation Surface Contract](conversation-surface-contract.md)
+   — surface-to-thread scope, shell chrome, interaction policy, and Host callbacks;
+4. [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)
+   — implementation order, test matrix, packaged macOS evidence, and definition of done.
+
+The activity-summary and command-batching documents are subordinate projection rules. They
+may define eligibility and hard boundaries, but they must not introduce another timeline,
+persistence table, renderer registry, or completion authority. When a historical section in
+those documents mentions `ConversationWorkCell`, it means an adapter or migration input only;
+the v3.7 production owner is always `ConversationTimeline`.
+
+Codex item 到 Ling kind 的逐项映射、事实来源和完成权威见详细设计 §5.1.1；视觉 row
+grammar、EnvironmentPopover 和 disclosure 见视觉规范 §13–15。实现者不应从截图或旧
+WorkCell 名称自行推导新的 item 类型。
+
+命名也有固定的三层边界：SQLite/API 使用 `snake_case` wire kind，
+`conversation-ui-core` 使用 `camelCase` projection kind，DOM/fingerprint 使用稳定的
+dotted `rendererKey`。例如 `terminal_report → terminalReport → result.terminal`；三层
+只能在 contract adapter 处转换一次，不能让 surface 或 CSS 直接消费 wire kind。详细映射
+和未知 kind 的 fail-closed 规则见详细设计 §5.1.2。
+
+#### Implementation lock（2026-09-01）
+
+设计文档已经锁定；`D0` 的可执行 contract gate 尚未完成。下一步先把
+`terminalReport` 加入 closed union、canonical execute-result fixture、fingerprint 和
+exhaustive renderer fixture，再执行 packaged Web DOM 的 selector smoke；通过后才按
+`E1 → E2 → E3 → E4 → E5 → E6` 推进实现。`D0` 只冻结 contract、fixture 和 selector，
+不接业务 UI；现有实现 worktree 中的代码改动仍是未验收 WIP。只有同时具备
+atomic evidence、统一 renderer fingerprint、recovery 结果和 packaged macOS 的
+screenshot/semantic-state/lineage/log 四件套，才可把实现标为完成。
+
+开工时沿这四份文档执行：先完成 v3.7 的 D0 contract gate（区分
+`TimelineSourceSnapshot` 与 `TimelineSnapshot`），建立 parity fixture 和 evidence
+闸门，再实现共享
 `ConversationTimeline`，最后按实现计划完成 surface cutover 和 packaged macOS 验收。
 “简单好看”的验收不是主观截图评审，而是文档 lane、事实 row、原地 revision、可逆
-disclosure、唯一 scroll owner、Host capability 二次校验和跨 surface fingerprint
-的组合约束。v3.5 还明确 UI 状态所有权和迁移顺序：先接 durable evidence，再切换
-shared Timeline，最后删除旧 WorkCell/activity caller；不保留运行时兼容 renderer。
+disclosure、唯一 Feed viewport scroll owner、Host capability 二次校验和跨 surface fingerprint
+的组合约束。v3.7 还明确 UI 状态所有权和迁移顺序：user/agent 统一左对齐，事实状态
+使用闭集文案，先接 durable evidence，再切换 shared Timeline，最后删除旧
+WorkCell/activity caller；不保留运行时兼容 renderer，也不允许 batch/output 形成第二个
+纵向 scroll owner。
+
+#### Implementation brief（给实现者的一页输入）
+
+下面这组决定是 v3.7 的不可变输入；如果实现需要改变其中任何一项，先更新四份权威
+文档并重新跑 D0，而不是在某个 surface 里加一个局部例外：
+
+| 问题 | v3.7 决定 | 用户可观察结果 |
+| --- | --- | --- |
+| 历史存储 | `conversation_items` 是 canonical item timeline；`channel_messages` 只保留为旧 channel 读写的 adapter/index，不扩成第二套 item 表 | reload、resume、SSE reconnect、daemon restart 仍回到同一条历史 |
+| Thread 拓扑 | normal/private/channel root/topic/branch 都解析真实 `LingThread.id`；topic 用 `parentThreadId + anchorItemId`，branch 用不可变 `forkContextSnapshotId`；child 不建可见 child thread | 三种会话和 child 使用同一个 Timeline，topic/branch 不复制 parent transcript |
+| 事实与叙述 | `agentMessage/reasoning/plan` 只是 document lane；command/file/tool/approval/protocol/child action 必须来自 Host evidence；execute 终态进入唯一 `terminalReport` result row | “我会执行/已完成”不会变成绿色成功；首屏总能看到动作动词和文本状态，且不会出现第二张完成总结 |
+| 上下文分段 | `contextSegmentId` 由“用户显式选择 → 结构规则 → 受权限约束的模型候选 → 服务端提交”单向确定；batch 不参与 | 自动换话题不会污染历史，且每次选择都可回溯 |
+| 展示组件 | 一个 `ConversationTimeline`、一个 exhaustive renderer registry、一个外层 Feed viewport scroll owner；normal/private/channel/topic/branch/child 只改变 shell/policy/participant rail | 普通会话不再有右侧方形 bubble，频道和私聊不会各自发明一套 action 卡 |
+| 活动折叠 | `commandBatch`/`explorationBatch` 只在内存中由相邻、同 lineage、安全终态 atomic items 计算；active/failed/approval/consequential 永不隐藏 | 成功历史安静，展开仍能看到每条原子命令，不影响 completion/fan-in |
+| 文件与环境 | 模型 path 显示 basename + icon + 完整路径 tooltip，可复制；只有 Host capability 才能 `open_file/open_diff/open_artifact`。EnvironmentPopover 只显示当前 active run 的两行 ambient hint | path 简洁但不冒充授权；点击有权限才打开；浮窗不会重复历史、summary 或 TerminalReport |
+| 多 Agent | `subAgentActivity` 增加 participant label + 1px rail，child 的 narration、plan、command、file、tool 复用同一 registry，最大 depth=1 | 子 Agent 可以正常叙述和显示真实动作，但不会乱码、不会出现第二套聊天 UI |
+| 完成闸门 | `terminalReport`/fan-in 只读取 atomic evidence；required participant 缺 evidence 时只能 waiting 或 structured blocked | ready/plan/batch count 不会提前把任务显示为完成 |
+
+实现顺序固定为 `D0 → E1 → E2 → E3 → E4 → E5 → E6`：先锁 fixture/selector，再接
+evidence fold，再做 canonical projection 和可逆 batching，再切统一 renderer 与 Host
+viewer，之后才移除旧 WorkCell caller，最后只用 packaged macOS 真实客户端验收。每个
+阶段都必须同时有代码、语义测试和对应证据；只有截图而没有 `semantic-state.json`、
+`lineage.json` 与脱敏日志，不算完成。
 
 ## Teammates, Memory, And Skills
 

@@ -4,8 +4,8 @@ Status: subordinate projection rule; canonical contract in
 [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 Date: 2026-09-01
 Last verified: 2026-09-01
-Scope: completed work-cell activity summaries, read-operation batching, shared
-conversation projections, Continuity v2 integration boundaries, and validation
+Scope: batch-header navigation copy, read-operation batching, shared conversation
+projections, Continuity v2 integration boundaries, and validation
 
 Related docs:
 
@@ -13,14 +13,17 @@ Related docs:
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 
-v3.5 note: this document defines only the pure, display-only batch projection. The
-canonical owner is `ConversationTimeline`; older `ConversationWorkCell` names below
-describe migration inputs and must not remain as a second production renderer.
+v3.7 note: this document defines only the pure, display-only batch projection. The
+canonical owner is `ConversationTimeline`; `ConversationWorkCell` is a pre-v3.7
+migration input and must not remain as a production renderer or summary owner.
 
-实现映射固定为：旧 `ConversationWorkCellItem` → canonical typed item →
-`commandBatch`/`explorationBatch` display wrapper。任何 summary、batch 或 disclosure
-都不能写回 `conversation_items`，也不能被 TerminalReport、fan-in 或
+实现映射固定为：durable action → canonical atomic item →
+`commandBatch`/`explorationBatch` display wrapper。任何 batch header、membership 或
+disclosure 都不能写回 `conversation_items`，也不能被 TerminalReport、fan-in 或
 `contextSegmentId` 读取。
+
+batching 只接收 `TimelineSnapshot` 的 atomic items；`TimelineSourceSnapshot` 仍由
+evidence fold/projector 负责，不能被 UI 直接读取或按可见行数重新分组。
 
 ## 1. Purpose
 
@@ -42,16 +45,15 @@ The target presentation has two layers:
 ```text
 authoritative execution evidence
   -> typed operation rows
-  -> compact activity summary
   -> reversible activity-item projection
        ├── exploration batch
        ├── command batch
        └── standalone consequential or exceptional action
 ```
 
-The summary and batches are display projections only. They never replace, coalesce,
-rewrite, or delete the underlying `ExecutionAction`, run event, artifact, or source
-reference.
+Batch headers are display projections only. They never replace, coalesce, rewrite, or
+delete the underlying `ExecutionAction`, run event, artifact, or source reference. A
+cross-kind completed activity summary is not rendered as a second row in v3.7.
 
 ## 2. Continuity v2 Boundary
 
@@ -85,31 +87,33 @@ canonical channel/item projection directly and must not restore the legacy
 
 ## 3. Product Contract
 
-### 3.1 Completed activity summary
+### 3.1 No standalone completed activity summary
 
-The completed work-cell shell may show a compact activity summary instead of a generic
-`Processed` label when structured actions exist:
+v3.7 does not render a cross-kind row such as:
 
 ```text
 已编辑 2 个文件 · 已读取 8 项 · 已运行 3 个命令
 ```
 
+That row duplicates the owning file, exploration, and command facts and caused the
+completed red-frame/Composer-summary regressions. The compact copy now exists only inside
+the owning batch header:
+
+```text
+Read 8 items
+Ran 3 commands
+```
+
 Rules:
 
-- Count only structured execution actions in the current work cell.
-- Exclude notes, terminal-report prose, artifact-only rows, approvals, and memory
-  citations from activity counts.
-- Use action type and status, never translated titles or labels such as `已读取` or
-  `read_only`, as the classification authority.
-- Say `项` when target refs do not prove that every child is a file. Do not fabricate a
-  file count from a filename embedded in prose.
-- Preserve the existing `Processed`, `Failed`, `Blocked`, and `Stopped` fallback when
-  no structured activity exists.
-- Active work shows the latest active action. It does not continuously rewrite a full
-  historical summary for every output chunk.
-- The summary count is navigation copy, not completion evidence. Terminal reporting,
-  workflow completion, and multi-agent fan-in must inspect the atomic actions and their
-  source lineage rather than a summary or batch count.
+- Derive a header only from the exact atomic children inside that batch.
+- Use action kind and status, never translated titles, as classification authority.
+- Say `items` when target refs do not prove that every child is a file.
+- Active, failed, blocked, approval-gated, and consequential actions remain standalone.
+- Do not emit `Processed`, `Completed`, or an aggregate activity-summary row after the
+  final `agentMessage`, `fileChange`, or `terminalReport` result row.
+- Batch counts are navigation copy, not completion evidence. Terminal reporting,
+  workflow completion, and multi-agent fan-in inspect atomic actions and source lineage.
 
 ### 3.2 Exploration batch
 
@@ -135,82 +139,54 @@ family without changing the batch identity or Continuity boundary.
 
 ### 3.3 Existing command batch
 
-`command_batch` remains responsible only for successful, low-risk Bash commands. It is
-not renamed to or broadened into `exploration_batch`. The command contract remains in
+`commandBatch` remains responsible only for successful, low-risk Bash commands. It is
+not renamed to or broadened into `explorationBatch`. The command contract remains in
 [Conversation Command Execution Batching Detailed Design](conversation-command-execution-batching-detailed-design.md).
 
 ## 4. Shared View Model
 
-The row needs common execution identity in addition to command-specific evidence:
+This subordinate design uses the canonical union directly. It does not define a second
+legacy `ConversationWorkCellItem` union:
 
 ```ts
-interface ConversationOperationSourceRef {
-  readonly kind: string;
-  readonly id: string;
-  readonly label?: string;
-  readonly visibility?: "conversation" | "private";
-}
-
-interface ConversationOperationExecutionView {
+type ActivityBatchLineageEnvelope = {
+  /** Stable display identity; never a durable ExecutionAction id. */
   readonly actionId: string;
-  readonly toolCallId?: string;
-  readonly runId?: string;
-  readonly attemptId?: string;
-  readonly turnRunRole?: "primary" | "retry" | "resume" | "repair" | "validation";
-  readonly participantId?: string;
-  readonly workUnitId?: string;
-  readonly workflowStepId?: string;
-  readonly actionType: string;
-  readonly status: string;
-  readonly updatedAt?: string;
-  readonly sourceRefs: readonly ConversationOperationSourceRef[];
-}
-```
-
-`ConversationWorkCellRow` gains an optional `operationExecution` field. The existing
-`commandExecution` field remains the specialized source for command text, output, exit
-code, and artifacts.
-
-The shared item union becomes:
-
-```ts
-type ConversationWorkCellItem =
-  | { readonly kind: "operation"; readonly row: ConversationWorkCellRow }
-  | { readonly kind: "command_batch"; readonly batch: ConversationCommandBatch }
-  | { readonly kind: "exploration_batch"; readonly batch: ConversationExplorationBatch };
-
-interface ConversationExplorationBatch {
-  readonly id: string;
-  readonly revisionKey: string;
-  readonly actionIds: readonly string[];
   readonly runId: string;
-  readonly attemptId?: string;
-  readonly turnRunRole?: "primary" | "retry" | "resume" | "repair" | "validation";
-  readonly participantId?: string;
-  readonly workUnitId?: string;
-  readonly workflowStepId?: string;
+  readonly attemptId: string;
+  readonly participantId: string;
+  readonly workflowStepId: string | null;
   readonly sourceRefs: readonly ConversationOperationSourceRef[];
+};
+
+type ActivityBatchItem = ConversationTimelineItemBase & ActivityBatchLineageEnvelope & {
+  readonly kind: "commandBatch" | "explorationBatch";
+  readonly actionIds: readonly string[];
+  readonly childActionIds: readonly string[];
+  readonly childItemIds: readonly string[];
+  readonly batch: CommandBatchPayload | ExplorationBatchPayload;
+};
+
+type ExplorationBatchPayload = {
   readonly operationCount: number;
   readonly targetCount?: number;
   readonly defaultExpanded: boolean;
-  readonly rows: readonly ConversationWorkCellRow[];
-}
+  readonly children: readonly ExplorationItem[];
+};
 ```
 
-The operation metadata is a projection of the authoritative action and its canonical run
-lineage. It is not a new runtime record and must not be used to make approval or execution
-decisions. When `attemptId` is not stored on an action, the adapter resolves it from the
-owning Run/WorkUnit Attempt or Ling turn-run link; unresolved attempt lineage makes the
-row ineligible for batching.
-
-`command_batch` must expose the same lineage fields and ordered `actionIds`. Existing
-command-specific evidence remains on its child items. This is a contract extension, not
-a reason to duplicate or replace the implemented command batching algorithm.
+Every child remains an atomic canonical item with its original `actionId`, `runId`,
+`attemptId`, `participantId`, `workflowStepId`, status, revision, and source refs. The batch
+copies the exact lineage scope and ordered child ids needed for reversible rendering; it is
+not a runtime record and cannot make approval, execution, retry, or completion decisions.
+Missing attempt or source lineage keeps the atomic row visible and makes it ineligible for
+batching; the projector never fills a guessed default.
 
 ## 5. Deterministic Projection
 
-The shared projection receives rows in stable transcript order and emits activity items.
-It must be used by the primary work-cell stream and every agent span.
+The shared projection receives canonical atomic items in stable transcript order and emits
+display items. It is called once before `ConversationTimeline` and is reused by every
+surface and depth-1 participant span.
 
 An exploration row is eligible only when:
 
@@ -230,7 +206,7 @@ The grouping algorithm is:
 3. Append only when run, attempt, turn-run role, participant, work unit, and workflow
    step match.
 4. Flush before every non-eligible row or scope change.
-5. Emit `exploration_batch` only when the segment contains at least three rows.
+5. Emit `explorationBatch` only when the segment contains at least three rows.
 6. Emit one or two rows as ordinary operation items.
 7. Keep executing, failed, cancelled, approval-gated, and consequential rows standalone.
 8. Preserve the original row order exactly.
@@ -250,9 +226,9 @@ read G
 becomes:
 
 ```text
-exploration_batch[A,B,C]
+explorationBatch[A,B,C]
 operation[edit D]
-exploration_batch[E,F,G]
+explorationBatch[E,F,G]
 ```
 
 Hard boundaries are the same as command batching where applicable:
@@ -267,29 +243,35 @@ Hard boundaries are the same as command batching where applicable:
   access, provider configuration, network send, or external-system mutation;
 - missing stable action identity, source refs, or required lineage.
 
-The batch id is derived from participant scope, run scope, and the first child action:
+The batch display identity is derived from participant scope, run scope, attempt scope, and the
+first child action. It is a projection key, not a new Host action:
 
 ```text
-exploration-batch:{participantScope}:{runId}:{firstActionId}
+explorationBatch:{participantId}:{runId}:{attemptId}:{firstActionId}
 ```
+
+`actionIds`/`childActionIds` remain the durable identities used for audit and completion. A
+batch cannot be formed unless all children share participant, run, attempt and workflow-step
+lineage; otherwise the projector flushes the batch and keeps atomic rows visible.
 
 The revision key includes ordered child ids, statuses, and `updatedAt` values. A later
 read appended to the same segment updates the batch without discarding user disclosure
 state.
 
-These boundaries also constrain `command_batch`. No command or exploration batch may
+These boundaries also constrain `commandBatch`. No command or exploration batch may
 cross an agent, run, attempt, retry role, workflow step, approval, failed action, or
 consequential action. The batch retains the union of visible child `sourceRefs`, while
 each child retains its original refs for exact UI-to-SQL traceability.
 
 ## 6. Rendering And Accessibility
 
-Add a shared `ConversationExplorationBatch` component beside
-`ConversationCommandBatch`.
+Render both batch kinds through the shared Timeline registry. The batch component may
+delegate child detail to the same `TimelineFactRow`, but it must not import or wrap the
+legacy `ConversationWorkCell`.
 
 - Use a native button with `aria-expanded` and a localized accessible label.
 - Keep the batch borderless and visually subordinate to normal conversation text.
-- Render child rows with the existing `WorkCellRow`; do not create nested chat bubbles.
+- Render child rows with the same fact-row renderer; do not create nested chat bubbles.
 - The batch disclosure controls only the child list.
 - A child row controls only its own detail.
 - Preserve keyboard focus behavior and reduced-motion behavior from command batches.
@@ -325,8 +307,9 @@ browser-side action store.
 
 Presentation grouping is never a completion oracle:
 
-- `TerminalReport` reads atomic `ExecutionAction`, RunEvent, approval, artifact, and
-  verification evidence with source refs.
+- The `terminalReport` Timeline item is projected from `TerminalReport` after it reads
+  atomic `ExecutionAction`, RunEvent, approval, artifact, and verification evidence with
+  source refs.
 - Multi-agent fan-in succeeds only after every required participant has terminal atomic
   evidence for the expected run/attempt/workflow-step lineage.
 - A visible batch, summary count, or model-authored ready/done sentence cannot satisfy a
@@ -341,9 +324,9 @@ These are implementation follow-ups, not part of the Continuity v2 canonical mod
 1. **R5 - evidence contract:** add common operation lineage and source refs, expose the
    same fields on command batches, and verify `tool_start/tool_update/tool_end` folding,
    stable action identity, revision, and invalidation.
-2. **R6 - pure projection:** add the `exploration_batch` union variant plus shared,
-   deterministic activity-summary and batching functions. Keep them outside React and
-   outside persistence.
+2. **R6 - pure projection:** add the canonical `explorationBatch` variant and deterministic
+   batching function. Keep it outside React and outside persistence; do not add a standalone
+   activity-summary item.
 3. **R7 - shared UI:** add the exploration renderer, copy, styles, and disclosure state;
    ordinary conversation, channel, teammate-private, and every agent span consume the
    same projection.
@@ -376,9 +359,9 @@ reconnect recovery; browser-only fixtures do not close those two acceptance item
 Acceptance example:
 
 ```text
-summary: 已编辑 2 个文件 · 已读取 8 项 · 已运行 3 个命令
-stream:  exploration batch + command batch + standalone edit row
+stream:  Read 8 items + Ran 3 commands + standalone Edited 2 files rows
 expanded: all original child rows and source refs remain recoverable
+absent:  no second aggregate activity-summary row after the stream
 ```
 
 ## 11. Non-Goals
@@ -390,7 +373,7 @@ expanded: all original child rows and source refs remain recoverable
 - Do not summarize activity with an LLM.
 - Do not merge edits, approvals, deploys, credential changes, external sends, or failures
   into generic counts that hide their consequences.
-- Do not replace the final Ling summary, artifact strip, or diagnostics view.
+- Do not add a second aggregate summary after the final message, artifact, or diagnostic.
 
 ## 12. Decision Verdict
 

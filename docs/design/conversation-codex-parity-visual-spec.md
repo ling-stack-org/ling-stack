@@ -1,9 +1,13 @@
 # Conversation Codex-Parity Visual Specification
 
-Status: normative visual contract v3.5
+Status: normative visual contract v3.7；implementation-ready（截图必须附 semantic/lineage 证据）
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Related: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+
+Cross-surface ownership and implementation sequencing are defined in
+[Conversation Surface Contract](conversation-surface-contract.md) and
+[Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md).
 
 这份规范只回答“用户看到什么、点击什么、如何保持简单好看”。数据权威、lineage、
 completion 和 recovery 以详细设计为准。
@@ -68,7 +72,7 @@ attention       = 同一行的 tint/border + 可恢复控件
 | `fact-size` | `13px / 1.4` | factual rail |
 | `mono-size` | `12px / 1.5` | command/output/code |
 | `content-max` | `760px` | 正文可读宽度；事实行可占满 |
-| `detail-max-height` | `240px` | inline detail，超出内部滚动 |
+| `detail-max-height` | `240px` | inline bounded preview；超出显示展开/完整 artifact 入口 |
 
 正文只用自然空白和排版层级；事实行只用 icon、动词、状态和一个 disclosure。
 任何新组件如果需要自己的 spacing、radius 或 status 色，必须先证明 shared token
@@ -82,10 +86,11 @@ attention       = 同一行的 tint/border + 可恢复控件
 ```text
 ConversationSurfaceShell
 ├─ Header（标题、参与者/模型提示）
-├─ ConversationTimeline  ← 唯一 overflow/scroll owner
-│  ├─ document item：自然宽度，最多 760px
-│  ├─ fact row：同一列，动词 + 状态 + disclosure
-│  └─ depth=1 child：左侧 1px rail + 8px inset
+├─ ConversationFeedViewport  ← 唯一纵向 overflow/scroll owner
+│  └─ ConversationTimeline   ← 普通文档流，无纵向 overflow
+│     ├─ document item：自然宽度，最多 760px
+│     ├─ fact row：同一列，动词 + 状态 + disclosure
+│     └─ depth=1 child：左侧 1px rail + 8px inset
 ├─ EnvironmentPopover（只绑定 active action）
 └─ Composer（输入和 approval control 的唯一 owner）
 ```
@@ -108,14 +113,14 @@ Codex 风格的重点是阅读顺序，不是把所有内容都做成气泡：
 
 | 内容 | 对齐 | 首屏容器 | 允许的强调 |
 | --- | --- | --- | --- |
-| `userMessage` | 同一时间线内可右对齐作者块 | 无重边框的轻量文本块，最大 `min(760px, 82%)` | hover/edit 状态 |
+| `userMessage` | 左对齐、与 Agent 共用 document column | 轻量作者标识 + 文档流，最大 `760px` | hover/edit 状态 |
 | `agentMessage` / `reasoning` / `plan` | 左对齐 | 文档流，无 card chrome | 标题/列表/代码自身层级 |
 | command/file/tool/approval | 左对齐、占满 timeline column | 28px+ fact row | active/attention tint |
 | depth-1 child | 左对齐，增加 rail + inset | 复用上面两类容器 | participant label |
 
-用户消息可以通过对齐表达作者身份，但不能变成大圆角方框；Agent 叙述和事实行不能被
-推到右侧。任何 surface 都不得通过 `justify-end`、独立 max-width 或 route CSS 改变同一
-item 的 renderer geometry。
+用户消息通过轻量作者标识表达身份，不靠右侧方形气泡表达身份；Agent 叙述和事实行同样
+保持左侧阅读顺序。任何 surface 都不得通过 `justify-end`、独立 max-width 或 route CSS
+改变同一 item 的 renderer geometry。
 
 ## 2. Row grammar
 
@@ -128,7 +133,9 @@ item 的 renderer geometry。
 
 - icon 只表达 kind，不代替 status 文案；
 - title 用动作动词：`Run pnpm test`、`Edited parser.ts`、`Read 8 items`；
-- status 是可读文本：`Working`、`Succeeded`、`Failed`、`Waiting for approval`；
+- status 是可读文本：`Queued`、`Working`、`Waiting`、`Waiting for approval`、
+  `Succeeded`、`Failed`、`Cancelled`、`Blocked`；`Waiting for approval` 只用于审批，
+  其他等待原因使用 `Waiting` 加一行原因说明；
 - 每行最多一个 disclosure；没有 detail 就不显示按钮；
 - row hit target ≥28px，focus ring 与 hover 规则一致；
 - active/blocked 默认展开一层 bounded detail，成功历史默认折叠。
@@ -153,7 +160,7 @@ item 的 renderer geometry。
 | fenced code | `code` | 保留换行/缩进，显示 language label + copy |
 | 未闭合 fence 的流式片段 | plain monospace | 先安全显示，结束后再高亮 |
 | 已验证本地文件 ref | `fileRef` | basename + icon；hover/focus 完整路径；可打开 |
-| 模型随口写出的 path | paragraph | 纯文本，不生成 `file://` 或 Host action |
+| 模型随口写出的 path | display-only `pathCandidate`（parser 的 `local_file` token） | basename + icon + 完整路径 tooltip/copy；不生成 `file://` 或 Host action |
 
 同一 `agentMessage` 可以包含多个 content part；不能为了渲染方便把它们 flatten 成
 一行，也不能把 code part 误归类为 `commandExecution`。
@@ -168,6 +175,38 @@ item 的 renderer geometry。
   part 后原地替换；
 - markdown 解析失败时保留安全纯文本并生成 `diagnostic(markdown_parse_failed)`，不
   把整条消息送进 fact rail。
+
+### 2.5 Result row
+
+`terminalReport` 是 execute turn 的结果文档，不是命令列表的另一种包装：
+
+```text
+[✓] Result · Succeeded · 2 files changed · 3 checks passed       [⌄]
+```
+
+- 只由已提交的 Completion Gate、TerminalReport 和 final-result Item 投影；
+- 默认显示一行 outcome + 关键计数，展开后显示 bounded summary、changes、verification、
+  artifacts 和 risks 的 source refs；完整 stdout/stderr 仍回到 owning fact row 或 artifact
+  viewer；
+- `reply` turn 使用最终 `agentMessage`，不生成 result row；`execute` turn 不在 result row
+  后再渲染重复的最终 assistant summary；
+- 状态使用与 fact row 相同的 machine/value 文案和无障碍 label，颜色只做辅助。
+
+### 2.6 Render-once 边界
+
+同一个 canonical item 只能在 Timeline 中生成一次 owning row。以下区域只提供控制或
+定位，不能再复制历史内容：
+
+| 区域 | 允许显示 | 禁止复制 |
+| --- | --- | --- |
+| `ConversationTimeline` | item、状态、详情、disclosure | — |
+| `Composer` / approval gate | 输入、停止、重试、allow/deny | command/output/summary |
+| `EnvironmentPopover` | 当前 active run 的两行 ambient hint | 历史动作、TerminalReport |
+| Right Dock / viewer | 当前 source ref 的完整预览 | 第二个 action row 或 completion |
+| `terminalReport` row / fan-in | atomic evidence 结论 | batch count、命令输出全文、Timeline 外的第二张结果卡 |
+
+如果同一 `actionId` 在两个区域出现，视觉验收必须判定为 duplicate-owner 回归，即使
+两处内容完全相同。修复入口应回到 projector/owner 映射，而不是在 CSS 中隐藏其中一处。
 
 ## 3. Typed renderer map
 
@@ -186,6 +225,7 @@ item 的 renderer geometry。
 | `approval` | shield | `Waiting for approval` | decision |
 | `imageView` | image | caption/basename | bounded preview |
 | `contextCompaction` | layers | `Context compacted` | snapshot/range |
+| `terminalReport` | checkmark/alert | `Result · Succeeded` | bounded summary, changes, verification, artifacts |
 | `protocolEvent` | protocol | lifecycle/decision title | structured protocol detail |
 | `subAgentActivity` | participant | `Engineer · working` | nested timeline |
 | `commandBatch` | terminal-stack | `Ran 4 commands` | exact children |
@@ -193,8 +233,18 @@ item 的 renderer geometry。
 | `diagnostic` | alert | `Activity unavailable` | repair/source refs |
 
 renderer key 必须稳定，例如 `message.document`、`fact.command`、`fact.file`、
-`fact.tool`、`fact.approval`、`batch.command`、`batch.exploration`、`agent.nested`。
+`fact.tool`、`fact.approval`、`result.terminal`、`batch.command`、`batch.exploration`、
+`agent.nested`。`terminalReport` 是 execute turn 的唯一结果 row；reply turn 不生成
+该 kind。
 key 是 fingerprint 的一部分；surface 只能改变 policy/chrome，不能改变 key。
+
+视觉层永远不显示 SQLite/API 的 wire kind。`terminal_report` 只在 durable payload 和
+ lineage 中出现，进入 Timeline 后显示为 `Result · Succeeded`，其 DOM 使用
+`data-conversation-timeline-kind="terminalReport"`、
+`data-conversation-timeline-renderer-key="result.terminal"`。同理，
+`assistant_message` 经过 `presentationRole` 投影成 document row，而不是把 snake_case
+名称或 provider 原始 JSON泄露给用户。这样视觉简化不会牺牲可审计性，也不会让不同
+surface 因 wire 字段差异产生不同 renderer。
 
 ### 3.1 组合示例：一个 timeline，四种 row
 
@@ -207,7 +257,10 @@ document lane
 fact rail
   ⌁ Read src/parser.ts · Succeeded                 [⌄]
   ▣ Run pnpm test · Working                         [⌄]
-  ▱ Edited parser.ts · +18 -4                      [⌄]
+  ▱ Edited parser.ts · +18 -4 · Succeeded          [⌄]
+
+result lane
+  Result · Succeeded · 2 files changed · tests passed                 [⌄]
 
 nested rail (depth=1, same registry)
   Engineer  我会复核失败用例。
@@ -222,8 +275,9 @@ nested rail (depth=1, same registry)
 - nested rail 只增加 participant label/rail，子 Agent 的 narration、command、file、
   tool 仍复用相同 renderer key、row height、disclosure 和 a11y 属性；
 - `agentMessage` 与事实 row 可以相邻，但一个 action 不能在两处重复；
-- summary、TerminalReport、Composer footer 和 EnvironmentPopover 都不能再复制事实
-  row 的正文或输出。
+- summary、Composer footer 和 EnvironmentPopover 都不能再复制事实 row 的正文或输出；
+  `terminalReport` 本身就是 Timeline 内唯一的 execute 结果 row，不能在 Timeline 外再挂
+  一个同内容的 TerminalReport card。
 
 这是视觉验收的最小单元：同一 canonical fixture 在 normal/private/channel/child 中
 必须得到相同的 row 组合和 renderer fingerprint，只允许外围标题、roster、participant
@@ -239,8 +293,10 @@ rail、权限提示不同。
 ```
 
 展开显示 exact command、cwd、stdout/stderr 的原始换行、exit code、duration、truncation
-标记和 trusted artifact ref。成功最多 inline 5 行/800 字符，失败最多 12 行/1600 字符；
-完整输出从同一 row 的 detail/raw action 打开。
+标记和 trusted artifact ref。daemon 的 bounded tail 上限为 40 行/8KiB/64 chunks；首屏
+成功最多显示 5 行/800 字符，失败最多 12 行/1600 字符。超过首屏上限时由同一 row 的
+`Show more` 展开 bounded tail，完整输出通过 trusted artifact 打开，不创建第二个纵向
+滚动容器。
 
 `tool_update` 更新同一 `data-conversation-timeline-id`，不能追加 stdout 气泡。active
 row 保持可见；completed batch 不包含 active command。
@@ -273,7 +329,7 @@ provider 原始 JSON 的行。
 ## 5. 文件、路径和 diff
 
 ```text
-▱  Edited parser.ts · +18 -4                    [⌄]
+▱  Edited parser.ts · +18 -4 · Succeeded        [⌄]
 ```
 
 - 首屏不显示长绝对路径；
@@ -312,6 +368,11 @@ QA       ─┘
 
 子 Agent 是同一个 `ConversationTimeline(depth=1)`，只有 participant label 和 1px rail
 增加层次感。不能生成 child-specific bubble、独立 WorkCell 或第二滚动区域。
+
+`subAgentActivity` 自己只有一个 group disclosure，不再包卡片：首次实时运行时展开；
+`waiting/blocked/errored` 保持展开；重新载入历史时，只有全部 child 都是安全终态且没有
+用户 focus 的 completed group 默认折叠。用户手动展开/折叠后，以稳定 `item.id` 保持状态，
+后续 revision 不得强制切换。group 展开后 child 的 fact row 仍各自使用原 disclosure。
 
 子 Agent 的叙述、计划、命令、文件和工具按父级相同顺序渲染；例如：
 
@@ -399,7 +460,8 @@ same fixture
 | --- | --- | --- | --- |
 | pending | 动作 + `Queued` | 否 | 取消（若 Host 支持） |
 | running | 动作 + `Working` | bounded live tail | 停止/展开 |
-| waiting | 动作 + `Waiting for approval` | 是 | allow/deny（唯一 owner） |
+| waiting (approval) | 动作 + `Waiting for approval` | 是 | allow/deny（Composer 唯一 owner） |
+| waiting (dependency/fan-in) | 动作 + `Waiting` | 是 | 仅查看缺失证据 |
 | succeeded | 动作 + `Succeeded` | 否 | 展开/复制/打开 trusted ref |
 | failed | 动作 + `Failed` | 是 | 重试/查看完整 artifact |
 | cancelled | 动作 + `Cancelled` | 否 | 查看原因 |
@@ -408,20 +470,25 @@ same fixture
 状态必须同时由文本、icon 和可访问名称表达；颜色只是 tint。active 状态更新时 row
 identity 不变，hover/focus 不丢失。
 
+视觉 copy 的 `Queued` 对应内部既有的 `pending` 状态；`Waiting`/`Waiting for approval`
+都来自内部 `waiting`，由 `waitingReason` 决定文案和可执行动作。这只是 shared renderer
+的显示映射，不要求新增或改写持久化状态值。
+
 ## 10. Responsive、density 和 a11y
 
 | Token | 值/规则 |
 | --- | --- |
 | fact row hit target | ≥28px |
 | icon | 16px；nested icon 14px |
-| detail max height | 240px，超出 row 内滚动 |
+| detail max height | 240px bounded preview；超出用 `Show more`/完整 artifact，不增加纵向滚动 owner |
 | inline command tail | ≤40 lines、8KiB、64 chunks |
-| activity region | 10 行后 `min(360px, 50vh)` |
+| dense activity | 通过安全终态 batching 和 `subAgentActivity` group disclosure 收敛；不设置局部 max-height/`overflow-y` |
 | mobile/narrow | 隐藏次要 cwd/时间，保留 verb/status |
 | reduced motion | 关闭插入/展开动画，保留状态变化 |
 
 所有 disclosure 使用 native button + `aria-expanded`；状态必须有文本而非只用颜色；
 `data-conversation-timeline-id`、`data-conversation-timeline-kind`、
+`data-conversation-timeline-renderer-key`、
 `data-conversation-timeline-status`、`data-conversation-timeline-revision`、
 `data-conversation-timeline-depth` 和 source ref 属性是稳定测试接口。
 
@@ -484,7 +551,8 @@ detail/popover，Enter 激活已授权的 file/diff ref。滚动容器只有一�
 | --- | --- | --- | --- |
 | queued | clock | `Queued` | 否 |
 | working | spinner/terminal | `Working` | 是（bounded tail） |
-| waiting | shield | `Waiting for approval` | 是 |
+| waiting (approval) | shield | `Waiting for approval` | 是 |
+| waiting (dependency/fan-in) | clock/people | `Waiting` | 是 |
 | succeeded | check | `Succeeded` | 否 |
 | failed | alert | `Failed` | 是 |
 | cancelled | stop | `Cancelled` | 否 |
@@ -506,9 +574,12 @@ ConversationTimeline
 │  └─ LocalPathRef
 ├─ TimelineFactRow
 │  ├─ FactIcon / FactTitle / FactStatus
-│  └─ FactDisclosure -> CommandDetail | DiffDetail | ToolDetail | ApprovalDetail
+│  └─ FactDisclosure -> CommandDetail | DiffDetail | ToolDetail | ApprovalStatusDetail
 ├─ TimelineBatchRow -> exact atomic children
 └─ SubAgentActivity -> participant rail + ConversationTimeline(depth=1)
+
+Composer / approval gate
+└─ allow / deny / stop / retry controls（各自唯一 owner，Timeline 不复制按钮）
 ```
 
 `NormalConversationFeed`、`TeammatePrivateChatFeed` 和频道组件只能传 items、policy、
@@ -537,7 +608,151 @@ roster、Composer 和页面边距。
 4. dark/light、键盘、reduced-motion、窄窗口是否保留同一语义层级；
 5. 同一 fixture 在 normal/private/channel/child 的 renderer key 和 geometry 是否一致。
 
-## 13. Visual acceptance
+## 13. v3.7 视觉实现细化
+
+这一版把“简单好看”变成实现者可以逐项检查的交互契约。Codex 的可借鉴点是信息层级
+和 item 专用 renderer，不是把所有内容做成同样的卡片。视觉实现必须先满足语义，再
+调整颜色和间距。
+
+### 13.1 四个时刻，只有一个历史 owner
+
+```text
+首屏加载       -> document skeleton（不造假 action）
+动作进行中     -> 同一 fact row：动词 + Working + bounded tail
+动作结束       -> 同一 fact row：Succeeded/Failed/Cancelled + disclosure
+重连/重启恢复  -> 同一 fact row：短暂 Reconnecting，恢复后原地清除
+```
+
+`ConversationTimeline` 是四个时刻唯一的历史 owner。Composer、EnvironmentPopover、
+right dock 和 Timeline 外部区域可以聚焦或打开 owning row，但不能复制 row 文案、输出、
+文件统计或完成状态。`terminalReport` 作为 execute turn 的 result row 也只能在 Timeline
+内出现一次。任何第二份历史列表都视为视觉回归。
+
+### 13.2 单行 anatomy 与文案规则
+
+事实行固定为：
+
+```text
+[kind icon]  [verb title] · [text status]                 [Details]
+             [optional one-line detail / bounded tail]
+```
+
+动词由 typed payload 生成，而不是从模型句子截取：
+
+| kind | 标题模板 | 例子 |
+| --- | --- | --- |
+| command | `Run {commandSummary}` | `Run pnpm test` |
+| exploration | `{Read\|Search} {targetSummary}` | `Read src/parser.ts` |
+| fileChange | `{Created\|Edited\|Deleted} {basename}` | `Edited parser.ts` |
+| tool | `{toolVerb} {target}` | `Search GitHub issues` |
+| delegation | `Delegated to {participant}` | `Delegated to QA` |
+
+缺少安全 payload 时显示 `Activity unavailable` + blocked 状态，不降级成只有
+`Running…`、`Done` 或 provider JSON 的行。一个 action 的 start/update/end 永远只占
+一行，revision 更新不得改变 DOM id、排序、焦点或用户已展开的 detail。
+
+### 13.3 统一 surface 的唯一差异
+
+```text
+ResolvedConversationSurface
+  -> canonical snapshot
+  -> one projector + optional display batch
+  -> ConversationTimeline（same registry）
+  -> surface shell/policy/chrome
+```
+
+普通会话、队友私聊、频道 root/topic/branch 和 depth-1 child 的 `rendererKeys`、item
+顺序、状态文案、行高和 disclosure 数必须一致。只允许标题、roster、participant rail、
+权限提示不同。禁止在任何 surface 中新增 `MessageBubble`、`WorkCell`、`CommandRow`、
+Markdown parser 或第二个 scroll owner。
+
+### 13.4 EnvironmentPopover 交互契约
+
+浮窗是“现在正在发生什么”的环境提示，不是历史摘要：
+
+```text
+Working · Engineer editing parser.ts
+ling-stack · feature/transcript
+```
+
+- 只绑定一个 `activeRunId` 和其当前 `actionId`，active revision 到来时原地更新；
+- 最多两行，长 cwd 使用 basename/branch 截断，hover/focus 才显示完整值；
+- run 进入 terminal fence 后关闭，不保留“刚刚完成”的 summary；
+- 点击浮窗中的 source 只 focus Timeline owning row，不复制详情；
+- 没有 active run 时不渲染空框，也不显示旧 run、TerminalReport 或 memory footer；
+- `reconnecting` 只显示短暂 shell hint，恢复后清除，不追加“恢复完成”消息。
+
+### 13.5 disclosure 与折叠规则
+
+默认只展开需要用户处理的内容：
+
+| 状态/数量 | 首屏行为 | 说明 |
+| --- | --- | --- |
+| 1–2 个安全终态动作 | 保持普通 row | 不为了短列表制造 batch 控件 |
+| ≥3 个相邻安全终态 read/command | 一个 batch header | 展开恢复 exact child order |
+| active action | 独立 row，默认 bounded detail | 不能被已完成 batch 吸收 |
+| failed/waiting/blocked | 独立 attention row，默认展开一层 | 详情和恢复动作仍在 owning row |
+| consequential action | 永远独立 row | 不允许被“Ran N”隐藏 |
+
+展开只改变本地 disclosure 状态，不改变 canonical item、context segment、completion、
+fan-in 或 retry 选择。成功历史的折叠是可逆的显示优化，不是数据合并。
+
+### 13.6 内容类型的视觉验收
+
+同一个 `agentMessage` 可以含多个 content part，必须保持语义结构：
+
+```text
+paragraph -> 自然换行与段落间距
+list      -> 真实 ul/ol marker
+code      -> fenced code、语言标签、copy、保留缩进换行
+fileRef   -> basename + icon；hover/focus 完整路径；Host capability 后才可打开
+link      -> http/https 安全链接
+```
+
+未闭合 code fence 在流式阶段先用 plain monospace，解析结束后再高亮；解析失败保留
+纯文本并生成 `diagnostic(markdown_parse_failed)`。任何 path 字符串都不能自行升级成
+`file://`，避免模型叙述与 Host 事实混淆。
+
+### 13.7 滚动、折叠和高度的实现边界
+
+“简单好看”最容易被局部滚动和重复折叠破坏，因此实现只允许下面的所有权关系：
+
+| 区域 | 允许的行为 | 禁止的行为 |
+| --- | --- | --- |
+| `ConversationFeedViewport` | 唯一纵向滚动、贴底、历史 anchor | surface 再创建第二个 history viewport |
+| `ConversationTimeline` | 普通文档流、item/disclosure/focus | 自己或子 row、batch、child 创建 `overflow-y` |
+| fact detail | 正常文档流中的 bounded tail；必要时 `Show more` | 内嵌纵向 terminal viewport |
+| batch | 一个 disclosure，展开 exact children | 自己再包一层 WorkCell/card 或改变排序 |
+| code/diff | 仅允许水平滚动 | 横向滚动撑破页面或产生第二历史列 |
+| EnvironmentPopover | 浮层定位，最多两行 ambient hint | 变成历史摘要、结果面板或第三个 activity list |
+
+高度规则固定为：普通正文不设固定高度；事实行最小 28px；active/attention detail 的
+bounded preview 最大 240px；超过上限通过同一 owning row 的 `Show more` 或 trusted
+artifact 打开。高密度历史通过安全 batching、completed child group disclosure 和外层
+Feed viewport 浏览，不给 Timeline、batch、child 或 command detail 增加纵向 max-height。
+
+折叠状态只存在 Timeline view state，并以 `item.id`/稳定 batch id 为 key。snapshot
+刷新、revision 更新、SSE reconnect、daemon restart 和 retry 不得把用户已经展开的 row
+重置成另一行，也不得因为 batch 变长而复制 header。这样可以同时保持 Codex 式的安静
+首屏和 Ling 所需的完整可追溯性。
+
+### 13.8 旧 bubble class 的迁移规则
+
+`MessageRow` 当前仍会输出 `message-bubble-own`、`message-bubble-peer` 等历史 class，
+因为它们被现有测试和外部 surface selector 用作身份标记。它们在 v3.7 不再代表几何或
+视觉样式：当 row 属于 `tone="document"` 时，shared CSS 必须强制以下规则：
+
+- own/peer 使用同一个 leading-column + content-column 网格，内容均 `justify-self:start`；
+- `message-content` 透明、无 border/radius/shadow，宽度占满 document column；
+- avatar（若 policy 允许）始终位于 leading column；normal surface 隐藏 avatar 时，
+  content 回到唯一的第一列；
+- surface stylesheet 不得通过 `.message-bubble-own` 恢复右对齐、背景或独立 max-width。
+
+因此 selector 迁移可以分两步完成：先把断言从“own bubble 外观”改为
+`message-bubble-document + data-has-avatar + justify-self:start`，再在 E4 删除不再
+需要的 legacy class。不能为了让旧截图通过而把 document row 重新变成气泡。
+
+## 14. Visual acceptance
 
 每个真实 packaged macOS case 至少提供：
 
@@ -555,3 +770,152 @@ logs.redacted.txt   app + daemon logs without secrets
 验收截图至少包含四个视角：普通会话 document + fact、私聊同 fixture、频道多 Agent
 nested rail、active/failed/approval attention state。只展示一个成功 command row 不足以
 证明共享组件、Markdown、批次、恢复和多 Agent 都已正确。
+
+## 15. v3.7 组件级视觉蓝图
+
+### 15.1 页面 composition
+
+所有 conversation surface 使用同一纵向阅读结构；“lane”是语义，不是并排栏：
+
+```text
+ConversationShell
+├─ Header / environment trigger                         shell chrome
+├─ ConversationFeedViewport                             only vertical scroll owner
+│  └─ ConversationTimeline                              no vertical overflow
+│     ├─ User document                                  no bubble card
+│     ├─ Agent document                                 Markdown
+│     ├─ Fact row                                       icon + verb + status
+│     │  └─ disclosure                                  bounded detail
+│     ├─ Result row                                      execute terminalReport only
+│     │  └─ disclosure                                  summary/changes/verification refs
+│     ├─ Nested participant rail                        depth=1
+│     │  ├─ child Agent document                        same renderer
+│     │  └─ child fact row                              same renderer
+│     └─ Final Agent document                           reply only; no duplicate report
+├─ EnvironmentPopover                                   active ambient only
+├─ Composer / approval gate                             controls only
+└─ Right Dock                                           source viewer only
+```
+
+Document 与 fact row 的左边缘统一；nested rail 只增加 `8px` inset。普通、私聊和频道
+不得改变正文宽度、fact row anatomy、状态 copy 或 disclosure 位置。
+
+### 15.2 视觉 token 与密度
+
+首轮实现使用现有 Ling 设计 token，不增加新的色板：
+
+| 元素 | 约束 |
+| --- | --- |
+| Timeline column | `max-width: 760px`；窄窗 `width: 100%` |
+| document gap | 段落 `8px`；item 间 `12px` |
+| fact row | 最小高 `28px`；水平 gap `8px`；radius `6px` 仅 attention tint |
+| icon | depth 0 为 `16px`；depth 1 为 `14px` |
+| participant rail | `1px`、低对比；label 只出现一次 |
+| code/diff | `12px/1.5` monospace；只允许水平 overflow |
+| detail | 首屏最大 `240px`；超出使用 `Show more`/artifact，不创建纵向 viewport |
+
+`Succeeded` 行默认无背景；`Working` 只有轻微 active tint；`Waiting/Failed/Blocked` 使用
+attention tint 和文本状态。禁止用大圆角卡、整块红框或强饱和背景表达终态。
+
+### 15.3 文本、Markdown、代码和路径
+
+内容按 parser 输出的结构渲染，不按换行字符粗暴拼接：
+
+| content part | renderer | fallback |
+| --- | --- | --- |
+| paragraph | Markdown paragraph | 原始文本，保留换行 |
+| list | 真实 `ul/ol/li` | 原始 Markdown，不黏成一行 |
+| fenced code | code block + language/copy | plain monospace，保留缩进 |
+| inline code | inline code token | plain text |
+| local path | basename + file icon + tooltip/copy | display-only，不可导航 |
+| trusted file ref | 同上 + Host action | blocked 时仍可复制 |
+| diff ref | file row → review viewer | 不降级成普通文件 |
+
+流式阶段未闭合 fence 使用 plain monospace；fence 完成后在相同 message item 内切换
+renderer，不创建第二条消息。Markdown parse 失败保留可读文本，并产生 diagnostic 供
+审计；不得把正文压成一行或把代码当普通段落。
+
+### 15.4 Fact row 与 batch 的首屏规则
+
+```text
+⌁ Read src/parser.ts · Succeeded                         Details
+▣ Run pnpm test · Working                               Details
+▱ Edited parser.ts · +18 -4 · Succeeded                 Review
+◇ Search GitHub issues · Succeeded                      Details
+```
+
+- 动词和 target 来自 typed payload；状态来自 shared status mapper；
+- row 只有一个 disclosure/action 区；`Review` 仍属于同一个 owning row；
+- 1–2 个相邻成功动作保持独立；≥3 个符合条件的动作才出现 batch；
+- active、waiting、failed、blocked、approval、retry boundary 和 consequential action 永不
+  被 batch 吸收；
+- batch 展开后 child 仍使用原始 renderer，但不增加卡片、头像或纵向滚动。
+
+### 15.5 Nested Agent 展示
+
+```text
+Engineer ─┐  我先检查 parser 的 token 边界。
+          ├─ ⌁ Read parser.ts · Succeeded
+          ├─ ▣ Run parser test · Failed · exit 1
+          └─ 我定位到空 token 分支。
+```
+
+participant lifecycle 只显示一次；子 Agent narration 使用普通 `agentMessage`，真实动作
+使用父级相同的 fact renderer。父级 fan-in 未满足时保持 `Waiting`；child ready 文本不会
+使父级显示成功。depth=2 显示一条轻量 `Blocked` diagnostic，而不是继续缩进。
+
+### 15.6 EnvironmentPopover
+
+Popover 只在存在 active action 时出现，最多两行：
+
+```text
+Working · Engineer editing parser.ts
+ling-stack · feature/transcript
+```
+
+它不显示历史列表、最终总结、文件统计、approval 控件或 memory footer。active action
+切换时原地更新；terminal fence 后关闭；reconnect 时可短暂显示 `Reconnecting`，恢复后
+清除。点击只聚焦 Timeline owning row，不复制 row。
+
+### 15.7 视觉验收截图组合
+
+packaged macOS 的最终检查不能只拍一个成功结果。至少保存：
+
+1. 普通会话：paragraph/list/fenced code/display-only path/trusted path；reply 的 final
+   `agentMessage` 与 execute 的单一 `terminalReport` result row；
+2. 普通会话：read batch、active command update、file diff；
+3. 私聊：复用同一 fixture，验证 geometry/fingerprint parity；
+4. 频道：两位 participant，各含 narration、command/file/tool；
+5. 频道：partial fan-in、structured blocked、depth-2 blocked；
+6. approval：waiting、deny、expired；
+7. recovery：retry、SSE reconnect、daemon restart；
+8. shell：EnvironmentPopover、dark/light、reduced motion、窄窗口。
+
+每张截图必须能关联同目录的 `semantic-state.json` 和 `lineage.json`；无法回链事实的漂亮
+截图一律视为 mock，不计入完成。
+
+### 15.8 Turn outcome slot
+
+每个 turn 只有一个结果位置，避免“已编辑文件后又出现红框总结、输入框下再重复一次”：
+
+```text
+reply turn
+  └─ agentMessage(role=reply_result)
+
+execute turn
+  ├─ agentMessage(role=narration)          可有多条，解释过程
+  ├─ fact rows                             真实 command/file/tool evidence
+  └─ outcome slot
+      ├─ Finalizing result                 report publication 尚未完成
+      ├─ terminalReport                    highest committed generation
+      └─ diagnostic(blocked)               publication/join 失败
+```
+
+`execution_summary` 是 provider 的终态文本，不拥有第二个可见结果。TerminalReport
+committed 后它只保留为 synthesis/audit 输入；Timeline、Composer、EnvironmentPopover 和
+Right Dock 都不渲染它。outcome slot 的 identity 绑定 `turnId`，从 finalizing 切换为 result
+或 blocked 时原位更新，不在底部追加新卡，也不改变用户当前 scroll anchor。
+
+结果行仍遵守 Codex 风格的低重量表达：成功是无背景的一行，失败/blocked 才使用轻量
+attention tint；展开显示结构化 changes、verification、artifacts 和 risks，不复制每条
+命令输出。这样“最终说明”和“真实执行事实”在语义上分层，视觉上仍保持一个连续文档流。
