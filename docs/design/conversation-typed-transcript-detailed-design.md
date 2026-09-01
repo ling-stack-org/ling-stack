@@ -1010,10 +1010,27 @@ TerminalReport 或 fan-in 中作为 action/run 完成依据。
 批次投影使用单次线性扫描，任何边界都先 flush 再处理当前 item。边界判定不读取
 文案、不读取可见行数，且返回可审计的 `splitReason`：
 
+```ts
+type BatchSplitReason =
+  | "narration"
+  | "kind"
+  | "participant"
+  | "run"
+  | "attempt"
+  | "workflow_step"
+  | "context_scope"
+  | "approval"
+  | "retry"
+  | "non_adjacent"
+  | "non_terminal"
+  | "consequential"
+  | "missing_lineage";
+```
+
 ```text
 for item in atomic:
-  if item is not eligible: flush("kind_or_status")
-  else if lineage(item) != lineage(openBatch): flush("lineage")
+  if item is not eligible: flush(splitReason(item))
+  else if lineage(item) != lineage(openBatch): flush(splitReason(left, item))
   else if item.sequence != previous.sequence + 1: flush("non_adjacent")
   else if consequential(item): flush("consequential")
   append(item)
@@ -1025,6 +1042,30 @@ flush("end")
 取消、retry、resume、repair、validation、write/edit、commit/push、deploy、MCP、
 browser、artifact、handoff 和缺 source ref 等边界。active item 永远单独显示，不能
 被已经打开的 batch 吸收。
+
+实现级诊断结果和可逆展开接口固定如下：
+
+```ts
+type BatchSplitBoundary = {
+  readonly beforeItemId: string;
+  readonly afterItemId: string | null;
+  readonly reason: BatchSplitReason;
+};
+
+type DisplayBatchProjection = {
+  readonly items: readonly ConversationTimelineItem[];
+  readonly boundaries: readonly BatchSplitBoundary[];
+};
+
+projectDisplayBatches(atomic, context) -> DisplayBatchProjection
+expandDisplayBatch(item) -> readonly ConversationTimelineItem[]
+```
+
+`batchCanonicalTranscriptItems` 只返回 `DisplayBatchProjection.items`。若没有已提交的
+`contextSegmentIdByItemId`，必须保持所有候选为原子行，并在相邻候选之间记录
+`context_scope`；不能因 run/participant 元数据相同就猜测可以合并。展开结果必须保留
+原始 child 的 canonical 顺序、`actionId` 与 `sourceRefs`，不得读取 batch 数量或重建另一
+份事实模型。
 
 ## 10. 统一渲染架构
 

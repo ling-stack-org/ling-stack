@@ -4,6 +4,8 @@ import {
   mergeCanonicalTranscriptInputs,
   projectCanonicalConversationTimeline,
   batchCanonicalTranscriptItems,
+  expandDisplayBatch,
+  projectDisplayBatches,
 } from "../dist/index.js";
 
 const scope = {
@@ -362,6 +364,77 @@ test("typed batching flushes at context segment changes and unknown lookups", ()
     contextSegmentIdByItemId: new Map([["c1", "segment-a"], ["c2", "segment-a"]]),
   });
   assert.deepEqual(unknown.map((item) => item.kind), items.map(() => "commandExecution"));
+});
+
+test("typed batching exposes deterministic split reasons without changing the display projection", () => {
+  const base = (id, sequence, overrides = {}) => ({
+    id,
+    kind: "commandExecution",
+    revision: sequence,
+    threadSequence: sequence,
+    partIndex: 1,
+    status: "succeeded",
+    actionId: id,
+    runId: "run-1",
+    attemptId: "attempt-1",
+    participantId: "ling",
+    workflowStepId: null,
+    turnRunRole: "primary",
+    sourceRefs: [conversationRef(`item-${id}`)],
+    title: id,
+    command: `node ${id}.js`,
+    risk: "low",
+    outputTail: [],
+    outputTruncated: false,
+    exitCode: 0,
+    ...overrides,
+  });
+  const source = [
+    base("c1", 1),
+    base("c2", 2),
+    base("c3", 3),
+    base("c4", 4, { participantId: "reviewer" }),
+    base("c5", 5, { participantId: "reviewer", attemptId: "attempt-2", turnRunRole: "retry" }),
+    base("c6", 6, { participantId: "reviewer", attemptId: "attempt-2", turnRunRole: "retry", workflowStepId: "step-2" }),
+    base("c7", 8, { participantId: "reviewer", attemptId: "attempt-2", turnRunRole: "retry", workflowStepId: "step-2" }),
+  ];
+  const projection = projectDisplayBatches(source, {
+    contextSegmentIdByItemId: new Map(source.map((item) => [item.id, "segment-a"])),
+  });
+
+  assert.deepEqual(projection.items.map((item) => item.kind), ["commandBatch", "commandExecution", "commandExecution", "commandExecution", "commandExecution"]);
+  assert.deepEqual(projection.boundaries.map((boundary) => [boundary.beforeItemId, boundary.reason]), [
+    ["c4", "participant"],
+    ["c5", "retry"],
+    ["c6", "workflow_step"],
+    ["c7", "non_adjacent"],
+  ]);
+  assert.deepEqual(expandDisplayBatch(projection.items[0]).map((item) => item.id), ["c1", "c2", "c3"]);
+  assert.deepEqual(expandDisplayBatch(projection.items[1]).map((item) => item.id), ["c4"]);
+});
+
+test("typed batching treats missing context as an explicit context boundary", () => {
+  const make = (id, sequence) => ({
+    id,
+    kind: "exploration",
+    revision: sequence,
+    threadSequence: sequence,
+    partIndex: 1,
+    status: "succeeded",
+    actionId: id,
+    runId: "run-1",
+    attemptId: "attempt-1",
+    participantId: "ling",
+    workflowStepId: null,
+    sourceRefs: [conversationRef(`item-${id}`)],
+    title: id,
+    operation: "read",
+    targets: [{ kind: "file", id: `${id}.ts` }],
+  });
+  const source = [make("r1", 1), make("r2", 2), make("r3", 3)];
+  const projection = projectDisplayBatches(source);
+  assert.deepEqual(projection.items.map((item) => item.kind), ["exploration", "exploration", "exploration"]);
+  assert.deepEqual(projection.boundaries.map((boundary) => boundary.reason), ["context_scope", "context_scope"]);
 });
 
 test("canonical projector gives multiple evidence facts one persisted anchor ordered part positions", () => {

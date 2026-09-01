@@ -1,7 +1,7 @@
 # Conversation Codex-Parity Component Detailed Design
 
 Status: normative component implementation contract v3.9.1; implementation is in progress,
-not yet accepted
+not yet accepted. E2 split-reason/expansion contract is now explicit.
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`
 Scope: normal conversation, teammate private chat, channel root/topic/branch, depth-1
@@ -490,10 +490,43 @@ type BatchSplitReason =
   | "context_scope"
   | "approval"
   | "retry"
+  | "non_adjacent"
   | "non_terminal"
   | "consequential"
   | "missing_lineage";
 ```
+
+The implementation exposes the diagnostic result without making it part of the rendered
+timeline contract:
+
+```ts
+type BatchSplitBoundary = {
+  readonly beforeItemId: string;
+  readonly afterItemId: string | null;
+  readonly reason: BatchSplitReason;
+};
+
+type DisplayBatchProjection = {
+  readonly items: readonly ConversationTimelineItem[];
+  readonly boundaries: readonly BatchSplitBoundary[];
+};
+
+function projectDisplayBatches(
+  atomic: readonly ConversationTimelineItem[],
+  context: DisplayProjectionContext | undefined,
+): DisplayBatchProjection;
+
+function expandDisplayBatch(
+  item: ConversationTimelineItem,
+): readonly ConversationTimelineItem[];
+```
+
+`batchCanonicalTranscriptItems()` remains the compatibility-free convenience wrapper and
+returns only `projectDisplayBatches(...).items`. If `context` is absent, the projector emits
+no batch and records a `context_scope` boundary between adjacent eligible candidates. The
+expansion function returns the original child item objects in canonical order; it never reads
+batch counts or rehydrates a second fact model. Tests must assert both the visible wrapper list
+and exact child ids/source refs after expansion.
 
 The pure projection walks atomic items once. It starts a candidate at the first eligible item,
 flushes on the first split reason, and emits a batch header only when the candidate has at least

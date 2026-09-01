@@ -105,6 +105,11 @@ disclosure、唯一 Feed viewport scroll owner、Host capability 二次校验和
 WorkCell/activity caller；不保留运行时兼容 renderer，也不允许 batch/output 形成第二个
 纵向 scroll owner。
 
+E2 的 batching 入口已经锁定为纯 projection：`projectDisplayBatches()` 返回可逆的
+`items` 和仅供测试/诊断的 `boundaries`（`BatchSplitReason`），
+`expandDisplayBatch()` 返回原子 child。没有已提交的 context segment 时保持原子展示并以
+`context_scope` 记录边界；这些诊断不落 SQLite，也不参与 TerminalReport、retry 或 fan-in。
+
 #### Implementation brief（给实现者的一页输入）
 
 下面这组决定是 v3.9.1 的不可变输入（继承 v3.9 contract）；如果实现需要改变其中任何一项，先更新五份权威

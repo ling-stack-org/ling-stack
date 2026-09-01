@@ -1,6 +1,6 @@
 # Codex-style Typed Transcript v3.9.1：实现计划
 
-Status: implementation plan；v3.9.1 组件级细设计已锁定，D0 contract/result-anchor slice 正在实现、尚未验收；E1–E6 按顺序推进，packaged macOS 验收仍待执行
+Status: implementation plan；v3.9.1 组件级细设计已锁定，D0 contract/result-anchor slice 与 E2 split-reason slice 正在实现、尚未验收；E1–E6 按顺序推进，packaged macOS 验收仍待执行
 Date: 2026-09-01
 Base: `origin/main` @ `63ab7c0e`（已核对远端无新提交）
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
@@ -32,7 +32,7 @@ macOS 六层，不能从某个页面的 CSS 或一段模型文本开始。
 | --- | --- | --- | --- |
 | `D0` | 设计、contract、parity fixture 和 selector 锁定；不接业务 UI | 五份权威文档一致；reply/execute fixture、closed union、fingerprint 和 selector 全部通过 | `P0`、`S0`、`R0/R1` |
 | `E1` | Host evidence fold：`tool_start/update/end`、revision、terminal fence、invalidation | 同一 `actionId` 原地收敛，乱序/重复/迟到事件有 audit | `P1`、`S1`、`R5` |
-| `E2` | canonical atomic projector、owner/attempt/context 校验、display-only batching | fingerprint、split reason、child lineage 和 completion 隔离 | `P2`、`S2/S3`、`R6` |
+| `E2` | canonical atomic projector、owner/attempt/context 校验、display-only batching | fingerprint、split reason、child lineage 和 completion 隔离；batch 可展开恢复原子 identity | `P2`、`S2/S3`、`R6` |
 | `E3` | shared Timeline registry、Markdown/fact/nested renderer、Host file/diff/artifact viewer、document row geometry | exhaustive registry、单滚动 owner、capability issue/redeem、无右侧 bubble | `P3`、`S4`、部分 `P1b` |
 | `E4` | normal/private/channel/topic/branch/child surface cutover | 所有入口只调用一次 `mountConversationTimeline`，旧 caller 删除 | `P4`、`S5`、`R7` |
 | `E5` | approval、retry、SSE reconnect、daemon restart、fan-in、TerminalReport recovery | atomic evidence 结论与 latest generation 收敛 | `P5`、`S6`、`R8` |
@@ -147,7 +147,7 @@ D0 不引入 feature flag，也不保留旧 renderer 兼容分支；测试先失
 | 已有入口 | 已覆盖内容 | 本计划的处理 |
 | --- | --- | --- |
 | `packages/conversation-ui-core/src/canonical-transcript-projector.ts` | scope、anchor、attempt、owner、terminal evidence、reconnect merge | 继续作为唯一纯 projector，不在 surface 重建 |
-| `packages/conversation-ui-core/src/typed-transcript-batching.ts` | 相邻 read/command 的可逆 display batch | 补齐 consequential/跨 lineage split reason，不落库 |
+| `packages/conversation-ui-core/src/typed-transcript-batching.ts` | 相邻 read/command 的可逆 display batch | `projectDisplayBatches()`、`BatchSplitReason`、边界诊断和 `expandDisplayBatch()`；不落库 |
 | `apps/web/src/shared/conversation/timeline/*` | typed renderer registry、row、nested child、semantic selectors | 继续作为唯一 renderer；删除 route-local caller |
 | `packages/daemon` RunEvent/ExecutionAction 与 TerminalReport | durable action/evidence、fan-in 和 recovery | 补齐 live invalidation、latest-generation replay 和真实重启验证 |
 | `WorkspaceFileCapabilityRegistry` 与 source-ref adapter | capability scope、TTL、daemon epoch、realpath 校验 | 接通三个 surface 的 callback 二次校验 |

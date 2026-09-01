@@ -11,6 +11,38 @@ import type {
 
 const MIN_BATCH_SIZE = 3;
 
+/**
+ * Why a display batch candidate was flushed. This is projection/debug data;
+ * it is never persisted and it never participates in completion decisions.
+ */
+export type BatchSplitReason =
+  | "narration"
+  | "kind"
+  | "participant"
+  | "run"
+  | "attempt"
+  | "workflow_step"
+  | "context_scope"
+  | "approval"
+  | "retry"
+  | "non_adjacent"
+  | "non_terminal"
+  | "consequential"
+  | "missing_lineage";
+
+export interface BatchSplitBoundary {
+  /** The item that caused the open candidate to flush. */
+  readonly beforeItemId: string;
+  /** The last item in the candidate, when one existed. */
+  readonly afterItemId: string | null;
+  readonly reason: BatchSplitReason;
+}
+
+export interface DisplayBatchProjection {
+  readonly items: readonly ConversationTimelineItem[];
+  readonly boundaries: readonly BatchSplitBoundary[];
+}
+
 export interface DisplayProjectionContext {
   /** Immutable ContextSnapshot-derived segment identity for every atomic item. */
   readonly contextSegmentIdByItemId: ReadonlyMap<string, string>;
@@ -25,11 +57,28 @@ export function batchCanonicalTranscriptItems(
   items: readonly ConversationTimelineItem[],
   context?: DisplayProjectionContext,
 ): readonly ConversationTimelineItem[] {
+  return projectDisplayBatches(items, context).items;
+}
+
+/**
+ * Projects atomic items into reversible display batches and exposes the
+ * deterministic boundary diagnostics used by E2 tests and telemetry.
+ */
+export function projectDisplayBatches(
+  items: readonly ConversationTimelineItem[],
+  context?: DisplayProjectionContext,
+): DisplayBatchProjection {
   // A missing snapshot is an unknown boundary.  Returning atomic items is
   // intentionally fail-closed: display grouping must never infer that two
   // neighboring facts share context merely because their run metadata matches.
-  if (!context) return items;
+  if (!context) {
+    return {
+      items: [...items],
+      boundaries: collectMissingContextBoundaries(items),
+    };
+  }
   const output: ConversationTimelineItem[] = [];
+  const boundaries: BatchSplitBoundary[] = [];
   let pending: ConversationTimelineItem[] = [];
 
   const flush = (): void => {
@@ -46,18 +95,105 @@ export function batchCanonicalTranscriptItems(
 
   for (const item of items) {
     if (!isBatchableCommand(item) && !isBatchableExploration(item)) {
+      if (pending.length > 0) {
+        boundaries.push({
+          beforeItemId: item.id,
+          afterItemId: pending.at(-1)?.id ?? null,
+          reason: splitReasonForIneligible(item),
+        });
+      }
       flush();
       output.push(item);
       continue;
     }
-    const sameKind = pending.length === 0 || (isBatchableCommand(item) && pending.every(isBatchableCommand)) || (isBatchableExploration(item) && pending.every(isBatchableExploration));
-    const sameScope = pending.length === 0 || pending.every((candidate) => sameOperationScope(candidate, item, context));
-    const adjacent = pending.length === 0 || isCanonicalNeighbor(pending.at(-1)!, item);
-    if (!sameKind || !sameScope || !adjacent) flush();
+    if (pending.length > 0) {
+      const reason = splitReasonForPair(pending.at(-1)!, item, context);
+      if (reason) {
+        boundaries.push({
+          beforeItemId: item.id,
+          afterItemId: pending.at(-1)?.id ?? null,
+          reason,
+        });
+        flush();
+      }
+    }
     pending.push(item);
   }
   flush();
-  return output;
+  return { items: output, boundaries };
+}
+
+/** Expands a display wrapper back to the exact atomic children it contains. */
+export function expandDisplayBatch(item: ConversationTimelineItem): readonly ConversationTimelineItem[] {
+  if (item.kind === "commandBatch") return item.batch.commands;
+  if (item.kind === "explorationBatch") return item.batch.children;
+  return [item];
+}
+
+function collectMissingContextBoundaries(items: readonly ConversationTimelineItem[]): readonly BatchSplitBoundary[] {
+  const boundaries: BatchSplitBoundary[] = [];
+  let previous: ConversationTimelineItem | undefined;
+  for (const item of items) {
+    if (previous && isBatchableCandidate(previous) && isBatchableCandidate(item)) {
+      boundaries.push({ beforeItemId: item.id, afterItemId: previous.id, reason: "context_scope" });
+    }
+    previous = item;
+  }
+  return boundaries;
+}
+
+function isBatchableCandidate(item: ConversationTimelineItem): boolean {
+  return isBatchableCommand(item) || isBatchableExploration(item);
+}
+
+function splitReasonForIneligible(item: ConversationTimelineItem): BatchSplitReason {
+  if (item.kind === "userMessage" || item.kind === "agentMessage" || item.kind === "reasoning" || item.kind === "plan") {
+    return "narration";
+  }
+  if (item.kind === "approval") return "approval";
+  if (item.kind === "commandExecution" || item.kind === "exploration") {
+    if (!hasOperationLineage(item)) return "missing_lineage";
+    if (item.status !== "succeeded") return "non_terminal";
+    if (item.kind === "commandExecution" && (item.risk !== "low" || item.exitCode !== 0)) {
+      return "consequential";
+    }
+  }
+  if (item.kind === "fileChange" || item.kind === "mcpToolCall" || item.kind === "dynamicToolCall" || item.kind === "collabAgentToolCall") {
+    return "consequential";
+  }
+  return "kind";
+}
+
+function splitReasonForPair(
+  left: ConversationTimelineItem,
+  right: ConversationTimelineItem,
+  context: DisplayProjectionContext,
+): BatchSplitReason | undefined {
+  const leftCommand = isBatchableCommand(left);
+  const rightCommand = isBatchableCommand(right);
+  const leftExploration = isBatchableExploration(left);
+  const rightExploration = isBatchableExploration(right);
+  if ((leftCommand && !rightCommand) || (leftExploration && !rightExploration)) return "kind";
+  if ((leftCommand && rightExploration) || (leftExploration && rightCommand)) return "kind";
+
+  const leftSegment = segmentForItem(left, context);
+  const rightSegment = segmentForItem(right, context);
+  if (!leftSegment || !rightSegment || leftSegment !== rightSegment) return "context_scope";
+  if (left.participantId !== right.participantId) return "participant";
+  if (left.runId !== right.runId) return "run";
+  if (left.attemptId !== right.attemptId) {
+    return isRetryRole(left.turnRunRole) || isRetryRole(right.turnRunRole) ? "retry" : "attempt";
+  }
+  if (left.workflowStepId !== right.workflowStepId || left.workUnitId !== right.workUnitId) return "workflow_step";
+  if (left.turnRunRole !== right.turnRunRole) {
+    return isRetryRole(left.turnRunRole) || isRetryRole(right.turnRunRole) ? "retry" : "workflow_step";
+  }
+  if (!isCanonicalNeighbor(left, right)) return "non_adjacent";
+  return undefined;
+}
+
+function isRetryRole(role: ConversationTimelineItem["turnRunRole"]): boolean {
+  return role === "retry" || role === "resume" || role === "repair" || role === "validation";
 }
 
 function isBatchableCommand(item: ConversationTimelineItem): item is ConversationTimelineCommandExecutionItem {

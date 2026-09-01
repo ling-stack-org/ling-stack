@@ -78,6 +78,7 @@ export type {
   CanonicalArtifactRecord,
   CanonicalPlanRecord,
   CanonicalCompactionRecord,
+  CanonicalTerminalReportProjection,
   CanonicalParticipantSpan,
   CanonicalTurnRunLink,
   CanonicalConversationItem,
@@ -102,6 +103,7 @@ export type {
   ConversationTimelineApprovalItem,
   ConversationTimelineCommandExecutionItem,
   ConversationTimelineContextCompactionItem,
+  ConversationTimelineTerminalReportItem,
   ConversationTimelineProtocolEventItem,
   ConversationTimelineExplorationItem,
   ConversationTimelineFileChangeItem,
@@ -125,7 +127,17 @@ export {
   isCommandBatchEligible,
   projectConversationCommandBatches,
 } from "./command-batching.js";
-export { batchCanonicalTranscriptItems } from "./typed-transcript-batching.js";
+export {
+  batchCanonicalTranscriptItems,
+  expandDisplayBatch,
+  projectDisplayBatches,
+} from "./typed-transcript-batching.js";
+export type {
+  BatchSplitBoundary,
+  BatchSplitReason,
+  DisplayBatchProjection,
+  DisplayProjectionContext,
+} from "./typed-transcript-batching.js";
 export {
   isExplorationBatchEligible,
   projectConversationActivity,
