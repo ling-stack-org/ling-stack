@@ -1,5 +1,12 @@
 # Channel environment information hierarchy
 
+Status: current product and information-architecture contract
+Owner: Web and Daemon maintainers
+Last verified: 2026-09-03
+Document type: product and information-architecture contract
+Code anchors: `apps/web/src/features/workspace/ChannelEnvironmentPage.tsx`, `apps/web/src/styles/channel-task-environment.css`
+Test anchors: `apps/web/e2e/ui2-channel-task-environment.spec.ts`
+
 ## Scope
 
 The channel Environment page reports the execution directory, Git context, review

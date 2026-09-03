@@ -1,6 +1,11 @@
 # Workspace Command Rule Approval Implementation Plan
 
-Status: approved for local implementation on `codex/codex-language-parity`
+Status: active implementation plan; source implementation exists and real-browser acceptance remains open
+Owner: Core, Daemon, Runner, Web, and Desktop maintainers
+Last verified: 2026-09-03
+Document type: active safety-sensitive implementation plan
+Code anchors: `packages/core/src/storage/sqlite/approval-request-store.ts`, `packages/daemon/src/features/runs/approval-command-rules.ts`, `apps/web/src/features/approvals/ConversationDecisionGate.tsx`
+Test anchors: `packages/core/test/approval-policy.test.mjs`, `packages/daemon/test/approval-command-rules.test.mjs`, `apps/web/e2e/ui2-approvals.spec.ts`
 
 ## Goal
 
