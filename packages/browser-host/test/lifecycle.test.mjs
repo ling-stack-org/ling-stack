@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { chmod, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -140,4 +141,19 @@ test("Windows runtime descriptor locks the directory, temporary file, and publis
     ["icacls.exe", path, "/inheritance:r", "/grant:r", "ling-test-user:F"],
   ]);
   assert.deepEqual(await readChromeBrowserRuntimeDescriptor(path), descriptor);
+});
+
+test("macOS native Host replaces the linker signature with an explicit ad-hoc signature", {
+  skip: process.platform !== "darwin",
+}, async () => {
+  const hostPath = new URL("../dist/native/ling-browser-host", import.meta.url);
+  const metadata = JSON.parse(await readFile(new URL("../dist/native/build-metadata.json", import.meta.url), "utf8"));
+  assert.equal(metadata.signing, "adhoc");
+  const result = spawnSync("/usr/bin/codesign", ["--display", "--verbose=4", hostPath.pathname], {
+    encoding: "utf8",
+  });
+  assert.equal(result.status, 0, result.stderr);
+  const details = `${result.stdout}\n${result.stderr}`;
+  assert.match(details, /\badhoc\b/u);
+  assert.doesNotMatch(details, /linker-signed/u);
 });

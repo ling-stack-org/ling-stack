@@ -20,7 +20,29 @@ const source = resolve(packageRoot, "native/target/release", executable);
 const output = resolve(packageRoot, "dist/native", executable);
 await mkdir(dirname(output), { recursive: true, mode: 0o700 });
 await copyFile(source, output);
-if (platform !== "win32") await chmod(output, 0o755);
+let signing = "unsigned";
+if (platform === "darwin") {
+  await chmod(output, 0o755);
+  const signed = spawnSync("/usr/bin/codesign", ["--force", "--sign", "-", "--timestamp=none", output], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (signed.status !== 0) throw new Error(`browser_host_codesign_failed:${signed.stderr.trim()}`);
+  const verified = spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", "--verbose=4", output], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  if (verified.status !== 0) throw new Error(`browser_host_codesign_verify_failed:${verified.stderr.trim()}`);
+  const displayed = spawnSync("/usr/bin/codesign", ["--display", "--verbose=4", output], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  const details = `${displayed.stdout}\n${displayed.stderr}`;
+  if (displayed.status !== 0 || !/\badhoc\b/u.test(details) || /linker-signed/u.test(details)) {
+    throw new Error("browser_host_codesign_identity_invalid");
+  }
+  signing = "adhoc";
+}
 const bytes = await readFile(output);
 const git = spawnSync("git", ["rev-parse", "HEAD"], { cwd: packageRoot, encoding: "utf8" });
 const metadata = {
@@ -29,6 +51,7 @@ const metadata = {
   protocol: "ling.chrome.native.v1",
   platform: platform === "darwin" ? "darwin-arm64" : "win32-x64",
   executable,
+  signing,
   hostSha256: createHash("sha256").update(bytes).digest("hex"),
   sourceCommit: git.status === 0 ? git.stdout.trim() : "unknown",
 };
