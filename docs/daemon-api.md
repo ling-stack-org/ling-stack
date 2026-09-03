@@ -4398,6 +4398,61 @@ Request body is optional:
 Approval decisions append `approval_approved`, `approval_denied`, or `approval_expired` to the linked run event log when the run still exists. Listing or fetching approvals lazily normalizes pending requests whose `expiresAt` is already in the past.
 Media cost approvals are owned by `mediaJobId`. Approving a Media Production request dispatches its direct-provider or workflow job; denying it fails the waiting job without contacting the external generation service. Historical approvals remain readable through the same endpoints.
 
+### Transcript workspace-file capabilities
+
+Transcript file, diff, and artifact refs are display-only until the daemon issues a
+short-lived opaque capability from durable action evidence:
+
+```http
+POST /workspace-files/capabilities
+Content-Type: application/json
+```
+
+```json
+{
+  "cwd": "/path/to/project",
+  "capabilityTarget": "open_file",
+  "refId": "/path/to/project/src/parser.ts",
+  "scope": {
+    "workspaceId": "workspace_default",
+    "threadId": "thread_...",
+    "runId": "run_...",
+    "actionId": "tool:run_...:tool_...",
+    "participantId": "participant-engineer"
+  }
+}
+```
+
+The daemon checks the real `LingThread`, linked run and `ExecutionAction`, participant
+ownership, source/target refs, workspace realpath and artifact root before returning a
+capability. Grants are process-local, expire within five minutes, and carry the current
+daemon epoch; a daemon restart invalidates all previously issued grants.
+
+Capability-bound preview uses the same endpoint path with `POST` (the capability and
+scope stay in the body, never in a URL):
+
+```http
+POST /workspace-files/preview
+Content-Type: application/json
+```
+
+```json
+{
+  "cwd": "/path/to/project",
+  "capabilityId": "wscap_...",
+  "scope": { "workspaceId": "workspace_default", "threadId": "thread_...", "runId": "run_...", "actionId": "tool:run_...:tool_...", "participantId": "participant-engineer" },
+  "maxBytes": 65536,
+  "line": 42
+}
+```
+
+`POST /workspace-files/open` accepts the existing user-selected editor target together
+with `capabilityId` and the same scope. Every preview/open rechecks TTL, daemon epoch,
+scope, durable lineage, permission boundary and realpath. Expired, cross-workspace,
+symlink-escaped, or otherwise stale refs return a typed `403` blocker; the untrusted path
+remains copyable and is never downgraded to `file://` navigation. The legacy GET preview
+and path-based open adapter remain available only for unscoped workspace browsing.
+
 ## Current Limits
 
 - HTTP client disconnect does not imply cancellation; callers must use `POST /runs/:id/cancel`.

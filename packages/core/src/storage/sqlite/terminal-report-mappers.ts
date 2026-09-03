@@ -35,7 +35,7 @@ export function mapTerminalReport(row: Record<string, SQLOutputValue>): LingTerm
     promptVersion: readNullableString(row, "prompt_version"),
     attemptCount: readNumber(row, "attempt_count"),
     validationCodes: parseJsonStringArray(readString(row, "validation_codes_json")),
-    publishedMessageId: readNullableString(row, "published_message_id"),
+    resultItemId: readNullableString(row, "result_item_id"),
     errorCode: readNullableString(row, "error_code"),
     createdAt: readString(row, "created_at"),
     updatedAt: readString(row, "updated_at"),

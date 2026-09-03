@@ -1,5 +1,4 @@
 import { CheckSquare, GitBranch, Handshake, ListChecks, MessageSquareText, Play, Workflow } from "lucide-react";
-import type { ReactNode } from "react";
 import type { ConversationTimelineProtocolEventItem } from "@ling-stack/conversation-ui-core";
 import { TimelineFactRow } from "./TimelineFactRow.js";
 import { TextDetail, detailExists } from "./timeline-renderer-details.js";
@@ -7,11 +6,9 @@ import { TextDetail, detailExists } from "./timeline-renderer-details.js";
 export function ConversationTimelineProtocolRenderer({
   item,
   depth,
-  actions,
 }: {
   readonly item: ConversationTimelineProtocolEventItem;
   readonly depth: 0 | 1;
-  readonly actions?: ReactNode;
 }): React.JSX.Element {
   return (
     <TimelineFactRow
@@ -21,7 +18,6 @@ export function ConversationTimelineProtocolRenderer({
       meta={item.meta}
       icon={<ProtocolIcon kind={item.protocolKind} />}
       detail={detailExists(item) ? <TextDetail text={item.description ?? item.detailLines?.map((line) => line.text).join("\n")} /> : undefined}
-      actions={actions}
     />
   );
 }

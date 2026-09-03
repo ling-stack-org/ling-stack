@@ -124,6 +124,7 @@ export async function createAiChannelReply(input: {
       format: "markdown",
       streaming: true,
       deliveryStatus: "pending",
+      presentationRole: "reply_result",
     },
     domainRefs: [{ type: "conversation_item", id: sourceItem.id, label: "reply source" }],
     ...(input.replyMessageId ? { idempotencyKey: `assistant-reply:${input.replyMessageId}` } : {}),

@@ -378,6 +378,13 @@ interface ConversationAnchorStore {
   } | undefined;
   readonly getConversationItem?: (itemId: string) => ConversationAnchorItem | undefined;
   readonly listConversationItemsForTurn?: (options: { readonly turnId: string }) => readonly ConversationAnchorItem[];
+  readonly getChannelWorkflowStep?: (workflowStepId: string) => {
+    readonly metadata?: { readonly sourceMessageId?: string };
+    readonly workflowId?: string;
+  } | undefined;
+  readonly getChannelWorkflow?: (workflowId: string) => {
+    readonly metadata?: { readonly sourceMessageId?: string };
+  } | undefined;
 }
 
 interface ConversationAnchorItem {
@@ -402,6 +409,28 @@ function conversationItemAnchorRefs(
   const anchorStore = store as ExecutionActionStore & ConversationAnchorStore;
   const turn = anchorStore.getLingTurnForRun?.(action.runId);
   if (!turn || turn.threadId !== action.threadId) return [];
+
+  // Workflow-step runs intentionally live in their own LingThread, while the
+  // user-visible channel message lives in the channel root thread. The
+  // workflow/step metadata carries that root message id; use it as the
+  // authoritative cross-thread anchor for action evidence. This also repairs
+  // already-persisted runs whose child turn was created without sourceItemId.
+  const workflowStep = action.workflowStepId
+    ? anchorStore.getChannelWorkflowStep?.(action.workflowStepId)
+    : undefined;
+  const sourceItemId = turn.sourceItemId ??
+    workflowStep?.metadata?.sourceMessageId ??
+    (workflowStep?.workflowId ? anchorStore.getChannelWorkflow?.(workflowStep.workflowId)?.metadata?.sourceMessageId : undefined);
+  if (sourceItemId) {
+    const source = anchorStore.getConversationItem?.(sourceItemId);
+    if (source && Number.isSafeInteger(source.sequence) && source.sequence >= 0) {
+      return [{
+        kind: "conversation_item",
+        id: source.id,
+        label: `sequence:${source.sequence}`,
+      }];
+    }
+  }
 
   const candidates: ConversationAnchorItem[] = [];
   if (turn.sourceItemId) {

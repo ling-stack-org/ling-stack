@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   isTrustedFileSourceRef,
   isCapabilityActive,
+  operationFileSourceRefForPath,
   trustedFileSourceRefForPath,
   upgradeConversationSourceRef,
 } from "../src/shared/conversation/timeline/source-ref.ts";
@@ -24,6 +25,31 @@ test("source-ref adapter rejects empty and outside matches", () => {
 
   assert.equal(trustedFileSourceRefForPath(refs, ""), undefined);
   assert.equal(trustedFileSourceRefForPath(refs, "../src/parser.ts"), undefined);
+});
+
+test("operation file refs become capability candidates only with atomic lineage", () => {
+  const ref = { kind: "file", id: "action-file", path: "./src/parser.ts" };
+  const item = {
+    id: "action:edit-1",
+    kind: "fileChange",
+    revision: 3,
+    threadSequence: 4,
+    partIndex: 1,
+    runId: "run-1",
+    actionId: "tool:run-1:edit-1",
+    attemptId: "attempt-1",
+    participantId: "engineer",
+    workflowStepId: null,
+    sourceRefs: [ref],
+    title: "Edited parser.ts",
+    files: [],
+  };
+
+  assert.equal(operationFileSourceRefForPath([ref], "src\\parser.ts", item)?.id, "action-file");
+  assert.equal(operationFileSourceRefForPath([ref], "src/parser.ts", { ...item, runId: undefined }), undefined);
+  assert.equal(operationFileSourceRefForPath([ref], "src/parser.ts", { ...item, actionId: undefined }), undefined);
+  assert.equal(operationFileSourceRefForPath([ref], "src/parser.ts", { ...item, participantId: undefined }), undefined);
+  assert.equal(operationFileSourceRefForPath([ref], "src/other.ts", item), undefined);
 });
 
 test("source-ref adapter refuses a capability from another transcript scope", () => {

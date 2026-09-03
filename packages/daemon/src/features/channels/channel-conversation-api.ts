@@ -138,8 +138,9 @@ function filterVisibleTimelineItems(input: {
 }
 
 function isIneligibleTerminalReportMessage(store: RunStore, itemId: string): boolean {
-  if (!itemId.startsWith("message_terminal_report_")) return false;
-  const record = store.getTerminalReport(itemId.slice("message_".length));
+  const prefix = "result_terminal_report:";
+  if (!itemId.startsWith(prefix)) return false;
+  const record = store.getTerminalReport(itemId.slice(prefix.length));
   return Boolean(record && !terminalReportIsEligibleForDisplay(store, record));
 }
 

@@ -98,7 +98,7 @@ export function maybeScheduleWorkflowTerminalReport(
     return undefined;
   }
   const published = latestCommittedReport(store, "workflow", workflowId);
-  if (published?.publishedMessageId && published.report) {
+  if (published?.resultItemId && published.report) {
     // A workflow may be retried after a report was already published. Only
     // reuse the old publication when the current canonical evidence has the
     // same semantic fingerprint; otherwise schedule a new report revision.
@@ -111,7 +111,7 @@ export function maybeScheduleWorkflowTerminalReport(
       // The async coordinator will perform the authoritative barrier/read.
     }
     if (currentFingerprint === published.report.evidenceFingerprint) {
-      return getChannelMessageView(store, published.publishedMessageId);
+      return getChannelMessageView(store, published.resultItemId);
     }
   }
   const active = activeMap(store);
@@ -707,7 +707,7 @@ function succeedReportWorkUnit(
     type: "work_unit_succeeded",
     actor: "system",
     ts: now,
-    data: { reportId: report.id, publishedMessageId: message?.id ?? null },
+    data: { reportId: report.id, resultItemId: message?.id ?? null },
   });
 }
 

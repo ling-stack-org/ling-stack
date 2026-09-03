@@ -255,7 +255,7 @@ export function terminalReportSelectSql(whereClause: string): string {
       prompt_version,
       attempt_count,
       validation_codes_json,
-      published_message_id,
+      result_item_id,
       error_code,
       created_at,
       updated_at,

@@ -12,6 +12,7 @@ import type {
   ConversationTimelineExplorationItem,
   ConversationTimelineApprovalItem,
   ConversationTimelineDiagnosticItem,
+  ConversationTimelineTerminalReportItem,
 } from "./transcript-item.js";
 
 export interface CanonicalProjectionSourceRef {
@@ -42,6 +43,7 @@ export interface CanonicalConversationItem {
     | "handoff"
     | "operation_state"
     | "artifact_ref"
+    | "terminal_report"
     | "system_event";
   readonly status: "pending" | "committed" | "failed";
   readonly actorType: "local_user" | "ling_agent" | "teammate" | "system";
@@ -177,6 +179,80 @@ export interface CanonicalCompactionRecord {
   readonly sourceRefs: readonly CanonicalSourceRef[];
 }
 
+export interface CanonicalTerminalReportProjection {
+  readonly generation: number;
+  readonly resultItemId: string;
+  readonly report: {
+    readonly id: string;
+    readonly workspaceId: string;
+    readonly threadId?: string;
+    readonly turnId?: string;
+    readonly source: { readonly kind: "workflow" | "run" | "turn"; readonly id: string };
+    readonly status: "committed" | "fallback";
+    readonly evidenceFingerprint: string;
+    readonly outcome: {
+      readonly status: "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
+      readonly title: string;
+      readonly summary: string;
+      readonly corrections: readonly {
+        readonly id: string;
+        readonly originalAssumption: string;
+        readonly correctedFact: string;
+        readonly confidence: "high" | "medium";
+        readonly sourceRefs: readonly CanonicalSourceRef[];
+      }[];
+    };
+    readonly changes: readonly {
+      readonly id: string;
+      readonly kind: "behavior" | "code" | "configuration" | "documentation" | "data" | "other";
+      readonly title: string;
+      readonly summary: string;
+      readonly paths: readonly string[];
+      readonly addedLines?: number;
+      readonly deletedLines?: number;
+      readonly sourceRefs: readonly CanonicalSourceRef[];
+    }[];
+    readonly verification: readonly {
+      readonly id: string;
+      readonly title: string;
+      readonly status: "passed" | "failed" | "blocked" | "cancelled" | "skipped" | "not_run" | "unknown";
+      readonly summary?: string;
+      readonly command?: string;
+      readonly durationMs?: number;
+      readonly sourceRefs: readonly CanonicalSourceRef[];
+    }[];
+    readonly participants: readonly {
+      readonly agentId: string;
+      readonly displayName: string;
+      readonly roleKey?: string;
+      readonly status: "completed" | "failed" | "blocked" | "cancelled";
+      readonly contribution: string;
+      readonly sourceRefs: readonly CanonicalSourceRef[];
+    }[];
+    readonly artifacts: readonly {
+      readonly id: string;
+      readonly kind: "file" | "diff" | "document" | "image" | "test_result" | "commit" | "pull_request" | "deployment" | "external" | "other";
+      readonly title: string;
+      readonly path?: string;
+      readonly href?: string;
+      readonly summary?: string;
+      readonly addedLines?: number;
+      readonly deletedLines?: number;
+      readonly sourceRefs: readonly CanonicalSourceRef[];
+    }[];
+    readonly risks: readonly {
+      readonly id: string;
+      readonly severity: "info" | "warning" | "critical";
+      readonly status: "unresolved" | "mitigated" | "accepted" | "unverified";
+      readonly summary: string;
+      readonly nextAction?: string;
+      readonly approvalDecision?: "pending" | "approved" | "denied" | "expired" | "cancelled";
+      readonly sourceRefs: readonly CanonicalSourceRef[];
+    }[];
+    readonly references: readonly CanonicalSourceRef[];
+  };
+}
+
 /** A parent-anchored participant span; children are already typed facts/messages. */
 export interface CanonicalParticipantSpan {
   readonly id: string;
@@ -224,6 +300,7 @@ export interface CanonicalTranscriptProjectionInput {
   readonly artifacts?: readonly CanonicalArtifactRecord[];
   readonly plans?: readonly CanonicalPlanRecord[];
   readonly compactions?: readonly CanonicalCompactionRecord[];
+  readonly terminalReports?: readonly CanonicalTerminalReportProjection[];
   readonly participantSpans?: readonly CanonicalParticipantSpan[];
   readonly sourceSequence: number;
   readonly sourceRevision: string;
@@ -269,6 +346,7 @@ export function mergeCanonicalTranscriptInputs(
     artifacts: mergeVersionedRecords(current.artifacts ?? [], incoming.artifacts ?? [], (record) => record.id),
     plans: mergeVersionedRecords(current.plans ?? [], incoming.plans ?? [], (record) => record.id),
     compactions: mergeVersionedRecords(current.compactions ?? [], incoming.compactions ?? [], (record) => record.id),
+    terminalReports: mergeTerminalReportProjections(current.terminalReports ?? [], incoming.terminalReports ?? []),
     participantSpans: mergeVersionedRecords(current.participantSpans ?? [], incoming.participantSpans ?? [], (record) => record.id),
     contextSegmentIdByItemId: mergeContextSegmentLookups(current.contextSegmentIdByItemId, incoming.contextSegmentIdByItemId),
     initialDiagnostics: diagnostics,
@@ -395,13 +473,18 @@ export function projectCanonicalConversationTimeline(
     return emptyProjection(input, diagnostics);
   }
   const actionsById = latestActions(input.actions, diagnostics);
-  const anchoredProjection = anchorActions([...actionsById.values()], itemsById, input, diagnostics);
+  const actionsWithArtifactRefs = attachArtifactRefs([...actionsById.values()], input.artifacts ?? []);
+  const anchoredProjection = anchorActions(actionsWithArtifactRefs, itemsById, input, diagnostics);
   const anchoredActions = anchoredProjection.actions;
   const actionsByItem = groupAnchoredActions(anchoredActions);
   const actionToolCallIds = new Set(anchoredActions.map(({ action }) => action.toolCallId).filter((value): value is string => Boolean(value)));
   const matchedActionIds = new Set(anchoredActions.map(({ action }) => action.id));
   const projected: ConversationTimelineItem[] = [];
   const supplemental = projectSupplementalEvidence(input, itemsById, actionsByItem, anchoredActions, diagnostics);
+  const terminalProjection = projectTerminalReports(input, itemsById, diagnostics);
+  const committedTerminalTurns = new Set(
+    [...terminalProjection.values()].map((item) => item.turnId).filter((value): value is string => Boolean(value)),
+  );
   let activeItemId: string | undefined;
 
   for (const item of orderedItems) {
@@ -410,9 +493,13 @@ export function projectCanonicalConversationTimeline(
     const suppressToolEnvelope = (item.kind === "tool_result" || item.kind === "tool_call") &&
       Boolean((toolCallId && actionToolCallIds.has(toolCallId)) || anchored.length > 0);
     if (!suppressToolEnvelope) {
-      const message = projectCanonicalMessage(item, input.scope);
+      const message = projectCanonicalMessage(item, input.scope, committedTerminalTurns);
       if (message) projected.push(message);
-      else if (isFactEnvelope(item)) projected.push(blockedCanonicalItem(item, input.scope, "No verified execution evidence is attached."));
+      else if (item.kind !== "terminal_report" && isFactEnvelope(item)) projected.push(blockedCanonicalItem(item, input.scope, "No verified execution evidence is attached."));
+    }
+    if (item.kind === "terminal_report") {
+      const terminal = terminalProjection.get(item.id);
+      if (terminal) projected.push(terminal);
     }
     for (const anchoredAction of anchored) {
       const timelineItem = projectCanonicalAction(anchoredAction, input.scope, diagnostics);
@@ -449,6 +536,173 @@ export function projectCanonicalConversationTimeline(
     ...(input.contextSegmentIdByItemId ? { contextSegmentIdByItemId: input.contextSegmentIdByItemId } : {}),
     ...(activeItemId ? { activeItemId } : {}),
   };
+}
+
+function attachArtifactRefs(
+  actions: readonly CanonicalExecutionAction[],
+  artifacts: readonly CanonicalArtifactRecord[],
+): readonly CanonicalExecutionAction[] {
+  const latestArtifacts = new Map<string, CanonicalArtifactRecord>();
+  for (const artifact of artifacts) {
+    const current = latestArtifacts.get(artifact.id);
+    if (!current || artifact.revision > current.revision) latestArtifacts.set(artifact.id, artifact);
+  }
+  const artifactsByActionId = new Map<string, CanonicalArtifactRecord[]>();
+  for (const artifact of latestArtifacts.values()) {
+    if (!artifact.actionId) continue;
+    artifactsByActionId.set(artifact.actionId, [...(artifactsByActionId.get(artifact.actionId) ?? []), artifact]);
+  }
+  return actions.map((action) => {
+    const attached = [
+      ...(artifactsByActionId.get(action.id) ?? []),
+      ...[...latestArtifacts.values()].filter((artifact) =>
+        artifact.runId === action.runId &&
+        (action.previewArtifactIds?.includes(artifact.id) || action.resultArtifactIds?.includes(artifact.id)),
+      ),
+    ];
+    if (attached.length === 0) return action;
+    const sourceRefs = toSourceRefs([
+      ...action.sourceRefs,
+      ...attached.flatMap((artifact) => [{
+        kind: "artifact",
+        id: artifact.id,
+        label: artifact.title ?? basename(artifact.path),
+        path: artifact.path,
+        hostTarget: artifact.type === "diff" ? "open_diff" as const : "open_artifact" as const,
+        workspaceId: artifact.workspaceId,
+      }, ...artifact.sourceRefs]),
+    ]);
+    return { ...action, sourceRefs };
+  });
+}
+
+function projectTerminalReports(
+  input: CanonicalTranscriptProjectionInput,
+  itemsById: ReadonlyMap<string, CanonicalConversationItem>,
+  diagnostics: CanonicalTranscriptDiagnostic[],
+): Map<string, ConversationTimelineTerminalReportItem> {
+  const output = new Map<string, ConversationTimelineTerminalReportItem>();
+  const reports = (input.terminalReports ?? []).filter((entry) => entry.report.status === "committed" || entry.report.status === "fallback");
+  const bySource = new Map<string, CanonicalTerminalReportProjection[]>();
+  for (const entry of reports) {
+    if (entry.generation < 1 || !Number.isSafeInteger(entry.generation) || entry.report.workspaceId !== input.scope.workspaceId
+      || (entry.report.threadId && entry.report.threadId !== input.scope.threadId)) {
+      diagnostics.push({ code: "scope_mismatch", sourceRefs: [{ kind: "terminal_report", id: entry.report.id }], message: `Terminal report ${entry.report.id} is outside the requested scope.` });
+      continue;
+    }
+    const key = `${entry.report.source.kind}:${entry.report.source.id}`;
+    bySource.set(key, [...(bySource.get(key) ?? []), entry]);
+  }
+  for (const entries of bySource.values()) {
+    const maxGeneration = Math.max(...entries.map((entry) => entry.generation));
+    const latest = entries.filter((entry) => entry.generation === maxGeneration);
+    const uniqueIds = new Set(latest.map((entry) => entry.resultItemId));
+    if (latest.length !== uniqueIds.size) {
+      diagnostics.push({ code: "owner_conflict", sourceRefs: latest.map((entry) => ({ kind: "terminal_report", id: entry.report.id })), message: "Multiple terminal report projections claim the same source and generation." });
+      continue;
+    }
+    for (const entry of latest) {
+      const anchor = itemsById.get(entry.resultItemId);
+      const payload = anchor?.kind === "terminal_report"
+        ? anchor.payload as {
+            readonly reportId: string;
+            readonly generation: number;
+            readonly sourceKind: "workflow" | "run" | "turn";
+            readonly sourceId: string;
+            readonly evidenceFingerprint: string;
+            readonly outcomeStatus: string;
+          }
+        : undefined;
+      const valid = anchor && payload
+        && payload.reportId === entry.report.id
+        && payload.generation === entry.generation
+        && payload.sourceKind === entry.report.source.kind
+        && payload.sourceId === entry.report.source.id
+        && payload.evidenceFingerprint === entry.report.evidenceFingerprint
+        && payload.outcomeStatus === entry.report.outcome.status
+        && anchor.threadId === input.scope.threadId
+        && (!entry.report.turnId || entry.report.turnId === anchor.turnId);
+      if (!valid) {
+        diagnostics.push({ code: "missing_anchor", sourceRefs: [{ kind: "terminal_report", id: entry.report.id }, { kind: "conversation_item", id: entry.resultItemId }], message: `Terminal report ${entry.report.id} has no matching committed result Item anchor.` });
+        continue;
+      }
+      const sourceRefs: CanonicalProjectionSourceRef[] = [
+        { kind: "terminal_report", id: entry.report.id },
+        { kind: "conversation_item", id: anchor.id },
+        { kind: entry.report.source.kind, id: entry.report.source.id },
+        ...(anchor.turnId ? [{ kind: "turn", id: anchor.turnId }] : []),
+      ];
+      output.set(anchor.id, {
+        id: `terminal-report:${entry.report.id}`,
+        kind: "terminalReport",
+        revision: anchor.revision,
+        threadSequence: anchor.sequence,
+        partIndex: 0,
+        status: terminalReportTimelineStatus(entry.report.outcome.status),
+        turnId: anchor.turnId ?? entry.report.turnId,
+        itemId: anchor.id,
+        runId: entry.report.source.kind === "run" ? entry.report.source.id : undefined,
+        sourceRefs,
+        title: entry.report.outcome.title,
+        description: entry.report.outcome.summary,
+        meta: `generation ${entry.generation}`,
+        reportId: entry.report.id,
+        generation: entry.generation,
+        resultItemId: entry.resultItemId,
+        outcomeStatus: entry.report.outcome.status,
+        summary: entry.report.outcome.summary,
+        changeCount: entry.report.changes.length,
+        verificationCount: entry.report.verification.length,
+        participantCount: entry.report.participants.length,
+        artifactCount: entry.report.artifacts.length,
+        riskCount: entry.report.risks.length,
+        corrections: entry.report.outcome.corrections.map((correction) => ({
+          ...correction,
+          sourceRefs: toSourceRefs(correction.sourceRefs),
+        })),
+        changes: entry.report.changes.map((change) => ({
+          ...change,
+          sourceRefs: toSourceRefs(change.sourceRefs),
+        })),
+        verification: entry.report.verification.map((verification) => ({
+          ...verification,
+          sourceRefs: toSourceRefs(verification.sourceRefs),
+        })),
+        participants: entry.report.participants.map((participant) => ({
+          ...participant,
+          sourceRefs: toSourceRefs(participant.sourceRefs),
+        })),
+        artifacts: entry.report.artifacts.map((artifact) => ({
+          ...artifact,
+          sourceRefs: toSourceRefs(artifact.sourceRefs),
+        })),
+        risks: entry.report.risks.map((risk) => ({
+          ...risk,
+          sourceRefs: toSourceRefs(risk.sourceRefs),
+        })),
+        references: toSourceRefs(entry.report.references),
+      });
+    }
+  }
+  return output;
+}
+
+function terminalReportTimelineStatus(
+  status: CanonicalTerminalReportProjection["report"]["outcome"]["status"],
+): ConversationTimelineItemStatus {
+  return status === "partially_succeeded" ? "blocked" : status;
+}
+
+function mergeTerminalReportProjections(
+  current: readonly CanonicalTerminalReportProjection[],
+  incoming: readonly CanonicalTerminalReportProjection[],
+): CanonicalTerminalReportProjection[] {
+  const map = new Map<string, CanonicalTerminalReportProjection>();
+  for (const entry of [...current, ...incoming]) {
+    const key = `${entry.report.id}:${entry.generation}:${entry.resultItemId}`;
+    if (!map.has(key)) map.set(key, entry);
+  }
+  return [...map.values()];
 }
 
 function actionInScope(action: CanonicalExecutionAction, scope: CanonicalTranscriptScope): boolean {
@@ -1085,9 +1339,13 @@ function groupAnchoredActions(actions: readonly AnchoredAction[]): Map<string, A
   return grouped;
 }
 
-function projectCanonicalMessage(item: CanonicalConversationItem, scope: CanonicalTranscriptScope): ConversationTimelineItem | undefined {
+function projectCanonicalMessage(item: CanonicalConversationItem, scope: CanonicalTranscriptScope, committedTerminalTurns: ReadonlySet<string> = new Set()): ConversationTimelineItem | undefined {
   const body = readStringField(item.payload, "body");
   if (!body || (item.kind !== "user_message" && item.kind !== "assistant_message")) return undefined;
+  if (item.kind === "assistant_message"
+    && readStringField(item.payload, "presentationRole") === "execution_summary"
+    && item.turnId
+    && committedTerminalTurns.has(item.turnId)) return undefined;
   return {
     id: `${item.kind === "user_message" ? "message:user:" : "message:agent:"}${item.id}`,
     kind: item.kind === "user_message" ? "userMessage" : "agentMessage",
@@ -1296,16 +1554,23 @@ function sourceRefsForAction(action: CanonicalExecutionAction): CanonicalProject
 }
 
 function toSourceRefs(refs: readonly CanonicalSourceRef[]): CanonicalProjectionSourceRef[] {
-  return refs.filter((ref) => typeof ref?.kind === "string" && typeof ref.id === "string" && ref.id.length > 0).map((ref) => ({
-    kind: ref.kind,
-    id: ref.id,
-    ...(ref.label ? { label: ref.label } : {}),
-    ...(ref.path ? { path: ref.path } : {}),
-    ...(ref.hostTarget ? { hostTarget: ref.hostTarget } : {}),
-    ...(ref.capabilityId ? { capabilityId: ref.capabilityId } : {}),
-    ...(ref.workspaceId ? { workspaceId: ref.workspaceId } : {}),
-    ...(ref.visibility ? { visibility: ref.visibility } : {}),
-  }));
+  const merged = new Map<string, CanonicalProjectionSourceRef>();
+  for (const ref of refs) {
+    if (typeof ref?.kind !== "string" || typeof ref.id !== "string" || ref.id.length === 0) continue;
+    const normalized: CanonicalProjectionSourceRef = {
+      kind: ref.kind,
+      id: ref.id,
+      ...(ref.label ? { label: ref.label } : {}),
+      ...(ref.path ? { path: ref.path } : {}),
+      ...(ref.hostTarget ? { hostTarget: ref.hostTarget } : {}),
+      ...(ref.capabilityId ? { capabilityId: ref.capabilityId } : {}),
+      ...(ref.workspaceId ? { workspaceId: ref.workspaceId } : {}),
+      ...(ref.visibility ? { visibility: ref.visibility } : {}),
+    };
+    const key = `${normalized.kind}:${normalized.id}`;
+    merged.set(key, { ...merged.get(key), ...normalized });
+  }
+  return [...merged.values()];
 }
 
 function ensureAnchorRef(refs: readonly CanonicalSourceRef[], anchorId: string): readonly CanonicalSourceRef[] {

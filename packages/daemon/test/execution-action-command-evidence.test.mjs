@@ -209,6 +209,72 @@ test("execution action carries a same-thread ConversationItem anchor when the st
   });
 });
 
+test("workflow-step action carries the channel root ConversationItem anchor across child threads", () => {
+  const runId = "run-workflow-cross-thread-anchor";
+  const toolCallId = "tool-workflow-cross-thread-anchor";
+  const turnId = "turn-workflow-cross-thread-anchor";
+  const workflowStepId = "workflow-step-cross-thread-anchor";
+  const item = {
+    id: "channel-root-item-cross-thread-anchor",
+    threadId: "thread-channel-root-cross-thread-anchor",
+    turnId: "turn-channel-root-cross-thread-anchor",
+    kind: "user_message",
+    sequence: 12,
+    domainRefs: [],
+  };
+  const run = {
+    id: runId,
+    taskId: "task-workflow-cross-thread-anchor",
+    threadId: "thread-workflow-step-cross-thread-anchor",
+    workUnitId: "work-unit-workflow-cross-thread-anchor",
+    teammateId: "participant-qa",
+    workflowStepId,
+    cwd: "/repo",
+    status: "succeeded",
+    createdAt: "2026-07-13T00:00:01.000Z",
+    updatedAt: "2026-07-13T00:00:03.000Z",
+  };
+  const events = [
+    event(1, "run_created", { attemptId: "attempt-workflow-cross-thread-anchor" }, runId),
+    event(2, "tool_start", {
+      toolCallId,
+      toolName: "bash",
+      args: { command: "node verify.js" },
+    }, runId),
+    event(3, "tool_end", {
+      toolCallId,
+      toolName: "bash",
+      isError: false,
+      result: { content: [{ type: "text", text: "ok\n" }] },
+    }, runId),
+  ];
+  const store = {
+    getRun: (id) => id === runId ? run : undefined,
+    getLingTurnForRun: (id) => id === runId ? {
+      id: turnId,
+      threadId: run.threadId,
+      sourceItemId: undefined,
+    } : undefined,
+    getChannelWorkflowStep: (id) => id === workflowStepId ? {
+      workflowId: "workflow-cross-thread-anchor",
+      metadata: { sourceMessageId: item.id },
+    } : undefined,
+    getConversationItem: (id) => id === item.id ? item : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [],
+    listEvents: (id) => id === runId ? events : [],
+  };
+
+  const actions = listExecutionActions(store, { runId, complete: true });
+
+  assert.equal(actions.length, 1);
+  assert.deepEqual(actions[0].sourceRefs.at(-1), {
+    kind: "conversation_item",
+    id: item.id,
+    label: "sequence:12",
+  });
+});
+
 test("execution action identity keeps the tool attempt over the run fallback", () => {
   const runId = "run-attempt-lineage";
   const toolCallId = "tool-attempt-lineage";

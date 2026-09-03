@@ -18,17 +18,23 @@ import { maybeCreateWorkflowTerminalCoordinatorReply } from "../dist/features/ch
 import { buildLingAgentSessionViewForChannel } from "../dist/features/channels/ling-agent-session-view.js";
 import { createTerminalWorkflowFixture } from "./terminal-report-coordinator-fixture.mjs";
 
-test("terminal report flag off preserves the legacy workflow terminal message", async () => {
+test("terminal report flag off does not publish a legacy workflow terminal message", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-flag-off-"));
   const store = createSqliteRunStore(cwd);
   try {
     const fixture = createTerminalWorkflowFixture(store, cwd, "flag-off");
     configureTerminalReportStore(store, { enabled: false });
-    const message = maybeCreateWorkflowTerminalCoordinatorReply(store, fixture.workflow.id, {
+    const result = maybeCreateWorkflowTerminalCoordinatorReply(store, fixture.workflow.id, {
       now: "2026-07-11T05:04:00.000Z",
     });
-    assert.ok(message);
-    assert.match(message.body, /^完成：「实现 TerminalReport」/u);
+    assert.equal(result, undefined);
+    assert.equal(store.getConversationItem(`message_workflow_terminal_${fixture.workflow.id}`), undefined);
+    assert.equal(store.listConversationItemsByChannelPage({
+      channelId: fixture.channel.id,
+      kinds: ["assistant_message"],
+      effectiveOnly: true,
+      limit: 100,
+    }).items.some((item) => item.id === `message_workflow_terminal_${fixture.workflow.id}`), false);
     assert.equal(store.listTerminalReports({ sourceKind: "workflow", sourceId: fixture.workflow.id }).length, 0);
   } finally {
     store.close();
@@ -158,7 +164,7 @@ test("terminal report recovery never turns an ordinary channel reply into a task
     assert.equal(store.listTerminalReports({ sourceKind: "run", sourceId: run.id }).length, 0);
     assert.equal(
       listChannelItemViewsFixture(store, { channelId: channel.id, limit: 100 })
-        .filter((message) => message.id.startsWith("message_terminal_report_"))
+        .filter((message) => message.id.startsWith("result_terminal_report:"))
         .length,
       0,
     );
@@ -184,11 +190,14 @@ test("terminal report coordinator commits fallback, publishes once, and closes i
       now: "2026-07-11T05:04:00.000Z",
     });
     assert.equal(result.record.status, "fallback");
-    assert.ok(result.record.publishedMessageId);
-    assert.equal(result.message?.id, result.record.publishedMessageId);
-    assert.match(result.message?.body ?? "", /参与 Agent/u);
-    assert.match(result.message?.body ?? "", /Engineer/u);
-    assert.match(result.message?.body ?? "", /QA/u);
+    assert.ok(result.record.resultItemId);
+    assert.equal(result.message?.id, result.record.resultItemId);
+    assert.equal(result.message?.body, "succeeded");
+    assert.match(result.record.report?.outcome.summary ?? "", /完成 2\/2/u);
+    assert.deepEqual(
+      result.record.report?.participants.map((participant) => participant.displayName),
+      ["Engineer", "QA"],
+    );
     assert.equal(store.getWorkUnit(result.workUnit?.id ?? "")?.status, "succeeded");
     const sessionView = buildLingAgentSessionViewForChannel({ store, channelId: fixture.channel.id });
     assert.equal(sessionView.status, "succeeded");
@@ -200,7 +209,12 @@ test("terminal report coordinator commits fallback, publishes once, and closes i
     });
     assert.equal(repeated.record.id, result.record.id);
     assert.equal(repeated.message?.id, result.message?.id);
-    assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 }).filter((message) => message.id === result.message?.id).length, 1);
+    assert.equal(store.listConversationItemsByChannelPage({
+      channelId: fixture.channel.id,
+      kinds: ["terminal_report"],
+      effectiveOnly: true,
+      limit: 100,
+    }).items.filter((item) => item.id === result.message?.id).length, 1);
     assert.equal(store.listTerminalReports({ sourceKind: "workflow", sourceId: fixture.workflow.id }).length, 1);
     const publicationEvents = store.listControlPlaneEvents({
       workspaceId: "workspace_default",
@@ -212,7 +226,7 @@ test("terminal report coordinator commits fallback, publishes once, and closes i
       channelId: fixture.channel.id,
       sourceKind: "workflow",
       sourceId: fixture.workflow.id,
-      publishedMessageId: result.message?.id,
+      resultItemId: result.message?.id,
       status: "fallback",
     });
   } finally {
@@ -254,9 +268,13 @@ test("terminal report recovery reuses the atomic publication event without dupli
     await recoverTerminalReports(store);
     const recovered = store.getTerminalReport(published.record.id);
     assert.equal(recovered?.id, published.record.id);
-    assert.equal(recovered?.publishedMessageId, published.message?.id);
-    assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 })
-      .filter((message) => message.id === published.message?.id).length, 1);
+    assert.equal(recovered?.resultItemId, published.message?.id);
+    assert.equal(store.listConversationItemsByChannelPage({
+      channelId: fixture.channel.id,
+      kinds: ["terminal_report"],
+      effectiveOnly: true,
+      limit: 100,
+    }).items.filter((item) => item.id === published.message?.id).length, 1);
     assert.equal(store.listControlPlaneEvents({
       workspaceId: "workspace_default",
       domains: ["work_units"],
@@ -351,9 +369,14 @@ test("workflow terminal report creates a superseding revision when late Host evi
     assert.equal(store.listTerminalReports({ sourceKind: "workflow", sourceId: fixture.workflow.id }).length, 2);
     assert.equal(store.getConversationItem(second.message?.id ?? "")?.supersedesItemId, first.message?.id);
     assert.deepEqual(
-      listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 })
-        .filter((message) => message.id.startsWith("message_terminal_report_"))
-        .map((message) => message.id),
+      store.listConversationItemsByChannelPage({
+        channelId: fixture.channel.id,
+        kinds: ["terminal_report"],
+        effectiveOnly: true,
+        limit: 100,
+      }).items
+        .filter((item) => item.id.startsWith("result_terminal_report:"))
+        .map((item) => item.id),
       [second.message?.id],
     );
   } finally {
@@ -381,7 +404,7 @@ test("terminal report recovery republishes only the latest committed revision pe
     store.close();
     const database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
     try {
-      database.prepare("UPDATE ling_terminal_reports SET published_message_id = NULL WHERE id = ?").run(first.record.id);
+      database.prepare("UPDATE ling_terminal_reports SET result_item_id = NULL WHERE id = ?").run(first.record.id);
       database.prepare("DELETE FROM conversation_items WHERE id = ?").run(first.message?.id);
     } finally {
       database.close();
@@ -433,9 +456,14 @@ test("terminal report recovery republishes only the latest committed revision pe
 
     await recoverTerminalReports(reopened);
     assert.deepEqual(
-      listChannelItemViewsFixture(reopened, { channelId: fixture.channel.id, limit: 100 })
-        .filter((message) => message.id.startsWith("message_terminal_report_"))
-        .map((message) => message.id),
+      reopened.listConversationItemsByChannelPage({
+        channelId: fixture.channel.id,
+        kinds: ["terminal_report"],
+        effectiveOnly: true,
+        limit: 100,
+      }).items
+        .filter((item) => item.id.startsWith("result_terminal_report:"))
+        .map((item) => item.id),
       [second.message?.id],
     );
   } finally {

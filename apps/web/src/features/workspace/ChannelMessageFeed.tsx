@@ -61,6 +61,7 @@ interface MessageFeedAnchorSnapshot {
 interface OlderLoadAnchorSnapshot {
   readonly anchorId: string;
   readonly anchorOffset: number;
+  readonly previousScrollHeight: number;
 }
 
 interface UseChannelMessageFeedInput {
@@ -102,7 +103,8 @@ interface ChannelMessageFeedProps {
   readonly emptyLabel: string;
   readonly title?: string;
   readonly items: readonly ChannelMessageFeedItem[];
-  readonly renderItem: (feedItem: ChannelMessageFeedItem, index: number) => ReactNode;
+  /** The single Timeline root owned by the channel surface. */
+  readonly unifiedTimelineNode: ReactNode;
   readonly onKeyDown?: KeyboardEventHandler<HTMLDivElement>;
   readonly onPointerDown?: PointerEventHandler<HTMLDivElement>;
   readonly onPointerMove?: PointerEventHandler<HTMLDivElement>;
@@ -141,13 +143,13 @@ export function useChannelMessageFeed({
   const [resetRevision, setResetRevision] = useState(0);
 
   const virtualizer = useVirtualizer({
-    count: items.length,
+    count: items.length > 0 ? 1 : 0,
     getScrollElement: () => scrollRef.current,
-    estimateSize: (index) => items[index]?.kind === "older-loader" ? 48 : 128,
+    estimateSize: () => 640,
     measureElement: measureChannelMessageFeedRow,
     overscan: 10,
     paddingEnd: 38,
-    getItemKey: (index) => items[index]?.renderKey ?? items[index]?.id ?? index,
+    getItemKey: () => "channel-timeline-root",
     useFlushSync: false,
   });
   const virtualRows = virtualizer.getVirtualItems();
@@ -416,22 +418,11 @@ export function useChannelMessageFeed({
     }
     const feed = scrollRef.current;
     if (feed) {
-      const anchorRow = virtualRows.find((virtualRow) => channelMessageFeedItemCanAnchor(items[virtualRow.index]));
-      const anchorItem = anchorRow ? items[anchorRow.index] : undefined;
-      if (anchorRow && channelMessageFeedItemCanAnchor(anchorItem)) {
-        olderLoadSnapshotRef.current = {
-          anchorId: anchorItem.id,
-          anchorOffset: anchorRow.start - feed.scrollTop,
-        };
-      } else {
-        const fallbackAnchor = items.find(channelMessageFeedItemCanAnchor);
-        if (fallbackAnchor) {
-          olderLoadSnapshotRef.current = {
-            anchorId: fallbackAnchor.id,
-            anchorOffset: 48,
-          };
-        }
-      }
+      olderLoadSnapshotRef.current = {
+        anchorId: "channel-timeline-root",
+        anchorOffset: feed.scrollTop,
+        previousScrollHeight: feed.scrollHeight,
+      };
     }
     olderLoadArmedRef.current = false;
     void onLoadOlder();
@@ -453,6 +444,13 @@ export function useChannelMessageFeed({
     const snapshot = olderLoadSnapshotRef.current;
     const feed = scrollRef.current;
     if (!snapshot || !feed) {
+      return;
+    }
+    if (snapshot.anchorId === "channel-timeline-root") {
+      feed.scrollTop = Math.max(0, feed.scrollHeight - snapshot.previousScrollHeight + snapshot.anchorOffset);
+      olderLoadSnapshotRef.current = undefined;
+      pinnedToLatestRef.current = false;
+      setLatestButtonVisible(feed.scrollHeight > feed.clientHeight);
       return;
     }
     const anchorIndex = items.findIndex((item) => item.id === snapshot.anchorId);
@@ -579,11 +577,11 @@ export function ChannelMessageFeed({
   onPointerDown,
   onPointerMove,
   onPointerUp,
-  renderItem,
   state,
   statusNode,
   surfaceId,
   title,
+  unifiedTimelineNode,
 }: ChannelMessageFeedProps): React.JSX.Element {
   return (
     <ConversationViewProvider surfaceId={surfaceId}>
@@ -601,7 +599,8 @@ export function ChannelMessageFeed({
         items={items}
         getItemId={(feedItem) => feedItem.id}
         getItemKind={(feedItem) => feedItem.kind}
-        renderItem={renderItem}
+        renderVirtualRow={() => unifiedTimelineNode}
+        virtualRowIdentity={{ id: "channel-timeline-root", kind: "timeline" }}
         measureElement={state.measureElement}
         viewStateRetainKeys={state.viewRetainKeys}
         onScroll={state.onScroll}
@@ -712,10 +711,6 @@ export function conversationTurnRenderSignature(turn: ConversationTurnViewModel)
     ].join(":")),
     ...turn.coordinatorTerminalMessages.map((message) => `${message.id}:${message.status}:${message.updatedAt}:${message.body}`),
   ].join("|");
-}
-
-function channelMessageFeedItemCanAnchor(item: ChannelMessageFeedItem | undefined): item is Extract<ChannelMessageFeedItem, { readonly kind: "activity" | "turn" }> {
-  return item?.kind === "activity" || item?.kind === "turn";
 }
 
 function channelMessageFeedItemIsPending(item: ChannelMessageFeedItem | undefined): boolean {

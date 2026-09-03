@@ -15,8 +15,7 @@ import { collectWorkflowTerminalReportEvidence } from "../dist/features/channels
 import {
   TerminalReportPublicationError,
   publishWorkflowTerminalReport,
-  renderTerminalReportMarkdown,
-  terminalReportMessageId,
+  terminalReportResultItemId,
 } from "../dist/features/channels/terminal-report-publisher.js";
 import { evaluateWorkflowCompletion } from "../dist/features/channels/workflow-completion-gate.js";
 import { materializeWorkflowDelegatedStepRequirements } from "../dist/features/channels/workflow-step-requirement.js";
@@ -51,9 +50,14 @@ test("terminal report publication uses a deterministic message id across mark-pu
     });
 
     const message = publishWorkflowTerminalReport({ store, report, now });
-    assert.equal(message?.id, terminalReportMessageId(report.id));
+    assert.equal(message?.id, terminalReportResultItemId(report.id));
     assert.equal(publishWorkflowTerminalReport({ store, report, now: "2026-07-11T05:05:00.000Z" })?.id, message?.id);
-    assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 }).filter((item) => item.id === message?.id).length, 1);
+    assert.equal(store.listConversationItemsByChannelPage({
+      channelId: fixture.channel.id,
+      kinds: ["terminal_report"],
+      effectiveOnly: true,
+      limit: 100,
+    }).items.filter((item) => item.id === message?.id).length, 1);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -103,7 +107,7 @@ test("terminal report publication closes the workflow source turn exactly once",
     const closures = store.listStateTransitionEvents({ entityType: "turn", entityId: sourceItem.turnId })
       .filter((event) => event.toStatus === "succeeded");
     assert.equal(closures.length, 1);
-    assert.equal(store.getTerminalReport(report.id).publishedMessageId, message.id);
+    assert.equal(store.getTerminalReport(report.id).resultItemId, message.id);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -115,7 +119,7 @@ test("atomic publication rolls back every internal write boundary", async (t) =>
     await t.test(boundary, async () => {
       const fixture = await createManifestPublicationFixture(`rollback-${boundary}`, "succeeded");
       try {
-        const messageId = terminalReportMessageId(fixture.report.id);
+        const messageId = terminalReportResultItemId(fixture.report.id);
         const database = new DatabaseSync(resolveRuntimePaths(fixture.cwd).databasePath);
         database.exec(crashTrigger(boundary, messageId, fixture.report.id, fixture.sourceTurn.id));
         database.close();
@@ -124,7 +128,7 @@ test("atomic publication rolls back every internal write boundary", async (t) =>
           /injected_publication_crash/u,
         );
         assert.equal(fixture.store.getConversationItem(messageId), undefined);
-        assert.equal(fixture.store.getTerminalReport(fixture.report.id).publishedMessageId, undefined);
+        assert.equal(fixture.store.getTerminalReport(fixture.report.id).resultItemId, undefined);
         assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, fixture.sourceTurn.status);
         assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
           .some((event) => event.reason?.includes(`published:${messageId}`)), false);
@@ -144,7 +148,7 @@ test("atomic publication rolls back every internal write boundary", async (t) =>
           now: "2026-08-12T20:00:11.000Z",
         });
         assert.equal(recovered?.id, messageId);
-        assert.equal(fixture.store.getTerminalReport(fixture.report.id).publishedMessageId, messageId);
+        assert.equal(fixture.store.getTerminalReport(fixture.report.id).resultItemId, messageId);
         assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, "succeeded");
         assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
           .filter((event) => event.reason?.includes(`published:${messageId}`)).length, 1);
@@ -160,59 +164,6 @@ test("atomic publication rolls back every internal write boundary", async (t) =>
           report: fixture.report,
           now: "2026-08-12T20:00:12.000Z",
         })?.id, messageId);
-      } finally {
-        await fixture.close();
-      }
-    });
-  }
-});
-
-test("legacy workflow publication rolls back every internal write boundary and remains retryable", async (t) => {
-  for (const boundary of ["item", "turn", "turn_event", "publication_event"]) {
-    await t.test(boundary, async () => {
-      const fixture = await createManifestPublicationFixture(`legacy-rollback-${boundary}`, "succeeded");
-      try {
-        const input = legacyPublicationInput(fixture);
-        const messageId = input.publicationItem.id;
-        const database = new DatabaseSync(resolveRuntimePaths(fixture.cwd).databasePath);
-        database.exec(legacyCrashTrigger(boundary, messageId, fixture.workflow.id, fixture.sourceTurn.id));
-        database.close();
-
-        assert.throws(
-          () => fixture.store.commitLegacyWorkflowPublication(input),
-          /injected_legacy_publication_crash/u,
-        );
-        assert.equal(fixture.store.getConversationItem(messageId), undefined);
-        assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, fixture.sourceTurn.status);
-        assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
-          .some((event) => event.reason?.includes(`published:${messageId}`)), false);
-        assert.equal(fixture.store.listControlPlaneEvents({
-          workspaceId: "workspace_default",
-          entityType: "workflow",
-          entityId: fixture.workflow.id,
-          action: "workflow.final_result_published",
-          limit: 10,
-        }).length, 0);
-        appendRollbackRecoveryProbe(fixture.store, fixture.cwd, `legacy-publication-${boundary}`);
-        fixture.store.database.exec(`DROP TRIGGER ${legacyPublicationCrashTriggerName(boundary)};`);
-
-        const recovered = fixture.store.commitLegacyWorkflowPublication(input);
-        assert.equal(recovered.ok, true);
-        assert.equal(recovered.duplicate, false);
-        assert.equal(recovered.item.id, messageId);
-        assert.equal(recovered.sourceTurnStatus, "succeeded");
-        const duplicate = fixture.store.commitLegacyWorkflowPublication(legacyPublicationInput(fixture));
-        assert.equal(duplicate.ok, true);
-        assert.equal(duplicate.duplicate, true);
-        assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: fixture.sourceTurn.id })
-          .filter((event) => event.reason?.includes(`published:${messageId}`)).length, 1);
-        assert.equal(fixture.store.listControlPlaneEvents({
-          workspaceId: "workspace_default",
-          entityType: "workflow",
-          entityId: fixture.workflow.id,
-          action: "workflow.final_result_published",
-          limit: 10,
-        }).length, 1);
       } finally {
         await fixture.close();
       }
@@ -320,7 +271,7 @@ test("publication rejects stale completion, incompatible outcome, source Turn, a
         () => publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report, now: fixture.publishAt }),
         (error) => error instanceof TerminalReportPublicationError && error.code === "item_conflict",
       );
-      assert.equal(fixture.store.getTerminalReport(fixture.report.id).publishedMessageId, undefined);
+      assert.equal(fixture.store.getTerminalReport(fixture.report.id).resultItemId, undefined);
       assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, fixture.sourceTurn.status);
     } finally {
       await fixture.close();
@@ -496,6 +447,8 @@ async function createManifestPublicationFixture(suffix, outcome) {
 function publicationInput(fixture) {
   const workflow = fixture.store.getChannelWorkflow(fixture.workflow.id);
   const sourceTurn = fixture.store.getLingTurn(fixture.sourceTurn.id);
+  const record = fixture.store.getTerminalReport(fixture.report.id);
+  if (!record) throw new Error(`Terminal report fixture record missing: ${fixture.report.id}`);
   const evaluation = evaluateWorkflowCompletion({
     store: fixture.store,
     workflow,
@@ -510,16 +463,22 @@ function publicationInput(fixture) {
     expectedCompletion: evaluation,
     expectedSourceTurn: { id: sourceTurn.id, status: sourceTurn.status, updatedAt: sourceTurn.updatedAt },
     publicationItem: {
-      id: terminalReportMessageId(fixture.report.id),
+      id: terminalReportResultItemId(fixture.report.id),
       channelId: workflow.channelId,
       threadId: sourceTurn.threadId,
       turnId: sourceTurn.id,
-      kind: "assistant_message",
+      kind: "terminal_report",
       status: "committed",
-      actorType: "ling_agent",
-      actorId: "ling_agent",
+      actorType: "system",
       visibility: "channel",
-      payload: { body: renderTerminalReportMarkdown(fixture.report), format: "markdown", streaming: false, deliveryStatus: "ready" },
+      payload: {
+        reportId: fixture.report.id,
+        generation: record.generation,
+        sourceKind: fixture.report.source.kind,
+        sourceId: fixture.report.source.id,
+        evidenceFingerprint: fixture.report.evidenceFingerprint,
+        outcomeStatus: fixture.report.outcome.status,
+      },
       domainRefs: [
         { type: "terminal_report", id: fixture.report.id },
         { type: "workflow", id: workflow.id },
@@ -529,43 +488,6 @@ function publicationInput(fixture) {
       idempotencyKey: `terminal-report:${fixture.report.id}`,
     },
     publicationEventIdempotencyKey: `terminal-report:${fixture.report.id}:published`,
-    now: fixture.publishAt,
-  };
-}
-
-function legacyPublicationInput(fixture) {
-  const workflow = fixture.store.getChannelWorkflow(fixture.workflow.id);
-  const sourceTurn = fixture.store.getLingTurn(fixture.sourceTurn.id);
-  const evaluation = evaluateWorkflowCompletion({
-    store: fixture.store,
-    workflow,
-    steps: fixture.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
-    now: fixture.publishAt,
-  });
-  const messageId = `message_workflow_terminal_${workflow.id}`;
-  return {
-    expectedWorkflowId: workflow.id,
-    expectedCompletion: evaluation,
-    expectedSourceTurn: { id: sourceTurn.id, status: sourceTurn.status, updatedAt: sourceTurn.updatedAt },
-    publicationItem: {
-      id: messageId,
-      channelId: workflow.channelId,
-      threadId: sourceTurn.threadId,
-      turnId: sourceTurn.id,
-      kind: "assistant_message",
-      status: "committed",
-      actorType: "ling_agent",
-      actorId: "ling_agent",
-      visibility: "channel",
-      payload: { body: "Workflow completed.", format: "markdown", streaming: false, deliveryStatus: "ready" },
-      domainRefs: [
-        { type: "workflow", id: workflow.id },
-        { type: "conversation_item", id: fixture.sourceItem.id },
-        { type: "turn", id: sourceTurn.id },
-      ],
-      idempotencyKey: `workflow-terminal:${workflow.id}`,
-    },
-    publicationEventIdempotencyKey: `workflow-terminal:${workflow.id}:published`,
     now: fixture.publishAt,
   };
 }
@@ -588,7 +510,7 @@ function projectionFor(item, assignment) {
 function crashTrigger(boundary, messageId, reportId, turnId) {
   const definitions = {
     item: `CREATE TRIGGER crash_publication_item BEFORE INSERT ON conversation_items WHEN NEW.id = '${messageId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
-    report: `CREATE TRIGGER crash_publication_report BEFORE UPDATE OF published_message_id ON ling_terminal_reports WHEN NEW.id = '${reportId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
+    report: `CREATE TRIGGER crash_publication_report BEFORE UPDATE OF result_item_id ON ling_terminal_reports WHEN NEW.id = '${reportId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
     turn: `CREATE TRIGGER crash_publication_turn BEFORE UPDATE OF status ON ling_turns WHEN NEW.id = '${turnId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
     turn_event: `CREATE TRIGGER crash_publication_turn_event BEFORE INSERT ON state_transition_events WHEN NEW.entity_type = 'turn' AND NEW.entity_id = '${turnId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
     publication_event: `CREATE TRIGGER crash_publication_event BEFORE INSERT ON control_plane_events WHEN NEW.entity_type = 'terminal_report' AND NEW.entity_id = '${reportId}' BEGIN SELECT RAISE(ABORT, 'injected_publication_crash'); END;`,
@@ -603,25 +525,6 @@ function publicationCrashTriggerName(boundary) {
     turn: "crash_publication_turn",
     turn_event: "crash_publication_turn_event",
     publication_event: "crash_publication_event",
-  }[boundary];
-}
-
-function legacyCrashTrigger(boundary, messageId, workflowId, turnId) {
-  const definitions = {
-    item: `CREATE TRIGGER crash_legacy_publication_item BEFORE INSERT ON conversation_items WHEN NEW.id = '${messageId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
-    turn: `CREATE TRIGGER crash_legacy_publication_turn BEFORE UPDATE OF status ON ling_turns WHEN NEW.id = '${turnId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
-    turn_event: `CREATE TRIGGER crash_legacy_publication_turn_event BEFORE INSERT ON state_transition_events WHEN NEW.entity_type = 'turn' AND NEW.entity_id = '${turnId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
-    publication_event: `CREATE TRIGGER crash_legacy_publication_event BEFORE INSERT ON control_plane_events WHEN NEW.entity_type = 'workflow' AND NEW.entity_id = '${workflowId}' BEGIN SELECT RAISE(ABORT, 'injected_legacy_publication_crash'); END;`,
-  };
-  return definitions[boundary];
-}
-
-function legacyPublicationCrashTriggerName(boundary) {
-  return {
-    item: "crash_legacy_publication_item",
-    turn: "crash_legacy_publication_turn",
-    turn_event: "crash_legacy_publication_turn_event",
-    publication_event: "crash_legacy_publication_event",
   }[boundary];
 }
 
@@ -640,7 +543,7 @@ function appendRollbackRecoveryProbe(store, cwd, suffix) {
 }
 
 function assertNoPublication(fixture, expectedTurnStatus = fixture.sourceTurn.status) {
-  assert.equal(fixture.store.getConversationItem(terminalReportMessageId(fixture.report.id)), undefined);
-  assert.equal(fixture.store.getTerminalReport(fixture.report.id).publishedMessageId, undefined);
+  assert.equal(fixture.store.getConversationItem(terminalReportResultItemId(fixture.report.id)), undefined);
+  assert.equal(fixture.store.getTerminalReport(fixture.report.id).resultItemId, undefined);
   assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, expectedTurnStatus);
 }

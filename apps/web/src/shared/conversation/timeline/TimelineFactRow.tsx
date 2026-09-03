@@ -5,11 +5,11 @@ import {
 } from "@ling-stack/conversation-ui-core";
 import type {
   ConversationOperationSourceRef,
-  ConversationTrustedSourceRef,
   ConversationTimelineRowItem,
 } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
+import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 
 export interface TimelineFactRowProps {
   readonly item: ConversationTimelineRowItem;
@@ -17,10 +17,8 @@ export interface TimelineFactRowProps {
   readonly meta?: ReactNode;
   readonly icon: ReactNode;
   readonly detail?: ReactNode;
-  /** Surface-owned controls rendered inside this fact's single disclosure. */
-  readonly actions?: ReactNode;
   readonly cwd?: string;
-  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
+  readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
   readonly depth?: 0 | 1;
 }
 
@@ -35,11 +33,10 @@ export function TimelineFactRow({
   meta,
   icon,
   detail,
-  actions,
   depth = 0,
 }: TimelineFactRowProps): React.JSX.Element {
   const { t } = useI18n();
-  const hasDetail = Boolean(detail || actions);
+  const hasDetail = Boolean(detail);
   const disclosure = useConversationBlockView({
     blockId: `timeline-item:${item.id}`,
     revisionKey: String(item.revision),
@@ -104,7 +101,6 @@ export function TimelineFactRow({
       {expanded ? (
         <div id={detailId} className="conversation-timeline-activity-detail">
           {detail}
-          {actions ? <div className="conversation-timeline-activity-actions">{actions}</div> : null}
         </div>
       ) : null}
     </article>
@@ -123,7 +119,7 @@ export function timelineStatusLabel(
 ): string | undefined {
   if (!status) return undefined;
   const labels: Record<NonNullable<ConversationTimelineRowItem["status"]>, string> = {
-    pending: t("Pending"), running: t("Working"), waiting: t("Waiting"), blocked: t("Blocked"), failed: t("Failed"), cancelled: t("Cancelled"), succeeded: t("Completed"),
+    pending: t("Pending"), running: t("Working"), waiting: t("Waiting"), blocked: t("Blocked"), failed: t("Failed"), cancelled: t("Cancelled"), succeeded: t("Succeeded"),
   };
   return labels[status];
 }

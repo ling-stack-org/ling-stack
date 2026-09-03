@@ -7,7 +7,7 @@ import type { ConversationActiveReplyTarget, RunEventEnvelope, RunIntervention, 
 import type { ConversationContextSnapshot, ConversationContextSummary, ConversationItemV1 } from "./conversation-continuity.js";
 import type { LingThread } from "./threads.js";
 import type { LingTurn, LingTurnRun } from "./turns.js";
-import type { TerminalReportDto } from "./terminal-reports.js";
+import type { ConversationTerminalReportProjectionDto } from "./terminal-reports.js";
 import type { ConversationGeneratedMedia } from "./media.js";
 import type { RunArtifact } from "./artifacts.js";
 import type { CompactionCheckpoint } from "./workspace-changes.js";
@@ -99,7 +99,7 @@ export interface ConversationDetailResponse {
   readonly executionActions: readonly ExecutionAction[];
   readonly approvals: readonly ApprovalRequest[];
   readonly interventions: readonly RunIntervention[];
-  readonly terminalReports: readonly TerminalReportDto[];
+  readonly terminalReports: readonly ConversationTerminalReportProjectionDto[];
   /** Host-owned artifacts used by file, diff, image, and evidence timeline items. */
   readonly artifacts: readonly RunArtifact[];
   /** Durable proposed plans; projected into the shared `plan` item when anchored. */

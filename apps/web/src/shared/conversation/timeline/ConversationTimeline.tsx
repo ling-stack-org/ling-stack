@@ -2,16 +2,14 @@ import type { ReactNode } from "react";
 import {
   conversationTimelineRendererKey,
   fingerprintConversationTimeline,
-  type ConversationTrustedSourceRef,
   type ConversationTimelineItem,
-  type ConversationTimelineRowItem,
   type ConversationTimelineSubAgentItem,
   type TimelineSnapshot,
 } from "@ling-stack/conversation-ui-core";
 import { ChevronDown, CircleAlert, Loader2, UserRound } from "lucide-react";
-import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { ConversationTimelineBlockedRenderer } from "./ConversationTimelineBlockedRenderer.js";
 import { renderConversationTimelineItem } from "./renderer-registry.js";
+import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 
 export interface ConversationTimelineProps {
   /** Immutable, already-scoped canonical/display projection. */
@@ -20,11 +18,9 @@ export interface ConversationTimelineProps {
   readonly className?: string;
   readonly ariaLabel?: string;
   readonly cwd?: string;
-  readonly loadPreview?: ArtifactPreviewLoader;
-  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
+  readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
   readonly renderSubAgentAvatar?: (item: ConversationTimelineSubAgentItem) => ReactNode;
-  /** Surface-owned controls rendered inside the owning fact row disclosure. */
-  readonly renderFactActions?: (item: ConversationTimelineRowItem) => ReactNode;
+  readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode) => ReactNode;
   readonly emptyLabel?: ReactNode;
 }
 
@@ -37,10 +33,9 @@ export function ConversationTimeline({
   snapshot,
   depth,
   cwd,
-  loadPreview,
   onOpenSourceRef,
   renderSubAgentAvatar,
-  renderFactActions,
+  renderMessageChrome,
   emptyLabel,
   className: customClassName,
   ariaLabel,
@@ -72,10 +67,9 @@ export function ConversationTimeline({
     <div className={className} {...attrs}>
       {timelineItems.map((item) => renderTimelineItem(item, {
         cwd,
-        loadPreview,
         onOpenSourceRef,
+        renderMessageChrome,
         renderSubAgentAvatar,
-        renderFactActions,
         snapshot,
         depth,
       }))}
@@ -92,20 +86,18 @@ function countAtomicItems(items: readonly ConversationTimelineItem[]): number {
   }, 0);
 }
 
-type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "loadPreview" | "onOpenSourceRef" | "renderSubAgentAvatar"> & {
+type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "onOpenSourceRef" | "renderMessageChrome" | "renderSubAgentAvatar"> & {
   readonly snapshot: TimelineSnapshot;
   readonly depth: 0 | 1;
-  readonly renderFactActions?: (item: ConversationTimelineRowItem) => ReactNode;
 };
 
 function renderTimelineItem(item: ConversationTimelineItem, context: TimelineRenderContext): ReactNode {
   return renderConversationTimelineItem(item, {
     cwd: context.cwd,
-    loadPreview: context.loadPreview,
     onOpenSourceRef: context.onOpenSourceRef,
+    renderMessageChrome: context.renderMessageChrome,
     depth: context.depth,
     renderSubAgent: (subAgent) => <SubAgentTimelineItem key={subAgent.id} item={subAgent} context={context} />,
-    renderFactActions: context.renderFactActions,
   });
 }
 
@@ -169,10 +161,9 @@ function SubAgentTimelineItem({
           snapshot={childSnapshot}
           depth={1}
           cwd={context.cwd}
-          loadPreview={context.loadPreview}
           onOpenSourceRef={context.onOpenSourceRef}
+          renderMessageChrome={context.renderMessageChrome}
           renderSubAgentAvatar={context.renderSubAgentAvatar}
-          renderFactActions={context.renderFactActions}
           ariaLabel={`${item.label} activity`}
         />
       ) : null}

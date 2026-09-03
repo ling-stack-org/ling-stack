@@ -50,6 +50,17 @@ test("composer parser keeps adjacent natural-language text outside URL tokens", 
   assert.equal(parts[1].text, "这段文字应该继续显示");
 });
 
+test("composer parser keeps adjacent natural-language text outside workspace file tokens", () => {
+  const parts = parseComposerInputParts("请查看 /private/tmp/ling-v391-qa-20260902-cdp/workspace/demo.ts。然后继续说明", {
+    cwd: "/private/tmp/ling-v391-qa-20260902-cdp/workspace",
+  });
+
+  assert.deepEqual(parts.map((part) => part.type), ["text", "workspace_file", "text"]);
+  assert.equal(parts[1].type, "workspace_file");
+  assert.equal(parts[1].raw, "/private/tmp/ling-v391-qa-20260902-cdp/workspace/demo.ts");
+  assert.equal(parts[2].text, "。然后继续说明");
+});
+
 test("slash picker is pure and can insert command tokens", () => {
   const picker = findActiveSlashCommand("please /des", 11);
 

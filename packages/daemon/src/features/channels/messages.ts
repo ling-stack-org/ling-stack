@@ -813,6 +813,7 @@ function createCoordinatorWorkflowStartReply(input: {
       format: "markdown",
       streaming: true,
       deliveryStatus: "pending",
+      presentationRole: "narration",
     },
     domainRefs: [{ type: "conversation_item", id: sourceItem.id }],
   }, now);

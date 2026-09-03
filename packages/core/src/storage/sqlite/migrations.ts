@@ -238,6 +238,8 @@ const MEDIA_PROJECT_ASSETS_MIGRATION_VERSION = 114;
 const MEDIA_PROJECT_ASSETS_MIGRATION_NAME = "create_media_project_assets";
 const APPROVAL_COMMAND_RULES_MIGRATION_VERSION = 126;
 const APPROVAL_COMMAND_RULES_MIGRATION_NAME = "create_approval_command_rules";
+const CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_VERSION = 127;
+const CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_NAME = "codex_typed_transcript_v3_result_items";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -4571,7 +4573,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           prompt_version TEXT,
           attempt_count INTEGER NOT NULL DEFAULT 0,
           validation_codes_json TEXT NOT NULL DEFAULT '[]',
-          published_message_id TEXT,
+          result_item_id TEXT,
           error_code TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
@@ -5694,6 +5696,42 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     `);
     if (!hasApprovalCommandRulesMigration) {
       context.recordMigration(APPROVAL_COMMAND_RULES_MIGRATION_VERSION, APPROVAL_COMMAND_RULES_MIGRATION_NAME);
+    }
+  }
+
+  const hasCodexTypedTranscriptV3Migration = context.hasMigration(CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_VERSION);
+  if (!hasCodexTypedTranscriptV3Migration || !context.hasColumn("ling_terminal_reports", "result_item_id")) {
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      if (context.hasTable("ling_terminal_reports") && !context.hasColumn("ling_terminal_reports", "result_item_id")) {
+        if (context.hasColumn("ling_terminal_reports", "published_message_id")) {
+          database.exec("ALTER TABLE ling_terminal_reports RENAME COLUMN published_message_id TO result_item_id;");
+        } else {
+          database.exec("ALTER TABLE ling_terminal_reports ADD COLUMN result_item_id TEXT;");
+        }
+      }
+      database.exec(`
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_ling_terminal_reports_result_item
+        ON ling_terminal_reports(result_item_id)
+        WHERE result_item_id IS NOT NULL;
+      `);
+      if (context.hasTable("conversation_items")) {
+        // Existing development rows are normalized to the Host-assigned role;
+        // report publications are migrated by their dedicated result anchor.
+        database.exec(`
+          UPDATE conversation_items
+          SET payload_json = json_set(payload_json, '$.presentationRole', 'narration')
+          WHERE kind = 'assistant_message'
+            AND json_extract(payload_json, '$.presentationRole') IS NULL;
+        `);
+      }
+      if (!hasCodexTypedTranscriptV3Migration) {
+        context.recordMigration(CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_VERSION, CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_NAME);
+      }
+      database.exec("COMMIT;");
+    } catch (error) {
+      database.exec("ROLLBACK;");
+      throw error;
     }
   }
 

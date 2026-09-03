@@ -9,9 +9,21 @@ import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
+import { resolvePackagedArtifactName } from "./packaged-artifact-path.mjs";
+
 const repositoryRoot = resolve(new URL("../../..", import.meta.url).pathname);
 const defaultApp = join(repositoryRoot, "apps/desktop/release/mac-arm64/Ling Stack.app/Contents/MacOS/Ling Stack");
-const defaultArtifact = join(repositoryRoot, "apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.zip");
+const desktopPackage = JSON.parse(await readFile(join(repositoryRoot, "apps/desktop/package.json"), "utf8"));
+const defaultArtifact = join(
+  repositoryRoot,
+  "apps/desktop/release",
+  resolvePackagedArtifactName({
+    artifactName: desktopPackage.build?.mac?.artifactName,
+    version: desktopPackage.version,
+    arch: "arm64",
+    ext: "zip",
+  }),
+);
 const options = parseArgs(process.argv.slice(2));
 
 if (process.platform !== "darwin") {
@@ -676,8 +688,8 @@ function readSqliteAudit(databasePath, ids) {
     if (runs.length !== ids.runIds.length || runs.some((run) => run.status !== "succeeded")) throw new Error("sqlite_lineage_runs_incomplete");
     const evidenceEvents = count(`SELECT COUNT(*) AS count FROM run_events WHERE run_id IN (${ids.runIds.map(() => "?").join(",")}) AND type IN ('tool_start','tool_end')`, ...ids.runIds);
     if (evidenceEvents < 4) throw new Error(`sqlite_lineage_evidence_incomplete:${evidenceEvents}`);
-    const reports = rows("SELECT id, source_kind, source_id, outcome_status, published_message_id FROM ling_terminal_reports WHERE source_kind = 'workflow' AND source_id = ? AND status IN ('committed','fallback')", ids.workflowId);
-    if (reports.length !== 1 || reports[0].outcome_status !== "succeeded" || !reports[0].published_message_id) throw new Error("sqlite_lineage_terminal_report_incomplete");
+    const reports = rows("SELECT id, source_kind, source_id, outcome_status, result_item_id FROM ling_terminal_reports WHERE source_kind = 'workflow' AND source_id = ? AND status IN ('committed','fallback')", ids.workflowId);
+    if (reports.length !== 1 || reports[0].outcome_status !== "succeeded" || !reports[0].result_item_id) throw new Error("sqlite_lineage_terminal_report_incomplete");
     const succeededTransitions = count("SELECT COUNT(*) AS count FROM state_transition_events WHERE entity_type = 'turn' AND entity_id = ? AND to_status = 'succeeded'", sourceTurn.id);
     if (succeededTransitions !== 1) throw new Error(`sqlite_lineage_turn_settlement_not_idempotent:${succeededTransitions}`);
     const manifest = JSON.parse(decision.participant_manifest_json);
@@ -691,7 +703,7 @@ function readSqliteAudit(databasePath, ids) {
       runIds: runs.map((run) => run.id),
       evidenceEvents,
       terminalReportId: reports[0].id,
-      publishedMessageId: reports[0].published_message_id,
+      resultItemId: reports[0].result_item_id,
       succeededTransitions,
       foreignKeyCheck: "ok",
       integrityCheck: "ok",
@@ -817,6 +829,7 @@ try {
   });
   if (channelResponse.status !== 201) throw new Error(`channel_create:${channelResponse.text}`);
   const channelId = channelResponse.body.channel.id;
+  const channelExecutionPath = channelResponse.body.channel.workspaceBinding?.executionPath ?? workspace;
   for (const teammateId of ["teammate_builtin_engineer", "teammate_builtin_qa"]) {
     const teammateResponse = await request(baseUrl, `/teammates/${encodeURIComponent(teammateId)}${cwdQuery}`, {
       method: "PATCH",
@@ -868,7 +881,7 @@ try {
     terminalEvent: replayText.includes("event: blocked") ? "blocked" : replayText.includes("event: done") ? "done" : "unknown",
   });
 
-  await waitForFile(join(workspace, proofFileName), proofContent);
+  await waitForFile(join(channelExecutionPath, proofFileName), proofContent);
   const workflowsResponse = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/workflows${cwdQuery}`);
   if (workflowsResponse.status !== 200 || workflowsResponse.body.workflows?.length !== 1) throw new Error(`workflow_list:${workflowsResponse.text}`);
   const workflow = workflowsResponse.body.workflows[0];
@@ -902,9 +915,14 @@ try {
       throw new Error(`run_evidence:${step.runId}:${eventsResponse.text}`);
     }
   }
-  const terminalReportId = terminalReportsResponse.body.reports[0].id;
-  const terminalItems = items.filter((item) => item.kind === "assistant_message" && item.idempotencyKey === `terminal-report:${terminalReportId}`);
+  const terminalReport = terminalReportsResponse.body.reports[0];
+  const terminalReportId = terminalReport.id;
+  const expectedResultItemId = typeof terminalReport.resultItemId === "string" && terminalReport.resultItemId.length > 0
+    ? terminalReport.resultItemId
+    : `result_terminal_report:${terminalReportId}`;
+  const terminalItems = items.filter((item) => item.kind === "terminal_report" && item.id === expectedResultItemId);
   if (terminalItems.length !== 1) throw new Error(`duplicate_terminal_items:${terminalItems.length}`);
+  if (terminalItems[0].payload?.reportId !== terminalReportId) throw new Error("terminal_report_item_lineage_mismatch");
   check("lineage_before_restart", "passed", {
     itemCount: items.length,
     userItemCount: userItems.length,
@@ -913,7 +931,7 @@ try {
     workflowStepIds: workflowSteps.map((step) => step.id),
     runIds: workflowSteps.map((step) => step.runId),
     terminalReportCount: terminalReportsResponse.body.reports.length,
-    hostEvidence: { path: proofFileName, content: proofContent },
+    hostEvidence: { executionPath: channelExecutionPath, path: proofFileName, content: proofContent },
   });
 
   const nakedTeammateResponse = await request(baseUrl, `/teammates${cwdQuery}`, {
@@ -1238,7 +1256,7 @@ try {
     terminalReportStatus: terminalReportsResponse.body.reports[0]?.outcome?.status ?? null,
     visibleItemCount: recoveredItems.length,
     userItemCount: recoveredUsers.length,
-    terminalReportItemCount: recoveredItems.filter((item) => item.kind === "assistant_message").length,
+    terminalReportItemCount: recoveredItems.filter((item) => item.kind === "terminal_report").length,
     sseReconnectReady: recoveredReplay.text.includes("event: ready"),
     daemonReadiness: recoveredHealth.readiness,
     canonicalReplayIdempotent: true,

@@ -1,27 +1,16 @@
 import { Terminal } from "lucide-react";
-import type { ReactNode } from "react";
 import type { ConversationTimelineCommandExecutionItem } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
 import { TimelineFactRow } from "./TimelineFactRow.js";
-import { CommandDetail, detailExists, truncateInline } from "./timeline-renderer-details.js";
+import { commandTarget } from "./command-target.js";
+import { CommandDetail, detailExists } from "./timeline-renderer-details.js";
 
-export function ConversationTimelineCommandRenderer({ item, depth, actions }: { readonly item: ConversationTimelineCommandExecutionItem; readonly depth: 0 | 1; readonly actions?: ReactNode }): React.JSX.Element {
+export function ConversationTimelineCommandRenderer({ item, depth }: { readonly item: ConversationTimelineCommandExecutionItem; readonly depth: 0 | 1 }): React.JSX.Element {
   const { t } = useI18n();
   const target = commandTarget(item.command);
   const title = target ? t("Run command: {target}", { target }) : item.title;
   const meta = commandMeta(item);
-  return <TimelineFactRow item={item} depth={depth} title={title} meta={meta} icon={<Terminal size={14} aria-hidden="true" />} detail={detailExists(item) ? <CommandDetail item={item} /> : undefined} actions={actions} />;
-}
-
-/** Keep the compact rail quiet; the exact command remains in disclosure detail. */
-function commandTarget(command: string): string {
-  const tokens = command.trim().split(/\s+/u);
-  const executable = tokens[0]?.replace(/^.*[\\/]/u, "");
-  if (!executable) return "";
-  const firstMeaningfulArg = tokens.slice(1).find((token) =>
-    !token.startsWith("-") && !token.includes("=") && !/[\\/$]/u.test(token),
-  );
-  return truncateInline(firstMeaningfulArg ? `${executable} ${firstMeaningfulArg}` : executable);
+  return <TimelineFactRow item={item} depth={depth} title={title} meta={meta} icon={<Terminal size={14} aria-hidden="true" />} detail={detailExists(item) ? <CommandDetail item={item} /> : undefined} />;
 }
 
 function commandMeta(item: ConversationTimelineCommandExecutionItem): string | undefined {

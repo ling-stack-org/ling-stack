@@ -1,4 +1,4 @@
-import { useCallback, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
+import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
 import { ArrowDown, Copy, FileText, Pencil, ThumbsDown, ThumbsUp } from "lucide-react";
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
@@ -35,6 +35,12 @@ import type {
   ConversationHomeMessage,
 } from "./normal-conversation-types.js";
 import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
+import {
+  flattenNormalTimelineItems,
+  maxTimelineRevision,
+  selectNormalTimelineItems,
+} from "./normal-conversation-timeline-items.js";
+import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
 
 const latestThresholdPx = 56;
 
@@ -107,6 +113,51 @@ export function NormalConversationFeed({
     workspaceCwd,
   }), [detailContext, messages, projectPath, runById, t, visibleMessages, workspaceCwd]);
   const generatedMediaByRunId = useMemo(() => groupGeneratedMediaByRunId(generatedMedia), [generatedMedia]);
+  const timelineSnapshot = useMemo(() => {
+    const canonicalItems = detailContext?.timelineProjection?.items;
+    const items = canonicalItems && canonicalItems.length > 0
+      ? selectNormalTimelineItems(canonicalItems, feedItems)
+      : flattenNormalTimelineItems(feedItems);
+    const activeMessage = feedItems.find((item) => item.bodyStreaming && item.message.runId);
+    const activeRun = activeMessage?.message.runId
+      ? {
+          runId: activeMessage.message.runId,
+          status: "working" as const,
+          workspaceLabel: projectPath?.trim() || workspaceCwd.trim(),
+          cwd: projectPath?.trim() || workspaceCwd.trim(),
+          branch: null,
+          modelLabel: null,
+          sourceRefs: [],
+        }
+      : null;
+    return buildSurfaceTimelineSnapshot({
+      surface: "normal_conversation",
+      threadId: detailContext?.threadId ?? feedItems.find((item) => item.message.threadId)?.message.threadId,
+      items,
+      activeRun,
+      contextSegmentIdByItemId: detailContext?.timelineProjection?.contextSegmentIdByItemId,
+      canonicalRevision: maxTimelineRevision(items),
+    });
+  }, [detailContext, feedItems, projectPath, workspaceCwd]);
+  const feedItemByMessageId = useMemo(
+    () => new Map(feedItems.map((item) => [item.message.id, item])),
+    [feedItems],
+  );
+  const workspaceId = detailContext?.executionActions.find((action) => action.workspaceId.trim())?.workspaceId;
+  const timelineThreadId = detailContext?.threadId ?? feedItems.find((item) => item.message.threadId)?.message.threadId;
+  const handleOpenTimelineSourceRef = useCallback(async (
+    ref: import("@ling-stack/conversation-ui-core").ConversationOperationSourceRef,
+    item?: import("@ling-stack/conversation-ui-core").ConversationTimelineItem,
+  ): Promise<void> => {
+    if (ref.kind !== "file" && ref.kind !== "path" && ref.kind !== "diff" && ref.kind !== "artifact") {
+      throw new Error("This source is not an openable workspace resource.");
+    }
+    await requestTimelineWorkspaceFileOpen(ref, item, {
+      cwd: projectPath?.trim() || workspaceCwd.trim(),
+      workspaceId,
+      threadId: timelineThreadId,
+    }, onOpenReportFile);
+  }, [onOpenReportFile, projectPath, timelineThreadId, workspaceCwd, workspaceId]);
   const itemIdentityKey = useMemo(
     () => feedItems.map((item) => item.message.id).join("|"),
     [feedItems],
@@ -196,34 +247,50 @@ export function NormalConversationFeed({
         onScroll={handleFeedScroll}
         className="normal-conversation-feed"
         ariaLabel={t("Conversation messages")}
-        items={feedItems}
+        items={feedItems.length > 0 ? [feedItems[0]!] : []}
         emptyLabel={searchActive ? t("No matching conversation messages") : t("No conversation messages yet")}
-        getItemId={(item) => item.message.id}
-        renderItem={(item) => (
-          <NormalConversationMessageRow
-            item={item}
-            composerGateApproval={item.workCell
-              ? composerGateApprovalPresentationForWorkCell(item.workCell, composerGateApprovalByRunId)
-              : undefined}
-            generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
-            feedback={feedbackById[item.message.id]}
-            editing={editingMessageId === item.message.id}
-            editSaving={editSaving}
-            editable={item.message.id === latestEditableUserMessageId}
-            replacementRetrying={replacementRetryingMessageId === item.message.id}
-            replacementRetryError={replacementRetryError}
-            projectPath={projectPath}
-            workspaceCwd={workspaceCwd}
-            onCancelEdit={onCancelMessageEdit}
-            onEdit={() => onEditMessage(item.message.id)}
-            onSave={(body) => onSaveMessage(item.message, body)}
-            onRetryReplacement={() => onRetryReplacement(item.message)}
-            onToggleFeedback={(feedback) => toggleFeedback(item.message.id, feedback)}
-            onOpenFiles={onOpenFiles}
-            onOpenReportFile={onOpenReportFile}
-            onOpenReview={onOpenReview}
-            onOpenRun={onOpenRun}
-          />
+        getItemId={(item) => `timeline:${item.message.threadId ?? "unbound"}`}
+        renderItem={() => (
+          <div className="normal-conversation-timeline-surface" data-conversation-surface-timeline="normal">
+            {mountConversationTimeline({
+              snapshot: timelineSnapshot,
+              depth: 0,
+              cwd: projectPath?.trim() || workspaceCwd.trim(),
+              onOpenSourceRef: handleOpenTimelineSourceRef,
+              renderMessageChrome: (messageItem, body) => {
+                const messageId = messageItem.itemId;
+                const item = messageId ? feedItemByMessageId.get(messageId) : undefined;
+                if (!item) return body;
+                return (
+                  <NormalConversationMessageRow
+                    item={item}
+                    bodyNodeOverride={body}
+                    composerGateApproval={item.workCell
+                      ? composerGateApprovalPresentationForWorkCell(item.workCell, composerGateApprovalByRunId)
+                      : undefined}
+                    generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
+                    feedback={feedbackById[item.message.id]}
+                    editing={editingMessageId === item.message.id}
+                    editSaving={editSaving}
+                    editable={item.message.id === latestEditableUserMessageId}
+                    replacementRetrying={replacementRetryingMessageId === item.message.id}
+                    replacementRetryError={replacementRetryError}
+                    projectPath={projectPath}
+                    workspaceCwd={workspaceCwd}
+                    onCancelEdit={onCancelMessageEdit}
+                    onEdit={() => onEditMessage(item.message.id)}
+                    onSave={(nextBody) => onSaveMessage(item.message, nextBody)}
+                    onRetryReplacement={() => onRetryReplacement(item.message)}
+                    onToggleFeedback={(nextFeedback) => toggleFeedback(item.message.id, nextFeedback)}
+                    onOpenFiles={onOpenFiles}
+                    onOpenReview={onOpenReview}
+                    onOpenRun={onOpenRun}
+                  />
+                );
+              },
+              ariaLabel: t("Conversation transcript"),
+            }).node}
+          </div>
         )}
       />
       {latestButtonVisible ? (
@@ -239,6 +306,7 @@ export function NormalConversationFeed({
 }
 
 function NormalConversationMessageRow({
+  bodyNodeOverride,
   composerGateApproval,
   editSaving,
   editable,
@@ -249,7 +317,6 @@ function NormalConversationMessageRow({
   onCancelEdit,
   onEdit,
   onOpenFiles,
-  onOpenReportFile,
   onOpenReview,
   onOpenRun,
   onRetryReplacement,
@@ -261,6 +328,8 @@ function NormalConversationMessageRow({
   workspaceCwd,
 }: {
   readonly item: NormalConversationFeedItem;
+  /** Body is supplied by the owning surface Timeline renderer. */
+  readonly bodyNodeOverride: ReactNode;
   readonly composerGateApproval?: ComposerGateApprovalPresentation;
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly feedback?: "up" | "down";
@@ -277,7 +346,6 @@ function NormalConversationMessageRow({
   readonly onRetryReplacement: () => void | Promise<void>;
   readonly onToggleFeedback: (feedback: "up" | "down") => void;
   readonly onOpenFiles: () => void;
-  readonly onOpenReportFile: (target: WorkspaceRightDockFileTarget) => void;
   readonly onOpenReview: (target: WorkspaceRightDockReviewTarget) => void;
   readonly onOpenRun?: (runId: string) => void;
 }): React.JSX.Element {
@@ -308,40 +376,12 @@ function NormalConversationMessageRow({
           onCancel={onCancelEdit}
           onSave={onSave}
         />
-      ) : (
-        mountConversationTimeline({
-          snapshot: buildSurfaceTimelineSnapshot({
-            surface: "normal_conversation",
-            threadId: message.threadId,
-            anchorItemId: message.id,
-            items: item.timelineItems,
-            activeRun: item.bodyStreaming && message.runId ? {
-              runId: message.runId,
-              status: "working",
-              workspaceLabel: projectPath?.trim() || workspaceCwd.trim(),
-              cwd: projectPath?.trim() || workspaceCwd.trim(),
-              branch: null,
-              modelLabel: null,
-              sourceRefs: [],
-            } : null,
-          }),
-          depth: 0,
-          cwd: projectPath?.trim() || workspaceCwd.trim(),
-          onOpenSourceRef: (ref) => {
-            if ((ref.kind === "file" || ref.kind === "path") && ref.path) {
-              onOpenReportFile({
-                cwd: projectPath?.trim() || workspaceCwd.trim(),
-                path: ref.path,
-                label: ref.label,
-              });
-            }
-          },
-          ariaLabel: t("Conversation transcript"),
-        }).node
-      )}
+      ) : bodyNodeOverride}
       bodyCompact
       bodyStreaming={item.bodyStreaming}
-      bodyOnOpenLocalFile={onOpenFiles}
+      // Model-text paths are display-only. Only typed timeline evidence with
+      // a complete execution lineage may open a workspace file.
+      bodyOnOpenLocalFile={undefined}
       attachmentsNode={(message.attachments?.length ?? 0) > 0 || (message.fileRefs?.length ?? 0) > 0 ? (
         <>
           <ConversationAttachmentStrip
@@ -373,7 +413,6 @@ function NormalConversationMessageRow({
               meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
               previewTitle: fileRef.label,
               previewText: fileRef.path,
-              onOpen: () => onOpenReportFile({ cwd: workspaceCwd.trim(), path: fileRef.path, line: fileRef.line, label: fileRef.label }),
             }))}
           />
         </>
@@ -464,6 +503,12 @@ function groupGeneratedMediaByRunId(
   return grouped;
 }
 
+/**
+ * Compatibility adapter for an optimistic normal feed that has not received
+ * the canonical Continuity projection yet.  It preserves the feed order and
+ * re-bases local positions so the surface still owns one deterministic
+ * Timeline instead of one Timeline per message.
+ */
 function distanceFromLatest(element: HTMLElement): number {
   return Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight);
 }

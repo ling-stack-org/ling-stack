@@ -8,6 +8,7 @@ import {
   type SecretResolver,
 } from "@ling-stack/core";
 import { executeMediaJob as executeMediaAdapterJob } from "@ling-stack/providers";
+import { fetchProvider } from "@ling-stack/runner-pi";
 import { readLimitedResponseText } from "../../shared/http.js";
 import { validateUrl } from "../../shared/validation.js";
 import { createMediaAdapterForProvider } from "../media/provider.js";
@@ -19,7 +20,11 @@ import {
 } from "./secret-materializer.js";
 import { extractProviderResponseText } from "./response-text.js";
 
-const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
+// Compatible relays may need more than ten seconds to schedule a cold model
+// even though the same endpoint is healthy and accepts the configured model.
+// Keep the preflight bounded, but give it enough time to reflect the runtime
+// path instead of permanently blocking a usable provider in the UI.
+const PROVIDER_CHECK_TIMEOUT_MS = 30_000;
 
 export async function checkProviderPreset(
   store: ProviderStoreFacet,
@@ -180,7 +185,7 @@ async function probeChatProvider(
       secretResolver,
       baseHeaders: { "Content-Type": "application/json" },
     });
-    const response = await fetch(buildProviderCheckUrl(preset), {
+    const response = await fetchProvider(buildProviderCheckUrl(preset), {
       method: "POST",
       headers: applyProviderAuthHeaders(materialized.headers, preset, materialized.apiKeySecret.value),
       body: JSON.stringify(buildProviderCheckBody(preset)),

@@ -12,6 +12,11 @@ import type {
   SnapshotRestoreConfirmation,
   SnapshotRestoreRequest,
 } from "../types.js";
+import type {
+  WorkspaceFileCapabilityPreviewRequest,
+  WorkspaceFileCapabilityRequest,
+  WorkspaceFileCapabilityResponse,
+} from "@ling-stack/contracts";
 import { daemonClient } from "./client.js";
 import { channelWorkCellDemoWorkflowRecovery } from "../lib/work-cell-demo-fixture.js";
 
@@ -107,10 +112,22 @@ export function openWorkspaceFile(cwd: string, path: string, input: WorkspaceFil
   return daemonClient.openWorkspaceFile(cwd, path, input);
 }
 
+export function openWorkspaceFileCapability(input: WorkspaceFileOpenRequest): Promise<WorkspaceFileOpenResponse> {
+  return daemonClient.openWorkspaceFileCapability(input);
+}
+
 export function workspaceFileOpenIconUrl(cwd: string, target: WorkspaceFileOpenTarget): string {
   return daemonClient.workspaceFileOpenIconUrl(cwd, target);
 }
 
 export function workspaceFileContentUrl(cwd: string, path: string, download = false): string {
   return daemonClient.workspaceFileContentUrl(cwd, path, download);
+}
+
+export function issueWorkspaceFileCapability(input: WorkspaceFileCapabilityRequest): Promise<WorkspaceFileCapabilityResponse> {
+  return daemonClient.issueWorkspaceFileCapability(input);
+}
+
+export function previewWorkspaceFileCapability(input: WorkspaceFileCapabilityPreviewRequest): Promise<import("@ling-stack/contracts").PreviewContentResponse> {
+  return daemonClient.previewWorkspaceFileCapability(input);
 }

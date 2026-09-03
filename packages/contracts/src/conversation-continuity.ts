@@ -61,6 +61,7 @@ export const conversationItemKindsV1 = [
   "handoff",
   "operation_state",
   "artifact_ref",
+  "terminal_report",
   "system_event",
 ] as const;
 
@@ -141,8 +142,19 @@ export interface ConversationAssistantMessagePayloadV1 {
   readonly format: "plain_text" | "markdown";
   readonly streaming: boolean;
   readonly deliveryStatus: ConversationAssistantDeliveryStatusV1;
+  /** Host-assigned role; model text never self-classifies as a result. */
+  readonly presentationRole: ConversationAssistantPresentationRoleV1;
   readonly errorMessage?: string;
 }
+
+export const conversationAssistantPresentationRolesV1 = [
+  "narration",
+  "reply_result",
+  "execution_summary",
+] as const;
+
+export type ConversationAssistantPresentationRoleV1 =
+  (typeof conversationAssistantPresentationRolesV1)[number];
 
 export interface ConversationToolCallPayloadV1 {
   readonly toolCallId: string;
@@ -189,6 +201,21 @@ export interface ConversationArtifactRefPayloadV1 {
   readonly artifactKind?: string;
 }
 
+/** Host-committed final-result anchor. Report content remains in TerminalReport. */
+export interface ConversationTerminalReportPayloadV1 {
+  readonly reportId: string;
+  readonly generation: number;
+  readonly sourceKind: "workflow" | "run" | "turn";
+  readonly sourceId: string;
+  readonly evidenceFingerprint: string;
+  readonly outcomeStatus:
+    | "succeeded"
+    | "partially_succeeded"
+    | "blocked"
+    | "failed"
+    | "cancelled";
+}
+
 export interface ConversationSystemEventPayloadV1 {
   readonly eventType: string;
   readonly summary: string;
@@ -204,6 +231,7 @@ export interface ConversationItemPayloadByKindV1 {
   readonly handoff: ConversationHandoffPayloadV1;
   readonly operation_state: ConversationOperationStatePayloadV1;
   readonly artifact_ref: ConversationArtifactRefPayloadV1;
+  readonly terminal_report: ConversationTerminalReportPayloadV1;
   readonly system_event: ConversationSystemEventPayloadV1;
 }
 

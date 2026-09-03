@@ -22,7 +22,13 @@ export interface ConversationVirtualFeedProps<TItem> {
   readonly items: readonly TItem[];
   readonly getItemId: (item: TItem) => string;
   readonly getItemKind: (item: TItem) => string;
-  readonly renderItem: (item: TItem, index: number) => ReactNode;
+  /** Surface-level renderer for the typed Timeline row at the virtual index. */
+  readonly renderVirtualRow: (index: number) => ReactNode;
+  /** Stable metadata for a surface-level root row when it does not map to items[index]. */
+  readonly virtualRowIdentity?: {
+    readonly id: string;
+    readonly kind: string;
+  };
   readonly measureElement: (node: HTMLDivElement | null) => void;
   readonly viewStateRetainKeys?: ConversationViewRetainKeys;
   readonly onScroll?: UIEventHandler<HTMLDivElement>;
@@ -55,7 +61,8 @@ export function ConversationVirtualFeed<TItem>({
   items,
   getItemId,
   getItemKind,
-  renderItem,
+  renderVirtualRow,
+  virtualRowIdentity,
   measureElement,
   viewStateRetainKeys,
   onScroll,
@@ -124,21 +131,23 @@ export function ConversationVirtualFeed<TItem>({
           <div className="message-feed-virtualizer" style={{ height: `${totalSize}px` }}>
             {virtualRows.map((virtualRow) => {
               const item = items[virtualRow.index];
+              const itemId = virtualRowIdentity?.id ?? (item ? getItemId(item) : undefined);
+              const itemKind = virtualRowIdentity?.kind ?? (item ? getItemKind(item) : undefined);
               return (
                 <div
                   key={virtualRow.key}
                   ref={handleMeasureElement}
                   className="message-feed-virtual-row"
                   tabIndex={-1}
-                  data-conversation-focus-block={item ? "true" : undefined}
-                  data-feed-item-id={item ? getItemId(item) : undefined}
-                  data-feed-item-kind={item ? getItemKind(item) : undefined}
+                  data-conversation-focus-block={itemId ? "true" : undefined}
+                  data-feed-item-id={itemId}
+                  data-feed-item-kind={itemKind}
                   data-index={virtualRow.index}
                   style={{
                     transform: `translateY(${virtualRow.start}px)`,
                   }}
                 >
-                  {item ? renderItem(item, virtualRow.index) : null}
+                  {renderVirtualRow(virtualRow.index)}
                 </div>
               );
             })}

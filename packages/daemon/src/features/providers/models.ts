@@ -18,6 +18,7 @@ import {
   type ProviderStoreFacet,
   type SecretResolver,
 } from "@ling-stack/core";
+import { fetchProvider } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
 import { readLimitedResponseText } from "../../shared/http.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
@@ -53,7 +54,7 @@ export async function listProviderModels(
 
   const source = buildProviderModelsUrl(preset);
   try {
-    const response = await fetch(source, {
+    const response = await fetchProvider(source, {
       method: "GET",
       headers: applyProviderAuthHeaders(materialized.headers, preset, materialized.apiKeySecret.value),
       signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
@@ -100,7 +101,7 @@ async function listMediaProviderModels(
 
   const source = buildProviderModelsUrl(preset);
   try {
-    const response = await fetch(source, {
+    const response = await fetchProvider(source, {
       method: "GET",
       headers: applyProviderAuthHeaders(materialized.headers, preset, materialized.apiKeySecret.value),
       signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),

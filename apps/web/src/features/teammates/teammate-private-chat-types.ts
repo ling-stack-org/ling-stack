@@ -48,6 +48,8 @@ export interface TeammatePrivateModelNotice {
 export interface TeammatePrivateChatSurfaceProps {
   readonly cwd: string;
   readonly teammate: AiTeammate;
+  /** Verified LingThread scope for the private transcript. */
+  readonly threadId?: string;
   readonly userProfile?: UserProfile;
   readonly loading: boolean;
   readonly visibleMessages: readonly TeammateDirectMessage[];

@@ -85,7 +85,7 @@ export interface BuildConversationTurnProjectionInput {
   readonly operationCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly operationCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly lingAgentAuthorId: string;
-  readonly terminalReportMessageIds?: ReadonlySet<string>;
+  readonly terminalReportResultItemIds?: ReadonlySet<string>;
 }
 
 export function buildConversationTurnProjection(input: BuildConversationTurnProjectionInput): ConversationTurnProjection {
@@ -142,7 +142,7 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
       .filter((message) => message.id !== sourceMessage.id)
       .sort(compareByCreatedAtThenId);
     const allCoordinatorMessages = childMessages.filter((message) => isLingAgentMessage(message, input.lingAgentAuthorId));
-    const coordinatorMessages = allCoordinatorMessages.filter((message) => !input.terminalReportMessageIds?.has(message.id));
+    const coordinatorMessages = allCoordinatorMessages.filter((message) => !input.terminalReportResultItemIds?.has(message.id));
     const { startMessages, terminalMessages } = splitCoordinatorMessages(coordinatorMessages, operation?.cell);
     const turnId = `conversation-turn:${sourceMessage.id}`;
     const turnConversationItems = conversationItemsForSource({
@@ -393,7 +393,6 @@ function buildTranscriptBlocks(input: {
       operationRef: input.operation.ref,
     });
     if (
-      input.terminalMessages.length === 0 &&
       input.operation.cell.terminalReportId &&
       input.operation.cell.terminalReportRevisionKey &&
       input.operation.cell.terminalReportRows.length > 0
@@ -525,6 +524,8 @@ function conversationItemDisplay(item: ConversationItemV1): { readonly title: st
       return { title: item.payload.title, meta: item.payload.state, detail: item.payload.summary };
     case "artifact_ref":
       return { title: item.payload.title ?? item.payload.artifactId, meta: item.payload.artifactKind ?? "Artifact" };
+    case "terminal_report":
+      return { title: item.payload.outcomeStatus, meta: `generation ${item.payload.generation}`, detail: item.payload.evidenceFingerprint };
     case "system_event":
       return { title: item.payload.summary, meta: item.payload.eventType };
     case "user_message":

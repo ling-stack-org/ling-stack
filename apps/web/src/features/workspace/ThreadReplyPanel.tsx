@@ -1,13 +1,16 @@
 import { CircleAlert, Copy, Loader2, Pencil, Reply, Send, X } from "lucide-react";
+import { createConversationTimelineMessageItem, type ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../i18n.js";
+import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
 import { filterUsedMemoryEventsByResponse, UsedMemorySummary } from "../../shared/components/index.js";
-import { ConversationReplacementRetry, InlineMessageEditor, MessageActionBar, MessageBodyRenderer, MessageRow } from "../../shared/conversation/index.js";
+import { ConversationReplacementRetry, InlineMessageEditor, MessageActionBar, MessageRow, mountConversationTimeline } from "../../shared/conversation/index.js";
 import { Textarea } from "../../shared/ui/index.js";
 import type { ChannelMention, ChannelMessage, MemoryObject, UsedMemoryEvent } from "../../types.js";
 
 export function ThreadReplyPanel({
   cwd,
   rootMessage,
+  threadId,
   replies,
   teammates,
   memoryById,
@@ -32,6 +35,8 @@ export function ThreadReplyPanel({
 }: {
   readonly cwd: string;
   readonly rootMessage: ChannelMessage;
+  /** Verified topic LingThread.id. Empty while the topic snapshot is loading. */
+  readonly threadId?: string;
   readonly replies: readonly ChannelMessage[];
   readonly teammates: readonly ChannelMention[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
@@ -56,8 +61,109 @@ export function ThreadReplyPanel({
 }): React.JSX.Element {
   const { t } = useI18n();
   const canSend = draft.trim().length > 0 && !pending;
-  const rootMessageIsOwn = rootMessage.authorType === "local-user";
   const latestOwnReplyId = [...replies].reverse().find((reply) => reply.authorType === "local-user" && !reply.pendingReplacement)?.id;
+  const messages = [rootMessage, ...replies.filter((reply) => reply.id !== rootMessage.id)];
+  const messageByTimelineId = new Map<string, ChannelMessage>();
+  const timelineItems: ConversationTimelineItem[] = messages.map((message, index) => {
+    const item = createConversationTimelineMessageItem({
+      id: `message:${message.authorType === "local-user" ? "user" : "agent"}:${message.id}`,
+      role: message.authorType === "local-user" ? "user" : "agent",
+      markdown: message.body,
+      revision: message.revision,
+      threadSequence: index * 1_000_000,
+      itemId: message.id,
+      status: message.status === "pending"
+        ? "pending"
+        : message.status === "blocked"
+          ? "blocked"
+          : message.status === "failed"
+            ? "failed"
+            : undefined,
+      fileRefs: message.fileRefs,
+    });
+    messageByTimelineId.set(item.id, message);
+    return item;
+  });
+  const timelineNode = mountConversationTimeline({
+    snapshot: buildSurfaceTimelineSnapshot({
+      surface: "topic_reply",
+      threadId,
+      anchorItemId: rootMessage.threadAnchorItemId ?? rootMessage.id,
+      items: timelineItems,
+      canonicalRevision: timelineItems.reduce((max, item) => Math.max(max, item.revision), 0),
+    }),
+    depth: 0,
+    cwd,
+    onOpenSourceRef: () => onOpenFileReference(),
+    renderMessageChrome: (item, body) => {
+      const message = messageByTimelineId.get(item.id);
+      if (!message) return body;
+      const messageIsRoot = message.id === rootMessage.id;
+      const editing = editingMessageId === message.id;
+      const memoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
+      return (
+        <MessageRow
+          surface="topic_reply"
+          className={messageIsRoot ? "thread-root-message-row" : message.authorType === "local-user" ? "thread-reply-item thread-reply-own" : "thread-reply-item"}
+          authorType={message.authorType}
+          tone={message.authorType === "system" ? "system" : "document"}
+          authorName={messageAuthorLabel(message, teammates)}
+          statusNode={(
+            <>
+              {messageIsRoot && message.authorType !== "local-user" ? (
+                <small>{t("Topic started by {author}", { author: messageAuthorLabel(message, teammates) })}</small>
+              ) : null}
+              {message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : null}
+            </>
+          )}
+          bodyNode={editing ? (
+            <div className="conversation-inline-message-editor-stack">
+              <InlineMessageEditor
+                initialValue={message.body}
+                cwd={cwd}
+                ariaLabel={t("Edit message")}
+                saveLabel={t("Save and resend")}
+                cancelLabel={t("Cancel")}
+                saving={editSaving}
+                onCancel={onCancelMessageEdit}
+                onSave={(value) => onSaveMessageEdit(message, value)}
+              />
+              {editError ? <div className="inline-error compact-inline-error" role="alert">{editError}</div> : null}
+            </div>
+          ) : body}
+          evidenceNode={!editing && memoryEvents.length > 0 ? (
+            <UsedMemorySummary compact events={memoryEvents} memoryById={memoryById} />
+          ) : null}
+          errorNode={message.pendingReplacement ? (
+            <ConversationReplacementRetry
+              failureReason={replacementRetryError || message.pendingReplacement.failureReason}
+              retryLabel={t("Retry response")}
+              retrying={replacementRetryingMessageId === message.id}
+              onRetry={() => void onRetryMessageReplacement(message)}
+            />
+          ) : message.errorMessage ? (
+            <div className="composer-status-row failed" role="alert"><CircleAlert size={14} /><span>{message.errorMessage}</span></div>
+          ) : null}
+          actionsNode={!editing ? (
+            <MessageActionBar
+              surface="topic_reply"
+              actions={[
+                { id: "copy", kind: "copy", label: t("Copy message"), icon: <Copy size={13} />, copyText: message.body },
+                ...(message.id === latestOwnReplyId ? [{
+                  id: "edit",
+                  kind: "edit_latest" as const,
+                  label: t("Edit message"),
+                  icon: <Pencil size={13} />,
+                  onClick: () => onBeginMessageEdit(message.id),
+                }] : []),
+              ]}
+            />
+          ) : null}
+        />
+      );
+    },
+    ariaLabel: t("Topic conversation transcript"),
+  }).node;
   return (
     <aside className="thread-reply-panel" aria-label={t("Topic replies")}>
       <div className="thread-reply-head">
@@ -69,80 +175,9 @@ export function ThreadReplyPanel({
           <X size={14} />
         </button>
       </div>
-      <div className="thread-root-message">
-        {rootMessageIsOwn ? null : (
-          <small>{t("Topic started by {author}", { author: messageAuthorLabel(rootMessage, teammates) })}</small>
-        )}
-        <MessageBodyRenderer text={rootMessage.body} cwd={cwd} compact onOpenLocalFile={onOpenFileReference} />
-        <UsedMemorySummary
-          compact
-          events={filterUsedMemoryEventsByResponse(usedMemoryEvents, rootMessage.id)}
-          memoryById={memoryById}
-        />
-      </div>
       <div className="thread-reply-list" aria-label={t("Replies")}>
-        {replies.length === 0 ? (
-          <div className="thread-empty-state">{t("No replies yet")}</div>
-        ) : replies.map((reply) => {
-          const replyIsOwn = reply.authorType === "local-user";
-          const editing = editingMessageId === reply.id;
-          return (
-            <MessageRow
-              surface="topic_reply"
-              key={reply.id}
-              className={replyIsOwn ? "thread-reply-item thread-reply-own" : "thread-reply-item"}
-              authorType={reply.authorType}
-              tone={reply.authorType === "system" ? "system" : "document"}
-              authorName={messageAuthorLabel(reply, teammates)}
-              statusNode={reply.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
-              bodyNode={editing ? (
-                <div className="conversation-inline-message-editor-stack">
-                  <InlineMessageEditor
-                    initialValue={reply.body}
-                    cwd={cwd}
-                    ariaLabel={t("Edit message")}
-                    saveLabel={t("Save and resend")}
-                    cancelLabel={t("Cancel")}
-                    saving={editSaving}
-                    onCancel={onCancelMessageEdit}
-                    onSave={(value) => onSaveMessageEdit(reply, value)}
-                  />
-                  {editError ? <div className="inline-error compact-inline-error" role="alert">{editError}</div> : null}
-                </div>
-              ) : <MessageBodyRenderer text={reply.body} cwd={cwd} compact onOpenLocalFile={onOpenFileReference} />}
-              evidenceNode={!editing ? (
-                <UsedMemorySummary
-                  compact
-                  events={filterUsedMemoryEventsByResponse(usedMemoryEvents, reply.id)}
-                  memoryById={memoryById}
-                />
-              ) : null}
-              errorNode={reply.pendingReplacement ? (
-                <ConversationReplacementRetry
-                  failureReason={replacementRetryError || reply.pendingReplacement.failureReason}
-                  retryLabel={t("Retry response")}
-                  retrying={replacementRetryingMessageId === reply.id}
-                  onRetry={() => void onRetryMessageReplacement(reply)}
-                />
-              ) : null}
-              actionsNode={!editing ? (
-                <MessageActionBar
-                  surface="topic_reply"
-                  actions={[
-                    { id: "copy", kind: "copy", label: t("Copy message"), icon: <Copy size={13} />, copyText: reply.body },
-                    ...(reply.id === latestOwnReplyId ? [{
-                      id: "edit",
-                      kind: "edit_latest" as const,
-                      label: t("Edit message"),
-                      icon: <Pencil size={13} />,
-                      onClick: () => onBeginMessageEdit(reply.id),
-                    }] : []),
-                  ]}
-                />
-              ) : null}
-            />
-          );
-        })}
+        {replies.length === 0 ? <div className="thread-empty-state">{t("No replies yet")}</div> : null}
+        {timelineNode}
       </div>
       <div className="thread-reply-composer">
         <Textarea

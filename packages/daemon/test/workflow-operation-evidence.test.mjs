@@ -1283,7 +1283,7 @@ test("startup synthesis finalization prepares one deterministic output packet an
     const firstReport = await processWorkflowTerminalReport(fixture.store, fixture.workflow.id, {
       now: "2026-08-12T14:25:11.500Z",
     });
-    assert.ok(firstReport.record.publishedMessageId);
+    assert.ok(firstReport.record.resultItemId);
     assert.equal(fixture.store.getLingTurn(sourceItem.turnId).status, "succeeded");
 
     const duplicate = reconcileWorkflowFromCanonicalState({
@@ -1299,9 +1299,9 @@ test("startup synthesis finalization prepares one deterministic output packet an
       now: "2026-08-12T14:25:12.500Z",
     });
     assert.equal(duplicateReport.record.id, firstReport.record.id);
-    assert.equal(duplicateReport.record.publishedMessageId, firstReport.record.publishedMessageId);
+    assert.equal(duplicateReport.record.resultItemId, firstReport.record.resultItemId);
     assert.equal(fixture.store.listConversationItemsForTurn({ turnId: sourceItem.turnId })
-      .filter((item) => item.id === firstReport.record.publishedMessageId).length, 1);
+      .filter((item) => item.id === firstReport.record.resultItemId).length, 1);
     assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: sourceItem.turnId })
       .filter((event) => event.toStatus === "succeeded").length, 1);
   } finally {

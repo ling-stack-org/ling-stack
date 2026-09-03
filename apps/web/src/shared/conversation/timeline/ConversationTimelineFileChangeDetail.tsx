@@ -1,80 +1,46 @@
-import { useEffect, useMemo, useState } from "react";
+import { useState } from "react";
 import type {
   ConversationOperationSourceRef,
-  ConversationTrustedSourceRef,
+  ConversationTimelineRowItem,
   ConversationTimelineFileChangeItem,
 } from "@ling-stack/conversation-ui-core";
-import type { PreviewContentResponse } from "../../../types.js";
-import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
-import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
-import { DiffViewer } from "../blocks/DiffViewer.js";
-import { isTrustedFileSourceRef } from "./source-ref.js";
+import { hasExecutableFileLineage } from "./source-ref.js";
+import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 
 interface ConversationTimelineFileChangeDetailProps {
   readonly item: ConversationTimelineFileChangeItem;
-  readonly cwd?: string;
-  readonly loadPreview?: ArtifactPreviewLoader;
-  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
-}
-
-interface PreviewState {
-  readonly status: "idle" | "loading" | "loaded" | "error";
-  readonly changes: readonly ConversationFileChange[];
-  readonly truncated?: boolean;
+  readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
 }
 
 /**
  * Renders file evidence only after the typed item is disclosed. Full diffs remain
- * behind the trusted artifact loader and are never inferred from assistant text.
+ * behind the Host capability viewer and are never fetched from a bare artifact id.
  */
 export function ConversationTimelineFileChangeDetail({
   item,
-  cwd,
-  loadPreview,
   onOpenSourceRef,
 }: ConversationTimelineFileChangeDetailProps): React.JSX.Element {
-  const preview = item.changePreview;
-  const [previewState, setPreviewState] = useState<PreviewState>({ status: "idle", changes: [] });
-
-  useEffect(() => {
-    if (!preview || !cwd || !loadPreview) {
-      setPreviewState({ status: "idle", changes: [] });
-      return;
-    }
-    let cancelled = false;
-    setPreviewState({ status: "loading", changes: [] });
-    void loadPreview({ source: "artifact", cwd, artifactId: preview.artifactId, maxBytes: 64 * 1024 }).then(
-      (response) => { if (!cancelled) setPreviewState(toPreviewState(response, preview.path, preview.artifactId)); },
-      () => { if (!cancelled) setPreviewState({ status: "error", changes: [] }); },
-    );
-    return () => { cancelled = true; };
-  }, [cwd, loadPreview, preview?.artifactId, preview?.path]);
-
-  const summary = useMemo(() => {
-    if (previewState.status !== "loaded" || previewState.changes.length === 0) return undefined;
-    return summarizeFileChanges(previewState.changes);
-  }, [previewState]);
+  const previewRef = item.changePreview
+    ? item.sourceRefs.find((ref) => ref.id === item.changePreview?.artifactId && (ref.kind === "artifact" || ref.kind === "diff"))
+    : undefined;
 
   return (
     <div className="conversation-timeline-file-detail">
       <div className="conversation-timeline-file-list">
-        {item.files.map((file) => <ConversationTimelineFileReference key={`${file.fileRef.kind}:${file.fileRef.id}`} file={file} onOpenSourceRef={onOpenSourceRef} />)}
+        {item.files.map((file) => <ConversationTimelineFileReference key={`${file.fileRef.kind}:${file.fileRef.id}`} file={file} onOpenSourceRef={onOpenSourceRef} item={item} />)}
+        {previewRef ? (
+          <ConversationTimelineFileReference
+            file={{
+              fileRef: previewRef,
+              displayName: previewRef.label ?? item.changePreview?.path ?? "Open diff",
+              change: "edited",
+            }}
+            onOpenSourceRef={onOpenSourceRef}
+            item={item}
+          />
+        ) : null}
       </div>
-      {previewState.status === "loading" ? <small className="conversation-timeline-detail-meta">Loading diff…</small> : null}
-      {previewState.status === "error" ? <small className="conversation-timeline-detail-meta">Diff preview unavailable; the file reference remains available.</small> : null}
-      {summary ? <small className="conversation-timeline-detail-meta">+{summary.additions} -{summary.deletions}</small> : null}
-      {previewState.status === "loaded" && previewState.changes.length > 0 ? (
-        <div className="conversation-timeline-change-preview">
-          {previewState.changes.slice(0, 2).map((change) => (
-            <section key={change.id} className="conversation-timeline-change-preview-file">
-              {previewState.changes.length > 1 ? <div className="conversation-timeline-change-preview-file-head"><code>{change.path}</code><span>+{change.additions ?? 0} -{change.deletions ?? 0}</span></div> : null}
-              <DiffViewer change={change} maxCollapsedLines={12} showFoldMarkers={false} />
-            </section>
-          ))}
-          {previewState.truncated ? <small className="conversation-timeline-detail-meta">Diff preview truncated.</small> : null}
-        </div>
-      ) : null}
-      {preview && previewState.status === "idle" ? <small className="conversation-timeline-detail-meta">Diff available from artifact {preview.artifactId}</small> : null}
+      {item.changePreview && !previewRef ? <small className="conversation-timeline-detail-meta">Diff evidence is unavailable because its durable artifact ref is missing.</small> : null}
     </div>
   );
 }
@@ -82,6 +48,7 @@ export function ConversationTimelineFileChangeDetail({
 export function ConversationTimelineFileReference({
   file,
   onOpenSourceRef,
+  item,
 }: {
   readonly file: {
     readonly fileRef: ConversationOperationSourceRef;
@@ -90,36 +57,43 @@ export function ConversationTimelineFileReference({
     readonly additions?: number;
     readonly deletions?: number;
   };
-  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
+  readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
+  readonly item?: ConversationTimelineRowItem;
 }): React.JSX.Element {
   const ref = file.fileRef;
-  const canOpen = Boolean(onOpenSourceRef && isTrustedFileSourceRef(ref));
+  const canOpen = Boolean(onOpenSourceRef && hasExecutableFileLineage(item) && ref.id.trim() && isOpenableResourceRef(ref));
+  const [opening, setOpening] = useState(false);
+  const [openError, setOpenError] = useState("");
   const content = (
     <>
-      <span className="conversation-timeline-file-ref-icon" aria-hidden="true">▧</span>
+      <span className="conversation-timeline-file-ref-icon" aria-hidden="true">{sourceRefIcon(ref)}</span>
       <span>{file.displayName}</span>
       {file.additions !== undefined || file.deletions !== undefined ? <small>+{file.additions ?? 0} -{file.deletions ?? 0}</small> : null}
     </>
   );
   return canOpen ? (
-    <button className="conversation-timeline-file-ref" type="button" title={ref.path} onClick={() => {
-      if (isTrustedFileSourceRef(ref)) onOpenSourceRef?.(ref);
-    }}>{content}</button>
+    <span className="conversation-timeline-file-ref-wrap">
+      <button className="conversation-timeline-file-ref" type="button" title={ref.path} disabled={opening} onClick={() => {
+        if (!hasExecutableFileLineage(item)) return;
+        setOpening(true);
+        setOpenError("");
+        void Promise.resolve(onOpenSourceRef?.(ref, item)).catch((reason: unknown) => {
+          setOpenError(reason instanceof Error ? reason.message : String(reason));
+        }).finally(() => setOpening(false));
+      }}>{opening ? "…" : content}</button>
+      {openError ? <small className="conversation-timeline-detail-meta" role="alert">{openError}</small> : null}
+    </span>
   ) : (
-    <span className="conversation-timeline-file-ref" title={ref.path}>{content}</span>
+    <span className="conversation-timeline-file-ref" title={ref.path ?? ref.label ?? ref.id}>{content}</span>
   );
 }
 
-function toPreviewState(response: PreviewContentResponse, fallbackPath: string | undefined, artifactId: string): PreviewState {
-  if (response.kind !== "diff" || !response.text?.trim()) return { status: "error", changes: [] };
-  return {
-    status: "loaded",
-    changes: parseUnifiedDiff(response.text, {
-      idPrefix: `timeline:${artifactId}`,
-      fallbackPath: fallbackPath || response.ref.displayPath || response.ref.label || "change.diff",
-      status: "completed",
-      artifactId,
-    }),
-    truncated: response.truncated,
-  };
+function isOpenableResourceRef(ref: ConversationOperationSourceRef): boolean {
+  return ref.kind === "file" || ref.kind === "path" || ref.kind === "diff" || ref.kind === "artifact";
+}
+
+function sourceRefIcon(ref: ConversationOperationSourceRef): string {
+  if (ref.hostTarget === "open_artifact" || ref.kind === "artifact") return "◫";
+  if (ref.hostTarget === "open_diff" || ref.kind === "diff") return "±";
+  return "▧";
 }

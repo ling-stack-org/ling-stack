@@ -61,7 +61,10 @@ interface KnownMentionRead {
   readonly raw: string;
 }
 
-const pathPattern = /^(?:~\/|\.{1,2}\/|\/|(?:[A-Za-z0-9_.-]+\/))[^\s<>"'`]+/;
+// Keep the token bounded to path-safe characters. In particular, do not let
+// CJK natural-language text immediately following a path become part of the
+// file token (for example `/tmp/demo.ts。请继续说明`).
+const pathPattern = /^(?:~\/|\.{1,2}\/|\/|(?:[A-Za-z0-9_.-]+\/))[A-Za-z0-9._~@%+/#:-]+/;
 const slashCommandTokenPattern = /^\/([A-Za-z0-9][A-Za-z0-9_.-]*)$/;
 const urlPattern = /^(?:https?:\/\/[^\s<>"'`]+|github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+[^\s<>"'`]*)/i;
 

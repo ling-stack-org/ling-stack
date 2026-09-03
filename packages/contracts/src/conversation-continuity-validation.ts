@@ -8,6 +8,7 @@ import {
   requiredParticipantRequirementsV1,
   requiredParticipantManifestFingerprintV1,
   conversationAssistantDeliveryStatusesV1,
+  conversationAssistantPresentationRolesV1,
   contextSegmentStates,
   conversationContextSummaryScopes,
   conversationContextSummaryStatuses,
@@ -77,7 +78,7 @@ const PAYLOAD_KEYS: Readonly<Record<ConversationItemKindV1, ReadonlySet<string>>
     "replyToItemId",
     "quotedItemIds",
   ]),
-  assistant_message: new Set(["body", "format", "streaming", "deliveryStatus", "errorMessage"]),
+  assistant_message: new Set(["body", "format", "streaming", "deliveryStatus", "presentationRole", "errorMessage"]),
   tool_call: new Set(["toolCallId", "toolName", "title", "inputSummary"]),
   tool_result: new Set(["toolCallId", "status", "outputSummary", "errorCode"]),
   approval_request: new Set(["approvalRequestId", "title", "summary"]),
@@ -85,6 +86,7 @@ const PAYLOAD_KEYS: Readonly<Record<ConversationItemKindV1, ReadonlySet<string>>
   handoff: new Set(["handoffId", "targetTeammateId", "summary"]),
   operation_state: new Set(["operationId", "state", "title", "summary"]),
   artifact_ref: new Set(["artifactId", "title", "artifactKind"]),
+  terminal_report: new Set(["reportId", "generation", "sourceKind", "sourceId", "evidenceFingerprint", "outcomeStatus"]),
   system_event: new Set(["eventType", "summary"]),
 };
 
@@ -569,6 +571,7 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
         && (value.format === "plain_text" || value.format === "markdown")
         && typeof value.streaming === "boolean"
         && includes(conversationAssistantDeliveryStatusesV1, value.deliveryStatus)
+        && includes(conversationAssistantPresentationRolesV1, value.presentationRole)
         && isOptionalText(value.errorMessage, 8_192);
     case "tool_call":
       return isText(value.toolCallId)
@@ -601,6 +604,17 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
       return isText(value.artifactId)
         && isOptionalText(value.title)
         && isOptionalText(value.artifactKind);
+    case "terminal_report":
+      return isText(value.reportId)
+        && isPositiveInteger(value.generation)
+        && (value.sourceKind === "workflow" || value.sourceKind === "run" || value.sourceKind === "turn")
+        && isText(value.sourceId)
+        && isText(value.evidenceFingerprint)
+        && (value.outcomeStatus === "succeeded"
+          || value.outcomeStatus === "partially_succeeded"
+          || value.outcomeStatus === "blocked"
+          || value.outcomeStatus === "failed"
+          || value.outcomeStatus === "cancelled");
     case "system_event":
       return isText(value.eventType)
         && isText(value.summary, 8_192);

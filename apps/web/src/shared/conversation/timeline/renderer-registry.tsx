@@ -1,11 +1,8 @@
 import type { ReactNode } from "react";
 import type {
-  ConversationTrustedSourceRef,
   ConversationTimelineItem,
-  ConversationTimelineRowItem,
   ConversationTimelineSubAgentItem,
 } from "@ling-stack/conversation-ui-core";
-import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import { ConversationCommandBatch } from "../blocks/ConversationCommandBatch.js";
 import { ConversationExplorationBatch } from "../blocks/ConversationExplorationBatch.js";
 import { ConversationTimelineMessageRenderer } from "./ConversationTimelineMessageRenderer.js";
@@ -20,13 +17,14 @@ import { ConversationTimelineImageRenderer } from "./ConversationTimelineImageRe
 import { ConversationTimelineCompactionRenderer } from "./ConversationTimelineCompactionRenderer.js";
 import { ConversationTimelineBlockedRenderer } from "./ConversationTimelineBlockedRenderer.js";
 import { ConversationTimelineProtocolRenderer } from "./ConversationTimelineProtocolRenderer.js";
+import { ConversationTimelineTerminalReportRenderer } from "./ConversationTimelineTerminalReportRenderer.js";
+import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 
 export interface ConversationTimelineRenderContext {
   readonly cwd?: string;
-  readonly loadPreview?: ArtifactPreviewLoader;
-  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
+  readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
+  readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode) => ReactNode;
   readonly renderSubAgent: (item: ConversationTimelineSubAgentItem) => ReactNode;
-  readonly renderFactActions?: (item: ConversationTimelineRowItem) => ReactNode;
   readonly depth: 0 | 1;
 }
 
@@ -53,6 +51,7 @@ const RENDERERS = {
   approval: renderApprovalItem,
   imageView: renderImageItem,
   contextCompaction: renderContextCompactionItem,
+  terminalReport: renderTerminalReportItem,
   protocolEvent: renderProtocolEventItem,
   diagnostic: renderDiagnosticItem,
   commandBatch: renderCommandBatchItem,
@@ -72,60 +71,64 @@ function renderMessageItem(
   context: ConversationTimelineRenderContext,
 ): ReactNode {
   if (item.kind !== "agentMessage" && item.kind !== "userMessage") return null;
-  return <ConversationTimelineMessageRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} />;
+  return <ConversationTimelineMessageRenderer key={item.id} item={item} cwd={context.cwd} renderChrome={context.renderMessageChrome} depth={context.depth} />;
 }
 
 function renderReasoningItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "reasoning" ? <ConversationTimelineReasoningRenderer key={item.id} item={item} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "reasoning" ? <ConversationTimelineReasoningRenderer key={item.id} item={item} depth={context.depth} /> : null;
 }
 
 function renderPlanItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "plan" ? <ConversationTimelinePlanRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "plan" ? <ConversationTimelinePlanRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} /> : null;
 }
 
 function renderCommandItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "commandExecution" ? <ConversationTimelineCommandRenderer key={item.id} item={item} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "commandExecution" ? <ConversationTimelineCommandRenderer key={item.id} item={item} depth={context.depth} /> : null;
 }
 
 function renderFileChangeItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "fileChange" ? <ConversationTimelineFileChangeRenderer key={item.id} item={item} cwd={context.cwd} loadPreview={context.loadPreview} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "fileChange" ? <ConversationTimelineFileChangeRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} /> : null;
 }
 
 function renderExplorationItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "exploration" ? <ConversationTimelineExplorationRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "exploration" ? <ConversationTimelineExplorationRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} /> : null;
 }
 
 function renderMcpToolItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "mcpToolCall" ? <ConversationTimelineToolRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "mcpToolCall" ? <ConversationTimelineToolRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} /> : null;
 }
 
 function renderDynamicToolItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "dynamicToolCall" ? <ConversationTimelineToolRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "dynamicToolCall" ? <ConversationTimelineToolRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} /> : null;
 }
 
 function renderCollabAgentToolItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "collabAgentToolCall" ? <ConversationTimelineToolRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "collabAgentToolCall" ? <ConversationTimelineToolRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} /> : null;
 }
 
 function renderApprovalItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "approval" ? <ConversationTimelineApprovalRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "approval" ? <ConversationTimelineApprovalRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} /> : null;
 }
 
 function renderImageItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "imageView" ? <ConversationTimelineImageRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "imageView" ? <ConversationTimelineImageRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
 }
 
 function renderContextCompactionItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "contextCompaction" ? <ConversationTimelineCompactionRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "contextCompaction" ? <ConversationTimelineCompactionRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
+}
+
+function renderTerminalReportItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return item.kind === "terminalReport" ? <ConversationTimelineTerminalReportRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
 }
 
 function renderDiagnosticItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "diagnostic" ? <ConversationTimelineBlockedRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} actions={context.renderFactActions?.(item)} /> : null;
+  return item.kind === "diagnostic" ? <ConversationTimelineBlockedRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
 }
 
 function renderProtocolEventItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
   return item.kind === "protocolEvent"
-    ? <ConversationTimelineProtocolRenderer key={item.id} item={item} depth={context.depth} actions={context.renderFactActions?.(item)} />
+    ? <ConversationTimelineProtocolRenderer key={item.id} item={item} depth={context.depth} />
     : null;
 }
 
@@ -144,7 +147,7 @@ function renderCommandBatchItem(
       renderCommand={(command) => (
         <div key={command.id} className="conversation-command-batch-child">
           {command.leadingItems?.map((leading) => renderConversationTimelineItem(leading, context))}
-          <ConversationTimelineCommandRenderer item={command} depth={context.depth} actions={context.renderFactActions?.(command)} />
+          <ConversationTimelineCommandRenderer item={command} depth={context.depth} />
         </div>
       )}
     />
@@ -164,7 +167,7 @@ function renderExplorationBatchItem(
       revision={item.revision}
       depth={context.depth}
       renderItem={(child) => (
-        <ConversationTimelineExplorationRenderer key={child.id} item={child} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} actions={context.renderFactActions?.(child)} />
+        <ConversationTimelineExplorationRenderer key={child.id} item={child} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} />
       )}
     />
   );

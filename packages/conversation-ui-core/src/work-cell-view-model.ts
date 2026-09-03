@@ -30,10 +30,10 @@ export interface ConversationOperationSourceRef {
 /**
  * A source reference that the Host has explicitly authorised for an action.
  *
- * Renderers may display every source reference as copyable text, but only this
- * narrowed shape may cross the UI -> Host callback boundary.  Keeping the
- * capability in the type makes it impossible for an untrusted model string to
- * accidentally trigger a file/diff/artifact open operation.
+ * Renderers may display every source reference as copyable text. A typed
+ * operation item may pass a display ref plus its full action lineage to the
+ * Host so the Host can mint a fresh capability; model message text cannot.
+ * This narrowed shape represents a capability that was already Host-issued.
  */
 export type ConversationTrustedSourceRef = ConversationOperationSourceRef & {
   readonly hostTarget: "open_file" | "open_diff" | "open_artifact" | "open_run";

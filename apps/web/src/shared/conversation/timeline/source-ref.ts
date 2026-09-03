@@ -1,7 +1,43 @@
 import type {
   ConversationOperationSourceRef,
   ConversationTrustedSourceRef,
+  ConversationTimelineItem,
 } from "@ling-stack/conversation-ui-core";
+
+export type ConversationTimelineSourceRefHandler = (
+  ref: ConversationOperationSourceRef,
+  item?: ConversationTimelineItem,
+) => void | Promise<void>;
+
+/**
+ * A file reference can cross the UI -> Host boundary only when the typed
+ * timeline item carries the complete execution lineage needed to mint a
+ * short-lived capability. Message text intentionally does not satisfy this
+ * predicate and therefore remains display-only.
+ */
+export function hasExecutableFileLineage(item: ConversationTimelineItem | undefined): boolean {
+  return Boolean(item?.runId && item.actionId && item.participantId);
+}
+
+/**
+ * Resolve a file ref owned by an atomic operation item. The path is only a
+ * display-side join key: the Host still validates the ref id against the
+ * durable ExecutionAction before issuing a capability.
+ */
+export function operationFileSourceRefForPath(
+  refs: readonly ConversationOperationSourceRef[],
+  path: string,
+  item: ConversationTimelineItem | undefined,
+): ConversationOperationSourceRef | undefined {
+  if (!hasExecutableFileLineage(item)) return undefined;
+  const normalizedPath = normalizeDisplayPath(path);
+  if (!normalizedPath) return undefined;
+  return refs.find((ref) =>
+    (ref.kind === "file" || ref.kind === "path" || ref.kind === "diff") &&
+    typeof ref.path === "string" &&
+    normalizeDisplayPath(ref.path) === normalizedPath,
+  );
+}
 
 export interface ConversationSourceRefScope {
   readonly workspaceId: string;

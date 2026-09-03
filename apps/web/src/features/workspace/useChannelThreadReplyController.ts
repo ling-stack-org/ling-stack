@@ -42,6 +42,8 @@ interface ChannelThreadReplyControllerInput {
 
 export interface ChannelThreadReplyController {
   readonly activeThreadRoot: ChannelMessage | undefined;
+  /** Canonical LingThread id returned by the topic/thread items API. */
+  readonly resolvedThreadId: string;
   readonly activeThreadMessages: readonly ChannelMessage[];
   readonly draft: string;
   readonly pending: boolean;
@@ -236,6 +238,7 @@ export function useChannelThreadReplyController({
 
   return {
     activeThreadRoot,
+    resolvedThreadId,
     activeThreadMessages,
     draft,
     pending: pending || loading,

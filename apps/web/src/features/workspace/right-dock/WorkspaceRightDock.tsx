@@ -11,6 +11,7 @@ import {
 import { getWorkspaceChanges, previewArtifactContent } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
 import type { ProposedPlanArtifact, WorkspaceChangesResponse } from "../../../types.js";
+import type { WorkspaceFileCapabilityScope, WorkspaceFileCapabilityTarget } from "@ling-stack/contracts";
 import {
   createDockPageEntry,
   EvidencePage,
@@ -66,6 +67,9 @@ export interface WorkspaceRightDockFileTarget {
   readonly path: string;
   readonly line?: number;
   readonly label?: string;
+  readonly capabilityId?: string;
+  readonly capabilityTarget?: WorkspaceFileCapabilityTarget;
+  readonly capabilityScope?: WorkspaceFileCapabilityScope;
 }
 
 export interface WorkspaceRightDockReviewTarget {

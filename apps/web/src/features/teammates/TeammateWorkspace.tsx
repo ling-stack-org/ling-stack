@@ -577,11 +577,13 @@ export function TeammateWorkspace({
       ].join("|")
     : "";
   const privateMessageFeedVirtualizer = useVirtualizer({
-    count: visibleMessages.length,
+    // The private surface owns one transcript row; individual messages are
+    // rendered by the shared Timeline registry inside that row.
+    count: visibleMessages.length > 0 ? 1 : 0,
     getScrollElement: () => privateFeedRef.current,
-    estimateSize: () => 112,
+    estimateSize: () => 640,
     overscan: 8,
-    getItemKey: (index) => visibleMessages[index]?.id ?? index,
+    getItemKey: () => `timeline:${currentDirectWorkspace?.threadId ?? "unbound"}`,
     useFlushSync: false,
   });
   const privateMessageFeedVirtualRows = privateMessageFeedVirtualizer.getVirtualItems();
@@ -845,7 +847,7 @@ export function TeammateWorkspace({
       privateFeedAutoFollowUntilRef.current = Date.now() + 1_000;
       privateFeedUserScrollIntentRef.current = false;
       if (visibleMessages.length > 0) {
-        privateMessageFeedVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: "end" });
+        privateMessageFeedVirtualizer.scrollToIndex(0, { align: "end" });
       }
       feed.scrollTop = feed.scrollHeight;
       privateFeedPinnedToLatestRef.current = true;
@@ -1606,7 +1608,7 @@ export function TeammateWorkspace({
     privateFeedAutoFollowUntilRef.current = Date.now() + 1_000;
     privateFeedUserScrollIntentRef.current = false;
     if (visibleMessages.length > 0) {
-      privateMessageFeedVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: "end" });
+      privateMessageFeedVirtualizer.scrollToIndex(0, { align: "end" });
     }
     feed.scrollTop = feed.scrollHeight;
     privateFeedPinnedToLatestRef.current = true;
@@ -1754,6 +1756,7 @@ export function TeammateWorkspace({
         <TeammatePrivateChatSurface
           cwd={cwd}
           teammate={teammate}
+          threadId={currentDirectWorkspace?.threadId}
           userProfile={userProfile}
           loading={loading}
           visibleMessages={visibleMessages}

@@ -1510,9 +1510,6 @@ export interface RunStore {
   commitTerminalReportPublication(
     input: import("./terminal-report-publication-types.js").CommitTerminalReportPublicationInput,
   ): import("./terminal-report-publication-types.js").CommitTerminalReportPublicationResult;
-  commitLegacyWorkflowPublication(
-    input: import("./terminal-report-publication-types.js").CommitLegacyWorkflowPublicationInput,
-  ): import("./terminal-report-publication-types.js").CommitLegacyWorkflowPublicationResult;
   failTerminalReport(input: FailLingTerminalReportInput): LingTerminalReportRecord;
   createRun(input: CreateRunInput): RunSession;
   markRunStarted(runId: string, startedAt: string): void;
@@ -2331,7 +2328,6 @@ export type TerminalReportStoreFacet = RunStoreFacet<
   | "commitTerminalReport"
   | "markTerminalReportPublished"
   | "commitTerminalReportPublication"
-  | "commitLegacyWorkflowPublication"
   | "failTerminalReport"
 >;
 

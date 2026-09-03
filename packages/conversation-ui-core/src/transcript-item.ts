@@ -27,6 +27,7 @@ export type ConversationTimelineItemKind =
   | "approval"
   | "imageView"
   | "contextCompaction"
+  | "terminalReport"
   | "subAgentActivity"
   | "protocolEvent"
   | "diagnostic"
@@ -192,6 +193,88 @@ export interface ConversationTimelineContextCompactionItem extends ConversationT
   readonly snapshotRef?: ConversationOperationSourceRef;
 }
 
+/** The single Host-owned outcome row for an executed turn. */
+export interface ConversationTimelineTerminalReportItem extends ConversationTimelineActivityPayload {
+  readonly kind: "terminalReport";
+  readonly reportId: string;
+  readonly generation: number;
+  readonly resultItemId: string;
+  readonly outcomeStatus: "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
+  readonly summary: string;
+  readonly changeCount: number;
+  readonly verificationCount: number;
+  readonly participantCount: number;
+  readonly artifactCount: number;
+  readonly riskCount: number;
+  readonly corrections: readonly ConversationTimelineTerminalReportCorrection[];
+  readonly changes: readonly ConversationTimelineTerminalReportChange[];
+  readonly verification: readonly ConversationTimelineTerminalReportVerification[];
+  readonly participants: readonly ConversationTimelineTerminalReportParticipant[];
+  readonly artifacts: readonly ConversationTimelineTerminalReportArtifact[];
+  readonly risks: readonly ConversationTimelineTerminalReportRisk[];
+  readonly references: readonly ConversationOperationSourceRef[];
+}
+
+export interface ConversationTimelineTerminalReportCorrection {
+  readonly id: string;
+  readonly originalAssumption: string;
+  readonly correctedFact: string;
+  readonly confidence: "high" | "medium";
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
+}
+
+export interface ConversationTimelineTerminalReportChange {
+  readonly id: string;
+  readonly kind: "behavior" | "code" | "configuration" | "documentation" | "data" | "other";
+  readonly title: string;
+  readonly summary: string;
+  readonly paths: readonly string[];
+  readonly addedLines?: number;
+  readonly deletedLines?: number;
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
+}
+
+export interface ConversationTimelineTerminalReportVerification {
+  readonly id: string;
+  readonly title: string;
+  readonly status: "passed" | "failed" | "blocked" | "cancelled" | "skipped" | "not_run" | "unknown";
+  readonly summary?: string;
+  readonly command?: string;
+  readonly durationMs?: number;
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
+}
+
+export interface ConversationTimelineTerminalReportParticipant {
+  readonly agentId: string;
+  readonly displayName: string;
+  readonly roleKey?: string;
+  readonly status: "completed" | "failed" | "blocked" | "cancelled";
+  readonly contribution: string;
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
+}
+
+export interface ConversationTimelineTerminalReportArtifact {
+  readonly id: string;
+  readonly kind: "file" | "diff" | "document" | "image" | "test_result" | "commit" | "pull_request" | "deployment" | "external" | "other";
+  readonly title: string;
+  readonly path?: string;
+  readonly href?: string;
+  readonly summary?: string;
+  readonly addedLines?: number;
+  readonly deletedLines?: number;
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
+}
+
+export interface ConversationTimelineTerminalReportRisk {
+  readonly id: string;
+  readonly severity: "info" | "warning" | "critical";
+  readonly status: "unresolved" | "mitigated" | "accepted" | "unverified";
+  readonly summary: string;
+  readonly nextAction?: string;
+  readonly approvalDecision?: "pending" | "approved" | "denied" | "expired" | "cancelled";
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
+}
+
 /**
  * Non-execution protocol facts (handoff, decision, task/run lifecycle, or
  * state transition) that are visible in the channel audit projection. They
@@ -221,6 +304,7 @@ export type ConversationTimelineRowItem =
   | ConversationTimelineApprovalItem
   | ConversationTimelineImageViewItem
   | ConversationTimelineContextCompactionItem
+  | ConversationTimelineTerminalReportItem
   | ConversationTimelineProtocolEventItem
   | ConversationTimelineDiagnosticItem;
 

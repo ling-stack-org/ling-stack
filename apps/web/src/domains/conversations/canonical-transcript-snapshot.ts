@@ -5,6 +5,7 @@ import {
   type CanonicalExecutionAction,
   type CanonicalParticipantSpan,
   type CanonicalPlanRecord,
+  type CanonicalTerminalReportProjection,
   type CanonicalSourceRef,
   type CanonicalTranscriptProjection,
   type CanonicalTranscriptScope,
@@ -88,6 +89,9 @@ export function projectConversationDetailTimeline(
     contextSegmentIdByItemId,
     diagnostics: adapterDiagnostics,
   });
+  const terminalReports = detail.terminalReports
+    .map(toCanonicalTerminalReportProjection)
+    .filter((report): report is CanonicalTerminalReportProjection => Boolean(report));
   return projectCanonicalConversationTimeline({
     scope,
     items,
@@ -102,12 +106,75 @@ export function projectConversationDetailTimeline(
     artifacts: detail.artifacts.map((artifact) => toCanonicalArtifactRecord(artifact, actions, itemById, detail.thread.id)),
     plans,
     compactions,
+    terminalReports,
     participantSpans,
     contextSegmentIdByItemId,
     sourceSequence,
     sourceRevision: `${detail.thread.updatedAt}:${maxItemRevision}:${maxActionRevision}:${plans.map((plan) => `${plan.id}:${plan.revision}`).join(",")}:${compactions.map((record) => `${record.id}:${record.revision}`).join(",")}:${participantSpans.map((span) => `${span.id}:${span.revision}`).join(",")}`,
     initialDiagnostics: adapterDiagnostics,
   });
+}
+
+function toCanonicalTerminalReportProjection(
+  report: ConversationDetailResponse["terminalReports"][number],
+): CanonicalTerminalReportProjection | undefined {
+  if (!Number.isSafeInteger(report.generation) || report.generation < 1 || !report.resultItemId) {
+    return undefined;
+  }
+  return {
+    generation: report.generation,
+    resultItemId: report.resultItemId,
+    report: {
+      id: report.id,
+      workspaceId: report.workspaceId,
+      ...(report.threadId ? { threadId: report.threadId } : {}),
+      ...(report.turnId ? { turnId: report.turnId } : {}),
+      source: report.source,
+      status: report.status,
+      evidenceFingerprint: report.evidenceFingerprint,
+      outcome: {
+        status: report.outcome.status,
+        title: report.outcome.title,
+        summary: report.outcome.summary,
+        corrections: report.outcome.corrections.map((correction) => ({
+          ...correction,
+          sourceRefs: terminalReportSourceRefs(correction.sourceRefs),
+        })),
+      },
+      changes: report.changes.map((change) => ({
+        ...change,
+        sourceRefs: terminalReportSourceRefs(change.sourceRefs),
+      })),
+      verification: report.verification.map((verification) => ({
+        ...verification,
+        sourceRefs: terminalReportSourceRefs(verification.sourceRefs),
+      })),
+      participants: report.participants.map((participant) => ({
+        ...participant,
+        sourceRefs: terminalReportSourceRefs(participant.sourceRefs),
+      })),
+      artifacts: report.artifacts.map((artifact) => ({
+        ...artifact,
+        sourceRefs: terminalReportSourceRefs(artifact.sourceRefs),
+      })),
+      risks: report.risks.map((risk) => ({
+        ...risk,
+        sourceRefs: terminalReportSourceRefs(risk.sourceRefs),
+      })),
+      references: terminalReportSourceRefs(report.references),
+    },
+  };
+}
+
+function terminalReportSourceRefs(
+  refs: readonly import("../../types.js").TerminalReportSourceRefDto[],
+): readonly CanonicalSourceRef[] {
+  return refs.map((ref) => ({
+    kind: ref.kind,
+    id: ref.id,
+    ...(ref.label ? { label: ref.label } : {}),
+    visibility: ref.visibility === "conversation" ? "conversation" : "audit",
+  }));
 }
 
 function toCanonicalPlanRecord(

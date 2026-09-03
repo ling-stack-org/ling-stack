@@ -101,6 +101,33 @@ test("builds workspace review recovery and open-action requests", async () => {
   );
 });
 
+test("builds capability-bound transcript file requests without putting the token in the URL", async () => {
+  const mock = createFetchMock([
+    { cwd: "/repo", capability: { capabilityId: "wscap_1" } },
+    { kind: "code", ref: { displayPath: "src/a.ts" }, text: "const value = 1;" },
+  ]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+  const scope = {
+    workspaceId: "workspace_default",
+    threadId: "thread_1",
+    runId: "run_1",
+    actionId: "tool:run_1:tool_1",
+    participantId: "participant-engineer",
+  };
+  await client.issueWorkspaceFileCapability({ cwd: "/repo", capabilityTarget: "open_file", refId: "/repo/src/a.ts", scope });
+  await client.previewWorkspaceFileCapability({ cwd: "/repo", capabilityId: "wscap_1", scope, maxBytes: 4096, line: 12 });
+  assert.deepEqual(mock.calls.map((call) => [call.method, call.url]), [
+    ["POST", "http://daemon.test/workspace-files/capabilities"],
+    ["POST", "http://daemon.test/workspace-files/preview"],
+  ]);
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    cwd: "/repo", capabilityTarget: "open_file", refId: "/repo/src/a.ts", scope,
+  });
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+    cwd: "/repo", capabilityId: "wscap_1", scope, maxBytes: 4096, line: 12,
+  });
+});
+
 test("binds global fetch to globalThis when no custom fetch is provided", async () => {
   const originalFetch = globalThis.fetch;
   try {

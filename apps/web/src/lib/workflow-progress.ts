@@ -107,6 +107,7 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
     input.t,
   );
   const agentSpans = buildWorkflowAgentActivitySpans({
+    workflowId: input.workflow.id,
     t: input.t,
     steps: orderedSteps,
     actions: workflowActions,
@@ -540,6 +541,7 @@ function buildWorkflowOperationRows(input: {
 }
 
 function buildWorkflowAgentActivitySpans(input: {
+  readonly workflowId: string;
   readonly t: Translate;
   readonly steps: readonly ChannelWorkflowStep[];
   readonly actions: readonly ExecutionAction[];
@@ -584,7 +586,10 @@ function buildWorkflowAgentActivitySpans(input: {
       });
       return {
         sortIndex: index,
-        id: `agent:${participantId}`,
+        // Participant IDs are stable across workflows. Scope the synthetic
+        // span identity by workflow so channel fan-in cannot dedupe a later
+        // operation's Agent activity as a duplicate of an earlier one.
+        id: `agent:${input.workflowId}:${participantId}`,
         ...(canonicalParticipantId ? { participantId: canonicalParticipantId } : {}),
         kind: "agent" as const,
         label: latestStep?.toParticipantLabel.trim() || orderedSteps[0]?.toParticipantLabel.trim() || participantId,

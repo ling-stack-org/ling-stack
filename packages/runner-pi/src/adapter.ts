@@ -5,6 +5,7 @@ import { DEFAULT_TOOLS } from "./constants.js";
 import { translatePiEvent } from "./events.js";
 import { TOOL_HYDRATION_CALL_TOOL_NAME, TOOL_HYDRATION_LOAD_TOOL_NAME } from "./extensions/tool-hydration.js";
 import { createLingStackResourceLoader } from "./resource-loader.js";
+import { fetchProvider } from "./provider-http.js";
 import type { PiRunnerEvent, PiRunnerProviderConfig, PiRunnerResult, PiRunnerRunOptions } from "./types.js";
 import { formatTaskPrompt, throwIfAborted } from "./utils.js";
 
@@ -124,7 +125,7 @@ export class PiRunnerAdapter {
       return;
     }
 
-    modelRuntime.registerProvider(provider.provider, {
+    const registration = {
       name: provider.displayName ?? provider.provider,
       baseUrl: provider.baseUrl,
       apiKey: provider.apiKey,
@@ -146,6 +147,24 @@ export class PiRunnerAdapter {
           compat: provider.compat,
         },
       ],
+    };
+    modelRuntime.registerProvider(provider.provider, registration);
+
+    // The coding-agent SDK delegates the actual request to the composed
+    // provider. Wrap only this provider's simple stream so concurrent runs do
+    // not mutate globalThis.fetch while still giving OpenAI-compatible relays
+    // an explicit Undici connect timeout.
+    const registeredProvider = modelRuntime.getProvider(provider.provider);
+    if (!registeredProvider) {
+      return;
+    }
+    const streamSimple = registeredProvider.streamSimple.bind(registeredProvider);
+    modelRuntime.registerProvider(provider.provider, {
+      api: provider.api ?? "openai-completions",
+      streamSimple: (model, context, streamOptions) => streamSimple(model, context, {
+        ...streamOptions,
+        fetch: streamOptions?.fetch ?? fetchProvider,
+      }),
     });
   }
 }

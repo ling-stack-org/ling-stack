@@ -1,4 +1,4 @@
-import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
+import { appendChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -11,9 +11,13 @@ import {
 } from "../../core/dist/index.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../dist/features/channels/orchestrator.js";
 import { buildWorkflowStepContextPack } from "../dist/features/channels/context-packs.js";
+import {
+  configureTerminalReportStore,
+  processWorkflowTerminalReport,
+} from "../dist/features/channels/terminal-report-coordinator.js";
 import { collectWorkflowTerminalReportEvidence } from "../dist/features/channels/terminal-report-evidence.js";
 
-test("workflow terminal reply preserves full step result text", async () => {
+test("workflow terminal report preserves full step result text without a legacy assistant reply", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-terminal-summary-"));
   const store = createSqliteRunStore(cwd);
   try {
@@ -94,11 +98,19 @@ test("workflow terminal reply preserves full step result text", async () => {
     const completedStep = store.getChannelWorkflowStep(step.id);
     assert.equal(completedStep?.status, "succeeded");
     assert.equal(completedStep?.resultSummary, longResult);
-    const reply = listChannelItemViewsFixture(store, { channelId: channel.id, limit: 20 }).find((message) => message.kind === "ai_reply");
-    assert.ok(reply);
-    assert.match(reply.body, /完成：「Create index\.html」/u);
-    assert.match(reply.body, /END_MARKER_完整结尾/u);
-    assert.equal(reply.body.includes("..."), false);
+    assert.equal(
+      store.getConversationItem(`message_workflow_terminal_${workflow.id}`),
+      undefined,
+    );
+    assert.equal(
+      store.listConversationItemsByChannelPage({
+        channelId: channel.id,
+        kinds: ["assistant_message"],
+        effectiveOnly: true,
+        limit: 20,
+      }).items.some((item) => item.id.startsWith("message_workflow_terminal_")),
+      false,
+    );
 
     const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, {
       generatedAt: "2026-06-25T00:05:01.000Z",
@@ -109,6 +121,26 @@ test("workflow terminal reply preserves full step result text", async () => {
     });
     assert.equal(validateTerminalReport(report, snapshot).ok, true);
     assert.match(report.participants[0]?.contribution ?? "", /END_MARKER_完整结尾/u);
+
+    configureTerminalReportStore(store, { enabled: true });
+    const published = await processWorkflowTerminalReport(store, workflow.id, {
+      now: "2026-06-25T00:05:02.000Z",
+    });
+    assert.ok(published.record.resultItemId);
+    assert.match(
+      published.record.report?.participants[0]?.contribution ?? "",
+      /END_MARKER_完整结尾/u,
+    );
+    assert.equal(
+      published.record.report?.participants[0]?.contribution.includes("..."),
+      false,
+    );
+    const resultItem = store.getConversationItem(published.record.resultItemId);
+    assert.equal(resultItem?.kind, "terminal_report");
+    assert.equal(resultItem?.turnId, sourceItem.turnId);
+    assert.equal(resultItem?.payload.reportId, published.record.id);
+    assert.equal(resultItem?.payload.sourceKind, "workflow");
+    assert.equal(resultItem?.payload.sourceId, workflow.id);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

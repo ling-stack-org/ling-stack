@@ -47,6 +47,7 @@ import type { ChromeBrowserSessionController } from "./features/browser-extensio
 import type { ChromeBrowserPluginService } from "./features/plugins/chrome-browser.js";
 import type { OfficeDriverController } from "./features/office-documents/driver-controller.js";
 import type { OfficeDocumentsPluginService } from "./features/plugins/office-documents.js";
+import type { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
 
 export interface RunnerAdapter {
   runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
@@ -211,4 +212,6 @@ export interface DaemonContext {
   readonly chromeBrowserPlugin: ChromeBrowserPluginService;
   readonly officeDriverController: OfficeDriverController;
   readonly officeDocumentsPlugin: OfficeDocumentsPluginService;
+  /** Process-local transcript source grants; daemon restart invalidates all grants. */
+  readonly workspaceFileCapabilities: WorkspaceFileCapabilityRegistry;
 }

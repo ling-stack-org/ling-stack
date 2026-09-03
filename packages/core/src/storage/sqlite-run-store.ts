@@ -1626,14 +1626,6 @@ export class SqliteRunStore implements RunStore {
     return result;
   }
 
-  commitLegacyWorkflowPublication(
-    input: Parameters<RunStore["commitLegacyWorkflowPublication"]>[0],
-  ): ReturnType<RunStore["commitLegacyWorkflowPublication"]> {
-    const result = this.terminalReportPublication.commitLegacyWorkflowPublication(input);
-    if (result.ok) this.tryRebuildLingThreadMetadataForTurn(result.sourceTurnId, input.now);
-    return result;
-  }
-
   failTerminalReport(input: FailLingTerminalReportInput): LingTerminalReportRecord {
     return this.terminalReports.failTerminalReport(input);
   }

@@ -69,7 +69,7 @@ export function filterSupersededTerminalReports(
     if (record.sourceKind === "run" && projection.supersededRunIds.has(record.sourceId)) {
       return false;
     }
-    return !record.publishedMessageId || !projection.supersededResponseMessageIds.has(record.publishedMessageId);
+    return !record.resultItemId || !projection.supersededResponseMessageIds.has(record.resultItemId);
   });
 }
 

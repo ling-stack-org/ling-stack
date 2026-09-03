@@ -143,6 +143,8 @@ function projectedConversationItemBody(item: ConversationItemV1): string {
       return item.payload.summary ?? item.payload.title;
     case "artifact_ref":
       return item.payload.title ?? item.payload.artifactId;
+    case "terminal_report":
+      return item.payload.outcomeStatus;
     case "system_event":
       return item.payload.summary;
   }

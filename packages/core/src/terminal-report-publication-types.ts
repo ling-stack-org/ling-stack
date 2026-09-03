@@ -14,20 +14,7 @@ export interface CommitTerminalReportPublicationInput {
     readonly status: LingTurnStatus;
     readonly updatedAt: string;
   };
-  readonly publicationItem: AppendConversationItemInput<"assistant_message">;
-  readonly publicationEventIdempotencyKey: string;
-  readonly now: string;
-}
-
-export interface CommitLegacyWorkflowPublicationInput {
-  readonly expectedWorkflowId: string;
-  readonly expectedSourceTurn: {
-    readonly id: string;
-    readonly status: LingTurnStatus;
-    readonly updatedAt: string;
-  };
-  readonly expectedCompletion?: WorkflowCompletionEvaluationV1;
-  readonly publicationItem: AppendConversationItemInput<"assistant_message">;
+  readonly publicationItem: AppendConversationItemInput<"terminal_report">;
   readonly publicationEventIdempotencyKey: string;
   readonly now: string;
 }
@@ -53,18 +40,4 @@ export type CommitTerminalReportPublicationResult =
   | {
       readonly ok: false;
       readonly code: TerminalReportPublicationConflictCode;
-    };
-
-export type CommitLegacyWorkflowPublicationResult =
-  | {
-      readonly ok: true;
-      readonly item: ConversationItemV1;
-      readonly sourceTurnId: string;
-      readonly sourceTurnStatus: LingTurnStatus;
-      readonly controlPlaneEvent: ControlPlaneEvent;
-      readonly duplicate: boolean;
-    }
-  | {
-      readonly ok: false;
-      readonly code: Exclude<TerminalReportPublicationConflictCode, "report_conflict" | "outcome_conflict">;
     };

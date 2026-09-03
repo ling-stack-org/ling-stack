@@ -547,7 +547,13 @@ export function buildConversationDetail(
       ? store.listTerminalReports({ threadId: thread.id, limit: 200 })
       : filterSupersededTerminalReports(store.listTerminalReports({ threadId: thread.id, limit: 200 }), projection))
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
-      .map((record) => projectTerminalReportDto(record.report!)),
+      .flatMap((record) => record.resultItemId
+        ? [{
+            ...projectTerminalReportDto(record.report!),
+            generation: record.generation,
+            resultItemId: record.resultItemId,
+          }]
+        : []),
     artifacts: runs.flatMap((run) => store.listArtifacts(run.id)),
     plans: store.listProposedPlanArtifacts({ threadId: thread.id, limit: 200 }),
     compactionCheckpoints: store.listCompactionCheckpoints({ threadId: thread.id, limit: 100 }),

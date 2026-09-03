@@ -140,6 +140,7 @@ test("ConversationItem v1 validates every typed payload kind", () => {
       format: "markdown",
       streaming: false,
       deliveryStatus: "ready",
+      presentationRole: "narration",
     },
     tool_call: {
       toolCallId: "tool-call-1",
@@ -178,6 +179,14 @@ test("ConversationItem v1 validates every typed payload kind", () => {
       title: "README.md",
       artifactKind: "file",
     },
+    terminal_report: {
+      reportId: "terminal-report-1",
+      generation: 1,
+      sourceKind: "turn",
+      sourceId: "turn-1",
+      evidenceFingerprint: "sha256:evidence-1",
+      outcomeStatus: "succeeded",
+    },
     system_event: {
       eventType: "turn_completed",
       summary: "The turn completed without a Run.",
@@ -196,6 +205,7 @@ test("ConversationItem v1 rejects mixed payloads, ambiguous privacy and mutable 
     format: "plain_text",
     streaming: false,
     deliveryStatus: "ready",
+    presentationRole: "reply_result",
   });
   assert.equal(isConversationItemV1({ ...item, schemaVersion: 2 }), false);
   assert.equal(isConversationItemV1({ ...item, payload: { body: "Done.", format: "plain_text" } }), false);
@@ -251,6 +261,7 @@ test("ConversationItem v1 preserves attachment-only inputs and assistant deliver
     format: "plain_text",
     streaming: false,
     deliveryStatus: "ready",
+    presentationRole: "reply_result",
   });
   assert.equal(isConversationItemV1({
     ...ready,

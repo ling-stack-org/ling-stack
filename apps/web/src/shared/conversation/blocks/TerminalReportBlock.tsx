@@ -23,6 +23,7 @@ import {
   SiYaml,
 } from "react-icons/si";
 import type { IconType } from "react-icons";
+import type { WorkspaceFileCapabilityScope, WorkspaceFileCapabilityTarget } from "@ling-stack/contracts";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
 import { useI18n } from "../../../i18n.js";
@@ -39,6 +40,9 @@ export interface TerminalReportFileTarget {
   readonly path: string;
   readonly line?: number;
   readonly label?: string;
+  readonly capabilityId?: string;
+  readonly capabilityTarget?: WorkspaceFileCapabilityTarget;
+  readonly capabilityScope?: WorkspaceFileCapabilityScope;
 }
 
 export function TerminalReportBlock({

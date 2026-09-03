@@ -1,15 +1,12 @@
 import type { ReactNode } from "react";
-import type {
-  ConversationTrustedSourceRef,
-  ConversationTimelineRowItem,
-} from "@ling-stack/conversation-ui-core";
+import type { ConversationTimelineRowItem } from "@ling-stack/conversation-ui-core";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import {
   ConversationTimelineFileChangeDetail,
   ConversationTimelineFileReference,
 } from "./ConversationTimelineFileChangeDetail.js";
-import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
-import { trustedFileSourceRefForPath } from "./source-ref.js";
+import { operationFileSourceRefForPath } from "./source-ref.js";
+import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 
 export function CommandDetail({ item }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "commandExecution" }> }): React.JSX.Element {
   return (
@@ -26,15 +23,13 @@ export function CommandDetail({ item }: { readonly item: Extract<ConversationTim
 export function FileChangeDetail({
   item,
   cwd,
-  loadPreview,
   onOpenSourceRef,
 }: {
   readonly item: Extract<ConversationTimelineRowItem, { kind: "fileChange" }>;
   readonly cwd?: string;
-  readonly loadPreview?: ArtifactPreviewLoader;
-  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
+  readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
 }): React.JSX.Element {
-  return <><ConversationTimelineFileChangeDetail item={item} cwd={cwd} loadPreview={loadPreview} onOpenSourceRef={onOpenSourceRef} /><DetailLines item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} /></>;
+  return <><ConversationTimelineFileChangeDetail item={item} onOpenSourceRef={onOpenSourceRef} /><DetailLines item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} /><OperationSourceRefs item={item} onOpenSourceRef={onOpenSourceRef} /></>;
 }
 
 export function ExplorationDetail({
@@ -44,46 +39,62 @@ export function ExplorationDetail({
 }: {
   readonly item: Extract<ConversationTimelineRowItem, { kind: "exploration" }>;
   readonly cwd?: string;
-  readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void;
+  readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
 }): React.JSX.Element {
   return (
     <>
       {item.resultSummary ? <MessageBodyRenderer className="conversation-timeline-rich-detail" text={item.resultSummary} cwd={cwd} compact /> : null}
       <div className="conversation-timeline-ref-list">
-        {item.targets.map((ref) => <ConversationTimelineFileReference key={`${ref.kind}:${ref.id}`} file={{ fileRef: ref, displayName: basename(ref.path ?? ref.label ?? ref.id), change: "edited" }} onOpenSourceRef={onOpenSourceRef} />)}
+        {item.targets.map((ref) => <ConversationTimelineFileReference key={`${ref.kind}:${ref.id}`} file={{ fileRef: ref, displayName: basename(ref.path ?? ref.label ?? ref.id), change: "edited" }} onOpenSourceRef={onOpenSourceRef} item={item} />)}
       </div>
       <DetailLines item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} />
     </>
   );
 }
 
-export function PlanDetail({ item, cwd, onOpenSourceRef }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "plan" }>; readonly cwd?: string; readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void }): React.JSX.Element {
+export function PlanDetail({ item, cwd, onOpenSourceRef }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "plan" }>; readonly cwd?: string; readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler }): React.JSX.Element {
   return <><ol className="conversation-timeline-plan-steps">{item.steps.map((step) => <li key={step.id} data-step-status={step.status}>{step.text}</li>)}</ol><DetailLines item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} /></>;
 }
 
-export function ApprovalDetail({ item, cwd, onOpenSourceRef }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "approval" }>; readonly cwd?: string; readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void }): React.JSX.Element {
+export function ApprovalDetail({ item, cwd, onOpenSourceRef }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "approval" }>; readonly cwd?: string; readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler }): React.JSX.Element {
   return <><DetailText text={[item.description, item.decision ? `Decision: ${item.decision}` : undefined].filter(Boolean).join("\n")} cwd={cwd} /><DetailLines item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} /></>;
 }
 
-export function ToolDetail({ item, cwd, onOpenSourceRef }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall" }>; readonly cwd?: string; readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void }): React.JSX.Element {
-  return <><DetailText text={[item.inputSummary, item.resultSummary].filter(Boolean).join("\n")} cwd={cwd} /><DetailLines item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} /></>;
+export function ToolDetail({ item, cwd, onOpenSourceRef }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "mcpToolCall" | "dynamicToolCall" | "collabAgentToolCall" }>; readonly cwd?: string; readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler }): React.JSX.Element {
+  return <><DetailText text={[item.inputSummary, item.resultSummary].filter(Boolean).join("\n")} cwd={cwd} /><DetailLines item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} /><OperationSourceRefs item={item} onOpenSourceRef={onOpenSourceRef} /></>;
 }
 
 export function TextDetail({ text, cwd }: { readonly text: string | undefined; readonly cwd?: string }): React.JSX.Element {
   return <DetailText text={text} cwd={cwd} />;
 }
 
-function DetailLines({ item, cwd, onOpenSourceRef }: { readonly item: ConversationTimelineRowItem; readonly cwd?: string; readonly onOpenSourceRef?: (ref: ConversationTrustedSourceRef) => void }): React.JSX.Element | null {
+function DetailLines({ item, cwd, onOpenSourceRef }: { readonly item: ConversationTimelineRowItem; readonly cwd?: string; readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler }): React.JSX.Element | null {
   const lines = item.detailLines ?? [];
   if (lines.length === 0) return null;
   return <div className="conversation-timeline-detail-lines">{lines.map((line, index) => {
     if (line.kind === "code") return <code className="conversation-timeline-detail-code" key={`${index}:${line.text}`}>{line.text}</code>;
     if (line.kind === "file_ref") {
-      const trustedRef = trustedFileSourceRefForPath(item.sourceRefs, line.path);
-      return trustedRef ? <ConversationTimelineFileReference key={`${index}:${line.path}`} file={{ fileRef: trustedRef, displayName: basename(line.path), change: "edited" }} onOpenSourceRef={onOpenSourceRef} /> : <span className="conversation-timeline-file-ref" title={line.path} key={`${index}:${line.path}`}>{basename(line.path)}</span>;
+      const operationRef = operationFileSourceRefForPath(item.sourceRefs, line.path, item);
+      return operationRef ? <ConversationTimelineFileReference key={`${index}:${line.path}`} file={{ fileRef: operationRef, displayName: basename(line.path), change: "edited" }} onOpenSourceRef={onOpenSourceRef} item={item} /> : <span className="conversation-timeline-file-ref" title={line.path} key={`${index}:${line.path}`}>{basename(line.path)}</span>;
     }
     return <MessageBodyRenderer key={`${index}:${line.text}`} className="conversation-timeline-rich-detail" text={line.text} cwd={cwd} compact />;
   })}</div>;
+}
+
+function OperationSourceRefs({ item, onOpenSourceRef }: { readonly item: ConversationTimelineRowItem; readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler }): React.JSX.Element | null {
+  const refs = item.sourceRefs.filter((ref) =>
+    (ref.kind === "file" || ref.kind === "path" || ref.kind === "diff" || ref.kind === "artifact") &&
+    Boolean(ref.path || ref.label),
+  );
+  if (refs.length === 0) return null;
+  return <div className="conversation-timeline-ref-list">{refs.map((ref) => (
+    <ConversationTimelineFileReference
+      key={`${ref.kind}:${ref.id}`}
+      file={{ fileRef: ref, displayName: basename(ref.path ?? ref.label ?? ref.id), change: "edited" }}
+      onOpenSourceRef={onOpenSourceRef}
+      item={item}
+    />
+  ))}</div>;
 }
 
 function DetailText({ text, cwd }: { readonly text: string | undefined; readonly cwd?: string }): React.JSX.Element {
@@ -110,11 +121,6 @@ export function detailExists(item: ConversationTimelineRowItem): boolean {
 export function basename(value: string): string {
   const normalized = value.replace(/\\/gu, "/");
   return normalized.slice(normalized.lastIndexOf("/") + 1) || normalized;
-}
-
-export function truncateInline(value: string): string {
-  const normalized = value.replace(/\s+/gu, " ").trim();
-  return normalized.length > 140 ? `${normalized.slice(0, 137)}...` : normalized;
 }
 
 function formatDuration(value: number): string {

@@ -281,6 +281,50 @@ export type WorkspaceFileOpenTarget =
   | "finder"
   | "terminal";
 
+export type WorkspaceFileCapabilityTarget = "open_file" | "open_diff" | "open_artifact";
+
+export interface WorkspaceFileCapabilityScope {
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly runId: string;
+  readonly actionId: string;
+  readonly participantId: string;
+  readonly workflowStepId?: string;
+}
+
+/** Request for a short-lived Host grant. The ref id is checked against durable action evidence. */
+export interface WorkspaceFileCapabilityRequest {
+  readonly cwd: string;
+  readonly capabilityTarget: WorkspaceFileCapabilityTarget;
+  readonly refId: string;
+  readonly scope: WorkspaceFileCapabilityScope;
+  readonly ttlMs?: number;
+}
+
+export interface WorkspaceFileCapability {
+  readonly capabilityId: string;
+  readonly capabilityTarget: WorkspaceFileCapabilityTarget;
+  readonly refId: string;
+  readonly displayPath: string;
+  readonly scope: WorkspaceFileCapabilityScope;
+  readonly issuedAt: string;
+  readonly expiresAt: string;
+  readonly daemonEpoch: string;
+}
+
+export interface WorkspaceFileCapabilityResponse {
+  readonly cwd: string;
+  readonly capability: WorkspaceFileCapability;
+}
+
+export interface WorkspaceFileCapabilityPreviewRequest {
+  readonly cwd: string;
+  readonly capabilityId: string;
+  readonly scope: WorkspaceFileCapabilityScope;
+  readonly maxBytes?: number;
+  readonly line?: number;
+}
+
 export interface WorkspaceFileOpenOption {
   readonly id: WorkspaceFileOpenTarget;
   readonly label: string;
@@ -296,6 +340,9 @@ export interface WorkspaceFileOpenOptionsResponse {
 export interface WorkspaceFileOpenRequest {
   readonly target: WorkspaceFileOpenTarget;
   readonly line?: number;
+  /** Required when opening a transcript-owned trusted ref; omitted for generic workspace browsing. */
+  readonly capabilityId?: string;
+  readonly scope?: WorkspaceFileCapabilityScope;
 }
 
 export interface WorkspaceFileOpenResponse {
@@ -303,4 +350,5 @@ export interface WorkspaceFileOpenResponse {
   readonly path: string;
   readonly target: WorkspaceFileOpenTarget;
   readonly opened: true;
+  readonly capabilityId?: string;
 }

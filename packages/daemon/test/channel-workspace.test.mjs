@@ -4561,7 +4561,7 @@ test("channel intent selector asks one clarify question for underspecified work 
 test("channel intent selector auto-starts explicit direct workflow proposals", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-direct-workflow-"));
   const runner = new WorkflowEvidenceRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { channels: { terminalReports: true } });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -4589,15 +4589,23 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
 
     assertCoordinatorWorkflowStartReply(created);
     assert.equal(created.autoStartedWorkflow.workflowSteps.length, 3);
-    await waitForCondition(() => runner.runs.length === 3, "direct workflow proposal runner sequence");
+    await waitForCondition(
+      () => runner.runs.filter((run) => !/terminal report synthesizer/i.test(run.systemPrompt ?? "")).length === 3,
+      "direct workflow proposal runner sequence",
+    );
     let listedMessages;
     await waitForCondition(async () => {
       listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
-      return listedMessages.messages.some((message) =>
-        message.kind === "ai_reply" && message.authorId === "ling_agent" && /^(完成：|Done:)/u.test(message.body));
+      return listedMessages.items.some((item) =>
+        item.kind === "terminal_report" && item.payload?.outcomeStatus === "succeeded");
     }, "direct workflow terminal publication");
-    const terminalReply = assertCoordinatorWorkflowTerminalReply(listedMessages.messages);
-    assert.match(terminalReply.body, /(?:结果：|Result:) Designer reply/);
+    const terminalItem = listedMessages.items.find((item) =>
+      item.kind === "terminal_report" && item.payload?.outcomeStatus === "succeeded");
+    assert.ok(terminalItem);
+    const terminalReport = await getJson(`${daemon.url}/terminal-reports/${encodeURIComponent(terminalItem.payload.reportId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(terminalReport.report.outcome.status, "succeeded");
+    assert.match(terminalReport.report.outcome.summary, /任务已完成/u);
+    assert.equal(terminalReport.report.participants.length, 3);
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
@@ -6321,9 +6329,9 @@ test("single-participant execute acknowledgement stays non-terminal until callba
     assert.equal(finalWorkflow.status, "succeeded");
     assert.equal(finalWorkflow.metadata.completionGate.status, "verified");
     assert.equal(reports.length, 1);
-    assert.ok(reports[0].publishedMessageId);
+    assert.ok(reports[0].resultItemId);
     assert.equal(store.listConversationItemsForTurn({ turnId: sourceItem.turnId })
-      .filter((item) => item.id === reports[0].publishedMessageId).length, 1);
+      .filter((item) => item.id === reports[0].resultItemId).length, 1);
     assert.equal(store.listStateTransitionEvents({ entityType: "turn", entityId: sourceItem.turnId })
       .filter((event) => event.toStatus === "succeeded").length, 1);
     assert.equal(store.listControlPlaneEvents({
@@ -15488,18 +15496,6 @@ function assertCoordinatorWorkflowStartReply(result) {
   assert.match(result.aiReply.body, /(?:现在开始处理。|Starting now\.)$/u);
   assert.doesNotMatch(result.aiReply.body, /主会话/);
   assert.doesNotMatch(result.aiReply.body, /工作证据|折叠证据摘要/);
-}
-
-function assertCoordinatorWorkflowTerminalReply(messages) {
-  const reply = messages.find((message) =>
-    message.kind === "ai_reply" &&
-    message.authorId === "ling_agent" &&
-    /^(完成：|Done:)/u.test(message.body)
-  );
-  assert.ok(reply, "expected Ling Agent workflow terminal summary reply");
-  assert.equal(reply.status, "ready");
-  assert.doesNotMatch(reply.body, /我已完成|I finished|打开工作证据|展开下方证据摘要|evidence summary/i);
-  return reply;
 }
 
 function assertIntentDecisionInspectPayloadIsSafe(decision) {

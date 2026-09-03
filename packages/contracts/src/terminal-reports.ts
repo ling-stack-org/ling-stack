@@ -110,6 +110,12 @@ export interface TerminalReportDto {
   readonly committedAt: string;
 }
 
+/** Conversation-detail join metadata for the Host-owned final-result Item. */
+export interface ConversationTerminalReportProjectionDto extends TerminalReportDto {
+  readonly generation: number;
+  readonly resultItemId: string;
+}
+
 export interface TerminalReportResponse {
   readonly report: TerminalReportDto;
 }

@@ -235,7 +235,7 @@ test("turn projection does not duplicate items already represented by a work cel
   assert.equal(turnView.blocks.some((block) => block.kind === "operation"), true);
 });
 
-test("terminal agent prose supersedes the inline terminal report", () => {
+test("terminal agent prose remains separate from the inline terminal report", () => {
   const operationCell = {
     id: "work-cell:turn:turn-1",
     sourceKind: "run_thread",
@@ -266,7 +266,7 @@ test("terminal agent prose supersedes the inline terminal report", () => {
     proposals: [{ id: "proposal-1", channelId: "channel-1", sourceMessageId: userItem.id, status: "accepted", linkedRunId: "run-1", updatedAt: "2026-08-10T00:00:04.000Z" }],
   }));
   assert.equal(withTerminalMessage.turns[0].blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal"), true);
-  assert.equal(withTerminalMessage.turns[0].blocks.some((block) => block.kind === "final_result"), false);
+  assert.equal(withTerminalMessage.turns[0].blocks.some((block) => block.kind === "final_result"), true);
 
   const withoutTerminalMessage = buildConversationTurnProjection(projectionInput({
     messages: [projectMessageItem(userItem, [], thread)],

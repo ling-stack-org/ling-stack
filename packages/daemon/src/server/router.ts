@@ -250,6 +250,10 @@ import {
   handleGetWorkspaceFileOpenOptions,
   handlePostWorkspaceFileOpen,
 } from "../features/previews/workspace-file-actions.js";
+import {
+  handlePostWorkspaceFileCapabilityIssue,
+  handlePostWorkspaceFileCapabilityPreview,
+} from "../features/previews/workspace-file-capability-routes.js";
 import { handleGetWorkspaceFilePreview } from "../features/previews/workspace-file-preview.js";
 import {
   handleGetRunWorkspaceChanges,
@@ -384,6 +388,7 @@ export async function routeRequest(
     startupState,
     computerUsePreviews,
     cuaDriverActivationService,
+    workspaceFileCapabilities,
   } = context;
   setCorsHeaders(response);
 
@@ -1481,6 +1486,14 @@ export async function routeRequest(
     await handleGetWorkspaceFilePreview(response, url);
     return;
   }
+  if (request.method === "POST" && url.pathname === "/workspace-files/capabilities") {
+    await handlePostWorkspaceFileCapabilityIssue(request, response, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/workspace-files/preview") {
+    await handlePostWorkspaceFileCapabilityPreview(request, response, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
+    return;
+  }
   if (request.method === "GET" && url.pathname === "/workspace/changes") {
     if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
       return;
@@ -1509,10 +1522,7 @@ export async function routeRequest(
     return;
   }
   if (request.method === "POST" && url.pathname === "/workspace-files/open") {
-    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
-      return;
-    }
-    await handlePostWorkspaceFileOpen(request, response, url, config.maxBodyBytes);
+    await handlePostWorkspaceFileOpen(request, response, url, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
     return;
   }
   if (request.method === "GET" && url.pathname === "/workspace-files/content") {

@@ -87,11 +87,14 @@ function workflowNeedsSemanticRecovery(
 ): boolean {
   if (!metadata || typeof metadata.requiredParticipantManifest !== "object") return false;
   if (NON_TERMINAL_WORKFLOW_STATUSES.has(status)) return true;
+  const publicationColumn = tableColumns(database, "ling_terminal_reports").has("result_item_id")
+    ? "result_item_id"
+    : "published_message_id";
   const published = database.prepare(`
-    SELECT published_message_id
+    SELECT ${publicationColumn} AS publication_item_id
     FROM ling_terminal_reports
     WHERE source_kind = 'workflow' AND source_id = ?
-      AND status IN ('committed', 'fallback') AND published_message_id IS NOT NULL
+      AND status IN ('committed', 'fallback') AND ${publicationColumn} IS NOT NULL
     ORDER BY generation DESC LIMIT 1
   `).get(workflowId) as Record<string, SQLOutputValue> | undefined;
   if (!published) return true;

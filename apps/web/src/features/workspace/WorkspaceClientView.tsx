@@ -39,12 +39,8 @@ import {
   convertProposedPlanToWorkflow,
   deleteLingThreadGoal,
   editConversationMessage,
-  getChannelWorkflowEvidence,
-  getLingThreadEvidence,
   getLingThreadGoal,
-  getLingTrace,
   listLingThreadTurns,
-  listLingTraces,
   patchLingThreadGoal,
   putLingThreadGoal,
   refineProposedPlanArtifact,
@@ -69,7 +65,7 @@ import {
   type ChannelActivityTriageDraft,
   type ChannelActivityTriageResult,
 } from "../../lib/channel-activity-triage.js";
-import { buildConversationWorkCellDetailsFromThreadEvidence, buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { buildConversationWorkCellViewModel, groupRunsByThreadId, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import { deriveSilentChannelReplyRunIds } from "../../lib/conversation-runtime-visibility.js";
 import { buildConversationTurnProjection } from "../../lib/conversation-turn-projector.js";
 import { buildCollaborationTaskCardModel, type CollaborationTaskCardModel } from "../../lib/collaboration-task-card.js";
@@ -78,7 +74,7 @@ import {
   type ConversationContextSourceGroup,
   type ConversationContextSourceSummary,
 } from "../../lib/conversation-context-sources.js";
-import { buildConversationWorkCellDetailsFromWorkflowEvidence, buildWorkflowProgressModel, workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "../../lib/workflow-progress.js";
+import { buildWorkflowProgressModel, workflowProgressToConversationWorkCell, type WorkflowProgressModel } from "../../lib/workflow-progress.js";
 import { deriveChannelRuns } from "../../lib/channel-artifacts.js";
 import { truncatePreview } from "../../lib/data.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -122,7 +118,6 @@ import {
   ConversationStatusStrip,
   useConversationSendLifecycle,
   type DockPageKind,
-  type ConversationWorkCellDetailsState,
 } from "../../shared/conversation/index.js";
 import {
   ConversationHeaderSearch,
@@ -313,11 +308,6 @@ function channelActivityVisibleInDefaultChat(item: ChannelActivityItem): boolean
 interface ChannelTeamMetricsState {
   readonly channelId: string;
   readonly metrics: ChannelTeamMetricsProjection;
-}
-
-interface WorkspaceTranscriptRenderContext {
-  readonly detailsState: ConversationWorkCellDetailsState;
-  readonly onLoadDetails?: (id: string) => void;
 }
 
 interface BranchConversationActivityScope {
@@ -785,7 +775,6 @@ export function WorkspaceClientView({
   const environmentCommitReturnFocusRef = useRef<HTMLElement | null>(null);
   const [channelGitStatusState, setChannelGitStatusState] = useState<ChannelGitStatusLoadState>({ status: "idle" });
   const [selectedApprovalId, setSelectedApprovalId] = useState("");
-  const [conversationWorkCellDetailsByKey, setConversationWorkCellDetailsByKey] = useState<Readonly<Record<string, ConversationWorkCellDetailsState>>>({});
   const [channelTerminalReports, setChannelTerminalReports] = useState<readonly TerminalReportDto[]>([]);
   const [conversationThreadTurnsByKey, setConversationThreadTurnsByKey] = useState<Readonly<Record<string, ThreadTurnsLoadState>>>({});
   const [channelMoreOpen, setChannelMoreOpen] = useState(false);
@@ -946,7 +935,6 @@ export function WorkspaceClientView({
   const channelMoreButtonRef = useRef<HTMLButtonElement | null>(null);
   const teammateManagerButtonRef = useRef<HTMLButtonElement | null>(null);
   const teammateManagerPanelRef = useRef<HTMLElement | null>(null);
-  const conversationWorkCellEvidenceLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnLoadsRef = useRef(new Set<string>());
   const conversationThreadTurnRunSignaturesRef = useRef(new Map<string, string>());
   const messageFeedChannelIdRef = useRef(selectedChannelId);
@@ -1429,10 +1417,6 @@ export function WorkspaceClientView({
         });
     }
   }, [conversationThreadTurnsByKey, cwd, t, visibleConversationThreadIds, visibleConversationThreadRunSignatures]);
-  useEffect(() => {
-    conversationWorkCellEvidenceLoadsRef.current.clear();
-    setConversationWorkCellDetailsByKey((current) => Object.keys(current).length === 0 ? current : {});
-  }, [approvals, channelArtifactsByRunForDisplay, channelWorkflowStepsForDisplay, channelWorkflowsForDisplay, conversationWorkCellByThreadId, cwd, runsForDisplay]);
   const pendingChannelApprovals = useMemo(() => {
     return approvals.filter((approval) => {
       if (effectiveApprovalStatus(approval) !== "pending") {
@@ -2175,125 +2159,8 @@ export function WorkspaceClientView({
     setTeammateManagerOpen(false);
   }
 
-  function conversationWorkCellDetailsCacheKey(threadId: string): string {
-    const workCell = conversationWorkCellByThreadId.get(threadId);
-    return `${cwd.trim()}::${workCell?.id ?? threadId}`;
-  }
-
-  function workflowWorkCellDetailsCacheKey(workflowId: string): string {
-    const normalizedWorkflowId = workflowIdFromWorkCellThreadId(workflowId);
-    const model = workflowProgressByWorkflowId.get(normalizedWorkflowId);
-    return `${cwd.trim()}::${model?.id ?? `workflow-progress:${normalizedWorkflowId}`}`;
-  }
-
   function threadTurnsCacheKey(threadId: string): string {
     return `${cwd.trim()}::${threadId}`;
-  }
-
-  function loadConversationWorkCellDetails(threadId: string): void {
-    const cacheKey = conversationWorkCellDetailsCacheKey(threadId);
-    const workCell = conversationWorkCellByThreadId.get(threadId);
-    const existing = conversationWorkCellDetailsByKey[cacheKey];
-    if (existing?.status === "loading" || existing?.status === "loaded" || existing?.status === "empty" || conversationWorkCellEvidenceLoadsRef.current.has(cacheKey)) {
-      return;
-    }
-
-    conversationWorkCellEvidenceLoadsRef.current.add(cacheKey);
-    setConversationWorkCellDetailsByKey((current) => ({
-      ...current,
-      [cacheKey]: { status: "loading" },
-    }));
-
-    const workspaceCwd = cwd.trim();
-    const traceDetailPromise = listLingTraces(workspaceCwd, { threadId, limit: 1 })
-      .then((response) => response.traces[0] ? getLingTrace(workspaceCwd, response.traces[0].id) : undefined)
-      .catch(() => undefined);
-
-    void Promise.all([
-      getLingThreadEvidence(workspaceCwd, threadId),
-      traceDetailPromise,
-    ])
-      .then(([evidence, trace]) => {
-        const details = buildConversationWorkCellDetailsFromThreadEvidence({
-          threadId,
-          evidence,
-          trace,
-          runIds: workCell?.turnId ? workCell.runIds : undefined,
-          t,
-          artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
-        });
-        const hasEvidence = details.evidenceLinks.length > 0 || details.groups.some((group) => group.rows.length > 0);
-        setConversationWorkCellDetailsByKey((current) => ({
-          ...current,
-          [cacheKey]: {
-            status: hasEvidence ? "loaded" : "empty",
-            groups: details.groups,
-            evidenceLinks: details.evidenceLinks,
-          },
-        }));
-      })
-      .catch((caught: unknown) => {
-        const message = caught instanceof Error ? caught.message : String(caught);
-        setConversationWorkCellDetailsByKey((current) => ({
-          ...current,
-          [cacheKey]: {
-            status: "error",
-            errorMessage: message || t("Evidence failed to load."),
-          },
-        }));
-      })
-      .finally(() => {
-        conversationWorkCellEvidenceLoadsRef.current.delete(cacheKey);
-      });
-  }
-
-  function loadWorkflowWorkCellDetails(workflowIdOrThreadId: string, options: { readonly force?: boolean } = {}): void {
-    const workflowId = workflowIdFromWorkCellThreadId(workflowIdOrThreadId);
-    if (!workflowId) {
-      return;
-    }
-    const cacheKey = workflowWorkCellDetailsCacheKey(workflowId);
-    const existing = conversationWorkCellDetailsByKey[cacheKey];
-    if (!options.force && (existing?.status === "loading" || existing?.status === "loaded" || existing?.status === "empty" || conversationWorkCellEvidenceLoadsRef.current.has(cacheKey))) {
-      return;
-    }
-
-    conversationWorkCellEvidenceLoadsRef.current.add(cacheKey);
-    setConversationWorkCellDetailsByKey((current) => ({
-      ...current,
-      [cacheKey]: { status: "loading" },
-    }));
-
-    void getChannelWorkflowEvidence(cwd.trim(), workflowId)
-      .then((evidence) => {
-        const details = buildConversationWorkCellDetailsFromWorkflowEvidence({
-          evidence,
-          t,
-          artifactHref: (artifact) => artifactContentUrl(artifact.id, cwd),
-        });
-        const hasEvidence = details.evidenceLinks.length > 0 || details.groups.some((group) => group.rows.length > 0);
-        setConversationWorkCellDetailsByKey((current) => ({
-          ...current,
-          [cacheKey]: {
-            status: hasEvidence ? "loaded" : "empty",
-            groups: details.groups,
-            evidenceLinks: details.evidenceLinks,
-          },
-        }));
-      })
-      .catch((caught: unknown) => {
-        const message = caught instanceof Error ? caught.message : String(caught);
-        setConversationWorkCellDetailsByKey((current) => ({
-          ...current,
-          [cacheKey]: {
-            status: "error",
-            errorMessage: message || t("Evidence failed to load."),
-          },
-        }));
-      })
-      .finally(() => {
-        conversationWorkCellEvidenceLoadsRef.current.delete(cacheKey);
-      });
   }
 
   function openActivityDrilldownTarget(target: ChannelActivityDrilldownTarget): void {
@@ -2407,20 +2274,6 @@ export function WorkspaceClientView({
     setActivityToolsOpen(false);
     setProgressPopoverOpen(false);
     setTeammateManagerOpen(false);
-  }
-
-  function activityActionRow(activityItemId: string, children?: ReactNode): React.JSX.Element {
-    return (
-      <div className="activity-action-row">
-        {children}
-        {auditActivityVisible ? (
-          <button className="secondary-button compact-button" type="button" onClick={() => setActivityDrilldownItemId(activityItemId)}>
-            <Info size={14} />
-            {t("Details")}
-          </button>
-        ) : null}
-      </div>
-    );
   }
 
   const taskDetailContent = createTaskOpen ? (
@@ -3307,25 +3160,21 @@ export function WorkspaceClientView({
   }
 
   const messageRenderers = createChannelMessageRenderers({
-    activeRunId,
     allLocalTeammateById,
     allLocalTeammateByName,
-    approvals,
     attachmentContentUrl,
     auditActivityVisible,
-    channelArtifactsByRun: channelArtifactsByRunForDisplay,
     generatedMedia: channelGeneratedMedia,
     channelAttachmentById,
     channelLinkPreviewById,
     channelMessageFeedbackById,
-    channelMessagesLoadingOlder,
-    channelWorkflowSteps: channelWorkflowStepsForDisplay,
     channelWorkflows: channelWorkflowsForDisplay,
+    terminalReports: terminalReportsForDisplay,
     conversationWorkCellByThreadId,
     conversationWorkCellByWorkflowId,
-    conversationWorkCellDetailsByKey,
     composerGateApprovals: inlineApprovalViews,
     cwd,
+    workspaceId: selectedChannel?.workspaceId,
     executionProposalsByMessageId,
     formatBytes,
     latestStatus,
@@ -3338,46 +3187,23 @@ export function WorkspaceClientView({
     loadPreview: channelWorkCellPreviewLoader,
     localUserDisplayName,
     memoryById: memoryByIdForDisplay,
-    orchestratingWorkflowId,
     proposedPlanArtifactsById,
-    runningWorkflowStepId,
-    runById,
     selectedChannelBranchRootThreadId,
     selectedChannelId,
+    selectedChannelThreadId: activeChannelConversationThread?.id ?? "",
     teammateOptions,
     t,
     usedMemoryEvents: usedMemoryEventsForDisplay,
     userProfile,
     workflowProgressByWorkflowId,
-    activityActionRow,
-    conversationWorkCellDetailsCacheKey,
-    onCancelWorkflow,
-    onCreateTaskFromContextSummary,
     onAcceptProposedPlan: handleAcceptProposedPlan,
     onConvertProposedPlan: handleConvertProposedPlan,
-    onLoadConversationWorkCellDetails: loadConversationWorkCellDetails,
-    onLoadWorkflowWorkCellDetails: loadWorkflowWorkCellDetails,
-    onOpenApprovalDetail: openApprovalDetail,
-    onOpenContextSummaryInConversationDetail: openContextSummaryInConversationDetail,
-    onOpenRun: openRunInPanel,
     onOpenExecutionProposal: openExecutionProposal,
     onOpenFileReference: () => openRightDockPage("files"),
     onOpenTerminalReportFile: (target) => openRightDockPage("files", target),
-    onOpenWorkspaceReview: (target) => openRightDockPage("review", undefined, {
-      ...target,
-      cwd: target.runId ? runById.get(target.runId)?.cwd ?? target.cwd : target.cwd,
-    }),
     onOpenThreadForMessage: threadReplyController.openThreadForMessage,
-    onOrchestrateWorkflow,
-    onRejectDecision,
     onRefineProposedPlan: handleRefineProposedPlan,
     onSaveProposedPlan: handleSaveProposedPlan,
-    onRetryWorkflowStep,
-    onRevealReviewInConversation: revealReviewInConversation,
-    onRevealRunFromActivity: revealRunFromActivity,
-    onRevealTaskFromActivity: revealTaskFromActivity,
-    onStartWorkflowFromHandoff,
-    onSupersedeDecision,
     onToggleChannelMessageFeedback: toggleChannelMessageFeedback,
     onBeginMessageEdit: (messageId) => {
       setChannelMessageEditError("");
@@ -3389,10 +3215,7 @@ export function WorkspaceClientView({
     },
     onSaveMessageEdit: saveChannelMessageEdit,
     onRetryMessageReplacement: retryChannelMessageReplacement,
-    onUpdateHandoffStatus,
-    readRunTitle,
     planActionBusyId: proposedPlanActionBusyId,
-    workflowWorkCellDetailsCacheKey,
   });
 
   function toggleChannelMessageFeedback(messageId: string, feedback: "up" | "down"): void {
@@ -4475,7 +4298,6 @@ export function WorkspaceClientView({
                   ? t("No channel messages yet")
                   : t("Create a default channel to start the workspace loop."),
             items: messageFeedItems,
-            renderItem: messageRenderers.renderMessageFeedItem,
             onKeyDown: handleMessageFeedKeyDown,
             onPointerDown: handleMessageFeedPointerDown,
             onPointerMove: handleMessageFeedPointerMove,
@@ -4495,6 +4317,7 @@ export function WorkspaceClientView({
                 onActivate={messageFeedState.scrollToLatest}
               />
             ),
+            unifiedTimelineNode: messageRenderers.renderUnifiedTimeline(messageFeedItems),
           }}
           conversationBlockActionMenuNode={conversationBlockActionMenuNode}
           conversationDetailOverlayNode={conversationDetailOverlayNode}
@@ -4502,6 +4325,7 @@ export function WorkspaceClientView({
           threadReply={threadReplyController.activeThreadRoot ? {
             cwd,
             rootMessage: threadReplyController.activeThreadRoot,
+            threadId: threadReplyController.resolvedThreadId,
             replies: threadReplyController.activeThreadMessages,
             teammates: teammateOptions,
             memoryById,
@@ -4665,10 +4489,6 @@ function formatAge(value: string | undefined): string {
     return `${hours}h`;
   }
   return `${Math.floor(hours / 24)}d`;
-}
-
-function workflowIdFromWorkCellThreadId(value: string): string {
-  return value.startsWith("workflow:") ? value.slice("workflow:".length) : value;
 }
 
 function isActionableExecutionProposal(proposal: ChannelExecutionProposal): boolean {

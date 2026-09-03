@@ -98,6 +98,7 @@ import {
 import { BundledCuaDriverActivationService } from "./features/plugins/cua-driver-bundled-activation.js";
 import { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-driver-daemon-composition.js";
 import { createCuaDriverGenerationBroker } from "./features/plugins/cua-driver-generation-broker.js";
+import { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
@@ -481,6 +482,7 @@ export function createDaemonServer(
     managementAllowedOrigins: resolvedConfig.remoteAccess.managementAllowedOrigins,
     dispatcher: remoteReplyDispatcher,
   });
+  const workspaceFileCapabilities = new WorkspaceFileCapabilityRegistry();
   const context: DaemonContext = {
     config: resolvedConfig,
     runnerRegistry,
@@ -524,6 +526,7 @@ export function createDaemonServer(
     chromeBrowserPlugin,
     officeDriverController,
     officeDocumentsPlugin,
+    workspaceFileCapabilities,
   };
   const server = createServer(async (request, response) => {
     try {
