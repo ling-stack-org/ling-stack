@@ -112,7 +112,6 @@
 }
 
 .right-dock-review-fallback-action,
-.right-dock-review-mode,
 .right-dock-review-badges span {
   display: inline-flex;
   min-height: 22px;
@@ -283,23 +282,6 @@
 .right-dock-review-mini.amber { background: var(--ling-status-warning); }
 .right-dock-review-mini.red { background: var(--ling-status-danger); }
 .right-dock-review-mini.gray { background: var(--ling-status-neutral); opacity: 0.72; }
-
-.right-dock-review-mode-row {
-  display: flex;
-  min-width: 0;
-  gap: var(--ling-space-2);
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.right-dock-review-mode-row::-webkit-scrollbar {
-  display: none;
-}
-
-.right-dock-review-mode.active {
-  color: var(--ling-status-info);
-  background: var(--ling-status-info-bg);
-}
 
 .right-dock-code-preview {
   display: grid;

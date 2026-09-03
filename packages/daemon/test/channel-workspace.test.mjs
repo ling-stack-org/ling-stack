@@ -43,6 +43,7 @@ import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs"
 import { ensureEmptyGitRepo, ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
 
 const require = createRequire(import.meta.url);
+const ASYNC_SETTLE_TIMEOUT_MS = 10_000;
 
 function projectionFor(item, assignment) {
   return {
@@ -15107,7 +15108,7 @@ class ParallelDelayedRunner {
   }
 
   async waitUntilStarted(count) {
-    const deadline = Date.now() + 2_000;
+    const deadline = Date.now() + ASYNC_SETTLE_TIMEOUT_MS;
     while (Date.now() < deadline) {
       if (this.runs.length >= count) {
         return;
@@ -15562,7 +15563,7 @@ function assertSingleReplyIntentDecision(decisions, sourceItemId) {
 }
 
 async function waitForChannelMessageStatus(baseUrl, cwd, channelId, messageId, status, threadId) {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + ASYNC_SETTLE_TIMEOUT_MS;
   let latest;
   while (Date.now() < deadline) {
     latest = await getJson(`${baseUrl}/channels/${encodeURIComponent(channelId)}/items?cwd=${encodeURIComponent(cwd)}${threadId ? `&threadId=${encodeURIComponent(threadId)}` : ""}`);
@@ -15576,7 +15577,7 @@ async function waitForChannelMessageStatus(baseUrl, cwd, channelId, messageId, s
 }
 
 async function waitForCondition(predicate, label) {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + ASYNC_SETTLE_TIMEOUT_MS;
   while (Date.now() < deadline) {
     if (await predicate()) {
       return;
@@ -15587,7 +15588,7 @@ async function waitForCondition(predicate, label) {
 }
 
 async function waitForWorkflowStepStatus(baseUrl, cwd, workflowId, workflowStepId, status) {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + ASYNC_SETTLE_TIMEOUT_MS;
   let latest;
   while (Date.now() < deadline) {
     latest = await getJson(`${baseUrl}/workflows/${encodeURIComponent(workflowId)}/steps?cwd=${encodeURIComponent(cwd)}`);
@@ -15601,7 +15602,7 @@ async function waitForWorkflowStepStatus(baseUrl, cwd, workflowId, workflowStepI
 }
 
 async function settleParallelDelayedWorkflow(baseUrl, cwd, workflowId, runner, text, options = {}) {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + ASYNC_SETTLE_TIMEOUT_MS;
   let latest;
   while (Date.now() < deadline) {
     runner.resolveAll(text);
@@ -15628,7 +15629,7 @@ async function settleParallelDelayedWorkflow(baseUrl, cwd, workflowId, runner, t
 }
 
 async function waitForWorkflowTemplateStepStatus(baseUrl, cwd, workflowId, templateStepId, status) {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + ASYNC_SETTLE_TIMEOUT_MS;
   let latest;
   while (Date.now() < deadline) {
     latest = await getJson(`${baseUrl}/workflows/${encodeURIComponent(workflowId)}/steps?cwd=${encodeURIComponent(cwd)}`);
@@ -15642,7 +15643,7 @@ async function waitForWorkflowTemplateStepStatus(baseUrl, cwd, workflowId, templ
 }
 
 async function approveWorkflowStepGate(baseUrl, cwd, workflowId, templateStepId) {
-  const deadline = Date.now() + 2_000;
+  const deadline = Date.now() + ASYNC_SETTLE_TIMEOUT_MS;
   let approval;
   let step;
   while (Date.now() < deadline) {

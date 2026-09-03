@@ -59,6 +59,8 @@ JSX/CSS 里加入兼容分支。
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
 - [Conversation Full Access Confirmation](conversation-session-full-access-confirmation.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
+- [Project Defect Remediation Contract 2026-09](project-defect-remediation-contract-2026-09.md)
+- [Project Defect Remediation Plan 2026-09](project-defect-remediation-plan-2026-09.md)
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)

@@ -852,6 +852,7 @@ export function AppShell(): React.JSX.Element {
     latestStatus,
     isRunning,
     isLoading: runsLoading,
+    isRunLoading,
     cancellingRunId,
   } = runsDomain.state;
   const {
@@ -2367,7 +2368,7 @@ export function AppShell(): React.JSX.Element {
     ) : undefined;
 
   const settingsFullscreen = activeView === "settings";
-  const showInspector = !["workspace", "providers", "plugins", "teammates", "councils", "runs", "threads", "automations", "approvals", "work_board", "media", "profile", "settings"].includes(activeView);
+  const showInspector = !["workspace", "providers", "plugins", "teammates", "councils", "threads", "automations", "approvals", "work_board", "media", "profile", "settings"].includes(activeView);
   const selectedChannelForRun = channels.find((channel) => channel.id === selectedChannelId);
   const selectedProviderIdForRun =
     taskRunProviderId || selectedChannelForRun?.defaultProviderPresetId || workspaceDefaultProviderPresetId || "";
@@ -3358,6 +3359,8 @@ export function AppShell(): React.JSX.Element {
               artifacts={artifacts}
               assistantText={assistantText}
               isRunning={isRunning}
+              isRunLoading={isRunLoading}
+              runErrorMessage={runsDomain.error?.message ?? ""}
               pendingApprovals={activePendingApprovals}
               resolvingApprovals={resolvingApprovals}
               providers={providers}
@@ -3379,7 +3382,7 @@ export function AppShell(): React.JSX.Element {
               approvalPolicyForm={approvalPolicyForm}
               cwd={form.cwd}
               onLookupRunIdChange={setLookupRunId}
-              onLoadRun={() => void loadRun()}
+              onLoadRun={() => loadRun().catch(() => undefined)}
               onResolveApproval={(approvalId, decision, reason) => void resolveApproval(approvalId, decision, reason)}
               onExecuteExternalAction={(actionId) => void executeExternalAction(actionId)}
               onCancelExternalAction={(actionId) => void cancelExternalAction(actionId, "Cancelled from Web Inspector")}

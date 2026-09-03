@@ -97,6 +97,7 @@ function DockReviewDetailTop({
   readonly item: DockReviewItem;
   readonly preview: NonNullable<DockReviewItem["codePreview"]>;
 }): React.JSX.Element {
+  const { t } = useI18n();
   const stats = item.stats ?? preview.stats ?? codePreviewStats(preview.lines);
   const minimap = reviewMinimapSegments(item, preview);
   return (
@@ -114,7 +115,7 @@ function DockReviewDetailTop({
           </span>
         ) : null}
       </div>
-      <div className="right-dock-review-minimap" aria-label="File review minimap">
+      <div className="right-dock-review-minimap" aria-label={t("File review minimap")}>
         {minimap.map((segment) => (
           <span
             key={segment.id}
@@ -123,12 +124,6 @@ function DockReviewDetailTop({
             style={{ "--segment-fill": `${segment.fill}%` } as CSSProperties}
           />
         ))}
-      </div>
-      <div className="right-dock-review-mode-row" aria-label="Review display mode">
-        <span className="right-dock-review-mode active">Unified</span>
-        <span className="right-dock-review-mode">Split</span>
-        <span className="right-dock-review-mode">Hide whitespace</span>
-        <span className="right-dock-review-mode">只看 note</span>
       </div>
     </div>
   );
