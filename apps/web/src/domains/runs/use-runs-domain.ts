@@ -12,6 +12,7 @@ import { readDataString } from "../../lib/data.js";
 import { inferRunStatus } from "../../lib/run-evidence.js";
 import { useRunControl } from "../../lib/use-run-control.js";
 import { useLatestKeyedRequestGuard } from "../../lib/use-latest-request.js";
+import { useI18n } from "../../i18n.js";
 import { streamRun } from "../../sse.js";
 import type {
   RunArtifact,
@@ -31,6 +32,7 @@ export interface RunsState {
   readonly latestStatus: string;
   readonly isRunning: boolean;
   readonly isLoading: boolean;
+  readonly isRunLoading: boolean;
   readonly cancellingRunId: string;
 }
 
@@ -58,11 +60,13 @@ export function useRunsDomain(input: {
   readonly refreshUsedMemoryAudit: (cwd: string) => Promise<void>;
   readonly readRunWorkspaceCwd: (run: RunSession, fallbackCwd: string) => string;
 }): RunsController {
+  const { t } = useI18n();
   const [activeRunId, setActiveRunId] = useState("");
   const [lookupRunId, setLookupRunId] = useState("");
   const [run, setRun] = useState<RunSession | undefined>();
   const [runs, setRuns] = useState<readonly RunSession[]>([]);
   const [runsLoading, setRunsLoading] = useState(false);
+  const [runLoading, setRunLoading] = useState(false);
   const [events, setEvents] = useState<readonly RunEventEnvelope[]>([]);
   const [artifacts, setArtifacts] = useState<readonly RunArtifact[]>([]);
   const [isRunning, setIsRunning] = useState(false);
@@ -83,11 +87,12 @@ export function useRunsDomain(input: {
   async function loadRun(runId = lookupRunId, cwd = input.cwd): Promise<void> {
     const trimmedRunId = runId.trim();
     if (!trimmedRunId) {
-      setError({ scope: "load", message: "请输入 runId" });
+      setError({ scope: "load", message: t("Enter a Run ID") });
       return;
     }
 
     const requestToken = runLoadGuard.next(trimmedRunId);
+    setRunLoading(true);
     try {
       setError(undefined);
       const [runResult, eventResult, artifactResult] = await Promise.all([
@@ -117,6 +122,10 @@ export function useRunsDomain(input: {
       const message = caught instanceof Error ? caught.message : String(caught);
       setError({ scope: "load", message });
       throw caught;
+    } finally {
+      if (runLoadGuard.isCurrent(trimmedRunId, requestToken)) {
+        setRunLoading(false);
+      }
     }
   }
 
@@ -236,6 +245,7 @@ export function useRunsDomain(input: {
     setArtifacts([]);
     setIsRunning(false);
     setRunsLoading(false);
+    setRunLoading(false);
     setError(undefined);
   }
 
@@ -251,6 +261,7 @@ export function useRunsDomain(input: {
       latestStatus,
       isRunning,
       isLoading: runsLoading,
+      isRunLoading: runLoading,
       cancellingRunId,
     },
     actions: {

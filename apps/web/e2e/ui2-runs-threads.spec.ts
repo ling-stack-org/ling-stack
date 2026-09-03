@@ -123,6 +123,30 @@ test("P11.2 characterization: fallback projection, request cap and search normal
   expect(normalizeWorkHistorySearchQuery(" x ")).toBeUndefined();
 });
 
+test("RUN-INSPECTOR-001: persisted run lookup is reachable, loads evidence, and reports failures", async ({ page }) => {
+  await initPage(page, "en-US", "ling-light", { width: 1440, height: 960 });
+  const state = createRunsThreadsFixture();
+  await installRunsThreadsFixture(page, state);
+  await page.goto("/");
+  await openMainRunHistory(page);
+
+  const inspector = page.getByLabel("Run inspector");
+  await expect(inspector).toBeVisible();
+  const runId = inspector.getByLabel("Run ID");
+  await runId.fill("");
+  await inspector.getByRole("button", { name: "Load persisted run" }).click();
+  await expect(inspector.getByRole("alert")).toHaveText("Enter a Run ID");
+
+  await runId.fill("run_ui2_failed");
+  await runId.press("Enter");
+  await expect(inspector.getByText("failed", { exact: true })).toBeVisible();
+  await expect(inspector.getByText("local-relay/gpt-5.5", { exact: true })).toBeVisible();
+
+  await runId.fill("missing_run");
+  await inspector.getByRole("button", { name: "Load persisted run" }).click();
+  await expect(inspector.getByRole("alert")).toBeVisible();
+});
+
 test("RUN-HISTORY-001: 100 groups, keyboard, no-result, retained stale and dual-theme ledger", async ({ page }) => {
   const errors = collectRuntimeErrors(page);
   await initPage(page, "en-US", "ling-light", { width: 1440, height: 960 });

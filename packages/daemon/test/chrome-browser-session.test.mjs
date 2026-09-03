@@ -96,6 +96,28 @@ test("Chrome pairing is one-time, allowlisted, hash-backed, and revocable", asyn
   }
 });
 
+test("Native migration preserves legacy credentials until its ready commit point", async () => {
+  const { cwd, store, controller } = await fixture();
+  try {
+    const grant = controller.createPairing(cwd);
+    controller.pair(cwd, extensionId, {
+      protocol: CHROME_BROWSER_PROTOCOL,
+      pairingCode: grant.pairingCode,
+      extensionVersion: "0.1.0",
+    });
+    const transport = createNativeTransport();
+    const accepted = controller.acceptNativeTransport(cwd, extensionId, transport, { extensionVersion: "0.1.1" });
+    assert.equal(accepted.migratedLegacyCredential, true);
+    assert.equal(store.getChromeBrowserCredential("workspace_default", CHROME_BROWSER_PLUGIN_ID, extensionId)?.revokedAt, undefined);
+    assert.equal(controller.commitNativeCredentialMigration(cwd), 1);
+    assert.ok(store.getChromeBrowserCredential("workspace_default", CHROME_BROWSER_PLUGIN_ID, extensionId)?.revokedAt);
+  } finally {
+    controller.close();
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("Chrome WebSocket authority executes commands, fences replacement, and cancels", async () => {
   const { cwd, store, controller } = await fixture({ commandTimeoutMs: 500, heartbeatTimeoutMs: 5_000 });
   const server = createServer((_request, response) => { response.statusCode = 404; response.end(); });
@@ -332,6 +354,29 @@ test("Chrome Host repair installs the current Host and projects it as ready with
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+function createNativeTransport() {
+  const messageListeners = new Set();
+  const closeListeners = new Set();
+  return {
+    kind: "native_messaging",
+    isOpen: () => true,
+    send: async () => undefined,
+    close: () => {
+      for (const listener of closeListeners) listener();
+    },
+    terminate: () => undefined,
+    onMessage: (listener) => {
+      messageListeners.add(listener);
+      return () => messageListeners.delete(listener);
+    },
+    onClose: (listener) => {
+      closeListeners.add(listener);
+      return () => closeListeners.delete(listener);
+    },
+    onError: () => () => undefined,
+  };
+}
 
 function connectChrome(url, credential) {
   return new Promise((resolve, reject) => {

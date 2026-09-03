@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-08-20
+Last verified: 2026-09-03
 Document type: governance index
 
 ## Purpose
@@ -31,6 +31,7 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 | [Channel Execution Completion](channel-execution-completion-implementation-plan.md) | Required-participant fan-in, operation evidence, TerminalReport/source-Turn convergence, clean-break Attempt fencing, restart recovery, and aggregate source verification are green | Run fresh packaged macOS restart/fan-in/SSE reconnect/SQLite acceptance against integrated `main`, then review, PR/CI, and merge |
 | [Channel Context Processing](channel-context-processing-layer-implementation-plan.md) | Channel and direct-message context views exist | Condensation, quote eligibility, persistence and redaction ownership are closed |
 | [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin-implementation-plan.md) | Manual V1 pairing and six approved browser tools exist; Native Messaging `0.1.1` implementation is active | Automatic Host connection, dual-platform package gates, real Chrome acceptance and Store resubmission close |
+| [Project Defect Remediation 2026-09](project-defect-remediation-plan-2026-09.md) | Source remediation and automated Web/daemon/native regression are green across right-dock review, Runs, Profile i18n, Native Broker startup, and Native migration | Real macOS/Windows packaged-client and Chrome-extension environment acceptance closes |
 | [Permission Presets](codex-inspired-settings-permission-presets-implementation-plan.md) | Enforcement modes exist | Preset UI, effective preview and run audit agree with daemon enforcement |
 | [Conversation Surface](conversation-surface-contract-implementation-plan.md) | Shared primitives and initial package extraction are implemented | WorkCell, evidence, attachment, package CSS and Desktop-consumption boundaries close |
 | [Bundled CUA Driver](cua-driver-bundled-embedded-implementation-plan.md) | Packaging, integrity and platform foundations exist | Computer Control Settings surface and remaining signed platform gates close |
