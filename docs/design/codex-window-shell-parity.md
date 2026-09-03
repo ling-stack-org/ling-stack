@@ -1,6 +1,11 @@
 # Codex Window Shell Parity
 
-Status: approved for local implementation; no push or PR in this slice
+Status: current implementation contract; packaged acceptance remains open
+Owner: Web, Desktop, and release maintainers
+Last verified: 2026-09-03
+Document type: desktop shell contract
+Code anchors: `apps/web/src/app/AppShell.tsx`, `apps/web/src/app/DesktopWindowChrome.tsx`, `apps/desktop/main/window-factory.ts`
+Test anchors: `apps/web/e2e/macos-titlebar.spec.ts`, `apps/desktop/tests/main-window-contract.test.mjs`, `apps/desktop/tests/packaged-language-parity.mjs`
 
 ## Intent
 
