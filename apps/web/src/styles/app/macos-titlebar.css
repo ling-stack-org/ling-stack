@@ -26,6 +26,22 @@
   --desktop-window-traffic-light-width: 76px;
 }
 
+.app-shell.desktop-window-shell[data-ui2-shell-boundary="true"]:not(.channel-sidebar-collapsed):not(.settings-fullscreen-shell)::before {
+  position: absolute;
+  z-index: calc(var(--desktop-window-chrome-layer) + 1);
+  top: 0;
+  bottom: 0;
+  left: calc(var(--desktop-shell-sidebar-width) - 1px);
+  width: 1px;
+  background: var(--border);
+  content: "";
+  pointer-events: none;
+}
+
+.app-shell.desktop-window-shell[data-ui2-shell-boundary="true"]:not(.channel-sidebar-collapsed):not(.settings-fullscreen-shell) > .channel-left-drawer {
+  border-right: 0;
+}
+
 .app-shell.desktop-window-shell[data-ui2-shell-boundary="true"].inspector-hidden {
   grid-template-areas:
     "titlebar titlebar"
@@ -97,9 +113,44 @@
   background: var(--ling-bg-sidebar);
 }
 
-.app-shell.desktop-window-shell.channel-sidebar-collapsed .desktop-window-chrome-leading,
-.app-shell.desktop-window-shell.settings-fullscreen-shell .desktop-window-chrome-leading {
+.app-shell.desktop-window-shell.channel-sidebar-collapsed .desktop-window-chrome-leading {
   background: var(--ling-bg-panel);
+}
+
+.app-shell.desktop-window-shell.settings-fullscreen-shell > .desktop-window-chrome::before {
+  position: absolute;
+  z-index: 0;
+  top: 0;
+  bottom: 0;
+  left: 0;
+  box-sizing: border-box;
+  width: var(--settings-sidebar-width);
+  border-right: 1px solid var(--ling-border-default);
+  background: var(--ling-bg-sidebar);
+  content: "";
+  pointer-events: none;
+}
+
+.app-shell.desktop-window-shell.settings-fullscreen-shell :is(
+  .desktop-window-chrome-leading,
+  .desktop-window-titlebar-surface,
+  .desktop-window-controls
+) {
+  position: relative;
+  z-index: 1;
+}
+
+.app-shell.desktop-window-shell.settings-fullscreen-shell :is(
+  .desktop-window-chrome-leading,
+  .desktop-window-titlebar-surface
+) {
+  background: transparent;
+}
+
+@media (max-width: 760px) {
+  .app-shell.desktop-window-shell.settings-fullscreen-shell > .desktop-window-chrome::before {
+    display: none;
+  }
 }
 
 .desktop-window-traffic-light-exclusion {

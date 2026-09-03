@@ -4,6 +4,7 @@
 .app-shell.settings-fullscreen-shell.channel-drawer-shell,
 .app-shell.settings-fullscreen-shell.channel-drawer-shell.inspector-hidden,
 .app-shell.settings-fullscreen-shell.channel-sidebar-collapsed.inspector-collapsed {
+  --settings-sidebar-width: clamp(236px, 19.5vw, 282px);
   grid-template-areas: "workspace";
   grid-template-columns: minmax(0, 1fr);
   grid-template-rows: minmax(0, 1fr);
@@ -19,7 +20,7 @@
 
 .settings-layout {
   display: grid;
-  grid-template-columns: clamp(236px, 19.5vw, 282px) minmax(0, 1fr);
+  grid-template-columns: var(--settings-sidebar-width, clamp(236px, 19.5vw, 282px)) minmax(0, 1fr);
   width: 100%;
   height: 100%;
   max-width: none;
@@ -169,6 +170,10 @@
 }
 
 @media (max-width: 760px) {
+  .app-shell.settings-fullscreen-shell {
+    --settings-sidebar-width: 0px;
+  }
+
   .settings-layout {
     display: flex;
     flex-direction: column;
