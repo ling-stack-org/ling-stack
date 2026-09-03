@@ -18,6 +18,7 @@ Related docs:
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
+- [Conversation Media Generation Tools](conversation-media-generation-tools.md)
 
 2026-07-30 model ownership update: private chat still has no composer model picker. A
 user-created teammate uses its fixed model; a built-in teammate explicitly follows the
@@ -200,6 +201,73 @@ message/composer/evidence model.
 21. File paste is owned by the shared tokenized input. Clipboard files enter the same
     attachment upload path as the attach button and drag/drop. Clipboard HTML is never
     inserted into the editable transcript input.
+22. Image and video generation use first-party Runner tools and the shared generated-media
+    projection. Normal conversation, channel, and teammate private chat must not add
+    keyword routing, separate MediaJob state machines, or surface-specific media cards.
+    MediaJob remains the artifact owner; the conversation surface consumes a read model
+    linked through the parent Run and child WorkUnit.
+23. Pending local runtime approvals are owned by their conversation surface, not by a
+    global blocking dialog. A background channel, normal conversation, or teammate
+    private chat shows a visible green `Waiting for approval` label on its Sidebar row
+    without interrupting the active conversation. When the user opens the owning session,
+    one shared `RuntimeApprovalComposerGate` replaces that session's Composer and presents
+    one localized action sentence plus direct deny/allow actions. The gate must not mount
+    a page backdrop, trap focus outside the session, disable Sidebar navigation, or affect
+    another session's Composer. The same ordered approval read model marks its owning Run
+    as `composer_gate_pending`: the transcript may show one non-interactive localized
+    status marker, but must not render an expandable WorkCell, approval operation rows,
+    evidence groups, raw permission labels, or duplicate decision controls until the
+    Composer-owned approval resolves. Complete payload and history remain available in
+    Run detail and audit surfaces.
+    Ownership resolution must use the linked Work Unit kind before teammate identity:
+    `conversation_run` is a normal conversation and `teammate_direct_reply` is a private
+    chat. A normal Ling Agent Run may carry `teammateId`, so that field alone must never
+    move its approval into the teammate Sidebar or Composer.
+24. Channel execution proposals render a compact transcript summary. An actionable
+    proposal is a session-owned decision and replaces only its channel Composer, after any
+    runtime approval gate. The shared decision shell shows one sentence naming task,
+    assignee, and localized permission categories, followed only by deny and allow. The
+    summary can select its proposal for the owning Composer. When a proposal exists, that
+    summary is the only default
+    feed representation of requirement shaping. Internal shaping status, teammate ids,
+    and collaboration records remain audit data; only an actual unanswered user question
+    may render as a separate compact decision-needed row. The compact summary is visually
+    owned by `assigneeTeammateId`: it must render the assignee through the canonical
+    teammate-avatar projection, including custom-avatar and deleted-teammate fallback
+    behavior. It must not inherit or duplicate the source message author's avatar.
+25. Channel, teammate-private-chat, and recent-conversation rows use one shared Sidebar
+    object preview. Every preview shows the complete object name and its latest known
+    activity time; it does not repeat the surface type already established by the Sidebar
+    section. It may additionally show repository and
+    branch context only when that object's effective execution workspace resolves to an
+    available Git workspace distinct from the shared global workspace. Conversation
+    context comes from its newest loaded Run; channel context uses its current workspace
+    binding first, then a distinct latest-Run or explicit bound path; teammate-private-chat
+    context uses the newest non-channel Run for that teammate. A shared-workspace Run is
+    activity evidence, not durable object-level Git evidence, because its current branch
+    may differ from the branch used by the historical Run. The
+    Sidebar uses the existing workspace-change projection, deduplicates checks by working
+    directory, never displays an absolute local path, and treats missing/non-Git/error
+    results as absent optional metadata. Git context belongs to the rich preview rather
+    than the title row, so it must not reduce title width or add horizontal scrolling.
+26. A failed or blocked recent conversation uses the red status dot only as an unreviewed
+    attention signal. Successfully entering that conversation acknowledges the current
+    failure revision and removes the dot without changing the durable thread, Run, error,
+    transcript, or retry state. The acknowledgement is local UI state keyed by workspace,
+    conversation, and failure update time. Reloading the same revision keeps it hidden;
+    a later failed or blocked revision must surface the dot again. Waiting-for-approval
+    and running projections are live state and are never cleared by this acknowledgement.
+27. A recent-conversation Sidebar row is a single-line object row. It renders the title
+    only and must not add a redundant `Conversation` type subtitle. The row remains `32px`
+    high with the icon and title sharing one vertical centerline; removing the subtitle
+    must not move the title's horizontal origin. Its shared preview is viewport-bounded,
+    has no internal scrollbar, and moves an overflowing line horizontally using the same
+    fade-and-hover behavior as the Sidebar title.
+28. Right Dock visibility is a shared projection across channel, normal conversation,
+    and teammate private chat. Above `900px`, Details uses the existing inline resizable
+    column. At `900px` and below, the dock, resize handle, and layout reservation are all
+    absent; an unavailable dock cannot leave an active toolbar state or blank grid column.
+    Surface-specific media queries must not independently hide only part of this state.
 
 ## Surface Capability Matrix
 
@@ -220,6 +288,7 @@ message/composer/evidence model.
 | Edit latest own message | Yes | Yes | Yes | Yes, latest own reply | Yes | No by default |
 | Structured Markdown / Mermaid / math | Yes | Yes | Yes | Yes | Yes | Yes |
 | Tool execution | Yes | Yes | Yes | No by default; promote explicitly | Yes, single-agent | Yes |
+| Image/video generation tools | When a runnable target exists | When a runnable target exists | When a runnable target exists | No by default | When a runnable target exists | Projection only |
 | TerminalReport participants | No | Yes | Yes | No by default | No | Contextual |
 | Raw runtime detail | Detail only | Developer/detail only | Developer/detail only | No by default | Detail only | Yes |
 | Right Dock shell | Yes | Yes | Yes | No by default | Yes | Optional rich detail |
@@ -560,6 +629,11 @@ Rules:
   WorkCell by themselves,
 - run/thread detail can render the richest version of the same work contract.
 
+The operation shell owns alignment, not content padding. Every visual child is rendered
+through a semantic head, body, or static-content slot. Static status content uses the
+shared operation-cell inline inset on both sides; consumers must not rely on parent padding
+or add screenshot-specific margins.
+
 ## Surface Policies
 
 ### Normal Conversation
@@ -729,6 +803,25 @@ interface ConversationTurnView {
   readonly status: ConversationTurnStatus;
 }
 ```
+
+Generated media is an additive capability view, not a message-text convention:
+
+```ts
+interface ConversationGeneratedMediaView {
+  readonly mediaJobId: string;
+  readonly runId: string;
+  readonly messageId?: string;
+  readonly operation: "image_generate" | "video_generate";
+  readonly status: "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
+  readonly targetDisplayName: string;
+  readonly artifacts: readonly ConversationArtifactView[];
+  readonly errorMessage?: string;
+}
+```
+
+The daemon derives this view from durable parent Run, child MediaJob WorkUnit, MediaJob,
+and MediaJob artifacts. Web adapters never infer generation ownership from assistant text or
+tool-event wording. Refresh and reconnect rebuild the same projection from storage.
 
 Policy is explicit. Components should not infer policy from route name, message text, or
 whether `threadId` is present.
@@ -1039,6 +1132,16 @@ Every future slice touching conversation UI should keep or add focused tests for
   duplicating providers that already emitted text deltas,
 - reasoning-only or structurally empty successful responses never become assistant body
   text and fail provider readiness with `empty_response`.
+- a successful conversation run with a persisted `ConversationGeneratedMedia` projection may
+  have an empty assistant body: the media block is the visible result. Normal conversation,
+  initial channel reply, queued channel continuation and teammate private chat must not turn
+  that tool-only result into an empty-response error or synthetic acknowledgement. A successful
+  run with neither visible text nor generated-media projection still fails at message level.
+- while a conversation feed is pinned to the latest turn, late layout growth from generated
+  media, previews, fonts, or other asynchronous content must preserve that bottom pin. The
+  complete outer message row must remain scrollable above the Composer boundary; measuring an
+  inner WorkCell or text block is not sufficient overlap evidence. If the user has intentionally
+  scrolled away from the latest turn, asynchronous growth must not pull them back to the bottom.
 
 ## Implementation Slice Status
 

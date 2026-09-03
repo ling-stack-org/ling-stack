@@ -13,6 +13,8 @@ import type {
 
 export type ProviderReferenceBlockerKind =
   | "workspace_default_provider"
+  | "workspace_default_image_generation"
+  | "workspace_default_video_generation"
   | "channel_default_provider"
   | "ai_teammate_provider"
   | "automation_execution_policy"
@@ -69,6 +71,28 @@ export function inspectProviderReferences(
       kind: "workspace_default_provider",
       id: "workspace",
       label: "Workspace default model",
+      active: true,
+    });
+  }
+  if (
+    workspaceSettings.mediaGenerationDefaults?.image?.kind === "provider" &&
+    workspaceSettings.mediaGenerationDefaults.image.providerPresetId === providerPresetId
+  ) {
+    blockers.push({
+      kind: "workspace_default_image_generation",
+      id: "workspace:image",
+      label: "Workspace default image generation target",
+      active: true,
+    });
+  }
+  if (
+    workspaceSettings.mediaGenerationDefaults?.video?.kind === "provider" &&
+    workspaceSettings.mediaGenerationDefaults.video.providerPresetId === providerPresetId
+  ) {
+    blockers.push({
+      kind: "workspace_default_video_generation",
+      id: "workspace:video",
+      label: "Workspace default video generation target",
       active: true,
     });
   }

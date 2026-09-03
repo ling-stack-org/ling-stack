@@ -101,7 +101,7 @@ test("home and conversation render exact scaled viewports without invoking produ
   assert.match(home, /data-artwork="ambient"/u);
   assert.match(home, /data-decorations="true"/u);
   assert.match(home, /src="blob:local-preview"/u);
-  assert.match(home, /--ling-bg-app:#f6f7f8/u);
+  assert.match(home, /--ling-bg-app:#ffffff/u);
   assert.match(home, /Start conversation/u);
   assert.match(home, /Ask Ling anything/u);
 
@@ -156,7 +156,7 @@ test("preview drops non-allowlisted style keys and non-blob artwork URLs", () =>
   assert.doesNotMatch(html, /invalid\.example/u);
   assert.doesNotMatch(html, /unregistered-theme-value/u);
   assert.doesNotMatch(html, /background-image/u);
-  assert.match(html, /--ling-bg-app:#f6f7f8/u);
+  assert.match(html, /--ling-bg-app:#ffffff/u);
 });
 
 function render(surface, viewport, scale, artworkUrl) {

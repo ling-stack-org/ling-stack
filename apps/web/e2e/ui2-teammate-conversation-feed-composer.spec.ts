@@ -489,6 +489,12 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 }
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
+  const sessionDirectory = process.env.LING_SESSION_VALIDATION_DIR?.replace(/\/$/u, "");
+  if (sessionDirectory) {
+    await mkdir(sessionDirectory, { recursive: true });
+    await page.screenshot({ animations: "disabled", fullPage: true, path: `${sessionDirectory}/${filename}` });
+    return;
+  }
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
   await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({ animations: "disabled", fullPage: true, path: `${evidenceDirectory}${filename}` });

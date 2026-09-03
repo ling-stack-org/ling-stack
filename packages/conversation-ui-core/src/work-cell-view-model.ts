@@ -13,11 +13,51 @@ export type ConversationOperationKind =
   | "watch";
 export type ConversationWorkCellGroupKind = "changed" | "checked" | "context" | "evidence" | "attention";
 export type ConversationWorkCellRowTone = "neutral" | "running" | "waiting" | "success" | "failed";
+export type ConversationTurnRunRole = "primary" | "retry" | "resume" | "repair" | "validation";
+
+export interface ConversationOperationSourceRef {
+  readonly kind: string;
+  readonly id: string;
+  readonly label?: string;
+  readonly path?: string;
+  readonly visibility?: "conversation" | "private";
+}
+
+export interface ConversationOperationExecutionView {
+  readonly actionId: string;
+  readonly toolCallId?: string;
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly attemptNumber?: number;
+  readonly approvalId?: string;
+  readonly turnRunRole?: ConversationTurnRunRole;
+  readonly participantId?: string;
+  readonly workUnitId?: string;
+  readonly workflowStepId?: string;
+  readonly actionType: string;
+  readonly status: string;
+  readonly updatedAt?: string;
+  readonly latestEventSeq?: number;
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
+}
+
+export interface ConversationActivitySummary {
+  readonly editedFileCount: number;
+  readonly editedItemCount: number;
+  readonly readItemCount: number;
+  readonly commandCount: number;
+  readonly hasStructuredActions: boolean;
+}
 
 export interface ConversationCommandExecutionView {
   readonly actionId: string;
   readonly toolCallId?: string;
   readonly runId?: string;
+  readonly attemptId?: string;
+  readonly attemptNumber?: number;
+  readonly approvalId?: string;
+  readonly turnRunRole?: ConversationTurnRunRole;
+  readonly participantId?: string;
   readonly workUnitId?: string;
   readonly workflowStepId?: string;
   readonly actionType: string;
@@ -29,6 +69,7 @@ export interface ConversationCommandExecutionView {
   readonly durationMs?: number;
   readonly exitCode?: number;
   readonly latestEventSeq: number;
+  readonly sourceRefs?: readonly ConversationOperationSourceRef[];
   readonly outputTruncated: boolean;
   readonly stdoutArtifactId?: string;
   readonly stderrArtifactId?: string;
@@ -51,6 +92,7 @@ export interface ConversationWorkCellRow {
   readonly meta?: string;
   readonly commandText?: string;
   readonly commandExecution?: ConversationCommandExecutionView;
+  readonly operationExecution?: ConversationOperationExecutionView;
   readonly changePreview?: ConversationWorkCellChangePreview;
   readonly detailLines?: readonly ConversationWorkCellRowDetailLine[];
   readonly tone?: ConversationWorkCellRowTone;
@@ -126,7 +168,8 @@ export interface ConversationArtifactStripChangeArtifact {
 
 export type ConversationWorkspaceRecoveryTarget =
   | { readonly kind: "run"; readonly id: string }
-  | { readonly kind: "workflow"; readonly id: string };
+  | { readonly kind: "workflow"; readonly id: string }
+  | { readonly kind: "turn"; readonly id: string };
 
 export interface ConversationArtifactStripItem {
   readonly id: string;
@@ -164,6 +207,7 @@ export interface ConversationCommandBatchItem {
   readonly outputTruncated: boolean;
   readonly stdoutArtifactId?: string;
   readonly stderrArtifactId?: string;
+  readonly leadingRows?: readonly ConversationWorkCellRow[];
 }
 
 export interface ConversationCommandBatch {
@@ -172,7 +216,34 @@ export interface ConversationCommandBatch {
   readonly commandCount: number;
   readonly durationMs?: number;
   readonly defaultExpanded: boolean;
+  readonly actionIds: readonly string[];
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly attemptNumber?: number;
+  readonly turnRunRole?: ConversationTurnRunRole;
+  readonly participantId?: string;
+  readonly workUnitId?: string;
+  readonly workflowStepId?: string;
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
   readonly commands: readonly ConversationCommandBatchItem[];
+}
+
+export interface ConversationExplorationBatch {
+  readonly id: string;
+  readonly revisionKey: string;
+  readonly actionIds: readonly string[];
+  readonly runId: string;
+  readonly attemptId?: string;
+  readonly attemptNumber?: number;
+  readonly turnRunRole?: ConversationTurnRunRole;
+  readonly participantId?: string;
+  readonly workUnitId?: string;
+  readonly workflowStepId?: string;
+  readonly sourceRefs: readonly ConversationOperationSourceRef[];
+  readonly operationCount: number;
+  readonly targetCount?: number;
+  readonly defaultExpanded: boolean;
+  readonly rows: readonly ConversationWorkCellRow[];
 }
 
 export type ConversationWorkCellItem =
@@ -183,6 +254,10 @@ export type ConversationWorkCellItem =
   | {
       readonly kind: "command_batch";
       readonly batch: ConversationCommandBatch;
+    }
+  | {
+      readonly kind: "exploration_batch";
+      readonly batch: ConversationExplorationBatch;
     };
 
 export interface ConversationOperationCellViewModel {
@@ -203,6 +278,7 @@ export interface ConversationOperationCellViewModel {
   readonly elapsedMs?: number;
   readonly operationRows: readonly ConversationWorkCellRow[];
   readonly operationItems?: readonly ConversationWorkCellItem[];
+  readonly activitySummary?: ConversationActivitySummary;
   readonly agentSpans: readonly ConversationAgentActivitySpan[];
   /** @deprecated Use agentSpans. Kept while call sites migrate. */
   readonly agentBranches: readonly ConversationWorkCellBranch[];

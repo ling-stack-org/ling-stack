@@ -1,8 +1,8 @@
 # Channel Turn Streaming
 
-Status: active Continuity v2 transport contract; deterministic reconnect is green and
-fresh packaged SSE reconnect acceptance remains pending
-Updated: 2026-08-16
+Status: active Continuity v2 transport contract; deterministic reconnect and fresh
+packaged SSE reconnect acceptance are green
+Updated: 2026-08-25
 
 Related docs:
 

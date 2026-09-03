@@ -13,6 +13,7 @@ import {
   type TeammateDirectThread,
   type WorkspaceAccessMode,
 } from "@ling-stack/core";
+import { formatServerCatalogMessage, isSupportedLocale } from "@ling-stack/localization";
 import { buildPrivateChatContextView } from "../channels/context-processing/private-chat.js";
 import { renderChannelContextView } from "../channels/context-processing/render.js";
 import { createProviderBackedImageVisionSummarizer } from "../channels/materialization/provider-vision.js";
@@ -42,6 +43,8 @@ import {
   buildConversationSupersessionProjection,
   filterSupersededTeammateDirectMessages,
 } from "../conversations/supersession-projection.js";
+import { runHasConversationGeneratedMedia } from "../media/conversation-projection.js";
+import { fallbackResponseLanguage, responseLanguageInstruction } from "../channels/response-language.js";
 
 export type StartTeammateDirectRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -90,6 +93,7 @@ export async function createAiTeammateDirectReply(input: {
     requestedProviderPresetId: input.providerPresetId,
     workspaceDefaultProviderPresetId: input.store.getWorkspaceSettings().defaultProviderPresetId,
   });
+  const responseLanguagePreference = input.store.getWorkspaceSettings().responseLanguage ?? "follow_user";
   const now = new Date().toISOString();
   const pending = input.store.createTeammateDirectMessage(
     {
@@ -197,6 +201,7 @@ export async function createAiTeammateDirectReply(input: {
       });
     const systemPrompt = [
       buildDirectSystemPrompt(input.teammate, renderedMemory.prompt, input.continuationReason),
+      responseLanguageInstruction(responseLanguagePreference),
       input.systemPromptAppend,
     ].filter((line): line is string => Boolean(line?.trim())).join("\n");
     const execution = resolveTeammateDirectExecutionContext({
@@ -213,6 +218,7 @@ export async function createAiTeammateDirectReply(input: {
       workspaceAccessMode: input.workspaceAccessMode,
       permissionPreset: input.permissionPreset,
       permissionConfirmation: input.permissionConfirmation,
+      responseLanguage: responseLanguagePreference === "follow_user" ? undefined : responseLanguagePreference,
       requestedSkillId: input.requestedSkillId,
       skillOptimizationMode: input.skillOptimizationMode,
       continuationReason: input.continuationReason,
@@ -250,7 +256,14 @@ export async function createAiTeammateDirectReply(input: {
     if (current?.status === "cancelled") {
       return current;
     }
-    const reply = finishProjectedRun(input.store, pending.id, run, projection.text(), projection.error());
+    const reply = finishProjectedRun(
+      input.store,
+      pending.id,
+      run,
+      projection.text(),
+      projection.error(),
+      input.sourceMessage.body,
+    );
     if (reply.status === "ready") {
       input.stream?.onDone(reply);
     } else {
@@ -333,11 +346,28 @@ function finishProjectedRun(
   run: RunSession | undefined,
   streamedText: string,
   projectionError: string | undefined,
+  sourceText: string,
 ): TeammateDirectMessage {
   const text = streamedText.trim();
   if (run?.status === "succeeded") {
+    const hasGeneratedMedia = runHasConversationGeneratedMedia(store, run.id);
+    if (!text && !hasGeneratedMedia) {
+      const snapshotLanguage = run.requestSnapshot && typeof run.requestSnapshot === "object"
+        ? (run.requestSnapshot as Record<string, unknown>).responseLanguage
+        : undefined;
+      const message = formatServerCatalogMessage(
+        isSupportedLocale(snapshotLanguage) ? snapshotLanguage : fallbackResponseLanguage(undefined),
+        "daemon.conversation.empty_result",
+      );
+      return finishDirectMessage(store, messageId, {
+        body: message,
+        status: "failed",
+        errorMessage: message,
+        linkedRunId: run.id,
+      });
+    }
     return finishDirectMessage(store, messageId, {
-      body: text || "AI reply completed without text.",
+      body: text,
       status: "ready",
       errorMessage: null,
       linkedRunId: run.id,

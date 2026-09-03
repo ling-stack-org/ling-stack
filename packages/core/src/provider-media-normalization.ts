@@ -1,4 +1,8 @@
-import type { MediaOperation, VideoGenerationCapabilities } from "./media-types.js";
+import type {
+  ImageGenerationCapabilities,
+  MediaOperation,
+  VideoGenerationCapabilities,
+} from "./media-types.js";
 import type {
   ProviderApi,
   ProviderCapability,
@@ -65,6 +69,7 @@ export interface GenerationProviderRuntimeState {
   readonly supportsOperation: boolean;
   readonly liveTransportEnabled: boolean;
   readonly liveAdapterSupported: boolean;
+  readonly imageGeneration?: ImageGenerationCapabilities;
   readonly videoGeneration?: VideoGenerationCapabilities;
   readonly canRun: boolean;
   readonly reason?: GenerationProviderRuntimeUnavailableReason;
@@ -146,6 +151,7 @@ export function resolveGenerationProviderRuntimeState(
     supportsOperation,
     liveTransportEnabled,
     liveAdapterSupported,
+    imageGeneration: undefined,
     videoGeneration: undefined,
   };
 
@@ -178,12 +184,58 @@ export function resolveGenerationProviderRuntimeState(
   }
   return {
     ...baseState,
+    imageGeneration: supportedOperations.includes("image_generate")
+      ? resolveVerifiedImageGenerationCapabilities(provider, family?.familyId)
+      : undefined,
     videoGeneration: supportedOperations.includes("video_generate")
       ? resolveVerifiedVideoGenerationCapabilities(provider, family?.familyId)
       : undefined,
     canRun: true,
     uiCopyKey: "generation_runtime_ready",
   };
+}
+
+function resolveVerifiedImageGenerationCapabilities(
+  provider: GenerationProviderRuntimeInput,
+  familyId: GenerationModelFamilyId | undefined,
+): ImageGenerationCapabilities | undefined {
+  if (
+    familyId !== "openai-images" ||
+    (provider.kind !== "openai" && provider.kind !== "openai-compatible")
+  ) {
+    return undefined;
+  }
+  const model = provider.modelId ?? provider.model ?? "";
+  if (/(?:^|[/_-])dall-e-3(?=$|[/_.-])/i.test(model)) {
+    return {
+      aspectRatios: ["1:1", "7:4", "4:7"],
+      sizeByAspectRatio: {
+        "1:1": "1024x1024",
+        "7:4": "1792x1024",
+        "4:7": "1024x1792",
+      },
+      maxCount: 1,
+    };
+  }
+  if (/(?:^|[/_-])dall-e-2(?=$|[/_.-])/i.test(model)) {
+    return {
+      aspectRatios: ["1:1"],
+      sizeByAspectRatio: { "1:1": "1024x1024" },
+      maxCount: 4,
+    };
+  }
+  if (/(?:^|[/_-])gpt-image(?=$|[/_.-])/i.test(model)) {
+    return {
+      aspectRatios: ["1:1", "3:2", "2:3"],
+      sizeByAspectRatio: {
+        "1:1": "1024x1024",
+        "3:2": "1536x1024",
+        "2:3": "1024x1536",
+      },
+      maxCount: 4,
+    };
+  }
+  return undefined;
 }
 
 function resolveVerifiedVideoGenerationCapabilities(

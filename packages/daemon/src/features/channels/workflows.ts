@@ -9,15 +9,18 @@ import {
   type ChannelWorkflowStepStatus,
   type RunStore,
   type RunTool,
+  type ResponseLanguage,
   type SkillApprovalProfile,
   type Task,
 } from "@ling-stack/core";
+import { formatServerCatalogMessage } from "@ling-stack/localization";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { fallbackResponseLanguage } from "./response-language.js";
 import {
   compileWorkflowTemplate,
   isWorkflowTemplateCompileRequest,
@@ -125,6 +128,7 @@ export interface WorkflowStepRunContextPackSnapshot {
     readonly id: string;
     readonly role: string;
     readonly priority: string;
+    readonly compactionSurvival?: string;
     readonly estimatedTokens?: number;
     readonly sourceRefIds?: readonly string[];
     readonly metadata?: Record<string, unknown>;
@@ -865,7 +869,7 @@ export function prepareWorkflowStepStart(
     providerBinding = providerPreflight.binding;
     providerPresetId = providerBinding.providerPresetId;
   }
-  const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const workflowSteps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const memoryRecallQuery = `${workflow.objective}\n${step.title}\n${input.taskPrompt ?? step.prompt}`;
   const memoryRecall = store.recallMemory({
     teammateId: assigneeTeammateId,
@@ -896,6 +900,7 @@ export function prepareWorkflowStepStart(
         id: "workflow_role_evidence",
         role: "memory" as const,
         priority: "medium" as const,
+        compactionSurvival: "summarize" as const,
         title: "workflow_role_evidence",
         text: renderedMemory.prompt,
         sourceRefIds: renderedMemory.memoryIds,
@@ -1144,7 +1149,7 @@ export function reconcileContinuityWorkflowCompletion(store: RunStore, now = new
         continue;
       }
       if (workflow.status === "succeeded") {
-        const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+        const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
         const gate = evaluateWorkflowCompletionGate({ store, workflow, steps, now });
         if (gate?.status === "verified" && gate.basisFingerprint !== workflow.metadata.completionGate?.basisFingerprint) {
           store.updateChannelWorkflow(workflow.id, { metadata: { ...workflow.metadata, completionGate: gate } }, now);
@@ -1184,7 +1189,7 @@ export function maybeCreateWorkflowTerminalCoordinatorReply(
   const sourceTurnId = workflow.metadata?.sourceTurnId;
   const sourceTurn = sourceTurnId ? store.getLingTurn(sourceTurnId) : undefined;
   if (!sourceItem || !sourceTurn || sourceItem.turnId !== sourceTurn.id) return undefined;
-  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const now = input.now ?? new Date().toISOString();
   const expectedCompletion = workflow.metadata?.requiredParticipantManifest
     ? evaluateWorkflowCompletion({ store, workflow, steps, now })
@@ -1231,26 +1236,19 @@ function workflowTerminalCoordinatorReplyBody(
   workflow: ChannelWorkflow,
   steps: readonly ChannelWorkflowStep[],
 ): string {
-  const language = workflow.metadata?.responseLanguage === "en-US" ? "en-US" : "zh-CN";
-  const title = workflow.title.trim() || (language === "en-US" ? "this task" : "这次任务");
+  const language = fallbackResponseLanguage(workflow.metadata?.responseLanguage);
+  const title = workflow.title.trim() || formatServerCatalogMessage(language, "daemon.workflow.default_title");
   const blocker = workflowTerminalBlocker(workflow, steps, language);
   const resultSummary = workflowTerminalResultSummary(steps);
-  if (language === "en-US") {
-    if (workflow.status === "succeeded") {
-      return resultSummary ? `Done: "${title}".\nResult: ${resultSummary}` : `Done: "${title}".`;
-    }
-    if (workflow.status === "cancelled") {
-      return `Stopped: "${title}".`;
-    }
-    return `Not completed: "${title}". Reason: ${blocker}.`;
-  }
   if (workflow.status === "succeeded") {
-    return resultSummary ? `完成：「${title}」。\n结果：${resultSummary}` : `完成：「${title}」。`;
+    return resultSummary
+      ? formatServerCatalogMessage(language, "daemon.workflow.succeeded_with_result", { title, result: resultSummary })
+      : formatServerCatalogMessage(language, "daemon.workflow.succeeded", { title });
   }
   if (workflow.status === "cancelled") {
-    return `已停止：「${title}」。`;
+    return formatServerCatalogMessage(language, "daemon.workflow.cancelled", { title });
   }
-  return `未完成：「${title}」。原因：${blocker}。`;
+  return formatServerCatalogMessage(language, "daemon.workflow.not_completed", { title, reason: blocker });
 }
 
 function workflowTerminalResultSummary(steps: readonly ChannelWorkflowStep[]): string | undefined {
@@ -1268,7 +1266,7 @@ function isGenericRunSuccessSummary(summary: string): boolean {
 function workflowTerminalBlocker(
   workflow: ChannelWorkflow,
   steps: readonly ChannelWorkflowStep[],
-  language: "en-US" | "zh-CN",
+  language: ResponseLanguage,
 ): string {
   const blockedStep = steps.find((step) => step.status === "blocked" || step.status === "failed" || step.status === "cancelled");
   const blocker = blockedStep?.blocker?.trim();
@@ -1276,12 +1274,12 @@ function workflowTerminalBlocker(
     return blocker;
   }
   if (workflow.status === "failed") {
-    return language === "en-US" ? "Workflow failed." : "工作流执行失败。";
+    return formatServerCatalogMessage(language, "daemon.workflow.failed_reason");
   }
   if (workflow.status === "blocked") {
-    return language === "en-US" ? "Workflow is blocked." : "工作流已阻塞。";
+    return formatServerCatalogMessage(language, "daemon.workflow.blocked_reason");
   }
-  return language === "en-US" ? "No additional reason was recorded." : "没有记录更多原因。";
+  return formatServerCatalogMessage(language, "daemon.workflow.missing_reason");
 }
 
 function renderWorkflowStepContextPackPrompt(pack: ContextPack): string {
@@ -1311,6 +1309,7 @@ function snapshotWorkflowStepContextPack(pack: ContextPack): WorkflowStepRunCont
       id: section.id,
       role: section.role,
       priority: section.priority,
+      compactionSurvival: section.compactionSurvival,
       estimatedTokens: section.estimatedTokens,
       sourceRefIds: section.sourceRefIds,
       metadata: section.metadata,

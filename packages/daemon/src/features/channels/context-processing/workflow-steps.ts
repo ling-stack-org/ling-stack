@@ -75,6 +75,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
       id: "workflow_runtime_boundary",
       role: "instruction",
       priority: "must_keep",
+      compactionSurvival: "rebuild",
       title: "workflow_runtime_boundary",
       text: [
         "Workflow step runtime boundary:",
@@ -92,6 +93,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
       id: "workflow_objective",
       role: "user",
       priority: "must_keep",
+      compactionSurvival: "summarize",
       title: "workflow_objective",
       text: [
         "Workflow objective:",
@@ -114,6 +116,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
       id: "workflow_current_step",
       role: "user",
       priority: "must_keep",
+      compactionSurvival: "summarize",
       title: "workflow_current_step",
       text: [
         "Current workflow step:",
@@ -135,6 +138,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
       id: "workflow_approval_gates",
       role: "instruction",
       priority: "high",
+      compactionSurvival: "rebuild",
       title: "workflow_approval_gates",
       text: [
         "Approval gates:",
@@ -153,6 +157,7 @@ export function buildWorkflowStepContextView(input: BuildWorkflowStepContextView
           id: "workflow_context_summary",
           role: "evidence" as const,
           priority: "medium" as const,
+          compactionSurvival: "summarize" as const,
           title: "workflow_context_summary",
           text: [
             "Channel context summary:",
@@ -206,6 +211,7 @@ function buildCompactedWorkflowDependencySection(summary: WorkflowStepCompactedD
     id: "workflow_dependency_summary",
     role: "evidence",
     priority: "high",
+    compactionSurvival: "summarize",
     title: "workflow_dependency_summary",
     text: summary.text,
     sourceRefIds: summary.sourceRefIds,
@@ -224,6 +230,7 @@ function buildWorkflowStepDependencySections(input: WorkflowStepContextPackInput
       id: "workflow_dependencies",
       role: "evidence",
       priority: "high",
+      compactionSurvival: "summarize",
       title: "workflow_dependencies",
       text: "Dependencies:\n- none",
       sourceRefIds: [input.step.id],
@@ -241,6 +248,7 @@ function buildWorkflowStepDependencySections(input: WorkflowStepContextPackInput
       id: `workflow_dependency_${index + 1}`,
       role: "evidence",
       priority: "high",
+      compactionSurvival: "summarize",
       title: `workflow_dependency_${index + 1}`,
       text: [
         "Dependency output:",
@@ -273,6 +281,7 @@ function formatWorkflowDecisionAndHandoffSections(input: WorkflowStepContextPack
       id: "workflow_selector_decisions",
       role: "evidence",
       priority: "high",
+      compactionSurvival: "summarize",
       title: "workflow_selector_decisions",
       text: ["Workflow selector decisions:", ...lines].join("\n"),
       sourceRefIds: selectorDecisionIds,
@@ -291,6 +300,7 @@ function formatWorkflowDecisionAndHandoffSections(input: WorkflowStepContextPack
       id: "workflow_handoff_intents",
       role: "evidence",
       priority: "high",
+      compactionSurvival: "summarize",
       title: "workflow_handoff_intents",
       text: ["Workflow handoff intents:", ...lines].join("\n"),
       sourceRefIds: handoffIntentIds,

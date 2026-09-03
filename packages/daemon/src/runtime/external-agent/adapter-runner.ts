@@ -147,6 +147,9 @@ async function handleExternalAgentEvent(
   }
   const normalized = normalizeExternalAgentEvent(event, input.extraSecrets ?? []);
   if (normalized) {
+    if (normalized.type === "run_error") {
+      throw new Error(normalized.message);
+    }
     emit(normalized);
   }
 }

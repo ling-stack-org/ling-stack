@@ -465,6 +465,7 @@ async function executeCommand(method, params) {
   const tab = await resolveTargetTab(params.tabId);
   if (!tab.id || !isAllowedPageUrl(tab.url ?? "")) throw new Error("Target tab is unavailable");
   if (method === "chrome_screenshot") {
+    await chrome.windows.update(tab.windowId, { focused: true });
     await chrome.tabs.update(tab.id, { active: true });
     const image = dataUrlImage(await chrome.tabs.captureVisibleTab(tab.windowId, { format: "jpeg", quality: 75 }));
     return { tabId: tab.id, ...image };

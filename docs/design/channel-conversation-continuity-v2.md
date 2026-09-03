@@ -1,21 +1,126 @@
 # Channel Conversation Continuity v2
 
-Status: semantic completion/recovery is implemented and has historical isolated packaged
-macOS acceptance. Delivery was reopened at the Node 22 SQLite transaction-composition
-boundary, and the supplemental Attempt-fence, typed-outcome, required-coverage, and
-single-terminal-projection hardening is now present in the active WIP. Earlier packaged
-evidence proves the behavior contract, but it predates those corrections and is not
-release evidence for the current source. Focused S3.5 source regressions are green; the
-corrected full Daemon aggregate, repository-wide source gates, and fresh packaged
-naked-ready, Engineer + QA fan-in, daemon restart, SSE reconnect, and canonical
-SQLite-lineage acceptance remain. Current release verdict: source implementation exists,
-but S3.5 verification, packaged behavior, and delivery are not cleared. The current
-release can close only after the active S3.5/S4/S5/S6 gates in the execution plan pass on
-one post-hardening artifact.
+Status: semantic completion/recovery is implemented. The current post-hardening source
+matrix is green, and one fresh macOS arm64 artifact has passed configured Engineer + QA
+fan-in, real Host write/command evidence, naked-`ready` blocking, missing-provider
+blocking, daemon restart, SSE disconnect/reconnect, replay idempotency, and canonical
+SQLite-lineage checks. The same artifact also passes the no-checkpoint/effect-unknown
+restart windows and the old-schema migration 119-121 rollback/reopen fixture. Only the
+repository delivery gate remains; historical package hashes are not reused as current
+release evidence.
 Date: 2026-08-08
-Last verified: 2026-08-18
+Last verified: 2026-08-25
 Scope: channel conversation persistence, Thread/Turn/Item topology, context segmentation,
 context projection, rolling summaries, multi-agent recovery, and Channel Intent Decision v2
+
+## Harness Integration Boundary
+
+The Ling product model and the execution harness are deliberately adjacent, not
+interchangeable. Adapters may translate between them, but neither side may silently
+become the other's authority:
+
+1. **Timeline authority.** The Ling timeline is the only conversation authority. A
+   harness transcript is execution evidence and a message projection only; it must not
+   be replayed as canonical conversation history.
+2. **Immutable run input.** `ChannelContextView` is the immutable projection captured
+   before a Run is created. It is not mutable Channel state, and later Channel changes
+   must not rewrite the Run's input lineage.
+3. **Product versus execution semantics.** `LingThread` and `LingTurn` describe product
+   conversation semantics. Codex Thread and Turn describe harness execution semantics.
+   The adapter preserves both identities and does not merge the two models.
+4. **Approval protocol bridge.** Ling approval is an asynchronous, durable,
+   event-driven product event. Harness approval is a synchronous, blocking RPC. The
+   approval adapter bridges the wait and wake-up semantics while keeping Ling's event
+   as the source of truth.
+5. **Durable approval ownership.** Durable approvals are managed by Ling. The harness
+   only implements the approval adapter and reports request/decision evidence; it does
+   not own approval persistence or lifecycle authority.
+
+### Typed RunEvent boundary
+
+`RunEventEnvelope` is execution evidence, not a second conversation record. Its
+`type` is now a discriminant for `data`: producers append a payload from the matching
+`RunEventDataByType[K]`, and consumers narrow on `event.type` before reading fields.
+Provider-specific details may remain in bounded opaque fields (`args`, `result`, or
+metadata), but the envelope itself may not fall back to `unknown`.
+
+The SQLite event log is a replay boundary. Rows are validated as JSON objects when
+read, malformed payloads fail closed, and replay consumers must be idempotent. A
+replayed event may update a deterministic projection, but it must not create a second
+Ling turn, approval authority, artifact authority, or canonical history entry.
+
+### Conversation Item projection boundary
+
+The existing `ConversationItemV1` model is the Item layer; no second Item table or
+mutable execution store is introduced:
+
+```text
+Ling timeline authority
+  ├── LingThread
+  ├── LingTurn
+  └── ConversationItem
+
+execution evidence
+  └── RunEventEnvelope
+
+typed, read-only projection
+  └── rich timeline / activity UI
+```
+
+The core projection maps assistant deltas, tool start/end, approval request/decision,
+artifact creation, and terminal/intervention state into typed Items. Item identity is
+deterministic (`run + event domain key`), tool and approval pairs are matched by their
+IDs, and incomplete pairs remain renderable rather than crashing replay. The projection
+owns neither Run, Approval, Artifact, nor workspace state; it stores only domain refs.
+Its sequence is projection-local and must not be written directly into the canonical
+SQLite Item sequence allocator. UI code must render the typed kind/payload instead of
+inferring tools or approvals from prose.
+
+### `workspace_knowledge` provider boundary (reserved)
+
+`ChannelContextSourceKind` reserves `workspace_knowledge` for a future provider that
+can inject bounded, structured workspace facts such as `AGENTS.md`, design documents,
+quality levels, and workspace policy. This slice intentionally provides no source
+provider or automatic injection path. A future provider must return source refs,
+freshness, quality metadata, and bounded text; pass through the same sensitivity,
+permission, and `ChannelContextView` filtering as every other source; and define a
+refresh/revalidation policy for long-running autonomous Runs.
+
+### Post-compaction undo boundary (reserved)
+
+Compaction may reduce prompt context, but it must never delete workspace-change
+provenance. Undo semantics are deferred until the Continuity v2 compaction implementation
+freezes these facts:
+
+- the exact workspace snapshot or patch basis to which undo returns;
+- a durable chain from compacted Turns to `RunArtifact`, patch plan, Run lineage, and
+  source refs;
+- a fail-closed rule when the target snapshot cannot be verified.
+
+A condenser summary is context evidence only; it is never the authority for undo. A
+future implementation must answer how changes from compacted Turns are traced before
+exposing an undo action.
+
+## Current release checkpoint (2026-08-25)
+
+The clean delivery worktree is based on `origin/main` at `ea1f580f0e6cc57fe07dca4f8615be3b28ae35b8`.
+Source gates pass: Contracts `46/46`, Core `445/445`, and Daemon `1090/1090`.
+The fresh packaged smoke runner is `apps/desktop/tests/run-packaged-continuity-smoke.mjs`
+(`pnpm --filter @ling-stack/desktop smoke:continuity:mac`). Its post-build evidence is:
+
+- ZIP SHA-256: `4cfc3e7e432fa98531d858b603be88f364d60cdea275c66bdecd787d66def8cc`;
+- DMG SHA-256: `f25ee6683db6aeeacde8f83d92037b884630511a8d5463abe2d6f7bcf2a14ffe`;
+- bundle `codesign --verify --deep --strict`: passed;
+- packaged smoke: passed, including launch/health, SSE disconnect/reconnect, real
+  Engineer write, exact QA command, required-participant fan-in, one TerminalReport and
+  final Item, naked-`ready` and missing-provider blockers, safe checkpoint/no-checkpoint/
+  effect-unknown restart classification, daemon restart, replay idempotency, migration
+  rollback/reopen, foreign-key check, and integrity check.
+
+The package uses an Apple Development identity and is not notarized; `spctl` rejection
+(`exit 3`) is expected for this local QA artifact and is not a distribution-readiness
+claim. The packaged runtime and SQLite upgrade gates are complete; delivery still requires
+final diff review, PR/CI, merge, remote-main parity, and exact QA cleanup.
 
 Related docs:
 
@@ -23,7 +128,6 @@ Related docs:
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Context Processing Layer Implementation Plan](channel-context-processing-layer-implementation-plan.md)
 - [Channel Context Budget Manager](channel-context-budget-manager.md)
-- [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
 - [Thread-First Work History v2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Conversation Memory Citations And Sources](conversation-memory-citations-and-sources.md)
 - [Multi-Agent Orchestrator](multi-agent-orchestrator.md)

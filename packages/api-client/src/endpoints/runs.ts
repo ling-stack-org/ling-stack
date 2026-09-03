@@ -50,6 +50,7 @@ import type {
   ToolLoadRequestResponse,
   ToolSurfaceResponse,
   RunWorkspaceChangesResponse,
+  TurnWorkspaceChangesResponse,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
@@ -284,6 +285,18 @@ export const runEndpoints = {
 
   async reapplyRunWorkspaceChanges(this: LingDaemonEndpointContext, runId: string, cwd?: string): Promise<RunWorkspaceChangesResponse> {
       return this._post(`/runs/${encodeURIComponent(runId)}/workspace-changes/reapply`, { cwd }, {});
+    },
+
+  async getTurnWorkspaceChanges(this: LingDaemonEndpointContext, turnId: string, cwd?: string): Promise<TurnWorkspaceChangesResponse> {
+      return this._get(`/turns/${encodeURIComponent(turnId)}/workspace-changes`, { cwd });
+    },
+
+  async undoTurnWorkspaceChanges(this: LingDaemonEndpointContext, turnId: string, idempotencyKey: string, cwd?: string): Promise<TurnWorkspaceChangesResponse> {
+      return this._post(`/turns/${encodeURIComponent(turnId)}/workspace-changes/undo`, { cwd, idempotencyKey }, {});
+    },
+
+  async reapplyTurnWorkspaceChanges(this: LingDaemonEndpointContext, turnId: string, idempotencyKey: string, cwd?: string): Promise<TurnWorkspaceChangesResponse> {
+      return this._post(`/turns/${encodeURIComponent(turnId)}/workspace-changes/reapply`, { cwd, idempotencyKey }, {});
     },
 
   async listRunArtifacts(this: LingDaemonEndpointContext, runId: string, cwd?: string): Promise<RunArtifactListResponse> {

@@ -173,6 +173,7 @@ test("Native connection owns commands and removes legacy workspace credentials a
     WebSocket: globalThis.WebSocket,
   };
   const ports = [];
+  const screenshotCalls = [];
   const activeIntervals = new Set();
   const runtimeListeners = { alarm: undefined, installed: undefined, message: undefined, startup: undefined };
   const stored = {
@@ -241,7 +242,22 @@ test("Native connection owns commands and removes legacy workspace credentials a
         },
       },
       tabs: {
+        captureVisibleTab: async (windowId, options) => {
+          screenshotCalls.push(["tabs.captureVisibleTab", windowId, options]);
+          return "data:image/jpeg;base64,ZmFrZQ==";
+        },
+        get: async () => ({ id: 7, windowId: 1, active: true, title: "Ling fixture", url: "https://example.com" }),
         query: async () => [{ id: 7, windowId: 1, active: true, title: "Ling fixture", url: "https://example.com" }],
+        update: async (tabId, options) => {
+          screenshotCalls.push(["tabs.update", tabId, options]);
+          return { id: tabId, windowId: 1, active: true, title: "Ling fixture", url: "https://example.com" };
+        },
+      },
+      windows: {
+        update: async (windowId, options) => {
+          screenshotCalls.push(["windows.update", windowId, options]);
+          return { id: windowId, focused: true };
+        },
       },
     },
   });
@@ -306,6 +322,22 @@ test("Native connection owns commands and removes legacy workspace credentials a
     });
     await settle();
     assert.equal(ports[0].messages.some((message) => message.id === "native-tabs" && message.ok === true), true);
+
+    ports[0].emitMessage({
+      protocol: "ling.chrome.v1",
+      type: "command",
+      id: "native-screenshot",
+      method: "chrome_screenshot",
+      params: { tabId: 7 },
+      deadlineAt: new Date(Date.now() + 60_000).toISOString(),
+    });
+    await settle();
+    assert.deepEqual(screenshotCalls, [
+      ["windows.update", 1, { focused: true }],
+      ["tabs.update", 7, { active: true }],
+      ["tabs.captureVisibleTab", 1, { format: "jpeg", quality: 75 }],
+    ]);
+    assert.equal(ports[0].messages.some((message) => message.id === "native-screenshot" && message.ok === true), true);
 
     const paused = await sendPopupMessage(runtimeListeners.message, { type: "pause" });
     assert.equal(paused.state, "paused");

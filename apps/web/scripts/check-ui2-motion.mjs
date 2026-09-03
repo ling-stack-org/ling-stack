@@ -5,7 +5,6 @@ import process from "node:process";
 const migratedFiles = [
   "src/styles/base.css",
   "src/styles/app/sidebar-layout.css",
-  "src/styles/app/sidebar-rail-sections.css",
   "src/styles/app/sidebar-ui2.css",
   "src/styles/channel-execution-proposal.css",
   "src/styles/channel-right-dock/shell.css",

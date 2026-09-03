@@ -7,6 +7,7 @@ import type { ConversationActiveReplyTarget, RunEventEnvelope, RunIntervention, 
 import type { LingThread } from "./threads.js";
 import type { LingTurn } from "./turns.js";
 import type { TerminalReportDto } from "./terminal-reports.js";
+import type { ConversationGeneratedMedia } from "./media.js";
 
 export type ConversationTranscriptRole = "user" | "assistant" | "system";
 export type ConversationTranscriptStatus = "pending" | "running" | "succeeded" | "failed" | "blocked" | "cancelled";
@@ -17,6 +18,8 @@ export interface ConversationTranscriptMessage {
   readonly authorId?: string;
   readonly authorLabel?: string;
   readonly content: string;
+  /** Runtime/provider failure kept separate from assistant narrative content. */
+  readonly errorMessage?: string;
   readonly attachments?: readonly ConversationAttachment[];
   readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly status: ConversationTranscriptStatus;
@@ -90,6 +93,7 @@ export interface ConversationDetailResponse {
   readonly interventions: readonly RunIntervention[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly messages: readonly ConversationTranscriptMessage[];
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly defaults: {
     readonly projectPath?: string;
     readonly providerPresetId?: string;

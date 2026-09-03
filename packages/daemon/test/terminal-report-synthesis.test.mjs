@@ -114,6 +114,46 @@ test("terminal report synthesis restores evidence-bound file refs omitted by the
   });
 });
 
+test("terminal report synthesis binds participant contributions to semantic Host evidence", async () => {
+  await withSynthesisFixture([], async ({ store, snapshot, runnerRegistry, runner, secretResolver }) => {
+    const qaRunId = snapshot.participants.find((participant) => participant.agentId === "qa")?.runIds[0];
+    assert.ok(qaRunId);
+    const rawCommand = "node -e \"const p=Buffer.from('c2Vuc2l0aXZlLXBhdGg=','base64').toString('utf8');if (!p) process.exit(1)\"";
+    store.appendEvent(qaRunId, "tool_start", {
+      toolCallId: "qa_raw_command",
+      toolName: "bash",
+      args: { command: rawCommand },
+    });
+    store.appendEvent(qaRunId, "tool_end", {
+      toolCallId: "qa_raw_command",
+      toolName: "bash",
+      isError: false,
+    });
+    const evidenceSnapshot = collectWorkflowTerminalReportEvidence(store, snapshot.source.id, {
+      generatedAt: "2026-07-11T06:00:00.000Z",
+    });
+    const valid = buildDeterministicTerminalReportContent(evidenceSnapshot);
+    runner.responses = [JSON.stringify({
+      ...valid,
+      participants: valid.participants.map((participant) => participant.agentId === "qa"
+        ? { ...participant, contribution: rawCommand }
+        : participant),
+    })];
+
+    const result = await synthesizeTerminalReportContent({
+      store,
+      snapshot: evidenceSnapshot,
+      runnerRegistry,
+      secretResolver,
+      timeoutMs: 100,
+    });
+    assert.equal(result.mode, "model");
+    const qaContribution = result.content?.participants.find((participant) => participant.agentId === "qa")?.contribution ?? "";
+    assert.equal(qaContribution, "Verified: verification (completed)");
+    assert.doesNotMatch(qaContribution, /Buffer\.from|sensitive-path/u);
+  });
+});
+
 test("terminal report synthesis times out directly to fallback", async () => {
   await withSynthesisFixture([], async ({ store, snapshot, secretResolver }) => {
     const runner = new BlockingRunner();

@@ -4,8 +4,10 @@ import { chmod, mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { test } from "node:test";
+import { supportsNativeHostBuild } from "../scripts/test.mjs";
 import {
   browserHostStatus,
+  buildDevelopmentBrowserHost,
   createChromeBrowserRuntimeDescriptor,
   installBrowserHost,
   publishChromeBrowserRuntimeDescriptor,
@@ -13,6 +15,19 @@ import {
   removeChromeBrowserRuntimeDescriptor,
   uninstallBrowserHost,
 } from "../dist/index.js";
+
+test("development install delegates to the signed native Host build", {
+  skip: !supportsNativeHostBuild(process.platform, process.arch),
+}, async () => {
+  const commands = [];
+  const hostPath = await buildDevelopmentBrowserHost({
+    runCommand: async (file, args) => { commands.push([file, ...args]); },
+  });
+  assert.equal(hostPath.endsWith(process.platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host"), true);
+  assert.equal(commands.length, 1);
+  assert.equal(commands[0][0], process.execPath);
+  assert.equal(commands[0][1].endsWith("scripts/build-native.mjs"), true);
+});
 
 test("macOS browser Host install is idempotent and uninstall removes only owned manifests", async () => {
   const root = await mkdtemp(join(tmpdir(), "ling-browser-host-mac-"));

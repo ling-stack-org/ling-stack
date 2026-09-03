@@ -47,51 +47,9 @@
 .teammate-model-field,
 .teammate-model-error,
 .teammate-model-feedback,
-.teammate-model-empty,
-.teammate-model-summary {
+.teammate-model-empty {
   width: 100%;
   min-width: 0;
-}
-
-.teammate-model-summary {
-  display: grid;
-  overflow: hidden;
-  border: 1px solid var(--ling-border-default);
-  border-radius: var(--ling-radius-md);
-  background: var(--ling-bg-panel);
-}
-
-.teammate-model-summary-row {
-  min-width: 0;
-  grid-template-columns: minmax(112px, 0.72fr) minmax(0, 1.28fr);
-  gap: var(--ling-space-4);
-  padding-inline: var(--ling-space-4);
-  border-bottom: 1px solid var(--ling-border-default);
-}
-
-.teammate-model-summary-row:last-child {
-  border-bottom: 0;
-}
-
-.teammate-model-summary-label,
-.teammate-model-summary-value {
-  display: block;
-  min-width: 0;
-  overflow: hidden;
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.teammate-model-summary-label {
-  color: var(--ling-text-muted);
-}
-
-.teammate-model-summary-value {
-  color: var(--ling-text-strong);
-  font-weight: 650;
-  text-align: right;
 }
 
 .teammate-model-actions {

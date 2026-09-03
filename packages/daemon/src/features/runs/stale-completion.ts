@@ -1,5 +1,6 @@
 import type {
   RunEventEnvelope,
+  RunEventDataByType,
   RunnerFallbackReason,
   RunSession,
   RunStatus,
@@ -18,7 +19,7 @@ export type StaleRunnerCompletionReason =
   | "work_unit_cancelled"
   | "work_unit_stale";
 
-export interface StaleRunnerCompletionIgnoredPayload {
+export type StaleRunnerCompletionIgnoredPayload = RunEventDataByType["stale_runner_completion_ignored"] & {
   readonly runId: string;
   readonly workUnitId?: string;
   readonly attemptId?: string;
@@ -31,7 +32,7 @@ export interface StaleRunnerCompletionIgnoredPayload {
   readonly effectiveRunnerId?: string;
   readonly fallbackReason?: RunnerFallbackReason;
   readonly reportedAt: string;
-}
+};
 
 export function auditIgnoredRunnerCompletion(input: {
   readonly store: RunStore;

@@ -16,7 +16,8 @@ export type ChannelContextSourceKind =
   | "artifact"
   | "workflow"
   | "workflow_step"
-  | "workflow_packet";
+  | "workflow_packet"
+  | "workspace_knowledge";
 
 export type ChannelContextSensitivity = "normal" | "private" | "secret_adjacent";
 export type ChannelContextFreshness = "current_turn" | "recent" | "durable" | "archival";
@@ -25,6 +26,7 @@ export type ChannelContextQuotePolicy = "public_ok" | "influence_only" | "inspec
 export type ChannelContextDroppedReason = "budget" | "scope" | "sensitivity" | "raw_evidence" | "unrelated";
 export type ChannelContextSectionRole = "system" | "instruction" | "user" | "memory" | "evidence";
 export type ChannelContextSectionPriority = "must_keep" | "high" | "medium" | "low";
+export type ChannelContextSectionCompactionSurvival = "rebuild" | "summarize" | "discard";
 
 export type ChannelContextViewKind =
   | "ling_agent_channel_view"
@@ -59,6 +61,8 @@ export interface ChannelContextSection {
   readonly id: string;
   readonly role: ChannelContextSectionRole;
   readonly priority: ChannelContextSectionPriority;
+  /** Lifecycle is independent from priority: it controls what compaction may do. */
+  readonly compactionSurvival: ChannelContextSectionCompactionSurvival;
   readonly title: string;
   readonly text: string;
   readonly sourceRefIds: readonly string[];
@@ -87,6 +91,8 @@ export interface ChannelContextCondenserMetadata {
   readonly maxSources?: number;
   readonly condensedSourceCount: number;
   readonly droppedSourceCount: number;
+  readonly condensedSectionCount?: number;
+  readonly discardedSectionCount?: number;
 }
 
 export interface ChannelContextViewMetadata {

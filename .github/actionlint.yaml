@@ -1,4 +1,0 @@
-self-hosted-runner:
-  labels:
-    - ling-cua-driver-macos-arm64-v1
-    - ling-cua-driver-windows-x64-v1

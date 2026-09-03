@@ -15,6 +15,7 @@ import type {
   EffectiveConfigSource,
   EffectiveConfigValue,
 } from "@ling-stack/contracts";
+import { isSupportedLocale } from "@ling-stack/localization";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import {
   loadWorkspaceRuntimeSettingsWithSources,
@@ -25,7 +26,7 @@ import {
 
 interface UserSettingsLayer {
   readonly theme?: "light" | "dark" | "system";
-  readonly locale?: string;
+  readonly locale?: WorkspaceSettings["locale"];
   readonly responseLanguage?: WorkspaceSettings["responseLanguage"];
   readonly lingConversationTone?: WorkspaceSettings["lingConversationTone"];
 }
@@ -168,10 +169,11 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
   return {
     workspaceCwd: readNullableString(record.workspaceCwd, "workspaceCwd"),
     theme: readNullableTheme(record.theme),
-    locale: readNullableString(record.locale, "locale"),
+    locale: readNullableLocale(record.locale),
     responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
     lingConversationTone: readNullableLingConversationTone(record.lingConversationTone),
     defaultProviderPresetId: readNullableString(record.defaultProviderPresetId, "defaultProviderPresetId"),
+    mediaGenerationDefaults: readNullableMediaGenerationDefaults(record.mediaGenerationDefaults),
     defaultAuthorizationMode: readNullableAuthorizationMode(record.defaultAuthorizationMode),
     defaultWorkspaceAccessMode: readNullableWorkspaceAccessMode(record.defaultWorkspaceAccessMode),
     defaultPermissionMode: readNullableSessionPermissionMode(record.defaultPermissionMode),
@@ -180,6 +182,51 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     channelActivityViews: readNullableUnknownRecord(record.channelActivityViews, "channelActivityViews"),
     skillGovernancePolicy: readNullableSkillGovernancePolicy(record.skillGovernancePolicy),
   };
+}
+
+function readNullableMediaGenerationDefaults(
+  value: unknown,
+): UpdateWorkspaceSettingsInput["mediaGenerationDefaults"] {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  if (typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("mediaGenerationDefaults must be an object or null");
+  }
+  const record = value as Record<string, unknown>;
+  const image = readOptionalMediaGenerationTargetRef(record.image, "mediaGenerationDefaults.image");
+  const video = readOptionalMediaGenerationTargetRef(record.video, "mediaGenerationDefaults.video");
+  return {
+    ...(image ? { image } : {}),
+    ...(video ? { video } : {}),
+  };
+}
+
+function readOptionalMediaGenerationTargetRef(
+  value: unknown,
+  path: string,
+): NonNullable<UpdateWorkspaceSettingsInput["mediaGenerationDefaults"]>["image"] {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    throw new Error(`${path} must be an object`);
+  }
+  const record = value as Record<string, unknown>;
+  if (record.kind === "provider") {
+    return { kind: "provider", providerPresetId: readRequiredTargetId(record.providerPresetId, `${path}.providerPresetId`) };
+  }
+  if (record.kind === "workflow") {
+    return { kind: "workflow", workflowDefinitionId: readRequiredTargetId(record.workflowDefinitionId, `${path}.workflowDefinitionId`) };
+  }
+  throw new Error(`${path}.kind must be provider or workflow`);
+}
+
+function readRequiredTargetId(value: unknown, path: string): string {
+  if (typeof value !== "string" || !value.trim()) {
+    throw new Error(`${path} must be a non-empty string`);
+  }
+  return value.trim();
 }
 
 function effectiveValue<T>(
@@ -229,7 +276,7 @@ async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigD
   }
   const result: {
     theme?: "light" | "dark" | "system";
-    locale?: string;
+    locale?: WorkspaceSettings["locale"];
     responseLanguage?: WorkspaceSettings["responseLanguage"];
     lingConversationTone?: WorkspaceSettings["lingConversationTone"];
   } = {};
@@ -237,7 +284,7 @@ async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigD
   if (theme) {
     result.theme = theme;
   }
-  const locale = readOptionalNonEmptyString(record.locale, "locale", path, diagnostics, "user_settings_invalid_locale");
+  const locale = readOptionalLocale(record.locale, path, diagnostics);
   if (locale) {
     result.locale = locale;
   }
@@ -324,8 +371,18 @@ function readNullableResponseLanguagePreference(value: unknown): UpdateWorkspace
   if (value === null) {
     return null;
   }
-  if (value !== "follow_user" && value !== "zh-CN" && value !== "en-US") {
-    throw new Error("responseLanguage must be follow_user, zh-CN, en-US, or null");
+  if (value !== "follow_user" && !isSupportedLocale(value)) {
+    throw new Error("responseLanguage must be follow_user, a supported locale, or null");
+  }
+  return value;
+}
+
+function readNullableLocale(value: unknown): UpdateWorkspaceSettingsInput["locale"] {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  if (!isSupportedLocale(value)) {
+    throw new Error("locale must be a supported locale or null");
   }
   return value;
 }
@@ -484,13 +541,29 @@ function readOptionalResponseLanguage(value: unknown, path: string, diagnostics:
   if (value === undefined) {
     return undefined;
   }
-  if (value === "follow_user" || value === "zh-CN" || value === "en-US") {
+  if (value === "follow_user" || isSupportedLocale(value)) {
     return value;
   }
   diagnostics.push({
     level: "warning",
     code: "user_settings_invalid_response_language",
-    message: "responseLanguage must be follow_user, zh-CN, or en-US.",
+    message: "responseLanguage must be follow_user or a supported locale.",
+    path,
+  });
+  return undefined;
+}
+
+function readOptionalLocale(value: unknown, path: string, diagnostics: EffectiveConfigDiagnostic[]): WorkspaceSettings["locale"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (isSupportedLocale(value)) {
+    return value;
+  }
+  diagnostics.push({
+    level: "warning",
+    code: "user_settings_invalid_locale",
+    message: "locale must be a supported locale.",
     path,
   });
   return undefined;

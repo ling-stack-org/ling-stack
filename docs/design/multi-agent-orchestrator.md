@@ -3,12 +3,13 @@
 Status: active; evidence-aware finalization, Completion Gate, approval-wait suspension,
 reconnect recovery, explicit participant preservation, participant authority/profile,
 and typed provider preflight exist. Explicit Node 22 transaction ownership, its fault
-matrix, and the pre-S3.5 source matrix are green. The Runtime fence, closed
-delegated-outcome binding, required-participant coverage, and single-terminal-publication
-amendments are implemented in the active WIP and focused regressions are green. The full
-Daemon/source matrix must be regenerated before fresh packaged naked-ready,
-approval-resume/fan-in, and reconnect acceptance.
-Last verified: 2026-08-18
+matrix, Runtime fencing, closed delegated-outcome binding, required-participant
+coverage, and single-terminal-publication amendments are implemented and green. The
+fresh packaged macOS matrix is also green for naked-ready and missing-provider
+blockers, Engineer + QA fan-in, safe checkpoint/no-checkpoint/effect-unknown restart
+classification, daemon restart, SSE reconnect, and final evidence publication. Only
+S6 delivery review/PR/CI/merge remains for this slice.
+Last verified: 2026-08-25
 
 ## Purpose
 
@@ -946,8 +947,9 @@ at most one eligible step.
 
 Status: evidence-aware delegated finalization, five-state Completion Evaluation, full
 canonical read-set CAS, fan-in validation, and removal of direct Run-success shortcuts are
-focused green in the active Continuity v2 amendment. The full deterministic suite is
-green; packaged macOS verification remains pending.
+green in the active Continuity v2 amendment. The full deterministic suite and the fresh
+packaged macOS matrix are green; the remaining work is S6 delivery only. Earlier
+references to packaged verification being pending are historical checkpoints.
 
 - After a linked run reaches terminal state, tick the workflow.
 - Persist the immutable delegated requirement on the graph step and Run request snapshot.

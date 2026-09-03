@@ -151,7 +151,7 @@ export async function handleProviderModelImport(
       const modelCapabilities = providerCapabilitiesWithReasoning(model.capabilities ?? input.capabilities, modelReasoning);
       const modelContextWindow = model.contextWindow ?? input.contextWindow;
       const modelMaxTokens = model.maxTokens ?? input.maxTokens;
-      const displayName = providerImportDisplayName(input.displayName, model);
+      const displayName = providerImportDisplayName(input.providerId, input.displayName, model);
       const existing = existingProviders.find((provider) =>
         provider.providerId === input.providerId &&
         provider.api === modelApi &&
@@ -756,8 +756,13 @@ function normalizeProviderImportEndpoint(value: string | undefined): string {
   return (value ?? "").trim().replace(/\/+$/, "");
 }
 
-function providerImportDisplayName(providerDisplayName: string, model: { readonly id: string; readonly displayName?: string }): string {
+function providerImportDisplayName(
+  providerId: string,
+  providerDisplayName: string,
+  model: { readonly id: string; readonly displayName?: string },
+): string {
   const modelName = model.displayName?.trim() || model.id;
+  if (providerId === "custom-openai-compatible") return modelName;
   return `${providerDisplayName.trim()} · ${modelName}`;
 }
 

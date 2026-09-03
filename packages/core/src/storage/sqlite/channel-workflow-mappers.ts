@@ -10,6 +10,7 @@ import {
   isWorkflowCompletionGateV1,
   type WorkflowParticipantAuthorityV1,
 } from "@ling-stack/contracts";
+import { isSupportedLocale } from "@ling-stack/localization";
 import type { RunTool } from "../../approval-policy.js";
 import type { SkillApprovalProfile } from "../../skill-types.js";
 import {
@@ -21,7 +22,7 @@ import {
   type ChannelWorkflowStep,
   type ChannelWorkflowStepMetadata,
   type ChannelWorkflowStepStatus,
-  type ResponseLanguage,
+  type ResponseLanguagePreference,
   type WorkflowFanInPolicy,
   type WorkflowFanInContextReview,
   type WorkflowHandoffIntent,
@@ -682,8 +683,8 @@ function parseOptionalApprovalProfileValue(value: unknown): SkillApprovalProfile
     : undefined;
 }
 
-function parseOptionalResponseLanguage(value: unknown): ResponseLanguage | undefined {
-  return value === "zh-CN" || value === "en-US" ? value : undefined;
+function parseOptionalResponseLanguage(value: unknown): ResponseLanguagePreference | undefined {
+  return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
 function isWorkflowSelectorTargetKindValue(value: unknown): value is WorkflowSelectorTargetKind {
@@ -693,15 +694,18 @@ function isWorkflowSelectorTargetKindValue(value: unknown): value is WorkflowSel
 function isWorkflowPacketSourceRefTypeValue(value: unknown): value is WorkflowPacketSourceRef["type"] {
   return (
     value === "channel_message" ||
+    value === "conversation_item" ||
     value === "channel_brief" ||
     value === "channel_decision" ||
     value === "context_summary" ||
     value === "task" ||
     value === "run" ||
+    value === "attempt" ||
     value === "workflow" ||
     value === "workflow_step" ||
     value === "workflow_handoff_intent" ||
     value === "workflow_selector_decision" ||
+    value === "execution_action" ||
     value === "artifact" ||
     value === "approval" ||
     value === "memory"

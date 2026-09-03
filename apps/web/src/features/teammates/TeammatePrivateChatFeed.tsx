@@ -5,6 +5,10 @@ import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
+  buildComposerGateApprovalPresentationByRunId,
+  composerGateApprovalPresentationForWorkCell,
+} from "../../lib/runtime-approval-presentation.js";
+import {
   AvatarInitial,
   UsedMemorySummary,
   UsedMemorySummaryLabel,
@@ -13,6 +17,7 @@ import {
 } from "../../shared/components/index.js";
 import {
   ConversationAttachmentStrip,
+  ConversationGeneratedMediaBlock,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
   ConversationVirtualFeed,
@@ -24,7 +29,7 @@ import {
 } from "../../shared/conversation/index.js";
 import { ConversationWorkCell } from "../../shared/conversation/blocks/ConversationWorkCell.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import type { TeammateDirectLinkPreview, TeammatePrivateAttachment } from "../../types.js";
+import type { ConversationGeneratedMedia, TeammateDirectLinkPreview, TeammatePrivateAttachment } from "../../types.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import type { TeammatePrivateChatSurfaceProps } from "./teammate-private-chat-types.js";
 import {
@@ -41,7 +46,9 @@ export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "approvals"
   | "cwd"
   | "directLinkPreviewById"
+  | "composerGateApprovals"
   | "executionActions"
+  | "generatedMedia"
   | "latestButtonVisible"
   | "loading"
   | "memoryById"
@@ -76,7 +83,9 @@ export function TeammatePrivateChatFeed({
   approvals,
   cwd,
   directLinkPreviewById,
+  composerGateApprovals,
   executionActions,
+  generatedMedia,
   latestButtonVisible,
   loading,
   memoryById,
@@ -108,6 +117,10 @@ export function TeammatePrivateChatFeed({
   const { t } = useI18n();
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
   const runById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);
+  const composerGateApprovalByRunId = useMemo(
+    () => buildComposerGateApprovalPresentationByRunId(composerGateApprovals, t),
+    [composerGateApprovals, t],
+  );
   const workCellByMessageId = useMemo(() => buildTeammatePrivateWorkCellMap({
     messages: visibleMessages,
     teammateId: teammate.id,
@@ -141,6 +154,7 @@ export function TeammatePrivateChatFeed({
           onUserScrollIntent={onCancelPrivateFeedAutoFollow}
           renderItem={(message) => {
             const workCell = workCellByMessageId.get(message.id);
+            const messageGeneratedMedia = generatedMediaForDirectMessage(generatedMedia, message);
             const projection = projectTeammatePrivateMessage({
               hasStructuredTerminalReport: Boolean(workCell?.model.terminalReportRows.length),
               localUserDisplayName,
@@ -151,6 +165,9 @@ export function TeammatePrivateChatFeed({
             });
             const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
             const workCellRun = workCell ? runById.get(workCell.model.anchorRunId) : undefined;
+            const composerGateApproval = workCell
+              ? composerGateApprovalPresentationForWorkCell(workCell.model, composerGateApprovalByRunId)
+              : undefined;
             const messageFeedback = messageController.feedbackById[message.id];
             const taskCreateKey = `message:${message.id}`;
             const taskCreateBusy = taskCreateBusyKeys.has(taskCreateKey);
@@ -275,17 +292,25 @@ export function TeammatePrivateChatFeed({
                     />
                   </>
                 ) : null}
-                workCellNode={workCell ? (
-                  <ConversationWorkCell
-                    model={workCell.model}
-                    surface="teammate_direct"
-                    cwd={workCellRun?.cwd ?? cwd.trim()}
-                    detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
-                    onOpenRun={onOpenRun}
-                    onOpenWorkspaceFile={onOpenFiles}
-                    onOpenWorkspaceReview={onOpenReview}
-                    loadPreview={loadPreviewContent}
-                  />
+                workCellNode={workCell || messageGeneratedMedia.length > 0 ? (
+                  <>
+                    {workCell ? (
+                      <ConversationWorkCell
+                        model={workCell.model}
+                        surface="teammate_direct"
+                        composerGateApproval={composerGateApproval}
+                        cwd={workCellRun?.cwd ?? cwd.trim()}
+                        detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
+                        onOpenRun={onOpenRun}
+                        onOpenWorkspaceFile={onOpenFiles}
+                        onOpenWorkspaceReview={onOpenReview}
+                        loadPreview={loadPreviewContent}
+                      />
+                    ) : null}
+                    {message.authorType === "ai-teammate" ? (
+                      <ConversationGeneratedMediaBlock items={messageGeneratedMedia} cwd={cwd.trim()} />
+                    ) : null}
+                  </>
                 ) : null}
                 evidenceNode={messageUsedMemoryEvents.length > 0 || message.webEvidence ? (
                   <MessageEvidencePanel
@@ -298,9 +323,9 @@ export function TeammatePrivateChatFeed({
                 ) : null}
                 errorNode={(
                   <>
-                    {message.errorMessage && message.status !== "cancelled" && !projection.recoveredHistoricalProviderFailure ? (
+                    {projection.errorText ? (
                       <InlineFeedback className="teammate-message-error" tone="danger">
-                        {message.errorMessage}
+                        {projection.errorText}
                       </InlineFeedback>
                     ) : null}
                     {message.pendingReplacement ? (
@@ -318,7 +343,7 @@ export function TeammatePrivateChatFeed({
                     ) : null}
                   </>
                 )}
-                actionsNode={!editing ? (
+                actionsNode={!editing && !projection.blocked && !composerGateApproval ? (
                   <MessageActionBar
                     surface="teammate_direct"
                     className="teammate-message-actions"
@@ -366,4 +391,13 @@ export function TeammatePrivateChatFeed({
       </ConversationViewProvider>
     </div>
   );
+}
+
+function generatedMediaForDirectMessage(
+  items: readonly ConversationGeneratedMedia[],
+  message: TeammatePrivateChatSurfaceProps["visibleMessages"][number],
+): readonly ConversationGeneratedMedia[] {
+  return items.filter((item) => item.messageId
+    ? item.messageId === message.id
+    : Boolean(message.linkedRunId && item.runId === message.linkedRunId));
 }

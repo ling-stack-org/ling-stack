@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { isSupportedLocale } from "@ling-stack/localization";
 import {
   DEFAULT_SKILL_GOVERNANCE_POLICY,
   DEFAULT_WORKSPACE_ID,
@@ -47,6 +48,7 @@ export class SqliteWorkspaceSettingsStore {
       responseLanguage: nullableUpdate(input.responseLanguage, current.responseLanguage),
       lingConversationTone: nullableUpdate(input.lingConversationTone, current.lingConversationTone),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, current.defaultProviderPresetId),
+      mediaGenerationDefaults: nullableUpdate(input.mediaGenerationDefaults, current.mediaGenerationDefaults),
       defaultAuthorizationMode: permissionDefaults.authorizationMode,
       defaultWorkspaceAccessMode: permissionDefaults.workspaceAccessMode,
       defaultPermissionMode: permissionDefaults.permissionMode,
@@ -84,7 +86,7 @@ function createDefaultWorkspaceSettings(now: string): WorkspaceSettings {
 }
 
 function parseOptionalResponseLanguagePreference(value: unknown): ResponseLanguagePreference | undefined {
-  return value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
+  return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
 function parseOptionalLingConversationTone(value: unknown): LingConversationTone | undefined {
@@ -102,10 +104,11 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     schemaVersion: 1 as const,
     workspaceCwd: typeof parsed.workspaceCwd === "string" && parsed.workspaceCwd.trim() ? parsed.workspaceCwd : undefined,
     theme: parsedTheme,
-    locale: typeof parsed.locale === "string" && parsed.locale.trim() ? parsed.locale : undefined,
+    locale: isSupportedLocale(parsed.locale) ? parsed.locale : undefined,
     responseLanguage: parseOptionalResponseLanguagePreference(parsed.responseLanguage),
     lingConversationTone: parseOptionalLingConversationTone(parsed.lingConversationTone),
     defaultProviderPresetId: typeof parsed.defaultProviderPresetId === "string" && parsed.defaultProviderPresetId.trim() ? parsed.defaultProviderPresetId : undefined,
+    mediaGenerationDefaults: parseMediaGenerationDefaults(parsed.mediaGenerationDefaults),
     defaultAuthorizationMode: parseOptionalAuthorizationMode(parsed.defaultAuthorizationMode) ?? legacySelection.authorizationMode,
     defaultWorkspaceAccessMode: parseOptionalWorkspaceAccessMode(parsed.defaultWorkspaceAccessMode) ?? legacySelection.workspaceAccessMode,
     defaultPermissionMode,
@@ -115,6 +118,32 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     skillGovernancePolicy: parseSkillGovernancePolicy(parsed.skillGovernancePolicy) ?? DEFAULT_SKILL_GOVERNANCE_POLICY,
     updatedAt: typeof parsed.updatedAt === "string" && parsed.updatedAt.trim() ? parsed.updatedAt : updatedAt,
   });
+}
+
+function parseMediaGenerationDefaults(value: unknown): WorkspaceSettings["mediaGenerationDefaults"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  const image = parseMediaGenerationTargetRef(record.image);
+  const video = parseMediaGenerationTargetRef(record.video);
+  return image || video ? omitUndefined({ image, video }) : undefined;
+}
+
+function parseMediaGenerationTargetRef(
+  value: unknown,
+): NonNullable<WorkspaceSettings["mediaGenerationDefaults"]>["image"] {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  if (record.kind === "provider" && typeof record.providerPresetId === "string" && record.providerPresetId.trim()) {
+    return { kind: "provider", providerPresetId: record.providerPresetId.trim() };
+  }
+  if (record.kind === "workflow" && typeof record.workflowDefinitionId === "string" && record.workflowDefinitionId.trim()) {
+    return { kind: "workflow", workflowDefinitionId: record.workflowDefinitionId.trim() };
+  }
+  return undefined;
 }
 
 function resolvePermissionDefaults(

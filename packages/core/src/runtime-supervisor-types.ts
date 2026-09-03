@@ -197,6 +197,7 @@ export interface ListWorkUnitsOptions {
   readonly providerPresetId?: string;
   readonly linkedRunId?: string;
   readonly linkedMessageId?: string;
+  readonly linkedMediaJobId?: string;
   readonly limit?: number;
 }
 

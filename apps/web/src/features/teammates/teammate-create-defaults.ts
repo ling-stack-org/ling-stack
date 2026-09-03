@@ -1,6 +1,6 @@
 import type { AiTeammateTemplate } from "@ling-stack/core/skill-types";
 import type { Translate } from "../../i18n.js";
-import { canUseConversationProvider, providerPreflightReady } from "../../lib/providers.js";
+import { canUseConversationProvider, providerCompactModelLabel, providerPreflightReady } from "../../lib/providers.js";
 import type { ProviderPreset } from "../../types.js";
 import type { LocalTeammateCreateInput } from "./types.js";
 
@@ -32,7 +32,7 @@ export function resolveDefaultTeammateCreateSelection(input: {
       displayName,
       description: input.t(template.summary),
       providerPresetId: provider.id,
-      modelLabel: `${provider.displayName} / ${provider.model}`,
+      modelLabel: providerCompactModelLabel(provider),
       channelIds: [],
     },
   };

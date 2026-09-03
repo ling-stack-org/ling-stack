@@ -4,6 +4,7 @@ import { getUserProfile, updateUserProfile } from "../../api/profile.js";
 import { listRuns } from "../../api/runs.js";
 import { listSkills } from "../../api/skills.js";
 import { useI18n, type Locale } from "../../i18n.js";
+import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import { Button, Field, Input, useLingToast } from "../../shared/ui/index.js";
 import type { RunSession, SkillRegistryEntry, UserProfile } from "../../types.js";
@@ -217,6 +218,7 @@ export function ProfilePage({
 
   return (
     <div className="profile-page">
+      <DesktopTitlebarSurface>
       <header className="profile-topbar" data-desktop-window-drag-region="true">
         <div>
           <p className="profile-kicker">{t("User profile")}</p>
@@ -229,6 +231,7 @@ export function ProfilePage({
           </button>
         </div>
       </header>
+      </DesktopTitlebarSurface>
 
       <section className="profile-hero" aria-label={t("Profile overview")}>
         <button
@@ -572,18 +575,27 @@ function formatCompactNumber(value: number, locale: Locale): string {
 
 function formatDuration(value: number, locale: Locale): string {
   if (value <= 0) {
-    return locale === "zh-CN" ? "0 分" : "0 min";
+    return formatDurationUnit(0, "minute", locale);
   }
   const minutes = Math.round(value / 60_000);
   if (minutes < 60) {
-    return locale === "zh-CN" ? `${minutes} 分` : `${minutes} min`;
+    return formatDurationUnit(minutes, "minute", locale);
   }
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  if (locale === "zh-CN") {
-    return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
-  }
-  return rest ? `${hours} hr ${rest} min` : `${hours} hr`;
+  const values = [
+    formatDurationUnit(hours, "hour", locale),
+    rest ? formatDurationUnit(rest, "minute", locale) : undefined,
+  ].filter((item): item is string => Boolean(item));
+  return new Intl.ListFormat(locale, { style: "narrow", type: "unit" }).format(values);
+}
+
+function formatDurationUnit(value: number, unit: "hour" | "minute", locale: Locale): string {
+  return new Intl.NumberFormat(locale, {
+    style: "unit",
+    unit,
+    unitDisplay: "short",
+  }).format(value);
 }
 
 function initialsFromName(value: string): string {

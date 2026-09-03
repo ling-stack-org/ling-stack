@@ -1,8 +1,14 @@
 import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
+import type { WorkspaceMediaGenerationDefaults } from "./media-generation-routing.js";
+import type {
+  ExplicitResponseLanguage,
+  InterfaceLocale,
+  ResponseLanguagePreference as SharedResponseLanguagePreference,
+} from "@ling-stack/localization";
 
-export type ResponseLanguage = "zh-CN" | "en-US";
+export type ResponseLanguage = ExplicitResponseLanguage;
 
-export type ResponseLanguagePreference = "follow_user" | ResponseLanguage;
+export type ResponseLanguagePreference = SharedResponseLanguagePreference;
 
 export type LingConversationTone = "friendly" | "pragmatic" | "none";
 
@@ -22,10 +28,11 @@ export interface WorkspaceSettings {
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
   readonly theme?: "light" | "dark" | "system";
-  readonly locale?: string;
+  readonly locale?: InterfaceLocale;
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly lingConversationTone?: LingConversationTone;
   readonly defaultProviderPresetId?: string;
+  readonly mediaGenerationDefaults?: WorkspaceMediaGenerationDefaults;
   readonly defaultAuthorizationMode?: AuthorizationMode;
   readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly defaultPermissionMode?: SessionPermissionMode;
@@ -39,10 +46,11 @@ export interface WorkspaceSettings {
 export interface UpdateWorkspaceSettingsRequest {
   readonly workspaceCwd?: string | null;
   readonly theme?: "light" | "dark" | "system" | null;
-  readonly locale?: string | null;
+  readonly locale?: InterfaceLocale | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly lingConversationTone?: LingConversationTone | null;
   readonly defaultProviderPresetId?: string | null;
+  readonly mediaGenerationDefaults?: WorkspaceMediaGenerationDefaults | null;
   readonly defaultAuthorizationMode?: AuthorizationMode | null;
   readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode | null;
   readonly defaultPermissionMode?: SessionPermissionMode | null;
@@ -107,7 +115,7 @@ export interface EffectiveConfigResponse {
   readonly values: {
     readonly workspaceCwd: EffectiveConfigValue<string>;
     readonly theme: EffectiveConfigValue<"light" | "dark" | "system">;
-    readonly locale: EffectiveConfigValue<string>;
+    readonly locale: EffectiveConfigValue<InterfaceLocale>;
     readonly responseLanguage: EffectiveConfigValue<ResponseLanguagePreference>;
     readonly lingConversationTone: EffectiveConfigValue<LingConversationTone>;
     readonly skillGovernancePolicy: EffectiveConfigValue<SkillGovernancePolicy>;

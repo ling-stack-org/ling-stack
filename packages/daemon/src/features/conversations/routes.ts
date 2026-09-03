@@ -26,6 +26,7 @@ import type {
   SessionPermissionMode,
   WorkspaceAccessMode,
 } from "@ling-stack/contracts";
+import { formatServerCatalogMessage, isSupportedLocale } from "@ling-stack/localization";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
@@ -34,7 +35,7 @@ import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js"
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
-import { inferUserLanguage, responseLanguageInstruction } from "../channels/response-language.js";
+import { responseLanguageInstruction } from "../channels/response-language.js";
 import { parseChannelAttachmentRequest, readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
@@ -45,6 +46,10 @@ import { lingConversationToneInstruction } from "./conversation-tone.js";
 import { projectConversationActiveReplyTarget } from "./active-reply-target.js";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import { listExecutionActions } from "../runs/execution-actions.js";
+import {
+  buildConversationGeneratedMediaProjection,
+  runHasConversationGeneratedMedia,
+} from "../media/conversation-projection.js";
 import {
   buildConversationSupersessionProjection,
   filterSupersededLingTurns,
@@ -138,7 +143,6 @@ const permissionPresets: readonly PermissionPreset[] = ["read_only", "workspace_
 const permissionModes: readonly SessionPermissionMode[] = ["ask_everything", "balanced", "workspace_write", "full_access", "custom"];
 const authorizationModes: readonly AuthorizationMode[] = ["ask", "smart", "always"];
 const workspaceAccessModes: readonly WorkspaceAccessMode[] = ["read_only", "workspace_write", "full_access"];
-const responseLanguagePreferences: readonly ResponseLanguagePreference[] = ["follow_user", "zh-CN", "en-US"];
 
 export async function handleConversationStream(
   request: IncomingMessage,
@@ -245,9 +249,11 @@ export async function handleConversationStream(
             updatedAt: envelope.ts,
           };
         } else if (envelope.type === "run_error") {
+          const errorMessage = readEventError(envelope);
           assistantMessage = {
             ...assistantMessage,
-            content: readEventError(envelope) || assistantMessage.content || conversationRunFailedContent(input.responseLanguage, input.message),
+            content: assistantMessage.content || conversationRunFailedContent(input.responseLanguage, input.message),
+            ...(errorMessage ? { errorMessage } : {}),
             status: "failed",
             updatedAt: envelope.ts,
           };
@@ -268,7 +274,13 @@ export async function handleConversationStream(
       },
       writeError(_statusCode, body) {
         const message = readErrorBodyMessage(body, input.responseLanguage, input.message);
-        assistantMessage = { ...assistantMessage, content: message, status: "failed", updatedAt: new Date().toISOString() };
+        assistantMessage = {
+          ...assistantMessage,
+          content: assistantMessage.content || conversationRunFailedContent(input.responseLanguage, input.message),
+          errorMessage: message,
+          status: "failed",
+          updatedAt: new Date().toISOString(),
+        };
         safeWrite("error", { thread, turn, assistantMessage, error: message });
       },
       end() {
@@ -276,19 +288,31 @@ export async function handleConversationStream(
         const latestThread = store.getLingThread(thread.id) ?? thread;
         const latestTurn = store.getLingTurn(turn.id) ?? turn;
         const terminalStatus = statusFromRun(latestRun) ?? assistantMessage.status;
-        const finalStatus = terminalStatus === "succeeded" && !assistantMessage.content.trim()
+        const hasGeneratedMedia = runHasConversationGeneratedMedia(store, runId || undefined);
+        const finalStatus = terminalStatus === "succeeded" && !assistantMessage.content.trim() && !hasGeneratedMedia
           ? "failed"
           : terminalStatus;
         const finalAssistant = {
           ...assistantMessage,
           status: finalStatus,
-          content: assistantMessage.content || fallbackAssistantContent(terminalStatus, input.responseLanguage, input.message),
+          content: assistantMessage.content || (terminalStatus === "succeeded" && hasGeneratedMedia
+            ? ""
+            : fallbackAssistantContent(terminalStatus, input.responseLanguage, input.message)),
+          ...(assistantMessage.errorMessage || latestRun?.errorMessage
+            ? { errorMessage: assistantMessage.errorMessage ?? latestRun?.errorMessage ?? undefined }
+            : {}),
           updatedAt: latestRun?.updatedAt ?? new Date().toISOString(),
         };
         if (latestRun && (terminalStatus === "succeeded" || terminalStatus === "cancelled")) {
           safeWrite("done", { thread: latestThread, turn: latestTurn, run: latestRun, assistantMessage: finalAssistant });
         } else {
-          safeWrite("blocked", { thread: latestThread, turn: latestTurn, run: latestRun, assistantMessage: finalAssistant, error: finalAssistant.content });
+          safeWrite("blocked", {
+            thread: latestThread,
+            turn: latestTurn,
+            run: latestRun,
+            assistantMessage: finalAssistant,
+            error: finalAssistant.errorMessage || latestRun?.errorMessage || finalAssistant.content,
+          });
         }
         if (!closed) {
           response.end();
@@ -515,6 +539,10 @@ export function buildConversationDetail(
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
       .map((record) => projectTerminalReportDto(record.report!)),
     messages: [...messageById.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)),
+    generatedMedia: buildConversationGeneratedMediaProjection({
+      store,
+      runIds: runs.map((run) => run.id),
+    }),
     defaults: {
       projectPath: readOptionalRecordString(latestSnapshot, "projectPath") || latestProjectPath,
       providerPresetId: latestRun?.providerPresetId ?? readOptionalRecordString(latestSnapshot, "providerPresetId"),
@@ -593,10 +621,14 @@ function buildConversationRunRequest(input: {
   readonly attachmentMaterializations: ReadonlyMap<string, ConversationAttachmentMaterialization>;
 }): RunRequest {
   const toneInstruction = lingConversationToneInstruction(input.lingConversationTone);
-  const responseLanguage = resolveConversationResponseLanguage(input.input.responseLanguage, input.input.message.trim());
+  const responseLanguagePreference = input.input.responseLanguage ?? "follow_user";
+  const responseLanguage = resolveConversationResponseLanguage(
+    responseLanguagePreference,
+    input.input.message,
+  );
   const appendSystemPrompt = [
     toneInstruction,
-    responseLanguageInstruction(responseLanguage),
+    responseLanguageInstruction(responseLanguagePreference),
   ].filter((instruction) => instruction.trim());
   return {
     workspaceCwd: input.workspaceCwd,
@@ -614,6 +646,7 @@ function buildConversationRunRequest(input: {
     threadId: input.thread.id,
     turnId: input.turn.id,
     teammateId: LING_AGENT_ID,
+    createdByActor: input.turn.createdByActor,
     providerPresetId: input.input.providerPresetId,
     tools: input.input.tools ?? defaultConversationTools,
     authorizationMode: input.input.authorizationMode,
@@ -660,6 +693,7 @@ function createAssistantTranscriptMessage(
   content: string,
   status: ConversationTranscriptStatus,
   now: string,
+  errorMessage?: string,
 ): ConversationTranscriptMessage {
   return {
     id: conversationAssistantMessageId(turn.id),
@@ -667,6 +701,7 @@ function createAssistantTranscriptMessage(
     authorId: LING_AGENT_ID,
     authorLabel: "Ling Agent",
     content,
+    ...(errorMessage ? { errorMessage } : {}),
     status,
     threadId: thread.id,
     turnId: turn.id,
@@ -685,16 +720,20 @@ function assistantMessageFromRun(store: RunStore, thread: LingThread, turn: Ling
   const content = streamedContent || (finalContent ? readEventText(finalContent) : "");
   const error = [...events].reverse().map(readEventError).find(Boolean);
   const status = statusFromRun(run) ?? "running";
-  const projectedStatus = status === "succeeded" && !content.trim() ? "failed" : status;
+  const hasGeneratedMedia = runHasConversationGeneratedMedia(store, run.id);
+  const projectedStatus = status === "succeeded" && !content.trim() && !hasGeneratedMedia ? "failed" : status;
   const requestSnapshot = readRecord(run.requestSnapshot);
   const responseLanguage = readResponseLanguagePreference(readOptionalRecordString(requestSnapshot, "responseLanguage"));
   return createAssistantTranscriptMessage(
     thread,
     turn,
     run,
-    content || error || fallbackAssistantContent(status, responseLanguage, turn.userInstruction),
+    content || (status === "succeeded" && hasGeneratedMedia
+      ? ""
+      : fallbackAssistantContent(status, responseLanguage, turn.userInstruction)),
     projectedStatus,
     run.updatedAt,
+    error,
   );
 }
 
@@ -769,26 +808,26 @@ function fallbackAssistantContent(status: ConversationTranscriptStatus, response
   }
   const language = resolveConversationResponseLanguage(responseLanguage, message);
   if (status === "cancelled") {
-    return language === "zh-CN" ? "这次运行已取消。" : "Ling Agent run was cancelled.";
+    return formatServerCatalogMessage(language, "daemon.conversation.cancelled");
   }
   if (status === "succeeded") {
-    return language === "zh-CN"
-      ? "模型没有返回可显示的内容，请重试或切换模型。"
-      : "The model returned no displayable content. Retry or choose another model.";
+    return formatServerCatalogMessage(language, "daemon.conversation.empty_result");
   }
   return conversationRunFailedContent(responseLanguage, message);
 }
 
 function conversationRunFailedContent(responseLanguage: ResponseLanguagePreference | undefined, message: string): string {
-  return resolveConversationResponseLanguage(responseLanguage, message) === "zh-CN"
-    ? "Ling 助手暂时无法完成这次请求。"
-    : "Ling Agent could not complete this request.";
+  return formatServerCatalogMessage(
+    resolveConversationResponseLanguage(responseLanguage, message),
+    "daemon.conversation.failed",
+  );
 }
 
 function conversationRunFailedBeforeStartContent(responseLanguage: ResponseLanguagePreference | undefined, message: string): string {
-  return resolveConversationResponseLanguage(responseLanguage, message) === "zh-CN"
-    ? "Ling 助手还没启动就遇到了问题，请稍后重试。"
-    : "Ling Agent run failed before it started.";
+  return formatServerCatalogMessage(
+    resolveConversationResponseLanguage(responseLanguage, message),
+    "daemon.conversation.failed_before_start",
+  );
 }
 
 function readRecord(value: unknown): Record<string, unknown> {
@@ -838,13 +877,14 @@ function readPermissionConfirmation(value: unknown): ConversationStreamRequest["
 }
 
 function readResponseLanguagePreference(value: string | undefined): ResponseLanguagePreference | undefined {
-  return value && responseLanguagePreferences.includes(value as ResponseLanguagePreference) ? value as ResponseLanguagePreference : undefined;
+  return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
-function resolveConversationResponseLanguage(responseLanguage: ResponseLanguagePreference | undefined, message: string): "zh-CN" | "en-US" {
-  return responseLanguage === "zh-CN" || responseLanguage === "en-US"
-    ? responseLanguage
-    : inferUserLanguage(message);
+function resolveConversationResponseLanguage(
+  responseLanguage: ResponseLanguagePreference | undefined,
+  _message: string,
+): Exclude<ResponseLanguagePreference, "follow_user"> {
+  return responseLanguage && responseLanguage !== "follow_user" ? responseLanguage : "en-US";
 }
 
 function buildConversationRunPrompt(

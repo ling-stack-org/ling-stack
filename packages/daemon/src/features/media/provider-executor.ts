@@ -26,6 +26,12 @@ import { HttpError } from "../../errors.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { resolveProviderSecret } from "../providers/secrets.js";
 import { createMediaJobArtifacts, mediaExecutionHasRequiredArtifact } from "./artifact-collector.js";
+import {
+  bindMediaExecutionHandleToRuntime,
+  findConversationMediaWorkUnit,
+  prepareConversationMediaWorkUnitForExplicitRetry,
+  synchronizeConversationMediaWorkUnitTerminal,
+} from "./conversation-runtime-recovery.js";
 import type { MediaJobExecutionResult, MediaRuntimeHandle, RunMediaJobHooks } from "./executor.js";
 import { requiresMediaProductionApproval } from "./media-cost-approval.js";
 import { assertMediaJobProvider, createMediaAdapterForProvider } from "./provider.js";
@@ -37,6 +43,7 @@ const MAX_POLL_ATTEMPTS = 10_800;
 const MEDIA_RUNTIME_SEMAPHORE_TTL_MS = 6 * 60 * 60 * 1000;
 const pendingOperationPrefix = "ling-pending:";
 const scheduled = new Map<string, ReturnType<typeof setTimeout>>();
+const inFlight = new Map<string, Promise<MediaJobExecutionResult>>();
 
 type ProviderExecutionStore =
   MediaStoreFacet &
@@ -51,6 +58,27 @@ export async function runProviderMediaJobExecution(input: {
   readonly secretResolver: SecretResolver;
   readonly mediaJobId: string;
   readonly hooks: RunMediaJobHooks;
+  readonly retryTerminal?: boolean;
+}): Promise<MediaJobExecutionResult> {
+  const key = `${input.cwd}\u0000${input.mediaJobId}`;
+  const existing = inFlight.get(key);
+  if (existing) return await existing;
+  const execution = runProviderMediaJobExecutionOwner(input);
+  inFlight.set(key, execution);
+  try {
+    return await execution;
+  } finally {
+    if (inFlight.get(key) === execution) inFlight.delete(key);
+  }
+}
+
+async function runProviderMediaJobExecutionOwner(input: {
+  readonly cwd: string;
+  readonly storeRegistry: RunStoreRegistry;
+  readonly secretResolver: SecretResolver;
+  readonly mediaJobId: string;
+  readonly hooks: RunMediaJobHooks;
+  readonly retryTerminal?: boolean;
 }): Promise<MediaJobExecutionResult> {
   const store = input.storeRegistry.getStore(input.cwd);
   let job = store.getMediaJob(input.mediaJobId);
@@ -59,6 +87,8 @@ export async function runProviderMediaJobExecution(input: {
     return { statusCode: 400, body: { error: "invalid_execution_source", message: "该任务不是模型直接生成任务。" } };
   }
   if (job.status === "succeeded") {
+    settleExecutionHandle(store, job.id, "succeeded", "media-job-already-succeeded");
+    clearScheduled(job.id);
     selectInitialMediaSceneResult(store, job.id, now());
     return { statusCode: 200, body: { mediaJob: job, artifacts: [] } };
   }
@@ -67,14 +97,75 @@ export async function runProviderMediaJobExecution(input: {
   }
 
   let supervised: MediaRuntimeHandle | undefined;
+  let handle = store.getMediaJobExecutionHandle(job.id);
   let secretValue: string | undefined;
   try {
-    let handle = store.getMediaJobExecutionHandle(job.id);
     if (job.status === "waiting_for_approval") {
       job = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, now()) ?? job;
     }
-    if ((job.status === "failed" || job.status === "cancelled") && !handle) {
+    const terminalStatus = job.status === "failed" || job.status === "cancelled" ? job.status : undefined;
+    const retryingTerminal = terminalStatus !== undefined && input.retryTerminal === true && (!handle || isPendingHandle(handle));
+    if (terminalStatus && !retryingTerminal) {
+      const child = findConversationMediaWorkUnit(store, job.id);
+      const shouldAuditPreSubmissionCancellation = terminalStatus === "cancelled" &&
+        !handle && Boolean(child && !isTerminalWorkUnitStatus(child.status));
+      if (shouldAuditPreSubmissionCancellation) {
+        // Adopt the queued conversation child below so pre-submission cancellation still records one attempt.
+      } else {
+        if (terminalStatus === "cancelled" && handle && !isPendingHandle(handle)) {
+          await cancelPersistedProviderOperation(store, job, handle, input.secretResolver);
+        }
+        synchronizeConversationMediaWorkUnitTerminal(store, job.id, terminalStatus, now());
+        settleExecutionHandle(store, job.id, terminalStatus, `media-job-already-${terminalStatus}`);
+        clearScheduled(job.id);
+        notifyProjection(input, job.id);
+        return terminalMediaJobResult(job);
+      }
+    }
+    if (retryingTerminal) {
+      if (handle && isPendingHandle(handle)) {
+        store.deleteMediaJobExecutionHandle(job.id);
+        handle = undefined;
+      }
       job = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, now()) ?? job;
+      const child = prepareConversationMediaWorkUnitForExplicitRetry(store, job.id, now());
+      if (child && child.status !== "queued") {
+        throw new Error(`Conversation media work unit could not be retried: ${child.id} (${child.status}).`);
+      }
+      handle = store.getMediaJobExecutionHandle(job.id);
+    }
+    supervised = restoreRuntimeHandle(store, handle) ?? restoreConversationRuntimeHandle(store, job.id) ?? input.hooks.startRuntimeWorkUnit({
+      store,
+      kind: "media_job",
+      ownerType: "media_job",
+      ownerId: job.id,
+      providerPresetId: job.providerPresetId,
+      linkedMediaJobId: job.id,
+      idempotencyKey: `media_job:${job.id}:provider:${randomUUID()}`,
+      request: { mediaJobId: job.id, providerPresetId: job.providerPresetId, operation: job.operation },
+    });
+    if (handle) {
+      handle = bindMediaExecutionHandleToRuntime(store, handle, supervised, now());
+    }
+    if (job.status === "cancelled") {
+      if (handle) {
+        await cancelPersistedProviderOperation(store, job, handle, input.secretResolver);
+      }
+      input.hooks.transitionRuntimeWorkUnitCancelled({
+        store,
+        workUnitId: supervised.workUnit.id,
+        attemptId: supervised.attempt.id,
+        reason: "媒体任务已取消。",
+      });
+      finishExecution(store, job.id, supervised, "cancelled", "media-job-cancelled-before-submission");
+      notifyProjection(input, job.id);
+      return { statusCode: 200, body: { mediaJob: job, artifacts: [] } };
+    }
+    if (job.status === "failed" && !retryingTerminal) {
+      terminalFailure(store, input.hooks, supervised, "media_job_execution_failed", "媒体任务已经失败，需要用户明确重试。");
+      finishExecution(store, job.id, supervised, "failed", "media-job-already-failed");
+      notifyProjection(input, job.id);
+      return terminalMediaJobResult(job);
     }
     const provider = assertMediaJobProvider(store, {
       providerPresetId: job.providerPresetId,
@@ -85,20 +176,13 @@ export async function runProviderMediaJobExecution(input: {
     const readiness = resolveLiveMediaExecutionReadiness(store, provider, job.operation, input.secretResolver);
     if (!readiness.ok) {
       const failed = store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: readiness.message }, now()) ?? job;
+      terminalFailure(store, input.hooks, supervised, readiness.code, readiness.message);
+      finishExecution(store, job.id, supervised, "failed", "media-job-not-runnable");
+      notifyProjection(input, job.id);
       return { statusCode: 400, body: { error: readiness.code, message: readiness.message, mediaJob: failed, artifacts: [] } };
     }
     secretValue = provider.apiKeyRef ? resolveProviderSecret(store, provider, input.secretResolver).value : undefined;
     const adapter = createMediaAdapterForProvider(store, provider, input.secretResolver);
-    supervised = restoreRuntimeHandle(store, handle) ?? input.hooks.startRuntimeWorkUnit({
-      store,
-      kind: "media_job",
-      ownerType: "media_job",
-      ownerId: job.id,
-      providerPresetId: provider.id,
-      linkedMediaJobId: job.id,
-      idempotencyKey: `media_job:${job.id}:provider:${randomUUID()}`,
-      request: { mediaJobId: job.id, providerPresetId: provider.id, operation: job.operation },
-    });
     handle = handle ?? persistPendingHandle(store, job, adapter, supervised);
     if (!ensureSemaphore(store, provider, supervised)) {
       scheduleProviderPoll(input, POLL_INTERVAL_MS);
@@ -106,16 +190,10 @@ export async function runProviderMediaJobExecution(input: {
     }
     recordHeartbeat(store, supervised, "provider_tick");
 
-    if (job.status === "cancelled") {
-      await cancelProviderOperation(adapter, handle);
-      terminalFailure(store, input.hooks, supervised, "media_job_cancelled", "媒体任务已取消。");
-      finishExecution(store, job.id, supervised, "media-job-cancelled");
-      return { statusCode: 200, body: { mediaJob: job, artifacts: [] } };
-    }
-
     job = job.status === "running"
       ? job
       : store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, now()) ?? job;
+    notifyProjection(input, job.id);
     const requestJob = job;
     const tick = hasRecoverableLifecycle(adapter)
       ? await runRecoverableTick(store, job, adapter, () => mediaExecutionRequest(store, requestJob, provider), handle)
@@ -125,9 +203,17 @@ export async function runProviderMediaJobExecution(input: {
       return { statusCode: 202, body: { mediaJob: job, pending: true } };
     }
     const execution = tick.execution;
-    if (execution.status === "failed") throw new Error(execution.errorMessage ?? "媒体生成执行失败。");
+    if (execution.status === "failed") {
+      throw mediaExecutionError(
+        execution.errorCode ?? "media_job_execution_failed",
+        execution.errorMessage ?? "媒体生成执行失败。",
+      );
+    }
     if (!mediaExecutionHasRequiredArtifact(execution.artifacts, job.operation)) {
-      throw new Error("生成供应商没有返回可用的图片或视频结果，请检查模型、权限和返回格式。");
+      throw mediaExecutionError(
+        "media_result_unavailable",
+        "生成供应商没有返回可用的图片或视频结果，请检查模型、权限和返回格式。",
+      );
     }
     const completedAt = now();
     const artifacts = createMediaJobArtifacts(store, job, execution.artifacts, completedAt, [secretValue]);
@@ -136,6 +222,7 @@ export async function runProviderMediaJobExecution(input: {
       artifactIds: [...new Set([...job.artifactIds, ...artifacts.map((artifact) => artifact.id)])],
       errorMessage: null,
     }, completedAt) ?? job;
+    notifyProjection(input, job.id, artifacts.map((artifact) => artifact.id));
     selectInitialMediaSceneResult(store, job.id, completedAt);
     for (const artifact of artifacts) {
       store.appendRuntimeEvent({
@@ -159,21 +246,50 @@ export async function runProviderMediaJobExecution(input: {
       actor: "provider",
       now: completedAt,
     });
-    finishExecution(store, job.id, supervised, "media-job-succeeded");
+    finishExecution(store, job.id, supervised, "succeeded", "media-job-succeeded");
     return { statusCode: 200, body: { mediaJob: succeeded, artifacts } };
   } catch (error) {
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [secretValue]);
-    const errorCode = error instanceof HttpError ? error.code : "media_job_execution_failed";
+    const errorCode = mediaExecutionErrorCode(error, "media_job_execution_failed");
     const failed = store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, now()) ?? job;
+    notifyProjection(input, job.id);
     if (supervised) {
       terminalFailure(store, input.hooks, supervised, errorCode, message);
-      finishExecution(store, job.id, supervised, "media-job-failed");
+      finishExecution(store, job.id, supervised, "failed", "media-job-failed");
     } else {
-      store.deleteMediaJobExecutionHandle(job.id);
+      synchronizeConversationMediaWorkUnitTerminal(store, job.id, "failed", now());
+      settleExecutionHandle(store, job.id, "failed", "media-job-failed-before-runtime-start");
       clearScheduled(job.id);
     }
     return { statusCode: error instanceof HttpError ? error.statusCode : 200, body: { error: errorCode, message, mediaJob: failed } };
   }
+}
+
+function terminalMediaJobResult(job: MediaJob): MediaJobExecutionResult {
+  return job.status === "cancelled"
+    ? { statusCode: 200, body: { mediaJob: job, artifacts: [] } }
+    : {
+        statusCode: 200,
+        body: {
+          error: "media_job_already_failed",
+          message: job.errorMessage ?? "媒体任务已经失败，需要用户明确重试。",
+          mediaJob: job,
+        },
+      };
+}
+
+function isTerminalWorkUnitStatus(status: string): boolean {
+  return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function mediaExecutionError(code: string, message: string): Error & { readonly code: string } {
+  return Object.assign(new Error(message), { code });
+}
+
+function mediaExecutionErrorCode(error: unknown, fallback: string): string {
+  if (typeof error !== "object" || error === null || !("code" in error)) return fallback;
+  const code = (error as { readonly code?: unknown }).code;
+  return typeof code === "string" && code.trim() ? code.trim() : fallback;
 }
 
 export function resumePendingProviderMediaJobs(input: {
@@ -338,11 +454,45 @@ function finishExecution(
   store: ProviderExecutionStore,
   mediaJobId: string,
   supervised: MediaRuntimeHandle,
+  status: "succeeded" | "failed" | "cancelled",
   reason: string,
 ): void {
-  store.deleteMediaJobExecutionHandle(mediaJobId);
-  store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(supervised.attempt), now(), reason);
+  const handle = settleExecutionHandle(store, mediaJobId, status, reason);
+  if (!handle || handle.attemptId !== supervised.attempt.id) {
+    store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(supervised.attempt), now(), reason);
+  }
   clearScheduled(mediaJobId);
+}
+
+function settleExecutionHandle(
+  store: ProviderExecutionStore,
+  mediaJobId: string,
+  status: "succeeded" | "failed" | "cancelled",
+  reason: string,
+): ReturnType<ProviderExecutionStore["getMediaJobExecutionHandle"]> {
+  const handle = store.getMediaJobExecutionHandle(mediaJobId);
+  if (!handle) return undefined;
+  if (handle.attemptId) {
+    const attempt = store.getWorkUnitAttempt(handle.attemptId);
+    if (attempt) {
+      store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now(), reason);
+    }
+  }
+  if (status === "succeeded" || isPendingHandle(handle)) {
+    store.deleteMediaJobExecutionHandle(mediaJobId);
+    return handle;
+  }
+  store.upsertMediaJobExecutionHandle({
+    mediaJobId: handle.mediaJobId,
+    adapterKind: handle.adapterKind,
+    externalOperationId: handle.externalOperationId,
+    recovery: handle.recovery,
+    nextPollAt: null,
+    pollAttempts: handle.pollAttempts,
+    workUnitId: null,
+    attemptId: null,
+  }, now());
+  return handle;
 }
 
 function mediaExecutionRequest(
@@ -382,11 +532,46 @@ async function cancelProviderOperation(
   await adapter.cancel(toExecutionHandle(handle));
 }
 
+async function cancelPersistedProviderOperation(
+  store: ProviderExecutionStore,
+  job: MediaJob,
+  handle: NonNullable<ReturnType<ProviderExecutionStore["getMediaJobExecutionHandle"]>>,
+  secretResolver: SecretResolver,
+): Promise<void> {
+  if (isPendingHandle(handle) || !job.providerPresetId) return;
+  try {
+    const provider = store.getProviderPreset(job.providerPresetId);
+    if (!provider) return;
+    const adapter = createMediaAdapterForProvider(store, provider, secretResolver);
+    await cancelProviderOperation(adapter, handle);
+  } catch {
+    // The local cancellation remains authoritative when the original target cannot be reconstructed.
+  }
+}
+
 function restoreRuntimeHandle(store: RunStore, handle: ReturnType<RunStore["getMediaJobExecutionHandle"]>): MediaRuntimeHandle | undefined {
   if (!handle?.workUnitId || !handle.attemptId) return undefined;
   const workUnit = store.getWorkUnit(handle.workUnitId);
   const attempt = store.getWorkUnitAttempt(handle.attemptId);
   return workUnit && attempt ? { workUnit, attempt } : undefined;
+}
+
+function restoreConversationRuntimeHandle(store: RunStore, mediaJobId: string): MediaRuntimeHandle | undefined {
+  const workUnit = findConversationMediaWorkUnit(store, mediaJobId);
+  const attempt = workUnit?.activeAttemptId ? store.getWorkUnitAttempt(workUnit.activeAttemptId) : undefined;
+  return workUnit && attempt ? { workUnit, attempt } : undefined;
+}
+
+function notifyProjection(
+  input: Parameters<typeof runProviderMediaJobExecution>[0],
+  mediaJobId: string,
+  createdArtifactIds?: readonly string[],
+): void {
+  try {
+    input.hooks.onMediaJobProjectionChanged?.({ cwd: input.cwd, mediaJobId, createdArtifactIds });
+  } catch {
+    // Projection invalidation is best-effort; persisted state remains authoritative.
+  }
 }
 
 function terminalFailure(
@@ -447,7 +632,9 @@ function scheduleProviderPoll(input: Parameters<typeof runProviderMediaJobExecut
   clearScheduled(input.mediaJobId);
   const timer = setTimeout(() => {
     scheduled.delete(input.mediaJobId);
-    void runProviderMediaJobExecution(input);
+    void runProviderMediaJobExecution(input).catch(() => {
+      // The execution owner persists normal failures; this only closes entry-level promise rejection.
+    });
   }, Math.max(0, delayMs));
   timer.unref?.();
   scheduled.set(input.mediaJobId, timer);

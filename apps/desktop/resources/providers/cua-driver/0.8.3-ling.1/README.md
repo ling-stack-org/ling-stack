@@ -24,7 +24,7 @@ than being rewritten solely to erase unrelated baseline formatting drift.
 
 ## Reproduce the candidate
 
-Run on the locked native runner for the target platform:
+Run in the separately governed private native release environment for the target platform:
 
 ```bash
 node apps/desktop/scripts/build-cua-driver-provider.mjs \

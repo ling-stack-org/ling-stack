@@ -33,6 +33,7 @@ import {
   projectTeammateDirectMessageRevisionMetadata,
 } from "../conversations/supersession-projection.js";
 import { projectConversationActiveReplyTarget } from "../conversations/active-reply-target.js";
+import { buildConversationGeneratedMediaProjection } from "../media/conversation-projection.js";
 
 export type CreateTeammateDirectAiReply = (input: {
   readonly store: RunStore;
@@ -165,6 +166,10 @@ export async function handleTeammateDirectMessagesCollection(
         teammateId,
         thread,
         messages,
+        generatedMedia: buildConversationGeneratedMediaProjection({
+          store,
+          runIds: messages.flatMap((message) => message.linkedRunId ? [message.linkedRunId] : []),
+        }),
         hasMore: page.hasMore,
         nextBeforeMessageId: page.nextBeforeMessageId,
       });

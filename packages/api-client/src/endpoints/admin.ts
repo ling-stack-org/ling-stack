@@ -1,9 +1,12 @@
 import type {
   ApprovalListResponse,
+  ApprovalCommandRuleListResponse,
+  ApprovalCommandRuleMutationResponse,
   ApprovalMutationResponse,
   ApprovalPolicyResponse,
   ChromeBrowserPairingStartResponse,
   CreateMediaJobRequest,
+  ConversationMediaGenerationTargetsResponse,
   CreateMediaProjectRequest,
   CreateMediaProjectAssetRequest,
   CreateMediaSceneRequest,
@@ -72,6 +75,7 @@ import type {
   ProviderSecretResponse,
   ProviderTemplateListResponse,
   RunMediaProjectRequest,
+  ResolveApprovalRequest,
   UpdateApprovalPolicyRequest,
   UpdateMediaProjectRequest,
   UpdateMediaSceneRequest,
@@ -288,12 +292,33 @@ export const adminEndpoints = {
       });
     },
 
-  async approveApproval(this: LingDaemonEndpointContext, cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
-      return this._post(`/approvals/${encodeURIComponent(approvalId)}/approve`, { cwd }, { reason });
+  async approveApproval(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    approvalId: string,
+    input?: string | ResolveApprovalRequest,
+  ): Promise<ApprovalMutationResponse> {
+      return this._post(
+        `/approvals/${encodeURIComponent(approvalId)}/approve`,
+        { cwd },
+        typeof input === "string" ? { reason: input } : (input ?? {}),
+      );
     },
 
   async denyApproval(this: LingDaemonEndpointContext, cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
       return this._post(`/approvals/${encodeURIComponent(approvalId)}/deny`, { cwd }, { reason });
+    },
+
+  async listApprovalCommandRules(this: LingDaemonEndpointContext, cwd: string): Promise<ApprovalCommandRuleListResponse> {
+      return this._get("/approval-command-rules", { cwd });
+    },
+
+  async revokeApprovalCommandRule(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+    ruleId: string,
+  ): Promise<ApprovalCommandRuleMutationResponse> {
+      return this._delete(`/approval-command-rules/${encodeURIComponent(ruleId)}`, { cwd });
     },
 
   async getApprovalPolicy(this: LingDaemonEndpointContext, cwd: string): Promise<ApprovalPolicyResponse> {
@@ -306,6 +331,13 @@ export const adminEndpoints = {
 
   async listMediaJobs(this: LingDaemonEndpointContext, cwd: string, limit: number = 100): Promise<MediaJobListResponse> {
       return this._get("/media-jobs", { cwd, limit });
+    },
+
+  async getConversationMediaGenerationTargets(
+    this: LingDaemonEndpointContext,
+    cwd: string,
+  ): Promise<ConversationMediaGenerationTargetsResponse> {
+      return this._get("/media-generation-targets", { cwd });
     },
 
   async createMediaJob(this: LingDaemonEndpointContext, cwd: string, input: CreateMediaJobRequest): Promise<MediaJobMutationResponse> {

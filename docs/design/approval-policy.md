@@ -4,9 +4,9 @@
 
 Status: active enforcement contract; core local-tool approval is implemented
 Owner: Approval policy and runtime enforcement
-Last verified: 2026-08-03
+Last verified: 2026-08-28
 
-Current implementation includes workspace-level configurable policy storage, `GET/PATCH /approval-policy`, Web Settings controls, CLI policy commands, tool decisions (`allow`, `ask`, `deny`), write path scopes, and Pi pre-tool interception for `bash`, `edit`, and `write`.
+Current implementation includes workspace-level configurable policy storage, `GET/PATCH /approval-policy`, Web Settings controls, CLI policy commands, tool decisions (`allow`, `ask`, `deny`), write path scopes, and Pi pre-tool interception for `bash`, `edit`, and `write`. The workspace-command-rule slice adds durable, revocable Bash argv-prefix rules without changing the tool-level `bash=ask` policy.
 
 This design follows session persistence and provider presets. It defines how Ling Stack should represent, persist, display, and enforce human approval gates for risky actions.
 
@@ -275,8 +275,47 @@ interface ApprovalRequest {
   resolvedAt?: string;
   resolvedBy?: "local-user";
   decisionReason?: string;
+  availableDecisions: ("approve_once" | "approve_command_rule" | "deny")[];
+  proposedCommandRule?: {
+    prefix: string[];
+    display: string;
+    fingerprint: string;
+    version: 1;
+  };
+  decisionKind?: "approve_once" | "approve_command_rule" | "deny";
+  decisionRuleId?: string;
 }
 ```
+
+Legacy approvals without `availableDecisions` are read as `approve_once` and `deny`.
+Legacy approve requests that omit `decisionKind` resolve as `approve_once`.
+
+## Workspace Bash Command Rules
+
+`Allow similar commands` saves a versioned argv prefix proposed by the Bash tool and
+validated by the Daemon. For example, command `whois example.com` with proposal
+`["whois"]` permits later commands whose parsed argv starts with exactly `whois` in the
+same workspace. It does not permit arbitrary Bash or another workspace.
+
+The Daemon is the only authority that parses, validates, stores, matches, and revokes
+rules. The Web and API client may display the validated proposal but must not derive one
+from command text. Matching occurs only after tool deny, write-scope, Plan Mode, risk
+review, workflow binding, and mandatory Agent/Skill approval constraints have been
+applied. A command rule can bypass only an ordinary `bash=ask` result.
+
+Eligible proposals are one simple literal command with no newline, pipeline,
+redirection, list operator, command substitution, shell/interpreter wrapper, privilege
+wrapper, or high/critical risk flag. Generic `git`, destructive removal, force push,
+download-and-execute, and other over-broad prefixes are ineligible. The exact stored
+proposal and its fingerprint are revalidated when the approval is resolved.
+
+Saving a rule and approving the originating request is one `BEGIN IMMEDIATE` SQLite
+transaction. The transaction rereads the pending approval, validates the submitted
+fingerprint, upserts or reactivates the rule, and conditionally changes the approval to
+`approved`. Failure rolls back both changes. Runner resumption occurs only after commit.
+
+Rules are listed in Workspace approval settings and can be revoked. First version has no
+manual create or edit operation.
 
 Payload variants:
 
@@ -416,7 +455,24 @@ CREATE INDEX idx_approval_requests_run ON approval_requests(run_id);
 CREATE INDEX idx_approval_requests_task ON approval_requests(task_id);
 CREATE INDEX idx_approval_requests_media_job ON approval_requests(media_job_id);
 CREATE INDEX idx_approval_requests_created_at ON approval_requests(created_at);
+
+CREATE TABLE approval_command_rules (
+  id TEXT PRIMARY KEY,
+  workspace_id TEXT NOT NULL,
+  tool_name TEXT NOT NULL CHECK(tool_name = 'bash'),
+  rule_version INTEGER NOT NULL,
+  prefix_tokens_json TEXT NOT NULL,
+  fingerprint TEXT NOT NULL,
+  source_approval_id TEXT,
+  created_by TEXT NOT NULL,
+  created_at TEXT NOT NULL,
+  revoked_at TEXT,
+  UNIQUE(workspace_id, tool_name, fingerprint)
+);
 ```
+
+Approval rows add nullable proposal JSON, decision kind, and decision-rule ID columns so
+pending approvals and audit decisions survive process restart.
 
 Policy records can be global in v0.1. Channel-level policy selection should be added when channel CRUD lands.
 
@@ -560,9 +616,15 @@ Request:
 
 ```json
 {
-  "reason": "Approved for this run."
+  "reason": "Approved for this run.",
+  "decisionKind": "approve_once",
+  "proposedRuleFingerprint": null
 }
 ```
+
+Omitted `decisionKind` means `approve_once`. `approve_command_rule` requires the exact
+stored proposal fingerprint and returns `409` when the approval is no longer pending,
+the proposal is unavailable, or the rule is no longer eligible.
 
 Response:
 
@@ -787,10 +849,12 @@ CLI output must include:
 Approval panel:
 
 - Pending approvals are visible globally and inside the run viewer.
-- Risk level is visually prominent.
-- Payload preview is specific: command, file path, diff, destination, or media cost.
-- Approve and deny actions require one click plus optional reason.
-- Critical approvals should require a confirmation step.
+- The active runtime dialog shows one exact, human-readable action sentence and direct
+  allow/deny actions; it does not expose raw payload or policy metadata.
+- `ResolveApprovalRequest.reason` remains optional for CLI, specialized review surfaces,
+  and historical compatibility. The shared Web runtime dialog submits no reason.
+- External sends, deploys, credential changes, and other specialized reviews retain their
+  own consequence-matched confirmation surfaces.
 - Resolved approvals remain visible in the run timeline.
 
 The UI must not bury approvals inside raw logs.

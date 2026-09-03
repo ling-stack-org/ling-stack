@@ -1,4 +1,10 @@
 import { randomUUID } from "node:crypto";
+import {
+  SUPPORTED_LOCALES,
+  type InterfaceLocale,
+  type ResponseLanguagePreference as SharedResponseLanguagePreference,
+  type SupportedLocale,
+} from "@ling-stack/localization";
 import type { RunTool } from "./approval-policy.js";
 import type { ProcedureObservationStep, ProcedureObservationValidationStep } from "./procedure-observation-types.js";
 import type { RunnerFallbackReason, RunnerRequestSource } from "./runtime-supervisor-types.js";
@@ -58,13 +64,13 @@ export type ChannelAutoReplyMode = "mentions_only" | "default_teammate" | "auto_
 
 export const channelAutoReplyModes: readonly ChannelAutoReplyMode[] = ["mentions_only", "default_teammate", "auto_route"];
 
-export type ResponseLanguage = "zh-CN" | "en-US";
+export type ResponseLanguage = SupportedLocale;
 
-export const responseLanguages: readonly ResponseLanguage[] = ["zh-CN", "en-US"];
+export const responseLanguages: readonly ResponseLanguage[] = SUPPORTED_LOCALES;
 
-export type ResponseLanguagePreference = "follow_user" | ResponseLanguage;
+export type ResponseLanguagePreference = SharedResponseLanguagePreference;
 
-export const responseLanguagePreferences: readonly ResponseLanguagePreference[] = ["follow_user", "zh-CN", "en-US"];
+export const responseLanguagePreferences: readonly ResponseLanguagePreference[] = ["follow_user", ...SUPPORTED_LOCALES];
 
 export type LingConversationTone = "friendly" | "pragmatic" | "none";
 
@@ -103,7 +109,7 @@ export const DEFAULT_SKILL_GOVERNANCE_POLICY: SkillGovernancePolicy = {
 
 export type ChannelResponseLanguage = "workspace" | ResponseLanguagePreference;
 
-export const channelResponseLanguages: readonly ChannelResponseLanguage[] = ["workspace", "follow_user", "zh-CN", "en-US"];
+export const channelResponseLanguages: readonly ChannelResponseLanguage[] = ["workspace", "follow_user", ...SUPPORTED_LOCALES];
 
 export type ChannelWorkflowPreference = "manual" | "architect_engineer_qa";
 
@@ -483,10 +489,11 @@ export interface WorkspaceSettings {
   readonly schemaVersion: 1;
   readonly workspaceCwd?: string;
   readonly theme?: "light" | "dark" | "system";
-  readonly locale?: string;
+  readonly locale?: InterfaceLocale;
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly lingConversationTone?: LingConversationTone;
   readonly defaultProviderPresetId?: string;
+  readonly mediaGenerationDefaults?: import("./media-generation-routing-types.js").WorkspaceMediaGenerationDefaults;
   readonly defaultAuthorizationMode?: AuthorizationMode;
   readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly defaultPermissionMode?: SessionPermissionMode;
@@ -500,10 +507,11 @@ export interface WorkspaceSettings {
 export interface UpdateWorkspaceSettingsInput {
   readonly workspaceCwd?: string | null;
   readonly theme?: "light" | "dark" | "system" | null;
-  readonly locale?: string | null;
+  readonly locale?: InterfaceLocale | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly lingConversationTone?: LingConversationTone | null;
   readonly defaultProviderPresetId?: string | null;
+  readonly mediaGenerationDefaults?: import("./media-generation-routing-types.js").WorkspaceMediaGenerationDefaults | null;
   readonly defaultAuthorizationMode?: AuthorizationMode | null;
   readonly defaultWorkspaceAccessMode?: WorkspaceAccessMode | null;
   readonly defaultPermissionMode?: SessionPermissionMode | null;
@@ -1489,7 +1497,7 @@ export interface ChannelExecutionProposal {
   readonly collaborationSteps: readonly ChannelExecutionProposalStep[];
   readonly requiredTools: readonly ("read" | "grep" | "find" | "ls" | "bash" | "edit" | "write")[];
   readonly riskSummary?: string;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly shaping?: ChannelRequirementShaping;
   readonly status: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
@@ -1512,7 +1520,7 @@ export interface CreateChannelExecutionProposalInput {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly ChannelExecutionProposal["requiredTools"][number][];
   readonly riskSummary?: string;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
   readonly shaping?: ChannelRequirementShaping;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string;
@@ -1530,7 +1538,7 @@ export interface UpdateChannelExecutionProposalInput {
   readonly collaborationSteps?: readonly ChannelExecutionProposalStep[];
   readonly requiredTools?: readonly ChannelExecutionProposal["requiredTools"][number][];
   readonly riskSummary?: string | null;
-  readonly responseLanguage?: ResponseLanguage | null;
+  readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly shaping?: ChannelRequirementShaping | null;
   readonly status?: ChannelExecutionProposalStatus;
   readonly linkedTaskId?: string | null;
@@ -1965,15 +1973,18 @@ export interface WorkflowStepOutputRef {
 
 export type WorkflowPacketSourceRefType =
   | "channel_message"
+  | "conversation_item"
   | "channel_brief"
   | "channel_decision"
   | "context_summary"
   | "task"
   | "run"
+  | "attempt"
   | "workflow"
   | "workflow_step"
   | "workflow_handoff_intent"
   | "workflow_selector_decision"
+  | "execution_action"
   | "artifact"
   | "approval"
   | "memory";
@@ -2261,6 +2272,7 @@ export interface WorkflowStepContextPackSnapshot {
     readonly id: string;
     readonly role: string;
     readonly priority: string;
+    readonly compactionSurvival?: string;
     readonly estimatedTokens?: number;
     readonly sourceRefIds?: readonly string[];
     readonly metadata?: Record<string, unknown>;
@@ -2359,7 +2371,7 @@ export interface ChannelWorkflowMetadata {
   readonly sourceIntentDecisionId?: string;
   readonly requiredParticipantManifest?: RequiredParticipantManifestV1;
   readonly completionGate?: WorkflowCompletionGateV1;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
 }
 
 export type DelegatedOutcomeV1 = import("@ling-stack/contracts").DelegatedOutcomeV1;
@@ -2474,6 +2486,8 @@ export interface ListChannelWorkflowStepsOptions {
   readonly workflowId: string;
   readonly status?: ChannelWorkflowStepStatus;
   readonly limit?: number;
+  /** Read the complete durable workflow-step history for canonical evidence paths. */
+  readonly complete?: boolean;
 }
 
 export type CollaborationTaskCardMode =

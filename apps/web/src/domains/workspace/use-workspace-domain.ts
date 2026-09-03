@@ -31,7 +31,7 @@ import {
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
-import { projectChannelConversationItemPage } from "../../lib/channel-conversation-items.js";
+import { mergeConversationItems, projectChannelConversationItemPage } from "../../lib/channel-conversation-items.js";
 import { channelMessagesEqual } from "../../lib/channel-message-equality.js";
 import {
   defaultChannelCreateForm,
@@ -55,6 +55,8 @@ import type {
   ChannelHandoff,
   ChannelLinkPreview,
   ChannelMessage,
+  ConversationItemV1,
+  ConversationGeneratedMedia,
   ChannelIntentDecision,
   ChannelMessageRouteDecision,
   ChannelWorkflow,
@@ -105,6 +107,8 @@ export interface WorkspaceState {
   readonly taskEditForm: TaskEditFormState;
   readonly taskRunProviderId: string;
   readonly channelMessages: readonly ChannelMessage[];
+  readonly channelConversationItems: readonly ConversationItemV1[];
+  readonly channelGeneratedMedia: readonly ConversationGeneratedMedia[];
   readonly memoryObjects: readonly MemoryObject[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly channelMessagesHasOlder: boolean;
@@ -157,6 +161,7 @@ export interface WorkspaceActions {
   readonly setTaskEditForm: Dispatch<SetStateAction<TaskEditFormState>>;
   readonly setTaskRunProviderId: Dispatch<SetStateAction<string>>;
   readonly setChannelMessages: Dispatch<SetStateAction<readonly ChannelMessage[]>>;
+  readonly setChannelConversationItems: Dispatch<SetStateAction<readonly ConversationItemV1[]>>;
   readonly setChannelExecutionProposals: Dispatch<SetStateAction<readonly ChannelExecutionProposal[]>>;
   readonly setChannelAttachments: Dispatch<SetStateAction<readonly ChannelAttachment[]>>;
   readonly setChannelLinkPreviews: Dispatch<SetStateAction<readonly ChannelLinkPreview[]>>;
@@ -213,6 +218,7 @@ interface WorkspaceFeedbackEntry {
 export function useWorkspaceDomain(input: {
   readonly cwd: string;
   readonly initialWorkspaceCwd: string;
+  readonly selectedChannelBranchId: string;
   readonly translate: (value: string) => string;
   readonly reportFeedback: (entry: WorkspaceFeedbackEntry) => void;
   readonly clearFeedback: (surface: WorkspaceFeedbackSurface, identity: string) => void;
@@ -239,6 +245,8 @@ export function useWorkspaceDomain(input: {
   const [taskEditForm, setTaskEditForm] = useState<TaskEditFormState>(defaultTaskEditForm);
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
+  const [channelConversationItems, setChannelConversationItems] = useState<readonly ConversationItemV1[]>([]);
+  const [channelGeneratedMedia, setChannelGeneratedMedia] = useState<readonly ConversationGeneratedMedia[]>([]);
   const [channelItemsBeforeSequence, setChannelItemsBeforeSequence] = useState<number | undefined>();
   const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
   const [usedMemoryEvents, setUsedMemoryEvents] = useState<readonly UsedMemoryEvent[]>([]);
@@ -280,6 +288,23 @@ export function useWorkspaceDomain(input: {
   const [channelCouncilSaving, setChannelCouncilSaving] = useState(false);
   const [error, setError] = useState<DomainError | undefined>();
   const loadGuard = useLatestKeyedRequestGuard();
+
+  const selectedChannelBranch = channelBranches.find((branch) =>
+    branch.id === input.selectedChannelBranchId &&
+    branch.channelId === selectedChannelId &&
+    branch.status !== "archived"
+  );
+  const selectedChannelMessageThreadId = input.selectedChannelBranchId
+    ? selectedChannelBranch?.rootThreadId ?? `missing-channel-branch-thread:${input.selectedChannelBranchId}`
+    : undefined;
+  const selectedChannelIdRef = useRef(selectedChannelId);
+  const selectedChannelMessageThreadIdRef = useRef(selectedChannelMessageThreadId);
+  selectedChannelIdRef.current = selectedChannelId;
+  selectedChannelMessageThreadIdRef.current = selectedChannelMessageThreadId;
+
+  function isSelectedChannelConversation(channelId: string, threadId?: string): boolean {
+    return channelId === selectedChannelIdRef.current && threadId === selectedChannelMessageThreadIdRef.current;
+  }
 
   function clearScopedFeedback(surface: WorkspaceFeedbackSurface, identity: string): void {
     input.clearFeedback(surface, identity);
@@ -461,12 +486,13 @@ export function useWorkspaceDomain(input: {
     const cwd = input.cwd.trim();
     if (!cwd || !channelId) {
       setChannelMessages([]);
+      setChannelConversationItems([]);
       setChannelMessagesHasOlder(false);
       setChannelItemsBeforeSequence(undefined);
       return;
     }
 
-    const guardKey = `messages:${cwd}:${channelId}:${threadId ?? ""}`;
+    const guardKey = `messages:${cwd}:${channelId}`;
     const token = loadGuard.next(guardKey);
     if (!options?.silent) {
       setChannelMessagesLoading(true);
@@ -483,21 +509,26 @@ export function useWorkspaceDomain(input: {
       if (!loadGuard.isCurrent(guardKey, token)) {
         return;
       }
+      if (!isSelectedChannelConversation(channelId, threadId)) {
+        return;
+      }
       const page = projectChannelConversationItemPage(response);
       const messagesChanged = !channelMessagesEqual(channelMessages, page.messages);
       setChannelMessages((current) => channelMessagesEqual(current, page.messages) ? current : page.messages);
+      setChannelConversationItems(page.conversationItems);
+      setChannelGeneratedMedia(page.generatedMedia);
       setChannelMessagesHasOlder(page.hasMore);
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
       if (messagesChanged) {
         input.onChannelMessagesLoaded?.(channelId, page.messages);
       }
     } catch (caught) {
-      if (!loadGuard.isCurrent(guardKey, token)) return;
+      if (!loadGuard.isCurrent(guardKey, token) || !isSelectedChannelConversation(channelId, threadId)) return;
       if (!options?.silent) {
         reportScopedFeedback("composer", channelId, "load", caught);
       }
     } finally {
-      if (loadGuard.isCurrent(guardKey, token)) {
+      if (loadGuard.isCurrent(guardKey, token) && isSelectedChannelConversation(channelId, threadId)) {
         setChannelMessagesLoading(false);
       }
     }
@@ -509,7 +540,7 @@ export function useWorkspaceDomain(input: {
       return;
     }
 
-    const guardKey = `olderMessages:${cwd}:${channelId}:${threadId ?? ""}`;
+    const guardKey = `olderMessages:${cwd}:${channelId}`;
     const token = loadGuard.next(guardKey);
     setChannelMessagesLoadingOlder(true);
     try {
@@ -523,15 +554,20 @@ export function useWorkspaceDomain(input: {
       if (!loadGuard.isCurrent(guardKey, token)) {
         return;
       }
+      if (!isSelectedChannelConversation(channelId, threadId)) {
+        return;
+      }
       const page = projectChannelConversationItemPage(response);
       setChannelMessages((current) => mergeChannelMessages(page.messages, current));
+      setChannelConversationItems((current) => mergeConversationItems(page.conversationItems, current));
+      setChannelGeneratedMedia((current) => mergeGeneratedMedia(page.generatedMedia, current));
       setChannelMessagesHasOlder(page.hasMore);
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
     } catch (caught) {
-      if (!loadGuard.isCurrent(guardKey, token)) return;
+      if (!loadGuard.isCurrent(guardKey, token) || !isSelectedChannelConversation(channelId, threadId)) return;
       reportScopedFeedback("composer", channelId, "load", caught);
     } finally {
-      if (loadGuard.isCurrent(guardKey, token)) {
+      if (loadGuard.isCurrent(guardKey, token) && isSelectedChannelConversation(channelId, threadId)) {
         setChannelMessagesLoadingOlder(false);
       }
     }
@@ -965,6 +1001,8 @@ export function useWorkspaceDomain(input: {
   function resetSelectedChannelActivity(): void {
     setTasks([]);
     setChannelMessages([]);
+    setChannelConversationItems([]);
+    setChannelGeneratedMedia([]);
     setChannelMessagesHasOlder(false);
     setChannelItemsBeforeSequence(undefined);
     setChannelMessagesLoadingOlder(false);
@@ -1013,6 +1051,8 @@ export function useWorkspaceDomain(input: {
     setChannelsLoading(false);
     setTasksLoading(false);
     setChannelMessages([]);
+    setChannelConversationItems([]);
+    setChannelGeneratedMedia([]);
     setMemoryObjects([]);
     setUsedMemoryEvents([]);
     setChannelMessagesHasOlder(false);
@@ -1061,6 +1101,8 @@ export function useWorkspaceDomain(input: {
       taskEditForm,
       taskRunProviderId,
       channelMessages,
+      channelConversationItems,
+      channelGeneratedMedia,
       memoryObjects,
       usedMemoryEvents,
       channelMessagesHasOlder,
@@ -1112,6 +1154,7 @@ export function useWorkspaceDomain(input: {
       setTaskEditForm,
       setTaskRunProviderId,
       setChannelMessages,
+      setChannelConversationItems,
       setChannelExecutionProposals,
       setChannelAttachments,
       setChannelLinkPreviews,
@@ -1169,6 +1212,17 @@ function mergeChannelMessages(
     merged.push(message);
   }
   return merged;
+}
+
+function mergeGeneratedMedia(
+  olderItems: readonly ConversationGeneratedMedia[],
+  currentItems: readonly ConversationGeneratedMedia[],
+): readonly ConversationGeneratedMedia[] {
+  const byId = new Map<string, ConversationGeneratedMedia>();
+  for (const item of [...olderItems, ...currentItems]) byId.set(item.mediaJobId, item);
+  return [...byId.values()].sort(
+    (left, right) => left.createdAt.localeCompare(right.createdAt) || left.mediaJobId.localeCompare(right.mediaJobId),
+  );
 }
 
 interface ChannelTransitionEntity {

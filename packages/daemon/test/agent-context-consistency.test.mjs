@@ -735,6 +735,10 @@ test("manifest-backed stale context commits a typed delegated blocker", async ()
     });
     fixture.store.updateChannelWorkflowStep(step.id, { taskId: prepared.task.id, runId: run.id }, "2026-08-10T03:00:01.000Z");
     fixture.store.markRunStarted(run.id, "2026-08-10T03:00:02.000Z");
+    fixture.store.appendEvent(run.id, "run_created", {
+      attemptId: "attempt_manifest_stale_context",
+      workUnitId: "work_unit_manifest_stale_context",
+    });
     fixture.store.markRunSucceeded(run.id, "2026-08-10T03:00:03.000Z");
     fixture.store.appendConversationItem({
       channelId: fixture.channel.id,

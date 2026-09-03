@@ -11,11 +11,14 @@
     }
   },
   "scripts": {
+    "build:ci": "tsc -p tsconfig.json",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+    "test:ci": "node scripts/test.mjs",
     "build": "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json",
     "build:native": "node scripts/build-native.mjs",
     "typecheck": "corepack pnpm --filter @ling-stack/contracts build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
-    "test": "corepack pnpm build && node --test test/*.test.mjs && cargo test --manifest-path native/Cargo.toml"
+    "test": "corepack pnpm build && node scripts/test.mjs"
   },
   "dependencies": {
     "@ling-stack/contracts": "workspace:*"

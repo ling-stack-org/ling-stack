@@ -18,6 +18,11 @@ import type {
   WorkItemReleaseRequest,
   WorkItemRouteRequest,
   WorkspaceChangesResponse,
+  WorkspaceSnapshotManifest,
+  WorkspaceSnapshotEntry,
+  WorkspaceSnapshotPreview,
+  SnapshotRestoreConfirmation,
+  SnapshotRestoreRequest,
   WorkspaceFileOpenOptionsResponse,
   WorkspaceFileOpenRequest,
   WorkspaceFileOpenResponse,
@@ -106,7 +111,39 @@ export const operationEndpoints = {
 
   async getWorkspaceChanges(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceChangesResponse> {
       return this._get("/workspace/changes", { cwd });
-    },
+  },
+
+  async listWorkspaceSnapshots(this: LingDaemonEndpointContext, cwd: string): Promise<{ readonly cwd: string; readonly snapshots: readonly WorkspaceSnapshotManifest[]; readonly restoreUiEnabled?: boolean }> {
+      return this._get("/workspace/snapshots", { cwd });
+  },
+
+  async getWorkspaceSnapshot(this: LingDaemonEndpointContext, cwd: string, snapshotId: string): Promise<WorkspaceSnapshotPreview> {
+      return this._get(`/workspace/snapshots/${encodeURIComponent(snapshotId)}`, { cwd });
+  },
+
+  async createWorkspaceSnapshot(this: LingDaemonEndpointContext, cwd: string, input: { readonly ttlMs?: number } = {}): Promise<{ readonly manifest: WorkspaceSnapshotManifest; readonly entries: readonly WorkspaceSnapshotEntry[] }> {
+      return this._post("/workspace/snapshots", { cwd }, input);
+  },
+
+  async createWorkspaceSnapshotAnchor(this: LingDaemonEndpointContext, cwd: string, snapshotId: string): Promise<import("@ling-stack/contracts").WorkspaceSnapshotRestoreAnchor> {
+      return this._post(`/workspace/snapshots/${encodeURIComponent(snapshotId)}/anchors`, { cwd }, {});
+  },
+
+  async createWorkspaceSnapshotConfirmation(this: LingDaemonEndpointContext, cwd: string, snapshotId: string, input: { readonly anchorId: string }): Promise<SnapshotRestoreConfirmation> {
+      return this._post(`/workspace/snapshots/${encodeURIComponent(snapshotId)}/confirmations`, { cwd }, input);
+  },
+
+  async confirmWorkspaceSnapshotRestore(this: LingDaemonEndpointContext, cwd: string, confirmationId: string): Promise<SnapshotRestoreConfirmation> {
+      return this._post(`/workspace/snapshot-confirmations/${encodeURIComponent(confirmationId)}/confirm`, { cwd }, { state: "confirmed" });
+  },
+
+  async restoreWorkspaceSnapshot(this: LingDaemonEndpointContext, cwd: string, snapshotId: string, input: { readonly idempotencyKey: string; readonly anchorId: string; readonly confirmationId: string; readonly expectedWorkspaceFingerprint?: string; readonly expectedProvenanceWatermark?: string }): Promise<SnapshotRestoreRequest> {
+      return this._post(`/workspace/snapshots/${encodeURIComponent(snapshotId)}/restore`, { cwd }, input);
+  },
+
+  async getWorkspaceSnapshotRestore(this: LingDaemonEndpointContext, cwd: string, requestId: string): Promise<SnapshotRestoreRequest> {
+      return this._get(`/workspace/snapshot-restores/${encodeURIComponent(requestId)}`, { cwd });
+  },
 
   async getWorkspaceFileOpenOptions(this: LingDaemonEndpointContext, cwd: string, path: string): Promise<WorkspaceFileOpenOptionsResponse> {
       return this._get("/workspace-files/open-options", { cwd, path });

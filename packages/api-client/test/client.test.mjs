@@ -30,6 +30,32 @@ test("daemonBaseUrlFromEnv trims configured URL and falls back to local daemon",
   assert.equal(daemonBaseUrlFromEnv({}), "http://127.0.0.1:17891");
 });
 
+test("builds command-rule approval and management requests", async () => {
+  const mock = createFetchMock([
+    { approval: { id: "approval 1", status: "approved" } },
+    { cwd: "/repo", rules: [] },
+    { rule: { id: "rule 1", revokedAt: "now" } },
+  ]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+
+  await client.approveApproval("/repo", "approval 1", {
+    decisionKind: "approve_command_rule",
+    proposedRuleFingerprint: "fingerprint-1",
+  });
+  await client.listApprovalCommandRules("/repo");
+  await client.revokeApprovalCommandRule("/repo", "rule 1");
+
+  assert.deepEqual(mock.calls.map((call) => [call.method, call.url]), [
+    ["POST", "http://daemon.test/approvals/approval%201/approve?cwd=%2Frepo"],
+    ["GET", "http://daemon.test/approval-command-rules?cwd=%2Frepo"],
+    ["DELETE", "http://daemon.test/approval-command-rules/rule%201?cwd=%2Frepo"],
+  ]);
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    decisionKind: "approve_command_rule",
+    proposedRuleFingerprint: "fingerprint-1",
+  });
+});
+
 test("builds workspace review recovery and open-action requests", async () => {
   const mock = createFetchMock([
     { cwd: "/repo", state: "clean", additions: 0, deletions: 0, files: [], checkedAt: "now" },

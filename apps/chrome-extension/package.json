@@ -6,6 +6,9 @@
   "type": "module",
   "private": true,
   "scripts": {
+    "build:ci": "node scripts/build.mjs",
+    "typecheck:ci": "node --check src/background.js && node --check src/content-script.js && node --check src/popup.js && node --check src/protocol.js",
+    "test:ci": "node --test test/*.test.mjs",
     "build": "node scripts/build.mjs",
     "build:store-bootstrap": "node scripts/build.mjs --store-bootstrap",
     "test": "node --test test/*.test.mjs",

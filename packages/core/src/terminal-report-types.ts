@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { SupportedLocale } from "@ling-stack/localization";
 
 export const terminalReportSchemaVersion = 1 as const;
 
@@ -6,11 +7,12 @@ export type TerminalReportSurface = "normal_conversation" | "channel" | "teammat
 export type TerminalReportSourceKind = "workflow" | "run" | "turn";
 export type TerminalReportOutcomeStatus = "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
 export type TerminalReportRecordStatus = "draft" | "validating" | "committed" | "fallback" | "failed";
-export type TerminalReportLanguage = "zh-CN" | "en-US";
+export type TerminalReportLanguage = SupportedLocale;
 export type TerminalReportCheckStatus = "passed" | "failed" | "blocked" | "cancelled" | "skipped" | "not_run" | "unknown";
 export type TerminalReportParticipantStatus = "completed" | "failed" | "blocked" | "cancelled";
 export type TerminalReportRiskSeverity = "info" | "warning" | "critical";
 export type TerminalReportRiskStatus = "unresolved" | "mitigated" | "accepted" | "unverified";
+export type TerminalReportApprovalDecision = "pending" | "approved" | "denied" | "expired" | "cancelled";
 
 export type TerminalReportSourceRefKind =
   | "message"
@@ -127,6 +129,8 @@ export interface TerminalReportEvidenceRisk {
   readonly status: TerminalReportRiskStatus;
   readonly summary: string;
   readonly nextAction?: string;
+  /** Set when the risk is derived from a durable approval decision. */
+  readonly approvalDecision?: TerminalReportApprovalDecision;
   readonly sourceRefs: readonly TerminalReportSourceRef[];
 }
 
@@ -220,6 +224,8 @@ export interface TerminalReportRisk {
   readonly status: TerminalReportRiskStatus;
   readonly summary: string;
   readonly nextAction?: string;
+  /** Set when the risk is derived from a durable approval decision. */
+  readonly approvalDecision?: TerminalReportApprovalDecision;
   readonly sourceRefs: readonly TerminalReportSourceRef[];
 }
 
@@ -300,6 +306,8 @@ export interface ListLingTerminalReportsOptions {
   readonly sourceKind?: TerminalReportSourceKind;
   readonly sourceId?: string;
   readonly status?: TerminalReportRecordStatus;
+  /** Return only the newest committed/fallback revision for each source. */
+  readonly effectiveOnly?: boolean;
   readonly limit?: number;
 }
 

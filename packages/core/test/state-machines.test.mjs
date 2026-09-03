@@ -207,6 +207,16 @@ test("work unit transitions enforce supervisor lifecycle and terminal guards", (
       currentStatus: "succeeded",
     },
   );
+
+  assert.deepEqual(
+    transitionWorkUnit({
+      entityId: "wu_cancelled_retry",
+      currentStatus: "cancelled",
+      event: "retry",
+      actor: "local-user",
+    }),
+    { ok: true, from: "cancelled", to: "queued" },
+  );
 });
 
 test("work unit can finish if approval resume event was already consumed", () => {

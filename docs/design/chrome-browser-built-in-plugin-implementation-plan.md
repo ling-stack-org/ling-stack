@@ -103,7 +103,10 @@ Light/Dark, with no invalid refresh action or loading flicker.
   proves first-install connection only because Chrome does not persist that installation across a
   restart. The Chrome-restart and six-tool gates run only with `LING_CHROME_SMOKE_PREINSTALLED=1`
   after the isolated profile has received one real persistent unpacked installation.
-- Run platform-neutral Host framing/lifecycle tests. Do not build a new Windows installer for this
+- Run platform-neutral Host framing/lifecycle tests on generic CI. The Host test runner builds and
+  verifies the native executable only on supported macOS arm64 or Windows x64 hosts; Linux CI still
+  runs Node lifecycle and Rust protocol tests, with product-build-only cases explicitly skipped,
+  without pretending to produce a Linux Host. Do not build a new Windows installer for this
   reconnect-only release because Host and daemon wire protocols are unchanged.
 - Keep the repair branch local, create no PR or push, and build `ling-for-chrome.zip` from the exact
   clean local commit that passed acceptance. Record source, manifest, and ZIP SHA-256 values.

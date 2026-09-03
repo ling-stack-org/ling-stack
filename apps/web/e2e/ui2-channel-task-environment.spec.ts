@@ -242,10 +242,30 @@ test("channel environment presents dirty conflict state as a data-first surface"
   const environment = page.getByRole("region", { name: "Environment", exact: true });
   await expect(environment).toHaveAttribute("data-ui2-channel-environment", "true");
   await expect(environment.locator(".ling-ui-data-row")).toHaveCount(5);
+  await expect(environment.locator('[data-environment-row="commit"]')).toBeVisible();
   await expect(environment.locator(".ling-ui-status-indicator[data-tone='danger']").first()).toContainText("Needs attention");
   await expect(environment).toContainText("3 changed files");
   await expect(environment).toContainText("1 conflicted");
+  await expect(environment.locator(".channel-environment-page-header > span")).toHaveCount(1);
+  await environment.getByText("Evidence and output", { exact: true }).click();
+  await expect(environment.locator(".channel-environment-evidence-grid")).toBeVisible();
+  await expect(environment).toContainText("No linked resources");
   await expect(environment.locator(".channel-environment-section")).toHaveCount(0);
+  const path = environment.locator(".channel-environment-path");
+  await expect(path).toHaveAttribute("title", `${cwd}/.ling-stack/worktrees/channels/channel_engineering`);
+  await expect(path).toHaveCSS("white-space", "nowrap");
+  await expect(path).toHaveCSS("text-overflow", "ellipsis");
+  await expect.poll(async () => {
+    const box = await path.boundingBox();
+    return Math.round(box?.height ?? 0);
+  }).toBeLessThanOrEqual(20);
+  const statusLeftEdges = await environment
+    .locator(".channel-environment-list > .ling-ui-data-row .ling-ui-data-row-status")
+    .evaluateAll((elements) => elements.map((element) => (
+      Math.round(element.querySelector(".ling-ui-status-indicator")!.getBoundingClientRect().left)
+    )));
+  expect(statusLeftEdges).toHaveLength(5);
+  expect(new Set(statusLeftEdges).size, `status columns: ${statusLeftEdges.join(", ")}`).toBe(1);
   await captureEvidence(page, "1440x960-ling-light-channel-environment-conflict.png");
 
   const openCommit = environment.getByRole("button", { name: "Open" });

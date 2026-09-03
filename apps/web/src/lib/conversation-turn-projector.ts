@@ -4,6 +4,7 @@ import type {
   ChannelMessage,
   ChannelWorkflow,
   ChannelWorkflowStep,
+  ConversationItemV1,
   RunSession,
   UsedMemoryEvent,
 } from "../types.js";
@@ -14,13 +15,14 @@ export type ConversationTurnOperationRef =
   | { readonly kind: "workflow"; readonly workflowId: string }
   | { readonly kind: "run_thread"; readonly threadId: string };
 
-type ConversationGenericTranscriptBlockKind = Exclude<TranscriptBlockKind, "coordinator_message" | "operation" | "final_result">;
+type ConversationGenericTranscriptBlockKind = Exclude<TranscriptBlockKind, "coordinator_message" | "conversation_item" | "operation" | "final_result">;
 type ConversationGenericTranscriptBlock = {
   readonly [Kind in ConversationGenericTranscriptBlockKind]: TranscriptBlockBase<Kind>;
 }[ConversationGenericTranscriptBlockKind];
 
 export type ConversationTranscriptBlock =
   | ConversationCoordinatorMessageBlock
+  | ConversationItemBlock
   | ConversationOperationBlock
   | ConversationFinalResultBlock
   | ConversationGenericTranscriptBlock;
@@ -31,6 +33,10 @@ export interface ConversationCoordinatorMessageBlock extends TranscriptBlockBase
   readonly phase: "start" | "terminal";
   readonly message: ChannelMessage;
   readonly memoryCitationEvents: readonly UsedMemoryEvent[];
+}
+
+export interface ConversationItemBlock extends TranscriptBlockBase<"conversation_item"> {
+  readonly item: ConversationItemV1;
 }
 
 export interface ConversationOperationBlock extends TranscriptBlockBase<"operation"> {
@@ -69,6 +75,7 @@ export interface ConversationTurnProjection {
 export interface BuildConversationTurnProjectionInput {
   readonly channelId: string;
   readonly messages: readonly ChannelMessage[];
+  readonly conversationItems?: readonly ConversationItemV1[];
   readonly proposals: readonly ChannelExecutionProposal[];
   readonly intentDecisions: readonly ChannelIntentDecision[];
   readonly workflows: readonly ChannelWorkflow[];
@@ -84,7 +91,12 @@ export interface BuildConversationTurnProjectionInput {
 export function buildConversationTurnProjection(input: BuildConversationTurnProjectionInput): ConversationTurnProjection {
   const hiddenActivityIds = new Set<string>();
   const channelMessages = input.messages.filter((message) => message.channelId === input.channelId);
+  const conversationItems = (input.conversationItems ?? []).filter((item) =>
+    item.channelId === input.channelId && (item.visibility === "channel" || item.visibility === "thread_participants"));
+  const itemsByTurnId = groupBy(conversationItems.filter((item) => Boolean(item.turnId)), (item) => item.turnId ?? "");
+  const itemsByThreadId = groupBy(conversationItems, (item) => item.threadId);
   const messagesByTurnId = groupBy(channelMessages.filter((message) => Boolean(message.turnId)), (message) => message.turnId ?? "");
+  const messagesByThreadId = groupBy(channelMessages.filter((message) => Boolean(message.threadId)), (message) => message.threadId ?? "");
   const legacyChildMessagesBySourceItemId = groupBy(
     channelMessages.filter((message) => !message.turnId && Boolean(message.threadId)),
     (message) => message.threadId ?? "",
@@ -125,6 +137,7 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
     const childMessages = uniqueMessages([
       ...(sourceMessage.turnId ? messagesByTurnId.get(sourceMessage.turnId) ?? [] : []),
       ...(legacyChildMessagesBySourceItemId.get(sourceMessage.id) ?? []),
+      ...threadMessagesForSource(sourceMessage, messagesByThreadId),
     ])
       .filter((message) => message.id !== sourceMessage.id)
       .sort(compareByCreatedAtThenId);
@@ -132,6 +145,12 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
     const coordinatorMessages = allCoordinatorMessages.filter((message) => !input.terminalReportMessageIds?.has(message.id));
     const { startMessages, terminalMessages } = splitCoordinatorMessages(coordinatorMessages, operation?.cell);
     const turnId = `conversation-turn:${sourceMessage.id}`;
+    const turnConversationItems = conversationItemsForSource({
+      sourceMessage,
+      itemsByTurnId,
+      itemsByThreadId,
+      rootMessages,
+    });
     const blocks = buildTranscriptBlocks({
       turnId,
       proposals,
@@ -140,9 +159,11 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
       terminalMessages,
       operation,
       usedMemoryEventsByResponseId,
+      conversationItems: turnConversationItems,
     });
     const updatedAt = maxIsoString([
       sourceMessage.updatedAt,
+      ...turnConversationItems.map((item) => item.updatedAt),
       ...proposals.map((proposal) => proposal.updatedAt),
       ...input.workflowSteps
         .filter((step) => operation?.ref.kind === "workflow" && step.workflowId === operation.ref.workflowId)
@@ -155,6 +176,11 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
     hiddenActivityIds.add(`message:${sourceMessage.id}`);
     for (const message of allCoordinatorMessages) {
       hiddenActivityIds.add(`message:${message.id}`);
+    }
+    for (const item of turnConversationItems) {
+      if (item.kind !== "user_message" && item.kind !== "assistant_message") {
+        hiddenActivityIds.add(`message:${item.id}`);
+      }
     }
     if (operation?.ref.kind === "workflow") {
       hiddenActivityIds.add(`workflow:${operation.ref.workflowId}`);
@@ -188,7 +214,48 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
 }
 
 function isRootUserMessage(message: ChannelMessage): boolean {
-  return message.authorType === "local-user" && message.kind === "message" && (Boolean(message.turnId) || !message.threadId);
+  // A channel-root user message may carry the channel discussion thread id.
+  // Treat every local message as a turn root and let threadMessagesForSource
+  // assign same-thread coordinator replies to the nearest preceding request.
+  // The previous `!message.threadId` guard left those replies in the activity
+  // feed, where the internal workflow prompt was rendered as user-facing text.
+  return message.authorType === "local-user" && message.kind === "message";
+}
+
+function threadMessagesForSource(
+  sourceMessage: ChannelMessage,
+  messagesByThreadId: ReadonlyMap<string, readonly ChannelMessage[]>,
+): readonly ChannelMessage[] {
+  // A canonical item without a turn id has no reliable parent relation. Do
+  // not infer ownership from adjacency alone: an unrelated assistant message
+  // in the same channel-root thread must remain a standalone activity row.
+  const sourceTurnId = sourceMessage.turnId?.trim();
+  if (!sourceTurnId) {
+    return [];
+  }
+  const threadId = sourceMessage.threadId?.trim();
+  if (!threadId) {
+    return [];
+  }
+  const threadMessages = messagesByThreadId.get(threadId);
+  if (!threadMessages || threadMessages.length === 0) {
+    return [];
+  }
+  const ordered = [...threadMessages].sort(compareByCreatedAtThenId);
+  const sourceIndex = ordered.findIndex((message) => message.id === sourceMessage.id);
+  if (sourceIndex < 0) {
+    return [];
+  }
+  const result: ChannelMessage[] = [];
+  for (const message of ordered.slice(sourceIndex + 1)) {
+    if (message.authorType === "local-user" && message.kind === "message") {
+      break;
+    }
+    if (message.turnId === sourceTurnId) {
+      result.push(message);
+    }
+  }
+  return result;
 }
 
 function uniqueMessages(messages: readonly ChannelMessage[]): readonly ChannelMessage[] {
@@ -281,6 +348,7 @@ function buildTranscriptBlocks(input: {
   readonly terminalMessages: readonly ChannelMessage[];
   readonly operation: { readonly cell: ConversationWorkCellViewModel; readonly ref: ConversationTurnOperationRef } | undefined;
   readonly usedMemoryEventsByResponseId: ReadonlyMap<string, readonly UsedMemoryEvent[]>;
+  readonly conversationItems: readonly ConversationItemV1[];
 }): readonly ConversationTranscriptBlock[] {
   const blocks: ConversationTranscriptBlock[] = [];
   blocks.push(...buildRequirementShapingBlocks(input.turnId, input.proposals));
@@ -299,6 +367,7 @@ function buildTranscriptBlocks(input: {
       memoryCitationEvents: input.usedMemoryEventsByResponseId.get(message.id) ?? [],
     });
   }
+  blocks.push(...buildConversationItemBlocks(input.turnId, input.conversationItems, input.operation));
   if (input.operation) {
     blocks.push({
       id: `operation:${input.operation.cell.id}`,
@@ -365,6 +434,127 @@ function buildTranscriptBlocks(input: {
   return blocks;
 }
 
+function buildConversationItemBlocks(
+  turnId: string,
+  items: readonly ConversationItemV1[],
+  operation: { readonly cell: ConversationWorkCellViewModel; readonly ref: ConversationTurnOperationRef } | undefined,
+): readonly ConversationItemBlock[] {
+  return items
+    .filter((item) => item.kind !== "user_message" && item.kind !== "assistant_message")
+    .filter((item) => !conversationItemCoveredByOperation(item, operation))
+    .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id))
+    .map((item) => {
+      const display = conversationItemDisplay(item);
+      return {
+        id: `conversation-item:${item.id}`,
+        turnId,
+        kind: "conversation_item",
+        status: conversationItemTranscriptStatus(item),
+        revision: item.revision,
+        updatedAt: item.updatedAt,
+        ownerId: item.actorId,
+        display: [{ id: `display:${item.id}`, text: display.title, meta: display.meta }],
+        expanded: display.detail ? { mode: "inline", title: display.title, summary: display.detail } : undefined,
+        ...(item.kind === "artifact_ref" ? {
+          previewTargets: [{
+            id: `artifact:${item.payload.artifactId}`,
+            kind: "artifact" as const,
+            label: item.payload.title ?? item.payload.artifactId,
+          }],
+        } : {}),
+        raw: { id: `raw:${item.id}`, source: `conversation-item:${item.id}` },
+        item,
+      } satisfies ConversationItemBlock;
+    });
+}
+
+function conversationItemsForSource(input: {
+  readonly sourceMessage: ChannelMessage;
+  readonly itemsByTurnId: ReadonlyMap<string, readonly ConversationItemV1[]>;
+  readonly itemsByThreadId: ReadonlyMap<string, readonly ConversationItemV1[]>;
+  readonly rootMessages: readonly ChannelMessage[];
+}): readonly ConversationItemV1[] {
+  const explicit = input.sourceMessage.turnId
+    ? input.itemsByTurnId.get(input.sourceMessage.turnId) ?? []
+    : [];
+  const fallback = input.itemsByThreadId.get(input.sourceMessage.threadId ?? "") ?? [];
+  const fallbackCandidates = fallback.filter((item) => !item.turnId && item.domainRefs.some((ref) =>
+    (ref.type === "turn" && ref.id === input.sourceMessage.turnId) ||
+    (ref.type === "message" && ref.id === input.sourceMessage.id) ||
+    (ref.type === "conversation_item" && ref.id === input.sourceMessage.id),
+  ));
+  const sameThreadRootCount = input.rootMessages.filter((message) => message.threadId === input.sourceMessage.threadId).length;
+  const candidates = fallbackCandidates.length > 0 || sameThreadRootCount === 1
+    ? [...explicit, ...(fallbackCandidates.length > 0 ? fallbackCandidates : fallback.filter((item) => !item.turnId))]
+    : explicit;
+  return [...new Map(candidates.map((item) => [item.id, item])).values()]
+    .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
+}
+
+function conversationItemCoveredByOperation(
+  item: ConversationItemV1,
+  operation: { readonly cell: ConversationWorkCellViewModel; readonly ref: ConversationTurnOperationRef } | undefined,
+): boolean {
+  if (!operation) return false;
+  const refs = item.domainRefs;
+  if (refs.some((ref) => ref.type === "run" && operation.cell.runIds.includes(ref.id))) return true;
+  if (refs.some((ref) => ref.type === "thread" && ref.id === operation.cell.threadId)) return true;
+  if (refs.some((ref) => ref.type === "operation" && ref.id === operation.cell.id)) return true;
+  if (item.kind === "operation_state" && item.payload.operationId === operation.cell.id) return true;
+  const operationRef = operation.ref;
+  if (operationRef.kind === "workflow") {
+    return refs.some((ref) => ref.type === "workflow" && ref.id === operationRef.workflowId);
+  }
+  return refs.some((ref) => ref.type === "run" && ref.id === operation.cell.anchorRunId);
+}
+
+function conversationItemDisplay(item: ConversationItemV1): { readonly title: string; readonly meta?: string; readonly detail?: string } {
+  switch (item.kind) {
+    case "tool_call":
+      return { title: item.payload.title ?? item.payload.toolName, meta: item.payload.toolName, detail: item.payload.inputSummary };
+    case "tool_result":
+      return { title: item.payload.outputSummary ?? item.payload.status, meta: item.payload.status, detail: item.payload.errorCode };
+    case "approval_request":
+      return { title: item.payload.title, detail: item.payload.summary };
+    case "approval_decision":
+      return { title: item.payload.decision, detail: item.payload.reason };
+    case "handoff":
+      return { title: item.payload.summary, meta: item.payload.targetTeammateId };
+    case "operation_state":
+      return { title: item.payload.title, meta: item.payload.state, detail: item.payload.summary };
+    case "artifact_ref":
+      return { title: item.payload.title ?? item.payload.artifactId, meta: item.payload.artifactKind ?? "Artifact" };
+    case "system_event":
+      return { title: item.payload.summary, meta: item.payload.eventType };
+    case "user_message":
+    case "assistant_message":
+      return { title: item.payload.body };
+  }
+}
+
+function conversationItemTranscriptStatus(item: ConversationItemV1): TranscriptBlockStatus {
+  if (item.status === "failed") return "failed";
+  if (item.kind === "approval_request") return "waiting_for_approval";
+  if (item.status === "pending") return "running";
+  if (item.kind === "tool_result") {
+    if (item.payload.status === "failed") return "failed";
+    if (item.payload.status === "cancelled") return "cancelled";
+    return "succeeded";
+  }
+  if (item.kind === "approval_decision") {
+    if (item.payload.decision === "denied") return "failed";
+    if (item.payload.decision === "cancelled") return "cancelled";
+    return "succeeded";
+  }
+  if (item.kind === "operation_state") {
+    if (item.payload.state === "failed") return "failed";
+    if (item.payload.state === "cancelled") return "cancelled";
+    if (item.payload.state === "succeeded") return "succeeded";
+    return "running";
+  }
+  return "succeeded";
+}
+
 function buildRequirementShapingBlocks(
   turnId: string,
   proposals: readonly ChannelExecutionProposal[],
@@ -372,117 +562,34 @@ function buildRequirementShapingBlocks(
   const blocks: ConversationGenericTranscriptBlock[] = [];
   for (const proposal of proposals.filter((item) => item.shaping && item.status === "draft")) {
     const shaping = proposal.shaping;
-    if (!shaping) {
+    if (!shaping || shaping.status !== "needs_user_clarification" || shaping.openQuestions.length === 0) {
       continue;
     }
-    const contributionLines = [
-      ...proposal.collaborationSteps
-        .filter(requirementShapingContributionAffectsScope)
-        .map((step, index) => ({
-          id: `proposal:${proposal.id}:contribution:${index}`,
-          text: `${step.teammateId}: ${step.summary}`,
-          tone: step.action === "flagged_risk" ? "waiting" as const : "default" as const,
-          meta: step.action,
-        })),
-      ...shaping.clarifications.map((clarification) => ({
-        id: `proposal:${proposal.id}:clarification:${clarification.id}`,
-        text: `${clarification.authorType}: ${clarification.body}`,
-        tone: "muted" as const,
-        meta: "clarification",
-      })),
-    ];
+    const remainingQuestions = shaping.openQuestions.slice(1);
     blocks.push({
-      id: `requirement-shaping:${proposal.id}`,
+      id: `decision-needed:${proposal.id}`,
       turnId,
-      kind: "requirement_shaping",
-      status: requirementShapingTranscriptStatus(shaping.status),
+      kind: "decision_needed",
+      status: "waiting_for_approval",
       revision: 1,
       updatedAt: shaping.updatedAt ?? proposal.updatedAt,
       display: [{
-        id: `display:${proposal.id}:shaping`,
-        text: shaping.summary?.trim() || proposal.title,
-        meta: requirementShapingStatusLabel(shaping.status),
+        id: `display:${proposal.id}:decision`,
+        text: shaping.openQuestions[0] ?? proposal.title,
       }],
-      expanded: {
-        mode: "inline",
-        title: "Requirement shaping",
-        summary: proposal.riskSummary,
-        lines: contributionLines,
-      },
-    });
-    if (shaping.openQuestions.length > 0 && shaping.status === "needs_user_clarification") {
-      blocks.push({
-        id: `decision-needed:${proposal.id}`,
-        turnId,
-        kind: "decision_needed",
-        status: "waiting_for_approval",
-        revision: 1,
-        updatedAt: shaping.updatedAt ?? proposal.updatedAt,
-        display: [{
-          id: `display:${proposal.id}:decision`,
-          text: shaping.openQuestions[0] ?? "Decision needed",
-          meta: shaping.openQuestions.length === 1 ? "1 open question" : `${shaping.openQuestions.length} open questions`,
-        }],
+      ...(remainingQuestions.length > 0 ? {
         expanded: {
-          mode: "inline",
-          title: "Decision needed",
-          lines: shaping.openQuestions.map((question, index) => ({
-            id: `proposal:${proposal.id}:question:${index}`,
+          mode: "inline" as const,
+          lines: remainingQuestions.map((question, index) => ({
+            id: `proposal:${proposal.id}:question:${index + 1}`,
             text: question,
-            tone: "waiting",
+            tone: "waiting" as const,
           })),
         },
-      });
-    }
+      } : {}),
+    });
   }
   return blocks;
-}
-
-function requirementShapingContributionAffectsScope(step: ChannelExecutionProposal["collaborationSteps"][number]): boolean {
-  const summary = step.summary.trim();
-  if (!summary) {
-    return false;
-  }
-  if (step.action === "flagged_risk") {
-    return true;
-  }
-  return /\b(scope|scoped|boundary|requirement|acceptance|criteria|risk|blocker|conflict|decision|decide|approval|clarify|clarification|question|assumption|constraint|permission|security|cost|latency|handoff|owner|proposal)\b|范围|边界|需求|验收|风险|阻塞|冲突|决策|决定|审批|澄清|问题|假设|约束|权限|安全|成本|延迟|交接|负责人|提案/u.test(summary);
-}
-
-function requirementShapingTranscriptStatus(
-  status: NonNullable<ChannelExecutionProposal["shaping"]>["status"],
-): TranscriptBlockStatus {
-  if (status === "needs_user_clarification" || status === "ready_for_confirmation") {
-    return "waiting_for_approval";
-  }
-  if (status === "converted_to_task") {
-    return "succeeded";
-  }
-  if (status === "dismissed") {
-    return "cancelled";
-  }
-  return "running";
-}
-
-function requirementShapingStatusLabel(
-  status: NonNullable<ChannelExecutionProposal["shaping"]>["status"],
-): string {
-  if (status === "collecting_context") {
-    return "Collecting context";
-  }
-  if (status === "collecting_teammate_input") {
-    return "Collecting teammate input";
-  }
-  if (status === "needs_user_clarification") {
-    return "Needs user clarification";
-  }
-  if (status === "ready_for_confirmation") {
-    return "Ready for confirmation";
-  }
-  if (status === "converted_to_task") {
-    return "Converted to task";
-  }
-  return "Dismissed";
 }
 
 function transcriptStatusFromMessage(message: ChannelMessage): TranscriptBlockStatus {

@@ -2,13 +2,14 @@ import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type R
 import { createPortal } from "react-dom";
 import { ChevronDown, Code2, FilePenLine, FileText, Image as ImageIcon, Loader2, Redo2, Undo2 } from "lucide-react";
 import {
+  getTurnWorkspaceChanges,
   getRunWorkspaceChanges,
   getWorkflowWorkspaceChanges,
 } from "../../../api.js";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
 import type { ConversationArtifactStripChangeArtifact, ConversationArtifactStripItem, ConversationWorkspaceRecoveryTarget } from "../../../lib/conversation-work-cell.js";
-import type { PreviewContentResponse, RunWorkspaceChangesResponse, WorkflowWorkspaceChangesResponse } from "../../../types.js";
+import type { PreviewContentResponse, RunWorkspaceChangesResponse, TurnWorkspaceChangesResponse, WorkflowWorkspaceChangesResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import {
   ConversationArtifactRecoveryDialog,
@@ -20,7 +21,7 @@ import { WorkspaceFileOpenMenu } from "./WorkspaceFileOpenMenu.js";
 const artifactHoverDelayMs = 2_000;
 const artifactHoverHideDelayMs = 300;
 const collapsedChangeFileCount = 3;
-type WorkspaceRecoveryResponse = RunWorkspaceChangesResponse | WorkflowWorkspaceChangesResponse;
+type WorkspaceRecoveryResponse = RunWorkspaceChangesResponse | TurnWorkspaceChangesResponse | WorkflowWorkspaceChangesResponse;
 
 export interface ConversationWorkspaceReviewTarget {
   readonly cwd: string;
@@ -31,12 +32,15 @@ export interface ConversationWorkspaceReviewTarget {
 export function ConversationArtifactStrip({
   items,
   cwd,
+  hideChangedFileDetails = false,
   recoveryTarget,
   loadPreview,
   onOpenWorkspaceReview,
 }: {
   readonly items: readonly ConversationArtifactStripItem[];
   readonly cwd?: string;
+  /** Keep the compact change count while another block owns file-level details. */
+  readonly hideChangedFileDetails?: boolean;
   readonly recoveryTarget?: ConversationWorkspaceRecoveryTarget;
   readonly loadPreview: ArtifactPreviewLoader;
   readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
@@ -66,6 +70,7 @@ export function ConversationArtifactStrip({
         <ChangedFilesGroup
           item={item}
           cwd={cwd}
+          hideFileDetails={hideChangedFileDetails}
           recoveryTarget={item.recoveryTarget ?? recoveryTarget}
           key={item.id}
           loadPreview={loadPreview}
@@ -144,6 +149,7 @@ function ArtifactOutputRow({
 function ChangedFilesGroup({
   item,
   cwd,
+  hideFileDetails,
   recoveryTarget,
   loadPreview,
   onOpenWorkspaceReview,
@@ -153,6 +159,7 @@ function ChangedFilesGroup({
 }: {
   readonly item: ConversationArtifactStripItem;
   readonly cwd?: string;
+  readonly hideFileDetails: boolean;
   readonly recoveryTarget?: ConversationWorkspaceRecoveryTarget;
   readonly loadPreview: ArtifactPreviewLoader;
   readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
@@ -267,7 +274,7 @@ function ChangedFilesGroup({
           ) : null}
         </span>
       </div>
-      <div className="conversation-work-cell-change-files">
+      {!hideFileDetails ? <div className="conversation-work-cell-change-files">
         {visibleChanges.map((entry) => {
           const previewable = Boolean(entry.change);
           const content = (
@@ -313,7 +320,7 @@ function ChangedFilesGroup({
             <ChevronDown className="expanded" size={13} aria-hidden="true" />
           </button>
         ) : null}
-      </div>
+      </div> : null}
       <ConversationArtifactRecoveryDialog
         action={recoveryAction}
         cwd={cwd}
@@ -336,6 +343,8 @@ function getWorkspaceRecovery(
 ): Promise<WorkspaceRecoveryResponse> {
   return target.kind === "workflow"
     ? getWorkflowWorkspaceChanges(cwd, target.id)
+    : target.kind === "turn"
+      ? getTurnWorkspaceChanges(cwd, target.id)
     : getRunWorkspaceChanges(cwd, target.id);
 }
 

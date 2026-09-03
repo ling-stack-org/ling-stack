@@ -5,6 +5,8 @@ import {
   type ApprovalRequest,
   type LingApprovalCheckpoint,
   type RunEventEnvelope,
+  type RunEventDataByType,
+  type RunEventEmitter,
   type RunSession,
   type RunStore,
   type WorkUnit,
@@ -276,7 +278,10 @@ export class ApprovalResumeCoordinator {
   }): Promise<void> {
     const payload = input.approval.payload;
     if (payload.type !== "bash") return;
-    const append = (type: Parameters<RunStore["appendEvent"]>[1], data: unknown): RunEventEnvelope => {
+    const append: RunEventEmitter = <K extends Parameters<RunStore["appendEvent"]>[1]>(
+      type: K,
+      data: RunEventDataByType[K],
+    ): RunEventEnvelope => {
       const envelope = input.store.appendEvent(input.run.id, type, data);
       syncWorkUnitForRunEvent(input.store, input.workUnit.id, input.attempt.id, type, envelope);
       appendRuntimeProgressForRunEvent(input.store, input.workUnit.id, input.attempt.id, type, envelope);

@@ -40,6 +40,10 @@ export interface LingStackRuntimePaths {
   readonly runtimeSettingsPath: string;
   readonly sessionsDir: string;
   readonly artifactsDir: string;
+  /** Daemon-owned content-addressed workspace snapshot objects. */
+  readonly snapshotsDir: string;
+  readonly snapshotBlobsDir: string;
+  readonly snapshotStagingDir: string;
   readonly attachmentsDir: string;
   readonly logsDir: string;
   readonly piDir: string;
@@ -187,6 +191,9 @@ function buildRuntimePaths(
     runtimeSettingsPath: join(rootDir, "runtime-settings.json"),
     sessionsDir: join(rootDir, "sessions"),
     artifactsDir: join(rootDir, "artifacts"),
+    snapshotsDir: join(rootDir, "snapshots"),
+    snapshotBlobsDir: join(rootDir, "snapshots", "blobs"),
+    snapshotStagingDir: join(rootDir, "snapshots", "staging"),
     attachmentsDir: join(rootDir, "attachments"),
     logsDir: join(rootDir, "logs"),
     piDir: join(rootDir, "pi"),
@@ -201,6 +208,9 @@ export function ensureRuntimePaths(paths: LingStackRuntimePaths): void {
   mkdirSync(paths.rootDir, { recursive: true });
   mkdirSync(paths.sessionsDir, { recursive: true });
   mkdirSync(paths.artifactsDir, { recursive: true });
+  mkdirSync(paths.snapshotsDir, { recursive: true });
+  mkdirSync(paths.snapshotBlobsDir, { recursive: true });
+  mkdirSync(paths.snapshotStagingDir, { recursive: true });
   mkdirSync(paths.attachmentsDir, { recursive: true });
   mkdirSync(paths.logsDir, { recursive: true });
   mkdirSync(paths.piDir, { recursive: true });

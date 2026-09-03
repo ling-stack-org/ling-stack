@@ -1,15 +1,24 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
   createWorkflowParticipantAuthorityV1,
+  delegatedStepFinalizationBasisFingerprintV1,
   isConversationContextProjectionMetadata,
   isDelegatedOutcomeV1,
+  isDelegatedStepRequirementV1,
   isWorkflowCompletionGateV1,
   isWorkflowParticipantAuthorityV1,
   isWorkflowParticipantProviderBindingV1,
+  workflowGraphFingerprintV1,
 } from "@ling-stack/contracts";
-import type { WorkflowCompletionGateV1 } from "@ling-stack/contracts";
+import type {
+  DelegatedEvidenceRefV1,
+  DelegatedOutcomeV1,
+  WorkflowCompletionGateV1,
+} from "@ling-stack/contracts";
+import type { RunEventEnvelope } from "../../run-types.js";
 import {
   buildWorkflowCompletionExpectedReadSet,
+  workflowCompletionGateBasisFingerprintV1,
   type WorkflowCompletionEvaluationV1,
 } from "../../workflow-completion-read-set.js";
 import type { CreateStateTransitionEventInput, StateTransitionEvent } from "../../channel-runtime-types.js";
@@ -66,6 +75,8 @@ import {
   workflowSelectorDecisionSelectSql,
 } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+
+type FinalizableDelegatedOutcomeV1 = Exclude<DelegatedOutcomeV1, { readonly kind: "workflow_started" }>;
 
 export interface SqliteChannelWorkflowStorePorts {
   readonly assertChannelExists: (channelId: string) => void;
@@ -702,7 +713,7 @@ export class SqliteChannelWorkflowStore {
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
       const currentWorkflow = this.getChannelWorkflow(input.workflowId);
-      const currentSteps = this.listChannelWorkflowSteps({ workflowId: input.workflowId, limit: 500 });
+      const currentSteps = this.listChannelWorkflowSteps({ workflowId: input.workflowId, complete: true });
       if (!currentWorkflow) {
         this.context.database.exec("ROLLBACK;");
         return { ok: false, code: "stale_transition", currentStatus: workflow.status };
@@ -717,6 +728,14 @@ export class SqliteChannelWorkflowStore {
         || JSON.stringify(actual) !== JSON.stringify(expected)) {
         this.context.database.exec("ROLLBACK;");
         return { ok: false, code: "stale_transition", currentStatus: currentWorkflow.status };
+      }
+      if (!isCompletionGateConsistentWithCanonicalState({
+        gate,
+        workflow: currentWorkflow,
+        steps: currentSteps,
+      })) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "invalid_transition", currentStatus: currentWorkflow.status };
       }
       const currentGate = currentWorkflow.metadata?.completionGate;
       if (currentWorkflow.status === expectedTarget
@@ -805,10 +824,35 @@ export class SqliteChannelWorkflowStore {
     if (input.finalStatus === "cancelled" && input.delegatedOutcome.kind !== "cancelled") {
       return { ok: false, code: "invalid_transition", currentStatus: input.expectedStatus };
     }
+    if (input.delegatedOutcome.kind === "workflow_started") {
+      return { ok: false, code: "invalid_transition", currentStatus: input.expectedStatus };
+    }
     const expectedRunId = input.expectedRun.kind === "linked_run" ? input.expectedRun.id : undefined;
     const step = this.getChannelWorkflowStep(input.workflowStepId);
     if (!step || step.status !== input.expectedStatus || step.updatedAt !== input.expectedUpdatedAt || step.runId !== expectedRunId) {
       return { ok: false, code: "stale_transition", currentStatus: step?.status ?? input.expectedStatus };
+    }
+    const workflow = this.getChannelWorkflow(step.workflowId);
+    if (!workflow) {
+      return { ok: false, code: "invalid_transition", currentStatus: step.status };
+    }
+    if (input.delegatedOutcome.workflowId !== step.workflowId
+      || input.delegatedOutcome.workflowStepId !== step.id
+      || input.delegatedOutcome.participantId !== step.toParticipantId
+      || input.delegatedOutcome.lineage.runId !== (expectedRunId ?? null)) {
+      return { ok: false, code: "invalid_transition", currentStatus: step.status };
+    }
+    try {
+      // Attempt refs are checked against the linked Run/WorkUnit below. The
+      // channel validator cannot resolve legacy run-created attempt ids that
+      // predate a durable WorkUnit row, so do not make that adapter own the
+      // attempt boundary.
+      this.ports.assertWorkflowPacketSourceRefsInChannel(
+        step.channelId,
+        input.delegatedOutcome.lineage.sourceRefs.filter((ref) => ref.type !== "attempt"),
+      );
+    } catch {
+      return { ok: false, code: "invalid_transition", currentStatus: step.status };
     }
     const event = input.finalStatus === "succeeded"
       ? "succeed"
@@ -832,11 +876,21 @@ export class SqliteChannelWorkflowStore {
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
       let expectedArtifactIds: readonly string[] = [];
+      let actualRunEventCount = 0;
+      let actualRunLatestSeq = 0;
       if (input.expectedRun.kind === "linked_run") {
         const run = this.context.database.prepare(
-          "SELECT status, updated_at FROM run_sessions WHERE id = ?",
+          "SELECT status, updated_at, work_unit_id FROM run_sessions WHERE id = ?",
         ).get(input.expectedRun.id) as Record<string, SQLOutputValue> | undefined;
         if (!run || run.status !== input.expectedRun.status || run.updated_at !== input.expectedRun.updatedAt) {
+          this.context.database.exec("ROLLBACK;");
+          return { ok: false, code: "stale_transition", currentStatus: step.status };
+        }
+        if (!this.delegatedRunAttemptLineageIsCurrent(
+          input.expectedRun.id,
+          run.work_unit_id === null || run.work_unit_id === undefined ? undefined : String(run.work_unit_id),
+          input.delegatedOutcome.lineage.attemptId,
+        )) {
           this.context.database.exec("ROLLBACK;");
           return { ok: false, code: "stale_transition", currentStatus: step.status };
         }
@@ -844,8 +898,10 @@ export class SqliteChannelWorkflowStore {
           SELECT COUNT(*) AS count, COALESCE(MAX(seq), 0) AS latest_seq
           FROM run_events WHERE run_id = ?
         `).get(input.expectedRun.id) as Record<string, SQLOutputValue>;
-        if (Number(eventWatermark.count) !== input.expectedRun.eventWatermark.count
-          || Number(eventWatermark.latest_seq) !== input.expectedRun.eventWatermark.latestSeq) {
+        actualRunEventCount = Number(eventWatermark.count);
+        actualRunLatestSeq = Number(eventWatermark.latest_seq);
+        if (actualRunEventCount !== input.expectedRun.eventWatermark.count
+          || actualRunLatestSeq !== input.expectedRun.eventWatermark.latestSeq) {
           this.context.database.exec("ROLLBACK;");
           return { ok: false, code: "stale_transition", currentStatus: step.status };
         }
@@ -861,6 +917,21 @@ export class SqliteChannelWorkflowStore {
         this.context.database.exec("ROLLBACK;");
         return { ok: false, code: "invalid_transition", currentStatus: step.status };
       }
+      if (input.outputArtifactId && !expectedArtifactIds.includes(input.outputArtifactId)) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "invalid_transition", currentStatus: step.status };
+      }
+      if (!this.delegatedOutcomeEvidenceIsCurrent(
+        input.delegatedOutcome as FinalizableDelegatedOutcomeV1,
+        workflow,
+        step,
+        expectedRunId,
+        input.delegatedOutcome.lineage.attemptId,
+        expectedArtifactIds,
+      )) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "invalid_transition", currentStatus: step.status };
+      }
       if (input.expectedApproval) {
         const approval = this.context.database.prepare(
           "SELECT status, resolved_at FROM approval_requests WHERE id = ?",
@@ -870,6 +941,27 @@ export class SqliteChannelWorkflowStore {
           this.context.database.exec("ROLLBACK;");
           return { ok: false, code: "stale_transition", currentStatus: step.status };
         }
+      }
+      const canonicalBasisFingerprint = delegatedStepFinalizationBasisFingerprintV1({
+        workflowId: workflow.id,
+        workflowStepId: step.id,
+        stepUpdatedAt: input.expectedUpdatedAt,
+        ...(input.expectedRun.kind === "linked_run" ? {
+          runId: input.expectedRun.id,
+          runStatus: input.expectedRun.status,
+          runUpdatedAt: input.expectedRun.updatedAt,
+        } : {}),
+        runEventCount: actualRunEventCount,
+        runLatestSeq: actualRunLatestSeq,
+        requirementFingerprint: step.metadata?.delegatedRequirement?.fingerprint,
+        approval: input.expectedApproval,
+        artifactIds: expectedArtifactIds,
+        outcome: input.delegatedOutcome,
+        verification: input.executionVerification,
+      });
+      if (canonicalBasisFingerprint !== input.delegatedOutcomeBasisFingerprint) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "invalid_transition", currentStatus: step.status };
       }
       const latest = this.context.database.prepare(
         "SELECT status, run_id, updated_at, metadata_json FROM channel_workflow_steps WHERE id = ?",
@@ -931,6 +1023,158 @@ export class SqliteChannelWorkflowStore {
     } catch (error) {
       rollbackOwnedSqliteTransaction(this.context.database);
       throw error;
+    }
+  }
+
+  private delegatedRunAttemptLineageIsCurrent(
+    runId: string,
+    workUnitId: string | undefined,
+    attemptId: string | null,
+  ): boolean {
+    if (!attemptId) return false;
+    if (workUnitId) {
+      const workUnit = this.context.database.prepare(
+        "SELECT active_attempt_id, linked_run_id FROM work_units WHERE id = ?",
+      ).get(workUnitId) as Record<string, SQLOutputValue> | undefined;
+      if (!workUnit || workUnit.active_attempt_id !== attemptId
+        || (workUnit.linked_run_id !== null && workUnit.linked_run_id !== runId)) return false;
+      const attempt = this.context.database.prepare(
+        "SELECT work_unit_id FROM work_unit_attempts WHERE id = ?",
+      ).get(attemptId) as Record<string, SQLOutputValue> | undefined;
+      return attempt?.work_unit_id === workUnitId;
+    }
+    const created = this.context.database.prepare(`
+      SELECT data_json FROM run_events
+      WHERE run_id = ? AND type = 'run_created'
+      ORDER BY seq DESC LIMIT 1
+    `).get(runId) as Record<string, SQLOutputValue> | undefined;
+    if (!created || typeof created.data_json !== "string") return false;
+    try {
+      const data = JSON.parse(created.data_json) as unknown;
+      return Boolean(data && typeof data === "object" && !Array.isArray(data)
+        && (data as Record<string, unknown>).attemptId === attemptId);
+    } catch {
+      return false;
+    }
+  }
+
+  private delegatedOutcomeEvidenceIsCurrent(
+    outcome: FinalizableDelegatedOutcomeV1,
+    workflow: ChannelWorkflow,
+    step: ChannelWorkflowStep,
+    expectedRunId: string | undefined,
+    expectedAttemptId: string | null,
+    expectedArtifactIds: readonly string[],
+  ): boolean {
+    if (outcome.kind === "completed") {
+      const requirement = step.metadata?.delegatedRequirement;
+      const manifest = workflow.metadata?.requiredParticipantManifest;
+      if (!isDelegatedStepRequirementV1(requirement)
+        || !manifest
+        || requirement.workflowId !== workflow.id
+        || requirement.workflowStepId !== step.id
+        || requirement.participantId !== step.toParticipantId
+        || requirement.participantManifestFingerprint !== manifest.fingerprint
+        || outcome.evidenceRefs.some((ref) => !requirement.acceptedEvidenceKinds.includes(ref.kind))) {
+        return false;
+      }
+    }
+    const expectedArtifacts = new Set(expectedArtifactIds);
+    for (const sourceRef of outcome.lineage.sourceRefs) {
+      if (sourceRef.type === "workflow" && sourceRef.id !== workflow.id) return false;
+      if (sourceRef.type === "workflow_step" && sourceRef.id !== step.id) return false;
+      if (sourceRef.type === "run" && sourceRef.id !== (expectedRunId ?? "")) return false;
+      if (sourceRef.type === "attempt" && sourceRef.id !== (expectedAttemptId ?? "")) return false;
+      if (sourceRef.type === "artifact") {
+        if (!expectedRunId || !expectedArtifacts.has(sourceRef.id)) return false;
+        const artifact = this.ports.getArtifact(sourceRef.id);
+        if (!artifact || artifact.runId !== expectedRunId) return false;
+      }
+      if (sourceRef.type === "execution_action"
+        && (!expectedRunId || !this.executionActionEvidenceIsCurrent(expectedRunId, expectedAttemptId, sourceRef.id))) {
+        return false;
+      }
+      if (sourceRef.type === "approval") {
+        const approval = this.findApprovalForExpectedRun(expectedRunId, sourceRef.id);
+        if (!approval || (expectedRunId ? approval.runId !== expectedRunId : Boolean(approval.runId))) return false;
+      }
+    }
+    for (const evidenceRef of outcome.evidenceRefs) {
+      if (evidenceRef.kind === "conversation_item") continue;
+      if (evidenceRef.kind === "workflow_output_packet" || evidenceRef.kind === "artifact") {
+        if (!expectedRunId || !expectedArtifacts.has(evidenceRef.id)) return false;
+        const artifact = this.ports.getArtifact(evidenceRef.id);
+        if (!artifact || artifact.runId !== expectedRunId) return false;
+        continue;
+      }
+      if (!expectedRunId || !this.executionActionEvidenceIsCurrent(expectedRunId, expectedAttemptId, evidenceRef.id)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
+  private executionActionEvidenceIsCurrent(
+    runId: string,
+    attemptId: string | null,
+    actionId: string,
+  ): boolean {
+    if (actionId.startsWith("approval:")) {
+      const approvalId = actionId.slice("approval:".length);
+      if (!approvalId) return false;
+      const approval = this.findApprovalForExpectedRun(runId, approvalId);
+      if (!approval || approval.status !== "approved" || !approval.toolCallId) return false;
+      return this.toolExecutionEvidenceIsCurrent(runId, attemptId, approval.toolCallId);
+    }
+    if (!actionId.startsWith("tool:")) return false;
+    const remainder = actionId.slice("tool:".length);
+    const separator = remainder.indexOf(":");
+    const actionRunId = separator > 0 ? remainder.slice(0, separator) : "";
+    const toolCallId = separator > 0 ? remainder.slice(separator + 1) : "";
+    if (actionRunId !== runId || !toolCallId) return false;
+    return this.toolExecutionEvidenceIsCurrent(runId, attemptId, toolCallId);
+  }
+
+  private toolExecutionEvidenceIsCurrent(
+    runId: string,
+    attemptId: string | null,
+    toolCallId: string,
+  ): boolean {
+    const events = this.listAllRunEvents(runId);
+    let latestToolEvent: RunEventEnvelope | undefined;
+    let terminalToolEvent: RunEventEnvelope | undefined;
+    let explicitAttemptId: string | undefined;
+    for (const event of events) {
+      if (event.type !== "tool_start" && event.type !== "tool_update" && event.type !== "tool_end") continue;
+      if (!isUnknownRecord(event.data) || event.data.toolCallId !== toolCallId) continue;
+      latestToolEvent = event;
+      if (event.type === "tool_end") terminalToolEvent = event;
+      if (typeof event.data.attemptId === "string" && event.data.attemptId.trim()) {
+        explicitAttemptId = event.data.attemptId;
+      }
+    }
+    if (!latestToolEvent || !terminalToolEvent || !isUnknownRecord(terminalToolEvent.data)
+      || terminalToolEvent.data.isError === true) return false;
+    const actionAttemptId = explicitAttemptId ?? latestRunAttemptIdAtOrBefore(events, latestToolEvent.seq);
+    return Boolean(actionAttemptId && actionAttemptId === attemptId);
+  }
+
+  private findApprovalForExpectedRun(runId: string | undefined, approvalId: string) {
+    return this.ports.listApprovalRequests({
+      ...(runId ? { runId } : {}),
+      complete: true,
+    }).find((approval) => approval.id === approvalId);
+  }
+
+  private listAllRunEvents(runId: string): readonly RunEventEnvelope[] {
+    const events: RunEventEnvelope[] = [];
+    let afterSeq = 0;
+    while (true) {
+      const page = this.ports.listEvents(runId, { afterSeq, limit: 1000 });
+      events.push(...page);
+      const latestSeq = page.at(-1)?.seq;
+      if (page.length < 1000 || latestSeq === undefined || latestSeq <= afterSeq) return events;
+      afterSeq = latestSeq;
     }
   }
 
@@ -1051,6 +1295,12 @@ export class SqliteChannelWorkflowStore {
     if (options.status) {
       clauses.push("status = ?");
       params.push(options.status);
+    }
+    if (options.complete) {
+      return this.context.database
+        .prepare(channelWorkflowStepSelectSql("WHERE " + clauses.join(" AND ") + " ORDER BY position ASC, created_at ASC"))
+        .all(...params)
+        .map((row) => mapChannelWorkflowStep(row as Record<string, SQLOutputValue>));
     }
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
@@ -1334,6 +1584,92 @@ function validateWorkflowPacketSourceRefs(sourceRefs: readonly WorkflowPacketSou
   }
 }
 
+function isCompletionGateConsistentWithCanonicalState(input: {
+  readonly gate: WorkflowCompletionGateV1;
+  readonly workflow: ChannelWorkflow;
+  readonly steps: readonly ChannelWorkflowStep[];
+}): boolean {
+  const manifest = input.workflow.metadata?.requiredParticipantManifest;
+  const sourceDecisionId = input.workflow.metadata?.sourceIntentDecisionId;
+  const graph = input.workflow.metadata?.workflowGraph;
+  if (!manifest || !sourceDecisionId || !graph
+    || input.gate.sourceIntentDecisionId !== sourceDecisionId
+    || input.gate.participantManifestFingerprint !== manifest.fingerprint
+    || input.gate.graphFingerprint !== workflowGraphFingerprintV1(graph)) {
+    return false;
+  }
+  // The source decision is checked by the read-set CAS. The checks below bind
+  // every result to the current manifest and materialized step graph.
+  const manifestIds = manifest.participants.map((participant) => participant.participantId).sort();
+  const resultIds = input.gate.participantResults.map((result) => result.participantId).sort();
+  if (JSON.stringify(manifestIds) !== JSON.stringify(resultIds)
+    || new Set(resultIds).size !== resultIds.length) return false;
+
+  for (const participant of manifest.participants) {
+    const result = input.gate.participantResults.find((candidate) => candidate.participantId === participant.participantId);
+    if (!result) return false;
+    const ownedSteps = input.steps
+      .filter((step) => step.toParticipantId === participant.participantId)
+      .sort((left, right) => left.id.localeCompare(right.id));
+    const resultStepIds = [...result.workflowStepIds].sort();
+    if (JSON.stringify(resultStepIds) !== JSON.stringify(ownedSteps.map((step) => step.id))) return false;
+    const expectedEvidenceRefs = uniqueDelegatedEvidenceRefs(ownedSteps);
+    if (!sameDelegatedEvidenceRefs(result.evidenceRefs, expectedEvidenceRefs)) return false;
+    if (input.gate.status === "verified" && participant.requirement === "required") {
+      if (result.status !== "satisfied"
+        || ownedSteps.length === 0
+        || ownedSteps.some((step) => step.status !== "succeeded" && step.status !== "skipped")
+        || ownedSteps.some((step) => step.metadata?.delegatedOutcome?.kind !== "completed")) {
+        return false;
+      }
+    }
+  }
+
+  const basisFingerprint = workflowCompletionGateBasisFingerprintV1({
+    workflowId: input.workflow.id,
+    sourceIntentDecisionId: input.gate.sourceIntentDecisionId,
+    manifestFingerprint: manifest.fingerprint,
+    graphFingerprint: input.gate.graphFingerprint,
+    participantResults: input.gate.participantResults,
+    steps: input.steps,
+  });
+  return basisFingerprint === input.gate.basisFingerprint;
+}
+
+function uniqueDelegatedEvidenceRefs(steps: readonly ChannelWorkflowStep[]): readonly DelegatedEvidenceRefV1[] {
+  const refs = new Map<string, DelegatedEvidenceRefV1>();
+  for (const step of steps) {
+    const outcome = step.metadata?.delegatedOutcome;
+    if (!outcome || outcome.kind !== "completed") continue;
+    for (const ref of outcome.evidenceRefs) refs.set(`${ref.kind}:${ref.id}`, ref);
+  }
+  return [...refs.values()].sort((left, right) => `${left.kind}:${left.id}`.localeCompare(`${right.kind}:${right.id}`));
+}
+
+function sameDelegatedEvidenceRefs(
+  left: readonly DelegatedEvidenceRefV1[],
+  right: readonly DelegatedEvidenceRefV1[],
+): boolean {
+  const key = (ref: DelegatedEvidenceRefV1): string => `${ref.kind}:${ref.id}`;
+  return JSON.stringify([...left].map(key).sort()) === JSON.stringify([...right].map(key).sort());
+}
+
+function isUnknownRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function latestRunAttemptIdAtOrBefore(
+  events: readonly RunEventEnvelope[],
+  throughSeq: number,
+): string | undefined {
+  for (const event of [...events].sort((left, right) => right.seq - left.seq)) {
+    if (event.seq > throughSeq || event.type !== "run_created" || !isUnknownRecord(event.data)) continue;
+    const attemptId = event.data.attemptId;
+    if (typeof attemptId === "string" && attemptId.trim()) return attemptId;
+  }
+  return undefined;
+}
+
 function isWorkflowHandoffIntentStatusValue(value: unknown): value is WorkflowHandoffIntentStatus {
   return value === "proposed" || value === "validated" || value === "accepted" || value === "declined" || value === "converted" || value === "failed";
 }
@@ -1349,15 +1685,18 @@ function isWorkflowSelectorTargetKindValue(value: unknown): value is WorkflowSel
 function isWorkflowPacketSourceRefTypeValue(value: unknown): value is WorkflowPacketSourceRef["type"] {
   return (
     value === "channel_message" ||
+    value === "conversation_item" ||
     value === "channel_brief" ||
     value === "channel_decision" ||
     value === "context_summary" ||
     value === "task" ||
     value === "run" ||
+    value === "attempt" ||
     value === "workflow" ||
     value === "workflow_step" ||
     value === "workflow_handoff_intent" ||
     value === "workflow_selector_decision" ||
+    value === "execution_action" ||
     value === "artifact" ||
     value === "approval" ||
     value === "memory"

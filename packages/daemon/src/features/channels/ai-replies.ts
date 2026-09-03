@@ -7,6 +7,7 @@ import {
   type RunStore,
   type SecretResolver,
 } from "@ling-stack/core";
+import { formatServerCatalogMessage } from "@ling-stack/localization";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { isRunTool } from "../runs/approvals.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
@@ -45,6 +46,7 @@ import {
   getChannelMessageView,
   updatePendingAssistantMessage,
 } from "./conversation-item-messages.js";
+import { runHasConversationGeneratedMedia } from "../media/conversation-projection.js";
 
 export type StartChannelReplyRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -231,11 +233,12 @@ async function completeAiChannelReply(input: {
       consumerTeammateId: input.canonicalTeammateId,
     });
     const memoryPrompt = renderedMemory.prompt;
-    const responseLanguage = resolveChannelResponseLanguage({
+    const responseLanguageResolution = resolveChannelResponseLanguage({
       store: input.store,
       channel: input.channel,
       sourceText: input.sourceMessage.body,
-    }).language;
+    });
+    const responseLanguage = responseLanguageResolution.language;
     let discussionContextPack = buildChannelReplyContextPack({
       store: input.store,
       channel: input.channel,
@@ -270,15 +273,15 @@ async function completeAiChannelReply(input: {
     const systemPrompt = [
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
-      responseLanguageInstruction(responseLanguage),
+      responseLanguageInstruction(responseLanguageResolution.instructionLanguage),
       planModeActive ? renderPlanModeInstruction() : undefined,
       "Use only attachment/link metadata and preview/extraction text that is explicitly included in the turn envelope. Do not claim to inspect unavailable attachment bodies or web page bodies.",
       "If Ling web context is included, you may use only those web_search/open_url results and must keep cited source URLs visible in the reply.",
       "If Ling web context is blocked, degraded, or has no usable source URLs, explain the limitation briefly in user-facing language and do not repeat provider, relay, or protocol diagnostics verbatim.",
-      "Do not perform tool use or side effects.",
+      "Do not use workspace tools, MCP tools, or other side effects. If Ling exposes image_generate or video_generate for this run, you may use only those first-party media tools when the user asks to generate media.",
       ...(!proposalBlocksAllowed
         ? [
-            "Do not include hidden proposal blocks. Do not create or suggest tasks, runs, workflows, branches, approvals, or side effects.",
+            "Do not include hidden proposal blocks. Do not create or suggest tasks, runs, workflows, branches, approvals, or other side effects; the explicitly exposed first-party media generation tools are the only exception.",
           ]
         : [
             "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
@@ -373,9 +376,20 @@ async function completeAiChannelReply(input: {
     if (runFailure) {
       throw new Error(runFailure);
     }
-    const rawReplyText = execution.projection.rawText().trim() || "AI reply completed without text.";
+    const rawReplyText = execution.projection.rawText().trim();
     if (execution.projection.promptLeakDetected() || isChannelReplyPromptLeak(rawReplyText)) {
       throw new Error(CHANNEL_PROMPT_LEAK_ERROR_MESSAGE);
+    }
+    const hasGeneratedMedia = runHasConversationGeneratedMedia(input.store, execution.run.id);
+    if (!rawReplyText && !hasGeneratedMedia) {
+      const message = formatServerCatalogMessage(responseLanguage, "daemon.conversation.empty_result");
+      const failed = finishChannelMessage(input.store, input.pending.id, {
+        body: message,
+        status: "failed",
+        errorMessage: message,
+      });
+      input.stream?.onBlocked(failed);
+      return failed;
     }
     const extractedProposal = !proposalBlocksAllowed
       ? undefined
@@ -418,7 +432,9 @@ async function completeAiChannelReply(input: {
         new Date().toISOString(),
       );
     }
-    recordProposedPlanArtifactFromReply(input.store, replyReference, rawReplyText);
+    if (rawReplyText) {
+      recordProposedPlanArtifactFromReply(input.store, replyReference, rawReplyText);
+    }
     const reply = finishChannelMessage(input.store, input.pending.id, {
       body: replyText,
       status: "ready",

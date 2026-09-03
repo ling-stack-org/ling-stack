@@ -1,5 +1,6 @@
 import {
   buildWorkflowCompletionExpectedReadSet,
+  workflowCompletionGateBasisFingerprintV1,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type RunStore,
@@ -16,7 +17,7 @@ import {
 } from "@ling-stack/contracts";
 import { readWorkflowStepOutputPacketArtifact } from "./workflow-step-packets.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
-import { listExecutionActions } from "../runs/execution-actions.js";
+import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 
 export function evaluateWorkflowCompletionGate(input: {
   readonly store: RunStore;
@@ -95,37 +96,26 @@ function buildEvaluation(
   const graphFingerprint = values.graph
     ? workflowGraphFingerprintV1(values.graph)
     : input.workflow.metadata?.workflowGraphFingerprint ?? "missing_graph";
-  const basis = {
+  const basisFingerprint = workflowCompletionGateBasisFingerprintV1({
     workflowId: input.workflow.id,
     sourceIntentDecisionId: values.sourceIntentDecisionId,
     manifestFingerprint: manifest.fingerprint,
     graphFingerprint,
     participantResults: values.participantResults,
-    steps: [...input.steps].sort((left, right) => left.id.localeCompare(right.id)).map((step) => ({
-      id: step.id,
-      status: step.status,
-      participantId: step.toParticipantId,
-      graphNodeId: step.metadata?.graphNodeId,
-      dependsOnStepIds: [...(step.metadata?.dependsOnStepIds ?? [])].sort(),
-      delegatedOutcome: step.metadata?.delegatedOutcome,
-      delegatedOutcomeBasisFingerprint: step.metadata?.delegatedOutcomeBasisFingerprint,
-      delegatedRequirement: step.metadata?.delegatedRequirement,
-      executionVerification: step.metadata?.executionVerification,
-      outputArtifactId: step.metadata?.outputArtifactId,
-    })),
-  };
+    steps: input.steps,
+  });
   const gate: WorkflowCompletionGateV1 = {
     schemaVersion: 1,
     status: values.forceStatus,
     sourceIntentDecisionId: values.sourceIntentDecisionId,
     participantManifestFingerprint: manifest.fingerprint,
     graphFingerprint,
-    basisFingerprint: workflowCompletionBasisFingerprintV1(basis),
+    basisFingerprint,
     participantResults: values.participantResults,
     checkedAt: input.now,
   };
   const actions = input.steps
-    .flatMap((step) => step.runId ? listExecutionActions(input.store, { runId: step.runId, limit: 500 }) : [])
+    .flatMap((step) => step.runId ? listAllExecutionActionsForRun(input.store, step.runId) : [])
     .sort((left, right) => left.id.localeCompare(right.id));
   const referencedActionIds = [...new Set(values.participantResults.flatMap((participant) => participant.evidenceRefs
     .filter((ref) => ref.kind === "execution_action")
@@ -180,7 +170,7 @@ function evaluateParticipant(
         return verification.operationResults.flatMap((operation) => operation.evidenceActionIds);
       }
       return step.runId && participant.requiredOperationIds.length === 0
-        ? listExecutionActions(store, { runId: step.runId, limit: 500 })
+        ? listAllExecutionActionsForRun(store, step.runId)
           .filter((action) => action.status === "succeeded")
           .map((action) => action.id)
         : [];

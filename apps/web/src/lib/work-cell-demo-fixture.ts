@@ -898,6 +898,7 @@ function demoAction(input: {
     id: input.id,
     workspaceId: input.workspaceId,
     runId: input.runId,
+    attemptId: `attempt:${input.runId}`,
     actionType: input.actionType,
     risk: input.risk ?? "low",
     status: "succeeded",

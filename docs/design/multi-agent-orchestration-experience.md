@@ -10,7 +10,7 @@ Related docs:
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
-- [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md)
+- [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 - [Channel Message Streaming](channel-message-streaming.md)
 - [Ling Agent Operation Cell UI](ling-agent-operation-cell-ui.md)
 
@@ -37,10 +37,8 @@ P4-P7 implementation status as of 2026-06-09:
 - Model-assisted selector decisions remain a follow-up behind an explicit policy/feature
   flag; the current selector records deterministic routing evidence and alternatives.
 - Ordinary channel messages use a separate intent entry before they can propose or start
-  workflow-shaped collaboration. The staged plan is documented as P1-P6 in
-  [Channel Intent To Workflow Selector](channel-intent-workflow-selector.md): proposal
-  to WorkflowGraph adapter, proposal edit, clarify, independent intent evidence,
-  confirmed direct-workflow prefill, and model-assisted intent selection.
+  workflow-shaped collaboration. Current intent routing and participant semantics are
+  owned by [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md).
 - Detailed design:
   [Multi-Agent Orchestrator](./multi-agent-orchestrator.md).
 

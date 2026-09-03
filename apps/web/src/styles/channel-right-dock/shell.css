@@ -17,6 +17,10 @@
   overflow: hidden;
 }
 
+.task-workbench-window.with-channel-progress-popover > .task-workbench-main {
+  background: var(--surface-panel);
+}
+
 .task-workbench-main.with-channel-side-panel {
   grid-template-columns:
     minmax(0, 1fr)
@@ -57,6 +61,7 @@
 
 .channel-side-panel-frame > .channel-side-panel {
   justify-self: end;
+  border-left: 0;
 }
 
 .task-workbench-main.channel-right-dock-collapsed .channel-side-panel-frame {

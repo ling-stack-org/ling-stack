@@ -3,8 +3,15 @@ import { ArrowDown, Copy, FileText, Pencil, ThumbsDown, ThumbsUp } from "lucide-
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
+import type { InlineApprovalView } from "../../lib/inline-approvals.js";
+import {
+  buildComposerGateApprovalPresentationByRunId,
+  composerGateApprovalPresentationForWorkCell,
+  type ComposerGateApprovalPresentation,
+} from "../../lib/runtime-approval-presentation.js";
 import {
   ConversationAttachmentStrip,
+  ConversationGeneratedMediaBlock,
   ConversationFeed,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
@@ -14,7 +21,7 @@ import {
   MessageRow,
 } from "../../shared/conversation/index.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import type { RunSession } from "../../types.js";
+import type { ConversationGeneratedMedia, RunSession } from "../../types.js";
 import type {
   WorkspaceRightDockFileTarget,
   WorkspaceRightDockReviewTarget,
@@ -35,6 +42,8 @@ export interface NormalConversationFeedProps {
   readonly visibleMessages: readonly ConversationHomeMessage[];
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly detailContext?: ConversationHomeDetailContext;
+  readonly composerGateApprovals: readonly InlineApprovalView[];
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly projectPath?: string;
   readonly workspaceCwd: string;
   readonly searchActive: boolean;
@@ -55,10 +64,12 @@ export interface NormalConversationFeedProps {
 
 export function NormalConversationFeed({
   detailContext,
+  composerGateApprovals,
   editSaving,
   editingMessageId,
   latestEditableUserMessageId,
   messages,
+  generatedMedia,
   onCancelMessageEdit,
   onEditMessage,
   onOpenFiles,
@@ -77,10 +88,14 @@ export function NormalConversationFeed({
 }: NormalConversationFeedProps): React.JSX.Element {
   const { t } = useI18n();
   const feedRef = useRef<HTMLDivElement | null>(null);
+  const tailReconciliationFrameRef = useRef<number | undefined>(undefined);
   const stickToLatestRef = useRef(true);
-  const mountedRef = useRef(false);
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [feedbackById, setFeedbackById] = useState<Record<string, "up" | "down">>({});
+  const composerGateApprovalByRunId = useMemo(
+    () => buildComposerGateApprovalPresentationByRunId(composerGateApprovals, t),
+    [composerGateApprovals, t],
+  );
   const feedItems = useMemo(() => projectNormalConversationFeedItems({
     detailContext,
     messages,
@@ -90,8 +105,9 @@ export function NormalConversationFeed({
     visibleMessages,
     workspaceCwd,
   }), [detailContext, messages, projectPath, runById, t, visibleMessages, workspaceCwd]);
-  const itemKey = useMemo(
-    () => feedItems.map((item) => `${item.message.id}:${item.message.updatedAt ?? item.message.createdAt}:${item.message.status ?? "ready"}`).join("|"),
+  const generatedMediaByRunId = useMemo(() => groupGeneratedMediaByRunId(generatedMedia), [generatedMedia]);
+  const itemIdentityKey = useMemo(
+    () => feedItems.map((item) => item.message.id).join("|"),
     [feedItems],
   );
 
@@ -105,18 +121,55 @@ export function NormalConversationFeed({
     setLatestButtonVisible(false);
   }, []);
 
+  const reconcileTail = useCallback((): void => {
+    const feed = feedRef.current;
+    if (!feed) {
+      return;
+    }
+    if (stickToLatestRef.current) {
+      feed.scrollTop = feed.scrollHeight;
+      setLatestButtonVisible(false);
+      return;
+    }
+    setLatestButtonVisible(distanceFromLatest(feed) > latestThresholdPx);
+  }, []);
+
+  const scheduleTailReconciliation = useCallback((): void => {
+    if (tailReconciliationFrameRef.current !== undefined) {
+      return;
+    }
+    tailReconciliationFrameRef.current = globalThis.requestAnimationFrame(() => {
+      tailReconciliationFrameRef.current = undefined;
+      reconcileTail();
+    });
+  }, [reconcileTail]);
+
   useLayoutEffect(() => {
     const feed = feedRef.current;
     if (!feed) {
       return;
     }
-    if (!mountedRef.current || stickToLatestRef.current) {
-      mountedRef.current = true;
-      const frame = globalThis.requestAnimationFrame(() => scrollToLatest("auto"));
-      return () => globalThis.cancelAnimationFrame(frame);
+    scheduleTailReconciliation();
+  }, [itemIdentityKey, scheduleTailReconciliation]);
+
+  useLayoutEffect(() => {
+    const feed = feedRef.current;
+    if (!feed || typeof ResizeObserver === "undefined") {
+      return undefined;
     }
-    setLatestButtonVisible(distanceFromLatest(feed) > latestThresholdPx);
-  }, [itemKey, scrollToLatest]);
+    const observer = new ResizeObserver(() => scheduleTailReconciliation());
+    Array.from(feed.children).forEach((child) => observer.observe(child));
+    return () => observer.disconnect();
+  }, [itemIdentityKey, scheduleTailReconciliation]);
+
+  useLayoutEffect(() => {
+    return () => {
+      if (tailReconciliationFrameRef.current !== undefined) {
+        globalThis.cancelAnimationFrame(tailReconciliationFrameRef.current);
+        tailReconciliationFrameRef.current = undefined;
+      }
+    };
+  }, []);
 
   function handleFeedScroll(event: UIEvent<HTMLDivElement>): void {
     const atLatest = distanceFromLatest(event.currentTarget) <= latestThresholdPx;
@@ -148,6 +201,10 @@ export function NormalConversationFeed({
         renderItem={(item) => (
           <NormalConversationMessageRow
             item={item}
+            composerGateApproval={item.workCell
+              ? composerGateApprovalPresentationForWorkCell(item.workCell, composerGateApprovalByRunId)
+              : undefined}
+            generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
             feedback={feedbackById[item.message.id]}
             editing={editingMessageId === item.message.id}
             editSaving={editSaving}
@@ -170,7 +227,7 @@ export function NormalConversationFeed({
       />
       {latestButtonVisible ? (
         <IconButton
-          className="normal-conversation-latest-button"
+          className="message-feed-latest-button normal-conversation-latest-button"
           icon={ArrowDown}
           label={t("Jump to latest message")}
           onClick={() => scrollToLatest()}
@@ -181,11 +238,13 @@ export function NormalConversationFeed({
 }
 
 function NormalConversationMessageRow({
+  composerGateApproval,
   editSaving,
   editable,
   editing,
   feedback,
   item,
+  generatedMedia,
   onCancelEdit,
   onEdit,
   onOpenFiles,
@@ -201,6 +260,8 @@ function NormalConversationMessageRow({
   workspaceCwd,
 }: {
   readonly item: NormalConversationFeedItem;
+  readonly composerGateApproval?: ComposerGateApprovalPresentation;
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly feedback?: "up" | "down";
   readonly editing: boolean;
   readonly editSaving: boolean;
@@ -221,11 +282,14 @@ function NormalConversationMessageRow({
 }): React.JSX.Element {
   const { t } = useI18n();
   const { message } = item;
+  const blockedAgentMessage = item.authorType === "ai-teammate"
+    && (Boolean(composerGateApproval) || message.status === "blocked");
   return (
     <MessageRow
       surface="normal_conversation"
       className={item.className}
       authorType={item.authorType}
+      tone={blockedAgentMessage ? "chat-blocked" : item.authorType === "system" ? "system" : "chat"}
       authorName={item.authorName}
       createdAtLabel={item.createdAtLabel}
       statusNode={message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
@@ -283,16 +347,24 @@ function NormalConversationMessageRow({
           />
         </>
       ) : null}
-      workCellNode={item.workCell ? (
-        <ConversationWorkCell
-          model={item.workCell}
-          surface="normal_conversation"
-          cwd={item.workCellCwd}
-          onOpenRun={onOpenRun}
-          onOpenWorkspaceFile={onOpenReportFile}
-          onOpenWorkspaceReview={onOpenReview}
-          loadPreview={loadPreviewContent}
-        />
+      workCellNode={item.workCell || generatedMedia.length > 0 ? (
+        <>
+          {item.workCell ? (
+            <ConversationWorkCell
+              model={item.workCell}
+              surface="normal_conversation"
+              composerGateApproval={composerGateApproval}
+              cwd={item.workCellCwd}
+              onOpenRun={onOpenRun}
+              onOpenWorkspaceFile={onOpenReportFile}
+              onOpenWorkspaceReview={onOpenReview}
+              loadPreview={loadPreviewContent}
+            />
+          ) : null}
+          {message.role === "assistant" ? (
+            <ConversationGeneratedMediaBlock items={generatedMedia} cwd={workspaceCwd.trim()} />
+          ) : null}
+        </>
       ) : null}
       errorNode={(
         <>
@@ -313,7 +385,7 @@ function NormalConversationMessageRow({
           ) : null}
         </>
       )}
-      actionsNode={message.content && !editing ? (
+      actionsNode={message.content && !editing && !blockedAgentMessage ? (
         <MessageActionBar
           surface="normal_conversation"
           className="normal-conversation-message-actions"
@@ -361,6 +433,16 @@ function NormalConversationMessageRow({
       ) : null}
     />
   );
+}
+
+function groupGeneratedMediaByRunId(
+  items: readonly ConversationGeneratedMedia[],
+): ReadonlyMap<string, readonly ConversationGeneratedMedia[]> {
+  const grouped = new Map<string, ConversationGeneratedMedia[]>();
+  for (const item of items) {
+    grouped.set(item.runId, [...(grouped.get(item.runId) ?? []), item]);
+  }
+  return grouped;
 }
 
 function distanceFromLatest(element: HTMLElement): number {

@@ -124,14 +124,45 @@
 }
 
 .channel-left-drawer .sidebar-row-shell {
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr);
 }
 
 .channel-left-drawer .sidebar-row-status {
+  position: absolute;
+  z-index: 2;
+  top: 50%;
+  right: 8px;
   display: inline-grid;
   width: 16px;
   height: 32px;
   place-items: center;
+  transform: translateY(-50%);
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] .sidebar-row-main {
+  padding-right: 82px;
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] > .sidebar-row-status {
+  right: 10px;
+  width: auto;
+  max-width: 72px;
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] .sidebar-object-status {
+  width: auto;
+  height: 20px;
+  color: var(--ling-status-success);
+  font-weight: 650;
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-status="waiting"] .ling-ui-status-indicator-dot {
+  display: none;
+}
+
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-actions="true"]:hover > .sidebar-row-status,
+.channel-left-drawer .sidebar-row-shell[data-sidebar-row-actions="true"]:focus-within > .sidebar-row-status {
+  opacity: 0;
 }
 
 .channel-left-drawer .sidebar-row-main.ling-ui-button .sidebar-channel-avatar {

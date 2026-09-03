@@ -16,6 +16,14 @@ import {
   resolveProviderModelCapabilitySnapshot,
   type ProviderModelCapabilitySnapshot,
 } from "@ling-stack/core/provider-model-capabilities";
+import { providerWorkbenchReady } from "./provider-workbench-readiness.js";
+import {
+  formatProviderModelRouteLabel,
+  providerCompactModelLabel,
+  providerDisplaySourceLabel,
+} from "./provider-model-labels.js";
+
+export { providerCompactModelLabel, providerDisplaySourceLabel } from "./provider-model-labels.js";
 
 type ProviderTranslate = (key: string, values?: Readonly<Record<string, string | number>>) => string;
 
@@ -385,7 +393,18 @@ export function canWorkbenchBatchCheckProvider(provider: ProviderPreset): boolea
 }
 
 export function isWorkbenchReadyProvider(provider: ProviderPreset): boolean {
-  return provider.enabled && providerSecretReady(provider) && provider.lastCheck?.ok === true;
+  const generationCapable = providerHasGenerationCapability(provider);
+  const generationRuntimeReady = generationOperations.some((operation) =>
+    providerSupportsGenerationOperation(provider, operation) &&
+    resolveGenerationProviderRuntimeState(provider, operation).canRun
+  );
+  return providerWorkbenchReady({
+    enabled: provider.enabled,
+    secretReady: providerSecretReady(provider),
+    latestCheckReady: provider.lastCheck?.ok === true,
+    generationCapable,
+    generationRuntimeReady,
+  });
 }
 
 export function isWorkbenchNeedsConfigProvider(provider: ProviderPreset): boolean {
@@ -507,8 +526,9 @@ export function providerModelRouteLabel(
   provider: ProviderPreset,
   templates: readonly ProviderTemplate[] = [],
 ): string {
+  const modelLabel = providerCompactModelLabel(provider);
   const routeLabel = providerRouteShortLabel(provider, templates);
-  return routeLabel ? `${provider.model} · ${routeLabel}` : provider.model;
+  return formatProviderModelRouteLabel(modelLabel, routeLabel);
 }
 
 export function providerRouteShortLabel(
@@ -955,19 +975,6 @@ function providerEndpointHost(value: string): string {
   } catch {
     return "";
   }
-}
-
-function providerDisplaySourceLabel(displayName: string, model: string): string {
-  const trimmedDisplayName = displayName.trim();
-  const trimmedModel = model.trim();
-  if (!trimmedDisplayName || !trimmedModel) {
-    return trimmedDisplayName;
-  }
-  const suffixes = [` · ${trimmedModel}`, ` / ${trimmedModel}`, ` - ${trimmedModel}`];
-  const matchingSuffix = suffixes.find((suffix) => trimmedDisplayName.toLowerCase().endsWith(suffix.toLowerCase()));
-  return matchingSuffix
-    ? trimmedDisplayName.slice(0, -matchingSuffix.length).trim()
-    : trimmedDisplayName;
 }
 
 function translateProviderText(

@@ -1,10 +1,10 @@
 # Documentation Governance And Cleanup Record
 
-Status: cleanup completed locally
+Status: cleanup completed locally; incremental documentation cleanup recorded
 Baseline commit: `ea8c40e3a1f6a083df64c0a69e252805bc96a320`
-Completed: 2026-08-03
+Completed: 2026-09-03
 Owner: repository maintainers
-Last verified: 2026-08-04
+Last verified: 2026-09-03
 
 ## Outcome
 
@@ -13,16 +13,22 @@ general cleanup, UI2 consolidation, and implementation-plan normalization, 213 M
 files remained. The open-source-readiness batch added two long-lived governance and
 release documents, the data-revalidation contract, and the secondary-copy contract added
 four current authorities. Subsequent conversation-continuity, Sidebar-stability, and Chrome
-plugin work added four protected authorities, so the classified tree contains 221 Markdown
-files, a net reduction of 328 files. The
-governance record, canonical design index,
-implementation-status index, publication checklist, and release policy are the long-lived
-navigation documents.
+plugin work added four protected authorities. The 2026-08-27 incremental batch removed one
+superseded selector and two completed Sidebar implementation plans, refreshed their inbound
+links, and classified ten current documents that had been added since the previous ledger
+update. The 2026-09-03 cleanup removed 38 test screenshots, removed three completed or
+superseded documents from the default branch, and classified five still-current documents
+plus the CI maintenance guide. The classified tree now contains 233 Markdown files, a net
+reduction of 316 files.
+The governance record, canonical design index, implementation-status index, publication
+checklist, and release policy are the long-lived navigation documents.
 
-The complete UI2 evidence tree was removed from the default branch: 107 Markdown
-metadata files and 660 screenshot, JSON, and sidecar assets. The documentation tree
-dropped from about 61 MB to about 5.9 MB. The UI2 tree is now about 276 KB. Git history
-remains the historical archive.
+Historical UI2 evidence was removed in the earlier cleanup. This batch also removed the
+24 screenshots reintroduced under `docs/design/ui2.0升级/evidence/` and the 14 screenshots
+under `docs/design/validation/sidebar-approval-dialogs-2026-08-26/`. The brand asset
+`docs/design/assets/ling-stack-social-preview.png` remains because it is product artwork,
+not test evidence. Git history remains the historical archive for deleted captures and
+documents.
 
 No runtime code, daemon API, database schema, migration, approval behavior, or release
 state was changed by this cleanup.
@@ -43,6 +49,8 @@ state was changed by this cleanup.
 | Open-source readiness | 2 added Markdown files | Publication governance and release policy are now explicit long-lived authorities. |
 | Data revalidation policy | 1 added Markdown file | Automatic focus revalidation replaces generic normal-state Refresh controls. |
 | Secondary copy policy | 1 added Markdown file | Explanatory copy is limited to decisions, consequences, dynamic state, and recovery. |
+| Incremental open-source documentation cleanup | 3 Markdown files | Removed one superseded selector reference and two completed Sidebar implementation plans; current contracts remain indexed. |
+| 2026-09-03 document and screenshot cleanup | 38 screenshots and 3 Markdown files | Removed test captures and completed or superseded documents; current window, environment, internationalization, right-dock, and command-rule documents remain indexed. |
 
 ## Canonical Replacements
 
@@ -56,6 +64,8 @@ state was changed by this cleanup.
 | External Work phases 2-7 | External Work Orchestration and current phase 8 adapter contracts |
 | Plugin and Model Workbench layout phases | Plugin Manager and UI2 Model Workbench |
 | UI screenshot and run evidence | CI or Release artifacts; UI2 Acceptance Contract keeps stable acceptance rules |
+| Internationalization alignment and completed parity plans | Internationalization And Language Parity contract |
+| Completed macOS titlebar layout plan | Codex Window Shell Parity contract |
 
 ## Retained Classification
 
@@ -64,15 +74,15 @@ unclassified or review-pending files.
 
 | Retained class | Files | Rule |
 | --- | ---: | --- |
-| `CANONICAL_CONTRACT` - product and architecture contracts | 120 | Current capability or bounded subsystem authority |
-| `PROTECTED_SAFETY_RUNTIME` - safety, migration, recovery, and runtime contracts | 26 | Deletion requires explicit security or architecture review |
-| `ACTIVE_PROTECTED_PLAN` - active or protected implementation plans | 16 | Material work remains, or the plan is part of a high-risk implementation boundary |
+| `CANONICAL_CONTRACT` - product and architecture contracts | 124 | Current capability or bounded subsystem authority |
+| `PROTECTED_SAFETY_RUNTIME` - safety, migration, recovery, and runtime contracts | 29 | Deletion requires explicit security or architecture review |
+| `ACTIVE_PROTECTED_PLAN` - active or protected implementation plans | 21 | Material work remains, or the plan is part of a high-risk implementation boundary |
 | `ADR_RELEASE_API` - ADR, release, and daemon API authority | 9 | Permanent architecture or release evidence |
 | `UI2_CONTRACT` - UI2 contracts | 40 | Current foundation, architecture, component, module, theme, and index rules |
 | `UI2_MIGRATION_RELEASE` - UI2 migration and release authority | 2 | One compatibility record and one packaged Desktop release checklist |
 | `UI2_ACTIVE_PLAN` - active UI2 implementation plans | 4 | Work Board, Startup/Diagnostics, Workspace Tools, and protected Desktop theme publication |
 | `GOVERNANCE_INDEX` - governance and indexes | 4 | Canonical design index, implementation-status index, cleanup record, and publication checklist |
-| **Total** | **221** | |
+| **Total** | **233** | |
 
 ## Path Classification
 
@@ -100,7 +110,8 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/channel-context-processing-layer-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/channel-context-processing-layer.md` | `CANONICAL_CONTRACT` |
 | `docs/design/channel-conversation-continuity-v2.md` | `PROTECTED_SAFETY_RUNTIME` |
-| `docs/design/channel-intent-workflow-selector.md` | `CANONICAL_CONTRACT` |
+| `docs/design/channel-environment-information-hierarchy.md` | `CANONICAL_CONTRACT` |
+| `docs/design/channel-execution-completion-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/channel-message-streaming.md` | `CANONICAL_CONTRACT` |
 | `docs/design/channel-settings-tabbed-information-architecture.md` | `CANONICAL_CONTRACT` |
 | `docs/design/channel-team-operating-system.md` | `CANONICAL_CONTRACT` |
@@ -115,13 +126,18 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/codex-inspired-settings-permission-presets.md` | `CANONICAL_CONTRACT` |
 | `docs/design/codex-like-execution.md` | `CANONICAL_CONTRACT` |
 | `docs/design/codex-style-hunk-diff-review.md` | `CANONICAL_CONTRACT` |
+| `docs/design/codex-window-shell-parity.md` | `CANONICAL_CONTRACT` |
 | `docs/design/contracts-api-client.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-activity-summary-and-exploration-batching-detailed-design.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-command-execution-batching-detailed-design.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-composer-unification.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-media-generation-tools.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-media-generation-tools-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/conversation-memory-citations-and-sources.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-model-binding-and-creation-validation.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-performance-deferral-and-virtualization.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-plan-and-goal-modes.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-right-dock-responsive-visibility-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/conversation-right-dock-workspace-tools.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-session-full-access-confirmation.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-shared-capabilities-detailed-design.md` | `CANONICAL_CONTRACT` |
@@ -158,11 +174,11 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/global-feedback-toast-system.md` | `CANONICAL_CONTRACT` |
 | `docs/design/gstack-skill-source-sync.md` | `CANONICAL_CONTRACT` |
 | `docs/design/gstack-source-upgrade-lifecycle.md` | `CANONICAL_CONTRACT` |
-| `docs/design/i18n-alignment-modularization.md` | `CANONICAL_CONTRACT` |
 | `docs/design/implementation-status.md` | `GOVERNANCE_INDEX` |
 | `docs/design/inline-runtime-approval-detailed-design.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/input-materialization-detailed-design.md` | `CANONICAL_CONTRACT` |
 | `docs/design/internal-registry-plugin-sdk.md` | `CANONICAL_CONTRACT` |
+| `docs/design/internationalization-language-parity.md` | `CANONICAL_CONTRACT` |
 | `docs/design/ling-agent-operation-cell-ui.md` | `CANONICAL_CONTRACT` |
 | `docs/design/ling-agent-session-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/ling-agent-session.md` | `CANONICAL_CONTRACT` |
@@ -181,6 +197,7 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/media-automations-workbench-refinement.md` | `CANONICAL_CONTRACT` |
 | `docs/design/media-production-experience-refinement.md` | `CANONICAL_CONTRACT` |
 | `docs/design/media-production-external-workflows.md` | `CANONICAL_CONTRACT` |
+| `docs/design/media-production-image-to-video-detailed-design.md` | `CANONICAL_CONTRACT` |
 | `docs/design/memory-health-and-fanin.md` | `CANONICAL_CONTRACT` |
 | `docs/design/memory-review-policy-implementation.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/mobile-approval-and-creation-detailed-design.md` | `PROTECTED_SAFETY_RUNTIME` |
@@ -194,12 +211,16 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/multi-agent-orchestrator.md` | `CANONICAL_CONTRACT` |
 | `docs/design/multi-agent-slash-commands.md` | `CANONICAL_CONTRACT` |
 | `docs/design/multi-channel-concurrency.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/office-documents-native-plugin-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
+| `docs/design/office-documents-native-plugin.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/openai-agents-sdk-adapter-decision-record.md` | `CANONICAL_CONTRACT` |
 | `docs/design/openai-agents-sdk-runtime-patterns.md` | `CANONICAL_CONTRACT` |
 | `docs/design/orchestrator-advanced.md` | `CANONICAL_CONTRACT` |
 | `docs/design/platform-architecture.md` | `CANONICAL_CONTRACT` |
 | `docs/design/plugin-manager-add-local-plugin.md` | `CANONICAL_CONTRACT` |
 | `docs/design/plugin-manager.md` | `CANONICAL_CONTRACT` |
+| `docs/design/post-compaction-snapshot-restore.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/post-compaction-undo.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/provider-domestic-templates.md` | `CANONICAL_CONTRACT` |
 | `docs/design/provider-generation-runtime.md` | `CANONICAL_CONTRACT` |
 | `docs/design/provider-hardening-and-media-adapter-completion.md` | `CANONICAL_CONTRACT` |
@@ -218,8 +239,8 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/session-persistence.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/settings-advanced-workspace-policy-productization.md` | `CANONICAL_CONTRACT` |
 | `docs/design/settings-archived-items-permanent-delete.md` | `CANONICAL_CONTRACT` |
+| `docs/design/sidebar-approval-proposal-dialogs-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/sidebar-archive-conversations-teammates.md` | `CANONICAL_CONTRACT` |
-| `docs/design/sidebar-navigation-stability-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/skill-candidates-and-protocol-governance.md` | `CANONICAL_CONTRACT` |
 | `docs/design/skill-capability-model-and-library-simplification.md` | `CANONICAL_CONTRACT` |
 | `docs/design/skill-context-optimization.md` | `CANONICAL_CONTRACT` |
@@ -289,14 +310,15 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/work-board-review-queue.md` | `CANONICAL_CONTRACT` |
 | `docs/design/work-history-ia-cleanup.md` | `CANONICAL_CONTRACT` |
 | `docs/design/workspace-change-review-recovery-and-open-actions.md` | `CANONICAL_CONTRACT` |
+| `docs/design/workspace-command-rule-approval-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/workspace-state-storage.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/external-work-live-smoke.md` | `CANONICAL_CONTRACT` |
+| `docs/maintenance/ci.md` | `ADR_RELEASE_API` |
 | `docs/maintenance/document-cleanup-inventory.md` | `GOVERNANCE_INDEX` |
 | `docs/maintenance/open-source-readiness.md` | `GOVERNANCE_INDEX` |
 | `docs/pi-coding-agent-integration.md` | `CANONICAL_CONTRACT` |
 | `docs/product-design.md` | `CANONICAL_CONTRACT` |
 | `docs/provider-adapters.md` | `CANONICAL_CONTRACT` |
-| `docs/release/cua-driver-self-hosted-runners.md` | `ADR_RELEASE_API` |
 | `docs/release/desktop-windows-release-decisions.md` | `ADR_RELEASE_API` |
 | `docs/release/desktop.md` | `ADR_RELEASE_API` |
 | `docs/release/evidence/README.md` | `ADR_RELEASE_API` |

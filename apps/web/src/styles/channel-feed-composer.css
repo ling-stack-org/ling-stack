@@ -42,6 +42,7 @@
   flex-direction: column;
   gap: 18px;
   padding: 0 4px;
+  overflow-x: hidden;
   overflow-y: auto;
   overflow-anchor: none;
   overscroll-behavior: contain;

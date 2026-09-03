@@ -354,6 +354,10 @@ export interface ConversationContextProjectionMetadata {
   readonly sourceRefs: readonly ConversationDomainRef[];
   readonly policyVersion: string;
   readonly visibilityFingerprint: string;
+  /** Immutable ChannelContextView identity used to materialize a run. */
+  readonly contextViewId?: string;
+  /** Creation timestamp for the immutable ChannelContextView projection. */
+  readonly contextViewCreatedAt?: string;
 }
 
 export const channelIntentDecisionV2Actions = [

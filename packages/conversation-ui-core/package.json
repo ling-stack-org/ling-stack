@@ -11,12 +11,16 @@
     }
   },
   "scripts": {
+    "build:ci": "tsc -p tsconfig.json",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+    "test:ci": "node --test test/*.test.mjs",
     "build": "tsc -p tsconfig.json",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
     "test": "tsc -p tsconfig.json && node --test test/*.test.mjs"
   },
   "dependencies": {
+    "@ling-stack/localization": "workspace:*",
     "remark-gfm": "^4.0.1",
     "remark-math": "^6.0.0",
     "remark-parse": "^11.0.0",

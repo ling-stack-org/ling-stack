@@ -7,6 +7,7 @@ import type {
   ComputerUsePreviewSummary,
   ComputerControlPermissionKind,
   DesktopNavigationIntent,
+  DesktopWindowState,
   LingDesktopCapabilities,
 } from "../shared/desktop-capabilities.js";
 import { isDesktopNavigationIntent } from "../shared/desktop-capabilities.js";
@@ -30,9 +31,10 @@ const themePackageFirstPaint = parseDesktopThemePackageFirstPaintArgument(proces
 const computerControlPlatform = process.argv
   .find((argument) => argument.startsWith("--ling-computer-control-platform="))
   ?.slice("--ling-computer-control-platform=".length);
+const platform = desktopPlatform();
 
 const capabilities: LingDesktopCapabilities = {
-  platform: desktopPlatform(),
+  platform,
   daemonBaseUrl,
   appearance: {
     reportTheme: (theme) => {
@@ -71,6 +73,30 @@ const capabilities: LingDesktopCapabilities = {
       { themeId: request.themeId },
     ),
   },
+  ...(platform === "windows"
+    ? {
+        windowControls: {
+          getState: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowStateGet),
+          minimize: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowMinimize),
+          toggleMaximize: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowToggleMaximize),
+          close: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowClose),
+          onStateChanged: (listener: (state: DesktopWindowState) => void) => {
+            return subscribeWithInitialRead<DesktopWindowState>({
+              read: () => ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.windowStateGet),
+              subscribe: (onState) => {
+                const wrapped = (
+                  _event: Electron.IpcRendererEvent,
+                  state: DesktopWindowState,
+                ): void => onState(state);
+                ipcRenderer.on(DESKTOP_IPC_CHANNELS.windowStateChanged, wrapped);
+                return () => ipcRenderer.off(DESKTOP_IPC_CHANNELS.windowStateChanged, wrapped);
+              },
+              onValue: listener,
+            });
+          },
+        },
+      }
+    : {}),
   navigation: {
     acknowledgeIntent: (requestId: number) =>
       ipcRenderer.invoke(DESKTOP_IPC_CHANNELS.navigationIntentAck, requestId),

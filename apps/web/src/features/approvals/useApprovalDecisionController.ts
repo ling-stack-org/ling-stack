@@ -7,15 +7,22 @@ export function useApprovalDecisionController(input: {
   readonly approval: ApprovalRequest;
   readonly resolvingDecision?: ApprovalResolution;
   readonly errorMessage?: string;
-  readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
+  readonly reasonPolicy?: "risk_based" | "none";
+  readonly onResolve: (
+    approvalId: string,
+    decision: ApprovalResolution,
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ) => void;
 }) {
   const [decisionReason, setDecisionReason] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
   const [reasonError, setReasonError] = useState("");
   const [attempted, setAttempted] = useState(false);
+  const [attemptedDecision, setAttemptedDecision] = useState<ApprovalResolution | undefined>();
   const status = effectiveApprovalStatus(input.approval);
   const highRisk = input.approval.risk === "high" || input.approval.risk === "critical";
-  const reasonRequired = highRisk && input.approval.actionType !== "media_cost";
+  const reasonRequired = input.reasonPolicy !== "none" && highRisk && input.approval.actionType !== "media_cost";
   const isResolving = Boolean(input.resolvingDecision);
   const trimmedReason = decisionReason.trim();
   const mutationError = useMemo(
@@ -28,6 +35,7 @@ export function useApprovalDecisionController(input: {
     setDialogOpen(false);
     setReasonError("");
     setAttempted(false);
+    setAttemptedDecision(undefined);
   }, [input.approval.id]);
 
   useEffect(() => {
@@ -35,6 +43,7 @@ export function useApprovalDecisionController(input: {
     setDialogOpen(false);
     setReasonError("");
     setAttempted(false);
+    setAttemptedDecision(undefined);
   }, [status]);
 
   function updateReason(value: string): void {
@@ -52,7 +61,7 @@ export function useApprovalDecisionController(input: {
     submit(decision);
   }
 
-  function submit(decision: ApprovalResolution): void {
+  function submit(decision: ApprovalResolution, proposedRuleFingerprint?: string): void {
     if (status !== "pending" || isResolving) return;
     if (decision === "approve" && reasonRequired && !trimmedReason) {
       setReasonError("High-risk approvals need a decision reason.");
@@ -60,7 +69,8 @@ export function useApprovalDecisionController(input: {
     }
     setReasonError("");
     setAttempted(true);
-    input.onResolve(input.approval.id, decision, trimmedReason || undefined);
+    setAttemptedDecision(decision);
+    input.onResolve(input.approval.id, decision, trimmedReason || undefined, proposedRuleFingerprint);
   }
 
   function setOpen(open: boolean): void {
@@ -71,6 +81,7 @@ export function useApprovalDecisionController(input: {
 
   return {
     decisionReason,
+    attemptedDecision,
     dialogOpen,
     reasonError,
     mutationError,

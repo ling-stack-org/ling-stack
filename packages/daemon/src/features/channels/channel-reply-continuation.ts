@@ -1,4 +1,5 @@
 import type { ChannelMessage, RunIntervention, RunSession, RunStore } from "@ling-stack/core";
+import { formatServerCatalogMessage } from "@ling-stack/localization";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
 import {
@@ -11,6 +12,8 @@ import {
   getChannelMessageView,
   updatePendingAssistantMessage,
 } from "./conversation-item-messages.js";
+import { runHasConversationGeneratedMedia } from "../media/conversation-projection.js";
+import { resolveChannelResponseLanguage } from "./response-language.js";
 
 export interface ChannelReplyContinuationProjection {
   readonly sourceMessageId: string;
@@ -122,10 +125,26 @@ export function createChannelReplyContinuationProjection(input: {
       }
       const body = visibleChannelReplyText(rawText);
       if (!body) {
+        if (runHasConversationGeneratedMedia(input.store, run.id)) {
+          return finishContinuationReply(input.store, replyMessageId, {
+            body: "",
+            status: "ready",
+            errorMessage: null,
+          });
+        }
+        const emptyResponseLanguage = resolveChannelResponseLanguage({
+          store: input.store,
+          channel,
+          sourceText: sourceMessage.body,
+        }).language;
+        const emptyResponseMessage = formatServerCatalogMessage(
+          emptyResponseLanguage,
+          "daemon.conversation.empty_result",
+        );
         return finishContinuationReply(input.store, replyMessageId, {
-          body: "模型没有返回可显示内容，请重试或切换模型。",
+          body: emptyResponseMessage,
           status: "failed",
-          errorMessage: "Channel continuation completed without visible text.",
+          errorMessage: emptyResponseMessage,
         });
       }
       return finishContinuationReply(input.store, replyMessageId, {

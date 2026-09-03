@@ -8,6 +8,8 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ## [Unreleased]
 
+## [0.1.2-alpha.1] - 2026-08-27
+
 ### Added
 
 - Durable Channel execution completion now tracks required participants, operation evidence,
@@ -15,6 +17,8 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 - Public contribution, support, security, and community-governance documents.
 - GitHub Issue Forms, pull request template, CODEOWNERS, Dependabot, and generic CI.
 - Local Markdown-link, dependency-license, and public-repository safety checks.
+- A neutral public product screenshot and explicit Chrome, Plugin Manager, Office native,
+  MCP/local-tool, and model-provider integration boundaries in the root README.
 
 ### Changed
 
@@ -28,6 +32,10 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
   startup path.
 - Consolidated the design documentation around current contracts and implementation
   status instead of completed implementation diaries.
+- Moved native runner, signing, and Desktop artifact workflows out of the public source
+  repository boundary.
+- Unified the product release version as Semantic Versioning across `VERSION`, the root
+  package, Desktop package, and changelog.
 
 ### Fixed
 
@@ -36,6 +44,36 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 - Channels and private teammate chats now continue in the selected Local workspace when
   Git is unavailable or the directory is not a Git repository, while missing workspaces
   and explicit managed-worktree creation still fail closed.
+
+## [0.1.1] - 2026-08-26
+
+### Fixed
+
+- Channel message feeds no longer move sideways when wide execution content is swiped or
+  horizontally scrolled; switching channels and jumping to the latest message also clear
+  any stale horizontal offset.
+- Added browser regression coverage for contained horizontal gestures and offset resets.
+
+## [0.1.0] - 2026-08-25
+
+### Added
+
+- Structured channel transcripts now keep canonical conversation items and render tool calls,
+  tool results, approvals, handoffs, artifacts, operations, and final results in typed content
+  layers instead of mixing them into ordinary prose.
+- Added focused unit and browser coverage for structured content projection, stream updates,
+  visibility boundaries, status semantics, and legacy-item deduplication.
+
+### Changed
+
+- Channel transcript projection now preserves canonical item revisions, domain references, and
+  stable ordering across initial loads, stream events, and pagination.
+
+### Fixed
+
+- Operator-only and agent-private content is excluded from channel transcripts, while failed and
+  cancelled tool and approval states retain their correct visible status.
+- Stale channel or thread refreshes can no longer overwrite the currently selected conversation.
 
 Historical changes before this baseline remain available in Git history. They are not
 retroactively reconstructed as release notes.

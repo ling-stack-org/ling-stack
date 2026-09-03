@@ -136,16 +136,21 @@ export async function uninstallBrowserHost(input: {
 export async function buildDevelopmentBrowserHost(input: {
   readonly platform?: BrowserHostPlatform;
   readonly outputPath?: string;
+  readonly runCommand?: BrowserHostCommandRunner;
 } = {}): Promise<string> {
   const platform = input.platform ?? supportedPlatform(process.platform);
+  if (platform !== supportedPlatform(process.platform)) {
+    throw new Error("browser_host_cross_platform_build_unsupported");
+  }
   const executableName = platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host";
-  const outputPath = input.outputPath ?? join(packageRoot, "dist", "native", executableName);
-  const manifestPath = join(packageRoot, "native", "Cargo.toml");
-  await runBrowserHostCommand("cargo", ["build", "--release", "--manifest-path", manifestPath]);
-  const builtPath = join(packageRoot, "native", "target", "release", executableName);
-  await mkdir(dirname(outputPath), { recursive: true });
-  await copyFile(builtPath, outputPath);
-  if (platform === "darwin") await chmod(outputPath, 0o755);
+  const builtPath = join(packageRoot, "dist", "native", executableName);
+  const outputPath = input.outputPath ? resolve(input.outputPath) : builtPath;
+  await (input.runCommand ?? runBrowserHostCommand)(process.execPath, [join(packageRoot, "scripts", "build-native.mjs")]);
+  if (outputPath !== builtPath) {
+    await mkdir(dirname(outputPath), { recursive: true });
+    await copyFile(builtPath, outputPath);
+    if (platform === "darwin") await chmod(outputPath, 0o755);
+  }
   return outputPath;
 }
 

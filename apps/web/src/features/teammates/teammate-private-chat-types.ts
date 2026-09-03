@@ -8,10 +8,12 @@ import type {
   UIEvent,
 } from "react";
 import type { ComposerInputPart, PendingAttachmentItem } from "../../shared/components/index.js";
+import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import type {
   AiTeammate,
   ApprovalRequest,
   Channel,
+  ConversationGeneratedMedia,
   ExecutionAction,
   MemoryObject,
   PermissionConfirmation,
@@ -49,6 +51,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly userProfile?: UserProfile;
   readonly loading: boolean;
   readonly visibleMessages: readonly TeammateDirectMessage[];
+  readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly normalizedMessageSearchQuery: string;
   readonly privateFeedRef: RefObject<HTMLDivElement | null>;
   readonly privateMessageFeedVirtualizer: ReactVirtualizer<HTMLDivElement, Element>;
@@ -58,6 +61,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
   readonly approvals: readonly ApprovalRequest[];
+  readonly composerGateApprovals: readonly InlineApprovalView[];
   readonly terminalReports: readonly TerminalReportDto[];
   readonly providerRecovered: boolean;
   readonly modelNotice?: TeammatePrivateModelNotice;
@@ -92,6 +96,7 @@ export interface TeammatePrivateChatSurfaceProps {
     readonly occurrenceIndex: number;
   }[];
   readonly composerDragActive: boolean;
+  readonly composerGateNode?: ReactNode;
   readonly onPrivateFeedScroll: (event: UIEvent<HTMLDivElement>) => void;
   readonly onCancelPrivateFeedAutoFollow: () => void;
   readonly onScrollToLatest: () => void;
@@ -127,7 +132,7 @@ export interface TeammatePrivateChatSurfaceProps {
   readonly onRemovePendingAttachment: (localId: string) => void | Promise<void>;
   readonly workspaceAccessMode: WorkspaceAccessMode;
   readonly onWorkspaceAccessModeChange: (mode: WorkspaceAccessMode) => void;
-  readonly onFullAccessPresetSelected?: () => void;
+  readonly onFullAccessPresetSelected?: () => Promise<PermissionConfirmation | undefined>;
   readonly dockOpen: boolean;
   readonly dockController: WorkspaceRightDockController;
   readonly dockPageRequest?: WorkspaceRightDockPageRequest;

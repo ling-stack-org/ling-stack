@@ -2,7 +2,7 @@
 
 Status: active publication checklist
 Owner: repository maintainers
-Last verified: 2026-08-03
+Last verified: 2026-08-27
 Document type: repository governance
 Code and workflow anchors: `README.md`, `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`,
 `.github/workflows/ci.yml`, `.gitleaksignore`, `scripts/check-public-repo-safety.mjs`
@@ -25,7 +25,7 @@ Passing an earlier boundary does not authorize the next one.
 | Open-source license | Ready | MIT `LICENSE` and package metadata |
 | Contribution policy | Ready locally | `CONTRIBUTING.md` |
 | Code of Conduct | Ready locally | Contributor Covenant 2.1 adaptation |
-| Security reporting | Ready locally | `SECURITY.md`; GitHub private reporting still needs online enablement |
+| Security reporting | Partially ready | `SECURITY.md` is ready; GitHub private reporting and Advanced Security controls must be enabled after the repository is public (the current private plan/API does not expose them) |
 | Support boundary | Ready locally | `SUPPORT.md` |
 | Issue and PR intake | Ready locally | Issue Forms and pull request template |
 | Ownership | Ready locally | `.github/CODEOWNERS` |
@@ -34,21 +34,26 @@ Passing an earlier boundary does not authorize the next one.
 | Documentation links | Ready locally | `corepack pnpm check:docs` |
 | Dependency licenses | Ready locally | `corepack pnpm check:licenses`; binary notices remain a separate gate |
 | Current-tree safety scan | Ready locally | `corepack pnpm check:public` after personal-path cleanup |
+| Main branch protection | Configured online | PR-only `main`, required CI, one approval, conversation resolution, linear history, and no force-push/delete |
+| Actions policy | Configured online | Default read-only token permissions and full-length SHA pinning are enabled; allowed actions remain temporarily broad for the existing generic CI |
 | Git-history secret scan | Ready locally | Gitleaks v8.30.1 scanned 765 commits and 67.2 MB; 21 reviewed false positives are fingerprint-scoped in `.gitleaksignore` |
-| Public UI screenshots | Pending | Capture the current product; do not restore outdated UI2 concept screenshots |
+| Public UI screenshots | Ready locally | Current homepage capture from a fresh local workspace is checked in; historical screenshots with maintainer paths were removed |
 | Changelog and release policy | Ready locally | `CHANGELOG.md` and `docs/release/README.md` |
 
 ## GitHub Settings Required Before Visibility Change
 
-- Enable private vulnerability reporting.
-- Enable secret scanning and push protection for contributors.
+- Enable private vulnerability reporting after the repository visibility change (GitHub does
+  not expose this control for the current private repository plan).
+- Enable secret scanning and push protection for contributors after the visibility change
+  (the current private repository API returns `404` for both controls).
 - Enable dependency graph, Dependabot alerts, and security updates.
 - Create a `main` ruleset requiring pull requests, review, conversation resolution, and
   the generic CI check.
 - Disable force pushes and branch deletion for `main`.
 - Keep default workflow token permissions read-only; grant write permissions only to a
   specific reviewed workflow job.
-- Review whether fork pull requests require maintainer approval before Actions run.
+- Review and configure fork pull request approval before Actions run after the visibility
+  change (GitHub does not expose this setting while the repository is private).
 - Confirm Issues are enabled and Issue Forms render correctly.
 - Set repository description, topics, website, social preview, and default branch.
 - Review Actions artifact retention and repository storage limits.
@@ -56,22 +61,13 @@ Passing an earlier boundary does not authorize the next one.
 
 These settings are online state and cannot be proven by committed files alone.
 
-## Hard Stop: Self-Hosted Runners
+## Native Release Boundary
 
-The Cua Driver macOS and Windows runners are interactive repository-scoped hosts. Existing
-release documentation explicitly forbids sharing them with a public repository.
-
-Before making the repository public:
-
-1. disable or unregister both runners;
-2. revoke their repository registration credentials;
-3. verify no public or fork-triggered workflow can select their labels;
-4. move native release work to a separately reviewed private repository or protected
-   runner boundary;
-5. inspect retained artifacts and logs for private paths or signing metadata.
-
-Do not rely only on `workflow_dispatch` or actor-name checks as the public-repository
-security boundary.
+The public repository contains only the generic hosted CI workflow. Native Cua Driver
+builds, signing, and Desktop artifact publication are intentionally kept out of this
+repository because they require interactive, privileged platform hosts and private
+credentials. Maintain that release lane in a separately reviewed private repository or
+protected runner boundary; do not reintroduce self-hosted runner labels here.
 
 ## Legal And Distribution Review
 
@@ -114,7 +110,7 @@ at a user's existing Ling data directory.
 
 Source publication is **No-Go** until all of the following are true:
 
-- self-hosted native runners are detached or moved behind a private boundary;
+- no native release workflow or self-hosted runner label remains in this repository;
 - required GitHub security and branch settings are enabled;
 - current UI screenshots and repository metadata are reviewed;
 - the complete change is committed and CI plus a final Gitleaks scan pass from a clean checkout.

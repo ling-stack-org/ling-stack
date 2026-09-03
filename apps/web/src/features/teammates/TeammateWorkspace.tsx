@@ -39,6 +39,11 @@ import {
   uploadTeammatePrivateAttachment,
 } from "../../api.js";
 import { useI18n } from "../../i18n.js";
+import {
+  DesktopTitlebarSurface,
+  useDesktopTitlebarPlacement,
+} from "../../app/DesktopTitlebarSurface.js";
+import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
 import { readSseResponse } from "../../sse.js";
 import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import {
@@ -71,6 +76,7 @@ import type {
   TeammateActivityItem,
   TeammateDirectLinkPreview,
   TeammateDirectMessage,
+  ConversationGeneratedMedia,
   TeammateDirectReplyIntervention,
   TeammateDirectRuntimeResponse,
   DirectWorkspaceResponse,
@@ -84,6 +90,7 @@ import type {
   TeammateDirectMessageStreamReadyEvent,
   UpdateAiTeammateRequest,
   UserProfile,
+  WorkUnit,
   WorkspaceAccessMode,
   TerminalReportDto,
 } from "../../types.js";
@@ -100,6 +107,8 @@ import { TeammatePermissionsTab } from "./TeammatePermissionsTab.js";
 import { TeammateProfileTab } from "./TeammateProfileTab.js";
 import { TeammatePrivateChatSurface } from "./TeammatePrivateChatSurface.js";
 import { TeammateRenameDialog } from "./TeammateRenameDialog.js";
+import { RuntimeApprovalComposerGate } from "../approvals/RuntimeApprovalComposerGate.js";
+import type { ApprovalResolution } from "../approvals/types.js";
 import { TeammateSettingsHeader } from "./TeammateSettingsHeader.js";
 import { TeammateSettingsNavigation } from "./TeammateSettingsNavigation.js";
 import { TeammateSkillsTab } from "./TeammateSkillsTab.js";
@@ -142,6 +151,7 @@ type TeammateWorkspaceTab = "profile" | "model" | "channels" | "skills" | "tools
 
 type MaybePromise<T> = T | Promise<T>;
 const emptyTeammateDirectMessages: readonly TeammateDirectMessage[] = [];
+const emptyConversationGeneratedMedia: readonly ConversationGeneratedMedia[] = [];
 
 export function TeammateWorkspace({
   cwd,
@@ -151,6 +161,7 @@ export function TeammateWorkspace({
   workspaceDefaultProviderPresetId,
   channels,
   runs,
+  workUnits,
   skillPack,
   onUpdateTeammate,
   onTeammateUpdated,
@@ -178,7 +189,11 @@ export function TeammateWorkspace({
   workspacePolicyLoading = false,
   workspacePolicyError,
   onRefreshWorkspacePolicy,
+  approvalErrors,
+  resolvingApprovals,
+  onResolveApproval,
   settingsOpenRequest,
+  conversationRefreshToken = 0,
   onSettingsOpenRequestConsumed,
 }: {
   readonly cwd: string;
@@ -188,6 +203,7 @@ export function TeammateWorkspace({
   readonly workspaceDefaultProviderPresetId?: string;
   readonly channels: readonly Channel[];
   readonly runs: readonly RunSession[];
+  readonly workUnits: readonly WorkUnit[];
   readonly skillPack: SkillPack | undefined;
   readonly onUpdateTeammate: (
     teammateId: string,
@@ -212,24 +228,35 @@ export function TeammateWorkspace({
   readonly onDirectConversationChange?: (threadId?: string) => void;
   readonly fullAccessConfirmed?: boolean;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
-  readonly onConfirmFullAccessSelection?: () => PermissionConfirmation;
+  readonly onConfirmFullAccessSelection?: () => Promise<PermissionConfirmation | undefined>;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
   readonly workspacePolicy?: ApprovalPolicy;
   readonly workspacePolicyLoading?: boolean;
   readonly workspacePolicyError?: string;
   readonly onRefreshWorkspacePolicy?: () => void;
+  readonly approvalErrors: Readonly<Record<string, string>>;
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly onResolveApproval: (
+    approvalId: string,
+    decision: ApprovalResolution,
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ) => MaybePromise<void>;
   readonly settingsOpenRequest?: {
     readonly teammateId: string;
     readonly requestId: number;
   };
+  readonly conversationRefreshToken?: number;
   readonly onSettingsOpenRequestConsumed?: (requestId: number) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
+  const titlebarPlacement = useDesktopTitlebarPlacement();
   const focusRevalidationToken = useFocusRevalidationToken();
   const [workspaceView, setWorkspaceView] = useState<TeammateWorkspaceView>("chat");
   const [activeTab, setActiveTab] = useState<TeammateWorkspaceTab>("profile");
   const [messages, setMessages] = useState<readonly TeammateDirectMessage[]>([]);
+  const [generatedMedia, setGeneratedMedia] = useState<readonly ConversationGeneratedMedia[]>([]);
   const workspaceMessageIdentity = JSON.stringify([cwd.trim(), teammate.id]);
   const [messageSnapshotIdentity, setMessageSnapshotIdentity] = useState(workspaceMessageIdentity);
   const [selectedWorkspaceAccessMode, setSelectedWorkspaceAccessMode] = useState<WorkspaceAccessMode>(() => resolveWorkspaceAccessMode(
@@ -246,6 +273,7 @@ export function TeammateWorkspace({
   const [directWorkspace, setDirectWorkspace] = useState<DirectWorkspaceResponse | undefined>();
   const workspaceSnapshotCurrent = messageSnapshotIdentity === workspaceMessageIdentity;
   const currentMessages = workspaceSnapshotCurrent ? messages : emptyTeammateDirectMessages;
+  const currentGeneratedMedia = workspaceSnapshotCurrent ? generatedMedia : emptyConversationGeneratedMedia;
   const currentDirectRuntime = workspaceSnapshotCurrent ? directRuntime : undefined;
   const currentDirectWorkspace = workspaceSnapshotCurrent ? directWorkspace : undefined;
 
@@ -462,6 +490,19 @@ export function TeammateWorkspace({
       .filter((runId): runId is string => Boolean(runId && teammateRunIds.has(runId))))];
   }, [runs, teammate.id, visibleMessages]);
   const visibleDirectRunKey = visibleDirectRunIds.join("|");
+  const directApprovalViews = useMemo(
+    () => currentDirectRuntime ? buildInlineApprovalViews(currentDirectRuntime.approvals, {
+      owner: {
+        kind: "teammate_direct",
+        teammateId: teammate.id,
+        threadId: currentDirectRuntime.thread.id,
+      },
+      runs,
+      teammateDirectMessages: currentMessages,
+      workUnits,
+    }) : [],
+    [currentDirectRuntime, currentMessages, runs, teammate.id, workUnits],
+  );
   const hasActiveVisibleDirectRun = useMemo(() => {
     const visibleRunIds = new Set(visibleDirectRunIds);
     return runs.some((run) => visibleRunIds.has(run.id) && (
@@ -541,6 +582,7 @@ export function TeammateWorkspace({
     estimateSize: () => 112,
     overscan: 8,
     getItemKey: (index) => visibleMessages[index]?.id ?? index,
+    useFlushSync: false,
   });
   const privateMessageFeedVirtualRows = privateMessageFeedVirtualizer.getVirtualItems();
   const directAttachments = useMemo(
@@ -723,6 +765,7 @@ export function TeammateWorkspace({
     setChatSummaryOpen(false);
     setChatTerminalOpen(false);
     setMessages([]);
+    setGeneratedMedia([]);
     setMessageSnapshotIdentity(workspaceMessageIdentity);
     setHasMoreDirectMessages(false);
     setNextDirectBeforeMessageId(undefined);
@@ -775,6 +818,13 @@ export function TeammateWorkspace({
     if (workspaceView === "settings" && activeTab === "channels") void channelsController.refresh("refresh");
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [focusRevalidationToken]);
+
+  useEffect(() => {
+    if (conversationRefreshToken === 0 || workspaceView !== "chat") return;
+    void refreshTeammateConversationSnapshot();
+    // The refresh function is intentionally owned by the current cwd/teammate request fence.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [conversationRefreshToken]);
 
   useEffect(() => {
     privateFeedPinnedToLatestRef.current = true;
@@ -876,6 +926,7 @@ export function TeammateWorkspace({
       ]);
       workspaceRequestOwner.commit(request, "conversation", () => {
         setMessages(directResponse.messages);
+        setGeneratedMedia(directResponse.generatedMedia);
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
@@ -906,6 +957,26 @@ export function TeammateWorkspace({
     }
   }
 
+  async function refreshTeammateConversationSnapshot(): Promise<void> {
+    const request = workspaceRequestOwner.beginWorkspaceAction("messages");
+    if (!workspaceRequestOwner.isActionCurrent(request)) return;
+    const workspaceCwd = cwd.trim();
+    if (!workspaceCwd) return;
+    try {
+      const response = await listTeammateDirectMessages(workspaceCwd, request.teammateId);
+      workspaceRequestOwner.commit(request, "conversation", () => {
+        setMessages((current) => current.length > response.messages.length
+          ? upsertDirectMessages(current, response.messages)
+          : response.messages);
+        setGeneratedMedia((current) => mergeConversationGeneratedMedia(current, response.generatedMedia));
+        setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
+      });
+      workspaceRequestOwner.clearError(request);
+    } catch (error) {
+      workspaceRequestOwner.reportError(request, error instanceof Error ? error.message : String(error));
+    }
+  }
+
   async function refreshDirectRuntime(): Promise<"committed" | "stale"> {
     const request = workspaceRequestOwner.beginWorkspaceAction("runtime");
     if (!workspaceRequestOwner.isActionCurrent(request)) return "stale";
@@ -925,6 +996,7 @@ export function TeammateWorkspace({
         setMessages((current) => current.length > directResponse.messages.length
           ? upsertDirectMessages(current, directResponse.messages)
           : directResponse.messages);
+        setGeneratedMedia(directResponse.generatedMedia);
         setMessageSnapshotIdentity(JSON.stringify([workspaceCwd, request.teammateId]));
         setHasMoreDirectMessages(Boolean(directResponse.hasMore));
         setNextDirectBeforeMessageId(directResponse.nextBeforeMessageId);
@@ -983,6 +1055,7 @@ export function TeammateWorkspace({
       });
       workspaceRequestOwner.commit(request, "conversation", () => {
         setMessages((current) => upsertDirectMessages(current, response.messages));
+        setGeneratedMedia((current) => mergeConversationGeneratedMedia(current, response.generatedMedia));
         setHasMoreDirectMessages(Boolean(response.hasMore));
         setNextDirectBeforeMessageId(response.nextBeforeMessageId);
         globalThis.requestAnimationFrame(() => {
@@ -1329,6 +1402,7 @@ export function TeammateWorkspace({
           const directMessagesResponse = await listTeammateDirectMessages(cwd.trim(), request.teammateId);
           workspaceRequestOwner.commit(request, "conversation", () => {
             setMessages(directMessagesResponse.messages);
+            setGeneratedMedia(directMessagesResponse.generatedMedia);
             setMessageSnapshotIdentity(JSON.stringify([cwd.trim(), request.teammateId]));
           });
           workspaceRequestOwner.clearError(request);
@@ -1566,10 +1640,12 @@ export function TeammateWorkspace({
         "teammate-workspace",
         `right-dock-motion-${chatDockController.motionState}`,
         workspaceView === "settings" ? "settings-mode" : "chat-mode",
+        `titlebar-${titlebarPlacement}`,
       ].filter(Boolean).join(" ")}
       data-ui2-teammate-settings={workspaceView === "settings" || undefined}
     >
       {workspaceView === "chat" ? (
+        <DesktopTitlebarSurface>
         <TeammateChatHeader
           cwd={cwd}
           teammate={teammate}
@@ -1587,7 +1663,8 @@ export function TeammateWorkspace({
           summaryRows={privateSummaryRows}
           terminalOpen={chatTerminalOpen}
           terminalDisabled={!cwd.trim()}
-          detailsOpen={chatDockOpen}
+          detailsOpen={chatDockController.expanded}
+          detailsDisabled={!chatDockController.available}
           moreButtonRef={renameController.triggerRef}
           onToggleSearch={() => {
             setChatSummaryOpen(false);
@@ -1616,12 +1693,14 @@ export function TeammateWorkspace({
             setChatTerminalOpen((current) => !current);
           }}
           onToggleDetails={() => {
+            if (!chatDockController.available) return;
             setChatDockOpen((current) => !current);
           }}
         />
+        </DesktopTitlebarSurface>
       ) : (
+        <DesktopTitlebarSurface>
         <TeammateSettingsHeader
-          teammateName={settingsForm.displayName.trim() || teammate.displayName}
           profileActive={activeTab === "profile"}
           profileDirty={profileController.profileDirty}
           savingProfile={profileController.savingProfile}
@@ -1645,6 +1724,7 @@ export function TeammateWorkspace({
             externalToolsController.save(),
           ])}
         />
+        </DesktopTitlebarSurface>
       )}
 
       {renameController.open ? (
@@ -1677,6 +1757,7 @@ export function TeammateWorkspace({
           userProfile={userProfile}
           loading={loading}
           visibleMessages={visibleMessages}
+          generatedMedia={currentGeneratedMedia}
           normalizedMessageSearchQuery={normalizedMessageSearchQuery}
           privateFeedRef={privateFeedRef}
           privateMessageFeedVirtualizer={privateMessageFeedVirtualizer}
@@ -1686,6 +1767,7 @@ export function TeammateWorkspace({
           runs={runs}
           executionActions={directExecutionActions}
           approvals={currentDirectRuntime?.approvals ?? []}
+          composerGateApprovals={directApprovalViews}
           terminalReports={terminalReports}
           dockViewModel={privateDockViewModel}
           providerRecovered={providerRecovered}
@@ -1718,6 +1800,22 @@ export function TeammateWorkspace({
           composerFileReferenceParts={composerFileReferenceParts}
           composerFileReferenceTokens={composerFileReferenceTokens}
           composerDragActive={composerDragActive}
+          composerGateNode={directApprovalViews.length > 0 ? (
+            <RuntimeApprovalComposerGate
+              approvals={directApprovalViews}
+              approvalErrors={approvalErrors}
+              resolvingApprovals={resolvingApprovals}
+              surface="teammate_direct"
+              onResolve={(approvalId, decision, reason, proposedRuleFingerprint) => {
+                void Promise.resolve(onResolveApproval(
+                  approvalId,
+                  decision,
+                  reason,
+                  proposedRuleFingerprint,
+                )).then(() => refreshDirectRuntime());
+              }}
+            />
+          ) : undefined}
           onPrivateFeedScroll={handlePrivateFeedScroll}
           onCancelPrivateFeedAutoFollow={cancelPrivateFeedAutoFollow}
           onScrollToLatest={scrollPrivateFeedToLatest}
@@ -1745,7 +1843,7 @@ export function TeammateWorkspace({
           workspaceAccessMode={selectedWorkspaceAccessMode}
           onWorkspaceAccessModeChange={setSelectedWorkspaceAccessMode}
           onFullAccessPresetSelected={onConfirmFullAccessSelection}
-          dockOpen={chatDockOpen}
+          dockOpen={chatDockController.renderedOpen}
           dockController={chatDockController}
           dockPageRequest={chatDockPageRequest}
           dockActions={(
@@ -1852,5 +1950,16 @@ export function TeammateWorkspace({
         </div>
       ) : null}
     </div>
+  );
+}
+
+function mergeConversationGeneratedMedia(
+  currentItems: readonly ConversationGeneratedMedia[],
+  latestItems: readonly ConversationGeneratedMedia[],
+): readonly ConversationGeneratedMedia[] {
+  const byId = new Map<string, ConversationGeneratedMedia>();
+  for (const item of [...currentItems, ...latestItems]) byId.set(item.mediaJobId, item);
+  return [...byId.values()].sort(
+    (left, right) => left.createdAt.localeCompare(right.createdAt) || left.mediaJobId.localeCompare(right.mediaJobId),
   );
 }

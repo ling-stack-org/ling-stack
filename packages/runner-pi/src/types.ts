@@ -274,6 +274,7 @@ export interface PiRunnerRunOptions {
   readonly provider: PiRunnerProviderConfig;
   readonly tools?: readonly PiRunnerToolName[];
   readonly mcpTools?: readonly PiRunnerMcpToolDefinition[];
+  readonly mediaGenerationTools?: readonly PiRunnerMediaGenerationToolDefinition[];
   readonly thinkingLevel?: ModelThinkingLevel;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
@@ -296,7 +297,43 @@ export interface PiRunnerRunOptions {
     boundary: "before_agent_start" | "before_provider_request" | "tool_call",
   ) => Promise<void>;
   readonly onMcpToolCall?: (request: PiRunnerMcpToolCallRequest) => PiRunnerMcpToolCallResult | Promise<PiRunnerMcpToolCallResult>;
+  readonly onMediaGenerationToolCall?: (
+    request: PiRunnerMediaGenerationToolCallRequest,
+  ) => PiRunnerMediaGenerationToolCallResult | Promise<PiRunnerMediaGenerationToolCallResult>;
 }
+
+export type PiRunnerMediaGenerationToolName = "image_generate" | "video_generate";
+
+export interface PiRunnerMediaGenerationTarget {
+  readonly id: string;
+  readonly displayName: string;
+  readonly aspectRatios?: readonly string[];
+  readonly durationsSeconds?: readonly number[];
+  readonly supportsAspectRatio?: boolean;
+  readonly supportsDurationSeconds?: boolean;
+  readonly supportsCount?: boolean;
+}
+
+export interface PiRunnerMediaGenerationToolDefinition {
+  readonly name: PiRunnerMediaGenerationToolName;
+  readonly targets: readonly PiRunnerMediaGenerationTarget[];
+}
+
+export interface PiRunnerMediaGenerationToolCallRequest {
+  readonly toolCallId: string;
+  readonly toolName: PiRunnerMediaGenerationToolName;
+  readonly runId: string;
+  readonly prompt: string;
+  readonly target?: string;
+  readonly aspectRatio?: string;
+  readonly durationSeconds?: number;
+  readonly count?: number;
+  readonly task: PiRunnerTask;
+  readonly cwd: string;
+  readonly signal?: AbortSignal;
+}
+
+export interface PiRunnerMediaGenerationToolCallResult extends PiRunnerToolHandledResult {}
 
 export interface PiRunnerMcpToolDefinition {
   readonly registeredName: string;

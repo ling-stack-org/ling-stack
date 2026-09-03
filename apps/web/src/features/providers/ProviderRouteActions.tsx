@@ -1,4 +1,4 @@
-import { CheckCircle2, MoreHorizontal, Pencil, Star, Trash2, X } from "lucide-react";
+import { CheckCircle2, MoreHorizontal, Pencil, Trash2, X } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import {
   Button,
@@ -22,9 +22,7 @@ export function ProviderRouteActions({
   onCheck,
   onDelete,
   onEdit,
-  onStopUse,
   onToggleEnabled,
-  onUse,
 }: {
   readonly provider: ProviderPreset;
   readonly row: ProviderRouteRowView;
@@ -34,9 +32,7 @@ export function ProviderRouteActions({
   readonly onCheck: (providerId: string) => void;
   readonly onDelete: (provider: ProviderPreset) => void;
   readonly onEdit: (provider: ProviderPreset) => void;
-  readonly onStopUse: (provider: ProviderPreset) => void;
   readonly onToggleEnabled: (provider: ProviderPreset, enabled: boolean) => void;
-  readonly onUse: (provider: ProviderPreset) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
   const primary = row.primaryAction === "add_api_key" ? (
@@ -63,16 +59,6 @@ export function ProviderRouteActions({
 
   return (
     <div className="provider-actions">
-      {row.chatCapable && (row.canBeDefault || row.selectedForRun) ? (
-        <IconButton
-          className={`provider-row-icon-action provider-default-action${row.selectedForRun ? " selected" : ""}`}
-          icon={Star}
-          label={row.selectedForRun ? t("Current default") : t("Set default")}
-          pressed={row.selectedForRun}
-          disabled={row.selectedForRun}
-          onClick={() => onUse(provider)}
-        />
-      ) : null}
       {primary}
       {row.showInlineCheck ? (
         <IconButton
@@ -92,19 +78,13 @@ export function ProviderRouteActions({
           <IconButton className="provider-row-menu-trigger" icon={MoreHorizontal} label={t("More")} tooltip="" />
         </MenuTrigger>
         <MenuContent className="provider-row-menu-popover" align="end">
-          {row.selectedForRun ? (
-            <MenuItem onSelect={() => onStopUse(provider)}>
-              <X aria-hidden="true" />
-              {t("Clear default")}
-            </MenuItem>
-          ) : null}
           {row.showDisableMenuAction ? (
             <MenuItem disabled={checkingAny} onSelect={() => onToggleEnabled(provider, false)}>
               <X aria-hidden="true" />
               {t("Disable")}
             </MenuItem>
           ) : null}
-          {(row.selectedForRun || row.showDisableMenuAction) ? <MenuSeparator /> : null}
+          {row.showDisableMenuAction ? <MenuSeparator /> : null}
           <MenuItem tone="danger" onSelect={() => onDelete(provider)}>
             <Trash2 aria-hidden="true" />
             {t("Delete")}

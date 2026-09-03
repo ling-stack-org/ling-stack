@@ -250,6 +250,49 @@
   white-space: nowrap;
 }
 
+.workspace-snapshot-restore-panel {
+  display: grid;
+  gap: var(--ling-space-3);
+  padding: var(--ling-space-4);
+  border: 1px solid var(--ling-border-default);
+  border-radius: var(--ling-radius-md);
+  background: var(--ling-bg-panel);
+}
+.workspace-snapshot-restore-head,
+.workspace-snapshot-restore-list li,
+.workspace-snapshot-restore-meta,
+.workspace-snapshot-restore-progress,
+.workspace-snapshot-fingerprint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-3);
+}
+.workspace-snapshot-restore-head span,
+.workspace-snapshot-restore-copy { display: grid; gap: var(--ling-space-1); min-width: 0; }
+.workspace-snapshot-restore-head strong,
+.workspace-snapshot-restore-copy strong { color: var(--ling-text-strong); font-size: var(--ling-font-xs); }
+.workspace-snapshot-restore-head small,
+.workspace-snapshot-restore-copy small,
+.workspace-snapshot-restore-empty,
+.workspace-snapshot-excluded small { color: var(--ling-text-muted); font-size: 10px; }
+.workspace-snapshot-restore-list { display: grid; gap: var(--ling-space-2); margin: 0; padding: 0; list-style: none; }
+.workspace-snapshot-restore-list li { padding-block: var(--ling-space-2); border-top: 1px solid var(--ling-border-default); }
+.workspace-snapshot-restore-progress { padding: var(--ling-space-2); border-radius: var(--ling-radius-sm); background: var(--ling-bg-subtle); font-size: 11px; }
+.workspace-snapshot-restore-progress span { color: var(--ling-status-info); font-family: ui-monospace, monospace; }
+.workspace-snapshot-restore-dialog .dialog-body { display: grid; gap: var(--ling-space-4); }
+.workspace-snapshot-restore-meta { flex-wrap: wrap; justify-content: flex-start; color: var(--ling-text-muted); font-size: 11px; }
+.workspace-snapshot-fingerprint { justify-content: flex-start; padding: var(--ling-space-3); border-radius: var(--ling-radius-sm); font-size: 11px; }
+.workspace-snapshot-fingerprint.matching { color: var(--ling-status-success); background: color-mix(in srgb, var(--ling-status-success) 8%, transparent); }
+.workspace-snapshot-fingerprint.changed { color: var(--ling-status-warning); background: color-mix(in srgb, var(--ling-status-warning) 8%, transparent); }
+.workspace-snapshot-preview-group { border: 1px solid var(--ling-border-default); border-radius: var(--ling-radius-sm); }
+.workspace-snapshot-preview-group > button { display: flex; width: 100%; align-items: center; justify-content: space-between; padding: var(--ling-space-3); border: 0; color: var(--ling-text-strong); background: transparent; cursor: pointer; text-align: left; }
+.workspace-snapshot-preview-group > button svg { transition: transform 120ms ease; }
+.workspace-snapshot-preview-group > button svg.expanded { transform: rotate(180deg); }
+.workspace-snapshot-preview-group ul { max-height: 180px; margin: 0; padding: 0 var(--ling-space-4) var(--ling-space-3); overflow: auto; list-style: none; color: var(--ling-text-muted); font: 10px ui-monospace, monospace; }
+.workspace-snapshot-preview-group li { padding-block: 2px; }
+.workspace-snapshot-excluded { display: grid; gap: var(--ling-space-1); padding: var(--ling-space-3); border: 1px solid color-mix(in srgb, var(--ling-status-warning) 30%, var(--ling-border-default)); border-radius: var(--ling-radius-sm); }
+
 @media (max-width: 760px) {
   .workspace-change-file-badges > small {
     display: none;
