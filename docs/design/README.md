@@ -134,22 +134,22 @@ dotted `rendererKey`。例如 `terminal_report → terminalReport → result.ter
 只能在 contract adapter 处转换一次，不能让 surface 或 CSS 直接消费 wire kind。详细映射
 和未知 kind 的 fail-closed 规则见详细设计 §5.1.2。
 
-#### Implementation lock（2026-09-01，v3.9.1-final）
+#### Implementation lock（2026-09-03，v3.9.1-final）
 
-设计文档已经锁定；v3.9.1-final 在不改变 v3.9 contract 的前提下补齐了可直接开工的接口级细设计；
-D0 的 contract/result-anchor、E2 projection 和 E4a–E4d normal/private/channel/topic 单
-Timeline slices 已落地，当前 web 回归 123/123 通过，但完整 E4/E5/E6 仍未完成验收：
-当前实现还额外切断了 channel 的旧 `renderMessageFeedItem` 外部入口，频道只允许
-`renderUnifiedTimeline`，topic panel 也只接受真实 `resolvedThreadId`；这只是 surface
-composition 收口，不代表 E4/E5/E6 已验收。
+设计文档已经锁定；v3.9.1-final 在不改变 v3.9 contract 的前提下补齐了接口级细设计。
+D0–E5 的 source implementation 与自动化闸门已完成：Web `137/137`、UI-core `93/93`、
+contracts `50/50`、API client `51/51`、runner-pi `25/25`、Desktop staging/path `89/89`，
+Core/Daemon 全量、Web lint/typecheck/build、Markdown links 和 diff check 均通过。当前实现
+也切断了 channel 的旧 `renderMessageFeedItem` 外部入口，频道只允许统一 Timeline，topic
+panel 只接受真实 `resolvedThreadId`；生产代码没有旧 WorkCell 或独立 TerminalReport
+renderer caller。
 `terminal_report` 已进入 closed union，assistant 文本带 Host-assigned
 `presentationRole`，SQLite publication 使用 `result_item_id`，canonical projector 会选择
 最高 committed generation 并以 `result.terminal` 渲染；UI-core fixture 已覆盖单一结果、
 summary 抑制、缺 anchor fail-closed。`WorkspaceClientView.tsx` 的
 `TerminalReportDto` / projection DTO 类型边界已由 `terminalReportResultItemId()` 收口；
-daemon 旧 fallback renderer 的移除和对应 coordinator 断言仍在进行中。接下来按
-`E1 → E2 → E3 → E4 → E5 → E6` 接入真实 evidence fold、统一 surface、recovery 和 packaged
-macOS 验收。只有同时具备 atomic evidence、统一
+daemon fallback renderer 已移除，recovery/fan-in/late evidence 的自动化断言已通过。接下来
+只进入 E6 packaged macOS 验收。只有同时具备 atomic evidence、统一
 renderer fingerprint、recovery 结果和 macOS screenshot/semantic-state/lineage/log 四件套，
 才可把实现标为完成。
 

@@ -1,12 +1,11 @@
 # Conversation Codex-Parity Component Detailed Design
 
-Status: normative component implementation contract v3.9.1-final; implementation is in progress,
-not yet accepted. E2 split-reason/expansion contract is explicit and the normal/private/channel
-root/branch/topic Timeline composition slices have web 123/123 contract coverage; the formal D0
-gate, E5 recovery/fan-in and E6 packaged macOS acceptance remain open.
+Status: normative component implementation contract v3.9.1-final; D0–E5 source implementation
+and automated gates are green, but the implementation is not yet accepted because E6 packaged
+macOS normal/private/channel/topic/branch/child and recovery evidence remains open.
 Date: 2026-09-01
 Design revision: Codex parity handoff 2026-09-01（component tree、row contract、child span 和 EnvironmentPopover 已锁定）
-Base: `origin/main` @ `63ab7c0e`
+Base: `origin/main` @ `ebfadd1b`
 Scope: normal conversation, teammate private chat, channel root/topic/branch, depth-1
 sub-Agent activity, packaged macOS
 Owner: Conversation UI, conversation-ui-core, daemon runtime, Desktop maintainers
@@ -1166,9 +1165,10 @@ private 的 legacy adapter 若需要把一条消息及其 facts 合并为 surfac
 否则 message 会被加两次偏移，facts 会落在所属 message 之前。该规则只约束 display adapter，
 canonical durable sequence 仍由 `ConversationItemStore` 提供。
 
-这还不是 E4 完成证明：channel root/branch 的真实 turn、protocol、workflow、run snapshot
-仍需端到端验收，topic 的非消息 item projection 与 typed protocol actions 仍待补齐；后续
-必须按 28.5 的 source audit 和 packaged macOS 证据闸门继续推进。
+E4 的 source cutover 与自动化 contract 已完成：channel root/branch/topic 的消息、事实、
+protocol、workflow 和 run projection 均进入同一 Timeline，生产代码没有
+`ConversationWorkCell` 或独立 `TerminalReportBlock` renderer caller。它仍不是 E6 完成证明；
+后续必须按 28.5 的 source audit 和 packaged macOS 证据闸门重放真实交互、重连与重启。
 
 ### 28.2 Target composition API
 

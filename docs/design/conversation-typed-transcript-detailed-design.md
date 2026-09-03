@@ -1,9 +1,9 @@
 # Ling Typed Transcript：Codex 风格统一会话详细设计
 
-Status: normative design v3.9.1-final（extends the v3.9 contract）；Codex-parity component detailed design 已锁定；D0 contract/result-anchor slice、E2 display projection 与 E4a–E4d normal/private/channel/topic composition slice 已落地，当前 web 回归 123/123 通过；D0 正式闸门、E5 recovery/fan-in 与 E6 packaged macOS 仍待完成
+Status: normative design v3.9.1-final（extends the v3.9 contract）；D0–E5 source implementation 与自动化闸门已通过，E6 packaged macOS 真实案例与证据仍待完成
 Date: 2026-09-01
 Design revision: Codex parity handoff 2026-09-01（component、scope、nested child 和无兼容入口已锁定）
-Base: `origin/main` @ `63ab7c0e`（实现 worktree 已同步；实现进行中）
+Base: `origin/main` @ `ebfadd1b`（2026-09-03 已同步；实现进行中）
 Scope: 普通会话、队友私聊、频道 root/topic/branch、depth-1 子 Agent、macOS 客户端
 Owner: Conversation UI、conversation-ui-core、daemon runtime maintainers
 

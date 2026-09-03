@@ -1,9 +1,9 @@
 # Conversation Codex-Parity Visual Specification
 
-Status: normative visual contract v3.9.1-final（extends v3.9）；implementation-ready（截图必须附 semantic/lineage 证据）；2026-09-01 Codex parity 开工锁已补齐
+Status: normative visual contract v3.9.1-final（extends v3.9）；source implementation 已通过自动化闸门，packaged macOS 截图仍必须附 semantic/lineage 证据
 Date: 2026-09-01
 Design revision: Codex parity handoff 2026-09-01（Document/Fact/Result primitive 和统一 surface geometry 已锁定）
-Base: `origin/main` @ `63ab7c0e`
+Base: `origin/main` @ `ebfadd1b`
 Related: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 Component implementation: [Conversation Codex-Parity Component Detailed Design](conversation-codex-parity-component-detailed-design.md)
 

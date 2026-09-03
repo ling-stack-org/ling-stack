@@ -1,9 +1,9 @@
 # Codex-style Typed Transcript v3.9.1-final：实现计划
 
-Status: implementation plan；v3.9.1-final 组件级细设计已锁定，D0 contract/result-anchor slice 与 E2 split-reason slice 已落地到实现 worktree；E4a normal、E4b private、E4c channel root/branch 和 E4d topic composition 已完成代码切片，web 回归 123/123 通过，但 D0 正式闸门、E5 recovery/fan-in 和 packaged macOS 验收仍待执行
+Status: implementation plan；v3.9.1-final 组件级细设计已锁定。D0–E5 的 source implementation 与自动化闸门已在实现分支通过；E6 packaged macOS 真实案例和证据采集仍未验收，因此整体实现尚不能标记完成
 Date: 2026-09-01
 Design revision: Codex parity handoff 2026-09-01（设计先行；实现按 D0→E6 闸门推进）
-Base: `origin/main` @ `63ab7c0e`（已核对远端无新提交）
+Base: `origin/main` @ `ebfadd1b`（2026-09-03 已 fetch 并合入实现分支）
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 Visual contract: [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
 Surface contract: [Conversation Surface Contract](conversation-surface-contract.md)
@@ -98,14 +98,14 @@ contract adapter 映射为 core 的 `camelCase` projection kind，再映射为�
 `node scripts/check-markdown-links.mjs` 和
 `git diff --check` 通过。D0 未通过时不进入 E1，也不删除旧 caller。
 
-**D0 当前状态（2026-09-01）**：五份权威文档已同步到 v3.9.1-final contract；实现 worktree
+**D0 当前状态（2026-09-03）**：五份权威文档已同步到 v3.9.1-final contract；实现分支
 已有 `terminal_report` closed-union、Host `presentationRole`、`result_item_id` migration、
-原子 publication item、纯 projector 的最高 generation join 和 `result.terminal` renderer
-key WIP。已通过的最近窄范围证据为 contracts `50/50`、UI-core `88/88`、core `460/460`
-和 daemon 定向测试 `322/322`；Markdown 链接与 `git diff --check` 也通过。Web typecheck
-的 `TerminalReportDto` / projection DTO 边界已由 `terminalReportResultItemId()` 收口。
-daemon 旧 fallback renderer 移除和对应 coordinator 断言仍需完成。因此 D0 尚未完成，更
-不能替代真实 daemon/API 与 packaged macOS 验收。剩余必须补齐：
+原子 publication item、纯 projector 的最高 generation join 和 `result.terminal` renderer。
+当前合并后证据为 contracts `50/50`、UI-core `93/93`、API client `51/51`、runner-pi
+`25/25`、Web `137/137`、Desktop staging/path `89/89`，Core 与 Daemon 全量测试均以
+exit 0 结束；Web lint、TypeScript、production build、Markdown links 与 `git diff --check`
+也通过。D0 的 contract 闸门已经完成；下面五项均已有自动化覆盖，但仍要在 E6 packaged
+客户端中重放，不能用源代码测试替代真实 App 验收：
 
 1. reply turn 以最终 `agentMessage` 收口；
 2. execute turn 只产生一个 `terminalReport`；
@@ -117,10 +117,10 @@ daemon 旧 fallback renderer 移除和对应 coordinator 断言仍需完成。�
 而不是带 TerminalReport Markdown 的 `assistant_message`；execute 后的
 `execution_summary` 被同一 turn outcome slot 抑制，普通 reply 的 `reply_result` 仍可见。
 
-这五项以及 selector smoke 全部通过后，D0 才算完成。真实 surface cutover 仍属于 E4，
-不能用它反向填补 D0 contract。
-本次交接没有新增 SQLite 表、provider session 或运行时兼容 renderer。当前 worktree 中已有
-的代码改动仍属于未验收 WIP，不能被当作 E1–E6 已完成的证据。
+这五项和 selector smoke 已在自动化层通过。真实 surface cutover 的 source audit 属于 E4，
+packaged 客户端中的视觉、交互与恢复证明属于 E6；两者不能反向填补彼此。
+本次实现没有新增 batch SQLite 表、provider session 或运行时兼容 renderer。E1–E5 的
+source/automated evidence 已完成，E6 未完成前仍不得发布或宣称整体完成。
 
 D0 不引入 feature flag，也不保留旧 renderer 兼容分支；测试先失败是预期的设计闸门。
 
@@ -131,12 +131,12 @@ D0 不引入 feature flag，也不保留旧 renderer 兼容分支；测试先失
 
 | 已落地 | 证据 | 仍需完成 |
 | --- | --- | --- |
-| closed item union、canonical snapshot、纯 projector、`protocolEvent`、`terminalReport` result anchor | `packages/conversation-ui-core` 与对应 tests | 对所有既有 channel caller 完成 cutover |
-| 统一 `ConversationTimeline`、renderer registry、mount/fingerprint | `apps/web/src/shared/conversation/timeline` | 删除残留 route-local activity renderer |
-| shared Timeline CSS/row shell | `apps/web/src/styles/shared/conversation-timeline.css`、`TimelineFactRow.tsx` | 收口状态文案为 `Queued/Working/Waiting/Waiting for approval/Succeeded/Failed/Cancelled/Blocked`，并移除 batch/output 的第二个纵向 scroll owner |
-| `tool_start/update/end` 的 action identity 与 revision 基础、Host presentation role | daemon execution-action 模块、contracts | durable Host capability 签发和二次 scope 校验 |
-| display-only command/exploration batching | core batching tests | recovery、fan-in、TerminalReport 的 atomic 回归 |
-| source-ref adapter 的前端边界 | `source-ref.ts` 与 tests | daemon/desktop 真实 capability、symlink/跨 workspace 拒绝 |
+| closed item union、canonical snapshot、纯 projector、`protocolEvent`、`terminalReport` result anchor | contracts/UI-core/Web tests | packaged App 中验证唯一 result row |
+| 统一 `ConversationTimeline`、renderer registry、mount/fingerprint | Web source audit 与 `137/137` | packaged normal/private/channel/topic/branch/child 视觉等价 |
+| shared Timeline CSS/row shell、统一状态文案、单一 feed scroll owner | Web lint、semantic contracts、production build | 真实长输出、折叠和窄窗口 UI 验收 |
+| `tool_start/update/end` action identity/revision、terminal fence、live invalidation | Daemon/Core 全量测试 | packaged SSE reconnect 与 daemon restart 重放 |
+| display-only command/exploration batching | UI-core `93/93` | packaged mixed action/batch disclosure 验收 |
+| file/diff/artifact capability issue/redeem 与专用 viewer | API/Web/Daemon capability tests | packaged 点击、tooltip、跨 workspace 拒绝证据 |
 
 因此实现顺序必须是“先接真实 evidence，再收口 surface，再做 packaged macOS 验收”。
 不能用一张漂亮截图替代尚未接通的 Host 事实，也不能因为某个 surface 仍有旧 caller
@@ -907,9 +907,9 @@ rg -n "publishedMessageId|renderTerminalReportMarkdown|kind:\s*\"assistant_messa
 每一项都有明确输入、代码边界和退出证据。除当前实现分支已有的 D0 WIP 外，不需要再
 开第二套 transcript 或新建 SQLite 表。
 
-### WP-0：收口 D0 基线（立即执行）
+### WP-0：收口 D0 基线（已完成）
 
-**输入**：`origin/main=63ab7c0e`、v3.9.1-final 五份设计、现有 contract/result-anchor WIP。
+**输入**：`origin/main=ebfadd1b`、v3.9.1-final 五份设计、已收口的 contract/result-anchor implementation。
 
 **动作**：
 
@@ -1504,17 +1504,17 @@ protocol/activity/workflow/run fact renderer 已删除，message chrome adapter 
 附件和 typed callbacks，且不改变 durable facts；topic reply panel 也已通过真实
 `resolvedThreadId` 构造一个 `topic_reply` snapshot，不能再直接 map `MessageRow`。退出条件已由
 source-contract 断言确认 channel root/branch/topic 只有 unified Timeline roots，TypeScript
-与 web 回归均通过（123/123）；这仍不替代真实 channel/root/branch/topic 的完整 E4 和
-packaged 验收。
+与 Web `137/137` 均通过；E4 source cutover 已完成，但这仍不替代 packaged App 中的
+channel/root/branch/topic 真实视觉、交互和恢复验收。
 
 频道 virtualizer 的 root metadata 也已收口：`ConversationVirtualFeed` 使用显式
 `virtualRowIdentity={ id: "channel-timeline-root", kind: "timeline" }`，不会再把
 `older-loader` 或第一条消息作为整个 Timeline 的滚动锚点。该 identity 只服务于 DOM
 semantic selector、焦点和 older-load anchor，不参与 projector、batch 或 completion gate。
 
-这些 surface 切片的退出证据是 typecheck、source audit 和 web 123/123 语义测试通过，尚不能
-代表 E4 完成。channel root/branch 的真实 turn/message/protocol/workflow/run snapshot、topic
-的非消息事实以及 packaged macOS 仍需复核，不能用当前 source contract 通过替代完整 E4/E5/E6。
+这些 surface 切片的 source 退出证据是 typecheck、source audit 和 Web `137/137` 语义测试
+通过，已满足 E4 自动化闸门。channel root/branch/topic/child 的真实视觉、交互、SSE reconnect
+和 daemon restart 仍需在 E6 packaged macOS 复核；不能用 source contract 通过替代 E6。
 
 ### 4.14.3 机械验收断言
 
