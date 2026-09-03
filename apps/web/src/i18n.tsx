@@ -123,7 +123,7 @@ export function I18nProvider({ children }: { readonly children: ReactNode }): Re
     <I18nContext.Provider value={value}>
       {catalog && fallbackCatalog
         ? children
-        : <div aria-busy="true" aria-label="Ling Stack is loading" data-i18n-bootstrap role="status" />}
+        : <div aria-busy="true" aria-label={formatCatalogMessage(catalog ?? {}, fallbackCatalog ?? {}, "Loading")} data-i18n-bootstrap role="status" />}
     </I18nContext.Provider>
   );
 }
