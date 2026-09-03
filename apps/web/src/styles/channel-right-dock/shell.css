@@ -17,6 +17,10 @@
   overflow: hidden;
 }
 
+.task-workbench-window.with-channel-progress-popover > .task-workbench-main {
+  background: var(--surface-panel);
+}
+
 .task-workbench-main.with-channel-side-panel {
   grid-template-columns:
     minmax(0, 1fr)
