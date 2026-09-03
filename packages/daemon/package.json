@@ -8,6 +8,9 @@
     "ling-stack-daemon": "./dist/cli.js"
   },
   "scripts": {
+    "build:ci": "tsc -p tsconfig.json",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+    "test:ci": "node --test test/*.test.mjs",
     "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json",
     "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/plugin-sdk build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/core build && corepack pnpm --filter @ling-stack/runner-pi build && corepack pnpm --filter @ling-stack/providers build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
@@ -17,6 +20,7 @@
     "@ling-stack/browser-host": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/core": "workspace:*",
+    "@ling-stack/localization": "workspace:*",
     "@ling-stack/plugin-sdk": "workspace:*",
     "@ling-stack/providers": "workspace:*",
     "@ling-stack/remote-protocol": "workspace:*",
@@ -24,11 +28,11 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@xmldom/xmldom": "0.9.12",
     "docx": "9.7.1",
-    "image-size": "1.2.1",
     "jszip": "3.10.1",
     "officeparser": "7.8.0",
     "pdf-parse": "2.4.5",
     "pptxgenjs": "4.0.1",
+    "shell-quote": "1.10.0",
     "ws": "^8.21.0",
     "xlsx-populate": "1.21.0"
   },

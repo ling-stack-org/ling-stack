@@ -1,384 +1,284 @@
-# Inline Runtime Approval Detailed Design
+# Runtime Approval Composer Gate Detailed Design
 
-## Status
-
-Design plan.
-
-This document defines the Codex-style inline approval experience for local runtime
-permission requests and active-run tool approvals. It is the detailed design for the
-local approval side of
-[Work Board, Review Queue, and Inline Approval Boundaries](work-board-review-queue.md).
+Status: active contract. The earlier global blocking Dialog is superseded by the
+session-owned Composer gate below.
 
 ## Summary
 
-Local runtime approvals are immediate execution decisions. They should appear near the
-active run or channel context, not primarily in Inbox.
+Runtime approval is a blocking decision for one conversation, not for the whole Ling
+application. Channel, normal conversation, and teammate private chat share one approval
+gate component and one ordering rule, but each surface renders only approvals owned by
+its current session.
+
+When a background session needs approval, its Sidebar row shows a visible green
+`Waiting for approval` label. The user can keep working elsewhere, switch to that row,
+and decide there. Inside the owning session, the approval gate replaces the Composer
+until the user allows or denies the current request. It never mounts a page-level modal,
+backdrop, focus trap, or global keyboard lock.
+
+## Product Model
 
 ```text
-approval policy returns ask
--> daemon creates a durable approval request
--> active run enters waiting_for_approval
--> inline approval appears near the channel composer, progress popover, or run detail
--> user approves or denies
--> daemon resumes, blocks, or queues a continuation
+runner persists pending approval
+-> daemon keeps run waiting_for_approval
+-> AppShell projects approval ownership to Sidebar objects
+-> background owner shows Waiting for approval
+-> selected owner renders RuntimeApprovalComposerGate in the Composer slot
+-> user allows or denies one request
+-> surface refreshes its authoritative runtime snapshot
+-> next owned approval appears, or the Composer returns
 ```
 
-The approval record remains durable. The inline surface is only the primary interaction
-point for active local work.
+The approval record, policy, audit history, expiry, and resume semantics remain owned by
+the daemon. Web only chooses where the current decision is presented.
 
-## Related Docs
+## Ownership
 
-- [Work Board, Review Queue, and Inline Approval Boundaries](work-board-review-queue.md)
-- [Approval Policy](approval-policy.md)
-- [Codex-Inspired Runtime Tools P2A: Permission Requests Implementation](./codex-inspired-runtime-tools.md)
-- [Codex-Inspired Settings And Permission Presets](codex-inspired-settings-permission-presets.md)
-- [Conversation Surface Contract](./conversation-surface-contract.md)
-- [Codex-Like Execution Experience](codex-like-execution.md)
+Approval ownership must be derived by the shared runtime-approval owner resolver, in this
+order:
 
-## Current Implementation Anchors
+1. `approval.channelId` owns the approval directly and wins over conflicting linked data.
+2. `approval.runId -> RunSession -> WorkUnit` resolves a channel, teammate-private, or
+   normal conversation owner. A channel Run belongs to its channel. For non-channel Runs,
+   `WorkUnit.kind=conversation_run` belongs to the normal conversation and
+   `WorkUnit.kind=teammate_direct_reply` belongs to the teammate-private conversation.
+   A teammate-private Run's Ling execution `threadId` is not the visible direct-message
+   thread ID. Resolve the visible owner through the Work Unit source message, linked reply,
+   or a direct message carrying the same `linkedRunId`; all available links must identify
+   one teammate and one direct-message thread.
+   `teammateId` alone is not a surface discriminator because normal Ling Agent Runs also
+   carry it. Legacy Runs without a Work Unit may fall back to the existing thread signals.
+3. `approval.taskId -> Task.channelId` and
+   `approval.workflowStepId -> ChannelWorkflowStep.channelId` resolve channel ownership.
+4. Compatibility payload fields `runId` and `requestedByRunId` may resolve through the
+   same Run rules only when no durable direct link resolved an owner.
 
-| Area | Current anchor | Use in this slice |
-| --- | --- | --- |
-| Approval type | `packages/core/src/approval-types.ts` | `runtime_permission_request`, local tool approvals, `runId`, `channelId`, `toolCallId` |
-| Permission helpers | `packages/core/src/runtime-permissions.ts` | derive run-scoped grants from approved permission approvals |
-| Approval storage | `packages/core/src/storage/sqlite-run-store.ts` | existing durable approval request lifecycle |
-| Run state | `packages/core/src/run-types.ts` | `waiting_for_approval` and active run linkage |
-| Web approval card | `apps/web/src/features/approvals/ApprovalCard.tsx` | reusable payload summaries and approve/deny behavior |
-| Web approvals page | `apps/web/src/features/approvals/ApprovalsPage.tsx` | fallback and audit list, not primary active-run UX |
-| Channel workspace | `apps/web/src/features/workspace/ChannelTaskWorkspace.tsx` | active task/run context where inline approval should appear |
-| Attention popover | `docs/design/conversation-surface-contract.md` | compact channel-scoped attention entry point |
+An approval whose referenced Work Unit is not yet loaded, or which otherwise has no
+provable owner, remains available in the Approval Inbox. Web must not guess the current
+session, the foreground session, the newest session, or another private chat for the same
+teammate. Conflicting source-message, linked-reply, or linked-Run thread evidence also fails
+closed to the Approval Inbox.
 
-## Goals
+Sidebar waiting state, Composer gating, and compact transcript suppression must consume
+this same resolved owner. A global or previously selected `activeRunId` is not ownership
+evidence and must never attach an approval to the foreground session.
 
-- Make active local approval requests visible where the user is working.
-- Preserve the existing durable approval system and audit trail.
-- Keep local runtime approval separate from external action review.
-- Let users approve or deny without navigating away from the active channel.
-- Show scope deltas clearly before approval.
-- Make high-risk approvals require an explicit reason and confirmation.
-- Keep approved runtime permission grants scoped to the run or continuation.
+## Surface States
 
-## Non-Goals
+### Background Session
 
-- No new approval database.
-- No mutation of workspace approval policy from a run approval.
-- No hidden prompt injection into an active run.
-- No full Work Board implementation in this slice.
-- No external action execution from the inline prompt.
-- No migration to Codex app-server JSON-RPC.
-- No broad permission profile DSL.
+- Show `Waiting for approval` in green on the corresponding expanded Sidebar row.
+- Keep the complete row clickable so the user can navigate to it.
+- Do not open an overlay, steal focus, switch sessions, or disable another Composer.
+- In the collapsed rail, aggregate the existing section status rather than squeezing
+  text into the icon-only rail.
 
-## Eligible Inline Approvals
+### Selected Session With Pending Approval
 
-Inline approval should prioritize approvals that are both local and active.
+- Replace the Composer with `RuntimeApprovalComposerGate` in the same stable Composer
+  slot.
+- The feed, header, Sidebar, right dock, terminal, and other sessions remain usable.
+- The selected session cannot send another message until its approval queue is empty.
+- The gate shows one request at a time using the existing risk/time ordering from
+  `buildInlineApprovalViews`.
+- Resolving one request advances to the next pending request without briefly revealing
+  the Composer.
 
-Eligible by default:
+### Selected Session Without Pending Approval
 
-- `runtime_permission_request`
-- `bash`
-- `edit`
-- `write`
-- local `mcp_tool_call` when it belongs to the active run and is not an external action
-- workflow-step gates when the currently visible channel workflow is blocked on them
+- Render the normal Composer with its draft, attachments, permission preset, model, and
+  focus state intact.
+- Removing or resolving the final approval restores the Composer in the same slot.
 
-Not primary inline approvals:
+## Approval Gate Content
 
-- approvals with `externalWorkActionId`
-- external sends or GitHub/Linear mutations
-- paid media job approvals
-- credential changes
-- provider changes
-- old approvals whose run is no longer active or visible
+The default gate contains only:
 
-Those should remain visible in Review Queue or the existing approval audit page.
+- the fixed decision title `Allow this action?`;
+- one localized action sentence, for example `Run command: pnpm test` or
+  `Modify file: src/App.tsx`;
+- one-line mutation feedback when a decision fails;
+- `Deny` and `Allow once` actions.
 
-## Inline Surface Hierarchy
+For an eligible Bash approval, `Allow once` becomes a split button. Its primary action
+still approves only the current request. The adjacent arrow opens a compact menu with
+`Allow once` and `Allow similar commands`. The second decision persists only the
+daemon-proposed command-prefix rule for the current workspace. It does not grant Bash as
+a whole, does not apply to another workspace, and does not add a second confirmation
+Dialog.
 
-### 1. Channel Composer Strip
+The arrow is absent unless the approval carries a daemon-validated
+`proposedCommandRule` and lists `approve_command_rule` in `availableDecisions`. Web must
+never infer a rule from the displayed command. File, MCP, network, deploy, credential,
+runtime-permission, and task-proposal decisions keep the ordinary two-button layout.
 
-The composer strip is the primary active-channel prompt.
+The gate does not show risk badges, Run IDs, workspace absolute paths, approval titles,
+raw payloads, permission deltas, queue counts, decision reasons, technical details, or an
+approve-all action. Full payload and decision history stay in Run detail, Approval Inbox,
+and audit surfaces.
 
-Placement:
+## Shared Decision-Gate Shell
 
-```text
-conversation / task context
--> progress or latest run summary
--> inline approval strip
--> composer input
-```
+`ConversationDecisionGate` owns only the stable Composer-slot layout: decision title,
+one human-readable sentence, one optional mutation-error line, and deny/allow buttons.
+It has no approval DTO, proposal DTO, navigation, daemon request, or audit knowledge.
 
-Rules:
+`RuntimeApprovalComposerGate` adapts an ordered runtime approval into this shell.
+`ChannelExecutionProposalComposerGate` adapts one actionable channel proposal into the
+same shell. The task sentence names the task, assigned Agent, and localized permission
+categories without rendering a table or technical tool identifiers. Runtime approval
+always has priority when both decisions belong to the selected channel.
 
-- Show only when there is at least one pending inline-eligible approval for the active
-  channel or active run.
-- Use one compact row for a single approval.
-- Use a grouped row when multiple approvals are pending.
-- Do not use a full card layout inside the composer area.
-- Keep the row action-led: approve, deny, open details.
+Neither adapter uses a Dialog, portal, backdrop, close button, Escape dismissal, reason
+field, technical disclosure, or secondary editing path. A task proposal in a background
+channel never gates the selected channel.
 
-### 2. Channel Progress Popover
+The first action target may use monospace presentation when it is a command, relative
+file path, or tool name. The UI must use the compact target projection and must not reveal
+a workspace prefix already established by the session.
 
-The progress popover should show current approval-needed progress rows, but not
-duplicate the full approval card. Resolved approval history remains in Activity/audit
-logs.
+## Interaction
 
-Rules:
+- `Deny` receives initial keyboard focus when the gate first appears.
+- `Escape` does not resolve or dismiss the approval.
+- Sidebar navigation remains available because the gate is not a modal.
+- While a decision request is in flight, both decision buttons are disabled and the
+  selected action shows progress.
+- The split menu supports Arrow Up/Down, Enter, Escape, outside-click dismissal, visible
+  focus, and focus return to its arrow. Opening or closing it never resolves an approval.
+- Choosing `Allow similar commands` resolves immediately. A save or fingerprint failure
+  keeps the same approval visible and exposes the existing one-line retry state.
+- A mutation failure keeps the same request visible and changes only the attempted action
+  to `Retry`.
+- Returning to a session with a still-pending approval restores the gate, not the
+  Composer.
+- Focus returns to the Composer only after the owning queue becomes empty.
 
-- Show the top pending inline approval with action summary and risk.
-- Link to the run drawer or approval detail for full payload.
-- If approval action is high or critical risk, route to detail before final approval.
-- Keep external action approvals labeled as Review Queue items, not inline run prompts.
+## Transcript Projection
 
-### 3. Run Detail / Timeline
+The owning Run may keep one compact, non-interactive `Waiting for approval` marker in the
+transcript. While the gate owns a pending approval, the transcript must not render a
+second approval card, decision buttons, raw permission labels, or expandable technical
+evidence for that same request.
 
-The run detail surface should show the durable approval event and payload.
+Resolved approval history remains immutable and compact. The gate is never persisted as
+message content.
 
-Rules:
+## Full Access Boundary
 
-- Waiting runs should show a blocking approval panel near the latest event.
-- Resolved approvals should remain in the run audit trail.
-- The run detail can reuse `ApprovalCard` in compact mode for full payload display.
+Full access confirmation is a separate, explicit permission-change Dialog. Selecting
+`Full access` opens that Dialog before the preset changes. The Dialog explains files and
+folders, terminal commands, Internet and connected apps, and the risk of sensitive data
+exposure or prompt injection. Cancel leaves the previous preset unchanged; Confirm records
+the existing conversation-scoped confirmation and then activates full access.
 
-### 4. Review Queue Fallback
+Full access does not use `RuntimeApprovalComposerGate`. Agent/Skill mandatory approval,
+external send, deploy, credential mutation, and other independent boundaries may still
+create runtime approvals after full access is confirmed.
 
-Review Queue can show inline-eligible pending approvals when the user is not in the
-active channel or when the run was backgrounded.
-
-Rules:
-
-- The row should route back to the channel/run when possible.
-- The page should label it as a local runtime approval, not an external action.
-- It should not become the main interaction point for active local runs.
-
-## Selection Logic
-
-The Web domain should derive inline approvals from existing approval data before any
-new daemon endpoint is added.
+## Interfaces
 
 ```ts
-function isInlineApprovalCandidate(
-  approval: ApprovalRequest,
-  context: {
-    readonly activeChannelId?: string;
-    readonly activeRunId?: string;
-    readonly visibleRunIds: readonly string[];
-  },
-): boolean {
-  if (effectiveApprovalStatus(approval) !== "pending") {
-    return false;
-  }
-  if (approval.externalWorkActionId || approval.mediaJobId) {
-    return false;
-  }
-  if (!isInlineActionType(approval.actionType)) {
-    return false;
-  }
-  if (approval.runId && approval.runId === context.activeRunId) {
-    return true;
-  }
-  if (approval.runId && context.visibleRunIds.includes(approval.runId)) {
-    return true;
-  }
-  return Boolean(approval.channelId && approval.channelId === context.activeChannelId);
-}
-
-function isInlineActionType(actionType: ApprovalActionType): boolean {
-  return [
-    "runtime_permission_request",
-    "bash",
-    "edit",
-    "write",
-    "mcp_tool_call",
-    "workflow_step",
-  ].includes(actionType);
+interface RuntimeApprovalComposerGateProps {
+  readonly approvals: readonly InlineApprovalView[];
+  readonly approvalErrors: Readonly<Record<string, string>>;
+  readonly resolvingApprovals: Readonly<Record<string,
+    "approve_once" | "approve_command_rule" | "deny">>;
+  readonly onResolve: (
+    approvalId: string,
+    decision: "approve_once" | "approve_command_rule" | "deny",
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ) => void;
 }
 ```
 
-This is intentionally conservative. External action approvals are excluded even if they
-also have `channelId`.
+The component consumes view data and callbacks only. It does not fetch, mutate global
+navigation state, inspect another session, derive command rules, or own approval policy.
+The command-rule DTO, persistence, matching, and audit authority remain in Core and the
+Daemon.
 
-## Information Design
-
-### Compact Row
-
-Required fields:
-
-- action title;
-- risk pill;
-- owner label: run, task, channel, or workflow step;
-- short scope summary;
-- approve and deny actions;
-- detail link.
-
-Runtime permission request summary should show:
-
-- request kind: core tool, write scope, MCP tool, or runner capability;
-- requested scope;
-- current scope summary;
-- proposed continuation mode;
-- reason supplied by the runner.
-
-### Detail View
-
-The detail view should show:
-
-- full payload summary;
-- current scope and requested scope diff;
-- file paths, MCP server/tool names, or runner capability names;
-- risk and approval policy reason;
-- run, task, channel, and tool-call identifiers;
-- audit JSON behind a disclosure.
-
-High-risk and critical approvals must require:
-
-- explicit decision reason before approval;
-- second confirmation;
-- clear copy that the decision is scoped to this run or continuation.
-
-## Interaction Rules
-
-### Approve
-
-```text
-user clicks approve
--> Web calls existing approval resolve endpoint
--> daemon resolves approval as approved
--> runtime permission grants are materialized from the approved record when applicable
--> active run resumes if the runner supports same-run continuation
--> otherwise a follow-up continuation is queued or shown as required
-```
-
-The UI must not update workspace Settings or approval policy after approval.
-
-### Deny
-
-```text
-user clicks deny
--> Web calls existing approval resolve endpoint
--> daemon resolves approval as denied
--> active run receives denial or remains blocked according to runner bridge behavior
--> UI updates the run and approval strip
-```
-
-### Expire Or Cancel
-
-Expired or cancelled approvals should leave the inline strip and remain in the run audit
-trail. If the run still waits after expiry, the run should show a repair hint rather than
-silently hiding the problem.
-
-### Multiple Pending Approvals
-
-When multiple local approvals are pending for the same active run:
-
-- show a grouped strip with count and highest risk;
-- display the first blocking approval inline;
-- provide a detail list sorted by risk, then created time;
-- do not allow "approve all" in the first slice.
-
-## Component Plan
-
-Recommended components:
+## Placement
 
 ```text
 apps/web/src/features/approvals/
-  InlineApprovalStrip.tsx
-  InlineApprovalSummary.tsx
-  RuntimePermissionScopeDelta.tsx
+  ConversationDecisionGate.tsx
+  RuntimeApprovalComposerGate.tsx
 
-apps/web/src/lib/
-  inline-approvals.ts
+channel
+  WorkspaceClientView -> runtime approval gate -> task proposal gate -> normal Composer
+
+normal conversation
+  ConversationHome -> NormalConversationPage Composer slot
+
+private chat
+  TeammateWorkspace -> TeammatePrivateChatSurface Composer slot
+
+sidebar
+  AppShell owner projections -> SidebarNavigation -> SidebarObjectRow
 ```
 
-`InlineApprovalStrip` should depend on approval data and callbacks, not fetch data
-itself. The domain controller keeps loading and resolving behavior centralized.
+## Accessibility
 
-`ApprovalCard` remains the full audit component. It can be reused in drawer/detail
-contexts, but it is too large for the composer strip.
+- Gate root is a labelled region, not a Dialog.
+- Decision feedback uses a polite live region.
+- Buttons retain visible focus and minimum target dimensions.
+- `Waiting for approval` is real text in the expanded Sidebar and has a status role.
+- Color is supplementary; screen-reader labels include the approval count when known.
+- Reduced motion does not change ownership or decision behavior.
 
-## API Plan
+## Tests
 
-### First Slice
+### Projection
 
-No new daemon endpoint is required.
+- channel, normal conversation, and private chat approvals map to the correct Sidebar row;
+- an approval owned by one channel never gates another channel even when a stale global
+  Run selection still points at the owner Run;
+- explicit channel ownership wins over conflicting Run, task, workflow, or payload links;
+- a pending approval outranks running, failed, paused, and unread presentation;
+- approvals with no provable owner do not attach to the selected session;
+- multiple approvals for one owner produce one Sidebar label with an accessible count.
 
-Use existing approval list and resolve endpoints:
+### Interaction
 
-```text
-GET /approvals?cwd=...
-POST /approvals/:id/approve?cwd=...
-POST /approvals/:id/deny?cwd=...
-```
+- a background approval does not open an overlay or disable the active Composer;
+- selecting the owner replaces only that Composer;
+- allow, deny, retry, expiry, stale removal, and ordered multi-item progression work;
+- primary `Allow once` never persists a command rule;
+- eligible Bash approvals expose `Allow similar commands`, persist the proposed prefix,
+  and stop asking for matching commands in the same workspace;
+- ineligible or stale proposals render no arrow and cannot be submitted as a rule;
+- another Sidebar row remains clickable while the gate is visible;
+- the final decision restores the preserved Composer draft and focus.
+- an actionable task proposal uses the same shell only in its owning channel;
+- its compact feed summary reselects the proposal gate without opening a modal;
+- denying or allowing the last actionable proposal restores the channel Composer.
 
-The Web app derives inline candidates client-side from loaded approvals, active run, and
-channel state.
+### Full Access
 
-### Later Slice
+- selecting full access opens the dedicated confirmation Dialog before changing the
+  preset;
+- Cancel preserves the previous preset, draft, and focus;
+- Confirm stores the existing scoped evidence and changes the preset;
+- normal conversation, channel, and private chat share the same confirmation content and
+  behavior.
 
-If polling or fan-in becomes noisy, add a daemon attention endpoint:
+### Visual
 
-```text
-GET /approvals/attention?cwd=...&channelId=...&runId=...
-```
+- expanded Sidebar shows a clear green `Waiting for approval` label;
+- the Composer gate is contained at `1280x800` and `1440x960` in light and dark themes;
+- the gate shrink-wraps its decision content with equal inline insets and no reserved
+  transcript, footer, or empty-message height below the actions;
+- an eligible Bash split button renders one contiguous primary action plus a fixed arrow
+  segment; labels remain centered and neither segment wraps, overlaps, or separates;
+- no horizontal overflow, page-level backdrop, feed overlap, or Composer flash appears.
 
-It should return view-ready approval references, not a new approval model.
+## Non-Goals
 
-## State And Recovery
-
-Inline approval must tolerate:
-
-- approval resolved from another surface;
-- active run no longer present;
-- run completed while approval was visible;
-- approval expired;
-- stale SSE state;
-- duplicate click while resolve is in flight.
-
-UI behavior:
-
-- disable actions while resolving;
-- refresh approval and run state after resolve;
-- remove non-pending approvals from inline strip;
-- show resolved state briefly only in detail surfaces, not as a persistent composer row;
-- route stale or missing run cases to Review Queue or Run History.
-
-## Test Plan
-
-Unit tests:
-
-- inline approval eligibility excludes external action approvals;
-- runtime permission request scope summary renders all four request kinds;
-- high-risk approvals require a reason and second confirmation;
-- multiple pending approvals sort by risk and age.
-
-Web integration tests:
-
-- a pending active run approval appears above the channel composer;
-- approving it calls the existing approval endpoint;
-- denying it removes the inline strip and updates run state;
-- external action approvals appear in Review Queue, not the inline strip;
-- background approvals are still reachable from Review Queue.
-
-Daemon tests:
-
-- approved `runtime_permission_request` creates a run-scoped or continuation-scoped
-  grant;
-- approval resolution does not mutate workspace approval policy;
-- denied permission request fails closed.
-
-## Acceptance Criteria
-
-- Active local approvals are visible without leaving the channel.
-- Review Queue is not required for normal active run approval.
-- Existing `ApprovalRequest` records remain the durable source of truth.
-- External action approvals are not shown as normal local runtime prompts.
-- Approving a runtime permission request does not change Settings approval policy.
-- Resolved approvals remain visible in Run History.
-
-## Open Questions
-
-- Should the composer strip appear only for the selected task/run, or for any active run
-  in the current channel?
-- Should `workflow_step` approvals appear inline when they are pre-run gates, or only in
-  workflow detail?
-- Should `mcp_tool_call` approvals always be inline when run-owned, or should high
-  side-effect MCP tools route to Review Queue by default?
+- No global notification center or OS push in this slice.
+- No global Bash allow, session-wide approval, or bulk approval.
+- No persistent rule for file, MCP, network, deploy, credential, runtime-permission, or
+  task-proposal decisions.
+- No external-action review redesign.
+- No task proposal editor or technical-detail surface in the Composer decision path.
+- No mobile acceptance target.

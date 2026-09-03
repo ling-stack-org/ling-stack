@@ -32,6 +32,7 @@ import {
 import { ensureDeterministicWorkflowSelectorDecision } from "./workflow-selector.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
 import { finalizeDelegatedWorkflowStepFromCanonicalState } from "./workflow-step-finalizer.js";
+import { preserveMarkdownLayout } from "./markdown-text.js";
 import { reconcileWorkflowFromCanonicalState } from "./workflow-reconciliation.js";
 import { syncWorkflowSourceTurnProgress } from "./workflow-source-turn.js";
 import {
@@ -142,7 +143,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
     return reconciled;
   }
   const currentWorkflow = input.store.getChannelWorkflow(workflow.id) ?? workflow;
-  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const activeStepCount = countActiveWorkflowSteps(steps);
   const approvedGatedSteps = steps.filter((step) => step.status === "running" && step.metadata?.preStepApprovalId && !step.runId && !step.taskId);
   const eligibleSteps = [
@@ -424,10 +425,17 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${input.workflowId}`);
   }
+  const now = new Date().toISOString();
   if (workflow.status === "cancelled") {
+    // Cancellation is idempotent, including after a client reconnects between
+    // the durable status transition and terminal-report publication. Re-run
+    // the publication coordinator so a cancelled source turn/thread cannot
+    // remain open merely because the first request returned early.
+    syncWorkflowSourceTurnProgress(input.store, workflow, now);
+    maybeCreateWorkflowTerminalCoordinatorReply(input.store, workflow.id, { now });
     return {
-      workflow,
-      workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
+      workflow: input.store.getChannelWorkflow(workflow.id) ?? workflow,
+      workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }),
       cancelledRunIds: [],
       cancelledApprovalIds: [],
     };
@@ -436,12 +444,11 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
     throw new HttpError(409, "workflow_not_cancellable", `Workflow ${workflow.id} is already ${workflow.status}.`);
   }
 
-  const now = new Date().toISOString();
   const reason = input.reason ?? "workflow_cancelled";
   const cancelledRunIds: string[] = [];
   const cancelledApprovalIds: string[] = [];
 
-  for (const step of input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 })) {
+  for (const step of input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true })) {
     for (const approval of input.store.listApprovalRequests({ workflowStepId: step.id, status: "pending", limit: 500 })) {
       const cancelled = input.store.cancelApprovalRequest(
         approval.id,
@@ -492,9 +499,18 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
     }
   }
 
+  // Cancellation is a terminal workflow outcome too. Route it through the
+  // same durable publication coordinator as success/failure so the source
+  // turn/thread cannot remain open after the user has cancelled the work.
+  const terminalWorkflow = input.store.getChannelWorkflow(workflow.id) ?? latestWorkflow;
+  if (isTerminalWorkflowStatus(terminalWorkflow.status)) {
+    syncWorkflowSourceTurnProgress(input.store, terminalWorkflow, now);
+    maybeCreateWorkflowTerminalCoordinatorReply(input.store, terminalWorkflow.id, { now });
+  }
+
   return {
     workflow: input.store.getChannelWorkflow(workflow.id) ?? workflow,
-    workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
+    workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }),
     cancelledRunIds,
     cancelledApprovalIds,
   };
@@ -516,7 +532,7 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
     throw new HttpError(409, "workflow_terminal", `Workflow ${workflow.id} is already ${workflow.status}.`);
   }
 
-  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   if (!isWorkflowStepEligible(step, steps)) {
     return {
       status: "blocked",
@@ -550,6 +566,11 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
   if (started.kind === "error") {
     throw new HttpError(started.statusCode, started.code, started.message);
   }
+  syncWorkflowSourceTurnProgress(
+    input.store,
+    input.store.getChannelWorkflow(started.workflowId) ?? workflow,
+    new Date().toISOString(),
+  );
 
   const runRequest: WorkflowStepRunRequest = {
     ...started.runRequest,
@@ -855,10 +876,9 @@ function readRunAssistantTextSummary(store: RunStore, runId: string): string | u
     .listEvents(runId, { limit: 1000 })
     .filter((event) => event.type === "assistant_text_delta")
     .map((event) => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
-    .join("")
-    .replace(/\s+/g, " ")
-    .trim();
-  return text || undefined;
+    .join("");
+  const normalizedText = preserveMarkdownLayout(text);
+  return normalizedText || undefined;
 }
 
 function readRunArtifactResultSummary(store: RunStore, runId: string): string | undefined {
@@ -1006,7 +1026,7 @@ function maybeRequestPostStepApproval(
 }
 
 function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): WorkflowOrchestrationResult | { readonly status: "open" } {
-  const steps = store.listChannelWorkflowSteps({ workflowId, limit: 500 });
+  const steps = store.listChannelWorkflowSteps({ workflowId, complete: true });
   const workflow = store.getChannelWorkflow(workflowId);
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${workflowId}`);
@@ -1045,6 +1065,24 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
     if (!run) {
       continue;
     }
+    if (run.status === "waiting_for_approval") {
+      const latestWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
+      if (latestWorkflow.status === "running") {
+        const waiting = store.transitionChannelWorkflowStatus({
+          workflowId: workflow.id,
+          expectedStatus: "running",
+          event: "approval_requested",
+          actor: "system",
+          reason: `run:${run.id}:waiting_for_approval`,
+          now: new Date().toISOString(),
+        });
+        if (!waiting.ok) {
+          throw new HttpError(409, waiting.code, `Workflow approval transition failed: ${waiting.code}`);
+        }
+      }
+      syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id) ?? workflow, new Date().toISOString());
+      continue;
+    }
     if (run.status === "succeeded" || run.status === "failed" || run.status === "cancelled") {
       finalizeOrchestratedWorkflowStepRun(store, step.id, step.taskId, run);
     }
@@ -1054,7 +1092,7 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
   if (latest.status === "succeeded") {
     return { status: "completed", workflow: latest };
   }
-  const blocked = store.listChannelWorkflowSteps({ workflowId, status: "blocked", limit: 500 })[0];
+  const blocked = store.listChannelWorkflowSteps({ workflowId, status: "blocked", complete: true })[0];
   if (blocked) {
     return { status: "blocked", workflow: latest, workflowStep: blocked, blocker: blocked.blocker ?? "Workflow step is blocked." };
   }

@@ -67,8 +67,6 @@ import {
 const execFile = promisify(execFileCallback);
 const BUILD_SCRIPT = new URL("../scripts/build-cua-driver-provider.mjs", import.meta.url).pathname;
 const VERIFY_SCRIPT = new URL("../scripts/verify-cua-driver-source-build.mjs", import.meta.url).pathname;
-const DESKTOP_ARTIFACTS_WORKFLOW = new URL("../../../.github/workflows/desktop-artifacts.yml", import.meta.url).pathname;
-const SELF_HOSTED_NATIVE_WORKFLOW = new URL("../../../.github/workflows/cua-driver-self-hosted-native.yml", import.meta.url).pathname;
 const DARWIN_REPRODUCIBILITY_DIAGNOSTIC = new URL("../scripts/diagnose-cua-driver-darwin-reproducibility.mjs", import.meta.url).pathname;
 
 test("provider lock is the exact V2 contract and remains fail-closed", async () => {
@@ -174,147 +172,11 @@ test("package authorization follows only the independently anchored committed lo
   );
 });
 
-test("product artifact workflow is manual, single-build, and uploads only release products", async () => {
-  const workflow = await readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8");
-  assert.match(workflow, /^  workflow_dispatch:/mu);
-  assert.doesNotMatch(workflow, /^  (?:pull_request|push):/mu);
-  assert.match(workflow, /default: macos-arm64/u);
-  assert.match(workflow, /- windows-x64/u);
-  assert.doesNotMatch(workflow, /- both/u);
-
-  const macosBuildJob = workflow.slice(
-    workflow.indexOf("  macos-arm64:"),
-    workflow.indexOf("  windows-x64:"),
-  );
-  const windowsBuildJob = workflow.slice(workflow.indexOf("  windows-x64:"));
-  for (const [platform, job] of [["darwin", macosBuildJob], ["win32-x64", windowsBuildJob]]) {
-    assert.equal(job.match(/build-cua-driver-provider\.mjs/gu)?.length, 1);
-    assert.match(job, new RegExp(`--platform ${platform}`, "u"));
-    assert.match(job, /verify-cua-driver-source-build\.mjs/u);
-    assert.match(job, /LING_CUA_DRIVER_PACKAGE_PROVIDER: "1"/u);
-    assert.doesNotMatch(job, /candidate-[ab]|promote-cua-driver|download-artifact/u);
-  }
-
-  const uses = [...workflow.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)].map((match) => match[1]);
-  assert.equal(uses.length, 7);
-  for (const action of uses) assert.match(action, /^[^@]+@[0-9a-f]{40}$/u);
-  assert.equal(workflow.match(/actions\/upload-artifact@/gu)?.length, 2);
-  assert.match(macosBuildJob, /Ling-Stack-\*-macos-arm64\.dmg[\s\S]+checksums\.txt/u);
-  assert.doesNotMatch(macosBuildJob, /release\/\*-macos-arm64\.zip\n\s+apps/u);
-  assert.match(windowsBuildJob, /Ling-Stack-\*-windows-x64-setup\.exe[\s\S]+checksums\.txt/u);
-  assert.match(
-    windowsBuildJob,
-    /check-cua-driver-package-authorization\.mjs --platform win32-x64[\s\S]+Windows packaging is not authorized yet/u,
-  );
-
-  const desktopPackage = JSON.parse(await readFile(
-    new URL("../package.json", import.meta.url),
-    "utf8",
-  ));
-  assert.match(desktopPackage.scripts["package:mac"], /--mac dmg zip --arm64/u);
-  assert.doesNotMatch(desktopPackage.scripts["package:mac"], /--x64/u);
-  assert.equal(desktopPackage.build.mac.artifactName, "Ling-Stack-${version}-macos-${arch}.${ext}");
-  assert.equal(desktopPackage.build.win.artifactName, "Ling-Stack-${version}-windows-${arch}-setup.${ext}");
-  assert.match(desktopPackage.scripts["package:win"], /--win nsis --x64/u);
-  assert.equal(desktopPackage.dependencies?.["electron-updater"], undefined);
-  assert.equal(desktopPackage.devDependencies?.["electron-updater"], undefined);
-  assert.equal(desktopPackage.build.publish, undefined);
-});
-
-test("self-hosted macOS A/B failures emit bounded reproducibility diagnostics", async () => {
-  const [workflow, diagnostic] = await Promise.all([
-    readFile(SELF_HOSTED_NATIVE_WORKFLOW, "utf8"),
-    readFile(DARWIN_REPRODUCIBILITY_DIAGNOSTIC, "utf8"),
-  ]);
-  assert.match(
-    workflow,
-    /- name: Compare repeated arm64 pre-sign outputs\n\s+id: repeat-build-compare[\s\S]+- name: Diagnose macOS repeated-build mismatch\n\s+if: failure\(\) && steps\.repeat-build-compare\.outcome == 'failure'/u,
-  );
-  assert.match(workflow, /diagnose-cua-driver-darwin-reproducibility\.mjs/u);
+test("macOS A/B failures emit bounded reproducibility diagnostics", async () => {
+  const diagnostic = await readFile(DARWIN_REPRODUCIBILITY_DIAGNOSTIC, "utf8");
   assert.match(diagnostic, /MAX_BINARY_BYTES = 128 \* 1024 \* 1024/u);
   assert.match(diagnostic, /MAX_REPORTED_DIFFERENCES = 64/u);
   assert.match(diagnostic, /SWIFT_ARCHIVE_PATTERN/u);
-});
-
-test("self-hosted native workflow is manual, identity-bound, and uses only dedicated runner labels", async () => {
-  const workflow = await readFile(SELF_HOSTED_NATIVE_WORKFLOW, "utf8");
-  const macosBuildJob = workflow.slice(
-    workflow.indexOf("  macos-source-build:"),
-    workflow.indexOf("  macos-promotion-proposal:"),
-  );
-  const windowsBuildJob = workflow.slice(
-    workflow.indexOf("  windows-source-build:"),
-    workflow.indexOf("  windows-promotion-proposal:"),
-  );
-  const macosPromotionJob = workflow.slice(
-    workflow.indexOf("  macos-promotion-proposal:"),
-    workflow.indexOf("  windows-source-build:"),
-  );
-  const windowsPromotionJob = workflow.slice(
-    workflow.indexOf("  windows-promotion-proposal:"),
-  );
-  assert.match(workflow, /^  workflow_call:/mu);
-  assert.match(workflow, /^  workflow_dispatch:/mu);
-  assert.doesNotMatch(workflow, /^  (?:pull_request|push):/mu);
-  assert.match(workflow, /expected_commit:[\s\S]+Full 40-character commit SHA/u);
-  assert.match(workflow, /runs-on:\n      - ling-cua-driver-macos-arm64-v1/u);
-  assert.match(workflow, /runs-on:\n      - ling-cua-driver-windows-x64-v1/u);
-  assert.doesNotMatch(workflow, /runs-on:\s+(?:macos-|windows-|ubuntu-)/u);
-  assert.doesNotMatch(workflow, /\b(?:pull_request_target|schedule)\b/u);
-  assert.match(workflow, /persist-credentials: false/u);
-  assert.match(workflow, /retention-days: 1/u);
-  assert.match(workflow, /GITHUB_TRIGGERING_ACTOR/u);
-  assert.doesNotMatch(workflow, /\$\{\{\s*runner\.temp\s*\}\}/u);
-  assert.match(workflow, /LING_CUA_BUILD_ROOT=\$RUNNER_TEMP\//u);
-  assert.match(workflow, /LING_CUA_PROMOTION_ROOT=\$RUNNER_TEMP\//u);
-  assert.match(workflow, /LING_CUA_BUILD_ROOT=\$env:RUNNER_TEMP\\/u);
-  assert.match(workflow, /LING_CUA_PROMOTION_ROOT=\$env:RUNNER_TEMP\\/u);
-  assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform darwin/u);
-  assert.match(workflow, /verify-cua-driver-self-hosted-runner\.mjs --platform win32-x64/u);
-  assert.match(
-    macosBuildJob,
-    /outputs:\n\s+package-authorized: \$\{\{ steps\.package-authorization\.outputs\.authorized \}\}/u,
-  );
-  assert.match(
-    windowsBuildJob,
-    /outputs:\n\s+package-authorized: \$\{\{ steps\.package-authorization\.outputs\.authorized \}\}/u,
-  );
-  assert.match(
-    macosPromotionJob,
-    /needs\.macos-source-build\.outputs\.package-authorized != 'true'/u,
-  );
-  assert.match(
-    windowsPromotionJob,
-    /needs\.windows-source-build\.outputs\.package-authorized != 'true'/u,
-  );
-  assert.match(
-    macosBuildJob,
-    /Resolve committed macOS package authorization[\s\S]+id: package-authorization[\s\S]+--platform darwin[\s\S]+Run production macOS arm64 package wrapper\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs[\s\S]+LING_CUA_BUILD_ROOT\/a\/output/u,
-  );
-  assert.match(
-    windowsBuildJob,
-    /Resolve committed Windows package authorization[\s\S]+id: package-authorization[\s\S]+--platform win32-x64[\s\S]+Run production Windows package wrapper\n\s+if: steps\.package-authorization\.outputs\.authorized == 'true'[\s\S]+run-cua-driver-signing-builder-fixture\.mjs --source-root/u,
-  );
-  assert.match(workflow, /cua-driver-self-hosted-electron-builder-macos-/u);
-  assert.match(workflow, /cua-driver-self-hosted-electron-builder-windows-/u);
-  assert.match(workflow, /actions\/upload-artifact@[0-9a-f]{40}/u);
-  assert.match(workflow, /actions\/download-artifact@[0-9a-f]{40}/u);
-  for (const action of workflow.matchAll(/^\s+uses:\s+([^\s]+)$/gmu)) {
-    assert.match(action[1], /^[^@]+@[0-9a-f]{40}$/u);
-  }
-
-  const caller = await readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8");
-  assert.match(caller, /^  workflow_dispatch:/mu);
-  assert.doesNotMatch(caller, /^  (?:workflow_call|pull_request|push):/mu);
-  assert.match(caller, /runs-on:\n      - ling-cua-driver-macos-arm64-v1/u);
-  assert.match(caller, /runs-on:\n      - ling-cua-driver-windows-x64-v1/u);
-  assert.doesNotMatch(caller, /cua-driver-self-hosted-native\.yml/u);
-  assert.doesNotMatch(caller, /execution_mode|native_platform|expected_commit/u);
-  assert.equal([...caller.matchAll(/toolset: 14\.44/gu)].length, 1);
-  assert.equal([...caller.matchAll(/sdk: 10\.0\.26100\.0/gu)].length, 1);
-  assert.doesNotMatch(caller, /vsversion:/u);
-  assert.equal([...caller.matchAll(/actions\/upload-artifact@/gu)].length, 2);
-  assert.doesNotMatch(caller, /actions\/download-artifact@/u);
 });
 
 test("reproducible final linker flags never poison executable host build scripts", async () => {
@@ -393,22 +255,6 @@ test("canonical Mach-O relink selector accepts only the reviewed identity and fa
     /canonical Mach-O source identity was not reached.*after 3 attempts/u,
   );
   assert.equal(attempts, 3);
-});
-
-test("macOS and Windows product jobs keep package checks focused", async () => {
-  const workflow = await readFile(DESKTOP_ARTIFACTS_WORKFLOW, "utf8");
-  const macosJob = workflow.slice(
-    workflow.indexOf("  macos-arm64:"),
-    workflow.indexOf("  windows-x64:"),
-  );
-  const windowsJob = workflow.slice(workflow.indexOf("  windows-x64:"));
-
-  for (const [name, job] of [["macOS", macosJob], ["Windows", windowsJob]]) {
-    assert.match(job, /- name: Run focused package contracts/u, name);
-    assert.match(job, /- name: Run packaged Desktop smoke/u, name);
-    assert.doesNotMatch(job, /Run complete (?:core|daemon|Pi runner) suite/u, name);
-    assert.doesNotMatch(job, /Install Chromium for Web E2E|playwright test/u, name);
-  }
 });
 
 test("verify-only validates the pinned source, patch series and closed packaging gate", async () => {

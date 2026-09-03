@@ -9,15 +9,46 @@ const evidenceDirectory = fileURLToPath(new URL(
   import.meta.url,
 ));
 
-test("UI 2.0 Sidebar object rows keep compact identity and actions in the expanded rail", async ({ page }) => {
+test("UI 2.0 Sidebar object rows keep compact identity and actions in the expanded Sidebar", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
+  let workspaceChangesRequests = 0;
   await prepareSurface(page, "light", 1440, 960);
   await mockDaemon(page, createSidebarState());
+  await page.route("http://127.0.0.1:17891/workspace/changes?**", async (route) => {
+    workspaceChangesRequests += 1;
+    await route.fulfill({
+      json: {
+        cwd: "/tmp/ling-stack/apps/web",
+        state: "dirty",
+        repoRoot: "/tmp/ling-stack",
+        branchName: "codex/sidebar-approval-dialogs",
+        additions: 12,
+        deletions: 4,
+        files: [],
+        totalFileCount: 2,
+        truncated: false,
+        checkedAt: "2026-08-26T00:00:00.000Z",
+      },
+    });
+  });
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
+  const channel = navigation.getByRole("button", { name: "Engineering", exact: true });
+  await page.mouse.move(720, 320);
+  await channel.hover();
+  const channelPreview = page.locator('[role="tooltip"]:visible').filter({ hasText: "Engineering" });
+  await expect(channelPreview).not.toContainText("Channel");
+  await expect(channelPreview).not.toContainText("ling-stack");
+  await expect(channelPreview).not.toContainText("codex/sidebar-approval-dialogs");
+  const channelPreviewBox = await channelPreview.boundingBox();
+  expect(channelPreviewBox).not.toBeNull();
+  expect(channelPreviewBox!.width).toBeLessThanOrEqual(220);
+  expectTooltipInsideViewport(channelPreviewBox!, 1440, 960);
+  await captureEvidence(page, "1440x960-ling-light-channel-preview.png");
+
   const teammate = navigation.getByRole("button", { name: "Designer", exact: true });
   const avatar = teammate.locator(".teammate-avatar-image.compact");
   const label = teammate.locator('[data-ling-button-slot="label"]');
@@ -29,6 +60,11 @@ test("UI 2.0 Sidebar object rows keep compact identity and actions in the expand
   expect(avatarBox!.width).toBeLessThanOrEqual(24);
   expect(labelBox!.x - (avatarBox!.x + avatarBox!.width)).toBeGreaterThanOrEqual(4);
   await teammate.hover();
+  const teammatePreview = page.locator('[role="tooltip"]:visible').filter({ hasText: "Designer" });
+  await expect(teammatePreview).not.toContainText("Private chat");
+  await expect(teammatePreview).toContainText("ling-stack");
+  await expect(teammatePreview).toContainText("codex/sidebar-approval-dialogs");
+  await captureEvidence(page, "1440x960-ling-light-private-chat-preview.png");
   const teammateRow = navigation.locator('.sidebar-row-shell:has(.sidebar-row-main[aria-label="Designer"])');
   const archive = teammateRow.getByRole("button", { name: "Archive teammate" });
   await expect(archive).toBeVisible();
@@ -37,43 +73,71 @@ test("UI 2.0 Sidebar object rows keep compact identity and actions in the expand
   const recent = navigation.locator(".sidebar-recent-row").filter({
     hasText: "A deliberately long conversation title",
   });
+  const recentShell = recent.locator("xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' sidebar-recent-row-shell ')][1]");
   await expect(recent).toContainText("A deliberately long conversation title");
-  await expect(recent.locator(".sidebar-recent-copy")).toHaveCSS("min-width", "0px");
+  await expect(navigation.locator(".sidebar-recent-row .sidebar-row-description")).toHaveCount(0);
+  await expect(recentShell).toHaveAttribute("data-sidebar-row-overflow", "true");
+  await expect(recent.locator(".sidebar-row-title-viewport")).toHaveCSS("overflow", "hidden");
+  await expect(recent.locator(".sidebar-row-title-track")).not.toHaveCSS("text-overflow", "ellipsis");
+  expect(await recentShell.evaluate((element) => getComputedStyle(element).gridTemplateColumns.trim().split(/\s+/u))).toHaveLength(1);
+  const recentTools = recentShell.locator(".sidebar-row-tools");
+  await expect(recentTools).toHaveCSS("position", "absolute");
+  const recentBox = await recent.boundingBox();
+  const recentShellBox = await recentShell.boundingBox();
+  const recentIconBox = await recent.locator("svg").first().boundingBox();
+  const recentTitleBox = await recent.locator(".sidebar-row-title-viewport").boundingBox();
+  expect(recentBox).not.toBeNull();
+  expect(recentShellBox).not.toBeNull();
+  expect(recentIconBox).not.toBeNull();
+  expect(recentTitleBox).not.toBeNull();
+  expect(Math.round(recentBox!.height)).toBe(32);
+  expect(Math.round(recentShellBox!.height)).toBe(32);
+  expect(Math.abs(
+    (recentIconBox!.y + recentIconBox!.height / 2)
+    - (recentTitleBox!.y + recentTitleBox!.height / 2),
+  )).toBeLessThanOrEqual(1);
+  await recent.hover();
+  await expect(recentTools).toHaveCSS("opacity", "1");
+  await expect(page.getByRole("tooltip")).toContainText("A deliberately long conversation title that must remain inside the Sidebar row");
+  await expect(page.getByRole("tooltip")).not.toContainText("Conversation");
+  await expect(page.getByRole("tooltip")).toContainText("ling-stack");
+  await expect(page.getByRole("tooltip")).toContainText("codex/sidebar-approval-dialogs");
+  const conversationPreviewBox = await page.getByRole("tooltip").boundingBox();
+  expect(conversationPreviewBox).not.toBeNull();
+  expect(conversationPreviewBox!.width).toBeGreaterThan(channelPreviewBox!.width);
+  expect(conversationPreviewBox!.width).toBeLessThanOrEqual(240);
+  expectTooltipInsideViewport(conversationPreviewBox!, 1440, 960);
+  await expectPreviewWithoutScrollbars(page.getByRole("tooltip"));
+  const previewTitle = page.getByRole("tooltip").locator(".sidebar-object-preview-line.is-title");
+  await expect(previewTitle).toHaveAttribute("data-sidebar-preview-overflow", "true");
+  await expect.poll(async () => previewTitle.locator(".sidebar-object-preview-line-track").evaluate((element) => (
+    new DOMMatrixReadOnly(getComputedStyle(element).transform).m41
+  ))).toBeLessThan(-1);
+  expect(workspaceChangesRequests).toBe(1);
   await expectNoHorizontalOverflow(navigation);
-  await captureEvidence(page, "1440x960-ling-light-expanded.png");
+  await captureEvidence(page, "1440x960-ling-light-conversation-preview.png");
   expect(runtimeErrors).toEqual([]);
 });
 
-test("UI 2.0 Sidebar compact rail keeps object rows behind a section launcher in dark theme", async ({ page }) => {
+test("UI 2.0 Sidebar preview stays inside the minimum desktop window", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
-  await prepareSurface(page, "dark", 1280, 800);
+  await prepareSurface(page, "dark", 980, 680);
   await mockDaemon(page, createSidebarState());
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await navigation.getByRole("button", { name: "Engineering" }).click();
-  await expect(page.getByLabel("Channel composer")).toBeVisible();
-  await page.getByRole("button", { name: "Hide navigation" }).click();
-  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(48);
-
-  await expect(navigation.locator(".sidebar-row-shell")).toHaveCount(0);
-  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
-  const channel = navigation.getByRole("button", { name: "Channels", exact: true });
-  await expect(channel).toHaveAttribute("data-sidebar-rail-launcher", "channels");
-  await expect(channel).toHaveAttribute("aria-pressed", "true");
-  await expectHitArea(channel, 36);
-  await expect(navigation.getByRole("button", { name: "Archive channel" })).toBeHidden();
-
-  await channel.hover();
-  const tooltip = page.getByRole("tooltip");
-  await expect(tooltip).toHaveText("Channels");
-  await expect.poll(async () => Math.round((await tooltip.boundingBox())?.x ?? 0)).toBeGreaterThan(45);
-  await channel.click();
-  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(240);
-  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expectNoHorizontalOverflow(page.locator("html"));
-  await captureEvidence(page, "1280x800-ling-dark-launcher-expanded.png");
+  const recent = page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({
+    hasText: "A deliberately long conversation title",
+  });
+  await recent.hover();
+  const preview = page.locator('[role="tooltip"]:visible').filter({
+    hasText: "A deliberately long conversation title",
+  });
+  await expect(preview).toBeVisible();
+  const previewBox = await preview.boundingBox();
+  expect(previewBox).not.toBeNull();
+  expect(previewBox!.width).toBeLessThanOrEqual(188);
+  expectTooltipInsideViewport(previewBox!, 980, 680);
+  await expectPreviewWithoutScrollbars(preview);
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -100,6 +164,36 @@ function createSidebarState(): MockState {
       metadata: { schemaVersion: 1 as const, lastActivityAt: timestamp },
     };
   });
+  const sourceRun = state.runs[0]!;
+  state.channels[0] = {
+    ...state.channels[0]!,
+    boundPath: cwd,
+  };
+  const conversationRuns = state.threads.map((thread, index) => ({
+    ...sourceRun,
+    id: `run_sidebar_${index}`,
+    taskId: `task_sidebar_${index}`,
+    channelId: undefined,
+    teammateId: undefined,
+    threadId: thread.id,
+    cwd: "/tmp/ling-stack/apps/web",
+    eventLogPath: `/tmp/ling-stack/.ling-stack/runs/run_sidebar_${index}/events.jsonl`,
+    updatedAt: thread.updatedAt,
+  }));
+  state.runs = [
+    ...conversationRuns,
+    {
+      ...sourceRun,
+      id: "run_sidebar_private_chat",
+      taskId: "task_sidebar_private_chat",
+      channelId: undefined,
+      teammateId: state.aiTeammates[0]!.id,
+      threadId: "thread_sidebar_private_chat",
+      cwd: "/tmp/ling-stack/apps/web",
+      eventLogPath: "/tmp/ling-stack/.ling-stack/runs/run_sidebar_private_chat/events.jsonl",
+      updatedAt: "2026-08-26T00:11:00.000Z",
+    },
+  ];
   return state;
 }
 
@@ -122,6 +216,32 @@ async function expectHitArea(locator: Locator, minimum: number): Promise<void> {
   expect(box).not.toBeNull();
   expect(box!.width).toBeGreaterThanOrEqual(minimum);
   expect(box!.height).toBeGreaterThanOrEqual(minimum);
+}
+
+function expectTooltipInsideViewport(
+  box: { readonly x: number; readonly y: number; readonly width: number; readonly height: number },
+  viewportWidth: number,
+  viewportHeight: number,
+): void {
+  expect(box.x).toBeGreaterThanOrEqual(12);
+  expect(box.y).toBeGreaterThanOrEqual(12);
+  expect(box.x + box.width).toBeLessThanOrEqual(viewportWidth - 12);
+  expect(box.y + box.height).toBeLessThanOrEqual(viewportHeight - 12);
+}
+
+async function expectPreviewWithoutScrollbars(preview: Locator): Promise<void> {
+  const metrics = await preview.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    clientWidth: element.clientWidth,
+    overflowX: getComputedStyle(element).overflowX,
+    overflowY: getComputedStyle(element).overflowY,
+    scrollHeight: element.scrollHeight,
+    scrollWidth: element.scrollWidth,
+  }));
+  expect(metrics.overflowX).toBe("hidden");
+  expect(metrics.overflowY).toBe("hidden");
+  expect(metrics.scrollHeight).toBeLessThanOrEqual(metrics.clientHeight);
+  expect(metrics.scrollWidth).toBeLessThanOrEqual(metrics.clientWidth);
 }
 
 async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {

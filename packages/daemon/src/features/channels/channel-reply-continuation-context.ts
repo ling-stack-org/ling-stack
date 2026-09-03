@@ -1,4 +1,5 @@
 import type { ChannelMessage, RunIntervention, RunSession, RunStore } from "@ling-stack/core";
+import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
 import { ensureChannelReplyThread } from "./channel-reply-execution.js";
 import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
@@ -14,6 +15,7 @@ export interface ChannelReplyContinuationContext {
   readonly providerPresetId: string;
   readonly threadId: string;
   readonly turnId: string;
+  readonly contextProjection?: ConversationContextProjectionMetadata;
   readonly runnerId?: string;
 }
 
@@ -78,14 +80,14 @@ export function buildChannelReplyContinuationContext(input: {
     store: input.store,
     channel,
     sourceText: sourceMessage.body,
-  }).language;
+  });
   return {
     title: `Channel follow-up in ${channel.name}`,
     prompt: renderContextPack(contextPack),
     systemPromptInstruction: [
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
-      responseLanguageInstruction(responseLanguage),
+      responseLanguageInstruction(responseLanguage.instructionLanguage),
       "Do not use workspace tools, MCP tools, or other side effects. If Ling exposes image_generate or video_generate for this run, you may use only those first-party media tools when the user asks to generate media.",
       "Do not include hidden proposal blocks. Do not create or suggest tasks, runs, workflows, branches, approvals, or other side effects; the explicitly exposed first-party media generation tools are the only exception.",
       "Treat the latest queued follow-up as the current user message.",
@@ -96,6 +98,7 @@ export function buildChannelReplyContinuationContext(input: {
     providerPresetId: target.providerPresetId,
     threadId,
     turnId: sourceItem.turnId,
+    contextProjection: contextPack.contextProjection,
     ...(target.teammate?.runnerId ? { runnerId: target.teammate.runnerId } : {}),
   };
 }

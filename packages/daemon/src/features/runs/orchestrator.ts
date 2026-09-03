@@ -15,6 +15,8 @@ import {
   type LingThread,
   type LingTurn,
   type RunEventEnvelope,
+  type RunEventDataByType,
+  type RunEventEmitter,
   type RunEventType,
   type RunArtifact,
   type RunSession,
@@ -593,6 +595,8 @@ export async function executeRunRequest(
       parentRunId: runRequest.parentRunId,
       interventionId: runRequest.interventionId,
       continuationReason: runRequest.continuationReason,
+      contextViewId: runRequest.contextProjection?.contextViewId,
+      contextViewCreatedAt: runRequest.contextProjection?.contextViewCreatedAt,
       createdAt,
     });
     store.linkRunToWorkUnit(run.id, workUnit.id, createdAt);
@@ -678,6 +682,7 @@ export async function executeRunRequest(
     store.appendEvent(run.id, "run_created", {
       taskId: run.taskId,
       workUnitId: workUnit.id,
+      attemptId: attempt.id,
       workspaceCwd,
       cwd: run.cwd,
       threadId: thread.id,
@@ -1049,7 +1054,10 @@ export async function executeRunRequest(
     requestRuntimeAbort("hard_timeout");
     return true;
   };
-  const appendAndMaybeStream = (type: RunEventType, data: unknown): RunEventEnvelope | undefined => {
+  const appendAndMaybeStream: RunEventEmitter = <K extends RunEventType>(
+    type: K,
+    data: RunEventDataByType[K],
+  ): RunEventEnvelope | undefined => {
     if (persistenceError) {
       return undefined;
     }
@@ -1061,7 +1069,11 @@ export async function executeRunRequest(
     }
 
     try {
-      const envelope = store.appendEvent(run.id, type, redactSecrets(data, resolvedSecretValues));
+      const envelope = store.appendEvent(
+        run.id,
+        type,
+        redactSecrets(data, resolvedSecretValues) as RunEventDataByType[K],
+      );
       lastRuntimeActivityAt = Date.now();
       if (type === "approval_requested") {
         // The approval handler starts this pause before persistence. Keep the
@@ -1169,6 +1181,7 @@ export async function executeRunRequest(
       delegatedRequirementFingerprint: runRequest.delegatedRequirement?.fingerprint,
       executionOperationBindings: runRequest.executionOperationBindings,
       approvalPolicy,
+      approvalProfile: runtimeApprovalProfile,
       effectivePolicySnapshot,
       appendAndMaybeStream,
       streamEnvelope,
@@ -1249,7 +1262,10 @@ export async function executeRunRequest(
         if (event.type === "tool_start") {
           toolStartArgsById.set(event.toolCallId, event.args);
         }
-        const eventEnvelope = appendAndMaybeStream(event.type, event);
+        const eventEnvelope = appendAndMaybeStream(
+          event.type,
+          { ...event } as RunEventDataByType[typeof event.type],
+        );
         if (eventEnvelope && event.type === "tool_end") {
           const sourceArgs = toolStartArgsById.get(event.toolCallId);
           try {
@@ -1282,6 +1298,10 @@ export async function executeRunRequest(
 
     if (persistenceError) {
       throw persistenceError;
+    }
+    const terminalFailure = findRunnerTerminalFailure(result.events);
+    if (terminalFailure) {
+      throw new Error(terminalFailure);
     }
     if (store.getRun(run.id)?.status === "cancelled") {
       const staleEvent = auditIgnoredRunnerCompletion({
@@ -1751,6 +1771,28 @@ function readActiveRunStopIntent(value: unknown): import("../../runtime/active-r
 
 function isTerminalRunStatus(status: RunStatus): status is Extract<RunStatus, "succeeded" | "failed" | "cancelled"> {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function findRunnerTerminalFailure(events: readonly PiRunnerEvent[]): string | undefined {
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type === "run_error") {
+      return event.message;
+    }
+  }
+  for (let index = events.length - 1; index >= 0; index -= 1) {
+    const event = events[index];
+    if (event.type === "message_end" && event.role === "assistant") {
+      if (event.errorMessage) {
+        return event.errorMessage;
+      }
+      if (event.stopReason?.toLowerCase() === "error") {
+        return "Provider message ended with an error.";
+      }
+      return undefined;
+    }
+  }
+  return undefined;
 }
 
 function validateWorkflowStepOwner(store: RunStore, runRequest: RunRequest): void {

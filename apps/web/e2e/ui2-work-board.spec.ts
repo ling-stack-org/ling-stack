@@ -64,6 +64,21 @@ test.describe("UI2 Work Board", () => {
     const channelAudit = await readWorkBoardStyleAudit(page);
     expect(channelAudit.strictConsoleMatches).toEqual([]);
     expect(channelAudit.focusedMatches.some((rule) => rule.source === "channel.css" && rule.selector.includes(".channel-work-board"))).toBe(true);
+    const channelToolsLayout = await page.locator(".channel-activity-tools").evaluate((tools) => {
+      const toolbar = tools.querySelector<HTMLElement>(".activity-filter-toolbar");
+      const workBoard = tools.querySelector<HTMLElement>(".channel-work-board");
+      const toolbarRect = toolbar?.getBoundingClientRect();
+      const workBoardRect = workBoard?.getBoundingClientRect();
+      const computed = getComputedStyle(tools);
+      return {
+        display: computed.display,
+        rowGap: computed.rowGap,
+        toolbarToBoardGap: toolbarRect && workBoardRect ? workBoardRect.top - toolbarRect.bottom : -1,
+      };
+    });
+    expect(channelToolsLayout.display).toBe("grid");
+    expect(channelToolsLayout.rowGap).toBe("12px");
+    expect(channelToolsLayout.toolbarToBoardGap).toBeGreaterThanOrEqual(11.5);
     await expectNoDocumentOverflow(page);
     expect(errors).toEqual([]);
   });

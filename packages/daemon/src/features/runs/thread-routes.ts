@@ -35,7 +35,7 @@ import {
   type UpdateProposedPlanArtifactInput,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
-import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
+import { createWorkflowParticipantAuthorityV1, isConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
@@ -1234,7 +1234,14 @@ function buildForkRunRunRequest(input: {
     systemPrompt: readSnapshotString(requestSnapshot, "systemPrompt"),
     appendSystemPrompt: readSnapshotStringArray(requestSnapshot, "appendSystemPrompt"),
     agentDir: readSnapshotString(requestSnapshot, "agentDir"),
+    contextProjection: readSnapshotContextProjection(requestSnapshot),
   };
+}
+
+function readSnapshotContextProjection(record: Record<string, unknown>) {
+  return isConversationContextProjectionMetadata(record.contextProjection)
+    ? record.contextProjection
+    : undefined;
 }
 
 function buildForkRunOperationKey(input: {
@@ -1575,6 +1582,7 @@ function buildLingThreadResumeContext(input: {
       systemPrompt: readSnapshotString(requestSnapshot, "systemPrompt"),
       appendSystemPrompt: readSnapshotStringArray(requestSnapshot, "appendSystemPrompt"),
       agentDir: readSnapshotString(requestSnapshot, "agentDir"),
+      contextProjection: readSnapshotContextProjection(requestSnapshot),
       parentRunId: sourceRun.id,
       continuationReason: "manual_resume",
     },

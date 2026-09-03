@@ -19,6 +19,8 @@ import type {
   TerminalReportDto,
   WorkspaceAccessMode,
 } from "../../types.js";
+import type { InlineApprovalView } from "../../lib/inline-approvals.js";
+import type { ApprovalResolution } from "../approvals/types.js";
 
 export interface ConversationHomeProjectSelection {
   readonly projectPath?: string;
@@ -50,6 +52,7 @@ export interface ConversationHomeMessage {
   readonly role: "user" | "assistant" | "system";
   readonly authorLabel?: string;
   readonly content: string;
+  readonly errorMessage?: string;
   readonly attachments?: readonly ConversationAttachment[];
   readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly status?: ConversationTranscriptStatus;
@@ -115,12 +118,21 @@ export interface ConversationHomeProps {
   readonly conversationErrorMessage?: string;
   readonly sending?: boolean;
   readonly activeRun?: RunSession;
+  readonly inlineApprovalViews: readonly InlineApprovalView[];
+  readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
+  readonly approvalErrors: Readonly<Record<string, string>>;
   readonly stopping?: boolean;
   readonly fullAccessConfirmed?: boolean;
   readonly onOpenRun?: (runId: string) => void;
+  readonly onResolveApproval: (
+    approvalId: string,
+    decision: ApprovalResolution,
+    reason?: string,
+    proposedRuleFingerprint?: string,
+  ) => void;
   readonly onOpenModelWorkbench?: () => void;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
-  readonly onConfirmFullAccessSelection?: () => PermissionConfirmation;
+  readonly onConfirmFullAccessSelection?: () => Promise<PermissionConfirmation | undefined>;
   readonly onFullAccessConversationBound?: (threadId: string) => void;
   readonly onRefreshConversation?: () => void | Promise<void>;
   readonly onStopConversation?: (target: ConversationActiveReplyTarget) => void | Promise<void>;

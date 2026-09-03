@@ -1,13 +1,15 @@
 import { effectiveApprovalStatus } from "./approvals.js";
 import { readDataString } from "./data.js";
+import {
+  resolveRuntimeApprovalOwner,
+  runtimeApprovalOwnerMatches,
+  type RuntimeApprovalOwner,
+  type RuntimeApprovalOwnershipContext,
+} from "./runtime-approval-ownership.js";
 import type { ApprovalRequest, ApprovalActionType } from "../types.js";
 
-export interface InlineApprovalContext {
-  readonly activeChannelId?: string;
-  readonly activeRunId?: string;
-  readonly visibleRunIds?: readonly string[];
-  readonly visibleTaskIds?: readonly string[];
-  readonly blockedWorkflowStepIds?: readonly string[];
+export interface InlineApprovalContext extends RuntimeApprovalOwnershipContext {
+  readonly owner: RuntimeApprovalOwner;
 }
 
 export interface InlineApprovalView {
@@ -41,29 +43,7 @@ export function isInlineApprovalEligible(approval: ApprovalRequest, context: Inl
     return false;
   }
 
-  const visibleRunIds = new Set([context.activeRunId, ...(context.visibleRunIds ?? [])].filter(Boolean));
-  const visibleTaskIds = new Set(context.visibleTaskIds ?? []);
-  const blockedWorkflowStepIds = new Set(context.blockedWorkflowStepIds ?? []);
-
-  if (approval.runId && visibleRunIds.has(approval.runId)) {
-    return true;
-  }
-  if (approval.taskId && visibleTaskIds.has(approval.taskId)) {
-    return true;
-  }
-  if (approval.workflowStepId && blockedWorkflowStepIds.has(approval.workflowStepId)) {
-    return true;
-  }
-  if (approval.channelId && approval.channelId === context.activeChannelId) {
-    return approval.actionType !== "workflow_step" || Boolean(approval.workflowStepId && blockedWorkflowStepIds.has(approval.workflowStepId));
-  }
-
-  const payloadRunId = readDataString(approval.payload, "runId") || readDataString(approval.payload, "requestedByRunId");
-  if (payloadRunId && visibleRunIds.has(payloadRunId)) {
-    return true;
-  }
-
-  return false;
+  return runtimeApprovalOwnerMatches(resolveRuntimeApprovalOwner(approval, context), context.owner);
 }
 
 export function buildInlineApprovalViews(

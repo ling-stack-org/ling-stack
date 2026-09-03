@@ -1,14 +1,16 @@
 import { Redo2, RefreshCw, Undo2 } from "lucide-react";
-import { useRef, useState, type RefObject } from "react";
+import { useEffect, useRef, useState, type RefObject } from "react";
 import {
+  reapplyTurnWorkspaceChanges,
   reapplyRunWorkspaceChanges,
   reapplyWorkflowWorkspaceChanges,
+  undoTurnWorkspaceChanges,
   undoRunWorkspaceChanges,
   undoWorkflowWorkspaceChanges,
 } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
 import type { ConversationWorkspaceRecoveryTarget } from "../../../lib/conversation-work-cell.js";
-import type { RunWorkspaceChangesResponse, WorkflowWorkspaceChangesResponse } from "../../../types.js";
+import type { RunWorkspaceChangesResponse, TurnWorkspaceChangesResponse, WorkflowWorkspaceChangesResponse } from "../../../types.js";
 import {
   Button,
   Dialog,
@@ -20,7 +22,7 @@ import {
 } from "../../ui/index.js";
 
 export type ConversationArtifactRecoveryAction = "undo" | "reapply";
-export type ConversationArtifactRecoveryResponse = RunWorkspaceChangesResponse | WorkflowWorkspaceChangesResponse;
+export type ConversationArtifactRecoveryResponse = RunWorkspaceChangesResponse | TurnWorkspaceChangesResponse | WorkflowWorkspaceChangesResponse;
 
 export function ConversationArtifactRecoveryDialog({
   action,
@@ -45,7 +47,13 @@ export function ConversationArtifactRecoveryDialog({
   const cancelRef = useRef<HTMLButtonElement | null>(null);
   const inFlightRef = useRef(false);
   const lastActionRef = useRef<ConversationArtifactRecoveryAction>("undo");
+  const idempotencyKeyRef = useRef<string | undefined>(undefined);
   if (action) lastActionRef.current = action;
+  useEffect(() => {
+    idempotencyKeyRef.current = action && target?.kind === "turn"
+      ? createRecoveryIdempotencyKey()
+      : undefined;
+  }, [action, target?.id, target?.kind]);
   const visibleAction = action ?? lastActionRef.current;
   const title = visibleAction === "undo"
     ? t("Undo changes to {count} files?", { count: fileCount })
@@ -54,6 +62,7 @@ export function ConversationArtifactRecoveryDialog({
   function close(): void {
     if (inFlightRef.current) return;
     setError("");
+    idempotencyKeyRef.current = undefined;
     onClose();
   }
 
@@ -63,7 +72,11 @@ export function ConversationArtifactRecoveryDialog({
     inFlightRef.current = true;
     setBusy(true);
     try {
-      const response = await mutateWorkspaceRecovery(cwd, target, requestedAction);
+      const idempotencyKey = target.kind === "turn"
+        ? idempotencyKeyRef.current ?? createRecoveryIdempotencyKey()
+        : undefined;
+      idempotencyKeyRef.current = idempotencyKey;
+      const response = await mutateWorkspaceRecovery(cwd, target, requestedAction, idempotencyKey);
       setError("");
       onRecovered(response);
       onClose();
@@ -137,15 +150,28 @@ export function ConversationArtifactRecoveryDialog({
   );
 }
 
+function createRecoveryIdempotencyKey(): string {
+  return globalThis.crypto?.randomUUID?.() ?? `${Date.now()}-${Math.random()}`;
+}
+
 function mutateWorkspaceRecovery(
   cwd: string,
   target: ConversationWorkspaceRecoveryTarget,
   action: ConversationArtifactRecoveryAction,
+  idempotencyKey?: string,
 ): Promise<ConversationArtifactRecoveryResponse> {
   if (target.kind === "workflow") {
     return action === "undo"
       ? undoWorkflowWorkspaceChanges(cwd, target.id)
       : reapplyWorkflowWorkspaceChanges(cwd, target.id);
+  }
+  if (target.kind === "turn") {
+    if (!idempotencyKey) {
+      return Promise.reject(new Error("A recovery idempotency key is required."));
+    }
+    return action === "undo"
+      ? undoTurnWorkspaceChanges(cwd, target.id, idempotencyKey)
+      : reapplyTurnWorkspaceChanges(cwd, target.id, idempotencyKey);
   }
   return action === "undo"
     ? undoRunWorkspaceChanges(cwd, target.id)

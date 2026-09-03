@@ -3,6 +3,7 @@ import type {
   ChannelMessage,
   RunInterventionMessagePayload,
   RunSession,
+  RunEventDataByType,
   RunStore,
 } from "@ling-stack/core";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
@@ -122,7 +123,7 @@ function appendInterventionEvent(
   store: RunStore,
   runId: string,
   type: "run_intervention_created" | "run_followup_queued",
-  data: unknown,
+  data: RunEventDataByType[typeof type],
 ): void {
   try {
     store.appendEvent(runId, type, data);

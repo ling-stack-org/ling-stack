@@ -5,6 +5,10 @@ import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
+  buildComposerGateApprovalPresentationByRunId,
+  composerGateApprovalPresentationForWorkCell,
+} from "../../lib/runtime-approval-presentation.js";
+import {
   AvatarInitial,
   UsedMemorySummary,
   UsedMemorySummaryLabel,
@@ -42,6 +46,7 @@ export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "approvals"
   | "cwd"
   | "directLinkPreviewById"
+  | "composerGateApprovals"
   | "executionActions"
   | "generatedMedia"
   | "latestButtonVisible"
@@ -78,6 +83,7 @@ export function TeammatePrivateChatFeed({
   approvals,
   cwd,
   directLinkPreviewById,
+  composerGateApprovals,
   executionActions,
   generatedMedia,
   latestButtonVisible,
@@ -111,6 +117,10 @@ export function TeammatePrivateChatFeed({
   const { t } = useI18n();
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
   const runById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);
+  const composerGateApprovalByRunId = useMemo(
+    () => buildComposerGateApprovalPresentationByRunId(composerGateApprovals, t),
+    [composerGateApprovals, t],
+  );
   const workCellByMessageId = useMemo(() => buildTeammatePrivateWorkCellMap({
     messages: visibleMessages,
     teammateId: teammate.id,
@@ -155,6 +165,9 @@ export function TeammatePrivateChatFeed({
             });
             const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
             const workCellRun = workCell ? runById.get(workCell.model.anchorRunId) : undefined;
+            const composerGateApproval = workCell
+              ? composerGateApprovalPresentationForWorkCell(workCell.model, composerGateApprovalByRunId)
+              : undefined;
             const messageFeedback = messageController.feedbackById[message.id];
             const taskCreateKey = `message:${message.id}`;
             const taskCreateBusy = taskCreateBusyKeys.has(taskCreateKey);
@@ -285,6 +298,7 @@ export function TeammatePrivateChatFeed({
                       <ConversationWorkCell
                         model={workCell.model}
                         surface="teammate_direct"
+                        composerGateApproval={composerGateApproval}
                         cwd={workCellRun?.cwd ?? cwd.trim()}
                         detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
                         onOpenRun={onOpenRun}
@@ -309,9 +323,9 @@ export function TeammatePrivateChatFeed({
                 ) : null}
                 errorNode={(
                   <>
-                    {message.errorMessage && message.status !== "cancelled" && !projection.recoveredHistoricalProviderFailure ? (
+                    {projection.errorText ? (
                       <InlineFeedback className="teammate-message-error" tone="danger">
-                        {message.errorMessage}
+                        {projection.errorText}
                       </InlineFeedback>
                     ) : null}
                     {message.pendingReplacement ? (
@@ -329,7 +343,7 @@ export function TeammatePrivateChatFeed({
                     ) : null}
                   </>
                 )}
-                actionsNode={!editing ? (
+                actionsNode={!editing && !projection.blocked && !composerGateApproval ? (
                   <MessageActionBar
                     surface="teammate_direct"
                     className="teammate-message-actions"

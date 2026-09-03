@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-08-22
+Last verified: 2026-09-03
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -36,7 +36,12 @@ CI/Release artifacts instead of the default documentation tree.
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+- [Channel Environment Information Hierarchy](channel-environment-information-hierarchy.md)
+- [Conversation Activity Summary And Exploration Batching](conversation-activity-summary-and-exploration-batching-detailed-design.md)
+- [Conversation Right Dock Responsive Visibility Implementation Plan](conversation-right-dock-responsive-visibility-implementation-plan.md)
 - [Channel Execution Completion Implementation Plan](channel-execution-completion-implementation-plan.md)
+- [Post-Compaction Workspace Undo](post-compaction-undo.md)
+- [Post-Compaction Snapshot Restore](post-compaction-snapshot-restore.md)
 - [Channel Team Operating System](channel-team-operating-system.md)
 - [Ling Agent Session](ling-agent-session.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
@@ -59,6 +64,7 @@ CI/Release artifacts instead of the default documentation tree.
 ## Runtime, Security, And Storage
 
 - [Approval Policy](approval-policy.md)
+- [Workspace Command Rule Approval Implementation Plan](workspace-command-rule-approval-implementation-plan.md)
 - [Inline Runtime Approval](inline-runtime-approval-detailed-design.md)
 - [State Machines And Recovery](state-machine-recovery.md)
 - [Multi-Channel Concurrency](multi-channel-concurrency.md)
@@ -80,9 +86,13 @@ part of the current product acceptance scope.
 - [Provider Generation Runtime](provider-generation-runtime.md)
 - [Video Production Studio](model-workbench-video-production-studio.md)
 - [Media Production Experience](media-production-experience-refinement.md)
+- [Media Production Image To Video](media-production-image-to-video-detailed-design.md)
 - [Media External Workflows](media-production-external-workflows.md)
+- [Conversation Media Generation Tools](conversation-media-generation-tools.md)
+- [Conversation Media Generation Tools Implementation Plan](conversation-media-generation-tools-implementation-plan.md)
 - [Plugin Manager](plugin-manager.md)
 - [Office Documents Native Plugin](office-documents-native-plugin.md)
+- [Office Documents Native Plugin Implementation Plan](office-documents-native-plugin-implementation-plan.md)
 - [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin.md)
 - [Chrome Native Messaging Implementation Plan](chrome-browser-built-in-plugin-implementation-plan.md)
 - [Automations](automations.md)
@@ -90,6 +100,7 @@ part of the current product acceptance scope.
 
 ## Web, Desktop, And UI 2.0
 
+- [Internationalization And Language Parity](internationalization-language-parity.md)
 - [UI 2.0 Documentation](ui2.0升级/README.md)
 - [UI 2.0 Product Contract](ui2.0升级/00-UI2.0整体升级方案.md)
 - [UI 2.0 Acceptance Contract](ui2.0升级/03-UI2.0验收总规范.md)
@@ -98,7 +109,9 @@ part of the current product acceptance scope.
 - [Data Revalidation And Manual Refresh Policy](data-revalidation-and-manual-refresh-policy.md)
 - [Web Modularization](web-modularization.md)
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
+- [Codex Window Shell Parity](codex-window-shell-parity.md)
 - [Desktop Shell](desktop-shell.md)
+- [Sidebar, Approval, And Proposal Dialogs Implementation Plan](sidebar-approval-proposal-dialogs-implementation-plan.md)
 - [Desktop Release](../release/desktop.md)
 
 ## Open Source And Release

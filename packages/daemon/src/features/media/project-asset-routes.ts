@@ -19,7 +19,6 @@ import {
   type MediaProjectAssetContentType,
   type RunStore,
 } from "@ling-stack/core";
-import { imageSize } from "image-size";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -28,6 +27,7 @@ import { isPathInsideRoot, normalizeArtifactPath } from "../../shared/path.js";
 import { setCorsHeaders, writeJson } from "../../shared/response.js";
 import { isRecord, readString } from "../../shared/validation.js";
 import { resolveArtifactContentPath } from "../runs/artifacts.js";
+import { inspectSupportedImage } from "./image-inspection.js";
 
 const MEDIA_PROJECT_ASSET_MAX_BYTES = 25 * 1024 * 1024;
 const MEDIA_PROJECT_ASSET_REQUEST_MAX_BYTES = 40 * 1024 * 1024;
@@ -297,21 +297,15 @@ async function validateImageBytes(
   declaredContentType: string | undefined,
 ): Promise<{ readonly contentType: MediaProjectAssetContentType; readonly width: number; readonly height: number }> {
   assertMediaProjectAssetByteLength(content.byteLength);
-  let dimensions: { readonly type?: string; readonly width?: number; readonly height?: number };
-  try {
-    dimensions = imageSize(content);
-  } catch {
-    throw new HttpError(400, "invalid_media_asset", "无法识别图片内容，请上传有效的 JPEG、PNG 或 WebP。");
-  }
-  const contentType = contentTypeForImageType(dimensions.type);
-  if (!contentType || !dimensions.width || !dimensions.height || !hasValidImageContainer(content, contentType)) {
+  const inspection = inspectSupportedImage(content);
+  if (!inspection) {
     throw new HttpError(400, "invalid_media_asset", "图片结构无效，只支持完整的 JPEG、PNG 或 WebP 图片。");
   }
-  if (declaredContentType && declaredContentType !== contentType) {
+  if (declaredContentType && declaredContentType !== inspection.contentType) {
     throw new HttpError(400, "invalid_media_asset", "图片声明格式与实际内容不一致。");
   }
-  assertMediaProjectAssetDimensions(dimensions.width, dimensions.height);
-  return { contentType, width: dimensions.width, height: dimensions.height };
+  assertMediaProjectAssetDimensions(inspection.width, inspection.height);
+  return inspection;
 }
 
 function handleMediaProjectAssetContent(
@@ -421,91 +415,6 @@ function sanitizeDisplayFileName(value: string): string {
 
 function normalizeDisplayFileName(fileName: string, extension: string): string {
   return extname(fileName) ? fileName : `${fileName}${extension}`;
-}
-
-function contentTypeForImageType(type: string | undefined): MediaProjectAssetContentType | undefined {
-  if (type === "jpg" || type === "jpeg") return "image/jpeg";
-  if (type === "png") return "image/png";
-  if (type === "webp") return "image/webp";
-  return undefined;
-}
-
-function hasValidImageContainer(content: Buffer, contentType: MediaProjectAssetContentType): boolean {
-  if (contentType === "image/png") return hasValidPngContainer(content);
-  if (contentType === "image/jpeg") return hasValidJpegContainer(content);
-  return hasValidWebpContainer(content);
-}
-
-function hasValidPngContainer(content: Buffer): boolean {
-  if (!content.subarray(0, 8).equals(Buffer.from("89504e470d0a1a0a", "hex"))) return false;
-  let offset = 8;
-  let sawHeader = false;
-  let sawImageData = false;
-  while (offset + 12 <= content.length) {
-    const length = content.readUInt32BE(offset);
-    const type = content.toString("ascii", offset + 4, offset + 8);
-    const nextOffset = offset + 12 + length;
-    if (nextOffset > content.length) return false;
-    if (!sawHeader) {
-      if (type !== "IHDR" || length !== 13) return false;
-      sawHeader = true;
-    } else if (type === "IDAT") {
-      sawImageData = true;
-    } else if (type === "IEND") {
-      return length === 0 && sawImageData && nextOffset === content.length;
-    }
-    offset = nextOffset;
-  }
-  return false;
-}
-
-function hasValidJpegContainer(content: Buffer): boolean {
-  if (content.length < 8 || content[0] !== 0xff || content[1] !== 0xd8) return false;
-  if (content[content.length - 2] !== 0xff || content[content.length - 1] !== 0xd9) return false;
-  let offset = 2;
-  let sawFrame = false;
-  while (offset + 4 <= content.length - 2) {
-    if (content[offset] !== 0xff) return false;
-    while (offset < content.length && content[offset] === 0xff) offset += 1;
-    const marker = content[offset];
-    offset += 1;
-    if (marker === 0xda) {
-      if (offset + 2 > content.length - 2) return false;
-      const length = content.readUInt16BE(offset);
-      return sawFrame && length >= 2 && offset + length <= content.length - 2;
-    }
-    if (marker === 0xd8 || marker === 0xd9 || (marker >= 0xd0 && marker <= 0xd7)) continue;
-    if (offset + 2 > content.length - 2) return false;
-    const length = content.readUInt16BE(offset);
-    if (length < 2 || offset + length > content.length - 2) return false;
-    if ((marker >= 0xc0 && marker <= 0xc3) || (marker >= 0xc5 && marker <= 0xc7) || (marker >= 0xc9 && marker <= 0xcb) || (marker >= 0xcd && marker <= 0xcf)) {
-      sawFrame = true;
-    }
-    offset += length;
-  }
-  return false;
-}
-
-function hasValidWebpContainer(content: Buffer): boolean {
-  if (
-    content.length < 20 ||
-    content.toString("ascii", 0, 4) !== "RIFF" ||
-    content.toString("ascii", 8, 12) !== "WEBP" ||
-    content.readUInt32LE(4) + 8 !== content.length
-  ) {
-    return false;
-  }
-  let offset = 12;
-  let sawImageChunk = false;
-  while (offset + 8 <= content.length) {
-    const type = content.toString("ascii", offset, offset + 4);
-    const length = content.readUInt32LE(offset + 4);
-    const nextOffset = offset + 8 + length + (length % 2);
-    if (nextOffset > content.length) return false;
-    if (type === "VP8 " || type === "VP8L" || type === "VP8X") sawImageChunk = true;
-    offset = nextOffset;
-  }
-  return sawImageChunk && offset === content.length;
 }
 
 function extensionForContentType(contentType: MediaProjectAssetContentType): string {

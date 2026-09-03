@@ -286,7 +286,7 @@ async function confirmAndOrchestrateProposal(
   return {
     proposal: store.getChannelExecutionProposal(proposalId) ?? confirmed.proposal,
     workflow: orchestration.workflow,
-    workflowSteps: store.listChannelWorkflowSteps({ workflowId: confirmed.workflow.id, limit: 500 }),
+    workflowSteps: store.listChannelWorkflowSteps({ workflowId: confirmed.workflow.id, complete: true }),
     orchestration,
   };
 }

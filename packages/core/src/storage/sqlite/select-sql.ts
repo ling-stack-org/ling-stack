@@ -152,6 +152,8 @@ export function runSessionSelectSql(whereClause: string): string {
       parent_run_id,
       intervention_id,
       continuation_reason,
+      context_view_id,
+      context_view_created_at,
       summary_path,
       error_message,
       created_at,
@@ -1543,8 +1545,31 @@ export function approvalRequestSelectSql(whereClause: string): string {
       expires_at,
       resolved_at,
       resolved_by,
-      decision_reason
+      decision_reason,
+      available_decisions_json,
+      proposed_command_rule_json,
+      decision_kind,
+      decision_rule_id
     FROM approval_requests
+    ${whereClause}
+  `;
+}
+
+export function approvalCommandRuleSelectSql(whereClause: string): string {
+  return `
+    SELECT
+      id,
+      workspace_id,
+      tool_name,
+      rule_version,
+      prefix_tokens_json,
+      display,
+      fingerprint,
+      source_approval_id,
+      created_by,
+      created_at,
+      revoked_at
+    FROM approval_command_rules
     ${whereClause}
   `;
 }

@@ -3,6 +3,12 @@ import { normalizeChannelRuntimePolicy } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
 import { removeLegacySkillWorkflowPhaseMetadata } from "./skill-capability-migration.js";
 import { CONTINUITY_V2_STORAGE_MIGRATION_VERSION } from "./continuity-v2-migration.js";
+import {
+  applyRunContextViewLineageMigration,
+} from "./run-context-view-lineage-migration.js";
+import { applyWorkspaceProvenanceMigration } from "./workspace-provenance-migration.js";
+import { applyPostCompactionUndoMigration } from "./post-compaction-undo-migration.js";
+import { applyWorkspaceSnapshotMigration } from "./workspace-snapshot-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -230,6 +236,8 @@ const CHROME_BROWSER_CREDENTIALS_MIGRATION_VERSION = 113;
 const CHROME_BROWSER_CREDENTIALS_MIGRATION_NAME = "create_chrome_browser_credentials";
 const MEDIA_PROJECT_ASSETS_MIGRATION_VERSION = 114;
 const MEDIA_PROJECT_ASSETS_MIGRATION_NAME = "create_media_project_assets";
+const APPROVAL_COMMAND_RULES_MIGRATION_VERSION = 126;
+const APPROVAL_COMMAND_RULES_MIGRATION_NAME = "create_approval_command_rules";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -5641,4 +5649,76 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       context.recordMigration(MEDIA_PROJECT_ASSETS_MIGRATION_VERSION, MEDIA_PROJECT_ASSETS_MIGRATION_NAME);
     }
   }
+
+  const hasApprovalCommandRulesMigration = context.hasMigration(APPROVAL_COMMAND_RULES_MIGRATION_VERSION);
+  if (
+    !hasApprovalCommandRulesMigration ||
+    !context.hasTable("approval_command_rules") ||
+    !context.hasColumn("approval_requests", "available_decisions_json") ||
+    !context.hasColumn("approval_requests", "proposed_command_rule_json") ||
+    !context.hasColumn("approval_requests", "decision_kind") ||
+    !context.hasColumn("approval_requests", "decision_rule_id")
+  ) {
+    if (!context.hasColumn("approval_requests", "available_decisions_json")) {
+      database.exec("ALTER TABLE approval_requests ADD COLUMN available_decisions_json TEXT NOT NULL DEFAULT '[\"approve_once\",\"deny\"]';");
+    }
+    if (!context.hasColumn("approval_requests", "proposed_command_rule_json")) {
+      database.exec("ALTER TABLE approval_requests ADD COLUMN proposed_command_rule_json TEXT;");
+    }
+    if (!context.hasColumn("approval_requests", "decision_kind")) {
+      database.exec("ALTER TABLE approval_requests ADD COLUMN decision_kind TEXT;");
+    }
+    if (!context.hasColumn("approval_requests", "decision_rule_id")) {
+      database.exec("ALTER TABLE approval_requests ADD COLUMN decision_rule_id TEXT;");
+    }
+    database.exec(`
+      CREATE TABLE IF NOT EXISTS approval_command_rules (
+        id TEXT PRIMARY KEY,
+        workspace_id TEXT NOT NULL,
+        tool_name TEXT NOT NULL CHECK(tool_name = 'bash'),
+        rule_version INTEGER NOT NULL,
+        prefix_tokens_json TEXT NOT NULL,
+        display TEXT NOT NULL,
+        fingerprint TEXT NOT NULL,
+        source_approval_id TEXT,
+        created_by TEXT NOT NULL,
+        created_at TEXT NOT NULL,
+        revoked_at TEXT,
+        UNIQUE(workspace_id, tool_name, fingerprint),
+        FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
+        FOREIGN KEY(source_approval_id) REFERENCES approval_requests(id) ON DELETE SET NULL
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_approval_command_rules_active
+      ON approval_command_rules(workspace_id, tool_name, revoked_at, created_at DESC);
+    `);
+    if (!hasApprovalCommandRulesMigration) {
+      context.recordMigration(APPROVAL_COMMAND_RULES_MIGRATION_VERSION, APPROVAL_COMMAND_RULES_MIGRATION_NAME);
+    }
+  }
+
+  applyRunContextViewLineageMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasColumn: context.hasColumn.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyWorkspaceProvenanceMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyPostCompactionUndoMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyWorkspaceSnapshotMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
 }

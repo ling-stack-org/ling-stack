@@ -37,7 +37,16 @@ export function terminalReportSourceRefKey(ref: Pick<TerminalReportSourceRef, "k
 export function computeTerminalReportEvidenceFingerprint(
   snapshot: Omit<TerminalReportEvidenceSnapshot, "evidenceFingerprint"> | TerminalReportEvidenceSnapshot,
 ): string {
-  const normalized = { ...snapshot, evidenceFingerprint: undefined };
+  // Snapshot ids and collection timestamps identify an observation, but are not
+  // evidence themselves. Excluding these volatile fields makes repeated
+  // projections of the same canonical run/workflow state compare equal while
+  // still changing the fingerprint whenever a durable fact changes.
+  const normalized = {
+    ...snapshot,
+    id: undefined,
+    generatedAt: undefined,
+    evidenceFingerprint: undefined,
+  };
   return createHash("sha256").update(stableStringify(normalized)).digest("hex");
 }
 
@@ -99,6 +108,13 @@ export function validateTerminalReportContent(
   }
 
   const checksById = new Map(snapshot.checks.map((check) => [check.id, check]));
+  if (snapshot.terminalState === "succeeded" && snapshot.checks.length > 0 && content.verification.length === 0) {
+    issues.push(issue(
+      "terminal_report_unverified_success_claim",
+      "verification",
+      "A successful evidence snapshot with checks must include verification rows.",
+    ));
+  }
   for (const [index, verification] of content.verification.entries()) {
     const matched = verification.sourceRefs.some((ref) => ref.kind === "check" && checksById.has(ref.id));
     if ((verification.status === "passed" || verification.status === "failed") && !matched) {

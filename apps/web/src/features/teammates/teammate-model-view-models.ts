@@ -1,5 +1,5 @@
 import type { Translate } from "../../i18n.js";
-import { providerSecretReady } from "../../lib/providers.js";
+import { providerModelRouteLabel, providerSecretReady } from "../../lib/providers.js";
 import type { AiTeammateModelBindingMode, ProviderPreset } from "../../types.js";
 
 export const workspaceDefaultModelOptionValue = "__workspace_default__";
@@ -31,12 +31,10 @@ export interface TeammateModelViewModel {
   readonly emptyInventory: boolean;
   readonly feedback?: TeammateModelFeedback;
   readonly isProtected: boolean;
-  readonly modelLabel: string;
   readonly options: readonly TeammateModelOption[];
   readonly primaryLabel: string;
   readonly primaryState: TeammateModelPrimaryState;
   readonly primaryTone: "danger" | "info" | "neutral" | "success" | "warning";
-  readonly providerLabel: string;
   readonly selectionValue: string;
   readonly selectedProvider?: ProviderPreset;
 }
@@ -88,7 +86,7 @@ export function buildTeammateModelViewModel({
     }] : []),
     ...missingOption,
     ...providers.map((provider): TeammateModelOption => {
-      const identity = `${provider.displayName} / ${provider.model}`;
+      const identity = providerModelRouteLabel(provider);
       if (!provider.enabled) {
         return {
           disabled: true,
@@ -113,12 +111,10 @@ export function buildTeammateModelViewModel({
     emptyInventory: !isProtected && providers.length === 0 && !canFollowWorkspaceDefault,
     feedback: copy.feedback,
     isProtected,
-    modelLabel: selectedProvider?.model ?? (effectiveProviderId ? t("Unavailable") : "-"),
     options: isProtected ? [] : options,
     primaryLabel: copy.label,
     primaryState,
     primaryTone: copy.tone,
-    providerLabel: selectedProvider?.displayName ?? (effectiveProviderId ? t("Unavailable") : t("None")),
     selectionValue: effectiveBindingMode === "workspace_default"
       ? workspaceDefaultModelOptionValue
       : selectedProviderId,
@@ -139,7 +135,7 @@ function workspaceDefaultOptionLabel(
     return t("Use workspace default (unavailable)");
   }
   return t("Use workspace default (current: {model})", {
-    model: `${provider.displayName} / ${provider.model}`,
+    model: providerModelRouteLabel(provider),
   });
 }
 

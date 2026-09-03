@@ -35,6 +35,10 @@
   padding-top: 68px;
 }
 
+.media-production-page.canvas-first.titlebar-window.showing-jobs .media-production-jobs-view {
+  padding-top: 0;
+}
+
 .media-production-load-state,
 .media-production-empty-state {
   position: absolute;
@@ -73,6 +77,15 @@
   top: 72px;
   right: 16px;
   width: min(520px, calc(100% - 32px));
+}
+
+.media-production-page.titlebar-window .media-production-load-state,
+.media-production-page.titlebar-window .media-production-empty-state {
+  padding-top: 24px;
+}
+
+.media-production-page.titlebar-window .media-production-studio > .media-production-load-feedback {
+  top: 16px;
 }
 
 .media-production-load-feedback-actions,

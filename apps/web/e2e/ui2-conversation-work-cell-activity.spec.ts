@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import {
   installActiveChannelWorkCellFixture,
   installChannelWorkCellFixture,
+  installExplorationWorkCellFixture,
   installNormalWorkCellFixture,
   installTeammateWorkCellFixture,
 } from "./support/conversation-work-cell-fixture";
@@ -192,6 +193,74 @@ test("Normal conversation keeps the completed command batch in the shared WorkCe
   await expectNoWorkCellShimmer(workCell);
   await expectContained(page, [conversation, workCell]);
   await captureEvidence(page, "1440x960-ling-light-normal-work-cell.png");
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("Completed WorkCell collapses adjacent read actions into an expandable exploration batch", async ({ page }) => {
+  await prepareSurface(page, { theme: "light", width: 1440, height: 960 });
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const { threadId } = installExplorationWorkCellFixture(state);
+  await mockDaemon(page, state);
+
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const feed = page.getByLabel("Channel message feed");
+  const workCell = feed.locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
+  await expect(workCell).toBeVisible();
+  await expect(workCell.locator(".conversation-operation-shell-status")).toContainText("Read 3 items");
+  await expandOperationShell(workCell);
+
+  const batch = workCell.locator(".conversation-exploration-batch");
+  const trigger = batch.locator(".conversation-exploration-batch-header");
+  await expect(trigger).toHaveAttribute("aria-expanded", "false");
+  await trigger.focus();
+  await trigger.press("Space");
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(batch.locator(".conversation-exploration-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expectContained(page, [feed, workCell, batch]);
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("Dense exploration activity stays scrollable after ten atomic rows", async ({ page }) => {
+  await prepareSurface(page, { theme: "light", width: 1440, height: 600 });
+  const runtimeErrors = collectRuntimeErrors(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const { threadId } = installExplorationWorkCellFixture(state, 11);
+  await mockDaemon(page, state);
+
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const feed = page.getByLabel("Channel message feed");
+  const workCell = feed.locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
+  await expect(workCell).toBeVisible();
+  await expect(workCell.locator(".conversation-operation-shell-status")).toContainText("Read 11 items");
+  await expandOperationShell(workCell);
+
+  const stream = workCell.locator('[data-conversation-work-stream="primary"]');
+  await expect(stream).toHaveAttribute("data-activity-density", "dense");
+  await expect(stream).toHaveCSS("overflow-y", "auto");
+  await expect.poll(() => stream.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }))).toEqual(expect.objectContaining({
+    scrollHeight: expect.any(Number),
+  }));
+  const dimensions = await stream.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    scrollHeight: element.scrollHeight,
+  }));
+  expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+
+  const batch = workCell.locator(".conversation-exploration-batch");
+  const trigger = batch.locator(".conversation-exploration-batch-header");
+  await trigger.focus();
+  await trigger.press("Space");
+  await expect(trigger).toHaveAttribute("aria-expanded", "true");
+  await expect(batch.locator(".conversation-exploration-batch-list .conversation-work-cell-row")).toHaveCount(11);
+  await expectContained(page, [feed, workCell, stream, batch]);
   expect(runtimeErrors).toEqual([]);
 });
 

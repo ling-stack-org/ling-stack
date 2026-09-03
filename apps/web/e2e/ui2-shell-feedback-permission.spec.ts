@@ -80,7 +80,7 @@ test("full access confirmation preserves draft, focus, and permission evidence",
 
   await send.click();
   dialog = page.locator("#ling-ui-overlay-root").getByRole("dialog", { name: "Confirm full access" });
-  await dialog.getByRole("button", { name: "Start with full access" }).click();
+  await dialog.getByRole("button", { name: "Enable full access" }).click();
   await expect.poll(() => state.runs.length).toBe(1);
   await expect.poll(() => {
     const snapshot = state.runs[0]?.requestSnapshot;
@@ -134,7 +134,12 @@ test("new conversation metadata controls stay quiet and compact without a config
 
 function createFullAccessState(): MockState {
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_full_access_ui2", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({
+    id: "provider_full_access_ui2",
+    displayName: "Local Relay",
+    model: "gpt-5.5",
+    lastCheck: { ok: true, code: "ready", message: "ready", checkedAt: "2026-08-25T00:00:00.000Z" },
+  })];
   state.workspaceSettings = {
     ...state.workspaceSettings,
     defaultAuthorizationMode: "always",

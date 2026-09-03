@@ -6,7 +6,7 @@ import {
   type ActiveSlashCommandPicker,
   type TokenizedComposerInputHandle,
 } from "../../shared/conversation/index.js";
-import type { PermissionPreset, WorkspaceAccessMode } from "../../types.js";
+import type { PermissionConfirmation, PermissionPreset, WorkspaceAccessMode } from "../../types.js";
 import {
   permissionPresetForWorkspaceAccessMode,
   workspaceAccessModeForPermissionPreset,
@@ -51,7 +51,7 @@ export function useTeammatePrivateComposerController({
   readonly onComposerSubmit: (authorization: {
     readonly permissionPreset: PermissionPreset;
   }) => void;
-  readonly onFullAccessPresetSelected?: () => void;
+  readonly onFullAccessPresetSelected?: () => Promise<PermissionConfirmation | undefined>;
   readonly onMessageDraftChange: (value: string) => void;
   readonly onWorkspaceAccessModeChange: (mode: WorkspaceAccessMode) => void;
   readonly privateComposerSending: boolean;
@@ -137,8 +137,13 @@ export function useTeammatePrivateComposerController({
   }
 
   function handlePermissionPresetChange(preset: PermissionPreset): void {
-    if (preset === "full_access") {
-      onFullAccessPresetSelected?.();
+    if (preset === "full_access" && onFullAccessPresetSelected) {
+      void onFullAccessPresetSelected().then((confirmation) => {
+        if (!confirmation) return;
+        setSelectedPermissionPreset(preset);
+        onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));
+      });
+      return;
     }
     setSelectedPermissionPreset(preset);
     onWorkspaceAccessModeChange(workspaceAccessModeForPermissionPreset(preset));

@@ -3665,7 +3665,7 @@ test("conversation stream materializes uploaded attachments into the run prompt"
     assert.match(runner.runs[0].task.prompt, /Alpha decision: keep the shared composer contract\./);
     assert.doesNotMatch(runner.runs[0].task.prompt, /Use English for user-visible output/);
     assert.ok(runner.runs[0].appendSystemPrompt.some((instruction) => /Default conversation tone: friendly\./.test(instruction)));
-    assert.ok(runner.runs[0].appendSystemPrompt.some((instruction) => /Use English for user-visible output/.test(instruction)));
+    assert.ok(runner.runs[0].appendSystemPrompt.some((instruction) => /Match the language of the most recent user message/.test(instruction)));
 
     const done = events.find((event) => event.event === "done");
     assert.ok(done);
@@ -4222,11 +4222,11 @@ test("channel intent selector creates workflow proposals for execution-shaped al
       proposals.proposals[0].collaborationSteps.map((step) => step.teammateId),
       ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"],
     );
-    assert.equal(proposals.proposals[0].responseLanguage, "zh-CN");
-    assert.match(proposals.proposals[0].prompt, /建议协作步骤/);
-    assert.match(proposals.proposals[0].acceptanceCriteria[0], /可审计 proposal evidence/);
-    assert.match(proposals.proposals[0].collaborationSteps[0].summary, /拆解实现边界/);
-    assert.match(proposals.proposals[0].riskSummary, /工作流 proposal/);
+    assert.equal(proposals.proposals[0].responseLanguage, "follow_user");
+    assert.match(proposals.proposals[0].prompt, /需要协作执行的工作流请求/);
+    assert.match(proposals.proposals[0].acceptanceCriteria[0], /可审计的提案证据/);
+    assert.match(proposals.proposals[0].collaborationSteps[0].summary, /实现边界和步骤顺序/);
+    assert.match(proposals.proposals[0].riskSummary, /工作流提案/);
 
     const listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listedMessages.messages.filter((message) => message.kind === "ai_reply").length, 0);
@@ -4324,7 +4324,7 @@ test("multi-participant concrete file workflow preserves operation-derived tools
       qaStep.prompt.includes(`exact command: ${verificationOperation.commandMatchPolicy.command}`),
       "QA step prompt must carry the exact Host-materialized command used by Completion Gate",
     );
-    assert.match(qaStep.prompt, /不能用语义等价的替代命令/u);
+    assert.match(qaStep.prompt, /do not substitute a semantically equivalent command/u);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
   } finally {
     await daemon.close();
@@ -4407,7 +4407,7 @@ test("channel intent selector does not assign specialists outside current channe
     assert.equal(proposals.proposals[0].assigneeTeammateId, "ling_agent");
     assert.equal(proposals.proposals[0].proposedByTeammateId, "ling_agent");
     assert.deepEqual(proposals.proposals[0].collaborationSteps.map((step) => step.teammateId), ["ling_agent"]);
-    assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理/);
+    assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理这个有边界的任务/);
     assert.doesNotMatch(proposals.proposals[0].prompt, /Engineer:|QA:|Architect:/);
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
@@ -4532,7 +4532,7 @@ test("channel intent selector asks one clarify question for underspecified work 
     assert.equal(created.aiReply.status, "ready");
     assert.equal(created.aiReply.threadId, created.message.threadId);
     assert.equal(created.aiReply.authorId, "ling_agent");
-    assert.match(created.aiReply.body, /确认范围/);
+    assert.match(created.aiReply.body, /需要先确认范围/);
     assert.equal(runner.runs.length, 0);
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -4597,18 +4597,18 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
         message.kind === "ai_reply" && message.authorId === "ling_agent" && /^(完成：|Done:)/u.test(message.body));
     }, "direct workflow terminal publication");
     const terminalReply = assertCoordinatorWorkflowTerminalReply(listedMessages.messages);
-    assert.match(terminalReply.body, /结果：Designer reply/);
+    assert.match(terminalReply.body, /(?:结果：|Result:) Designer reply/);
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
     assert.equal(proposals.proposals[0].status, "accepted");
     assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
-    assert.equal(proposals.proposals[0].responseLanguage, "zh-CN");
+    assert.equal(proposals.proposals[0].responseLanguage, "follow_user");
     assert.deepEqual(
       proposals.proposals[0].collaborationSteps.map((step) => step.teammateId),
       ["teammate_builtin_architect", "teammate_builtin_engineer", "teammate_builtin_qa"],
     );
-    assert.match(proposals.proposals[0].riskSummary, /runtime approval policy/);
+    assert.match(proposals.proposals[0].riskSummary, /运行时审批策略/);
 
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 2);
@@ -4618,9 +4618,9 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
     assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
     assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
 
-    assert.equal(created.autoStartedWorkflow.workflow.metadata.responseLanguage, "zh-CN");
-    assert.match(created.autoStartedWorkflow.workflowSteps[0].prompt, /用户可读输出请使用中文/);
-    assert.match(created.autoStartedWorkflow.workflowSteps[0].prompt, /API 字段和证据摘录保持原文/);
+    assert.equal(created.autoStartedWorkflow.workflow.metadata.responseLanguage, "follow_user");
+    assert.match(created.autoStartedWorkflow.workflowSteps[0].prompt, /Match the language of the most recent user message/);
+    assert.match(created.autoStartedWorkflow.workflowSteps[0].prompt, /API fields, and evidence excerpts in their original language/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -6072,7 +6072,7 @@ test("explicit executable participant missing a required tool blocks without sub
     assert.ok(proposal);
     assert.equal(proposal.status, "blocked");
     assert.equal(proposal.assigneeTeammateId, namedEngineer.id);
-    assert.match(proposal.errorMessage, /缺少所需工具: bash|missing required tools: bash/i);
+    assert.match(proposal.errorMessage, /缺少所需工具[：:]bash|missing required tools: bash/iu);
     const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
       .find((candidate) => candidate.proposalId === proposal.id);
     assert.ok(decision);
@@ -6567,7 +6567,7 @@ test("workspace follow-up clarifies when the previous Ling Agent reply names mul
 
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.status, "ready");
-    assert.match(created.aiReply.body, /多个可能的文件目标|多个可能目标/);
+    assert.match(created.aiReply.body, /多个可能的文件目标/);
     assert.match(created.aiReply.body, /login\.html/);
     assert.match(created.aiReply.body, /README\.md/);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -6641,7 +6641,7 @@ test("thread follow-up clarifies when the previous Ling Agent reply names multip
     assert.equal(created.autoStartedWorkflow, undefined);
     assert.equal(created.aiReply.status, "ready");
     assert.equal(created.aiReply.threadId, created.message.threadId);
-    assert.match(created.aiReply.body, /多个可能的文件目标|多个可能目标/);
+    assert.match(created.aiReply.body, /多个可能的文件目标/);
     assert.match(created.aiReply.body, /login\.html/);
     assert.match(created.aiReply.body, /README\.md/);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -6921,7 +6921,7 @@ test("Ling Agent fallback creates file proposal when no Docs teammate can run", 
     assert.equal(proposals.proposals[0].proposedByTeammateId, "ling_agent");
     assert.deepEqual(proposals.proposals[0].collaborationSteps.map((step) => step.teammateId), ["ling_agent"]);
     assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
-    assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理/);
+    assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理这个有边界的任务/);
 
     assert.equal(created.autoStartedWorkflow.proposal.status, "accepted");
     assert.equal(created.autoStartedWorkflow.workflow.createdBy, "ling_agent");
@@ -6969,8 +6969,8 @@ test("Ling Agent fallback edits code proposal when no Engineer teammate can run"
     assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
     assert.equal(proposals.proposals[0].assigneeTeammateId, "ling_agent");
     assert.deepEqual(proposals.proposals[0].requiredTools, ["edit"]);
-    assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理/);
-    assert.match(proposals.proposals[0].riskSummary, /Engineer/);
+    assert.match(proposals.proposals[0].riskSummary, /Ling Agent 可以先处理这个有边界的任务/);
+    assert.match(proposals.proposals[0].riskSummary, /工程师/);
 
     assert.equal(created.autoStartedWorkflow.workflowSteps[0].toParticipantId, "ling_agent");
     assert.deepEqual(created.autoStartedWorkflow.workflowSteps[0].metadata.requiredTools, ["edit"]);
@@ -7214,7 +7214,7 @@ test("high-risk push merge request auto-starts when required tools are not denie
     assert.equal(proposals.proposals.length, 1);
     assert.equal(proposals.proposals[0].status, "accepted");
     assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
-    assert.match(proposals.proposals[0].riskSummary, /runtime approval policy/);
+    assert.match(proposals.proposals[0].riskSummary, /^本次任务需要 bash 权限处理 Git push\/merge workflow。/u);
 
     const workflows = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/workflows?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(workflows.workflows.length, 1);
@@ -15484,8 +15484,8 @@ function assertCoordinatorWorkflowStartReply(result) {
   assert.equal(result.aiReply.status, "ready");
   assert.equal(result.aiReply.threadId, result.message.threadId);
   assert.equal(result.aiReply.authorId, "ling_agent");
-  assert.match(result.aiReply.body, /确认需求/);
-  assert.match(result.aiReply.body, /开始处理/);
+  assert.match(result.aiReply.body, /^(?:已确认：|Confirmed:)/u);
+  assert.match(result.aiReply.body, /(?:现在开始处理。|Starting now\.)$/u);
   assert.doesNotMatch(result.aiReply.body, /主会话/);
   assert.doesNotMatch(result.aiReply.body, /工作证据|折叠证据摘要/);
 }

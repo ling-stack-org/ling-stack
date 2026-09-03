@@ -36,6 +36,7 @@ function mockPrivateCommandAction(
     workspaceId: "workspace_default",
     threadId,
     runId,
+    attemptId: `attempt_${runId}`,
     toolCallId: `tool_${id}`,
     actionType: "bash",
     risk: "low",
@@ -212,7 +213,7 @@ test("AI teammates page creates a durable teammate and opens its private workspa
   await openAiTeammatesFromSettings(page);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
   await expect(page.locator(".teammate-management-grid")).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await expect(page.getByLabel("Teammate templates")).toBeVisible();
@@ -434,7 +435,7 @@ test("sidebar teammate create offers model workbench when no ready model exists"
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
   await expect.poll(() => state.aiTeammates.length).toBe(0);
 });
 
@@ -834,7 +835,7 @@ test("AI teammates page links council management to Council Workspace", async ({
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
   await expect(page.getByRole("button", { name: /New AI teammate/ })).toHaveCount(1);
   const teammateListSize = await page.getByLabel("Workspace teammates").locator(".teammate-draft-list").evaluate((element) => ({
@@ -856,7 +857,7 @@ test("AI teammates page links council management to Council Workspace", async ({
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Council members" })).toContainText("Ling Engineer");
@@ -898,6 +899,7 @@ test("AI teammate sidebar menu keeps create action without bulk archive", async 
 });
 
 test("AI teammate private workspace sends blocked chat replies and persists settings", async ({ page }) => {
+  await page.setViewportSize({ width: 1600, height: 900 });
   const runtimeErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() === "error") runtimeErrors.push(`${message.text()} @ ${message.location().url || "unknown"}`);
@@ -1318,11 +1320,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(blockedPrivateRow).toHaveClass(/message-bubble-chat-blocked/);
   await expect(blockedPrivateRow).toHaveClass(/message-bubble-peer/);
   await expect(blockedPrivateRow.locator(".status-badge")).toHaveCount(0);
-  const blockedPrivateActions = blockedPrivateRow.locator(".teammate-message-actions.message-action-bar");
-  await expect(blockedPrivateActions.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
-  await expect(blockedPrivateActions.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
-  await expect(blockedPrivateActions.getByRole("button", { name: "Dislike response", exact: true })).toHaveCount(1);
-  await expect(blockedPrivateActions.getByRole("button", { name: "Reply in topic", exact: true })).toHaveCount(0);
+  await expect(blockedPrivateRow.locator(".teammate-message-actions.message-action-bar")).toHaveCount(0);
   await expect(page.getByLabel("Conversation context").getByText("Private acceptance memory")).toBeVisible();
   await expect.poll(() => state.teammateDirectMessages.length).toBe(4);
   await expect.poll(() => {
@@ -1430,7 +1428,7 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save" }).click();
   await expect(page.getByText("Teammate profile saved", { exact: true })).toBeVisible();
   await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Teammate settings", level: 2 })).toBeVisible();
-  await expect(page.getByLabel("Single agent settings")).toContainText("Renamed Engineer");
+  await expect(page.getByLabel("Single agent settings")).not.toContainText("Renamed Engineer");
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate)
@@ -1448,9 +1446,10 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
 
   await settingsSections.getByRole("button", { name: /Model/ }).click();
   const modelPanel = page.getByLabel("Model assignment");
-  await modelPanel.getByLabel("Assigned model").selectOption("provider_alt");
-  await expect(modelPanel.getByLabel("Model summary")).toContainText("Model Shuttle");
-  await expect(modelPanel.getByLabel("Model summary")).toContainText("qwen-plus");
+  const assignedModel = modelPanel.getByLabel("Assigned model");
+  await assignedModel.selectOption("provider_alt");
+  await expect(assignedModel.locator("option:checked")).toContainText("qwen-plus");
+  await expect(modelPanel.getByLabel("Model summary")).toHaveCount(0);
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save model" }).click();
   await expect(page.getByText("Teammate model saved", { exact: true })).toBeVisible();
   await expect.poll(() => {
@@ -1494,12 +1493,14 @@ test("AI teammate private workspace sends blocked chat replies and persists sett
   await expect(personaPanel.getByLabel("Role profile preview")).toBeVisible();
   await expect(personaPanel.getByText("Permission-like persona text was ignored for authority changes.")).toBeVisible();
   await personaPanel.getByRole("button", { name: "Apply to profile" }).click();
+  await expect(teammateProfile.getByLabel("Teammate name")).toHaveValue("Imported QA Persona");
+  await page.getByLabel("Single agent settings").getByRole("button", { name: "Save changes" }).click();
   await expect.poll(() => {
     const teammate = state.aiTeammates.find((item) => isRecord(item) && item.id === teammateId);
     return isRecord(teammate) ? [teammate.displayName, teammate.appendSystemPrompt, teammate.allowedTools, teammate.approvalProfile] : undefined;
   }).toEqual(["Imported QA Persona", [], ["read", "grep", "find", "ls"], { mode: "standard", risk: "medium" }]);
   await expect(page.getByLabel("Single agent settings").getByRole("heading", { name: "Teammate settings", level: 2 })).toBeVisible();
-  await expect(page.getByLabel("Single agent settings")).toContainText("Imported QA Persona");
+  await expect(page.getByLabel("Single agent settings")).not.toContainText("Imported QA Persona");
 
   await page.getByLabel("Upload avatar").setInputFiles({
     name: "avatar.png",
@@ -1587,7 +1588,7 @@ test("AI teammate settings save status and visibility fields", async ({ page }) 
     return isRecord(teammate) ? [teammate.status, teammate.pinned, teammate.hidden] : undefined;
   }).toEqual(["paused", false, true]);
   await expect(page.getByRole("heading", { name: "Teammate settings", level: 2 })).toBeVisible();
-  await expect(page.getByLabel("Single agent settings")).toContainText("Ling Engineer");
+  await expect(page.getByLabel("Single agent settings")).not.toContainText("Ling Engineer");
 });
 
 test("AI teammate private chat previews image attachments and keeps them in message history", async ({ page }) => {

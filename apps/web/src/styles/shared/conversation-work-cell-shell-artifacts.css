@@ -26,6 +26,15 @@
   box-shadow: none;
 }
 
+.conversation-operation-shell {
+  --conversation-operation-content-inline-inset: 12px;
+}
+
+.conversation-operation-shell-static-content {
+  min-width: 0;
+  padding-inline: var(--conversation-operation-content-inline-inset);
+}
+
 .conversation-operation-bubble-header,
 .conversation-operation-shell-head {
   display: grid;
@@ -97,6 +106,34 @@
 .conversation-operation-shell-head:hover .conversation-operation-shell-status,
 .conversation-operation-shell-head:focus-visible .conversation-operation-shell-status {
   color: var(--conversation-text-strong);
+}
+
+.conversation-composer-gate-approval-marker {
+  display: grid;
+  grid-template-columns: 16px auto minmax(0, 1fr);
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+  min-height: 22px;
+  color: var(--conversation-text-muted);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+.conversation-composer-gate-approval-marker > svg {
+  color: var(--conversation-status-waiting);
+}
+
+.conversation-composer-gate-approval-marker > strong {
+  color: var(--conversation-text-strong);
+  font-weight: 600;
+}
+
+.conversation-composer-gate-approval-marker > span {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-operation-bubble-body,

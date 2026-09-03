@@ -104,7 +104,7 @@ test("normal conversation summary uses the channel panel motion", async ({ page 
   await openNormalConversationFixture(page);
 
   const conversation = page.getByLabel("Conversation page");
-  const toolbar = conversation.getByRole("toolbar", { name: "Conversation workspace toolbar" });
+  const toolbar = page.getByRole("toolbar", { name: "Conversation workspace toolbar" });
   await toolbar.getByRole("button", { name: "Summary" }).click();
   await expect(page.locator(".normal-conversation-summary-popover")).toBeVisible();
   await expectOpaque(page.locator(".normal-conversation-summary-popover"));
@@ -294,6 +294,66 @@ test("summary intent survives constrained Details geometry and restores when Sid
   );
 });
 
+test("right dock hides as one shared state at 900px and restores inline above the breakpoint", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
+  await prepareSurface(page, "light", 1280, 800);
+  const teammateName = "Responsive Dock Engineer";
+  const state = createBaseState({ approvalStatus: "expired" });
+  state.providers = [createChatProvider({
+    id: "provider_ui2_responsive_dock",
+    displayName: "Local Relay",
+    model: "gpt-5.5",
+  })];
+  state.aiTeammates = [createMockTeammate({
+    id: "teammate_ui2_responsive_dock",
+    displayName: teammateName,
+  })];
+  installNormalConversationFixture(state);
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await openEngineeringChannel(page);
+  await expectResponsiveDockProjection({
+    page,
+    toolbar: page.getByRole("toolbar", { name: "Workspace task toolbar" }),
+    root: page.locator(".task-workbench-main"),
+    dock: page.getByLabel("Channel workspace dock"),
+    handle: page.getByRole("separator", { name: "Resize workspace dock" }),
+    dockLayoutVariable: "--channel-right-dock-layout-width",
+    handleLayoutVariable: "--channel-side-panel-layout-handle-width",
+  });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await ensureNavigationExpanded(page);
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await expectResponsiveDockProjection({
+    page,
+    toolbar: page.getByRole("toolbar", { name: "Private chat actions" }),
+    root: page.locator(".teammate-private-chat"),
+    dock: page.getByLabel("Private chat workspace dock"),
+    handle: page.getByRole("separator", { name: "Resize workspace dock" }),
+    dockLayoutVariable: "--workspace-right-dock-layout-width",
+    handleLayoutVariable: "--workspace-right-dock-layout-handle-width",
+  });
+
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await ensureNavigationExpanded(page);
+  await openNormalConversationFixture(page);
+  await expectResponsiveDockProjection({
+    page,
+    toolbar: page.getByRole("toolbar", { name: "Conversation workspace toolbar" }),
+    root: page.locator(".normal-conversation-page"),
+    dock: page.getByLabel("Conversation workspace dock"),
+    handle: page.getByRole("separator", { name: "Resize workspace dock" }),
+    dockLayoutVariable: "--workspace-right-dock-layout-width",
+    handleLayoutVariable: "--workspace-right-dock-layout-handle-width",
+  });
+
+  await page.setViewportSize({ width: 866, height: 994 });
+  await expectNoDocumentOverflow(page);
+  expect(runtimeErrors).toEqual([]);
+});
+
 for (const fixture of [
   { theme: "light" as const, width: 1728, height: 960, summaryWithDock: true },
   { theme: "light" as const, width: 1440, height: 960, summaryWithDock: false },
@@ -380,6 +440,12 @@ async function openNormalConversationFixture(page: Page): Promise<void> {
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 
+async function ensureNavigationExpanded(page: Page): Promise<void> {
+  const showNavigation = page.getByRole("button", { name: "Show navigation" });
+  if (await showNavigation.isVisible()) await showNavigation.click();
+  await expect(page.getByRole("button", { name: "Hide navigation" })).toBeVisible();
+}
+
 async function prepareSurface(page: Page, theme: "light" | "dark", width: number, height: number): Promise<void> {
   await page.setViewportSize({ width, height });
   await page.addInitScript((themeId) => {
@@ -447,6 +513,48 @@ async function expectConversationSummaryGeometry(
   });
 }
 
+async function expectResponsiveDockProjection(input: {
+  readonly page: Page;
+  readonly toolbar: import("@playwright/test").Locator;
+  readonly root: import("@playwright/test").Locator;
+  readonly dock: import("@playwright/test").Locator;
+  readonly handle: import("@playwright/test").Locator;
+  readonly dockLayoutVariable: string;
+  readonly handleLayoutVariable: string;
+}): Promise<void> {
+  const details = input.toolbar.locator('[data-conversation-action="details"]');
+  await expect(details).toBeEnabled();
+  await details.click();
+  await expect(input.dock).toBeVisible();
+  await expect(input.handle).toBeVisible();
+  await expect(details).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(async () => input.dock.evaluate((element) => getComputedStyle(element).borderLeftWidth)).toBe("0px");
+  await expect.poll(async () => input.handle.evaluate((element) => getComputedStyle(element, "::before").width)).toBe("1px");
+
+  await input.page.setViewportSize({ width: 900, height: 800 });
+  await expect(input.dock).toHaveCount(0);
+  await expect(input.handle).toHaveCount(0);
+  await expect(details).toBeDisabled();
+  await expect(details).toHaveAttribute("aria-expanded", "false");
+  await expect.poll(async () => input.root.evaluate((element, variables) => {
+    const style = getComputedStyle(element);
+    return variables.map((variable) => Number.parseFloat(style.getPropertyValue(variable)) || 0);
+  }, [input.dockLayoutVariable, input.handleLayoutVariable])).toEqual([0, 0]);
+  await expectNoDocumentOverflow(input.page);
+
+  await input.page.setViewportSize({ width: 901, height: 800 });
+  await expect(input.dock).toBeVisible();
+  await expect(input.handle).toBeVisible();
+  await expect(details).toBeEnabled();
+  await expect(details).toHaveAttribute("aria-expanded", "true");
+  await expect.poll(async () => input.root.evaluate((element, variables) => {
+    const style = getComputedStyle(element);
+    const values = variables.map((variable) => Number.parseFloat(style.getPropertyValue(variable)) || 0);
+    return { dockHasWidth: values[0] > 0, handleWidth: values[1] };
+  }, [input.dockLayoutVariable, input.handleLayoutVariable])).toEqual({ dockHasWidth: true, handleWidth: 8 });
+  await expectNoDocumentOverflow(input.page);
+}
+
 async function expectSummaryConcealAndRestore(
   page: Page,
   toolbar: import("@playwright/test").Locator,
@@ -486,6 +594,10 @@ async function openBottomTerminal(
   await expect(terminal).toBeVisible();
   await expect(terminal).toHaveAttribute("data-bottom-panel-expanded", "true");
   await expect(terminal).toHaveAttribute("data-bottom-panel-motion", "open");
+}
+
+async function expectNoDocumentOverflow(page: Page): Promise<void> {
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
 }
 
 function evidenceFilename(

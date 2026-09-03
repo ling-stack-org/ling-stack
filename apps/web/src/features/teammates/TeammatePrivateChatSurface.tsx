@@ -92,10 +92,10 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
       ].filter(Boolean).join(" ")}
       ariaLabel={t("Private chat")}
       feedNode={<TeammatePrivateChatFeed {...props} messageController={messageController} />}
-      composerNode={<TeammatePrivateChatComposer {...props} controller={composerController} />}
+      composerNode={props.composerGateNode ?? <TeammatePrivateChatComposer {...props} controller={composerController} />}
       sideNode={(
         <>
-          {dockController.visible ? (
+          {dockController.resizable ? (
             <button
               className="workspace-right-dock-resize-handle"
               type="button"

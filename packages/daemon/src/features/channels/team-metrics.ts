@@ -40,7 +40,7 @@ export async function handleChannelTeamMetricsProjection(
       .filter((run) => run.channelId === channelId || taskIds.has(run.taskId));
     const workflowSteps = store
       .listChannelWorkflows({ channelId, limit })
-      .flatMap((workflow) => store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }));
+      .flatMap((workflow) => store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }));
     const approvals = store.listApprovalRequests({ limit: Math.max(limit * 4, 500) });
     const messages = enrichChannelMessagesWithWebEvidence(store, listChannelMessageViews({ store, channelId, limit }));
     const attachments = store.listChannelAttachments({ channelId, limit });

@@ -13,6 +13,7 @@ export const terminalReportEndpoints = {
       readonly threadId?: string;
       readonly sourceKind?: TerminalReportSourceKind;
       readonly sourceId?: string;
+      readonly includeHistory?: boolean;
       readonly limit?: number;
     } = {},
   ): Promise<TerminalReportListResponse> {
@@ -21,6 +22,7 @@ export const terminalReportEndpoints = {
       threadId: options.threadId,
       sourceKind: options.sourceKind,
       sourceId: options.sourceId,
+      includeHistory: options.includeHistory,
       limit: options.limit,
     });
   },
@@ -41,6 +43,7 @@ export const terminalReportEndpoints = {
       readonly threadId?: string;
       readonly sourceKind?: TerminalReportSourceKind;
       readonly sourceId?: string;
+      readonly includeHistory?: boolean;
       readonly limit?: number;
     } = {},
   ): Promise<TerminalReportListResponse> {
@@ -49,6 +52,7 @@ export const terminalReportEndpoints = {
       threadId: options.threadId,
       sourceKind: options.sourceKind,
       sourceId: options.sourceId,
+      includeHistory: options.includeHistory,
       limit: options.limit,
     });
   },

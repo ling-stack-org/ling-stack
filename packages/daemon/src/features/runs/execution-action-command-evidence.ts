@@ -44,34 +44,36 @@ export function deriveExecutionActionCommandEvidence(input: {
   readonly start?: RunEventEnvelope;
   readonly end?: RunEventEnvelope;
 }): ExecutionActionCommandEvidence | undefined {
-  const unifiedExecEnvelopePresent = hasUnifiedExecEnvelope(input.end);
-  const result = readUnifiedExecResult(input.end);
+  const start = latestToolEvent(input.events, input.toolCallId, "tool_start") ?? input.start;
+  const end = latestToolEvent(input.events, input.toolCallId, "tool_end") ?? input.end;
+  const unifiedExecEnvelopePresent = hasUnifiedExecEnvelope(end);
+  const result = readUnifiedExecResult(end);
   const outcome = unifiedExecEnvelopePresent
-    ? readUnifiedExecOutcome(input.end) ?? "unknown"
-    : inferLegacyPiOutcome(input.end);
-  const command = readCommand(result?.command) ?? readCommand(readToolArgs(input.start));
+    ? readUnifiedExecOutcome(end) ?? "unknown"
+    : inferLegacyPiOutcome(end);
+  const command = readCommand(result?.command) ?? readCommand(readToolArgs(start));
   if (!command) {
     return undefined;
   }
 
-  const updateEvents = input.events.filter((event) =>
-    event.type === "tool_update" && readToolCallId(event) === input.toolCallId,
-  );
+  const updateEvents = input.events
+    .filter((event) => event.type === "tool_update" && readToolCallId(event) === input.toolCallId)
+    .sort((left, right) => left.seq - right.seq);
   const structuredStreamedChunks = updateEvents
     .map(readOutputChunk)
     .filter((chunk): chunk is ExecutionActionCommandOutputChunk => Boolean(chunk));
   const legacyChunk = unifiedExecEnvelopePresent
     ? undefined
-    : readLegacyPiOutputChunk(input.end) ?? readLatestLegacyPiUpdateChunk(updateEvents);
+    : readLegacyPiOutputChunk(end) ?? readLatestLegacyPiUpdateChunk(updateEvents);
   const chunks = addFinalPreviewFallbacks(
     legacyChunk ? [legacyChunk] : structuredStreamedChunks,
     result,
-    input.end,
+    end,
   );
   const bounded = boundOutputChunks(chunks);
   const latestEventSeq = Math.max(
-    input.start?.seq ?? 0,
-    input.end?.seq ?? 0,
+    start?.seq ?? 0,
+    end?.seq ?? 0,
     ...updateEvents.map((event) => event.seq),
   );
   const artifactIds = result ? artifactIdsByRole(result.artifacts) : {};
@@ -85,11 +87,11 @@ export function deriveExecutionActionCommandEvidence(input: {
   return {
     command,
     outcome,
-    cwd: result?.cwd ?? readString(readToolArgs(input.start), "cwd"),
-    startedAt: result?.startedAt ?? input.start?.ts,
-    completedAt: result?.endedAt ?? input.end?.ts,
-    durationMs: result?.durationMs ?? durationBetween(input.start?.ts, input.end?.ts),
-    exitCode: result?.exitCode ?? inferLegacyPiExitCode(input.end, unifiedExecEnvelopePresent),
+    cwd: result?.cwd ?? readString(readToolArgs(start), "cwd"),
+    startedAt: result?.startedAt ?? start?.ts,
+    completedAt: result?.endedAt ?? end?.ts,
+    durationMs: result?.durationMs ?? durationBetween(start?.ts, end?.ts),
+    exitCode: result?.exitCode ?? inferLegacyPiExitCode(end, unifiedExecEnvelopePresent),
     signal: result?.signal,
     timedOut: result?.timedOut,
     cancelled: result?.cancelled,
@@ -102,6 +104,19 @@ export function deriveExecutionActionCommandEvidence(input: {
     stderrArtifactId: result?.stderr.artifactId ?? artifactIds.stderr,
     resultArtifactId: artifactIds.result,
   };
+}
+
+function latestToolEvent(
+  events: readonly RunEventEnvelope[],
+  toolCallId: string,
+  type: RunEventEnvelope["type"],
+): RunEventEnvelope | undefined {
+  return events.reduce<RunEventEnvelope | undefined>((latest, event) => {
+    if (event.type !== type || readToolCallId(event) !== toolCallId) {
+      return latest;
+    }
+    return !latest || event.seq > latest.seq ? event : latest;
+  }, undefined);
 }
 
 function hasUnifiedExecEnvelope(event: RunEventEnvelope | undefined): boolean {

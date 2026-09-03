@@ -158,6 +158,8 @@ test("risk review upgrades allowed force push into an explicit approval request"
     assert.equal(approvals[0].id, approvalId);
     assert.equal(approvals[0].status, "pending");
     assert.equal(approvals[0].risk, "critical");
+    assert.deepEqual(approvals[0].availableDecisions, ["approve_once", "deny"]);
+    assert.equal(approvals[0].proposedCommandRule, undefined);
 
     await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/deny?cwd=${encodeURIComponent(cwd)}`, {
       reason: "risk review denied",
@@ -708,7 +710,7 @@ test("assignee approval profile tightens workspace approval policy", async () =>
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_bash_profile",
     toolName: "bash",
-    input: { command: "echo profile-gated" },
+    input: { command: "echo profile-gated", prefix_rule: ["echo"] },
   });
   const daemon = await startDaemonForTest(runner);
   try {
@@ -728,6 +730,9 @@ test("assignee approval profile tightens workspace approval policy", async () =>
 
     const requested = await waitForSseEvent(sse, "approval_requested");
     const approvalId = requested.data.data.approvalId;
+    const [pending] = await listApprovals(daemon.url, cwd, runId);
+    assert.deepEqual(pending.availableDecisions, ["approve_once", "deny"]);
+    assert.equal(pending.proposedCommandRule, undefined);
     const approval = await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
       reason: "profile approval",
     });
@@ -916,6 +921,68 @@ test("bash=ask pauses the run until the approval is resolved", async () => {
     assert.equal(actionsForThread.actions.length, 2);
     assert.deepEqual(new Set(actionsForThread.actions.map((action) => action.runId)), new Set([runId, second.runId]));
     assert.equal(actionsForThread.actions.every((action) => action.toolCallId === "tool_bash_ask"), true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workspace command rule approves the current Bash request and suppresses matching prompts until revoked", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-command-rule-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_command_rule_first",
+    toolName: "bash",
+    input: { command: "whois example.com", prefix_rule: ["whois"] },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const firstResponse = await postRunStream(daemon.url, runBody(cwd, "task_command_rule_first"));
+    const firstSse = createSseReader(firstResponse);
+    const firstReady = await firstSse.nextEvent();
+    const firstRunId = firstReady.data.runId;
+    await waitForSseEvent(firstSse, "approval_requested");
+    const [pending] = await listApprovals(daemon.url, cwd, firstRunId);
+    assert.deepEqual(pending.availableDecisions, ["approve_once", "approve_command_rule", "deny"]);
+    assert.deepEqual(pending.proposedCommandRule.prefix, ["whois"]);
+
+    const resolved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(pending.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      decisionKind: "approve_command_rule",
+      proposedRuleFingerprint: pending.proposedCommandRule.fingerprint,
+    });
+    assert.equal(resolved.approval.decisionKind, "approve_command_rule");
+    assert.ok(resolved.approval.decisionRuleId);
+    await firstSse.collectRemaining();
+
+    const rules = await getJson(`${daemon.url}/approval-command-rules?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(rules.rules.length, 1);
+    assert.deepEqual(rules.rules[0].prefix, ["whois"]);
+
+    runner.request = {
+      toolCallId: "tool_command_rule_second",
+      toolName: "bash",
+      input: { command: "whois example.net" },
+    };
+    const second = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_command_rule_second"));
+    assert.equal(second.events.some((event) => event.event === "approval_requested"), false);
+    assert.match(runner.decisions.at(-1).reason, /workspace command rule/);
+
+    const revokeResponse = await fetch(`${daemon.url}/approval-command-rules/${encodeURIComponent(rules.rules[0].id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "DELETE",
+    });
+    assert.equal(revokeResponse.status, 200);
+
+    runner.request = {
+      toolCallId: "tool_command_rule_third",
+      toolName: "bash",
+      input: { command: "whois example.org" },
+    };
+    const thirdResponse = await postRunStream(daemon.url, runBody(cwd, "task_command_rule_third"));
+    const thirdSse = createSseReader(thirdResponse);
+    await thirdSse.nextEvent();
+    const thirdRequested = await waitForSseEvent(thirdSse, "approval_requested");
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(thirdRequested.data.data.approvalId)}/deny?cwd=${encodeURIComponent(cwd)}`, {});
+    await thirdSse.collectRemaining();
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

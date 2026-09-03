@@ -31,6 +31,7 @@ export interface WorkflowContextInspectSummary {
     readonly id: string;
     readonly role: string;
     readonly priority: string;
+    readonly compactionSurvival?: string;
     readonly estimatedTokens?: number;
     readonly sourceRefIds: readonly string[];
     readonly metadataKeys: readonly string[];
@@ -91,6 +92,7 @@ export function buildWorkflowContextInspectSummary(input: {
       id: section.id,
       role: section.role,
       priority: section.priority,
+      compactionSurvival: section.compactionSurvival,
       estimatedTokens: section.estimatedTokens,
       sourceRefIds: section.sourceRefIds ?? [],
       metadataKeys: section.metadata ? Object.keys(section.metadata).sort() : [],

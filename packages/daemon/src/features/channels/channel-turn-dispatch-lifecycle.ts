@@ -350,7 +350,7 @@ function replayAutoStartedWorkflow(
   return {
     proposal,
     workflow,
-    workflowSteps: store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }),
+    workflowSteps: store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }),
   };
 }
 

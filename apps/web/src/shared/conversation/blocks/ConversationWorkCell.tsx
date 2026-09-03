@@ -2,13 +2,16 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { BookOpen, CheckCircle2, ChevronDown, CircleAlert, Clock3, FilePenLine, FileText, GitBranch, History, ListChecks, Loader2, RefreshCw, Search, ShieldCheck, SquareTerminal } from "lucide-react";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
-import { projectConversationCommandBatches, type ConversationAgentActivitySpan, type ConversationArtifactStripItem, type ConversationCommandBatchItem, type ConversationOperationCellViewModel, type ConversationWorkCellEvidenceLink, type ConversationWorkCellGroup, type ConversationWorkCellItem, type ConversationWorkCellRow, type ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
+import { projectConversationActivity, type ConversationAgentActivitySpan, type ConversationArtifactStripItem, type ConversationCommandBatchItem, type ConversationOperationCellViewModel, type ConversationWorkCellEvidenceLink, type ConversationWorkCellGroup, type ConversationWorkCellItem, type ConversationWorkCellRow, type ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
+import type { ComposerGateApprovalPresentation } from "../../../lib/runtime-approval-presentation.js";
 import type { PreviewContentResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import type { ConversationSurfaceKind, TerminalReportProjectionPolicy } from "../tokens/conversation-surface-policy.js";
 import { ConversationArtifactStrip, type ConversationWorkspaceReviewTarget } from "./ConversationArtifactStrip.js";
 import { ConversationCommandBatch } from "./ConversationCommandBatch.js";
+import { ConversationExplorationBatch } from "./ConversationExplorationBatch.js";
 import { DiffViewer } from "./DiffViewer.js";
+import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 import { TerminalReportBlock, type TerminalReportFileTarget } from "./TerminalReportBlock.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 import { useWorkCellActivityVisibility } from "./use-work-cell-activity-visibility.js";
@@ -34,12 +37,20 @@ export interface ConversationWorkCellProps {
   readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
   readonly showArtifactStrip?: boolean;
   readonly showTerminalReport?: boolean;
+  readonly composerGateApproval?: ComposerGateApprovalPresentation;
   readonly terminalReportProjectionPolicy?: Partial<TerminalReportProjectionPolicy>;
   readonly onOpenWorkspaceFile?: (target: TerminalReportFileTarget) => void;
   readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
 }
 
-export function ConversationWorkCell({
+export function ConversationWorkCell(props: ConversationWorkCellProps): React.JSX.Element {
+  if (props.composerGateApproval) {
+    return <ComposerGatePendingWorkCell model={props.model} approval={props.composerGateApproval} />;
+  }
+  return <ConversationWorkCellContent {...props} />;
+}
+
+function ConversationWorkCellContent({
   model,
   surface,
   cwd,
@@ -75,14 +86,18 @@ export function ConversationWorkCell({
     : singleAgentRows.length > 0
       ? singleAgentRows
       : fallbackRows;
-  const operationItems = model.operationItems ?? projectConversationCommandBatches(operationRows);
-  const showOperationRows = operationItems.length > 0;
+  const operationItems = model.operationItems ?? projectConversationActivity(operationRows);
   const terminalReportRendered = showTerminalReport && model.terminalReportRows.length > 0;
+  const reportOwnsChanges = terminalReportRendered && model.terminalReportRows.some((row) => row.reportSection === "change");
+  const visibleOperationItems = reportOwnsChanges
+    ? operationItems.filter((item) => item.kind !== "operation" || item.row.kind !== "edit")
+    : operationItems;
+  const showOperationRows = visibleOperationItems.length > 0;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
-  const artifactStripSummary = showArtifactStrip ? buildArtifactStripSummary(model.artifactStripItems, t) : undefined;
   const visibleArtifactItems = showArtifactStrip
     ? model.artifactStripItems.filter((item) => item.kind === "artifact" || item.kind === "changed")
     : [];
+  const artifactStripSummary = showArtifactStrip ? buildArtifactStripSummary(visibleArtifactItems, t) : undefined;
   const recoveryTarget = visibleArtifactItems.find((item) => item.kind === "changed")?.recoveryTarget;
   const referencesOnly = !showArtifactStrip;
   const evidenceSummary = model.terminalReportRows.length > 0
@@ -224,7 +239,7 @@ export function ConversationWorkCell({
             ) : null}
 
             {showOperationRows ? (
-              <ActiveTurnItemStream items={operationItems} cwd={cwd} loadPreview={loadPreview} />
+              <ActiveTurnItemStream items={visibleOperationItems} cwd={cwd} loadPreview={loadPreview} />
             ) : null}
             {!terminalReportRendered ? evidenceDisclosure : null}
           </div>
@@ -237,6 +252,7 @@ export function ConversationWorkCell({
           rows={model.terminalReportRows}
           renderParticipantAvatar={renderParticipantAvatar}
           surface={surface}
+          cwd={cwd}
           projectionPolicy={terminalReportProjectionPolicy}
           onOpenWorkspaceFile={onOpenWorkspaceFile ? (target) => onOpenWorkspaceFile({ ...target, cwd }) : undefined}
         />
@@ -245,6 +261,7 @@ export function ConversationWorkCell({
         <ConversationArtifactStrip
           items={visibleArtifactItems}
           cwd={cwd}
+          hideChangedFileDetails={reportOwnsChanges}
           recoveryTarget={recoveryTarget}
           loadPreview={loadPreview}
           onOpenWorkspaceReview={onOpenWorkspaceReview}
@@ -255,6 +272,38 @@ export function ConversationWorkCell({
           {evidenceDisclosure}
         </div>
       ) : null}
+    </article>
+  );
+}
+
+function ComposerGatePendingWorkCell({
+  model,
+  approval,
+}: {
+  readonly model: ConversationOperationCellViewModel;
+  readonly approval: ComposerGateApprovalPresentation;
+}): React.JSX.Element {
+  const { t } = useI18n();
+  const statusLabel = `${t("Waiting for approval")}: ${approval.actionSentence}`;
+  return (
+    <article
+      className="conversation-work-cell conversation-operation-cell active status-waiting_for_approval no-rail presentation-composer-gate-pending"
+      data-thread-id={model.threadId}
+      data-operation-source={model.sourceKind}
+      data-approval-presentation-owner="composer_gate"
+      data-approval-id={approval.approvalId}
+      aria-label={statusLabel}
+    >
+      <span className="visually-hidden" role="status" aria-live="polite">{statusLabel}</span>
+      <div className="conversation-operation-shell conversation-operation-bubble active tone-waiting collapsed">
+        <div className="conversation-operation-shell-static-content">
+          <div className="conversation-composer-gate-approval-marker">
+            <CircleAlert aria-hidden="true" size={15} />
+            <strong>{t("Waiting for approval")}</strong>
+            <span>{approval.actionSentence}</span>
+          </div>
+        </div>
+      </div>
     </article>
   );
 }
@@ -368,6 +417,10 @@ function operationShellStatusLabel(
   const elapsed = formatElapsedDuration(model.elapsedMs);
   const suffix = elapsed ? ` ${elapsed}` : "";
   if (model.status === "succeeded") {
+    const activitySummary = completedActivitySummary(model, t);
+    if (activitySummary) {
+      return activitySummary;
+    }
     return t("Processed{duration}", { duration: suffix });
   }
   if (model.status === "failed") {
@@ -383,6 +436,34 @@ function operationShellStatusLabel(
     return t("Stopped{duration}", { duration: suffix });
   }
   return active ? t("Processing") : t("Processed{duration}", { duration: suffix });
+}
+
+function completedActivitySummary(
+  model: ConversationOperationCellViewModel,
+  t: Translate,
+): string | undefined {
+  if (model.mode !== "completed" || !model.activitySummary?.hasStructuredActions) {
+    return undefined;
+  }
+  const summary = model.activitySummary;
+  const pieces = [
+    summary.editedFileCount > 0
+      ? summary.editedFileCount === 1
+        ? t("Edited 1 file")
+        : t("Edited {count} files", { count: summary.editedFileCount })
+      : undefined,
+    summary.readItemCount > 0
+      ? summary.readItemCount === 1
+        ? t("Read 1 item")
+        : t("Read {count} items", { count: summary.readItemCount })
+      : undefined,
+    summary.commandCount > 0
+      ? summary.commandCount === 1
+        ? t("Ran 1 command")
+        : t("Ran {count} commands", { count: summary.commandCount })
+      : undefined,
+  ].filter((piece): piece is string => Boolean(piece));
+  return pieces.length > 0 ? pieces.join(" · ") : undefined;
 }
 
 function formatElapsedDuration(elapsedMs: number | undefined): string | undefined {
@@ -413,6 +494,8 @@ function operationBubbleRevisionKey(
     model.agentSpans.length,
     model.artifactStripItems.length,
     evidenceSummary ?? "",
+    activitySummaryRevisionKey(model),
+    operationItemsRevisionKey(model.operationItems),
   ].join("|");
 }
 
@@ -431,7 +514,29 @@ function operationShellRevisionKey(
     model.operationRows.length,
     model.agentSpans.length,
     model.artifactStripItems.length,
+    activitySummaryRevisionKey(model),
+    operationItemsRevisionKey(model.operationItems),
   ].join("|");
+}
+
+function activitySummaryRevisionKey(model: ConversationOperationCellViewModel): string {
+  const summary = model.activitySummary;
+  return summary
+    ? [summary.editedFileCount, summary.editedItemCount, summary.readItemCount, summary.commandCount, summary.hasStructuredActions ? "structured" : "plain"].join(":")
+    : "";
+}
+
+function operationItemsRevisionKey(items: readonly ConversationWorkCellItem[] | undefined): string {
+  if (!items) {
+    return "";
+  }
+  return items.map((item) => {
+    if (item.kind === "operation") {
+      const execution = item.row.operationExecution;
+      return `operation:${item.row.id}:${execution?.actionId ?? ""}:${execution?.status ?? ""}:${execution?.updatedAt ?? ""}`;
+    }
+    return `${item.kind}:${item.batch.id}:${item.batch.revisionKey}`;
+  }).join("|");
 }
 
 function operationShellExpandable(
@@ -489,7 +594,7 @@ function AgentActivitySpanItem({
   readonly renderAgentAvatar?: (span: ConversationAgentActivitySpan) => ReactNode;
 }): React.JSX.Element {
   const { t } = useI18n();
-  const items = span.items ?? projectConversationCommandBatches(span.rows, { participantScope: span.participantId ?? span.id });
+  const items = span.items ?? projectConversationActivity(span.rows, { participantScope: span.participantId ?? span.id });
   const hasDetail = items.length > 0;
   const avatar = renderAgentAvatar?.(span);
   const headContent = (
@@ -657,33 +762,78 @@ function ActiveTurnItemStream({
     ? "conversation-work-cell-agent-stream"
     : "conversation-work-cell-active-stream";
   const ariaLabel = scope === "agent" ? t("Agent activity detail") : t("Active work stream");
+  const atomicItemCount = items.reduce((count, item) => {
+    if (item.kind === "operation") {
+      return count + 1;
+    }
+    if (item.kind === "exploration_batch") {
+      return count + item.batch.rows.length;
+    }
+    return count + item.batch.commands.reduce(
+      (commandCount, command) => commandCount + 1 + (command.leadingRows?.length ?? 0),
+      0,
+    );
+  }, 0);
+  const density = atomicItemCount > 10 ? "dense" : "default";
   if (items.length === 0) {
     return (
-      <div className={`${className} empty`} data-conversation-work-stream={scope}>
+      <div
+        className={`${className} empty`}
+        data-activity-density={density}
+        data-conversation-work-stream={scope}
+      >
         <Clock3 size={13} />
         <span>{t("Waiting for activity")}</span>
       </div>
     );
   }
   return (
-    <div className={className} aria-label={ariaLabel} data-conversation-work-stream={scope}>
-      {items.map((item) => item.kind === "command_batch" ? (
-        <ConversationCommandBatch
-          key={item.batch.id}
-          batch={item.batch}
-          renderCommand={(command) => (
-            <WorkCellRow
-              key={command.id}
-              row={commandBatchRow(command)}
-              compact
-              cwd={cwd}
-              loadPreview={loadPreview}
+    <div
+      className={className}
+      aria-label={ariaLabel}
+      data-activity-density={density}
+      data-conversation-work-stream={scope}
+    >
+      {items.map((item) => {
+        if (item.kind === "command_batch") {
+          return (
+            <ConversationCommandBatch
+              key={item.batch.id}
+              batch={item.batch}
+              renderCommand={(command) => [
+                ...(command.leadingRows ?? []).map((row) => (
+                  <WorkCellRow
+                    key={`leading:${row.id}`}
+                    row={row}
+                    compact
+                    cwd={cwd}
+                    loadPreview={loadPreview}
+                  />
+                )),
+                <WorkCellRow
+                  key={command.id}
+                  row={commandBatchRow(command)}
+                  compact
+                  cwd={cwd}
+                  loadPreview={loadPreview}
+                />,
+              ]}
             />
-          )}
-        />
-      ) : (
-        <WorkCellRow key={item.row.id} row={item.row} compact cwd={cwd} loadPreview={loadPreview} />
-      ))}
+          );
+        }
+        if (item.kind === "exploration_batch") {
+          return (
+            <ConversationExplorationBatch
+              key={item.batch.id}
+              batch={item.batch}
+              renderRow={(row) => (
+                <WorkCellRow key={row.id} row={row} compact cwd={cwd} loadPreview={loadPreview} />
+              )}
+            />
+          );
+        }
+        return <WorkCellRow key={item.row.id} row={item.row} compact cwd={cwd} loadPreview={loadPreview} />;
+      })}
     </div>
   );
 }
@@ -774,7 +924,7 @@ function WorkCellRow({
         </span>
       ) : null}
       <span className="conversation-work-cell-row-copy">
-        <strong>{row.title}</strong>
+        <strong>{displayableRowTitle(row.title)}</strong>
         {changeSummary ? (
           <span className="conversation-work-cell-change-stat" aria-label={`+${changeSummary.additions} -${changeSummary.deletions}`}>
             <span className="add">+{changeSummary.additions}</span>
@@ -809,7 +959,7 @@ function WorkCellRow({
       {expanded && hasDetail ? (
         <div className={row.presentation === "shell" ? "conversation-work-cell-row-detail conversation-work-cell-shell-detail" : "conversation-work-cell-row-detail"}>
           {shellCommand ? <code className="conversation-work-cell-shell-command">$ {shellCommand}</code> : null}
-          {displayDescription ? <small>{displayDescription}</small> : null}
+          {displayDescription ? <MessageBodyRenderer className="conversation-work-cell-rich-description" text={displayDescription} cwd={cwd} compact /> : null}
           {detailLines.map((line, index) => (
             line.kind === "code"
               ? <code key={`${line.kind}:${index}`}>{line.text}</code>
@@ -948,6 +1098,11 @@ function displayableRowDescription(title: string, description?: string): string 
     return undefined;
   }
   return trimmed;
+}
+
+function displayableRowTitle(title: string): string {
+  const normalized = title.replace(/\s+/gu, " ").trim();
+  return normalized.length > 180 ? `${normalized.slice(0, 177).trimEnd()}...` : normalized;
 }
 
 function displayableRowMeta(meta?: string): string | undefined {

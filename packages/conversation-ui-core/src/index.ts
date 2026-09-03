@@ -10,6 +10,7 @@ export type {
 export type {
   ConversationAgentActivitySpan,
   ConversationAgentActivitySpanKind,
+  ConversationActivitySummary,
   ConversationCommandBatch,
   ConversationCommandBatchItem,
   ConversationCommandExecutionView,
@@ -22,6 +23,10 @@ export type {
   ConversationOperationCellStatus,
   ConversationOperationCellViewModel,
   ConversationOperationKind,
+  ConversationOperationExecutionView,
+  ConversationOperationSourceRef,
+  ConversationExplorationBatch,
+  ConversationTurnRunRole,
   ConversationWorkCellBranch,
   ConversationWorkCellChangePreview,
   ConversationWorkCellDetailsModel,
@@ -41,6 +46,12 @@ export {
   isCommandBatchEligible,
   projectConversationCommandBatches,
 } from "./command-batching.js";
+export {
+  isExplorationBatchEligible,
+  projectConversationActivity,
+  projectConversationExplorationBatches,
+  summarizeConversationActivity,
+} from "./activity-projection.js";
 export type {
   TerminalReportViewInput,
   TerminalReportViewModel,
@@ -68,6 +79,11 @@ export type {
   ConversationMessageEditCandidate,
   ConversationMessageEditScope,
 } from "./message-edit-policy.js";
+export { projectConversationMessagePresentation } from "./message-presentation.js";
+export type {
+  ConversationMessagePresentation,
+  ConversationMessagePresentationInput,
+} from "./message-presentation.js";
 export {
   getTerminalReportProjectionPolicy,
 } from "./terminal-report-projection-policy.js";

@@ -21,6 +21,12 @@ async function useEnglishLocale(page: Page): Promise<void> {
   });
 }
 
+const readyProviderCheck = {
+  ok: true,
+  message: "Ready",
+  checkedAt: "2026-08-25T00:00:00.000Z",
+} as const;
+
 function mockCommandExecutionAction(
   id: string,
   threadId: string,
@@ -35,6 +41,7 @@ function mockCommandExecutionAction(
     workspaceId: "workspace_default",
     threadId,
     runId,
+    attemptId: `attempt_${runId}`,
     toolCallId: `tool_${id}`,
     actionType: "bash",
     risk: "low",
@@ -183,7 +190,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await navigation.getByRole("button", { name: "Designer", exact: true }).click();
   await expect.poll(() => readSidebarSelection(page)).toEqual({ activeNav: [], selectedRows: ["Designer"] });
   const selectedTeammateRow = page.locator('.channel-left-drawer .sidebar-row-shell.selected:has-text("Designer")');
-  await expect(selectedTeammateRow).toHaveCSS("background-color", "rgb(245, 245, 245)");
+  await expect(selectedTeammateRow).toHaveCSS("background-color", "rgb(217, 216, 213)");
   expect(await selectedTeammateRow.evaluate((row) => getComputedStyle(row, "::before").content)).toBe("none");
   await expect(page.getByRole("heading", { name: "Designer", level: 1 })).toBeVisible();
 });
@@ -279,7 +286,7 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
 test("sidebar archive hides conversations and teammates without deleting data", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   state.aiTeammates = [createMockTeammate({ id: "teammate_sidebar_designer", displayName: "Designer" })];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -340,8 +347,9 @@ test("sidebar archive hides conversations and teammates without deleting data", 
 
 test("recent conversations only show records created from the conversation home", async ({ page }) => {
   await useEnglishLocale(page);
+  await page.setViewportSize({ width: 1600, height: 900 });
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   state.aiTeammates = [createMockTeammate({ id: "teammate_sidebar_designer", displayName: "Designer" })];
   await mockDaemon(page, state);
   await page.goto("/");
@@ -369,7 +377,8 @@ test("recent conversations only show records created from the conversation home"
   }).toBe("workspace_write");
   const conversationPage = page.getByLabel("Conversation page");
   await expect(conversationPage).toBeVisible();
-  const conversationToolbar = conversationPage.getByLabel("Conversation workspace toolbar");
+  const conversationToolbar = page.locator("[data-desktop-window-titlebar-surface='true']")
+    .getByLabel("Conversation workspace toolbar");
   await expect(conversationToolbar).toBeVisible();
   await expect(conversationToolbar).toHaveClass(/workspace-top-right-toolbar/);
   await expect(conversationToolbar.locator(".workspace-toolbar-action-label")).toHaveCount(0);
@@ -385,7 +394,7 @@ test("recent conversations only show records created from the conversation home"
   expect(conversationDetailsButtonBox?.height ?? 0).toBeGreaterThanOrEqual(32);
   await conversationToolbar.getByRole("button", { name: "Summary" }).click();
   await expect(page.locator(".normal-conversation-summary-popover")).toContainText("Workspace");
-  await conversationPage.getByRole("button", { name: "Show details" }).click();
+  await conversationToolbar.getByRole("button", { name: "Show details" }).click();
   const conversationDock = page.getByLabel("Conversation workspace dock");
   const conversationSummaryPanel = page.locator(".normal-conversation-summary-panel");
   await expect(conversationSummaryPanel).toBeVisible();
@@ -459,10 +468,390 @@ test("recent conversations only show records created from the conversation home"
   await expect(navigation.locator(".sidebar-recent-row").first()).toContainText("Second local conversation");
 });
 
+test("normal conversation queues approvals in its composer gate", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const threadId = "thread_normal_inline_approvals";
+  const turnId = "turn_normal_inline_approvals";
+  const runId = "run_normal_inline_approvals";
+  const timestamp = "2026-07-20T02:00:00.000Z";
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "conversation",
+    title: "Normal inline approvals",
+    objective: "Verify normal conversation approvals.",
+    status: "waiting_for_approval",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }];
+  state.turns = [{
+    id: turnId,
+    workspaceId: "workspace_default",
+    threadId,
+    kind: "initial_request",
+    status: "running",
+    title: "Normal inline approvals",
+    userInstruction: "Run the gated command.",
+    activeRunId: runId,
+    lastRunId: runId,
+    createdByActor: "local-user",
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }];
+  state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt: timestamp }];
+  state.runs.unshift({
+    id: runId,
+    status: "waiting_for_approval",
+    cwd,
+    taskId: "task_normal_inline_approvals",
+    providerPresetId: "provider_local",
+    providerName: "local-relay",
+    providerModel: "gpt-5.5",
+    taskSnapshot: { id: "task_normal_inline_approvals", title: "Normal inline approvals" },
+    providerSnapshot: {},
+    requestSnapshot: {},
+    eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+    threadId,
+    turnId,
+    workUnitId: "work_unit_normal_inline_approvals",
+    createdAt: timestamp,
+    startedAt: timestamp,
+    updatedAt: timestamp,
+  });
+  state.workUnits = [{
+    id: "work_unit_normal_inline_approvals",
+    workspaceId: "workspace_default",
+    kind: "conversation_run",
+    ownerType: "conversation_turn",
+    ownerId: turnId,
+    teammateId: "ling_agent",
+    idempotencyKey: "work_unit_normal_inline_approvals",
+    status: "waiting_for_approval",
+    priority: 0,
+    attemptCount: 1,
+    createdByActor: "local-user",
+    request: {},
+    timeoutPolicy: {
+      heartbeatIntervalMs: 10_000,
+      heartbeatTimeoutMs: 45_000,
+      idleTimeoutMs: 600_000,
+      hardTimeoutMs: 3_600_000,
+      cancelGraceMs: 15_000,
+    },
+    linkedRunId: runId,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }];
+  state.eventsByRun[runId] = [{
+    id: `event_${runId}`,
+    runId,
+    seq: 1,
+    ts: timestamp,
+    type: "assistant_text_delta",
+    data: { text: "Waiting for approval." },
+  }];
+  state.approvals = [
+    {
+      id: "approval_normal_shell",
+      runId,
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve normal shell command",
+      description: "echo normal",
+      payload: { type: "bash", command: "echo normal" },
+      status: "pending",
+      createdAt: timestamp,
+      availableDecisions: ["approve_once", "approve_command_rule", "deny"],
+      proposedCommandRule: {
+        prefix: ["echo"],
+        display: "echo",
+        fingerprint: "fingerprint_echo",
+        version: 1,
+      },
+    },
+    {
+      id: "approval_normal_whois",
+      runId,
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve normal whois command",
+      description: "whois example.com",
+      payload: { type: "bash", command: "whois example.com" },
+      status: "pending",
+      createdAt: "2026-07-20T02:00:00.500Z",
+      availableDecisions: ["approve_once", "approve_command_rule", "deny"],
+      proposedCommandRule: {
+        prefix: ["whois"],
+        display: "whois",
+        fingerprint: "fingerprint_whois",
+        version: 1,
+      },
+    },
+    {
+      id: "approval_normal_edit",
+      runId,
+      actionType: "edit",
+      risk: "low",
+      title: "Approve normal file edit",
+      description: "README.md",
+      payload: { type: "file_edit", path: "README.md" },
+      status: "pending",
+      createdAt: "2026-07-20T02:00:01.000Z",
+    },
+  ];
+  await mockDaemon(page, state);
+  await page.route(/\/approvals\/approval_normal_edit\/deny(?:\?.*)?$/u, async (route) => {
+    const approval = state.approvals.find((item) => item.id === "approval_normal_edit");
+    const thread = state.threads.find((item) => item.id === threadId);
+    if (!approval || !thread) {
+      await route.fulfill({ status: 404, json: { error: "fixture_not_found" } });
+      return;
+    }
+    approval.status = "denied";
+    approval.resolvedAt = "2026-07-20T02:00:02.000Z";
+    approval.resolvedBy = "local-user";
+    setTimeout(() => {
+      thread.status = "failed";
+      thread.activeRunId = undefined;
+      thread.updatedAt = approval.resolvedAt;
+    }, 150);
+    await route.fulfill({ json: { approval } });
+  });
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  const recentShell = navigation.locator(".sidebar-recent-row-shell").filter({ hasText: "Normal inline approvals" });
+  const recentRow = recentShell.locator(".sidebar-recent-row");
+  await expect(recentShell).toContainText("Waiting for approval");
+  await recentRow.click();
+  const conversation = page.getByLabel("Conversation page");
+  const gate = conversation.getByRole("region", { name: "Allow this action?" });
+  await expect(gate).toBeVisible();
+  await expect(conversation.getByLabel("New conversation composer")).toHaveCount(0);
+  await expect(page.getByRole("dialog", { name: "Allow this action?" })).toHaveCount(0);
+  await expect(gate).toContainText("Run command: echo normal");
+  await expect(gate).not.toContainText("Approve normal shell command");
+  await expect(gate).not.toContainText("pending approvals");
+  await expect(gate).not.toContainText("Approve normal file edit");
+  await expect(gate.getByRole("button", { name: "Allow options" })).toBeVisible();
+  const splitButton = gate.locator('[data-ling-split-button="true"]');
+  const splitPrimary = splitButton.getByRole("button", { name: "Allow once" });
+  const splitTrigger = splitButton.getByRole("button", { name: "Allow options" });
+  const splitGeometry = await Promise.all([
+    splitButton.boundingBox(),
+    splitPrimary.boundingBox(),
+    splitTrigger.boundingBox(),
+  ]);
+  expect(splitGeometry.every(Boolean)).toBe(true);
+  expect(splitGeometry[1]!.y).toBe(splitGeometry[2]!.y);
+  expect(splitGeometry[1]!.height).toBe(splitGeometry[2]!.height);
+  expect(splitGeometry[1]!.x + splitGeometry[1]!.width).toBe(splitGeometry[2]!.x);
+  expect(splitGeometry[0]!.height).toBe(splitGeometry[1]!.height + 2);
+  await expect(splitButton).toHaveCSS("overflow", "hidden");
+  await expect(splitPrimary).toHaveCSS("border-radius", "0px");
+  await expect(splitTrigger).toHaveCSS("border-radius", "0px");
+  const pendingWorkCell = conversation.locator('[data-approval-presentation-owner="composer_gate"]');
+  await expect(pendingWorkCell).toBeVisible();
+  const pendingMessage = pendingWorkCell.locator('xpath=ancestor::article[@data-conversation-message-row][1]');
+  await expect(pendingMessage).toHaveClass(/message-bubble-chat-blocked/u);
+  await expect(conversation.locator(".message-bubble-chat-blocked")).toHaveCount(1);
+  await expect(conversation.locator(".normal-conversation-message-row.local-user")).not.toHaveClass(/message-bubble-chat-blocked/u);
+  await expect(pendingMessage.locator(".normal-conversation-message-actions")).toHaveCount(0);
+  const pendingMessageContent = pendingMessage.locator(":scope > .message-content");
+  await expect(pendingMessageContent).toHaveCSS("padding-top", "8px");
+  await expect(pendingMessageContent).toHaveCSS("padding-left", "12px");
+  const pendingMessageTrailingSpace = await pendingMessageContent.evaluate((content) => {
+    const contentStyle = getComputedStyle(content);
+    const visibleFlowChildren = Array.from(content.children).filter((child) => {
+      const style = getComputedStyle(child);
+      return style.display !== "none"
+        && style.visibility !== "hidden"
+        && Number.parseFloat(style.opacity) > 0
+        && style.position !== "absolute";
+    });
+    const contentRect = content.getBoundingClientRect();
+    const lastVisibleChildRect = visibleFlowChildren.at(-1)?.getBoundingClientRect();
+    return {
+      actual: contentRect.bottom - (lastVisibleChildRect?.bottom ?? contentRect.top),
+      expected: Number.parseFloat(contentStyle.paddingBottom) + Number.parseFloat(contentStyle.borderBottomWidth),
+    };
+  });
+  expect(Math.abs(pendingMessageTrailingSpace.actual - pendingMessageTrailingSpace.expected)).toBeLessThanOrEqual(1);
+  await expect(pendingWorkCell).toContainText("Waiting for approval");
+  await expect(pendingWorkCell).toContainText("Run command: echo normal");
+  await expect(pendingWorkCell).not.toContainText("Approve normal shell command");
+  await expect(pendingWorkCell).not.toContainText("Approve normal file edit");
+  await expect(pendingWorkCell.locator(".conversation-work-cell-evidence-summary")).toHaveCount(0);
+  await expect(pendingWorkCell.locator(".conversation-operation-shell-body")).toHaveCount(0);
+  await navigation.getByRole("button", { name: "New conversation" }).click();
+  await expect(page.getByLabel("Conversation home")).toBeVisible();
+  await recentRow.click();
+  await expect(gate).toBeVisible();
+
+  await gate.getByRole("button", { name: "Allow once" }).click();
+  await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_shell")?.status).toBe("approved");
+  await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_shell")?.decisionKind).toBe("approve_once");
+  expect(state.approvalCommandRules).toHaveLength(0);
+  await expect(gate).toContainText("Run command: whois example.com");
+  await gate.getByRole("button", { name: "Allow options" }).click();
+  const allowSimilarCommand = page.getByRole("menuitem", { name: /Allow similar commands/ });
+  await expect(allowSimilarCommand).toContainText("this workspace");
+  await allowSimilarCommand.click();
+  await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_whois")?.decisionKind).toBe("approve_command_rule");
+  await expect.poll(() => state.approvalCommandRules.find((rule) => !rule.revokedAt)?.display).toBe("whois");
+  expect(state.approvalDecisionRequests.find((request) => request.approvalId === "approval_normal_whois")?.body).toEqual({
+    decisionKind: "approve_command_rule",
+    proposedRuleFingerprint: "fingerprint_whois",
+  });
+  await expect(gate).toContainText("Modify file: README.md");
+  await expect(gate).not.toContainText("Approve normal file edit");
+  await expect(gate).not.toContainText("pending approvals");
+  await expect(gate.getByRole("button", { name: "Allow options" })).toHaveCount(0);
+
+  await gate.getByRole("button", { name: "Deny" }).click();
+  await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_edit")?.status).toBe("denied");
+  await expect(gate).toHaveCount(0);
+  await expect(conversation.getByLabel("New conversation composer")).toBeVisible();
+  await expect(recentShell).not.toContainText("Waiting for approval");
+
+  await navigation.getByRole("button", { name: "Settings" }).click();
+  await page.getByLabel("Settings sections").getByRole("button", { name: "Default authorization" }).click();
+  const commandRules = page.getByRole("region", { name: "Terminal command rules" });
+  await expect(commandRules).toContainText("whois");
+  await commandRules.getByRole("button", { name: "Revoke" }).click();
+  await expect(commandRules).toContainText("No saved command rules");
+  await expect.poll(() => state.approvalCommandRules.find((rule) => rule.display === "whois")?.revokedAt).toBeTruthy();
+});
+
+test("teammate private chat resolves its runtime approval through its composer gate", async ({ page }) => {
+  await useEnglishLocale(page);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const teammateId = "teammate_private_approval";
+  const runId = "run_private_approval";
+  const directThreadId = `tdthread_${teammateId}`;
+  const executionThreadId = "thread_private_approval";
+  const sourceMessageId = "tdmsg_private_approval_source";
+  const replyMessageId = "tdmsg_private_approval_reply";
+  const workUnitId = "work_unit_private_approval";
+  state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Private Approver" })];
+  state.runs.unshift({
+    ...state.runs[0],
+    id: runId,
+    channelId: undefined,
+    taskId: undefined,
+    teammateId,
+    threadId: executionThreadId,
+    workUnitId,
+    status: "waiting_for_approval",
+    updatedAt: "2026-07-20T03:00:00.000Z",
+  });
+  state.workUnits = [{
+    id: workUnitId,
+    workspaceId: "workspace_default",
+    kind: "teammate_direct_reply",
+    ownerType: "teammate_direct_message",
+    ownerId: sourceMessageId,
+    teammateId,
+    idempotencyKey: workUnitId,
+    status: "waiting_for_approval",
+    priority: 0,
+    attemptCount: 1,
+    createdByActor: "user",
+    request: { sourceMessageId },
+    timeoutPolicy: {
+      heartbeatIntervalMs: 10_000,
+      heartbeatTimeoutMs: 45_000,
+      idleTimeoutMs: 600_000,
+      hardTimeoutMs: 3_600_000,
+      cancelGraceMs: 15_000,
+    },
+    linkedRunId: runId,
+    linkedMessageId: replyMessageId,
+    createdAt: "2026-07-20T03:00:00.000Z",
+    updatedAt: "2026-07-20T03:00:00.000Z",
+  }];
+  state.teammateDirectMessages = [
+    {
+      id: sourceMessageId,
+      workspaceId: "workspace_default",
+      threadId: directThreadId,
+      teammateId,
+      authorType: "local-user",
+      authorId: "local-user",
+      body: "Please update the private notes.",
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "ready",
+      createdAt: "2026-07-20T02:59:59.000Z",
+      updatedAt: "2026-07-20T02:59:59.000Z",
+    },
+    {
+      id: replyMessageId,
+      workspaceId: "workspace_default",
+      threadId: directThreadId,
+      teammateId,
+      authorType: "ai-teammate",
+      authorId: teammateId,
+      body: "Waiting for the private approval.",
+      attachmentIds: [],
+      linkPreviewIds: [],
+      fileRefs: [],
+      status: "pending",
+      linkedRunId: runId,
+      createdAt: "2026-07-20T03:00:00.000Z",
+      updatedAt: "2026-07-20T03:00:00.000Z",
+    },
+  ];
+  state.approvals = [{
+    id: "approval_private_bash",
+    runId,
+    actionType: "bash",
+    risk: "medium",
+    title: "Approve private command",
+    description: "whois private.example",
+    payload: { type: "bash", command: "whois private.example" },
+    status: "pending",
+    createdAt: "2026-07-20T03:00:00.000Z",
+    availableDecisions: ["approve_once", "approve_command_rule", "deny"],
+    proposedCommandRule: {
+      prefix: ["whois"],
+      display: "whois",
+      fingerprint: "fingerprint_private_whois",
+      version: 1,
+    },
+  }];
+  await mockDaemon(page, state);
+  await page.goto("/");
+
+  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Private Approver" }).click();
+  const gate = page.getByRole("region", { name: "Allow this action?" });
+  await expect(page.locator(".teammate-direct-composer")).toHaveCount(0);
+  await expect(gate).toContainText("Run command: whois private.example");
+  await expect(gate).not.toContainText("Approve private command");
+  const pendingWorkCell = page.locator('.teammate-private-feed-owner [data-approval-presentation-owner="composer_gate"]');
+  await expect(pendingWorkCell).toBeVisible();
+  const pendingMessage = pendingWorkCell.locator('xpath=ancestor::article[@data-conversation-message-row][1]');
+  await expect(pendingMessage.locator(".teammate-message-actions")).toHaveCount(0);
+  await expect(pendingWorkCell).toContainText("Waiting for approval");
+  await expect(pendingWorkCell).toContainText("Run command: whois private.example");
+  await expect(pendingWorkCell).not.toContainText("Approve private command");
+  await expect(pendingWorkCell.locator(".conversation-operation-shell-body")).toHaveCount(0);
+  await gate.getByRole("button", { name: "Allow options" }).click();
+  await page.getByRole("menuitem", { name: /Allow similar commands/ }).click();
+  await expect.poll(() => state.approvals[0]?.decisionKind).toBe("approve_command_rule");
+  await expect.poll(() => state.approvalCommandRules[0]?.display).toBe("whois");
+  await expect(gate).toHaveCount(0);
+  await expect(page.locator(".teammate-direct-composer")).toBeVisible();
+});
+
 test("normal conversation full access confirms before creating the run", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   state.workspaceSettings = {
     ...state.workspaceSettings,
     defaultAuthorizationMode: "always",
@@ -490,7 +879,7 @@ test("normal conversation full access confirms before creating the run", async (
   await expect(home.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", "Inspect trusted files");
 
   await home.getByRole("button", { name: "Send" }).click();
-  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Start with full access" }).click();
+  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Enable full access" }).click();
   await expect.poll(() => state.runs.length).toBe(1);
   await expect.poll(() => {
     const snapshot = state.runs[0]?.requestSnapshot;
@@ -504,12 +893,13 @@ test("normal conversation full access confirms before creating the run", async (
     const snapshot = state.runs[0]?.requestSnapshot;
     return isRecord(snapshot) ? [snapshot.authorizationMode, snapshot.workspaceAccessMode] : [];
   }).toEqual(["always", "full_access"]);
+  await expect(page.getByRole("dialog", { name: "Allow this action?" })).toHaveCount(0);
 });
 
 test("normal conversation composer sends and replays uploaded attachments", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -546,8 +936,10 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   await expect(messages).toContainText("Review this brief");
   await expect(messages.locator(".conversation-attachment-chip")).toContainText("brief.txt");
   await expect(conversationPage.locator(".composer-preview-strip")).toHaveCount(0);
-  await expect(conversationPage.getByLabel("Conversation workspace toolbar").getByRole("button", { name: /^Files/ })).toHaveCount(0);
-  await conversationPage.getByRole("button", { name: "Show details" }).click();
+  const conversationToolbar = page.locator("[data-desktop-window-titlebar-surface='true']")
+    .getByLabel("Conversation workspace toolbar");
+  await expect(conversationToolbar.getByRole("button", { name: /^Files/ })).toHaveCount(0);
+  await conversationToolbar.getByRole("button", { name: "Show details" }).click();
   const conversationDock = page.getByLabel("Conversation workspace dock");
   await expect(conversationDock).toBeVisible();
   await conversationDock.getByRole("button", { name: "Files" }).click();
@@ -963,6 +1355,13 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(report).toContainText("保留有意义的变更说明");
   await expect(report.locator(".terminal-report-section.kind-change .terminal-report-row-title small")).toHaveCount(0);
   await expect(report.locator(".terminal-report-section.kind-verification .terminal-report-row-title small")).toHaveCount(0);
+  const verificationRow = report.locator(".terminal-report-section.kind-verification .terminal-report-row").first();
+  const commandDisclosure = verificationRow.locator("[data-terminal-report-command-disclosure]");
+  await expect(commandDisclosure).toBeVisible();
+  await expect(commandDisclosure.locator(":scope > code")).toBeHidden();
+  await commandDisclosure.locator(":scope > summary").click();
+  await expect(commandDisclosure.locator(":scope > code")).toBeVisible();
+  await expect(commandDisclosure.locator(":scope > code")).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
   const reportFileLink = report.locator(".terminal-report-file-reference").first();
   await expect(reportFileLink).toBeVisible();
   await expect(reportFileLink).toHaveText("ConversationHome-1.tsx");
@@ -989,14 +1388,13 @@ test("executed normal conversation renders one structured terminal report", asyn
   await expect(workCell.locator(".conversation-work-cell-artifact-row")).toHaveCount(1);
   await expect(workCell).toContainText("ConversationHome.tsx");
   await expect(workCell).toContainText("已编辑 2 个文件");
+  await expect(workCell.locator(".conversation-work-cell-change-file")).toHaveCount(0);
   await expect.poll(() => workCell.evaluate((element) => ({
     artifactPaddingLeft: getComputedStyle(element.querySelector(".conversation-work-cell-artifacts") as Element).paddingLeft,
     artifactThumbWidth: getComputedStyle(element.querySelector(".conversation-work-cell-artifact-row .conversation-work-cell-artifact-thumb") as Element).width,
-    changeFilePaddingLeft: getComputedStyle(element.querySelector(".conversation-work-cell-change-file") as Element).paddingLeft,
   }))).toEqual({
     artifactPaddingLeft: "0px",
     artifactThumbWidth: "30px",
-    changeFilePaddingLeft: "0px",
   });
   await expect(workCell.locator(".conversation-work-cell-artifact-row").getByRole("button", { name: "打开方式" })).toBeVisible();
   await expect(workCell).not.toContainText("Generated file metadata");
@@ -1145,7 +1543,7 @@ test("persisted normal conversation without work evidence renders only the assis
 
 test("conversation home follows user language and shows thinking as off", async ({ page }) => {
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -1250,7 +1648,8 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(settingsSections.getByRole("button", { name: /^User profile$/ })).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: /Interface preferences/ })).toBeVisible();
   await settingsSections.getByRole("button", { name: /^User profile$/ }).click();
-  await expect(page.getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "User profile", level: 1 })).toBeVisible();
+  await expect(page.locator(".settings-content-stack").getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(0);
   await expect(page.locator('[data-profile-section="identity"]')).toBeVisible();
   await expect(page.getByRole("heading", { name: "Identity information" })).toHaveCount(0);
   await expect(page.getByLabel("Handle")).toHaveCount(0);
@@ -1308,7 +1707,7 @@ test("conversation home uses plus as the single attachment entry and keeps slash
 test("conversation home sends with workspace cwd without a folder picker", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({ id: "provider_local", displayName: "Local Relay", model: "gpt-5.5", lastCheck: readyProviderCheck })];
   await mockDaemon(page, state);
   await page.goto("/");
 
@@ -1496,7 +1895,8 @@ test("settings keeps configuration tools embedded while Work Board stays hidden 
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".provider-workbench[aria-label='Model Workbench']")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
+  await expect(page.locator(".provider-workbench").getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
 
@@ -1506,7 +1906,8 @@ test("settings keeps configuration tools embedded while Work Board stays hidden 
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "AI Teammates", level: 1 })).toBeVisible();
+  await expect(page.locator(".settings-content-stack").getByRole("heading", { name: "AI Teammates", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toBeVisible();
   await expect(settingsSections).toBeVisible();
 

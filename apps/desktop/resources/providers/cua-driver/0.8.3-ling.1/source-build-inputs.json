@@ -56,7 +56,6 @@
     "cargoVersion": "1.97.1",
     "rustToolchainFile": "toolchains/rust-toolchain.toml",
     "darwin": {
-      "runner": "ling-cua-driver-macos-arm64-v1",
       "developerDir": "/Applications/Xcode.app/Contents/Developer",
       "xcodeVersion": "26.6",
       "xcodeBuildVersion": "17F113",
@@ -90,7 +89,6 @@
       }
     },
     "win32X64": {
-      "runner": "ling-cua-driver-windows-x64-v1",
       "visualStudioVersion": "17.14.37502.11",
       "msvcToolsetVersion": "14.44.35211",
       "windowsSdkVersion": "10.0.26100.0",

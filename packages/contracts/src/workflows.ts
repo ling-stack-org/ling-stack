@@ -4,7 +4,7 @@ import type { RunArtifact } from "./artifacts.js";
 import type { ChannelExecutionProposal, ChannelExecutionProposalStepSource, ChannelHandoff } from "./channels.js";
 import type { MemoryObject } from "./memory.js";
 import type { RunSession, RunnerFallbackReason, RunnerRequestSource } from "./runtime.js";
-import type { ResponseLanguage } from "./settings.js";
+import type { ResponseLanguagePreference } from "./settings.js";
 import type { RunTool } from "./shared.js";
 import type { WorkflowParticipantProviderBindingV1 } from "./conversation-model-binding.js";
 import type { Task } from "./tasks.js";
@@ -120,6 +120,51 @@ export function isDelegatedEvidenceRefV1(value: unknown): value is DelegatedEvid
     && isNonEmptyText(record.id);
 }
 
+function isWorkflowPacketSourceRefV1(value: unknown): value is WorkflowPacketSourceRef {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  return Object.keys(record).every((key) => key === "type" || key === "id" || key === "label")
+    && workflowPacketSourceRefTypes.includes(record.type as WorkflowPacketSourceRefType)
+    && isNonEmptyText(record.id)
+    && (record.label === undefined || isNonEmptyText(record.label));
+}
+
+function isDelegatedLineageV1(value: unknown): value is DelegatedLineageV1 {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const record = value as Record<string, unknown>;
+  if (!Object.keys(record).every((key) => [
+    "workflowId", "workflowStepId", "participantId", "runId", "attemptId", "sourceRefs",
+  ].includes(key))
+    || !isNonEmptyText(record.workflowId)
+    || !isNonEmptyText(record.workflowStepId)
+    || !isNonEmptyText(record.participantId)
+    || (record.runId !== null && !isNonEmptyText(record.runId))
+    || (record.attemptId !== null && !isNonEmptyText(record.attemptId))
+    || ((record.runId === null) !== (record.attemptId === null))
+    || !Array.isArray(record.sourceRefs)
+    || record.sourceRefs.length === 0
+    || !record.sourceRefs.every(isWorkflowPacketSourceRefV1)) return false;
+
+  const sourceRefKeys = new Set(record.sourceRefs.map((ref) => `${ref.type}:${ref.id}`));
+  return sourceRefKeys.size === record.sourceRefs.length
+    && sourceRefKeys.has(`workflow:${record.workflowId}`)
+    && sourceRefKeys.has(`workflow_step:${record.workflowStepId}`)
+    && (record.runId === null || sourceRefKeys.has(`run:${record.runId}`))
+    && (record.attemptId === null || sourceRefKeys.has(`attempt:${record.attemptId}`));
+}
+
+function delegatedEvidenceSourceRefType(kind: DelegatedEvidenceRefKindV1): WorkflowPacketSourceRefType {
+  return kind === "execution_action" || kind === "conversation_item" ? kind : "artifact";
+}
+
+function delegatedEvidenceRefsCoveredByLineage(
+  lineage: DelegatedLineageV1,
+  evidenceRefs: readonly DelegatedEvidenceRefV1[],
+): boolean {
+  const sourceRefKeys = new Set(lineage.sourceRefs.map((ref) => `${ref.type}:${ref.id}`));
+  return evidenceRefs.every((ref) => sourceRefKeys.has(`${delegatedEvidenceSourceRefType(ref.kind)}:${ref.id}`));
+}
+
 export function isDelegatedOutcomeV1(value: unknown): value is DelegatedOutcomeV1 {
   if (!value || typeof value !== "object" || Array.isArray(value)) return false;
   const record = value as Record<string, unknown>;
@@ -130,9 +175,14 @@ export function isDelegatedOutcomeV1(value: unknown): value is DelegatedOutcomeV
     return isNonEmptyText(record.workflowId)
       && isNonEmptyText(record.workflowStepId)
       && isNonEmptyText(record.participantId)
+      && isDelegatedLineageV1(record.lineage)
+      && record.lineage.workflowId === record.workflowId
+      && record.lineage.workflowStepId === record.workflowStepId
+      && record.lineage.participantId === record.participantId
       && evidenceRefsValid(record.evidenceRefs)
       && record.evidenceRefs.length > 0
-      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "evidenceRefs"].includes(key));
+      && delegatedEvidenceRefsCoveredByLineage(record.lineage, record.evidenceRefs)
+      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "lineage", "evidenceRefs"].includes(key));
   }
   if (record.kind === "workflow_started") {
     return isNonEmptyText(record.workflowId)
@@ -148,8 +198,13 @@ export function isDelegatedOutcomeV1(value: unknown): value is DelegatedOutcomeV
       && Array.isArray(record.missingRequirements)
       && record.missingRequirements.every(isNonEmptyText)
       && record.missingRequirements.length > 0
+      && isDelegatedLineageV1(record.lineage)
+      && record.lineage.workflowId === record.workflowId
+      && record.lineage.workflowStepId === record.workflowStepId
+      && record.lineage.participantId === record.participantId
       && evidenceRefsValid(record.evidenceRefs)
-      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "code", "reason", "missingRequirements", "evidenceRefs"].includes(key));
+      && delegatedEvidenceRefsCoveredByLineage(record.lineage, record.evidenceRefs)
+      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "code", "reason", "missingRequirements", "lineage", "evidenceRefs"].includes(key));
   }
   if (record.kind === "failed" || record.kind === "cancelled") {
     return isNonEmptyText(record.workflowId)
@@ -157,8 +212,13 @@ export function isDelegatedOutcomeV1(value: unknown): value is DelegatedOutcomeV
       && isNonEmptyText(record.participantId)
       && isDelegatedTerminalCodeForKindV1(record.kind, record.code)
       && isNonEmptyText(record.reason)
+      && isDelegatedLineageV1(record.lineage)
+      && record.lineage.workflowId === record.workflowId
+      && record.lineage.workflowStepId === record.workflowStepId
+      && record.lineage.participantId === record.participantId
       && evidenceRefsValid(record.evidenceRefs)
-      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "code", "reason", "evidenceRefs"].includes(key));
+      && delegatedEvidenceRefsCoveredByLineage(record.lineage, record.evidenceRefs)
+      && Object.keys(record).every((key) => ["kind", "workflowId", "workflowStepId", "participantId", "code", "reason", "lineage", "evidenceRefs"].includes(key));
   }
   return false;
 }
@@ -378,20 +438,26 @@ export interface WorkflowStepOutputRef {
   readonly branchGroupId?: string;
 }
 
-export type WorkflowPacketSourceRefType =
-  | "channel_message"
-  | "channel_brief"
-  | "channel_decision"
-  | "context_summary"
-  | "task"
-  | "run"
-  | "workflow"
-  | "workflow_step"
-  | "workflow_handoff_intent"
-  | "workflow_selector_decision"
-  | "artifact"
-  | "approval"
-  | "memory";
+export const workflowPacketSourceRefTypes = [
+  "channel_message",
+  "conversation_item",
+  "channel_brief",
+  "channel_decision",
+  "context_summary",
+  "task",
+  "run",
+  "attempt",
+  "workflow",
+  "workflow_step",
+  "workflow_handoff_intent",
+  "workflow_selector_decision",
+  "execution_action",
+  "artifact",
+  "approval",
+  "memory",
+] as const;
+
+export type WorkflowPacketSourceRefType = (typeof workflowPacketSourceRefTypes)[number];
 
 export interface WorkflowPacketSourceRef {
   readonly type: WorkflowPacketSourceRefType;
@@ -615,6 +681,22 @@ export interface DelegatedEvidenceRefV1 {
   readonly id: string;
 }
 
+/**
+ * Canonical identity for every terminal delegated outcome.
+ *
+ * A pre-run blocker has no Run or Attempt, so those values are explicitly null
+ * instead of being omitted. This keeps the difference between "not started"
+ * and "lineage was lost" observable to the completion gate and the UI.
+ */
+export interface DelegatedLineageV1 {
+  readonly workflowId: string;
+  readonly workflowStepId: string;
+  readonly participantId: string;
+  readonly runId: string | null;
+  readonly attemptId: string | null;
+  readonly sourceRefs: readonly WorkflowPacketSourceRef[];
+}
+
 export interface DelegatedStepRequirementV1 {
   readonly schemaVersion: 1;
   readonly workflowId: string;
@@ -706,6 +788,7 @@ export type DelegatedOutcomeV1 =
       readonly workflowId: string;
       readonly workflowStepId: string;
       readonly participantId: string;
+      readonly lineage: DelegatedLineageV1;
       readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
     }
   | {
@@ -721,6 +804,7 @@ export type DelegatedOutcomeV1 =
       readonly code: DelegatedBlockCodeV1;
       readonly reason: string;
       readonly missingRequirements: readonly string[];
+      readonly lineage: DelegatedLineageV1;
       readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
   }
   | {
@@ -730,6 +814,7 @@ export type DelegatedOutcomeV1 =
       readonly participantId: string;
       readonly code: DelegatedTerminalCodeV1;
       readonly reason: string;
+      readonly lineage: DelegatedLineageV1;
       readonly evidenceRefs: readonly DelegatedEvidenceRefV1[];
     };
 
@@ -883,7 +968,7 @@ export interface ChannelWorkflowMetadata {
   readonly workflowGraphFingerprint?: string;
   readonly requiredParticipantManifest?: RequiredParticipantManifestV1;
   readonly completionGate?: WorkflowCompletionGateV1;
-  readonly responseLanguage?: ResponseLanguage;
+  readonly responseLanguage?: ResponseLanguagePreference;
 }
 
 export type WorkflowStepExecutionVerificationStatusV1 = "pending" | "verified" | "blocked" | "failed";

@@ -1,8 +1,10 @@
-import { Eye, FolderOpen, Hand, Shield, ShieldCheck, type LucideIcon } from "lucide-react";
+import { Eye, FolderOpen, Hand, RefreshCw, Shield, ShieldCheck, Trash2, type LucideIcon } from "lucide-react";
+import { useEffect, useRef, useState } from "react";
 import { useI18n } from "../../i18n.js";
+import { listApprovalCommandRules, revokeApprovalCommandRule } from "../../api.js";
 import { resolveAuthorizationMode, resolveWorkspaceAccessMode } from "../../lib/conversation-authorization.js";
-import { DataRow, SegmentedControl, SegmentedControlItem } from "../../shared/ui/index.js";
-import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "../../types.js";
+import { Button, DataRow, SegmentedControl, SegmentedControlItem } from "../../shared/ui/index.js";
+import type { ApprovalCommandRule, AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "../../types.js";
 
 interface AuthorizationChoice<Value extends string> {
   readonly value: Value;
@@ -12,6 +14,7 @@ interface AuthorizationChoice<Value extends string> {
 }
 
 export function ExecutionPermissionsSettingsPanel({
+  cwd,
   workspaceDefaultPermissionMode,
   workspaceDefaultPermissionPreset,
   workspaceDefaultAuthorizationMode,
@@ -19,6 +22,7 @@ export function ExecutionPermissionsSettingsPanel({
   onWorkspaceDefaultAuthorizationChange,
   onWorkspaceDefaultWorkspaceAccessChange,
 }: {
+  readonly cwd: string;
   readonly workspaceDefaultPermissionMode?: SessionPermissionMode;
   readonly workspaceDefaultPermissionPreset?: PermissionPreset;
   readonly workspaceDefaultAuthorizationMode?: AuthorizationMode;
@@ -100,6 +104,125 @@ export function ExecutionPermissionsSettingsPanel({
         options={accessOptions}
         onChange={onWorkspaceDefaultWorkspaceAccessChange}
       />
+      <ApprovalCommandRulesSettings cwd={cwd} />
+    </section>
+  );
+}
+
+function ApprovalCommandRulesSettings({ cwd }: { readonly cwd: string }): React.JSX.Element {
+  const { t } = useI18n();
+  const [rules, setRules] = useState<readonly ApprovalCommandRule[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState("");
+  const [revokingId, setRevokingId] = useState("");
+  const cwdRef = useRef(cwd);
+  const listRequestSequenceRef = useRef(0);
+  cwdRef.current = cwd;
+
+  async function refresh(): Promise<void> {
+    const workspaceCwd = cwd;
+    const requestId = ++listRequestSequenceRef.current;
+    setLoading(true);
+    setError("");
+    try {
+      const response = await listApprovalCommandRules(workspaceCwd);
+      if (cwdRef.current !== workspaceCwd || listRequestSequenceRef.current !== requestId) return;
+      setRules(response.rules);
+    } catch (caught) {
+      if (cwdRef.current !== workspaceCwd || listRequestSequenceRef.current !== requestId) return;
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (cwdRef.current === workspaceCwd && listRequestSequenceRef.current === requestId) setLoading(false);
+    }
+  }
+
+  useEffect(() => {
+    const requestId = ++listRequestSequenceRef.current;
+    let active = true;
+    setLoading(true);
+    setError("");
+    setRules([]);
+    setRevokingId("");
+    void listApprovalCommandRules(cwd)
+      .then((response) => {
+        if (active && listRequestSequenceRef.current === requestId) setRules(response.rules);
+      })
+      .catch((caught) => {
+        if (active && listRequestSequenceRef.current === requestId) {
+          setError(caught instanceof Error ? caught.message : String(caught));
+        }
+      })
+      .finally(() => {
+        if (active && listRequestSequenceRef.current === requestId) setLoading(false);
+      });
+    return () => {
+      active = false;
+    };
+  }, [cwd]);
+
+  async function revoke(rule: ApprovalCommandRule): Promise<void> {
+    const workspaceCwd = cwd;
+    setRevokingId(rule.id);
+    setError("");
+    try {
+      await revokeApprovalCommandRule(workspaceCwd, rule.id);
+      if (cwdRef.current !== workspaceCwd) return;
+      setRules((current) => current.filter((item) => item.id !== rule.id));
+    } catch (caught) {
+      if (cwdRef.current !== workspaceCwd) return;
+      setError(caught instanceof Error ? caught.message : String(caught));
+    } finally {
+      if (cwdRef.current === workspaceCwd) setRevokingId("");
+    }
+  }
+
+  return (
+    <section className="settings-command-rules" aria-label={t("Terminal command rules")}>
+      <header className="settings-command-rules-header">
+        <span className="settings-authorization-copy">
+          <strong>{t("Terminal command rules")}</strong>
+          <small>{t("Commands allowed with Allow similar commands in this workspace.")}</small>
+        </span>
+        {error ? (
+          <Button leadingIcon={<RefreshCw aria-hidden="true" size={14} />} size="sm" variant="secondary" onClick={() => void refresh()}>
+            {t("Retry")}
+          </Button>
+        ) : null}
+      </header>
+      {error ? <p className="settings-command-rules-error" role="alert">{error}</p> : null}
+      {loading ? (
+        <p className="settings-command-rules-empty" role="status">{t("Loading command rules")}</p>
+      ) : rules.length === 0 ? (
+        <p className="settings-command-rules-empty">{t("No saved command rules")}</p>
+      ) : (
+        <div className="settings-command-rule-list">
+          {rules.map((rule) => (
+            <DataRow
+              compact
+              className="settings-command-rule-row"
+              key={rule.id}
+              identity={(
+                <span className="settings-authorization-copy">
+                  <strong><code>{rule.display}</code></strong>
+                  <small>{t("Allows commands starting with {command}", { command: rule.display })}</small>
+                </span>
+              )}
+              actions={(
+                <Button
+                  leadingIcon={<Trash2 aria-hidden="true" size={14} />}
+                  loading={revokingId === rule.id}
+                  loadingLabel={t("Revoking command rule")}
+                  size="sm"
+                  variant="secondary"
+                  onClick={() => void revoke(rule)}
+                >
+                  {t("Revoke")}
+                </Button>
+              )}
+            />
+          ))}
+        </div>
+      )}
     </section>
   );
 }

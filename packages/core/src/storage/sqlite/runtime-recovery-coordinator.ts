@@ -2,6 +2,7 @@ import type { LingApprovalCheckpoint } from "../../approval-checkpoints.js";
 import type { ApprovalRequest, ListApprovalRequestsOptions } from "../../approval-types.js";
 import {
   type LingThread,
+  type RunEventDataByType,
   type RunEventType,
   type RunSession,
   type UpdateLingThreadInput,
@@ -26,7 +27,7 @@ export interface SqliteRuntimeRecoveryCoordinatorPorts {
   readonly expireResourceLeases: (now: string) => number;
   readonly listRecoverableRunIds: () => string[];
   readonly hasTerminalRunEvent: (runId: string) => boolean;
-  readonly appendRunEvent: (runId: string, type: RunEventType, data: unknown) => unknown;
+  readonly appendRunEvent: <K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]) => unknown;
   readonly markRunFailed: (runId: string, endedAt: string, errorMessage: string) => void;
   readonly getRun: (runId: string) => RunSession | undefined;
   readonly getLingThread: (threadId: string) => LingThread | undefined;
@@ -116,7 +117,7 @@ export class SqliteRuntimeRecoveryCoordinator {
     const workflows = this.ports.listRecoverableChannelWorkflows();
 
     for (const workflow of workflows) {
-      const steps = this.ports.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 });
+      const steps = this.ports.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
       for (const step of steps) {
         if (workflow.metadata?.requiredParticipantManifest && step.status === "running" && step.runId) {
           const run = this.ports.getRun(step.runId);
@@ -333,7 +334,7 @@ export class SqliteRuntimeRecoveryCoordinator {
     if (!workflow || workflow.status === "succeeded" || workflow.status === "failed" || workflow.status === "cancelled") {
       return 0;
     }
-    const steps = this.ports.listChannelWorkflowSteps({ workflowId, limit: 500 });
+    const steps = this.ports.listChannelWorkflowSteps({ workflowId, complete: true });
     if (steps.length > 0 && steps.every((step) => step.status === "succeeded" || step.status === "skipped")) {
       if (workflow.metadata?.requiredParticipantManifest) {
         // Continuity-backed workflows are completed only by the daemon's shared

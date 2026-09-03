@@ -1,83 +1,6 @@
-/* Strict console workbench interaction pass. */
-:root[data-theme="light"] .channel-daylight-shell {
-  --app-bg: #ffffff;
-  --window-bg: #ffffff;
-  --surface-sidebar: #ffffff;
-  --surface-panel: #ffffff;
-  --surface-panel-strong: #ffffff;
-  --surface-subtle: #f5f5f5;
-  --surface-selected: #f5f5f5;
-  --surface-hover: #f5f5f5;
-  --surface-pressed: #f5f5f5;
-  --text: #111111;
-  --text-strong: #111111;
-  --text-muted: #6b6b6b;
-  --text-soft: #8a8a8a;
-  --border: #e5e5e5;
-  --border-strong: #d8d8d8;
-  --hairline: rgba(17, 17, 17, 0.04);
-  --accent: #111111;
-  --accent-strong: #111111;
-  --accent-border: #111111;
-  --accent-soft: #f5f5f5;
-  --info: #2563eb;
-  --info-border: rgba(37, 99, 235, 0.28);
-  --info-soft: rgba(37, 99, 235, 0.08);
-  --success: #087443;
-  --success-border: rgba(8, 116, 67, 0.24);
-  --success-soft: rgba(8, 116, 67, 0.08);
-  --warning: #b76b00;
-  --warning-border: rgba(183, 107, 0, 0.26);
-  --warning-soft: rgba(183, 107, 0, 0.08);
-  --danger: #b42318;
-  --danger-border: rgba(180, 35, 24, 0.28);
-  --danger-soft: #fff7f6;
-  --conversation-bg: var(--surface-panel);
-  --conversation-bg-muted: var(--surface-subtle);
-  --conversation-bg-subtle: #f0f0f0;
-  --conversation-text: var(--text);
-  --conversation-text-strong: var(--text-strong);
-  --conversation-text-muted: var(--text-muted);
-  --conversation-text-soft: var(--text-soft);
-  --conversation-border: var(--border);
-  --conversation-border-strong: var(--border-strong);
-  --conversation-focus-ring: var(--accent-border);
-  --conversation-active-bg: var(--accent-soft);
-  --conversation-status-running: var(--accent);
-  --conversation-status-success: var(--success);
-  --conversation-status-waiting: var(--warning);
-  --conversation-status-danger: var(--danger);
-  --conversation-code-bg: #f7f7f7;
-  --conversation-code-bg-hover: #f3f3f3;
-  --conversation-code-border: #dedede;
-  --conversation-code-border-hover: #c7c7c7;
-  --conversation-code-text: #151515;
-  --conversation-code-muted: #626262;
-  --conversation-diff-add: var(--success);
-  --conversation-diff-remove: var(--danger);
-  --conversation-agent-guide-line: var(--border);
-  --conversation-active-shimmer: #8f8f8f;
-  --conversation-locate-pulse-bg: rgba(17, 17, 17, 0.08);
-  --shadow-control: none;
-  --shadow-panel: none;
-  --material-blur: none;
-  background: #ffffff;
-  color: #111111;
-}
-
 .channel-daylight-shell {
   position: relative;
   overflow: hidden;
-}
-
-.app-shell.inspector-collapsed {
-  grid-template-columns: 240px minmax(0, 1fr) 44px;
-}
-
-.app-shell.inspector-hidden {
-  grid-template-areas:
-    "nav workspace";
-  grid-template-columns: 240px minmax(0, 1fr);
 }
 
 .right-panel {
@@ -148,6 +71,16 @@
   min-width: 0;
   width: 100%;
   max-width: 100%;
+}
+
+.task-workbench-header {
+  --channel-progress-popover-width: min(280px, calc(100vw - 420px));
+  --conversation-summary-gap: 16px;
+  --channel-side-panel-layout-handle-width: 0px;
+  --channel-right-dock-layout-width: 0px;
+  --channel-progress-popover-right: calc(var(--conversation-summary-gap) + var(--channel-side-panel-layout-handle-width) + var(--channel-right-dock-layout-width));
+  --channel-right-dock-motion-duration: var(--ling-motion-slow);
+  --channel-right-dock-motion-ease: var(--ling-ease-standard);
 }
 
 .task-workbench-window > * {
@@ -312,6 +245,9 @@
 }
 
 .channel-activity-tools {
+  display: grid;
+  align-content: start;
+  gap: var(--ling-space-5);
   max-height: min(46vh, 420px);
   overflow: auto;
 }

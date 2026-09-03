@@ -148,6 +148,7 @@ export function useChannelMessageFeed({
     overscan: 10,
     paddingEnd: 38,
     getItemKey: (index) => items[index]?.renderKey ?? items[index]?.id ?? index,
+    useFlushSync: false,
   });
   const virtualRows = virtualizer.getVirtualItems();
   const totalSize = virtualizer.getTotalSize();
@@ -219,6 +220,10 @@ export function useChannelMessageFeed({
   }, [rememberVisibleAnchor]);
 
   const reset = useCallback((): void => {
+    const feed = scrollRef.current;
+    if (feed) {
+      feed.scrollLeft = 0;
+    }
     pinnedToLatestRef.current = true;
     userScrollIntentRef.current = false;
     userScrollRenderSignatureRef.current = "";
@@ -238,6 +243,7 @@ export function useChannelMessageFeed({
     autoFollowUntilRef.current = Date.now() + 1_000;
     userScrollIntentRef.current = false;
     userScrollRenderSignatureRef.current = "";
+    feed.scrollLeft = 0;
     if (items.length > 0) {
       virtualizer.scrollToIndex(items.length - 1, { align: "end" });
     }

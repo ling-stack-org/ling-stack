@@ -28,6 +28,7 @@ import { useWorkspaceBottomPanelResizeController } from "./useWorkspaceBottomPan
 import { useWorkspaceRightDockController } from "./useWorkspaceRightDockController.js";
 import { useConversationPanelPresence } from "./useConversationPanelPresence.js";
 import { NormalConversationComposer } from "./NormalConversationComposer.js";
+import { RuntimeApprovalComposerGate } from "../approvals/RuntimeApprovalComposerGate.js";
 import { NormalConversationEmptyState } from "./NormalConversationEmptyState.js";
 import { NormalConversationPage } from "./NormalConversationPage.js";
 import {
@@ -87,6 +88,8 @@ export function ConversationHome({
   conversationErrorMessage = "",
   sending = false,
   activeRun,
+  inlineApprovalViews,
+  approvalErrors,
   stopping = false,
   fullAccessConfirmed = false,
   onOpenRun,
@@ -96,6 +99,8 @@ export function ConversationHome({
   onFullAccessConversationBound,
   onRefreshConversation,
   onStopConversation,
+  onResolveApproval,
+  resolvingApprovals,
   onSendConversation,
 }: ConversationHomeProps): React.JSX.Element {
   const { t } = useI18n();
@@ -491,16 +496,11 @@ export function ConversationHome({
         },
         failMessage: (message) => {
           if (!shouldCommit()) return;
+          // Once the server has accepted the turn, its typed assistant/evidence
+          // projection owns the failure. Keep composer feedback for transport
+          // failures that happen before a durable message exists only.
+          if (sendBound) return;
           actionFeedback.report("stream", message);
-          setMessages((current) => upsertConversationHomeMessage(current, {
-            id: `conversation-error:${pendingUserMessage.id}`,
-            role: "assistant",
-            authorLabel: "Ling Agent",
-            content: message,
-            status: "failed",
-            createdAt: new Date().toISOString(),
-            updatedAt: new Date().toISOString(),
-          }));
         },
         onThreadBound,
         shouldCommit,
@@ -686,10 +686,13 @@ export function ConversationHome({
       onOpenModelWorkbench={onOpenModelWorkbench}
       onRemoveAttachment={attachmentController.removeAttachment}
       onPermissionPresetChange={(preset) => {
-        if (preset === "full_access") {
-          onConfirmFullAccessSelection?.();
+        if (preset !== "full_access" || !onConfirmFullAccessSelection) {
+          setSelectedPermissionPreset(preset);
+          return;
         }
-        setSelectedPermissionPreset(preset);
+        void onConfirmFullAccessSelection().then((confirmation) => {
+          if (confirmation) setSelectedPermissionPreset(preset);
+        });
       }}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
@@ -698,9 +701,21 @@ export function ConversationHome({
     />
   );
 
+  const approvalGateNode = (
+    <RuntimeApprovalComposerGate
+      approvals={inlineApprovalViews}
+      approvalErrors={approvalErrors}
+      resolvingApprovals={resolvingApprovals}
+      surface="normal_conversation"
+      onResolve={onResolveApproval}
+    />
+  );
+  const visibleComposerNode = inlineApprovalViews.length > 0 ? approvalGateNode : composerNode;
+
   if (messages.length > 0) {
     return (
-      <NormalConversationPage
+      <>
+        <NormalConversationPage
         summaryOpen={conversationSummaryOpen}
         onCloseSummary={() => setConversationSummaryOpen(false)}
         summaryDockMotion={conversationSummaryDockMotion}
@@ -714,7 +729,8 @@ export function ConversationHome({
           summaryActive: conversationSummaryOpen,
           terminalActive: conversationTerminalOpen,
           terminalDisabled: !workspaceCwd.trim(),
-          detailsActive: conversationDockOpen,
+          detailsActive: conversationDockController.expanded,
+          detailsDisabled: !conversationDockController.available,
           onClearSearch: normalConversationHeader.clearSearch,
           onCloseSearch: () => normalConversationHeader.closeSearch(true),
           onSearchQueryChange: setMessageSearchQuery,
@@ -731,6 +747,7 @@ export function ConversationHome({
             setConversationTerminalOpen((current) => !current);
           },
           onToggleDetails: () => {
+            if (!conversationDockController.available) return;
             if (conversationDockOpen) conversationDockController.close();
             setConversationDockOpen((current) => !current);
           },
@@ -740,6 +757,7 @@ export function ConversationHome({
           visibleMessages,
           runById,
           detailContext,
+          composerGateApprovals: inlineApprovalViews,
           generatedMedia: detailContext?.generatedMedia ?? [],
           projectPath: project.projectPath,
           workspaceCwd,
@@ -758,7 +776,7 @@ export function ConversationHome({
           onOpenReview: openConversationReview,
           onOpenRun,
         }}
-        composerNode={composerNode}
+        composerNode={visibleComposerNode}
         panelsProps={{
           workspaceCwd,
           currentThreadId: detailContext?.threadId,
@@ -776,11 +794,16 @@ export function ConversationHome({
           },
           onCloseTerminal: () => setConversationTerminalOpen(false),
         }}
-      />
+        />
+      </>
     );
   }
 
-  return <NormalConversationEmptyState composerNode={composerNode} onApplyShortcut={applyShortcut} />;
+  return (
+    <>
+      <NormalConversationEmptyState composerNode={visibleComposerNode} onApplyShortcut={applyShortcut} />
+    </>
+  );
 }
 
 function activeReplyStatus(status: string): status is "queued" | "running" | "waiting_for_approval" {

@@ -12,6 +12,14 @@
   grid-template-rows: 48px minmax(0, 1fr) auto auto;
 }
 
+.normal-conversation-page.titlebar-window.with-right-dock {
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+
+.normal-conversation-page.titlebar-window.with-bottom-terminal {
+  grid-template-rows: minmax(0, 1fr) auto auto;
+}
+
 .normal-conversation-page.with-right-dock > .workspace-right-dock-resize-handle {
   grid-column: 3;
   grid-row: 1 / 4;
@@ -26,6 +34,15 @@
 .normal-conversation-page.with-bottom-terminal > .workspace-bottom-terminal {
   grid-column: 1 / -1;
   grid-row: 4;
+}
+
+.normal-conversation-page.titlebar-window.with-right-dock > .workspace-right-dock-resize-handle,
+.normal-conversation-page.titlebar-window.with-right-dock > .workspace-right-dock-frame {
+  grid-row: 1 / 3;
+}
+
+.normal-conversation-page.titlebar-window.with-bottom-terminal > .workspace-bottom-terminal {
+  grid-row: 3;
 }
 
 .normal-conversation-right-dock .normal-conversation-dock-page {
@@ -194,16 +211,5 @@
 
   .normal-conversation-context-details dd {
     text-align: left;
-  }
-}
-
-@media (max-width: 900px) {
-  .normal-conversation-page.with-right-dock {
-    grid-template-columns: minmax(0, 1fr) 0 0 0;
-  }
-
-  .normal-conversation-page.with-right-dock > .workspace-right-dock-resize-handle,
-  .normal-conversation-page.with-right-dock > .workspace-right-dock-frame {
-    display: none;
   }
 }

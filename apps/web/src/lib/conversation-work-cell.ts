@@ -1,17 +1,24 @@
 import {
   normalizeConversationOperationCell,
+  projectConversationActivity,
   projectConversationCommandBatches,
+  summarizeConversationActivity,
   terminalReportToViewModel,
   type ConversationAgentActivitySpan,
+  type ConversationActivitySummary,
   type ConversationArtifactStripChangeArtifact,
   type ConversationArtifactStripItem,
   type ConversationCommandBatch,
   type ConversationCommandBatchItem,
+  type ConversationExplorationBatch,
   type ConversationOperationCellMode,
   type ConversationOperationCellSourceKind,
   type ConversationOperationCellStatus,
   type ConversationOperationCellViewModel,
+  type ConversationOperationExecutionView,
   type ConversationOperationKind,
+  type ConversationOperationSourceRef,
+  type ConversationTurnRunRole,
   type ConversationWorkCellDetailsModel,
   type ConversationWorkCellChangePreview,
   type ConversationWorkCellEvidenceLink,
@@ -29,24 +36,33 @@ import type { Translate } from "../i18n.js";
 import { effectiveApprovalStatus } from "./approvals.js";
 import { truncatePreview } from "./data.js";
 import { artifactLooksLikeDiff } from "./diff-summary.js";
+import { executionActionSourceRefs } from "./execution-action-lineage.js";
+import { projectConversationLatestAttemptEvidence } from "./conversation-work-cell-attempts.js";
 
 export {
   normalizeConversationOperationCell,
+  projectConversationActivity,
   projectConversationCommandBatches,
+  summarizeConversationActivity,
 };
 export type {
   ConversationAgentActivitySpan,
   ConversationAgentActivitySpanKind,
+  ConversationActivitySummary,
   ConversationArtifactStripChangeArtifact,
   ConversationArtifactStripItem,
   ConversationArtifactStripItemKind,
   ConversationCommandBatch,
   ConversationCommandBatchItem,
+  ConversationExplorationBatch,
   ConversationOperationCellMode,
   ConversationOperationCellSourceKind,
   ConversationOperationCellStatus,
   ConversationOperationCellViewModel,
+  ConversationOperationExecutionView,
   ConversationOperationKind,
+  ConversationOperationSourceRef,
+  ConversationTurnRunRole,
   ConversationWorkCellBranch,
   ConversationWorkCellChangePreview,
   ConversationWorkCellDetailsModel,
@@ -318,6 +334,7 @@ const MAIN_FEED_INTERNAL_PATTERNS: readonly RegExp[] = [
   /\braw prompt text excluded\b/iu,
   /\braw logs excluded\b/iu,
   /\braw artifact bodies excluded\b/iu,
+  /\bUnified exec (?:stdout|stderr|result)\b/iu,
   /\bsource refs\b/iu,
   /\bcompactions\b/iu,
   /\bchannel_collaboration_protocol\b/iu,
@@ -450,27 +467,37 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     return undefined;
   }
 
-  const latestRun = runs[0];
+  const latestRun = turnContext?.latestRun ?? runs[0];
   const runIds = runs.map((run) => run.id);
-  const runIdSet = new Set(runIds);
+  // Keep the complete attempt lineage on the model for diagnostics and audit
+  // details, but project the main operation cell from the latest attempt only.
+  // Otherwise a failed retry predecessor leaks its actions, artifacts, checks,
+  // and failure rows into the current successful attempt.
+  const latestAttempt = projectConversationLatestAttemptEvidence({
+    threadId: input.threadId,
+    latestRun,
+    attemptCount: runs.length,
+    artifactsByRun: input.artifactsByRun,
+    executionActions: input.executionActions ?? [],
+  });
+  const latestRuns = latestAttempt.runs;
   const status: ConversationWorkCellStatus = turnContext?.turn.status ?? latestRun.status;
   const approvals = input.approvals
-    .filter((approval) => approval.runId ? runIdSet.has(approval.runId) : false)
+    .filter((approval) => approval.runId === latestRun.id)
     .sort((left, right) => (right.resolvedAt ?? right.createdAt).localeCompare(left.resolvedAt ?? left.createdAt));
   const visibleApprovals = approvals.filter((approval) => effectiveApprovalStatus(approval) !== "approved");
-  const artifacts = runIds.flatMap((runId) => input.artifactsByRun[runId] ?? []);
+  const artifacts = latestAttempt.artifacts;
   const artifactsById = artifactsByIdMap(artifacts);
-  const actions = (input.executionActions ?? [])
-    .filter((action) => action.threadId === input.threadId || (action.runId ? runIdSet.has(action.runId) : false))
+  const actions = [...latestAttempt.actions]
     .sort((left, right) => (right.completedAt ?? right.executedAt ?? right.resolvedAt ?? right.createdAt).localeCompare(left.completedAt ?? left.executedAt ?? left.resolvedAt ?? left.createdAt));
   const pendingApprovals = visibleApprovals.filter((approval) => effectiveApprovalStatus(approval) === "pending");
-  const failedRuns = runs.filter((run) => run.status === "failed");
+  const failedRuns = latestRuns.filter((run) => run.status === "failed");
   const failedActions = actions.filter((action) => action.status === "failed" || action.status === "denied" || action.status === "expired");
   const mode: ConversationWorkCellMode = isWorkCellStatusActive(status) ? "active" : "completed";
   const title = turnContext?.turn.title || readRunTitle(latestRun);
   const evidenceLinks = mainFeedArtifactEvidenceLinks(artifacts, input.artifactHref);
   const groups = mainFeedEvidenceGroups(
-    buildWorkCellGroups({ t: input.t, runs, approvals: visibleApprovals, artifacts, artifactsById, actions, failedRuns, failedActions, pendingApprovals }),
+    buildWorkCellGroups({ t: input.t, runs: latestRuns, approvals: visibleApprovals, artifacts, artifactsById, actions, failedRuns, failedActions, pendingApprovals }),
     input.t,
   );
   const terminalReport = input.terminalReport ? terminalReportToViewModel(input.terminalReport) : undefined;
@@ -483,7 +510,9 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   const artifactStripItems = mergeConversationArtifactStripItems(
     baseArtifactStripItems,
     (terminalReport?.artifactStripItems ?? []).filter((item) => item.kind !== "changed" || !hasBaseChangedItem),
-  );
+  ).map((item) => turnContext && item.kind === "changed"
+    ? { ...item, recoveryTarget: { kind: "turn" as const, id: turnContext.turn.id } }
+    : item);
   const representedArtifactIds = new Set(artifactStripItems.flatMap((item) => [
     item.artifactId,
     ...(item.changeArtifacts ?? []).map((artifact) => artifact.artifactId),
@@ -491,6 +520,15 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   const mergedEvidenceLinks = terminalReport
     ? combinedEvidenceLinks.filter((link) => !link.artifactId || !representedArtifactIds.has(link.artifactId))
     : combinedEvidenceLinks;
+  const operationRows = buildActiveRows({
+    t: input.t,
+    latestRun,
+    attemptCount: runs.length,
+    turnRunLinks: input.turnRunLinks,
+    pendingApprovals,
+    artifacts,
+    actions,
+  });
 
   return normalizeConversationOperationCell({
     id: turnContext ? `work-cell:turn:${turnContext.turn.id}` : `work-cell:${input.threadId}`,
@@ -515,7 +553,9 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
       { id: "approvals", label: input.t("Approvals"), value: String(visibleApprovals.length) },
     ],
     elapsedMs: workCellElapsedMs(runs),
-    operationRows: buildActiveRows({ t: input.t, latestRun, runs, pendingApprovals, artifacts, actions }),
+    operationRows,
+    operationItems: projectConversationActivity(operationRows),
+    activitySummary: summarizeConversationActivity(operationRows),
     agentBranches: [],
     terminalReportId: terminalReport?.reportId,
     terminalReportRevisionKey: terminalReport?.revisionKey,
@@ -949,7 +989,11 @@ function traceSpanStatusTone(status: LingTraceSpan["status"]): ConversationWorkC
   return "neutral";
 }
 
-function buildVisibleTurnContext(input: BuildConversationWorkCellInput): { readonly turn: LingTurn; readonly runs: readonly RunSession[] } | undefined {
+function buildVisibleTurnContext(input: BuildConversationWorkCellInput): {
+  readonly turn: LingTurn;
+  readonly runs: readonly RunSession[];
+  readonly latestRun: RunSession;
+} | undefined {
   if (!input.turns || !input.turnRunLinks) {
     return undefined;
   }
@@ -970,12 +1014,15 @@ function buildVisibleTurnContext(input: BuildConversationWorkCellInput): { reado
   for (const turn of turns) {
     const links = [...(linksByTurnId.get(turn.id) ?? [])]
       .sort((left, right) => right.attemptNumber - left.attemptNumber || right.createdAt.localeCompare(left.createdAt));
-    const runs = links
-      .map((link) => runById.get(link.runId))
-      .filter((run): run is RunSession => Boolean(run))
-      .sort((left, right) => compareRunActivity(left, right));
-    if (runs[0]) {
-      candidates.push({ turn, runs, latestRun: runs[0] });
+    const linkedRuns = links
+      .map((link) => ({ link, run: runById.get(link.runId) }))
+      .filter((entry): entry is { readonly link: LingTurnRun; readonly run: RunSession } => Boolean(entry.run));
+    const runs = linkedRuns.map((entry) => entry.run);
+    const latestRun = linkedRuns.find((entry) => entry.run.id === turn.activeRunId)?.run ??
+      linkedRuns.find((entry) => entry.run.id === turn.lastRunId)?.run ??
+      linkedRuns[0]?.run;
+    if (latestRun) {
+      candidates.push({ turn, runs, latestRun });
     }
   }
   candidates.sort((left, right) =>
@@ -984,7 +1031,7 @@ function buildVisibleTurnContext(input: BuildConversationWorkCellInput): { reado
     right.turn.id.localeCompare(left.turn.id),
   );
   const selected = candidates[0];
-  return selected ? { turn: selected.turn, runs: selected.runs } : undefined;
+  return selected ? { turn: selected.turn, runs: selected.runs, latestRun: selected.latestRun } : undefined;
 }
 
 function filterEvidenceRuns(
@@ -1027,17 +1074,21 @@ function emptyWorkCellGroups(t: Translate): readonly ConversationWorkCellGroup[]
 function buildActiveRows(input: {
   readonly t: Translate;
   readonly latestRun: RunSession;
-  readonly runs: readonly RunSession[];
+  readonly attemptCount: number;
+  readonly turnRunLinks?: readonly LingTurnRun[];
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly artifacts: readonly RunArtifact[];
   readonly actions: readonly ExecutionAction[];
 }): readonly ConversationWorkCellRow[] {
   const rows: ConversationWorkCellRow[] = [];
   const artifactsById = artifactsByIdMap(input.artifacts);
+  const turnRunRoleByRunId = new Map((input.turnRunLinks ?? []).map((link) => [link.runId, link.role]));
   const actionRows = [...input.actions]
     .filter(isMainFeedActionRow)
     .sort(compareExecutionActionTranscriptOrder)
-    .flatMap((action) => executionActionTranscriptRows(action, artifactsById, input.t));
+    .flatMap((action) => executionActionTranscriptRows(action, artifactsById, input.t, {
+      turnRunRole: action.runId ? turnRunRoleByRunId.get(action.runId) ?? "primary" : undefined,
+    }));
 
   if (actionRows.length > 0) {
     rows.push(...actionRows);
@@ -1063,12 +1114,12 @@ function buildActiveRows(input: {
     });
   }
 
-  if (input.runs.length > 1) {
+  if (input.attemptCount > 1) {
     rows.push({
       id: "attempts",
       kind: "watch",
       title: input.t("Earlier tries"),
-      description: input.t("{count} earlier tries", { count: input.runs.length - 1 }),
+      description: input.t("{count} earlier tries", { count: input.attemptCount - 1 }),
       tone: "neutral",
     });
   }
@@ -1193,12 +1244,20 @@ export function buildConversationExecutionActionEvidenceRows(input: {
   readonly artifactsById?: ReadonlyMap<string, RunArtifact>;
   readonly t: Translate;
   readonly limit?: number;
+  readonly participantId?: string;
+  readonly turnRunRoleByRunId?: ReadonlyMap<string, ConversationTurnRunRole>;
+  readonly workflowStepId?: string;
 }): readonly ConversationWorkCellRow[] {
   const artifactsById = input.artifactsById ?? artifactsByIdMap(input.artifacts ?? []);
-  return input.actions
-    .filter(isMainFeedActionRow)
-    .slice(0, input.limit ?? 8)
-    .flatMap((action) => executionActionTranscriptRows(action, artifactsById, input.t));
+  const actions = input.actions
+    .filter(isMainFeedActionRow);
+  const visibleActions = input.limit === undefined ? actions : actions.slice(0, input.limit);
+  return visibleActions
+    .flatMap((action) => executionActionTranscriptRows(action, artifactsById, input.t, {
+      participantId: input.participantId,
+      turnRunRole: action.runId ? input.turnRunRoleByRunId?.get(action.runId) ?? "primary" : undefined,
+      workflowStepId: input.workflowStepId,
+    }));
 }
 
 function artifactsByIdMap(artifacts: readonly RunArtifact[]): ReadonlyMap<string, RunArtifact> {
@@ -1218,9 +1277,15 @@ function executionActionEvidenceRow(
   action: ExecutionAction,
   artifactsById: ReadonlyMap<string, RunArtifact>,
   t: Translate,
+  context: {
+    readonly participantId?: string;
+    readonly turnRunRole?: ConversationTurnRunRole;
+    readonly workflowStepId?: string;
+  } = {},
 ): ConversationWorkCellRow {
   const commandText = executionActionCommandText(action);
   const detailLines = executionActionDetailLines(action, artifactsById, t);
+  const operationExecution = executionActionExecutionView(action, context);
   return {
     id: `action:${action.id}`,
     kind: operationKindForExecutionAction(action),
@@ -1231,6 +1296,10 @@ function executionActionEvidenceRow(
       actionId: action.id,
       toolCallId: action.toolCallId,
       runId: action.runId,
+      attemptId: action.attemptId,
+      approvalId: action.approvalId,
+      turnRunRole: operationExecution.turnRunRole,
+      participantId: operationExecution.participantId,
       workUnitId: action.workUnitId,
       workflowStepId: action.targetRefs.find((ref) => ref.type === "workflow_step")?.id,
       actionType: action.actionType,
@@ -1242,10 +1311,12 @@ function executionActionEvidenceRow(
       durationMs: action.commandEvidence.durationMs,
       exitCode: action.commandEvidence.exitCode,
       latestEventSeq: action.commandEvidence.latestEventSeq,
+      sourceRefs: operationExecution.sourceRefs,
       outputTruncated: action.commandEvidence.outputTruncated,
       stdoutArtifactId: action.commandEvidence.stdoutArtifactId,
       stderrArtifactId: action.commandEvidence.stderrArtifactId,
     } : undefined,
+    operationExecution,
     changePreview: executionActionChangePreview(action, artifactsById),
     detailLines,
     meta: operationStatusMeta(action.status, t),
@@ -1278,20 +1349,74 @@ function executionActionTranscriptRows(
   action: ExecutionAction,
   artifactsById: ReadonlyMap<string, RunArtifact>,
   t: Translate,
+  context: {
+    readonly participantId?: string;
+    readonly turnRunRole?: ConversationTurnRunRole;
+    readonly workflowStepId?: string;
+  } = {},
 ): readonly ConversationWorkCellRow[] {
   const rows: ConversationWorkCellRow[] = [];
+  const operationExecution = executionActionExecutionView(action, context);
   const scopeSummary = action.scopeSummary?.trim();
-  if (scopeSummary) {
+  if (scopeSummary && !isInternalExecutionScopeSummary(scopeSummary)) {
     rows.push({
       id: `action-note:${action.id}`,
       kind: "plan",
       presentation: "note",
       title: truncatePreview(scopeSummary, 260),
       tone: "neutral",
+      operationExecution,
     });
   }
-  rows.push(executionActionEvidenceRow(action, artifactsById, t));
+  rows.push(executionActionEvidenceRow(action, artifactsById, t, context));
   return rows;
+}
+
+const INTERNAL_EXECUTION_SCOPES = new Set([
+  "read_only",
+  "workspace_read",
+  "workspace_write",
+  "git_history",
+  "network",
+  "credential",
+  "provider_config",
+  "deployment",
+  "external_system",
+]);
+
+function isInternalExecutionScopeSummary(summary: string): boolean {
+  const scopes = summary
+    .split(",")
+    .map((scope) => scope.trim())
+    .filter(Boolean);
+  return scopes.length > 0 && scopes.every((scope) => INTERNAL_EXECUTION_SCOPES.has(scope));
+}
+
+function executionActionExecutionView(
+  action: ExecutionAction,
+  context: {
+    readonly participantId?: string;
+    readonly turnRunRole?: ConversationTurnRunRole;
+    readonly workflowStepId?: string;
+  } = {},
+): ConversationOperationExecutionView {
+  const workflowStepId = context.workflowStepId ?? action.targetRefs.find((ref) => ref.type === "workflow_step")?.id;
+  return {
+    actionId: action.id,
+    toolCallId: action.toolCallId,
+    runId: action.runId,
+    attemptId: action.attemptId,
+    approvalId: action.approvalId,
+    turnRunRole: context.turnRunRole,
+    participantId: context.participantId,
+    workUnitId: action.workUnitId,
+    workflowStepId,
+    actionType: action.actionType,
+    status: action.status,
+    updatedAt: action.updatedAt ?? action.completedAt ?? action.executedAt ?? action.createdAt,
+    latestEventSeq: action.commandEvidence?.latestEventSeq,
+    sourceRefs: executionActionSourceRefs(action, workflowStepId),
+  };
 }
 
 function executionActionDisplayTitle(

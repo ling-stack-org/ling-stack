@@ -14,6 +14,7 @@ import {
 } from "../dist/index.js";
 import { RUNTIME_ATTEMPT_FENCE_MIGRATION_VERSION } from "../dist/storage/sqlite/runtime-attempt-fence-migration.js";
 import { createRequiredParticipantManifestV1 } from "../../contracts/dist/index.js";
+import { SUPPORTED_LOCALES } from "../../localization/dist/index.js";
 
 test("sqlite channels persist default and edited runtime policy", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-runtime-"));
@@ -104,6 +105,32 @@ test("sqlite workspace settings persist Ling conversation tone", async () => {
       assert.equal(pragmatic.lingConversationTone, "pragmatic");
       const cleared = reopened.updateWorkspaceSettings({ lingConversationTone: null }, "2026-07-05T00:03:00.000Z");
       assert.equal(cleared.lingConversationTone, undefined);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite workspace settings round-trip every supported interface and response locale", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-locales-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    for (const [index, locale] of SUPPORTED_LOCALES.entries()) {
+      const settings = store.updateWorkspaceSettings(
+        { locale, responseLanguage: locale },
+        new Date(Date.UTC(2026, 7, 27, 0, index)).toISOString(),
+      );
+      assert.equal(settings.locale, locale);
+      assert.equal(settings.responseLanguage, locale);
+    }
+    store.close();
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      assert.equal(reopened.getWorkspaceSettings().locale, SUPPORTED_LOCALES.at(-1));
+      assert.equal(reopened.getWorkspaceSettings().responseLanguage, SUPPORTED_LOCALES.at(-1));
     } finally {
       reopened.close();
     }
@@ -990,6 +1017,36 @@ test("sqlite handoff workflows persist steps, transitions, and workflow-step lea
   }
 });
 
+test("workflow step complete reads are not truncated at the interactive 500-row limit", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workflow-step-complete-read-"));
+  const now = "2026-05-28T04:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Large workflow", boundPath: cwd }, now);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Large workflow",
+      objective: "Exercise canonical complete reads.",
+      createdBy: "system",
+    }, now);
+    for (let index = 0; index < 501; index += 1) {
+      store.createChannelWorkflowStep({
+        workflowId: workflow.id,
+        title: `Step ${index}`,
+        prompt: `Step ${index}`,
+        toParticipantId: "teammate_builtin_engineer",
+        toParticipantLabel: "Engineer",
+        position: index,
+      }, now);
+    }
+    assert.equal(store.listChannelWorkflowSteps({ workflowId: workflow.id, limit: 500 }).length, 500);
+    assert.equal(store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true }).length, 501);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite task CAS claim and idempotency allow only one real transition", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-task-cas-"));
   const now = "2026-05-26T00:00:00.000Z";
@@ -1236,8 +1293,12 @@ test("sqlite work units link run sessions and enforce CAS transitions", async ()
       taskSnapshot: task,
       providerSnapshot: { provider: "test-provider", model: "test-model" },
       requestSnapshot: { cwd },
+      contextViewId: "context_view_runtime",
+      contextViewCreatedAt: "2026-06-04T00:00:00.000Z",
       createdAt: now,
     });
+    assert.equal(store.getRun("run_linked_runtime")?.contextViewId, "context_view_runtime");
+    assert.equal(store.getRun("run_linked_runtime")?.contextViewCreatedAt, "2026-06-04T00:00:00.000Z");
     const linked = store.linkRunToWorkUnit("run_linked_runtime", workUnit.id, "2026-06-04T00:00:01.000Z");
     assert.equal(linked?.workUnitId, workUnit.id);
     assert.equal(store.getWorkUnit(workUnit.id)?.linkedRunId, "run_linked_runtime");

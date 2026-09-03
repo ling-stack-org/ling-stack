@@ -12,9 +12,15 @@
     "./fixtures/channel-conversation-continuity-v2.json": "./fixtures/channel-conversation-continuity-v2.json"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "build:ci": "tsc -p tsconfig.json",
+    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
+    "test:ci": "node --test test/*.test.mjs",
+    "build": "corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json",
+    "typecheck": "corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",
-    "test": "tsc -p tsconfig.json && node --test test/*.test.mjs"
+    "test": "corepack pnpm --filter @ling-stack/localization build && tsc -p tsconfig.json && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@ling-stack/localization": "workspace:*"
   }
 }

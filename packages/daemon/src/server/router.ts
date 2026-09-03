@@ -224,6 +224,8 @@ import {
   handleListShellSnapshots,
 } from "../features/runs/shell-snapshots.js";
 import {
+  handleApprovalCommandRuleItem,
+  handleApprovalCommandRulesCollection,
   handleApprovalItem,
   handleApprovalPolicy,
   handleApprovalsCollection,
@@ -251,8 +253,11 @@ import {
 import { handleGetWorkspaceFilePreview } from "../features/previews/workspace-file-preview.js";
 import {
   handleGetRunWorkspaceChanges,
+  handleGetTurnWorkspaceChanges,
   handleMutateRunWorkspaceChanges,
+  handleMutateTurnWorkspaceChanges,
 } from "../features/runs/workspace-change-recovery.js";
+import { handleWorkspaceSnapshotRoute, parseWorkspaceSnapshotRoute } from "../features/runs/workspace-snapshot-routes.js";
 import { handleEffectiveConfig, handleWorkspaceSettings } from "../features/settings/routes.js";
 import { handleSkillRoute } from "../features/skills/routes.js";
 import { handleTaskItem, handleTaskRun, handleTasksCollection } from "../features/tasks/routes.js";
@@ -305,6 +310,7 @@ import {
   matchSingleSegmentRoute,
   parseRunnerReadinessRoute,
   parseMemoryRoute,
+  parseApprovalCommandRuleRoute,
   parseApprovalRoute,
   parseArtifactRoute,
   parseAiCouncilRoute,
@@ -331,6 +337,7 @@ import {
   parseProviderRoute,
   parseRunInterventionRoute,
   parseRunRoute,
+  parseTurnRoute,
   parseSkillRoute,
   parseTaskRoute,
   parseTeammateDirectInterventionRoute,
@@ -978,6 +985,11 @@ export async function routeRequest(
     return;
   }
 
+  if (url.pathname === "/approval-command-rules") {
+    handleApprovalCommandRulesCollection(request, response, url, storeRegistry);
+    return;
+  }
+
   if (url.pathname === "/execution-actions") {
     handleExecutionActionsCollection(request, response, url, storeRegistry);
     return;
@@ -1384,6 +1396,29 @@ export async function routeRequest(
     return;
   }
 
+  const turnRoute = parseTurnRoute(url.pathname);
+  if (request.method === "GET" && turnRoute?.kind === "workspace-changes") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleGetTurnWorkspaceChanges(response, url, storeRegistry, turnRoute.turnId);
+    return;
+  }
+  if (request.method === "POST" && turnRoute?.kind === "workspace-changes-undo") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleMutateTurnWorkspaceChanges(response, url, storeRegistry, turnRoute.turnId, "undo");
+    return;
+  }
+  if (request.method === "POST" && turnRoute?.kind === "workspace-changes-reapply") {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleMutateTurnWorkspaceChanges(response, url, storeRegistry, turnRoute.turnId, "reapply");
+    return;
+  }
+
   const runInterventionRoute = parseRunInterventionRoute(url.pathname);
   if (runInterventionRoute) {
     if (runInterventionRoute.kind === "promote") {
@@ -1427,6 +1462,15 @@ export async function routeRequest(
   const workUnitRoute = parseWorkUnitRoute(url.pathname);
   if (workUnitRoute) {
     handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled, controlPlaneEvents);
+    return;
+  }
+
+  const workspaceSnapshotRoute = parseWorkspaceSnapshotRoute(url.pathname);
+  if (workspaceSnapshotRoute) {
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
+      return;
+    }
+    await handleWorkspaceSnapshotRoute(request, response, url, storeRegistry, workspaceSnapshotRoute, config);
     return;
   }
 
@@ -1629,7 +1673,7 @@ export async function routeRequest(
     return {
       proposal: input.store.getChannelExecutionProposal(input.proposalId) ?? confirmed.proposal,
       workflow: orchestration.workflow,
-      workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: confirmed.workflow.id, limit: 500 }),
+      workflowSteps: input.store.listChannelWorkflowSteps({ workflowId: confirmed.workflow.id, complete: true }),
       orchestration,
     };
   };
@@ -2554,6 +2598,12 @@ export async function routeRequest(
         hooks: mediaJobHooks,
       });
     });
+    return;
+  }
+
+  const approvalCommandRuleRoute = parseApprovalCommandRuleRoute(url.pathname);
+  if (approvalCommandRuleRoute) {
+    handleApprovalCommandRuleItem(request, response, url, storeRegistry, approvalCommandRuleRoute.ruleId);
     return;
   }
 

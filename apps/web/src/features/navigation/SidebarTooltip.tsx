@@ -1,15 +1,17 @@
-import type { ReactElement } from "react";
+import type { ReactElement, ReactNode } from "react";
 import { Tooltip } from "../../shared/ui/index.js";
 
 export function SidebarTooltip({
   children,
+  className,
   label,
 }: {
   readonly children: ReactElement;
-  readonly label: string;
+  readonly className?: string;
+  readonly label: ReactNode;
 }): React.JSX.Element {
   return (
-    <Tooltip content={label} side="right" sideOffset={8}>
+    <Tooltip className={className} collisionPadding={12} content={label} side="right" sideOffset={8}>
       {children}
     </Tooltip>
   );

@@ -5,7 +5,7 @@ export function completeWorkflowIfStepsFinished(store: RunStore, workflowId: str
   const workflow = store.getChannelWorkflow(workflowId);
   if (!workflow || (workflow.status !== "running" && workflow.status !== "waiting_for_approval"
     && workflow.status !== "blocked")) return;
-  const steps = store.listChannelWorkflowSteps({ workflowId, limit: 500 });
+  const steps = store.listChannelWorkflowSteps({ workflowId, complete: true });
   const evaluation = evaluateWorkflowCompletion({ store, workflow, steps, now });
   if (workflow.metadata?.requiredParticipantManifest && !evaluation) {
     throw new Error(`Manifest-backed workflow has no completion gate: ${workflow.id}`);
