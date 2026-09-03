@@ -41,6 +41,8 @@ export function PageInspector({
   artifacts,
   assistantText,
   isRunning,
+  isRunLoading,
+  runErrorMessage,
   pendingApprovals,
   resolvingApprovals,
   providers,
@@ -77,6 +79,8 @@ export function PageInspector({
   readonly artifacts: readonly RunArtifact[];
   readonly assistantText: string;
   readonly isRunning: boolean;
+  readonly isRunLoading: boolean;
+  readonly runErrorMessage: string;
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly resolvingApprovals: Readonly<Record<string, ApprovalResolution>>;
   readonly providers: readonly ProviderPreset[];
@@ -112,6 +116,8 @@ export function PageInspector({
         run={selectedRun}
         events={events}
         artifacts={artifacts}
+        isLoading={isRunLoading}
+        errorMessage={runErrorMessage}
         onLookupRunIdChange={onLookupRunIdChange}
         onLoadRun={onLoadRun}
       />
