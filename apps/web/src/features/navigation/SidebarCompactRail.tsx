@@ -29,7 +29,7 @@ export function SidebarCompactRail({
 
   return (
     <aside
-      aria-label="Ling Stack navigation"
+      aria-label={t("Sidebar display")}
       className="left-nav sidebar-compact-rail"
       data-sidebar-mode="compact"
     >

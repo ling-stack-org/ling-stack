@@ -47,6 +47,16 @@ test("macOS Home chrome owns a fixed layout row and keeps the collapsed compact 
     chrome: "rgb(255, 255, 255)",
     leading: "rgb(230, 228, 223)",
   });
+  await expect.poll(async () => expandedSidebarDivider(shell, leading, navigation)).toEqual({
+    dividerBottom: 0,
+    dividerColor: "rgb(237, 237, 237)",
+    dividerLeft: 291,
+    dividerTop: 0,
+    dividerWidth: 1,
+    leadingRight: 292,
+    navigationBorderWidth: 0,
+    navigationRight: 292,
+  });
   await expectNoDragControl(sidebarToggle);
   await expect(page.locator(".channel-sidebar-switch")).toHaveCount(0);
   await expect.poll(async () => {
@@ -229,6 +239,25 @@ test("macOS Settings and Media stay below or inside the shared titlebar", async 
   await captureIfRequested(page, testInfo.outputPath("media.png"));
 });
 
+for (const theme of ["light", "dark"] as const) {
+  test(`macOS Settings keeps one continuous sidebar surface in ${theme} mode`, async ({ page }, testInfo) => {
+    await prepareSurface(page, "macos", { theme });
+    await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+    await page.goto("/");
+    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+
+    const chrome = page.locator("[data-desktop-window-chrome='true']");
+    const settingsNavigation = page.locator(".settings-section-nav");
+    await expect.poll(async () => settingsSidebarSurface(chrome, settingsNavigation)).toEqual({
+      contentMatchesTitlebar: true,
+      sidebarMatchesTitlebar: true,
+      sidebarWidth: 281,
+      titlebarSidebarWidth: 281,
+    });
+    await captureIfRequested(page, testInfo.outputPath(`settings-${theme}.png`));
+  });
+}
+
 test("macOS portal overlays subtract the underlying shell drag region", async ({ page }) => {
   await prepareSurface(page, "macos");
   const state = createBaseState({ approvalStatus: "expired" });
@@ -338,6 +367,16 @@ test("macOS titlebar stays bounded at 1280x800 in dark mode", async ({ page }, t
   await expect.poll(async () => titlebarBackgrounds(chrome, leading)).toEqual({
     chrome: "rgb(31, 31, 31)",
     leading: "rgb(40, 39, 37)",
+  });
+  await expect.poll(async () => expandedSidebarDivider(shell, leading, page.getByLabel("Ling Stack navigation"))).toEqual({
+    dividerBottom: 0,
+    dividerColor: "rgb(65, 64, 61)",
+    dividerLeft: 291,
+    dividerTop: 0,
+    dividerWidth: 1,
+    leadingRight: 292,
+    navigationBorderWidth: 0,
+    navigationRight: 292,
   });
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
@@ -607,6 +646,79 @@ async function titlebarBackgrounds(
   return {
     chrome: await chrome.evaluate((element) => getComputedStyle(element).backgroundColor),
     leading: await leading.evaluate((element) => getComputedStyle(element).backgroundColor),
+  };
+}
+
+async function expandedSidebarDivider(
+  shell: Locator,
+  leading: Locator,
+  navigation: Locator,
+): Promise<{
+  readonly dividerBottom: number;
+  readonly dividerColor: string;
+  readonly dividerLeft: number;
+  readonly dividerTop: number;
+  readonly dividerWidth: number;
+  readonly leadingRight: number;
+  readonly navigationBorderWidth: number;
+  readonly navigationRight: number;
+}> {
+  const leadingBox = await leading.boundingBox();
+  const navigationBox = await navigation.boundingBox();
+  const styles = await shell.evaluate((element) => {
+    const divider = getComputedStyle(element, "::before");
+    const navigationElement = document.querySelector<HTMLElement>("[aria-label='Ling Stack navigation']");
+    return {
+      dividerBottom: Number.parseFloat(divider.bottom),
+      dividerColor: divider.backgroundColor,
+      dividerLeft: Number.parseFloat(divider.left),
+      dividerTop: Number.parseFloat(divider.top),
+      dividerWidth: Number.parseFloat(divider.width),
+      navigationBorderWidth: navigationElement
+        ? Number.parseFloat(getComputedStyle(navigationElement).borderRightWidth)
+        : -1,
+    };
+  });
+  return {
+    dividerBottom: Math.round(styles.dividerBottom),
+    dividerColor: styles.dividerColor,
+    dividerLeft: Math.round(styles.dividerLeft),
+    dividerTop: Math.round(styles.dividerTop),
+    dividerWidth: Math.round(styles.dividerWidth),
+    leadingRight: Math.round((leadingBox?.x ?? -1) + (leadingBox?.width ?? 0)),
+    navigationBorderWidth: Math.round(styles.navigationBorderWidth),
+    navigationRight: Math.round((navigationBox?.x ?? -1) + (navigationBox?.width ?? 0)),
+  };
+}
+
+async function settingsSidebarSurface(
+  chrome: Locator,
+  navigation: Locator,
+): Promise<{
+  readonly contentMatchesTitlebar: boolean;
+  readonly sidebarMatchesTitlebar: boolean;
+  readonly sidebarWidth: number;
+  readonly titlebarSidebarWidth: number;
+}> {
+  const navigationBox = await navigation.boundingBox();
+  const colors = await chrome.evaluate((element) => {
+    const sidebarSurface = getComputedStyle(element, "::before");
+    const navigationElement = document.querySelector(".settings-section-nav");
+    const contentElement = document.querySelector(".settings-content-stack");
+    return {
+      content: contentElement ? getComputedStyle(contentElement).backgroundColor : "",
+      navigation: navigationElement ? getComputedStyle(navigationElement).backgroundColor : "",
+      titlebar: getComputedStyle(element).backgroundColor,
+      titlebarSidebar: sidebarSurface.backgroundColor,
+      titlebarSidebarWidth: Math.round(Number.parseFloat(sidebarSurface.width)),
+    };
+  });
+  const sidebarWidth = Math.round(navigationBox?.width ?? -1);
+  return {
+    contentMatchesTitlebar: colors.content === colors.titlebar,
+    sidebarMatchesTitlebar: colors.navigation === colors.titlebarSidebar,
+    sidebarWidth,
+    titlebarSidebarWidth: colors.titlebarSidebarWidth,
   };
 }
 

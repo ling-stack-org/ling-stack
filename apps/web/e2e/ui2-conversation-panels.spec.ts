@@ -53,6 +53,42 @@ test("channel summary stays visible while the details dock opens", async ({ page
   await expect(terminal).toHaveCount(0);
 });
 
+test("channel summary reserve stays visually continuous with the conversation surface", async ({ page }) => {
+  await prepareSurface(page, "dark", 1280, 800);
+  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+  await page.goto("/");
+  await openEngineeringChannel(page);
+
+  const toolbar = page.getByRole("toolbar", { name: "Workspace task toolbar" });
+  await toolbar.getByRole("button", { name: "Summary" }).click();
+
+  const appearance = await page.evaluate(() => {
+    const main = document.querySelector<HTMLElement>(".task-workbench-main");
+    const conversation = document.querySelector<HTMLElement>(".channel-chat-panel");
+    const summary = document.querySelector<HTMLElement>(".channel-progress-popover");
+    if (!main || !conversation || !summary) return undefined;
+
+    const mainStyle = getComputedStyle(main);
+    const conversationStyle = getComputedStyle(conversation);
+    const summaryStyle = getComputedStyle(summary);
+    const mainRect = main.getBoundingClientRect();
+    const summaryRect = summary.getBoundingClientRect();
+    return {
+      surfaceBackgroundMatches: mainStyle.backgroundColor === conversationStyle.backgroundColor,
+      summaryPosition: summaryStyle.position,
+      summaryHasOverlayShadow: summaryStyle.boxShadow !== "none",
+      summaryIsCompact: summaryRect.height < mainRect.height,
+    };
+  });
+
+  expect(appearance).toEqual({
+    surfaceBackgroundMatches: true,
+    summaryPosition: "absolute",
+    summaryHasOverlayShadow: true,
+    summaryIsCompact: true,
+  });
+});
+
 test("normal conversation summary uses the channel panel motion", async ({ page }) => {
   await useEnglishLightSurface(page, 1728);
   const state = createBaseState({ approvalStatus: "expired" });

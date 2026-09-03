@@ -166,6 +166,9 @@ maintain a private dock-offset rule.
 - When space is available, feed and Composer occupy the same conversation column and move
   left together. Summary, feed, avatars, Composer, resize handle, and right dock must have
   pairwise non-overlapping rectangles.
+- The reserved Summary column remains visually continuous with the conversation surface.
+  It must not render as a contrasting full-height sidebar or dock; only the `280px` Summary
+  card carries panel background, border, shadow, and elevated popover treatment.
 - When space is insufficient, Summary is not rendered and is not interactive. Widening the
   window, collapsing Sidebar, narrowing or closing Details automatically restores it.
 - Availability is computed from the stable root width and target dock reservation, not

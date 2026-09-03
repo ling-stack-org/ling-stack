@@ -2,10 +2,9 @@
 
 Status: canonical product and architecture contract
 Owner: Web, Desktop, Daemon, and release maintainers
-Last verified: 2026-08-28
+Last verified: 2026-09-03
 Document type: product and architecture contract
-Canonical replacement for: [I18n Alignment And Modularization](./i18n-alignment-modularization.md)
-Implementation plan: [Internationalization Language Parity Implementation Plan](./internationalization-language-parity-implementation-plan.md)
+History: This contract supersedes the earlier i18n alignment contract and its completed implementation plan; both are preserved in Git history.
 Code anchors: `packages/localization`, `apps/web/src/i18n`, `packages/contracts/src/settings.ts`, `apps/desktop`
 Test anchors: `packages/localization/test`, `apps/web/test`, `apps/web/e2e/i18n-language-parity.spec.ts`, `apps/desktop/tests/packaged-language-parity.mjs`, `apps/desktop/tests/run-packaged-language-parity.mjs`
 

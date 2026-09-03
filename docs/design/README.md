@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-09-01
+Last verified: 2026-09-03
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -63,10 +63,12 @@ JSX/CSS 里加入兼容分支。
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+- [Channel Environment Information Hierarchy](channel-environment-information-hierarchy.md)
 - [Conversation Activity Summary And Exploration Batching](conversation-activity-summary-and-exploration-batching-detailed-design.md)
 - [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 - [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
 - [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)
+- [Conversation Right Dock Responsive Visibility Implementation Plan](conversation-right-dock-responsive-visibility-implementation-plan.md)
 - [Channel Execution Completion Implementation Plan](channel-execution-completion-implementation-plan.md)
 - [Post-Compaction Workspace Undo](post-compaction-undo.md)
 - [Post-Compaction Snapshot Restore](post-compaction-snapshot-restore.md)
@@ -241,6 +243,7 @@ WorkCell。完成判定永远读取 atomic evidence，不读取 batch 数量、p
 ## Runtime, Security, And Storage
 
 - [Approval Policy](approval-policy.md)
+- [Workspace Command Rule Approval Implementation Plan](workspace-command-rule-approval-implementation-plan.md)
 - [Inline Runtime Approval](inline-runtime-approval-detailed-design.md)
 - [State Machines And Recovery](state-machine-recovery.md)
 - [Multi-Channel Concurrency](multi-channel-concurrency.md)
@@ -277,7 +280,6 @@ part of the current product acceptance scope.
 ## Web, Desktop, And UI 2.0
 
 - [Internationalization And Language Parity](internationalization-language-parity.md)
-- [Internationalization Language Parity Implementation Plan](internationalization-language-parity-implementation-plan.md)
 - [UI 2.0 Documentation](ui2.0升级/README.md)
 - [UI 2.0 Product Contract](ui2.0升级/00-UI2.0整体升级方案.md)
 - [UI 2.0 Acceptance Contract](ui2.0升级/03-UI2.0验收总规范.md)
@@ -286,6 +288,7 @@ part of the current product acceptance scope.
 - [Data Revalidation And Manual Refresh Policy](data-revalidation-and-manual-refresh-policy.md)
 - [Web Modularization](web-modularization.md)
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
+- [Codex Window Shell Parity](codex-window-shell-parity.md)
 - [Desktop Shell](desktop-shell.md)
 - [Sidebar, Approval, And Proposal Dialogs Implementation Plan](sidebar-approval-proposal-dialogs-implementation-plan.md)
 - [Desktop Release](../release/desktop.md)
