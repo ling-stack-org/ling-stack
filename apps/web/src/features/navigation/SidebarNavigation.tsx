@@ -167,7 +167,7 @@ export function SidebarNavigation({
   }
 
   return (
-    <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label="Ling Stack navigation">
+    <aside className={channelDrawer ? "left-nav channel-left-drawer" : "left-nav"} aria-label={t("Sidebar display")}>
       <div className="sidebar-fixed-top">
         <div className="sidebar-brand-row">
           <SidebarTooltip label={t("New conversation")}>

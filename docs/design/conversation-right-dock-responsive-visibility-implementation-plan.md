@@ -1,8 +1,12 @@
 # Conversation Right Dock Responsive Visibility Implementation Plan
 
 Status: active implementation plan
-Date: 2026-08-29
+Owner: Web and Desktop maintainers
+Last verified: 2026-09-03
+Document type: active implementation plan
 Scope: Web/Desktop channel, normal conversation, teammate private chat
+Code anchors: `apps/web/src/features/workspace/useConversationRightDockController.ts`, `apps/web/src/styles/channel-right-dock/shell.css`
+Test anchors: `apps/web/e2e/ui2-channel-settings-overlay-dock.spec.ts`, `apps/web/e2e/ui2-conversation-panels.spec.ts`
 
 Related contracts:
 
