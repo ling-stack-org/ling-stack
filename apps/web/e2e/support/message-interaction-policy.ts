@@ -11,12 +11,13 @@ export async function expectMessageInteractionPolicy(
 
   if (kind === "assistant") {
     expect(initial.backgroundColor).toBe(transparent);
-    expect(initial.borderColors.every((color) => color === transparent)).toBe(true);
+    expect(hasVisibleBorder(initial)).toBe(false);
   } else if (kind === "user") {
-    expect(initial.backgroundColor).not.toBe(transparent);
+    expect(initial.backgroundColor).toBe(transparent);
+    expect(hasVisibleBorder(initial)).toBe(false);
   } else {
     expect(initial.backgroundColor).not.toBe(transparent);
-    expect(initial.borderColors.some((color) => color !== transparent)).toBe(true);
+    expect(hasVisibleBorder(initial)).toBe(true);
   }
 
   await expect.poll(() => actionBar.evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity))).toBeLessThan(0.01);
@@ -43,6 +44,8 @@ export async function expectMessageInteractionPolicy(
 async function readMessageSurface(row: Locator): Promise<{
   readonly backgroundColor: string;
   readonly borderColors: readonly string[];
+  readonly borderStyles: readonly string[];
+  readonly borderWidths: readonly number[];
   readonly boxShadow: string;
 }> {
   return row.locator(":scope > .message-content").evaluate((element) => {
@@ -50,7 +53,21 @@ async function readMessageSurface(row: Locator): Promise<{
     return {
       backgroundColor: style.backgroundColor,
       borderColors: [style.borderTopColor, style.borderRightColor, style.borderBottomColor, style.borderLeftColor],
+      borderStyles: [style.borderTopStyle, style.borderRightStyle, style.borderBottomStyle, style.borderLeftStyle],
+      borderWidths: [style.borderTopWidth, style.borderRightWidth, style.borderBottomWidth, style.borderLeftWidth]
+        .map((width) => Number.parseFloat(width)),
       boxShadow: style.boxShadow,
     };
   });
+}
+
+function hasVisibleBorder(surface: {
+  readonly borderColors: readonly string[];
+  readonly borderStyles: readonly string[];
+  readonly borderWidths: readonly number[];
+}): boolean {
+  const transparent = "rgba(0, 0, 0, 0)";
+  return surface.borderColors.some((color, index) =>
+    color !== transparent && surface.borderStyles[index] !== "none" && (surface.borderWidths[index] ?? 0) > 0
+  );
 }

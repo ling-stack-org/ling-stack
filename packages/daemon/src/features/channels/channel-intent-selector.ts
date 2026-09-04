@@ -868,7 +868,10 @@ function createWorkflowProposal(
   const persistedDecisionAction = execution ? "execute" : decisionAction;
   const participantManifest = createParticipantManifest(
     input,
-    participants.map((participant) => participant.teammate),
+    participants.map((participant) => ({
+      teammate: participant.teammate,
+      stepAction: participant.role.action,
+    })),
     persistedDecisionAction,
     execution,
   );
@@ -958,7 +961,10 @@ function createSingleStepExecutableProposal(
   );
   const participantManifest = createParticipantManifest(
     input,
-    participants.map((participant) => participant.teammate),
+    participants.map((participant) => ({
+      teammate: participant.teammate,
+      stepAction: participant.role.action,
+    })),
     "execute",
     operationPlan,
   );
@@ -2506,7 +2512,8 @@ function executableProposalBlocker(
     });
     if (participants.length > 1
       && execution.operations.some((operation) => operation.required)
-      && ownedRequiredOperations.length === 0) {
+      && ownedRequiredOperations.length === 0
+      && participant.role.action === "coordinated") {
       userMessages.push(formatServerCatalogMessage(
         responseLanguage,
         "daemon.channel.participant_no_required_operation",
@@ -2822,7 +2829,10 @@ function persistIntentDecision(
 
 function createParticipantManifest(
   input: ChannelIntentSelectorInput,
-  teammates: readonly AiTeammate[],
+  participants: readonly {
+    readonly teammate: AiTeammate;
+    readonly stepAction?: ChannelExecutionProposalStep["action"];
+  }[],
   action: Parameters<RunStore["createChannelIntentDecision"]>[0]["action"],
   execution: ChannelIntentExecutionPlanV1 | undefined,
 ): RequiredParticipantManifestV1 {
@@ -2834,18 +2844,28 @@ function createParticipantManifest(
   const operations = execution?.operations ?? [];
   const operationOwners = assignExecutionOperationOwners(
     operations,
-    teammates.map((teammate) => ({ teammate })),
+    participants.map((participant) => ({ teammate: participant.teammate })),
   );
-  return createRequiredParticipantManifestV1(teammates.map((teammate, index) => ({
-    participantId: teammate.id,
-    role: teammate.roleKey,
-    requirement: "required" as const,
-    expectedOutcome: expectedParticipantOutcome(action, teammate, index, teammates.length),
-    requiredOperationIds: ownedExecutionOperations(operations, operationOwners, index)
-      .filter((operation) => operation.required)
-      .map((operation) => operation.id),
-    requestedBy: (explicitIds.has(teammate.id) ? "structured_mention" : "selector_policy") as RequiredParticipantRequestedByV1,
-  })));
+  return createRequiredParticipantManifestV1(participants.map((participant, index) => {
+    const ownedOperations = ownedExecutionOperations(operations, operationOwners, index);
+    return {
+      participantId: participant.teammate.id,
+      role: participant.teammate.roleKey,
+      requirement: "required" as const,
+      expectedOutcome: expectedParticipantOutcome(
+        action,
+        participant.teammate,
+        participant.stepAction,
+        ownedOperations,
+        index,
+        participants.length,
+      ),
+      requiredOperationIds: ownedOperations
+        .filter((operation) => operation.required)
+        .map((operation) => operation.id),
+      requestedBy: (explicitIds.has(participant.teammate.id) ? "structured_mention" : "selector_policy") as RequiredParticipantRequestedByV1,
+    };
+  }));
 }
 
 function createParticipantManifestFromSelected(
@@ -2856,7 +2876,7 @@ function createParticipantManifestFromSelected(
 ): RequiredParticipantManifestV1 {
   const teammates = teammateIds.flatMap((id) => {
     const teammate = input.store.getAiTeammate(id);
-    return teammate ? [teammate] : [];
+    return teammate ? [{ teammate }] : [];
   });
   return createParticipantManifest(input, teammates, action, execution);
 }
@@ -2864,12 +2884,19 @@ function createParticipantManifestFromSelected(
 function expectedParticipantOutcome(
   action: Parameters<RunStore["createChannelIntentDecision"]>[0]["action"],
   teammate: AiTeammate,
+  stepAction: ChannelExecutionProposalStep["action"] | undefined,
+  ownedOperations: readonly ChannelIntentExecutionOperationV1[],
   index: number,
   participantCount: number,
 ): RequiredParticipantExpectedOutcomeV1 {
   if (action === "reply" || action === "visible_multi_reply" || action === "clarify") return "discussion_reply";
+  // A reviewed/consulted/risk-flagged participant may contribute a durable
+  // output packet without claiming a Host operation. This is still evidence:
+  // the finalizer seals the packet from the Run snapshot and canonical events;
+  // plain ready text never satisfies a delegated step.
+  if (ownedOperations.length === 0 && stepAction !== "coordinated") return "synthesis";
   if (teammate.roleKey === "qa" || teammate.roleKey === "security" || teammate.roleKey === "release") return "verification";
-  if (participantCount > 1 && index === participantCount - 1 && teammate.roleKey === "architect") return "synthesis";
+  if (ownedOperations.length === 0 && participantCount > 1 && index === participantCount - 1 && teammate.roleKey === "architect") return "synthesis";
   return "execution";
 }
 

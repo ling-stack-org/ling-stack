@@ -119,7 +119,7 @@ function renderContextCompactionItem(item: ConversationTimelineItem, context: Co
 }
 
 function renderTerminalReportItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "terminalReport" ? <ConversationTimelineTerminalReportRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
+  return item.kind === "terminalReport" ? <ConversationTimelineTerminalReportRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} /> : null;
 }
 
 function renderDiagnosticItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {

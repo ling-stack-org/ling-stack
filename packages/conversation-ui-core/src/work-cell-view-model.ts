@@ -98,10 +98,15 @@ export interface ConversationCommandExecutionView {
     readonly text: string;
     readonly redacted: boolean;
   }[];
+  /** Total bytes captured by the Host for stdout + stderr. */
+  readonly outputByteCount?: number;
+  /** Total logical lines captured by the Host for stdout + stderr. */
+  readonly outputLineCount?: number;
   readonly sourceRefs?: readonly ConversationOperationSourceRef[];
   readonly outputTruncated: boolean;
   readonly stdoutArtifactId?: string;
   readonly stderrArtifactId?: string;
+  readonly resultArtifactId?: string;
 }
 
 export interface ConversationWorkCellStat {

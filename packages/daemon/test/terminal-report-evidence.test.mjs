@@ -167,6 +167,75 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
   }
 });
 
+test("terminal report checks use the exact Host command instead of action prose", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-command-authority-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-07-11T02:30:00.000Z";
+    const channel = store.createChannel({ name: "Command authority", boundPath: cwd }, now);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Command authority",
+      objective: "Use Host command evidence",
+      status: "succeeded",
+      createdBy: "ling_agent",
+    }, now);
+    const created = createWorkflowRun(store, {
+      cwd,
+      channelId: channel.id,
+      workflowId: workflow.id,
+      teammateId: "qa",
+      title: "QA command authority",
+      status: "succeeded",
+      resultSummary: "The model prose must not become the command.",
+      runId: "run_terminal_command_authority",
+      createdAt: now,
+    });
+    const toolCallId = "qa-command-authority";
+    store.appendEvent(created.run.id, "tool_start", {
+      toolCallId,
+      toolName: "bash",
+      args: { command: "pnpm typecheck" },
+    });
+    store.appendEvent(created.run.id, "tool_end", {
+      toolCallId,
+      toolName: "bash",
+      isError: false,
+      result: {
+        details: {
+          unifiedExec: {
+            status: "succeeded",
+            cwd,
+            command: { kind: "shell", command: "pnpm typecheck", shell: "bash" },
+            startedAt: now,
+            endedAt: now,
+            durationMs: 1,
+            exitCode: 0,
+            timedOut: false,
+            cancelled: false,
+            stdout: { byteCount: 3, lineCount: 1, preview: "ok\n", truncated: false },
+            stderr: { byteCount: 0, lineCount: 0, preview: "", truncated: false },
+            artifacts: [],
+          },
+        },
+      },
+    });
+    store.appendEvent(created.run.id, "assistant_text_delta", {
+      text: "I ran a semantic substitute instead.",
+    });
+    store.markRunSucceeded(created.run.id, now);
+
+    const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, { generatedAt: now });
+    const check = snapshot.checks.find((entry) => entry.runId === created.run.id);
+    assert.ok(check);
+    assert.equal(check.command, "pnpm typecheck");
+    assert.notEqual(check.command, "I ran a semantic substitute instead.");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("run and turn terminal evidence preserve retry history while latest participation can complete", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-turn-evidence-"));
   const store = createSqliteRunStore(cwd);

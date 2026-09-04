@@ -434,7 +434,11 @@ function mapCheck(
         : action.status === "cancelled" ? "cancelled"
           : action.status === "denied" || action.status === "expired" ? "blocked"
             : "unknown",
-    command: boundedText(action.summary, maxCharacters),
+    // The command is Host evidence. Model/action prose is only a narrative
+    // fallback and must never replace the exact command in a report check.
+    command: action.commandEvidence?.command
+      ? boundedText(action.commandEvidence.command, maxCharacters)
+      : undefined,
     summary: action.status === "succeeded" ? "Command completed successfully."
       : action.status === "failed" ? "Command failed."
         : undefined,

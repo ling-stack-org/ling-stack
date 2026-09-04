@@ -274,7 +274,9 @@ function channelTurnTerminalReportTimelineItem(
     threadSequence: Number.MAX_SAFE_INTEGER - 1,
     partIndex: 0,
     status: timelineStatus,
-    turnId: turn.id,
+    // ConversationTurnViewModel.id is a presentation-only grouping key. Recovery
+    // and lineage must use the durable LingTurn id carried by the operation cell.
+    turnId: turn.operationCell.turnId ?? turn.id,
     sourceRefs: [{ kind: "terminal_report", id: block.terminalReportId }],
     title: outcome?.title ?? turn.operationCell.title,
     description: outcome?.description,

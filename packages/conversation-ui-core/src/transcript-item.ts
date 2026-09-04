@@ -133,6 +133,12 @@ export interface ConversationTimelineCommandExecutionItem extends ConversationTi
     readonly text: string;
     readonly redacted: boolean;
   }[];
+  /** Host-authoritative totals; the tail is a bounded preview only. */
+  readonly outputByteCount?: number;
+  readonly outputLineCount?: number;
+  readonly stdoutArtifactId?: string;
+  readonly stderrArtifactId?: string;
+  readonly resultArtifactId?: string;
   readonly outputTruncated: boolean;
   readonly exitCode?: number;
   readonly durationMs?: number;
@@ -798,6 +804,11 @@ function projectConversationTimelineRow(
       risk: command?.risk ?? "low",
       cwd: command?.cwd,
       outputTail: command?.outputTail ?? outputTailFromDetailLines(row.detailLines),
+      outputByteCount: command?.outputByteCount,
+      outputLineCount: command?.outputLineCount,
+      stdoutArtifactId: command?.stdoutArtifactId,
+      stderrArtifactId: command?.stderrArtifactId,
+      resultArtifactId: command?.resultArtifactId,
       outputTruncated: command?.outputTruncated ?? false,
       exitCode: command?.exitCode,
       durationMs: command?.durationMs,

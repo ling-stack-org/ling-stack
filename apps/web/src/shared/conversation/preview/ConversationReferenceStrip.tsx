@@ -73,7 +73,7 @@ export function ConversationReferenceStrip({
                 onClick={onOpen}
                 onFocus={() => setActivePreviewId(reference.id)}
                 onBlur={() => setActivePreviewId((current) => current === reference.id ? undefined : current)}
-                disabled={!onOpen}
+                aria-disabled={onOpen ? undefined : "true"}
               >
                 {content}
               </button>

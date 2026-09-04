@@ -614,7 +614,7 @@ test("channel team metrics stay in settings without a conversation expert summar
   };
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Engineering" }).click();
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed.getByText("主回复保持干净，团队证据不重复展示。")).toBeVisible();
@@ -685,7 +685,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await expect(navigation.locator(".sidebar-fixed-top")).toBeVisible();
   await expect(navigation.locator(".sidebar-scroll-region")).toBeVisible();
   await expect(navigation.locator(".sidebar-bottom")).toBeVisible();
@@ -817,7 +817,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Sidebar display" })).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
 
   await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBe(292);
@@ -1324,7 +1324,7 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.goto("/");
   await openEngineeringChannel(page);
   await page.getByRole("button", { name: "Hide navigation" }).click();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveAttribute("data-sidebar-mode", "compact");
+  await expect(page.getByRole("complementary", { name: "Sidebar display" })).toHaveAttribute("data-sidebar-mode", "compact");
   await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
   await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
@@ -1877,7 +1877,7 @@ test("empty channel drawer opens the new channel dialog", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await expect(navigation.getByRole("button", { name: "No channel yet" })).toBeVisible();
   await navigation.getByRole("button", { name: "No channel yet" }).click();
 
@@ -1898,7 +1898,7 @@ test("new channel dialog selects a project folder before create", async ({ page 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "Channel actions" }).click();
   await page.getByRole("menuitem", { name: "New channel" }).click();
 
@@ -1936,7 +1936,7 @@ test("new channel dialog shows create failures inline", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "Channel actions" }).click();
   await page.getByRole("menuitem", { name: "New channel" }).click();
 
@@ -2161,7 +2161,7 @@ test("channel runtime policy is visible while preferred specialist controls stay
     return isRecord(updated) ? [updated.name, updated.autoReplyMode] : [];
   }).toEqual(["Engineering QA", "auto_route"]);
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "Channel actions" }).click();
   await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await page.getByRole("menuitem", { name: "New channel" }).click();
@@ -2238,7 +2238,7 @@ test("channel reply routing mode is not exposed in ordinary settings", async ({ 
   await expect(currentManagement.getByText("Auto route")).toHaveCount(0);
   await expect(currentManagement.getByText("Ling Agent decides", { exact: true })).toHaveCount(0);
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "Channel actions" }).click();
   await expect(page.getByRole("menuitem", { name: "New channel" })).toBeVisible();
   await page.getByRole("menuitem", { name: "New channel" }).click();
@@ -2934,7 +2934,7 @@ test("channel settings can add and remove teammates without preferred specialist
   const initialDefaultTeammateId = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering")?.defaultTeammateId;
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
   await page.getByRole("button", { name: "AI teammate management" }).click();
@@ -3397,7 +3397,7 @@ test("channel message feed shows usable web sources and keeps diagnostics in the
   ];
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Engineering" }).click();
 
   const feed = page.getByLabel("Channel message feed");
   const sourcedReply = feed.locator(".channel-message-row").filter({ hasText: "Web-backed reply with source." });
@@ -3571,7 +3571,7 @@ test("conversation turn transcript omits web diagnostics without usable sources"
   ];
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Engineering" }).click();
 
   const turn = page.locator('[data-conversation-turn-id="conversation-turn:msg_web_turn_user"]');
   await expect(turn).toBeVisible();
@@ -3678,7 +3678,7 @@ test("channel more menu renames the selected channel", async ({ page }) => {
     return isRecord(channel) ? channel.name : "";
   }).toBe("v0.1 Smoke");
   await expect(page.getByRole("heading", { name: "v0.1 Smoke", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "v0.1 Smoke" })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "v0.1 Smoke" })).toBeVisible();
 });
 
 test("paused channels disable task run actions", async ({ page }) => {
@@ -3949,7 +3949,7 @@ test("channel composer snapshots restore draft assets and topic replies across c
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   const composerInput = channelComposerTextbox(page);
   await composerInput.fill("Engineering snapshot draft https://example.com");
   await expect(page.getByText("Example Domain").first()).toBeVisible({ timeout: 3_000 });
@@ -4238,7 +4238,7 @@ test("latest channel branch prompt reruns inside the same branch lane", async ({
 
   await mockDaemon(page, state);
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "Implementation branch" }).click();
 
   const feed = page.getByLabel("Channel message feed");
@@ -11773,13 +11773,13 @@ test("channel activity derives task run approval transition and workflow events"
   await runEventBubble.getByRole("button", { name: "Details" }).click();
   await clickActivityDetailsAction("Show run in transcript");
   await expectConversationReviewSurface(page);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
 
   await approvalEventBubble.getByRole("button", { name: "Details" }).click();
   await clickActivityDetailsAction("Open approval");
   await expect(page.locator(".conversation-detail-overlay").filter({ hasText: "Approval details" })).toContainText("No pending approval");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
 
   await workflowStepBubble.getByRole("button", { name: "Details" }).click();
@@ -11934,11 +11934,11 @@ test("channel activity derives task run approval transition and workflow events"
   await renameViewDialog.getByRole("textbox", { name: "Saved view name" }).fill("Run problems");
   await renameViewDialog.getByRole("button", { name: "Rename" }).click();
   await expect(savedViewOption("Run problems")).toHaveCount(1);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Design" }).click();
   await openChannelChatTools(page);
   await expect(searchInput).toHaveValue("");
   await expect(savedViewOption("Run problems")).toHaveCount(0);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
   await expect(savedViewOption("Run problems")).toHaveCount(1);
   await selectSavedView("Run problems");
@@ -11948,14 +11948,14 @@ test("channel activity derives task run approval transition and workflow events"
   await deleteViewDialog.getByRole("button", { name: "Delete view" }).click();
   await expect(savedViewOption("Run problems")).toHaveCount(0);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Design" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Design" }).click();
   await openChannelChatTools(page);
   await expect(searchInput).toHaveValue("");
   await expect(activityFeed.getByText("Other channel task leak").first()).toBeVisible();
   await expect(activityFeed.getByText("Timeline source message")).toHaveCount(0);
   await expect(page.getByText("No activity matches these filters")).toHaveCount(0);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
   await expect(searchInput).toHaveValue("");
   await expect(activityFeed.getByText("Timeline source message")).toBeVisible();
@@ -11967,12 +11967,12 @@ test("channel activity derives task run approval transition and workflow events"
   await page.locator(".message-bubble").filter({ hasText: "Run event" }).filter({ hasText: "Inspect workspace" }).getByRole("button", { name: "Show in transcript" }).click();
   await expectConversationReviewSurface(page);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
   await page.locator(".message-bubble").filter({ hasText: "Approval event" }).filter({ hasText: "Approval expired" }).getByRole("button", { name: "Open approval" }).click();
   await expectApprovalDetailOverlay(page, "Approval expired");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
   await page.locator(".message-bubble").filter({ hasText: "Workflow step" }).filter({ hasText: "Blocked timeline step" }).getByRole("button", { name: "Review source" }).click();
   await expectConversationReviewSurface(page);

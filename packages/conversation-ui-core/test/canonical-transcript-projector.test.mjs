@@ -45,6 +45,43 @@ test("canonical projector keeps messages and action evidence on one source-order
   assert.equal(projection.diagnostics.length, 0);
 });
 
+test("canonical command projection preserves Host output totals and artifact identities", () => {
+  const projection = projectCanonicalConversationTimeline({
+    scope,
+    sourceSequence: 1,
+    sourceRevision: "command-output-totals",
+    items: [item("tool-output", 1, "tool_call", { toolCallId: "call-output", toolName: "bash" })],
+    actions: [action("action-output", 9, {
+      toolCallId: "call-output",
+      actionType: "bash",
+      status: "succeeded",
+      sourceRefs: [conversationRef("tool-output")],
+      commandEvidence: {
+        command: "node verify.mjs",
+        latestEventSeq: 9,
+        outputTail: [{ eventSeq: 8, stream: "stdout", text: "ok\n", redacted: false }],
+        outputByteCount: 42,
+        outputLineCount: 3,
+        stdoutArtifactId: "artifact-stdout",
+        stderrArtifactId: "artifact-stderr",
+        resultArtifactId: "artifact-result",
+        outputTruncated: false,
+        exitCode: 0,
+      },
+    })],
+    turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+  });
+
+  const command = projection.items[0];
+  assert.equal(command.kind, "commandExecution");
+  assert.equal(command.outputByteCount, 42);
+  assert.equal(command.outputLineCount, 3);
+  assert.equal(command.stdoutArtifactId, "artifact-stdout");
+  assert.equal(command.stderrArtifactId, "artifact-stderr");
+  assert.equal(command.resultArtifactId, "artifact-result");
+  assert.equal(command.outputTail[0].text, "ok\n");
+});
+
 test("canonical projector surfaces rejected lifecycle diagnostics without changing the action row", () => {
   const projection = projectCanonicalConversationTimeline({
     scope,

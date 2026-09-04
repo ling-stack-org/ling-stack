@@ -175,6 +175,51 @@ function installRecoveryFixture(state: MockState, suffix: string): {
     diffArtifact(runId, `artifact_recovery_${suffix}_css`, "src/recovery-surface.css", createdAt),
   ];
   state.artifactsByRun[runId] = artifacts;
+  state.terminalReports = [{
+    schemaVersion: 1,
+    id: `terminal_report_artifact_recovery_${suffix}`,
+    generation: 1,
+    resultItemId: `result_terminal_report:artifact_recovery_${suffix}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId,
+    turnId,
+    source: { kind: "turn", id: turnId },
+    status: "committed",
+    language: "en-US",
+    outcome: {
+      status: "succeeded",
+      title: "Recovery fixture completed",
+      summary: "Workspace changes are available for guarded recovery.",
+      corrections: [],
+      sourceRefs: [{ kind: "run", id: runId, visibility: "conversation" }],
+    },
+    changes: [{
+      id: `change_artifact_recovery_${suffix}`,
+      kind: "code",
+      title: "Edited 2 files",
+      summary: "Updated the recovery surface and its styles.",
+      paths: artifacts.map((artifact) => artifact.path).filter((path): path is string => Boolean(path)),
+      addedLines: 2,
+      deletedLines: 2,
+      sourceRefs: [],
+    }],
+    verification: [],
+    participants: [],
+    artifacts: [],
+    risks: [],
+    references: [],
+    evidenceSnapshotId: `snapshot_artifact_recovery_${suffix}`,
+    evidenceFingerprint: `fingerprint_artifact_recovery_${suffix}`,
+    synthesis: {
+      mode: "deterministic_fallback",
+      promptVersion: "terminal-report-v1",
+      attemptCount: 0,
+      validationCodes: [],
+    },
+    createdAt,
+    committedAt: "2026-07-26T02:01:00.000Z",
+  }];
   return { runId, state, threadId, turnId };
 }
 
@@ -249,16 +294,21 @@ function recoveryResponse(
 
 async function openRecoverySurface(page: Page, threadId: string): Promise<Locator> {
   await openEngineeringChannel(page);
-  const workCell = page.getByLabel("Channel message feed")
-    .locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
-  await expect(workCell).toBeVisible();
-  const shellToggle = workCell.locator(".conversation-operation-shell-head");
-  if (await shellToggle.getAttribute("aria-expanded") === "false") {
-    await shellToggle.click();
+  const timeline = page.getByLabel("Channel message feed")
+    .locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"][data-conversation-timeline-depth="0"]`);
+  await expect(timeline).toBeVisible();
+  const report = timeline.locator('[data-conversation-timeline-kind="terminalReport"]');
+  await expect(report).toBeVisible();
+  await expect(report).toHaveAttribute("data-conversation-turn-id", `turn_ui2_work_cell_${threadId.replace("thread_ui2_work_cell_", "")}`);
+  const reportToggle = report.locator(".conversation-timeline-activity-main");
+  if (await reportToggle.getAttribute("aria-expanded") === "false") {
+    await reportToggle.click();
   }
-  const surface = workCell.locator(".conversation-work-cell-change-group");
+  const surface = report.locator('[data-terminal-report-section="changes"]');
   await expect(surface).toBeVisible();
   await expect(surface).toContainText("Edited 2 files");
+  await expect(surface.getByTitle("src/RecoverySurface.tsx")).toBeVisible();
+  await expect(surface.getByTitle("src/recovery-surface.css")).toBeVisible();
   return surface;
 }
 

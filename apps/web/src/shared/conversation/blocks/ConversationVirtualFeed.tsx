@@ -139,7 +139,7 @@ export function ConversationVirtualFeed<TItem>({
                   ref={handleMeasureElement}
                   className="message-feed-virtual-row"
                   tabIndex={-1}
-                  data-conversation-focus-block={itemId ? "true" : undefined}
+                  data-conversation-focus-block={itemId && itemKind !== "timeline" ? "true" : undefined}
                   data-feed-item-id={itemId}
                   data-feed-item-kind={itemKind}
                   data-index={virtualRow.index}

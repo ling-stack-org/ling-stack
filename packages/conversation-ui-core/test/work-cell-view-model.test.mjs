@@ -461,6 +461,24 @@ test("typed timeline can be projected again without changing identity", () => {
   assert.equal(second[0].revision, first[0].revision);
 });
 
+test("typed timeline keeps command output totals on the atomic row", () => {
+  const row = commandRow("command-output", "run-1", "node verify.mjs", 12, {
+    outputByteCount: 42,
+    outputLineCount: 3,
+    stdoutArtifactId: "stdout-artifact",
+    stderrArtifactId: "stderr-artifact",
+    resultArtifactId: "result-artifact",
+  });
+  const [item] = projectConversationTimelineItems([row]);
+
+  assert.equal(item.kind, "commandExecution");
+  assert.equal(item.outputByteCount, 42);
+  assert.equal(item.outputLineCount, 3);
+  assert.equal(item.stdoutArtifactId, "stdout-artifact");
+  assert.equal(item.stderrArtifactId, "stderr-artifact");
+  assert.equal(item.resultArtifactId, "result-artifact");
+});
+
 test("timeline replay rejects stale revisions and preserves current order", () => {
   const current = projectConversationTimelineItems([
     { id: "note-a", presentation: "note", title: "A" },
@@ -507,6 +525,11 @@ function commandRow(id, runId, commandText, durationMs, overrides = {}) {
       durationMs,
       exitCode,
       latestEventSeq: 1,
+      outputByteCount: overrides.outputByteCount,
+      outputLineCount: overrides.outputLineCount,
+      stdoutArtifactId: overrides.stdoutArtifactId,
+      stderrArtifactId: overrides.stderrArtifactId,
+      resultArtifactId: overrides.resultArtifactId,
       outputTruncated: false,
       sourceRefs: overrides.sourceRefs ?? [conversationItemRef(id), { kind: "command", id: commandText, label: commandText }],
     },

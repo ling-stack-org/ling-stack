@@ -521,6 +521,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_architect_read`,
         runId: runArchitectId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "read",
         title: "读取频道投影入口",
@@ -533,6 +534,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_architect_search`,
         runId: runArchitectId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "grep",
         title: "搜索 work-cell 投影函数",
@@ -545,6 +547,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_designer_review`,
         runId: runDesignerId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "mcp_tool_call",
         title: "审阅操作记录视觉层级",
@@ -557,6 +560,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_edit_component`,
         runId: runEngineerId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "edit",
         risk: "medium",
@@ -571,6 +575,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_edit_css`,
         runId: runEngineerId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "edit",
         risk: "medium",
@@ -585,6 +590,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_typecheck`,
         runId: runEngineerId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "bash",
         risk: "medium",
@@ -598,6 +604,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_qa_e2e`,
         runId: runQaId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "bash",
         risk: "medium",
@@ -612,6 +619,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_doc`,
         runId: runEngineerFollowupId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "edit",
         risk: "low",
@@ -626,6 +634,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_followup_typecheck`,
         runId: runEngineerFollowupId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "bash",
         title: "复查会话类型",
@@ -637,6 +646,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_followup_i18n`,
         runId: runEngineerFollowupId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "bash",
         title: "检查会话文案",
@@ -648,6 +658,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_followup_diff_check`,
         runId: runEngineerFollowupId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "bash",
         title: "检查补丁格式",
@@ -879,6 +890,7 @@ function demoArtifactPreviewText(artifact: RunArtifact): string {
 function demoAction(input: {
   readonly id: string;
   readonly runId: string;
+  readonly sourceItemId?: string;
   readonly workspaceId: string;
   readonly actionType: ExecutionAction["actionType"];
   readonly title: string;
@@ -909,12 +921,15 @@ function demoAction(input: {
     targetRefs: input.targetRefs,
     previewArtifactIds: [],
     resultArtifactIds: input.resultArtifactIds ?? [],
-    sourceRefs: input.targetRefs.map((ref) => ({
+    sourceRefs: [
+      ...(input.sourceItemId ? [{ kind: "conversation_item", id: input.sourceItemId }] : []),
+      ...input.targetRefs.map((ref) => ({
       kind: ref.type,
       id: ref.path ?? ref.id ?? ref.label ?? ref.type,
       ...(ref.label ? { label: ref.label } : {}),
       ...(ref.path ? { path: ref.path } : {}),
-    })),
+      })),
+    ],
     ...(commandText ? {
       toolCallId: `tool_${input.id}`,
       commandEvidence: {

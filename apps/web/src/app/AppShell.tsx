@@ -77,7 +77,6 @@ import {
   effectiveApprovalStatus,
 } from "../lib/approvals.js";
 import { buildInlineApprovalViews } from "../lib/inline-approvals.js";
-import { resolveRuntimeRunOwner } from "../lib/runtime-approval-ownership.js";
 import {
   channelToForm,
   defaultChannelCreateForm,
@@ -158,6 +157,7 @@ import {
   buildSidebarChannelNotifications,
   buildSidebarConversationApprovalCounts,
   buildSidebarTeammateNotifications,
+  conversationThreadHasActiveWork,
   projectSidebarConversationStatus,
 } from "./sidebar-status-projections.js";
 import { useAppNavigationController } from "./use-app-navigation-controller.js";
@@ -1107,20 +1107,17 @@ export function AppShell(): React.JSX.Element {
     ));
   }, [activeView, conversationThreads, form.cwd, selectedChannelId, selectedConversationThreadId]);
   const recentConversations = useMemo<readonly SidebarRecentConversation[]>(() => {
-    const activeThreadIds = new Set([...runs, ...(run ? [run] : [])]
-      .filter((item) => item.status === "queued" || item.status === "running")
-      .map((item) => {
-        const owner = resolveRuntimeRunOwner(item, { workUnits });
-        return owner?.kind === "normal_conversation" ? owner.threadId : undefined;
-      })
-      .filter((threadId): threadId is string => Boolean(threadId)));
     return conversationThreads
       .map((thread) => ({
         id: thread.id,
         label: thread.title || t("Conversation"),
         primaryStatus: projectSidebarConversationStatus(
           thread.status,
-          activeThreadIds.has(thread.id) || (thread.id === selectedConversationThreadId && conversationStreamBusy),
+          conversationThreadHasActiveWork(
+            thread,
+            selectedConversationThreadId,
+            conversationStreamBusy,
+          ),
           (sidebarConversationApprovalCounts.get(thread.id) ?? 0) > 0,
           hasAcknowledgedSidebarConversationFailure(
             sidebarFailureReadState,
@@ -1133,7 +1130,7 @@ export function AppShell(): React.JSX.Element {
       }) satisfies SidebarRecentConversation)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 5);
-  }, [conversationStreamBusy, conversationThreads, form.cwd, run, runs, selectedConversationThreadId, sidebarConversationApprovalCounts, sidebarFailureReadState, t, workUnits]);
+  }, [conversationStreamBusy, conversationThreads, form.cwd, selectedConversationThreadId, sidebarConversationApprovalCounts, sidebarFailureReadState, t]);
   const conversationChatProviders = useMemo(
     () => providers.filter(canUseConversationProvider),
     [providers],

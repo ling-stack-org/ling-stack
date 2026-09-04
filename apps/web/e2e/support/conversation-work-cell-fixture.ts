@@ -22,6 +22,7 @@ export function installChannelWorkCellFixture(state: MockState, suffix: string):
   const threadId = `thread_ui2_work_cell_${suffix}`;
   const turnId = `turn_ui2_work_cell_${suffix}`;
   const runId = `run_ui2_work_cell_${suffix}`;
+  const sourceMessageId = `message_ui2_work_cell_${suffix}`;
   const run = {
     ...baseRun,
     id: runId,
@@ -56,7 +57,41 @@ export function installChannelWorkCellFixture(state: MockState, suffix: string):
     completedAt,
   }];
   state.turnRunLinks = [{ turnId, runId, attemptNumber: 1, role: "primary", createdAt: startedAt }];
-  state.executionActions = completedCommandActions(threadId, runId, suffix);
+  state.threads = [{
+    id: threadId,
+    workspaceId,
+    kind: "channel_discussion",
+    channelId: "channel_engineering",
+    title: `Focused WorkCell ${suffix}`,
+    objective: `Inspect the focused WorkCell ${suffix}.`,
+    status: "succeeded",
+    lastRunId: runId,
+    surfaceKind: "channel_root",
+    relationKind: "root",
+    conversationMode: { mode: "default" },
+    createdAt: startedAt,
+    updatedAt: completedAt,
+  }, ...state.threads.filter((candidate) => candidate.id !== threadId)];
+  state.channelMessages = [{
+    id: sourceMessageId,
+    workspaceId,
+    channelId: "channel_engineering",
+    threadId,
+    kind: "message",
+    intent: "task",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: `Inspect the focused WorkCell ${suffix}.`,
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    linkedRunId: runId,
+    status: "ready",
+    createdAt: startedAt,
+    updatedAt: startedAt,
+  }, ...state.channelMessages.filter((candidate) => isRecord(candidate) && candidate.id !== sourceMessageId)];
+  state.executionActions = completedCommandActions(threadId, runId, suffix, sourceMessageId);
   state.approvals = [];
   return { runId, threadId };
 }
@@ -114,6 +149,7 @@ export function installExplorationWorkCellFixture(state: MockState, readCount = 
       result.runId,
       readPaths[index % readPaths.length]!,
       index,
+      `message_ui2_work_cell_exploration`,
     )),
   ];
   return result;
@@ -164,7 +200,7 @@ export function installNormalWorkCellFixture(state: MockState): string {
     type: "assistant_text_delta",
     data: { text: "Focused normal WorkCell completed." },
   }];
-  state.executionActions = completedCommandActions(threadId, runId, "normal");
+  state.executionActions = completedCommandActions(threadId, runId, "normal", `conversation-assistant:${turnId}`);
   state.terminalReports = [completedTerminalReport({
     id: "terminal_report_ui2_normal_work_cell",
     threadId,
@@ -172,6 +208,23 @@ export function installNormalWorkCellFixture(state: MockState): string {
     runId,
     title: "Normal WorkCell verified",
   })];
+  state.conversationContextSnapshotsByThreadId = {
+    ...(state.conversationContextSnapshotsByThreadId ?? {}),
+    [threadId]: [{
+      id: "snapshot_ui2_normal_work_cell",
+      threadId,
+      segmentId: "segment_ui2_normal_work_cell",
+      projectionVersion: "ui2-fixture-v1",
+      throughItemSequence: 2,
+      summaryIds: [],
+      sourceRefs: [
+        { type: "conversation_item", id: `conversation-user:${turnId}` },
+        { type: "conversation_item", id: `conversation-assistant:${turnId}` },
+      ],
+      policyVersion: "ui2-fixture",
+      createdAt: completedAt,
+    }],
+  };
   return title;
 }
 
@@ -199,7 +252,7 @@ export function installTeammateWorkCellFixture(state: MockState): {
     threadId: runThreadId,
     title: "Teammate WorkCell checks",
   }));
-  state.executionActions = completedCommandActions(runThreadId, runId, "teammate");
+  state.executionActions = completedCommandActions(runThreadId, runId, "teammate", "tdmsg_ui2_teammate_work_cell");
   state.terminalReports = [completedTerminalReport({
     id: "terminal_report_ui2_teammate_work_cell",
     threadId: runThreadId,
@@ -252,11 +305,11 @@ function completedRun(input: {
   };
 }
 
-function completedCommandActions(threadId: string, runId: string, suffix: string): MockExecutionAction[] {
+function completedCommandActions(threadId: string, runId: string, suffix: string, anchorItemId: string): MockExecutionAction[] {
   return [
-    commandAction(`typecheck_${suffix}`, threadId, runId, "corepack pnpm --filter @ling-stack/web typecheck", 1_200),
-    commandAction(`i18n_${suffix}`, threadId, runId, "corepack pnpm --filter @ling-stack/web check:i18n", 700),
-    commandAction(`diff_${suffix}`, threadId, runId, "git diff --check", 300),
+    commandAction(`typecheck_${suffix}`, threadId, runId, "corepack pnpm --filter @ling-stack/web typecheck", 1_200, anchorItemId),
+    commandAction(`i18n_${suffix}`, threadId, runId, "corepack pnpm --filter @ling-stack/web check:i18n", 700, anchorItemId),
+    commandAction(`diff_${suffix}`, threadId, runId, "git diff --check", 300, anchorItemId),
   ];
 }
 
@@ -266,6 +319,7 @@ function readAction(
   runId: string,
   path: string,
   index: number,
+  anchorItemId: string,
 ): MockExecutionAction {
   const actionTime = new Date(Date.parse(startedAt) + ((index + 1) * 8_000)).toISOString();
   return {
@@ -281,6 +335,7 @@ function readAction(
     title: "Read file",
     summary: `Read ${path}`,
     targetRefs: [{ type: "file", path, label: path }],
+    sourceRefs: [{ kind: "conversation_item", id: anchorItemId }],
     previewArtifactIds: [],
     resultArtifactIds: [],
     createdAt: actionTime,
@@ -296,6 +351,7 @@ function commandAction(
   runId: string,
   command: string,
   durationMs: number,
+  anchorItemId: string,
 ): MockExecutionAction {
   const actionStartedAt = new Date(Date.parse(startedAt) + durationMs).toISOString();
   const actionCompletedAt = new Date(Date.parse(actionStartedAt) + durationMs).toISOString();
@@ -312,6 +368,7 @@ function commandAction(
     title: "Run command",
     summary: command,
     targetRefs: [{ type: "command", label: command }],
+    sourceRefs: [{ kind: "conversation_item", id: anchorItemId }],
     previewArtifactIds: [],
     resultArtifactIds: [],
     commandEvidence: {
@@ -353,6 +410,8 @@ function completedTerminalReport(input: {
   return {
     schemaVersion: 1,
     id: input.id,
+    generation: 1,
+    resultItemId: `result_terminal_report:${input.id}`,
     workspaceId,
     threadId: input.threadId,
     turnId: input.turnId,

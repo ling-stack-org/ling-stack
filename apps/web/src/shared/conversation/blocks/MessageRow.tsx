@@ -20,18 +20,21 @@ export function MessageRow({
   bodyNode,
   ...props
 }: MessageRowProps): React.JSX.Element {
-  const resolvedBodyNode = bodyNode ?? (body ? (
+  const generatedBodyNode = body ? (
+    <MessageBodyRenderer
+      text={body}
+      cwd={bodyCwd}
+      compact={bodyCompact}
+      streaming={bodyStreaming}
+      onOpenLocalFile={bodyOnOpenLocalFile}
+    />
+  ) : null;
+  const resolvedBodyNode = bodyNode && !bodyStreaming ? bodyNode : (bodyNode ?? generatedBodyNode) ? (
     <div className={bodyStreaming ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
       {bodyStreaming ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-      <MessageBodyRenderer
-        text={body}
-        cwd={bodyCwd}
-        compact={bodyCompact}
-        streaming={bodyStreaming}
-        onOpenLocalFile={bodyOnOpenLocalFile}
-      />
+      {bodyNode ?? generatedBodyNode}
     </div>
-  ) : null);
+  ) : null;
 
   return (
     <SharedMessageRow

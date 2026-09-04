@@ -4289,7 +4289,9 @@ test("multi-participant concrete file workflow preserves operation-derived tools
       ],
       requestAiReply: true,
     });
-    assertCoordinatorWorkflowStartReply(created);
+    assert.ok(created.autoStartedWorkflow);
+    assert.equal(created.aiReply.kind, "ai_reply");
+    assert.ok(["pending", "ready"].includes(created.aiReply.status));
     const store = stores.get(cwd);
     assert.ok(store);
     const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
@@ -4327,6 +4329,65 @@ test("multi-participant concrete file workflow preserves operation-derived tools
     );
     assert.match(qaStep.prompt, /do not substitute a semantically equivalent command/u);
     assert.deepEqual(runner.runs[0].tools, ["write"]);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("review-only participant uses an output packet while execution participant keeps Host evidence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-review-only-participant-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    for (const teammateId of ["teammate_builtin_designer", "teammate_builtin_engineer"]) {
+      await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: provider.id,
+      });
+    }
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Review then execute",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "bash", "edit", "write"],
+    })).channel;
+    for (const teammateId of ["teammate_builtin_designer", "teammate_builtin_engineer"]) {
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Designer @Engineer 现在开始执行这个多 Agent 工作流：Designer 先评审文件结构和验收标准，Engineer 创建 review-only-proof.js 并运行 node review-only-proof.js。",
+      mentions: [
+        { id: "teammate_builtin_designer", label: "Designer", kind: "ai-teammate" },
+        { id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" },
+      ],
+      requestAiReply: true,
+    });
+
+    assert.ok(created.autoStartedWorkflow);
+    assert.equal(created.aiReply.kind, "ai_reply");
+    assert.ok(["pending", "ready"].includes(created.aiReply.status));
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 2);
+    const [designerStep, engineerStep] = created.autoStartedWorkflow.workflowSteps;
+    assert.equal(designerStep.toParticipantId, "teammate_builtin_designer");
+    assert.equal(designerStep.metadata.delegatedRequirement.expectedOutcome, "synthesis");
+    assert.deepEqual(designerStep.metadata.executionOperationIds, []);
+    assert.equal(engineerStep.toParticipantId, "teammate_builtin_engineer");
+    assert.equal(engineerStep.metadata.delegatedRequirement.expectedOutcome, "execution");
+    assert.ok(engineerStep.metadata.executionOperationIds.length > 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

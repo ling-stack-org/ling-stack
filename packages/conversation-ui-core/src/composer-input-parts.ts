@@ -47,6 +47,17 @@ export interface ComposerInputAttachmentOption {
 
 export interface ParseComposerInputPartsOptions {
   readonly cwd?: string;
+  /**
+   * Keep a token that currently reaches the end of the draft as plain text.
+   *
+   * A contenteditable composer is updated one input event at a time. If an
+   * incomplete path or URL is turned into a non-editable token at the end of
+   * the draft, the next character is inserted outside that token and the
+   * visible value becomes corrupted. Callers rendering an actively edited
+   * draft should enable this option; submission code should parse again with
+   * the default so a final token without trailing punctuation is preserved.
+   */
+  readonly deferTrailingAtomicTokens?: boolean;
   readonly attachments?: readonly ComposerInputAttachmentOption[];
   readonly teammateMentions?: readonly ComposerInputMentionOption[];
   readonly skills?: readonly ComposerInputSkillOption[];
@@ -108,6 +119,11 @@ export function parseComposerInputParts(text: string, options: ParseComposerInpu
     const tokenCanStart = index === 0 || /\s/u.test(previousChar) || previousChar === "(" || previousChar === "[" || previousChar === "{";
     const url = tokenCanStart ? readUrlAtStart(remaining, options.linkPreviews ?? []) : undefined;
     if (url) {
+      if (options.deferTrailingAtomicTokens && url.raw.length === remaining.length) {
+        textBuffer += text[index] ?? "";
+        index += 1;
+        continue;
+      }
       flushText();
       parts.push(url);
       index += url.raw.length;
@@ -117,6 +133,11 @@ export function parseComposerInputParts(text: string, options: ParseComposerInpu
     const pathCanStart = tokenCanStart;
     const path = pathCanStart ? pathPattern.exec(remaining) : null;
     if (path && path[0].includes("/")) {
+      if (options.deferTrailingAtomicTokens && path[0].length === remaining.length) {
+        textBuffer += text[index] ?? "";
+        index += 1;
+        continue;
+      }
       const command = readRegisteredSlashCommandToken(path[0], options.slashCommands ?? []);
       if (command) {
         flushText();
@@ -170,7 +191,20 @@ export function serializeComposerInputParts(parts: readonly ComposerInputPart[])
 }
 
 export function composerWorkspaceFileParts(parts: readonly ComposerInputPart[]): readonly Extract<ComposerInputPart, { readonly type: "workspace_file" }>[] {
-  return parts.filter((part): part is Extract<ComposerInputPart, { readonly type: "workspace_file" }> => part.type === "workspace_file");
+  const seen = new Set<string>();
+  const fileParts: Extract<ComposerInputPart, { readonly type: "workspace_file" }>[] = [];
+  for (const part of parts) {
+    if (part.type !== "workspace_file") {
+      continue;
+    }
+    const identity = `${part.path}:${part.line ?? ""}`;
+    if (seen.has(identity)) {
+      continue;
+    }
+    seen.add(identity);
+    fileParts.push(part);
+  }
+  return fileParts;
 }
 
 export function composerSlashCommandParts(parts: readonly ComposerInputPart[]): readonly Extract<ComposerInputPart, { readonly type: "slash_command" }>[] {

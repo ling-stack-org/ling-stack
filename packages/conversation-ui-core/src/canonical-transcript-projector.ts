@@ -77,6 +77,12 @@ export interface CanonicalCommandEvidence {
     readonly text: string;
     readonly redacted: boolean;
   }[];
+  /** Host-authoritative totals; the bounded tail is only a preview. */
+  readonly outputByteCount?: number;
+  readonly outputLineCount?: number;
+  readonly stdoutArtifactId?: string;
+  readonly stderrArtifactId?: string;
+  readonly resultArtifactId?: string;
   readonly outputTruncated?: boolean;
 }
 
@@ -1414,6 +1420,11 @@ function projectCanonicalAction(
       risk: action.risk ?? "low",
       cwd: evidence.cwd,
       outputTail: (evidence.outputTail ?? []).map((chunk) => ({ eventSeq: chunk.eventSeq, stream: chunk.stream, text: chunk.text, redacted: chunk.redacted })),
+      outputByteCount: evidence.outputByteCount,
+      outputLineCount: evidence.outputLineCount,
+      stdoutArtifactId: evidence.stdoutArtifactId,
+      stderrArtifactId: evidence.stderrArtifactId,
+      resultArtifactId: evidence.resultArtifactId,
       outputTruncated: evidence.outputTruncated ?? false,
       exitCode: evidence.exitCode,
       durationMs: evidence.durationMs,

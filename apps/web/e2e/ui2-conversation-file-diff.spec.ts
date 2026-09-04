@@ -76,17 +76,21 @@ test("Channel structured and deferred diffs stay keyboard-operable and contained
   expect(runtimeErrors).toEqual([]);
 });
 
-test("Durable WorkCell renders a bounded inline diff in dark reduced motion", async ({ page }) => {
+test("Durable file-change evidence opens a capability-scoped diff in the Host dock", async ({ page }) => {
   await prepareSurface(page, { theme: "dark", width: 1280, height: 800, reducedMotion: true });
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "expired" });
   const artifactId = installDurableWorkCellFixture(state);
-  let previewRequests = 0;
+  const capabilityRequests: unknown[] = [];
+  const previewRequests: unknown[] = [];
   await mockDaemon(page, state);
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (url.pathname === `/artifacts/${artifactId}/preview` && url.searchParams.get("maxBytes") === "65536") {
-      previewRequests += 1;
+    if (request.method() === "POST" && url.pathname === "/workspace-files/capabilities") {
+      capabilityRequests.push(request.postDataJSON());
+    }
+    if (request.method() === "POST" && url.pathname === "/workspace-files/preview") {
+      previewRequests.push(request.postDataJSON());
     }
   });
 
@@ -94,44 +98,78 @@ test("Durable WorkCell renders a bounded inline diff in dark reduced motion", as
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
-  const workCell = feed.locator('.conversation-work-cell[data-thread-id="thread_ui2_file_diff"]');
-  await expect(workCell).toBeVisible();
-  await expect(workCell).toHaveAttribute("data-operation-source", "run_thread");
+  const timeline = feed.locator(
+    '[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]',
+  ).first();
+  await expect(timeline).toBeVisible();
 
-  const editRow = workCell.locator('.conversation-timeline-activity[data-conversation-timeline-kind="fileChange"]')
+  const editRow = timeline.locator('.conversation-timeline-activity[data-conversation-timeline-kind="fileChange"]')
     .filter({ hasText: "Edited FileDiffSurface.tsx" });
+  await expect(editRow).toHaveAttribute("data-conversation-action-id", "execution_action_ui2_file_diff");
+  await expect(editRow).toHaveAttribute("data-conversation-run-id", state.runs[0]!.id);
   const rowToggle = editRow.locator(".conversation-timeline-activity-main");
   await expect(rowToggle).toHaveAttribute("aria-expanded", "false");
   await rowToggle.focus();
   await rowToggle.press("Space");
   await expect(rowToggle).toHaveAttribute("aria-expanded", "true");
 
-  const preview = editRow.locator(".conversation-timeline-change-preview");
+  const diffRef = editRow.locator("button.conversation-timeline-file-ref").filter({ hasText: "±" }).first();
+  await expect(editRow.locator("button.conversation-timeline-file-ref").filter({ hasText: "±" })).toHaveCount(1);
+  await expect(editRow.locator("button.conversation-timeline-file-ref").filter({ hasText: "▧" })).toHaveCount(1);
+  await expect(diffRef).toContainText("FileDiffSurface.tsx");
+  await expect(diffRef).toHaveAttribute("title", "apps/web/src/features/workspace/FileDiffSurface.tsx");
+  await diffRef.focus();
+  await diffRef.press("Enter");
+
+  await expect.poll(() => capabilityRequests.length).toBe(1);
+  expect(capabilityRequests[0]).toMatchObject({
+    cwd,
+    capabilityTarget: "open_diff",
+    refId: artifactId,
+    scope: {
+      workspaceId: "workspace_default",
+      threadId: "thread_ui2_file_diff",
+      runId: state.runs[0]!.id,
+      actionId: "execution_action_ui2_file_diff",
+      participantId: "ling",
+    },
+  });
+
+  const dock = page.getByRole("complementary", { name: "Channel workspace dock" });
+  const preview = dock.locator('[data-workspace-capability-target="open_diff"][data-workspace-viewer-kind="diff"]');
   await expect(preview).toBeVisible();
-  await expect(preview.locator(".conversation-timeline-change-preview-file")).toHaveCount(2);
-  await expect(preview).toContainText("FileDiffSurface.tsx");
-  await expect(preview).toContainText("file-diff-focused.css");
-  await expect(preview).not.toContainText("file-diff-not-rendered.ts");
-  await expect(preview.locator(".diff-fold")).toHaveCount(0);
+  await expect.poll(() => previewRequests.length).toBeGreaterThanOrEqual(1);
+  for (const request of previewRequests) {
+    expect(request).toMatchObject({
+      cwd,
+      scope: {
+        workspaceId: "workspace_default",
+        threadId: "thread_ui2_file_diff",
+        runId: state.runs[0]!.id,
+        actionId: "execution_action_ui2_file_diff",
+        participantId: "ling",
+      },
+      maxBytes: 65536,
+    });
+  }
+  expect(await preview.locator(".right-dock-code-line.add").count()).toBeGreaterThan(100);
+  await expect(preview.locator(".right-dock-code-line.delete")).toHaveCount(3);
+  await expect(preview.locator(".right-dock-code-truncated")).toContainText("Preview truncated");
+  await expect(preview).toContainText("workCellLine 1");
+  await expect(preview).toContainText("focusedStyleLine 1");
+  await expect(preview).toContainText("hiddenLine 1");
+  await expect(preview).not.toContainText("hiddenLine 220");
 
-  const showRemaining = preview.getByRole("button", { name: /Show remaining diff ranges/u }).first();
-  await expect(showRemaining).toHaveAttribute("aria-expanded", "false");
-  await showRemaining.focus();
-  await showRemaining.press("Space");
-  await expect(preview.getByRole("button", { name: "Collapse diff ranges" }).first()).toHaveAttribute("aria-expanded", "true");
-
-  await expect.poll(() => previewRequests).toBeGreaterThanOrEqual(1);
   await expect.poll(() => page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
-  const animatedTargets = await workCell.evaluate((root) => [
-    root,
-    ...root.querySelectorAll<HTMLElement>(".conversation-work-cell-change-preview, .diff-viewer"),
+  const animatedTargets = await page.locator("body").evaluate((root) => [
+    ...root.querySelectorAll<HTMLElement>('[data-workspace-viewer-kind="diff"], .right-dock-code-preview'),
   ].map((element) => ({
     animationDuration: getComputedStyle(element).animationDuration,
     animationName: getComputedStyle(element).animationName,
   })).filter((entry) => entry.animationName !== "none" && entry.animationDuration !== "0s"));
   expect(animatedTargets).toEqual([]);
-  await expectHorizontalContainment(page, [feed, workCell, editRow, preview]);
-  await captureEvidence(page, "1280x800-ling-dark-durable-work-cell-diff.png");
+  await expectHorizontalContainment(page, [feed, timeline, editRow, dock, preview]);
+  await captureEvidence(page, "1280x800-ling-dark-capability-diff-dock.png");
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -233,7 +271,8 @@ test("Normal Details Review supports keyboard navigation and bounded long diffs"
   await page.goto("/");
   await openConversation(page, conversationTitle);
   const conversation = page.getByLabel("Conversation page");
-  const detailsTrigger = conversation.getByRole("button", { name: "Show details" });
+  const detailsTrigger = page.getByRole("toolbar", { name: "Conversation workspace toolbar" })
+    .getByRole("button", { name: "Show details" });
   await detailsTrigger.focus();
   await detailsTrigger.press("Enter");
 
@@ -342,6 +381,7 @@ function installDurableWorkCellFixture(state: MockState): string {
   const run = state.runs[0];
   const threadId = "thread_ui2_file_diff";
   const turnId = "turn_ui2_file_diff";
+  const sourceMessageId = "message_ui2_file_diff";
   const artifactId = "artifact_ui2_work_cell_file_diff";
   const timestamp = "2026-07-23T09:10:00.000Z";
   if (!run) throw new Error("Base state must include one run");
@@ -365,7 +405,7 @@ function installDurableWorkCellFixture(state: MockState): string {
     diff: [
       fileDiff("apps/web/src/features/workspace/FileDiffSurface.tsx", 18, "workCellLine"),
       fileDiff("apps/web/src/styles/shared/file-diff-focused.css", 4, "focusedStyleLine"),
-      fileDiff("apps/web/src/hidden/file-diff-not-rendered.ts", 4, "hiddenLine"),
+      fileDiff("apps/web/src/hidden/file-diff-not-rendered.ts", 220, "hiddenLine"),
     ].join("\n"),
     createdAt: timestamp,
   })];
@@ -374,12 +414,16 @@ function installDurableWorkCellFixture(state: MockState): string {
     workspaceId: "workspace_default",
     threadId,
     runId: run.id,
+    attemptId: `attempt_${run.id}`,
+    participantId: "ling",
+    toolCallId: "tool_ui2_file_diff",
     actionType: "edit",
     risk: "medium",
     status: "succeeded",
     title: "Render focused file diff",
     summary: "Rendered the durable inline file diff.",
     targetRefs: [{ type: "file", path: "apps/web/src/features/workspace/FileDiffSurface.tsx" }],
+    sourceRefs: [{ kind: "conversation_item", id: sourceMessageId }],
     previewArtifactIds: [],
     resultArtifactIds: [artifactId],
     createdAt: timestamp,
@@ -402,6 +446,40 @@ function installDurableWorkCellFixture(state: MockState): string {
     createdAt: timestamp,
     updatedAt: timestamp,
     completedAt: timestamp,
+  }];
+  state.threads = [{
+    id: threadId,
+    workspaceId: "workspace_default",
+    kind: "channel_discussion",
+    channelId: "channel_engineering",
+    title: "Inspect shared file diff",
+    objective: "Render the durable shared file diff.",
+    status: "succeeded",
+    lastRunId: run.id,
+    surfaceKind: "channel_root",
+    relationKind: "root",
+    conversationMode: { mode: "default" },
+    createdAt: timestamp,
+    updatedAt: timestamp,
+  }];
+  state.channelMessages = [{
+    id: sourceMessageId,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId,
+    kind: "message",
+    intent: "task",
+    authorType: "local-user",
+    authorId: "local-user",
+    body: "Render the durable shared file diff.",
+    mentions: [],
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    linkedRunId: run.id,
+    status: "ready",
+    createdAt: timestamp,
+    updatedAt: timestamp,
   }];
   state.turnRunLinks = [{ turnId, runId: run.id, attemptNumber: 1, role: "primary", createdAt: timestamp }];
   return artifactId;
@@ -579,7 +657,10 @@ function longWorkspaceReviewPath(): string {
 }
 
 async function openConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" })
+    .getByRole("button", { name: /Open recent conversation/u })
+    .filter({ hasText: title })
+    .click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 

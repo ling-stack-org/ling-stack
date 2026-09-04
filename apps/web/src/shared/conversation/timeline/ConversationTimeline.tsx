@@ -65,14 +65,26 @@ export function ConversationTimeline({
 
   return (
     <div className={className} {...attrs}>
-      {timelineItems.map((item) => renderTimelineItem(item, {
-        cwd,
-        onOpenSourceRef,
-        renderMessageChrome,
-        renderSubAgentAvatar,
-        snapshot,
-        depth,
-      }))}
+      {timelineItems.map((item) => (
+        <div
+          key={item.id}
+          className="conversation-timeline-focus-block"
+          tabIndex={-1}
+          data-conversation-focus-block="true"
+          data-feed-item-id={item.id}
+          data-feed-item-kind={item.kind}
+          data-conversation-timeline-depth={depth}
+        >
+          {renderTimelineItem(item, {
+            cwd,
+            onOpenSourceRef,
+            renderMessageChrome,
+            renderSubAgentAvatar,
+            snapshot,
+            depth,
+          })}
+        </div>
+      ))}
     </div>
   );
 }

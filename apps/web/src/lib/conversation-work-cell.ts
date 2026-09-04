@@ -590,6 +590,8 @@ function mainFeedGroupSummary(
 
 export interface BuildConversationWorkCellInput {
   readonly threadId: string;
+  /** Surface-owned participant identity used when legacy actions omit it. */
+  readonly participantId?: string;
   readonly runs: readonly RunSession[];
   readonly turns?: readonly LingTurn[];
   readonly turnRunLinks?: readonly LingTurnRun[];
@@ -675,6 +677,7 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     t: input.t,
     latestRun,
     attemptCount: runs.length,
+    participantId: input.participantId,
     turnRunLinks: input.turnRunLinks,
     pendingApprovals,
     artifacts,
@@ -1228,6 +1231,7 @@ function buildActiveRows(input: {
   readonly t: Translate;
   readonly latestRun: RunSession;
   readonly attemptCount: number;
+  readonly participantId?: string;
   readonly turnRunLinks?: readonly LingTurnRun[];
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly artifacts: readonly RunArtifact[];
@@ -1240,6 +1244,7 @@ function buildActiveRows(input: {
     .filter(isMainFeedActionRow)
     .sort(compareExecutionActionTranscriptOrder)
     .flatMap((action) => executionActionTranscriptRows(action, artifactsById, input.t, {
+      participantId: input.participantId ?? action.participantId ?? "ling",
       turnRunRole: action.runId ? turnRunRoleByRunId.get(action.runId) ?? "primary" : undefined,
     }));
 
@@ -1438,7 +1443,7 @@ function executionActionEvidenceRow(
 ): ConversationWorkCellRow {
   const commandText = executionActionCommandText(action);
   const detailLines = executionActionDetailLines(action, artifactsById, t);
-  const operationExecution = executionActionExecutionView(action, context);
+  const operationExecution = executionActionExecutionView(action, context, artifactsById);
   return {
     id: `action:${action.id}`,
     kind: operationKindForExecutionAction(action),
@@ -1473,6 +1478,8 @@ function executionActionEvidenceRow(
         text: chunk.text,
         redacted: chunk.redacted,
       })),
+      outputByteCount: action.commandEvidence.outputByteCount,
+      outputLineCount: action.commandEvidence.outputLineCount,
       sourceRefs: operationExecution.sourceRefs,
       outputTruncated: action.commandEvidence.outputTruncated,
       stdoutArtifactId: action.commandEvidence.stdoutArtifactId,
@@ -1518,7 +1525,7 @@ function executionActionTranscriptRows(
   } = {},
 ): readonly ConversationWorkCellRow[] {
   const rows: ConversationWorkCellRow[] = [];
-  const operationExecution = executionActionExecutionView(action, context);
+  const operationExecution = executionActionExecutionView(action, context, artifactsById);
   const scopeSummary = action.scopeSummary?.trim();
   if (scopeSummary && !isInternalExecutionScopeSummary(scopeSummary)) {
     rows.push({
@@ -1561,6 +1568,7 @@ function executionActionExecutionView(
     readonly turnRunRole?: ConversationTurnRunRole;
     readonly workflowStepId?: string;
   } = {},
+  artifactsById: ReadonlyMap<string, RunArtifact> = new Map(),
 ): ConversationOperationExecutionView {
   const workflowStepId = context.workflowStepId ?? action.workflowStepId ?? action.targetRefs.find((ref) => ref.type === "workflow_step")?.id;
   return {
@@ -1578,7 +1586,7 @@ function executionActionExecutionView(
     status: action.status,
     updatedAt: action.updatedAt ?? action.completedAt ?? action.executedAt ?? action.createdAt,
     latestEventSeq: action.commandEvidence?.latestEventSeq ?? action.revision,
-    sourceRefs: executionActionSourceRefs(action, workflowStepId),
+    sourceRefs: executionActionSourceRefs(action, workflowStepId, artifactsById),
   };
 }
 

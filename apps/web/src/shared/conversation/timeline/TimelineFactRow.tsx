@@ -61,6 +61,7 @@ export function TimelineFactRow({
       data-conversation-timeline-thread-sequence={item.threadSequence}
       data-conversation-timeline-part-index={item.partIndex}
       data-conversation-timeline-status={item.status ?? "unknown"}
+      data-conversation-turn-id={item.turnId}
       data-conversation-diagnostic-code={item.kind === "diagnostic" ? item.code : undefined}
       data-conversation-timeline-depth={depth}
       data-conversation-action-id={item.actionId}

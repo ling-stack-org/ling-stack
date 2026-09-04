@@ -1,5 +1,6 @@
 import type { ReactNode } from "react";
 import type { ConversationTimelineRowItem } from "@ling-stack/conversation-ui-core";
+import { useI18n } from "../../../i18n.js";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import {
   ConversationTimelineFileChangeDetail,
@@ -9,11 +10,13 @@ import { operationFileSourceRefForPath } from "./source-ref.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 
 export function CommandDetail({ item }: { readonly item: Extract<ConversationTimelineRowItem, { kind: "commandExecution" }> }): React.JSX.Element {
+  const { t } = useI18n();
   return (
     <>
       <code className="conversation-timeline-command">$ {item.command}</code>
       {item.cwd ? <small className="conversation-timeline-detail-meta">cwd: {item.cwd}</small> : null}
       {item.outputTail.length > 0 ? <pre className="conversation-timeline-output">{item.outputTail.map((chunk) => chunk.text).join("")}</pre> : null}
+      {commandOutputMeta(item, t) ? <small className="conversation-timeline-detail-meta" data-conversation-command-output-stats>{commandOutputMeta(item, t)}</small> : null}
       {item.outputTruncated ? <small className="conversation-timeline-detail-meta">Output truncated; open the full log from evidence.</small> : null}
       <CommandResult item={item} />
     </>
@@ -22,14 +25,13 @@ export function CommandDetail({ item }: { readonly item: Extract<ConversationTim
 
 export function FileChangeDetail({
   item,
-  cwd,
   onOpenSourceRef,
 }: {
   readonly item: Extract<ConversationTimelineRowItem, { kind: "fileChange" }>;
   readonly cwd?: string;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
 }): React.JSX.Element {
-  return <><ConversationTimelineFileChangeDetail item={item} onOpenSourceRef={onOpenSourceRef} /><DetailLines item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} /><OperationSourceRefs item={item} onOpenSourceRef={onOpenSourceRef} /></>;
+  return <ConversationTimelineFileChangeDetail item={item} onOpenSourceRef={onOpenSourceRef} />;
 }
 
 export function ExplorationDetail({
@@ -106,6 +108,17 @@ function CommandResult({ item }: { readonly item: Extract<ConversationTimelineRo
   return parts.length > 0 ? <small className="conversation-timeline-detail-meta">{parts.join(" · ")}</small> : null;
 }
 
+function commandOutputMeta(
+  item: Extract<ConversationTimelineRowItem, { kind: "commandExecution" }>,
+  t: (key: string, vars?: Record<string, string | number>) => string,
+): string | undefined {
+  const parts = [
+    item.outputLineCount === undefined ? undefined : t("{count} lines", { count: item.outputLineCount }),
+    item.outputByteCount === undefined ? undefined : formatBytes(item.outputByteCount),
+  ].filter((part): part is string => Boolean(part));
+  return parts.length > 0 ? `${t("Output")}: ${parts.join(" · ")}` : undefined;
+}
+
 export function detailExists(item: ConversationTimelineRowItem): boolean {
   if (item.kind === "commandExecution") return Boolean(item.command || item.outputTail.length > 0 || item.cwd || item.exitCode !== undefined || item.durationMs !== undefined);
   if (item.kind === "fileChange") return item.files.length > 0 || Boolean(item.changePreview);
@@ -126,4 +139,13 @@ export function basename(value: string): string {
 function formatDuration(value: number): string {
   if (value < 1000) return `${Math.max(1, Math.round(value))}ms`;
   return `${(value / 1000).toFixed(value < 10_000 ? 1 : 0)}s`;
+}
+
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value < 0) return "0 B";
+  if (value < 1024) return `${value} B`;
+  const kib = value / 1024;
+  if (kib < 1024) return `${kib.toFixed(kib >= 10 ? 0 : 1)} KiB`;
+  const mib = kib / 1024;
+  return `${mib.toFixed(mib >= 10 ? 0 : 1)} MiB`;
 }

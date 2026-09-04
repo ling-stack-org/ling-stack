@@ -3,6 +3,7 @@ import {
   buildSidebarChannelNotifications,
   buildSidebarConversationApprovalCounts,
   buildSidebarTeammateNotifications,
+  conversationThreadHasActiveWork,
   projectSidebarConversationStatus,
 } from "../src/app/sidebar-status-projections.js";
 import {
@@ -160,6 +161,19 @@ test("conversation projection preserves actionable thread state across refresh",
   expect(projectSidebarConversationStatus("failed", false, false, true)).toBeUndefined();
   expect(projectSidebarConversationStatus("blocked", false, false, true)).toBeUndefined();
   expect(projectSidebarConversationStatus("running", false, false, true)).toBe("running");
+});
+
+test("conversation activity follows durable thread state and the selected optimistic stream", () => {
+  expect(conversationThreadHasActiveWork({
+    id: "thread_terminal",
+  }, "thread_terminal", false)).toBe(false);
+  expect(conversationThreadHasActiveWork({
+    id: "thread_active",
+    activeRunId: "run_active",
+  }, "thread_other", false)).toBe(true);
+  expect(conversationThreadHasActiveWork({
+    id: "thread_pending",
+  }, "thread_pending", true)).toBe(true);
 });
 
 test("conversation approval ownership follows approval run to its thread", () => {

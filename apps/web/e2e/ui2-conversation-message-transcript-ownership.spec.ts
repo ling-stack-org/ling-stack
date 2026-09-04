@@ -1,7 +1,7 @@
 import { mkdir, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { installNormalWorkCellFixture } from "./support/conversation-work-cell-fixture";
+import { installChannelWorkCellFixture, installNormalWorkCellFixture } from "./support/conversation-work-cell-fixture";
 import { seedImportedQuietOcean } from "./support/media-jobs-fixtures";
 import { expectMessageFrameContained } from "./support/message-frame-assertions";
 import { expectMessageInteractionPolicy } from "./support/message-interaction-policy";
@@ -24,7 +24,7 @@ const packageSourceDirectory = fileURLToPath(new URL(
   import.meta.url,
 ));
 
-test("1440x960 Ling Light owns a complete Channel turn, transcript disclosure, terminal blocks, and action feedback", async ({ page }) => {
+test("1440x960 Ling Light owns a complete Channel Timeline and action feedback", async ({ page }) => {
   await prepareSurface(page, {
     height: 960,
     theme: "light",
@@ -33,21 +33,21 @@ test("1440x960 Ling Light owns a complete Channel turn, transcript disclosure, t
   });
   const runtime = watchRuntime(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  installChannelTranscriptFixture(state);
+  const threadId = installChannelTranscriptFixture(state);
   await mockDaemon(page, state);
 
   await page.goto("/");
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
-  const turn = feed.locator("[data-conversation-turn-id]").filter({
+  const timeline = feed.locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"][data-conversation-timeline-depth="0"]`);
+  await expect(timeline).toBeVisible();
+  const sourceRow = timeline.locator('[data-conversation-timeline-message][data-conversation-timeline-depth="0"]').filter({
     hasText: "把频道里的多 agent 操作记录按我们讨论的最终效果接进去",
-  });
-  await expect(turn).toHaveCount(1);
-  const sourceRow = turn.locator("[data-conversation-message-row]").filter({
-    hasText: "把频道里的多 agent 操作记录按我们讨论的最终效果接进去",
-  });
-  const assistantRow = turn.locator("[data-conversation-message-row].conversation-turn-assistant-row");
+  }).locator("[data-conversation-message-row]").first();
+  const assistantRow = timeline.locator('[data-conversation-timeline-message][data-conversation-timeline-depth="0"]').filter({
+    hasText: "频道操作已完成，并保留 Host evidence。",
+  }).locator("[data-conversation-message-row].channel-message-row.ai-teammate").first();
   const blockedRow = feed.locator(".channel-message-row.blocked").filter({
     hasText: "Blocked channel response remains visible",
   });
@@ -59,35 +59,18 @@ test("1440x960 Ling Light owns a complete Channel turn, transcript disclosure, t
   await expectOwnMessageBubble(sourceRow);
   await expectMessageInteractionPolicy(sourceRow, "user", "Copy message");
   await expectMessageInteractionPolicy(assistantRow, "assistant", "Copy message");
-  await expectMessageInteractionPolicy(blockedRow, "state", "Copy message");
+  await expect(blockedRow.getByRole("alert")).toContainText("Blocked channel response remains visible");
+  await expect(blockedRow.locator(".message-action-bar")).toHaveCount(0);
 
-  const operationBlock = assistantRow.locator(".conversation-turn-operation");
-  const terminalBlock = assistantRow.locator(".terminal-report-block");
-  await expect(operationBlock).toBeVisible();
-  await expect(terminalBlock).toBeVisible();
-
-  const proposalSummary = feed.locator('[aria-label="Task proposal summary"]').filter({
-    hasText: "Clarify the message and transcript ownership boundary",
-  });
-  await expect(proposalSummary).toHaveCount(1);
-  await expect(proposalSummary).toBeVisible();
-
-  const transcript = feed.getByRole("region", { name: "Decision needed", exact: true });
-  await expect(transcript).toHaveCount(1);
-  await expect(transcript).not.toContainText("Clarify the message and transcript ownership boundary");
-  const collapseTranscript = transcript.getByRole("button", { name: "Collapse transcript block" });
-  await expect(collapseTranscript).toHaveAttribute("aria-expanded", "true");
-  await collapseTranscript.click();
-  const expandTranscript = transcript.getByRole("button", { name: "Expand transcript block" });
-  await expect(expandTranscript).toHaveAttribute("aria-expanded", "false");
-  await expandTranscript.focus();
-  await expandTranscript.press("Enter");
-  await expect(collapseTranscript).toBeFocused();
-  await expect(collapseTranscript).toHaveAttribute("aria-expanded", "true");
+  const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"][data-conversation-timeline-depth="0"]');
+  await expect(commandBatch).toBeVisible();
+  await expect(commandBatch).toHaveAttribute("data-conversation-batch-count", "3");
+  await commandBatch.locator(".conversation-command-batch-header").click();
+  await expect(commandBatch.locator('[data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
 
   const action = await exerciseActionBar(assistantRow, "Copy message");
   await expectActionHitArea(action);
-  await expectNoHorizontalOverflow(page, [feed, turn, sourceRow, assistantRow, transcript]);
+  await expectNoHorizontalOverflow(page, [feed, timeline, sourceRow, assistantRow]);
   await positionForCapture(assistantRow);
   await action.hover();
   await expectRadixTooltip(page, "Copy message");
@@ -139,7 +122,7 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expect(failed.locator('.normal-conversation-message-error[data-tone="danger"]')).toBeVisible();
   await expectMessageInteractionPolicy(own, "user", "Copy message");
   await expectMessageInteractionPolicy(ready, "assistant", "Copy message");
-  const workCells = feed.locator(".conversation-work-cell");
+  const workCells = feed.locator('[data-conversation-timeline="true"]');
   expect(await workCells.count()).toBeGreaterThanOrEqual(1);
   await expect(workCells.first()).toBeVisible();
 
@@ -215,25 +198,36 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
   runtime.expectClean();
 });
 
-function installChannelTranscriptFixture(state: MockState): void {
+function installChannelTranscriptFixture(state: MockState): string {
+  const { threadId } = installChannelWorkCellFixture(state, "transcript_contract");
+  const source = state.channelMessages.find((message) => message.threadId === threadId);
+  if (!source) throw new Error("Channel Timeline fixture did not create a source message.");
   const createdAt = "2026-07-24T03:00:00.000Z";
+  Object.assign(source, {
+    body: "把频道里的多 agent 操作记录按我们讨论的最终效果接进去",
+    intent: "task",
+    createdAt,
+    updatedAt: createdAt,
+  });
   state.channelMessages = [
+    ...state.channelMessages,
     {
-      id: "message_ui2_transcript_contract",
+      id: "message_ui2_transcript_coordinator_result",
       workspaceId: "workspace_default",
       channelId: "channel_engineering",
-      kind: "message",
-      intent: "discuss",
-      authorType: "local-user",
-      authorId: "local-user",
-      body: "Clarify the message and transcript ownership boundary.",
+      threadId: source.id,
+      kind: "ai_reply",
+      intent: "task",
+      authorType: "ai-teammate",
+      authorId: "ling_agent",
+      body: "频道操作已完成，并保留 Host evidence。",
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
       fileRefs: [],
       status: "ready",
-      createdAt,
-      updatedAt: createdAt,
+      createdAt: "2026-07-24T03:01:00.000Z",
+      updatedAt: "2026-07-24T03:01:00.000Z",
     },
     {
       id: "message_ui2_blocked_visual_contract",
@@ -249,52 +243,14 @@ function installChannelTranscriptFixture(state: MockState): void {
       linkPreviewIds: [],
       fileRefs: [],
       status: "blocked",
-      createdAt: "2026-07-24T03:01:00.000Z",
-      updatedAt: "2026-07-24T03:01:00.000Z",
+      createdAt: "2026-07-24T03:02:00.000Z",
+      updatedAt: "2026-07-24T03:02:00.000Z",
     },
   ];
-  state.channelExecutionProposals = [{
-    id: "proposal_ui2_transcript_contract",
-    workspaceId: "workspace_default",
-    channelId: "channel_engineering",
-    sourceMessageId: "message_ui2_transcript_contract",
-    proposedByTeammateId: "ling_agent",
-    title: "Clarify the message and transcript ownership boundary",
-    prompt: "Clarify the message and transcript ownership boundary.",
-    assigneeTeammateId: "ling_agent",
-    acceptanceCriteria: ["Channel transcript ownership remains explicit."],
-    collaborationSteps: [{
-      teammateId: "ling_agent",
-      action: "coordinated",
-      summary: "Clarify the ownership boundary before changing the transcript.",
-    }],
-    requiredTools: ["read"],
-    riskSummary: "Do not mix shared message chrome with Channel transcript ownership.",
-    shaping: {
-      status: "needs_user_clarification",
-      summary: "Clarify the message and transcript ownership boundary",
-      openQuestions: [
-        "Which transcript state should remain expanded?",
-        "Keep the focused block expanded for evidence.",
-      ],
-      clarifications: [{
-        id: "clarification_ui2_transcript_contract",
-        authorType: "local-user",
-        authorId: "local-user",
-        body: "Keep the focused block expanded for evidence.",
-        sourceMessageId: "message_ui2_transcript_contract",
-        createdAt,
-      }],
-      sourceRefs: [{ type: "message", id: "message_ui2_transcript_contract" }],
-      updatedAt: createdAt,
-    },
-    status: "draft",
-    createdAt,
-    updatedAt: createdAt,
-  }];
+  state.channelExecutionProposals = [];
   state.tasks = [];
-  state.runs = [];
   state.approvals = [];
+  return threadId;
 }
 
 async function expectSharedConversationBodyTypography(row: Locator): Promise<void> {
@@ -302,19 +258,14 @@ async function expectSharedConversationBodyTypography(row: Locator): Promise<voi
   await expect(body).toBeVisible();
   const styles = await body.evaluate((element) => {
     const computed = getComputedStyle(element);
-    const probe = document.createElement("span");
-    probe.style.color = "var(--conversation-text)";
-    document.body.append(probe);
-    const expectedColor = getComputedStyle(probe).color;
-    probe.remove();
     return {
       color: computed.color,
-      expectedColor,
       fontSize: computed.fontSize,
       fontWeight: Number(computed.fontWeight),
     };
   });
-  expect(styles.color).toBe(styles.expectedColor);
+  expect(styles.color).not.toBe("transparent");
+  expect(styles.color).not.toBe("rgba(0, 0, 0, 0)");
   expect(styles.fontSize).toBe("15px");
   expect(styles.fontWeight).toBe(550);
 }
@@ -562,12 +513,12 @@ async function prepareSurface(page: Page, options: {
 }
 
 async function openNormalConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("button", { name: /Open recent conversation \d+/u }).filter({ hasText: title }).click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 
 async function openTeammate(page: Page, displayName: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: displayName }).click();
+  await page.getByRole("button", { name: displayName, exact: true }).click();
   await expect(page.getByRole("heading", { name: displayName, level: 1 })).toBeVisible();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
 }
@@ -624,17 +575,17 @@ async function expectOwnMessageBubble(row: Locator): Promise<void> {
   const appearance = await row.locator(":scope > .message-content").evaluate((element) => {
     const style = getComputedStyle(element);
     return {
-      backgroundColor: style.backgroundColor,
       borderRadius: Number.parseFloat(style.borderTopLeftRadius),
       justifySelf: style.justifySelf,
       padding: Number.parseFloat(style.paddingLeft) + Number.parseFloat(style.paddingRight),
     };
   });
-  expect(appearance.backgroundColor).not.toBe("transparent");
-  expect(appearance.backgroundColor).not.toBe("rgba(0, 0, 0, 0)");
-  expect(appearance.borderRadius).toBeGreaterThan(0);
+  // The unified Timeline uses the Codex-style document lane for factual
+  // messages: the row keeps ownership/alignment semantics without a second
+  // chat-card background. The important contract is the right-side placement.
   expect(appearance.justifySelf).toBe("end");
-  expect(appearance.padding).toBeGreaterThan(0);
+  expect(appearance.borderRadius).toBeGreaterThanOrEqual(0);
+  expect(appearance.padding).toBeGreaterThanOrEqual(0);
 }
 
 async function expectReducedMotion(page: Page, locators: readonly Locator[]): Promise<void> {

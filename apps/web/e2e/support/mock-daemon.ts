@@ -71,6 +71,7 @@ export interface MockState {
   channelWorkspaceGitStatusByChannel: Record<string, WorkspaceGitStatus | MockWorkspaceGitStatusFailure>;
   channelMessages: unknown[];
   channelConversationItemExtras?: unknown[];
+  conversationContextSnapshotsByThreadId?: Record<string, unknown[]>;
   channelMessageRouteDecisions: unknown[];
   channelIntentDecisions: unknown[];
   channelTurnContexts: Record<string, Record<string, unknown>>;
@@ -334,11 +335,14 @@ export interface MockRun {
 
 export interface MockExecutionAction {
   id: string;
+  revision?: number;
   workspaceId: string;
   threadId?: string;
   runId?: string;
   attemptId?: string;
   workUnitId?: string;
+  participantId?: string;
+  workflowStepId?: string;
   approvalId?: string;
   toolCallId?: string;
   actionType: string;
@@ -349,6 +353,7 @@ export interface MockExecutionAction {
   targetRefs: Array<{ type: string; id?: string; label?: string; path?: string }>;
   previewArtifactIds: string[];
   resultArtifactIds: string[];
+  sourceRefs?: Array<{ kind: string; id: string; label?: string; path?: string; visibility?: string }>;
   policySnapshot?: unknown;
   commandEvidence?: {
     command: string;
@@ -1149,7 +1154,7 @@ export async function openEngineeringChannel(page: Page): Promise<void> {
   if (await channelMessageFeed.isVisible().catch(() => false)) {
     return;
   }
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByLabel(/Sidebar display|Ling Stack navigation/u);
   const showNavigation = page.getByRole("button", { name: /Show navigation|显示导航/ });
   await expect.poll(async () => (
     await navigation.isVisible().catch(() => false)
@@ -1249,6 +1254,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelWorkspaceGitStatusByChannel: {},
     channelMessages: [],
     channelConversationItemExtras: [],
+    conversationContextSnapshotsByThreadId: {},
     channelMessageRouteDecisions: [],
     channelIntentDecisions: [],
     channelTurnContexts: {},
@@ -7245,6 +7251,120 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
   });
   const messages = [...turnMessages, ...guidanceMessages]
     .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)) || String(left.id).localeCompare(String(right.id)));
+  const conversationItems = messages.map((message, index) => {
+    const role = readString(message, "role");
+    const status = readString(message, "status");
+    const turnId = readOptionalString(message, "turnId");
+    const runId = readOptionalString(message, "runId");
+    const createdAt = readString(message, "createdAt") || thread.createdAt;
+    const updatedAt = readString(message, "updatedAt") || createdAt;
+    const committed = status !== "pending" && status !== "running";
+    const domainRefs = [
+      ...(turnId ? [{ type: "turn", id: turnId }] : []),
+      ...(runId ? [{ type: "run", id: runId }] : []),
+    ];
+    if (role === "assistant") {
+      return {
+        schemaVersion: 1,
+        id: readString(message, "id"),
+        workspaceId: thread.workspaceId,
+        threadId: thread.id,
+        ...(turnId ? { turnId } : {}),
+        sequence: index + 1,
+        kind: "assistant_message",
+        status: committed ? status === "failed" || status === "cancelled" ? "failed" : "committed" : "pending",
+        actorType: "ling_agent",
+        actorId: readOptionalString(message, "authorId") ?? "ling_agent",
+        visibility: "thread_participants",
+        payload: {
+          body: readString(message, "content"),
+          format: "markdown",
+          streaming: !committed,
+          deliveryStatus: status === "failed" || status === "cancelled" ? "failed" : committed ? "ready" : "pending",
+          presentationRole: "reply_result",
+        },
+        domainRefs,
+        revision: 1,
+        createdAt,
+        updatedAt,
+        ...(committed ? { committedAt: updatedAt } : {}),
+      };
+    }
+    return {
+      schemaVersion: 1,
+      id: readString(message, "id"),
+      workspaceId: thread.workspaceId,
+      threadId: thread.id,
+      ...(turnId ? { turnId } : {}),
+      sequence: index + 1,
+      kind: "user_message",
+      status: committed ? status === "failed" || status === "cancelled" ? "failed" : "committed" : "pending",
+      actorType: "local_user",
+      visibility: "thread_participants",
+      payload: {
+        body: readString(message, "content"),
+        format: "plain_text",
+        mentions: [],
+        attachmentIds: Array.isArray(message.attachments)
+          ? message.attachments.flatMap((attachment) => isRecord(attachment) && typeof attachment.id === "string" ? [attachment.id] : [])
+          : [],
+        linkPreviewIds: [],
+        fileRefs: Array.isArray(message.fileRefs) ? message.fileRefs : [],
+      },
+      domainRefs,
+      revision: 1,
+      createdAt,
+      updatedAt,
+      ...(committed ? { committedAt: updatedAt } : {}),
+    };
+  });
+  const terminalReportItems = state.terminalReports
+    .filter((report) => isRecord(report) && report.threadId === thread.id)
+    .flatMap((report, index) => {
+      const reportId = readString(report, "id");
+      const resultItemId = readString(report, "resultItemId") || (reportId ? `result_terminal_report:${reportId}` : "");
+      const generation = typeof report.generation === "number" ? report.generation : 1;
+      const source = isRecord(report.source) ? report.source : undefined;
+      const sourceKind = readString(source, "kind");
+      const sourceId = readString(source, "id");
+      const evidenceFingerprint = readString(report, "evidenceFingerprint");
+      const outcome = isRecord(report.outcome) ? report.outcome : undefined;
+      const outcomeStatus = readString(outcome, "status");
+      if (!reportId || !resultItemId || !sourceKind || !sourceId || !evidenceFingerprint || !outcomeStatus) {
+        return [];
+      }
+      const reportCreatedAt = readString(report, "createdAt") || thread.updatedAt;
+      const reportCommittedAt = readString(report, "committedAt") || reportCreatedAt;
+      return [{
+        schemaVersion: 1,
+        id: resultItemId,
+        workspaceId: thread.workspaceId,
+        threadId: thread.id,
+        ...(readString(report, "turnId") ? { turnId: readString(report, "turnId") } : {}),
+        sequence: messages.length + index + 1,
+        kind: "terminal_report",
+        status: "committed",
+        actorType: "host",
+        visibility: "thread_participants",
+        payload: {
+          reportId,
+          generation,
+          sourceKind,
+          sourceId,
+          evidenceFingerprint,
+          outcomeStatus,
+        },
+        domainRefs: [
+          { type: "terminal_report", id: reportId },
+          { type: sourceKind, id: sourceId },
+        ],
+        revision: 1,
+        createdAt: reportCreatedAt,
+        updatedAt: reportCommittedAt,
+        committedAt: reportCommittedAt,
+      }];
+    });
+  const allConversationItems = [...conversationItems, ...terminalReportItems];
   const latestRun = runs[runs.length - 1];
   const requestSnapshot = isRecord(latestRun?.requestSnapshot) ? latestRun.requestSnapshot : {};
   const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
@@ -7252,11 +7372,23 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
     cwd,
     thread,
     turns,
+    conversationItems: allConversationItems,
+    contextSnapshots: state.conversationContextSnapshotsByThreadId?.[thread.id] ?? [],
+    runLinks,
     runs,
-    executionActions: state.executionActions.filter((action) => action.threadId === thread.id || runs.some((run) => run.id === action.runId)),
+    executionActions: state.executionActions
+      .filter((action) => action.threadId === thread.id || runs.some((run) => run.id === action.runId))
+      .map((action) => ({
+        ...action,
+        // Keep the mock detail response aligned with the ExecutionAction
+        // contract consumed by the canonical transcript adapter.
+        revision: action.revision ?? 1,
+        sourceRefs: action.sourceRefs ?? [],
+      })),
     approvals: state.approvals.filter((approval) => approval.runId && runIds.has(approval.runId)),
     interventions,
     terminalReports: state.terminalReports.filter((report) => isRecord(report) && report.threadId === thread.id),
+    artifacts: runs.flatMap((run) => state.artifactsByRun[run.id] ?? []),
     messages,
     generatedMedia: mockConversationGeneratedMediaForRunIds(state, runIds),
     defaults: {
@@ -7441,6 +7573,141 @@ function buildEmptyMockTeamMetrics(channelId: string): Record<string, unknown> {
   };
 }
 
+interface MockWorkspaceFileCapabilityGrant {
+  readonly capabilityTarget: "open_file" | "open_diff" | "open_artifact";
+  readonly refId: string;
+  readonly displayPath: string;
+  readonly scope: {
+    readonly workspaceId: string;
+    readonly threadId: string;
+    readonly runId: string;
+    readonly actionId: string;
+    readonly participantId: string;
+    readonly workflowStepId?: string;
+  };
+}
+
+function issueMockWorkspaceFileCapability(
+  state: MockState,
+  input: unknown,
+): { readonly status: number; readonly body: Record<string, unknown> } {
+  if (!isRecord(input) || !isRecord(input.scope)) {
+    return { status: 400, body: { error: "bad_request", message: "Capability scope is required." } };
+  }
+  const capabilityTarget = readString(input, "capabilityTarget");
+  const refId = readString(input, "refId");
+  const requestedCwd = readString(input, "cwd");
+  const workflowStepId = readOptionalString(input.scope, "workflowStepId");
+  const scope = {
+    workspaceId: readString(input.scope, "workspaceId"),
+    threadId: readString(input.scope, "threadId"),
+    runId: readString(input.scope, "runId"),
+    actionId: readString(input.scope, "actionId"),
+    participantId: readString(input.scope, "participantId"),
+    ...(workflowStepId ? { workflowStepId } : {}),
+  };
+  if (requestedCwd !== cwd || !refId || !scope.workspaceId || !scope.threadId || !scope.runId || !scope.actionId || !scope.participantId ||
+    (capabilityTarget !== "open_file" && capabilityTarget !== "open_diff" && capabilityTarget !== "open_artifact")) {
+    return { status: 400, body: { error: "bad_request", message: "Capability request is incomplete." } };
+  }
+  const action = state.executionActions.find((candidate) => candidate.id === scope.actionId);
+  if (!action || action.workspaceId !== scope.workspaceId || action.threadId !== scope.threadId || action.runId !== scope.runId ||
+    action.participantId !== scope.participantId || (action.workflowStepId ?? undefined) !== scope.workflowStepId) {
+    return { status: 403, body: { error: "scope_mismatch", message: "Capability action scope is invalid." } };
+  }
+  const artifact = Object.values(state.artifactsByRun).flat().find((candidate) => candidate.id === refId);
+  const artifactOwned = Boolean(artifact && (action.previewArtifactIds.includes(refId) || action.resultArtifactIds.includes(refId)));
+  const target = action.targetRefs.find((candidate) => candidate.id === refId || candidate.path === refId || candidate.label === refId);
+  const source = action.sourceRefs?.find((candidate) => candidate.id === refId || candidate.path === refId);
+  if (!artifactOwned && !target && !source) {
+    return { status: 403, body: { error: "missing_context_source", message: "Capability ref is not owned by the action." } };
+  }
+  if (capabilityTarget === "open_diff" && artifact && artifact.type !== "diff") {
+    return { status: 403, body: { error: "missing_context_source", message: "Capability ref is not diff evidence." } };
+  }
+  const displayPath = artifact?.path ?? target?.path ?? source?.path ?? refId;
+  const grant: MockWorkspaceFileCapabilityGrant = {
+    capabilityTarget,
+    refId,
+    displayPath,
+    scope,
+  };
+  const capabilityId = `wscap_mock_${Buffer.from(JSON.stringify(grant), "utf8").toString("base64url")}`;
+  return {
+    status: 200,
+    body: {
+      cwd: requestedCwd,
+      capability: {
+        capabilityId,
+        capabilityTarget,
+        refId,
+        displayPath,
+        scope,
+        issuedAt: "2026-07-23T09:10:01.000Z",
+        expiresAt: "2099-07-23T09:15:01.000Z",
+        daemonEpoch: "mock-daemon-epoch",
+      },
+    },
+  };
+}
+
+function previewMockWorkspaceFileCapability(
+  state: MockState,
+  input: unknown,
+): { readonly status: number; readonly body: Record<string, unknown> } {
+  if (!isRecord(input) || !isRecord(input.scope)) {
+    return { status: 400, body: { error: "bad_request", message: "Capability preview scope is required." } };
+  }
+  const capabilityId = readString(input, "capabilityId");
+  if (!capabilityId.startsWith("wscap_mock_")) {
+    return { status: 403, body: { error: "workspace_file_capability_invalid", message: "Capability is invalid." } };
+  }
+  let grant: MockWorkspaceFileCapabilityGrant;
+  try {
+    grant = JSON.parse(Buffer.from(capabilityId.slice("wscap_mock_".length), "base64url").toString("utf8")) as MockWorkspaceFileCapabilityGrant;
+  } catch {
+    return { status: 403, body: { error: "workspace_file_capability_invalid", message: "Capability is invalid." } };
+  }
+  const workflowStepId = readOptionalString(input.scope, "workflowStepId");
+  const requestedScope = {
+    workspaceId: readString(input.scope, "workspaceId"),
+    threadId: readString(input.scope, "threadId"),
+    runId: readString(input.scope, "runId"),
+    actionId: readString(input.scope, "actionId"),
+    participantId: readString(input.scope, "participantId"),
+    ...(workflowStepId ? { workflowStepId } : {}),
+  };
+  if (JSON.stringify(requestedScope) !== JSON.stringify(grant.scope)) {
+    return { status: 403, body: { error: "scope_mismatch", message: "Capability scope does not match." } };
+  }
+  const action = state.executionActions.find((candidate) => candidate.id === grant.scope.actionId);
+  const artifact = Object.values(state.artifactsByRun).flat().find((candidate) => candidate.id === grant.refId);
+  if (!action || !artifact || (!action.previewArtifactIds.includes(artifact.id) && !action.resultArtifactIds.includes(artifact.id))) {
+    return { status: 403, body: { error: "missing_context_source", message: "Capability evidence is no longer available." } };
+  }
+  const previewKind = artifact.type === "diff" ? "diff" : artifact.type === "json" ? "json" : artifact.type === "log" ? "log" : "plain_text";
+  return {
+    status: 200,
+    body: {
+      ref: {
+        id: artifact.id,
+        source: "artifact",
+        scope: "run",
+        label: artifact.title ?? artifact.path,
+        displayPath: artifact.path,
+        contentType: artifact.contentType,
+        sizeBytes: artifact.sizeBytes,
+        previewable: true,
+      },
+      kind: previewKind,
+      text: artifact.contentText ?? "",
+      truncated: false,
+      sizeBytes: artifact.sizeBytes,
+      redactionNotes: [],
+    },
+  };
+}
+
 export async function mockDaemon(
   page: Page,
   state: MockState,
@@ -7592,6 +7859,18 @@ export async function handleDaemonRoute(
   if (request.method() === "GET" && path === "/workspace-settings") {
     state.workspaceSettings = normalizeWorkspaceSettings(state.workspaceSettings);
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/workspace-files/capabilities") {
+    const body = await request.postDataJSON() as unknown;
+    const issued = issueMockWorkspaceFileCapability(state, body);
+    await route.fulfill({ status: issued.status, json: issued.body });
+    return;
+  }
+  if (request.method() === "POST" && path === "/workspace-files/preview") {
+    const body = await request.postDataJSON() as unknown;
+    const preview = previewMockWorkspaceFileCapability(state, body);
+    await route.fulfill({ status: preview.status, json: preview.body });
     return;
   }
   if (request.method() === "GET" && path === "/media-generation-targets") {

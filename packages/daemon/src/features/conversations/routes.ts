@@ -892,7 +892,8 @@ function conversationAssistantMessageId(turnId: string): string {
 }
 
 function readEventText(event: RunEventEnvelope): string {
-  return readOptionalRecordString(readRecord(event.data), "text") ?? "";
+  const text = readRecord(event.data).text;
+  return typeof text === "string" ? text : "";
 }
 
 function readEventRole(event: RunEventEnvelope): string {

@@ -63,9 +63,9 @@ for (const fixture of [
 
     const ownMessage = feed.locator(".normal-conversation-message-row.local-user").filter({ hasText: "UI2 history prompt 20" });
     const peerMessage = feed.locator(".normal-conversation-message-row.ai-teammate").last();
-    await expect(ownMessage).toHaveClass(/message-bubble-chat/);
+    await expect(ownMessage).toHaveClass(/message-bubble/);
     await expect(ownMessage).toHaveClass(/message-bubble-own/);
-    await expect(peerMessage).toHaveClass(/message-bubble-chat/);
+    await expect(peerMessage).toHaveClass(/message-bubble/);
     await expect(peerMessage).toHaveClass(/message-bubble-peer/);
     await expect(ownMessage).toHaveAttribute("data-has-avatar", "false");
     await expect(peerMessage).toHaveAttribute("data-has-avatar", "false");
@@ -854,7 +854,7 @@ function installStableConversationFixture(state: MockState): string {
 }
 
 async function openConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("button", { name: /Open recent conversation \d+/u }).filter({ hasText: title }).click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 

@@ -164,6 +164,7 @@ export function buildTeammatePrivateWorkCellMap(input: {
     }
     const model = buildConversationWorkCellViewModel({
       threadId: run.threadId,
+      participantId: input.teammateId,
       runs: [run],
       allowRunThreadFallback: true,
       approvals,

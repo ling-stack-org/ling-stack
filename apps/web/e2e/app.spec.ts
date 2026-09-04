@@ -140,7 +140,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   const primaryNav = navigation.locator(".primary-nav");
   const newConversationButton = navigation.getByRole("button", { name: "New conversation" });
   await expect(newConversationButton).toBeVisible();
@@ -207,7 +207,7 @@ test("app shell keeps offline data visible and reconnects from persistent feedba
   const feedback = page.getByRole("alert").filter({ hasText: "Local service is unavailable" });
   await expect(feedback).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Sidebar display" })).toBeVisible();
   await expect(feedback).toContainText("Some information may be out of date");
   await feedback.getByRole("button", { name: "Reconnect" }).click();
   await expect(feedback).toHaveCount(0);
@@ -227,7 +227,7 @@ test("AI teammate without uploaded avatar uses the default avatar", async ({ pag
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const engineerRow = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer", exact: true });
+  const engineerRow = page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Ling Engineer", exact: true });
   await expect(engineerRow.locator(".teammate-avatar-image-default")).toBeVisible();
   await expect(engineerRow.locator(".avatar-initial")).toHaveCount(0);
 });
@@ -245,7 +245,7 @@ test("sidebar sections collapse locally and keep group action menus", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   const recentConversationRow = navigation.getByRole("button", { name: "No recent conversations" });
   await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
   await expect(recentConversationRow).toBeVisible();
@@ -291,7 +291,7 @@ test("sidebar archive hides conversations and teammates without deleting data", 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   const channelShell = navigation.locator(".sidebar-channel-group").filter({ hasText: "Engineering" }).locator(".sidebar-row-shell").first();
   await channelShell.hover();
   const channelArchiveButton = channelShell.getByRole("button", { name: "Archive channel" });
@@ -354,7 +354,7 @@ test("recent conversations only show records created from the conversation home"
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await expect(navigation.getByRole("button", { name: "No recent conversations" })).toBeVisible();
   await expect(navigation.locator(".sidebar-recent-row")).toHaveCount(0);
 
@@ -622,7 +622,7 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
   });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   const recentShell = navigation.locator(".sidebar-recent-row-shell").filter({ hasText: "Normal inline approvals" });
   const recentRow = recentShell.locator(".sidebar-recent-row");
   await expect(recentShell).toContainText("Waiting for approval");
@@ -828,7 +828,7 @@ test("teammate private chat resolves its runtime approval through its composer g
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Private Approver" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).getByRole("button", { name: "Private Approver" }).click();
   const gate = page.getByRole("region", { name: "Allow this action?" });
   await expect(page.locator(".teammate-direct-composer")).toHaveCount(0);
   await expect(gate).toContainText("Run command: whois private.example");
@@ -864,7 +864,7 @@ test("normal conversation full access confirms before creating the run", async (
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "New conversation" }).click();
   const home = page.getByLabel("Conversation home");
   await expect(home.getByRole("button", { name: /Selected permission preset Full access/ })).toBeVisible();
@@ -904,7 +904,7 @@ test("normal conversation composer sends and replays uploaded attachments", asyn
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "New conversation" }).click();
   const home = page.getByLabel("Conversation home");
   const homeComposer = home.locator(".conversation-composer");
@@ -1013,7 +1013,7 @@ test("normal conversation renders the shared GFM, Mermaid, and math pipeline", a
 
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Shared rich content" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).locator(".sidebar-recent-row").filter({ hasText: "Shared rich content" }).click();
 
   const pageSurface = page.getByLabel("Conversation page");
   const assistantRow = pageSurface.locator(".normal-conversation-message-row.ai-teammate");
@@ -1090,7 +1090,7 @@ test("latest normal conversation prompt edits in place and hides the superseded 
 
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Editable normal prompt" }).click();
+  await page.getByRole("complementary", { name: "Sidebar display" }).locator(".sidebar-recent-row").filter({ hasText: "Editable normal prompt" }).click();
 
   const conversationPage = page.getByLabel("Conversation page");
   const userRow = conversationPage.locator(".normal-conversation-message-row.local-user");
@@ -1336,7 +1336,7 @@ test("executed normal conversation renders one structured terminal report", asyn
     });
   });
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.locator(".sidebar-recent-row").filter({ hasText: "实现结构化终局报告" }).click();
 
   const assistantRow = page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate");
@@ -1494,7 +1494,7 @@ test("persisted normal conversation without work evidence renders only the assis
 
   await mockDaemon(page, state);
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.locator(".sidebar-recent-row").filter({ hasText: "欧哈呦" }).click();
 
   const assistantRow = page.getByLabel("对话页面").locator(".normal-conversation-message-row.ai-teammate");
@@ -1508,7 +1508,7 @@ test("conversation home follows user language and shows thinking as off", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "新建对话" }).click();
   const home = page.getByLabel("对话首页");
   await expect(home.getByRole("heading", { name: "Ling Stack，让工作更简单。", level: 1 })).toBeVisible();
@@ -1543,7 +1543,7 @@ test("conversation home refreshes interface language and theme after workspace s
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await navigation.getByRole("button", { name: "New conversation" }).click();
@@ -1567,7 +1567,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   const primaryNav = navigation.locator(".primary-nav");
   await expect(navigation.getByRole("button", { name: "Search or start" })).toHaveCount(0);
   await expect(navigation.getByRole("button", { name: "Run", exact: true })).toHaveCount(0);
@@ -1588,7 +1588,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
 
   await primaryNav.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Sidebar display" })).toBeVisible();
 
   await navigation.getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
@@ -1602,7 +1602,7 @@ test("sidebar text entries route to context-aware inspectors", async ({ page }) 
   await expect(settingsSections.getByRole("button", { name: "AI Councils" })).toHaveCount(0);
   await settingsSections.getByRole("button", { name: "Council Workspace" }).click();
   await expect(settingsSections).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Sidebar display" })).toHaveCount(0);
   await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
@@ -1643,7 +1643,7 @@ test("conversation home uses plus as the single attachment entry and keeps slash
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "New conversation" }).click();
 
   const home = page.getByLabel("Conversation home");
@@ -1672,7 +1672,7 @@ test("conversation home sends with workspace cwd without a folder picker", async
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "New conversation" }).click();
 
   const home = page.getByLabel("Conversation home");
@@ -1753,7 +1753,7 @@ test("conversation home model picker uses the model workbench default without ch
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   const defaultUses = page.locator(".provider-default-purpose-bar");
@@ -1841,7 +1841,7 @@ test("settings keeps configuration tools embedded while Work Board stays hidden 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: "Sidebar display" });
   await navigation.getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toBeVisible();
@@ -1852,7 +1852,7 @@ test("settings keeps configuration tools embedded while Work Board stays hidden 
 
   await settingsSections.getByRole("button", { name: "Model Workbench" }).click();
   await expect(settingsSections).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Sidebar display" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Model Workbench" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".provider-workbench[aria-label='Model Workbench']")).toBeVisible();
@@ -1863,7 +1863,7 @@ test("settings keeps configuration tools embedded while Work Board stays hidden 
 
   await settingsSections.getByRole("button", { name: "Teammate Management" }).click();
   await expect(settingsSections).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: "Sidebar display" })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Teammate Management" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByLabel("Workspace teammates")).toBeVisible();
@@ -1875,6 +1875,6 @@ test("settings keeps configuration tools embedded while Work Board stays hidden 
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: "Sidebar display" })).toBeVisible();
   await expect(page.locator(".plugin-manager-page")).toBeVisible();
 });

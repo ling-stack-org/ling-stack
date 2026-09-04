@@ -1,5 +1,5 @@
 import type { ConversationOperationSourceRef } from "@ling-stack/conversation-ui-core";
-import type { ExecutionAction } from "../types.js";
+import type { ExecutionAction, RunArtifact } from "../types.js";
 
 /**
  * Builds the canonical UI-to-execution references for one action.
@@ -11,6 +11,7 @@ import type { ExecutionAction } from "../types.js";
 export function executionActionSourceRefs(
   action: ExecutionAction,
   workflowStepId: string | undefined,
+  artifactsById: ReadonlyMap<string, RunArtifact> = new Map(),
 ): readonly ConversationOperationSourceRef[] {
   const durableRefs = Array.isArray(action.sourceRefs)
     ? action.sourceRefs
@@ -28,12 +29,23 @@ export function executionActionSourceRefs(
         ...(ref.visibility ? { visibility: ref.visibility } : {}),
       }))
     : [];
-  if (durableRefs.length > 0) {
-    return uniqueSourceRefs(workflowStepId
-      ? [...durableRefs, { kind: "workflow_step", id: workflowStepId }]
-      : durableRefs);
-  }
+  const artifactRefs = [...action.previewArtifactIds, ...action.resultArtifactIds]
+    .filter((artifactId) => artifactId.trim())
+    .map((artifactId): ConversationOperationSourceRef => {
+      const artifact = artifactsById.get(artifactId);
+      const diff = artifact?.type === "diff" || artifact?.contentType?.includes("diff") === true;
+      return {
+        kind: diff ? "diff" : "artifact",
+        id: artifactId,
+        ...(artifact?.title || artifact?.path ? { label: artifact.title ?? artifact.path } : {}),
+        ...(artifact?.path ? { path: artifact.path } : {}),
+        hostTarget: diff ? "open_diff" : "open_artifact",
+        workspaceId: action.workspaceId,
+      };
+    });
   const refs: ConversationOperationSourceRef[] = [
+    ...artifactRefs,
+    ...durableRefs,
     { kind: "execution_action", id: action.id },
   ];
   if (action.runId) {
@@ -53,11 +65,6 @@ export function executionActionSourceRefs(
   }
   if (workflowStepId) {
     refs.push({ kind: "workflow_step", id: workflowStepId });
-  }
-  for (const artifactId of [...action.previewArtifactIds, ...action.resultArtifactIds]) {
-    if (artifactId.trim()) {
-      refs.push({ kind: "artifact", id: artifactId });
-    }
   }
   for (const target of action.targetRefs) {
     const id = target.path ?? target.id ?? target.label;

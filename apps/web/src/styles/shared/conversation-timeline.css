@@ -14,6 +14,17 @@
   overflow: visible;
 }
 
+.conversation-timeline-focus-block {
+  min-width: 0;
+  border-radius: 8px;
+  outline: none;
+}
+
+.conversation-timeline-focus-block:focus-visible {
+  outline: 2px solid var(--conversation-focus-ring);
+  outline-offset: 2px;
+}
+
 /* The page/feed owns scrolling.  Never turn a nested Timeline into a second
  * scroll container just because a run has many facts. */
 [data-conversation-timeline="true"][data-activity-density="dense"] {
@@ -108,7 +119,15 @@
   gap: 5px;
 }
 
-.conversation-timeline-terminal-section > h4 {
+.conversation-timeline-terminal-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.conversation-timeline-terminal-section-head > h4 {
   display: flex;
   align-items: baseline;
   gap: 6px;
@@ -119,10 +138,45 @@
   line-height: 16px;
 }
 
-.conversation-timeline-terminal-section > h4 span {
+.conversation-timeline-terminal-section-head > h4 span {
   color: var(--conversation-text-muted);
   font-variant-numeric: tabular-nums;
   font-weight: 500;
+}
+
+.conversation-workspace-recovery-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.conversation-timeline-terminal-recovery > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid var(--conversation-code-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--conversation-text-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.conversation-timeline-terminal-recovery > button:hover,
+.conversation-timeline-terminal-recovery > button:focus-visible {
+  border-color: var(--conversation-border-strong);
+  color: var(--conversation-text-strong);
+}
+
+.conversation-timeline-terminal-recovery > button:disabled {
+  cursor: default;
+  opacity: 0.55;
 }
 
 .conversation-timeline-terminal-section-list {

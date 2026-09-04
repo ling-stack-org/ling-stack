@@ -420,6 +420,23 @@ export function useChannelComposerInputController({
   const composerInputParts = useMemo(
     () => parseComposerInputParts(messageDraft, {
       cwd,
+      deferTrailingAtomicTokens: true,
+      attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
+      teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
+      slashCommands,
+      linkPreviews: pendingLinkPreviews.map((item) => ({
+        url: item.url,
+        normalizedUrl: item.preview?.normalizedUrl,
+        title: item.preview?.title,
+        state: item.state,
+        error: item.error ?? item.preview?.errorMessage,
+      })),
+    }),
+    [cwd, messageDraft, pendingLinkPreviews, readyAttachmentIds, slashCommands, teammateOptions],
+  );
+  const composerSubmissionInputParts = useMemo(
+    () => parseComposerInputParts(messageDraft, {
+      cwd,
       attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
       teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
       slashCommands,
@@ -434,13 +451,13 @@ export function useChannelComposerInputController({
     [cwd, messageDraft, pendingLinkPreviews, readyAttachmentIds, slashCommands, teammateOptions],
   );
   const composerFileRefs = useMemo(
-    () => composerWorkspaceFileParts(composerInputParts).map((part): ChannelMessageFileRef => ({
+    () => composerWorkspaceFileParts(composerSubmissionInputParts).map((part): ChannelMessageFileRef => ({
       path: part.path,
       label: part.path,
       source: "composer",
       ...(part.line !== undefined ? { line: part.line } : {}),
     })),
-    [composerInputParts],
+    [composerSubmissionInputParts],
   );
   const composerSlashIntent = useMemo(
     () => guidanceModeActive

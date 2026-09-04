@@ -540,7 +540,11 @@ function toCanonicalExecutionAction(
     ...(action.attemptId ? { attemptId: action.attemptId } : {}),
     ...(runLink ? { attemptNumber: runLink.attemptNumber, turnRunRole: runLink.role } : {}),
     ...(action.workUnitId || run?.workUnitId ? { workUnitId: action.workUnitId ?? run?.workUnitId } : {}),
-    ...(action.participantId || run?.teammateId || scope.participantId ? { participantId: action.participantId ?? run?.teammateId ?? scope.participantId ?? "ling" } : {}),
+    // Every execution action must carry a stable participant owner into the
+    // canonical timeline. Normal conversations do not have a teammate on the
+    // RunSession, so the local Ling agent is the explicit default rather than
+    // omitting the field and causing the projector to fail closed.
+    participantId: action.participantId ?? run?.teammateId ?? scope.participantId ?? "ling",
     workflowStepId: action.workflowStepId ?? run?.workflowStepId ?? null,
     ...(action.approvalId ? { approvalId: action.approvalId } : {}),
     ...(action.toolCallId ? { toolCallId: action.toolCallId } : {}),
@@ -560,7 +564,18 @@ function toCanonicalExecutionAction(
         ...(ref.path ? { path: ref.path } : {}),
       })),
     })) } : {}),
-    ...(action.commandEvidence ? { commandEvidence: action.commandEvidence } : {}),
+    ...(action.commandEvidence ? {
+      commandEvidence: {
+        ...action.commandEvidence,
+        // Keep the Host totals at the canonical boundary. The output tail is
+        // intentionally bounded and must never be mistaken for the total.
+        outputByteCount: action.commandEvidence.outputByteCount,
+        outputLineCount: action.commandEvidence.outputLineCount,
+        stdoutArtifactId: action.commandEvidence.stdoutArtifactId,
+        stderrArtifactId: action.commandEvidence.stderrArtifactId,
+        resultArtifactId: action.commandEvidence.resultArtifactId,
+      },
+    } : {}),
     previewArtifactIds: action.previewArtifactIds,
     resultArtifactIds: action.resultArtifactIds,
   };

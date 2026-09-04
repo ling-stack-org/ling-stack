@@ -17,6 +17,18 @@ test("detail adapter feeds the canonical projector from full Continuity history"
   assert.equal(projection.items[1].sourceRefs.some((ref) => ref.kind === "conversation_item" && ref.id === "tool-1"), true);
 });
 
+test("detail adapter assigns the local Ling participant when a normal action omits ownership", () => {
+  const detail = detailFixture({ kind: "conversation" });
+  const action = detail.executionActions[0];
+  if (!action) throw new Error("Fixture must include an execution action.");
+  delete action.participantId;
+
+  const projection = projectConversationDetailTimeline(detail);
+  const command = projection.items.find((entry) => entry.kind === "commandExecution");
+  assert.equal(command?.participantId, "ling");
+  assert.equal(projection.diagnostics.some((entry) => entry.code === "missing_lineage"), false);
+});
+
 test("detail adapter supplies immutable context segments to display batching", () => {
   const detail = detailFixture({ kind: "conversation" });
   detail.conversationItems = [

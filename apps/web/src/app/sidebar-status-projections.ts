@@ -1,4 +1,4 @@
-import type { AiTeammate, ApprovalRequest, Channel, ChannelWorkflowStep, LingThreadStatus, RunSession, Task, WorkUnit } from "../types.js";
+import type { AiTeammate, ApprovalRequest, Channel, ChannelWorkflowStep, LingThread, LingThreadStatus, RunSession, Task, WorkUnit } from "../types.js";
 import type {
   SidebarNotification,
   SidebarPrimaryStatus,
@@ -126,6 +126,21 @@ export function projectSidebarConversationStatus(
   if ((status === "failed" || status === "blocked") && !failureAcknowledged) return "failed";
   if (status === "running" || activeRunOrStream) return "running";
   return undefined;
+}
+
+/**
+ * Thread state is the durable activity authority for recent conversations.
+ * The local stream flag only covers the optimistic interval before the daemon
+ * has bound and refreshed the newly created thread.
+ */
+export function conversationThreadHasActiveWork(
+  thread: Pick<LingThread, "id" | "activeRunId">,
+  selectedThreadId: string,
+  selectedStreamBusy: boolean,
+): boolean {
+  return Boolean(thread.activeRunId?.trim()) || (
+    selectedStreamBusy && thread.id === selectedThreadId
+  );
 }
 
 export function buildSidebarConversationApprovalCounts(

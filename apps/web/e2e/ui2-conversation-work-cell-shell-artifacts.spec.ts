@@ -30,35 +30,24 @@ test("Channel WorkCell keeps terminal report changes, references, and file-path 
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
-  const transcript = feed
-    .locator('.conversation-turn-assistant-row:has(.conversation-work-cell[data-operation-source="workflow"])')
-    .first();
-  const workCell = transcript.locator('.conversation-work-cell[data-operation-source="workflow"]').first();
-  await expect(workCell).toBeVisible();
-  const externalArtifactSurface = transcript.locator(".conversation-turn-artifacts");
-  const terminalReport = transcript.locator(".terminal-report-block");
-  const changedSection = terminalReport.locator(".terminal-report-section.kind-change");
-  const changedFileReferences = changedSection.locator("[data-terminal-report-file-reference]");
+  const timeline = feed.locator('[data-conversation-timeline-depth="0"]').first();
+  await expect(timeline).toBeVisible();
+  const agentSpans = timeline.locator('[data-conversation-timeline-kind="subAgentActivity"]');
+  await expect(agentSpans).toHaveCount(4);
+  await expect(timeline.locator('[data-conversation-timeline-kind="diagnostic"]')).toHaveCount(0);
+  const terminalReport = timeline.locator('[data-conversation-timeline-kind="terminalReport"]');
+  await expect(terminalReport).toBeVisible();
+  await terminalReport.locator(".conversation-timeline-activity-main").click();
+  const changedSection = terminalReport.locator('[data-terminal-report-section="changes"]');
+  const firstChangedEntry = changedSection.locator(".conversation-timeline-terminal-entry").first();
+  const changedFileReferences = firstChangedEntry.locator(".conversation-timeline-file-ref");
   await expect(terminalReport).toBeVisible();
   await expect(changedSection).toBeVisible();
   await expect(changedFileReferences).toHaveCount(3);
-  await expect(externalArtifactSurface).toHaveCount(0);
-
-  const referenceTrigger = workCell.locator(".conversation-work-cell-evidence-summary");
-  await expect(referenceTrigger).toHaveAttribute("aria-expanded", "false");
-  await referenceTrigger.focus();
-  await referenceTrigger.press("Enter");
-  await expect(referenceTrigger).toHaveAttribute("aria-expanded", "true");
-  await expect(workCell.locator(".conversation-work-cell-evidence-links > *")).not.toHaveCount(0);
 
   const changedFile = changedFileReferences.first();
-  const changedFilePath = (await changedFile.getAttribute("data-terminal-report-file-reference")) ?? "";
+  const changedFilePath = (await changedFile.getAttribute("title")) ?? "";
   expect(changedFilePath).not.toBe("");
-  await page.mouse.move(0, 0);
-  await changedFile.hover();
-  const filePathTooltip = changedFile.getByRole("tooltip");
-  await expect(filePathTooltip).toBeVisible({ timeout: 4_000 });
-  await expect(filePathTooltip).toContainText(changedFilePath);
   await captureEvidence(page, "1280x800-ling-dark-channel-terminal-report-file-path.png");
 
   const composer = page.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
@@ -78,7 +67,7 @@ test("Channel WorkCell keeps terminal report changes, references, and file-path 
   await fileReference.press("Tab");
   await expect(references.getByRole("tooltip")).toHaveCount(0);
 
-  await expectReducedMotion(page, [workCell, changedSection, changedFile, filePathTooltip]);
+  await expectReducedMotion(page, [timeline, changedSection, changedFile]);
   await expectDocumentContained(page);
   expect(runtimeErrors).toEqual([]);
 });
@@ -91,14 +80,13 @@ test("Normal conversation renders the shared WorkCell shell without document ove
   await mockDaemon(page, state);
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await openRecentConversation(page, title);
 
   const conversation = page.getByLabel("Conversation page");
-  const workCell = conversation.locator(".conversation-work-cell");
-  await expect(workCell).toBeVisible();
-  await expect(workCell).toHaveAttribute("data-conversation-typed-transcript", "true");
-  await expect(workCell.locator("[data-conversation-timeline]")).toBeVisible();
-  await expect(workCell.locator(".conversation-command-batch")).toHaveCount(1);
+  const timeline = conversation.locator('[data-conversation-timeline-depth="0"]').first();
+  await expect(timeline).toBeVisible();
+  const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
+  await expect(commandBatch).toHaveCount(1);
   await expectDocumentContained(page);
   await captureEvidence(page, "1440x960-ling-light-normal-work-cell-shell.png");
   expect(runtimeErrors).toEqual([]);
@@ -125,14 +113,16 @@ test("Terminal report summaries keep Markdown paragraphs and fenced code", async
   await mockDaemon(page, state);
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await openRecentConversation(page, title);
 
-  const reportBlock = page.getByLabel("Conversation page").locator(".terminal-report-block");
-  await expect(reportBlock).toBeVisible();
-  await expect(reportBlock.locator(".message-body-paragraph")).toHaveCount(3);
-  await expect(reportBlock.locator(".message-body-list")).toHaveCount(1);
-  await expect(reportBlock.locator(".message-code-block")).toHaveCount(1);
-  await expect(reportBlock.locator(".message-code-block")).toContainText("node app.js");
+  const report = page.getByLabel("Conversation page").locator('[data-conversation-timeline-kind="terminalReport"]');
+  await expect(report).toBeVisible();
+  await report.locator(".conversation-timeline-activity-main").click();
+  const reportDetail = report.locator(".conversation-timeline-terminal-report");
+  await expect(reportDetail.locator(".message-body-paragraph")).toHaveCount(3);
+  await expect(reportDetail.locator(".message-body-list")).toHaveCount(1);
+  await expect(reportDetail.locator(".message-code-block")).toHaveCount(1);
+  await expect(reportDetail.locator(".message-code-block")).toContainText("node app.js");
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -158,14 +148,15 @@ test("WorkCell command evidence preserves multiline output formatting", async ({
   await mockDaemon(page, state);
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await openRecentConversation(page, title);
 
-  const workCell = page.getByLabel("Conversation page").locator(".conversation-work-cell");
-  const commandBatch = workCell.locator(".conversation-command-batch");
-  await commandBatch.getByRole("button", { name: /Expand command batch/u }).click();
-  const commandRow = commandBatch.locator('[data-conversation-timeline-kind="commandExecution"]').filter({ hasText: "corepack pnpm --filter @ling-stack/web typecheck" });
+  const timeline = page.getByLabel("Conversation page").locator('[data-conversation-timeline-depth="0"]').first();
+  const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
+  await commandBatch.locator(".conversation-command-batch-header").click();
+  const commandRow = commandBatch.locator('[data-conversation-timeline-kind="commandExecution"][data-conversation-timeline-id="action:execution_action_typecheck_normal"]');
+  await expect(commandRow).toHaveCount(1);
   await commandRow.locator(".conversation-timeline-activity-main").click();
-  const output = workCell.locator(".conversation-timeline-output").filter({ hasText: "first output line" }).first();
+  const output = timeline.locator(".conversation-timeline-output").filter({ hasText: "first output line" }).first();
   await expect(output).toBeVisible();
   await expect(output).toHaveCSS("white-space", "pre-wrap");
   expect(await output.textContent()).toBe("first output line\nsecond output line\nthird output line\n");
@@ -185,14 +176,14 @@ test("Teammate conversation renders the shared WorkCell shell in reduced motion"
   await mockDaemon(page, state);
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammate.displayName }).click();
+  await page.getByRole("button", { name: teammate.displayName, exact: true }).click();
 
   const feed = page.getByLabel("Private message feed", { exact: true });
-  const workCell = feed.locator(".conversation-work-cell");
-  await expect(workCell).toBeVisible();
-  const commandBatch = workCell.locator(".conversation-command-batch");
+  const timeline = feed.locator('[data-conversation-timeline-depth="0"]').first();
+  await expect(timeline).toBeVisible();
+  const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
   await expect(commandBatch).toHaveCount(1);
-  await expectReducedMotion(page, [workCell, commandBatch]);
+  await expectReducedMotion(page, [timeline, commandBatch]);
   await expectDocumentContained(page);
   await captureEvidence(page, "1280x800-ling-dark-teammate-work-cell-shell.png");
   expect(runtimeErrors).toEqual([]);
@@ -216,6 +207,13 @@ async function prepareSurface(page: Page, input: {
     localStorage.setItem("ling-stack.themeBootstrapPreference", theme);
     if (workCellDemo) localStorage.setItem("ling-stack.workCellDemo", "true");
   }, { theme: input.theme, workCellDemo: input.workCellDemo });
+}
+
+async function openRecentConversation(page: Page, title: string): Promise<void> {
+  await page
+    .getByRole("button", { name: /Open recent conversation \d+/u })
+    .filter({ hasText: title })
+    .click();
 }
 
 async function expectReducedMotion(page: Page, locators: readonly Locator[]): Promise<void> {

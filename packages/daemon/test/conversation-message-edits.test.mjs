@@ -725,6 +725,65 @@ test("conversation detail prefers streamed text and treats a completely empty ch
   }
 });
 
+test("conversation detail preserves whitespace-only streaming chunks in markdown", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-markdown-chunks-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.createLingThread({
+      kind: "conversation",
+      teammateId: LING_AGENT_ID,
+      title: "Markdown chunk boundaries",
+      objective: "Markdown chunk boundaries",
+    }, "2026-07-12T09:15:00.000Z");
+    const turn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Render markdown",
+      userInstruction: "Render markdown",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T09:15:01.000Z");
+    const run = store.createRun(createRunInput({
+      id: "run_conversation_markdown_chunks",
+      cwd,
+      threadId: thread.id,
+      turnId: turn.id,
+      createdAt: "2026-07-12T09:15:02.000Z",
+    }));
+    finishRun(store, run.id, "2026-07-12T09:15:03.000Z");
+
+    const chunks = [
+      "First paragraph.\n\n",
+      "Second paragraph.\n\n",
+      "- First item",
+      "\n",
+      "- Second item",
+      "\n\n",
+      "```javascript",
+      "\n",
+      "function add(a, b) { return a + b; }",
+      "\n",
+      "```",
+    ];
+    for (const text of chunks) {
+      store.appendEvent(run.id, "assistant_text_delta", { type: "assistant_text_delta", text });
+    }
+    store.appendEvent(run.id, "message_end", {
+      type: "message_end",
+      role: "assistant",
+      text: chunks.join(""),
+    });
+
+    const assistant = buildConversationDetail(store, cwd, thread).messages
+      .find((message) => message.id === `conversation-assistant:${turn.id}`);
+    assert.equal(assistant?.content, chunks.join(""));
+    assert.equal(assistant?.status, "succeeded");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("conversation detail keeps a run error separate from assistant narrative", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-run-error-projection-"));
   const store = createSqliteRunStore(cwd);

@@ -1,4 +1,5 @@
 import {
+  batchCanonicalTranscriptItems,
   createTimelineSnapshot,
   resolveTimelineScope,
   type ActiveRunSnapshot,
@@ -23,8 +24,17 @@ export function buildSurfaceTimelineSnapshot(input: {
   readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
 }): TimelineSnapshot {
   const threadId = input.threadId?.trim() ?? "";
-  const items = threadId.length > 0
-    ? input.items
+  // Display grouping is an explicit, reversible projection.  Only apply it
+  // when the caller supplies the immutable ContextSnapshot-derived lookup;
+  // otherwise keep the canonical atomic facts untouched.
+  const projectedItems = input.contextSegmentIdByItemId
+    ? batchCanonicalTranscriptItems(input.items, {
+        contextSegmentIdByItemId: input.contextSegmentIdByItemId,
+      })
+    : input.items;
+  const hasUnscopedEvidence = projectedItems.some((item) => item.kind !== "userMessage" && item.kind !== "agentMessage");
+  const items = threadId.length > 0 || !hasUnscopedEvidence
+    ? projectedItems
     : [{
         id: `diagnostic:scope:${input.surface}:${input.anchorItemId ?? "missing"}`,
         kind: "diagnostic" as const,

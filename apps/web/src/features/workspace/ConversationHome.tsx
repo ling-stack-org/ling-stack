@@ -323,17 +323,25 @@ export function ConversationHome({
   const composerInputParts = useMemo(
     () => parseComposerInputParts(draft, {
       cwd: project.projectPath,
+      deferTrailingAtomicTokens: true,
+      slashCommands,
+    }),
+    [draft, project.projectPath, slashCommands],
+  );
+  const composerSubmissionInputParts = useMemo(
+    () => parseComposerInputParts(draft, {
+      cwd: project.projectPath,
       slashCommands,
     }),
     [draft, project.projectPath, slashCommands],
   );
   const composerFileRefs = useMemo(
-    () => composerWorkspaceFileParts(composerInputParts).map((part) => ({
+    () => composerWorkspaceFileParts(composerSubmissionInputParts).map((part) => ({
       path: part.path,
       ...(part.line !== undefined ? { line: part.line } : {}),
       source: "composer" as const,
     })),
-    [composerInputParts],
+    [composerSubmissionInputParts],
   );
 
   useEffect(() => {

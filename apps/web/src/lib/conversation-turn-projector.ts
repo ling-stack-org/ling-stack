@@ -297,7 +297,15 @@ function findTurnOperation(input: {
     }
   }
 
-  const linkedRunIds = input.proposals.map((proposal) => proposal.linkedRunId).filter(isString);
+  // The canonical channel message projection carries the turn's active/last
+  // run directly. Prefer that lineage when a turn has no proposal/workflow
+  // wrapper (for example a direct teammate reply or a resumed run). The
+  // operation still resolves through the thread-scoped WorkCell map, so this
+  // does not bypass the existing attempt/participant ownership checks.
+  const linkedRunIds = uniqueStrings([
+    ...(input.sourceMessage.linkedRunId ? [input.sourceMessage.linkedRunId] : []),
+    ...input.proposals.map((proposal) => proposal.linkedRunId).filter(isString),
+  ]);
   for (const runId of linkedRunIds) {
     const threadId = input.runsById.get(runId)?.threadId;
     if (!threadId) {

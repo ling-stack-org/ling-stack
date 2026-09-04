@@ -396,11 +396,18 @@ export function TeammateWorkspace({
   );
   const composerInputParts = parseComposerInputParts(messageDraft, {
     cwd: cwd.trim(),
+    deferTrailingAtomicTokens: true,
     attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
     skills: effectiveSkills.map((skill) => ({ id: skill.skillId, label: skill.skill.name })),
     slashCommands: privateSlashCommands,
   });
-  const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
+  const composerSubmissionInputParts = useMemo(() => parseComposerInputParts(messageDraft, {
+    cwd: cwd.trim(),
+    attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
+    skills: effectiveSkills.map((skill) => ({ id: skill.skillId, label: skill.skill.name })),
+    slashCommands: privateSlashCommands,
+  }), [cwd, effectiveSkills, messageDraft, privateSlashCommands, readyAttachmentIds]);
+  const composerFileReferenceParts = composerWorkspaceFileParts(composerSubmissionInputParts);
   const composerFileReferenceTokens = composerFileReferenceParts.map((part, index) => ({
     part,
     occurrenceIndex: composerFileReferenceParts.slice(0, index).filter((candidate) => candidate.raw === part.raw).length,
@@ -706,7 +713,7 @@ export function TeammateWorkspace({
   const openDirectInterventions = currentDirectRuntime?.interventions ?? [];
   const hasQueuedDirectGuidance = openDirectInterventions.some((intervention) => intervention.status === "queued");
   const privateComposerPayload = useMemo(() => {
-    const serializedInput = serializeComposerInputParts(composerInputParts);
+    const serializedInput = serializeComposerInputParts(composerSubmissionInputParts);
     const fileRefs = directComposerFileRefs(composerFileReferenceParts);
     return {
       body: serializedInput.body.trim(),
@@ -714,7 +721,7 @@ export function TeammateWorkspace({
       linkPreviewIds: [...pendingDirectLinkPreviewIds],
       fileRefs,
     };
-  }, [composerFileReferenceParts, composerInputParts, pendingDirectLinkPreviewIds]);
+  }, [composerFileReferenceParts, composerSubmissionInputParts, pendingDirectLinkPreviewIds]);
   const privateComposerHasGuidancePayload =
     privateComposerPayload.body.length > 0 ||
     privateComposerPayload.attachmentIds.length > 0 ||
@@ -1127,7 +1134,7 @@ export function TeammateWorkspace({
     readonly permissionPreset: PermissionPreset;
     readonly permissionConfirmation?: PermissionConfirmation;
   }): Promise<void> {
-    const serializedInput = serializeComposerInputParts(composerInputParts);
+    const serializedInput = serializeComposerInputParts(composerSubmissionInputParts);
     const body = serializedInput.body.trim();
     const attachmentIds = [...serializedInput.attachmentIds];
     const fileRefs = directComposerFileRefs(composerFileReferenceParts);
