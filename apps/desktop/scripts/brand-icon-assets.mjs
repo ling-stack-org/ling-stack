@@ -26,8 +26,14 @@ export async function renderBrandIcon(size, logicalSize = size) {
   const source = await readFile(new URL(variantForSize(logicalSize), brandRoot), "utf8");
   const sized = source.replace(/width="\d+" height="\d+"/, `width="${size}" height="${size}"`);
   const image = await loadImage(Buffer.from(sized));
+  if (image.width !== size || image.height !== size) {
+    throw new Error(`Vector master must render directly at ${size}px; bitmap resizing is not allowed.`);
+  }
   const canvas = createCanvas(size, size);
-  canvas.getContext("2d").drawImage(image, 0, 0);
+  const context = canvas.getContext("2d");
+  // Copy native-resolution SVG pixels without a second resampling pass.
+  context.imageSmoothingEnabled = false;
+  context.drawImage(image, 0, 0);
   return { canvas, png: canvas.toBuffer("image/png") };
 }
 

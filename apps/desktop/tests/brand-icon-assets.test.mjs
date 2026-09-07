@@ -53,6 +53,26 @@ function assertSameArtwork(actual, expected) {
   assert.ok(total / a.length < 1.5, `Packaged artwork differs from the vector master: ${total / a.length}`);
 }
 
+function assertCrispExteriorEdges(canvas) {
+  const size = canvas.width;
+  const data = pixels(canvas);
+  // Sample straight silhouette segments, away from rounded corners and joins.
+  for (const ratio of [0.22, 0.3, 0.38]) {
+    const y = Math.floor(size * ratio);
+    for (const direction of [1, -1]) {
+      let x = direction === 1 ? 0 : size - 1;
+      const alpha = () => data[(y * size + x) * 4 + 3];
+      while (x >= 0 && x < size && alpha() === 0) x += direction;
+      assert.ok(x >= 0 && x < size, `Missing silhouette at ${size}px, row ${y}`);
+      const start = x;
+      while (x >= 0 && x < size && alpha() < 255) x += direction;
+      assert.ok(x >= 0 && x < size, `Missing opaque interior at ${size}px, row ${y}`);
+      assert.ok(Math.abs(x - start) <= 3,
+        `Blurred exterior edge at ${size}px, row ${y}: ${Math.abs(x - start)} transition pixels`);
+    }
+  }
+}
+
 test("brand masters remain vector-only and render with transparent margins at every export size", async () => {
   for (const name of ["ling-mark.svg", "ling-mark-compact.svg", "ling-mark-micro.svg"]) {
     const source = await readFile(new URL(name, brandRoot), "utf8");
@@ -60,6 +80,22 @@ test("brand masters remain vector-only and render with transparent margins at ev
     assert.equal((source.match(/<circle\b/g) ?? []).length, 5);
   }
   for (const size of pngSizes) assertVisibleTransparentIcon((await renderBrandIcon(size)).canvas);
+});
+
+test("large exports retain native-resolution edges and reject enlarged 256px artwork", async () => {
+  const small = (await renderBrandIcon(256)).canvas;
+  assertCrispExteriorEdges(small);
+  for (const size of pngSizes.filter((value) => value > 256)) {
+    const frame = await renderBrandIcon(size);
+    assertCrispExteriorEdges(await decode(frame.png, size));
+
+    const enlarged = createCanvas(size, size);
+    const context = enlarged.getContext("2d");
+    context.imageSmoothingEnabled = true;
+    context.imageSmoothingQuality = "high";
+    context.drawImage(small, 0, 0, size, size);
+    assert.throws(() => assertCrispExteriorEdges(enlarged), /Blurred exterior edge/);
+  }
 });
 
 test("Windows and Chrome frames match the correct optical vector master", async () => {
@@ -90,6 +126,7 @@ test("macOS system decoder preserves all standard and Retina optical representat
     const actual = await decode(resolve(output, `icon_${slot.name}.png`), slot.size);
     const expected = (await renderBrandIcon(slot.size, slot.logical)).canvas;
     assertSameArtwork(actual, expected);
+    if (slot.size >= 256) assertCrispExteriorEdges(actual);
     if (slot.argb) {
       const a = pixels(actual);
       const b = pixels(expected);
