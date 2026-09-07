@@ -1,9 +1,7 @@
 import type { ReactNode } from "react";
 import { File, FileText, PackagePlus, Presentation, Table2 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { publicAssetUrl } from "../../shared/ui/public-asset-url.js";
-
-const conversationMarkSrc = publicAssetUrl("icons/ling-stack-gpt-image-2-icon.png");
+import { LingStackLogo } from "../../shared/components/LingStackLogo.js";
 
 export interface NormalConversationEmptyStateProps {
   readonly composerNode: ReactNode;
@@ -19,7 +17,7 @@ export function NormalConversationEmptyState({
     <section className="conversation-home" aria-label={t("Conversation home")}>
       <div className="conversation-home-center">
         <div className="conversation-home-mark" aria-hidden="true">
-          <img src={conversationMarkSrc} alt="" />
+          <LingStackLogo size={64} />
         </div>
         <h1>{t("Ling Stack, make work easier.")}</h1>
         {composerNode}

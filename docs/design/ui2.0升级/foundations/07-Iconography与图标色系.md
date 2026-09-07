@@ -17,7 +17,7 @@ React 本身不提供图标。Feature 不得新增远程 Iconfont、字符图标
 | 官方品牌、语言和文件类型 | 本地 SVG 或批准的 `react-icons` 例外 |
 | 头像、缩略图、生成结果 | PNG/WebP/JPEG |
 | 复杂插图 | 优先 WebP/PNG，确需矢量时本地 SVG |
-| Ling Logo 和 favicon | 当前资源原样保留 |
+| Ling Logo 和 favicon | 本地精细矢量母版及按尺寸导出的品牌资源 |
 
 禁止加载阿里 Iconfont 或其他远程字体图标。若从 Iconfont 获取自定义图标，只允许导出 SVG、
 确认授权、清理不必要 metadata 后作为本地资产提交。
@@ -55,19 +55,43 @@ Theme Pack 和 Desktop 不分别替换 SVG 文件，只通过 semantic tokens/cu
 - loading 使用统一 Loader2/Spinner 动效，不用不同旋转图标。
 - 图标与文字基线由 Button/Menu 组件控制，Feature 不用手动 translate 修正。
 
-## Logo Protection
+## Brand Asset Contract
 
-以下对象明确排除在 UI 2.0 图标迁移之外：
+Status: current implementation contract
+Owner: Web and Desktop maintainers
+Last verified: 2026-09-07
 
-```text
-apps/web/src/shared/components/LingStackLogo.tsx
-apps/web/public/favicon.svg
-apps/web/public/favicon.png
-```
+本轮为用户明确授权的品牌精细化替换。保留三层堆叠、白色顶面、五个连接节点和紫蓝青配色；
+去除模糊阴影、光晕和边缘杂点。品牌不能被 Theme Pack、UI 图标迁移或普通功能修改自行替换。
+角色头像属于独立的身份资源，不属于应用品牌 Logo。
 
-规则：不替换、不重绘、不改路径、不改主体颜色、不改变比例、不用 Lucide 近似图标代替。
-组件可通过既有 `size` prop 缩放，但必须保持 `viewBox` 和路径。Logo 保护优先于统一 stroke
-或 icon wrapper 规则。
+- 唯一母版位于 `apps/web/public/icons/`：`ling-mark-micro.svg` 用于 16–24px，
+  `ling-mark-compact.svg` 用于大于 24px 且不超过 64px，`ling-mark.svg` 用于大于 64px。
+  任意 UI 尺寸使用不小于需求的对应层级；小图增粗连接线、扩大节点色块、精简中心环。
+- 母版只包含本地几何和简单渐变，不嵌入位图、字体、滤镜或外部引用。
+- `LingStackLogo` 统一选择母版，使用可信的 public base URL，保持既有装饰性无障碍语义。
+  首页品牌容器不得通过圆形裁切截掉三层图标的角点。
+- PNG 逐尺寸从母版渲染，不通过多轮位图缩放得到小图。macOS 的标准/Retina 表示按逻辑尺寸
+  选择相同母版；Windows 和 Chrome 扩展按目标像素尺寸选择母版。
+- macOS 包含 10 个表示，16–1024px；Windows 包含 9 档 32-bit RGBA 图标，
+  16、20、24、32、40、48、64、128、256px。
+- Web favicon 保留稳定 `favicon.png` 地址作为兼容入口，并优先使用 SVG；README 使用完整
+  矢量母版，不能放大 64px favicon 充当大图。扩展商店图和仓库宣传图同步使用新品牌。
+- 旧生成 PNG 和旧手绘堆叠 Logo 路径在引用迁移后删除。稳定原生文件名原位替换，不留旧版
+  副本；历史版本由 Git 保留。
+
+## Brand Delivery And Verification
+
+1. 收口三档矢量母版及集中导出命令 `corepack pnpm --filter @ling-stack/desktop generate:icons`。
+2. 替换 Web、共享 Logo、原生包、扩展和宣传图，清除旧路径引用。
+3. 验证全部帧的尺寸、透明像素、非空内容和边缘留白；以图像内容校验替代文件体积下限。
+4. 使用 macOS `iconutil` 解码回读，验证 ARGB 透明边缘和 PNG 表示；验证 Windows ICO
+   每一帧与对应母版渲染的内容一致。
+5. 检查真实浏览器中的明暗首页、favicon 和扩展宣传图，运行资源路径、扩展、类型、lint、
+   i18n、文档链接及构建检查。截图放在忽略的本地产物目录，不重新加入设计文档目录。
+
+SVG 放大不产生位图放大失真；有限像素和非整数系统缩放仍限制极小尺寸的细节。资源校验
+不代表已重新签名安装客户端，也不替代真实 Windows 主机上的打包验收。
 
 ## Accessibility
 

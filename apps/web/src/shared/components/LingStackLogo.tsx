@@ -1,17 +1,15 @@
+import { publicAssetUrl } from "../ui/public-asset-url.js";
+
 export function LingStackLogo({ size = 20 }: { readonly size?: number }): React.JSX.Element {
+  const file = size <= 24 ? "ling-mark-micro.svg" : size <= 64 ? "ling-mark-compact.svg" : "ling-mark.svg";
   return (
-    <svg
+    <img
       aria-hidden="true"
-      fill="none"
+      alt=""
       height={size}
-      stroke="currentColor"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      strokeWidth={2}
-      viewBox="0 0 24 24"
+      src={publicAssetUrl(`icons/${file}`)}
+      style={{ display: "block", objectFit: "contain", flexShrink: 0 }}
       width={size}
-    >
-      <path d="M12 2 2 7l10 5 10-5-10-5ZM2 17l10 5 10-5M2 12l10 5 10-5" />
-    </svg>
+    />
   );
 }

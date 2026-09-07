@@ -26,7 +26,20 @@ test("Desktop packaging uses Ling brand icons and an explicit per-user Windows p
   const icns = await readFile(resolve(desktopRoot, packageJson.build.mac.icon));
   assert.equal(icns.subarray(0, 4).toString("ascii"), "icns");
   assert.equal(icns.readUInt32BE(4), icns.length);
-  assert.ok(icns.length > 1_000_000, "macOS icon must retain the full-resolution Ling artwork");
+  const representations = new Map();
+  for (let offset = 8; offset < icns.length;) {
+    const type = icns.toString("ascii", offset, offset + 4);
+    const length = icns.readUInt32BE(offset + 4);
+    assert.ok(length >= 8 && offset + length <= icns.length);
+    assert.ok(!representations.has(type));
+    representations.set(type, icns.subarray(offset + 8, offset + length));
+    offset += length;
+  }
+  assert.equal(representations.size, 10);
+  const fullResolution = representations.get("ic10");
+  assert.equal(fullResolution.subarray(1, 4).toString("ascii"), "PNG");
+  assert.equal(fullResolution.readUInt32BE(16), 1024);
+  assert.equal(fullResolution.readUInt32BE(20), 1024);
 
   const ico = await readFile(resolve(desktopRoot, packageJson.build.win.icon));
   assert.deepEqual(
