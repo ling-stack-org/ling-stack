@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="apps/web/public/favicon.png" alt="Ling Stack" width="88" height="88" />
+  <img src="apps/web/public/icons/ling-mark.svg" alt="Ling Stack" width="88" height="88" />
   <h1>Ling Stack</h1>
   <p><strong>A local-first workspace for AI teammates, models, tools, approvals, and auditable work.</strong></p>
   <p>

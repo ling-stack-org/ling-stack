@@ -142,8 +142,9 @@ UI 2.0 实施以 [Toast 与 InlineFeedback](./ui2.0升级/components/02-浮层�
   must not assign arbitrary icon colors or dimensions.
 - Remote icon fonts, PNG action icons, emoji controls, and character icons are
   not allowed. Brand/language/file-type icons require a documented local exception.
-- `LingStackLogo.tsx` and the current favicon assets are protected: do not
-  replace, redraw, recolor, distort, or substitute them during UI 2.0 work.
+- `LingStackLogo.tsx` and favicon use the approved precision brand masters in
+  [Iconography](ui2.0升级/foundations/07-Iconography与图标色系.md). Ordinary UI or
+  theme changes must not redraw, recolor, distort, or substitute these assets.
 - Menus use fixed icon cells and a consistent row height.
 - Menu descriptions are opt-in; they should not be used for routine actions.
 
