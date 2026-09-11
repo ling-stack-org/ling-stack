@@ -14,6 +14,7 @@ export interface ChannelWorkCellDemoFixture {
   readonly memoryObjects: readonly MemoryObject[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly terminalReports: readonly TerminalReportDto[];
+  readonly contextSegmentIdByItemId: ReadonlyMap<string, string>;
 }
 
 const channelWorkCellDemoArtifactPrefix = "demo_work_cell_";
@@ -517,6 +518,7 @@ export function createChannelWorkCellDemoFixture(input: {
     workflows: [workflow],
     workflowSteps,
     runs,
+    contextSegmentIdByItemId: new Map([[sourceMessageId, `${idPrefix}_context_segment`]]),
     executionActions: [
       demoAction({
         id: `${idPrefix}_action_architect_read`,

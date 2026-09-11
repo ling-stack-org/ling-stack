@@ -172,7 +172,7 @@ export async function installMediaProductionScenarioRoutes(
 }
 
 export async function openMediaProduction(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
 }
 
 function mediaProject(index: number, timestamp: string): MockMediaProject {

@@ -237,6 +237,8 @@ export function installTeammateWorkCellFixture(state: MockState): {
   const runThreadId = "thread_ui2_teammate_work_cell";
   const directThreadId = `tdthread_${teammateId}`;
   const runId = "run_ui2_teammate_work_cell";
+  const turnId = "turn_ui2_teammate_work_cell";
+  const userId = "tdmsg_ui2_teammate_work_cell_user";
   state.providers = [createChatProvider({
     id: providerId,
     displayName: "Local Relay",
@@ -247,18 +249,31 @@ export function installTeammateWorkCellFixture(state: MockState): {
     displayName,
     providerPresetId: providerId,
   })];
-  state.runs.unshift(completedRun({
+  state.runs.unshift({ ...completedRun({
     runId,
     threadId: runThreadId,
+    turnId,
     title: "Teammate WorkCell checks",
-  }));
-  state.executionActions = completedCommandActions(runThreadId, runId, "teammate", "tdmsg_ui2_teammate_work_cell");
-  state.terminalReports = [completedTerminalReport({
+  }), teammateId });
+  state.threads.push({
+    id: runThreadId, workspaceId, kind: "teammate_direct", teammateId, title: displayName,
+    objective: "Run the private workspace checks.",
+    status: "succeeded", lastRunId: runId, createdAt: startedAt, updatedAt: completedAt,
+  });
+  state.turns.push({
+    id: turnId, workspaceId, threadId: runThreadId, teammateId, kind: "initial_request", status: "succeeded",
+    sourceItemId: userId, title: "Teammate WorkCell checks", userInstruction: "Run the private workspace checks.",
+    lastRunId: runId, createdByActor: "local-user", createdAt: startedAt, updatedAt: completedAt,
+  });
+  state.turnRunLinks.push({ turnId, runId, attemptNumber: 1, role: "primary", createdAt: startedAt });
+  state.executionActions = completedCommandActions(runThreadId, runId, "teammate", userId);
+  const report = completedTerminalReport({
     id: "terminal_report_ui2_teammate_work_cell",
     threadId: runThreadId,
     runId,
     title: "Teammate WorkCell verified",
-  })];
+  });
+  state.terminalReports = [report];
   state.teammateDirectMessages = [{
     id: "tdmsg_ui2_teammate_work_cell",
     workspaceId,
@@ -274,7 +289,30 @@ export function installTeammateWorkCellFixture(state: MockState): {
     linkedRunId: runId,
     createdAt: completedAt,
     updatedAt: completedAt,
+  }, {
+    id: userId, workspaceId, threadId: directThreadId, teammateId, authorType: "local-user", authorId: "local-user",
+    body: "Run the private workspace checks.", attachmentIds: [], linkPreviewIds: [], fileRefs: [],
+    status: "ready", createdAt: startedAt, updatedAt: startedAt,
   }];
+  state.conversationItems ??= [];
+  state.conversationItems.push({
+    schemaVersion: 1, id: userId, workspaceId, threadId: runThreadId, turnId, sequence: 1, revision: 1,
+    kind: "user_message", status: "committed", actorType: "local_user", actorId: "local-user", visibility: "agent_private", visibilityOwnerId: teammateId,
+    payload: { body: "Run the private workspace checks.", format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
+    domainRefs: [{ type: "message", id: userId }, { type: "turn", id: turnId }], committedAt: startedAt, createdAt: startedAt, updatedAt: startedAt,
+  }, {
+    schemaVersion: 1, id: report.resultItemId, workspaceId, threadId: runThreadId, turnId, sequence: 2, revision: 1,
+    kind: "terminal_report", status: "committed", actorType: "system", visibility: "agent_private", visibilityOwnerId: teammateId,
+    payload: { reportId: report.id, generation: report.generation, sourceKind: report.source.kind, sourceId: report.source.id, evidenceFingerprint: report.evidenceFingerprint, outcomeStatus: report.outcome.status },
+    domainRefs: [{ type: "terminal_report", id: report.id }, { type: "run", id: runId }], committedAt: completedAt, createdAt: completedAt, updatedAt: completedAt,
+  });
+  state.conversationContextSnapshotsByThreadId = {
+    ...state.conversationContextSnapshotsByThreadId,
+    [runThreadId]: [{
+      id: "snapshot_ui2_private_work_cell", threadId: runThreadId, segmentId: "segment_ui2_private_work_cell", projectionVersion: "ui2-fixture-v1",
+      throughItemSequence: 1, summaryIds: [], sourceRefs: [{ type: "conversation_item", id: userId }], policyVersion: "ui2-fixture", createdAt: startedAt,
+    }],
+  };
   return { displayName, teammateId };
 }
 
@@ -406,7 +444,7 @@ function completedTerminalReport(input: {
   readonly turnId?: string;
   readonly runId: string;
   readonly title: string;
-}): MockState["terminalReports"][number] {
+}) {
   return {
     schemaVersion: 1,
     id: input.id,
@@ -416,8 +454,8 @@ function completedTerminalReport(input: {
     threadId: input.threadId,
     turnId: input.turnId,
     source: input.turnId
-      ? { kind: "turn", id: input.turnId }
-      : { kind: "run", id: input.runId },
+      ? { kind: "turn" as const, id: input.turnId }
+      : { kind: "run" as const, id: input.runId },
     status: "committed",
     language: "en-US",
     outcome: {
@@ -443,5 +481,5 @@ function completedTerminalReport(input: {
     },
     createdAt: completedAt,
     committedAt: completedAt,
-  };
+  } as const;
 }

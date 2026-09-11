@@ -1,3 +1,6 @@
+import type { UnifiedExecProcessObservation, UnifiedExecIsolationEvidence } from "@ling-stack/contracts";
+export type { UnifiedExecProcessObservation, UnifiedExecIsolationEvidence } from "@ling-stack/contracts";
+
 export type UnifiedExecCommand =
   | {
       readonly kind: "shell";
@@ -85,6 +88,8 @@ export interface UnifiedExecResult {
   readonly signal?: string;
   readonly timedOut: boolean;
   readonly cancelled: boolean;
+  readonly processObservation?: UnifiedExecProcessObservation;
+  readonly isolation?: UnifiedExecIsolationEvidence;
   readonly stdout: UnifiedExecStreamSummary;
   readonly stderr: UnifiedExecStreamSummary;
   readonly artifacts: readonly UnifiedExecArtifactSummary[];

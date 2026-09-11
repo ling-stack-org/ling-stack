@@ -24,9 +24,12 @@ import { nullableUpdate, stringifyJson } from "./helpers.js";
 import { mapLingThread, mapLingThreadGoal, mapProposedPlanArtifact } from "./run-mappers.js";
 import { lingThreadSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { UserInputWait } from "../../user-input-wait-types.js";
+import { projectThreadUserInputWait } from "./user-input-wait-projection.js";
 
 export interface SqliteLingThreadStorePorts {
   readonly rebuildLingThreadMetadata: (threadId: string, now: string) => void;
+  readonly getUserInputWait: (threadId: string, requestId: string) => UserInputWait | undefined;
 }
 
 export class SqliteLingThreadStore {
@@ -181,6 +184,31 @@ export class SqliteLingThreadStore {
   }
 
   updateLingThread(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined {
+    if (input.status !== "succeeded" && input.status !== "failed" && input.status !== "cancelled") {
+      return this.applyLingThreadUpdate(threadId, input, now);
+    }
+    // A savepoint participates in an outer wait/cancellation transaction without
+    // committing it. Read the checkpoints and write their Thread projection in
+    // the same snapshot; a competing writer fails safely instead of hiding a wait.
+    const { database } = this.context;
+    database.exec("SAVEPOINT ling_thread_terminal_projection");
+    try {
+      const thread = this.getLingThread(threadId);
+      const archived = input.archivedAt !== null && (thread?.status === "archived" || Boolean(thread?.archivedAt));
+      const projection = thread && !archived
+        ? projectThreadUserInputWait(database, this.ports.getUserInputWait, thread, input.lastRunId ?? undefined) : undefined;
+      const result = archived ? thread : this.applyLingThreadUpdate(threadId, { ...input, ...projection }, now);
+      database.exec("RELEASE ling_thread_terminal_projection");
+      return result;
+    } catch (error) {
+      try {
+        database.exec("ROLLBACK TO ling_thread_terminal_projection; RELEASE ling_thread_terminal_projection");
+      } catch { /* Preserve the original storage error if SQLite already rolled back. */ }
+      throw error;
+    }
+  }
+
+  private applyLingThreadUpdate(threadId: string, input: UpdateLingThreadInput, now: string): LingThread | undefined {
     const existing = this.getLingThread(threadId);
     if (!existing) {
       return undefined;

@@ -10,6 +10,7 @@ import {
   projectConversationItemToChannelMessage,
 } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
+import { prepareFixtureTaskInput } from "./support/prepared-input-fixture.mjs";
 import {
   createConversationMediaGenerationToolDefinitions,
   createConversationMediaGenerationToolHandler,
@@ -1703,6 +1704,7 @@ function runtimeConfig(cwd) {
 }
 
 class MediaToolProbeRunner {
+  prepareTaskInput = prepareFixtureTaskInput;
   runs = [];
 
   async runTask(options) {
@@ -1785,6 +1787,7 @@ function configureToolOnlyMediaFixture(store, imageBaseUrl) {
 }
 
 class ToolOnlyMediaRunner {
+  prepareTaskInput = prepareFixtureTaskInput;
   runs = [];
 
   async runTask(options) {

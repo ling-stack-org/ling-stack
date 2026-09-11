@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { CheckCircle2, CircleAlert } from "lucide-react";
+import { CircleAlert } from "lucide-react";
 import {
   conversationTimelineRendererKey,
 } from "@ling-stack/conversation-ui-core";
@@ -14,6 +14,9 @@ import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 export interface TimelineFactRowProps {
   readonly item: ConversationTimelineRowItem;
   readonly title: string;
+  readonly titleTooltip?: string;
+  readonly statusLabel?: string;
+  readonly compact?: boolean;
   readonly meta?: ReactNode;
   readonly icon: ReactNode;
   readonly detail?: ReactNode;
@@ -30,6 +33,9 @@ export interface TimelineFactRowProps {
 export function TimelineFactRow({
   item,
   title,
+  titleTooltip,
+  statusLabel,
+  compact = false,
   meta,
   icon,
   detail,
@@ -41,16 +47,18 @@ export function TimelineFactRow({
     blockId: `timeline-item:${item.id}`,
     revisionKey: String(item.revision),
     defaultExpanded: item.status === "running" || item.status === "waiting" ||
-      item.status === "blocked" || item.status === "failed",
+      item.status === "blocked" || item.status === "failed" || item.status === "cancelled",
     preserveTouchedStateOnRevision: true,
   });
   const expanded = hasDetail && disclosure.expanded;
-  const status = timelineStatusLabel(item.status, t);
+  const status = statusLabel ?? timelineStatusLabel(item.status, t);
+  const visibleStatus = compact && item.status === "succeeded" ? undefined : status;
+  const visibleMeta = meta !== undefined ? meta : compact ? undefined : item.meta;
   const detailId = `conversation-timeline-detail-${domSafeId(item.id)}`;
 
   return (
     <article
-      className={["conversation-timeline-activity", `kind-${item.kind}`, item.status ? `status-${item.status}` : "", expanded ? "expanded" : ""].filter(Boolean).join(" ")}
+      className={["conversation-timeline-activity", `kind-${item.kind}`, compact ? "compact" : "", item.status ? `status-${item.status}` : "", expanded ? "expanded" : ""].filter(Boolean).join(" ")}
       data-conversation-timeline-activity
       data-conversation-timeline-item={item.kind}
       data-conversation-timeline-kind={item.kind}
@@ -83,20 +91,20 @@ export function TimelineFactRow({
         >
           <StatusAwareIcon item={item} icon={icon} />
           <span className="conversation-timeline-activity-copy">
-            <strong>{title}</strong>
-            {meta !== undefined || item.meta ? <small>{meta ?? item.meta}</small> : null}
+            <strong title={titleTooltip ?? title}>{title}</strong>
+            {visibleMeta ? <small>{visibleMeta}</small> : null}
           </span>
-          {status ? <span className="conversation-timeline-activity-status">{status}</span> : null}
+          {visibleStatus ? <span className="conversation-timeline-activity-status">{visibleStatus}</span> : null}
           <span className="conversation-timeline-activity-chevron" aria-hidden="true">⌄</span>
         </button>
       ) : (
         <div className="conversation-timeline-activity-main static">
           <StatusAwareIcon item={item} icon={icon} />
           <span className="conversation-timeline-activity-copy">
-            <strong>{title}</strong>
-            {meta !== undefined || item.meta ? <small>{meta ?? item.meta}</small> : null}
+            <strong title={titleTooltip ?? title}>{title}</strong>
+            {visibleMeta ? <small>{visibleMeta}</small> : null}
           </span>
-          {status ? <span className="conversation-timeline-activity-status">{status}</span> : null}
+          {visibleStatus ? <span className="conversation-timeline-activity-status">{visibleStatus}</span> : null}
         </div>
       )}
       {expanded ? (
@@ -110,7 +118,6 @@ export function TimelineFactRow({
 
 function StatusAwareIcon({ item, icon }: { readonly item: ConversationTimelineRowItem; readonly icon: ReactNode }): React.JSX.Element {
   if (item.status === "failed" || item.status === "blocked") return <CircleAlert size={14} aria-hidden="true" />;
-  if (item.status === "succeeded") return <CheckCircle2 size={14} aria-hidden="true" />;
   return <>{icon}</>;
 }
 

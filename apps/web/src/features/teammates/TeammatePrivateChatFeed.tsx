@@ -1,6 +1,5 @@
-import { useMemo } from "react";
+import { useMemo, useRef } from "react";
 import { ArrowDown, Copy, FileText, Image, Loader2, MessageSquare, Pencil, Plus, ThumbsDown, ThumbsUp } from "lucide-react";
-import { createConversationTimelineMessageItem, type ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
@@ -8,7 +7,6 @@ import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js"
 import {
   buildComposerGateApprovalPresentationByRunId,
   composerGateApprovalPresentationForWorkCell,
-  type ComposerGateApprovalPresentation,
 } from "../../lib/runtime-approval-presentation.js";
 import {
   AvatarInitial,
@@ -23,15 +21,15 @@ import {
   ConversationGeneratedMediaBlock,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
-  ConversationVirtualFeed,
-  ConversationViewProvider,
+  type ConversationTimelineItemLocator,
+  ConversationTimelineFeed,
   InlineMessageEditor,
   MessageActionBar,
   MessageEvidencePanel,
   MessageRow,
 } from "../../shared/conversation/index.js";
 import { IconButton, InlineFeedback } from "../../shared/ui/index.js";
-import type { ConversationGeneratedMedia, TeammateDirectLinkPreview, TeammateDirectMessage, TeammatePrivateAttachment } from "../../types.js";
+import type { TeammateDirectLinkPreview, TeammateDirectMessage, TeammatePrivateAttachment } from "../../types.js";
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import type { TeammatePrivateChatSurfaceProps } from "./teammate-private-chat-types.js";
 import {
@@ -40,87 +38,14 @@ import {
   teammateReferenceFileName,
   teammateWebReferenceHost,
 } from "./teammate-private-chat-view-models.js";
-import { conversationTimelineItemsForModel, type ConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
+import { conversationTimelineItemsForModel } from "../../lib/conversation-work-cell.js";
 import { formatBytes } from "./teammate-workspace-utils.js";
 import type { TeammatePrivateMessageController } from "./useTeammatePrivateMessageController.js";
 import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
 import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
-
-function privateMessageTimelineItems(input: {
-  readonly message: TeammateDirectMessage;
-  readonly body: string;
-  readonly facts: readonly ConversationTimelineItem[];
-}): readonly ConversationTimelineItem[] {
-  const messageItem = createConversationTimelineMessageItem({
-    id: `message:${input.message.authorType === "local-user" ? "user" : "agent"}:${input.message.id}`,
-    role: input.message.authorType === "local-user" ? "user" : "agent",
-    markdown: input.body,
-    phase: input.message.authorType === "ai-teammate" && input.message.status === "ready" ? "final" : "commentary",
-    revision: input.message.revision,
-    // This helper emits a local per-message slice.  The owning surface adds
-    // the message offset exactly once after the slice is assembled.
-    threadSequence: 0,
-    status: privateMessageTimelineStatus(input.message.status),
-    itemId: input.message.id,
-    fileRefs: input.message.fileRefs,
-  });
-  return [messageItem, ...input.facts]
-    .filter((candidate, index, all) => all.findIndex((other) => other.id === candidate.id) === index)
-    .sort((left, right) => left.threadSequence - right.threadSequence || left.partIndex - right.partIndex || left.id.localeCompare(right.id));
-}
-
-function privateConversationTimelineItems(input: {
-  readonly messages: readonly TeammateDirectMessage[];
-  readonly projectionByMessageId: ReadonlyMap<string, ReturnType<typeof projectTeammatePrivateMessage>>;
-  readonly workCellByMessageId: ReadonlyMap<string, { readonly model: ConversationWorkCellViewModel }>;
-  readonly composerGateApprovalByRunId: ReadonlyMap<string, ComposerGateApprovalPresentation>;
-}): readonly ConversationTimelineItem[] {
-  const items: ConversationTimelineItem[] = [];
-  input.messages.forEach((message, messageIndex) => {
-    const projection = input.projectionByMessageId.get(message.id);
-    if (!projection) return;
-    const workCell = input.workCellByMessageId.get(message.id);
-    const composerApprovalId = workCell
-      ? composerGateApprovalPresentationForWorkCell(workCell.model, input.composerGateApprovalByRunId)?.approvalId
-      : undefined;
-    const facts = workCell
-      ? conversationTimelineItemsForModel(workCell.model, composerApprovalId)
-      : [];
-    const baseSequence = messageIndex * 1_000_000;
-    for (const item of privateMessageTimelineItems({
-      message,
-      body: projection.body,
-      facts,
-      // Rebase the whole per-message slice exactly once below.  Passing the
-      // outer sequence into the local helper would double-offset the message
-      // item while facts keep their local sequence.
-    })) {
-      items.push({
-        ...item,
-        threadSequence: baseSequence + item.threadSequence,
-      });
-    }
-  });
-  const seen = new Set<string>();
-  return items
-    .filter((item) => {
-      if (seen.has(item.id)) return false;
-      seen.add(item.id);
-      return true;
-    })
-    .sort((left, right) => left.threadSequence - right.threadSequence || left.partIndex - right.partIndex || left.id.localeCompare(right.id));
-}
-
-function privateMessageTimelineStatus(status: TeammateDirectMessage["status"]): ConversationTimelineItem["status"] {
-  switch (status) {
-    case "pending": return "running";
-    case "blocked": return "blocked";
-    case "failed": return "failed";
-    case "cancelled": return "cancelled";
-    case "ready": return "succeeded";
-    default: return "pending";
-  }
-}
+import { timelineMessageChromeOwnerIds } from "../../shared/conversation/timeline/timeline-message-chrome-owners.js";
+import { privateGeneratedMediaForMessage, projectTeammatePrivateTimelineItems, resolveTeammatePrivateDiagnosticPlacements, selectTeammatePrivateMessages } from "./teammate-private-timeline-items.js";
+import { useTeammatePrivateTimeline } from "./use-teammate-private-timeline.js";
 
 export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "approvals"
@@ -143,8 +68,6 @@ export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "onScrollToLatest"
   | "privateAttachmentById"
   | "privateFeedRef"
-  | "privateMessageFeedVirtualRows"
-  | "privateMessageFeedVirtualizer"
   | "providerRecovered"
   | "runs"
   | "taskCreateBusyKeys"
@@ -182,10 +105,7 @@ export function TeammatePrivateChatFeed({
   onScrollToLatest,
   privateAttachmentById,
   privateFeedRef,
-  privateMessageFeedVirtualRows,
-  privateMessageFeedVirtualizer,
   providerRecovered,
-  runs,
   taskCreateBusyKeys,
   taskCreateErrors,
   taskChannelOptions,
@@ -194,9 +114,28 @@ export function TeammatePrivateChatFeed({
   terminalReports,
   usedMemoryEvents,
   userProfile,
-  visibleMessages,
+  visibleMessages: candidateMessages,
 }: TeammatePrivateChatFeedProps): React.JSX.Element {
   const { t } = useI18n();
+  const timelineItemLocatorRef = useRef<ConversationTimelineItemLocator | null>(null);
+  const ownerMessageText = useMemo(() => selectTeammatePrivateMessages(candidateMessages, {
+    teammateId: teammate.id, directThreadId: threadId,
+  }), [candidateMessages, teammate.id, threadId]);
+  const canonical = useTeammatePrivateTimeline({
+    cwd, teammateId: teammate.id, directThreadId: threadId,
+    refreshKey: JSON.stringify([
+      ownerMessageText.map((message) => [message.id, message.revision, message.status]),
+      executionActions.map((action) => [action.id, action.revision, action.updatedAt, action.status]),
+    ]),
+    active: ownerMessageText.some((message) => message.authorType === "ai-teammate" && message.status === "pending"),
+  });
+  const privateScope = useMemo(() => ({
+    teammateId: teammate.id, directThreadId: threadId ?? canonical.directThreadId,
+    canonicalThreadId: canonical.threadId, runs: canonical.runs, runLinks: canonical.runLinks,
+    turns: canonical.turns,
+  }), [canonical.directThreadId, canonical.runLinks, canonical.runs, canonical.threadId, canonical.turns, teammate.id, threadId]);
+  // All downstream body/chrome/media/action paths consume this owner-filtered list.
+  const visibleMessages = useMemo(() => selectTeammatePrivateMessages(candidateMessages, privateScope), [candidateMessages, privateScope]);
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
   const composerGateApprovalByRunId = useMemo(
     () => buildComposerGateApprovalPresentationByRunId(composerGateApprovals, t),
@@ -205,12 +144,12 @@ export function TeammatePrivateChatFeed({
   const workCellByMessageId = useMemo(() => buildTeammatePrivateWorkCellMap({
     messages: visibleMessages,
     teammateId: teammate.id,
-    runs,
+    runs: canonical.runs ?? [],
     executionActions,
     approvals,
     terminalReports,
     t,
-  }), [approvals, executionActions, runs, teammate.id, t, terminalReports, visibleMessages]);
+  }), [approvals, canonical.runs, executionActions, teammate.id, t, terminalReports, visibleMessages]);
   const projectionByMessageId = useMemo(
     () => new Map(visibleMessages.map((message) => [message.id, projectTeammatePrivateMessage({
       localUserDisplayName,
@@ -221,23 +160,43 @@ export function TeammatePrivateChatFeed({
     })])),
     [localUserDisplayName, providerRecovered, t, teammate.displayName, visibleMessages],
   );
-  const timelineItems = useMemo(
-    () => privateConversationTimelineItems({
-      messages: visibleMessages,
-      projectionByMessageId,
-      workCellByMessageId,
-      composerGateApprovalByRunId,
-    }),
-    [composerGateApprovalByRunId, projectionByMessageId, visibleMessages, workCellByMessageId],
-  );
   const activeMessage = [...visibleMessages].reverse().find((message) => {
     const projection = projectionByMessageId.get(message.id);
     return Boolean(projection?.pendingAiReply && message.linkedRunId);
   });
+  const timelineItems = useMemo(() => {
+    const hiddenApprovals = new Set([...composerGateApprovalByRunId.values()].map((approval) => approval.approvalId));
+    return projectTeammatePrivateTimelineItems({
+      ...privateScope,
+      messages: visibleMessages.map((message) => {
+        const workCell = workCellByMessageId.get(message.id);
+        const composerApprovalId = workCell
+          ? composerGateApprovalPresentationForWorkCell(workCell.model, composerGateApprovalByRunId)?.approvalId
+          : undefined;
+        return {
+          message,
+          body: projectionByMessageId.get(message.id)?.body ?? message.body,
+          facts: workCell ? conversationTimelineItemsForModel(workCell.model, composerApprovalId) : [],
+        };
+      }),
+      runLinks: canonical.runLinks,
+      canonical: canonical.projection ? {
+        ...canonical.projection,
+        items: canonical.projection.items.filter((item) => !item.approvalId || !hiddenApprovals.has(item.approvalId)),
+      } : undefined,
+      canonicalMessageIds: canonical.messageIds,
+      canonicalState: canonical.status,
+    });
+  }, [canonical, composerGateApprovalByRunId, privateScope, projectionByMessageId, visibleMessages, workCellByMessageId]);
   const timelineSnapshot = useMemo(() => buildSurfaceTimelineSnapshot({
     surface: "teammate_direct",
-    threadId,
+    threadId: canonical.threadId ?? threadId,
     items: timelineItems,
+    diagnosticPlacements: resolveTeammatePrivateDiagnosticPlacements({
+      items: timelineItems, scope: privateScope, messages: visibleMessages,
+      canonical: canonical.projection, canonicalMessageIds: canonical.messageIds,
+    }),
+    contextSegmentIdByItemId: canonical.projection?.contextSegmentIdByItemId,
     activeRun: activeMessage?.linkedRunId ? {
       runId: activeMessage.linkedRunId,
       status: "working",
@@ -248,8 +207,12 @@ export function TeammatePrivateChatFeed({
       sourceRefs: [],
     } : null,
     canonicalRevision: timelineItems.reduce((max, item) => Math.max(max, item.revision), 0),
-  }), [activeMessage?.linkedRunId, cwd, threadId, timelineItems]);
-  const workspaceId = executionActions.find((action) => action.workspaceId.trim())?.workspaceId;
+  }), [activeMessage?.linkedRunId, canonical.messageIds, canonical.projection, canonical.threadId, cwd, privateScope, threadId, timelineItems, visibleMessages]);
+  const messageChromeOwnerIds = useMemo(
+    () => timelineMessageChromeOwnerIds(timelineSnapshot.items),
+    [timelineSnapshot.items],
+  );
+  const workspaceId = canonical.workspaceId ?? executionActions.find((action) => action.workspaceId.trim())?.workspaceId;
 
   async function handleOpenTimelineSourceRef(
     ref: import("@ling-stack/conversation-ui-core").ConversationOperationSourceRef,
@@ -261,13 +224,13 @@ export function TeammatePrivateChatFeed({
     await requestTimelineWorkspaceFileOpen(ref, item, {
       cwd: cwd.trim(),
       workspaceId,
-      threadId,
+      threadId: canonical.threadId ?? threadId,
     }, onOpenFiles);
   }
 
-  function renderPrivateMessageRow(message: TeammateDirectMessage, body: React.ReactNode): React.JSX.Element {
+  function renderPrivateMessageRow(message: TeammateDirectMessage, body: React.ReactNode, ownsMessageChrome: boolean): React.JSX.Element {
     const workCell = workCellByMessageId.get(message.id);
-    const messageGeneratedMedia = generatedMediaForDirectMessage(generatedMedia, message);
+    const messageGeneratedMedia = privateGeneratedMediaForMessage(generatedMedia, message);
     const projection = projectionByMessageId.get(message.id) ?? projectTeammatePrivateMessage({
       localUserDisplayName,
       message,
@@ -280,12 +243,14 @@ export function TeammatePrivateChatFeed({
     const taskCreateKey = `message:${message.id}`;
     const taskCreateBusy = taskCreateBusyKeys.has(taskCreateKey);
     const taskCreateError = taskCreateErrors[message.id];
-    const editing = messageController.editingMessageId === message.id;
+    const editing = ownsMessageChrome && messageController.editingMessageId === message.id;
     const actionMessage = projection.userGuidance ? { ...message, body: projection.body } : message;
     const messageFileRefs = message.fileRefs ?? [];
     const messageLinkPreviews = (message.linkPreviewIds ?? [])
       .map((id) => directLinkPreviewById.get(id))
-      .filter((preview): preview is TeammateDirectLinkPreview => preview?.status === "ready");
+      .filter((preview): preview is TeammateDirectLinkPreview => preview?.status === "ready" &&
+        preview.teammateId === teammate.id && preview.threadId === message.threadId &&
+        (!preview.messageId || preview.messageId === message.id));
     const feedbackActions = message.authorType === "ai-teammate" ? [
       {
         id: "like",
@@ -344,7 +309,7 @@ export function TeammatePrivateChatFeed({
         bodyStreaming={projection.pendingAiReply}
         // Model-text paths are display-only; only typed timeline evidence may open a file.
         bodyOnOpenLocalFile={undefined}
-        attachmentsNode={(message.attachmentIds ?? []).length > 0 || messageFileRefs.length > 0 || messageLinkPreviews.length > 0 ? (
+        attachmentsNode={ownsMessageChrome && ((message.attachmentIds ?? []).length > 0 || messageFileRefs.length > 0 || messageLinkPreviews.length > 0) ? (
           <>
             <ConversationAttachmentStrip
               className="teammate-message-attachments"
@@ -352,7 +317,9 @@ export function TeammatePrivateChatFeed({
               loadPreview={loadPreviewContent}
               attachments={(message.attachmentIds ?? [])
                 .map((id) => privateAttachmentById.get(id))
-                .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment))
+                .filter((attachment): attachment is TeammatePrivateAttachment => Boolean(attachment &&
+                  attachment.teammateId === teammate.id && (!attachment.threadId || attachment.threadId === message.threadId) &&
+                  (!attachment.messageId || attachment.messageId === message.id)))
                 .map((attachment) => ({
                   id: attachment.id,
                   label: attachment.fileName,
@@ -380,6 +347,12 @@ export function TeammatePrivateChatFeed({
                   meta: fileRef.line !== undefined ? `${fileRef.path}:${fileRef.line}` : fileRef.path,
                   previewTitle: fileRef.label ?? teammateReferenceFileName(fileRef.path),
                   previewText: fileRef.path,
+                  onOpen: () => onOpenFiles({
+                    cwd: cwd.trim(),
+                    path: fileRef.path,
+                    ...(fileRef.line !== undefined ? { line: fileRef.line } : {}),
+                    label: fileRef.label ?? teammateReferenceFileName(fileRef.path),
+                  }),
                 })),
                 ...messageLinkPreviews.map((preview) => ({
                   id: `web:${preview.id}`,
@@ -394,10 +367,10 @@ export function TeammatePrivateChatFeed({
             />
           </>
         ) : null}
-        workCellNode={messageGeneratedMedia.length > 0 && message.authorType === "ai-teammate" ? (
+        workCellNode={ownsMessageChrome && messageGeneratedMedia.length > 0 && message.authorType === "ai-teammate" ? (
           <ConversationGeneratedMediaBlock items={messageGeneratedMedia} cwd={cwd.trim()} />
         ) : null}
-        evidenceNode={messageUsedMemoryEvents.length > 0 || message.webEvidence ? (
+        evidenceNode={ownsMessageChrome && (messageUsedMemoryEvents.length > 0 || message.webEvidence) ? (
           <MessageEvidencePanel
             memoryContent={messageUsedMemoryEvents.length > 0 ? (
               <UsedMemorySummary variant="inline" events={messageUsedMemoryEvents} memoryById={memoryById} />
@@ -406,7 +379,7 @@ export function TeammatePrivateChatFeed({
             webEvidence={message.webEvidence}
           />
         ) : null}
-        errorNode={(
+        errorNode={ownsMessageChrome ? (
           <>
             {projection.errorText ? (
               <InlineFeedback className="teammate-message-error" tone="danger">
@@ -427,8 +400,8 @@ export function TeammatePrivateChatFeed({
               </InlineFeedback>
             ) : null}
           </>
-        )}
-        actionsNode={!editing ? (
+        ) : null}
+        actionsNode={ownsMessageChrome && !editing && !projection.pendingAiReply && !projection.blocked ? (
           <MessageActionBar
             surface="teammate_direct"
             className="teammate-message-actions"
@@ -467,55 +440,48 @@ export function TeammatePrivateChatFeed({
 
   return (
     <div className="teammate-private-feed-owner" data-ui2-teammate-private-feed="true">
-      <ConversationViewProvider surfaceId={`teammate:${teammate.id}`}>
-        <ConversationVirtualFeed
-          scrollRef={privateFeedRef}
-          ariaLabel={t("Private message feed")}
-          feedClassName="message-feed teammate-message-list"
-          emptyFeedClassName="message-feed teammate-message-list message-feed-empty"
-          loading={false}
-          empty={!loading && visibleMessages.length === 0}
-          loadingLabel={t("Loading teammate workspace...")}
-          emptyIcon={<MessageSquare size={18} />}
-          emptyLabel={normalizedMessageSearchQuery ? t("No private messages match search") : t("No private messages yet")}
-          totalSize={privateMessageFeedVirtualizer.getTotalSize()}
-          virtualRows={privateMessageFeedVirtualRows}
-          items={[timelineSnapshot]}
-          getItemId={(snapshot) => `timeline:${snapshot.scope.threadId || "unbound"}`}
-          getItemKind={() => "timeline"}
-          measureElement={privateMessageFeedVirtualizer.measureElement}
-          onScroll={onPrivateFeedScroll}
-          onUserScrollIntent={onCancelPrivateFeedAutoFollow}
-          renderVirtualRow={() => mountConversationTimeline({
+      <ConversationTimelineFeed
+        surfaceId={`teammate:${teammate.id}`}
+        scrollRef={privateFeedRef}
+        ariaLabel={t("Private message feed")}
+        frameClassName="message-feed-wrap"
+        feedClassName="message-feed teammate-message-list"
+        emptyFeedClassName="message-feed-empty"
+        loading={loading}
+        empty={visibleMessages.length === 0}
+        loadingLabel={t("Loading teammate workspace...")}
+        emptyIcon={<MessageSquare size={18} />}
+        emptyLabel={normalizedMessageSearchQuery ? t("No private messages match search") : t("No private messages yet")}
+        timelineId={`timeline:${timelineSnapshot.scope.threadId || "unbound"}`}
+        onScroll={onPrivateFeedScroll}
+        onUserScrollIntent={onCancelPrivateFeedAutoFollow}
+        timelineNode={mountConversationTimeline({
+            renderUserInputAvatar: (item) => item.kind === "userInputAnswer"
+              ? <UserProfileAvatar profile={userProfile} fallbackLabel={localUserDisplayName} />
+              : item.participantId === teammate.id ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact /> : undefined,
             snapshot: timelineSnapshot,
             depth: 0,
             cwd: cwd.trim(),
+            virtualScrollRef: privateFeedRef,
+            itemLocatorRef: timelineItemLocatorRef,
+            onDisclosureIntent: onCancelPrivateFeedAutoFollow,
             onOpenSourceRef: handleOpenTimelineSourceRef,
             renderMessageChrome: (messageItem, body) => {
-              const message = messageItem.itemId ? visibleMessages.find((candidate) => candidate.id === messageItem.itemId) : undefined;
-              return message ? renderPrivateMessageRow(message, body) : body;
+              const messageId = messageItem.itemId ? canonical.messageIds?.get(messageItem.itemId) ?? messageItem.itemId : undefined;
+              const message = visibleMessages.find((candidate) => candidate.id === messageId);
+              return message ? renderPrivateMessageRow(message, body, messageChromeOwnerIds.has(messageItem.id)) : body;
             },
             ariaLabel: t("Private conversation transcript"),
           }).node}
-          latestButtonNode={latestButtonVisible ? (
-            <IconButton
-              className="message-feed-latest-button"
-              icon={ArrowDown}
-              label={t("Jump to latest message")}
-              onClick={onScrollToLatest}
-            />
-          ) : null}
-        />
-      </ConversationViewProvider>
+        latestButtonNode={latestButtonVisible ? (
+          <IconButton
+            className="message-feed-latest-button"
+            icon={ArrowDown}
+            label={t("Jump to latest message")}
+            onClick={onScrollToLatest}
+          />
+        ) : null}
+      />
     </div>
   );
-}
-
-function generatedMediaForDirectMessage(
-  items: readonly ConversationGeneratedMedia[],
-  message: TeammatePrivateChatSurfaceProps["visibleMessages"][number],
-): readonly ConversationGeneratedMedia[] {
-  return items.filter((item) => item.messageId
-    ? item.messageId === message.id
-    : Boolean(message.linkedRunId && item.runId === message.linkedRunId));
 }

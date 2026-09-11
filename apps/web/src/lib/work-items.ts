@@ -367,6 +367,7 @@ export function workItemNextActionLabel(item: WorkItemView): string {
 }
 
 function statusFromTaskAndRun(taskStatus: Task["status"], runStatus: RunSession["status"] | undefined): WorkItemStatus {
+  if (taskStatus === "waiting_for_input") return "waiting";
   if (runStatus) {
     return statusFromRun(runStatus);
   }
@@ -391,6 +392,8 @@ function statusFromTaskAndRun(taskStatus: Task["status"], runStatus: RunSession[
 
 function statusFromRun(status: RunSession["status"]): WorkItemStatus {
   switch (status) {
+    case "yielded":
+      return "waiting";
     case "queued":
       return "ready";
     case "running":
@@ -408,6 +411,8 @@ function statusFromRun(status: RunSession["status"]): WorkItemStatus {
 
 function statusFromWorkflowStep(status: ChannelWorkflowStep["status"]): WorkItemStatus {
   switch (status) {
+    case "waiting_for_input":
+      return "waiting";
     case "queued":
       return "ready";
     case "claimed":

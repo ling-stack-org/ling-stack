@@ -15,6 +15,60 @@ const scope = {
   depth: 0,
 };
 
+test("unhydrated user-input references never become messages, commands or terminal evidence", () => {
+  const result = projectCanonicalConversationTimeline({ scope, sourceSequence: 2, sourceRevision: "user-input-1",
+    items: [item("question", 1, "user_input_request", { requestId: "request-1", requestVersion: 1 }),
+      item("answer", 2, "user_input_answer", { requestId: "request-1", requestVersion: 1, answerId: "answer-1" })],
+    actions: [], turnRuns: [] });
+  assert.deepEqual(result.items, []);
+  assert.deepEqual(result.terminalEvidence, []);
+  assert.deepEqual(result.diagnostics, []);
+});
+
+const childScope = { ...scope, surface: "child", depth: 1, turnId: "turn-1", runId: "run-1", attemptId: "attempt-1", participantId: "qa" };
+const childMessage = () => ({
+  ...item("child-message", 1, "assistant_message", { body: "Inspecting the result.", deliveryStatus: "ready", presentationRole: "narration" }),
+  turnId: "turn-1", actorType: "teammate", actorId: "qa", domainRefs: [{ type: "run", id: "run-1" }],
+});
+const childInput = (message, overrides = {}) => ({
+  scope: childScope, sourceSequence: 2, sourceRevision: "child-scope", items: [message, item("child-tool", 2, "tool_call", { toolName: "bash", toolCallId: "child-call" })],
+  actions: [action("child-action", 1, { participantId: "qa", toolCallId: "child-call", sourceRefs: [conversationRef("child-tool")] })],
+  turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }], ...overrides,
+});
+
+test("child canonical narration keeps exact run, attempt, participant and commentary phase", () => {
+  const result = projectCanonicalConversationTimeline(childInput(childMessage()));
+  const message = result.items.find((entry) => entry.kind === "agentMessage");
+  assert.ok(message);
+  assert.equal(message.runId, "run-1");
+  assert.equal(message.attemptId, "attempt-1");
+  assert.equal(message.participantId, "qa");
+  assert.equal(message.phase, "commentary");
+  assert.ok(message.sourceRefs.some((ref) => ref.kind === "run" && ref.id === "run-1"));
+});
+
+for (const [name, overrides] of [
+  ["another run on the same turn", { domainRefs: [{ type: "run", id: "run-other" }] }],
+  ["two run owners", { domainRefs: [{ type: "run", id: "run-1" }, { type: "run", id: "run-other" }] }],
+  ["same turn without a run owner", { domainRefs: [] }],
+  ["another participant", { actorId: "engineer" }],
+  ["another turn", { turnId: "turn-other" }],
+]) {
+  test(`child scope rejects ${name}`, () => {
+    const result = projectCanonicalConversationTimeline(childInput({ ...childMessage(), ...overrides }));
+    assert.equal(result.items.some((entry) => entry.kind === "agentMessage"), false);
+    assert.ok(result.diagnostics.some((entry) => ["scope_mismatch", "owner_conflict", "missing_lineage"].includes(entry.code)));
+  });
+}
+
+test("child narration cannot borrow a selected attempt or missing run from its display scope", () => {
+  for (const scopeOverride of [{ attemptId: "attempt-other" }, { runId: undefined }, { participantId: undefined }]) {
+    const result = projectCanonicalConversationTimeline(childInput(childMessage(), { scope: { ...childScope, ...scopeOverride } }));
+    assert.equal(result.items.some((entry) => entry.kind === "agentMessage"), false);
+    assert.ok(result.diagnostics.some((entry) => ["scope_mismatch", "missing_lineage"].includes(entry.code)));
+  }
+});
+
 test("canonical projector keeps messages and action evidence on one source-order spine", () => {
   const projection = projectCanonicalConversationTimeline({
     scope,
@@ -81,6 +135,113 @@ test("canonical command projection preserves Host output totals and artifact ide
   assert.equal(command.resultArtifactId, "artifact-result");
   assert.equal(command.outputTail[0].text, "ok\n");
 });
+
+test("runtime loop evidence renders as one diagnostic and never as Agent narration or successful evidence", () => {
+  const projection = projectCanonicalConversationTimeline({
+    scope,
+    sourceSequence: 1,
+    sourceRevision: "loop-diagnostic",
+    items: [item("user-1", 1, "user_message", { body: "Finish the task" })],
+    actions: [action("loop-action", 8, {
+      actionType: "runtime_diagnostic",
+      status: "failed",
+      title: "Repeated execution stopped",
+      summary: "Execution stopped after the same action repeated 3 times.",
+      sourceRefs: [conversationRef("user-1"), { kind: "run_event", id: "loop-event" }],
+      commandEvidence: undefined,
+      runtimeDiagnostic: {
+        code: "execution_loop_detected", loopKind: "exact_repeat", repeatedCount: 3,
+        noProgressActionCount: 2, cycleLength: 1, fingerprint: "a".repeat(64), retryable: false,
+      },
+    })],
+    turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+  });
+  const diagnostic = projection.items.find(entry => entry.kind === "diagnostic");
+  assert.ok(diagnostic);
+  assert.equal(diagnostic.code, "execution_loop_detected");
+  assert.equal(diagnostic.status, "failed");
+  assert.deepEqual(diagnostic.runtimeDiagnostic, {
+    code: "execution_loop_detected", loopKind: "exact_repeat", repeatedCount: 3,
+    noProgressActionCount: 2, cycleLength: 1, fingerprint: "a".repeat(64), retryable: false,
+  });
+  assert.equal(projection.items.some(entry => entry.kind === "agentMessage"), false);
+  assert.equal(projection.terminalEvidence.some(entry => entry.status === "succeeded"), false);
+  assert.equal(projection.diagnostics.some(entry => entry.message.includes("unsupported action type")), false);
+});
+
+for (const [actionType, kind] of [
+  ["mcp_tool_call", "mcpToolCall"],
+  ["dynamic_tool_call", "dynamicToolCall"],
+  ["host_capability", "dynamicToolCall"],
+  ["collab_agent_tool_call", "collabAgentToolCall"],
+]) {
+  for (const status of ["succeeded", "failed"]) {
+    test(`canonical ${kind} preserves Host input and ${status} output evidence`, () => {
+      const outputText = status === "succeeded" ? '{"text":"实际工具输出"}\n' : "Provider error: request rejected\n";
+      const toolEvidence = {
+        toolName: "registered_lookup",
+        inputSummary: "query=parser · limit=2",
+        outputText,
+        outputTruncated: true,
+        latestEventSeq: 9,
+      };
+      const projection = projectCanonicalConversationTimeline({
+        scope,
+        sourceSequence: 1,
+        sourceRevision: `${kind}-${status}-output`,
+        items: [item("tool-output", 1, "tool_call", { toolCallId: "call-output", toolName: toolEvidence.toolName })],
+        actions: [action("action-output", 9, {
+          toolCallId: "call-output",
+          actionType,
+          status,
+          summary: "Action summary is not the input or result.",
+          sourceRefs: [conversationRef("tool-output")],
+          commandEvidence: undefined,
+          toolEvidence,
+        })],
+        turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+      });
+
+      const projected = projection.items[0];
+      assert.equal(projected.kind, kind);
+      assert.equal(projected.status, status);
+      assert.equal(projected.resultSummary, outputText);
+      assert.equal(projected.inputSummary, toolEvidence.inputSummary);
+      assert.equal(projected.toolName, toolEvidence.toolName);
+      assert.equal(projected.outputTruncated, true);
+      assert.equal(projection.diagnostics.length, 0);
+    });
+  }
+
+  test(`canonical ${kind} never invents input or output from an action summary`, () => {
+    for (const toolEvidence of [
+      undefined,
+      { toolName: "registered_lookup", inputSummary: "query=parser", outputTruncated: false, latestEventSeq: 1 },
+      { toolName: "registered_lookup", inputSummary: "", outputText: "", outputTruncated: false, latestEventSeq: 1 },
+    ]) {
+      const projection = projectCanonicalConversationTimeline({
+        scope,
+        sourceSequence: 1,
+        sourceRevision: `${kind}-without-output`,
+        items: [item("tool-empty", 1, "tool_call", { toolCallId: "call-empty", toolName: "registered_lookup" })],
+        actions: [action("action-empty", 1, {
+          toolCallId: "call-empty",
+          actionType,
+          summary: "Legacy action summary",
+          sourceRefs: [conversationRef("tool-empty")],
+          commandEvidence: undefined,
+          toolEvidence,
+        })],
+        turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+      });
+
+      const projected = projection.items[0];
+      assert.equal(projected.kind, kind);
+      assert.equal(projected.resultSummary, toolEvidence?.outputText);
+      assert.equal(projected.inputSummary, toolEvidence?.inputSummary);
+    }
+  });
+}
 
 test("canonical projector surfaces rejected lifecycle diagnostics without changing the action row", () => {
   const projection = projectCanonicalConversationTimeline({
@@ -484,8 +645,8 @@ test("canonical projector gives multiple evidence facts one persisted anchor ord
       item("tool-1", 2, "tool_call", { toolCallId: "call-1", toolName: "bash" }),
     ],
     actions: [
-      action("a-read", 2, { actionType: "read", toolCallId: "call-1", sourceRefs: [conversationRef("tool-1")] }),
-      action("a-command", 3, { actionType: "bash", toolCallId: "call-2", sourceRefs: [conversationRef("tool-1")] }),
+      action("a-read", 2, { actionType: "read", toolCallId: "call-1", sourceEventSequence: 2, sourceRefs: [conversationRef("tool-1")] }),
+      action("a-command", 3, { actionType: "bash", toolCallId: "call-2", sourceEventSequence: 3, sourceRefs: [conversationRef("tool-1")] }),
     ],
     turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
   });
@@ -548,6 +709,48 @@ test("canonical projector deterministically orders distinct equal-revision actio
   assert.deepEqual(facts.map((entry) => entry.actionId), ["same-a", "same-b"]);
   assert.deepEqual(facts.map((entry) => entry.partIndex), [1, 2]);
   assert.equal(projection.diagnostics.some((entry) => entry.code === "owner_conflict"), false);
+});
+
+test("canonical action order follows immutable start events when earlier output revisions advance", () => {
+  const input = {
+    scope,
+    sourceSequence: 1,
+    sourceRevision: "causal-action-order",
+    items: [item("user-1", 1, "user_message", { body: "Inspect then write" })],
+    actions: [
+      action("a-later", 100, { sourceEventSequence: 99 }),
+      action("z-earlier", 144, { sourceEventSequence: 49 }),
+    ],
+    turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+  };
+  const first = projectCanonicalConversationTimeline(input);
+  const refreshed = projectCanonicalConversationTimeline({ ...input, actions: input.actions.map((entry) => ({ ...entry, revision: entry.revision + 50 })) });
+  for (const projection of [first, refreshed]) {
+    const facts = projection.items.filter((entry) => entry.actionId);
+    assert.deepEqual(facts.map((entry) => entry.actionId), ["z-earlier", "a-later"]);
+    assert.deepEqual(facts.map((entry) => entry.sourceEventSequence), [49, 99]);
+    assert.deepEqual(facts.map((entry) => entry.partIndex), [1, 2]);
+  }
+});
+
+test("canonical action ordering never treats different run event cursors as a shared clock", () => {
+  const input = {
+    scope, sourceSequence: 1, sourceRevision: "run-local-cursors",
+    items: [item("user-1", 1, "user_message", { body: "Parallel work" })],
+    actions: [
+      action("a-late", 144, { sourceEventSequence: 99 }),
+      action("b-first", 5, { sourceEventSequence: 1, runId: "run-2", attemptId: "attempt-2", participantId: "qa" }),
+      action("a-first", 150, { sourceEventSequence: 49 }),
+    ],
+    turnRuns: [
+      { runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" },
+      { runId: "run-2", turnId: "turn-1", attemptNumber: 1, role: "primary" },
+    ],
+  };
+  const forward = projectCanonicalConversationTimeline(input);
+  const reverse = projectCanonicalConversationTimeline({ ...input, actions: [...input.actions].reverse() });
+  assert.deepEqual(forward.items.filter((entry) => entry.actionId).map((entry) => entry.actionId), ["a-first", "a-late", "b-first"]);
+  assert.deepEqual(forward.items, reverse.items);
 });
 
 test("canonical projector maps approvals, plans, compactions, artifacts, and child spans without creating a second history", () => {

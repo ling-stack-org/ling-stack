@@ -13,7 +13,7 @@ test("Settings subnavigation uses shared Tabs with stable keyboard selection", a
   await mockControlPlaneReads(page);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
 
   const tabList = page.getByRole("tablist", { name: "Archived item categories" });
@@ -50,7 +50,7 @@ test("Media Production view switcher keeps one shared segmented selection", asyn
   await mockControlPlaneReads(page);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   const switcher = page.getByRole("radiogroup", { name: "Media production views" });
   const studio = switcher.getByRole("radio", { name: "Production studio" });
   const jobs = switcher.getByRole("radio", { name: "Generation tasks" });

@@ -57,6 +57,7 @@ import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
 import type { PreselectedMemoryUse } from "../runs/schemas.js";
+import { createWorkflowOperationExecutionSnapshot, type WorkflowOperationExecutionSnapshot } from "../runs/workflow-operation-snapshot.js";
 import type {
   ChannelIntentExecutionOperationV1,
   DelegatedBlockCodeV1,
@@ -68,6 +69,7 @@ import { resolveWorkflowHandoffExecutionContext } from "./workflow-handoffs.js";
 import { evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
 import { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 import { blockDelegatedWorkflowStepBeforeRun } from "./workflow-step-finalizer.js";
+import { projectWorkflowStepNarration } from "./workflow-step-narration.js";
 import { workflowStepExecutionOperationBindings } from "./workflow-operation-evidence.js";
 import {
   resolveWorkflowParticipantRunProfile,
@@ -91,6 +93,7 @@ export interface WorkflowStepRunRequest {
   readonly delegatedRequirement?: DelegatedStepRequirementV1;
   /** Internal-only Host execution bindings for workflow-owned operations. */
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
+  readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
   readonly skipMemoryRecall?: boolean;
@@ -259,6 +262,15 @@ export async function handleChannelWorkflowFromHandoff(
     }
     const body = await readJsonBody(request, config.maxBodyBytes);
     const input = parseChannelWorkflowFromHandoffRequest(body);
+    const existingWorkflow = store.getChannelWorkflowForHandoff(handoff.channelId, handoff.id);
+    const existingWorkflowStep = existingWorkflow
+      ? store.listChannelWorkflowSteps({ workflowId: existingWorkflow.id, complete: true })
+        .find((step) => step.sourceHandoffId === handoff.id)
+      : undefined;
+    if (existingWorkflow && existingWorkflowStep) {
+      writeJson(response, 200, { workflow: existingWorkflow, workflowStep: existingWorkflowStep });
+      return;
+    }
     const createdAt = new Date().toISOString();
     const continuityContext = resolveWorkflowHandoffExecutionContext({
       store,
@@ -269,37 +281,37 @@ export async function handleChannelWorkflowFromHandoff(
       throw new Error(`Workflow handoff cannot start: ${continuityContext.blocker}`);
     }
     const sourceItemId = continuityContext.sourceItemId ?? handoff.sourceMessageId;
-    const workflow = store.createChannelWorkflow(
+    const result = store.createOrReuseChannelHandoffWorkflow(
       {
         channelId: handoff.channelId,
         sourceHandoffId: handoff.id,
-        title: input.title ?? `Handoff to ${handoff.toParticipantLabel}`,
-        objective: input.objective ?? (handoff.expectedOutput || handoff.reason || "Complete handoff workflow."),
-        createdBy: input.createdBy,
-        metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
+        workflow: {
+          title: input.title ?? `Handoff to ${handoff.toParticipantLabel}`,
+          objective: input.objective ?? (handoff.expectedOutput || handoff.reason || "Complete handoff workflow."),
+          createdBy: input.createdBy,
+          metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
+        },
+        workflowStep: {
+          contextSummaryId: input.contextSummaryId,
+          title: `Complete handoff: ${handoff.expectedOutput || handoff.reason || handoff.toParticipantLabel}`,
+          prompt: formatHandoffStepPrompt(handoff),
+          toParticipantId: handoff.toParticipantId,
+          toParticipantLabel: handoff.toParticipantLabel,
+          participantAuthority: createWorkflowParticipantAuthorityV1({
+            kind: "workflow_definition",
+            origin: "channel_handoff",
+            participantId: handoff.toParticipantId,
+            sourceId: handoff.id,
+          }),
+          metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
+        },
       },
       createdAt,
     );
-    const workflowStep = store.createChannelWorkflowStep(
-      {
-        workflowId: workflow.id,
-        sourceHandoffId: handoff.id,
-        contextSummaryId: input.contextSummaryId,
-        title: `Complete handoff: ${handoff.expectedOutput || handoff.reason || handoff.toParticipantLabel}`,
-        prompt: formatHandoffStepPrompt(handoff),
-        toParticipantId: handoff.toParticipantId,
-        toParticipantLabel: handoff.toParticipantLabel,
-        participantAuthority: createWorkflowParticipantAuthorityV1({
-          kind: "workflow_definition",
-          origin: "channel_handoff",
-          participantId: handoff.toParticipantId,
-          sourceId: handoff.id,
-        }),
-        metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
-      },
-      createdAt,
-    );
-    writeJson(response, 201, { workflow, workflowStep });
+    writeJson(response, result.reused ? 200 : 201, {
+      workflow: result.workflow,
+      workflowStep: result.workflowStep,
+    });
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
@@ -378,7 +390,7 @@ export async function handleChannelWorkflowStepsCollection(
           workflowId,
           status: readOptionalChannelWorkflowStepStatusQuery(url, "status"),
           limit: readOptionalIntegerQuery(url, "limit", 1),
-        }),
+        }).map(step => projectWorkflowStepNarration(store, step)),
       });
       return;
     }
@@ -417,7 +429,7 @@ export async function handleChannelWorkflowStepItem(
       return;
     }
     if (request.method === "GET") {
-      writeJson(response, 200, { workflowStep: existing });
+      writeJson(response, 200, { workflowStep: projectWorkflowStepNarration(store, existing) });
       return;
     }
     if (request.method !== "PATCH") {
@@ -943,6 +955,7 @@ export function prepareWorkflowStepStart(
     sourceMessageId: step.metadata?.sourceMessageId ?? workflow.metadata?.sourceMessageId,
     delegatedRequirement: step.metadata?.delegatedRequirement,
     executionOperationBindings: workflowStepExecutionOperationBindings(step),
+    workflowOperationExecution: createWorkflowOperationExecutionSnapshot(step),
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     skipMemoryRecall: true,
     preselectedMemoryUse: renderedMemory.memoryIds.length > 0

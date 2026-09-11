@@ -108,11 +108,19 @@ export function validateTerminalReportContent(
   }
 
   const checksById = new Map(snapshot.checks.map((check) => [check.id, check]));
-  if (snapshot.terminalState === "succeeded" && snapshot.checks.length > 0 && content.verification.length === 0) {
+  // A model cannot report checks withheld from its evidence projection. Use the
+  // strongest Host policy, including aliases elsewhere in the snapshot, solely
+  // for this presence requirement; status/ref validation still uses all facts.
+  const hasVisibleChecks = snapshot.checks.some((check) => check.sourceRefs.every((ref) =>
+    availableRefs.get(terminalReportSourceRefKey(ref))?.every((evidence) =>
+      evidence.visibility !== "developer_only" && evidence.sensitivity !== "secret_adjacent"
+    )
+  ));
+  if (snapshot.terminalState === "succeeded" && hasVisibleChecks && content.verification.length === 0) {
     issues.push(issue(
       "terminal_report_unverified_success_claim",
       "verification",
-      "A successful evidence snapshot with checks must include verification rows.",
+      "A successful evidence snapshot with model-visible checks must include verification rows.",
     ));
   }
   for (const [index, verification] of content.verification.entries()) {
@@ -184,7 +192,7 @@ export function validateTerminalReport(
   return { ok: issues.length === 0, issues };
 }
 
-function collectAvailableSourceRefs(snapshot: TerminalReportEvidenceSnapshot): ReadonlySet<string> {
+function collectAvailableSourceRefs(snapshot: TerminalReportEvidenceSnapshot): ReadonlyMap<string, readonly TerminalReportSourceRef[]> {
   const refs = [
     ...snapshot.references,
     ...snapshot.steps.flatMap((item) => item.sourceRefs),
@@ -195,7 +203,14 @@ function collectAvailableSourceRefs(snapshot: TerminalReportEvidenceSnapshot): R
     ...snapshot.approvals.flatMap((item) => item.sourceRefs),
     ...snapshot.risks.flatMap((item) => item.sourceRefs),
   ];
-  return new Set(refs.map(terminalReportSourceRefKey));
+  const available = new Map<string, TerminalReportSourceRef[]>();
+  for (const ref of refs) {
+    const key = terminalReportSourceRefKey(ref);
+    const group = available.get(key) ?? [];
+    group.push(ref);
+    available.set(key, group);
+  }
+  return available;
 }
 
 function collectEvidenceChangedPaths(snapshot: TerminalReportEvidenceSnapshot): ReadonlySet<string> {
@@ -210,15 +225,24 @@ function collectEvidenceChangedPaths(snapshot: TerminalReportEvidenceSnapshot): 
 function validateRefsResolve(
   issues: TerminalReportValidationIssue[],
   refs: readonly TerminalReportSourceRef[],
-  availableRefs: ReadonlySet<string>,
+  availableRefs: ReadonlyMap<string, readonly TerminalReportSourceRef[]>,
   path: string,
 ): void {
   for (const ref of refs) {
-    if (!availableRefs.has(terminalReportSourceRefKey(ref))) {
+    const evidenceRefs = availableRefs.get(terminalReportSourceRefKey(ref));
+    if (!evidenceRefs) {
       issues.push(issue("terminal_report_source_ref_missing", path, `Source ref is not present in evidence: ${terminalReportSourceRefKey(ref)}`));
+    } else if (evidenceRefs.some((evidence) =>
+      REF_VISIBILITY[ref.visibility] < REF_VISIBILITY[evidence.visibility] ||
+      REF_SENSITIVITY[ref.sensitivity ?? "normal"] < REF_SENSITIVITY[evidence.sensitivity ?? "normal"]
+    )) {
+      issues.push(issue("terminal_report_privacy_violation", path, "Report references cannot lower Host evidence privacy restrictions."));
     }
   }
 }
+
+const REF_VISIBILITY = { conversation: 0, folded_evidence: 1, developer_only: 2 } as const;
+const REF_SENSITIVITY = { normal: 0, private: 1, secret_adjacent: 2 } as const;
 
 function validateNoVisibleSecretRefs(
   issues: TerminalReportValidationIssue[],

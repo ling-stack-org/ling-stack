@@ -68,7 +68,7 @@ for (const theme of themes) {
 }
 
 async function openCouncilWorkspace(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace", exact: true }).click();
   const surface = page.locator("[data-settings-workspace-tool='councils']");
   await expect(surface).toBeVisible();

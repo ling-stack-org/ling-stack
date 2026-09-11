@@ -1,11 +1,12 @@
 # Conversation Codex-Parity Component Detailed Design
 
-Status: normative component implementation contract v3.9.1-final; D0–E5 source implementation
-and automated gates are green, but the implementation is not yet accepted because E6 packaged
-macOS normal/private/channel/topic/branch/child and recovery evidence remains open.
+Status: normative component implementation contract v3.9.1-final; source implementation is
+in progress. Historical D0–E5 passes do not certify the current combined WIP. The single-root
+windowing, pending ordering and effective-attempt changes require current validation; E6
+packaged macOS normal/private/channel/topic/branch/child and recovery acceptance remains open.
 Date: 2026-09-01
-Design revision: Codex parity handoff 2026-09-01（component tree、row contract、child span 和 EnvironmentPopover 已锁定）
-Base: `origin/main` @ `ebfadd1b`
+Design revision: unified viewport and root display model 2026-09-05（component tree、row contract、child span 和 EnvironmentPopover 已锁定）
+Design baseline: `origin/main` @ `ebfadd1b`（历史设计基线；当前实现/测试 SHA 以本轮 build manifest 为准）
 Scope: normal conversation, teammate private chat, channel root/topic/branch, depth-1
 sub-Agent activity, packaged macOS
 Owner: Conversation UI, conversation-ui-core, daemon runtime, Desktop maintainers
@@ -24,6 +25,13 @@ Related authority:
 This document is the component-level bridge between those contracts and code. It does not
 create a fifth fact authority. If it conflicts with typed transcript semantics, the typed
 transcript design wins. If it conflicts with visual geometry, the visual specification wins.
+
+2026-09-06 execution-entry increment: [Host capability integration](channel-execution-capability-integration-plan.md)
+is planned, not implemented. A real `host_capability` action projects to the existing
+`dynamicToolCall` renderer with one fact row and one disclosure. No IP-specific card,
+route-local renderer, second timeline, or compiler/OS call belongs in a React component.
+The Host adapter owns bounded result formatting and typed failure diagnostics. Root and
+child reuse the same renderer; terminal copy reads only the selected visible result.
 
 ## 1. Outcome
 
@@ -122,18 +130,17 @@ TerminalReport must not repeat the Timeline's action rows or output.
 `ConversationTimeline` receives one immutable, already-scoped snapshot. It does not accept
 separate message, operation, approval or report arrays.
 
-Channel/topic/branch 的 feed 只挂载一个 `renderVirtualRow -> ConversationTimeline` root。
-旧的 `renderMessageFeedItem` 不属于 `ChannelMessageRenderers` 对外 contract；shared virtual
-feed 也不再提供 `renderItem` fallback。virtualizer 只能调用 `renderVirtualRow`，normal、
-private、channel、topic、branch 和 child 都必须把完整 snapshot 交给同一个 Timeline root。
-fixture 若需要逐行断言，应直接调用纯 projector/registry，不得通过第二个 legacy JSX 入口
-绕过 Timeline。
+普通、私聊和频道共同使用 `ConversationTimelineFeed`，由它提供唯一的 feed viewport；
+每个 surface 只挂载一次 `mountConversationTimeline -> ConversationTimeline`。该 shell
+只处理 loading/empty/history chrome 和输入事件，不调用 `useVirtualizer`。旧
+`ConversationVirtualFeed`、`renderVirtualRow` 和 `virtualRowIdentity` 已退出生产合同，
+不能为了测量一个 Timeline root 保留第二层 virtualizer。
 
-当一个 surface 的 Timeline root 不与 `items[index]` 一一对应（例如 channel 把
-`older-loader` 和历史消息折叠进同一个 root）时，virtual feed 必须显式提供稳定的
-`virtualRowIdentity={ id, kind }`。这个 identity 只用于焦点、滚动锚点和 semantic selector，
-不能把 loader、batch 数量或任意首条消息冒充 Timeline root；内容变化时 root key 和
-lineage 仍保持不变。
+唯一的根 `ConversationTimeline` 从共享 display model 取得 `rows/segments/locations`，
+长历史按稳定 `rowKey` 选择可见窗口。depth-1 child 展开后进入同一 rows 序列，不另外
+mount Timeline。`timelineId` 仅标识整体 shell；滚动锚点必须标识真实 display row，
+不能使用 `older-loader`、第一条消息或整个 Timeline root 代替当前可见行。fixture 若需
+逐行断言，直接调用纯 projector/registry，不保留第二个 legacy JSX 入口。
 
 ```ts
 type ConversationTimelineProps = {
@@ -306,25 +313,27 @@ WorkCell card.
 ```text
 ConversationSurfaceShell
 |- Header
-|- ConversationFeedViewport              only vertical scroll owner
-|  `- ConversationTimeline
-|     |- ConversationDocumentItem
-|     |  `- ConversationMarkdownBody
-|     |- TimelineFactRow
-|     |  `- TimelineInlineDetail
-|     |- TerminalReportRow
-|     |- TimelineBatchRow
-|     |  `- exact atomic child renderers
-|     `- SubAgentActivity
-|        `- ConversationTimeline(depth=1, same registry)
+|- ConversationTimelineFeed              shared shell; no virtualizer
+|  `- ConversationFeedViewport            only vertical scroll owner
+|     `- ConversationTimeline             only root display-row virtualizer
+|        |- ConversationDocumentItem
+|        |  `- ConversationMarkdownBody
+|        |- TimelineFactRow
+|        |  `- TimelineInlineDetail
+|        |- TerminalReportRow
+|        |- TimelineBatchRow
+|        |  `- exact atomic child renderers
+|        `- SubAgentActivity header + depth-1 child rows
+|           `- same root display model and registry; no child Timeline
 |- EnvironmentPopover                    active ambient state only
 |- Composer                              input and shell controls only
 `- RightDock / HostViewer                selected source preview only
 ```
 
-`ConversationFeedViewport` owns history paging, scroll anchoring and sticky-to-bottom
-behavior. `ConversationTimeline`, nested child Timelines, batches and inline details use
-normal document flow and never create `overflow-y`.
+`ConversationFeedViewport` is the only vertical scroll element. Its shared shell carries
+history paging, anchor and sticky-to-bottom interactions; the root `ConversationTimeline`
+alone owns display-row windowing and dynamic measurement against that element. Child rows,
+batches and inline details never create another Timeline, virtualizer or `overflow-y`.
 
 ## 8. Document renderer
 
@@ -356,6 +365,11 @@ Rules:
 - A path candidate displays file icon + basename, with full path on hover/focus and copy.
   It remains non-clickable.
 - Only a trusted Host ref exposes open-file/open-diff/open-artifact behavior.
+- Terminal report details reuse an existing evidence ref for a matching full path
+  instead of adding a second section-path fallback. The original kind/id/privacy and
+  capability remain unchanged; full paths may enrich tooltips but never grant access.
+  Distinct evidence refs (including real file and diff targets) remain separate.
+  Never join by basename, label similarity, or across report sections/lineage.
 - Parse failure keeps safe plain text and emits `diagnostic(markdown_parse_failed)` without
   losing the message.
 
@@ -364,8 +378,7 @@ Rules:
 Every action renderer composes the same `TimelineFactRow`:
 
 ```text
-[kind icon]  Verb target - Text status                         [Disclosure]
-             optional one-line meta / bounded preview
+[kind icon]  Verb basename / actual command  [attention state] [Disclosure]
 ```
 
 The row contract is:
@@ -398,6 +411,26 @@ Title templates are deterministic:
 
 Missing safe payload produces `Activity unavailable - Blocked`. The renderer never shows
 only `Running`, `Done`, raw provider JSON or the model's description of the action.
+
+### 9.1 默认事实行与详情唯一展示规则（本次验收细化）
+
+这是已确认 UI 规则的验收细化，不新增设计版本，也不改变事实状态或执行语义：
+
+1. 默认事实行只有一行 `icon + 动作 + 文件 basename / 真实命令 + optional disclosure`。
+   完整路径通过 hover/focus tooltip 展示；能否点击仍由 Host trusted ref 决定。
+2. 成功由动作完成态表达，不额外重复 `Succeeded/已完成`、`exit 0` 或耗时。状态仍保留在
+   typed model 和可访问语义中；本文其他状态枚举和示意图不是要求再显示一份成功标签。
+3. exit code 和耗时仅在展开详情中各出现一次，不同时出现在摘要、标题和详情。
+4. 展开只新增真实输出、错误、diff 或未展示的证据字段；不得复制标题、动作摘要或同一
+   输出。不因工具没有额外结果而用摘要填充详情；无新增内容时不提供空 disclosure。
+5. 失败、timeout、cancel 和 approval 必须明确显示，不能因“简洁”而隐藏，也不能合并
+   到成功 batch 中。正在执行的状态同样必须可辨识。
+6. normal、private、channel 和 child 使用同一个 renderer、batch/disclosure 规则。
+   child 只增加 participant 标识和 depth=1 缩进，不维护自己的工具 UI 或滚动容器。
+
+组件测试和 packaged macOS 验收均检查：折叠行单行、完整路径 tooltip、成功态无重复
+元数据；展开后 exit/耗时各一次，且没有重复标题、摘要、输出。三 surface 与 child
+使用同一 fixture 核验相同 renderer 行为。
 
 ## 10. Status and action lifecycle
 
@@ -583,7 +616,8 @@ Implementation rules:
 - The parent renderer adds only participant label, lifecycle, 1 px rail and 8 px inset.
 - Child narration is `agentMessage`. Child plan, command, file and tool use the exact same
   registry and row components as depth 0.
-- The child Timeline receives a scoped child snapshot, not copied parent arrays.
+- The root display model receives scoped `childItems`, not copied parent arrays. Expanded
+  child rows join its root window and use the same registry with `depth=1`.
 - Depth 1 is the maximum visible nesting. Depth 2 projects
   `diagnostic(nested_depth_exceeded)` instead of another indent or scroll area.
 - `started/running/waiting/blocked/errored` groups remain open. Completed safe history may
@@ -593,14 +627,16 @@ Implementation rules:
 
 ## 15. Surface adapters
 
-Normal, private, channel root, topic, branch and child adapters have one job:
+Normal, private and channel root/topic/branch adapters have one job; child scope is a
+participant span projected inside that root, never a separately mounted surface:
 
 ```text
 route/domain selection
   -> resolve real LingThread id and scope
   -> load one canonical snapshot
   -> resolve shell policy and Host callbacks
-  -> mount ConversationTimeline once
+  -> shared ConversationTimelineFeed viewport
+  -> mount ConversationTimeline once (including its child display rows)
 ```
 
 Allowed differences:
@@ -690,7 +726,11 @@ shows a blocked diagnostic.
 
 ## 18. Accessibility and responsive behavior
 
-- Document and fact content stay left aligned on all surfaces and widths.
+- Text inside document and fact rows stays left aligned on all surfaces and widths.
+  User message lanes are end-aligned with the avatar to the right of the body; Agent
+  avatars and narrative/fact lanes remain on the left. This sender rule is shared across
+  surfaces, not a route-specific bubble style. An absent avatar reserves no empty column;
+  the explicit own-author header variant retains its header/body/actions rows.
 - Fact row minimum hit target is 28 px; pointer and keyboard focus use the same affordance.
 - Each disclosure is a native button with an accessible name and `aria-expanded`.
 - Status is always icon + text + `aria-label`; color is secondary.
@@ -796,8 +836,10 @@ hide an earlier failure with CSS or screenshots.
 | recovery | approval allow/deny/expired, retry, SSE reconnect, daemon restart, fan-in |
 | packaged macOS | real app screenshots + semantic state + lineage + redacted logs |
 
-Required real-client cases remain `N-01`, `N-02`, `P-01`, `C-01`, `C-02`, `A-01`,
-`R-01`, `R-02`, `R-03`, `F-01` and `E-01`. Every case stores:
+The original real-client cases are `N-01`, `N-02`, `P-01`, `C-01`, `C-02`, `A-01`,
+`R-01`, `R-02`, `R-03`, `F-01` and `E-01`. The implementation plan §6.3 is the current
+complete checklist, also covering follow-up memory, topic/branch, protocol actions, typed
+kinds, long history and a complete small project. Every real case stores:
 
 ```text
 case.json             simulation=false, build hash, thread/turn/run/attempt
@@ -976,9 +1018,9 @@ durable events，恢复同一 id/revision/fence，不追加“已恢复”消息
 ### 26.5 子 Agent 组合
 
 ```text
-SubAgentActivity(depth=1)
-  ├─ participant label + lifecycle + 1px rail
-  └─ ConversationTimeline(depth=1, child snapshot)
+root display model
+  ├─ subAgentHeader(participant label + lifecycle)
+  └─ subAgentChild(depth=1, same root window and registry)
        ├─ agentMessage / reasoning / plan
        ├─ command/file/tool fact rows
        └─ terminalReport（若 child execute turn 有自己的结果）
@@ -1036,7 +1078,7 @@ surface adapter
 | `conversation-ui-core` projector/batch | 校验 scope、owner、attempt、revision，生成原子 item 和可逆 display rows | I/O、权限副作用、completion/fan-in 判断 |
 | `shared/conversation/timeline/*` | exhaustive registry、row/detail、disclosure、semantic selectors | 读取 raw source、按文案去重、创建第二个 scroll owner |
 | normal/private/channel/topic/branch adapter | 解析真实 `LingThread.id`、shell/policy、Host callback | 自建 `MessageBubble`、`WorkCell`、activity renderer 或 summary |
-| `SubAgentActivity` | participant label、lifecycle、depth=1 child snapshot、fan-in focus | child-specific renderer、depth=2 Timeline、ready 文案冒充完成 |
+| `SubAgentActivity` | participant label、lifecycle、depth=1 scoped child rows、fan-in focus | child-specific renderer、任何 nested Timeline、ready 文案冒充完成 |
 | Composer/approval/EnvironmentPopover/Right Dock | 输入/控制、当前 active ambient、选中 source preview | 复制 action/output/TerminalReport 历史 |
 
 一次 render cycle 只能有一个 owning row：
@@ -1091,12 +1133,12 @@ type ConversationTimelineCallbacks = {
 某个 surface 缺少能力，返回缺失 callback 的 policy 状态或 `diagnostic(blocked)`，不能
 恢复任意 ReactNode 注入。
 
-### 27.3 子 Agent 的递归边界
+### 27.3 子 Agent 的展开边界
 
 ```text
-SubAgentActivity(depth=1)
-  -> participant label + lifecycle
-  -> child Timeline(depth=1)
+root Timeline display rows
+  -> subAgentHeader(participant label + lifecycle)
+  -> subAgentChild(depth=1, same registry)
        -> agentMessage/reasoning/plan
        -> command/exploration/file/tool/approval
        -> terminalReport（若 child execute turn 有结果）
@@ -1125,9 +1167,10 @@ message、workflow、run 或 protocol activity 分别调用一次 `mountConversa
 后者只能统一局部 row 的外观，仍然留下多个排序 owner、多个 fingerprint 和跨 row
 重复结果的可能性。
 
-### 28.1 2026-09-01 live code audit
+### 28.1 2026-09-01 caller audit（历史迁移背景）
 
-当前实现 worktree 已有 shared registry 和局部 Timeline，但 E4 仍未完成：
+下表记录首次 cutover 的 caller 问题与目标，不是 2026-09-05 当前验收结果。当前代码已
+统一三种会话的 `ConversationTimelineFeed`；本轮 E4 退出证据以实施计划 §6.2 为准：
 
 | 当前 caller | 当前行为 | 目标行为 |
 | --- | --- | --- |
@@ -1147,15 +1190,16 @@ route-local item ordering/merge functions = 0
 arbitrary renderer ReactNode action slots = 0
 ```
 
-depth-1 child 在该唯一 Timeline 内部递归使用同一个 registry，不计作第二个 surface
-owner；它不得拥有独立 feed、virtualizer、history loader 或 scroll container。
+depth-1 child 展开为该唯一 Timeline 的 display rows，通过同一个 registry 渲染，不创建
+第二个 Timeline owner；它不得拥有独立 feed、virtualizer、history loader 或 scroll container。
 
 ### 28.1.1 E4a/E4b 实现切片记录
 
-normal 和 private 的第一批切换已经按上述目标收口：surface 先构造完整 snapshot，再由
+normal 和 private 的第一批切换采用：surface 先构造完整 snapshot，再由
 `renderMessageChrome` 包装作者、时间、编辑、附件、反馈和重试等 chrome；message row 本身
-不再创建第二个 Timeline。private virtualizer 的计数也降为一个 root row，只负责测量和
-滚动锚点，不能改变 message/fact 的排序。private scope 只接受 API 返回的真实
+不再创建第二个 Timeline。曾经只测量一个 root row 的 private 外层 virtualizer 是已过时
+的过渡实现，现已由 `ConversationTimelineFeed` 纯 shell 替代；普通、私聊、频道均只由
+根 Timeline 测量实际 display rows。private scope 只接受 API 返回的真实
 `LingThread.id`，缺失时由 `buildSurfaceTimelineSnapshot()` 产生一个
 `scope_mismatch` diagnostic。
 
@@ -1165,10 +1209,11 @@ private 的 legacy adapter 若需要把一条消息及其 facts 合并为 surfac
 否则 message 会被加两次偏移，facts 会落在所属 message 之前。该规则只约束 display adapter，
 canonical durable sequence 仍由 `ConversationItemStore` 提供。
 
-E4 的 source cutover 与自动化 contract 已完成：channel root/branch/topic 的消息、事实、
+已有 source cutover 将 channel root/branch/topic 的消息、事实、
 protocol、workflow 和 run projection 均进入同一 Timeline，生产代码没有
-`ConversationWorkCell` 或独立 `TerminalReportBlock` renderer caller。它仍不是 E6 完成证明；
-后续必须按 28.5 的 source audit 和 packaged macOS 证据闸门重放真实交互、重连与重启。
+`ConversationWorkCell` 或独立 `TerminalReportBlock` renderer caller。历史自动化通过仅证明
+当时的切片；本轮还需复核单一根 virtualizer、pending sequence 和状态折叠的合并改动，
+并按 28.5 与实施计划 §6.2–§6.3 重放真实交互、重连与重启。
 
 ### 28.2 Target composition API
 
@@ -1293,17 +1338,53 @@ callback。它不能接受任意 React node，也不能让 surface 为同一 pro
 外部 card。active approval 只在 approval row 中显示 `Waiting for approval`，点击打开唯一
 decision dialog；Composer 不再复制 approval 内容或 summary。
 
+#### 28.4.1 Protocol status is kind-specific
+
+protocol domain state 不能经过一个“按字符串猜生命周期”的通用 mapper。projection 必须按
+`protocolKind` 使用穷尽映射，并允许没有 execution status：
+
+| domain fact | domain status | Timeline status | 说明 |
+| --- | --- | --- | --- |
+| decision | `active` | `undefined` | 当前有效的协议事实，不是假装仍在执行；`meta` 保留 `active` |
+| decision | `superseded` | `cancelled` | 被后继决定替代，仍可审计 |
+| decision | `rejected` | `failed` | 明确拒绝 |
+| approval | `pending` | `waiting` | renderer 显示唯一 `Waiting for approval` |
+| workflow step | `skipped` | `succeeded` | 正常跳过，不得显示失败 |
+| any cancellable kind | `cancelled` | `cancelled` | 不得折叠成 failed |
+
+未知 domain status 返回 `undefined` 并保留原始 meta/source ref；不能猜成 `running` 或
+`failed`。每张 protocol row 同时把映射结果写入 text、icon、`data-*` 与 `aria-label`，测试
+必须覆盖完整 domain enum，新增枚举值若未映射应在 TypeScript 或 unit test 中失败。
+
+#### 28.4.2 Decision supersession is an atomic single-successor mutation
+
+`supersede_decision` 不是先改旧行再随手插入新行的两个请求。Store 在同一个
+`BEGIN IMMEDIATE` 中：
+
+1. 查询 source decision 的既有 successor；等价 payload 复用并返回 `200`；
+2. 没有 successor 时，对 source 的 `status='active'` 做 CAS 更新；
+3. CAS 成功后插入唯一 active successor 并提交，首次返回 `201`；
+4. 不同 payload、stale source 或竞争失败返回 `409 decision_supersession_conflict`。
+
+SQLite 以 partial unique index 保证每个 `supersedes_decision_id` 只有一个 claimant。历史
+重复数据迁移采用 first-writer-wins：最早 successor 保留 claim；后续重复行清除 claim 并
+标记 `rejected`，保留审计但不能继续 active。UI 的 row-level in-flight guard、disabled 和
+`aria-busy` 只是避免双击噪声；数据库事务、唯一索引和 CAS 才是正确性边界。
+
 ### 28.5 Virtualization and scroll ownership
 
-单一 Timeline 不要求一次创建全部 DOM。长历史由 `ConversationFeedViewport` 按
-`TimelineDisplayItem.id` virtualize，但排序、batch 和 owner 在 virtualizer 之前已完成：
+单一 Timeline 不要求一次创建全部 DOM。`ConversationTimelineFeed` 提供唯一 viewport；
+长历史由根 `ConversationTimeline` 按 display model 的稳定 `rowKey` virtualize。
+surface shell 不得再虚拟化单一 Timeline root。排序、batch 和 owner 在 virtualizer 之前
+已完成：
 
 ```text
 atomic TimelineSnapshot
   -> projectDisplayBatches()
   -> TimelineDisplaySnapshot
-  -> ConversationFeedViewport window/anchor
-  -> registry renderer for visible display items
+  -> root TimelineDisplayModel (header + expanded child rows)
+  -> root ConversationTimeline window/measure against shared viewport
+  -> registry renderer for visible display rows (depth=0|1)
 ```
 
 virtualizer 只能选择可见窗口和测量高度，不能：
@@ -1314,7 +1395,50 @@ virtualizer 只能选择可见窗口和测量高度，不能：
 - 用数组 index 代替稳定 item/batch identity。
 
 历史向上加载后必须以 durable sequence/cursor 合并 source snapshot，再重新产生同一个
-display projection；visible anchor 按稳定 item id 恢复。
+display projection；visible anchor 按稳定 `rowKey + offsetTop` 恢复。
+
+#### 28.5.1 Expanded sub-Agent rows belong to the root window
+
+`subAgentActivity` 是一个语义 group，不是第二个 feed。根 Timeline 必须在渲染前把它投影为
+可窗口化的 display rows：
+
+```text
+subAgentActivity(collapsed)
+  -> subAgentHeader
+
+subAgentActivity(expanded)
+  -> subAgentHeader
+  -> subAgentChild(parentId, childItem, depth=1)
+  -> subAgentChild(parentId, childItem, depth=1)
+```
+
+display row 只改变展示结构，不改变 canonical item、SQLite lineage、TerminalReport 或
+fan-in。稳定 identity 使用 `timeline-row:<depth>:<encoded-parentId>:<encoded-itemId>:
+<threadSequence>:<partIndex>`；字符串字段须编码，revision 和数组 index 不进入 virtual
+key。`data-feed-item-id` 继续保存 canonical item id，
+另以 `data-conversation-row-key` 保存窗口/锚点 identity。
+
+展开状态由一个 root-level hook 订阅 `ConversationViewStore`，先按 revision-aware 默认规则
+同步产生 display model，再在 effect 中 reconcile store。禁止在 `.map()`、递归 projector
+或 virtual row renderer 中调用 `useConversationBlockView`，否则展开后的行数变化会破坏 Hook
+顺序。手动展开/折叠属于 view state；SSE revision、retry projection 和虚拟卸载后必须保留，
+除非 owning span 已从 retain keys 中移除。
+
+根 virtualizer 的启用判据使用 `potentialRowCount`，即包含可展开 child 的潜在行数，而不是
+当前 collapsed `rows.length`。这样从 5 个 header 展开为 505 行时不会在 non-virtual 与
+virtual DOM 之间切换并导致焦点/remount。根 virtualizer 统一消费 flat display rows；
+child 不再创建 `ConversationTimeline(depth=1)`、第二个 virtualizer 或第二个 scroll owner，
+但 child item 仍通过同一 registry 以 `depth=1` 渲染。
+
+locator 必须覆盖 collapsed child：先由 `locationByItemId` 找到 parent span，展开 parent，等待
+最新 display model，再按最新 `rowKey -> index` 定位。可见锚点记录 `rowKey + offsetTop`；若
+用户折叠了当前 child anchor，锚点明确回退到 parent header。depth=2
+`subAgentActivity` 只投影一个 `nested_depth_exceeded` diagnostic，绝不继续递归。
+
+500-child 的硬门槛是：根 virtualizer 恰好一个、nested virtualizer/scroll owner 为零、
+mounted child focus rows 不超过 48、首尾 child 均可通过滚动或 locator 到达。20 次本机展开
+p95 `<100ms` 作为性能证据，不作为易抖动 CI gate；DOM 上限、可达性、ARIA 和 anchor 稳定
+是 CI 硬断言。
 
 ### 28.6 E4 deletion and verification order
 
@@ -1352,19 +1476,20 @@ Codex TUI，而是让 Ling 的 durable facts 经过一套 renderer 后呈现出�
 ```text
 ConversationSurfaceShell
 ├─ ConversationSurfaceHeader           surface chrome only
-├─ ConversationFeedViewport             only vertical scroll owner
-│  └─ ConversationTimeline              one immutable display snapshot
-│     ├─ ConversationDocumentRenderer   message/reasoning/plan/compaction
-│     ├─ ConversationFactRenderer       command/read/file/tool/approval/protocol
-│     ├─ ConversationResultRenderer     terminalReport only
-│     ├─ ConversationBatchRenderer      reversible display wrapper
-│     └─ ConversationSubAgentRenderer   participant rail + same registry(depth=1)
+├─ ConversationTimelineFeed             same shell for normal/private/channel; no virtualizer
+│  └─ ConversationFeedViewport           only vertical scroll owner
+│     └─ ConversationTimeline           one root display model and virtualizer
+│        ├─ ConversationDocumentRenderer   message/reasoning/plan/compaction
+│        ├─ ConversationFactRenderer       command/read/file/tool/approval/protocol
+│        ├─ ConversationResultRenderer     terminalReport only
+│        ├─ ConversationBatchRenderer      reversible display wrapper
+│        └─ SubAgent header/child rows     same root window + registry(depth=1)
 ├─ EnvironmentPopover                   active ambient state only
 └─ ConversationComposer                 draft/stop/retry/approval controls
 ```
 
 生产代码不得再导出 `MessageBubble`、`ConversationWorkCell`、route-local `CommandRow`、
-`renderFactActions` 或 `ConversationVirtualFeed.renderItem` 作为 transcript 入口。Fixture
+`renderFactActions` 或已删除的 `ConversationVirtualFeed` 作为 transcript 入口。Fixture
 直接调用 pure projector、fingerprint 或 registry；不为测试保留第二套 JSX。
 
 ### 29.2 Display snapshot 与 row contract

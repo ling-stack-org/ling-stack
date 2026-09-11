@@ -66,6 +66,33 @@ test("command batching groups three adjacent low-risk successful commands", () =
   assert.deepEqual(items[0].batch.commands.map((command) => command.commandText), ["pnpm typecheck", "pnpm lint", "pnpm test"]);
 });
 
+test("work-cell exploration preserves Host output and never promotes its input or status to output", () => {
+  const row = {
+    ...readRow("read-output", "run-1", "src/todo.test.mjs"),
+    description: "src/todo.test.mjs",
+    meta: "Failed",
+    toolEvidence: {
+      toolName: "read", inputSummary: "src/todo.test.mjs · limit 400",
+      outputText: "ENOENT: no such file or directory\n  src/todo.test.mjs",
+      outputTruncated: true, latestEventSeq: 50,
+    },
+  };
+  const [item] = projectConversationTimelineItems([row]);
+  assert.equal(item.kind, "exploration");
+  assert.equal(item.resultSummary, row.toolEvidence.outputText);
+  assert.equal(item.inputSummary, row.toolEvidence.inputSummary);
+  assert.equal(item.outputTruncated, true);
+  const [withoutOutput] = projectConversationTimelineItems([{ ...row, toolEvidence: undefined }]);
+  assert.equal(withoutOutput.resultSummary, undefined);
+
+  const [tool] = projectConversationTimelineItems([{
+    ...row,
+    operationExecution: { ...row.operationExecution, actionType: "mcp_tool" },
+    toolEvidence: undefined,
+  }]);
+  assert.equal(tool.resultSummary, undefined, "A status label must never become tool result evidence");
+});
+
 test("command batching preserves boundaries and leaves active or consequential commands visible", () => {
   const rows = [
     commandRow("one", "run-1", "pnpm typecheck", 1200),
@@ -433,6 +460,27 @@ test("typed timeline prefers action type over legacy row kind", () => {
   assert.deepEqual(items.map((item) => item.kind), ["fileChange", "mcpToolCall", "plan", "collabAgentToolCall"]);
 });
 
+test("legacy action adapters preserve bounded runtime diagnostics as failed facts", () => {
+  const runtimeDiagnostic = {
+    code: "execution_loop_detected", loopKind: "cycle", repeatedCount: 3,
+    noProgressActionCount: 8, cycleLength: 2, fingerprint: "c".repeat(64), retryable: false,
+  };
+  const [item] = projectConversationTimelineItems([{
+    id: "loop-row",
+    kind: "watch",
+    title: "execution_loop_detected",
+    description: "Execution stopped after repeated activity produced no new evidence.",
+    tone: "failed",
+    operationExecution: operationExecution("loop-1", "run-1", "runtime_diagnostic", "failed", [conversationItemRef("loop-1")], { runtimeDiagnostic }),
+  }]);
+
+  assert.equal(item.kind, "diagnostic");
+  assert.equal(item.status, "failed");
+  assert.equal(item.code, "execution_loop_detected");
+  assert.equal(item.actionId, "loop-1");
+  assert.deepEqual(item.runtimeDiagnostic, runtimeDiagnostic);
+});
+
 test("typed timeline fail-closes malformed rows without crashing the feed", () => {
   const items = projectConversationTimelineItems([null, { id: "missing-title" }, {
     id: "unsafe-source",
@@ -463,6 +511,7 @@ test("typed timeline can be projected again without changing identity", () => {
 
 test("typed timeline keeps command output totals on the atomic row", () => {
   const row = commandRow("command-output", "run-1", "node verify.mjs", 12, {
+    timedOut: true,
     outputByteCount: 42,
     outputLineCount: 3,
     stdoutArtifactId: "stdout-artifact",
@@ -472,6 +521,7 @@ test("typed timeline keeps command output totals on the atomic row", () => {
   const [item] = projectConversationTimelineItems([row]);
 
   assert.equal(item.kind, "commandExecution");
+  assert.equal(item.timedOut, true);
   assert.equal(item.outputByteCount, 42);
   assert.equal(item.outputLineCount, 3);
   assert.equal(item.stdoutArtifactId, "stdout-artifact");
@@ -524,6 +574,7 @@ function commandRow(id, runId, commandText, durationMs, overrides = {}) {
       commandText,
       durationMs,
       exitCode,
+      timedOut: overrides.timedOut,
       latestEventSeq: 1,
       outputByteCount: overrides.outputByteCount,
       outputLineCount: overrides.outputLineCount,

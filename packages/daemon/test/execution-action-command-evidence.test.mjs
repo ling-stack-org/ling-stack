@@ -626,7 +626,7 @@ test("execution action invalidation publishes every accepted tool revision", () 
   );
 });
 
-test("approval action keeps stable lineage and changes revision when resolved", () => {
+test("approval-only state remains one approval lifecycle without execution evidence", () => {
   const runId = "run-approval-lineage";
   const approvalId = "approval-lineage";
   const run = {
@@ -663,33 +663,28 @@ test("approval action keeps stable lineage and changes revision when resolved", 
     listEvents: (id) => id === runId ? [event(1, "run_created", { attemptId: "attempt-approval-lineage" }, runId)] : [],
   };
 
-  const pending = listExecutionActions(store, { runId, complete: true });
-  assert.equal(pending.length, 1);
-  assert.equal(pending[0].id, `approval:${approvalId}`);
-  assert.equal(pending[0].status, "waiting_for_approval");
-  assert.equal(pending[0].revision > 0, true);
-  assert.deepEqual(pending[0].sourceRefs.slice(0, 8), [
-    { kind: "execution_action", id: `approval:${approvalId}` },
-    { kind: "run", id: runId },
-    { kind: "work_unit", id: run.workUnitId },
-    { kind: "attempt", id: "attempt-approval-lineage" },
-    { kind: "participant", id: run.teammateId },
-    { kind: "workflow_step", id: run.workflowStepId },
-    { kind: "approval", id: approvalId },
-    { kind: "tool_call", id: baseApproval.toolCallId },
-  ]);
-  assert.ok(pending[0].sourceRefs.some((ref) => ref.kind === "command" && ref.id === "pnpm test --filter parser"));
+  const [pendingAction] = listExecutionActions(store, { runId, complete: true });
+  assert.equal(pendingAction.id, `approval:${approvalId}`);
+  assert.equal(pendingAction.status, "waiting_for_approval");
+  assert.equal(pendingAction.toolCallId, baseApproval.toolCallId);
+  assert.equal(pendingAction.sourceEventSequence, undefined);
+  assert.equal(pendingAction.executedAt, undefined);
+  assert.equal(pendingAction.commandEvidence, undefined);
+  assert.equal(pendingAction.toolEvidence, undefined);
+  assert.equal(pendingAction.sourceRefs.some((ref) => ref.kind === "run_event"), false);
 
-  const resolved = listExecutionActions({
+  const [deniedAction] = listExecutionActions({
     ...store,
     listApprovalRequests: () => [{ ...baseApproval, status: "denied", resolvedAt: "2026-07-13T00:00:03.000Z" }],
   }, { runId, complete: true });
-  assert.equal(resolved[0].status, "denied");
-  assert.ok(resolved[0].revision > pending[0].revision);
-  assert.ok(resolved[0].sourceRefs.some((ref) => ref.kind === "approval" && ref.id === approvalId));
+  assert.equal(deniedAction.id, pendingAction.id);
+  assert.equal(deniedAction.status, "denied");
+  assert.equal(deniedAction.sourceEventSequence, undefined);
+  assert.equal(deniedAction.executedAt, undefined);
+  assert.equal(deniedAction.sourceRefs.some((ref) => ref.kind === "run_event"), false);
 });
 
-test("merged approval and tool action advances revision for every durable tool update", () => {
+test("approved tool action keeps approval identity and advances revision for every durable tool update", () => {
   const runId = "run-approval-tool-revision";
   const approvalId = "approval-tool-revision";
   const toolCallId = "tool-approval-tool-revision";
@@ -749,6 +744,11 @@ test("merged approval and tool action advances revision for every durable tool u
 
   assert.equal(started.length, 1);
   assert.equal(updated.length, 1);
+  assert.equal(started[0].id, `approval:${approvalId}`);
+  assert.equal(started[0].approvalId, approvalId);
+  assert.equal(started[0].toolCallId, toolCallId);
+  assert.equal(started[0].title, "Approve focused check");
+  assert.equal(started[0].sourceEventSequence, 2);
   assert.ok(updated[0].revision > started[0].revision);
   assert.deepEqual(
     started[0].sourceRefs.filter((ref) => ref.kind === "run_event").map((ref) => ref.id),
@@ -759,6 +759,80 @@ test("merged approval and tool action advances revision for every durable tool u
     ["event-2", "event-3"],
   );
   assert.match(updated[0].commandEvidence.outputTail.map((chunk) => chunk.text).join(""), /still running/u);
+});
+
+test("approved command failure remains the same failed approval action with tool evidence", () => {
+  const runId = "run-approved-command-failed";
+  const toolCallId = "tool-approved-command-failed";
+  const approvalId = "approval-approved-command-failed";
+  const start = event(2, "tool_start", {
+    toolCallId,
+    toolName: "bash",
+    args: { command: "git status", cwd: "/not-a-repository" },
+  }, runId);
+  const end = event(3, "tool_end", {
+    toolCallId,
+    toolName: "bash",
+    isError: true,
+    result: {
+      details: {
+        unifiedExec: {
+          status: "failed",
+          cwd: "/not-a-repository",
+          command: { kind: "argv", argv: ["git", "status"] },
+          startedAt: start.ts,
+          endedAt: "2026-07-13T00:00:03.000Z",
+          durationMs: 1000,
+          exitCode: 128,
+          timedOut: false,
+          cancelled: false,
+          stdout: { byteCount: 0, lineCount: 0, preview: "", truncated: false },
+          stderr: { byteCount: 72, lineCount: 1, preview: "fatal: not a git repository (or any of the parent directories): .git\n", truncated: false },
+          artifacts: [],
+        },
+      },
+    },
+  }, runId);
+  const run = {
+    id: runId,
+    taskId: "task-approved-command-failed",
+    threadId: "thread-approved-command-failed",
+    workUnitId: "work-unit-approved-command-failed",
+    teammateId: "ling",
+    cwd: "/not-a-repository",
+    status: "succeeded",
+    createdAt: start.ts,
+    updatedAt: end.ts,
+  };
+  const approval = {
+    id: approvalId,
+    runId,
+    taskId: run.taskId,
+    toolCallId,
+    actionType: "bash",
+    risk: "medium",
+    title: "Allow git status",
+    description: "Run git status",
+    payload: { type: "bash", cwd: run.cwd, command: "git status", riskFlags: [] },
+    createdAt: "2026-07-13T00:00:01.000Z",
+    resolvedAt: "2026-07-13T00:00:01.500Z",
+    status: "approved",
+    decisionKind: "approve_command_rule",
+  };
+  const [action] = listExecutionActions({
+    getRun: (id) => id === runId ? run : undefined,
+    listRuns: () => [run],
+    listApprovalRequests: () => [approval],
+    listArtifacts: () => [],
+    listEvents: () => [event(1, "run_created", { attemptId: "attempt-approved-command-failed" }, runId), start, end],
+  }, { runId, complete: true });
+
+  assert.equal(action.id, `approval:${approvalId}`);
+  assert.equal(action.approvalId, approvalId);
+  assert.equal(action.status, "failed");
+  assert.equal(action.commandEvidence.exitCode, 128);
+  assert.match(action.commandEvidence.outputTail.map((chunk) => chunk.text).join(""), /not a git repository/u);
+  assert.ok(action.sourceRefs.some((ref) => ref.kind === "approval" && ref.id === approvalId));
 });
 
 test("lifecycle evidence excludes events that precede the accepted tool start", () => {

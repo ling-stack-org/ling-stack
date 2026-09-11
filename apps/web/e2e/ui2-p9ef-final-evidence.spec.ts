@@ -224,7 +224,7 @@ test("P9EF-EVIDENCE-01 Beta remains clean after Alpha fails late", async ({ page
   const gate = deferred();
   await installLateConversationFailure(page, gate, "Late Alpha stream failure.");
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await openConversation(page, navigation, alpha);
   await sendConversation(page, "Keep this failure with Alpha");
   await gate.started.promise;
@@ -235,7 +235,9 @@ test("P9EF-EVIDENCE-01 Beta remains clean after Alpha fails late", async ({ page
   const betaPage = page.getByLabel("Conversation page");
   await expect(betaPage.getByText("Late Alpha stream failure.", { exact: true })).toHaveCount(0);
   await expect(betaPage.getByLabel("Conversation messages", { exact: true })).not.toContainText("Keep this failure with Alpha");
-  const search = betaPage.getByLabel("Conversation workspace toolbar").getByRole("button", { name: "Search" });
+  const search = page
+    .locator("[data-ui2-normal-conversation-header='true']")
+    .getByRole("button", { name: "Search" });
   await search.focus();
   await expect(search).toBeFocused();
   await finish(page, scenarios.conversationBetaClean, runtime);
@@ -248,7 +250,7 @@ test("P9EF-EVIDENCE-02 Alpha failure restores on Alpha only", async ({ page }) =
   const gate = deferred();
   await installLateConversationFailure(page, gate, "Late Alpha stream failure.");
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await openConversation(page, navigation, alpha);
   await sendConversation(page, "Keep this failure with Alpha");
   await gate.started.promise;
@@ -281,7 +283,7 @@ test("P9EF-EVIDENCE-03 new draft ignores stale upload", async ({ page }) => {
     await route.fallback();
   }, { times: 1 });
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "New conversation" }).click();
   let home = page.getByLabel("Conversation home");
   await home.locator('input[type="file"]').setInputFiles({
@@ -323,7 +325,7 @@ test("P9EF-EVIDENCE-04 Designer ignores late Engineer snapshot", async ({ page }
   const panel = await openTeammateManagement(page);
   await teammateRow(panel, "Ling Engineer").getByRole("button", { name: "Open chat in app" }).click();
   await gate.started.promise;
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button").filter({ hasText: "Ling Designer" }).first().click();
   await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   await expect(page.getByText("Designer current private message.", { exact: true })).toBeVisible();
@@ -426,7 +428,7 @@ test("P9EF-EVIDENCE-07 Settings error restores after surface return", async ({ p
     });
   });
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   let settings = page.getByLabel("Settings sections");
   await settings.getByRole("button", { name: "Default authorization" }).click();
   await page.getByRole("radiogroup", { name: "Authorization mode" }).getByRole("radio", { name: "Ask first" }).click();
@@ -436,7 +438,7 @@ test("P9EF-EVIDENCE-07 Settings error restores after surface return", async ({ p
   await expect(toast).toBeVisible();
   await settings.getByRole("button", { name: "Back to app" }).click();
   await expect(toast).toHaveCount(0);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   settings = page.getByLabel("Settings sections");
   await expect(settings).toBeVisible();
   await expect(toast).toContainText("Workspace settings save failed.");
@@ -483,7 +485,7 @@ test("P9EF-EVIDENCE-08 channel teammate failure restores on Engineering", async 
   let manager = await openChannelTeammateManager(page);
   await addTeammate(manager, "teammate_designer");
   await expect(manager.locator('[data-channel-teammate-error="add"]')).toContainText("Designer could not be added to Engineering.");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
   await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
   manager = await openChannelTeammateManager(page);
@@ -659,7 +661,7 @@ function readyProvider(id: string) {
 }
 
 async function openTeammateManagement(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
   const panel = page.getByLabel("Workspace teammates");
   await expect(panel).toBeVisible();
@@ -677,7 +679,7 @@ async function runRowMenuAction(page: Page, row: Locator, action: string): Promi
 
 async function openPluginManager(page: Page): Promise<void> {
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".settings-plugin-manager .plugin-table-row").first()).toBeVisible();

@@ -13,7 +13,7 @@ async function useEnglishLocale(page: Page): Promise<void> {
 }
 
 async function openArchivedItemsSettings(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
 }
 
@@ -45,7 +45,7 @@ test("channel branch list shows real branches without default branch chrome", as
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const engineeringGroup = navigation.locator(".sidebar-channel-group").filter({ hasText: "Engineering" });
   const engineeringRow = navigation.getByRole("button", { name: "Engineering" });
   await expect(engineeringRow).toBeVisible();
@@ -130,7 +130,7 @@ test("channel sidebar menu keeps create action without bulk archive", async ({ p
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expect(navigation.getByRole("button", { name: "Engineering" })).toBeVisible();
   await expect(navigation.getByRole("button", { name: "Design" })).toBeVisible();
   await navigation.getByRole("button", { name: "Channel actions" }).click();

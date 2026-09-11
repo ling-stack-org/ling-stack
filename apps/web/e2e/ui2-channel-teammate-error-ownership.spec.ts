@@ -87,7 +87,7 @@ test("T13-P.9EF review 2 channel teammate failures persist and only same channel
   await page.waitForTimeout(6_200);
   await expect(addError).toContainText(addFailure);
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
   await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
   manager = await openChannelTeammateManager(page);

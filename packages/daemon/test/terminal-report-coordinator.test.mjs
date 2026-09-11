@@ -51,12 +51,17 @@ test("terminal report coordinator stores executed conversation turns and skips p
     const channel = store.createChannel({ name: "Conversation backing", boundPath: cwd }, now);
     const task = store.createTask({ channelId: channel.id, title: "Edit report UI", prompt: "Edit report UI" }, now);
     const thread = store.createLingThread({ kind: "conversation", title: "Edit report UI", objective: "Edit and verify report UI" }, now);
-    const turn = store.createLingTurn({
+    const accepted = store.appendConversationUserTurn({
       threadId: thread.id,
-      kind: "initial_request",
+      itemId: "terminal-coordinator-source",
+      turnId: "terminal-coordinator-turn",
       title: "Edit report UI",
       userInstruction: "Edit and verify report UI",
+      actorId: "local-user",
+      payload: { body: "Edit and verify report UI", format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
+      idempotencyKey: "terminal-coordinator-input",
     }, now);
+    const turn = store.getLingTurn(accepted.turnId);
     const run = store.createRun({
       id: "run_terminal_turn_executed",
       cwd,
@@ -80,6 +85,7 @@ test("terminal report coordinator stores executed conversation turns and skips p
     assert.equal(result.record.report?.source.kind, "turn");
     assert.equal(result.record.report?.threadId, thread.id);
     assert.equal(result.message, undefined);
+    assert.equal(store.getConversationItem(result.record.resultItemId)?.kind, "terminal_report");
     assert.equal(store.getWorkUnit(result.workUnit?.id ?? "")?.ownerType, "turn");
 
     const plainTask = store.createTask({ channelId: channel.id, title: "Answer question", prompt: "Answer question" }, now);
@@ -96,6 +102,16 @@ test("terminal report coordinator stores executed conversation turns and skips p
     });
     store.appendEvent(plainRun.id, "assistant_text_delta", { text: "这是一个普通回答。" });
     store.markRunSucceeded(plainRun.id, "2026-07-11T06:05:00.000Z");
+    const approval = store.createApprovalRequest({
+      runId: plainRun.id,
+      taskId: plainTask.id,
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve command",
+      description: "Approval by itself is not executed work.",
+      payload: { type: "bash", cwd, command: "git status", riskFlags: [] },
+    }, "2026-07-11T06:05:10.000Z");
+    store.approveApprovalRequest(approval.id, { reason: "Fixture approval only" }, "2026-07-11T06:05:20.000Z");
     assert.equal(await processRunTerminalReport(store, plainRun.id, { now: "2026-07-11T06:06:00.000Z" }), undefined);
     assert.equal(store.listTerminalReports({ sourceKind: "run", sourceId: plainRun.id }).length, 0);
   } finally {

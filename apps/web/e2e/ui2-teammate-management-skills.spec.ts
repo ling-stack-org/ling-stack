@@ -324,7 +324,7 @@ async function openTeammateSettings(
   teammateName: string,
   labels: TeammateSkillsLabels = englishLabels,
 ): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   const chatHeader = page.locator("[data-ui2-teammate-chat-header]");
   await expect(chatHeader).toBeVisible();
   if (await page.getByLabel(labels.dock).count() === 0) {

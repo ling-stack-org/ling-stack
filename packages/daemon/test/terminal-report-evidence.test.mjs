@@ -118,7 +118,7 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
     const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, {
       generatedAt: "2026-07-11T02:05:00.000Z",
     });
-    assert.equal(snapshot.terminalState, "succeeded");
+    assert.equal(snapshot.terminalState, "partially_succeeded");
     assert.equal(snapshot.language, "zh-CN");
     assert.equal(snapshot.steps.length, 4);
     assert.deepEqual(snapshot.participants.map((participant) => participant.agentId).sort(), ["engineer", "qa"]);
@@ -164,6 +164,62 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow participant status folds independent step outcomes without last-row-wins", async (t) => {
+  for (const scenario of [
+    { name: "failed then completed", firstStatus: "failed", expectedStatus: "failed" },
+    { name: "blocked then completed", firstStatus: "blocked", expectedStatus: "blocked" },
+    { name: "cancelled then completed", firstStatus: "cancelled", expectedStatus: "cancelled" },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-participant-fold-"));
+      const store = createSqliteRunStore(cwd);
+      try {
+        const now = "2026-07-11T02:20:00.000Z";
+        const channel = store.createChannel({ name: "Participant status fold", boundPath: cwd }, now);
+        const workflow = store.createChannelWorkflow({
+          channelId: channel.id,
+          title: "Participant status fold",
+          objective: "Preserve every independent workflow step outcome",
+          status: scenario.firstStatus === "failed" ? "failed" : scenario.firstStatus,
+          createdBy: "ling_agent",
+        }, now);
+        const first = createWorkflowRun(store, {
+          cwd,
+          channelId: channel.id,
+          workflowId: workflow.id,
+          teammateId: "engineer",
+          title: `${scenario.name} first step`,
+          status: scenario.firstStatus,
+          resultSummary: `${scenario.name} first result`,
+          blocker: scenario.firstStatus === "blocked" ? "Waiting on independent evidence." : undefined,
+          runId: `run_terminal_participant_${scenario.firstStatus}`,
+          createdAt: "2026-07-11T02:20:01.000Z",
+        });
+        const second = createWorkflowRun(store, {
+          cwd,
+          channelId: channel.id,
+          workflowId: workflow.id,
+          teammateId: "engineer",
+          title: `${scenario.name} second step`,
+          status: "succeeded",
+          resultSummary: `${scenario.name} second result`,
+          runId: `run_terminal_participant_${scenario.firstStatus}_success`,
+          createdAt: "2026-07-11T02:20:02.000Z",
+        });
+
+        const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, { generatedAt: now });
+        assert.equal(snapshot.participants.length, 1);
+        assert.equal(snapshot.participants[0]?.status, scenario.expectedStatus);
+        assert.deepEqual(snapshot.participants[0]?.workflowStepIds, [first.step.id, second.step.id]);
+        assert.deepEqual(snapshot.participants[0]?.runIds, [first.run.id, second.run.id]);
+      } finally {
+        store.close();
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
   }
 });
 
@@ -236,6 +292,59 @@ test("terminal report checks use the exact Host command instead of action prose"
   }
 });
 
+test("workflow participant status uses the effective retry of each logical step", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-workflow-retry-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-07-11T02:30:00.000Z";
+    const channel = store.createChannel({ name: "Workflow retry", boundPath: cwd }, now);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Workflow retry",
+      objective: "Repair the same logical step without retaining its previous failure as current.",
+      status: "succeeded",
+      createdBy: "ling_agent",
+    }, now);
+    const original = createWorkflowRun(store, {
+      cwd,
+      channelId: channel.id,
+      workflowId: workflow.id,
+      teammateId: "engineer",
+      title: "Implementation",
+      status: "failed",
+      resultSummary: "Initial implementation failed.",
+      runId: "run_workflow_original_failure",
+      createdAt: now,
+    });
+    const repair = store.createRun(runInput({
+      id: "run_workflow_repair_success",
+      cwd,
+      taskId: original.task.id,
+      channelId: channel.id,
+      teammateId: "engineer",
+      workflowStepId: original.step.id,
+      parentRunId: original.run.id,
+      createdAt: "2026-07-11T02:31:00.000Z",
+    }));
+    store.appendEvent(repair.id, "assistant_text_delta", { text: "Repair completed." });
+    store.markRunSucceeded(repair.id, "2026-07-11T02:32:00.000Z");
+    store.updateChannelWorkflowStep(original.step.id, {
+      runId: repair.id,
+      status: "succeeded",
+      resultSummary: "Repair completed.",
+    }, "2026-07-11T02:32:00.000Z");
+
+    const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, { generatedAt: now });
+    assert.equal(snapshot.participants[0]?.status, "completed");
+    assert.deepEqual(snapshot.participants[0]?.runIds, [repair.id]);
+    assert.deepEqual(snapshot.participants[0]?.workflowStepIds, [original.step.id]);
+    assert.equal(store.getRun(original.run.id).status, "failed");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("run and turn terminal evidence preserve retry history while latest participation can complete", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-turn-evidence-"));
   const store = createSqliteRunStore(cwd);
@@ -275,7 +384,7 @@ test("run and turn terminal evidence preserve retry history while latest partici
       id: "run_turn_cancelled_before_start",
       cwd,
       taskId: task.id,
-      teammateId: "designer",
+      teammateId: "engineer",
       threadId: thread.id,
       turnId: turn.id,
       turnRunRole: "retry",
@@ -292,12 +401,15 @@ test("run and turn terminal evidence preserve retry history while latest partici
       threadId: thread.id,
       turnId: turn.id,
       turnRunRole: "repair",
-      parentRunId: failedRun.id,
+      parentRunId: cancelledBeforeStart.id,
       createdAt: "2026-07-11T03:03:00.000Z",
     }));
     store.appendEvent(repairRun.id, "assistant_text_delta", { text: "修复类型错误并通过验证。" });
     appendToolAction(store, repairRun.id, "repair_typecheck", "bash", { command: "pnpm typecheck" }, false, "2026-07-11T03:03:10.000Z");
     store.markRunSucceeded(repairRun.id, "2026-07-11T03:04:00.000Z");
+    // Late persistence of the old failure must not outrank the newer durable attempt.
+    store.markRunFailed(failedRun.id, "2026-07-11T03:04:30.000Z", "Typecheck failed.");
+    assert.ok(store.getRun(failedRun.id).updatedAt > store.getRun(repairRun.id).updatedAt);
 
     const runSnapshot = collectRunTerminalReportEvidence(store, repairRun.id, {
       generatedAt: "2026-07-11T03:05:00.000Z",
@@ -323,6 +435,205 @@ test("run and turn terminal evidence preserve retry history while latest partici
     assert.equal(turnSnapshot.participants.length, 1);
     assert.equal(turnSnapshot.participants[0]?.status, "completed");
     assert.equal(turnSnapshot.participants[0]?.runIds.length, 2);
+    assert.equal(turnSnapshot.terminalState, "succeeded");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("turn participant status preserves independent validation and unrelated run failures", async (t) => {
+  for (const scenario of [
+    { name: "unrelated primary success", successRole: "primary", hasParent: false },
+    { name: "validation success is not repair", successRole: "validation", hasParent: true },
+  ]) {
+    await t.test(scenario.name, async () => {
+      const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-independent-turn-"));
+      const store = createSqliteRunStore(cwd);
+      try {
+        const now = "2026-07-11T03:10:00.000Z";
+        const thread = store.createLingThread({
+          kind: "conversation",
+          title: scenario.name,
+          objective: "Implement and independently verify the project.",
+        }, now);
+        const turn = store.createLingTurn({
+          threadId: thread.id,
+          kind: "initial_request",
+          title: scenario.name,
+          userInstruction: "Implement and independently verify the project.",
+        }, now);
+        const channel = store.createChannel({ name: "Independent participation", boundPath: cwd }, now);
+        const task = store.createTask({
+          channelId: channel.id,
+          title: scenario.name,
+          prompt: "Implement and independently verify the project.",
+          assigneeTeammateId: "engineer",
+        }, now);
+        const failedRun = store.createRun(runInput({
+          id: "run_independent_failed",
+          cwd,
+          taskId: task.id,
+          teammateId: "engineer",
+          threadId: thread.id,
+          turnId: turn.id,
+          createdAt: now,
+        }));
+        store.appendEvent(failedRun.id, "assistant_text_delta", { text: "Implementation failed." });
+        store.markRunFailed(failedRun.id, now, "Implementation failed.");
+        const successfulRun = store.createRun(runInput({
+          id: "run_independent_success",
+          cwd,
+          taskId: task.id,
+          teammateId: "engineer",
+          threadId: thread.id,
+          turnId: turn.id,
+          turnRunRole: scenario.successRole,
+          parentRunId: scenario.hasParent ? failedRun.id : undefined,
+          createdAt: "2026-07-11T03:11:00.000Z",
+        }));
+        store.appendEvent(successfulRun.id, "assistant_text_delta", { text: "Independent verification completed." });
+        store.markRunSucceeded(successfulRun.id, "2026-07-11T03:12:00.000Z");
+
+        const snapshot = collectTurnTerminalReportEvidence(store, turn.id, { generatedAt: now });
+        assert.equal(snapshot.participants[0]?.status, "failed");
+        assert.deepEqual(snapshot.participants[0]?.runIds, [failedRun.id, successfulRun.id]);
+        assert.equal(snapshot.terminalState, "partially_succeeded");
+      } finally {
+        store.close();
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+  }
+});
+
+test("failed command evidence overrides a stale succeeded run marker", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-command-failure-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-07-11T03:20:00.000Z";
+    const channel = store.createChannel({ name: "Command failure", boundPath: cwd }, now);
+    const task = store.createTask({ channelId: channel.id, title: "Run command", prompt: "Run command" }, now);
+    const run = store.createRun(runInput({ id: "run_command_failed_but_marked_success", cwd, taskId: task.id, createdAt: now }));
+    appendToolAction(store, run.id, "failed_command", "bash", { command: "git status" }, true, now);
+    store.markRunSucceeded(run.id, "2026-07-11T03:21:00.000Z");
+
+    const snapshot = collectRunTerminalReportEvidence(store, run.id, { generatedAt: "2026-07-11T03:22:00.000Z" });
+    assert.equal(snapshot.operations[0]?.status, "failed");
+    assert.equal(snapshot.terminalState, "failed");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval lineage is retained but becomes an operation only after durable execution evidence", async (t) => {
+  for (const approvalStatus of ["pending", "approved", "denied"]) {
+    await t.test(`approval-only ${approvalStatus}`, async () => {
+      const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-terminal-report-approval-${approvalStatus}-`));
+      const store = createSqliteRunStore(cwd);
+      try {
+        const now = "2026-07-11T03:30:00.000Z";
+        const channel = store.createChannel({ name: "Approval evidence", boundPath: cwd }, now);
+        const task = store.createTask({ channelId: channel.id, title: "Answer only", prompt: "Answer only" }, now);
+        const run = store.createRun(runInput({
+          id: `run_approval_only_${approvalStatus}`,
+          cwd,
+          taskId: task.id,
+          createdAt: now,
+        }));
+        store.appendEvent(run.id, "assistant_text_delta", { text: "Plain answer." });
+        store.markRunSucceeded(run.id, "2026-07-11T03:30:10.000Z");
+        const approval = store.createApprovalRequest({
+          runId: run.id,
+          taskId: task.id,
+          toolCallId: `tool_approval_only_${approvalStatus}`,
+          actionType: "bash",
+          risk: "medium",
+          title: "Approve check",
+          description: "pnpm test",
+          payload: { type: "bash", cwd, command: "pnpm test", riskFlags: [] },
+        }, "2026-07-11T03:30:01.000Z");
+        if (approvalStatus === "approved") {
+          store.approveApprovalRequest(approval.id, { reason: "Fixture approval only" }, "2026-07-11T03:30:02.000Z");
+        } else if (approvalStatus === "denied") {
+          store.denyApprovalRequest(approval.id, { reason: "Fixture denial only" }, "2026-07-11T03:30:02.000Z");
+        }
+
+        const snapshot = collectRunTerminalReportEvidence(store, run.id, {
+          generatedAt: "2026-07-11T03:30:20.000Z",
+        });
+        assert.equal(snapshot.operations.length, 0);
+        assert.equal(snapshot.checks.length, 0);
+        assert.equal(snapshot.terminalState, "succeeded");
+        assert.equal(snapshot.approvals[0]?.status, approvalStatus);
+      } finally {
+        store.close();
+        await rm(cwd, { recursive: true, force: true });
+      }
+    });
+  }
+
+  await t.test("approved action with tool lifecycle", async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-approved-execution-"));
+    const store = createSqliteRunStore(cwd);
+    try {
+      const now = "2026-07-11T03:31:00.000Z";
+      const channel = store.createChannel({ name: "Approved execution", boundPath: cwd }, now);
+      const task = store.createTask({ channelId: channel.id, title: "Run approved check", prompt: "Run approved check" }, now);
+      const run = store.createRun(runInput({ id: "run_approved_execution", cwd, taskId: task.id, createdAt: now }));
+      const toolCallId = "tool_approved_execution";
+      const approval = store.createApprovalRequest({
+        runId: run.id,
+        taskId: task.id,
+        toolCallId,
+        actionType: "bash",
+        risk: "medium",
+        title: "Approve test",
+        description: "pnpm test",
+        payload: { type: "bash", cwd, command: "pnpm test", riskFlags: [] },
+      }, "2026-07-11T03:31:01.000Z");
+      store.approveApprovalRequest(approval.id, { reason: "Run the check" }, "2026-07-11T03:31:02.000Z");
+      store.appendEvent(run.id, "tool_start", { toolCallId, toolName: "bash", args: { command: "pnpm test", cwd } });
+      store.appendEvent(run.id, "tool_end", { toolCallId, toolName: "bash", isError: false });
+      store.markRunSucceeded(run.id, "2026-07-11T03:31:05.000Z");
+
+      const snapshot = collectRunTerminalReportEvidence(store, run.id, {
+        generatedAt: "2026-07-11T03:31:06.000Z",
+      });
+      const correlated = snapshot.operations.find((operation) => operation.id === `approval:${approval.id}`);
+      assert.ok(correlated);
+      assert.equal(correlated.status, "succeeded");
+      assert.ok(snapshot.checks.some((check) => check.id === correlated.id && check.status === "passed"));
+    } finally {
+      store.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+});
+
+test("end-only durable tool evidence still produces a terminal operation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-end-only-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-07-11T03:32:00.000Z";
+    const channel = store.createChannel({ name: "End-only evidence", boundPath: cwd }, now);
+    const task = store.createTask({ channelId: channel.id, title: "Recover tool completion", prompt: "Recover tool completion" }, now);
+    const run = store.createRun(runInput({ id: "run_terminal_end_only", cwd, taskId: task.id, createdAt: now }));
+    store.appendEvent(run.id, "tool_end", {
+      toolCallId: "end_only_read",
+      toolName: "read",
+      isError: false,
+      result: { content: [{ type: "text", text: "Recovered durable result" }] },
+    });
+    store.markRunSucceeded(run.id, "2026-07-11T03:32:01.000Z");
+
+    const snapshot = collectRunTerminalReportEvidence(store, run.id, {
+      generatedAt: "2026-07-11T03:32:02.000Z",
+    });
+    assert.equal(snapshot.operations.length, 1);
+    assert.equal(snapshot.operations[0]?.id, `tool:${run.id}:end_only_read`);
+    assert.equal(snapshot.operations[0]?.status, "succeeded");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -359,6 +670,72 @@ test("failed edit actions never become changed paths", async () => {
     const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, { generatedAt: now });
     assert.deepEqual(snapshot.steps[0].changedPaths, []);
     assert.deepEqual(snapshot.operations.find((operation) => operation.id.includes("failed_edit"))?.changedPaths, []);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("terminal report consumes the atomic execution-loop action and its durable risk", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-loop-evidence-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-07-11T04:10:00.000Z";
+    const thread = store.createLingThread({
+      kind: "conversation",
+      title: "Stop a repeated execution loop",
+      objective: "Stop a repeated execution loop",
+    }, now);
+    const turn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Stop a repeated execution loop",
+      userInstruction: "Stop a repeated execution loop",
+    }, now);
+    const channel = store.createChannel({ name: "Loop evidence", boundPath: cwd }, now);
+    const task = store.createTask({
+      channelId: channel.id,
+      title: "Loop evidence",
+      prompt: "Stop a repeated execution loop",
+      assigneeTeammateId: "engineer",
+    }, now);
+    const run = store.createRun(runInput({
+      id: "run_terminal_execution_loop",
+      cwd,
+      taskId: task.id,
+      teammateId: "engineer",
+      threadId: thread.id,
+      turnId: turn.id,
+      createdAt: now,
+    }));
+    store.appendEvent(run.id, "loop_detected", {
+      code: "execution_loop_detected",
+      attemptId: "attempt_terminal_execution_loop",
+      loopKind: "exact_repeat",
+      observedEventType: "tool_end",
+      observedEventSeq: 4,
+      repeatedCount: 3,
+      noProgressActionCount: 3,
+      fingerprint: "c".repeat(64),
+      message: "Execution stopped after the same action and result repeated 3 times.",
+      retryable: false,
+    });
+    store.markRunFailed(run.id, "2026-07-11T04:10:01.000Z", "execution_loop_detected");
+
+    const snapshot = collectRunTerminalReportEvidence(store, run.id, {
+      generatedAt: "2026-07-11T04:10:02.000Z",
+    });
+    const diagnostic = snapshot.operations.find((operation) =>
+      operation.id.startsWith(`runtime-diagnostic:${run.id}:`));
+    assert.ok(diagnostic);
+    assert.equal(diagnostic.kind, "other");
+    assert.equal(diagnostic.status, "failed");
+    assert.match(diagnostic.title, /Repeated execution stopped/u);
+    assert.ok(diagnostic.sourceRefs.some((ref) => ref.kind === "operation" && ref.id === diagnostic.id));
+    assert.ok(snapshot.risks.some((risk) =>
+      risk.id === `action-failure:${diagnostic.id}`
+      && risk.status === "unresolved"
+      && risk.sourceRefs.some((ref) => ref.kind === "operation" && ref.id === diagnostic.id)));
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -491,8 +868,10 @@ function createWorkflowRun(store, input) {
     createdAt: input.createdAt,
   }));
   store.appendEvent(run.id, "assistant_text_delta", { text: input.resultSummary });
-  if (input.status === "failed") {
+  if (input.status === "failed" || input.status === "blocked") {
     store.markRunFailed(run.id, input.createdAt, input.blocker ?? "Run failed.");
+  } else if (input.status === "cancelled") {
+    store.markRunCancelled(run.id, input.createdAt);
   } else {
     store.markRunSucceeded(run.id, input.createdAt);
   }

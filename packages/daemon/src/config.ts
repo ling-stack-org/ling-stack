@@ -1,5 +1,6 @@
 import { resolve as resolvePath } from "node:path";
 import type { LingSandboxPolicyProfileId } from "@ling-stack/core";
+import type { RestrictedCommandRuntimeConfig } from "./runtime/sandbox/restricted-command-runtime.js";
 
 export interface DaemonConfig {
   readonly host?: string;
@@ -75,6 +76,8 @@ export interface RunnerFeatureConfig {
 }
 
 export interface SandboxFeatureConfig {
+  /** Supplied only by the trusted Host bootstrap, never by workspace/runtime HTTP settings. */
+  readonly restrictedCommands?: RestrictedCommandRuntimeConfig;
   readonly platformNative?: PlatformNativeSandboxFeatureConfig;
   readonly docker?: DockerSandboxFeatureConfig;
 }
@@ -184,7 +187,7 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       requestPermissions: config.runtimeTools?.requestPermissions ??
         readBooleanEnv(process.env.LING_STACK_RUNTIME_REQUEST_PERMISSIONS, false),
       unifiedExec: config.runtimeTools?.unifiedExec ??
-        readBooleanEnv(process.env.LING_STACK_RUNTIME_UNIFIED_EXEC, false),
+        readBooleanEnv(process.env.LING_STACK_RUNTIME_UNIFIED_EXEC, true),
       shellSnapshot: config.runtimeTools?.shellSnapshot ??
         readBooleanEnv(process.env.LING_STACK_RUNTIME_SHELL_SNAPSHOT, false),
     },

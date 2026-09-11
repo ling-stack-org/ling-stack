@@ -13,6 +13,10 @@ import { appendEventLogLine } from "../event-log.js";
 import { readNullableString, readNumber, stringifyJson } from "./helpers.js";
 import { mapRunEvent } from "./run-mappers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
+import { runExecutionOwnerParameters, runExecutionOwnerSql } from "./run-execution-admission.js";
+
+type EventAdmission = { readonly kind: "host" | "audit" } | { readonly kind: "execution"; readonly sourceFence: RuntimeAttemptFenceV1 };
 
 export interface SqliteRunEventStorePorts {
   readonly getRun: (runId: string) => RunSession | undefined;
@@ -30,6 +34,25 @@ export class SqliteRunEventStore {
     type: K,
     data: RunEventDataByType[K],
   ): Extract<RunEventEnvelope, { readonly type: K }> {
+    return this.append(runId, type, data, { kind: "host" });
+  }
+
+  appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K, data: RunEventDataByType[K])
+    : Extract<RunEventEnvelope, { readonly type: K }> {
+    return this.append(runId, type, data, { kind: "execution", sourceFence });
+  }
+
+  /** A fixed audit kind cannot be used to bypass execution admission for tools or results. */
+  appendIgnoredRunnerCompletionEvent(runId: string, data: RunEventDataByType["stale_runner_completion_ignored"])
+    : Extract<RunEventEnvelope, { readonly type: "stale_runner_completion_ignored" }> {
+    return this.append(runId, "stale_runner_completion_ignored", data, { kind: "audit" });
+  }
+
+  private append<K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K], admission: EventAdmission)
+    : Extract<RunEventEnvelope, { readonly type: K }> {
+    if (type === "host_command_prepared" || type === "host_command_settled") {
+      throw Object.assign(new Error("Command journal requires its dedicated Host API."), { code: "host_command_event_reserved" });
+    }
     const run = this.ports.getRun(runId);
     if (!run) {
       throw new Error(`Run session not found: ${runId}`);
@@ -48,9 +71,21 @@ export class SqliteRunEventStore {
       data: redactedData,
     } as unknown as Extract<RunEventEnvelope, { readonly type: K }>;
 
-    this.context.database
-      .prepare("INSERT INTO run_events (id, run_id, seq, ts, type, data_json) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(envelope.id, envelope.runId, envelope.seq, envelope.ts, envelope.type, stringifyJson(envelope.data));
+    // A yielded execution is immutable. Keep the admission check in the write statement,
+    // before touching the event file; another connection may have committed its checkpoint.
+    const executionParameters = admission.kind === "execution"
+      ? runExecutionOwnerParameters(runId, admission.sourceFence, ["run_error", "run_cancelled", "tool_update", "tool_end"].includes(type)) : [];
+    const inserted = this.context.database
+      .prepare(`INSERT INTO run_events (id, run_id, seq, ts, type, data_json)
+        SELECT ?, ?, ?, ?, ?, ? WHERE EXISTS (
+          SELECT 1 FROM run_sessions WHERE id=? AND (status <> 'yielded' OR ? = 'audit')
+        ) ${admission.kind === "execution" ? `AND ${runExecutionOwnerSql}` : ""}`)
+      .run(envelope.id, envelope.runId, envelope.seq, envelope.ts, envelope.type, stringifyJson(envelope.data), runId, admission.kind, ...executionParameters);
+    if (Number(inserted.changes) !== 1) {
+      const error = new Error(`Run execution is closed (yielded or stale owner): ${runId}`);
+      Object.assign(error, { code: "stale_run_execution" });
+      throw error;
+    }
     appendEventLogLine(run.eventLogPath, envelope);
     if (type === "tool_start" || type === "tool_update" || type === "tool_end") {
       this.ports.rebuildLingThreadMetadata(run.threadId, envelope.ts);

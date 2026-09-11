@@ -417,7 +417,7 @@ async function openProfile(
     profile: "Teammate profile",
   },
 ): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   const header = page.locator("[data-ui2-teammate-chat-header]");
   await expect(header).toBeVisible();
   if (await page.getByLabel(labels.dock).count() === 0) {

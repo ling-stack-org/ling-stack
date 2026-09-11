@@ -56,10 +56,7 @@ function shouldRedactKey(key: string): boolean {
 
 function redactString(value: string, extraSecrets: readonly string[]): string {
   const extraRedacted = extraSecrets.reduce((text, secret) => text.split(secret).join(REDACTED), value);
-  if (AUTH_VALUE_PATTERN.test(value)) {
-    AUTH_VALUE_PATTERN.lastIndex = 0;
-    return extraRedacted.replace(AUTH_VALUE_PATTERN, REDACTED);
-  }
   AUTH_VALUE_PATTERN.lastIndex = 0;
-  return extraRedacted.replace(OPENAI_STYLE_SECRET_PATTERN, REDACTED);
+  OPENAI_STYLE_SECRET_PATTERN.lastIndex = 0;
+  return extraRedacted.replace(AUTH_VALUE_PATTERN, REDACTED).replace(OPENAI_STYLE_SECRET_PATTERN, REDACTED);
 }

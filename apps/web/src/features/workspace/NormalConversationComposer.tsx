@@ -2,8 +2,12 @@ import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEven
 import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, Plus, Search, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import { useI18n } from "../../i18n.js";
-import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
 import {
+  conversationAuthorizationModeMenuOptions,
+  conversationPermissionPresetMenuOptions,
+} from "../../lib/session-permissions.js";
+import {
+  ComposerAuthorizationMenu,
   ComposerPermissionMenu,
   ConversationComposerShell,
   ConversationStatusStrip,
@@ -24,7 +28,7 @@ import {
   StatusIndicator,
 } from "../../shared/ui/index.js";
 import { ComposerPendingAssetStrip, type ActiveSlashCommandPicker, type PendingAttachmentItem } from "../../shared/components/index.js";
-import type { ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
+import type { AuthorizationMode, ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
 import {
   normalConversationModelLabel,
   normalConversationThinkingLabel,
@@ -40,6 +44,7 @@ export interface NormalConversationComposerProps {
   readonly slashOptions: readonly ComposerSlashCommandOption[];
   readonly slashActiveIndex: number;
   readonly pendingAttachments: readonly PendingAttachmentItem<ConversationAttachment>[];
+  readonly authorizationMode: AuthorizationMode;
   readonly permissionPreset: PermissionPreset;
   readonly fullAccessConfirmed: boolean;
   readonly modelOptions: readonly ConversationHomeModelOption[];
@@ -64,6 +69,7 @@ export interface NormalConversationComposerProps {
   readonly onDrop: (event: DragEvent<HTMLDivElement>) => void;
   readonly onOpenModelWorkbench?: () => void;
   readonly onRemoveAttachment: (localId: string) => void;
+  readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onModelChange: (option: ConversationHomeModelOption) => void;
   readonly onThinkingLevelChange: (level: ProviderThinkingMode) => void;
@@ -82,6 +88,7 @@ export function NormalConversationComposer({
   inputRef,
   modelOptions,
   notice,
+  onAuthorizationModeChange,
   onAttachFiles,
   onDragLeave,
   onDragOver,
@@ -99,6 +106,7 @@ export function NormalConversationComposer({
   onSubmit,
   onThinkingLevelChange,
   pendingAttachments,
+  authorizationMode,
   permissionPreset,
   fullAccessConfirmed,
   selectedProviderPresetId,
@@ -271,6 +279,15 @@ export function NormalConversationComposer({
               }}
             />
           </label>
+          <ComposerAuthorizationMenu
+            mode={authorizationMode}
+            options={conversationAuthorizationModeMenuOptions(t)}
+            disabled={configurationLocked}
+            disabledReason={t("Authorization is locked while the current message is running.")}
+            selectedModeLabel={t("Selected authorization mode {label}")}
+            menuLabel={t("Authorization mode")}
+            onModeChange={onAuthorizationModeChange}
+          />
           <ComposerPermissionMenu
             preset={permissionPreset}
             options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}

@@ -30,7 +30,7 @@ test("automations page uses one create dialog and keeps template, manual, and ch
   const automationState = await mockAutomationRoutes(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "自动化" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "自动化" }).click();
   const automationsPage = page.locator(".automations-inbox-page");
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
   await expect(automationsPage.getByRole("heading", { name: "自动化", level: 1 })).toBeVisible();
@@ -120,7 +120,7 @@ test("automations page keeps failed recent runs in enabled definitions with a cl
   refreshScheduler(automationState);
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automations" }).click();
 
   const automationsPage = page.locator(".automations-inbox-page");
   await expect(automationsPage.locator(".automation-scheduler-strip").getByText("No enabled scheduled automations yet.")).toBeVisible();

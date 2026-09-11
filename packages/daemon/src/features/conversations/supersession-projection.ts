@@ -7,11 +7,22 @@ import type {
   RunStore,
   TeammateDirectMessage,
 } from "@ling-stack/core";
+import type { ConversationSupersessionTombstones } from "@ling-stack/contracts";
 
 export interface ConversationSupersessionProjection {
   readonly supersededTurnIds: ReadonlySet<string>;
   readonly supersededRunIds: ReadonlySet<string>;
   readonly supersededResponseMessageIds: ReadonlySet<string>;
+}
+
+export function projectConversationSupersessionTombstones(
+  projection: ConversationSupersessionProjection,
+): ConversationSupersessionTombstones {
+  return {
+    turnIds: [...projection.supersededTurnIds].sort(),
+    runIds: [...projection.supersededRunIds].sort(),
+    responseMessageIds: [...projection.supersededResponseMessageIds].sort(),
+  };
 }
 
 export function buildConversationSupersessionProjection(

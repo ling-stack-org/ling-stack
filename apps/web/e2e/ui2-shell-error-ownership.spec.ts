@@ -327,7 +327,7 @@ test("T13-P.9EF.F keeps Settings failures persistent and treats close, Escape, a
   });
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   const settingsNavigation = page.getByLabel("Settings sections");
   await settingsNavigation.getByRole("button", { name: "Default authorization" }).click();
   await page.getByRole("radiogroup", { name: "Authorization mode" })
@@ -339,16 +339,16 @@ test("T13-P.9EF.F keeps Settings failures persistent and treats close, Escape, a
   await page.waitForTimeout(6_250);
   await expect(scopedToast).toContainText(failureMessages[0]);
   await settingsNavigation.getByRole("button", { name: "Back to app" }).click();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
   await expect(settingsNavigation).toHaveCount(0);
   await expect(scopedToast).toHaveCount(0);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await expect(scopedToast).toContainText(failureMessages[0]);
   await scopedToast.getByRole("button", { name: "Dismiss notification" }).click();
   await expect(scopedToast).toHaveCount(0);
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await expect(scopedToast).toHaveCount(0);
 
   const reopenedSettingsNavigation = page.getByLabel("Settings sections");
@@ -360,7 +360,7 @@ test("T13-P.9EF.F keeps Settings failures persistent and treats close, Escape, a
   await page.keyboard.press("Escape");
   await expect(scopedToast).toHaveCount(0);
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await expect(scopedToast).toHaveCount(0);
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Default authorization" }).click();
@@ -376,7 +376,7 @@ test("T13-P.9EF.F keeps Settings failures persistent and treats close, Escape, a
   await page.mouse.up();
   await expect(scopedToast).toHaveCount(0);
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await expect(scopedToast).toHaveCount(0);
 });
 

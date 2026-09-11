@@ -119,7 +119,7 @@ for (const themeCase of themeCases) {
     await mockDaemon(page, state);
     await page.goto("/");
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
     await page.getByLabel("Settings sections").getByRole("button", { name: /Personalization/ }).click();
     const settingsSurface = page.getByRole("region", { name: "Settings" });
     const governance = settingsSurface

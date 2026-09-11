@@ -219,6 +219,15 @@ test("work unit transitions enforce supervisor lifecycle and terminal guards", (
   );
 });
 
+test("execution loop detection enters the normal cancelling fence", () => {
+  assert.deepEqual(transitionWorkUnit({
+    entityId: "wu_loop",
+    currentStatus: "running",
+    event: "execution_loop_detected",
+    actor: "system",
+  }), { ok: true, from: "running", to: "cancelling" });
+});
+
 test("work unit can finish if approval resume event was already consumed", () => {
   const waiting = transitionWorkUnit({
     entityId: "wu_approval",

@@ -45,7 +45,8 @@
     "package:signing-feasibility": "node tests/run-cua-driver-signing-builder-fixture.mjs",
     "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",
     "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
-    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform darwin -- --mac dmg zip --arm64",
+    "build:restricted-command-helper:mac": "node scripts/build-restricted-command-helper.mjs --platform darwin",
+    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build:restricted-command-helper:mac && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform darwin -- --mac dmg zip --arm64",
     "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64"
   },
   "dependencies": {
@@ -147,6 +148,17 @@
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
       "artifactName": "Ling-Stack-${version}-macos-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "dist/restricted-command",
+          "to": "restricted-command",
+          "filter": [
+            "ling-sandbox-runner",
+            "manifest.json",
+            "licenses/**/*"
+          ]
+        }
+      ],
       "target": [
         "dmg",
         "zip"

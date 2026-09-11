@@ -7,9 +7,30 @@ import {
   approvalSideEffectFingerprintV1,
   createApprovalResumeBasisV1,
   createSqliteRunStore,
+  getRunSummaryPath,
 } from "../../core/dist/index.js";
 import { ApprovalResumeCoordinator } from "../dist/features/runs/approval-resume-coordinator.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
+import { createTypedWorkflowBasis, gateOwner, typedOperation } from "./support/workflow-operation-gate-fixture.mjs";
+
+test("typed bash recovery is blocked before tool_start when isolation is unavailable", async () => {
+  const fixture = await createResumeFixture("typed-isolation", "printf x >> must-not-run.txt", true);
+  try {
+    const activeRuns = new ActiveRunRegistry();
+    const coordinator = createCoordinator(activeRuns);
+    const started = coordinator.resumeAfterApproval({ store: fixture.store, approval: fixture.approval });
+    assert.equal(started.status, "started");
+    await activeRuns.waitForIdle();
+    const checkpoint = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id);
+    assert.equal(checkpoint.status, "resume_failed");
+    assert.match(checkpoint.resumeFailureReason, /operation_binding_isolation_unavailable/);
+    assert.equal(fixture.store.getRun(fixture.run.id).status, "failed");
+    assert.equal(matchingToolEvents(fixture).filter((event) => event.type === "tool_start").length, 0);
+    await assert.rejects(readFile(resolve(fixture.cwd, "must-not-run.txt")), /ENOENT/);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ workUnitId: fixture.workUnit.id, status: "active" }).length, 0);
+    assert.equal(fixture.store.listResourceLeases({ workUnitId: fixture.workUnit.id, status: "active" }).length, 0);
+  } finally { await fixture.close(); }
+});
 
 test("resume_pending before tool_start replaces the lost attempt and executes exactly once", async () => {
   const fixture = await createResumeFixture("before-tool-start", "printf x >> resume-count.txt");
@@ -73,7 +94,8 @@ test("invalid resume lineage quarantines only the checkpoint and emits an approv
     const coordinator = new ApprovalResumeCoordinator({
       activeRuns: new ActiveRunRegistry(),
       runnerRegistry: resumeRunnerRegistry(),
-      runtimeSupervisor: {
+runtimeSupervisor: {
+        getRestrictedCommandRuntime() { return undefined; },
         getRuntime() {
           return { runtimeInstanceId: "runtime_after_restart" };
         },
@@ -201,11 +223,29 @@ test("a second runtime suspension after tool_start records effect-unknown instea
   }
 });
 
+for (const stage of ["before-entry", "terminal-cas"]) test(`approval completion never overwrites summary without completion ownership: ${stage}`, async () => {
+  const fixture = await createResumeFixture(`summary-${stage}`, "printf safe");
+  try {
+    const claimed = claimResume(fixture, `summary-owner-${stage}`);
+    const path = getRunSummaryPath(fixture.store.paths, fixture.run.id);
+    await writeFile(path, "existing-summary", "utf8");
+    if (stage === "before-entry") fixture.store.createWorkUnitAttempt({ workUnitId: fixture.workUnit.id,
+      attemptNumber: 3, runtimeInstanceId: "new-owner", runnerId: "pi", status: "started", now: "2026-09-07T00:00:00.000Z" });
+    else fixture.store.commitApprovalResumeTerminal = () => ({ ok: false, code: "stale_transition" });
+    const before = fixture.store.getWorkUnit(fixture.workUnit.id);
+    await createCoordinator(new ActiveRunRegistry()).finishRun({ ...fixture, attempt: claimed.attempt }, "succeeded");
+    assert.equal(await readFile(path, "utf8"), "existing-summary");
+    assert.deepEqual(fixture.store.getWorkUnit(fixture.workUnit.id), before);
+    assert.equal(fixture.store.getRun(fixture.run.id).status, "running");
+  } finally { await fixture.close(); }
+});
+
 function createCoordinator(activeRuns) {
   return new ApprovalResumeCoordinator({
     activeRuns,
     runnerRegistry: resumeRunnerRegistry(),
-    runtimeSupervisor: {
+runtimeSupervisor: {
+      getRestrictedCommandRuntime() { return undefined; },
       getRuntime() {
         return { runtimeInstanceId: "runtime_after_restart" };
       },
@@ -280,22 +320,25 @@ function matchingToolEvents(fixture) {
   });
 }
 
-async function createResumeFixture(suffix, command) {
+async function createResumeFixture(suffix, command, typed = false) {
   const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-approval-resume-recovery-${suffix}-`));
   const store = createSqliteRunStore(cwd);
   const now = "2026-08-16T02:00:00.000Z";
+  const basis = typed ? createTypedWorkflowBasis(store, cwd, [typedOperation("run_command", command)], now) : undefined;
   const run = store.createRun({
     id: `run_resume_recovery_${suffix}`,
     cwd,
     taskId: `task_resume_recovery_${suffix}`,
+    ...(basis ? { channelId: basis.channel.id, teammateId: gateOwner, workflowStepId: basis.step.id } : {}),
     providerName: "test-provider",
     providerModel: "test-model",
     taskSnapshot: { id: `task_resume_recovery_${suffix}`, title: "Resume recovery", prompt: "Resume safely" },
     providerSnapshot: { provider: "test-provider", model: "test-model" },
-    requestSnapshot: { cwd },
+    requestSnapshot: { cwd, ...(basis ? { workflowOperationExecution: basis.snapshot, delegatedRequirement: basis.requirement } : {}) },
     createdAt: now,
   });
   store.markRunStarted(run.id, now);
+  if (basis) store.updateChannelWorkflowStep(basis.step.id, { runId: run.id }, now);
   const workUnit = store.createWorkUnit({
     id: `work_unit_resume_recovery_${suffix}`,
     workspaceId: "workspace_default",
@@ -350,6 +393,7 @@ async function createResumeFixture(suffix, command) {
     runId: run.id,
     workUnitId: workUnit.id,
     priorAttemptId: priorAttempt.id,
+    ...(basis ? { workflowStepId: basis.step.id, delegatedRequirementFingerprint: basis.requirement.fingerprint } : {}),
     toolCallId: approval.toolCallId,
     actionType: approval.actionType,
     sideEffectFingerprint: approvalSideEffectFingerprintV1({

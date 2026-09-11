@@ -1,6 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { timelineBatchGroup } from "./support/timeline-batch-group";
 import {
   installActiveChannelWorkCellFixture,
   installChannelWorkCellFixture,
@@ -12,10 +11,6 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/conversations/shared-conversation-work-cell-activity/",
-  import.meta.url,
-));
 
 test("Channel multi-agent Timeline keeps rows and command batches keyboard-operable", async ({ page }) => {
   await prepareSurface(page, { theme: "light", width: 1440, height: 960, workCellDemo: true });
@@ -31,18 +26,26 @@ test("Channel multi-agent Timeline keeps rows and command batches keyboard-opera
   await expect(workCell.locator("[data-conversation-timeline-sub-agent]")).toHaveCount(4);
 
   const engineer = workCell.locator('[data-conversation-timeline-sub-agent][data-conversation-participant-id="engineer"]');
-  const editRow = engineer.locator('[data-conversation-timeline-kind="fileChange"]').filter({ hasText: /ConversationWorkCell\.tsx/u });
+  const engineerTrigger = engineer.locator(".conversation-timeline-sub-agent-head");
+  await expect(engineerTrigger).toHaveAttribute("aria-expanded", "false");
+  await engineerTrigger.focus();
+  await engineerTrigger.press("Space");
+  await expect(engineerTrigger).toHaveAttribute("aria-expanded", "true");
+  const groupId = await engineerTrigger.getAttribute("aria-controls");
+  expect(groupId).toBeTruthy();
+  const engineerGroup = workCell.locator(`[id="${groupId}"]`);
+  const editRow = engineerGroup.locator('[data-conversation-timeline-kind="fileChange"]').filter({ hasText: /ConversationWorkCell\.tsx/u });
   const editTrigger = editRow.locator(".conversation-timeline-activity-main");
   await editTrigger.focus();
   await editTrigger.press("Space");
   await expect(editTrigger).toHaveAttribute("aria-expanded", "true");
 
-  const batch = engineer.locator(".conversation-command-batch");
+  const batch = engineerGroup.locator(".conversation-command-batch");
   const batchTrigger = batch.locator(".conversation-command-batch-header");
   await batchTrigger.focus();
   await batchTrigger.press("Space");
   await expect(batchTrigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator('.conversation-command-batch-list [data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
+  await expect((await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
   await expectWorkCellMotionTokens(workCell);
   await batchTrigger.click();
   await batchTrigger.click();
@@ -94,9 +97,9 @@ test("Channel Timeline exposes command evidence without a second details owner",
 
   const batch = workCell.locator(".conversation-command-batch");
   await batch.locator(".conversation-command-batch-header").press("Enter");
-  const command = batch.locator('[data-conversation-timeline-kind="commandExecution"][data-conversation-timeline-id="action:execution_action_typecheck_loaded"]');
+  const command = (await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="commandExecution"][data-conversation-timeline-id="action:execution_action_typecheck_loaded"]');
   await command.locator(".conversation-timeline-activity-main").click();
-  await expect(command.locator(".conversation-timeline-activity-detail")).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
+  await expect(command.locator(".conversation-timeline-activity-main")).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
   await expectContained(page, [feed, workCell, command]);
   await captureEvidence(page, "1440x960-ling-light-channel-details-loaded.png");
   expect(runtimeErrors).toEqual([]);
@@ -176,7 +179,7 @@ test("Completed WorkCell collapses adjacent read actions into an expandable expl
   await trigger.focus();
   await trigger.press("Space");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator('.conversation-exploration-batch-list [data-conversation-timeline-kind="exploration"]')).toHaveCount(3);
+  await expect((await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="exploration"]')).toHaveCount(3);
   await expectContained(page, [feed, workCell, batch]);
   expect(runtimeErrors).toEqual([]);
 });
@@ -205,7 +208,7 @@ test("Dense exploration activity stays scrollable after ten atomic rows", async 
   await trigger.focus();
   await trigger.press("Space");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator('.conversation-exploration-batch-list [data-conversation-timeline-kind="exploration"]')).toHaveCount(11);
+  await expect((await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="exploration"]')).toHaveCount(11);
   await expectContained(page, [feed, workCell, stream, batch]);
   expect(runtimeErrors).toEqual([]);
 });
@@ -256,18 +259,17 @@ async function expectCommandBatchKeyboardFlow(workCell: Locator): Promise<void> 
   await trigger.focus();
   await trigger.press("Enter");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator('.conversation-command-batch-list [data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
+  await expect((await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
 
-  const firstCommand = batch.locator('[data-conversation-timeline-kind="commandExecution"]').first();
+  const firstCommand = (await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="commandExecution"]').first();
   const firstCommandTrigger = firstCommand.locator(".conversation-timeline-activity-main");
   await firstCommandTrigger.focus();
   await firstCommandTrigger.press("Space");
   await expect(firstCommandTrigger).toHaveAttribute("aria-expanded", "true");
-  // The expanded detail is the evidence projection and intentionally contains
-  // the actual command text instead of repeating the row's presentation title.
-  await expect(firstCommand.locator(".conversation-timeline-command")).toBeVisible();
-  await expect(firstCommand.locator(".conversation-timeline-command")).toContainText("$");
-  await expect(firstCommand.locator(".conversation-timeline-activity-detail")).toContainText("exit 0");
+  // The header owns the exact command. Expanding adds only its output/result.
+  await expect(firstCommand.locator(".conversation-timeline-activity-main strong")).toHaveAttribute("title", "git diff --check");
+  await expect(firstCommand.locator(".conversation-timeline-command")).toHaveCount(0);
+  await expect(firstCommand.locator(".conversation-timeline-activity-detail")).not.toContainText("exit 0");
 }
 
 async function expectWorkCellMotionDisabled(workCell: Locator): Promise<void> {
@@ -335,10 +337,9 @@ function collectRuntimeErrors(page: Page): string[] {
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     fullPage: true,
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
 }

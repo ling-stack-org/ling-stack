@@ -34,13 +34,13 @@ import {
 } from "./channel-message-router.js";
 import { selectChannelWorkflowIntent } from "./channel-intent-selector.js";
 import { decideLingAgentAutoStart, type LingAutoStartDecision } from "./ling-agent-auto-start.js";
+import { coordinatorWorkflowCheckingBody, coordinatorWorkflowFailedBody, projectCoordinatorWorkflowNarration } from "./coordinator-workflow-narration.js";
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import { buildLingAgentTurnEnvelope, type LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
 import {
   queueChannelReplyFollowup,
   resolveChannelReplyTargetTeammateId,
 } from "./channel-reply-dispatch.js";
-import { fallbackResponseLanguage } from "./response-language.js";
 import type { ChannelReplyDispatchCoordinator } from "./channel-reply-dispatch-coordinator.js";
 import {
   acquireChannelReplyLane,
@@ -70,16 +70,14 @@ import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-ta
 import { resolveProviderContextBudget } from "./context-packs.js";
 import { createModelConversationSummaryGenerator } from "./context-processing/conversation-summary-model.js";
 import {
-  executeConversationSummaryPlan,
   planConversationContextSummary,
   type ConversationSummaryPlan,
-  type GenerateConversationSummary,
 } from "./context-processing/conversation-summary-coordinator.js";
+import { ConversationSummaryExecutionRegistry } from "./context-processing/conversation-summary-execution.js";
 import type { ChannelTurnDispatchWorkerRegistry } from "./channel-turn-dispatch-worker.js";
 import { materializeCanonicalChannelMentions } from "./channel-mention-materializer.js";
 
-const inFlightConversationSummaries = new Map<string, Promise<void>>();
-const HARD_CONVERSATION_SUMMARY_TIMEOUT_MS = 20_000;
+const conversationSummaryExecutions = new ConversationSummaryExecutionRegistry();
 
 export type StartChannelExecutionProposalWorkflow = (input: {
   readonly store: RunStore;
@@ -468,11 +466,10 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     requestedProviderPresetId: summaryProviderPresetId,
   });
   if (summaryPlan?.trigger === "hard") {
-    const summaryKey = conversationSummaryPlanKey(input.store, summaryPlan);
-    await inFlightConversationSummaries.get(summaryKey);
+    await conversationSummaryExecutions.get(input.store, summaryPlan);
     summaryPlan = prepareConversationSummaryPlan(input, summaryProviderPresetId);
     if (summaryPlan?.trigger === "hard") {
-      await executeConversationSummaryPlanOnce(input.store, summaryPlan, summaryGenerator);
+      await conversationSummaryExecutions.executeOnce(input.store, summaryPlan, summaryGenerator);
     }
   }
   const lane = await acquireChannelReplyLane({
@@ -505,37 +502,9 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
   } finally {
     trackedReply.releaseIfUnused();
     if (summaryPlan?.trigger === "soft") {
-      void executeConversationSummaryPlanOnce(input.store, summaryPlan, summaryGenerator);
+      void conversationSummaryExecutions.executeOnce(input.store, summaryPlan, summaryGenerator);
     }
   }
-}
-
-function executeConversationSummaryPlanOnce(
-  store: RunStore,
-  plan: ConversationSummaryPlan,
-  generate: GenerateConversationSummary | undefined,
-): Promise<void> {
-  const key = conversationSummaryPlanKey(store, plan);
-  const existing = inFlightConversationSummaries.get(key);
-  if (existing) return existing;
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(new Error("Conversation summary generation timed out.")), HARD_CONVERSATION_SUMMARY_TIMEOUT_MS);
-  timeout.unref?.();
-  const execution = executeConversationSummaryPlan({ store, plan, generate, signal: controller.signal })
-    .then(() => undefined)
-    .catch(() => undefined)
-    .finally(() => {
-      clearTimeout(timeout);
-      if (inFlightConversationSummaries.get(key) === execution) {
-        inFlightConversationSummaries.delete(key);
-      }
-    });
-  inFlightConversationSummaries.set(key, execution);
-  return execution;
-}
-
-function conversationSummaryPlanKey(store: RunStore, plan: ConversationSummaryPlan): string {
-  return `${store.paths.databasePath}:${plan.projection.metadata.threadId}:${plan.projection.metadata.segmentId}`;
 }
 
 function prepareConversationSummaryPlan(
@@ -604,6 +573,7 @@ async function dispatchLingAgentChannelMessage(
     secretResolver: input.routeDependencies.secretResolver,
     config: input.config,
     runnerRegistry: input.routeDependencies.runnerRegistry,
+    hostCapabilityAvailable: input.routeDependencies.hostCapabilityAvailable,
   });
   if (workflowIntent.action === "blocked") {
     return { aiReply: workflowIntent.aiReply };
@@ -640,11 +610,18 @@ async function dispatchLingAgentChannelMessage(
           proposalId: workflowIntent.proposal.id,
           autoStartDecision,
         });
+        const startupNarration = projectCoordinatorWorkflowNarration({
+          store: input.store,
+          proposal: autoStartedWorkflow.proposal,
+          sourceMessage: input.sourceMessage,
+          workflow: autoStartedWorkflow.workflow,
+          orchestration: autoStartedWorkflow.orchestration,
+        });
         coordinatorReply = updatePendingAssistantMessage({
           store: input.store,
           itemId: coordinatorReply.id,
-          body: coordinatorWorkflowStartBody(autoStartedWorkflow.proposal, input.sourceMessage),
-          status: "ready",
+          body: startupNarration.body,
+          status: startupNarration.status,
           now: new Date().toISOString(),
         });
         persistChannelIntentDecision(input.store, input.channel, input.sourceMessage, {
@@ -655,7 +632,7 @@ async function dispatchLingAgentChannelMessage(
           resultItemIds: [coordinatorReply.id],
           execution: typedExecution,
           participantManifest: workflowDecision?.participantManifest,
-          reason: `Ling Agent Session auto-started proposal ${autoStartedWorkflow.proposal.id}. ${autoStartDecision.reason}`,
+          reason: `Ling Agent Session proposal ${autoStartedWorkflow.proposal.id}: ${startupNarration.state}. ${autoStartDecision.reason}`,
           status: "accepted",
           createdBy: "deterministic",
         });
@@ -664,7 +641,7 @@ async function dispatchLingAgentChannelMessage(
         coordinatorReply = updatePendingAssistantMessage({
           store: input.store,
           itemId: coordinatorReply.id,
-          body: coordinatorWorkflowStartFailedBody(workflowIntent.proposal, error),
+          body: coordinatorWorkflowFailedBody({ proposal: workflowIntent.proposal, sourceMessage: input.sourceMessage }, error),
           status: "failed",
           errorMessage: error instanceof Error ? error.message : String(error),
           now: new Date().toISOString(),
@@ -809,7 +786,7 @@ function createCoordinatorWorkflowStartReply(input: {
     actorId: LING_AGENT_EXECUTOR_ID,
     visibility: "channel",
     payload: {
-      body: coordinatorWorkflowStartBody(input.proposal, input.sourceMessage),
+      body: coordinatorWorkflowCheckingBody(input),
       format: "markdown",
       streaming: true,
       deliveryStatus: "pending",
@@ -818,27 +795,6 @@ function createCoordinatorWorkflowStartReply(input: {
     domainRefs: [{ type: "conversation_item", id: sourceItem.id }],
   }, now);
   return projectConversationItemToChannelMessage(item);
-}
-
-function coordinatorWorkflowStartBody(
-  proposal: ChannelExecutionProposal,
-  sourceMessage: ChannelMessage,
-): string {
-  const title = proposal.title.trim() || sourceMessage.body.trim() || "this task";
-  return formatServerCatalogMessage(
-    fallbackResponseLanguage(proposal.responseLanguage),
-    "daemon.channel.workflow_start.confirmed",
-    { title },
-  );
-}
-
-function coordinatorWorkflowStartFailedBody(proposal: ChannelExecutionProposal, error: unknown): string {
-  const message = error instanceof Error ? error.message : String(error);
-  return formatServerCatalogMessage(
-    fallbackResponseLanguage(proposal.responseLanguage),
-    "daemon.channel.workflow_start.blocked",
-    { message },
-  );
 }
 
 function persistChannelIntentDecision(
@@ -956,14 +912,29 @@ function persistChannelUserMessage(input: {
     && requestedSourceTurn?.threadId === thread.id
     ? requestedSourceTurn
     : undefined;
+  const idempotencyKey = input.input.idempotencyKey
+    ?? input.requestIdempotencyKey
+    ?? `channel-request:${randomUUID()}`;
+  const acceptedItem = input.store.getConversationItemByIdempotencyKey(thread.id, idempotencyKey);
+  const acceptedTurn = acceptedItem?.turnId ? input.store.getLingTurn(acceptedItem.turnId) : undefined;
+  if (acceptedItem && (acceptedItem.kind !== "user_message"
+    || acceptedItem.threadId !== thread.id || acceptedItem.channelId !== input.channel.id
+    || !acceptedTurn || acceptedTurn.threadId !== thread.id || acceptedTurn.channelId !== input.channel.id
+    || acceptedTurn.sourceItemId !== acceptedItem.id)) {
+    throw new Error(`Channel accepted turn scope does not match idempotency key: ${idempotencyKey}`);
+  }
+  // The Host derives these fields once at acceptance. Replaying the same
+  // request after sequence advancement or Run completion must not reclassify
+  // its Turn. User content and dispatch inputs still reach strict Store checks.
+  const sourceTurnId = acceptedTurn ? acceptedTurn.sourceTurnId : validatedFollowupSourceTurn?.id;
   const result = input.store.appendConversationUserTurn({
     channelId: input.channel.id,
     threadId: thread.id,
-    turnKind: validatedFollowupSourceTurn
+    turnKind: acceptedTurn?.kind ?? (validatedFollowupSourceTurn
       ? "queued_followup"
       : thread.nextItemSequence > 1
         ? "manual_followup"
-        : "initial_request",
+        : "initial_request"),
     title: channelTurnTitle(input.input.body),
     userInstruction: input.input.body || "Channel input with materialized references.",
     payload: {
@@ -984,12 +955,8 @@ function persistChannelUserMessage(input: {
       ...(anchor ? { replyToItemId: anchor.id } : {}),
     },
     domainRefs: [],
-    ...(validatedFollowupSourceTurn
-      ? { sourceTurnId: validatedFollowupSourceTurn.id }
-      : {}),
-    idempotencyKey: input.input.idempotencyKey
-      ?? input.requestIdempotencyKey
-      ?? `channel-request:${randomUUID()}`,
+    ...(sourceTurnId ? { sourceTurnId } : {}),
+    idempotencyKey,
     dispatch: {
       schemaVersion: 1,
       requestAiReply: Boolean(input.input.requestAiReply),

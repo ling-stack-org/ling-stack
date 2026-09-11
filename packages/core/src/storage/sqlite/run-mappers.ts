@@ -314,6 +314,9 @@ export function runActivityAt(run: RunSession): string {
 }
 
 export function runStatusToLingTurnStatus(status: RunStatus): LingTurnStatus {
+  // A physical yield alone is not sufficient proof of a recoverable logical wait.
+  // The Turn store upgrades this to waiting_for_input only with its durable checkpoint.
+  if (status === "yielded") return "blocked";
   if (status === "queued" || status === "running") {
     return "running";
   }

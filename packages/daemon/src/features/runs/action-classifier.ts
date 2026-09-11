@@ -10,6 +10,8 @@ import type {
   RunSession,
 } from "@ling-stack/core";
 import { isRecord } from "../../shared/validation.js";
+import { readOnlyToolInput } from "./execution-action-tool-evidence.js";
+import { classifyHostCapabilityAction, classifyHostCapabilityToolAction } from "./host-capability-action.js";
 
 export interface ClassifiedAction {
   readonly actionType: ApprovalActionType;
@@ -49,7 +51,7 @@ export function classifyApprovalAction(approval: ApprovalRequest, run: RunSessio
     risk: maxRisk(base.risk, approval.risk),
     title: approval.title,
     summary: approval.description,
-    targetRefs: mergeTargetRefs(base.targetRefs, buildCommonRefs(run, approval.toolCallId)),
+    targetRefs: mergeTargetRefs(base.targetRefs, buildCommonRefs(run, approval.actionType === "host_capability" ? undefined : approval.toolCallId)),
   };
 }
 
@@ -61,6 +63,10 @@ export function classifyToolAction(input: {
   readonly result?: unknown;
   readonly isError?: boolean;
 }): ClassifiedAction {
+  const host = classifyHostCapabilityToolAction({ toolName: input.toolName, input: input.args, cwd: input.run.cwd });
+  if (host) {
+    return { ...host, targetRefs: mergeTargetRefs(host.targetRefs, buildCommonRefs(input.run)) };
+  }
   if (input.toolName === "bash") {
     const command = readInputString(input.args, "command", "");
     const riskFlags = classifyBashRiskFlags(command);
@@ -132,10 +138,11 @@ export function classifyToolAction(input: {
     cwd: input.run.cwd,
     input: input.args,
   }, input.run.cwd);
-  return { ...classified, targetRefs: mergeTargetRefs(classified.targetRefs, buildCommonRefs(input.run, input.toolCallId)) };
+  return { ...classified, title: input.toolName, targetRefs: mergeTargetRefs(classified.targetRefs, buildCommonRefs(input.run, input.toolCallId)) };
 }
 
 export function classifyApprovalActionType(toolName: string, payload: ApprovalPayload): ApprovalActionType {
+  if (payload.type === "host_capability") return "host_capability";
   if (payload.type === "bash") {
     return classifyBashActionType(payload.command);
   }
@@ -216,13 +223,15 @@ export function buildGitCommandPreview(cwd: string, rawCommand: string): GitComm
 }
 
 export function artifactIdsForToolCall(events: readonly RunEventEnvelope[], toolCallId: string): string[] {
-  return events
+  return [...new Set(events
     .filter((event) => event.type === "artifact_created" && readEventString(event, "toolCallId") === toolCallId)
+    .filter((event) => readEventString(event, "role") !== "preview")
     .map((event) => readEventString(event, "artifactId") ?? readNestedArtifactId(event))
-    .filter((artifactId): artifactId is string => Boolean(artifactId));
+    .filter((artifactId): artifactId is string => Boolean(artifactId)))];
 }
 
 function classifyPayloadAction(payload: ApprovalPayload, cwd = ""): ClassifiedAction {
+  if (payload.type === "host_capability") return classifyHostCapabilityAction(payload);
   if (payload.type === "bash") {
     const actionType = classifyBashActionType(payload.command);
     const scopes = classifyCommandScopes(payload.command, actionType);
@@ -254,14 +263,15 @@ function classifyPayloadAction(payload: ApprovalPayload, cwd = ""): ClassifiedAc
     };
   }
   if (payload.type === "tool_call") {
+    const input = readOnlyToolInput(payload.toolName, payload.input, payload.cwd ?? cwd);
     return {
       actionType: payload.toolName,
       risk: "low",
       scopes: ["read_only"],
       scopeSummary: "read_only",
       title: payload.toolName,
-      summary: `${payload.toolName} tool call`,
-      targetRefs: [],
+      summary: input?.summary ?? payload.toolName,
+      targetRefs: input?.path ? [{ type: "file", path: input.path, label: input.path }] : [],
     };
   }
   if (payload.type === "mcp_tool_call") {

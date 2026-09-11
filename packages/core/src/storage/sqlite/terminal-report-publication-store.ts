@@ -14,18 +14,23 @@ import type {
 import type { LingTerminalReportRecord, TerminalReportOutcomeStatus } from "../../terminal-report-types.js";
 import type {
   CommitTerminalReportPublicationInput,
+  CommitWorkflowTerminalReportPublicationInput,
   CommitTerminalReportPublicationResult,
   TerminalReportPublicationConflictCode,
 } from "../../terminal-report-publication-types.js";
 import { DEFAULT_WORKSPACE_ID, type ChannelWorkflow, type ChannelWorkflowStep } from "../../workspace-types.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { NormalTerminalReportReadStore } from "../../normal-terminal-report-basis.js";
+import { commitNormalTerminalReportWithinTransaction } from "./normal-terminal-report-publication.js";
 
 type PublicationItem = AppendConversationItemInput<"terminal_report">;
 
 export interface SqliteTerminalReportPublicationStorePorts {
   readonly cwd: string;
   readonly getTerminalReport: (id: string) => LingTerminalReportRecord | undefined;
+  readonly commitTerminalReport: RunStore["commitTerminalReport"];
+  readonly normalReadStore: NormalTerminalReportReadStore;
   readonly getChannelWorkflow: (id: string) => ChannelWorkflow | undefined;
   readonly listChannelWorkflowSteps: (workflowId: string) => readonly ChannelWorkflowStep[];
   readonly completionReadStore: Pick<RunStore,
@@ -65,7 +70,9 @@ export class SqliteTerminalReportPublicationStore {
   ): CommitTerminalReportPublicationResult {
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
-      const result = this.commitWithinTransaction(input);
+      const result = "expectedNormalBasis" in input
+        ? commitNormalTerminalReportWithinTransaction(this.context, this.ports, input)
+        : this.commitWithinTransaction(input);
       if (!result.ok) {
         this.context.database.exec("ROLLBACK;");
         return result;
@@ -79,7 +86,7 @@ export class SqliteTerminalReportPublicationStore {
   }
 
   private commitWithinTransaction(
-    input: CommitTerminalReportPublicationInput,
+    input: CommitWorkflowTerminalReportPublicationInput,
   ): CommitTerminalReportPublicationResult {
     const report = this.ports.getTerminalReport(input.reportId);
     const workflow = this.ports.getChannelWorkflow(input.expectedWorkflowId);
@@ -405,7 +412,7 @@ function settleSourceTurn(
 }
 
 function publicationControlPlaneEvent(
-  input: CommitTerminalReportPublicationInput,
+  input: CommitWorkflowTerminalReportPublicationInput,
   report: LingTerminalReportRecord,
   workflow: ChannelWorkflow,
   cwd: string,

@@ -37,7 +37,11 @@ for (const fixture of [
       .last();
     await expect(runningMessage.locator(".conversation-work-cell")).toHaveCount(0);
     await expect(runningMessage).not.toContainText("Working on UI2 feed run 20");
-    await expect(feed.locator('.normal-conversation-message-error[data-tone="danger"]')).toContainText("Provider timed out while generating the response.");
+    const failedMessage = feed
+      .locator('[data-conversation-timeline-kind="agentMessage"][data-conversation-timeline-status="failed"]')
+      .filter({ hasText: "Provider timed out while generating the response." });
+    await expect(failedMessage).toBeVisible();
+    await expect(failedMessage.locator(".normal-conversation-message-error")).toHaveCount(0);
     await expect(feed.locator(".conversation-attachment-chip")).toContainText("release-checklist.pdf");
     await expect(feed.getByRole("button", { name: "Retry response" })).toBeVisible();
     await expect(composer.getByRole("button", { name: "Stop" })).toBeVisible();

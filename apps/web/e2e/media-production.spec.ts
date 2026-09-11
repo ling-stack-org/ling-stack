@@ -15,7 +15,7 @@ test("media production creates an ordered storyboard and keeps canvas layout sep
   await page.setViewportSize({ width: 1280, height: 800 });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("heading", { name: "Media Production", level: 1 })).toHaveCount(0);
   await expect(page.locator(".media-production-canvas-toolbar")).toContainText("Production studio");
   await page.locator(".media-production-empty-state").getByRole("button", { name: "New project" }).click();
@@ -187,7 +187,7 @@ test("media production fits a distant storyboard after switching projects", asyn
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await expect(page.locator(".storyboard-scene-node")).toHaveCount(1);
   await expect.poll(() => selectedSceneIsVisible(page)).toBe(true);
   await page.getByLabel("Media project").selectOption("media_project_far");
@@ -200,7 +200,7 @@ test("media production directs missing video setup to model workbench", async ({
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await page.locator(".media-production-empty-state").getByRole("button", { name: "New project" }).click();
   await page.getByRole("button", { name: "Add scene" }).click();
   await expect(page.getByRole("button", { name: "Check", exact: true })).toHaveCount(0);
@@ -218,7 +218,7 @@ test("media production configures Seedance from the workbench before generating 
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await page.locator(".media-production-empty-state").getByRole("button", { name: "New project" }).click();
   await page.getByRole("button", { name: "Add scene" }).click();
   await page.getByLabel("Prompt").fill("A controlled studio reveal of a compact camera.");
@@ -260,7 +260,7 @@ test("media production configures Seedance from the workbench before generating 
   const providerId = seedanceProvider.id;
 
   await page.getByRole("button", { name: "Back to app" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await page.locator(".storyboard-scene-node.selected").click();
   await page.locator(".scene-inspector").getByLabel("Default video model").selectOption(providerId);
   await expect(page.getByRole("button", { name: "Run", exact: true })).toBeEnabled();
@@ -302,7 +302,7 @@ test("media production completes a configured Seedance storyboard flow", async (
   });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "媒体生产" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "媒体生产" }).click();
   await page.locator(".media-production-empty-state").getByRole("button", { name: "新建项目" }).click();
   await page.getByRole("button", { name: "添加场景" }).click();
   await expect(page.locator(".storyboard-scene-node")).toHaveCount(1);
@@ -433,7 +433,7 @@ test("media production reviews only ready scenes before ordered generation", asy
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "zh-CN"));
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "媒体生产" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "媒体生产" }).click();
   await page.getByRole("button", { name: "新建项目" }).click();
   await page.getByRole("button", { name: "添加场景" }).click();
   await page.getByRole("button", { name: "检查", exact: true }).click();
@@ -551,7 +551,7 @@ test("media production keeps the current video when regeneration fails and previ
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "zh-CN"));
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "媒体生产" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "媒体生产" }).click();
   await expect(page.locator(".storyboard-scene-node.selected")).toContainText("保留旧结果");
   await expect(page.locator(".storyboard-node-status").first()).toContainText("生成结果");
   await expect(page.locator(".media-production-dock-panel.right")).not.toHaveClass(/is-open/);
@@ -580,7 +580,7 @@ test("media production keeps the current video when regeneration fails and previ
   });
   await page.reload();
   await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "媒体生产" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "媒体生产" }).click();
   await page.getByRole("button", { name: "预览: 第二场景" }).click();
   await expect(page.locator('[role="dialog"][data-media-production-dialog="scene-result-preview"]')).toBeVisible();
   await page.screenshot({ path: testInfo.outputPath("scene-preview-dark-1280x800.png"), fullPage: true });
@@ -611,7 +611,7 @@ test("media production imports a ComfyUI workflow and runs one scene without rep
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "zh-CN"));
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "媒体生产" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "媒体生产" }).click();
   await page.getByRole("button", { name: "新建项目" }).click();
   await page.getByRole("button", { name: "添加场景" }).click();
   await page.locator(".media-production-project-trigger").click();

@@ -25,6 +25,8 @@ export type {
   ConversationOperationKind,
   ConversationOperationExecutionView,
   ConversationOperationSourceRef,
+  ConversationRuntimeDiagnostic,
+  ConversationToolEvidence,
   ConversationTrustedSourceRef,
   ConversationExplorationBatch,
   ConversationTurnRunRole,
@@ -50,6 +52,8 @@ export {
 } from "./transcript-item.js";
 export type { ActiveRunSnapshot, TimelineSnapshot } from "./timeline-snapshot.js";
 export { createTimelineSnapshot } from "./timeline-snapshot.js";
+export { projectConversationRunNarration, mergeConversationRunNarration } from "./run-narration.js";
+export type { ConversationRunNarrationSegment } from "./run-narration.js";
 export {
   conversationTimelineRendererKey,
   fingerprintConversationTimeline,
@@ -79,6 +83,7 @@ export type {
   CanonicalArtifactRecord,
   CanonicalPlanRecord,
   CanonicalCompactionRecord,
+  CanonicalReasoningSummaryRecord,
   CanonicalTerminalReportProjection,
   CanonicalParticipantSpan,
   CanonicalTurnRunLink,
@@ -100,6 +105,7 @@ export type {
   ConversationTimelineOperationPayload,
   ConversationTimelineItemKind,
   ConversationTimelineItemStatus,
+  ConversationProtocolAction,
   ConversationTimelineActivityPayload,
   ConversationTimelineApprovalItem,
   ConversationTimelineCommandExecutionItem,
@@ -115,8 +121,12 @@ export type {
   ConversationTimelineExplorationItem,
   ConversationTimelineFileChangeItem,
   ConversationTimelineDiagnosticItem,
+  ConversationTimelineRuntimeDiagnostic,
   ConversationTimelineImageViewItem,
   ConversationTimelineMessageItem,
+  ConversationTimelineUserInputItem,
+  ConversationTimelineUserInputRequestItem,
+  ConversationTimelineUserInputAnswerItem,
   ConversationTimelinePlanItem,
   ConversationTimelineReasoningItem,
   ConversationTimelineInput,
@@ -130,6 +140,7 @@ export type {
   ConversationTimelineExplorationBatchPayload,
   ConversationTimelineSubAgentItem,
 } from "./transcript-item.js";
+export { projectCanonicalUserInputTimeline } from "./user-input-timeline.js";
 export {
   isCommandBatchEligible,
   projectConversationCommandBatches,
@@ -156,6 +167,8 @@ export type {
   TerminalReportViewModel,
 } from "./terminal-report-view-model.js";
 export { terminalReportToViewModel } from "./terminal-report-view-model.js";
+export { isUserVisibleTerminalReportArtifact } from "./terminal-report-visibility.js";
+export { terminalReportSourceRefs, projectVisibleTerminalReportContent, visibleTerminalReportTimelineItem } from "./terminal-report-presentation.js";
 export type {
   ConversationInteractionPolicy,
   ConversationInteractionSurfaceKind,
@@ -228,9 +241,12 @@ export type {
 } from "./message-body.js";
 export {
   conversationPermissionPresetRequiresConfirmation,
+  defaultConversationAuthorizationModeOptions,
   defaultConversationPermissionPresetOptions,
 } from "./permission-policy.js";
 export type {
+  ConversationAuthorizationMode,
+  ConversationAuthorizationModeOption,
   ConversationPermissionPreset,
   ConversationPermissionPresetOption,
 } from "./permission-policy.js";
@@ -264,3 +280,7 @@ export type {
   DockSeverity,
   DockSurfaceKind,
 } from "./dock-types.js";
+export { reconcileCanonicalUserInputs, isUserInputAnchor, userInputTranscriptRevisionSignature } from "./user-input-transcript-snapshot.js";
+export type { CanonicalUserInput, CanonicalUserInputRequest, CanonicalUserInputAnswer, CanonicalUserInputUnavailable, CanonicalUserInputSource, CanonicalUserInputSnapshot } from "./user-input-transcript-snapshot.js";
+export { interleaveUserInputRunTimeline } from "./user-input-event-order.js";
+export { interleaveConversationUserInputRows } from "./conversation-user-input-order.js";

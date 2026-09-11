@@ -15,6 +15,10 @@ import { formatSynchronousCatalogMessage } from "@ling-stack/localization";
 export interface BuildDeterministicTerminalReportInput {
   readonly id?: string;
   readonly promptVersion?: string;
+  readonly providerPresetId?: string;
+  readonly model?: string;
+  /** Model calls attempted before falling back; zero when no call was made. */
+  readonly attemptCount?: number;
   readonly validationCodes?: readonly string[];
   readonly createdAt?: string;
   readonly committedAt?: string;
@@ -41,7 +45,9 @@ export function buildDeterministicTerminalReport(
     synthesis: {
       mode: "deterministic_fallback",
       promptVersion: input.promptVersion ?? "terminal-report-fallback-v1",
-      attemptCount: 0,
+      providerPresetId: input.providerPresetId,
+      model: input.model,
+      attemptCount: input.attemptCount ?? 0,
       validationCodes: input.validationCodes ?? [],
     },
     ...buildDeterministicTerminalReportContent(snapshot),

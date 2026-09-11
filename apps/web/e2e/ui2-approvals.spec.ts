@@ -328,7 +328,7 @@ test("Runtime approval belongs to its channel composer and leaves other conversa
   });
   const runtime = watchRuntime(page);
   await page.goto("/");
-  const navigation = page.getByLabel(/Ling Stack navigation|Ling Stack 导航/);
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const engineeringButton = navigation.getByRole("button", { name: "Engineering" }).first();
   const engineeringRow = navigation.locator(".sidebar-row-shell").filter({ hasText: "Engineering" }).first();
   await expect(engineeringRow).toHaveAttribute("data-sidebar-row-status", "waiting");

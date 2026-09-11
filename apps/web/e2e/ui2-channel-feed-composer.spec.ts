@@ -80,7 +80,7 @@ for (const viewport of [
     await expect(composer).toHaveAttribute("data-surface", "channel");
     await expect(composer).toHaveAttribute("data-density", "docked");
     const latestMessage = feed.locator(".channel-message-row").filter({ hasText: "UI 2.0 channel message 32" });
-    await expect(latestMessage).toHaveClass(/message-bubble-chat/);
+    await expect(latestMessage).toHaveClass(/message-bubble-document/);
     await expect(latestMessage).toHaveClass(/message-bubble-own/);
     await expectMessageFrameContained(latestMessage);
 

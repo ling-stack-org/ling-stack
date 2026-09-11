@@ -70,6 +70,8 @@ JSX/CSS 里加入兼容分支。
 - [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 - [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
 - [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)
+- [User Input And Native Sandbox Integration](conversation-user-input-and-sandbox-integration.md)
+- [Platform Native Sandbox V1 Implementation Plan](platform-native-sandbox-v1-implementation-plan.md)
 - [Conversation Right Dock Responsive Visibility Implementation Plan](conversation-right-dock-responsive-visibility-implementation-plan.md)
 - [Channel Execution Completion Implementation Plan](channel-execution-completion-implementation-plan.md)
 - [Post-Compaction Workspace Undo](post-compaction-undo.md)

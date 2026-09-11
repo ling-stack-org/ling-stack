@@ -85,10 +85,10 @@ test("product language preference toggles Chinese and English UI labels", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "Appearance" })).toBeVisible();
   await expect(page.getByRole("heading", { name: "Interface preferences" })).toHaveCount(0);
@@ -96,9 +96,9 @@ test("product language preference toggles Chinese and English UI labels", async 
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "外观" })).toBeVisible();
   await page.getByRole("button", { name: "返回应用" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "收件箱" })).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "收件箱" })).toHaveCount(0);
   await expect(page.getByLabel("频道动态")).toBeVisible();
   await openChannelChatTools(page);
   await expect(page.getByPlaceholder("搜索动态")).toBeVisible();
@@ -116,18 +116,18 @@ test("product language preference toggles Chinese and English UI labels", async 
   await expect(page.locator(".task-toolbar-progress")).toHaveAttribute("aria-pressed", "true");
 
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "设置" }).click();
   await page.getByLabel("设置分组").getByRole("button", { name: /界面偏好/ }).click();
   await page.getByLabel("产品语言").selectOption("en-US");
   await expect(page.locator("html")).toHaveAttribute("lang", "en-US");
   await expect.poll(() => state.workspaceSettings.locale).toBe("en-US");
   await page.getByRole("button", { name: "Back to app" }).click();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Workspace" })).toHaveCount(0);
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Tasks" })).toHaveCount(0);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Workspace" })).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Tasks" })).toHaveCount(0);
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByLabel("Channel activity")).toBeVisible();
   await openChannelChatTools(page);
   await expect(page.getByPlaceholder("Search activity")).toBeVisible();
@@ -161,7 +161,7 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByText(/已启用 频道/)).toHaveCount(0);
   await expect(page.getByText("Daemon ready")).toHaveCount(0);
   await expect(page.getByText("本地服务已就绪")).toHaveCount(0);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   await page.getByRole("button", { name: "更多频道视图" }).click();
   await page.getByRole("menuitem", { name: "设置" }).click();
@@ -169,7 +169,7 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await expect(page.getByLabel("频道运行策略")).toBeVisible();
   await expect(page.getByLabel("频道管理").getByRole("button", { name: "创建频道" })).toHaveCount(0);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "设置" }).click();
   await expect(page.getByLabel("设置分组").getByRole("button", { name: "个性化" })).toBeVisible();
   await expect(page.getByLabel("设置分组").getByRole("button", { name: "Personalization" })).toHaveCount(0);
   await page.getByLabel("设置分组").getByRole("button", { name: "队友管理" }).click();
@@ -223,7 +223,7 @@ test("theme preferences support system strategy and fixed light or dark packs", 
   const html = page.locator("html");
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "system");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   const interfacePanel = page.locator(".interface-settings-panel");
   await expect(interfacePanel.getByRole("heading", { name: "Appearance" })).toBeVisible();
@@ -253,7 +253,7 @@ test("theme preferences support system strategy and fixed light or dark packs", 
   await expect(html).toHaveAttribute("data-theme", "dark");
   await expect(html).toHaveAttribute("data-theme-preference", "dark");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByRole("switch", { name: "Follow system" }).check();
   await expect(html).toHaveAttribute("data-theme", "dark");
@@ -286,7 +286,7 @@ test("settings interface preferences do not expose the channel protocol editor",
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   const settingsPanel = page.locator(".interface-settings-panel");
   await expect(settingsPanel).not.toContainText("Channel protocol");
@@ -300,7 +300,7 @@ test("settings default authorization hides internal tool policy and runner contr
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
   const authorizationPanel = page.locator("[data-ui2-default-authorization]");
   await expect(authorizationPanel).toBeVisible();
@@ -325,7 +325,7 @@ test("settings hides pending startup and diagnostics", async ({ page }) => {
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections.getByRole("button", { name: /Startup readiness/ })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: /Startup and diagnostics/ })).toHaveCount(0);
@@ -353,7 +353,7 @@ test("settings archived items use one remembered category list with scoped searc
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
   const panel = page.locator(".archived-items-settings-panel");
   await expect(panel).toBeVisible();
@@ -488,7 +488,7 @@ test("settings archived items use one remembered category list with scoped searc
 
   await panel.getByRole("tab", { name: /Branches 12/ }).click();
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
   await expect(panel.getByRole("tab", { name: /Branches 12/ })).toHaveAttribute("aria-selected", "true");
   await expect(panel.getByRole("tabpanel", { name: "Branches" })).toBeVisible();
@@ -514,7 +514,7 @@ test("settings archived conversation delete keeps loading and product error feed
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Archived items/ }).click();
   const panel = page.locator(".archived-items-settings-panel");
   const row = panel.locator(".archived-item-row").filter({ hasText: conversation.title });
@@ -576,9 +576,9 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   const settingsSections = page.getByLabel("Settings sections");
   await expect(settingsSections.getByText("Workspace tools", { exact: true })).toBeVisible();
   await expect(settingsSections.getByText("Workspace", { exact: true })).toBeVisible();
@@ -606,7 +606,7 @@ test("settings configuration entries open nested tools directly", async ({ page 
 
   await settingsSections.getByRole("button", { name: "Council Workspace" }).click();
   await expect(settingsSections).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(0);
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
@@ -640,7 +640,7 @@ test("settings default authorization persists each supported mode without exposi
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
   const authorizationPanel = page.locator("[data-ui2-default-authorization]");
   const authorizationMode = authorizationPanel.getByRole("radiogroup", { name: "Authorization mode" });
@@ -687,7 +687,7 @@ test("shared select controls preserve native sizing and segmented authorization 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
   const authorizationPanel = page.locator("[data-ui2-default-authorization]");
   const authorizationGroup = authorizationPanel.getByRole("radiogroup", { name: "Authorization mode" });
@@ -714,7 +714,7 @@ test("shared select controls preserve native sizing and segmented authorization 
   expect(fieldHeight).toBeLessThanOrEqual(37);
 
   await page.getByRole("button", { name: "Back to app" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await openChannelChatTools(page);
   const compactSelect = page.locator('select[aria-label="Saved views"]');
   await expect(compactSelect).toHaveClass(/ling-ui-select-native/);
@@ -774,7 +774,7 @@ test("settings skill library keeps ownership management focused", async ({ page 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Personalization/ })).toBeVisible();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Skill library/ }).click();
   await expect(page.locator(".skill-governance-settings-panel")).toHaveCount(0);
@@ -847,7 +847,7 @@ test("settings skill governance saves policy from a separate section", async ({ 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Personalization/ }).click();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Personalization/ })).toHaveClass(/active/);
   const tonePanel = page.locator(".personalization-settings-panel");
@@ -916,9 +916,9 @@ test("settings external work status shows setup and explicit controls", async ({
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator("[data-ui2-external-work]");
   await expect(panel).toHaveAttribute("aria-label", "External work");
@@ -960,8 +960,8 @@ test("settings external work token setup saves to daemon and clears the input", 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator("[data-ui2-external-work]");
   await expect(panel).toContainText("External token");
@@ -1006,8 +1006,8 @@ test("settings external work status renders invalid, missing, and Linear states"
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /External work/ }).click();
   const panel = page.locator("[data-ui2-external-work]");
   await expect(panel).toContainText("Needs attention");

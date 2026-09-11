@@ -7,6 +7,7 @@ import type {
   ConversationTimelineItemStatus,
   ConversationTimelineOperationPayload,
   ConversationTimelinePlanItem,
+  ConversationTimelineReasoningItem,
   ConversationTimelineSubAgentItem,
   ConversationTimelineToolCallItem,
   ConversationTimelineExplorationItem,
@@ -14,17 +15,21 @@ import type {
   ConversationTimelineDiagnosticItem,
   ConversationTimelineTerminalReportItem,
 } from "./transcript-item.js";
+import {
+  isUserVisibleTerminalReportArtifact,
+  isUserVisibleTerminalReportSourceRef,
+  userVisibleTerminalReportChanges,
+} from "./terminal-report-visibility.js";
+import type { ConversationOperationSourceRef, ConversationToolEvidence } from "./work-cell-view-model.js";
+import { createCanonicalChildMessageResolver } from "./canonical-child-message-scope.js";
+import { projectVisibleTerminalReportContent } from "./terminal-report-presentation.js";
+import type { CanonicalUserInput } from "./user-input-transcript-snapshot.js";
+import { projectCanonicalUserInputTimeline } from "./user-input-timeline.js";
+import { hasCommittedRunNarration, projectCommittedRunNarration } from "./canonical-run-narration.js";
+import { mergeConversationRunNarration } from "./run-narration.js";
+import type { ConversationTimelineMessageItem } from "./transcript-item.js";
 
-export interface CanonicalProjectionSourceRef {
-  readonly kind: string;
-  readonly id: string;
-  readonly label?: string;
-  readonly path?: string;
-  readonly hostTarget?: "open_file" | "open_diff" | "open_artifact" | "open_run";
-  readonly capabilityId?: string;
-  readonly workspaceId?: string;
-  readonly visibility?: "conversation" | "private" | "audit";
-}
+export type CanonicalProjectionSourceRef = ConversationOperationSourceRef;
 
 /** Structural mirror of ConversationItemV1 used by the framework-neutral UI package. */
 export interface CanonicalConversationItem {
@@ -40,6 +45,8 @@ export interface CanonicalConversationItem {
     | "tool_result"
     | "approval_request"
     | "approval_decision"
+    | "user_input_request"
+    | "user_input_answer"
     | "handoff"
     | "operation_state"
     | "artifact_ref"
@@ -53,16 +60,7 @@ export interface CanonicalConversationItem {
   readonly domainRefs?: readonly { readonly type: string; readonly id: string; readonly label?: string }[];
 }
 
-export interface CanonicalSourceRef {
-  readonly kind: string;
-  readonly id: string;
-  readonly label?: string;
-  readonly path?: string;
-  readonly hostTarget?: "open_file" | "open_diff" | "open_artifact" | "open_run";
-  readonly capabilityId?: string;
-  readonly workspaceId?: string;
-  readonly visibility?: "conversation" | "private" | "audit";
-}
+export type CanonicalSourceRef = ConversationOperationSourceRef;
 
 export interface CanonicalCommandEvidence {
   readonly command: string;
@@ -70,6 +68,7 @@ export interface CanonicalCommandEvidence {
   readonly durationMs?: number;
   readonly exitCode?: number;
   readonly signal?: string;
+  readonly timedOut?: boolean;
   readonly latestEventSeq: number;
   readonly outputTail?: readonly {
     readonly eventSeq: number;
@@ -90,6 +89,7 @@ export interface CanonicalCommandEvidence {
 export interface CanonicalExecutionAction {
   readonly id: string;
   readonly revision: number;
+  readonly sourceEventSequence?: number;
   readonly workspaceId: string;
   readonly threadId?: string;
   readonly turnId?: string;
@@ -117,9 +117,19 @@ export interface CanonicalExecutionAction {
   readonly previewArtifactIds?: readonly string[];
   readonly resultArtifactIds?: readonly string[];
   readonly commandEvidence?: CanonicalCommandEvidence;
+  readonly toolEvidence?: ConversationToolEvidence;
+  readonly runtimeDiagnostic?: {
+    readonly code: "execution_loop_detected";
+    readonly loopKind: "exact_repeat" | "repeated_update" | "cycle" | "no_progress_budget";
+    readonly repeatedCount: number;
+    readonly noProgressActionCount: number;
+    readonly cycleLength?: number;
+    readonly fingerprint: string;
+    readonly retryable: false;
+  };
 }
 
-/** Durable approval projection. It is joined to an action when possible. */
+/** Durable approval projection. Approval identity never belongs to a tool action. */
 export interface CanonicalApprovalRecord {
   readonly id: string;
   readonly revision: number;
@@ -185,6 +195,29 @@ export interface CanonicalCompactionRecord {
   readonly sourceRefs: readonly CanonicalSourceRef[];
 }
 
+/** Provider-safe RunEvent summary. It is narrative metadata, not an action. */
+export interface CanonicalReasoningSummaryRecord {
+  readonly id: string;
+  readonly revision: number;
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly turnId: string;
+  readonly runId: string;
+  readonly attemptId?: string;
+  readonly participantId?: string;
+  readonly workUnitId?: string;
+  readonly workflowStepId?: string;
+  readonly anchorItemId: string;
+  readonly eventId: string;
+  readonly eventSequence: number;
+  readonly text: string;
+  readonly parts: readonly string[];
+  readonly semantic: "safe_summary";
+  readonly source: "openai_responses";
+  readonly truncated: boolean;
+  readonly sourceRefs: readonly CanonicalSourceRef[];
+}
+
 export interface CanonicalTerminalReportProjection {
   readonly generation: number;
   readonly resultItemId: string;
@@ -196,10 +229,12 @@ export interface CanonicalTerminalReportProjection {
     readonly source: { readonly kind: "workflow" | "run" | "turn"; readonly id: string };
     readonly status: "committed" | "fallback";
     readonly evidenceFingerprint: string;
+    readonly language?: import("@ling-stack/localization").SupportedLocale;
     readonly outcome: {
       readonly status: "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
       readonly title: string;
       readonly summary: string;
+      readonly sourceRefs?: readonly CanonicalSourceRef[];
       readonly corrections: readonly {
         readonly id: string;
         readonly originalAssumption: string;
@@ -300,12 +335,14 @@ export interface CanonicalTranscriptProjectionInput {
   readonly scope: CanonicalTranscriptScope;
   readonly items: readonly CanonicalConversationItem[];
   readonly actions: readonly CanonicalExecutionAction[];
+  readonly userInputs?: readonly CanonicalUserInput[];
   /** Existing LingTurnRun links; no attempt table is introduced. */
   readonly turnRuns: readonly CanonicalTurnRunLink[];
   readonly approvals?: readonly CanonicalApprovalRecord[];
   readonly artifacts?: readonly CanonicalArtifactRecord[];
   readonly plans?: readonly CanonicalPlanRecord[];
   readonly compactions?: readonly CanonicalCompactionRecord[];
+  readonly reasoningSummaries?: readonly CanonicalReasoningSummaryRecord[];
   readonly terminalReports?: readonly CanonicalTerminalReportProjection[];
   readonly participantSpans?: readonly CanonicalParticipantSpan[];
   readonly sourceSequence: number;
@@ -352,6 +389,7 @@ export function mergeCanonicalTranscriptInputs(
     artifacts: mergeVersionedRecords(current.artifacts ?? [], incoming.artifacts ?? [], (record) => record.id),
     plans: mergeVersionedRecords(current.plans ?? [], incoming.plans ?? [], (record) => record.id),
     compactions: mergeVersionedRecords(current.compactions ?? [], incoming.compactions ?? [], (record) => record.id),
+    reasoningSummaries: mergeVersionedRecords(current.reasoningSummaries ?? [], incoming.reasoningSummaries ?? [], (record) => record.id),
     terminalReports: mergeTerminalReportProjections(current.terminalReports ?? [], incoming.terminalReports ?? []),
     participantSpans: mergeVersionedRecords(current.participantSpans ?? [], incoming.participantSpans ?? [], (record) => record.id),
     contextSegmentIdByItemId: mergeContextSegmentLookups(current.contextSegmentIdByItemId, incoming.contextSegmentIdByItemId),
@@ -438,7 +476,27 @@ export function projectCanonicalConversationTimeline(
     return emptyProjection(input, diagnostics);
   }
   const itemsById = new Map<string, CanonicalConversationItem>();
+  // Index the currently selected revisions, not every historical position.
+  // A full scan here made n distinct records allocate and compare O(n²) entries.
+  const itemIdsBySequence = new Map<number, Set<string>>();
+  const indexSequence = (item: CanonicalConversationItem): void => {
+    const owners = itemIdsBySequence.get(item.sequence) ?? new Set<string>();
+    owners.add(item.id);
+    itemIdsBySequence.set(item.sequence, owners);
+  };
+  const unindexSequence = (item: CanonicalConversationItem): void => {
+    const owners = itemIdsBySequence.get(item.sequence);
+    owners?.delete(item.id);
+    if (owners?.size === 0) itemIdsBySequence.delete(item.sequence);
+  };
   const conflictingSequences = new Set<number>();
+  const recordSequenceConflict = (item: CanonicalConversationItem): void => {
+    const peerId = itemIdsBySequence.get(item.sequence)?.values().next().value;
+    if (peerId !== undefined) {
+      conflictingSequences.add(item.sequence);
+      diagnostics.push({ code: "duplicate_sequence", sourceRefs: [conversationItemRef(peerId), conversationItemRef(item.id)], message: `Conversation sequence ${item.sequence} is claimed by multiple items.` });
+    }
+  };
   for (const item of input.items) {
     if (!isCanonicalItem(item) || item.workspaceId !== input.scope.workspaceId || item.threadId !== input.scope.threadId) {
       diagnostics.push({ code: "scope_mismatch", sourceRefs: [], message: "Conversation item is outside the requested scope." });
@@ -450,25 +508,30 @@ export function projectCanonicalConversationTimeline(
     }
     const previous = itemsById.get(item.id);
     if (previous) {
-      if (item.revision > previous.revision) itemsById.set(item.id, item);
+      if (item.revision > previous.revision) {
+        if (item.sequence !== previous.sequence) {
+          unindexSequence(previous);
+          recordSequenceConflict(item);
+          indexSequence(item);
+        }
+        itemsById.set(item.id, item);
+      }
       else if (item.revision === previous.revision && item.sequence !== previous.sequence) {
         conflictingSequences.add(item.sequence);
         conflictingSequences.add(previous.sequence);
         diagnostics.push({ code: "owner_conflict", sourceRefs: [conversationItemRef(item.id)], message: `Conversation item ${item.id} has conflicting positions.` });
       } else if (item.revision === previous.revision && stableSerialize(item) !== stableSerialize(previous)) {
         diagnostics.push({ code: "owner_conflict", sourceRefs: [conversationItemRef(item.id)], message: `Conversation item ${item.id} has conflicting equal revisions.` });
+        unindexSequence(previous);
         itemsById.delete(item.id);
       } else if (item.revision < previous.revision) {
         diagnostics.push({ code: "stale_revision", sourceRefs: [conversationItemRef(item.id)], message: `Conversation item ${item.id} has a stale revision.` });
       }
       continue;
     }
-    const peer = [...itemsById.values()].find((candidate) => candidate.sequence === item.sequence);
-    if (peer) {
-      conflictingSequences.add(item.sequence);
-      diagnostics.push({ code: "duplicate_sequence", sourceRefs: [conversationItemRef(peer.id), conversationItemRef(item.id)], message: `Conversation sequence ${item.sequence} is claimed by multiple items.` });
-    }
+    recordSequenceConflict(item);
     itemsById.set(item.id, item);
+    indexSequence(item);
   }
 
   const orderedItems = [...itemsById.values()]
@@ -486,21 +549,50 @@ export function projectCanonicalConversationTimeline(
   const actionToolCallIds = new Set(anchoredActions.map(({ action }) => action.toolCallId).filter((value): value is string => Boolean(value)));
   const matchedActionIds = new Set(anchoredActions.map(({ action }) => action.id));
   const projected: ConversationTimelineItem[] = [];
+  const committedNarration: ConversationTimelineMessageItem[] = [];
+  const reasoningRows = projectReasoningSummaries(input, itemsById, new Set(orderedItems.map((item) => item.id)), diagnostics);
   const supplemental = projectSupplementalEvidence(input, itemsById, actionsByItem, anchoredActions, diagnostics);
+  const userInputRows = new Map(projectCanonicalUserInputTimeline({
+    scope: input.scope, items: orderedItems, userInputs: input.userInputs,
+  }).map(row => [row.itemId, row]));
+  // Suppress only exact rows that survived a verified, visible child projection.
+  // A bare run/participant span must not make its question disappear.
+  const nestedUserInputIds = new Set(orderedItems.flatMap(anchor => (supplemental.get(anchor.id) ?? []).flatMap(row =>
+    row.kind === "subAgentActivity" ? row.childItems.flatMap(child =>
+      child.kind === "userInputRequest" || child.kind === "userInputAnswer" ? [child.itemId] : []) : [])));
   const terminalProjection = projectTerminalReports(input, itemsById, diagnostics);
-  const committedTerminalTurns = new Set(
-    [...terminalProjection.values()].map((item) => item.turnId).filter((value): value is string => Boolean(value)),
-  );
   let activeItemId: string | undefined;
+  const resolveChildMessage = input.scope.surface === "child"
+    ? createCanonicalChildMessageResolver(input.scope, [...actionsById.values()]) : undefined;
 
   for (const item of orderedItems) {
+    const userInputRow = userInputRows.get(item.id);
+    if (userInputRow && !nestedUserInputIds.has(item.id)) projected.push(userInputRow);
     const anchored = actionsByItem.get(item.id) ?? [];
     const toolCallId = readStringField(item.payload, "toolCallId");
     const suppressToolEnvelope = (item.kind === "tool_result" || item.kind === "tool_call") &&
       Boolean((toolCallId && actionToolCallIds.has(toolCallId)) || anchored.length > 0);
     if (!suppressToolEnvelope) {
-      const message = projectCanonicalMessage(item, input.scope, committedTerminalTurns);
-      if (message) projected.push(message);
+      if (hasCommittedRunNarration(item)) {
+        const rows = projectCommittedRunNarration(item, input.scope, itemsById, input.turnRuns);
+        if (rows) committedNarration.push(...rows);
+        else diagnostics.push({ code: "missing_lineage", sourceRefs: [conversationItemRef(item.id)],
+          message: "Committed narration is missing a consistent Run source or message boundary." });
+      }
+      const message = projectCanonicalMessage(item, input.scope);
+      if (message) {
+        const ownership = resolveChildMessage?.(item);
+        if (ownership && "diagnostic" in ownership) diagnostics.push(ownership.diagnostic);
+        else if (ownership) {
+          const { lineage } = ownership;
+          projected.push({ ...message, ...lineage, sourceRefs: [
+            ...message.sourceRefs,
+            { kind: "run", id: lineage.runId! },
+            { kind: "participant", id: lineage.participantId! },
+            ...(lineage.attemptId ? [{ kind: "attempt", id: lineage.attemptId }] : []),
+          ] });
+        } else projected.push(message);
+      }
       else if (item.kind !== "terminal_report" && isFactEnvelope(item)) projected.push(blockedCanonicalItem(item, input.scope, "No verified execution evidence is attached."));
     }
     if (item.kind === "terminal_report") {
@@ -535,7 +627,7 @@ export function projectCanonicalConversationTimeline(
     // The canonical projector deliberately returns atomic items only. Display
     // batching is a separate, reversible projection owned by the shared adapter;
     // completion, fan-in, and TerminalReport consumers must never see a batch.
-    items: projected.sort(compareTimelineItems),
+    items: mergeConversationRunNarration(projected.sort(compareTimelineItems), [...committedNarration, ...reasoningRows]),
     auditItems,
     terminalEvidence: projected.flatMap(terminalEvidenceForTimelineItem),
     diagnostics,
@@ -597,7 +689,7 @@ function projectTerminalReports(
       continue;
     }
     const key = `${entry.report.source.kind}:${entry.report.source.id}`;
-    bySource.set(key, [...(bySource.get(key) ?? []), entry]);
+    bySource.set(key, [...(bySource.get(key) ?? []), { ...entry, report: projectVisibleTerminalReportContent(entry.report) }]);
   }
   for (const entries of bySource.values()) {
     const maxGeneration = Math.max(...entries.map((entry) => entry.generation));
@@ -638,9 +730,30 @@ function projectTerminalReports(
         { kind: entry.report.source.kind, id: entry.report.source.id },
         ...(anchor.turnId ? [{ kind: "turn", id: anchor.turnId }] : []),
       ];
+      const visibleArtifacts = entry.report.artifacts.filter(isUserVisibleTerminalReportArtifact);
+      const visibleChanges = userVisibleTerminalReportChanges(entry.report.changes, [
+        { kind: entry.report.source.kind, id: entry.report.source.id },
+        ...entry.report.references,
+        ...entry.report.outcome.corrections.flatMap((section) => section.sourceRefs),
+        ...entry.report.changes.flatMap((section) => section.sourceRefs),
+        ...entry.report.verification.flatMap((section) => section.sourceRefs),
+        ...entry.report.participants.flatMap((section) => section.sourceRefs),
+        ...entry.report.artifacts.flatMap((section) => section.sourceRefs),
+        ...entry.report.risks.flatMap((section) => section.sourceRefs),
+      ]);
+      const hiddenArtifactIds = new Set(
+        entry.report.artifacts
+          .filter((artifact) => !isUserVisibleTerminalReportArtifact(artifact))
+          .map((artifact) => artifact.id),
+      );
+      const visibleReportRefs = (refs: readonly CanonicalSourceRef[]): CanonicalProjectionSourceRef[] => toSourceRefs(
+        refs.filter((ref) => !hiddenArtifactIds.has(ref.id) && isUserVisibleTerminalReportSourceRef(ref)),
+      );
       output.set(anchor.id, {
         id: `terminal-report:${entry.report.id}`,
         kind: "terminalReport",
+        language: entry.report.language,
+        outcomeSourceRefs: entry.report.outcome.sourceRefs,
         revision: anchor.revision,
         threadSequence: anchor.sequence,
         partIndex: 0,
@@ -657,36 +770,36 @@ function projectTerminalReports(
         resultItemId: entry.resultItemId,
         outcomeStatus: entry.report.outcome.status,
         summary: entry.report.outcome.summary,
-        changeCount: entry.report.changes.length,
+        changeCount: visibleChanges.length,
         verificationCount: entry.report.verification.length,
         participantCount: entry.report.participants.length,
-        artifactCount: entry.report.artifacts.length,
+        artifactCount: visibleArtifacts.length,
         riskCount: entry.report.risks.length,
         corrections: entry.report.outcome.corrections.map((correction) => ({
           ...correction,
-          sourceRefs: toSourceRefs(correction.sourceRefs),
+          sourceRefs: visibleReportRefs(correction.sourceRefs),
         })),
-        changes: entry.report.changes.map((change) => ({
+        changes: visibleChanges.map((change) => ({
           ...change,
-          sourceRefs: toSourceRefs(change.sourceRefs),
+          sourceRefs: visibleReportRefs(change.sourceRefs),
         })),
         verification: entry.report.verification.map((verification) => ({
           ...verification,
-          sourceRefs: toSourceRefs(verification.sourceRefs),
+          sourceRefs: visibleReportRefs(verification.sourceRefs),
         })),
         participants: entry.report.participants.map((participant) => ({
           ...participant,
-          sourceRefs: toSourceRefs(participant.sourceRefs),
+          sourceRefs: visibleReportRefs(participant.sourceRefs),
         })),
-        artifacts: entry.report.artifacts.map((artifact) => ({
+        artifacts: visibleArtifacts.map((artifact) => ({
           ...artifact,
-          sourceRefs: toSourceRefs(artifact.sourceRefs),
+          sourceRefs: visibleReportRefs(artifact.sourceRefs),
         })),
         risks: entry.report.risks.map((risk) => ({
           ...risk,
-          sourceRefs: toSourceRefs(risk.sourceRefs),
+          sourceRefs: visibleReportRefs(risk.sourceRefs),
         })),
-        references: toSourceRefs(entry.report.references),
+        references: visibleReportRefs(entry.report.references),
       });
     }
   }
@@ -714,6 +827,69 @@ function mergeTerminalReportProjections(
 function actionInScope(action: CanonicalExecutionAction, scope: CanonicalTranscriptScope): boolean {
   return (!scope.runId || action.runId === scope.runId)
     && (!scope.participantId || !action.participantId || action.participantId === scope.participantId);
+}
+
+function projectReasoningSummaries(
+  input: CanonicalTranscriptProjectionInput,
+  itemsById: ReadonlyMap<string, CanonicalConversationItem>,
+  visibleItemIds: ReadonlySet<string>,
+  diagnostics: CanonicalTranscriptDiagnostic[],
+): readonly ConversationTimelineReasoningItem[] {
+  const latest = latestSupplementalById(input.reasoningSummaries ?? [], diagnostics, "reasoning summary");
+  const output: ConversationTimelineReasoningItem[] = [];
+  const records = [...latest.values()].sort((left, right) =>
+    left.runId.localeCompare(right.runId)
+    || left.eventSequence - right.eventSequence
+    || left.id.localeCompare(right.id));
+  for (const record of records) {
+    const refs = toSourceRefs(ensureAnchorRef(record.sourceRefs, record.anchorItemId));
+    if (record.workspaceId !== input.scope.workspaceId || record.threadId !== input.scope.threadId
+      || (input.scope.runId && record.runId !== input.scope.runId)
+      || (input.scope.participantId && record.participantId && record.participantId !== input.scope.participantId)) {
+      diagnostics.push({ code: "scope_mismatch", sourceRefs: refs, message: `Reasoning summary ${record.id} belongs to another scope.` });
+      continue;
+    }
+    const anchor = itemsById.get(record.anchorItemId);
+    if (!anchor || !visibleItemIds.has(anchor.id) || anchor.kind !== "assistant_message") {
+      diagnostics.push({ code: "missing_anchor", sourceRefs: refs, message: `Reasoning summary ${record.id} has no visible assistant-message anchor.` });
+      continue;
+    }
+    const valid = Number.isSafeInteger(record.eventSequence) && record.eventSequence > 0
+      && record.turnId === anchor.turnId
+      && record.semantic === "safe_summary"
+      && record.source === "openai_responses"
+      && record.text.length > 0
+      && record.parts.length > 0
+      && record.text === record.parts.join("\n\n")
+      && refs.some((ref) => ref.kind === "conversation_item" && ref.id === anchor.id)
+      && refs.some((ref) => ref.kind === "run" && ref.id === record.runId)
+      && refs.some((ref) => ref.kind === "run_event" && ref.id === record.eventId);
+    if (!valid) {
+      diagnostics.push({ code: "missing_lineage", sourceRefs: refs, message: `Reasoning summary ${record.id} is malformed or missing durable Run lineage.` });
+      continue;
+    }
+    output.push({
+      id: `reasoning:${record.id}`,
+      kind: "reasoning",
+      revision: record.revision,
+      threadSequence: anchor.sequence,
+      partIndex: record.eventSequence,
+      sourceEventSequence: record.eventSequence,
+      status: "succeeded",
+      turnId: record.turnId,
+      itemId: anchor.id,
+      runId: record.runId,
+      ...(record.attemptId ? { attemptId: record.attemptId } : {}),
+      ...(record.participantId ? { participantId: record.participantId } : {}),
+      ...(record.workUnitId ? { workUnitId: record.workUnitId } : {}),
+      ...(record.workflowStepId ? { workflowStepId: record.workflowStepId } : {}),
+      sourceRefs: refs,
+      title: "Reasoning summary",
+      description: record.truncated ? "Summary truncated by the safe display budget." : undefined,
+      summary: record.text,
+    });
+  }
+  return output;
 }
 
 /**
@@ -767,8 +943,7 @@ function projectSupplementalEvidence(
       continue;
     }
     const ownedByAction = [...(actionsByItem.get(anchor.id) ?? [])].some(({ action }) =>
-      action.id === approval.actionId || action.approvalId === approval.id ||
-      Boolean(approval.toolCallId && action.toolCallId === approval.toolCallId),
+      action.id === approval.actionId && actionKind(action.actionType) === "approval",
     );
     if (ownedByAction) continue;
     const status = approvalStatus(approval.status);
@@ -1184,6 +1359,7 @@ function inputRevisionRank(input: CanonicalTranscriptProjectionInput): number {
     ...(input.artifacts ?? []).map((record) => record.revision),
     ...(input.plans ?? []).map((record) => record.revision),
     ...(input.compactions ?? []).map((record) => record.revision),
+    ...(input.reasoningSummaries ?? []).map((record) => record.revision),
     ...(input.participantSpans ?? []).map((record) => record.revision),
   );
 }
@@ -1284,10 +1460,13 @@ function anchorActions(
   for (const [itemId, actionsAtAnchor] of grouped) {
     const anchor = itemsById.get(itemId);
     if (!anchor) continue;
-    // Revisions are scoped to an action, not to the canonical item. Distinct
-    // actions may therefore legitimately start at the same revision; their
-    // stable ids provide the deterministic tie-breaker for part placement.
-    const ordered = [...actionsAtAnchor].sort((left, right) => left.action.revision - right.action.revision || left.action.id.localeCompare(right.action.id));
+    // Mutable revisions describe updates, never when an action began. The
+    // persisted start event shares a run-local domain with narrative segments;
+    // records without that Host position have only stable identity ordering.
+    const ordered = [...actionsAtAnchor].sort((left, right) =>
+      (left.action.runId ?? "").localeCompare(right.action.runId ?? "")
+      || (left.action.sourceEventSequence ?? Number.MAX_SAFE_INTEGER) - (right.action.sourceEventSequence ?? Number.MAX_SAFE_INTEGER)
+      || left.action.id.localeCompare(right.action.id));
     for (let index = 0; index < ordered.length; index += 1) {
       const candidate = ordered[index]!;
       anchored.push({ ...candidate, anchor, partIndex: index + 1 });
@@ -1345,18 +1524,16 @@ function groupAnchoredActions(actions: readonly AnchoredAction[]): Map<string, A
   return grouped;
 }
 
-function projectCanonicalMessage(item: CanonicalConversationItem, scope: CanonicalTranscriptScope, committedTerminalTurns: ReadonlySet<string> = new Set()): ConversationTimelineItem | undefined {
+function projectCanonicalMessage(item: CanonicalConversationItem, scope: CanonicalTranscriptScope): ConversationTimelineItem | undefined {
+  if (hasCommittedRunNarration(item)) return undefined;
   const body = readStringField(item.payload, "body");
   if (!body || (item.kind !== "user_message" && item.kind !== "assistant_message")) return undefined;
-  if (item.kind === "assistant_message"
-    && readStringField(item.payload, "presentationRole") === "execution_summary"
-    && item.turnId
-    && committedTerminalTurns.has(item.turnId)) return undefined;
   return {
     id: `${item.kind === "user_message" ? "message:user:" : "message:agent:"}${item.id}`,
     kind: item.kind === "user_message" ? "userMessage" : "agentMessage",
     markdown: body,
-    phase: item.kind === "assistant_message" && readStringField(item.payload, "deliveryStatus") === "ready" ? "final" : "commentary",
+    phase: item.kind === "assistant_message" && readStringField(item.payload, "deliveryStatus") === "ready"
+      && readStringField(item.payload, "presentationRole") !== "narration" ? "final" : "commentary",
     revision: item.revision,
     threadSequence: item.sequence,
     partIndex: 0,
@@ -1400,6 +1577,7 @@ function projectCanonicalAction(
     ...lineage,
     id: `action:${action.id}`,
     revision: action.revision,
+    sourceEventSequence: action.sourceEventSequence,
     threadSequence: anchor.sequence,
     partIndex,
     turnId: action.turnId ?? anchor.turnId ?? scope.turnId,
@@ -1429,6 +1607,7 @@ function projectCanonicalAction(
       exitCode: evidence.exitCode,
       durationMs: evidence.durationMs,
       signal: evidence.signal,
+      timedOut: evidence.timedOut,
     } satisfies ConversationTimelineCommandExecutionItem;
   }
   if (kind === "fileChange") {
@@ -1437,7 +1616,14 @@ function projectCanonicalAction(
     return { ...base, kind, status, title: action.title, description: action.summary, meta: action.summary, files } satisfies ConversationTimelineFileChangeItem;
   }
   if (kind === "exploration") {
-    return { ...base, kind, status, title: action.title, description: action.summary, meta: action.summary, operation: explorationOperation(action.actionType), targets: sourceRefs.filter((ref) => ref.kind === "file" || ref.kind === "path"), resultSummary: action.summary } satisfies ConversationTimelineExplorationItem;
+    return {
+      ...base, kind, status, title: action.title,
+      operation: explorationOperation(action.actionType),
+      targets: sourceRefs.filter((ref) => ref.kind === "file" || ref.kind === "path"),
+      inputSummary: action.toolEvidence?.inputSummary ?? action.summary,
+      resultSummary: action.toolEvidence?.outputText,
+      outputTruncated: action.toolEvidence?.outputTruncated ?? false,
+    } satisfies ConversationTimelineExplorationItem;
   }
   if (kind === "approval") {
     if (!action.approvalId) {
@@ -1447,7 +1633,27 @@ function projectCanonicalAction(
     return { ...base, kind, status, title: action.title, description: action.summary, meta: action.summary, approvalId: action.approvalId, decision: approvalDecision(status) } satisfies ConversationTimelineApprovalItem;
   }
   if (kind === "mcpToolCall" || kind === "dynamicToolCall" || kind === "collabAgentToolCall") {
-    return { ...base, kind, status, title: action.title, description: action.summary, meta: action.summary, toolName: action.actionType, inputSummary: action.summary } satisfies ConversationTimelineToolCallItem;
+    return {
+      ...base, kind, status, title: action.title,
+      description: action.summary,
+      meta: action.summary,
+      toolName: action.toolEvidence?.toolName ?? action.actionType,
+      inputSummary: action.toolEvidence?.inputSummary,
+      resultSummary: action.toolEvidence?.outputText,
+      outputTruncated: action.toolEvidence?.outputTruncated ?? false,
+    } satisfies ConversationTimelineToolCallItem;
+  }
+  if (action.actionType === "runtime_diagnostic") {
+    return {
+      ...base,
+      kind: "diagnostic",
+      status: "failed",
+      code: action.runtimeDiagnostic?.code ?? "execution_loop_detected",
+      title: action.title || "Repeated execution stopped",
+      description: action.summary,
+      summary: action.summary,
+      ...(action.runtimeDiagnostic ? { runtimeDiagnostic: action.runtimeDiagnostic } : {}),
+    } satisfies ConversationTimelineDiagnosticItem;
   }
   diagnostics.push({ code: "missing_lineage", sourceRefs, message: `Action ${action.id} has an unsupported action type: ${action.actionType}.` });
   const { workflowStepId, ...genericBase } = base;
@@ -1496,8 +1702,9 @@ function actionKind(actionType: string): "commandExecution" | "fileChange" | "ex
   if (["read", "grep", "find", "ls", "search"].includes(type)) return "exploration";
   if (["approval", "permission", "permission_request"].includes(type)) return "approval";
   if (["mcp", "mcp_tool_call"].includes(type)) return "mcpToolCall";
-  if (["dynamic_tool", "dynamic_tool_call"].includes(type)) return "dynamicToolCall";
+  if (["dynamic_tool", "dynamic_tool_call", "host_capability"].includes(type)) return "dynamicToolCall";
   if (["spawn_agent", "delegate_agent", "agent_call", "collab_agent_tool_call"].includes(type)) return "collabAgentToolCall";
+  if (type === "runtime_diagnostic") return "diagnostic";
   return "diagnostic";
 }
 
@@ -1564,6 +1771,9 @@ function sourceRefsForAction(action: CanonicalExecutionAction): CanonicalProject
   return toSourceRefs(action.sourceRefs);
 }
 
+const REF_VISIBILITY_RANK = { conversation: 0, folded_evidence: 1, private: 2, audit: 2, developer_only: 2 } as const;
+const REF_SENSITIVITY_RANK = { normal: 0, private: 1, secret_adjacent: 2 } as const;
+
 function toSourceRefs(refs: readonly CanonicalSourceRef[]): CanonicalProjectionSourceRef[] {
   const merged = new Map<string, CanonicalProjectionSourceRef>();
   for (const ref of refs) {
@@ -1572,14 +1782,23 @@ function toSourceRefs(refs: readonly CanonicalSourceRef[]): CanonicalProjectionS
       kind: ref.kind,
       id: ref.id,
       ...(ref.label ? { label: ref.label } : {}),
+      ...(ref.href ? { href: ref.href } : {}),
       ...(ref.path ? { path: ref.path } : {}),
       ...(ref.hostTarget ? { hostTarget: ref.hostTarget } : {}),
       ...(ref.capabilityId ? { capabilityId: ref.capabilityId } : {}),
       ...(ref.workspaceId ? { workspaceId: ref.workspaceId } : {}),
       ...(ref.visibility ? { visibility: ref.visibility } : {}),
+      ...(ref.sensitivity ? { sensitivity: ref.sensitivity } : {}),
     };
-    const key = `${normalized.kind}:${normalized.id}`;
-    merged.set(key, { ...merged.get(key), ...normalized });
+    const key = JSON.stringify([normalized.kind, normalized.id]);
+    const previous = merged.get(key);
+    merged.set(key, {
+      ...previous, ...normalized,
+      ...(previous?.visibility && REF_VISIBILITY_RANK[previous.visibility] > REF_VISIBILITY_RANK[normalized.visibility ?? "conversation"]
+        ? { visibility: previous.visibility } : {}),
+      ...(previous?.sensitivity && REF_SENSITIVITY_RANK[previous.sensitivity] > REF_SENSITIVITY_RANK[normalized.sensitivity ?? "normal"]
+        ? { sensitivity: previous.sensitivity } : {}),
+    });
   }
   return [...merged.values()];
 }
@@ -1603,7 +1822,8 @@ function isCanonicalAction(value: unknown): value is CanonicalExecutionAction {
 }
 
 function validScope(scope: CanonicalTranscriptScope): boolean {
-  return Boolean(scope && typeof scope.threadId === "string" && scope.threadId.length > 0 && typeof scope.workspaceId === "string" && scope.workspaceId.length > 0 && (scope.depth === 0 || scope.depth === 1));
+  return Boolean(scope && typeof scope.threadId === "string" && scope.threadId.length > 0 && typeof scope.workspaceId === "string" && scope.workspaceId.length > 0 && (scope.depth === 0 || scope.depth === 1)
+    && (scope.surface !== "child" || (scope.depth === 1 && scope.runId?.trim() && scope.participantId?.trim())));
 }
 
 function readStringField(value: unknown, key: string): string | undefined {
@@ -1619,7 +1839,9 @@ function readBooleanField(value: unknown, key: string): boolean | undefined {
 }
 
 function isFactEnvelope(item: CanonicalConversationItem): boolean {
-  return item.kind !== "user_message" && item.kind !== "assistant_message";
+  // User input belongs to its own scoped domain projection, never execution evidence.
+  return item.kind !== "user_message" && item.kind !== "assistant_message"
+    && item.kind !== "user_input_request" && item.kind !== "user_input_answer";
 }
 
 function compareTimelineItems(left: ConversationTimelineItem, right: ConversationTimelineItem): number {

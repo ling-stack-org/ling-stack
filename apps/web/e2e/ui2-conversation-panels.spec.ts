@@ -209,7 +209,7 @@ test("AI teammate summary uses the channel panel motion", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   const toolbar = page.getByRole("toolbar", { name: "Private chat actions" });
   await toolbar.getByRole("button", { name: "Summary" }).click();
   await expect(page.locator(".teammate-chat-summary-popover")).toBeVisible();
@@ -277,7 +277,7 @@ test("summary intent survives constrained Details geometry and restores when Sid
     page.getByLabel("Channel workspace dock"),
   );
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   await expectSummaryConcealAndRestore(
     page,
     page.getByRole("toolbar", { name: "Private chat actions" }),
@@ -325,7 +325,7 @@ test("right dock hides as one shared state at 900px and restores inline above th
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await ensureNavigationExpanded(page);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   await expectResponsiveDockProjection({
     page,
     toolbar: page.getByRole("toolbar", { name: "Private chat actions" }),
@@ -392,7 +392,7 @@ for (const fixture of [
     await openBottomTerminal(page, channelToolbar);
     await captureEvidence(page, evidenceFilename(fixture, "channel-terminal"));
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
     const teammateToolbar = page.getByRole("toolbar", { name: "Private chat actions" });
     await openSummaryAndDock(
       teammateToolbar,
@@ -433,7 +433,7 @@ async function useEnglishLightSurface(page: Page, width = 1440): Promise<void> {
 
 async function openNormalConversationFixture(page: Page): Promise<void> {
   await page
-    .getByLabel("Ling Stack navigation")
+    .getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
     .locator(".sidebar-recent-row")
     .filter({ hasText: normalConversationFixtureTitle })
     .click();

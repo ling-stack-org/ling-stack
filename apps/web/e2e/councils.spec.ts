@@ -7,7 +7,7 @@ import {
 } from "./support/mock-state";
 
 async function openCouncilWorkspace(page: Page): Promise<void> {
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" }).click();
 }
@@ -60,7 +60,7 @@ test("Council Workspace keeps no-available-member copy compact in Chinese", asyn
 
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Settings|设置/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Settings|设置/ }).click();
   await page.getByLabel(/Settings sections|设置分组/).getByRole("button", { name: /Council Workspace|智囊团工作区/ }).click();
 
   const emptyPrompt = page.locator(".council-members-candidate-empty");
@@ -120,13 +120,13 @@ test("Council Workspace shows council health, members, and channel entry points"
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await openCouncilWorkspace(page);
   await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
   await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(0);
   await expect(page.getByText("Manage councils, members, health, and channel usage from one workspace.")).toHaveCount(0);
   await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Create council" })).toHaveCount(1);

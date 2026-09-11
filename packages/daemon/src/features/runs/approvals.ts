@@ -1,4 +1,6 @@
 import { isAbsolute, relative, resolve as resolvePath } from "node:path";
+import { hostCapabilityApprovalPayload } from "./host-capability-action.js";
+import { createHostCapabilityAuthority } from "./host-capability-authority.js";
 import {
   DEFAULT_WORKSPACE_ID,
   approvalSideEffectFingerprintV1,
@@ -26,6 +28,7 @@ import {
   type RunStore,
   type RunTool,
   type RuntimeSupervisorStoreFacet,
+  type RuntimeAttemptFenceV1,
   type SkillApprovalProfile,
 } from "@ling-stack/core";
 import type { ChannelIntentExecutionOperationV1 } from "@ling-stack/contracts";
@@ -58,9 +61,12 @@ import {
 } from "./risk-review-approval-adapter.js";
 import { evaluatePlanModeApprovalDenial } from "./plan-mode-policy.js";
 import { commandMatchesPolicy } from "../channels/command-operation-match.js";
+import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
+import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
+import { executeWorkflowOperationFileCreate } from "./workflow-operation-file-create.js";
 import {
-  commandArgvForRuleMatching,
   createApprovalCommandRuleProposal,
+  findMatchingApprovalCommandRulesForCommand,
 } from "./approval-command-rules.js";
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
@@ -147,10 +153,13 @@ export function expireStaleApproval(
 }
 
 export function createRunApprovalHandler(options: {
+  readonly restrictedCommandRuntime?: NativeRestrictedCommandRuntime;
   readonly store: RunStore;
   readonly run: RunSession;
   readonly workUnitId: string;
   readonly attemptId: string;
+  /** Captured at Runner dispatch; required for Host calls, never inferred from the latest Attempt. */
+  readonly sourceFence?: RuntimeAttemptFenceV1;
   readonly delegatedRequirementFingerprint?: string;
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly approvalPolicy: ApprovalPolicy;
@@ -184,8 +193,52 @@ export function createRunApprovalHandler(options: {
    */
   readonly onExistingApprovalDecisionEvent?: (envelope: RunEventEnvelope) => void;
 }): PiRunnerRunOptions["onApprovalRequired"] {
+  const sourceFence = options.sourceFence ? Object.freeze({ ...options.sourceFence }) : undefined;
+  const hostAuthority = createHostCapabilityAuthority({ ...options, sourceFence });
   return async (request: PiRunnerApprovalRequest) => {
+    const isHost = request.toolName.startsWith("host_");
+    const rejectHost = (approvalId?: string) => {
+      const rejection = isHost ? hostAuthority.check(request, approvalId) : undefined;
+      return rejection ? { approved: false, approvalId, reason: `${rejection.code}: ${rejection.reason}` } : undefined;
+    };
+    const hostRejection = rejectHost();
+    if (hostRejection) return hostRejection;
+    const transitionRunStatus = (input: Parameters<RunStore["transitionRunStatus"]>[0]) =>
+      isHost && sourceFence ? options.store.transitionRunExecutionStatus({ ...input, sourceFence }) : options.store.transitionRunStatus(input);
+    const createScopedApproval = (input: CreateApprovalRequestInput, now: string) => {
+      try {
+        return isHost && sourceFence
+          ? options.store.createExecutionApprovalRequest({ ...input, runId: options.run.id }, sourceFence, now)
+          : options.store.createApprovalRequest(input, now);
+      } catch (error) {
+        if (isHost && error instanceof Error && "code" in error && error.code === "stale_run_execution") {
+          return { approved: false, reason: "host_capability_owner_invalid: Host approval lost its source execution before insertion." } as const;
+        }
+        throw error;
+      }
+    };
     const unifiedExecBash = options.unifiedExecEnabled === true && request.toolName === "bash";
+    if (request.toolName === "bash" && !unifiedExecBash) {
+      const reason = "host_command_executor_disabled: Bash requires the journaled Host executor; SDK fallback is disabled.";
+      return { approved: false, reason, handledResult: createUnifiedExecDeniedResult({ toolCallId: request.toolCallId, reason }) };
+    }
+    if (unifiedExecBash && !sourceFence) {
+      return { approved: false, reason: "stale_run_execution: Host command requires the captured source Attempt." };
+    }
+    const rejectUnboundEffect = (approvalId?: string) => {
+      const rejection = workflowOperationEffectRejection({ store: options.store, run: options.run, request,
+        restrictedCommandRuntime: options.restrictedCommandRuntime });
+      if (!rejection) return undefined;
+      const reason = rejection.code + ": " + rejection.reason;
+      return {
+        approved: false,
+        approvalId,
+        reason,
+        ...(unifiedExecBash ? { handledResult: createUnifiedExecDeniedResult({ toolCallId: request.toolCallId, approvalId, reason }) } : {}),
+      };
+    };
+    const effectRejection = rejectUnboundEffect();
+    if (effectRejection) return effectRejection;
     const bindingRejection = workflowExactCommandBindingRejection({
       bindings: options.executionOperationBindings,
       request,
@@ -262,14 +315,14 @@ export function createRunApprovalHandler(options: {
       !mandatoryApproval &&
       approvalInput.payload.type === "bash"
     ) {
-      const argv = commandArgvForRuleMatching(approvalInput.payload.command);
-      const matchingRule = argv
-        ? options.store.findMatchingApprovalCommandRule("bash", argv)
-        : undefined;
-      if (matchingRule) {
+      const matchingRules = findMatchingApprovalCommandRulesForCommand(
+        options.store,
+        approvalInput.payload.command,
+      );
+      if (matchingRules) {
         policyDecision = {
           decision: "allow",
-          reason: `Ling Stack workspace command rule allowed bash: ${matchingRule.display}.`,
+          reason: `Ling Stack workspace command rule allowed bash: ${matchingRules.map((rule) => rule.display).join(", ")}.`,
         };
       } else {
         const proposedCommandRule = createApprovalCommandRuleProposal({
@@ -289,12 +342,20 @@ export function createRunApprovalHandler(options: {
     }
 
     if (policyDecision.decision === "allow") {
+      const executionRejection = rejectUnboundEffect();
+      if (executionRejection) return executionRejection;
+      const exclusiveCreate = await executeWorkflowOperationFileCreate({
+        store: options.store, run: options.run, request, signal: options.signal,
+      });
+      if (exclusiveCreate) return { approved: true, reason: policyDecision.reason, handledResult: exclusiveCreate };
       if (unifiedExecBash) {
         return {
           approved: true,
           reason: policyDecision.reason,
           handledResult: await executeUnifiedBashTool({
+            restrictedCommandRuntime: options.restrictedCommandRuntime,
             store: options.store,
+            sourceFence: sourceFence!,
             run: options.run,
             request,
             appendAndMaybeStream: options.appendAndMaybeStream,
@@ -329,10 +390,11 @@ export function createRunApprovalHandler(options: {
 
     if (policyDecision.decision === "deny") {
       const createdAt = new Date().toISOString();
-      const denied = options.store.createApprovalRequest({
+      const denied = createScopedApproval({
         ...approvalInput,
         extraSecrets: options.extraSecrets,
       }, createdAt);
+      if ("approved" in denied) return denied;
       bindRunApprovalResumeBasis(options, denied, createdAt);
       appendApprovalCreatedControlPlaneEvent(
         options.store,
@@ -401,11 +463,14 @@ export function createRunApprovalHandler(options: {
     // artifacts, or changing the Run status. Those writes can be slower than
     // the remaining runtime budget, especially in a busy SQLite process.
     options.onApprovalWaitStarted?.();
+    const beforeWaitRejection = rejectHost();
+    if (beforeWaitRejection) return beforeWaitRejection;
     const createdAt = new Date().toISOString();
-    const approval = options.store.createApprovalRequest({
+    const approval = createScopedApproval({
       ...approvalInput,
       extraSecrets: options.extraSecrets,
     }, createdAt);
+    if ("approved" in approval) return approval;
     bindRunApprovalResumeBasis(options, approval, createdAt);
     appendApprovalCreatedControlPlaneEvent(
       options.store,
@@ -424,13 +489,15 @@ export function createRunApprovalHandler(options: {
       extraSecrets: options.extraSecrets,
     });
     const waitingAt = new Date().toISOString();
-    options.store.transitionRunStatus({
+    const waitingTransition = transitionRunStatus({
       runId: options.run.id,
       expectedStatus: "running",
       event: "approval_requested",
       actor: "system",
       now: waitingAt,
     });
+    if (isHost && !waitingTransition.ok) return { approved: false, approvalId: approval.id,
+      reason: "host_capability_owner_invalid: Host approval could not enter the captured execution's wait." };
     const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(approval, previewArtifacts));
     appendExecutionActionArtifactEvents({
       artifacts: previewArtifacts,
@@ -440,6 +507,11 @@ export function createRunApprovalHandler(options: {
     });
 
     const resolvedApproval = await waitForApprovalDecision(options.store, approval.id, options.signal);
+    const afterWaitRejection = rejectHost(resolvedApproval.status === "approved" ? resolvedApproval.id : undefined);
+    if (afterWaitRejection) {
+      options.onApprovalResolved?.(resolvedApproval);
+      return afterWaitRejection;
+    }
     const resolvedAt = new Date().toISOString();
     if (resolvedApproval.status === "expired") {
       appendApprovalExpiredControlPlaneEvent(
@@ -462,7 +534,7 @@ export function createRunApprovalHandler(options: {
       );
     }
     if (resolvedApproval.status === "approved") {
-      options.store.transitionRunStatus({
+      transitionRunStatus({
         runId: options.run.id,
         expectedStatus: "waiting_for_approval",
         event: "approval_approved",
@@ -471,7 +543,7 @@ export function createRunApprovalHandler(options: {
         now: resolvedAt,
       });
     } else if (resolvedApproval.status === "expired") {
-      options.store.transitionRunStatus({
+      transitionRunStatus({
         runId: options.run.id,
         expectedStatus: "waiting_for_approval",
         event: "approval_expired",
@@ -482,7 +554,7 @@ export function createRunApprovalHandler(options: {
         errorMessage: resolvedApproval.decisionReason ?? "Approval expired.",
       });
     } else {
-      options.store.transitionRunStatus({
+      transitionRunStatus({
         runId: options.run.id,
         expectedStatus: "waiting_for_approval",
         event: "approval_denied",
@@ -504,10 +576,26 @@ export function createRunApprovalHandler(options: {
     options.onApprovalResolved?.(resolvedApproval);
 
     if (resolvedApproval.status === "approved") {
+      const beforeExecutionRejection = rejectHost(resolvedApproval.id);
+      if (beforeExecutionRejection) return beforeExecutionRejection;
       let handledResult;
+      // Approval does not extend authority. Re-read the immutable basis and the
+      // current filesystem after the durable wait, immediately before effects.
+      const executionRejection = rejectUnboundEffect(resolvedApproval.id);
+      if (executionRejection) return executionRejection;
+      // Host execution has its own executor and receipt; never run file/Bash effects here.
+      if (isHost) return { approved: true, approvalId: resolvedApproval.id, reason: resolvedApproval.decisionReason };
+      const exclusiveCreate = await executeWorkflowOperationFileCreate({
+        store: options.store, run: options.run, request, signal: options.signal,
+      });
+      if (exclusiveCreate) return {
+        approved: true, approvalId: resolvedApproval.id, reason: resolvedApproval.decisionReason, handledResult: exclusiveCreate,
+      };
       if (unifiedExecBash) {
         handledResult = await executeUnifiedBashTool({
+          restrictedCommandRuntime: options.restrictedCommandRuntime,
           store: options.store,
+          sourceFence: sourceFence!,
           run: options.run,
           request,
           approvalId: resolvedApproval.id,
@@ -850,6 +938,10 @@ function evaluateApprovalPolicy(
   request: PiRunnerApprovalRequest,
   payload: ApprovalPayload,
 ): { readonly decision: ApprovalToolDecision; readonly reason: string } {
+  if (payload.type === "host_capability") {
+    if (request.defaultApproval === "deny") return { decision: "deny", reason: `Host policy denied ${payload.capabilityId}.` };
+    return { decision: "ask", reason: `Separate approval is required for ${payload.capabilityId}.` };
+  }
   const toolDecision = isRunTool(request.toolName)
     ? policy.toolDecisions[request.toolName] ?? defaultApprovalToolDecisions[request.toolName]
     : request.defaultApproval ?? "ask";
@@ -961,6 +1053,8 @@ function bindRunApprovalResumeBasis(
 }
 
 function toApprovalPayload(request: PiRunnerApprovalRequest): ApprovalPayload {
+  const host = hostCapabilityApprovalPayload(request);
+  if (host) return host;
   if (request.toolName === "bash") {
     const command = readInputString(request.input, "command", "");
     return {
@@ -1037,6 +1131,8 @@ function classifyApprovalRisk(request: PiRunnerApprovalRequest, payload: Approva
 }
 
 function approvalTitle(toolName: PiRunnerApprovalRequest["toolName"], risk: ApprovalRisk): string {
+  if (toolName === "host_open_local_target") return "Approve opening local file";
+  if (toolName === "host_local_network_info") return "Approve reading local network information";
   if (toolName === "bash") {
     return risk === "high" ? "Approve high-risk shell command" : "Approve shell command";
   }
@@ -1053,6 +1149,10 @@ function approvalTitle(toolName: PiRunnerApprovalRequest["toolName"], risk: Appr
 }
 
 function approvalDescription(toolName: PiRunnerApprovalRequest["toolName"], payload: ApprovalPayload): string {
+  if (payload.type === "host_capability") {
+    return payload.capabilityId === "host.open_local_target" ? `Display workspace file: ${payload.input.path}`
+      : `Read local interface addresses: ${payload.input.family}; include loopback: ${payload.input.includeLoopback}`;
+  }
   if (payload.type === "bash") {
     return payload.command || "The agent requested a shell command.";
   }

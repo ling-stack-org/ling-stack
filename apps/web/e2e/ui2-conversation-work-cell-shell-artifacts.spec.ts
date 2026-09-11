@@ -1,6 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { timelineBatchGroup } from "./support/timeline-batch-group";
 import {
   installNormalWorkCellFixture,
   installTeammateWorkCellFixture,
@@ -9,10 +8,6 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/conversations/shared-conversation-work-cell-shell-artifacts/",
-  import.meta.url,
-));
 
 test("Channel WorkCell keeps terminal report changes, references, and file-path disclosure contained", async ({ page }) => {
   await prepareSurface(page, {
@@ -43,7 +38,7 @@ test("Channel WorkCell keeps terminal report changes, references, and file-path 
   const changedFileReferences = firstChangedEntry.locator(".conversation-timeline-file-ref");
   await expect(terminalReport).toBeVisible();
   await expect(changedSection).toBeVisible();
-  await expect(changedFileReferences).toHaveCount(3);
+  await expect(changedFileReferences).toHaveCount(2);
 
   const changedFile = changedFileReferences.first();
   const changedFilePath = (await changedFile.getAttribute("title")) ?? "";
@@ -115,14 +110,15 @@ test("Terminal report summaries keep Markdown paragraphs and fenced code", async
   await page.goto("/");
   await openRecentConversation(page, title);
 
-  const report = page.getByLabel("Conversation page").locator('[data-conversation-timeline-kind="terminalReport"]');
-  await expect(report).toBeVisible();
+  const response = page.getByLabel("Conversation page").locator(".conversation-timeline-terminal-response");
+  const report = response.locator('[data-conversation-timeline-kind="terminalReport"]');
+  await expect(response).toBeVisible();
   await report.locator(".conversation-timeline-activity-main").click();
-  const reportDetail = report.locator(".conversation-timeline-terminal-report");
-  await expect(reportDetail.locator(".message-body-paragraph")).toHaveCount(3);
-  await expect(reportDetail.locator(".message-body-list")).toHaveCount(1);
-  await expect(reportDetail.locator(".message-code-block")).toHaveCount(1);
-  await expect(reportDetail.locator(".message-code-block")).toContainText("node app.js");
+  const summary = response.locator(".conversation-timeline-result-summary");
+  await expect(summary.locator(".message-body-paragraph")).toHaveCount(3);
+  await expect(summary.locator(".message-body-list")).toHaveCount(1);
+  await expect(summary.locator(".message-code-block")).toHaveCount(1);
+  await expect(summary.locator(".message-code-block")).toContainText("node app.js");
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -153,7 +149,7 @@ test("WorkCell command evidence preserves multiline output formatting", async ({
   const timeline = page.getByLabel("Conversation page").locator('[data-conversation-timeline-depth="0"]').first();
   const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"]');
   await commandBatch.locator(".conversation-command-batch-header").click();
-  const commandRow = commandBatch.locator('[data-conversation-timeline-kind="commandExecution"][data-conversation-timeline-id="action:execution_action_typecheck_normal"]');
+  const commandRow = (await timelineBatchGroup(commandBatch)).locator('[data-conversation-timeline-kind="commandExecution"][data-conversation-timeline-id="action:execution_action_typecheck_normal"]');
   await expect(commandRow).toHaveCount(1);
   await commandRow.locator(".conversation-timeline-activity-main").click();
   const output = timeline.locator(".conversation-timeline-output").filter({ hasText: "first output line" }).first();
@@ -249,19 +245,17 @@ function collectRuntimeErrors(page: Page): string[] {
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     fullPage: true,
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
 }
 
 async function captureElementEvidence(locator: Locator, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await locator.screenshot({
     animations: "disabled",
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
 }

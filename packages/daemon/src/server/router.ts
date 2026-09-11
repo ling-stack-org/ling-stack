@@ -240,6 +240,7 @@ import {
   handleRun,
 } from "../features/runs/routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
+import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capability-bridge-routes.js";
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
 import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
@@ -387,6 +388,7 @@ export async function routeRequest(
     providerStartupRefresh,
     startupState,
     computerUsePreviews,
+    hostCapabilityBridge,
     cuaDriverActivationService,
     workspaceFileCapabilities,
   } = context;
@@ -490,6 +492,9 @@ export async function routeRequest(
     dispatchMediaJobExecution({ cwd, storeRegistry, secretResolver, mediaJobId, hooks: mediaJobHooks });
   };
   if (await handleCuaDriverLeaseRoute(request, response, context)) {
+    return;
+  }
+  if (await handleHostCapabilityBridgeRoute(request, response, context)) {
     return;
   }
   if (await handleOfficeDriverRoute(request, response, context)) {
@@ -886,6 +891,7 @@ export async function routeRequest(
             controlPlaneEvents,
             startupState,
             computerUsePreviews,
+            hostCapabilityBridge,
           },
         );
       },
@@ -1044,6 +1050,7 @@ export async function routeRequest(
           controlPlaneEvents,
           startupState,
           computerUsePreviews,
+          hostCapabilityBridge: context.hostCapabilityBridge,
         },
       ), imageVisionSummarizer);
     return;
@@ -1322,6 +1329,7 @@ export async function routeRequest(
           controlPlaneEvents,
           startupState,
           computerUsePreviews,
+          hostCapabilityBridge: context.hostCapabilityBridge,
         },
       ));
     return;
@@ -1650,6 +1658,7 @@ export async function routeRequest(
             controlPlaneEvents,
             startupState,
             computerUsePreviews,
+            hostCapabilityBridge,
           },
         ).then(resolveOnce, () => resolveOnce(undefined));
       });
@@ -1662,6 +1671,8 @@ export async function routeRequest(
     readonly proposalId: string;
   }) => {
     const confirmed = confirmChannelExecutionProposalWorkflow({
+      restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime(),
+      hostCapabilityAvailable: (capabilityId) => hostCapabilityBridge.hasCapability(capabilityId),
       store: input.store,
       cwd: input.cwd,
       proposalId: input.proposalId,
@@ -1703,6 +1714,7 @@ export async function routeRequest(
             thread: editable.thread,
             message: revision.body,
             messageId: revision.messageId,
+            revisionId: revision.id,
             attachmentIds: revision.attachmentIds,
             providerPresetId: editRequest.providerPresetId,
             permissionPreset: editRequest.permissionPreset,

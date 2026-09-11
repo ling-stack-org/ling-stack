@@ -71,9 +71,9 @@ export function projectNormalConversationFeedItems(input: {
     const bodyStreaming = message.status === "running" || message.status === "pending";
     const messagePresentation = projectConversationMessagePresentation({
       content: message.content,
-      errorMessage: message.errorMessage,
-      status: message.status,
-      runtimeFailed: linkedRun?.status === "failed",
+      errorMessage: message.role === "assistant" ? message.errorMessage : undefined,
+      status: message.role === "assistant" ? message.status : undefined,
+      runtimeFailed: message.role === "assistant" && linkedRun?.status === "failed",
       streaming: bodyStreaming,
       streamingPlaceholder: input.t("Ling Agent is thinking..."),
     });
@@ -90,9 +90,7 @@ export function projectNormalConversationFeedItems(input: {
       fileRefs: message.fileRefs,
     });
     const facts = workCell ? conversationTimelineItemsForModel(workCell) : [];
-    const timelineItems = messageItem.phase === "final" && facts.length > 0
-      ? [...facts, messageItem]
-      : [messageItem, ...facts];
+    const timelineItems = [messageItem, ...facts];
 
     return {
       message,

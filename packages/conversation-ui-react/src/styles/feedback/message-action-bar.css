@@ -19,6 +19,8 @@
 
 [data-conversation-message-row]:hover .message-action-bar-hover-focus,
 [data-conversation-message-row]:focus-within .message-action-bar-hover-focus,
+[data-conversation-action-owner]:hover > .message-action-bar-hover-focus,
+[data-conversation-action-owner]:focus-within > .message-action-bar-hover-focus,
 .message-action-bar-always,
 .message-action-bar-critical {
   opacity: 1;

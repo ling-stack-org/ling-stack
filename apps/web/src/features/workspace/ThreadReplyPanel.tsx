@@ -1,17 +1,20 @@
 import { CircleAlert, Copy, Loader2, Pencil, Reply, Send, X } from "lucide-react";
-import { createConversationTimelineMessageItem, type ConversationTimelineItem } from "@ling-stack/conversation-ui-core";
+import { projectTopicReplyTimeline } from "./topic-reply-timeline.js";
 import { useI18n } from "../../i18n.js";
 import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
 import { filterUsedMemoryEventsByResponse, UsedMemorySummary } from "../../shared/components/index.js";
 import { ConversationReplacementRetry, InlineMessageEditor, MessageActionBar, MessageRow, mountConversationTimeline } from "../../shared/conversation/index.js";
 import { Textarea } from "../../shared/ui/index.js";
-import type { ChannelMention, ChannelMessage, MemoryObject, UsedMemoryEvent } from "../../types.js";
+import type { ChannelMention, ChannelMessage, ConversationItemV1, ConversationReasoningSummaryRecord, MemoryObject, UsedMemoryEvent, UserInputTranscriptItemV1 } from "../../types.js";
 
 export function ThreadReplyPanel({
   cwd,
   rootMessage,
   threadId,
   replies,
+  conversationItems,
+  userInputs,
+  reasoningSummaries,
   teammates,
   memoryById,
   usedMemoryEvents,
@@ -38,6 +41,9 @@ export function ThreadReplyPanel({
   /** Verified topic LingThread.id. Empty while the topic snapshot is loading. */
   readonly threadId?: string;
   readonly replies: readonly ChannelMessage[];
+  readonly conversationItems: readonly ConversationItemV1[];
+  readonly userInputs: readonly UserInputTranscriptItemV1[];
+  readonly reasoningSummaries: readonly ConversationReasoningSummaryRecord[];
   readonly teammates: readonly ChannelMention[];
   readonly memoryById: ReadonlyMap<string, MemoryObject>;
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
@@ -64,25 +70,12 @@ export function ThreadReplyPanel({
   const latestOwnReplyId = [...replies].reverse().find((reply) => reply.authorType === "local-user" && !reply.pendingReplacement)?.id;
   const messages = [rootMessage, ...replies.filter((reply) => reply.id !== rootMessage.id)];
   const messageByTimelineId = new Map<string, ChannelMessage>();
-  const timelineItems: ConversationTimelineItem[] = messages.map((message, index) => {
-    const item = createConversationTimelineMessageItem({
-      id: `message:${message.authorType === "local-user" ? "user" : "agent"}:${message.id}`,
-      role: message.authorType === "local-user" ? "user" : "agent",
-      markdown: message.body,
-      revision: message.revision,
-      threadSequence: index * 1_000_000,
-      itemId: message.id,
-      status: message.status === "pending"
-        ? "pending"
-        : message.status === "blocked"
-          ? "blocked"
-          : message.status === "failed"
-            ? "failed"
-            : undefined,
-      fileRefs: message.fileRefs,
-    });
-    messageByTimelineId.set(item.id, message);
-    return item;
+  for (const message of messages) {
+    messageByTimelineId.set(`message:${message.authorType === "local-user" ? "user" : "agent"}:${message.id}`, message);
+  }
+  const timelineItems = projectTopicReplyTimeline({
+    workspaceId: rootMessage.workspaceId, channelId: rootMessage.channelId, threadId,
+    rootMessage, replies, conversationItems, userInputs, reasoningSummaries,
   });
   const timelineNode = mountConversationTimeline({
     snapshot: buildSurfaceTimelineSnapshot({
@@ -176,7 +169,7 @@ export function ThreadReplyPanel({
         </button>
       </div>
       <div className="thread-reply-list" aria-label={t("Replies")}>
-        {replies.length === 0 ? <div className="thread-empty-state">{t("No replies yet")}</div> : null}
+        {timelineItems.length === 1 ? <div className="thread-empty-state">{t("No replies yet")}</div> : null}
         {timelineNode}
       </div>
       <div className="thread-reply-composer">

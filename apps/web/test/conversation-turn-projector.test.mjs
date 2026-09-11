@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  channelTerminalReportItemRevisionSignature,
   projectMessageItem,
   projectMessageItems,
 } from "../src/lib/channel-conversation-items.ts";
@@ -197,6 +198,15 @@ test("turn projection keeps execution items out of ordinary assistant prose", ()
   assert.equal(turnView.blocks[2].status, "waiting_for_approval");
 });
 
+test("user-input anchors do not use the generic operation renderer or successful status fallback", () => {
+  const request = { ...userItem, id: "question-1", sequence: 3, kind: "user_input_request",
+    payload: { requestId: "request-1", requestVersion: 1 } };
+  const answer = { ...request, id: "answer-1", sequence: 4, kind: "user_input_answer",
+    payload: { requestId: "request-1", requestVersion: 1, answerId: "accepted-answer" } };
+  const projection = buildConversationTurnProjection(projectionInput({ conversationItems: [userItem, request, answer] }));
+  assert.equal(projection.turns.flatMap(turn => turn.blocks).some(block => block.kind === "conversation_item"), false);
+});
+
 test("turn projection does not duplicate items already represented by a work cell", () => {
   const operationCell = {
     id: "work-cell:turn:turn-1",
@@ -233,6 +243,56 @@ test("turn projection does not duplicate items already represented by a work cel
   assert.ok(turnView);
   assert.equal(turnView.blocks.some((block) => block.kind === "conversation_item"), false);
   assert.equal(turnView.blocks.some((block) => block.kind === "operation"), true);
+});
+
+test("Host-declared startup narration never becomes terminal prose when a workflow finishes", () => {
+  const narration = { ...assistantItem, payload: { ...assistantItem.payload,
+    body: "运行已开始: Engineer", presentationRole: "narration" } };
+  const workflow = { id: "workflow-narration", channelId: "channel-1", updatedAt: turn.updatedAt,
+    metadata: { sourceMessageId: userItem.id } };
+  const proposal = { id: "proposal-narration", channelId: "channel-1", sourceMessageId: userItem.id,
+    status: "accepted", linkedWorkflowId: workflow.id, updatedAt: turn.updatedAt };
+  for (const status of ["active", "succeeded", "failed", "cancelled", "blocked"]) {
+    const operationCell = { id: "cell-narration", sourceKind: "workflow", threadId: thread.id,
+      turnId: turn.id, runIds: [], mode: "completed", status, title: "Inspect", summary: "Finished",
+      stats: [], operationRows: [], agentSpans: [], agentBranches: [], terminalReportRows: [],
+      activeRows: [], groups: [], evidenceLinks: [], artifactStripItems: [], updatedAt: turn.updatedAt };
+    const input = projectionInput({
+      messages: [projectMessageItem(userItem, [], thread), projectMessageItem(narration, [], thread)],
+      conversationItems: [userItem, narration], proposals: [proposal], workflows: [workflow],
+      operationCellByWorkflowId: new Map([[workflow.id, operationCell]]),
+    });
+    for (const replay of [input, { ...input, conversationItems: [...input.conversationItems].reverse() }]) {
+      const result = buildConversationTurnProjection(replay).turns[0];
+      assert.deepEqual(result.coordinatorStartMessages.map((message) => message.id), [narration.id], status);
+      assert.deepEqual(result.coordinatorTerminalMessages, [], status);
+      assert.equal(result.blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal"), false, status);
+    }
+    const reply = { ...assistantItem, id: "item-result", payload: { ...assistantItem.payload,
+      body: "Engineer：结论保留原样。", presentationRole: "reply_result" } };
+    const withReply = buildConversationTurnProjection({ ...input,
+      messages: [...input.messages, projectMessageItem(reply, [], thread)],
+      conversationItems: [...input.conversationItems, reply],
+    }).turns[0];
+    assert.deepEqual(withReply.coordinatorStartMessages.map((message) => message.id), [narration.id], status);
+    assert.deepEqual(withReply.coordinatorTerminalMessages.map((message) => message.body), [reply.payload.body], status);
+  }
+});
+
+test("report refresh signature tracks committed canonical anchors and ignores prose or duplicate replay", () => {
+  const anchor = { ...toolCall, id: "result_terminal_report:report-refresh", kind: "terminal_report",
+    actorType: "system", actorId: undefined, payload: { reportId: "report-refresh", generation: 1,
+      sourceKind: "workflow", sourceId: "workflow-refresh", evidenceFingerprint: "fingerprint-1", outcomeStatus: "succeeded" } };
+  const signature = (items) => channelTerminalReportItemRevisionSignature(items, "channel-1");
+  assert.equal(signature([userItem, assistantItem]), "");
+  assert.equal(signature([{ ...anchor, status: "pending" }, { ...anchor, channelId: "another-channel" },
+    { ...anchor, visibility: "operator_only" }]), "");
+  const committed = signature([anchor]);
+  assert.notEqual(committed, "");
+  assert.equal(signature([assistantItem, anchor, userItem, { ...anchor }]), committed);
+  assert.equal(signature([{ ...anchor, payload: Object.fromEntries(Object.entries(anchor.payload).reverse()) }]), committed);
+  assert.notEqual(signature([{ ...anchor, revision: anchor.revision + 1 }]), committed);
+  assert.notEqual(signature([{ ...anchor, payload: { ...anchor.payload, generation: 2, evidenceFingerprint: "fingerprint-2" } }]), committed);
 });
 
 test("terminal agent prose remains separate from the inline terminal report", () => {

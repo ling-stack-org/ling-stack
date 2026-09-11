@@ -35,14 +35,26 @@ test("message projection does not repeat a typed error already narrated by a blo
   });
 });
 
-test("message projection preserves a legacy content-only failure as an error", () => {
+test("message projection keeps content-only failures as narrative without inventing typed errors", () => {
   assert.deepEqual(projectConversationMessagePresentation({
     content: "Provider timed out while generating the response.",
     status: "failed",
   }), {
-    body: "",
-    errorText: "Provider timed out while generating the response.",
+    body: "Provider timed out while generating the response.",
+    errorText: "",
   });
+});
+
+test("approval-blocked narration retains paragraphs and Markdown without becoming an error", () => {
+  const content = "I will inspect `todo.test.mjs`.\n\nThen I will run `node --test`.";
+  assert.deepEqual(projectConversationMessagePresentation({
+    content,
+    status: "blocked",
+  }), { body: content, errorText: "" });
+  assert.deepEqual(projectConversationMessagePresentation({
+    content,
+    runtimeFailed: true,
+  }), { body: content, errorText: "" });
 });
 
 test("message projection does not show an error for a successful message", () => {

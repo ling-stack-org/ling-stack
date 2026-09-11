@@ -79,7 +79,7 @@ test("normal conversation confirms an explicit full access selection before chan
   const state = createFullAccessState();
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
 
   const home = page.getByLabel("Conversation home");
   const permissionTrigger = home.getByRole("button", { name: /Selected permission preset/ });
@@ -121,7 +121,7 @@ test("normal conversation confirms an explicit full access selection before chan
     reason: "user_confirmed_full_access",
   });
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
   const nextHome = page.getByLabel("Conversation home");
   const nextPermissionTrigger = nextHome.getByRole("button", { name: /Selected permission preset/ });
   await selectFullAccess(page, nextPermissionTrigger);
@@ -139,7 +139,7 @@ test("normal conversation confirms an explicit full access selection before chan
   });
 
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Open recent conversation/ }).first().click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Open recent conversation/ }).first().click();
   const restoredConversation = page.getByLabel("Conversation page");
   const restoredPermissionTrigger = restoredConversation.getByRole("button", { name: /Selected permission preset/ });
   await selectFullAccess(page, restoredPermissionTrigger);
@@ -170,7 +170,7 @@ test("normal conversation confirms inherited full access on the first run", asyn
   };
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
 
   const home = page.getByLabel("Conversation home");
   const permissionTrigger = home.getByRole("button", { name: /Selected permission preset/ });
@@ -225,7 +225,7 @@ test("teammate private chat confirms an explicit full access selection before ch
   });
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Full Access Teammate", exact: true }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Full Access Teammate", exact: true }).click();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
 
   const chat = page.getByLabel("Private chat", { exact: true });
@@ -271,7 +271,7 @@ test("teammate private chat confirms an explicit full access selection before ch
   });
 
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Full Access Teammate", exact: true }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Full Access Teammate", exact: true }).click();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
   const restoredComposer = page.getByLabel("Private chat composer", { exact: true });
   const restoredPermissionTrigger = restoredComposer.getByRole("button", { name: /Selected permission preset/ });
@@ -287,7 +287,7 @@ test("teammate private chat confirms an explicit full access selection before ch
     reason: "user_confirmed_full_access",
   });
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Second Full Access Teammate" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Second Full Access Teammate" }).click();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
   const nextComposer = page.getByLabel("Private chat composer", { exact: true });
   const nextPermissionTrigger = nextComposer.getByRole("button", { name: /Selected permission preset/ });
@@ -334,7 +334,7 @@ test("teammate private chat confirms inherited full access on the first run", as
   });
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Inherited Full Access Teammate", exact: true }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Inherited Full Access Teammate", exact: true }).click();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
 
   const composer = page.getByLabel("Private chat composer", { exact: true });

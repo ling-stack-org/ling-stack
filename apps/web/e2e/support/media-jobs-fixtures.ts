@@ -124,7 +124,7 @@ export async function installMediaScenarioRoutes(page: Page, control: MediaRoute
 }
 
 export async function openMediaJobs(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /^(Media Production|媒体生产)$/u }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /^(Media Production|媒体生产)$/u }).click();
   await page.getByRole("radio", { name: /^(Generation tasks|生成任务)$/u }).click();
 }
 

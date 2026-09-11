@@ -90,7 +90,7 @@ test("T13-P.9EF.C teammate list failure stays out of Channel", async ({ page }) 
   await expect(panel).toContainText("Teammates could not be refreshed. The last loaded list is still shown.");
 
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button").filter({ hasText: "Engineering" }).first().click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button").filter({ hasText: "Engineering" }).first().click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await expect(page.getByText("Owned teammate list failure", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Teammates could not be refreshed. The last loaded list is still shown.", { exact: true })).toHaveCount(0);
@@ -190,7 +190,7 @@ test("T13-P.9EF.C a late private workspace load error stays with its teammate", 
   await teammateRow(panel, "Ling Engineer").getByRole("button", { name: "Open chat in app" }).click();
   await requestStarted.promise;
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button").filter({ hasText: "Ling Designer" }).first().click();
   await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   releaseFailure.resolve();
@@ -229,7 +229,7 @@ test("T13-P.9EF.C create failure remains in its draft progress flow", async ({ p
 
   await dialog.getByRole("button", { name: "Close" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Back to app" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button").filter({ hasText: "Engineering" }).first().click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button").filter({ hasText: "Engineering" }).first().click();
   await expect(page.getByText("Provider rejected the endpoint or model", { exact: false })).toHaveCount(0);
   expect(runtimeErrors).toEqual([]);
 });
@@ -269,7 +269,7 @@ async function prepareSurface(page: Page): Promise<void> {
 }
 
 async function openTeammateManagement(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
   const panel = page.getByLabel("Workspace teammates");
   await expect(panel).toBeVisible();

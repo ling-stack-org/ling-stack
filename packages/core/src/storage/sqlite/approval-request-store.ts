@@ -14,6 +14,8 @@ import { stringifyJson } from "./helpers.js";
 import { mapApprovalCommandRule, mapApprovalRequest } from "./approval-media-mappers.js";
 import { approvalCommandRuleSelectSql, approvalRequestSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
+import { runExecutionOwnerParameters, runExecutionOwnerSql } from "./run-execution-admission.js";
 
 export interface SqliteApprovalRequestStorePorts {
   readonly hasRun: (id: string) => boolean;
@@ -35,7 +37,22 @@ export class SqliteApprovalRequestStore {
     this.ports = ports;
   }
 
-  createApprovalRequest(input: CreateApprovalRequestInput, now: string): ApprovalRequest {
+  /** Keep the approval and its checkpoint atomic; never let a read-side check authorize the insert. */
+  createExecutionApprovalRequest(input: CreateApprovalRequestInput & { readonly runId: string }, sourceFence: RuntimeAttemptFenceV1, now: string): ApprovalRequest {
+    if (!input.runId || !sourceFence) throw new Error("Execution approval requires a captured Run/Attempt identity.");
+    this.context.database.exec("SAVEPOINT execution_approval_creation");
+    try {
+      const approval = this.createApprovalRequest(input, now, sourceFence);
+      this.context.database.exec("RELEASE execution_approval_creation");
+      return approval;
+    } catch (error) {
+      this.context.database.exec("ROLLBACK TO execution_approval_creation");
+      this.context.database.exec("RELEASE execution_approval_creation");
+      throw error;
+    }
+  }
+
+  createApprovalRequest(input: CreateApprovalRequestInput, now: string, sourceFence?: RuntimeAttemptFenceV1): ApprovalRequest {
     const runId = normalizeOptionalOwnerId(input.runId);
     const taskId = normalizeOptionalOwnerId(input.taskId);
     const mediaJobId = normalizeOptionalOwnerId(input.mediaJobId);
@@ -89,7 +106,7 @@ export class SqliteApprovalRequestStore {
       proposedCommandRule: input.proposedCommandRule,
     };
 
-    this.context.database
+    const inserted = this.context.database
       .prepare(`
         INSERT INTO approval_requests (
           id,
@@ -115,7 +132,10 @@ export class SqliteApprovalRequestStore {
           proposed_command_rule_json,
           decision_kind,
           decision_rule_id
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+        ${sourceFence ? `WHERE ${runExecutionOwnerSql} AND EXISTS (
+          SELECT 1 FROM run_sessions WHERE id = ? AND task_id = ? AND channel_id IS ?
+        )` : ""}
       `)
       .run(
         approval.id,
@@ -141,7 +161,11 @@ export class SqliteApprovalRequestStore {
         approval.proposedCommandRule ? stringifyJson(approval.proposedCommandRule) : null,
         null,
         null,
+        ...(sourceFence ? [...runExecutionOwnerParameters(runId!, sourceFence, false), runId!, taskId!, approval.channelId ?? null] : []),
       );
+    if (Number(inserted.changes) !== 1) {
+      throw Object.assign(new Error("Execution approval source is no longer current."), { code: "stale_run_execution" });
+    }
 
     const created = this.getApprovalRequest(approval.id);
     if (!created) {

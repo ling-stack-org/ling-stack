@@ -18,7 +18,7 @@ test("Sidebar sections preserve geometry while channels and teammates load", asy
   await delayCollectionReads(page, 2_500);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const channelHeaderStatus = navigation.locator('[data-sidebar-section="channels"] .sidebar-section-status');
   const teammateHeaderStatus = navigation.locator('[data-sidebar-section="teammates"] .sidebar-section-status');
   await expect(channelHeaderStatus.getByRole("status", { name: "Loading channels..." })).toHaveCount(0);
@@ -66,7 +66,7 @@ test("Sidebar disclosure supports keyboard, rapid reversal, stale state, and red
   await mockDaemon(page, state, { healthResponses: [false, false, false, false] });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const channelsToggle = navigation.getByRole("button", { name: "Channels" });
   await expect(navigation.getByRole("status", { name: "Channels: Stale" })).toBeVisible();
   await expect(navigation.getByRole("status", { name: "AI Teammates: Stale" })).toBeVisible();

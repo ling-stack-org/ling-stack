@@ -24,7 +24,7 @@ test("switches and persists every supported product locale without runtime fallb
   const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Interface preferences" }).click();
 
   const panel = page.locator("[data-ui2-interface-preferences]");
@@ -90,7 +90,7 @@ test("renders representative long and complex scripts in dark mode", async ({ pa
   const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Interface preferences" }).click();
 
   const productLanguage = page.locator("select[data-product-language]");
@@ -121,7 +121,7 @@ test("keeps the previous locale when workspace persistence fails", async ({ page
   state.workspaceSettings.locale = "en-US";
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Interface preferences" }).click();
 
   const productLanguage = page.locator("select[data-product-language]");

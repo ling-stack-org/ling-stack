@@ -143,7 +143,6 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
       .sort(compareByCreatedAtThenId);
     const allCoordinatorMessages = childMessages.filter((message) => isLingAgentMessage(message, input.lingAgentAuthorId));
     const coordinatorMessages = allCoordinatorMessages.filter((message) => !input.terminalReportResultItemIds?.has(message.id));
-    const { startMessages, terminalMessages } = splitCoordinatorMessages(coordinatorMessages, operation?.cell);
     const turnId = `conversation-turn:${sourceMessage.id}`;
     const turnConversationItems = conversationItemsForSource({
       sourceMessage,
@@ -151,6 +150,10 @@ export function buildConversationTurnProjection(input: BuildConversationTurnProj
       itemsByThreadId,
       rootMessages,
     });
+    const narrationItemIds = new Set(turnConversationItems
+      .filter((item) => item.kind === "assistant_message" && item.payload.presentationRole === "narration")
+      .map((item) => item.id));
+    const { startMessages, terminalMessages } = splitCoordinatorMessages(coordinatorMessages, operation?.cell, narrationItemIds);
     const blocks = buildTranscriptBlocks({
       turnId,
       proposals,
@@ -323,25 +326,20 @@ function findTurnOperation(input: {
 function splitCoordinatorMessages(
   messages: readonly ChannelMessage[],
   operationCell: ConversationWorkCellViewModel | undefined,
+  narrationItemIds: ReadonlySet<string>,
 ): { readonly startMessages: readonly ChannelMessage[]; readonly terminalMessages: readonly ChannelMessage[] } {
   if (messages.length === 0) {
     return { startMessages: [], terminalMessages: [] };
   }
 
-  if (operationCell && isTerminalOperationStatus(operationCell.status)) {
-    if (messages.length > 1) {
-      return {
-        startMessages: messages.slice(0, -1),
-        terminalMessages: messages.slice(-1),
-      };
-    }
-    return { startMessages: [], terminalMessages: messages };
-  }
-
-  if (operationCell && messages.length > 1) {
-    return {
-      startMessages: messages.slice(0, -1),
-      terminalMessages: messages.slice(-1),
+  if (operationCell && (isTerminalOperationStatus(operationCell.status) || messages.length > 1)) {
+    // A durable Host narration role survives workflow completion. Keep the
+    // existing fallback only among other coordinator messages; text never grants
+    // a startup acknowledgement ownership of the terminal result slot.
+    const terminalMessage = messages.filter((message) => !narrationItemIds.has(message.id)).at(-1);
+    if (terminalMessage) return {
+      startMessages: messages.filter((message) => message.id !== terminalMessage.id),
+      terminalMessages: [terminalMessage],
     };
   }
 
@@ -449,6 +447,8 @@ function buildConversationItemBlocks(
 ): readonly ConversationItemBlock[] {
   return items
     .filter((item) => item.kind !== "user_message" && item.kind !== "assistant_message")
+    // U1 anchors are not generic successful operations. U4 supplies the shared domain renderer.
+    .filter((item) => item.kind !== "user_input_request" && item.kind !== "user_input_answer")
     .filter((item) => !conversationItemCoveredByOperation(item, operation))
     .sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id))
     .map((item) => {
@@ -518,6 +518,9 @@ function conversationItemCoveredByOperation(
 
 function conversationItemDisplay(item: ConversationItemV1): { readonly title: string; readonly meta?: string; readonly detail?: string } {
   switch (item.kind) {
+    case "user_input_request":
+    case "user_input_answer":
+      throw new Error("User-input anchors require domain projection");
     case "tool_call":
       return { title: item.payload.title ?? item.payload.toolName, meta: item.payload.toolName, detail: item.payload.inputSummary };
     case "tool_result":

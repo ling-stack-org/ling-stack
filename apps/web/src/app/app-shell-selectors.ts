@@ -13,6 +13,7 @@ import type {
 import type { LocalTeammateDraft } from "../features/teammates/index.js";
 import { deriveChannelTasks } from "../lib/channel-artifacts.js";
 import { providerCompactModelLabel } from "../lib/providers.js";
+import { mergeWorkflowStepReadModel } from "../lib/workflow-narration-refresh.js";
 import type { ViewId } from "./view-types.js";
 
 export function selectDesktopComputerUseConversation(input: {
@@ -151,7 +152,7 @@ export function mergeWorkflowSteps(
 ): readonly ChannelWorkflowStep[] {
   const byId = new Map(current.map((step) => [step.id, step]));
   for (const step of next) {
-    byId.set(step.id, step);
+    byId.set(step.id, mergeWorkflowStepReadModel(byId.get(step.id), step));
   }
   return [...byId.values()].sort((left, right) => {
     const workflowOrder = right.updatedAt.localeCompare(left.updatedAt);

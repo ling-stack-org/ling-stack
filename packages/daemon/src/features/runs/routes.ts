@@ -294,15 +294,7 @@ export function handleCancelRun(
   storeRegistry: RunStoreRegistry,
   activeRuns: ActiveRunRegistry,
   runId: string,
-  ensureRunCancelled: (input: {
-    readonly store: RunStore;
-    readonly runId: string;
-    readonly taskId: string;
-    readonly startedAt?: string;
-    readonly reason: string;
-    readonly active: boolean;
-    readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
-  }) => { readonly event?: RunEventEnvelope },
+  ensureRunCancelled: typeof import("./cancellation.js").ensureRunCancelled,
 ): void {
   const store = storeRegistry.findStoreForRun(runId, url.searchParams.get("cwd") ?? undefined);
   const run = store?.getRun(runId);
@@ -329,22 +321,30 @@ export function handleCancelRun(
   }
 
   const activeRun = activeRuns.get(runId);
-  const cancelled = ensureRunCancelled({
-    store,
-    runId,
-    taskId: run.taskId,
-    startedAt: run.startedAt,
-    reason: "user_requested",
-    active: Boolean(activeRun),
-    streamEnvelope: activeRun?.streamEnvelope,
-  });
-  activeRun?.abortController.abort();
+  let cancelled: ReturnType<typeof ensureRunCancelled>;
+  try {
+    cancelled = ensureRunCancelled({
+      store,
+      runId,
+      taskId: run.taskId,
+      startedAt: run.startedAt,
+      reason: "user_requested",
+      active: Boolean(activeRun),
+      streamEnvelope: activeRun?.streamEnvelope,
+    });
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    writeJson(response, error.statusCode, { error: error.code, message: error.message });
+    return;
+  }
+  if (!cancelled.inputWait) activeRun?.abortController.abort();
 
   writeJson(response, 200, {
     cancelled: true,
-    active: Boolean(activeRun),
+    active: !cancelled.inputWait && Boolean(activeRun),
     run: store.getRun(runId),
     event: cancelled.event,
+    ...(cancelled.inputWait ? { inputWait: cancelled.inputWait } : {}),
   });
 }
 

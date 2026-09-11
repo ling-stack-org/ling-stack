@@ -6,7 +6,10 @@ import type {
   ConversationWorkCellRowDetailLine,
   ConversationWorkCellChangePreview,
   ConversationTurnRunRole,
+  ConversationRuntimeDiagnostic,
 } from "./work-cell-view-model.js";
+import type { CanonicalUserInputRequest, CanonicalUserInputAnswer, CanonicalUserInputUnavailable } from "./user-input-transcript-snapshot.js";
+import { isUserInputTimelinePayload } from "./user-input-timeline.js";
 
 /**
  * A typed, rebuildable presentation item. This is intentionally separate from the
@@ -16,6 +19,8 @@ import type {
 export type ConversationTimelineItemKind =
   | "userMessage"
   | "agentMessage"
+  | "userInputRequest"
+  | "userInputAnswer"
   | "reasoning"
   | "plan"
   | "commandExecution"
@@ -43,6 +48,21 @@ export type ConversationTimelineItemStatus =
   | "cancelled"
   | "succeeded";
 
+/** Host-validated affordances owned by a protocol/approval fact row. */
+export type ConversationProtocolAction =
+  | "open_details"
+  | "open_source"
+  | "create_task"
+  | "open_task"
+  | "open_run"
+  | "open_approval"
+  | "start_workflow"
+  | "advance_workflow"
+  | "cancel_workflow"
+  | "retry_step"
+  | "supersede_decision"
+  | "reject_decision";
+
 export interface ConversationTimelineItemBase {
   readonly id: string;
   readonly kind: ConversationTimelineItemKind;
@@ -51,6 +71,8 @@ export interface ConversationTimelineItemBase {
   readonly threadSequence: number;
   /** Stable sub-position inside one canonical item; zero for atomic items. */
   readonly partIndex: number;
+  /** Persisted run-event position; stable while action/narration revisions change. */
+  readonly sourceEventSequence?: number;
   readonly status?: ConversationTimelineItemStatus;
   readonly turnId?: string;
   readonly itemId?: string;
@@ -85,10 +107,28 @@ export interface ConversationTimelineOperationItemBase
 }
 
 export interface ConversationTimelineMessageItem extends ConversationTimelineItemBase {
+  /** Logical message identity stays stable when its canonical storage Item arrives. */
+  readonly logicalMessageId?: string;
   readonly kind: "userMessage" | "agentMessage";
   readonly markdown: string;
   readonly phase?: "commentary" | "final";
 }
+
+/** Hydrated question history, not prose, approval or execution evidence. */
+export interface ConversationTimelineUserInputRequestItem extends ConversationTimelineItemBase {
+  readonly kind: "userInputRequest";
+  readonly userInput: CanonicalUserInputRequest | CanonicalUserInputUnavailable;
+}
+
+/** A saved answer and its delivery state are distinct from task completion. */
+export interface ConversationTimelineUserInputAnswerItem extends ConversationTimelineItemBase {
+  readonly kind: "userInputAnswer";
+  readonly userInput: CanonicalUserInputAnswer | CanonicalUserInputUnavailable;
+}
+
+export type ConversationTimelineUserInputItem =
+  | ConversationTimelineUserInputRequestItem
+  | ConversationTimelineUserInputAnswerItem;
 
 /**
  * Renderer-facing activity metadata. The raw WorkCell row is intentionally not
@@ -143,6 +183,7 @@ export interface ConversationTimelineCommandExecutionItem extends ConversationTi
   readonly exitCode?: number;
   readonly durationMs?: number;
   readonly signal?: string;
+  readonly timedOut?: boolean;
 }
 
 export interface ConversationTimelineFileChangeItem extends ConversationTimelineOperationPayload {
@@ -162,7 +203,9 @@ export interface ConversationTimelineExplorationItem extends ConversationTimelin
   readonly kind: "exploration";
   readonly operation: "read" | "grep" | "find" | "ls" | "search";
   readonly targets: readonly ConversationOperationSourceRef[];
+  readonly inputSummary?: string;
   readonly resultSummary?: string;
+  readonly outputTruncated?: boolean;
 }
 
 export interface ConversationTimelineToolCallItem extends ConversationTimelineOperationPayload {
@@ -171,6 +214,7 @@ export interface ConversationTimelineToolCallItem extends ConversationTimelineOp
   readonly providerLabel?: string;
   readonly inputSummary?: string;
   readonly resultSummary?: string;
+  readonly outputTruncated?: boolean;
   readonly detailRef?: ConversationOperationSourceRef;
 }
 
@@ -181,6 +225,7 @@ export interface ConversationTimelineApprovalItem extends ConversationTimelineAc
   readonly approvalId: string;
   readonly actionId?: string;
   readonly decision?: "allowed" | "denied" | "expired" | "cancelled";
+  readonly availableActions?: readonly ConversationProtocolAction[];
 }
 
 /** Host-generated image evidence. User-provided images remain ConversationItems. */
@@ -202,6 +247,8 @@ export interface ConversationTimelineContextCompactionItem extends ConversationT
 /** The single Host-owned outcome row for an executed turn. */
 export interface ConversationTimelineTerminalReportItem extends ConversationTimelineActivityPayload {
   readonly kind: "terminalReport";
+  readonly language?: import("@ling-stack/localization").SupportedLocale;
+  readonly outcomeSourceRefs?: readonly ConversationOperationSourceRef[];
   readonly reportId: string;
   readonly generation: number;
   readonly resultItemId: string;
@@ -290,6 +337,7 @@ export interface ConversationTimelineTerminalReportRisk {
 export interface ConversationTimelineProtocolEventItem extends ConversationTimelineActivityPayload {
   readonly kind: "protocolEvent";
   readonly protocolKind: "decision" | "handoff" | "summary" | "workflow" | "workflow-step" | "task" | "run" | "state-transition";
+  readonly availableActions?: readonly ConversationProtocolAction[];
 }
 
 export interface ConversationTimelineDiagnosticItem extends ConversationTimelineActivityPayload {
@@ -298,7 +346,14 @@ export interface ConversationTimelineDiagnosticItem extends ConversationTimeline
   readonly code?: string;
   readonly summary?: string;
   readonly diagnosticRef?: ConversationOperationSourceRef;
+  /**
+   * Bounded Host-owned runtime diagnosis. Raw tool input/output is deliberately
+   * absent; the renderer receives only the stop reason and aggregate counts.
+   */
+  readonly runtimeDiagnostic?: ConversationTimelineRuntimeDiagnostic;
 }
+
+export type ConversationTimelineRuntimeDiagnostic = ConversationRuntimeDiagnostic;
 
 export type ConversationTimelineRowItem =
   | ConversationTimelineReasoningItem
@@ -393,6 +448,7 @@ export interface ConversationTimelineSubAgentItem extends ConversationTimelineIt
 
 export type ConversationTimelineItem =
   | ConversationTimelineMessageItem
+  | ConversationTimelineUserInputItem
   | ConversationTimelineRowItem
   | ConversationTimelineBatchItem
   | ConversationTimelineSubAgentItem;
@@ -813,6 +869,7 @@ function projectConversationTimelineRow(
       exitCode: command?.exitCode,
       durationMs: command?.durationMs,
       signal: command?.signal,
+      timedOut: command?.timedOut,
     };
   }
   if (semanticKind === "fileChange") {
@@ -838,7 +895,9 @@ function projectConversationTimelineRow(
       detailLines: row.detailLines,
       operation,
       targets: sourceRefs.filter((ref) => ref.kind === "file" || ref.kind === "path"),
-      resultSummary: row.description,
+      inputSummary: row.toolEvidence?.inputSummary ?? row.description,
+      resultSummary: row.toolEvidence?.outputText,
+      outputTruncated: row.toolEvidence?.outputTruncated ?? false,
     };
   }
   if (semanticKind === "approval") {
@@ -901,6 +960,22 @@ function projectConversationTimelineRow(
       meta: row.meta,
       detailLines: row.detailLines,
       summary: row.description ?? row.title,
+    };
+  }
+  if (semanticKind === "diagnostic" && execution?.actionType?.trim().toLowerCase() === "runtime_diagnostic") {
+    if (!operationBase) {
+      return blockedActivityForRow(row, options, "Runtime diagnostic is missing required action lineage.");
+    }
+    return {
+      ...operationBase,
+      kind: "diagnostic",
+      code: execution.runtimeDiagnostic?.code ?? "execution_loop_detected",
+      title: row.title,
+      description: row.description,
+      meta: row.meta,
+      detailLines: row.detailLines,
+      summary: row.description,
+      ...(execution.runtimeDiagnostic ? { runtimeDiagnostic: execution.runtimeDiagnostic } : {}),
     };
   }
   return {
@@ -1054,9 +1129,10 @@ function toolCallPayload(
     description: row.description,
     meta: row.meta,
     detailLines: row.detailLines,
-    toolName: execution?.actionType ?? row.title,
-    inputSummary: row.description,
-    resultSummary: row.meta,
+    toolName: row.toolEvidence?.toolName ?? execution?.actionType ?? row.title,
+    inputSummary: row.toolEvidence?.inputSummary,
+    resultSummary: row.toolEvidence?.outputText,
+    outputTruncated: row.toolEvidence?.outputTruncated ?? false,
     detailRef: safeSourceRefs(execution?.sourceRefs).find((ref) => ref.kind === "mcp_tool"),
   };
 }
@@ -1109,6 +1185,7 @@ function semanticKindForRow(
   if (actionType === "collab_agent_tool_call" || actionType === "spawn_agent" || actionType === "delegate_agent" || actionType === "agent_call") return "collabAgentToolCall";
   if (actionType === "image_view" || actionType === "image_viewer" || actionType === "image") return "imageView";
   if (actionType === "context_compaction" || actionType === "compaction") return "contextCompaction";
+  if (actionType === "runtime_diagnostic") return "diagnostic";
   if (command || actionType === "bash" || actionType === "shell" || actionType === "run_command" || actionType === "verify" || actionType?.startsWith("git_")) return "commandExecution";
 
   if (row.kind === "plan") return "plan";
@@ -1208,6 +1285,9 @@ export function isConversationTimelineItem(value: unknown): value is Conversatio
     return false;
   }
   switch (candidate.kind) {
+    case "userInputRequest":
+    case "userInputAnswer":
+      return isUserInputTimelinePayload(item.userInput, candidate.kind, item.itemId);
     case "userMessage":
     case "agentMessage":
       return typeof item.markdown === "string";
@@ -1310,6 +1390,8 @@ function isExplorationBatchPayload(value: unknown): boolean {
 const TIMELINE_ITEM_KINDS = new Set<ConversationTimelineItemKind>([
   "userMessage",
   "agentMessage",
+  "userInputRequest",
+  "userInputAnswer",
   "reasoning",
   "plan",
   "commandExecution",

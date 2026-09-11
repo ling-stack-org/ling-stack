@@ -199,7 +199,7 @@ function createEvidenceState(): MockState {
 }
 
 async function openTeammateProfile(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Icon Evidence Engineer" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Icon Evidence Engineer" }).click();
   const header = page.locator("[data-ui2-teammate-chat-header]");
   await expect(header).toBeVisible();
   if (await page.getByLabel("Private chat workspace dock").count() === 0) {
@@ -212,7 +212,7 @@ async function openTeammateProfile(page: Page): Promise<Locator> {
 }
 
 async function openSettingsProfile(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "User profile", exact: true }).click();
   const profile = page.locator("[data-ui2-settings-profile]");
   await expect(profile).toHaveAttribute("data-profile-state", "loaded");
@@ -220,7 +220,7 @@ async function openSettingsProfile(page: Page): Promise<Locator> {
 }
 
 async function openCouncilWorkspace(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace", exact: true }).click();
   const council = page.locator("[data-settings-workspace-tool='councils']");
   await expect(council.locator(".council-list-health-row").first()).toBeVisible();
@@ -230,7 +230,7 @@ async function openCouncilWorkspace(page: Page): Promise<Locator> {
 async function openPluginManager(page: Page): Promise<Locator> {
   const backToApp = page.getByRole("button", { name: "Back to app" });
   if (await backToApp.isVisible().catch(() => false)) await backToApp.click();
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   const plugins = page.locator(".plugin-manager-page .settings-plugin-manager");

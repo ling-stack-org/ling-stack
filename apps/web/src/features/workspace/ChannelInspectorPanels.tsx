@@ -119,17 +119,10 @@ export function ChannelInspector({
   runtimeLoading,
   runtimeActionWorkUnitId,
   selectedTask,
-  onSupersedeDecision,
-  onRejectDecision,
   onUpdateHandoffStatus,
-  onStartWorkflowFromHandoff,
   onStartTemplateWorkflow,
-  onOrchestrateWorkflow,
-  onCancelWorkflow,
   onStartWorkflowStep,
-  onRetryWorkflowStep,
   onUpdateWorkflowStepStatus,
-  onCreateTaskFromContextSummary,
   onRefreshRuntime,
   onCancelWorkUnit,
   onRetryWorkUnit,
@@ -168,17 +161,10 @@ export function ChannelInspector({
   readonly runtimeLoading: boolean;
   readonly runtimeActionWorkUnitId: string;
   readonly selectedTask: Task | undefined;
-  readonly onSupersedeDecision: (decision: ChannelDecision) => void;
-  readonly onRejectDecision: (decision: ChannelDecision) => void;
   readonly onUpdateHandoffStatus: (handoff: ChannelHandoff, status: ChannelHandoffStatus) => void;
-  readonly onStartWorkflowFromHandoff: (handoff: ChannelHandoff) => void;
   readonly onStartTemplateWorkflow: () => void;
-  readonly onOrchestrateWorkflow: (workflow: ChannelWorkflow) => void;
-  readonly onCancelWorkflow: (workflow: ChannelWorkflow) => void;
   readonly onStartWorkflowStep: (step: ChannelWorkflowStep, mode: ChannelWorkflowStepStartMode) => void;
-  readonly onRetryWorkflowStep: (step: ChannelWorkflowStep) => void;
   readonly onUpdateWorkflowStepStatus: (step: ChannelWorkflowStep, status: "skipped" | "cancelled") => void;
-  readonly onCreateTaskFromContextSummary: (summary: ChannelContextSummary) => void;
   readonly onRefreshRuntime: () => void;
   readonly onCancelWorkUnit: (workUnitId: string) => void;
   readonly onRetryWorkUnit: (workUnitId: string) => void;
@@ -245,10 +231,6 @@ export function ChannelInspector({
                 <strong>{decision.title}</strong>
                 <small>{decision.status} · {decision.decision}</small>
               </span>
-              <div className="activity-action-row">
-                <button className="secondary-button compact-button" type="button" onClick={() => onSupersedeDecision(decision)}>{t("Supersede")}</button>
-                <button className="secondary-button compact-button" type="button" onClick={() => onRejectDecision(decision)}>{t("Reject")}</button>
-              </div>
             </div>
           )}
         />
@@ -264,14 +246,6 @@ export function ChannelInspector({
                 <small>{handoff.status} · {handoff.reason}</small>
               </span>
               <div className="activity-action-row">
-                <button
-                  className="secondary-button compact-button"
-                  type="button"
-                  onClick={() => onStartWorkflowFromHandoff(handoff)}
-                  disabled={workflows.some((workflow) => workflow.sourceHandoffId === handoff.id)}
-                >
-                  {workflows.some((workflow) => workflow.sourceHandoffId === handoff.id) ? t("Workflow started") : t("Start workflow")}
-                </button>
                 <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "accepted")}>{t("Accept")}</button>
                 <button className="secondary-button compact-button" type="button" onClick={() => onUpdateHandoffStatus(handoff, "completed")}>{t("Complete")}</button>
               </div>
@@ -318,12 +292,8 @@ export function ChannelInspector({
                 attachments={attachments}
                 linkPreviews={linkPreviews}
                 runningWorkflowStepId={runningWorkflowStepId}
-                orchestrating={orchestratingWorkflowId === workflow.id}
                 operationErrors={workflowErrors}
-                onOrchestrateWorkflow={onOrchestrateWorkflow}
-                onCancelWorkflow={onCancelWorkflow}
                 onStartWorkflowStep={onStartWorkflowStep}
-                onRetryWorkflowStep={onRetryWorkflowStep}
                 onUpdateWorkflowStepStatus={onUpdateWorkflowStepStatus}
               />
             )}
@@ -353,7 +323,6 @@ export function ChannelInspector({
               <div className="protocol-row compact" key={summary.id}>
                 <strong>{summary.targetId}</strong>
                 <small>{summary.summary}</small>
-                <button className="secondary-button compact-button" type="button" onClick={() => onCreateTaskFromContextSummary(summary)}>{t("Create task")}</button>
               </div>
             )}
           />

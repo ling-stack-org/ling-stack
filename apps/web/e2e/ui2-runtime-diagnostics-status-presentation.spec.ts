@@ -283,7 +283,7 @@ async function openRuntimeDiagnostics(page: Page, modeName = "Runtime"): Promise
 async function openChannelContextPanelLocalized(page: Page): Promise<void> {
   const channelFeed = page.getByLabel(/Channel message feed|频道消息列表/u);
   if (!await channelFeed.isVisible().catch(() => false)) {
-    await page.getByLabel(/Ling Stack navigation|Ling Stack 导航/u)
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
       .getByRole("button", { name: "Engineering", exact: true })
       .click();
     await expect(channelFeed).toBeVisible();

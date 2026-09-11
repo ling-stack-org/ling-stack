@@ -1,7 +1,10 @@
 import type { ReactNode } from "react";
 import type {
   ConversationTimelineItem,
+  ConversationProtocolAction,
   ConversationTimelineSubAgentItem,
+  ConversationTimelineUserInputItem,
+  ConversationTimelineScopeKind,
 } from "@ling-stack/conversation-ui-core";
 import { ConversationCommandBatch } from "../blocks/ConversationCommandBatch.js";
 import { ConversationExplorationBatch } from "../blocks/ConversationExplorationBatch.js";
@@ -15,17 +18,27 @@ import { ConversationTimelineToolRenderer } from "./ConversationTimelineToolRend
 import { ConversationTimelineApprovalRenderer } from "./ConversationTimelineApprovalRenderer.js";
 import { ConversationTimelineImageRenderer } from "./ConversationTimelineImageRenderer.js";
 import { ConversationTimelineCompactionRenderer } from "./ConversationTimelineCompactionRenderer.js";
-import { ConversationTimelineBlockedRenderer } from "./ConversationTimelineBlockedRenderer.js";
+import { ConversationTimelineDiagnosticRenderer } from "./ConversationTimelineDiagnosticRenderer.js";
 import { ConversationTimelineProtocolRenderer } from "./ConversationTimelineProtocolRenderer.js";
 import { ConversationTimelineTerminalReportRenderer } from "./ConversationTimelineTerminalReportRenderer.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
+import { ConversationTimelineUserInputRenderer } from "./ConversationTimelineUserInputRenderer.js";
+import type { ConversationTimelineBatchDisclosure } from "./conversation-timeline-display-model.js";
 
 export interface ConversationTimelineRenderContext {
+  readonly scopeKind?: ConversationTimelineScopeKind;
+  readonly renderUserInputAvatar?: (item: ConversationTimelineUserInputItem) => ReactNode;
   readonly cwd?: string;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
+  readonly onInvokeProtocolAction?: (
+    item: Extract<ConversationTimelineItem, { kind: "protocolEvent" | "approval" }>,
+    action: ConversationProtocolAction,
+  ) => void | Promise<void>;
   readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode) => ReactNode;
   readonly renderSubAgent: (item: ConversationTimelineSubAgentItem) => ReactNode;
   readonly depth: 0 | 1;
+  readonly batchDisclosure?: ConversationTimelineBatchDisclosure;
+  readonly onBatchExpandedChange?: (expanded: boolean) => void;
 }
 
 type ConversationTimelineItemRenderer = (
@@ -40,6 +53,8 @@ type ConversationTimelineItemRenderer = (
 const RENDERERS = {
   userMessage: renderMessageItem,
   agentMessage: renderMessageItem,
+  userInputRequest: renderUserInputItem,
+  userInputAnswer: renderUserInputItem,
   reasoning: renderReasoningItem,
   plan: renderPlanItem,
   commandExecution: renderCommandItem,
@@ -75,7 +90,13 @@ function renderMessageItem(
 }
 
 function renderReasoningItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "reasoning" ? <ConversationTimelineReasoningRenderer key={item.id} item={item} depth={context.depth} /> : null;
+  return item.kind === "reasoning" ? <ConversationTimelineReasoningRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
+}
+
+function renderUserInputItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
+  return item.kind === "userInputRequest" || item.kind === "userInputAnswer"
+    ? <ConversationTimelineUserInputRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth}
+        scopeKind={context.scopeKind} renderAvatar={context.renderUserInputAvatar} /> : null;
 }
 
 function renderPlanItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
@@ -107,7 +128,7 @@ function renderCollabAgentToolItem(item: ConversationTimelineItem, context: Conv
 }
 
 function renderApprovalItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "approval" ? <ConversationTimelineApprovalRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} /> : null;
+  return item.kind === "approval" ? <ConversationTimelineApprovalRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} onInvokeProtocolAction={context.onInvokeProtocolAction} depth={context.depth} /> : null;
 }
 
 function renderImageItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
@@ -123,12 +144,12 @@ function renderTerminalReportItem(item: ConversationTimelineItem, context: Conve
 }
 
 function renderDiagnosticItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "diagnostic" ? <ConversationTimelineBlockedRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
+  return item.kind === "diagnostic" ? <ConversationTimelineDiagnosticRenderer key={item.id} item={item} cwd={context.cwd} depth={context.depth} /> : null;
 }
 
 function renderProtocolEventItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
   return item.kind === "protocolEvent"
-    ? <ConversationTimelineProtocolRenderer key={item.id} item={item} depth={context.depth} />
+    ? <ConversationTimelineProtocolRenderer key={item.id} item={item} onInvokeProtocolAction={context.onInvokeProtocolAction} depth={context.depth} />
     : null;
 }
 
@@ -136,7 +157,7 @@ function renderCommandBatchItem(
   item: ConversationTimelineItem,
   context: ConversationTimelineRenderContext,
 ): ReactNode {
-  if (item.kind !== "commandBatch") return null;
+  if (item.kind !== "commandBatch" || !context.batchDisclosure || !context.onBatchExpandedChange) return null;
   return (
     <ConversationCommandBatch
       key={item.id}
@@ -144,12 +165,8 @@ function renderCommandBatchItem(
       actionIds={item.actionIds}
       revision={item.revision}
       depth={context.depth}
-      renderCommand={(command) => (
-        <div key={command.id} className="conversation-command-batch-child">
-          {command.leadingItems?.map((leading) => renderConversationTimelineItem(leading, context))}
-          <ConversationTimelineCommandRenderer item={command} depth={context.depth} />
-        </div>
-      )}
+      disclosure={context.batchDisclosure}
+      onExpandedChange={context.onBatchExpandedChange}
     />
   );
 }
@@ -158,7 +175,7 @@ function renderExplorationBatchItem(
   item: ConversationTimelineItem,
   context: ConversationTimelineRenderContext,
 ): ReactNode {
-  if (item.kind !== "explorationBatch") return null;
+  if (item.kind !== "explorationBatch" || !context.batchDisclosure || !context.onBatchExpandedChange) return null;
   return (
     <ConversationExplorationBatch
       key={item.id}
@@ -166,9 +183,8 @@ function renderExplorationBatchItem(
       actionIds={item.actionIds}
       revision={item.revision}
       depth={context.depth}
-      renderItem={(child) => (
-        <ConversationTimelineExplorationRenderer key={child.id} item={child} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} />
-      )}
+      disclosure={context.batchDisclosure}
+      onExpandedChange={context.onBatchExpandedChange}
     />
   );
 }

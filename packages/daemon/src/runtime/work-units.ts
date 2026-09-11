@@ -288,7 +288,10 @@ export function transitionWorkUnitTerminal(
 
 export function transitionWorkUnitCancelled(store: RuntimeWorkUnitStore, workUnitId: string, attemptId: string, reason: string): void {
   const current = store.getWorkUnit(workUnitId);
-  if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
+  const attempt = store.getWorkUnitAttempt(attemptId);
+  if (!current || !attempt || attempt.workUnitId !== workUnitId || current.activeAttemptId !== attempt.id
+    || !["created", "started", "waiting_for_approval", "cancelling"].includes(attempt.status)
+    || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
     return;
   }
   const now = new Date().toISOString();
@@ -296,7 +299,8 @@ export function transitionWorkUnitCancelled(store: RuntimeWorkUnitStore, workUni
     current.status === "cancelling"
       ? { ok: true as const, from: current.status, to: current.status }
       : store.transitionWorkUnitStatus({
-          workUnitId,
+          // Fence the first logical mutation, not only the terminal transition below.
+          ...toRuntimeAttemptFence(attempt),
           expectedStatus: current.status,
           event: "cancel",
           actor: "local-user",

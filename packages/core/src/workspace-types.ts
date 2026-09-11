@@ -35,6 +35,7 @@ export type TaskStatus =
   | "todo"
   | "claimed"
   | "running"
+  | "waiting_for_input"
   | "blocked"
   | "review"
   | "done"
@@ -45,6 +46,7 @@ export const taskStatuses: readonly TaskStatus[] = [
   "todo",
   "claimed",
   "running",
+  "waiting_for_input",
   "blocked",
   "review",
   "done",
@@ -1733,6 +1735,42 @@ export interface CreateChannelDecisionInput {
   readonly createdBy: string;
 }
 
+export type CreateSupersedingChannelDecisionInput = CreateChannelDecisionInput & {
+  readonly supersedesDecisionId: string;
+};
+
+export interface CreateOrReuseSupersedingChannelDecisionResult {
+  readonly decision: ChannelDecision;
+  readonly reused: boolean;
+}
+
+export class ChannelDecisionSupersessionConflictError extends Error {
+  readonly code = "decision_supersession_conflict";
+
+  constructor(
+    readonly supersededDecisionId: string,
+    readonly successorDecisionId?: string,
+  ) {
+    super(successorDecisionId
+      ? `Channel decision ${supersededDecisionId} already has a different successor: ${successorDecisionId}`
+      : `Channel decision is not active and cannot be superseded: ${supersededDecisionId}`);
+    this.name = "ChannelDecisionSupersessionConflictError";
+  }
+}
+
+export class ChannelDecisionStatusConflictError extends Error {
+  readonly code = "decision_status_conflict";
+
+  constructor(
+    readonly decisionId: string,
+    readonly expectedStatus: ChannelDecisionStatus,
+    readonly actualStatus: ChannelDecisionStatus,
+  ) {
+    super(`Channel decision ${decisionId} must be ${expectedStatus}, but is ${actualStatus}`);
+    this.name = "ChannelDecisionStatusConflictError";
+  }
+}
+
 export interface UpdateChannelDecisionInput {
   readonly title?: string;
   readonly decision?: string;
@@ -1740,6 +1778,8 @@ export interface UpdateChannelDecisionInput {
   readonly alternatives?: readonly string[];
   readonly status?: ChannelDecisionStatus;
 }
+
+export type RejectActiveChannelDecisionInput = Omit<UpdateChannelDecisionInput, "status">;
 
 export interface ListChannelDecisionsOptions {
   readonly channelId: string;
@@ -1874,6 +1914,7 @@ export type ChannelWorkflowStatus =
   | "ready"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -1895,6 +1936,7 @@ export type ChannelWorkflowStepStatus =
   | "claimed"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -2416,6 +2458,19 @@ export interface CreateChannelWorkflowInput {
   readonly status?: ChannelWorkflowStatus;
   readonly createdBy: string;
   readonly metadata?: ChannelWorkflowMetadata;
+}
+
+export interface CreateOrReuseChannelHandoffWorkflowInput {
+  readonly channelId: string;
+  readonly sourceHandoffId: string;
+  readonly workflow: Omit<CreateChannelWorkflowInput, "channelId" | "sourceHandoffId">;
+  readonly workflowStep: Omit<CreateChannelWorkflowStepInput, "workflowId" | "sourceHandoffId">;
+}
+
+export interface CreateOrReuseChannelHandoffWorkflowResult {
+  readonly workflow: ChannelWorkflow;
+  readonly workflowStep: ChannelWorkflowStep;
+  readonly reused: boolean;
 }
 
 export interface UpdateChannelWorkflowInput {

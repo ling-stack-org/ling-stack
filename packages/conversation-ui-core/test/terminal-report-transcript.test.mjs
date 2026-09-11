@@ -79,7 +79,110 @@ test("terminal result preserves detailed sections and source lineage", () => {
   assert.equal(result.participants[0].displayName, "Engineer");
   assert.equal(result.artifacts[0].kind, "diff");
   assert.equal(result.risks[0].status, "mitigated");
-  assert.equal(result.references[0].id, "run-1");
+  assert.equal(result.references.length, 0);
+  assert.equal(result.sourceRefs.some((reference) => reference.kind === "run" && reference.id === "run-1"), true);
+});
+
+test("terminal result hides internal artifacts and their conversation references", () => {
+  const detailed = report("report-visible-artifacts", 1, "result-visible-artifacts", "Visible result only");
+  detailed.report.artifacts = [
+    {
+      id: "artifact-user-file",
+      kind: "file",
+      title: "result.ts",
+      path: "src/result.ts",
+      sourceRefs: [{ kind: "file", id: "src/result.ts", label: "result.ts", path: "src/result.ts", visibility: "conversation" }],
+    },
+    {
+      id: "artifact-metadata",
+      kind: "other",
+      title: "Generated file metadata: result.ts",
+      path: "run-1/generated-file-metadata.txt",
+      sourceRefs: [],
+    },
+    {
+      id: "artifact-action-preview",
+      kind: "other",
+      title: "Action preview: bash",
+      path: "run-1/actions/approval-1/preview.json",
+      sourceRefs: [],
+    },
+  ];
+  detailed.report.references = [
+    { kind: "run", id: "run-1", label: "Ling Agent run", visibility: "conversation" },
+    { kind: "artifact", id: "artifact-user-file", label: "result.ts", path: "src/result.ts", visibility: "conversation" },
+    { kind: "artifact", id: "artifact-metadata", label: "Generated file metadata: result.ts", visibility: "conversation" },
+    { kind: "artifact", id: "artifact-action-preview", label: "Action preview: bash", visibility: "conversation" },
+  ];
+
+  const projection = projectCanonicalConversationTimeline({
+    scope,
+    sourceSequence: 1,
+    sourceRevision: "visible-artifacts",
+    items: [item("result-visible-artifacts", 1, "terminal_report", {
+      reportId: "report-visible-artifacts",
+      generation: 1,
+      sourceKind: "run",
+      sourceId: "run-1",
+      evidenceFingerprint: "fp-1",
+      outcomeStatus: "succeeded",
+    })],
+    actions: [],
+    turnRuns: [],
+    terminalReports: [detailed],
+  });
+
+  const result = projection.items[0];
+  assert.equal(result.kind, "terminalReport");
+  assert.equal(result.artifactCount, 1);
+  assert.deepEqual(result.artifacts.map((artifact) => artifact.id), ["artifact-user-file"]);
+  assert.deepEqual(result.references.map((reference) => reference.id), ["artifact-user-file"]);
+  assert.equal(result.sourceRefs.some((reference) => reference.kind === "run" && reference.id === "run-1"), true);
+});
+
+test("terminal result hides internal run artifact paths from visible changes", () => {
+  const detailed = report("report-visible-changes", 1, "result-visible-changes", "Visible workspace changes only");
+  detailed.report.changes = [
+    {
+      id: "change-mixed",
+      kind: "code",
+      title: "Updated parser",
+      summary: "Changed the workspace file and captured internal evidence",
+      paths: ["src/parser.ts", "run-1/001-read-content.md"],
+      sourceRefs: [{ kind: "run", id: "run-1", visibility: "folded_evidence" }],
+    },
+    {
+      id: "change-internal-only",
+      kind: "other",
+      title: "Captured execution output",
+      summary: "Internal evidence storage only",
+      paths: ["run-1/unified-exec-stdout.txt"],
+      sourceRefs: [{ kind: "run", id: "run-1", visibility: "folded_evidence" }],
+    },
+  ];
+
+  const projection = projectCanonicalConversationTimeline({
+    scope,
+    sourceSequence: 1,
+    sourceRevision: "visible-changes",
+    items: [item("result-visible-changes", 1, "terminal_report", {
+      reportId: "report-visible-changes",
+      generation: 1,
+      sourceKind: "run",
+      sourceId: "run-1",
+      evidenceFingerprint: "fp-1",
+      outcomeStatus: "succeeded",
+    })],
+    actions: [],
+    turnRuns: [],
+    terminalReports: [detailed],
+  });
+
+  const result = projection.items[0];
+  assert.equal(result.kind, "terminalReport");
+  assert.equal(result.changeCount, 1);
+  assert.deepEqual(result.changes.map((change) => change.id), ["change-mixed"]);
+  assert.deepEqual(result.changes[0].paths, ["src/parser.ts"]);
 });
 const item = (id, sequence, kind, payload) => ({
   id, workspaceId: "workspace-1", threadId: "thread-1", turnId: "turn-1", sequence,
@@ -87,19 +190,37 @@ const item = (id, sequence, kind, payload) => ({
   revision: 0, payload, domainRefs: [],
 });
 
-test("execute turn owns one terminal result and suppresses provider execution summary", () => {
+test("terminal result ref normalization never downgrades duplicate privacy markers", () => {
+  const privateRef = { kind: "file", id: "src/shared.ts", path: "src/shared.ts", visibility: "folded_evidence", sensitivity: "private" };
+  const publicRef = { ...privateRef, visibility: "conversation", sensitivity: "normal" };
+  for (const refs of [[privateRef, publicRef], [publicRef, privateRef]]) {
+    const detailed = report("report-policy", 1, "result-policy");
+    detailed.report.references = refs;
+    const projection = projectCanonicalConversationTimeline({
+      scope, sourceSequence: 1, sourceRevision: "privacy", actions: [], turnRuns: [],
+      items: [item("result-policy", 1, "terminal_report", { reportId: "report-policy", generation: 1,
+        sourceKind: "run", sourceId: "run-1", evidenceFingerprint: "fp-1", outcomeStatus: "succeeded" })],
+      terminalReports: [detailed],
+    });
+    const ref = projection.items[0].references.find((entry) => entry.id === privateRef.id);
+    assert.equal(ref.visibility, "folded_evidence");
+    assert.equal(ref.sensitivity, "private");
+  }
+});
+
+test("execute turn keeps the agent final and appends one terminal fact result", () => {
   const projection = projectCanonicalConversationTimeline({
     scope, sourceSequence: 4, sourceRevision: "r1",
     items: [
       item("user-1", 1, "user_message", { body: "run it", format: "markdown" }),
-      item("summary-1", 2, "assistant_message", { body: "I finished it", format: "markdown", streaming: false, deliveryStatus: "ready", presentationRole: "execution_summary" }),
+      item("summary-1", 2, "assistant_message", { body: "I finished it", format: "markdown", streaming: false, deliveryStatus: "ready", presentationRole: "reply_result" }),
       item("result-1", 3, "terminal_report", { reportId: "report-1", generation: 1, sourceKind: "run", sourceId: "run-1", evidenceFingerprint: "fp-1", outcomeStatus: "succeeded" }),
     ],
     actions: [], turnRuns: [], terminalReports: [report("report-1", 1, "result-1")],
   });
-  assert.deepEqual(projection.items.map((entry) => entry.kind), ["userMessage", "terminalReport"]);
-  assert.equal(projection.items[1].resultItemId, "result-1");
-  assert.deepEqual(fingerprintConversationTimeline(projection.items).rendererKeys, ["message.document", "result.terminal"]);
+  assert.deepEqual(projection.items.map((entry) => entry.kind), ["userMessage", "agentMessage", "terminalReport"]);
+  assert.equal(projection.items[2].resultItemId, "result-1");
+  assert.deepEqual(fingerprintConversationTimeline(projection.items).rendererKeys, ["message.document", "message.document", "result.terminal"]);
 });
 
 test("only highest committed generation is visible", () => {

@@ -4,6 +4,7 @@ import {
   conversationModeKinds,
   lingThreadKinds,
   permissionPresets,
+  redactSecrets,
   sessionPermissionModes,
   type ConversationModeKind,
   type GoalEvidenceRef,
@@ -47,6 +48,10 @@ import { listExecutionActions } from "./execution-actions.js";
 import { hydrateProposedPlanSourceState, hydrateProposedPlanSourceStates } from "./proposed-plan-source-state.js";
 import { handleLingThreadHardDelete } from "./thread-hard-delete-route.js";
 import type { RunRequest } from "./schemas.js";
+import { prepareNormalConversationInput } from "../conversations/normal-conversation-input.js";
+import { saveNormalConversationPreparedRequest } from "../conversations/normal-conversation-prepared-request.js";
+import { renderNormalConversationRunPrompt } from "../conversations/normal-conversation-context.js";
+import { createNormalConversationThreadFork, prepareNormalConversationForkRun } from "../conversations/normal-conversation-fork.js";
 
 export type LingThreadRoute =
   | { readonly kind: "detail"; readonly threadId: string }
@@ -937,6 +942,8 @@ function createLingThreadFork(input: {
   readonly created: boolean;
 } {
   const { store, sourceThread, body, now } = input;
+  if (sourceThread.kind === "conversation") return createNormalConversationThreadFork({ ...input,
+    resolveAnchor: () => resolveThreadForkAnchor(store, sourceThread, body) });
   if (sourceThread.status === "archived" || sourceThread.archivedAt) {
     throw new HttpError(409, "source_thread_archived", `Cannot fork archived thread: ${sourceThread.id}`);
   }
@@ -1096,7 +1103,7 @@ function createLingThreadForkRunRequest(input: {
   if (!userIdempotencyKey) {
     throw new HttpError(400, "fork_run_idempotency_required", "Fork-and-run requires an idempotency key.");
   }
-  const anchor = resolveThreadForkAnchor(store, sourceThread, body);
+  const anchor = sourceThread.kind === "conversation" ? {} : resolveThreadForkAnchor(store, sourceThread, body);
   const operationKey = buildForkRunOperationKey({
     sourceThreadId: sourceThread.id,
     sourceTurnId: anchor.sourceTurn?.id,
@@ -1112,6 +1119,12 @@ function createLingThreadForkRunRequest(input: {
     },
     now,
   });
+  if (sourceThread.kind === "conversation") {
+    const prepared = prepareNormalConversationForkRun({ store, fork, instruction, operationKey, now,
+      buildRequest: childTurn => buildForkRunRunRequest({ cwd, sourceThread, sourceRun: fork.sourceRun,
+        childThread: fork.childThread, childTurn, body, instruction, operationKey }) });
+    return { sourceTurn: fork.sourceTurn, sourceRun: fork.sourceRun, childThread: fork.childThread, ...prepared };
+  }
   const childTurn = createOrReuseForkRunChildTurn({
     store,
     childThread: fork.childThread,
@@ -1234,7 +1247,8 @@ function buildForkRunRunRequest(input: {
     systemPrompt: readSnapshotString(requestSnapshot, "systemPrompt"),
     appendSystemPrompt: readSnapshotStringArray(requestSnapshot, "appendSystemPrompt"),
     agentDir: readSnapshotString(requestSnapshot, "agentDir"),
-    contextProjection: readSnapshotContextProjection(requestSnapshot),
+    // A cross-thread fork must not masquerade as its parent's local context source.
+    contextProjection: input.childThread.kind === "conversation" ? undefined : readSnapshotContextProjection(requestSnapshot),
   };
 }
 
@@ -1535,7 +1549,8 @@ function buildLingThreadResumeContext(input: {
   const providerPresetId = readSnapshotString(requestSnapshot, "providerPresetId") ?? sourceRun.providerPresetId;
   const inlineProvider = providerPresetId
     ? undefined
-    : isRecord(requestSnapshot.provider) ? requestSnapshot.provider as unknown as PiRunnerProviderConfig : undefined;
+    : isRecord(requestSnapshot.provider) ? requestSnapshot.provider as unknown as PiRunnerProviderConfig
+    : isRecord(sourceRun.providerSnapshot) ? sourceRun.providerSnapshot as unknown as PiRunnerProviderConfig : undefined;
   if (!providerPresetId && !inlineProvider) {
     throw new HttpError(400, "resume_snapshot_unavailable", "Cannot resume thread because the source run has no reusable provider snapshot.");
   }
@@ -1550,23 +1565,35 @@ function buildLingThreadResumeContext(input: {
     includeArtifacts: isRecord(body) ? readOptionalBoolean(body, "includeArtifacts") ?? false : false,
     warnings,
   });
-  return {
-    sourceRun,
-    context,
-    runRequest: {
+  const normalInput = input.mode === "execute" && thread.kind === "conversation" && !thread.channelId
+    ? prepareNormalConversationInput({ store, thread, message: instruction, title: `Resume: ${thread.title}`,
+        attachmentIds: [], fileRefs: [], sourceTurnId: anchor.sourceTurn?.id ?? store.getLingTurnForRun(sourceRun.id)?.id,
+        turnKind: "manual_followup", idempotencyKey, now: new Date().toISOString() })
+    : undefined;
+  if (normalInput?.replayRequest) return { sourceRun, context, runRequest: normalInput.replayRequest };
+  const runRequest: RunRequest = {
       workspaceCwd: readSnapshotString(requestSnapshot, "workspaceCwd") ?? sourceRun.cwd,
       cwd: readSnapshotString(requestSnapshot, "cwd") ?? sourceRun.cwd,
       providerPresetId,
       provider: inlineProvider,
+      threadId: normalInput ? thread.id : undefined,
+      turnId: normalInput?.turn.id,
+      sourceMessageId: normalInput?.turn.sourceItemId,
+      createdByActor: normalInput ? "local-user" : undefined,
       teammateId: readSnapshotString(requestSnapshot, "teammateId") ?? sourceRun.teammateId,
       runnerId: readSnapshotString(requestSnapshot, "runnerId"),
       requestedSkillId: readSnapshotString(requestSnapshot, "requestedSkillId") ?? sourceRun.selectedSkillId,
       skipProviderPreflight: readSnapshotBoolean(requestSnapshot, "skipProviderPreflight") ?? false,
-      idempotencyKey,
+      idempotencyKey: normalInput?.idempotencyKey ?? idempotencyKey,
       task: {
         id: `manual_resume_${randomUUID()}`,
-        title: `Resume: ${thread.title}`,
-        prompt: context.contextText,
+        title: normalInput ? redactSecrets(`Resume: ${thread.title}`) as string : `Resume: ${thread.title}`,
+        prompt: normalInput ? renderNormalConversationRunPrompt(normalInput.context, [instruction,
+          `Resume source Run: ${sourceRun.id}`,
+          `Artifact ids: ${context.includedArtifactIds.join(", ") || "none"}`,
+          `Pending action ids: ${context.pendingActionIds.join(", ") || "none"}`,
+          "This is a new continuation. Re-check external state before repeating side effects; no additional permissions are granted.",
+        ].join("\n\n")) : context.contextText,
         channelId:
           thread.channelId ??
           readSnapshotString(taskSnapshot, "channelId") ??
@@ -1582,11 +1609,14 @@ function buildLingThreadResumeContext(input: {
       systemPrompt: readSnapshotString(requestSnapshot, "systemPrompt"),
       appendSystemPrompt: readSnapshotStringArray(requestSnapshot, "appendSystemPrompt"),
       agentDir: readSnapshotString(requestSnapshot, "agentDir"),
-      contextProjection: readSnapshotContextProjection(requestSnapshot),
+      contextProjection: normalInput?.context.projection ?? (thread.kind === "conversation" ? undefined : readSnapshotContextProjection(requestSnapshot)),
+      normalConversationContext: normalInput?.context,
+      normalConversationAcceptedSnapshotId: normalInput?.acceptedSnapshotId,
       parentRunId: sourceRun.id,
       continuationReason: "manual_resume",
-    },
   };
+  return { sourceRun, context, runRequest: normalInput
+    ? saveNormalConversationPreparedRequest(store, runRequest, new Date().toISOString()) : runRequest };
 }
 
 function resolveThreadResumeAnchor(store: RunStore, thread: LingThread, body: unknown): ThreadResumeAnchor {

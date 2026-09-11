@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { HostCapabilityCallV1 } from "@ling-stack/contracts";
 import type { ApplyPatchFormat, PatchPlan, PatchSummary } from "./patch/index.js";
 import type { RunTool } from "./approval-policy.js";
 import type { UnifiedExecEnvironmentSummary } from "./exec/unified-exec-types.js";
@@ -20,6 +21,7 @@ export type ApprovalActionType =
   | "provider_change"
   | "workflow_step"
   | "mcp_tool_call"
+  | "host_capability"
   | "runtime_permission_request";
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
@@ -134,6 +136,7 @@ export type MediaCostApprovalPayload =
     };
 
 export type ApprovalPayload =
+  | ({ readonly type: "host_capability"; readonly cwd: string } & HostCapabilityCallV1)
   | {
       readonly type: "file_write";
       readonly path: string;
@@ -239,7 +242,7 @@ export interface ApprovalRequest {
   readonly createdAt: string;
   readonly expiresAt?: string;
   readonly resolvedAt?: string;
-  readonly resolvedBy?: "local-user";
+  readonly resolvedBy?: "local-user" | "system-reviewer";
   readonly decisionReason?: string;
   readonly availableDecisions?: readonly ApprovalDecisionKind[];
   readonly proposedCommandRule?: ApprovalCommandRuleProposal;

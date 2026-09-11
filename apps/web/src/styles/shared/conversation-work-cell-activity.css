@@ -98,7 +98,7 @@
 .conversation-timeline-activity-brain {
   width: 14px;
   height: 14px;
-  color: var(--conversation-text-muted);
+  color: inherit;
 }
 
 .conversation-timeline-activity-copy {
@@ -158,13 +158,13 @@
   transform: rotate(180deg);
 }
 
-.conversation-timeline-activity-main:hover,
-.conversation-timeline-activity-main:focus-visible {
+button.conversation-timeline-activity-main:not(:disabled):hover,
+button.conversation-timeline-activity-main:not(:disabled):focus-visible {
   color: var(--conversation-text-strong);
 }
 
-.conversation-timeline-activity-main:hover .conversation-timeline-activity-copy strong,
-.conversation-timeline-activity-main:focus-visible .conversation-timeline-activity-copy strong {
+button.conversation-timeline-activity-main:not(:disabled):hover .conversation-timeline-activity-copy strong,
+button.conversation-timeline-activity-main:not(:disabled):focus-visible .conversation-timeline-activity-copy strong {
   color: var(--conversation-text-strong);
 }
 
@@ -176,13 +176,13 @@
   animation: none;
 }
 
-.conversation-timeline-activity.status-succeeded .conversation-timeline-activity-main > svg {
-  color: var(--success);
-}
-
 .conversation-timeline-activity.status-failed .conversation-timeline-activity-main > svg,
 .conversation-timeline-activity.status-blocked .conversation-timeline-activity-main > svg {
   color: var(--danger);
+}
+
+.conversation-timeline-activity.kind-approval:is(.status-waiting, .status-pending) .conversation-timeline-activity-main > svg {
+  color: var(--conversation-status-waiting);
 }
 
 .conversation-timeline-activity-detail {
@@ -372,6 +372,41 @@ button.conversation-timeline-file-ref {
   font-size: 12px;
 }
 
+.conversation-timeline-diagnostic-detail {
+  display: grid;
+  gap: 8px;
+  max-width: min(720px, 100%);
+  color: var(--conversation-text-soft);
+  font-size: 12px;
+}
+
+.conversation-timeline-diagnostic-detail p,
+.conversation-timeline-diagnostic-detail dl,
+.conversation-timeline-diagnostic-detail dd {
+  margin: 0;
+}
+
+.conversation-timeline-diagnostic-detail dl {
+  display: grid;
+  gap: 4px;
+}
+
+.conversation-timeline-diagnostic-detail dl > div {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.35fr) minmax(0, 1fr);
+  gap: 10px;
+}
+
+.conversation-timeline-diagnostic-detail dt,
+.conversation-timeline-diagnostic-detail small {
+  color: var(--conversation-text-muted);
+}
+
+.conversation-timeline-diagnostic-detail dd {
+  color: var(--conversation-text-strong);
+  overflow-wrap: anywhere;
+}
+
 @media (hover: none) {
   .conversation-timeline-activity-chevron {
     opacity: 1;
@@ -384,6 +419,10 @@ button.conversation-timeline-file-ref {
   }
 
   .conversation-timeline-activity-chevron {
+    transition: none;
+  }
+
+  .conversation-timeline-sub-agent-chevron {
     transition: none;
   }
 }
@@ -409,8 +448,21 @@ button.conversation-timeline-file-ref {
   display: flex;
   align-items: center;
   gap: 7px;
+  width: 100%;
   min-width: 0;
   min-height: 20px;
+  padding: 0;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.conversation-timeline-sub-agent-head:disabled {
+  cursor: default;
 }
 
 .conversation-timeline-sub-agent-icon {
@@ -420,16 +472,21 @@ button.conversation-timeline-file-ref {
   flex: 0 0 auto;
   width: 18px;
   height: 18px;
-  color: var(--info);
+  color: inherit;
 }
 
 .conversation-timeline-sub-agent-head strong {
   min-width: 0;
   overflow: hidden;
-  color: var(--info);
+  color: var(--conversation-text-muted);
   font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-timeline-sub-agent-head:not(:disabled):is(:hover, :focus-visible),
+.conversation-timeline-sub-agent-head:not(:disabled):is(:hover, :focus-visible) strong {
+  color: var(--conversation-text-strong);
 }
 
 .conversation-timeline-sub-agent-status {
@@ -442,6 +499,20 @@ button.conversation-timeline-file-ref {
   font-size: 11px;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.conversation-timeline-sub-agent-chevron {
+  flex: 0 0 auto;
+  margin-left: auto;
+  transition: transform var(--ling-motion-fast) var(--ling-ease-standard);
+}
+
+.conversation-timeline-sub-agent.expanded .conversation-timeline-sub-agent-chevron {
+  transform: rotate(180deg);
+}
+
+.conversation-timeline-sub-agent-detail {
+  min-width: 0;
 }
 
 .conversation-timeline-sub-agent.lifecycle-blocked,
@@ -663,11 +734,11 @@ button.conversation-timeline-file-ref {
   animation: conversation-active-shimmer 4600ms linear infinite;
 }
 
-.conversation-work-cell-locate-pulse {
+.conversation-timeline-locate-pulse {
   animation: conversation-locate-pulse var(--ling-motion-attention) var(--ling-ease-standard) 1;
 }
 
-.conversation-work-cell.completed.conversation-work-cell-locate-pulse {
+.conversation-work-cell.completed.conversation-timeline-locate-pulse {
   animation: conversation-locate-pulse var(--ling-motion-attention) var(--ling-ease-standard) 1;
 }
 
@@ -1232,7 +1303,7 @@ button.conversation-timeline-file-ref {
     background: none;
     color: var(--conversation-text-strong);
   }
-  .conversation-work-cell-locate-pulse {
+  .conversation-timeline-locate-pulse {
     animation: none;
   }
   .conversation-work-cell-row-toggle,

@@ -5,15 +5,32 @@ import type {
   ChannelConversationTurnResponse,
   ConversationDomainRef,
   ConversationItemV1,
+  ConversationReasoningSummaryRecord,
   ChannelMessage,
   ConversationGeneratedMedia,
+  TurnContextAssignment,
+  UserInputTranscriptItemV1,
 } from "@ling-stack/contracts";
 import { projectConversationItemToChannelMessage } from "@ling-stack/contracts";
+import {
+  isUserInputAnchor,
+  projectCanonicalConversationTimeline,
+  reconcileCanonicalUserInputs,
+  type CanonicalConversationItem,
+  type CanonicalReasoningSummaryRecord,
+  type CanonicalTranscriptScope,
+  type ConversationTimelineItem,
+} from "@ling-stack/conversation-ui-core";
 
 export interface ChannelConversationMessagePage {
+  readonly workspaceId: string;
+  readonly threadId: string;
   readonly messages: readonly ChannelMessage[];
   /** Canonical items retained for typed transcript presentation. */
   readonly conversationItems: readonly ConversationItemV1[];
+  readonly turnContextAssignments: readonly TurnContextAssignment[];
+  readonly userInputs?: readonly UserInputTranscriptItemV1[];
+  readonly reasoningSummaries: readonly ConversationReasoningSummaryRecord[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly hasMore: boolean;
   readonly nextBeforeSequence?: number;
@@ -23,14 +40,94 @@ export function projectChannelConversationItemPage(
   response: ChannelConversationItemPageResponse,
 ): ChannelConversationMessagePage {
   return {
+    workspaceId: response.thread.workspaceId,
+    threadId: response.thread.id,
     messages: projectMessageItems(response.items, response.decorations, response.thread),
     conversationItems: response.items,
+    turnContextAssignments: response.turnContextAssignments,
+    ...(response.userInputs !== undefined ? { userInputs: response.userInputs } : {}),
+    reasoningSummaries: response.reasoningSummaries ?? [],
     generatedMedia: response.generatedMedia,
     hasMore: response.hasMore,
     ...(response.nextBeforeSequence !== undefined
       ? { nextBeforeSequence: response.nextBeforeSequence }
       : {}),
   };
+}
+
+/** Host cursors describe the selected raw sequence window, before visibility filtering. */
+export function mergeChannelUserInputPage(
+  current: ChannelConversationMessagePage | undefined,
+  incoming: ChannelConversationMessagePage,
+  beforeSequence?: number,
+): ChannelConversationMessagePage {
+  if (current?.workspaceId !== incoming.workspaceId || current?.threadId !== incoming.threadId) current = undefined;
+  const hydration = reconcileCanonicalUserInputs({
+    scope: incoming,
+    current: current ? { items: current.conversationItems, userInputs: current.userInputs } : undefined,
+    incoming: { items: incoming.conversationItems, userInputs: incoming.userInputs },
+    mode: incoming.hasMore && incoming.nextBeforeSequence === undefined ? "page"
+      : { fromSequence: incoming.nextBeforeSequence ?? 0, beforeSequence },
+  });
+  return {
+    ...incoming,
+    // The cache retains outside-window anchors for status comparison on paging.
+    // Consumers still choose the visible window; cached hydration is not a row.
+    conversationItems: [...incoming.conversationItems.filter(item => !isUserInputAnchor(item)), ...hydration.items]
+      .sort((a, b) => a.sequence - b.sequence || a.id.localeCompare(b.id)),
+    turnContextAssignments: mergeTurnContextAssignments(
+      current?.turnContextAssignments ?? [],
+      incoming.turnContextAssignments,
+    ),
+    userInputs: hydration.userInputs,
+    reasoningSummaries: mergeReasoningSummaries(current?.reasoningSummaries ?? [], incoming.reasoningSummaries ?? []),
+  };
+}
+
+function mergeReasoningSummaries(
+  current: readonly ConversationReasoningSummaryRecord[],
+  incoming: readonly ConversationReasoningSummaryRecord[],
+): readonly ConversationReasoningSummaryRecord[] {
+  const byId = new Map(current.map((summary) => [summary.id, summary]));
+  for (const summary of incoming) {
+    const existing = byId.get(summary.id);
+    if (!existing || summary.revision >= existing.revision) byId.set(summary.id, summary);
+  }
+  return [...byId.values()].sort((left, right) =>
+    left.eventSequence - right.eventSequence || left.id.localeCompare(right.id));
+}
+
+/** Latest effective assignment wins; equal/older late pages cannot move a Turn backwards. */
+export function mergeTurnContextAssignments(
+  current: readonly TurnContextAssignment[],
+  incoming: readonly TurnContextAssignment[],
+): readonly TurnContextAssignment[] {
+  const byTurnId = new Map(current.map((assignment) => [assignment.turnId, assignment]));
+  for (const assignment of incoming) {
+    const existing = byTurnId.get(assignment.turnId);
+    if (!existing || assignment.revision > existing.revision) {
+      byTurnId.set(assignment.turnId, assignment);
+    }
+  }
+  return [...byTurnId.values()].sort((left, right) =>
+    left.turnId.localeCompare(right.turnId) || left.revision - right.revision
+  );
+}
+
+/** Display batching consumes only committed Host assignments; provisional context stays atomic. */
+export function buildCommittedContextSegmentLookup(
+  items: readonly ConversationItemV1[],
+  assignments: readonly TurnContextAssignment[],
+): ReadonlyMap<string, string> {
+  const committedByTurnId = new Map(
+    mergeTurnContextAssignments([], assignments)
+      .filter((assignment) => assignment.status === "committed")
+      .map((assignment) => [assignment.turnId, assignment.segmentId]),
+  );
+  return new Map(items.flatMap((item) => {
+    const segmentId = item.turnId ? committedByTurnId.get(item.turnId) : undefined;
+    return segmentId ? [[item.id, segmentId] as const] : [];
+  }));
 }
 
 export function projectChannelConversationTurn(response: ChannelConversationTurnResponse): {
@@ -91,6 +188,130 @@ export function projectMessageItems(
   return items
     .filter((item) => item.kind === "user_message" || item.kind === "assistant_message" || item.kind === "system_event")
     .map((item) => projectMessageItemWithDecoration(item, decorationsByItemId.get(item.id), thread));
+}
+
+/** Delivery readiness is not a final answer; the canonical role owns that distinction. */
+export function channelNarrationItemIds(
+  items: readonly ConversationItemV1[],
+  scope: { readonly workspaceId?: string; readonly channelId: string; readonly threadId: string },
+): ReadonlySet<string> {
+  return new Set(items.filter((item) =>
+    item.workspaceId === scope.workspaceId && item.channelId === scope.channelId && item.threadId === scope.threadId
+    && item.kind === "assistant_message" && item.payload.presentationRole === "narration",
+  ).map((item) => item.id));
+}
+
+/** Invalidate the report read model from committed Host result anchors, not prose. */
+export function channelTerminalReportItemRevisionSignature(
+  items: readonly ConversationItemV1[],
+  channelId: string,
+): string {
+  return [...new Set(items.flatMap((item) => {
+    if (item.channelId !== channelId || item.kind !== "terminal_report" || item.status !== "committed"
+      || (item.visibility !== "channel" && item.visibility !== "thread_participants")) return [];
+    const payload = item.payload;
+    return [JSON.stringify([item.id, item.threadId, item.turnId, item.revision, payload.reportId,
+      payload.generation, payload.sourceKind, payload.sourceId, payload.evidenceFingerprint, payload.outcomeStatus])];
+  }))]
+    .sort()
+    .join("\n");
+}
+
+/**
+ * Projects canonical envelopes that were not consumed by an ExecutionAction or
+ * another Host-owned domain record. The shared projector deliberately turns
+ * unverified fact envelopes into blocked diagnostics; this adapter must never
+ * upgrade model/tool text into command, file, approval, or tool evidence.
+ */
+export function projectUncoveredChannelConversationItems(
+  items: readonly ConversationItemV1[],
+  surface: Extract<CanonicalTranscriptScope["surface"], "channel_root" | "topic" | "branch">,
+): readonly ConversationTimelineItem[] {
+  const scopedItems = items.filter((item) =>
+    item.kind !== "user_message" &&
+    item.kind !== "assistant_message" &&
+    item.kind !== "user_input_request" &&
+    item.kind !== "user_input_answer"
+  );
+  if (scopedItems.length === 0) return [];
+
+  const byScope = new Map<string, ConversationItemV1[]>();
+  for (const item of scopedItems) {
+    const key = JSON.stringify([item.workspaceId, item.threadId]);
+    byScope.set(key, [...(byScope.get(key) ?? []), item]);
+  }
+
+  return [...byScope.values()].flatMap((group) => {
+    const first = group[0]!;
+    const sourceSequence = group.reduce((max, item) => Math.max(max, item.sequence), 0);
+    return projectCanonicalConversationTimeline({
+      scope: {
+        surface,
+        workspaceId: first.workspaceId,
+        threadId: first.threadId,
+        depth: 0,
+      },
+      items: group,
+      actions: [],
+      turnRuns: [],
+      sourceSequence,
+      sourceRevision: group
+        .map((item) => `${item.id}:${item.revision}`)
+        .sort()
+        .join("|"),
+    }).items;
+  });
+}
+
+/** Project only provider-safe reasoning rows; message and action rendering stay owned by the channel feed. */
+export function projectChannelReasoningSummaryItems(
+  items: readonly ConversationItemV1[],
+  summaries: readonly ConversationReasoningSummaryRecord[],
+  surface: Extract<CanonicalTranscriptScope["surface"], "channel_root" | "topic" | "branch">,
+): readonly ConversationTimelineItem[] {
+  const first = items[0];
+  if (!first || summaries.length === 0) return [];
+  const scopedItems = items
+    .filter((item) => item.workspaceId === first.workspaceId && item.threadId === first.threadId)
+    .map(toCanonicalChannelItem);
+  const scopedSummaries: CanonicalReasoningSummaryRecord[] = summaries
+    .filter((summary) => summary.workspaceId === first.workspaceId && summary.threadId === first.threadId)
+    .map((summary) => ({ ...summary, sourceRefs: summary.sourceRefs.map((ref) => ({ ...ref })) }));
+  if (scopedSummaries.length === 0) return [];
+  return projectCanonicalConversationTimeline({
+    scope: {
+      surface,
+      workspaceId: first.workspaceId,
+      threadId: first.threadId,
+      depth: 0,
+    },
+    items: scopedItems,
+    actions: [],
+    reasoningSummaries: scopedSummaries,
+    turnRuns: [],
+    sourceSequence: scopedItems.reduce((max, item) => Math.max(max, item.sequence), 0),
+    sourceRevision: scopedSummaries
+      .map((summary) => `${summary.id}:${summary.revision}`)
+      .sort()
+      .join("|"),
+  }).items.filter((item) => item.kind === "reasoning");
+}
+
+function toCanonicalChannelItem(item: ConversationItemV1): CanonicalConversationItem {
+  return {
+    id: item.id,
+    workspaceId: item.workspaceId,
+    threadId: item.threadId,
+    ...(item.turnId ? { turnId: item.turnId } : {}),
+    sequence: item.sequence,
+    kind: item.kind,
+    revision: item.revision,
+    status: item.status,
+    actorType: item.actorType,
+    actorId: item.actorId,
+    payload: item.payload,
+    domainRefs: item.domainRefs,
+  };
 }
 
 export function projectMessageItem(

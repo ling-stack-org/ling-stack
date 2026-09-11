@@ -16,7 +16,7 @@ export async function expectMessageFrameContained(row: Locator): Promise<void> {
       }
     };
 
-    const group = root.closest<HTMLElement>(".message-group, .message-feed-virtual-row");
+    const group = root.closest<HTMLElement>(".message-group, [data-conversation-focus-block][data-conversation-row-key]");
     if (group && group !== root) {
       record("bubble outside message group", group, root);
     }

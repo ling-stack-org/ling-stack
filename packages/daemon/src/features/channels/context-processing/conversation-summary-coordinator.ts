@@ -77,19 +77,50 @@ export interface ConversationSummaryPlan {
   readonly summaryTokenBudget: number;
 }
 
-export type CoordinateConversationSummaryResult =
-  | { readonly status: "not_needed" }
-  | { readonly status: "generator_unavailable"; readonly plan: ConversationSummaryPlan }
-  | { readonly status: "generation_failed"; readonly plan: ConversationSummaryPlan; readonly error: unknown }
-  | { readonly status: "checkpoint_failed"; readonly plan: ConversationSummaryPlan; readonly commit: CommitConversationContextSummaryResult; readonly error: unknown }
-  | { readonly status: "completed"; readonly plan: ConversationSummaryPlan; readonly commit: CommitConversationContextSummaryResult; readonly checkpoint?: CompactionCheckpoint };
-
-export function planConversationContextSummary(input: {
+export interface ConversationSummaryPlanningInput {
   readonly store: RunStore;
   readonly sourceItemId: string;
   readonly inputBudgetTokens: number;
   readonly policy?: ConversationSummaryPolicy;
-}): ConversationSummaryPlan | undefined {
+}
+
+export interface ConversationSummaryUnavailablePrefix {
+  readonly status: "no_eligible_prefix";
+  readonly trigger: "soft" | "hard";
+  readonly sourceItemId: string;
+  readonly threadId: string;
+  readonly segmentId: string;
+  readonly inputBudgetTokens: number;
+  readonly estimatedProjectionTokens: number;
+}
+
+/** Maintenance assessment only; neither threshold nor projection size proves final request capacity. */
+export type ConversationSummaryAssessment =
+  | { readonly status: "not_needed" }
+  | ConversationSummaryUnavailablePrefix
+  | { readonly status: "ready"; readonly plan: ConversationSummaryPlan };
+
+type CommittedSummary = Extract<CommitConversationContextSummaryResult, { readonly status: "committed" }>;
+type DiscardedSummary = Extract<CommitConversationContextSummaryResult, { readonly status: "discarded_stale" }>;
+
+export type CoordinateConversationSummaryResult =
+  | { readonly status: "not_needed" }
+  | ConversationSummaryUnavailablePrefix
+  | { readonly status: "generator_unavailable"; readonly plan: ConversationSummaryPlan }
+  | { readonly status: "cancelled"; readonly plan: ConversationSummaryPlan; readonly error: unknown }
+  | { readonly status: "generation_failed"; readonly plan: ConversationSummaryPlan; readonly error: unknown }
+  | { readonly status: "source_conflict"; readonly plan: ConversationSummaryPlan; readonly commit: DiscardedSummary }
+  | { readonly status: "checkpoint_failed"; readonly plan: ConversationSummaryPlan; readonly commit: CommittedSummary; readonly error: unknown }
+  | { readonly status: "completed"; readonly plan: ConversationSummaryPlan; readonly commit: CommittedSummary; readonly checkpoint: CompactionCheckpoint };
+
+/** Plan-only maintenance query. Missing work is not a not_needed or safe-to-dispatch verdict. */
+export function planConversationContextSummary(input: ConversationSummaryPlanningInput): ConversationSummaryPlan | undefined {
+  const assessment = assessConversationContextSummary(input);
+  return assessment.status === "ready" ? assessment.plan : undefined;
+}
+
+/** Preserve why planning cannot produce work; never drop a protected tail to fabricate a prefix. */
+export function assessConversationContextSummary(input: ConversationSummaryPlanningInput): ConversationSummaryAssessment {
   const policy = input.policy ?? DEFAULT_CONVERSATION_SUMMARY_POLICY;
   assertValidPolicy(policy);
   if (!Number.isSafeInteger(input.inputBudgetTokens) || input.inputBudgetTokens < 1_024) {
@@ -118,11 +149,19 @@ export function planConversationContextSummary(input: {
   const hard = estimatedProjectionTokens > input.inputBudgetTokens * policy.hardInputBudgetRatio;
   const soft = completedTurnIds.length >= policy.softCompletedTurnCount
     || estimatedRawTokens > input.inputBudgetTokens * policy.softInputBudgetRatio;
-  if (!hard && !soft) return undefined;
+  if (!hard && !soft) return { status: "not_needed" };
 
   const rawTailTurnIds = new Set(completedTurnIds.slice(-policy.rawTailCompletedTurnCount));
   const sourceItems = eligibleItems.filter((item) => item.turnId && !rawTailTurnIds.has(item.turnId));
-  if (sourceItems.length === 0) return undefined;
+  if (sourceItems.length === 0) return {
+    status: "no_eligible_prefix",
+    trigger: hard ? "hard" : "soft",
+    sourceItemId: input.sourceItemId,
+    threadId: projection.metadata.threadId,
+    segmentId: projection.metadata.segmentId,
+    inputBudgetTokens: input.inputBudgetTokens,
+    estimatedProjectionTokens,
+  };
   const sourceFence = sourceItems.map((item) => buildSourceFence(input.store, item));
   const sourceRefs = uniqueDomainRefs([
     ...(activeSummary ? [{ type: "context_summary" as const, id: activeSummary.id }] : []),
@@ -139,7 +178,7 @@ export function planConversationContextSummary(input: {
     128,
     Math.floor(input.inputBudgetTokens * policy.targetInputBudgetRatio) - estimatedRawTailTokens,
   );
-  return {
+  const plan: ConversationSummaryPlan = {
     trigger: hard ? "hard" : "soft",
     projection,
     ...(activeSummary ? { activeSummary } : {}),
@@ -157,6 +196,7 @@ export function planConversationContextSummary(input: {
     chunkTokenBudget: Math.max(1_024, Math.floor(input.inputBudgetTokens * policy.generationChunkBudgetRatio)),
     summaryTokenBudget,
   };
+  return { status: "ready", plan };
 }
 
 export async function coordinateConversationContextSummary(input: {
@@ -167,11 +207,11 @@ export async function coordinateConversationContextSummary(input: {
   readonly policy?: ConversationSummaryPolicy;
   readonly now?: string;
 }): Promise<CoordinateConversationSummaryResult> {
-  const plan = planConversationContextSummary(input);
-  if (!plan) return { status: "not_needed" };
+  const assessment = assessConversationContextSummary(input);
+  if (assessment.status !== "ready") return assessment;
   return executeConversationSummaryPlan({
     store: input.store,
-    plan,
+    plan: assessment.plan,
     generate: input.generate,
     now: input.now,
   });
@@ -185,6 +225,7 @@ export async function executeConversationSummaryPlan(input: {
   readonly signal?: AbortSignal;
 }): Promise<CoordinateConversationSummaryResult> {
   const { plan } = input;
+  if (input.signal?.aborted) return { status: "cancelled", plan, error: summaryAbortReason(input.signal) };
   if (!input.generate) return { status: "generator_unavailable", plan };
   let draft = normalizeDraft(draftFromSummary(plan.activeSummary), plan.summaryTokenBudget);
   const chunks = chunkSummaryItems(plan.sourceItems, plan.chunkTokenBudget);
@@ -210,7 +251,7 @@ export async function executeConversationSummaryPlan(input: {
     }
     throwIfSummaryAborted(input.signal);
   } catch (error) {
-    return { status: "generation_failed", plan, error };
+    return { status: input.signal?.aborted ? "cancelled" : "generation_failed", plan, error };
   }
   const commit = input.store.commitConversationContextSummary({
     threadId: plan.projection.metadata.threadId,
@@ -230,7 +271,7 @@ export async function executeConversationSummaryPlan(input: {
     expectedActiveSummaryId: plan.activeSummary?.id ?? null,
     sourceFence: plan.sourceFence,
   }, input.now ?? new Date().toISOString());
-  if (commit.status !== "committed") return { status: "completed", plan, commit };
+  if (commit.status !== "committed") return { status: "source_conflict", plan, commit };
   const sourceTurnIds = [...new Set(plan.sourceItems.flatMap((item) => item.turnId ? [item.turnId] : []))];
   let checkpoint: CompactionCheckpoint;
   try {
@@ -260,7 +301,11 @@ export async function executeConversationSummaryPlan(input: {
 }
 
 function throwIfSummaryAborted(signal: AbortSignal | undefined): void {
-  if (signal?.aborted) throw signal.reason ?? new Error("Conversation summary generation aborted.");
+  if (signal?.aborted) throw summaryAbortReason(signal);
+}
+
+function summaryAbortReason(signal: AbortSignal): unknown {
+  return signal.reason ?? new Error("Conversation summary generation aborted.");
 }
 
 function hashSummaryContent(summary: ConversationContextSummary): string {
@@ -348,6 +393,10 @@ export function renderSummaryItem(item: ConversationItemV1, tokenBudget?: number
 
 function itemText(item: ConversationItemV1): string {
   switch (item.kind) {
+    case "user_input_request":
+    case "user_input_answer":
+      // U1 stores references only; U2 must hydrate content under consumer scope.
+      return "[User-input reference only; not answer content, permission or execution evidence.]";
     case "user_message":
     case "assistant_message":
       return item.payload.body;

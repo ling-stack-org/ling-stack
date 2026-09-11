@@ -7,10 +7,12 @@ import type {
   ChannelMessageFileRef,
   ChannelReplyDisposition,
   ConversationActiveReplyTarget,
+  ConversationItemV1,
   RunSession,
   WorkUnit,
 } from "../../types.js";
-import { projectChannelConversationItemPage } from "../../lib/channel-conversation-items.js";
+import { mergeChannelUserInputPage, projectChannelConversationItemPage, type ChannelConversationMessagePage } from "../../lib/channel-conversation-items.js";
+import type { ConversationReasoningSummaryRecord, UserInputTranscriptItemV1 } from "@ling-stack/contracts";
 import { deriveChannelReplyGuidanceTargets } from "./channel-guidance-targets.js";
 import { findMentionsInText } from "./channelMentionText.js";
 
@@ -45,6 +47,9 @@ export interface ChannelThreadReplyController {
   /** Canonical LingThread id returned by the topic/thread items API. */
   readonly resolvedThreadId: string;
   readonly activeThreadMessages: readonly ChannelMessage[];
+  readonly conversationItems: readonly ConversationItemV1[];
+  readonly userInputs: readonly UserInputTranscriptItemV1[];
+  readonly reasoningSummaries: readonly ConversationReasoningSummaryRecord[];
   readonly draft: string;
   readonly pending: boolean;
   readonly error: string;
@@ -77,6 +82,16 @@ export function useChannelThreadReplyController({
   const [pending, setPending] = useState(false);
   const [error, setError] = useState("");
   const loadVersionRef = useRef(0);
+  const topicPageRef = useRef<ChannelConversationMessagePage | undefined>(undefined);
+  const [topicPage, setTopicPage] = useState<ChannelConversationMessagePage | undefined>(undefined);
+  const topicOwner = JSON.stringify([cwd.trim(), selectedChannelId, activeThreadId]);
+  const [topicPageOwner, setTopicPageOwner] = useState("");
+  const topicOwnerRef = useRef(topicOwner);
+  if (topicOwnerRef.current !== topicOwner) {
+    topicOwnerRef.current = topicOwner;
+    ++loadVersionRef.current;
+    topicPageRef.current = undefined;
+  }
 
   const activeThreadRoot = useMemo(
     () => channelMessages.find((message) => message.id === activeThreadId),
@@ -99,6 +114,7 @@ export function useChannelThreadReplyController({
     ).values()];
   }, [activeThreadRoot, channelMessages, topicMessages]);
   const loadTopicMessages = useCallback(async (surface: ChannelConversationSurface): Promise<void> => {
+    if (topicOwnerRef.current !== topicOwner) return;
     const workspaceCwd = cwd.trim();
     if (!workspaceCwd || !selectedChannelId || surface.kind === "channel_root") {
       setResolvedThreadId("");
@@ -106,6 +122,7 @@ export function useChannelThreadReplyController({
       return;
     }
     const version = ++loadVersionRef.current;
+    const requestedOwner = topicOwner;
     setLoading(true);
     setError("");
     try {
@@ -114,7 +131,15 @@ export function useChannelThreadReplyController({
         surface,
       });
       if (loadVersionRef.current !== version) return;
+      if (response.channelId !== selectedChannelId || response.thread.channelId !== selectedChannelId
+        || (surface.kind === "thread" && response.thread.id !== surface.threadId)
+        || (surface.kind === "topic" && response.thread.anchorItemId !== surface.anchorItemId)) throw new Error("Topic response scope mismatch.");
       const page = projectChannelConversationItemPage(response);
+      const hydrated = mergeChannelUserInputPage(topicPageRef.current, page);
+      topicPageRef.current = hydrated;
+      const visibleIds = new Set(page.conversationItems.map(item => item.id));
+      setTopicPage({ ...hydrated, conversationItems: hydrated.conversationItems.filter(item => visibleIds.has(item.id)) });
+      setTopicPageOwner(requestedOwner);
       setResolvedThreadId(response.thread.id);
       setTopicMessages(page.messages);
     } catch (loadError) {
@@ -125,9 +150,11 @@ export function useChannelThreadReplyController({
     } finally {
       if (loadVersionRef.current === version) setLoading(false);
     }
-  }, [cwd, selectedChannelId]);
+  }, [cwd, selectedChannelId, topicOwner]);
 
   useEffect(() => {
+    topicPageRef.current = undefined;
+    setTopicPage(undefined);
     if (!activeThreadId) {
       ++loadVersionRef.current;
       setResolvedThreadId("");
@@ -136,6 +163,7 @@ export function useChannelThreadReplyController({
       return;
     }
     void loadTopicMessages({ kind: "topic", anchorItemId: activeThreadId });
+    return () => { ++loadVersionRef.current; topicPageRef.current = undefined; };
   }, [activeThreadId, loadTopicMessages]);
 
   const activeReplyTarget = useMemo(
@@ -240,6 +268,9 @@ export function useChannelThreadReplyController({
     activeThreadRoot,
     resolvedThreadId,
     activeThreadMessages,
+    conversationItems: topicPageOwner === topicOwner && topicPage?.threadId === resolvedThreadId ? topicPage.conversationItems : [],
+    userInputs: topicPageOwner === topicOwner && topicPage?.threadId === resolvedThreadId ? topicPage.userInputs ?? [] : [],
+    reasoningSummaries: topicPageOwner === topicOwner && topicPage?.threadId === resolvedThreadId ? topicPage.reasoningSummaries : [],
     draft,
     pending: pending || loading,
     error,

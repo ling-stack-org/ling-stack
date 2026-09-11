@@ -14,6 +14,13 @@ Cross-surface ownership and implementation sequencing are defined in
 这份规范只回答“用户看到什么、点击什么、如何保持简单好看”。数据权威、lineage、
 completion 和 recovery 以详细设计为准。
 
+2026-09-06 待实现增量：[本机查询能力整合方案](channel-execution-capability-integration-plan.md)。
+首屏沿用 `icon + 查询本机网络信息 + 非成功状态 + disclosure`；成功后用“已查询本机网络信息”，
+不显示不存在的 `exit 0`、不重复显示工具名，也不为 IP 新建结果卡。展开才显示采集时间、
+接口/IP 列表、空结果或截断说明；IP 是结果文本，不能自动变为 URL 或本地文件跳转。
+正文用主色，事实行默认次色、hover/focus 用主色；失败/审批不能藏在 batch 中。
+Composer 和 EnvironmentPopover 不重复结果。该规则不代表新能力已实现或通过真实 QA。
+
 Codex 的借鉴点是 renderer 分工而不是复制皮肤：消息/Markdown、命令执行、patch、
 MCP 和本地路径各自有清晰的 renderer；Ling 额外加入 participant rail 和 approval
 状态，但仍落入同一 row grammar。参考入口（只借鉴信息架构；链接固定到 Codex 开源仓库的对应 renderer）：
@@ -741,18 +748,46 @@ Feed viewport 浏览，不给 Timeline、batch、child 或 command detail 增加
 ### 13.8 旧 bubble class 的迁移规则
 
 `MessageRow` 当前仍会输出 `message-bubble-own`、`message-bubble-peer` 等历史 class，
-因为它们被现有测试和外部 surface selector 用作身份标记。它们在 v3.7 不再代表几何或
-视觉样式：当 row 属于 `tone="document"` 时，shared CSS 必须强制以下规则：
+因为它们被现有测试和外部 surface selector 用作身份标记。它们不再代表气泡外框；当
+row 属于 `tone="document"` 时，shared CSS 按发送者身份强制以下规则：
 
-- own/peer 使用同一个 leading-column + content-column 网格，内容均 `justify-self:start`；
+- own 使用 content-column + trailing-avatar 网格，内容 `justify-self:end`；peer 使用
+  leading-avatar + content-column 网格，内容 `justify-self:start`；两者正文内部均左对齐；
 - `message-content` 透明、无 border/radius/shadow，宽度占满 document column；
-- avatar（若 policy 允许）始终位于 leading column；normal surface 隐藏 avatar 时，
-  content 回到唯一的第一列；
-- surface stylesheet 不得通过 `.message-bubble-own` 恢复右对齐、背景或独立 max-width。
+- avatar（若 policy 允许）在用户正文右侧、Agent 正文左侧，并与正文顶部对齐；normal
+  surface 隐藏 avatar 时，content 回到唯一的第一列，不保留空头像列；独立作者栏保持
+  作者/正文/动作三行；
+- surface stylesheet 不得通过 `.message-bubble-own` 覆盖共享发送者方向、背景或独立 max-width。
 
 因此 selector 迁移可以分两步完成：先把断言从“own bubble 外观”改为
-`message-bubble-document + data-has-avatar + justify-self:start`，再在 E4 删除不再
+`message-bubble-document + data-has-avatar + sender-specific geometry`，再在 E4 删除不再
 需要的 legacy class。不能为了让旧截图通过而把 document row 重新变成气泡。
+
+### 13.9 叙述、身份和可交互事实的颜色层级
+
+- 普通会话、队友私聊、频道和展开的子 Agent 使用同一颜色契约：`userMessage`、`agentMessage` 正文
+  始终采用主题 `conversation-text-strong`，不能因 running 结束而降为灰色；不得硬编码白色。
+- 读取、命令、文件变更和工具批次的标题及常规 icon 默认使用
+  `conversation-text-muted`；只有真实可交互、未禁用的 disclosure 在 hover / focus-visible
+  时升为主文字色。无详情的静态行不制造可点击反馈。
+- 失败、阻塞与待审批保留状态 icon、文本和可访问名称，不被通用提亮覆盖；成功的普通
+  操作不需要每行绿色 icon 或 `exit 0`。头像本身保留身份视觉，不作为工具状态色处理。
+- Agent 姓名由头像旁的身份栏显示一次，正文直接陈述动作与结论。producer 不应要求每段
+  自报姓名；不得通过无来源的正则裁剪历史正文、代码或引用来隐藏重复名字。
+
+### 13.10 回答收尾与复制（2026-09-06）
+
+- 分段叙述和工具事件仍保留因果顺序，不代表多轮独立回答。单个 narration segment
+  完成不能显示整轮收尾按钮；使用 Host 的运行终态，不读“完成了”等模型文案。
+- 用户消息的复制/编辑属于用户消息本身，可在 Agent 运行中使用；不能把它们误判为
+  Agent 提前完成。普通/私聊的回答复制使用完整逻辑消息 Markdown，不取最后显示段落。
+- execute 的唯一结果 owner 是有效 TerminalReport：summary 默认可见，证据详情折叠，
+  其左下角复用 MessageActionBar 的复制 icon、tooltip 和已复制反馈。summary 不在详情
+  内再次出现；展开/折叠不影响复制内容。
+- 结果复制只序列化当前 report 的用户可见结果字段（含变更、验证、交付物、风险），
+  不扫描 DOM、不拼前轮/旧 attempt/其他 participant、不导出内部 source id 或原始日志。
+- child 的整轮复制必须先证明消息与 run/attempt/participant 的精确归属；缺失时不可
+  因位于同一个 child 容器就自动拼接。此处是独立验收项，不能仅凭父结果有按钮宣称通过。
 
 ## 14. Visual acceptance
 

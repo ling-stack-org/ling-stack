@@ -96,7 +96,7 @@ export function projectConversationWorkCellTimeline(input: {
   readonly turnId?: string;
 }): readonly ConversationTimelineItem[] {
   const participantItems = input.agentSpans.map((span) => {
-    const childItems = span.items ?? projectConversationActivity(span.rows, {
+    const childItems = span.typedTimelineItems ?? span.items ?? projectConversationActivity(span.rows, {
       participantScope: span.participantId ?? span.id,
     });
     return projectConversationSubAgentActivity(span, childItems, { turnId: input.turnId });
@@ -676,7 +676,6 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   const operationRows = buildActiveRows({
     t: input.t,
     latestRun,
-    attemptCount: runs.length,
     participantId: input.participantId,
     turnRunLinks: input.turnRunLinks,
     pendingApprovals,
@@ -1230,7 +1229,6 @@ function emptyWorkCellGroups(t: Translate): readonly ConversationWorkCellGroup[]
 function buildActiveRows(input: {
   readonly t: Translate;
   readonly latestRun: RunSession;
-  readonly attemptCount: number;
   readonly participantId?: string;
   readonly turnRunLinks?: readonly LingTurnRun[];
   readonly pendingApprovals: readonly ApprovalRequest[];
@@ -1269,16 +1267,6 @@ function buildActiveRows(input: {
       description: approval.description,
       meta: input.t("Approval required"),
       tone: "waiting",
-    });
-  }
-
-  if (input.attemptCount > 1) {
-    rows.push({
-      id: "attempts",
-      kind: "watch",
-      title: input.t("Earlier tries"),
-      description: input.t("{count} earlier tries", { count: input.attemptCount - 1 }),
-      tone: "neutral",
     });
   }
 
@@ -1450,6 +1438,7 @@ function executionActionEvidenceRow(
     presentation: commandText ? "shell" : undefined,
     title: executionActionDisplayTitle(action, artifactsById, t),
     commandText,
+    toolEvidence: action.toolEvidence,
     commandExecution: commandText && action.commandEvidence ? {
       actionId: action.id,
       revision: action.revision,
@@ -1471,6 +1460,7 @@ function executionActionEvidenceRow(
       durationMs: action.commandEvidence.durationMs,
       exitCode: action.commandEvidence.exitCode,
       signal: action.commandEvidence.signal,
+      timedOut: action.commandEvidence.timedOut,
       latestEventSeq: action.commandEvidence.latestEventSeq,
       outputTail: action.commandEvidence.outputTail.map((chunk) => ({
         eventSeq: chunk.eventSeq,
@@ -1585,8 +1575,9 @@ function executionActionExecutionView(
     actionType: action.actionType,
     status: action.status,
     updatedAt: action.updatedAt ?? action.completedAt ?? action.executedAt ?? action.createdAt,
-    latestEventSeq: action.commandEvidence?.latestEventSeq ?? action.revision,
+    latestEventSeq: action.commandEvidence?.latestEventSeq ?? action.toolEvidence?.latestEventSeq ?? action.revision,
     sourceRefs: executionActionSourceRefs(action, workflowStepId, artifactsById),
+    ...(action.runtimeDiagnostic ? { runtimeDiagnostic: action.runtimeDiagnostic } : {}),
   };
 }
 
@@ -1595,6 +1586,11 @@ function executionActionDisplayTitle(
   artifactsById: ReadonlyMap<string, RunArtifact>,
   t: Translate,
 ): string {
+  const actionType = String(action.actionType).trim().toLowerCase();
+  if (actionType === "image_view" || actionType === "image_viewer" || actionType === "image" ||
+    actionType === "mcp_tool_call" || actionType === "dynamic_tool_call" || actionType === "host_capability" || actionType === "collab_agent_tool_call") {
+    return action.title;
+  }
   const kind = operationKindForExecutionAction(action);
   const targetSummary = executionActionTargetSummary(action, artifactsById, t);
   if (kind === "read") {
@@ -1923,6 +1919,9 @@ function operationKindForExecutionAction(action: ExecutionAction): ConversationO
   }
   if (action.actionType === "mcp_tool_call") {
     return "search";
+  }
+  if (action.actionType === "runtime_diagnostic") {
+    return "watch";
   }
   return "approval";
 }

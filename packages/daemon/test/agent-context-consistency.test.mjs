@@ -61,7 +61,7 @@ test("workflow agents share one projection while private role memory stays owner
     assert.deepEqual(engineer.runRequest.preselectedMemoryUse, {
       memoryIds: [fixture.engineerMemory.id],
       recallQuery: `${fixture.workflow.objective}\n${fixture.engineerStep.title}\n${fixture.engineerStep.prompt}`,
-      policyVersion: "ling-memory-v1-lexical+memory_use_isolation_v1",
+      policyVersion: "ling-memory-v1-lexical-v2+memory_use_isolation_v2",
     });
     assert.equal(engineer.runRequest.contextProjection.projectionVersion, engineer.runRequest.contextPack.agentContext.contextProjection.projectionVersion);
 

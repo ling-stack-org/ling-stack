@@ -22,11 +22,11 @@ test.beforeEach(async ({ page }) => {
 });
 
 async function openSettingsRunDiagnostics(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await openPendingStartupDiagnostics(page);
   await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.getByRole("region", { name: "Run Diagnostics" })).toBeVisible();
 }
 
@@ -219,7 +219,7 @@ test("settings run diagnostics stays inside the Settings shell", async ({ page }
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   const startupPanel = await openPendingStartupDiagnostics(page);
   await expect(startupPanel.locator(".settings-startup-primary-state").getByText("Ready", { exact: true })).toBeVisible();
   await expect(startupPanel.locator(".startup-readiness-card, .meta-row")).toHaveCount(0);
@@ -228,7 +228,7 @@ test("settings run diagnostics stays inside the Settings shell", async ({ page }
   await page.getByRole("button", { name: "Open Run Diagnostics" }).click();
 
   await expect(page.getByLabel("Settings sections")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.locator(".run-history-layout")).toHaveCount(0);
   const diagnosticsPanel = page.locator(".settings-run-diagnostics-panel");
   await expect(diagnosticsPanel).toContainText("Inspect workspace");
@@ -916,7 +916,7 @@ test("fork lineage creates child thread in work history while channel page hides
   await expect(detail).toContainText("turn_fork_source");
   await expect(workList).toContainText(childThread?.title ?? "Fork");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
   await expect(page.locator(".channel-left-drawer .sidebar-branch-list")).toHaveCount(0);
   await expect(page.getByText("Conversation branches")).toHaveCount(0);
@@ -1118,7 +1118,7 @@ test("fork and run starts an explicit child branch run from work history", async
 
   await expect(detail).toContainText("Forked from");
   await expect(detail).toContainText("thread_fork_run_source");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
   await expect(page.locator(".channel-left-drawer .sidebar-branch-list")).toHaveCount(0);
   const workCell = page.getByRole("article", { name: "Task in progress" });
@@ -1260,7 +1260,7 @@ test("run history archives restores pins and filters channel branches", async ({
   await expect(workList).toContainText("Visibility active branch");
   await expect(workList).toContainText("Visibility archived branch");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
   await expect(page.locator(".channel-left-drawer .sidebar-branch-list")).toHaveCount(0);
 });

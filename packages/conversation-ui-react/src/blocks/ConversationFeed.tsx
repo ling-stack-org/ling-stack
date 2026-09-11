@@ -1,4 +1,4 @@
-import { Fragment, type ReactNode, type Ref, type UIEventHandler } from "react";
+import { Fragment, type HTMLAttributes, type ReactNode, type Ref, type UIEventHandler } from "react";
 import { ConversationEmptyState } from "./ConversationEmptyState.js";
 
 export interface ConversationFeedProps<TItem> {
@@ -6,6 +6,8 @@ export interface ConversationFeedProps<TItem> {
   readonly emptyClassName?: string;
   readonly ariaLabel?: string;
   readonly rootRef?: Ref<HTMLDivElement>;
+  readonly rootProps?: Omit<HTMLAttributes<HTMLDivElement>, "aria-label" | "children" | "className" | "onScroll">
+    & { readonly [attribute: `data-${string}`]: string | number | boolean | undefined };
   readonly onScroll?: UIEventHandler<HTMLDivElement>;
   readonly items: readonly TItem[];
   readonly loading?: boolean;
@@ -15,6 +17,7 @@ export interface ConversationFeedProps<TItem> {
   readonly emptyIcon?: ReactNode;
   readonly getItemId: (item: TItem) => string;
   readonly renderItem: (item: TItem) => ReactNode;
+  readonly afterNode?: ReactNode;
 }
 
 export function ConversationFeed<TItem>({
@@ -22,6 +25,7 @@ export function ConversationFeed<TItem>({
   emptyClassName,
   ariaLabel,
   rootRef,
+  rootProps,
   onScroll,
   items,
   loading = false,
@@ -31,11 +35,12 @@ export function ConversationFeed<TItem>({
   emptyIcon,
   getItemId,
   renderItem,
+  afterNode,
 }: ConversationFeedProps<TItem>): React.JSX.Element {
   const rootClassName = [className ?? "conversation-feed", items.length === 0 ? "empty" : ""].filter(Boolean).join(" ");
 
   return (
-    <div ref={rootRef} className={rootClassName} aria-label={ariaLabel} onScroll={onScroll}>
+    <div {...rootProps} ref={rootRef} className={rootClassName} aria-label={ariaLabel} onScroll={onScroll}>
       {dayLabel ? <div className="teammate-chat-day-separator conversation-day-separator">{dayLabel}</div> : null}
       {loading ? (
         <ConversationEmptyState className={emptyClassName} label={emptyLabel} loading />
@@ -44,6 +49,7 @@ export function ConversationFeed<TItem>({
       ) : (
         items.map((item) => <Fragment key={getItemId(item)}>{renderItem(item)}</Fragment>)
       )}
+      {afterNode}
     </div>
   );
 }

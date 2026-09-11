@@ -906,7 +906,7 @@ export class SqliteRuntimeWorkUnitStore {
 }
 
 function isAttemptTerminal(status: WorkUnitAttempt["status"]): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "lost";
+  return status === "succeeded" || status === "failed" || status === "cancelled" || status === "lost" || status === "yielded";
 }
 
 function terminalRuntimeEventTypeForAttemptStatus(

@@ -73,10 +73,14 @@ export function projectLingTrace(input: ProjectLingTraceInput): ProjectLingTrace
   for (const action of input.executionActions ?? []) {
     const parentSpanId = action.runId ? runParentSpanIds.get(action.runId) : undefined;
     const duplicateToolSpan = action.toolCallId ? toolCallIdsFromEvents.has(action.toolCallId) : false;
-    if (!action.approvalId && duplicateToolSpan) {
+    if (duplicateToolSpan) {
       continue;
     }
     spans.push(executionActionToSpan(traceId, action, parentSpanId));
+  }
+
+  for (const approval of input.approvals ?? []) {
+    spans.push(approvalToSpan(traceId, approval, approval.runId ? runParentSpanIds.get(approval.runId) : undefined));
   }
 
   for (const artifact of input.artifacts ?? []) {
@@ -170,7 +174,7 @@ function buildToolCallSpans(input: {
 }
 
 function executionActionToSpan(traceId: string, action: ExecutionAction, parentSpanId: string | undefined): LingTraceSpan {
-  const kind = action.approvalId ? "approval" : action.actionType === "external_send" || action.actionType === "deploy" ? "external_action" : "tool_call";
+  const kind = action.actionType === "external_send" || action.actionType === "deploy" ? "external_action" : "tool_call";
   return {
     id: createLingTraceSpanId(traceId, kind, action.id),
     traceId,
@@ -195,6 +199,34 @@ function executionActionToSpan(traceId: string, action: ExecutionAction, parentS
       scopes: action.scopes,
       previewArtifactCount: action.previewArtifactIds.length,
       resultArtifactCount: action.resultArtifactIds.length,
+    }),
+  };
+}
+
+function approvalToSpan(traceId: string, approval: import("./approval-types.js").ApprovalRequest, parentSpanId: string | undefined): LingTraceSpan {
+  return {
+    id: createLingTraceSpanId(traceId, "approval", approval.id),
+    traceId,
+    parentSpanId,
+    kind: "approval",
+    title: approval.title,
+    startedAt: approval.createdAt,
+    endedAt: approval.resolvedAt,
+    status: approval.status === "pending" ? "waiting_for_approval"
+      : approval.status === "approved" ? "succeeded"
+        : approval.status === "cancelled" ? "cancelled" : "failed",
+    refs: {
+      runId: approval.runId,
+      workflowStepId: approval.workflowStepId,
+      approvalId: approval.id,
+      toolCallId: approval.toolCallId,
+    },
+    redactedAttributes: stripUndefined({
+      actionType: approval.actionType,
+      risk: approval.risk,
+      status: approval.status,
+      decisionKind: approval.decisionKind,
+      resolvedBy: approval.resolvedBy,
     }),
   };
 }
@@ -331,6 +363,11 @@ function deriveTraceStatus(runs: readonly RunSession[], spans: readonly LingTrac
   if (runs.some((run) => run.status === "cancelled")) {
     return "cancelled";
   }
+  // Historical progress spans do not keep a physically yielded execution alive.
+  if (runs.some((run) => run.status === "yielded")
+    && !runs.some((run) => run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval")) {
+    return spans.some((span) => span.status === "waiting_for_input") ? "waiting_for_input" : "yielded";
+  }
   if (runs.some((run) => run.status === "waiting_for_approval") || spans.some((span) => span.status === "waiting_for_approval")) {
     return "waiting_for_approval";
   }
@@ -339,6 +376,12 @@ function deriveTraceStatus(runs: readonly RunSession[], spans: readonly LingTrac
   }
   if (runs.some((run) => run.status === "queued") || spans.some((span) => span.status === "queued")) {
     return "queued";
+  }
+  if (spans.some((span) => span.status === "waiting_for_input")) {
+    return "waiting_for_input";
+  }
+  if (runs.some((run) => run.status === "yielded")) {
+    return "yielded";
   }
   return "succeeded";
 }
@@ -377,6 +420,9 @@ function statusFromRunIntervention(status: RunInterventionStatus): LingTraceStat
 }
 
 function statusFromRuntimeEvent(type: RuntimeEvent["type"]): LingTraceStatus {
+  if (type === "work_unit_waiting_for_input") {
+    return "waiting_for_input";
+  }
   if (type === "work_unit_failed" || type === "diagnostic_stuck_detected") {
     return "failed";
   }

@@ -491,18 +491,18 @@ function collectBrowserErrors(page: Page): string[] {
 }
 
 async function openModelWorkbench(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   await expect(page.locator(".provider-workbench")).toBeVisible();
 }
 
 async function openNormalConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({ hasText: title }).click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 
 async function openTeammate(page: Page, displayName: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: displayName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: displayName }).click();
   await expect(page.getByRole("heading", { name: displayName, level: 1 })).toBeVisible();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0);
 }

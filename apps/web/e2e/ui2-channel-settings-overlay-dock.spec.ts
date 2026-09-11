@@ -481,10 +481,9 @@ test("resolved channel approval detail remains an in-feed inspector", async ({ p
   await page.goto("/");
   await openChannelChatTools(page);
 
-  const approvalBubble = page.locator(".message-bubble")
-    .filter({ hasText: "Approval event" })
+  const approvalItem = page.locator('[data-conversation-timeline-kind="approval"]')
     .filter({ hasText: "Approval expired" });
-  await approvalBubble.getByRole("button", { name: "Open approval" }).click();
+  await approvalItem.getByRole("button", { name: "Open approval" }).click();
   const inspector = page.locator(".conversation-detail-overlay");
   await expect(inspector).toBeVisible();
   await expect(inspector).toHaveAttribute("data-ui2-channel-inline-detail", "true");

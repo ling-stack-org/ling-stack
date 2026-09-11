@@ -1,9 +1,12 @@
-import type { ChannelMessage, ControlPlaneEvent, RunStore, TerminalReport } from "@ling-stack/core";
+import type { ChannelMessage, ControlPlaneEvent, NormalTerminalReportBasis, RunStore, TerminalReport } from "@ling-stack/core";
+import type { ConversationItemV1 } from "@ling-stack/contracts";
 import { getChannelMessageView } from "./conversation-item-messages.js";
 import { evaluateWorkflowCompletion } from "./workflow-completion-gate.js";
+import { publishNormalTerminalReport } from "./normal-terminal-report-publisher.js";
 
 export interface TerminalReportPublication {
-  readonly message: ChannelMessage;
+  readonly message?: ChannelMessage;
+  readonly resultItem?: ConversationItemV1;
   readonly controlPlaneEvent?: ControlPlaneEvent;
   readonly duplicate: boolean;
 }
@@ -21,8 +24,13 @@ export function publishTerminalReportPublication(input: {
   readonly store: RunStore;
   readonly report: TerminalReport;
   readonly linkedRunId?: string;
+  readonly expectedNormalBasis?: NormalTerminalReportBasis;
   readonly now: string;
 }): TerminalReportPublication | undefined {
+  if (!input.report.channelId && input.report.source.kind !== "workflow" && input.report.threadId
+    && input.store.getLingThread(input.report.threadId)?.kind === "conversation") {
+    return publishNormalTerminalReport(input);
+  }
   if (!input.report.channelId || !input.report.sourceMessageId) {
     return undefined;
   }

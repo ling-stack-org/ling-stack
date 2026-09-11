@@ -2,7 +2,6 @@ import type { ServerResponse } from "node:http";
 import {
   type ApprovalPolicy,
   buildSkillSourceRuntimeFallbackPlan,
-  buildEffectiveTeammateSkills,
   createChannelWorkspaceSnapshot,
   createRunId,
   DEFAULT_WORKSPACE_ID,
@@ -42,6 +41,10 @@ import type {
   PiRunnerRunOptions,
   PiRunnerSandboxBinding,
 } from "@ling-stack/runner-pi";
+import { PiRunnerAdapter } from "@ling-stack/runner-pi";
+import { hostCapabilityToolsV1, type HostCapabilityToolDefinitionV1 } from "@ling-stack/contracts";
+import { createWorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
+import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
 import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
 import { ActiveRunRegistry } from "../../runtime/active-runs.js";
@@ -65,7 +68,7 @@ import { CuaDriverComputerUseProjectionProducer } from "../computer-use/cua-driv
 import { resolveEligibleCuaDriverProjectionServerIds } from "../computer-use/provider-eligibility.js";
 import type { ComputerUseProjectionRegistry } from "../computer-use/registry.js";
 import { renderUsedMemoryPrompt } from "../memory/prompt.js";
-import { listExecutableSkillDefinitions } from "../skills/registry.js";
+import { resolveCurrentRunSkill } from "./skill-selection.js";
 import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { listBundledPackageDescriptors } from "../plugins/source-index.js";
 import { createManagedPluginRuntimeSnapshot } from "../plugins/runtime-injection.js";
@@ -106,6 +109,7 @@ import {
 import { appendExecutionActionInvalidation } from "./execution-action-invalidation.js";
 import { listConversationMediaGenerationTargets } from "../media/conversation-targets.js";
 import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
+import { hasCurrentRunCallbackIdentity } from "./run-callback-ownership.js";
 import {
   ensureLingThreadForRun,
   ensureLingTurnForRun,
@@ -117,6 +121,13 @@ import {
 import { appendRuntimeProgressForRunEvent, syncWorkUnitForRunEvent } from "./work-units.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
+import { prepareNormalConversationExecution, readNormalConversationPreparedExecution,
+  restoreNormalConversationExecutionOptions, assertPreparedExecutionMemoryCurrent } from "../conversations/normal-conversation-prepared-execution.js";
+import { capturePreparedRunnerInput } from "./prepared-runner-input.js";
+import type { HostCapabilityBridgeController } from "./host-capability-bridge-controller.js";
+import { createHostCapabilityAuthority } from "./host-capability-authority.js";
+import { dispatchHostOpenLocalTarget } from "./host-open-local-target.js";
+import { ExecutionLoopDetector } from "./execution-loop-detector.js";
 
 export interface ExecuteRunRequestOptions {
   readonly onRunReady?: (runId: string) => void;
@@ -124,6 +135,7 @@ export interface ExecuteRunRequestOptions {
   readonly controlPlaneEvents?: ControlPlaneEventHub;
   readonly startupState?: StartupStateRegistry;
   readonly computerUsePreviews?: ComputerUseProjectionRegistry;
+  readonly hostCapabilityBridge?: HostCapabilityBridgeController;
 }
 
 export interface RunExecutionSink {
@@ -134,6 +146,12 @@ export interface RunExecutionSink {
   writeEvent(event: string, data: unknown): void;
   writeError(statusCode: number, body: unknown): void;
   end(): void;
+}
+
+/** Pre-Run failures are terminal for this dispatch transport, not successful Runs. */
+function writeRunPreparationFailure(sink: RunExecutionSink, statusCode: number, body: unknown): void {
+  try { sink.writeError(statusCode, body); }
+  finally { sink.end(); }
 }
 
 export function createSseRunExecutionSink(response: ServerResponse): RunExecutionSink {
@@ -169,12 +187,15 @@ export function createSseRunExecutionSink(response: ServerResponse): RunExecutio
       writeSse(response, event, data);
     },
     writeError(statusCode, body) {
+      if (closed || response.writableEnded) return;
       if (!response.headersSent) {
         writeJson(response, statusCode, body);
+      } else {
+        writeSse(response, "error", body);
       }
     },
     end() {
-      if (!closed) {
+      if (!closed && !response.writableEnded) {
         response.end();
       }
     },
@@ -197,7 +218,28 @@ export function createDetachedRunExecutionSink(): RunExecutionSink {
   };
 }
 
-export async function executeRunRequest(
+/** Track the whole request, including preflight before any durable Run exists. */
+export function executeRunRequest(
+  ...args: Parameters<typeof executeAdmittedRunRequest>
+): Promise<string | undefined> {
+  const [request, sink, , , activeRuns] = args;
+  const completion = Promise.resolve().then(() => {
+    if (request.continuationReason === "user_input_answer" || request.userInputContinuationContext !== undefined) {
+      writeRunPreparationFailure(sink, 409, { error: "user_input_continuation_coordinator_required",
+        message: "Saved answers must resume their existing WorkUnit through the continuation coordinator, not create a new task." });
+      return undefined;
+    }
+    if (activeRuns.isShuttingDown()) {
+      writeRunPreparationFailure(sink, 503, { error: "runtime_shutting_down", message: "Runtime is shutting down." });
+      return undefined;
+    }
+    return executeAdmittedRunRequest(...args);
+  });
+  activeRuns.trackCompletion(completion);
+  return completion;
+}
+
+async function executeAdmittedRunRequest(
   runRequest: RunRequest,
   sink: RunExecutionSink,
   runnerRegistry: RunnerRegistry,
@@ -232,7 +274,7 @@ export async function executeRunRequest(
   let effectivePolicySnapshot: EffectiveRunPolicySnapshot | undefined;
   let approvalPolicy: ApprovalPolicy | undefined;
   let durableTaskSnapshot: RunRequest["task"] = runRequest.task;
-  let durableRunRequest: RunRequest = { ...runRequest, preselectedMemoryUse: undefined };
+  let durableRunRequest: RunRequest = { ...runRequest, preselectedMemoryUse: undefined, runnerExecutionInput: undefined };
   let runId = "";
   let createdAt = "";
   let workspaceCwd = "";
@@ -248,39 +290,19 @@ export async function executeRunRequest(
       secretResolver,
     });
     store = storeRegistry.getStore(workspaceCwd);
+    let preparedExecution = readNormalConversationPreparedExecution(store, runRequest);
     assertFullAccessPermissionConfirmed(runRequest);
     validateWorkflowStepOwner(store, runRequest);
     runtime = runtimeSupervisor.getRuntime(workspaceCwd, store);
     resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver, {
       providerWebSocketFallbackEnabled: runtimeSupervisor.getTransportFeatures().providerWebSocketFallback,
     });
-    const skillChannel = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
     const skillTeammate = runRequest.teammateId ? resolveAiTeammateReference(store, runRequest.teammateId) : undefined;
     const skillProviderPreset = runRequest.providerPresetId ? store.getProviderPreset(runRequest.providerPresetId) : undefined;
-    if (runRequest.requestedSkillId) {
-      if (!skillTeammate) {
-        throw new HttpError(400, "skill_teammate_required", "requestedSkillId requires a resolved teammateId.");
-      }
-      const effectiveSkills = buildEffectiveTeammateSkills({
-        teammate: skillTeammate,
-        bindings: store.listTeammateSkillBindings(skillTeammate.id),
-        skills: listExecutableSkillDefinitions(store),
-        channelAllowedTools: skillChannel?.allowedTools,
-        providerCapabilities: skillProviderPreset?.capabilities,
-      });
-      selectedSkill = getEffectiveTeammateSkill(effectiveSkills, runRequest.requestedSkillId);
-      if (!selectedSkill) {
-        throw new HttpError(400, "skill_not_bound", `Skill is not bound to teammate: ${runRequest.requestedSkillId}`);
-      }
-      if (!selectedSkill.executable) {
-        throw new HttpError(
-          400,
-          "skill_not_executable",
-          `Skill is not executable: ${selectedSkill.blockedReasons.map((reason) => reason.code).join(", ")}`,
-        );
-      }
-    }
-    if (selectedSkill) {
+    selectedSkill = resolveCurrentRunSkill(store, runRequest);
+    if (preparedExecution) {
+      selectedSkillSourceContext = preparedExecution.payload.skillSourceContext;
+    } else if (selectedSkill) {
       const skillOptimizationMode = runRequest.skillOptimizationMode ?? "no_operation";
       const sourceSnapshot = store.getSkillSourceSnapshot(selectedSkill.skillId);
       const compiledView = sourceSnapshot && skillRuntimeCompiledViewRequested(skillOptimizationMode)
@@ -300,10 +322,10 @@ export async function executeRunRequest(
       selectedSkillSourcePrompt = sourcePrompt.promptFragment;
     }
     const runStore = store;
-    const mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
+    let mcpToolAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest, (teammateId) =>
       resolveAiTeammateReference(runStore, teammateId)?.id);
     mcpTools = createPiRunnerMcpToolDefinitions(mcpToolAccess);
-    memoryRecall = runRequest.skipMemoryRecall ? undefined : store.recallMemory({
+    memoryRecall = preparedExecution || runRequest.skipMemoryRecall ? undefined : store.recallMemory({
       teammateId: runRequest.teammateId,
       channelId: runRequest.task.channelId,
       taskId: runRequest.task.id,
@@ -312,13 +334,13 @@ export async function executeRunRequest(
       maxResults: 6,
     });
     const memoryPrompt = memoryRecall ? renderUsedMemoryPrompt(memoryRecall.memories) : undefined;
-    const appendSystemPrompt = [
+    const appendSystemPrompt = preparedExecution ? preparedExecution.payload.input.appendSystemPrompt ?? [] : [
       ...(runRequest.appendSystemPrompt ?? []),
       ...(selectedSkill?.promptFragments ?? []),
       ...(selectedSkillSourcePrompt ? [selectedSkillSourcePrompt] : []),
       ...(memoryPrompt ? [memoryPrompt] : []),
     ];
-    runtimeTools = selectedSkill
+    runtimeTools = preparedExecution ? preparedExecution.payload.input.tools : selectedSkill
       ? mergeRunTools(runRequest.tools ?? [], selectedSkill.requiredTools)
       : runRequest.tools;
     runtimeApprovalProfile = selectedSkill
@@ -329,7 +351,8 @@ export async function executeRunRequest(
       ? getExplicitRunnerRequestSource(runRequest)
       : skillTeammate?.runnerId ? "teammate_default" : "workspace_default";
     runnerResolution = runnerRegistry.resolve({
-      requestedRunnerId: runRequest.runnerId ?? skillTeammate?.runnerId ?? runtimeSettings.defaultRunnerId,
+      requestedRunnerId: preparedExecution?.payload.runnerId ?? runRequest.runnerId ?? skillTeammate?.runnerId ?? runtimeSettings.defaultRunnerId,
+      ...(preparedExecution ? { allowFallback: false } : {}),
       defaultRunnerId: runtimeSettings.defaultRunnerId,
       allowedRunnerIds: runtimeSettings.allowedRunnerIds,
       requestSource: runnerRequestSource,
@@ -338,26 +361,25 @@ export async function executeRunRequest(
       providerApi: resolvedProvider.api,
       tools: runtimeTools,
     });
+    if (runRequest.workflowOperationExecution && !(runnerResolution.runner.adapter instanceof PiRunnerAdapter)) {
+      throw new HttpError(409, "operation_binding_runner_gate_unavailable", "This runner has no verified universal typed tool-before gate.");
+    }
     const channelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
-    const sessionPolicy = resolveSessionRunPolicy({
-      workspacePolicy: store.getApprovalPolicy(),
-      authorizationMode: runRequest.authorizationMode,
-      workspaceAccessMode: runRequest.workspaceAccessMode,
-      permissionPreset: runRequest.permissionPreset,
-      permissionMode: runRequest.permissionMode,
-      channelBoundPath: channelForPolicy?.boundPath || runRequest.cwd,
-      approvalProfile: runtimeApprovalProfile,
-    });
     const channelWorkspaceSnapshot = channelForPolicy
       ? createChannelWorkspaceSnapshot(channelForPolicy, workspaceCwd)
       : undefined;
-    approvalPolicy = sessionPolicy.approvalPolicy;
-    effectivePolicySnapshot = sessionPolicy.snapshot;
     const runtimeToolFeatures = {
       ...runRequest.runtimeToolFeatures,
       unifiedExec: runtimeSupervisor.getRuntimeToolFeatures().unifiedExec === true,
       shellSnapshot: runtimeSupervisor.getRuntimeToolFeatures().shellSnapshot === true,
     };
+    const selectedHostCapabilityTools = selectHostCapabilityToolsForRun(runRequest);
+    const assertHostCapabilitiesCurrent = (): void => {
+      if (selectedHostCapabilityTools.some((tool) => options.hostCapabilityBridge?.hasCapability(tool.capabilityId) !== true)) {
+        throw new HttpError(409, "host_capability_desktop_required", "The selected Host capability is not currently available from Ling Desktop.");
+      }
+    };
+    assertHostCapabilitiesCurrent();
     runnerRequest = {
       cwd: runRequest.cwd,
       task: runRequest.task,
@@ -373,24 +395,82 @@ export async function executeRunRequest(
         artifactsDir: store.paths.artifactsDir,
       },
       runtimeToolFeatures,
+      hostCapabilityTools: selectedHostCapabilityTools,
     };
     resolvedSecretValues = [resolvedProvider.apiKey];
     runId = createRunId();
     createdAt = new Date().toISOString();
     const idempotencyKey = runRequest.idempotencyKey ?? `run:${runId}`;
     thread = ensureLingThreadForRun(store, runRequest, createdAt);
-    effectivePolicySnapshot = applyConversationModeToEffectiveRunPolicySnapshot(
-      effectivePolicySnapshot,
-      thread.conversationMode.mode,
-    );
     turn = ensureLingTurnForRun(store, thread, runRequest, createdAt);
     durableTaskSnapshot = store.getTask(runRequest.task.id) ?? runRequest.task;
     durableRunRequest = {
       ...runRequest,
       task: durableTaskSnapshot,
       preselectedMemoryUse: undefined,
+      runnerExecutionInput: undefined,
     };
     const workUnitOwner = resolveRunWorkUnitOwner(thread, runRequest, turn.id);
+    // Definitions belong to initial model input; executable handlers require the real Run below.
+    const mediaGenerationEligible = isConversationMediaGenerationEligible({
+      createdByActor: runRequest.createdByActor, workUnitKind: workUnitOwner.kind,
+    });
+    const currentMediaTools = mediaGenerationEligible ? createConversationMediaGenerationToolDefinitions(
+      listConversationMediaGenerationTargets(store, secretResolver)) : [];
+    const toolHydrationEnabled = runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" &&
+      runnerResolution.runner.toolHydration.conformance === "verified";
+    runnerRequest = { ...runnerRequest, mediaGenerationTools: currentMediaTools,
+      initialToolSurface: { mediaGeneration: currentMediaTools.length > 0, toolHydration: toolHydrationEnabled } };
+    let usedMemory = preparedExecution ? preparedExecution.payload.usedMemory : memoryRecall && memoryRecall.memories.length > 0
+      ? { memoryIds: memoryRecall.memories.map((item) => item.memory.id), recallQuery: memoryRecall.request.query,
+          policyVersion: memoryRecall.policyVersion } : runRequest.preselectedMemoryUse;
+    const assertPreparationCurrent = (): void => {
+      if (activeRuns.isShuttingDown()) throw new HttpError(503, "runtime_shutting_down", "Runtime is shutting down.");
+      assertHostCapabilitiesCurrent();
+    };
+    preparedExecution = await prepareNormalConversationExecution({ store, request: runRequest,
+      runnerId: runnerResolution.effectiveRunnerId, adapter: runnerResolution.runner.adapter, options: runnerRequest,
+      usedMemory, skillSourceContext: selectedSkillSourceContext, assertCurrent: assertPreparationCurrent });
+    let executionInput = preparedExecution?.payload;
+    if (!executionInput && runnerResolution.runner.adapter instanceof PiRunnerAdapter) {
+      // All Pi surfaces retain the actual SDK input, not an approximation rebuilt
+      // from requestSnapshot after a question or restart. Normal first-writer input is reused.
+      const preparedInput = await runnerResolution.runner.adapter.prepareTaskInput(runnerRequest);
+      assertPreparationCurrent();
+      executionInput = capturePreparedRunnerInput({ runnerId: runnerResolution.effectiveRunnerId,
+        options: runnerRequest, preparedInput, usedMemory, skillSourceContext: selectedSkillSourceContext });
+    }
+    const refreshPreparedExecution = (): void => {
+      if (!executionInput) return;
+      // Recheck after awaiting SDK preparation. A snapshot never authorizes a revoked provider/tool.
+      assertPreparedExecutionMemoryCurrent(runStore, runRequest, executionInput);
+      resolvedProvider = resolveProviderForRun(runStore, runRequest, secretResolver, {
+        providerWebSocketFallbackEnabled: runtimeSupervisor.getTransportFeatures().providerWebSocketFallback,
+      });
+      const currentAccess = resolveMcpToolAccessForRun(runStore, secretResolver, runRequest,
+        (teammateId) => resolveAiTeammateReference(runStore, teammateId)?.id);
+      const currentMcp = createPiRunnerMcpToolDefinitions(currentAccess);
+      runnerResolution = runnerRegistry.resolve({ requestedRunnerId: executionInput.runnerId, allowFallback: false,
+        allowedRunnerIds: loadWorkspaceRuntimeSettings(runStore, runnerRegistry).allowedRunnerIds, providerApi: resolvedProvider.api,
+        tools: executionInput.input.tools, requestSource: runnerRequestSource });
+      runnerRequest = restoreNormalConversationExecutionOptions(executionInput, { ...runnerRequest,
+        initialToolSurface: { mediaGeneration: mediaGenerationEligible,
+          toolHydration: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" && runnerResolution.runner.toolHydration.conformance === "verified" },
+        provider: resolvedProvider, mcpTools: currentMcp, mediaGenerationTools: mediaGenerationEligible
+          ? createConversationMediaGenerationToolDefinitions(listConversationMediaGenerationTargets(runStore, secretResolver)) : [] });
+      runtimeTools = executionInput.input.tools;
+      mcpTools = runnerRequest.mcpTools ?? [];
+      const names = new Set(mcpTools.map((tool) => tool.registeredName));
+      mcpToolAccess = { ...currentAccess, totalToolCount: mcpTools.length, servers: currentAccess.servers.map((server) => ({ ...server,
+        tools: server.tools.filter((tool) => names.has(tool.registeredName)) })).filter((server) => server.tools.length > 0) };
+      resolvedSecretValues = [resolvedProvider.apiKey, ...Object.values(resolvedProvider.headers ?? {})];
+      selectedSkillSourceContext = executionInput.skillSourceContext;
+      usedMemory = executionInput.usedMemory;
+      durableRunRequest = { ...durableRunRequest, runnerExecutionInput: executionInput,
+        ...(preparedExecution ? { normalConversationPreparedExecutionRef: preparedExecution.ref } : {}) };
+      assertPreparationCurrent();
+    };
+    refreshPreparedExecution();
     const existingWorkUnit = runRequest.idempotencyKey
       ? store.findWorkUnitByIdempotency({
           kind: workUnitOwner.kind,
@@ -412,6 +492,25 @@ export async function executeRunRequest(
       runId,
       now: createdAt,
     });
+    assertPreparationCurrent();
+    // SDK/backend setup both await. Policy must be read after them, not before.
+    refreshPreparedExecution();
+    selectedSkill = resolveCurrentRunSkill(store, runRequest);
+    runtimeApprovalProfile = selectedSkill ? mergeApprovalProfiles(runRequest.approvalProfile, selectedSkill.skill.approvalProfile)
+      : runRequest.approvalProfile;
+    if (executionInput && selectedSkill) {
+      const permitted = mergeRunTools(runRequest.tools ?? [], selectedSkill.requiredTools);
+      if (runtimeTools?.some((tool) => !permitted.includes(tool))) throw new HttpError(409, "prepared_skill_tools_changed",
+        "A prepared core tool is no longer supplied by the selected skill.");
+    }
+    const currentChannelForPolicy = runRequest.task.channelId ? store.getChannel(runRequest.task.channelId) : undefined;
+    const sessionPolicy = resolveSessionRunPolicy({ workspacePolicy: store.getApprovalPolicy(),
+      authorizationMode: runRequest.authorizationMode, workspaceAccessMode: runRequest.workspaceAccessMode,
+      permissionPreset: runRequest.permissionPreset, permissionMode: runRequest.permissionMode,
+      channelBoundPath: currentChannelForPolicy?.boundPath || runRequest.cwd, approvalProfile: runtimeApprovalProfile });
+    approvalPolicy = sessionPolicy.approvalPolicy;
+    effectivePolicySnapshot = applyConversationModeToEffectiveRunPolicySnapshot(sessionPolicy.snapshot,
+      store.getLingThread(thread.id)?.conversationMode.mode ?? thread.conversationMode.mode);
     workUnit = store.createWorkUnit({
       workspaceId: DEFAULT_WORKSPACE_ID,
       kind: workUnitOwner.kind,
@@ -633,14 +732,8 @@ export async function executeRunRequest(
           })
         : undefined,
     };
-    const mediaGenerationEligible = isConversationMediaGenerationEligible({
-      createdByActor: runRequest.createdByActor,
-      workUnitKind: workUnitOwner.kind,
-    });
     if (mediaGenerationEligible) {
-      const mediaGenerationTools = createConversationMediaGenerationToolDefinitions(
-        listConversationMediaGenerationTargets(store, secretResolver),
-      );
+      const mediaGenerationTools = runnerRequest.mediaGenerationTools ?? [];
       if (mediaGenerationTools.length > 0) {
         runnerRequest = {
           ...runnerRequest,
@@ -657,13 +750,6 @@ export async function executeRunRequest(
         };
       }
     }
-    const usedMemory = memoryRecall && memoryRecall.memories.length > 0
-      ? {
-          memoryIds: memoryRecall.memories.map((item) => item.memory.id),
-          recallQuery: memoryRecall.request.query,
-          policyVersion: memoryRecall.policyVersion,
-        }
-      : runRequest.preselectedMemoryUse;
     if (usedMemory && usedMemory.memoryIds.length > 0) {
       store.recordUsedMemoryEvent(
         {
@@ -804,7 +890,9 @@ export async function executeRunRequest(
         }
       }
     }
-    if (store && thread && !run) {
+    // A pre-Run loser has no authority over a Run already linked by another dispatch.
+    if (store && thread && !run && !(error instanceof DuplicateRunRequestError) &&
+      !store.getLingThread(thread.id)?.activeRunId && (!turn || store.listLingTurnRuns(turn.id).length === 0)) {
       store.updateLingThread(thread.id, { status: "failed", activeRunId: null }, new Date().toISOString());
     }
     if (error instanceof DuplicateRunRequestError) {
@@ -818,7 +906,7 @@ export async function executeRunRequest(
       return error.runId;
     }
     const statusCode = error instanceof HttpError ? error.statusCode : error instanceof UnsupportedRunnerError ? 400 : 500;
-    sink.writeError(statusCode, {
+    writeRunPreparationFailure(sink, statusCode, {
       error: error instanceof HttpError ? error.code : error instanceof UnsupportedRunnerError ? error.code : "run_storage_unavailable",
       message: error instanceof Error ? error.message : String(error),
     });
@@ -826,7 +914,7 @@ export async function executeRunRequest(
   }
 
   if (!store || !run || !workUnit || !attempt || !runtime || !runnerResolution || !thread) {
-    sink.writeError(500, { error: "run_storage_unavailable", message: "Run was not initialized." });
+    writeRunPreparationFailure(sink, 500, { error: "run_storage_unavailable", message: "Run was not initialized." });
     return undefined;
   }
 
@@ -910,7 +998,10 @@ export async function executeRunRequest(
       boundary,
     });
   };
-  const requestRuntimeAbort = (event: "idle_timeout" | "hard_timeout"): void => {
+  const requestRuntimeAbort = (
+    event: "idle_timeout" | "hard_timeout" | "execution_loop_detected",
+    reason: string = event,
+  ): void => {
     const current = store.getWorkUnit(workUnit.id);
     if (!current || current.status === "cancelling" || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
       return;
@@ -925,7 +1016,7 @@ export async function executeRunRequest(
       expectedStatus: current.status,
       event,
       actor: "system",
-      reason: event,
+      reason,
       now,
       lastHeartbeatAt: now,
     });
@@ -939,7 +1030,7 @@ export async function executeRunRequest(
         now,
         abortRequestedAt: now,
         errorCode: event,
-        errorMessage: event,
+        errorMessage: reason,
       });
       store.appendRuntimeEvent({
         workUnitId: workUnit.id,
@@ -949,12 +1040,12 @@ export async function executeRunRequest(
         type: "work_unit_cancelling",
         actor: "system",
         ts: now,
-        data: { reason: event },
+        data: { reason, code: event },
       });
       activeRuns.requestStop(run.id, {
         kind: "runtime_failure",
         code: event,
-        reason: event,
+        reason,
       });
     }
   };
@@ -1055,9 +1146,13 @@ export async function executeRunRequest(
     requestRuntimeAbort("hard_timeout");
     return true;
   };
-  const appendAndMaybeStream: RunEventEmitter = <K extends RunEventType>(
+  const runnerCallbackFence = Object.freeze(toRuntimeAttemptFence(attempt));
+  const loopDetector = new ExecutionLoopDetector(attempt.id);
+  let loopStopRequested = false;
+  const appendRunEvent = <K extends RunEventType>(
     type: K,
     data: RunEventDataByType[K],
+    observeLoop: boolean,
   ): RunEventEnvelope | undefined => {
     if (persistenceError) {
       return undefined;
@@ -1075,10 +1170,14 @@ export async function executeRunRequest(
     }
 
     try {
-      const envelope = store.appendEvent(
+      const attributedData = type === "assistant_reasoning_summary"
+        ? { ...data, attemptId: runnerCallbackFence.attemptId } as RunEventDataByType[K]
+        : data;
+      const envelope = store.appendExecutionEvent(
         run.id,
+        runnerCallbackFence,
         type,
-        redactSecrets(data, resolvedSecretValues) as RunEventDataByType[K],
+        redactSecrets(attributedData, resolvedSecretValues) as RunEventDataByType[K],
       );
       lastRuntimeActivityAt = Date.now();
       if (type === "approval_requested") {
@@ -1111,18 +1210,38 @@ export async function executeRunRequest(
         // Computer Use projection is a derived surface and cannot block the authoritative run event.
       }
       streamEnvelope(envelope);
+      if (observeLoop && !loopStopRequested) {
+        const finding = loopDetector.observe(envelope);
+        if (finding) {
+          loopStopRequested = true;
+          const loopEnvelope = appendRunEvent("loop_detected", finding.event, false);
+          if (loopEnvelope) {
+            requestRuntimeAbort("execution_loop_detected", finding.event.message);
+          } else {
+            activeRuns.requestStop(run.id, {
+              kind: "runtime_failure",
+              code: "runner_crash",
+              reason: "execution_loop_detection_persistence_failed",
+            });
+          }
+        }
+      }
       return envelope;
     } catch (error) {
       persistenceError = error;
       return undefined;
     }
   };
+  const appendAndMaybeStream: RunEventEmitter = <K extends RunEventType>(
+    type: K,
+    data: RunEventDataByType[K],
+  ): RunEventEnvelope | undefined => appendRunEvent(type, data, true);
 
   try {
-    await waitForTaskContinuation("run_start");
     runStartedAt = new Date().toISOString();
-    const runStartTransition = store.transitionRunStatus({
+    const runStartTransition = store.transitionRunExecutionStatus({
       runId: run.id,
+      sourceFence: runnerCallbackFence,
       expectedStatus: "queued",
       event: "runner_started",
       actor: "runner",
@@ -1190,11 +1309,17 @@ export async function executeRunRequest(
     if (!approvalPolicy) {
       throw new Error("Run approval policy was not initialized.");
     }
+    // Complete Host start bookkeeping so shutdown has a legal fenced failure
+    // transition, then reject before any Runner or approval tool is invoked.
+    await waitForTaskContinuation("run_start");
+    abortController.signal.throwIfAborted();
     const runApprovalHandler = createRunApprovalHandler({
+      restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime(),
       store,
       run,
       workUnitId: workUnit.id,
       attemptId: attempt.id,
+      sourceFence: runnerCallbackFence,
       delegatedRequirementFingerprint: runRequest.delegatedRequirement?.fingerprint,
       executionOperationBindings: runRequest.executionOperationBindings,
       approvalPolicy,
@@ -1221,11 +1346,31 @@ export async function executeRunRequest(
         syncLingThreadForRunEvent(store, run, envelope.type, envelope);
       },
     });
+    const hostCapabilityAuthority = runnerRequest.hostCapabilityTools?.length
+      ? createHostCapabilityAuthority({
+          store,
+          run,
+          workUnitId: workUnit.id,
+          attemptId: attempt.id,
+          sourceFence: runnerCallbackFence,
+          signal: abortController.signal,
+        })
+      : undefined;
     const result = await runnerResolution.runner.adapter.runTask({
       ...runnerRequest,
       runId: run.id,
       runnerAttemptId: attempt.id,
       sandbox: sandboxBinding,
+      onToolBefore: (request) => {
+        const rejection = workflowOperationEffectRejection({ store, run, request,
+          restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime() });
+        if (rejection) return { allowed: false, code: rejection.code, reason: rejection.reason };
+        if (runnerRequest.hostCapabilityTools?.some((tool) => tool.name === request.toolName)) {
+          const hostRejection = hostCapabilityAuthority?.check({ ...request, task: runnerRequest.task });
+          if (hostRejection) return { allowed: false, code: hostRejection.code, reason: hostRejection.reason };
+        }
+        return { allowed: true };
+      },
       onApprovalRequired: async (request) => {
         const definition = mcpTools.find((tool) => tool.registeredName === request.toolName);
         if (definition) {
@@ -1266,12 +1411,21 @@ export async function executeRunRequest(
         mcpToolRefs: mcpTools.map((tool) => `${tool.serverId}:${tool.rawName}`),
       }),
       onTaskContinuationBoundary: (boundary) => waitForTaskContinuation(boundary),
-      onToolHydrationRequest: runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" &&
+      onHostCapabilityCall: hostCapabilityAuthority && options.hostCapabilityBridge
+        ? (request) => dispatchHostOpenLocalTarget({
+            bridge: options.hostCapabilityBridge!,
+            authority: hostCapabilityAuthority,
+            run,
+            request,
+          })
+        : undefined,
+      onToolHydrationRequest: runnerRequest.initialToolSurface?.toolHydration !== false && runnerResolution.runner.toolHydration?.mode === "daemon_hydrated" &&
         runnerResolution.runner.toolHydration.conformance === "verified"
         ? (request) => hydrateRunnerToolSurface({
             store,
             runnerRegistry,
             run,
+            sourceFence: runnerCallbackFence,
             request,
           })
         : undefined,
@@ -1283,7 +1437,7 @@ export async function executeRunRequest(
           event.type,
           { ...event } as RunEventDataByType[typeof event.type],
         );
-        if (eventEnvelope && event.type === "tool_end") {
+        if (eventEnvelope && event.type === "tool_end" && store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence, true)) {
           const sourceArgs = toolStartArgsById.get(event.toolCallId);
           try {
             const artifacts = persistExtractedArtifacts({
@@ -1313,6 +1467,17 @@ export async function executeRunRequest(
       signal: abortController.signal,
     });
 
+    const completionStopIntent = activeRuns.getStopIntent(run.id)
+      ?? readActiveRunStopIntent(abortController.signal.reason);
+    const completionRun = store.getRun(run.id);
+    if (
+      abortController.signal.aborted
+      && completionRun?.status !== "cancelled"
+      && !isCancellationStopIntent(completionStopIntent)
+    ) {
+      abortController.signal.throwIfAborted();
+    }
+
     if (persistenceError) {
       throw persistenceError;
     }
@@ -1320,7 +1485,7 @@ export async function executeRunRequest(
     if (terminalFailure) {
       throw new Error(terminalFailure);
     }
-    if (store.getRun(run.id)?.status === "cancelled") {
+    if (!store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence)) {
       const staleEvent = auditIgnoredRunnerCompletion({
         store,
         run,
@@ -1347,18 +1512,10 @@ export async function executeRunRequest(
     }
 
     const endedAt = new Date().toISOString();
-    const summaryPath = writeTerminalSummary(getRunSummaryPath(store.paths, run.id), {
+    const summaryPath = getRunSummaryPath(store.paths, run.id);
+    const successTransition = store.transitionRunExecutionStatus({
       runId: run.id,
-      status: "succeeded",
-      taskId: run.taskId,
-      eventCount: resultEnvelope?.seq ?? store.countEvents(run.id),
-      messageCount: result.messages.length,
-      startedAt: runStartedAt,
-      endedAt,
-      errorMessage: null,
-    });
-    const successTransition = store.transitionRunStatus({
-      runId: run.id,
+      sourceFence: runnerCallbackFence,
       expectedStatus: "running",
       event: "runner_succeeded",
       actor: "runner",
@@ -1384,6 +1541,11 @@ export async function executeRunRequest(
       }
       return run.id;
     }
+    writeTerminalSummary(summaryPath, {
+      runId: run.id, status: "succeeded", taskId: run.taskId,
+      eventCount: resultEnvelope?.seq ?? store.countEvents(run.id), messageCount: result.messages.length,
+      startedAt: runStartedAt, endedAt, errorMessage: null,
+    });
     transitionWorkUnitTerminal(store, {
       workUnitId: workUnit.id,
       attemptId: attempt.id,
@@ -1413,6 +1575,54 @@ export async function executeRunRequest(
   } catch (error) {
     const stopIntent = activeRuns.getStopIntent(run.id) ?? readActiveRunStopIntent(abortController.signal.reason);
     const observedRun = store.getRun(run.id);
+    if (!store.isCurrentRunExecutionOwner(run.id, runnerCallbackFence, true)) {
+      const staleEvent = auditIgnoredRunnerCompletion({
+        store,
+        run,
+        workUnit,
+        attempt,
+        reportedStatus: observedRun?.status === "cancelled" || isCancellationStopIntent(stopIntent)
+          ? "cancelled"
+          : "failed",
+      });
+      if (staleEvent) streamEnvelope(staleEvent);
+      if (!sinkClosed) sink.end();
+      return run.id;
+    }
+    if (observedRun?.status === "cancelled" || isCancellationStopIntent(stopIntent)) {
+      const cancelledAt = new Date().toISOString();
+      const observedStatus = observedRun?.status;
+      const previousStatus = observedStatus && observedStatus !== "cancelled" ? observedStatus : "running";
+      ensureRunCancelled({
+        store,
+        runId: run.id,
+        taskId: run.taskId,
+        startedAt: runStartedAt,
+        reason: "cancelled",
+        active: false,
+        streamEnvelope,
+      });
+      transitionWorkUnitCancelled(store, workUnit.id, attempt.id, "cancelled");
+      const staleEvent = auditIgnoredRunnerCompletion({
+        store,
+        run,
+        workUnit,
+        attempt,
+        reportedStatus: "cancelled",
+        reason: "run_cancelled",
+        now: cancelledAt,
+      });
+      if (staleEvent) {
+        streamEnvelope(staleEvent);
+      }
+      appendRunCancelledControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, previousStatus, cancelledAt);
+      appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit.id, "cancelling", "cancelled", run.id, cancelledAt);
+      syncLingThreadForTerminalRun(store, run.id, cancelledAt);
+      if (!sinkClosed) {
+        sink.end();
+      }
+      return run.id;
+    }
     if (stopIntent?.kind === "runtime_suspend") {
       const suspendedAt = new Date().toISOString();
       const recoverableApproval = store.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 })[0]
@@ -1448,40 +1658,6 @@ export async function executeRunRequest(
         }
       }
     }
-    if (observedRun?.status === "cancelled" || stopIntent?.kind === "user_cancel" || stopIntent?.kind === "workflow_cancel") {
-      const cancelledAt = new Date().toISOString();
-      const observedStatus = observedRun?.status;
-      const previousStatus = observedStatus && observedStatus !== "cancelled" ? observedStatus : "running";
-      ensureRunCancelled({
-        store,
-        runId: run.id,
-        taskId: run.taskId,
-        startedAt: runStartedAt,
-        reason: "cancelled",
-        active: false,
-        streamEnvelope,
-      });
-      transitionWorkUnitCancelled(store, workUnit.id, attempt.id, "cancelled");
-      const staleEvent = auditIgnoredRunnerCompletion({
-        store,
-        run,
-        workUnit,
-        attempt,
-        reportedStatus: "succeeded",
-        reason: "run_cancelled",
-        now: cancelledAt,
-      });
-      if (staleEvent) {
-        streamEnvelope(staleEvent);
-      }
-      appendRunCancelledControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, previousStatus, cancelledAt);
-      appendWorkUnitTransitionControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, workUnit.id, "cancelling", "cancelled", run.id, cancelledAt);
-      syncLingThreadForTerminalRun(store, run.id, cancelledAt);
-      if (!sinkClosed) {
-        sink.end();
-      }
-      return run.id;
-    }
     const runtimeFailure = stopIntent?.kind === "runtime_failure"
       ? stopIntent
       : stopIntent?.kind === "runtime_suspend"
@@ -1502,23 +1678,17 @@ export async function executeRunRequest(
       : appendFailureEvent(
           store,
           run.id,
+          runnerCallbackFence,
           message,
           sinkClosed,
           sink,
           skillContextFallback ? { skillContextFallback } : undefined,
         );
-    const summaryPath = writeTerminalSummary(getRunSummaryPath(store.paths, run.id), {
-      runId: run.id,
-      status: "failed",
-      taskId: run.taskId,
-      eventCount: failureEvent?.seq ?? store.countEvents(run.id),
-      startedAt: runStartedAt,
-      endedAt,
-      errorMessage: message,
-    });
+    const summaryPath = getRunSummaryPath(store.paths, run.id);
     const currentRun = store.getRun(run.id);
-    const failureTransition = store.transitionRunStatus({
+    const failureTransition = store.transitionRunExecutionStatus({
       runId: run.id,
+      sourceFence: runnerCallbackFence,
       expectedStatus: currentRun?.status ?? "running",
       event: "runner_failed",
       actor: runtimeFailure ? "system" : "runner",
@@ -1545,6 +1715,11 @@ export async function executeRunRequest(
       }
       return run.id;
     }
+    writeTerminalSummary(summaryPath, {
+      runId: run.id, status: "failed", taskId: run.taskId,
+      eventCount: failureEvent?.seq ?? store.countEvents(run.id),
+      startedAt: runStartedAt, endedAt, errorMessage: message,
+    });
     const currentWorkUnit = store.getWorkUnit(workUnit.id);
     transitionWorkUnitTerminal(store, {
       workUnitId: workUnit.id,
@@ -1581,10 +1756,10 @@ export async function executeRunRequest(
     const releaseAt = new Date().toISOString();
     store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), releaseAt, "run-finished");
     store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), releaseAt, "run-finished");
-    activeRuns.delete(run.id);
+    if (activeRuns.get(run.id)?.attemptId === attempt.id) activeRuns.delete(run.id);
     try {
       const terminalRun = store.getRun(run.id);
-      if (terminalRun && isTerminalRunStatus(terminalRun.status)) {
+      if (terminalRun && isTerminalRunStatus(terminalRun.status) && hasCurrentRunCallbackIdentity(store, run, runnerCallbackFence)) {
         try {
           computerUseProducer?.finish(terminalRun.status, terminalRun.errorMessage ?? undefined);
         } catch {
@@ -1597,6 +1772,19 @@ export async function executeRunRequest(
     }
   }
   return run.id;
+}
+
+function selectHostCapabilityToolsForRun(
+  request: RunRequest,
+): readonly HostCapabilityToolDefinitionV1[] {
+  const execution = request.workflowOperationExecution;
+  if (!execution) return [];
+  const ownedIds = new Set(execution.ownedOperationIds);
+  const needsOpen = execution.plan.operations.some((operation) =>
+    ownedIds.has(operation.id) && operation.kind === "open_local_target");
+  return needsOpen
+    ? hostCapabilityToolsV1.filter((tool) => tool.capabilityId === "host.open_local_target")
+    : [];
 }
 
 function skillRuntimeCompiledViewRequested(mode: string): boolean {
@@ -1786,6 +1974,12 @@ function readActiveRunStopIntent(value: unknown): import("../../runtime/active-r
     : undefined;
 }
 
+function isCancellationStopIntent(
+  value: import("../../runtime/active-runs.js").ActiveRunStopIntentV1 | undefined,
+): value is Extract<import("../../runtime/active-runs.js").ActiveRunStopIntentV1, { readonly kind: "user_cancel" | "workflow_cancel" }> {
+  return value?.kind === "user_cancel" || value?.kind === "workflow_cancel";
+}
+
 function isTerminalRunStatus(status: RunStatus): status is Extract<RunStatus, "succeeded" | "failed" | "cancelled"> {
   return status === "succeeded" || status === "failed" || status === "cancelled";
 }
@@ -1814,6 +2008,9 @@ function findRunnerTerminalFailure(events: readonly PiRunnerEvent[]): string | u
 
 function validateWorkflowStepOwner(store: RunStore, runRequest: RunRequest): void {
   if (!runRequest.workflowStepId) {
+    if (runRequest.workflowOperationExecution !== undefined) {
+      throw new HttpError(409, "operation_binding_snapshot_invalid", "Typed execution requires a workflow step owner.");
+    }
     return;
   }
   const workflowStep = store.getChannelWorkflowStep(runRequest.workflowStepId);
@@ -1837,6 +2034,14 @@ function validateWorkflowStepOwner(store: RunStore, runRequest: RunRequest): voi
       "workflow_step_task_mismatch",
       `Run request task does not match workflow step: ${runRequest.workflowStepId}`,
     );
+  }
+  const expected = createWorkflowOperationExecutionSnapshot(workflowStep);
+  if (expected || runRequest.workflowOperationExecution !== undefined) {
+    if (!expected || JSON.stringify(expected) !== JSON.stringify(runRequest.workflowOperationExecution)
+      || runRequest.teammateId !== expected.participantId
+      || runRequest.delegatedRequirement?.fingerprint !== workflowStep.metadata?.delegatedRequirement?.fingerprint) {
+      throw new HttpError(409, "operation_binding_snapshot_invalid", "Run dispatch must preserve the complete accepted typed plan, owner IDs and delegated requirement.");
+    }
   }
 }
 

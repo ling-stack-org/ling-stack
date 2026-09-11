@@ -126,6 +126,10 @@ function formatProjectedConversationItem(item: ConversationItemV1): string {
 
 function projectedConversationItemBody(item: ConversationItemV1): string {
   switch (item.kind) {
+    case "user_input_request":
+    case "user_input_answer":
+      // U1 stores references only; U2 must hydrate content under consumer scope.
+      return "[User-input reference only; not answer content, permission or execution evidence.]";
     case "user_message":
     case "assistant_message":
       return item.payload.body;

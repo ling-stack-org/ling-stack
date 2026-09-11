@@ -1,8 +1,29 @@
 import { Brain } from "lucide-react";
 import type { ConversationTimelineReasoningItem } from "@ling-stack/conversation-ui-core";
-import { TimelineFactRow } from "./TimelineFactRow.js";
-import { TextDetail, detailExists } from "./timeline-renderer-details.js";
+import { conversationTimelineRendererKey } from "@ling-stack/conversation-ui-core";
+import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 
-export function ConversationTimelineReasoningRenderer({ item, depth }: { readonly item: ConversationTimelineReasoningItem; readonly depth: 0 | 1 }): React.JSX.Element {
-  return <TimelineFactRow item={item} depth={depth} title={item.title} icon={<Brain size={14} aria-hidden="true" />} detail={detailExists(item) ? <TextDetail text={item.summary} /> : undefined} />;
+export function ConversationTimelineReasoningRenderer({ item, cwd, depth }: {
+  readonly item: ConversationTimelineReasoningItem;
+  readonly cwd?: string;
+  readonly depth: 0 | 1;
+}): React.JSX.Element {
+  return (
+    <section
+      className="conversation-timeline-reasoning"
+      data-conversation-timeline-kind={item.kind}
+      data-conversation-timeline-renderer-key={conversationTimelineRendererKey(item.kind)}
+      data-conversation-timeline-id={item.id}
+      data-conversation-timeline-revision={item.revision}
+      data-conversation-timeline-depth={depth}
+    >
+      <div className="conversation-timeline-reasoning-heading">
+        <Brain size={13} aria-hidden="true" />
+        <span>{item.title}</span>
+      </div>
+      <div className="conversation-timeline-reasoning-body">
+        <MessageBodyRenderer text={item.summary} cwd={cwd} compact streaming={false} />
+      </div>
+    </section>
+  );
 }

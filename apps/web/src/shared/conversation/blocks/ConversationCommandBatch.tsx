@@ -1,32 +1,26 @@
 import { ChevronDown, SquareTerminal } from "lucide-react";
-import type { ReactNode } from "react";
 import { conversationTimelineRendererKey, type ConversationTimelineCommandBatchItem } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
-import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
+import type { ConversationTimelineBatchDisclosure } from "../timeline/conversation-timeline-display-model.js";
 
 export function ConversationCommandBatch({
   batch,
   actionIds,
   revision,
   depth = 0,
-  renderCommand,
+  disclosure,
+  onExpandedChange,
 }: {
   readonly batch: ConversationTimelineCommandBatchItem["batch"];
   readonly actionIds?: readonly string[];
   readonly revision?: number;
   readonly depth?: 0 | 1;
-  readonly renderCommand: (command: ConversationTimelineCommandBatchItem["batch"]["commands"][number]) => ReactNode;
+  readonly disclosure: ConversationTimelineBatchDisclosure;
+  readonly onExpandedChange: (expanded: boolean) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
-  const disclosure = useConversationBlockView({
-    blockId: batch.id,
-    revisionKey: batch.revisionKey,
-    defaultExpanded: batch.defaultExpanded,
-    preserveTouchedStateOnRevision: true,
-  });
   const duration = formatCommandDuration(batch.durationMs);
   const batchLabel = t("Ran {count} commands", { count: batch.commandCount });
-  const detailId = `conversation-command-batch-${domSafeId(batch.id)}`;
   const density = batch.commandCount > 20 ? "large" : "default";
 
   return (
@@ -56,9 +50,9 @@ export function ConversationCommandBatch({
         className="conversation-command-batch-header"
         type="button"
         aria-expanded={disclosure.expanded}
-        aria-controls={detailId}
+        aria-controls={disclosure.expanded ? disclosure.groupId : undefined}
         aria-label={`${batchLabel}. ${disclosure.expanded ? t("Collapse command batch") : t("Expand command batch")}`}
-        onClick={disclosure.toggleExpanded}
+        onClick={() => onExpandedChange(!disclosure.expanded)}
       >
         <SquareTerminal size={14} aria-hidden="true" />
         <span>{batchLabel}</span>
@@ -67,17 +61,8 @@ export function ConversationCommandBatch({
           <ChevronDown size={13} />
         </span>
       </button>
-      {disclosure.expanded ? (
-        <div id={detailId} className="conversation-command-batch-list">
-          {batch.commands.map((command) => renderCommand(command))}
-        </div>
-      ) : null}
     </section>
   );
-}
-
-function domSafeId(value: string): string {
-  return value.replace(/[^A-Za-z0-9_-]+/gu, "-");
 }
 
 function formatCommandDuration(durationMs: number | undefined): string | undefined {

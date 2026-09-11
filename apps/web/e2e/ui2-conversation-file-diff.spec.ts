@@ -116,7 +116,7 @@ test("Durable file-change evidence opens a capability-scoped diff in the Host do
   const diffRef = editRow.locator("button.conversation-timeline-file-ref").filter({ hasText: "±" }).first();
   await expect(editRow.locator("button.conversation-timeline-file-ref").filter({ hasText: "±" })).toHaveCount(1);
   await expect(editRow.locator("button.conversation-timeline-file-ref").filter({ hasText: "▧" })).toHaveCount(1);
-  await expect(diffRef).toContainText("FileDiffSurface.tsx");
+  await expect(diffRef).toHaveAccessibleName("Show diff details");
   await expect(diffRef).toHaveAttribute("title", "apps/web/src/features/workspace/FileDiffSurface.tsx");
   await diffRef.focus();
   await diffRef.press("Enter");

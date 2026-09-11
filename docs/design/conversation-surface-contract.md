@@ -29,6 +29,16 @@ presentation and completion gates are owned by the v3.9.1 documents above. This 
 only defines surface scope, shell chrome, composer policy and Host callback boundaries;
 it must not add a route-local transcript renderer or summary owner.
 
+2026-09-06 execution-entry increment: [Host capability integration](channel-execution-capability-integration-plan.md)
+is part of the current plan, not a shipped feature. Normal, private and channel surfaces
+share the capability catalog/compiler, action evidence and renderer contract. Availability
+is the intersection of Host support, runner bridge support, workspace policy and the current
+participant/surface permission snapshot, not a consequence of sharing UI. Private chat
+must not delegate to another Agent to obtain a missing capability. Channel root/topic/branch
+and child calls require their own validated scope and owner; a parent grant cannot be
+silently inherited. Existing deny/read-only policies must not be loosened to pass QA.
+Workspace-file viewer tokens remain a separate capability lifecycle.
+
 ## Typed transcript override (v3.9.1)
 
 For message, activity, command, file, tool, approval, child-agent, batching, and
@@ -46,7 +56,8 @@ inputs, not target renderers or independent fact owners. During the v3.7 cutover
 - production activity rendering moves to the shared `ConversationTimeline` registry;
 - Composer, right dock and EnvironmentPopover may focus/open an owning row but may not
   duplicate its action summary, output, approval control or completion state;
-- user/agent narrative uses the shared left-aligned document lane and the fact row status
+- user/agent narrative uses shared sender-aware document geometry (user lane/avatar right,
+  Agent lane/avatar left, text inside both left aligned) and the fact row status
   vocabulary is closed; a surface must not restore a right-side bubble or local status copy;
 - after all surface parity fixtures pass, production WorkCell/activity callers are
   removed without a legacy renderer feature flag.
@@ -1145,7 +1156,8 @@ Current first-pass matching:
 
 Rendering rules (v3.7 target; the pre-v3.6 geometry is historical only):
 
-- user and assistant messages share the left-aligned document lane; identity comes from
+- user and assistant messages share the document renderer, with the user lane end-aligned
+  and the assistant lane start-aligned; text inside both stays left aligned. Identity comes from
   lightweight author metadata, not a right-side square bubble,
 - assistant messages do not show a Ling Agent avatar or repeat the Ling Agent label on
   every ordinary reply,
@@ -1267,7 +1279,8 @@ Shared visual rules:
 - pending images, files, links and file references stay in one non-wrapping row; overflow
   scrolls horizontally inside the strip and never expands the page or wraps into a second
   Composer row,
-- user and assistant messages align to the same left document column,
+- user lanes end-align and assistant lanes start-align within the same document width;
+  user avatars are trailing and Agent avatars leading, while all body text stays left aligned,
 - avatars are compact and actual where available,
 - icon stacks overlap cleanly with stable spacing,
 - no redundant "teammate" label when the avatar stack already occupies that slot,

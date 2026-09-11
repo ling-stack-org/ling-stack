@@ -1,15 +1,19 @@
 import { CheckSquare, GitBranch, Handshake, ListChecks, MessageSquareText, Play, Workflow } from "lucide-react";
-import type { ConversationTimelineProtocolEventItem } from "@ling-stack/conversation-ui-core";
+import type { ConversationProtocolAction, ConversationTimelineProtocolEventItem } from "@ling-stack/conversation-ui-core";
 import { TimelineFactRow } from "./TimelineFactRow.js";
 import { TextDetail, detailExists } from "./timeline-renderer-details.js";
+import { ConversationTimelineProtocolActions } from "./ConversationTimelineProtocolActions.js";
 
 export function ConversationTimelineProtocolRenderer({
   item,
   depth,
+  onInvokeProtocolAction,
 }: {
   readonly item: ConversationTimelineProtocolEventItem;
   readonly depth: 0 | 1;
+  readonly onInvokeProtocolAction?: (item: ConversationTimelineProtocolEventItem, action: ConversationProtocolAction) => void | Promise<void>;
 }): React.JSX.Element {
+  const hasActions = Boolean(onInvokeProtocolAction && item.availableActions?.length);
   return (
     <TimelineFactRow
       item={item}
@@ -17,7 +21,12 @@ export function ConversationTimelineProtocolRenderer({
       title={item.title}
       meta={item.meta}
       icon={<ProtocolIcon kind={item.protocolKind} />}
-      detail={detailExists(item) ? <TextDetail text={item.description ?? item.detailLines?.map((line) => line.text).join("\n")} /> : undefined}
+      detail={detailExists(item) || hasActions ? (
+        <>
+          {detailExists(item) ? <TextDetail text={item.description ?? item.detailLines?.map((line) => line.text).join("\n")} /> : null}
+          <ConversationTimelineProtocolActions item={item} onInvoke={onInvokeProtocolAction} />
+        </>
+      ) : undefined}
     />
   );
 }

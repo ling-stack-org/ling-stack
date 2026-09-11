@@ -2,6 +2,7 @@ import {
   approvalSideEffectFingerprintV1,
   createWorkUnitAttemptId,
   getRunSummaryPath,
+  toRuntimeAttemptFence,
   type ApprovalRequest,
   type LingApprovalCheckpoint,
   type RunEventEnvelope,
@@ -19,12 +20,14 @@ import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../channels/orchestrator.js";
 import { workflowExactCommandBindingRejection } from "./approvals.js";
+import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
 import { workflowStepExecutionOperationBindings } from "../channels/workflow-operation-evidence.js";
 import { acquireRunRuntimeSemaphores, prepareRunConcurrency } from "./concurrency.js";
 import { executeUnifiedBashTool } from "./unified-exec.js";
 import { appendRuntimeProgressForRunEvent, syncWorkUnitForRunEvent } from "./work-units.js";
 import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./threads.js";
 import { writeTerminalSummary } from "./terminal.js";
+import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
 
 export type ApprovalResumeStartResult =
   | { readonly status: "not_applicable"; readonly reason: string }
@@ -254,7 +257,7 @@ export class ApprovalResumeCoordinator {
       attempt: claim.attempt,
       abortController,
     })).finally(() => {
-      this.options.activeRuns.delete(claim.run.id);
+      if (this.options.activeRuns.get(claim.run.id)?.attemptId === claim.attempt.id) this.options.activeRuns.delete(claim.run.id);
     });
     this.options.activeRuns.add(claim.run.id, {
       abortController,
@@ -278,11 +281,12 @@ export class ApprovalResumeCoordinator {
   }): Promise<void> {
     const payload = input.approval.payload;
     if (payload.type !== "bash") return;
+    const sourceFence = Object.freeze(toRuntimeAttemptFence(input.attempt));
     const append: RunEventEmitter = <K extends Parameters<RunStore["appendEvent"]>[1]>(
       type: K,
       data: RunEventDataByType[K],
     ): RunEventEnvelope => {
-      const envelope = input.store.appendEvent(input.run.id, type, data);
+      const envelope = input.store.appendExecutionEvent(input.run.id, sourceFence, type, data);
       syncWorkUnitForRunEvent(input.store, input.workUnit.id, input.attempt.id, type, envelope);
       appendRuntimeProgressForRunEvent(input.store, input.workUnit.id, input.attempt.id, type, envelope);
       syncLingThreadForRunEvent(input.store, input.run, type, envelope);
@@ -332,6 +336,12 @@ export class ApprovalResumeCoordinator {
         bindings: workflowStep ? workflowStepExecutionOperationBindings(workflowStep) : undefined,
         request,
       });
+      const restrictedCommandRuntime = this.options.runtimeSupervisor.getRestrictedCommandRuntime();
+      const effectRejection = workflowOperationEffectRejection({ store: input.store, run: input.run, request, restrictedCommandRuntime });
+      if (effectRejection) {
+        this.failResume(input.store, input.checkpoint, effectRejection.code + ":" + effectRejection.reason);
+        return;
+      }
       if (bindingRejection) {
         this.failResume(input.store, input.checkpoint, `approval_resume_tool_mismatch:${bindingRejection}`);
         return;
@@ -348,7 +358,9 @@ export class ApprovalResumeCoordinator {
         attemptId: input.attempt.id,
       });
       const handled = await executeUnifiedBashTool({
+        restrictedCommandRuntime,
         store: input.store,
+        sourceFence,
         run: input.run,
         request,
         approvalId: input.approval.id,
@@ -381,6 +393,10 @@ export class ApprovalResumeCoordinator {
       });
       await this.finishRun(input, "succeeded", undefined, handled);
     } catch (error) {
+      if (!input.store.isCurrentRunExecutionOwner(input.run.id, sourceFence, true)) {
+        auditIgnoredRunnerCompletion({ ...input, reportedStatus: "failed" });
+        return;
+      }
       const stopIntent = this.options.activeRuns.getStopIntent(input.run.id)
         ?? readStopIntent(input.abortController.signal.reason);
       const phase = readResumeToolPhase(input.store, input.run.id, input.approval, input.checkpoint, input.attempt.id);
@@ -448,16 +464,7 @@ export class ApprovalResumeCoordinator {
   ): Promise<void> {
     const now = new Date().toISOString();
     const message = errorCode ?? null;
-    const summaryPath = writeTerminalSummary(getRunSummaryPath(input.store.paths, input.run.id), {
-      runId: input.run.id,
-      status,
-      taskId: input.run.taskId,
-      eventCount: input.store.countEvents(input.run.id),
-      messageCount: handledResult ? 1 : 0,
-      startedAt: input.run.startedAt,
-      endedAt: now,
-      errorMessage: message,
-    });
+    const summaryPath = getRunSummaryPath(input.store.paths, input.run.id);
     const currentRun = input.store.getRun(input.run.id);
     const latestCheckpoint = input.store.getApprovalCheckpoint(input.checkpoint.id);
     const currentWorkUnit = input.store.getWorkUnit(input.workUnit.id);
@@ -468,7 +475,7 @@ export class ApprovalResumeCoordinator {
       || !currentWorkUnit
       || currentWorkUnit.status !== "running"
       || currentWorkUnit.activeAttemptId !== input.attempt.id) {
-      await this.reconcileTerminalRun(input.store, input.run.id, now);
+      auditIgnoredRunnerCompletion({ ...input, reportedStatus: status, now });
       return;
     }
     const terminal = input.store.commitApprovalResumeTerminal({
@@ -491,9 +498,14 @@ export class ApprovalResumeCoordinator {
       now,
     });
     if (!terminal.ok) {
-      await this.reconcileTerminalRun(input.store, input.run.id, now);
+      auditIgnoredRunnerCompletion({ ...input, reportedStatus: status, now });
       return;
     }
+    writeTerminalSummary(summaryPath, {
+      runId: input.run.id, status, taskId: input.run.taskId,
+      eventCount: input.store.countEvents(input.run.id), messageCount: handledResult ? 1 : 0,
+      startedAt: input.run.startedAt, endedAt: now, errorMessage: message,
+    });
     for (const event of terminal.controlPlaneEvents) this.options.controlPlaneEvents?.publish(event);
     syncLingThreadForTerminalRun(input.store, input.run.id, now);
     await this.reconcileTerminalRun(input.store, input.run.id, now);
@@ -521,15 +533,7 @@ export class ApprovalResumeCoordinator {
       }
       return;
     }
-    const summaryPath = writeTerminalSummary(getRunSummaryPath(store.paths, lineage.run.id), {
-      runId: lineage.run.id,
-      status: "failed",
-      taskId: lineage.run.taskId,
-      eventCount: store.countEvents(lineage.run.id),
-      startedAt: lineage.run.startedAt,
-      endedAt: now,
-      errorMessage: reason,
-    });
+    const summaryPath = getRunSummaryPath(store.paths, lineage.run.id);
     const terminal = store.commitApprovalResumeTerminal({
       kind: "verified_lineage",
       checkpointId: latest.id,
@@ -550,6 +554,11 @@ export class ApprovalResumeCoordinator {
       now,
     });
     if (!terminal.ok) return;
+    writeTerminalSummary(summaryPath, {
+      runId: lineage.run.id, status: "failed", taskId: lineage.run.taskId,
+      eventCount: store.countEvents(lineage.run.id), startedAt: lineage.run.startedAt,
+      endedAt: now, errorMessage: reason,
+    });
     for (const event of terminal.controlPlaneEvents) this.options.controlPlaneEvents?.publish(event);
     syncLingThreadForTerminalRun(store, lineage.run.id, now);
     void this.reconcileTerminalRun(store, lineage.run.id, now).catch(() => undefined);

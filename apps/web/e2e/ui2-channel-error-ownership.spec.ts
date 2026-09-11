@@ -59,7 +59,7 @@ test("T13-P.9D Channel removes the generic AppShell error owner", async () => {
 test("T13-P.9D a late Engineering send failure cannot leak into Research", async ({ page }) => {
   const signals = collectBrowserSignals(page);
   await prepareSurface(page, { height: 960, theme: "light", width: 1440 });
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   addResearchChannel(state);
   await mockDaemon(page, state);
 
@@ -89,7 +89,7 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
   await engineeringComposer.getByRole("button", { name: "Send", exact: true }).click();
   await requestStarted.promise;
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
   await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
 
@@ -162,7 +162,7 @@ test("T13-P.9D channel rename failure remains inside its owning Dialog", async (
 
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
   await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
   await expect(page.getByText(failureMessage, { exact: true })).toHaveCount(0);

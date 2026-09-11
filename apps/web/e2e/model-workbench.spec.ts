@@ -30,10 +30,10 @@ async function clickProviderRowMenuItem(row: Locator, name: string | RegExp): Pr
 }
 
 async function openModelWorkbench(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /^(Settings|设置)$/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /^(Settings|设置)$/ }).click();
   await page.getByLabel(/^(Settings sections|设置分组)$/).getByRole("button", { name: /^(Model Workbench|模型工作台)$/ }).click();
   await expect(page.getByLabel(/^(Settings sections|设置分组)$/)).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
 }
 
 async function expectProviderModelDiscoveryLayout(page: Page): Promise<void> {

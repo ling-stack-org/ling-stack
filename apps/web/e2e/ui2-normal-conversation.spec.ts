@@ -33,10 +33,10 @@ for (const fixture of [
     });
 
     await page.goto("/");
-    await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Deployment readiness" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({ hasText: "Deployment readiness" }).click();
 
     const conversation = page.getByLabel("Conversation page");
-    const header = conversation.locator("[data-ui2-normal-conversation-header='true']");
+    const header = page.locator("[data-ui2-normal-conversation-header='true']");
     const toolbar = header.getByRole("toolbar", { name: "Conversation workspace toolbar" });
     const identity = header.locator(".normal-conversation-identity");
     const feed = conversation.getByLabel("Conversation messages", { exact: true });
@@ -104,7 +104,8 @@ for (const fixture of [
     await expectSearchContained(evidenceSearch, header);
     await expect(feed).toContainText("architecture-notes.pdf");
 
-    const headerTheme = await header.evaluate((element) => {
+    const titlebarSurface = page.locator("[data-desktop-window-titlebar-surface='true']");
+    const headerTheme = await titlebarSurface.evaluate((element) => {
       const probe = document.createElement("span");
       probe.style.color = getComputedStyle(document.documentElement).getPropertyValue("--ling-bg-panel");
       document.body.append(probe);

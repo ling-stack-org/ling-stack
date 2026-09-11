@@ -19,12 +19,14 @@ export interface ConversationOperationSourceRef {
   readonly kind: string;
   readonly id: string;
   readonly label?: string;
+  readonly href?: string;
   readonly path?: string;
   /** Granted only by the Host adapter; absent refs remain copyable text. */
   readonly hostTarget?: "open_file" | "open_diff" | "open_artifact" | "open_run";
   readonly capabilityId?: string;
   readonly workspaceId?: string;
-  readonly visibility?: "conversation" | "private" | "audit";
+  readonly visibility?: "conversation" | "private" | "audit" | "folded_evidence" | "developer_only";
+  readonly sensitivity?: "normal" | "private" | "secret_adjacent";
 }
 
 /**
@@ -59,6 +61,27 @@ export interface ConversationOperationExecutionView {
   readonly updatedAt?: string;
   readonly latestEventSeq?: number;
   readonly sourceRefs: readonly ConversationOperationSourceRef[];
+  readonly runtimeDiagnostic?: ConversationRuntimeDiagnostic;
+}
+
+/** Bounded Host diagnosis shared by legacy adapters and the typed timeline. */
+export interface ConversationRuntimeDiagnostic {
+  readonly code: "execution_loop_detected";
+  readonly loopKind: "exact_repeat" | "repeated_update" | "cycle" | "no_progress_budget";
+  readonly repeatedCount: number;
+  readonly noProgressActionCount: number;
+  readonly cycleLength?: number;
+  readonly fingerprint: string;
+  readonly retryable: false;
+}
+
+/** Bounded, Host-derived tool output. Input labels are never result evidence. */
+export interface ConversationToolEvidence {
+  readonly toolName: string;
+  readonly inputSummary: string;
+  readonly outputText?: string;
+  readonly outputTruncated: boolean;
+  readonly latestEventSeq: number;
 }
 
 export interface ConversationActivitySummary {
@@ -91,6 +114,7 @@ export interface ConversationCommandExecutionView {
   readonly durationMs?: number;
   readonly exitCode?: number;
   readonly signal?: string;
+  readonly timedOut?: boolean;
   readonly latestEventSeq: number;
   readonly outputTail?: readonly {
     readonly eventSeq: number;
@@ -126,6 +150,7 @@ export interface ConversationWorkCellRow {
   readonly meta?: string;
   readonly commandText?: string;
   readonly commandExecution?: ConversationCommandExecutionView;
+  readonly toolEvidence?: ConversationToolEvidence;
   readonly operationExecution?: ConversationOperationExecutionView;
   readonly changePreview?: ConversationWorkCellChangePreview;
   readonly detailLines?: readonly ConversationWorkCellRowDetailLine[];
@@ -174,6 +199,8 @@ export interface ConversationAgentActivitySpan {
   readonly latestRow?: ConversationWorkCellRow;
   readonly rows: readonly ConversationWorkCellRow[];
   readonly items?: readonly ConversationWorkCellItem[];
+  /** Event-positioned child rows, using the root timeline's renderer contract. */
+  readonly typedTimelineItems?: readonly import("./transcript-item.js").ConversationTimelineItem[];
 }
 
 /** @deprecated Use ConversationAgentActivitySpan. */

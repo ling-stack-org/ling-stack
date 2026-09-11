@@ -4,6 +4,32 @@ import { batchCanonicalTranscriptItems } from "@ling-stack/conversation-ui-core"
 import { projectConversationDetailTimeline, resolveConversationContextSnapshots } from "../src/domains/conversations/canonical-transcript-snapshot.ts";
 import { mergeConversationDetailSnapshots } from "../src/domains/conversations/conversation-detail-merge.ts";
 
+test("all conversation detail surfaces preserve report reference privacy", () => {
+  for (const kind of ["conversation", "teammate_private", "channel_discussion"]) {
+    const detail = detailFixture({ kind });
+    const report = {
+      id: "privacy-report", workspaceId: "workspace-1", threadId: "thread-1", turnId: "turn-1",
+      generation: 1, resultItemId: "privacy-result", status: "committed", language: "en-US",
+      source: { kind: "run", id: "run-1" }, evidenceFingerprint: "privacy-fp",
+      outcome: { status: "succeeded", title: "Safe title", summary: "Safe summary", corrections: [], sourceRefs: [] },
+      changes: [], verification: [], participants: [], artifacts: [], risks: [],
+      references: [
+        { kind: "file", id: "safe-file", label: "safe-file", visibility: "conversation", sensitivity: "private" },
+        { kind: "file", id: "PRIVACY_SENTINEL", label: "PRIVACY_SENTINEL", visibility: "conversation", sensitivity: "secret_adjacent" },
+      ],
+    };
+    detail.terminalReports = [report];
+    detail.conversationItems.push({ ...item("privacy-result", 4, "terminal_report", {
+      reportId: report.id, generation: 1, sourceKind: "run", sourceId: "run-1",
+      evidenceFingerprint: report.evidenceFingerprint, outcomeStatus: "succeeded",
+    }), turnId: "turn-1" });
+    const result = projectConversationDetailTimeline(detail).items.find((entry) => entry.kind === "terminalReport");
+    assert.ok(result);
+    assert.doesNotMatch(JSON.stringify(result.references), /PRIVACY_SENTINEL/u);
+    assert.equal(result.references.find((ref) => ref.id === "safe-file")?.sensitivity, "private");
+  }
+});
+
 test("detail adapter feeds the canonical projector from full Continuity history", () => {
   const detail = detailFixture({ kind: "conversation" });
   const projection = projectConversationDetailTimeline(detail);
@@ -27,6 +53,33 @@ test("detail adapter assigns the local Ling participant when a normal action omi
   const command = projection.items.find((entry) => entry.kind === "commandExecution");
   assert.equal(command?.participantId, "ling");
   assert.equal(projection.diagnostics.some((entry) => entry.code === "missing_lineage"), false);
+});
+
+test("detail adapter preserves bounded tool results and their event sequence without inventing output", () => {
+  for (const kind of ["conversation", "channel_discussion", "teammate_private"]) {
+    const detail = detailFixture({ kind });
+    const action = detail.executionActions[0];
+    Object.assign(action, {
+      actionType: "read", title: "read", summary: "src/todo.test.mjs", status: "failed",
+      sourceEventSequence: 49,
+      targetRefs: [{ type: "file", id: "src/todo.test.mjs", path: "src/todo.test.mjs" }],
+      toolEvidence: {
+        toolName: "read", inputSummary: "src/todo.test.mjs · offset 1 · limit 400",
+        outputText: "ENOENT: no such file or directory\n  src/todo.test.mjs",
+        outputTruncated: true, latestEventSeq: 50,
+      },
+    });
+    const result = projectConversationDetailTimeline(detail).items.find((entry) => entry.kind === "exploration");
+    assert.equal(result?.resultSummary, action.toolEvidence.outputText);
+    assert.equal(result?.inputSummary, action.toolEvidence.inputSummary);
+    assert.equal(result?.outputTruncated, true);
+    assert.equal(result?.sourceEventSequence, 49);
+    assert.equal(result?.targets[0]?.path, "src/todo.test.mjs");
+
+    delete action.toolEvidence;
+    const noResult = projectConversationDetailTimeline(detail).items.find((entry) => entry.kind === "exploration");
+    assert.equal(noResult?.resultSummary, undefined, `${kind} must not promote input summary to a result`);
+  }
 });
 
 test("detail adapter supplies immutable context segments to display batching", () => {
@@ -131,7 +184,7 @@ test("normal, private, channel, topic, and branch keep one typed item grammar", 
   assert.equal(new Set(signatures.map((entries) => entries.join("|"))).size, 1);
 });
 
-test("detail adapter joins approvals and artifacts by exact durable identity, never arbitrary run order", () => {
+test("detail adapter projects approvals from checkpoint lineage without assigning command ownership", () => {
   const detail = detailFixture({ kind: "conversation" });
   detail.conversationItems = [
     item("user-1", 1, "user_message", { body: "Inspect", format: "plain_text" }),
@@ -142,18 +195,28 @@ test("detail adapter joins approvals and artifacts by exact durable identity, ne
   ];
   detail.executionActions = [
     actionFixture("unrelated", "tool-unrelated", { toolCallId: "call-unrelated" }),
-    actionFixture("approval-owner", "approval-item", { actionType: "approval", approvalId: "approval-1", status: "waiting_for_approval" }),
+    actionFixture("approved-command", "approval-item", { approvalId: "approval-1", toolCallId: "call-approved", status: "failed" }),
     actionFixture("artifact-owner", "artifact-item", { actionType: "read", resultArtifactIds: ["image-1"], sourceRefs: [{ kind: "conversation_item", id: "artifact-item" }, { kind: "run_event", id: "event-image" }] }),
   ];
   detail.approvals = [{
-    id: "approval-1", runId: "run-1", actionType: "bash", risk: "medium", title: "Allow command", description: "Run the command", payload: {}, status: "pending", createdAt: detail.thread.createdAt,
+    id: "approval-1", runId: "run-1", toolCallId: "call-approved", actionType: "bash", risk: "medium", title: "Allow command", description: "Run the command", payload: {}, status: "approved", createdAt: detail.thread.createdAt, resolvedAt: detail.thread.updatedAt,
+  }];
+  detail.approvalCheckpoints = [{
+    id: "checkpoint-1", approvalId: "approval-1", runId: "run-1", toolCallId: "call-approved",
+    actionType: "bash", risk: "medium", title: "Allow command", description: "Run the command", status: "approved",
+    sideEffect: {}, previewArtifactIds: [], resultArtifactIds: [], revision: 4,
+    resumeBasis: { schemaVersion: 1, approvalId: "approval-1", runId: "run-1", workUnitId: "work-unit-1", priorAttemptId: "attempt-1", toolCallId: "call-approved", actionType: "bash", sideEffectFingerprint: "side-effect", fingerprint: "resume-basis" },
+    createdAt: detail.thread.createdAt, updatedAt: detail.thread.updatedAt, resolvedAt: detail.thread.updatedAt,
   }];
   detail.artifacts = [{ id: "image-1", runId: "run-1", type: "image", path: "artifacts/result.png", title: "Result", contentType: "image/png", createdAt: detail.thread.createdAt }];
 
   const projection = projectConversationDetailTimeline(detail);
   const approval = projection.items.find((entry) => entry.kind === "approval");
   const image = projection.items.find((entry) => entry.kind === "imageView");
-  assert.equal(approval?.actionId, "approval-owner");
+  assert.equal(approval?.actionId, undefined);
+  assert.equal(approval?.status, "succeeded");
+  assert.equal(approval?.attemptId, "attempt-1");
+  assert.equal(projection.items.find((entry) => entry.actionId === "approved-command")?.status, "failed");
   assert.equal(image?.actionId, "artifact-owner");
   assert.equal(image?.itemId, "artifact-item");
   assert.equal(projection.diagnostics.some((entry) => entry.code === "missing_anchor" || entry.code === "owner_conflict"), false);
@@ -165,7 +228,9 @@ test("detail adapter projects durable plan, compaction lineage, and a child Agen
     { ...detail.conversationItems[0], turnId: "turn-1" },
     detail.conversationItems[1],
     { ...item("child-tool", 3, "tool_call", { toolCallId: "child-call", toolName: "bash" }), turnId: "turn-2" },
-    { ...item("child-agent", 4, "assistant_message", { body: "I checked the fixture.", format: "markdown", streaming: false, deliveryStatus: "ready" }), turnId: "turn-2" },
+    { ...item("child-agent", 4, "assistant_message", { body: "I checked the fixture.", format: "markdown", streaming: false, deliveryStatus: "ready" }), turnId: "turn-2", actorType: "teammate", actorId: "qa", domainRefs: [{ type: "run", id: "run-child" }] },
+    { ...item("sibling-agent", 5, "assistant_message", { body: "Another Agent on the same turn.", format: "markdown", deliveryStatus: "ready" }), turnId: "turn-2", actorType: "teammate", actorId: "engineer", domainRefs: [{ type: "run", id: "run-sibling" }] },
+    { ...item("unowned-agent", 6, "assistant_message", { body: "No Run owner.", format: "markdown", deliveryStatus: "ready" }), turnId: "turn-2" },
   ];
   detail.runLinks = [
     ...detail.runLinks,
@@ -196,6 +261,7 @@ test("detail adapter projects durable plan, compaction lineage, and a child Agen
   assert.equal(child?.childItems.some((entry) => entry.kind === "agentMessage"), true);
   assert.equal(child?.childItems.some((entry) => entry.kind === "diagnostic"), false);
   assert.equal(child?.childItems.some((entry) => entry.itemId === "tool-1"), false);
+  assert.deepEqual(child?.childItems.filter((entry) => entry.kind === "agentMessage").map((entry) => [entry.itemId, entry.runId, entry.attemptId, entry.participantId]), [["child-agent", "run-child", "child-attempt", "qa"]]);
 });
 
 test("detail adapter fails closed when a plan or delegated run has no explicit anchor", () => {
@@ -206,6 +272,9 @@ test("detail adapter fails closed when a plan or delegated run has no explicit a
   assert.equal(projection.items.some((entry) => entry.kind === "plan"), false);
   assert.equal(projection.items.some((entry) => entry.kind === "subAgentActivity"), false);
   assert.equal(projection.diagnostics.some((entry) => entry.code === "missing_anchor"), true);
+  detail.executionActions.push(actionFixture("unrelated-delegation", "tool-1", { actionType: "delegate_agent" }));
+  const genericAction = projectConversationDetailTimeline(detail);
+  assert.equal(genericAction.items.some((entry) => entry.kind === "subAgentActivity"), false, "a delegation tool name is not a child Run correlation");
 });
 
 test("detail reconnect merge keeps newer actions and durable records from both snapshots", () => {
@@ -252,6 +321,69 @@ test("detail reconnect merge is deterministic when snapshots arrive in either or
   assert.deepEqual(forward.terminalEvidence, reverse.terminalEvidence);
 });
 
+test("detail reconnect merge keeps edit tombstones authoritative across stale reads without guessing sourceTurnId", () => {
+  const old = detailFixture({ kind: "conversation" });
+  old.conversationItems = old.conversationItems.map((entry) => ({
+    ...entry,
+    turnId: "turn-1",
+    domainRefs: [{ type: "turn", id: "turn-1" }, { type: "run", id: "run-1" }],
+  }));
+  old.messages = [
+    { id: "conversation-user:turn-1", role: "user", content: "Old prompt", status: "succeeded", threadId: "thread-1", turnId: "turn-1", runId: "run-1", createdAt: old.thread.createdAt, updatedAt: old.thread.updatedAt },
+    { id: "conversation-assistant:turn-1", role: "assistant", content: "Old response", status: "succeeded", threadId: "thread-1", turnId: "turn-1", runId: "run-1", createdAt: old.thread.createdAt, updatedAt: old.thread.updatedAt },
+  ];
+  old.approvals = [{ id: "approval-old", runId: "run-1", actionType: "bash", risk: "low", title: "Old approval", description: "Old", payload: {}, status: "approved", createdAt: old.thread.createdAt }];
+  old.interventions = [{ id: "intervention-old", workspaceId: "workspace-1", sourceRunId: "run-1", mode: "queue_followup", status: "started", instruction: "Old followup", requestedBy: "local-user", idempotencyKey: "old", createdAt: old.thread.createdAt, updatedAt: old.thread.updatedAt }];
+  old.artifacts = [{ id: "artifact-old", runId: "run-1", type: "log", path: "old.log", createdAt: old.thread.createdAt }];
+  old.generatedMedia = [{ mediaJobId: "media-old", runId: "run-1", operation: "image_generate", target: { kind: "provider", id: "provider", displayName: "Provider" }, prompt: "old", status: "succeeded", artifacts: [], createdAt: old.thread.createdAt, updatedAt: old.thread.updatedAt }];
+
+  const replacement = detailFixture({ kind: "conversation", updatedAt: "2026-08-29T00:00:03.000Z" });
+  replacement.turns = [
+    { ...replacement.turns[0], id: "turn-2", sourceTurnId: "turn-1", title: "Replacement", userInstruction: "Replacement" },
+    { ...replacement.turns[0], id: "turn-resume", sourceTurnId: "turn-1", kind: "manual_followup", title: "Resume", userInstruction: "Resume" },
+  ];
+  replacement.runLinks = [
+    { ...replacement.runLinks[0], turnId: "turn-2", runId: "run-2" },
+    { ...replacement.runLinks[0], turnId: "turn-resume", runId: "run-resume", role: "resume" },
+  ];
+  replacement.runs = [
+    { ...replacement.runs[0], id: "run-2" },
+    { ...replacement.runs[0], id: "run-resume", continuationReason: "manual_resume" },
+  ];
+  replacement.conversationItems = [
+    { ...item("user-2", 4, "user_message", { body: "Replacement", format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] }), turnId: "turn-2", domainRefs: [{ type: "turn", id: "turn-2" }, { type: "run", id: "run-2" }] },
+    { ...item("resume-2", 5, "assistant_message", { body: "Resume stays", format: "markdown", streaming: false, deliveryStatus: "ready" }), turnId: "turn-resume", domainRefs: [{ type: "turn", id: "turn-resume" }, { type: "run", id: "run-resume" }] },
+  ];
+  replacement.executionActions = [actionFixture("action-2", "user-2", { runId: "run-2", sourceRefs: [{ kind: "conversation_item", id: "user-2" }] })];
+  replacement.messages = [
+    { id: "conversation-user:turn-2", role: "user", content: "Replacement", status: "succeeded", threadId: "thread-1", turnId: "turn-2", runId: "run-2", createdAt: replacement.thread.createdAt, updatedAt: replacement.thread.updatedAt },
+    { id: "conversation-assistant:turn-resume", role: "assistant", content: "Resume stays", status: "succeeded", threadId: "thread-1", turnId: "turn-resume", runId: "run-resume", createdAt: replacement.thread.createdAt, updatedAt: replacement.thread.updatedAt },
+  ];
+  replacement.supersessionTombstones = {
+    turnIds: ["turn-1"],
+    runIds: ["run-1"],
+    responseMessageIds: ["conversation-assistant:turn-1"],
+  };
+
+  const merged = mergeConversationDetailSnapshots(old, replacement);
+  const staleReplay = mergeConversationDetailSnapshots(merged, old);
+  for (const snapshot of [merged, staleReplay]) {
+    assert.deepEqual(snapshot.supersessionTombstones, replacement.supersessionTombstones);
+    assert.equal(snapshot.turns.some((turn) => turn.id === "turn-1"), false);
+    assert.equal(snapshot.runLinks.some((link) => link.turnId === "turn-1" || link.runId === "run-1"), false);
+    assert.equal(snapshot.runs.some((run) => run.id === "run-1"), false);
+    assert.equal(snapshot.conversationItems.some((entry) => entry.turnId === "turn-1"), false);
+    assert.equal(snapshot.executionActions.some((action) => action.id === "action-1"), false);
+    assert.equal(snapshot.approvals.some((approval) => approval.id === "approval-old"), false);
+    assert.equal(snapshot.interventions.some((intervention) => intervention.id === "intervention-old"), false);
+    assert.equal(snapshot.artifacts.some((artifact) => artifact.id === "artifact-old"), false);
+    assert.equal(snapshot.generatedMedia.some((media) => media.mediaJobId === "media-old"), false);
+    assert.equal(snapshot.messages.some((message) => message.content.startsWith("Old")), false);
+    assert.equal(snapshot.turns.some((turn) => turn.id === "turn-resume"), true, "sourceTurnId alone is not an edit tombstone");
+    assert.equal(snapshot.runs.some((run) => run.id === "run-resume"), true);
+  }
+});
+
 test("detail adapter reports omitted durable collections instead of silently projecting an incomplete snapshot", () => {
   const detail = detailFixture({ kind: "conversation" });
   delete detail.plans;
@@ -293,10 +425,11 @@ function detailFixture(threadOverrides = {}) {
       item("tool-1", 2, "tool_call", { toolCallId: "call-1", toolName: "bash" }),
       item("agent-1", 3, "assistant_message", { body: "Done", format: "markdown", streaming: false, deliveryStatus: "ready" }),
     ],
+    supersessionTombstones: { turnIds: [], runIds: [], responseMessageIds: [] },
     executionActions: [{
       id: "action-1", revision: 7, workspaceId: "workspace-1", threadId: "thread-1", runId: "run-1", attemptId: "attempt-1", participantId: "ling", actionType: "bash", risk: "low", status: "succeeded", title: "Run command", summary: "ok", toolCallId: "call-1", targetRefs: [], previewArtifactIds: [], resultArtifactIds: [], sourceRefs: [], commandEvidence: { command: "node -v", latestEventSeq: 7, outputTail: [], outputByteCount: 0, outputTruncated: false }, createdAt: now,
     }],
-    approvals: [], interventions: [], terminalReports: [], artifacts: [], plans: [], compactionCheckpoints: [], contextSnapshots: [], contextSummaries: [], messages: [], generatedMedia: [], defaults: {},
+    approvals: [], approvalCheckpoints: [], interventions: [], terminalReports: [], artifacts: [], plans: [], compactionCheckpoints: [], contextSnapshots: [], contextSummaries: [], messages: [], generatedMedia: [], defaults: {},
   };
 }
 
@@ -328,3 +461,39 @@ function actionFixture(id, anchorItemId, overrides = {}) {
     ...overrides,
   };
 }
+
+test("a delegated child can ask and receive an answer before any tool action", () => {
+  const detail = detailFixture();
+  const source = { workspaceId: "workspace-1", threadId: "thread-1", turnId: "turn-1", runId: "run-child",
+    attemptId: "attempt-child", participantId: "qa", workUnitId: "unit-child", sourceItemId: "user-1" };
+  const request = { availability: "available", itemId: "question-child", kind: "user_input_request",
+    requestId: "request-child", requestVersion: 1, source, status: "answered", statusRevision: 2,
+    waitMode: "required", questions: [{ questionId: "q", prompt: "Child question", required: true,
+      allowFreeText: true, options: [] }], createdAt: detail.thread.createdAt, updatedAt: detail.thread.updatedAt };
+  const answer = { availability: "available", itemId: "answer-child", kind: "user_input_answer",
+    requestId: request.requestId, requestVersion: 1, source, answerId: "accepted-child",
+    acceptedAt: detail.thread.updatedAt, answers: [{ questionId: "q", prompt: "Child question", kind: "text", text: "Child answer" }],
+    delivery: { status: "pending", revision: 1, updatedAt: detail.thread.updatedAt } };
+  detail.userInputs = [request, answer];
+  detail.conversationItems.push(...[request, answer].map((record, index) => ({
+    ...item(record.itemId, index + 5, record.kind, { requestId: record.requestId, requestVersion: 1,
+      ...(record.kind === "user_input_answer" ? { answerId: record.answerId } : {}) }),
+    turnId: source.turnId, actorType: record.kind === "user_input_request" ? "teammate" : "local_user",
+    actorId: record.kind === "user_input_request" ? "qa" : "user",
+  })));
+  detail.runs.push({ ...detail.runs[0], id: "run-child", parentRunId: "run-1", teammateId: "qa", status: "yielded" });
+  detail.executionActions.push(actionFixture("delegate", "tool-1", {
+    actionType: "delegate_agent", sourceRefs: [{ kind: "conversation_item", id: "tool-1" }, { kind: "run", id: "run-child" }],
+  }));
+  const result = projectConversationDetailTimeline(detail);
+  const child = result.items.find(row => row.kind === "subAgentActivity");
+  assert.ok(child);
+  assert.equal(child.lifecycle, "waiting");
+  assert.deepEqual(child.childItems.map(row => row.kind), ["userInputRequest", "userInputAnswer"]);
+  assert.ok(child.childItems.every(row => row.runId === "run-child" && row.attemptId === "attempt-child" && row.participantId === "qa"));
+  assert.equal(result.items.filter(row => row.kind === "userInputRequest" || row.kind === "userInputAnswer").length, 0);
+  const changed = structuredClone(detail);
+  changed.userInputs[1].delivery = { ...answer.delivery, status: "claimed", revision: 2 };
+  const updatedChild = projectConversationDetailTimeline(changed).items.find(row => row.kind === "subAgentActivity");
+  assert.equal(updatedChild.childItems[1].revision, 2);
+});

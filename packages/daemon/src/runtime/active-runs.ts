@@ -10,7 +10,7 @@ export type ActiveRunStopIntentV1 =
     }
   | {
       readonly kind: "runtime_failure";
-      readonly code: "idle_timeout" | "hard_timeout" | "runner_crash";
+      readonly code: "idle_timeout" | "hard_timeout" | "runner_crash" | "execution_loop_detected";
       readonly reason: string;
     };
 
@@ -31,11 +31,20 @@ interface RegisteredActiveRun extends ActiveRun {
 export class ActiveRunRegistry {
   private readonly activeRuns = new Map<string, RegisteredActiveRun>();
   private readonly completions = new Set<Promise<unknown>>();
+  private readonly idleWaiters = new Set<() => void>();
+  private shutdownCause?: Extract<ActiveRunStopIntentV1, { kind: "runtime_suspend" }>["cause"];
 
   add(runId: string, run: ActiveRun): void {
     this.activeRuns.set(runId, { ...run });
     if (run.completion) {
       this.trackCompletion(run.completion);
+    }
+    if (this.shutdownCause) {
+      this.requestStop(runId, {
+        kind: "runtime_suspend",
+        cause: this.shutdownCause,
+        runtimeInstanceId: run.runtimeInstanceId ?? "unknown-runtime",
+      });
     }
   }
 
@@ -43,8 +52,10 @@ export class ActiveRunRegistry {
     this.completions.add(completion);
     completion.then(() => {
       this.completions.delete(completion);
+      this.notifyIdleWaiters();
     }, () => {
       this.completions.delete(completion);
+      this.notifyIdleWaiters();
     });
   }
 
@@ -54,6 +65,7 @@ export class ActiveRunRegistry {
 
   delete(runId: string): void {
     this.activeRuns.delete(runId);
+    this.notifyIdleWaiters();
   }
 
   requestStop(runId: string, intent: ActiveRunStopIntentV1): boolean {
@@ -75,36 +87,49 @@ export class ActiveRunRegistry {
   }
 
   suspendAll(cause: Extract<ActiveRunStopIntentV1, { kind: "runtime_suspend" }>["cause"]): void {
+    this.shutdownCause ??= cause;
     for (const [runId, run] of this.activeRuns) {
       this.requestStop(runId, {
         kind: "runtime_suspend",
-        cause,
+        cause: this.shutdownCause,
         runtimeInstanceId: run.runtimeInstanceId ?? "unknown-runtime",
       });
     }
   }
 
-  async waitForIdle(timeoutMs = 2_000): Promise<void> {
-    const deadline = Date.now() + timeoutMs;
-    while (this.completions.size > 0) {
-      const remainingMs = deadline - Date.now();
-      if (remainingMs <= 0) {
-        return;
-      }
-      let timeout: ReturnType<typeof setTimeout> | undefined;
-      try {
-        await Promise.race([
-          Promise.allSettled([...this.completions]).then(() => undefined),
-          new Promise<void>((resolve) => {
-            timeout = setTimeout(resolve, remainingMs);
-            timeout.unref?.();
-          }),
-        ]);
-      } finally {
-        if (timeout) {
-          clearTimeout(timeout);
-        }
-      }
+  isShuttingDown(): boolean {
+    return this.shutdownCause !== undefined;
+  }
+
+  /** Wait for registered executions and callbacks, never infer idle from elapsed time. */
+  async waitForIdle(timeoutMs?: number): Promise<void> {
+    if (timeoutMs !== undefined && (!Number.isFinite(timeoutMs) || timeoutMs < 0 || timeoutMs > 2_147_483_647)) {
+      throw new RangeError("Idle timeout must be a finite non-negative timer duration.");
     }
+    if (this.isIdle()) return;
+    await new Promise<void>((resolve, reject) => {
+      let timeout: ReturnType<typeof setTimeout> | undefined;
+      const onIdle = (): void => {
+        if (!this.isIdle()) return;
+        this.idleWaiters.delete(onIdle);
+        if (timeout !== undefined) clearTimeout(timeout);
+        resolve();
+      };
+      this.idleWaiters.add(onIdle);
+      if (timeoutMs !== undefined) {
+        timeout = setTimeout(() => {
+          this.idleWaiters.delete(onIdle);
+          reject(new Error("Runtime is not idle; execution cleanup is still pending."));
+        }, timeoutMs);
+      }
+    });
+  }
+
+  private isIdle(): boolean {
+    return this.activeRuns.size === 0 && this.completions.size === 0;
+  }
+
+  private notifyIdleWaiters(): void {
+    for (const onIdle of this.idleWaiters) onIdle();
   }
 }

@@ -223,7 +223,7 @@ export function useChannelWorkflowController(input: {
         if (response.workflow) {
           input.setChannelWorkflows((current) => current.map((item) => item.id === response.workflow?.id ? response.workflow : item));
         }
-        input.setChannelWorkflowSteps((current) => current.map((item) => item.id === response.workflowStep.id ? response.workflowStep : item));
+        input.setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, [response.workflowStep]));
         const createdTask = response.task;
         if (createdTask) {
           input.setSelectedTaskId(createdTask.id);
@@ -255,7 +255,7 @@ export function useChannelWorkflowController(input: {
     try {
       input.clearWorkflowError(step.id);
       const response = await input.updateChannelWorkflowStep(input.form.cwd.trim(), step.id, { status });
-      input.setChannelWorkflowSteps((current) => current.map((item) => item.id === response.workflowStep.id ? response.workflowStep : item));
+      input.setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, [response.workflowStep]));
       if (response.workflow) {
         input.setChannelWorkflows((current) => current.map((item) => item.id === response.workflow?.id ? response.workflow : item));
       }

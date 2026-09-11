@@ -1,4 +1,5 @@
 import { resolve } from "node:path";
+import { isChannelIntentExecutionPlanV1 } from "@ling-stack/contracts";
 import type {
   ChannelIntentExecutionOperationV1,
   ChannelIntentExecutionPlanV1,
@@ -10,6 +11,7 @@ import type {
   WorkflowStepExecutionVerificationV1,
 } from "@ling-stack/core";
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
+import { validateWorkflowOperationRunContext, workflowStepRequiresOperationSnapshot } from "../runs/workflow-operation-snapshot.js";
 import { commandMatchesPolicy } from "./command-operation-match.js";
 
 export function workflowStepExecutionOperationBindings(
@@ -17,7 +19,8 @@ export function workflowStepExecutionOperationBindings(
 ): readonly ChannelIntentExecutionOperationV1[] {
   const plan = step.metadata?.executionPlan;
   if (!plan) return [];
-  const ownedIds = new Set(step.metadata?.executionOperationIds ?? plan.operations.map((operation) => operation.id));
+  const ownedIds = new Set(step.metadata?.executionOperationIds
+    ?? (workflowStepRequiresOperationSnapshot(step) ? [] : plan.operations.map((operation) => operation.id)));
   return plan.operations.filter((operation) => ownedIds.has(operation.id));
 }
 
@@ -26,18 +29,99 @@ export function verifyWorkflowStepExecutionOperations(input: {
   readonly step: ChannelWorkflowStep;
   readonly now: string;
 }): WorkflowStepExecutionVerificationV1 | undefined {
+  return input.store.readSnapshot(() => verifyWorkflowStepExecutionOperationsInSnapshot(input));
+}
+
+function verifyWorkflowStepExecutionOperationsInSnapshot(input: {
+  readonly store: RunStore;
+  readonly step: ChannelWorkflowStep;
+  readonly now: string;
+}): WorkflowStepExecutionVerificationV1 | undefined {
+  const storedStep = input.store.getChannelWorkflowStep(input.step.id);
+  const boundRun = input.step.runId ? input.store.getRun(input.step.runId) : undefined;
+  const context = boundRun ? validateWorkflowOperationRunContext({ store: input.store, run: boundRun }) : undefined;
+  const requiresSnapshot = workflowStepRequiresOperationSnapshot(input.step)
+    || workflowStepRequiresOperationSnapshot(storedStep)
+    || (context !== undefined && context.status !== "legacy");
   const plan = input.step.metadata?.executionPlan;
-  if (!plan) return undefined;
+  if (!plan) {
+    const operationIds = input.step.metadata?.executionOperationIds ?? storedStep?.metadata?.executionOperationIds ?? [];
+    if (operationIds.length === 0 && !requiresSnapshot) return undefined;
+    return { status: "blocked", checkedAt: input.now, operationResults: operationIds.map((operationId) => ({
+      operationId, status: "missing", evidenceActionIds: [], reasonCode: "operation_binding_plan_missing",
+    })) };
+  }
   const ownedOperations = workflowStepExecutionOperationBindings(input.step);
+  if (requiresSnapshot) {
+    const ownedIds = input.step.metadata?.executionOperationIds;
+    const invalidPlan = !isChannelIntentExecutionPlanV1(plan) || plan.bindingVersion !== 1;
+    const invalidOwnership = !ownedIds || new Set(ownedIds).size !== ownedIds.length
+      || ownedOperations.length !== ownedIds.length
+      || ownedOperations.some((operation) => operation.binding?.ownerParticipantId !== input.step.toParticipantId)
+      || (boundRun !== undefined && (boundRun.teammateId !== input.step.toParticipantId || boundRun.workflowStepId !== input.step.id));
+    if (invalidPlan || invalidOwnership) {
+      return {
+        status: "blocked", checkedAt: input.now,
+        operationResults: (ownedOperations.length > 0 ? ownedOperations : plan.operations).map((operation) => ({
+          operationId: operation.id, status: "missing", evidenceActionIds: [],
+          reasonCode: invalidPlan ? "operation_binding_fingerprint_invalid" : "operation_binding_owner_mismatch",
+        })),
+      };
+    }
+    if (context?.status !== "ready") {
+      return {
+        status: "blocked", checkedAt: input.now,
+        operationResults: ownedOperations.map((operation) => ({
+          operationId: operation.id, status: "missing", evidenceActionIds: [],
+          reasonCode: context?.status === "blocked" ? context.code : "operation_binding_snapshot_invalid",
+        })),
+      };
+    }
+    if (context.snapshot.plan.fingerprint !== plan.fingerprint
+      || context.step.workflowId !== input.step.workflowId
+      || JSON.stringify([...context.snapshot.ownedOperationIds].sort()) !== JSON.stringify([...ownedIds!].sort())) {
+      return {
+        status: "blocked", checkedAt: input.now,
+        operationResults: ownedOperations.map((operation) => ({
+          operationId: operation.id, status: "missing", evidenceActionIds: [], reasonCode: "operation_binding_fingerprint_mismatch",
+        })),
+      };
+    }
+  }
   if (ownedOperations.length === 0) return undefined;
-  const actions = input.step.runId
-    ? listAllExecutionActionsForRun(input.store, input.step.runId)
+  // Historical launches stay visible, but a retry cannot borrow its predecessor's receipt.
+  const isCurrentHostOpen = (action: ExecutionAction): boolean => {
+    if (!action.hostOpenReceipt) return true;
+    const ownerRun = action.runId ? input.store.getRun(action.runId) : undefined;
+    const unit = ownerRun?.workUnitId ? input.store.getWorkUnit(ownerRun.workUnitId) : undefined;
+    return unit?.activeAttemptId === action.hostOpenReceipt.attemptId;
+  };
+  const runActions = input.step.runId
+    ? listAllExecutionActionsForRun(input.store, input.step.runId).filter(isCurrentHostOpen)
     : [];
-  const workflowActions = input.store.listChannelWorkflowSteps({ workflowId: input.step.workflowId, complete: true })
-    .flatMap((step) => step.runId ? listAllExecutionActionsForRun(input.store, step.runId) : []);
+  const actions = plan.bindingVersion === 1
+    ? runActions.filter((action) => action.runId === input.step.runId && action.workflowStepId === input.step.id)
+    : runActions;
+  const workflowSteps = input.store.listChannelWorkflowSteps({ workflowId: input.step.workflowId, complete: true });
+  const workflowActions = workflowSteps
+    .flatMap((step) => step.runId ? listAllExecutionActionsForRun(input.store, step.runId) : [])
+    .filter(isCurrentHostOpen);
+  const dependencyActions = (operation: ChannelIntentExecutionOperationV1): readonly ExecutionAction[] => {
+    if (!operation.binding) return workflowActions;
+    const boundSteps = workflowSteps.filter((step) => {
+      if (step.toParticipantId !== operation.binding!.ownerParticipantId
+        || step.metadata?.executionPlan?.fingerprint !== plan.fingerprint
+        || !step.metadata?.executionOperationIds?.includes(operation.id)) return false;
+      const run = step.runId ? input.store.getRun(step.runId) : undefined;
+      const dependencyContext = run ? validateWorkflowOperationRunContext({ store: input.store, run }) : undefined;
+      return dependencyContext?.status === "ready" && dependencyContext.snapshot.plan.fingerprint === plan.fingerprint
+        && dependencyContext.snapshot.ownedOperationIds.includes(operation.id);
+    });
+    return workflowActions.filter((action) => boundSteps.some((step) => action.runId === step.runId && action.workflowStepId === step.id));
+  };
   const cwd = input.step.runId ? input.store.getRun(input.step.runId)?.cwd : undefined;
   const operationResults = ownedOperations.map((operation) =>
-    verifyOperation(operation, plan, actions, workflowActions, cwd));
+    verifyOperation(operation, plan, actions, dependencyActions, cwd));
   const requiredResultIds = new Set(ownedOperations.filter((operation) => operation.required).map((operation) => operation.id));
   const requiredResults = operationResults.filter((result) => requiredResultIds.has(result.operationId));
   return {
@@ -55,7 +139,7 @@ function verifyOperation(
   operation: ChannelIntentExecutionOperationV1,
   plan: ChannelIntentExecutionPlanV1,
   actions: readonly ExecutionAction[],
-  workflowActions: readonly ExecutionAction[],
+  resolveDependencyActions: (operation: ChannelIntentExecutionOperationV1) => readonly ExecutionAction[],
   cwd: string | undefined,
 ): WorkflowStepExecutionVerificationV1["operationResults"][number] {
   const candidates = actions.filter((action) => actionMatchesOperation(action, operation, cwd));
@@ -70,7 +154,7 @@ function verifyOperation(
   if (dependencyIds.size > 0) {
     const dependencies = plan.operations.filter((candidate) => dependencyIds.has(candidate.id));
     const dependencyActionGroups = dependencies.map((dependency) =>
-      workflowActions.filter((action) => actionMatchesOperation(action, dependency, cwd) && actionSucceededForOperation(action, dependency)));
+      resolveDependencyActions(dependency).filter((action) => actionMatchesOperation(action, dependency, cwd) && actionSucceededForOperation(action, dependency)));
     if (dependencyActionGroups.some((group) => group.length === 0)) {
       return {
         operationId: operation.id,
@@ -95,11 +179,12 @@ function actionMatchesOperation(
   operation: ChannelIntentExecutionOperationV1,
   cwd: string | undefined,
 ): boolean {
+  if (operation.binding && action.participantId !== operation.binding.ownerParticipantId) return false;
   const expectedActionType = operation.kind === "file_create"
     ? "write"
     : operation.kind === "file_edit"
       ? "edit"
-      : "bash";
+      : operation.kind === "file_read" ? "read" : operation.kind === "open_local_target" ? "host_capability" : "bash";
   if (action.actionType !== expectedActionType) return false;
   if (operation.kind === "run_command") {
     const actualCommand = action.commandEvidence?.command;
@@ -108,12 +193,13 @@ function actionMatchesOperation(
       && typeof actualCommand === "string"
       && commandMatchesPolicy(actualCommand, operation.commandMatchPolicy);
   }
-  const label = operation.targetRef.label?.trim();
+  const label = (operation.kind === "file_create" || operation.kind === "file_edit"
+    ? operation.binding?.outputRefs[0]?.path : operation.binding?.inputRefs[0]?.path) ?? operation.targetRef.label?.trim();
   if (!label) return false;
   if (operation.kind === "open_local_target") {
-    if (!action.commandEvidence) return false;
     const expectedPath = normalizePath(label, cwd);
-    return action.targetRefs.some((ref) => ref.path && normalizePath(ref.path, cwd) === expectedPath);
+    return action.targetRefs.some((ref) => ref.type === "host_capability" && ref.id === "host.open_local_target")
+      && action.targetRefs.some((ref) => ref.type === "file" && ref.path && normalizePath(ref.path, cwd) === expectedPath);
   }
   const expectedPath = normalizePath(label, cwd);
   return action.targetRefs.some((ref) => ref.type === "file" && ref.path && normalizePath(ref.path, cwd) === expectedPath);
@@ -121,7 +207,14 @@ function actionMatchesOperation(
 
 function actionSucceededForOperation(action: ExecutionAction, operation: ChannelIntentExecutionOperationV1): boolean {
   if (action.status !== "succeeded") return false;
-  if (operation.kind !== "run_command" && operation.kind !== "open_local_target") return true;
+  if (operation.kind === "open_local_target") {
+    const receipt = action.hostOpenReceipt;
+    return receipt !== undefined && receipt.status === "launched" && receipt.visibility === "unverified"
+      && receipt.runId === action.runId && receipt.attemptId === action.attemptId
+      && receipt.toolCallId === action.toolCallId && receipt.approvalId === action.approvalId
+      && receipt.path === (operation.binding?.inputRefs[0]?.path ?? operation.targetRef.label);
+  }
+  if (operation.kind !== "run_command") return true;
   const evidence = action.commandEvidence;
   return Boolean(evidence
     && evidence.exitCode === 0
@@ -134,7 +227,8 @@ function operationFailureCode(
   operation: ChannelIntentExecutionOperationV1,
   actions: readonly ExecutionAction[],
 ): string {
-  if (operation.kind === "run_command" || operation.kind === "open_local_target") {
+  if (operation.kind === "open_local_target") return "required_host_open_missing_launch_receipt";
+  if (operation.kind === "run_command") {
     const action = actions.find((candidate) => candidate.commandEvidence);
     const evidence = action?.commandEvidence;
     if (!evidence) return "required_command_missing_evidence";

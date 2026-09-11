@@ -10,6 +10,8 @@ import { applyWorkspaceProvenanceMigration } from "./workspace-provenance-migrat
 import { applyPostCompactionUndoMigration } from "./post-compaction-undo-migration.js";
 import { applyWorkspaceSnapshotMigration } from "./workspace-snapshot-migration.js";
 
+import { ensureHostCommandJournalIndex } from "./host-command-journal-migration.js";
+
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
   hasMigration(version: number): boolean;
@@ -240,6 +242,10 @@ const APPROVAL_COMMAND_RULES_MIGRATION_VERSION = 126;
 const APPROVAL_COMMAND_RULES_MIGRATION_NAME = "create_approval_command_rules";
 const CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_VERSION = 127;
 const CODEX_TYPED_TRANSCRIPT_V3_MIGRATION_NAME = "codex_typed_transcript_v3_result_items";
+const CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_VERSION = 128;
+const CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_NAME = "enforce_channel_handoff_workflow_idempotency";
+const CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_VERSION = 129;
+const CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_NAME = "enforce_channel_decision_supersession_idempotency";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -877,6 +883,10 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
 
         CREATE INDEX IF NOT EXISTS idx_channel_decisions_channel_status_created
         ON channel_decisions(channel_id, status, created_at);
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_decisions_supersedes_unique
+        ON channel_decisions(supersedes_decision_id)
+        WHERE supersedes_decision_id IS NOT NULL;
 
         CREATE TABLE IF NOT EXISTS channel_handoffs (
           id TEXT PRIMARY KEY,
@@ -5735,6 +5745,95 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     }
   }
 
+  if (!context.hasMigration(CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_VERSION)) {
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      // First-writer-wins for development databases that already contain the bug.
+      // Later workflow rows stay intact for audit, while their steps retain handoff lineage.
+      database.exec(`
+        WITH ranked_handoff_workflows AS (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY source_handoff_id
+              ORDER BY created_at ASC, rowid ASC
+            ) AS claim_order
+          FROM channel_workflows
+          WHERE source_handoff_id IS NOT NULL
+        )
+        UPDATE channel_workflows
+        SET source_handoff_id = NULL
+        WHERE id IN (
+          SELECT id
+          FROM ranked_handoff_workflows
+          WHERE claim_order > 1
+        );
+
+        DROP INDEX IF EXISTS idx_channel_workflows_handoff;
+        CREATE UNIQUE INDEX idx_channel_workflows_source_handoff_unique
+        ON channel_workflows(source_handoff_id)
+        WHERE source_handoff_id IS NOT NULL;
+      `);
+      context.recordMigration(
+        CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_VERSION,
+        CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_NAME,
+      );
+      database.exec("COMMIT;");
+    } catch (error) {
+      database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_workflows_source_handoff_unique
+    ON channel_workflows(source_handoff_id)
+    WHERE source_handoff_id IS NOT NULL;
+  `);
+
+  if (!context.hasMigration(CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_VERSION)) {
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      // Preserve the first successor claim. Later duplicate rows remain auditable, but
+      // cannot stay active or retain a claim that would violate the single-successor chain.
+      database.exec(`
+        WITH ranked_decision_successors AS (
+          SELECT
+            id,
+            ROW_NUMBER() OVER (
+              PARTITION BY supersedes_decision_id
+              ORDER BY created_at ASC, rowid ASC
+            ) AS claim_order
+          FROM channel_decisions
+          WHERE supersedes_decision_id IS NOT NULL
+        )
+        UPDATE channel_decisions
+        SET supersedes_decision_id = NULL, status = 'rejected'
+        WHERE id IN (
+          SELECT id
+          FROM ranked_decision_successors
+          WHERE claim_order > 1
+        );
+
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_decisions_supersedes_unique
+        ON channel_decisions(supersedes_decision_id)
+        WHERE supersedes_decision_id IS NOT NULL;
+      `);
+      context.recordMigration(
+        CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_VERSION,
+        CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_NAME,
+      );
+      database.exec("COMMIT;");
+    } catch (error) {
+      database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+  database.exec(`
+    CREATE UNIQUE INDEX IF NOT EXISTS idx_channel_decisions_supersedes_unique
+    ON channel_decisions(supersedes_decision_id)
+    WHERE supersedes_decision_id IS NOT NULL;
+  `);
+
   applyRunContextViewLineageMigration({
     database,
     hasMigration: context.hasMigration.bind(context),
@@ -5759,4 +5858,5 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     hasTable: context.hasTable.bind(context),
     recordMigration: context.recordMigration.bind(context),
   });
+  ensureHostCommandJournalIndex(database);
 }

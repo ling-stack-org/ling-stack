@@ -1,4 +1,5 @@
 import { useState } from "react";
+import { useI18n } from "../../../i18n.js";
 import type {
   ConversationOperationSourceRef,
   ConversationTimelineRowItem,
@@ -20,6 +21,7 @@ export function ConversationTimelineFileChangeDetail({
   item,
   onOpenSourceRef,
 }: ConversationTimelineFileChangeDetailProps): React.JSX.Element {
+  const { t } = useI18n();
   const previewRef = item.changePreview
     ? item.sourceRefs.find((ref) => ref.id === item.changePreview?.artifactId && (ref.kind === "artifact" || ref.kind === "diff"))
     : undefined;
@@ -27,12 +29,12 @@ export function ConversationTimelineFileChangeDetail({
   return (
     <div className="conversation-timeline-file-detail">
       <div className="conversation-timeline-file-list">
-        {item.files.map((file) => <ConversationTimelineFileReference key={`${file.fileRef.kind}:${file.fileRef.id}`} file={file} onOpenSourceRef={onOpenSourceRef} item={item} />)}
+        {item.files.map((file) => <ConversationTimelineFileReference key={`${file.fileRef.kind}:${file.fileRef.id}`} file={item.files.length === 1 ? { ...file, displayName: t("Open path") } : file} onOpenSourceRef={onOpenSourceRef} item={item} />)}
         {previewRef ? (
           <ConversationTimelineFileReference
             file={{
               fileRef: previewRef,
-              displayName: previewRef.label ?? item.changePreview?.path ?? "Open diff",
+              displayName: t("Show diff details"),
               change: "edited",
             }}
             onOpenSourceRef={onOpenSourceRef}

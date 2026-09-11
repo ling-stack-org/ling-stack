@@ -250,7 +250,7 @@ test("AUTO-THEME keeps imported Theme Pack ownership on the list and shared crea
   await page.goto("/");
   const themeId = await seedImportedQuietOcean(page);
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automations" }).click();
 
   const root = page.locator("html");
   const surface = page.locator("[data-automation-ui2-page]");
@@ -629,7 +629,7 @@ async function initializePage(page: Page, locale: "en-US" | "zh-CN", theme: "dar
 
 async function openAutomations(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Automations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Automations" }).click();
   await expect(page.locator("[data-automation-ui2-page]")).toBeVisible();
 }
 

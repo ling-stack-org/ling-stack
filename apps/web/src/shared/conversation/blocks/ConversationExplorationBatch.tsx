@@ -1,30 +1,25 @@
 import { BookOpen, ChevronDown } from "lucide-react";
-import { conversationTimelineRendererKey, type ConversationTimelineExplorationBatchItem, type ConversationTimelineExplorationItem } from "@ling-stack/conversation-ui-core";
+import { conversationTimelineRendererKey, type ConversationTimelineExplorationBatchItem } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
-import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
+import type { ConversationTimelineBatchDisclosure } from "../timeline/conversation-timeline-display-model.js";
 
 export function ConversationExplorationBatch({
   batch,
   actionIds,
   revision,
   depth = 0,
-  renderItem,
+  disclosure,
+  onExpandedChange,
 }: {
   readonly batch: ConversationTimelineExplorationBatchItem["batch"];
   readonly actionIds?: readonly string[];
   readonly revision?: number;
   readonly depth?: 0 | 1;
-  readonly renderItem: (item: ConversationTimelineExplorationItem) => React.ReactNode;
+  readonly disclosure: ConversationTimelineBatchDisclosure;
+  readonly onExpandedChange: (expanded: boolean) => void;
 }): React.JSX.Element {
   const { t } = useI18n();
-  const disclosure = useConversationBlockView({
-    blockId: batch.id,
-    revisionKey: batch.revisionKey,
-    defaultExpanded: batch.defaultExpanded,
-    preserveTouchedStateOnRevision: true,
-  });
   const batchLabel = t("Read {count} items", { count: batch.targetCount ?? batch.operationCount });
-  const detailId = `conversation-exploration-batch-${domSafeId(batch.id)}`;
   const density = batch.operationCount > 20 ? "large" : "default";
 
   return (
@@ -54,9 +49,9 @@ export function ConversationExplorationBatch({
         className="conversation-exploration-batch-header"
         type="button"
         aria-expanded={disclosure.expanded}
-        aria-controls={detailId}
+        aria-controls={disclosure.expanded ? disclosure.groupId : undefined}
         aria-label={`${batchLabel}. ${disclosure.expanded ? t("Collapse read records") : t("Expand read records")}`}
-        onClick={disclosure.toggleExpanded}
+        onClick={() => onExpandedChange(!disclosure.expanded)}
       >
         <BookOpen size={14} aria-hidden="true" />
         <span>{batchLabel}</span>
@@ -64,15 +59,6 @@ export function ConversationExplorationBatch({
           <ChevronDown size={13} />
         </span>
       </button>
-      {disclosure.expanded ? (
-        <div id={detailId} className="conversation-exploration-batch-list">
-          {batch.children.map((item) => renderItem(item))}
-        </div>
-      ) : null}
     </section>
   );
-}
-
-function domSafeId(value: string): string {
-  return value.replace(/[^A-Za-z0-9_-]+/gu, "-");
 }

@@ -16,20 +16,16 @@ const FAILURE_STATUSES = new Set(["blocked", "failed"]);
 
 /**
  * Projects the shared narrative/error boundary for every conversation surface.
- * New assistant content remains narrative and a typed error field owns the
- * failure presentation. Legacy rows that stored failure detail only in the
- * body, or duplicated it in both fields, are handled deterministically.
+ * Content remains narrative and a typed error field owns the failure
+ * presentation. A blocked run can mean it is waiting for permission; status
+ * alone never turns model text or a user instruction into an error.
  */
 export function projectConversationMessagePresentation(
   input: ConversationMessagePresentationInput,
 ): ConversationMessagePresentation {
   const content = input.content;
   const failed = Boolean(input.runtimeFailed || FAILURE_STATUSES.has(input.status ?? ""));
-  const typedErrorText = input.errorMessage?.trim() ?? "";
-  // Legacy conversation rows sometimes stored the only failure detail in
-  // `content`. Keep that row visible as an error until it is rewritten with a
-  // typed error field, while new rows retain the narrative/error split.
-  const errorText = typedErrorText || (failed ? content.trim() : "");
+  const errorText = input.errorMessage?.trim() ?? "";
   const showError = Boolean(errorText && failed);
   const errorOwnsBody = showError && content.trim() === errorText;
   const errorAlreadyNarrated = showError && contentContainsTypedFailure(content, errorText);

@@ -1,8 +1,10 @@
 import {
   buildDeterministicTerminalReport,
   computeTerminalReportEvidenceFingerprint,
+  captureNormalTerminalReportBasis,
   type ChannelMessage,
   type LingTerminalReportRecord,
+  type NormalTerminalReportBasis,
   type RunStore,
   type RunSession,
   type SecretResolver,
@@ -17,7 +19,7 @@ import { formatSynchronousCatalogMessage } from "@ling-stack/localization";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { collectRunTerminalReportEvidence, collectTurnTerminalReportEvidence, collectWorkflowTerminalReportEvidence } from "./terminal-report-evidence.js";
-import { publishTerminalReportPublication } from "./terminal-report-publisher.js";
+import { publishTerminalReportPublication, TerminalReportPublicationError } from "./terminal-report-publisher.js";
 import { getChannelMessageView } from "./conversation-item-messages.js";
 import {
   runIsEligibleForTerminalReport,
@@ -237,11 +239,14 @@ export async function processRunTerminalReport(
   const run = store.getRun(runId);
   if (!run || !runIsEligibleForTerminalReport(store, run)) return undefined;
   const now = options.now ?? new Date().toISOString();
-  const snapshot = collectRunTerminalReportEvidence(store, runId, { generatedAt: now });
+  const { snapshot, normalBasis } = store.readSnapshot(() => {
+    const snapshot = collectRunTerminalReportEvidence(store, runId, { generatedAt: now });
+    return { snapshot, normalBasis: terminalSnapshotHasExecutedWork(snapshot) ? captureNormalBasis(store, snapshot) : undefined };
+  });
   if (!terminalSnapshotHasExecutedWork(snapshot)) {
     return undefined;
   }
-  return processTerminalReportSnapshot(store, snapshot, options);
+  return processTerminalReportSnapshot(store, snapshot, options, normalBasis);
 }
 
 export async function processTurnTerminalReport(
@@ -251,27 +256,40 @@ export async function processTurnTerminalReport(
 ): Promise<ProcessTerminalReportResult | undefined> {
   if (!turnIsEligibleForTerminalReport(store, turnId)) return undefined;
   const now = options.now ?? new Date().toISOString();
-  const snapshot = collectTurnTerminalReportEvidence(store, turnId, { generatedAt: now });
+  const { snapshot, normalBasis } = store.readSnapshot(() => {
+    const snapshot = collectTurnTerminalReportEvidence(store, turnId, { generatedAt: now });
+    return { snapshot, normalBasis: terminalSnapshotHasExecutedWork(snapshot) ? captureNormalBasis(store, snapshot) : undefined };
+  });
   if (!terminalSnapshotHasExecutedWork(snapshot)) {
     return undefined;
   }
-  return processTerminalReportSnapshot(store, snapshot, options);
+  return processTerminalReportSnapshot(store, snapshot, options, normalBasis);
+}
+
+function captureNormalBasis(store: RunStore, snapshot: TerminalReportEvidenceSnapshot): NormalTerminalReportBasis | undefined {
+  if (snapshot.source.kind === "workflow" || !snapshot.threadId || store.getLingThread(snapshot.threadId)?.kind !== "conversation") return undefined;
+  const basis = captureNormalTerminalReportBasis(store, { kind: snapshot.source.kind, id: snapshot.source.id });
+  if (!basis) throw new TerminalReportPublicationError("source_turn_conflict", `Normal report source is not canonical: ${snapshot.source.id}`);
+  if (!basis.settled) throw new TerminalReportPublicationError("stale_completion_basis", `Normal report evidence barrier is not settled: ${snapshot.source.id}`);
+  return basis;
 }
 
 async function processTerminalReportSnapshot(
   store: RunStore,
   snapshot: TerminalReportEvidenceSnapshot,
   options: ProcessWorkflowTerminalReportOptions,
+  normalBasis?: NormalTerminalReportBasis,
 ): Promise<ProcessTerminalReportResult> {
   const now = options.now ?? new Date().toISOString();
+  const current = latestReport(store, snapshot.source.kind, snapshot.source.id);
   const existing = latestCommittedReport(store, snapshot.source.kind, snapshot.source.id);
-  if (existing?.report && existing.evidenceFingerprint === snapshot.evidenceFingerprint) {
-    const message = publishTerminalReportWithInvalidation(store, existing.report, options.linkedRunId, now);
+  if (existing?.report && existing.evidenceFingerprint === snapshot.evidenceFingerprint
+    && (!normalBasis || existing.generation === current?.generation)) {
+    const message = publishTerminalReportWithInvalidation(store, existing.report, options.linkedRunId, now, normalBasis);
     return { record: store.getTerminalReport(existing.id) ?? existing, message };
   }
 
   const settings = settingsByStore.get(store);
-  const current = latestReport(store, snapshot.source.kind, snapshot.source.id);
   const generation = current ? current.generation + 1 : 1;
   let draft = current && (current.status === "draft" || current.status === "validating")
     ? current
@@ -304,7 +322,11 @@ async function processTerminalReportSnapshot(
     });
   }
 
-  const workUnit = startReportWorkUnit(store, snapshot, generation, now);
+  // Concurrent collectors can have equal semantic evidence but different
+  // random snapshot IDs. The persisted draft owns the immutable report input.
+  if (normalBasis) snapshot = draft.evidenceSnapshot;
+
+  const workUnit = startReportWorkUnit(store, snapshot, normalBasis ? draft.generation : generation, now);
   try {
     const synthesis = await synthesizeTerminalReportContent({
       store,
@@ -324,21 +346,33 @@ async function processTerminalReportSnapshot(
       : buildDeterministicTerminalReport(snapshot, {
           id: draft.id,
           promptVersion: TERMINAL_REPORT_PROMPT_VERSION,
+          providerPresetId: synthesis.providerPresetId,
+          model: synthesis.providerModel,
+          attemptCount: synthesis.attemptCount,
           validationCodes: synthesis.validationCodes,
           createdAt: draft.createdAt,
           committedAt: now,
         });
-    const committed = store.commitTerminalReport({
-      reportId: draft.id,
-      expectedStatus: "validating",
-      expectedEvidenceFingerprint: snapshot.evidenceFingerprint,
-      report,
-      synthesisMode: report.synthesis.mode,
-      promptVersion: report.synthesis.promptVersion,
-      attemptCount: report.synthesis.attemptCount,
-      validationCodes: report.synthesis.validationCodes,
-      now,
-    });
+    // Normal reports become committed only inside the result publication transaction.
+    // Workflow publication retains its existing compatibility path.
+    let message: ChannelMessage | undefined;
+    let committed: LingTerminalReportRecord;
+    if (normalBasis) {
+      message = publishTerminalReportWithInvalidation(store, report, options.linkedRunId, now, normalBasis);
+      committed = store.getTerminalReport(draft.id)!;
+    } else {
+      committed = store.commitTerminalReport({
+        reportId: draft.id,
+        expectedStatus: "validating",
+        expectedEvidenceFingerprint: snapshot.evidenceFingerprint,
+        report,
+        synthesisMode: report.synthesis.mode,
+        promptVersion: report.synthesis.promptVersion,
+        attemptCount: report.synthesis.attemptCount,
+        validationCodes: report.synthesis.validationCodes,
+        now,
+      });
+    }
     store.appendRuntimeEvent({
       workUnitId: workUnit.id,
       type: "work_unit_progress",
@@ -356,19 +390,22 @@ async function processTerminalReportSnapshot(
         latencyMs: synthesis.latencyMs,
       },
     });
-    const message = publishTerminalReportWithInvalidation(store, report, options.linkedRunId, now);
+    if (!normalBasis) message = publishTerminalReportWithInvalidation(store, report, options.linkedRunId, now);
     succeedReportWorkUnit(store, workUnit, committed, message, now);
     return { record: store.getTerminalReport(committed.id) ?? committed, message, workUnit: store.getWorkUnit(workUnit.id) ?? workUnit };
   } catch (error) {
     const currentDraft = store.getTerminalReport(draft.id);
-    if (currentDraft && (currentDraft.status === "draft" || currentDraft.status === "validating")) {
+    const ownsEvidence = !normalBasis || currentDraft?.evidenceFingerprint === snapshot.evidenceFingerprint;
+    if (ownsEvidence && currentDraft && (currentDraft.status === "draft" || currentDraft.status === "validating")) {
       store.failTerminalReport({
         reportId: currentDraft.id,
+        expectedStatus: currentDraft.status,
+        expectedEvidenceFingerprint: currentDraft.evidenceFingerprint,
         errorCode: "terminal_report_fallback_failed",
         now,
       });
     }
-    failReportWorkUnit(store, workUnit, error, now);
+    if (ownsEvidence) failReportWorkUnit(store, workUnit, error, now);
     throw error;
   }
 }
@@ -477,6 +514,7 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
     return;
   }
   const latestPublishedBySource = new Map<string, LingTerminalReportRecord>();
+  const recoveredTurnIds = new Set<string>();
   for (const record of store.listTerminalReports({ limit: 500 })) {
     if (!terminalReportIsEligibleForDisplay(store, record)
       || (record.status !== "committed" && record.status !== "fallback")
@@ -490,6 +528,20 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
     }
   }
   for (const record of latestPublishedBySource.values()) {
+    if (record.sourceKind !== "workflow" && !record.channelId && record.turnId && record.threadId
+      && store.getLingThread(record.threadId)?.kind === "conversation") {
+      recoveredTurnIds.add(record.turnId);
+      const source = { kind: record.sourceKind, id: record.sourceId };
+      const basis = store.readSnapshot(() => captureNormalTerminalReportBasis(store, source));
+      // Recovery recollects evidence before publication. A stale pre-atomic
+      // orphan stays audit-only; a new generation owns the current result.
+      // Preserve a legacy Run source instead of creating a second Turn result.
+      if (basis?.settled && (source.kind === "turn" || source.id === basis.effectiveRunId)) {
+        if (source.kind === "turn") await processTurnTerminalReport(store, source.id);
+        else await processRunTerminalReport(store, source.id);
+      }
+      continue;
+    }
     publishTerminalReportWithInvalidation(store, record.report!, undefined, new Date().toISOString());
   }
   for (const channel of store.listChannels({ limit: 500 })) {
@@ -508,7 +560,6 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
       }
     }
   }
-  const recoveredTurnIds = new Set<string>();
   for (const status of ["succeeded", "failed", "cancelled"] as const) {
     for (const run of store.listRuns({ status, limit: 500 })) {
       if (
@@ -550,8 +601,9 @@ function publishTerminalReportWithInvalidation(
   report: TerminalReport,
   linkedRunId: string | undefined,
   now: string,
+  expectedNormalBasis?: NormalTerminalReportBasis,
 ): ChannelMessage | undefined {
-  const publication = publishTerminalReportPublication({ store, report, linkedRunId, now });
+  const publication = publishTerminalReportPublication({ store, report, linkedRunId, now, expectedNormalBasis });
   if (publication?.controlPlaneEvent) {
     try {
       settingsByStore.get(store)?.onPublished?.({ event: publication.controlPlaneEvent });
@@ -691,6 +743,7 @@ function succeedReportWorkUnit(
   message: ChannelMessage | undefined,
   now: string,
 ): void {
+  workUnit = store.getWorkUnit(workUnit.id) ?? workUnit;
   if (workUnit.status !== "running" && workUnit.status !== "waiting_for_approval") {
     return;
   }
@@ -707,11 +760,12 @@ function succeedReportWorkUnit(
     type: "work_unit_succeeded",
     actor: "system",
     ts: now,
-    data: { reportId: report.id, resultItemId: message?.id ?? null },
+    data: { reportId: report.id, resultItemId: report.resultItemId ?? message?.id ?? null },
   });
 }
 
 function failReportWorkUnit(store: RunStore, workUnit: WorkUnit, error: unknown, now: string): void {
+  workUnit = store.getWorkUnit(workUnit.id) ?? workUnit;
   if (workUnit.status !== "running" && workUnit.status !== "claimed" && workUnit.status !== "queued") {
     return;
   }
@@ -760,7 +814,6 @@ function terminalSnapshotHasExecutedWork(snapshot: TerminalReportEvidenceSnapsho
   return snapshot.operations.length > 0 ||
     snapshot.checks.length > 0 ||
     snapshot.artifacts.length > 0 ||
-    snapshot.approvals.length > 0 ||
     snapshot.steps.some((step) => step.changedPaths.length > 0 || step.artifactIds.length > 0);
 }
 

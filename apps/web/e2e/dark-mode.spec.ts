@@ -42,7 +42,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
   await assertDarkAliasConvergence(page);
   await assertAliasesTrackRuntimeThemeTokens(page);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.locator(".client-window")).toBeVisible();
   await assertDarkPage(page, "channel workspace", [
     ".workspace-client-surface",
@@ -52,7 +52,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   ]);
   await captureDarkEvidence(page, testInfo, "01-channel-workspace");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expect(navigation.getByRole("button", { name: "收件箱" })).toHaveCount(0);
 
   await navigation.getByRole("button", { name: "媒体生产" }).click();
@@ -280,7 +280,7 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   await openPendingStartupDiagnostics(page);
   await page.getByRole("button", { name: /打开运行诊断|Open run diagnostics/ }).first().click();
   await expect(page.getByLabel("设置分组")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.locator(".settings-run-diagnostics-panel")).toBeVisible();
   await assertDarkPage(page, "settings run diagnostics", [
     ".settings-layout",
@@ -370,7 +370,7 @@ test("packaged Computer Control follows the same dark surface hierarchy", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "设置" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "设置" }).click();
   await page.getByLabel("设置分组").getByRole("button", { name: /电脑控制|Computer Control/ }).click();
   await expect(page.locator(".computer-control-settings")).toBeVisible();
   await assertDarkPage(page, "packaged computer control", [

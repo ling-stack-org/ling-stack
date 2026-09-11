@@ -8,6 +8,7 @@ import {
 import type { ChannelContextDroppedSource, ChannelContextSource, ChannelContextViewKind } from "../channels/context-processing/types.js";
 
 type RecalledMemoryItems = ReturnType<MemoryStoreFacet["recallMemory"]>["memories"];
+const INFLUENCE_ONLY_QUOTE_POLICY = "Quote policy: influence_only; may guide reasoning, but do not quote or present as public memory.";
 
 export interface RenderUsedMemoryPromptForViewInput {
   readonly memories: RecalledMemoryItems;
@@ -38,6 +39,8 @@ export function renderUsedMemoryPrompt(memories: RecalledMemoryItems): string | 
     return [
       `Memory ${index + 1}: ${item.memory.title}`,
       `Scope: ${item.memory.scopeType}:${item.memory.ownerId}; Source: ${source}; Sensitivity: ${item.memory.sensitivity};${tags}`,
+      ...(item.memory.sensitivity === "private" ? [INFLUENCE_ONLY_QUOTE_POLICY] : []),
+      ...memoryVerificationLines(item),
       item.excerpt,
     ];
   });
@@ -62,8 +65,8 @@ export function renderUsedMemoryPromptForView(input: RenderUsedMemoryPromptForVi
       workspaceId: input.workspaceId,
       channelId: input.channelId,
     });
-    sources.push(source);
-    const eligibility = memoryEligibilityForView(source, input.viewKind, input.consumerTeammateId);
+    const consumerScope = input.workspaceId ? { workspaceId: input.workspaceId, channelId: input.channelId } : undefined;
+    const eligibility = memoryEligibilityForView(source, input.viewKind, input.consumerTeammateId, consumerScope);
     if (!eligibility || eligibility.mode === "excluded") {
       dropped.push({ sourceId: source.id, reason: eligibility?.droppedReason ?? "scope" });
       continue;
@@ -72,6 +75,8 @@ export function renderUsedMemoryPromptForView(input: RenderUsedMemoryPromptForVi
       dropped.push({ sourceId: source.id, reason: "scope" });
       continue;
     }
+    // Rejected bodies must not survive in the caller's context sources or used-memory list.
+    sources.push(source);
     promptItems.push({ item, source, eligibility });
   }
 
@@ -82,6 +87,12 @@ export function renderUsedMemoryPromptForView(input: RenderUsedMemoryPromptForVi
     dropped,
     policyVersion: `${input.recallPolicyVersion}+${MEMORY_USE_ISOLATION_POLICY_VERSION}`,
   };
+}
+
+function memoryVerificationLines(item: RecalledMemoryItems[number]): readonly string[] {
+  return item.memory.verifyBeforeUse
+    ? ["Verification: required. This memory is an unverified lead, not execution evidence. Verify its current source before treating it as a fact or citing it in a result."]
+    : [];
 }
 
 function renderPromptItems(
@@ -100,11 +111,12 @@ function renderPromptItems(
       : "manual";
     const tags = item.memory.tags.length > 0 ? ` tags=${item.memory.tags.join(",")}` : "";
     const quotePolicy = eligibility.quotePolicy === "influence_only"
-      ? "Quote policy: influence_only; may guide reasoning, but do not quote or present as public memory."
+      ? INFLUENCE_ONLY_QUOTE_POLICY
       : `Quote policy: ${eligibility.quotePolicy}.`;
     return [
       `Memory ${index + 1}: ${item.memory.title}`,
       `Scope: ${item.memory.scopeType}:${item.memory.ownerId}; Source: ${source}; Sensitivity: ${item.memory.sensitivity}; ${quotePolicy}${tags}`,
+      ...memoryVerificationLines(item),
       item.excerpt,
     ];
   });

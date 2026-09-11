@@ -11,6 +11,40 @@ import { DEFAULT_WORKSPACE_ID, createSqliteRunStore } from "../../core/dist/inde
 import { createDaemonServer } from "../dist/index.js";
 import { auditIgnoredRunnerCompletion } from "../dist/features/runs/stale-completion.js";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
+import { createHostToolResultAdapter } from "../../runner-pi/dist/host-tool-results.js";
+import { convertMessages } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js";
+import { convertResponsesMessages } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/api/openai-responses-shared.js";
+
+function modelVisibleToolOutputs(handled, toolCallId) {
+  let hook;
+  const adapt = createHostToolResultAdapter({ on(_name, handler) { hook = handler; } });
+  const result = adapt(toolCallId, "bash", handled);
+  const status = hook({ type: "tool_result", toolCallId, toolName: "bash", ...result, isError: false });
+  const model = { id: "gpt-test", provider: "openai", api: "openai-completions", input: ["text"], reasoning: false };
+  const context = {
+    messages: [{
+      role: "assistant",
+      content: [{ type: "toolCall", id: toolCallId, name: "bash", arguments: { command: "fixture" } }],
+      api: model.api,
+      provider: model.provider,
+      model: model.id,
+      stopReason: "toolUse",
+      timestamp: 0,
+    }, {
+      role: "toolResult",
+      toolCallId,
+      toolName: "bash",
+      ...result,
+      isError: status?.isError ?? false,
+      timestamp: 1,
+    }],
+  };
+  return [
+    convertMessages(model, context, {}).find((message) => message.role === "tool")?.content,
+    convertResponsesMessages({ ...model, api: "openai-responses" }, context, new Set(["openai"]))
+      .find((message) => message.type === "function_call_output")?.output,
+  ];
+}
 
 test("health includes the configured default workspace cwd", async () => {
   const defaultWorkspaceCwd = await mkdtemp(resolve(tmpdir(), "ling-stack-health-cwd-"));
@@ -109,10 +143,7 @@ test("bash=allow lets the runner continue without creating an approval request",
     const { events, runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_bash_allow"));
 
     assert.equal(runner.decisions.length, 1);
-    assert.deepEqual(runner.decisions[0], {
-      approved: true,
-      reason: "Ling Stack policy allowed bash.",
-    });
+    assertHandledCommand(runner.decisions[0], { approved: true, reason: "Ling Stack policy allowed bash." }, "ok");
     assert.equal(events.some((event) => event.event === "approval_requested"), false);
     assert.deepEqual(await listApprovals(daemon.url, cwd, runId), []);
   } finally {
@@ -181,7 +212,7 @@ test("runtimeTools.unifiedExec config is authoritative over run request feature 
     toolName: "bash",
     input: { command: "echo request-only" },
   });
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: false } });
   try {
     await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "allow" } });
     await postRunAndCollectEvents(daemon.url, {
@@ -190,10 +221,9 @@ test("runtimeTools.unifiedExec config is authoritative over run request feature 
     });
 
     assert.equal(runner.runs[0].runtimeToolFeatures?.unifiedExec, false);
-    assert.deepEqual(runner.decisions[0], {
-      approved: true,
-      reason: "Ling Stack policy allowed bash.",
-    });
+    assert.equal(runner.decisions[0].approved, false);
+    assert.match(runner.decisions[0].reason, /host_command_executor_disabled/);
+    assert.equal(runner.decisions[0].handledResult.isError, true);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -228,6 +258,14 @@ test("unified exec bash=allow runs through daemon and records redacted artifacts
     assert.equal(result.status, "succeeded");
     assert.equal(result.exitCode, 0);
     assert.match(result.stdout.preview, /hello \[REDACTED\]/);
+    for (const output of modelVisibleToolOutputs(runner.decisions[0].handledResult, runner.request.toolCallId)) {
+      assert.equal(typeof output, "string");
+      assert.match(output, /hello \[REDACTED\]/);
+      assert.doesNotMatch(output, new RegExp(secretValue));
+      assert.ok(output.includes(result.artifacts.find((artifact) => artifact.role === "result").artifactId));
+      assert.ok(output.includes(result.stdout.artifactId));
+      assert.match(output, /stderr \(0 bytes; 0 lines; preview truncated: no\):\n\(empty\)/);
+    }
     assert.doesNotMatch(JSON.stringify({ events, result }), new RegExp(secretValue));
     assert.deepEqual(await listApprovals(daemon.url, cwd, runId), []);
 
@@ -540,6 +578,10 @@ test("unified exec nonzero exit returns a handled failed result", async () => {
     assert.equal(result.exitCode, 7);
     assert.match(result.stderr.preview, /bad stderr/);
     assert.match(handled.content[0].text, /Command exited 7/);
+    for (const output of modelVisibleToolOutputs(handled, runner.request.toolCallId)) {
+      assert.match(output, /Command exited 7/);
+      assert.match(output, /bad stderr/);
+    }
 
     const artifacts = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(artifacts.artifacts.some((artifact) => artifact.path.endsWith("/stderr.txt")), true);
@@ -625,6 +667,16 @@ test("unified exec bounds long output chunks and stream previews", async () => {
     assert.equal(Buffer.byteLength(result.stderr.preview, "utf8") <= 8 * 1024, true);
     assert.equal(result.stdout.truncated, true);
     assert.equal(result.stderr.truncated, false);
+    for (const output of modelVisibleToolOutputs(runner.decisions[0].handledResult, runner.request.toolCallId)) {
+      assert.ok(output.includes(result.stdout.preview));
+      assert.ok(output.includes(result.stderr.preview));
+      assert.equal(output.includes("x".repeat(8193)), false);
+      assert.match(output, /stdout \(9000 bytes; 1 lines; preview truncated: yes\)/);
+      assert.match(output, /stderr \(5000 bytes; 1 lines; preview truncated: no\)/);
+      assert.ok(output.includes(result.stdout.artifactId));
+      assert.ok(output.includes(result.stderr.artifactId));
+      assert.ok(Buffer.byteLength(output, "utf8") < 20 * 1024);
+    }
 
     const chunks = events
       .filter((event) => event.event === "tool_update")
@@ -699,6 +751,12 @@ test("unified exec run cancellation kills command and leaves the run cancelled",
     assert.equal(artifacts.artifacts.some((artifact) => artifact.path.endsWith("/unified-exec/tool_unified_exec_cancel/result.json")), true);
     const snapshots = await listShellSnapshots(daemon.url, cwd, runId);
     assert.deepEqual(snapshots.snapshots.map((snapshot) => snapshot.status), ["starting", "cancelled"]);
+    const events = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/events?cwd=${encodeURIComponent(cwd)}&limit=1000`);
+    const ignoredCompletion = events.events.find((event) => event.type === "stale_runner_completion_ignored");
+    assert.equal(ignoredCompletion?.data.reportedStatus, "cancelled");
+    assert.equal(ignoredCompletion?.data.currentRunStatus, "cancelled");
+    assert.equal(ignoredCompletion?.data.currentWorkUnitStatus, "cancelled");
+    assert.equal(ignoredCompletion?.data.reason, "run_cancelled");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -739,11 +797,12 @@ test("assignee approval profile tightens workspace approval policy", async () =>
     assert.equal(approval.approval.status, "approved");
 
     const remaining = await sse.collectRemaining();
-    assert.deepEqual(runner.decisions, [{
+    assert.equal(runner.decisions.length, 1);
+    assertHandledCommand(runner.decisions[0], {
       approved: true,
       approvalId,
       reason: "profile approval",
-    }]);
+    }, "profile-gated");
     assert.equal(remaining.some((event) => event.event === "approval_approved"), true);
     assert.equal((await listApprovals(daemon.url, cwd, runId)).length, 1);
   } finally {
@@ -897,11 +956,11 @@ test("bash=ask pauses the run until the approval is resolved", async () => {
 
     const remaining = await sse.collectRemaining();
     assert.equal(runner.decisions.length, 1);
-    assert.deepEqual(runner.decisions[0], {
+    assertHandledCommand(runner.decisions[0], {
       approved: true,
       approvalId,
       reason: "test approval",
-    });
+    }, "approve-me");
     assert.equal(remaining.some((event) => event.event === "approval_approved"), true);
     assert.equal(remaining.some((event) => event.event === "result"), true);
     const finalRun = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
@@ -932,7 +991,7 @@ test("workspace command rule approves the current Bash request and suppresses ma
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_command_rule_first",
     toolName: "bash",
-    input: { command: "whois example.com", prefix_rule: ["whois"] },
+    input: { command: "printf first", prefix_rule: ["printf"] },
   });
   const daemon = await startDaemonForTest(runner);
   try {
@@ -944,7 +1003,7 @@ test("workspace command rule approves the current Bash request and suppresses ma
     await waitForSseEvent(firstSse, "approval_requested");
     const [pending] = await listApprovals(daemon.url, cwd, firstRunId);
     assert.deepEqual(pending.availableDecisions, ["approve_once", "approve_command_rule", "deny"]);
-    assert.deepEqual(pending.proposedCommandRule.prefix, ["whois"]);
+    assert.deepEqual(pending.proposedCommandRule.prefix, ["printf"]);
 
     const resolved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(pending.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
       decisionKind: "approve_command_rule",
@@ -956,12 +1015,12 @@ test("workspace command rule approves the current Bash request and suppresses ma
 
     const rules = await getJson(`${daemon.url}/approval-command-rules?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(rules.rules.length, 1);
-    assert.deepEqual(rules.rules[0].prefix, ["whois"]);
+    assert.deepEqual(rules.rules[0].prefix, ["printf"]);
 
     runner.request = {
       toolCallId: "tool_command_rule_second",
       toolName: "bash",
-      input: { command: "whois example.net" },
+      input: { command: "cd . && printf second" },
     };
     const second = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_command_rule_second"));
     assert.equal(second.events.some((event) => event.event === "approval_requested"), false);
@@ -975,7 +1034,7 @@ test("workspace command rule approves the current Bash request and suppresses ma
     runner.request = {
       toolCallId: "tool_command_rule_third",
       toolName: "bash",
-      input: { command: "whois example.org" },
+      input: { command: "printf third" },
     };
     const thirdResponse = await postRunStream(daemon.url, runBody(cwd, "task_command_rule_third"));
     const thirdSse = createSseReader(thirdResponse);
@@ -983,6 +1042,32 @@ test("workspace command rule approves the current Bash request and suppresses ma
     const thirdRequested = await waitForSseEvent(thirdSse, "approval_requested");
     await postJson(`${daemon.url}/approvals/${encodeURIComponent(thirdRequested.data.data.approvalId)}/deny?cwd=${encodeURIComponent(cwd)}`, {});
     await thirdSse.collectRemaining();
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("daemon derives a reusable rule for a bounded compound Bash command without a model hint", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-compound-command-rule-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_compound_command_rule",
+    toolName: "bash",
+    input: { command: "cd . && node --test" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_compound_command_rule"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    await waitForSseEvent(sse, "approval_requested");
+    const [pending] = await listApprovals(daemon.url, cwd, ready.data.runId);
+    assert.deepEqual(pending.availableDecisions, ["approve_once", "approve_command_rule", "deny"]);
+    assert.deepEqual(pending.proposedCommandRule.prefix, ["node", "--test"]);
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(pending.id)}/deny?cwd=${encodeURIComponent(cwd)}`, {});
+    await sse.collectRemaining();
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1306,10 +1391,21 @@ test("approval execution actions expose preview and result artifacts", async () 
     assert.equal(completedActions.actions[0].toolCallId, "tool_action_artifacts");
     assert.ok(completedActions.actions[0].executedAt);
     assert.ok(completedActions.actions[0].completedAt);
-    assert.equal(completedActions.actions[0].resultArtifactIds.length, 1);
-    const resultContent = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(completedActions.actions[0].resultArtifactIds[0])}/content?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(resultContent.status, 200);
-    assert.match(await resultContent.text(), /approved stdout artifact/);
+    const resultIds = completedActions.actions[0].resultArtifactIds;
+    assert.equal(new Set(resultIds).size, resultIds.length);
+    const contents = await Promise.all(resultIds.map(async id => {
+      const response = await fetch(`${daemon.url}/artifacts/${encodeURIComponent(id)}/content?cwd=${encodeURIComponent(cwd)}`);
+      assert.equal(response.status, 200);
+      const text = await response.text();
+      assert.doesNotMatch(text, /sk-test_action_preview_secret/);
+      return text;
+    }));
+    const execResult = contents.map(text => { try { return JSON.parse(text); } catch { return undefined; } })
+      .find(value => value?.toolCallId === "tool_action_artifacts" && value?.command);
+    assert.equal(execResult.status, "succeeded");
+    assert.equal(execResult.exitCode, 0);
+    assert.match(execResult.stdout.preview, /\[REDACTED\]/);
+    assert.ok(contents.some(text => text.trim() === execResult.stdout.preview.trim()));
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -4861,6 +4957,15 @@ class ThreadResumeRunner {
   }
 }
 
+function assertHandledCommand(decision, expectedMetadata, expectedOutput) {
+  const { handledResult, ...metadata } = decision;
+  assert.deepEqual(metadata, expectedMetadata);
+  assert.equal(handledResult.isError, false);
+  assert.equal(handledResult.details.unifiedExec.status, "succeeded");
+  assert.equal(handledResult.details.unifiedExec.exitCode, 0);
+  assert.ok(handledResult.details.unifiedExec.stdout.preview.includes(expectedOutput));
+}
+
 class ApprovalArtifactRunner {
   async runTask(options) {
     options.onEvent?.({
@@ -4887,9 +4992,7 @@ class ApprovalArtifactRunner {
       type: "tool_end",
       toolCallId: "tool_action_artifacts",
       toolName: "bash",
-      result: {
-        stdout: `approved stdout artifact: ${decision?.approved ? "yes" : "no"}`,
-      },
+      result: decision.handledResult,
       isError: !decision?.approved,
     });
     options.onEvent?.({

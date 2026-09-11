@@ -8,6 +8,28 @@ import {
   validateTerminalReportEvidenceSnapshot,
 } from "../dist/index.js";
 
+test("terminal report fallback preserves attempted model provenance without changing evidence", () => {
+  const snapshot = buildSnapshot();
+  const report = buildDeterministicTerminalReport(snapshot, {
+    providerPresetId: "provider_report",
+    model: "report-model",
+    attemptCount: 2,
+    validationCodes: ["terminal_report_schema_invalid"],
+  });
+  assert.equal(report.status, "fallback");
+  assert.equal(report.synthesis.mode, "deterministic_fallback");
+  assert.equal(report.synthesis.attemptCount, 2);
+  assert.equal(report.synthesis.providerPresetId, "provider_report");
+  assert.equal(report.synthesis.model, "report-model");
+  assert.deepEqual(report.synthesis.validationCodes, ["terminal_report_schema_invalid"]);
+  assert.deepEqual(report.outcome, buildDeterministicTerminalReportContent(snapshot).outcome);
+  assert.equal(report.evidenceFingerprint, snapshot.evidenceFingerprint);
+  const unattempted = buildDeterministicTerminalReport(snapshot);
+  assert.equal(unattempted.synthesis.attemptCount, 0);
+  assert.equal(unattempted.synthesis.providerPresetId, undefined);
+  assert.equal(unattempted.synthesis.model, undefined);
+});
+
 test("terminal report fallback aggregates workflow evidence", () => {
   const snapshot = buildSnapshot();
   const content = buildDeterministicTerminalReportContent(snapshot);

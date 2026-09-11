@@ -117,7 +117,7 @@ test("late teammate workspace success cannot replace the selected teammate or sh
   await engineerStarted.promise;
   expect(await readTransientLoadingSightings(page)).toEqual([]);
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Designer" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Ling Designer" }).click();
   await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   await designerStarted.promise;
   await expect(page.getByText("Loading teammate workspace...", { exact: true })).toHaveCount(0);
@@ -349,7 +349,7 @@ test("profile responses from the previous teammate are discarded after identity 
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save changes" }).click();
   await profileStarted.promise;
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Designer" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Ling Designer" }).click();
   await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   const profileResponse = page.waitForResponse((response) => response.ok() && response.request().method() === "PATCH" && new URL(response.url()).pathname === "/teammates/teammate_engineer");
   releaseProfile.resolve();
@@ -434,7 +434,7 @@ function activeReplyWorkUnit(
 }
 
 async function openTeammate(page: Page, name: string, waitForLoad = true): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name }).click();
   await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
   if (waitForLoad) {
     await expect(page.getByText("Loading teammate workspace...", { exact: true })).toHaveCount(0);

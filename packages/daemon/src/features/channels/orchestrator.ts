@@ -524,6 +524,13 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
   if (step.status !== "blocked") {
     throw new HttpError(409, "workflow_step_not_retryable", `Workflow step ${step.id} is ${step.status}; only blocked steps can be retried.`);
   }
+  if (workflowStepHasNonRetryableExecutionLoop(input.store, step)) {
+    throw new HttpError(
+      409,
+      "workflow_step_loop_failure_not_retryable",
+      `Workflow step ${step.id} stopped after a repeated execution loop; create a corrected instruction or new step instead of replaying the same attempt.`,
+    );
+  }
   const workflow = input.store.getChannelWorkflow(step.workflowId);
   if (!workflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${step.workflowId}`);
@@ -592,6 +599,22 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
     taskId: started.task.id,
     runId,
   };
+}
+
+function workflowStepHasNonRetryableExecutionLoop(store: RunStore, step: ChannelWorkflowStep): boolean {
+  if (step.metadata?.delegatedOutcome?.kind === "blocked"
+    && step.metadata.delegatedOutcome.code === "execution_loop_detected") return true;
+  if (!step.runId) return false;
+  let afterSeq = 0;
+  while (true) {
+    const page = store.listEvents(step.runId, { afterSeq, limit: 1000 });
+    if (page.some((event) => event.type === "loop_detected"
+      && typeof event.data === "object" && event.data !== null
+      && (event.data as { readonly retryable?: unknown }).retryable === false)) return true;
+    const latestSeq = page.at(-1)?.seq;
+    if (page.length < 1000 || latestSeq === undefined || latestSeq <= afterSeq) return false;
+    afterSeq = latestSeq;
+  }
 }
 
 export function finalizeOrchestratedWorkflowStepRun(

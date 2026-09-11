@@ -4,7 +4,10 @@ import {
   type RunStatus,
   type RunStore,
   toRuntimeAttemptFence,
+  UserInputStoreError,
 } from "@ling-stack/core";
+import type { RunCancelResponse } from "@ling-stack/contracts";
+import { HttpError } from "../../errors.js";
 import { transitionWorkUnitCancelled } from "../../runtime/work-units.js";
 import { writeTerminalSummary } from "./terminal.js";
 import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./threads.js";
@@ -17,10 +20,24 @@ export function ensureRunCancelled(input: {
   readonly reason: string;
   readonly active: boolean;
   readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
-}): { readonly event?: RunEventEnvelope } {
+}): { readonly event?: RunEventEnvelope; readonly inputWait?: RunCancelResponse["inputWait"] } {
   const current = input.store.getRun(input.runId);
   if (!current || current.status === "cancelled") {
     return {};
+  }
+  if (current.status === "yielded") {
+    if (!current.threadId) throw new HttpError(409, "run_wait_not_cancellable", "Waiting work has no owning thread.");
+    try {
+      const result = input.store.cancelUserInputWait({ threadId: current.threadId, sourceRunId: current.id }, new Date().toISOString());
+      return { inputWait: { requestId: result.request.requestId, requestVersion: result.request.requestVersion,
+        waitRevision: result.wait.revision, workUnitId: result.request.source.fence.workUnitId,
+        turnId: result.request.source.turnId, status: "cancelled" } };
+    } catch (error) {
+      if (error instanceof UserInputStoreError) {
+        throw new HttpError(409, "run_wait_not_cancellable", "Waiting work can no longer be cancelled through this source Run.");
+      }
+      throw error;
+    }
   }
   if (isTerminalRunStatus(current.status)) {
     return {};

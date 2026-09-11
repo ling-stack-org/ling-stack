@@ -14,6 +14,8 @@ import type {
 } from "./conversation-work-cell.js";
 import { buildConversationApprovalCheckpointRows, buildConversationArtifactStripItems, buildConversationExecutionActionEvidenceRows, mainFeedArtifactEvidenceLinks, mainFeedEvidenceGroups, mergeConversationArtifactStripItems, normalizeConversationOperationCell } from "./conversation-work-cell.js";
 import { truncatePreview } from "./data.js";
+import { projectWorkflowChildTimeline } from "./workflow-child-timeline.js";
+import { hasWorkflowTimelineContent } from "./workflow-timeline-content.js";
 
 export type WorkflowProgressMode = "active" | "completed";
 export type WorkflowProgressAttention = "none" | "waiting" | "blocked" | "failed";
@@ -55,6 +57,7 @@ export interface BuildWorkflowProgressInput {
   readonly approvals: readonly ApprovalRequest[];
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly executionActions?: readonly ExecutionAction[];
+  readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
   readonly t: Translate;
   readonly artifactHref?: (artifact: RunArtifact) => string;
   readonly terminalReport?: TerminalReportDto;
@@ -81,7 +84,7 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
   const pendingApprovals = workflowApprovals.filter((approval) => approval.status === "pending");
   const completedSteps = orderedSteps.filter((step) => step.status === "succeeded" || step.status === "skipped").length;
   const blockedStep = orderedSteps.find((step) => step.status === "blocked");
-  const waitingStep = orderedSteps.find((step) => step.status === "waiting_for_approval");
+  const waitingStep = orderedSteps.find((step) => step.status === "waiting_for_approval" || step.status === "waiting_for_input");
   const runningStep = orderedSteps.find((step) => step.status === "running" || step.status === "claimed");
   const queuedStep = orderedSteps.find((step) => step.status === "queued");
   const failedStep = orderedSteps.find((step) => step.status === "failed");
@@ -94,10 +97,10 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
     ? "blocked"
     : failedStep || input.workflow.status === "failed"
       ? "failed"
-      : waitingStep || pendingApprovals.length > 0 || input.workflow.status === "waiting_for_approval"
+      : waitingStep || pendingApprovals.length > 0 || input.workflow.status === "waiting_for_approval" || input.workflow.status === "waiting_for_input"
         ? "waiting"
         : "none";
-  const mode: WorkflowProgressMode = input.workflow.status === "draft" || input.workflow.status === "ready" || input.workflow.status === "running" || input.workflow.status === "waiting_for_approval"
+  const mode: WorkflowProgressMode = input.workflow.status === "draft" || input.workflow.status === "ready" || input.workflow.status === "running" || input.workflow.status === "waiting_for_approval" || input.workflow.status === "waiting_for_input"
     ? "active"
     : "completed";
   const anchorRunId = latestRun(workflowRuns)?.id ?? `workflow:${input.workflow.id}`;
@@ -108,11 +111,13 @@ export function buildWorkflowProgressModel(input: BuildWorkflowProgressInput): W
   );
   const agentSpans = buildWorkflowAgentActivitySpans({
     workflowId: input.workflow.id,
+    parentItemId: input.workflow.metadata?.sourceMessageId,
     t: input.t,
     steps: orderedSteps,
     actions: workflowActions,
     artifactsByRun: input.artifactsByRun,
     runsByStepId: workflowRunsByStepId,
+    contextSegmentIdByItemId: input.contextSegmentIdByItemId,
   });
 
   return {
@@ -462,6 +467,9 @@ function buildWorkflowProgressSummary(input: {
   if (input.pendingApprovalCount > 0 || input.workflow.status === "waiting_for_approval" || input.currentStep?.status === "waiting_for_approval") {
     return input.t("{teammate} is waiting for approval.", { teammate: input.currentStep?.toParticipantLabel ?? input.t("Work") });
   }
+  if (input.workflow.status === "waiting_for_input" || input.currentStep?.status === "waiting_for_input") {
+    return input.t("waiting for user input");
+  }
   if (input.currentStep && (input.currentStep.status === "running" || input.currentStep.status === "claimed")) {
     return input.t("{teammate} is working on {step}. {done} of {total} steps complete.", {
       teammate: input.currentStep.toParticipantLabel,
@@ -542,11 +550,13 @@ function buildWorkflowOperationRows(input: {
 
 function buildWorkflowAgentActivitySpans(input: {
   readonly workflowId: string;
+  readonly parentItemId?: string;
   readonly t: Translate;
   readonly steps: readonly ChannelWorkflowStep[];
   readonly actions: readonly ExecutionAction[];
   readonly artifactsByRun: Readonly<Record<string, readonly RunArtifact[]>>;
   readonly runsByStepId: ReadonlyMap<string, readonly RunSession[]>;
+  readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
 }): readonly ConversationAgentActivitySpan[] {
   const actionsByRun = groupWorkflowActionsByRun(input.actions);
   const groups = new Map<string, ChannelWorkflowStep[]>();
@@ -598,8 +608,12 @@ function buildWorkflowAgentActivitySpans(input: {
         latestRow: latestActionRow ?? (latestStep ? workflowStepToAgentRow(latestStep, input.t, "latest") : undefined),
         rows,
         items: projectConversationActivity(rows, { participantScope }),
+        typedTimelineItems: projectWorkflowChildTimeline({ steps: orderedSteps, rows, actions: input.actions,
+          participantId: participantScope, parentItemId: input.parentItemId,
+          contextSegmentIdByItemId: input.contextSegmentIdByItemId }),
       } satisfies ConversationAgentActivitySpan & { readonly sortIndex: number };
     })
+    .filter((span) => span.typedTimelineItems?.some(hasWorkflowTimelineContent) === true)
     .sort((left, right) => left.sortIndex - right.sortIndex)
     .map(({ sortIndex: _sortIndex, ...span }) => span);
 }
@@ -710,6 +724,7 @@ function workflowAgentFocusStep(steps: readonly ChannelWorkflowStep[]): ChannelW
   return steps.find((step) => step.status === "blocked") ??
     steps.find((step) => step.status === "failed") ??
     steps.find((step) => step.status === "waiting_for_approval") ??
+    steps.find((step) => step.status === "waiting_for_input") ??
     steps.find((step) => step.status === "running" || step.status === "claimed") ??
     steps.find((step) => step.status === "queued") ??
     steps.at(-1);
@@ -762,6 +777,7 @@ function visibleWorkflowOperationSteps(steps: readonly ChannelWorkflowStep[]): r
     step.status === "blocked" ||
     step.status === "failed" ||
     step.status === "waiting_for_approval" ||
+    step.status === "waiting_for_input" ||
     step.status === "running" ||
     step.status === "claimed" ||
     step.status === "queued"
@@ -806,6 +822,7 @@ function workflowStepLifecycleTitle(
   if (status === "waiting_for_approval") {
     return t("Waiting for approval: {title}", { title });
   }
+  if (status === "waiting_for_input") return t("waiting for user input");
   if (status === "cancelled") {
     return t("Stopped {title}", { title });
   }
@@ -944,6 +961,7 @@ function approvalBelongsToWorkflow(
 }
 
 function workflowStepProgressTitle(step: ChannelWorkflowStep, t: Translate): string {
+  if (step.status === "waiting_for_input") return t("waiting for user input");
   if (step.status === "blocked") {
     return t("{teammate} is blocked", { teammate: step.toParticipantLabel });
   }
@@ -1093,7 +1111,7 @@ function workflowStepTone(status: ChannelWorkflowStep["status"]): ConversationWo
   if (status === "failed" || status === "cancelled") {
     return "failed";
   }
-  if (status === "waiting_for_approval" || status === "blocked") {
+  if (status === "waiting_for_approval" || status === "waiting_for_input" || status === "blocked") {
     return "waiting";
   }
   if (status === "running" || status === "claimed" || status === "queued") {
@@ -1103,6 +1121,7 @@ function workflowStepTone(status: ChannelWorkflowStep["status"]): ConversationWo
 }
 
 function workflowStepStatusMeta(status: ChannelWorkflowStep["status"], t: Translate): string | undefined {
+  if (status === "waiting_for_input") return t("waiting for user input");
   if (status === "failed") {
     return t("Failed");
   }

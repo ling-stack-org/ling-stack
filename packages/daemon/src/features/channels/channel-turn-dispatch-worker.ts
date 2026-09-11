@@ -76,6 +76,7 @@ export class ChannelTurnDispatchWorkerRegistry {
     readonly observer?: ChannelTurnDispatchObserver;
     readonly waitForSettled?: boolean;
   }): Promise<LingAgentChannelMessageResult> {
+    if (!this.accepting) return Promise.reject(new Error("Channel turn dispatcher is shutting down."));
     const workUnit = findAcceptedChannelTurnDispatch(input.store, input.message);
     if (workUnit.status === "succeeded" || workUnit.status === "failed" || workUnit.status === "cancelled") {
       return Promise.resolve(replayAcceptedChannelTurnDispatch(input.store, input.message.id));
@@ -103,11 +104,20 @@ export class ChannelTurnDispatchWorkerRegistry {
     this.drains.set(store.paths.cwd, drain);
   }
 
-  async close(): Promise<void> {
+  beginShutdown(): void {
     this.accepting = false;
     this.started = false;
-    await waitForPromisesOrDeadline([...this.drains.values()], 2_000);
-    await waitForPromisesOrDeadline([...this.settlements.values()], 2_000);
+  }
+
+  async close(): Promise<void> {
+    this.beginShutdown();
+    // A drain can publish a settlement while it is closing. Keep the store open
+    // until both phases have actually stopped; timeouts are not stop receipts.
+    while (this.drains.size > 0) await Promise.allSettled([...this.drains.values()]);
+    while (this.settlements.size > 0) await Promise.allSettled([...this.settlements]);
+    for (const workUnitId of this.jobs.keys()) {
+      this.rejectJob(workUnitId, new Error("Channel turn dispatcher is shutting down."));
+    }
   }
 
   private async drain(store: RunStore): Promise<void> {
@@ -246,25 +256,6 @@ export class ChannelTurnDispatchWorkerRegistry {
     if (!job) return;
     this.jobs.delete(workUnitId);
     job.reject(error);
-  }
-}
-
-async function waitForPromisesOrDeadline(
-  promises: readonly Promise<unknown>[],
-  timeoutMs: number,
-): Promise<void> {
-  if (promises.length === 0) return;
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  try {
-    await Promise.race([
-      Promise.allSettled(promises).then(() => undefined),
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, timeoutMs);
-        timer.unref?.();
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
   }
 }
 

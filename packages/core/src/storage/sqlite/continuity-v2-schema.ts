@@ -498,6 +498,9 @@ function createReferenceIndexes(database: DatabaseSync): void {
     ON channel_decisions(channel_id, created_at);
     CREATE INDEX idx_channel_decisions_channel_status_created
     ON channel_decisions(channel_id, status, created_at);
+    CREATE UNIQUE INDEX idx_channel_decisions_supersedes_unique
+    ON channel_decisions(supersedes_decision_id)
+    WHERE supersedes_decision_id IS NOT NULL;
     CREATE INDEX idx_channel_handoffs_channel_status_created
     ON channel_handoffs(channel_id, status, created_at);
     CREATE INDEX idx_channel_execution_proposals_channel_created
@@ -558,6 +561,7 @@ const legacyReferenceIndexes = [
   "idx_channel_link_previews_channel_url",
   "idx_channel_decisions_channel_created",
   "idx_channel_decisions_channel_status_created",
+  "idx_channel_decisions_supersedes_unique",
   "idx_channel_handoffs_channel_status_created",
   "idx_channel_execution_proposals_channel_created",
   "idx_channel_execution_proposals_source",

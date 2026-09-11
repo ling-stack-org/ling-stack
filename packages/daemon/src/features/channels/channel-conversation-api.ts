@@ -6,7 +6,7 @@ import type {
   ConversationItemV1,
   LingTurn,
 } from "@ling-stack/contracts";
-import type { Channel, ChannelMessage, RunStore } from "@ling-stack/core";
+import type { Channel, ChannelMessage, RunSession, RunStore } from "@ling-stack/core";
 import {
   filterSupersededChannelMessages,
   projectChannelMessageRevisionMetadata,
@@ -21,6 +21,8 @@ import type { ChannelReplyDispatchCoordinator } from "./channel-reply-dispatch-c
 import { getChannelMessageView } from "./conversation-item-messages.js";
 import { buildConversationGeneratedMediaProjection } from "../media/conversation-projection.js";
 import { terminalReportIsEligibleForDisplay } from "./terminal-report-eligibility.js";
+import { projectConversationUserInputs } from "../conversations/user-input-transcript.js";
+import { projectConversationReasoningSummaries } from "../conversations/reasoning-summary-projection.js";
 
 export function listChannelConversationItems(input: {
   readonly store: RunStore;
@@ -38,19 +40,37 @@ export function listChannelConversationItems(input: {
     effectiveOnly: true,
     ...(input.limit !== undefined ? { limit: input.limit } : {}),
   });
-  const visibleItems = filterVisibleTimelineItems({
+  const selectedItems = filterVisibleTimelineItems({
     store: input.store,
     channelId: input.channel.id,
     items: page.items,
     replyDispatchCoordinator: input.replyDispatchCoordinator,
   });
+  const { conversationItems: visibleItems, userInputs } = projectConversationUserInputs(input.store, input.thread.id, selectedItems);
+  const turns = turnsForItems(input.store, visibleItems);
   const decorations = decorationsForItems(input.store, visibleItems);
+  const runLinks = turns.flatMap((turn) => input.store.listLingTurnRuns(turn.id));
+  const runs = runLinks
+    .map((link) => input.store.getRun(link.runId))
+    .filter((run): run is RunSession => Boolean(run));
   return {
     cwd: input.cwd,
     channelId: input.channel.id,
     thread: input.thread,
-    turns: turnsForItems(input.store, visibleItems),
+    turns,
     items: visibleItems,
+    turnContextAssignments: turns.flatMap((turn) => {
+      const assignment = input.store.getEffectiveTurnContextAssignment(turn.id);
+      return assignment ? [assignment] : [];
+    }),
+    userInputs,
+    reasoningSummaries: projectConversationReasoningSummaries({
+      store: input.store,
+      thread: input.thread,
+      runLinks,
+      runs,
+      items: visibleItems,
+    }),
     decorations,
     generatedMedia: buildConversationGeneratedMediaProjection({
       store: input.store,
@@ -116,14 +136,14 @@ function filterVisibleTimelineItems(input: {
   const messages = messageItems
     .map((item) => getChannelMessageView(input.store, item.id))
     .filter((message): message is ChannelMessage => Boolean(message));
+  const supersession = buildConversationSupersessionProjection(input.store, {
+    surfaces: ["channel_root", "channel_branch", "topic_reply"], ownerId: input.channelId,
+  });
   const visibleMessages = filterQueuedChannelReplyMessages(
     input.store,
     filterSupersededChannelMessages(
       messages,
-      buildConversationSupersessionProjection(input.store, {
-        surfaces: ["channel_root", "channel_branch", "topic_reply"],
-        ownerId: input.channelId,
-      }),
+      supersession,
     ),
     (message) => Boolean(input.replyDispatchCoordinator?.isMessageClassificationPending(
       message.workspaceId,
@@ -132,6 +152,9 @@ function filterVisibleTimelineItems(input: {
   );
   const visibleMessageIds = new Set(visibleMessages.map((message) => message.id));
   return input.items.filter((item) =>
+    ((item.kind !== "user_input_request" && item.kind !== "user_input_answer")
+      || (item.turnId && !supersession.supersededTurnIds.has(item.turnId)
+        && input.store.getLingTurn(item.turnId)?.status !== "superseded")) &&
     !isIneligibleTerminalReportMessage(input.store, item.id) &&
     (!isMessageLikeItem(item) || visibleMessageIds.has(item.id))
   );

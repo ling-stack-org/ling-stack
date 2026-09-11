@@ -41,6 +41,8 @@ export function fingerprintConversationTimeline(
 /** Stable dotted renderer key shared by fingerprinting and DOM semantics. */
 export function conversationTimelineRendererKey(kind: ConversationTimelineItemKind): string {
   if (kind === "userMessage" || kind === "agentMessage") return "message.document";
+  if (kind === "userInputRequest") return "input.request";
+  if (kind === "userInputAnswer") return "input.answer";
   if (kind === "reasoning") return "message.reasoning";
   if (kind === "plan") return "fact.plan";
   if (kind === "commandExecution") return "fact.command";
@@ -59,5 +61,5 @@ export function conversationTimelineRendererKey(kind: ConversationTimelineItemKi
 }
 
 function hasDisclosure(kind: ConversationTimelineItemKind): boolean {
-  return kind !== "userMessage" && kind !== "agentMessage";
+  return kind !== "userMessage" && kind !== "agentMessage" && kind !== "userInputRequest" && kind !== "userInputAnswer";
 }

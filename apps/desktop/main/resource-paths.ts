@@ -45,6 +45,12 @@ export async function resolveDesktopResourcePaths(
       access(paths.daemonEntryPath),
       access(paths.previewIndexPath),
       ...(app.isPackaged ? [access(paths.browserHostPath)] : []),
+      ...(app.isPackaged && process.platform === "darwin"
+        ? [
+            access(resolve(paths.resourcesRoot, "restricted-command/ling-sandbox-runner")),
+            access(resolve(paths.resourcesRoot, "restricted-command/manifest.json")),
+          ]
+        : []),
     ]);
   } catch (error) {
     throw new DesktopResourceResolutionError(error);

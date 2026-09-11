@@ -7,10 +7,15 @@ import {
   type ConversationTimelineItem,
   type TimelineSnapshot,
 } from "@ling-stack/conversation-ui-core";
+import {
+  placeConversationTimelineDiagnostics,
+  type ConversationTimelineDiagnosticPlacement,
+} from "./timeline-diagnostic-placement.js";
 
 /**
- * Adapter helper for surfaces that already hold a canonical typed projection.
- * It adds only verified scope/chrome metadata; it never changes item meaning.
+ * Shared display projection for surfaces with canonical typed facts. Verified
+ * diagnostic placement precedes batching; neither changes fact meaning or order
+ * fields. Surfaces supply relations, never their own final display sort.
  */
 export function buildSurfaceTimelineSnapshot(input: {
   readonly surface: ConversationInteractionSurfaceKind;
@@ -18,20 +23,22 @@ export function buildSurfaceTimelineSnapshot(input: {
   readonly parentThreadId?: string | null;
   readonly anchorItemId?: string | null;
   readonly items: readonly ConversationTimelineItem[];
+  readonly diagnosticPlacements?: readonly ConversationTimelineDiagnosticPlacement[];
   readonly activeRun?: ActiveRunSnapshot | null;
   readonly canonicalRevision?: number;
   readonly sseCursor?: string | null;
   readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
 }): TimelineSnapshot {
   const threadId = input.threadId?.trim() ?? "";
+  const positionedItems = placeConversationTimelineDiagnostics(input.items, input.diagnosticPlacements);
   // Display grouping is an explicit, reversible projection.  Only apply it
   // when the caller supplies the immutable ContextSnapshot-derived lookup;
   // otherwise keep the canonical atomic facts untouched.
   const projectedItems = input.contextSegmentIdByItemId
-    ? batchCanonicalTranscriptItems(input.items, {
+    ? batchCanonicalTranscriptItems(positionedItems, {
         contextSegmentIdByItemId: input.contextSegmentIdByItemId,
       })
-    : input.items;
+    : positionedItems;
   const hasUnscopedEvidence = projectedItems.some((item) => item.kind !== "userMessage" && item.kind !== "agentMessage");
   const items = threadId.length > 0 || !hasUnscopedEvidence
     ? projectedItems

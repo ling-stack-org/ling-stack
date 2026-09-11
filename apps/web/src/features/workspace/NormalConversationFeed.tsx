@@ -12,10 +12,11 @@ import {
 import {
   ConversationAttachmentStrip,
   ConversationGeneratedMediaBlock,
-  ConversationFeed,
+  ConversationTimelineFeed,
   mountConversationTimeline,
   ConversationReferenceStrip,
   ConversationReplacementRetry,
+  type ConversationTimelineItemLocator,
   InlineMessageEditor,
   MessageActionBar,
   MessageRow,
@@ -41,6 +42,7 @@ import {
   selectNormalTimelineItems,
 } from "./normal-conversation-timeline-items.js";
 import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
+import { timelineMessageChromeOwnerIds } from "../../shared/conversation/timeline/timeline-message-chrome-owners.js";
 
 const latestThresholdPx = 56;
 
@@ -95,6 +97,7 @@ export function NormalConversationFeed({
 }: NormalConversationFeedProps): React.JSX.Element {
   const { t } = useI18n();
   const feedRef = useRef<HTMLDivElement | null>(null);
+  const timelineItemLocatorRef = useRef<ConversationTimelineItemLocator | null>(null);
   const tailReconciliationFrameRef = useRef<number | undefined>(undefined);
   const stickToLatestRef = useRef(true);
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
@@ -139,8 +142,15 @@ export function NormalConversationFeed({
       canonicalRevision: maxTimelineRevision(items),
     });
   }, [detailContext, feedItems, projectPath, workspaceCwd]);
+  const messageChromeOwnerIds = useMemo(
+    () => timelineMessageChromeOwnerIds(timelineSnapshot.items),
+    [timelineSnapshot.items],
+  );
   const feedItemByMessageId = useMemo(
-    () => new Map(feedItems.map((item) => [item.message.id, item])),
+    () => new Map(feedItems.flatMap((item) => [
+      [item.message.id, item] as const,
+      ...(item.message.canonicalItemId ? [[item.message.canonicalItemId, item] as const] : []),
+    ])),
     [feedItems],
   );
   const workspaceId = detailContext?.executionActions.find((action) => action.workspaceId.trim())?.workspaceId;
@@ -171,6 +181,10 @@ export function NormalConversationFeed({
     feed.scrollTo({ top: feed.scrollHeight, behavior });
     stickToLatestRef.current = true;
     setLatestButtonVisible(false);
+  }, []);
+
+  const pauseTimelineAutoFollow = useCallback((): void => {
+    stickToLatestRef.current = false;
   }, []);
 
   const reconcileTail = useCallback((): void => {
@@ -241,59 +255,65 @@ export function NormalConversationFeed({
   }
 
   return (
-    <div className="normal-conversation-feed-frame">
-      <ConversationFeed
-        rootRef={feedRef}
-        onScroll={handleFeedScroll}
-        className="normal-conversation-feed"
-        ariaLabel={t("Conversation messages")}
-        items={feedItems.length > 0 ? [feedItems[0]!] : []}
-        emptyLabel={searchActive ? t("No matching conversation messages") : t("No conversation messages yet")}
-        getItemId={(item) => `timeline:${item.message.threadId ?? "unbound"}`}
-        renderItem={() => (
-          <div className="normal-conversation-timeline-surface" data-conversation-surface-timeline="normal">
-            {mountConversationTimeline({
-              snapshot: timelineSnapshot,
-              depth: 0,
-              cwd: projectPath?.trim() || workspaceCwd.trim(),
-              onOpenSourceRef: handleOpenTimelineSourceRef,
-              renderMessageChrome: (messageItem, body) => {
-                const messageId = messageItem.itemId;
-                const item = messageId ? feedItemByMessageId.get(messageId) : undefined;
-                if (!item) return body;
-                return (
-                  <NormalConversationMessageRow
-                    item={item}
-                    bodyNodeOverride={body}
-                    composerGateApproval={item.workCell
-                      ? composerGateApprovalPresentationForWorkCell(item.workCell, composerGateApprovalByRunId)
-                      : undefined}
-                    generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
-                    feedback={feedbackById[item.message.id]}
-                    editing={editingMessageId === item.message.id}
-                    editSaving={editSaving}
-                    editable={item.message.id === latestEditableUserMessageId}
-                    replacementRetrying={replacementRetryingMessageId === item.message.id}
-                    replacementRetryError={replacementRetryError}
-                    projectPath={projectPath}
-                    workspaceCwd={workspaceCwd}
-                    onCancelEdit={onCancelMessageEdit}
-                    onEdit={() => onEditMessage(item.message.id)}
-                    onSave={(nextBody) => onSaveMessage(item.message, nextBody)}
-                    onRetryReplacement={() => onRetryReplacement(item.message)}
-                    onToggleFeedback={(nextFeedback) => toggleFeedback(item.message.id, nextFeedback)}
-                    onOpenFiles={onOpenFiles}
-                    onOpenReview={onOpenReview}
-                    onOpenRun={onOpenRun}
-                  />
-                );
-              },
-              ariaLabel: t("Conversation transcript"),
-            }).node}
-          </div>
-        )}
-      />
-      {latestButtonVisible ? (
+    <ConversationTimelineFeed
+      surfaceId={`normal:${timelineSnapshot.scope.threadId}`}
+      scrollRef={feedRef}
+      frameClassName="normal-conversation-feed-frame"
+      feedClassName="normal-conversation-feed"
+      ariaLabel={t("Conversation messages")}
+      timelineId={`timeline:${timelineSnapshot.scope.threadId}`}
+      empty={feedItems.length === 0}
+      loadingLabel={t("Loading messages...")}
+      emptyLabel={searchActive ? t("No matching conversation messages") : t("No conversation messages yet")}
+      onScroll={handleFeedScroll}
+      onUserScrollIntent={pauseTimelineAutoFollow}
+      timelineNode={(
+        <div className="normal-conversation-timeline-surface" data-conversation-surface-timeline="normal">
+          {mountConversationTimeline({
+            snapshot: timelineSnapshot,
+            depth: 0,
+            cwd: projectPath?.trim() || workspaceCwd.trim(),
+            virtualScrollRef: feedRef,
+            itemLocatorRef: timelineItemLocatorRef,
+            onDisclosureIntent: pauseTimelineAutoFollow,
+            onOpenSourceRef: handleOpenTimelineSourceRef,
+            renderMessageChrome: (messageItem, body) => {
+              const messageId = messageItem.logicalMessageId ?? messageItem.itemId;
+              const item = messageId ? feedItemByMessageId.get(messageId) : undefined;
+              if (!item) return body;
+              return (
+                <NormalConversationMessageRow
+                  item={item}
+                  bodyNodeOverride={body}
+                  ownsMessageChrome={messageChromeOwnerIds.has(messageItem.id)}
+                  composerGateApproval={item.workCell
+                    ? composerGateApprovalPresentationForWorkCell(item.workCell, composerGateApprovalByRunId)
+                    : undefined}
+                  generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
+                  feedback={feedbackById[item.message.id]}
+                  editing={editingMessageId === item.message.id}
+                  editSaving={editSaving}
+                  editable={item.message.id === latestEditableUserMessageId}
+                  replacementRetrying={replacementRetryingMessageId === item.message.id}
+                  replacementRetryError={replacementRetryError}
+                  projectPath={projectPath}
+                  workspaceCwd={workspaceCwd}
+                  onCancelEdit={onCancelMessageEdit}
+                  onEdit={() => onEditMessage(item.message.id)}
+                  onSave={(nextBody) => onSaveMessage(item.message, nextBody)}
+                  onRetryReplacement={() => onRetryReplacement(item.message)}
+                  onToggleFeedback={(nextFeedback) => toggleFeedback(item.message.id, nextFeedback)}
+                  onOpenFiles={onOpenFiles}
+                  onOpenReview={onOpenReview}
+                  onOpenRun={onOpenRun}
+                />
+              );
+            },
+            ariaLabel: t("Conversation transcript"),
+          }).node}
+        </div>
+      )}
+      latestButtonNode={latestButtonVisible ? (
         <IconButton
           className="message-feed-latest-button normal-conversation-latest-button"
           icon={ArrowDown}
@@ -301,12 +321,13 @@ export function NormalConversationFeed({
           onClick={() => scrollToLatest()}
         />
       ) : null}
-    </div>
+    />
   );
 }
 
 function NormalConversationMessageRow({
   bodyNodeOverride,
+  ownsMessageChrome,
   composerGateApproval,
   editSaving,
   editable,
@@ -330,6 +351,8 @@ function NormalConversationMessageRow({
   readonly item: NormalConversationFeedItem;
   /** Body is supplied by the owning surface Timeline renderer. */
   readonly bodyNodeOverride: ReactNode;
+  /** Message resources/actions belong to one segment, not each narration row. */
+  readonly ownsMessageChrome: boolean;
   readonly composerGateApproval?: ComposerGateApprovalPresentation;
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly feedback?: "up" | "down";
@@ -353,18 +376,20 @@ function NormalConversationMessageRow({
   const { message } = item;
   const blockedAgentMessage = item.authorType === "ai-teammate"
     && (Boolean(composerGateApproval) || message.status === "blocked");
+  const actionsReady = message.role !== "assistant"
+    || message.status === "succeeded" || message.status === "failed" || message.status === "cancelled";
   return (
     <MessageRow
       surface="normal_conversation"
       className={item.className}
       authorType={item.authorType}
-      tone={blockedAgentMessage ? "chat-blocked" : item.authorType === "system" ? "system" : "document"}
+      tone={item.authorType === "system" ? "system" : "document"}
       authorName={item.authorName}
       createdAtLabel={item.createdAtLabel}
       statusNode={message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
       body={item.body}
       bodyCwd={projectPath?.trim() || workspaceCwd.trim()}
-      bodyNode={editing ? (
+      bodyNode={ownsMessageChrome && editing ? (
         <InlineMessageEditor
           initialValue={message.content}
           cwd={projectPath?.trim() || workspaceCwd.trim()}
@@ -382,7 +407,7 @@ function NormalConversationMessageRow({
       // Model-text paths are display-only. Only typed timeline evidence with
       // a complete execution lineage may open a workspace file.
       bodyOnOpenLocalFile={undefined}
-      attachmentsNode={(message.attachments?.length ?? 0) > 0 || (message.fileRefs?.length ?? 0) > 0 ? (
+      attachmentsNode={ownsMessageChrome && ((message.attachments?.length ?? 0) > 0 || (message.fileRefs?.length ?? 0) > 0) ? (
         <>
           <ConversationAttachmentStrip
             attachments={(message.attachments ?? []).map((attachment) => ({
@@ -417,14 +442,14 @@ function NormalConversationMessageRow({
           />
         </>
       ) : null}
-      workCellNode={generatedMedia.length > 0 ? (
+      workCellNode={ownsMessageChrome && generatedMedia.length > 0 ? (
         <>
           {message.role === "assistant" ? (
             <ConversationGeneratedMediaBlock items={generatedMedia} cwd={workspaceCwd.trim()} />
           ) : null}
         </>
       ) : null}
-      errorNode={(
+      errorNode={ownsMessageChrome ? (
         <>
           {item.errorText ? (
             <InlineFeedback
@@ -442,8 +467,8 @@ function NormalConversationMessageRow({
             />
           ) : null}
         </>
-      )}
-      actionsNode={message.content && !editing && !blockedAgentMessage ? (
+      ) : null}
+      actionsNode={ownsMessageChrome && actionsReady && message.content && !editing && !blockedAgentMessage ? (
         <MessageActionBar
           surface="normal_conversation"
           className="normal-conversation-message-actions"

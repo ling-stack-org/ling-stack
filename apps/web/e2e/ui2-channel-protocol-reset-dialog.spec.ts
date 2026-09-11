@@ -132,8 +132,9 @@ test("T13-P.6-F resets once through a busy-safe Dialog, restores focus, and emit
 
   await trigger.click();
   dialog = page.getByRole("dialog", { name: "Reset channel protocol?" });
-  await page.locator('[aria-label="Ling Stack navigation"] button').filter({ hasText: "Research" }).first()
-    .evaluate((element: HTMLButtonElement) => element.click());
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
+    .getByRole("button", { name: "Research", exact: true })
+    .click();
   await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
   await expect(dialog).toHaveCount(0);
   expect(resetRequests).toBe(0);
@@ -141,7 +142,7 @@ test("T13-P.6-F resets once through a busy-safe Dialog, restores focus, and emit
   if (await currentDock.isVisible().catch(() => false)) {
     await currentDock.getByRole("button", { name: "Close" }).click();
   }
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).first().click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).first().click();
   await expect(page.getByRole("heading", { name: "Engineering", level: 1 })).toBeVisible();
   const reopenedEditor = await openProtocolEditor(page);
   const reopenedTrigger = reopenedEditor.getByRole("button", { name: "Reset", exact: true });
@@ -242,7 +243,7 @@ test("T13-P.6-F production owner has no browser confirmation call", async () => 
 async function openProtocolEditor(page: Page): Promise<Locator> {
   const heading = page.getByRole("heading", { name: "Engineering", level: 1 });
   if (!(await heading.isVisible().catch(() => false))) {
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).first().click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).first().click();
   }
   await expect(heading).toBeVisible();
   await page.getByRole("toolbar", { name: "Workspace task toolbar" })

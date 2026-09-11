@@ -1951,20 +1951,9 @@ test("runtime attempt fence migration discards unfenced development runtime stat
       acquiredAt: "2026-06-04T04:00:02.000Z",
       expiresAt: "2099-06-04T04:00:02.000Z",
     });
-    const priorSlot = store.acquireRuntimeSemaphoreSlot({
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      resourceType: "provider",
-      resourceKey: "provider_fence_clean_break_old",
-      limit: 1,
-      ownerType: "work_unit_attempt",
-      ownerId: priorAttempt.id,
-      workUnitId: workUnit.id,
-      attemptId: priorAttempt.id,
-      runtimeInstanceId: priorAttempt.runtimeInstanceId,
-      fencingToken: priorAttempt.fencingToken,
-      acquiredAt: "2026-06-04T04:00:02.000Z",
-      expiresAt: "2099-06-04T04:00:02.000Z",
-    });
+    // Like the prior lease, seed historical unfenced state below. Runtime admission
+    // must reject a replaced attempt, even when a migration fixture needs its old row.
+    const priorSlot = { id: "slot_runtime_fence_prior" };
     const currentSlot = store.acquireRuntimeSemaphoreSlot({
       workspaceId: DEFAULT_WORKSPACE_ID,
       resourceType: "provider",
@@ -2011,6 +2000,14 @@ test("runtime attempt fence migration discards unfenced development runtime stat
         ALTER TABLE runtime_semaphore_slots DROP COLUMN fencing_token;
         ALTER TABLE resource_leases DROP COLUMN runtime_instance_id;
         ALTER TABLE resource_leases DROP COLUMN fencing_token;
+        INSERT INTO runtime_semaphore_slots (
+          id, workspace_id, resource_type, resource_key, owner_type, owner_id,
+          work_unit_id, attempt_id, status, acquired_at, last_renewed_at, expires_at
+        ) VALUES (
+          '${priorSlot.id}', 'workspace_default', 'provider', 'provider_fence_clean_break_old',
+          'work_unit_attempt', '${priorAttempt.id}', '${workUnit.id}', '${priorAttempt.id}',
+          'active', '2026-06-04T04:00:02.000Z', '2026-06-04T04:00:02.000Z', '2099-06-04T04:00:02.000Z'
+        );
         UPDATE work_unit_attempts
         SET
           status = CASE WHEN id = '${priorAttempt.id}' THEN 'started' ELSE status END,

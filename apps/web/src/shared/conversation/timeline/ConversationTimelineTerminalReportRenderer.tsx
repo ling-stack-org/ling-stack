@@ -1,17 +1,19 @@
 import { CheckCircle2, CircleAlert, FileCheck2, ShieldAlert } from "lucide-react";
+import { isUserVisibleTerminalReportArtifact, visibleTerminalReportTimelineItem } from "@ling-stack/conversation-ui-core";
 import type {
   ConversationOperationSourceRef,
   ConversationTimelineTerminalReportArtifact,
   ConversationTimelineTerminalReportItem,
 } from "@ling-stack/conversation-ui-core";
 import { TimelineFactRow } from "./TimelineFactRow.js";
-import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import { ConversationWorkspaceRecoveryControls } from "../blocks/ConversationWorkspaceRecoveryControls.js";
 import { ConversationTimelineFileReference } from "./ConversationTimelineFileChangeDetail.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
+import { terminalReportDisplaySourceRefs } from "./terminal-report-display-refs.js";
+import "./conversation-terminal-response.css";
 
 export function ConversationTimelineTerminalReportRenderer({
-  item,
+  item: inputItem,
   depth,
   cwd,
   onOpenSourceRef,
@@ -21,22 +23,26 @@ export function ConversationTimelineTerminalReportRenderer({
   readonly cwd?: string;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
 }): React.JSX.Element {
+  const item = visibleTerminalReportTimelineItem(inputItem);
+  const artifactCount = item.artifacts.filter(isUserVisibleTerminalReportArtifact).length;
   const counts = [
     item.changeCount ? `${item.changeCount} changes` : "",
     item.verificationCount ? `${item.verificationCount} checks` : "",
     item.participantCount ? `${item.participantCount} agents` : "",
-    item.artifactCount ? `${item.artifactCount} artifacts` : "",
+    artifactCount ? `${artifactCount} artifacts` : "",
     item.riskCount ? `${item.riskCount} risks` : "",
   ].filter(Boolean).join(" · ");
   return (
-    <TimelineFactRow
-      item={item}
-      depth={depth}
-      title={item.title}
-      meta={`generation ${item.generation}${counts ? ` · ${counts}` : ""}`}
-      icon={item.status === "succeeded" ? <CheckCircle2 size={14} aria-hidden="true" /> : item.status === "failed" || item.status === "blocked" ? <CircleAlert size={14} aria-hidden="true" /> : <FileCheck2 size={14} aria-hidden="true" />}
-      detail={<TerminalReportDetail item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} />}
-    />
+    <div className="conversation-timeline-terminal-response" data-conversation-terminal-response={item.reportId} data-conversation-action-owner>
+      <TimelineFactRow
+        item={item}
+        depth={depth}
+        title={item.title}
+        meta={`generation ${item.generation}${counts ? ` · ${counts}` : ""}`}
+        icon={item.status === "succeeded" ? <CheckCircle2 size={14} aria-hidden="true" /> : item.status === "failed" || item.status === "blocked" ? <CircleAlert size={14} aria-hidden="true" /> : <FileCheck2 size={14} aria-hidden="true" />}
+        detail={<TerminalReportDetail item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} />}
+      />
+    </div>
   );
 }
 
@@ -49,6 +55,7 @@ function TerminalReportDetail({
   readonly cwd?: string;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
 }): React.JSX.Element {
+  const visibleArtifacts = item.artifacts.filter(isUserVisibleTerminalReportArtifact);
   const visibleParticipants = item.participants.length > 1 || item.participants.some((participant) => participant.status !== "completed")
     ? item.participants
     : [];
@@ -57,7 +64,6 @@ function TerminalReportDetail({
     : item.runId ? { kind: "run" as const, id: item.runId } : undefined;
   return (
     <div className="conversation-timeline-terminal-report" data-terminal-report-id={item.reportId} data-terminal-report-generation={item.generation}>
-      <MessageBodyRenderer className="conversation-timeline-rich-detail" text={item.summary} cwd={cwd} compact />
       <ReportSection title="Corrections" count={item.corrections.length}>
         {item.corrections.map((correction) => (
           <ReportEntry key={correction.id} item={item} title={correction.correctedFact} meta={correction.confidence} summary={`Previously: ${correction.originalAssumption}`} refs={correction.sourceRefs} onOpenSourceRef={onOpenSourceRef} />
@@ -82,10 +88,16 @@ function TerminalReportDetail({
             title={change.title}
             meta={[change.kind, change.addedLines === undefined ? "" : `+${change.addedLines}`, change.deletedLines === undefined ? "" : `-${change.deletedLines}`].filter(Boolean).join(" · ")}
             summary={change.summary}
-            refs={[
-              ...change.paths.map((path) => ({ kind: "file", id: `report-path:${change.id}:${path}`, path, label: path })),
-              ...change.sourceRefs,
-            ]}
+            refs={terminalReportDisplaySourceRefs(
+              change.sourceRefs,
+              change.paths.map((path) => ({ kind: "file", id: `report-path:${change.id}:${path}`, path, label: path })),
+              item.artifacts.map((artifact) => ({
+                kind: artifact.kind === "diff" ? "diff" : artifact.kind === "file" ? "file" : "artifact",
+                id: artifact.id,
+                path: artifact.path,
+                label: artifact.title,
+              })),
+            )}
             onOpenSourceRef={onOpenSourceRef}
           />
         ))}
@@ -100,8 +112,8 @@ function TerminalReportDetail({
           <ReportEntry key={participant.agentId} item={item} title={participant.displayName} meta={[participant.roleKey, participant.status].filter(Boolean).join(" · ")} summary={participant.contribution} refs={participant.sourceRefs} onOpenSourceRef={onOpenSourceRef} />
         ))}
       </ReportSection>
-      <ReportSection title="Artifacts" count={item.artifacts.length}>
-        {item.artifacts.map((artifact) => <ArtifactEntry key={artifact.id} artifact={artifact} item={item} onOpenSourceRef={onOpenSourceRef} />)}
+      <ReportSection title="Artifacts" count={visibleArtifacts.length}>
+        {visibleArtifacts.map((artifact) => <ArtifactEntry key={artifact.id} artifact={artifact} item={item} onOpenSourceRef={onOpenSourceRef} />)}
       </ReportSection>
       <ReportSection title="Risks" count={item.risks.length}>
         {item.risks.map((risk) => (
@@ -158,15 +170,12 @@ function ReportEntry({
 }
 
 function ArtifactEntry({ artifact, item, onOpenSourceRef }: { readonly artifact: ConversationTimelineTerminalReportArtifact; readonly item: ConversationTimelineTerminalReportItem; readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler }): React.JSX.Element {
-  const refs: ConversationOperationSourceRef[] = [
-    ...(artifact.path ? [{
+  const refs = terminalReportDisplaySourceRefs(artifact.sourceRefs, artifact.path ? [{
       kind: artifact.kind === "diff" ? "diff" : artifact.kind === "file" ? "file" : "artifact",
       id: artifact.id,
       path: artifact.path,
       label: artifact.title,
-    }] : []),
-    ...artifact.sourceRefs,
-  ];
+    }] : []);
   return (
     <ReportEntry
       title={artifact.title}

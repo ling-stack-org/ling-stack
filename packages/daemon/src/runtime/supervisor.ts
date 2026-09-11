@@ -14,6 +14,7 @@ import {
   toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../config.js";
+import { NativeRestrictedCommandRuntime } from "./sandbox/restricted-command-runtime.js";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
 import {
@@ -43,6 +44,7 @@ export type RuntimeSupervisorWorkUnitTransitionObserver = (input: {
 }) => void;
 
 export class RuntimeSupervisor {
+  private restrictedCommandRuntime: NativeRestrictedCommandRuntime | undefined;
   private readonly runtimesByCwd = new Map<string, RuntimeInstance>();
   private readonly lockedCwds = new Set<string>();
   private readonly runtimeLockPathsByCwd = new Map<string, string>();
@@ -66,6 +68,12 @@ export class RuntimeSupervisor {
 
   getSandboxFeatures(): ResolvedDaemonConfig["sandbox"] {
     return this.config.sandbox;
+  }
+
+  getRestrictedCommandRuntime(): NativeRestrictedCommandRuntime | undefined {
+    const config = this.config.sandbox.restrictedCommands;
+    if (config) this.restrictedCommandRuntime ??= new NativeRestrictedCommandRuntime(config);
+    return this.restrictedCommandRuntime;
   }
 
   getLockedTaskContinuationSnapshot(): LockedTaskContinuationSnapshot {

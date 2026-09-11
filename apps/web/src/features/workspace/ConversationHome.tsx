@@ -7,7 +7,7 @@ import {
   SquareTerminal,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import type { ConversationAttachment, PermissionConfirmation, PermissionPreset, ProviderThinkingMode } from "../../types.js";
+import type { AuthorizationMode, ConversationAttachment, PermissionConfirmation, PermissionPreset, ProviderThinkingMode } from "../../types.js";
 import {
   filterSlashCommandPickerOptions,
   composerWorkspaceFileParts,
@@ -110,6 +110,11 @@ export function ConversationHome({
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [selectedProviderPresetId, setSelectedProviderPresetId] = useState(initialProviderPresetId.trim());
   const [selectedThinkingLevel, setSelectedThinkingLevel] = useState<ProviderThinkingMode>(initialThinkingLevel);
+  const [selectedAuthorizationMode, setSelectedAuthorizationMode] = useState<AuthorizationMode>(() => resolveAuthorizationMode(
+    initialAuthorizationMode,
+    initialPermissionMode,
+    initialPermissionPreset,
+  ));
   const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => permissionPresetForWorkspaceAccessMode(resolveWorkspaceAccessMode(
     initialWorkspaceAccessMode,
     initialPermissionMode,
@@ -381,12 +386,17 @@ export function ConversationHome({
       return;
     }
     permissionSelectionBoundThreadRef.current = "";
+    setSelectedAuthorizationMode(resolveAuthorizationMode(
+      initialAuthorizationMode,
+      initialPermissionMode,
+      initialPermissionPreset,
+    ));
     setSelectedPermissionPreset(permissionPresetForWorkspaceAccessMode(resolveWorkspaceAccessMode(
       initialWorkspaceAccessMode,
       initialPermissionMode,
       initialPermissionPreset,
     )));
-  }, [conversationIdentityController.ownerKey, initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]);
+  }, [conversationIdentityController.ownerKey, initialAuthorizationMode, initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]);
 
   useEffect(() => {
     if (!thinkingEnabled) {
@@ -428,7 +438,6 @@ export function ConversationHome({
       actionFeedback.report("validation", activeModelOption?.blocker || t("Please configure a chat model before sending."));
       return;
     }
-    const authorizationMode = resolveAuthorizationMode(initialAuthorizationMode, initialPermissionMode, initialPermissionPreset);
     const workspaceAccessMode = workspaceAccessModeForPermissionPreset(selectedPermissionPreset);
     let permissionConfirmation: PermissionConfirmation | undefined;
     if (workspaceAccessMode === "full_access") {
@@ -437,7 +446,7 @@ export function ConversationHome({
         return;
       }
     }
-    const legacyPermission = authorizationAndAccessToLegacyPermission(authorizationMode, workspaceAccessMode);
+    const legacyPermission = authorizationAndAccessToLegacyPermission(selectedAuthorizationMode, workspaceAccessMode);
     const now = new Date().toISOString();
     const pendingUserMessage: ConversationHomeMessage = {
       id: createConversationHomeMessageId(),
@@ -488,7 +497,7 @@ export function ConversationHome({
           ...(thinkingEnabled && selectedThinkingLevel !== "off" ? { thinkingLevel: selectedThinkingLevel } : {}),
         },
         authorization: {
-          authorizationMode,
+          authorizationMode: selectedAuthorizationMode,
           workspaceAccessMode,
           permissionMode: legacyPermission.permissionMode,
           permissionPreset: legacyPermission.permissionPreset,
@@ -665,6 +674,7 @@ export function ConversationHome({
       slashOptions={slashCommandPickerOptions}
       slashActiveIndex={slashActiveIndex}
       pendingAttachments={pendingAttachments}
+      authorizationMode={selectedAuthorizationMode}
       permissionPreset={selectedPermissionPreset}
       fullAccessConfirmed={fullAccessConfirmed}
       modelOptions={modelOptions}
@@ -693,6 +703,7 @@ export function ConversationHome({
       onDrop={composerDropController.onDrop}
       onOpenModelWorkbench={onOpenModelWorkbench}
       onRemoveAttachment={attachmentController.removeAttachment}
+      onAuthorizationModeChange={setSelectedAuthorizationMode}
       onPermissionPresetChange={(preset) => {
         if (preset !== "full_access" || !onConfirmFullAccessSelection) {
           setSelectedPermissionPreset(preset);

@@ -17,12 +17,14 @@ import type {
 } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
+import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
 import { teammateCanWorkInEffectiveChannel } from "./channel-teammate-availability.js";
 import { responseLanguageInstruction } from "./response-language.js";
 import { createLingAgentExecutor, isLingAgentExecutorId } from "./ling-agent-executor.js";
 import { compileWorkflowGraph } from "./workflow-graph.js";
 import type { ValidateWorkflowStepRunRequest } from "./workflows.js";
 import { materializeWorkflowDelegatedStepRequirements } from "./workflow-step-requirement.js";
+import { assertChannelOperationRunnerReady, assertChannelOperationRuntimeReady } from "./channel-operation-runtime-readiness.js";
 import {
   assignExecutionOperationOwners,
   ownedExecutionOperations,
@@ -34,6 +36,8 @@ import {
 } from "./workflow-participant-provider.js";
 
 export interface ConfirmChannelExecutionProposalWorkflowInput {
+  readonly restrictedCommandRuntime?: NativeRestrictedCommandRuntime;
+  readonly hostCapabilityAvailable?: (capabilityId: "host.open_local_target") => boolean;
   readonly store: RunStore;
   readonly cwd: string;
   readonly proposalId: string;
@@ -116,10 +120,18 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
   const participantManifest = sourceDecision.participantManifest;
   assertProposalParticipantManifest(participants, participantManifest);
   const executionPlan = sourceDecision.execution;
-  const requiredExecutionPlan = executionPlan?.operations.some((operation) => operation.required) ? executionPlan : undefined;
+  // Typed plans must reach the capability interlock intact, including optional
+  // operations; dropping them here would turn an unsupported plan into legacy.
+  const requiredExecutionPlan = executionPlan?.bindingVersion === 1 || executionPlan?.operations.some((operation) => operation.required) ? executionPlan : undefined;
   const operationOwners = requiredExecutionPlan
     ? assignExecutionOperationOwners(requiredExecutionPlan.operations, participants)
     : new Map<string, number>();
+  assertChannelOperationRuntimeReady(
+    requiredExecutionPlan,
+    operationOwners,
+    input.restrictedCommandRuntime,
+    input.hostCapabilityAvailable,
+  );
   validateProposalRequiredTools(channel, proposal, participants, requiredExecutionPlan, operationOwners);
   const providerBoundParticipants = participants.map((participant, index): ProposalParticipant => {
     const requiredTools = requiredExecutionPlan
@@ -139,6 +151,8 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
     return { ...participant, providerBinding: preflight.binding };
   });
 
+  assertChannelOperationRunnerReady({ plan: requiredExecutionPlan, store: input.store,
+    runnerRegistry: input.runnerRegistry, participants: providerBoundParticipants });
   const graph = buildProposalWorkflowGraph(
     proposal,
     providerBoundParticipants,
@@ -364,6 +378,14 @@ function validateProposalRequiredTools(
   operationOwners: ReadonlyMap<string, number> = new Map(),
 ): void {
   if (executionPlan) {
+    if (executionPlan.bindingVersion === 1) {
+      const missingChannelTools = requiredToolsForExecutionOperations(executionPlan.operations)
+        .filter((tool) => !channel.allowedTools.includes(tool));
+      if (missingChannelTools.length > 0) {
+        throw new HttpError(400, "proposal_required_tools_not_available",
+          `Channel is missing required tools: ${missingChannelTools.join(", ")}.`);
+      }
+    }
     for (const [index, participant] of participants.entries()) {
       const requiredTools = requiredToolsForExecutionOperations(ownedExecutionOperations(executionPlan.operations, operationOwners, index));
       const missingTeammateTools = requiredTools.filter((tool) => !participant.teammate.allowedTools.includes(tool));
@@ -447,7 +469,8 @@ function renderOwnedOperationBinding(
       : operation.commandMatchPolicy?.kind === "executable"
         ? `; executable: ${operation.commandMatchPolicy.executable}`
         : "";
-    return `- ${operation.id}: ${operation.kind} -> ${target}${dependency}${command}`;
+    const binding = operation.binding ? `; binding: ${JSON.stringify(operation.binding)}` : "";
+    return `- ${operation.id}: ${operation.kind} -> ${target}${dependency}${command}${binding}`;
   });
   const header = "Host-materialized operation bindings (authoritative for completion, not display advice):";
   const rule = "Execute only the operations owned by this step. An exact command must be run exactly; do not substitute a semantically equivalent command. If the binding cannot be executed, return structured blocked instead of ready text or narration.";

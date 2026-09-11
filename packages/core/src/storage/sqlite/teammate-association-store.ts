@@ -204,16 +204,9 @@ export class SqliteTeammateAssociationStore {
   }
 
   ensureDefaultTeammateMemoryScopes(teammateId: string, now: string): void {
-    if (!this.ports.hasTable("ai_teammates") || !this.ports.hasTable("teammate_memory_scopes") || !this.ports.getAiTeammate(teammateId)) {
+    if (!this.ports.hasTable("ai_teammates") || !this.ports.hasTable("teammate_memory_scopes")) {
       return;
     }
-    const channelIds = this.ports.hasTable("teammate_channel_memberships")
-      ? (this.context.database
-        .prepare("SELECT channel_id FROM teammate_channel_memberships WHERE teammate_id = ? ORDER BY created_at ASC")
-        .all(teammateId) as Record<string, SQLOutputValue>[])
-        .map((row) => readString(row, "channel_id"))
-      : [];
-    const requiredScopes = mergeDefaultTeammateMemoryScopeInputs([], channelIds);
     const findPrivateScope = this.context.database.prepare(`
       SELECT id, enabled
       FROM teammate_memory_scopes
@@ -249,8 +242,21 @@ export class SqliteTeammateAssociationStore {
       ) VALUES (?, ?, ?, ?, 1, ?, ?)
     `);
     const update = this.context.database.prepare("UPDATE teammate_memory_scopes SET enabled = 1, updated_at = ? WHERE id = ?");
-    this.context.database.exec("BEGIN");
+    // This is a read-modify-write transaction. Reserve the writer before reading
+    // membership/scope state so another bootstrap cannot invalidate its WAL snapshot.
+    this.context.database.exec("BEGIN IMMEDIATE");
     try {
+      if (!this.ports.getAiTeammate(teammateId)) {
+        this.context.database.exec("COMMIT");
+        return;
+      }
+      const channelIds = this.ports.hasTable("teammate_channel_memberships")
+        ? (this.context.database
+          .prepare("SELECT channel_id FROM teammate_channel_memberships WHERE teammate_id = ? ORDER BY created_at ASC")
+          .all(teammateId) as Record<string, SQLOutputValue>[])
+          .map((row) => readString(row, "channel_id"))
+        : [];
+      const requiredScopes = mergeDefaultTeammateMemoryScopeInputs([], channelIds);
       const currentChannelIds = new Set(channelIds);
       for (const row of existingChannelScopes.all(teammateId) as Record<string, SQLOutputValue>[]) {
         const kind = readString(row, "kind") as TeammateMemoryScopeKind;

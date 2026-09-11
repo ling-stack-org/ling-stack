@@ -32,7 +32,7 @@ test("generated Presentation Profile changes route policy without remounting the
   await page.screenshot({ path: testInfo.outputPath("1440x960-generated-immersive-home.png"), fullPage: true });
 
   await page.setViewportSize({ width: 1280, height: 800 });
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(root).toHaveAttribute("data-ui-surface", "settings");
   await expect(root).toHaveAttribute("data-ui-surface-recipe", "solid");

@@ -112,6 +112,15 @@ The arrow is absent unless the approval carries a daemon-validated
 never infer a rule from the displayed command. File, MCP, network, deploy, credential,
 runtime-permission, and task-proposal decisions keep the ordinary two-button layout.
 
+For Bash, `proposedCommandRule` is a Host fact, not a model fact. The runner may attach a
+`prefix_rule` hint, but the Daemon reparses the actual command into bounded literal argv
+segments, rejects expansion/redirection/pipelines/unsupported operators, and verifies that
+the proposed prefix covers every segment that would otherwise require a reusable rule.
+The Host may derive a narrower known-safe prefix when the hint is missing or invalid. Shell
+wrappers such as `bash -lc` are never persisted; only a validated inner command such as
+`cargo build` may become the rule. If one reusable prefix cannot safely account for the
+compound command, the arrow stays absent and the user can only allow once or deny.
+
 The gate does not show risk badges, Run IDs, workspace absolute paths, approval titles,
 raw payloads, permission deltas, queue counts, decision reasons, technical details, or an
 approve-all action. Full payload and decision history stay in Run detail, Approval Inbox,

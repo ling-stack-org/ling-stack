@@ -1,10 +1,14 @@
 import {
   projectCanonicalConversationTimeline,
+  terminalReportSourceRefs,
+  userInputTranscriptRevisionSignature,
+  reconcileCanonicalUserInputs,
   type CanonicalConversationItem,
   type CanonicalCompactionRecord,
   type CanonicalExecutionAction,
   type CanonicalParticipantSpan,
   type CanonicalPlanRecord,
+  type CanonicalReasoningSummaryRecord,
   type CanonicalTerminalReportProjection,
   type CanonicalSourceRef,
   type CanonicalTranscriptProjection,
@@ -43,12 +47,15 @@ export function projectConversationDetailTimeline(
   const itemById = new Map(items.map((item) => [item.id, item]));
   const turnByRunId = new Map(detail.runLinks.map((link) => [link.runId, link]));
   const runById = new Map(detail.runs.map((run) => [run.id, run]));
+  const checkpointByApprovalId = new Map(detail.approvalCheckpoints.map((checkpoint) => [checkpoint.approvalId, checkpoint]));
   const actions = detail.executionActions
     .filter((action) => !action.threadId || action.threadId === detail.thread.id)
     .map((action) => toCanonicalExecutionAction(action, itemById, turnByRunId, runById, scope));
   const sourceSequence = items.reduce((max, item) => Math.max(max, item.sequence), 0);
   const maxItemRevision = items.reduce((max, item) => Math.max(max, item.revision), 0);
   const maxActionRevision = actions.reduce((max, action) => Math.max(max, action.revision), 0);
+  const reasoningSummaries = (detail.reasoningSummaries ?? []).map(toCanonicalReasoningSummaryRecord);
+  const maxReasoningRevision = reasoningSummaries.reduce((max, summary) => Math.max(max, summary.revision), 0);
   const adapterDiagnostics: import("@ling-stack/conversation-ui-core").CanonicalTranscriptDiagnostic[] = [];
   const plans = durableCollection(detail.plans, "plans", adapterDiagnostics)
     .filter((plan) => plan.threadId === detail.thread.id && plan.status !== "archived" && plan.status !== "superseded")
@@ -96,23 +103,40 @@ export function projectConversationDetailTimeline(
     scope,
     items,
     actions,
+    userInputs: detail.userInputs,
     turnRuns: detail.runLinks.map((link) => ({
       runId: link.runId,
       turnId: link.turnId,
       attemptNumber: link.attemptNumber,
       role: link.role,
     })),
-    approvals: detail.approvals.map((approval) => toCanonicalApprovalRecord(approval, actions, itemById, detail.thread.id)),
+    approvals: detail.approvals.map((approval) => toCanonicalApprovalRecord(
+      approval,
+      checkpointByApprovalId.get(approval.id),
+      itemById,
+      runById,
+      detail.thread.id,
+    )),
     artifacts: detail.artifacts.map((artifact) => toCanonicalArtifactRecord(artifact, actions, itemById, detail.thread.id)),
     plans,
     compactions,
+    reasoningSummaries,
     terminalReports,
     participantSpans,
     contextSegmentIdByItemId,
     sourceSequence,
-    sourceRevision: `${detail.thread.updatedAt}:${maxItemRevision}:${maxActionRevision}:${plans.map((plan) => `${plan.id}:${plan.revision}`).join(",")}:${compactions.map((record) => `${record.id}:${record.revision}`).join(",")}:${participantSpans.map((span) => `${span.id}:${span.revision}`).join(",")}`,
+    sourceRevision: `${detail.thread.updatedAt}:${maxItemRevision}:${maxActionRevision}:${maxReasoningRevision}:${plans.map((plan) => `${plan.id}:${plan.revision}`).join(",")}:${compactions.map((record) => `${record.id}:${record.revision}`).join(",")}:${participantSpans.map((span) => `${span.id}:${span.revision}`).join(",")}:${userInputTranscriptRevisionSignature(detail.userInputs)}`,
     initialDiagnostics: adapterDiagnostics,
   });
+}
+
+function toCanonicalReasoningSummaryRecord(
+  summary: ConversationDetailResponse["reasoningSummaries"][number],
+): CanonicalReasoningSummaryRecord {
+  return {
+    ...summary,
+    sourceRefs: summary.sourceRefs.map((ref) => ({ ...ref })),
+  };
 }
 
 function toCanonicalTerminalReportProjection(
@@ -132,10 +156,12 @@ function toCanonicalTerminalReportProjection(
       source: report.source,
       status: report.status,
       evidenceFingerprint: report.evidenceFingerprint,
+      language: report.language,
       outcome: {
         status: report.outcome.status,
         title: report.outcome.title,
         summary: report.outcome.summary,
+        sourceRefs: terminalReportSourceRefs(report.outcome.sourceRefs),
         corrections: report.outcome.corrections.map((correction) => ({
           ...correction,
           sourceRefs: terminalReportSourceRefs(correction.sourceRefs),
@@ -164,17 +190,6 @@ function toCanonicalTerminalReportProjection(
       references: terminalReportSourceRefs(report.references),
     },
   };
-}
-
-function terminalReportSourceRefs(
-  refs: readonly import("../../types.js").TerminalReportSourceRefDto[],
-): readonly CanonicalSourceRef[] {
-  return refs.map((ref) => ({
-    kind: ref.kind,
-    id: ref.id,
-    ...(ref.label ? { label: ref.label } : {}),
-    visibility: ref.visibility === "conversation" ? "conversation" : "audit",
-  }));
 }
 
 function toCanonicalPlanRecord(
@@ -273,6 +288,9 @@ function buildParticipantSpans(input: {
     ? input.detail.runs.filter((run) => run.id === input.scope.runId)
     : input.detail.runs.filter((run) => !run.parentRunId);
   const spans: CanonicalParticipantSpan[] = [];
+  const userInputs = reconcileCanonicalUserInputs({
+    scope: input.scope, incoming: { items: input.items, userInputs: input.detail.userInputs }, mode: "page",
+  }).userInputs;
   for (const childRun of input.detail.runs) {
     if (!childRun.parentRunId || !parentRuns.some((parent) => parent.id === childRun.parentRunId)) continue;
     const parentAction = findParentDelegationAction(childRun, input.actions);
@@ -294,15 +312,21 @@ function buildParticipantSpans(input: {
     }
     const participantId = childRun.teammateId ?? `run:${childRun.id}`;
     const childTurnId = input.turnRuns.find((link) => link.runId === childRun.id)?.turnId;
+    const childActions = input.actions.filter((action) => action.runId === childRun.id);
+    const childActionAnchorIds = new Set(childActions.flatMap((action) =>
+      action.sourceRefs.filter((ref) => ref.kind === "conversation_item").map((ref) => ref.id)));
+    const childUserInputIds = new Set(userInputs.flatMap(record =>
+      record.availability === "available" && record.source.runId === childRun.id
+        && record.source.participantId === participantId ? [record.itemId] : []));
     // The parent anchor belongs to the outer timeline.  Re-including it in the
     // child snapshot creates a synthetic blocked row (the child run has no
     // action for the parent's tool call) and makes the same fact appear twice.
     // Child items must be owned by the child turn/run; the parent span header is
     // the only visual bridge back to the anchor.
     const childItems = input.items.filter((item) =>
-      (childTurnId ? item.turnId === childTurnId : false)
-      || item.domainRefs?.some((ref) => ref.type === "run" && ref.id === childRun.id));
-    const childActions = input.actions.filter((action) => action.runId === childRun.id);
+      item.domainRefs?.some((ref) => ref.type === "run" && ref.id === childRun.id)
+      || childUserInputIds.has(item.id)
+      || (item.kind !== "assistant_message" && item.kind !== "user_message" && childActionAnchorIds.has(item.id)));
     const childProjection = projectCanonicalConversationTimeline({
       scope: {
         surface: "child",
@@ -315,14 +339,24 @@ function buildParticipantSpans(input: {
       },
       items: childItems,
       actions: childActions,
+      userInputs: userInputs.filter(record => childUserInputIds.has(record.itemId)),
       turnRuns: input.turnRuns.map((link) => ({ runId: link.runId, turnId: link.turnId, attemptNumber: link.attemptNumber, role: link.role })),
-      approvals: (input.detail.approvals ?? []).filter((approval) => approval.runId === childRun.id).map((approval) => toCanonicalApprovalRecord(approval, childActions, new Map(childItems.map((item) => [item.id, item])), input.scope.threadId)),
+      approvals: (input.detail.approvals ?? []).filter((approval) => approval.runId === childRun.id).map((approval) => toCanonicalApprovalRecord(
+        approval,
+        input.detail.approvalCheckpoints.find((checkpoint) => checkpoint.approvalId === approval.id),
+        new Map(childItems.map((item) => [item.id, item])),
+        new Map([[childRun.id, childRun]]),
+        input.scope.threadId,
+      )),
       artifacts: (input.detail.artifacts ?? []).filter((artifact) => artifact.runId === childRun.id).map((artifact) => toCanonicalArtifactRecord(artifact, childActions, new Map(childItems.map((item) => [item.id, item])), input.scope.threadId)),
       plans: [],
       compactions: [],
+      reasoningSummaries: (input.detail.reasoningSummaries ?? [])
+        .filter((summary) => summary.runId === childRun.id)
+        .map(toCanonicalReasoningSummaryRecord),
       participantSpans: [],
       sourceSequence: childItems.reduce((max, item) => Math.max(max, item.sequence), 0),
-      sourceRevision: `${childRun.id}:${childRun.updatedAt}:${childActions.reduce((max, action) => Math.max(max, action.revision), 0)}`,
+      sourceRevision: `${childRun.id}:${childRun.updatedAt}:${childActions.reduce((max, action) => Math.max(max, action.revision), 0)}:${(input.detail.reasoningSummaries ?? []).filter((summary) => summary.runId === childRun.id).reduce((max, summary) => Math.max(max, summary.revision), 0)}:${userInputTranscriptRevisionSignature(userInputs.filter(record => childUserInputIds.has(record.itemId)))}`,
       contextSegmentIdByItemId: selectContextSegments(input.contextSegmentIdByItemId, childItems),
     });
     input.diagnostics.push(...childProjection.diagnostics);
@@ -358,8 +392,7 @@ function findParentDelegationAction(
   actions: readonly CanonicalExecutionAction[],
 ): CanonicalExecutionAction | undefined {
   const candidates = actions.filter((action) => action.runId === childRun.parentRunId);
-  return candidates.find((action) => action.sourceRefs.some((ref) => ref.kind === "run" && ref.id === childRun.id))
-    ?? candidates.find((action) => action.actionType.toLowerCase().includes("agent") || action.actionType.toLowerCase().includes("delegate"));
+  return uniqueMatch(candidates, (action) => action.sourceRefs.some((ref) => ref.kind === "run" && ref.id === childRun.id));
 }
 
 function participantLifecycle(status: RunSession["status"]): CanonicalParticipantSpan["lifecycle"] {
@@ -367,6 +400,7 @@ function participantLifecycle(status: RunSession["status"]): CanonicalParticipan
     case "queued": return "started";
     case "running": return "running";
     case "waiting_for_approval": return "waiting";
+    case "yielded": return "waiting";
     case "succeeded": return "completed";
     case "failed": return "errored";
     case "cancelled": return "interrupted";
@@ -480,7 +514,8 @@ function buildScope(
     ...(options.turnId ? { turnId: options.turnId } : {}),
     ...(options.runId ? { runId: options.runId } : {}),
     ...(options.attemptId ? { attemptId: options.attemptId } : {}),
-    ...(options.participantId ? { participantId: options.participantId } : {}),
+    ...((options.participantId ?? (surface === "private" ? thread.teammateId : undefined))
+      ? { participantId: options.participantId ?? thread.teammateId } : {}),
     depth: options.depth ?? 0,
   };
 }
@@ -533,6 +568,7 @@ function toCanonicalExecutionAction(
   return {
     id: action.id,
     revision: action.revision,
+    sourceEventSequence: action.sourceEventSequence,
     workspaceId: action.workspaceId,
     ...(action.threadId ? { threadId: action.threadId } : {}),
     ...(runLink?.turnId ? { turnId: runLink.turnId } : {}),
@@ -553,6 +589,8 @@ function toCanonicalExecutionAction(
     status: action.status,
     title: action.title,
     summary: action.summary,
+    ...(action.toolEvidence ? { toolEvidence: action.toolEvidence } : {}),
+    ...(action.runtimeDiagnostic ? { runtimeDiagnostic: action.runtimeDiagnostic } : {}),
     sourceRefs,
     ...(action.diagnostics ? { diagnostics: action.diagnostics.map((diagnostic) => ({
       code: diagnostic.code,
@@ -583,32 +621,42 @@ function toCanonicalExecutionAction(
 
 function toCanonicalApprovalRecord(
   approval: ConversationDetailResponse["approvals"][number],
-  actions: readonly CanonicalExecutionAction[],
+  checkpoint: ConversationDetailResponse["approvalCheckpoints"][number] | undefined,
   itemById: ReadonlyMap<string, CanonicalConversationItem>,
+  runById: ReadonlyMap<string, RunSession>,
   threadId: string,
 ): import("@ling-stack/conversation-ui-core").CanonicalApprovalRecord {
-  const owner = uniqueMatch(actions, (action) => action.approvalId === approval.id)
-    ?? (approval.toolCallId ? uniqueMatch(actions, (action) => action.toolCallId === approval.toolCallId) : undefined);
-  const anchorItemId = conversationAnchorId(owner?.sourceRefs)
-    ?? findItemAnchor(itemById, (item) =>
-      item.kind === "approval_request" || item.kind === "approval_decision",
+  const anchorItemId = findItemAnchor(itemById, (item) => item.kind === "approval_request",
     (item) => readString(item.payload, "approvalRequestId") === approval.id ||
       readString(item.payload, "approvalId") === approval.id ||
-      item.domainRefs?.some((ref) => ref.type === "approval" && ref.id === approval.id) === true);
-  const sourceRefs = withCanonicalRefs(owner?.sourceRefs ?? [], [
+      item.domainRefs?.some((ref) => ref.type === "approval" && ref.id === approval.id) === true)
+    ?? findItemAnchor(itemById, (item) => item.kind === "approval_decision",
+      (item) => readString(item.payload, "approvalRequestId") === approval.id ||
+        readString(item.payload, "approvalId") === approval.id ||
+        item.domainRefs?.some((ref) => ref.type === "approval" && ref.id === approval.id) === true);
+  const runId = checkpoint?.runId ?? approval.runId;
+  const run = runId ? runById.get(runId) : undefined;
+  const attemptId = checkpoint?.resumeBasis?.priorAttemptId;
+  const participantId = run?.teammateId ?? (run ? "ling" : undefined);
+  const sourceRefs = withCanonicalRefs([], [
     { kind: "approval", id: approval.id },
+    ...(checkpoint ? [{ kind: "approval_checkpoint", id: checkpoint.id }] : []),
+    ...(runId ? [{ kind: "run", id: runId }] : []),
+    ...(attemptId ? [{ kind: "attempt", id: attemptId }] : []),
+    ...(participantId ? [{ kind: "participant", id: participantId }] : []),
+    ...(checkpoint?.workflowStepId ? [{ kind: "workflow_step", id: checkpoint.workflowStepId }] : []),
+    ...(approval.toolCallId ? [{ kind: "tool_call", id: approval.toolCallId }] : []),
     ...(anchorItemId ? [{ kind: "conversation_item", id: anchorItemId }] : []),
   ]);
   return {
     id: approval.id,
-    revision: approval.resolvedAt ? 2 : 1,
-    workspaceId: owner?.workspaceId ?? [...itemById.values()][0]?.workspaceId ?? "",
+    revision: checkpoint?.revision ?? (approval.resolvedAt ? 2 : 1),
+    workspaceId: [...itemById.values()][0]?.workspaceId ?? "",
     threadId,
-    ...(owner?.runId ?? approval.runId ? { runId: owner?.runId ?? approval.runId } : {}),
-    ...(owner?.attemptId ? { attemptId: owner.attemptId } : {}),
-    ...(owner?.participantId ? { participantId: owner.participantId } : {}),
-    ...(owner?.workflowStepId ? { workflowStepId: owner.workflowStepId } : {}),
-    ...(owner?.id ? { actionId: owner.id } : {}),
+    ...(runId ? { runId } : {}),
+    ...(attemptId ? { attemptId } : {}),
+    ...(participantId ? { participantId } : {}),
+    ...(checkpoint?.workflowStepId ? { workflowStepId: checkpoint.workflowStepId } : {}),
     ...(approval.toolCallId ? { toolCallId: approval.toolCallId } : {}),
     ...(anchorItemId ? { anchorItemId } : {}),
     title: approval.title,

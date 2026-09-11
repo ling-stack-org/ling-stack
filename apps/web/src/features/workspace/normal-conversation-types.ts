@@ -8,6 +8,7 @@ import type {
   ConversationPendingReplacement,
   ConversationGeneratedMedia,
   ConversationItemV1,
+  ConversationNarrationSegment,
   RunArtifact,
   ConversationTranscriptStatus,
   ExecutionAction,
@@ -48,6 +49,7 @@ export interface ConversationHomeModelSelection {
 }
 
 export interface ConversationHomeMessage {
+  readonly canonicalItemId?: string;
   readonly id: string;
   readonly threadId?: string;
   readonly turnId?: string;
@@ -55,6 +57,7 @@ export interface ConversationHomeMessage {
   readonly role: "user" | "assistant" | "system";
   readonly authorLabel?: string;
   readonly content: string;
+  readonly narrationSegments?: readonly ConversationNarrationSegment[];
   readonly errorMessage?: string;
   readonly attachments?: readonly ConversationAttachment[];
   readonly fileRefs?: readonly ChannelMessageFileRef[];

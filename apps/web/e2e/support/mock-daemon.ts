@@ -9,7 +9,7 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { ConversationGeneratedMedia, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { ConversationGeneratedMedia, ConversationItemV1, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
 export const cwd = "/tmp/ling-stack-workspace";
@@ -71,6 +71,8 @@ export interface MockState {
   channelWorkspaceGitStatusByChannel: Record<string, WorkspaceGitStatus | MockWorkspaceGitStatusFailure>;
   channelMessages: unknown[];
   channelConversationItemExtras?: unknown[];
+  conversationItems?: ConversationItemV1[];
+  userInputs?: import("@ling-stack/contracts").UserInputTranscriptItemV1[];
   conversationContextSnapshotsByThreadId?: Record<string, unknown[]>;
   channelMessageRouteDecisions: unknown[];
   channelIntentDecisions: unknown[];
@@ -92,6 +94,9 @@ export interface MockState {
   channelContextSummaries: unknown[];
   channelWorkflows: unknown[];
   channelWorkflowSteps: unknown[];
+  failNextWorkflowOrchestrate?: { readonly error: string; readonly message: string; readonly status?: number; readonly delayMs?: number };
+  failNextWorkflowCancel?: { readonly error: string; readonly message: string; readonly status?: number };
+  failNextWorkflowStepRetry?: { readonly error: string; readonly message: string; readonly status?: number };
   channelProtocolDrafts: unknown[];
   channelPlaybookCandidates: unknown[];
   channelTeamExpertsByTurn: Record<string, unknown>;
@@ -215,6 +220,11 @@ export interface MockState {
   proposedPlans: ProposedPlanArtifact[];
   turns: MockLingTurn[];
   turnRunLinks: MockLingTurnRun[];
+  conversationSupersessionTombstonesByThreadId: Record<string, {
+    readonly turnIds: string[];
+    readonly runIds: string[];
+    readonly responseMessageIds: string[];
+  }>;
   failThreadTurnsForThreadIds: string[];
   failNextWorkspaceSettingsPatch?: { readonly error: string; readonly message: string; readonly status?: number };
   executionActions: MockExecutionAction[];
@@ -336,6 +346,7 @@ export interface MockRun {
 export interface MockExecutionAction {
   id: string;
   revision?: number;
+  sourceEventSequence?: number;
   workspaceId: string;
   threadId?: string;
   runId?: string;
@@ -350,11 +361,28 @@ export interface MockExecutionAction {
   status: string;
   title: string;
   summary: string;
+  scopeSummary?: string;
   targetRefs: Array<{ type: string; id?: string; label?: string; path?: string }>;
   previewArtifactIds: string[];
   resultArtifactIds: string[];
   sourceRefs?: Array<{ kind: string; id: string; label?: string; path?: string; visibility?: string }>;
   policySnapshot?: unknown;
+  toolEvidence?: {
+    toolName: string;
+    inputSummary: string;
+    outputText?: string;
+    outputTruncated: boolean;
+    latestEventSeq: number;
+  };
+  runtimeDiagnostic?: {
+    code: "execution_loop_detected";
+    loopKind: "exact_repeat" | "repeated_update" | "cycle" | "no_progress_budget";
+    repeatedCount: number;
+    noProgressActionCount: number;
+    cycleLength?: number;
+    fingerprint: string;
+    retryable: false;
+  };
   commandEvidence?: {
     command: string;
     cwd?: string;
@@ -1154,7 +1182,7 @@ export async function openEngineeringChannel(page: Page): Promise<void> {
   if (await channelMessageFeed.isVisible().catch(() => false)) {
     return;
   }
-  const navigation = page.getByLabel(/Sidebar display|Ling Stack navigation/u);
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const showNavigation = page.getByRole("button", { name: /Show navigation|显示导航/ });
   await expect.poll(async () => (
     await navigation.isVisible().catch(() => false)
@@ -1458,6 +1486,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     proposedPlans: [],
     turns: [],
     turnRunLinks: [],
+    conversationSupersessionTombstonesByThreadId: {},
     failThreadTurnsForThreadIds: [],
     executionActions: [],
     userProfile: {
@@ -6989,6 +7018,7 @@ async function handleMockConversationMessageEdit(
   const interruptedRunIds: string[] = [];
   let supersededTurnId: string | undefined;
   let replacementTurnId: string | undefined;
+  let supersessionThreadId: string | undefined;
   let replayedSupersessionId: string | undefined;
   let idempotentReplay = false;
 
@@ -7004,6 +7034,7 @@ async function handleMockConversationMessageEdit(
       return;
     }
     supersededTurnId = originalTurn.id;
+    supersessionThreadId = thread.id;
     originalTurn.status = "superseded";
     originalTurn.updatedAt = now;
     supersededResponseMessageIds.push(`conversation-assistant:${originalTurn.id}`);
@@ -7101,6 +7132,7 @@ async function handleMockConversationMessageEdit(
     const currentThreadId = typeof currentEntry?.item.threadId === "string"
       ? currentEntry.item.threadId
       : ensureMockChannelRootThread(state, ownerId).id;
+    supersessionThreadId = currentThreadId;
     for (let index = 0; index < state.channelMessages.length; index += 1) {
       const candidate = state.channelMessages[index];
       const matchesSupersededReply = isRecord(candidate) && candidate.authorType === "ai-teammate" && candidate.status !== "superseded" && (
@@ -7142,6 +7174,8 @@ async function handleMockConversationMessageEdit(
       await route.fulfill({ status: 404, json: { error: "message_not_found", message: "Private message not found." } });
       return;
     }
+    supersessionThreadId = state.threads.find((candidate) =>
+      candidate.kind === "teammate_direct" && candidate.teammateId === ownerId)?.id;
     const pendingReplacement = isRecord(current.pendingReplacement) && current.pendingReplacement.idempotencyKey === idempotencyKey
       ? current.pendingReplacement
       : undefined;
@@ -7194,6 +7228,19 @@ async function handleMockConversationMessageEdit(
     return;
   }
 
+  if (!idempotentReplay && supersessionThreadId) {
+    const tombstones = state.conversationSupersessionTombstonesByThreadId[supersessionThreadId] ?? {
+      turnIds: [],
+      runIds: [],
+      responseMessageIds: [],
+    };
+    state.conversationSupersessionTombstonesByThreadId[supersessionThreadId] = {
+      turnIds: [...new Set([...tombstones.turnIds, ...(supersededTurnId ? [supersededTurnId] : [])])].sort(),
+      runIds: [...new Set([...tombstones.runIds, ...interruptedRunIds])].sort(),
+      responseMessageIds: [...new Set([...tombstones.responseMessageIds, ...supersededResponseMessageIds])].sort(),
+    };
+  }
+
   await route.fulfill({
     json: {
       message: revision,
@@ -7209,7 +7256,7 @@ async function handleMockConversationMessageEdit(
   });
 }
 
-function buildMockConversationDetail(state: MockState, cwd: string, thread: MockLingThread): Record<string, unknown> {
+export function buildMockConversationDetail(state: MockState, cwd: string, thread: MockLingThread): Record<string, unknown> {
   const turns = state.turns
     .filter((turn) => turn.threadId === thread.id && turn.status !== "superseded")
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -7364,7 +7411,9 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
         committedAt: reportCommittedAt,
       }];
     });
-  const allConversationItems = [...conversationItems, ...terminalReportItems];
+  const allConversationItems = [...conversationItems, ...terminalReportItems,
+    ...(state.conversationItems ?? []).filter(item => item.threadId === thread.id && item.workspaceId === thread.workspaceId
+      && (item.kind === "user_input_request" || item.kind === "user_input_answer"))];
   const latestRun = runs[runs.length - 1];
   const requestSnapshot = isRecord(latestRun?.requestSnapshot) ? latestRun.requestSnapshot : {};
   const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
@@ -7373,6 +7422,12 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
     thread,
     turns,
     conversationItems: allConversationItems,
+    userInputs: state.userInputs?.filter(record => allConversationItems.some(item => item.id === record.itemId)),
+    supersessionTombstones: state.conversationSupersessionTombstonesByThreadId[thread.id] ?? {
+      turnIds: [],
+      runIds: [],
+      responseMessageIds: [],
+    },
     contextSnapshots: state.conversationContextSnapshotsByThreadId?.[thread.id] ?? [],
     runLinks,
     runs,
@@ -10363,6 +10418,7 @@ export async function handleDaemonRoute(
             teammateId,
             thread,
             messages: pageMessages,
+            timeline: buildMockTeammateDirectTimeline(state, teammateId),
             generatedMedia: mockConversationGeneratedMediaForRunIds(
               state,
               pageMessages.flatMap((message) => typeof message.linkedRunId === "string" ? [message.linkedRunId] : []),
@@ -11827,6 +11883,11 @@ export async function handleDaemonRoute(
         thread,
         turns: [...turnById.values()],
         items: pageItems,
+        turnContextAssignments: [...turnById.keys()].flatMap((turnId) => {
+          const context = state.channelTurnContexts[turnId];
+          return isRecord(context) && isRecord(context.assignment) ? [context.assignment] : [];
+        }),
+        userInputs: state.userInputs?.filter(record => pageItems.some(item => item.id === record.itemId)),
         decorations: mockChannelConversationDecorations(pageEntries),
         generatedMedia: mockConversationGeneratedMediaForRunIds(
           state,
@@ -12589,6 +12650,116 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, workflowId, card: buildMockCollaborationTaskCard(state, workflow) } });
     return;
   }
+  const workflowOrchestrateMatch = /^\/workflows\/([^/]+)\/orchestrate$/.exec(path);
+  if (workflowOrchestrateMatch && request.method() === "POST") {
+    if (state.failNextWorkflowOrchestrate) {
+      const failure = state.failNextWorkflowOrchestrate;
+      state.failNextWorkflowOrchestrate = undefined;
+      if (failure.delayMs) {
+        await new Promise((resolve) => setTimeout(resolve, failure.delayMs));
+      }
+      await route.fulfill({ status: failure.status ?? 409, json: { error: failure.error, message: failure.message } });
+      return;
+    }
+    const workflowId = decodeURIComponent(workflowOrchestrateMatch[1]);
+    const workflowIndex = state.channelWorkflows.findIndex((item) => isRecord(item) && item.id === workflowId);
+    if (workflowIndex === -1 || !isRecord(state.channelWorkflows[workflowIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found", message: `Workflow not found: ${workflowId}` } });
+      return;
+    }
+    const workflow = state.channelWorkflows[workflowIndex] as Record<string, unknown>;
+    const workflowStepIndex = state.channelWorkflowSteps.findIndex((step) =>
+      isRecord(step) && step.workflowId === workflowId && step.status === "queued"
+    );
+    if (workflowStepIndex === -1) {
+      const blockedStep = state.channelWorkflowSteps.find((step) =>
+        isRecord(step) && step.workflowId === workflowId && step.status === "blocked"
+      );
+      if (isRecord(blockedStep)) {
+        await route.fulfill({
+          json: {
+            status: "blocked",
+            workflow,
+            workflowStep: blockedStep,
+            blocker: typeof blockedStep.blocker === "string" ? blockedStep.blocker : "Workflow step is blocked.",
+          },
+        });
+        return;
+      }
+      const activeStep = state.channelWorkflowSteps.find((step) =>
+        isRecord(step) && step.workflowId === workflowId && ["claimed", "running", "waiting_for_approval"].includes(String(step.status))
+      );
+      if (isRecord(activeStep)) {
+        await route.fulfill({ json: { status: "idle", workflow, reason: "Workflow already has an active step." } });
+        return;
+      }
+      const updatedWorkflow = { ...workflow, status: "succeeded", updatedAt: "2026-05-25T00:38:00.000Z" };
+      state.channelWorkflows[workflowIndex] = updatedWorkflow;
+      await route.fulfill({ json: { status: "completed", workflow: updatedWorkflow } });
+      return;
+    }
+    const workflowStep = state.channelWorkflowSteps[workflowStepIndex] as Record<string, unknown>;
+    const updatedWorkflowStep = {
+      ...workflowStep,
+      status: "running",
+      blocker: undefined,
+      updatedAt: "2026-05-25T00:38:00.000Z",
+    };
+    const updatedWorkflow = { ...workflow, status: "running", updatedAt: "2026-05-25T00:38:00.000Z" };
+    state.channelWorkflowSteps[workflowStepIndex] = updatedWorkflowStep;
+    state.channelWorkflows[workflowIndex] = updatedWorkflow;
+    await route.fulfill({
+      json: {
+        status: "started",
+        workflow: updatedWorkflow,
+        workflowStep: updatedWorkflowStep,
+        taskId: `task_${String(workflowStep.id ?? workflowStepIndex + 1)}`,
+      },
+    });
+    return;
+  }
+  const workflowCancelMatch = /^\/workflows\/([^/]+)\/cancel$/.exec(path);
+  if (workflowCancelMatch && request.method() === "POST") {
+    if (state.failNextWorkflowCancel) {
+      const failure = state.failNextWorkflowCancel;
+      state.failNextWorkflowCancel = undefined;
+      await route.fulfill({ status: failure.status ?? 409, json: { error: failure.error, message: failure.message } });
+      return;
+    }
+    const workflowId = decodeURIComponent(workflowCancelMatch[1]);
+    const workflowIndex = state.channelWorkflows.findIndex((item) => isRecord(item) && item.id === workflowId);
+    if (workflowIndex === -1 || !isRecord(state.channelWorkflows[workflowIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found", message: `Workflow not found: ${workflowId}` } });
+      return;
+    }
+    const workflow = state.channelWorkflows[workflowIndex] as Record<string, unknown>;
+    const terminalWorkflowStatuses = new Set(["succeeded", "failed", "cancelled"]);
+    if (terminalWorkflowStatuses.has(String(workflow.status)) && workflow.status !== "cancelled") {
+      await route.fulfill({ status: 409, json: { error: "workflow_not_cancellable", message: `Workflow ${workflowId} is already ${String(workflow.status)}.` } });
+      return;
+    }
+    const updatedWorkflow = { ...workflow, status: "cancelled", updatedAt: "2026-05-25T00:39:00.000Z" };
+    const terminalStepStatuses = new Set(["succeeded", "failed", "skipped", "cancelled"]);
+    const updatedSteps = state.channelWorkflowSteps
+      .filter((step) => isRecord(step) && step.workflowId === workflowId)
+      .map((step) => terminalStepStatuses.has(String(step.status))
+        ? step
+        : { ...step, status: "cancelled", updatedAt: "2026-05-25T00:39:00.000Z" });
+    const updatedStepById = new Map(updatedSteps.map((step) => [String(step.id), step]));
+    state.channelWorkflowSteps = state.channelWorkflowSteps.map((step) =>
+      isRecord(step) && updatedStepById.has(String(step.id)) ? (updatedStepById.get(String(step.id)) ?? step) : step
+    );
+    state.channelWorkflows[workflowIndex] = updatedWorkflow;
+    await route.fulfill({
+      json: {
+        workflow: updatedWorkflow,
+        workflowSteps: updatedSteps,
+        cancelledRunIds: [],
+        cancelledApprovalIds: [],
+      },
+    });
+    return;
+  }
   const workflowMatch = /^\/workflows\/([^/]+)$/.exec(path);
   if (workflowMatch && request.method() === "GET") {
     const workflowId = decodeURIComponent(workflowMatch[1]);
@@ -12704,6 +12875,55 @@ export async function handleDaemonRoute(
       return;
     }
     await route.fulfill({ json: { workflowStep: updatedStep, task } });
+    return;
+  }
+  const workflowStepRetryMatch = /^\/workflow-steps\/([^/]+)\/retry$/.exec(path);
+  if (workflowStepRetryMatch && request.method() === "POST") {
+    if (state.failNextWorkflowStepRetry) {
+      const failure = state.failNextWorkflowStepRetry;
+      state.failNextWorkflowStepRetry = undefined;
+      await route.fulfill({ status: failure.status ?? 409, json: { error: failure.error, message: failure.message } });
+      return;
+    }
+    const stepId = decodeURIComponent(workflowStepRetryMatch[1]);
+    const stepIndex = state.channelWorkflowSteps.findIndex((step) => isRecord(step) && step.id === stepId);
+    if (stepIndex === -1 || !isRecord(state.channelWorkflowSteps[stepIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_step_not_found", message: `Workflow step not found: ${stepId}` } });
+      return;
+    }
+    const step = state.channelWorkflowSteps[stepIndex] as Record<string, unknown>;
+    if (step.status !== "blocked") {
+      await route.fulfill({ status: 409, json: { error: "workflow_step_not_retryable", message: `Workflow step ${stepId} is ${String(step.status)}; only blocked steps can be retried.` } });
+      return;
+    }
+    const workflowIndex = state.channelWorkflows.findIndex((workflow) => isRecord(workflow) && workflow.id === step.workflowId);
+    if (workflowIndex === -1 || !isRecord(state.channelWorkflows[workflowIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found", message: `Workflow not found: ${String(step.workflowId)}` } });
+      return;
+    }
+    const workflow = state.channelWorkflows[workflowIndex] as Record<string, unknown>;
+    if (["succeeded", "failed", "cancelled"].includes(String(workflow.status))) {
+      await route.fulfill({ status: 409, json: { error: "workflow_terminal", message: `Workflow ${String(workflow.id)} is already ${String(workflow.status)}.` } });
+      return;
+    }
+    const updatedStep = {
+      ...step,
+      status: "running",
+      blocker: undefined,
+      resultSummary: undefined,
+      updatedAt: "2026-05-25T00:40:00.000Z",
+    };
+    const updatedWorkflow = { ...workflow, status: "running", updatedAt: "2026-05-25T00:40:00.000Z" };
+    state.channelWorkflowSteps[stepIndex] = updatedStep;
+    state.channelWorkflows[workflowIndex] = updatedWorkflow;
+    await route.fulfill({
+      json: {
+        status: "started",
+        workflow: updatedWorkflow,
+        workflowStep: updatedStep,
+        taskId: `task_retry_${stepId}`,
+      },
+    });
     return;
   }
   const workflowStepMatch = /^\/workflow-steps\/([^/]+)$/.exec(path);
@@ -15814,6 +16034,22 @@ export function getOrCreateMockTeammateThread(
   };
   state.teammateDirectThreads[teammateId] = thread;
   return thread;
+}
+
+/** Private details use the explicit fixture source graph, never generated message anchors. */
+function buildMockTeammateDirectTimeline(state: MockState, teammateId: string): Record<string, unknown> | undefined {
+  const thread = state.threads.find((candidate) => candidate.kind === "teammate_direct" && candidate.teammateId === teammateId);
+  if (!thread) return undefined;
+  const detail = buildMockConversationDetail(state, cwd, thread);
+  return {
+    ...detail,
+    messages: [],
+    // Keep rejecting legacy raw mock statuses even though canonical V1 excludes them.
+    conversationItems: (state.conversationItems ?? []).filter((item) => item.threadId === thread.id && item.workspaceId === thread.workspaceId && (item.status as string) !== "superseded"),
+    plans: [],
+    contextSummaries: [],
+    compactionCheckpoints: [],
+  };
 }
 
 export function buildMockTeammateDirectRuntime(

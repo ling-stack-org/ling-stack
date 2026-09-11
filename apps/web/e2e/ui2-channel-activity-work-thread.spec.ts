@@ -18,7 +18,7 @@ const evidenceDirectory = fileURLToPath(new URL(
 test("Channel Activity keeps filters, search, drilldown, and triage contained", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
-  const state = createBaseState({ approvalStatus: "pending" });
+  const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
 
   await page.goto("/");

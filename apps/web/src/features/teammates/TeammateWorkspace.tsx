@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Bot,
   Brain,
@@ -259,6 +258,11 @@ export function TeammateWorkspace({
   const [generatedMedia, setGeneratedMedia] = useState<readonly ConversationGeneratedMedia[]>([]);
   const workspaceMessageIdentity = JSON.stringify([cwd.trim(), teammate.id]);
   const [messageSnapshotIdentity, setMessageSnapshotIdentity] = useState(workspaceMessageIdentity);
+  const [selectedAuthorizationMode, setSelectedAuthorizationMode] = useState<AuthorizationMode>(() => resolveAuthorizationMode(
+    defaultAuthorizationMode,
+    defaultPermissionMode,
+    defaultPermissionPreset,
+  ));
   const [selectedWorkspaceAccessMode, setSelectedWorkspaceAccessMode] = useState<WorkspaceAccessMode>(() => resolveWorkspaceAccessMode(
     defaultWorkspaceAccessMode,
     defaultPermissionMode,
@@ -583,17 +587,6 @@ export function TeammateWorkspace({
         latestVisiblePrivateMessage.attachmentIds.join(","),
       ].join("|")
     : "";
-  const privateMessageFeedVirtualizer = useVirtualizer({
-    // The private surface owns one transcript row; individual messages are
-    // rendered by the shared Timeline registry inside that row.
-    count: visibleMessages.length > 0 ? 1 : 0,
-    getScrollElement: () => privateFeedRef.current,
-    estimateSize: () => 640,
-    overscan: 8,
-    getItemKey: () => `timeline:${currentDirectWorkspace?.threadId ?? "unbound"}`,
-    useFlushSync: false,
-  });
-  const privateMessageFeedVirtualRows = privateMessageFeedVirtualizer.getVirtualItems();
   const directAttachments = useMemo(
     () => privateAttachments.filter((attachment) => attachment.scope === "teammate_direct_thread"),
     [privateAttachments],
@@ -747,19 +740,18 @@ export function TeammateWorkspace({
     : hasQueuedDirectGuidance
       ? t("Guidance is queued. Wait for it to run, or run it now.")
       : t("Message this AI teammate privately");
-  const directAuthorizationMode = resolveAuthorizationMode(
-    defaultAuthorizationMode,
-    defaultPermissionMode,
-    defaultPermissionPreset,
-  );
-
   useEffect(() => {
+    setSelectedAuthorizationMode(resolveAuthorizationMode(
+      defaultAuthorizationMode,
+      defaultPermissionMode,
+      defaultPermissionPreset,
+    ));
     setSelectedWorkspaceAccessMode(resolveWorkspaceAccessMode(
       defaultWorkspaceAccessMode,
       defaultPermissionMode,
       defaultPermissionPreset,
     ));
-  }, [defaultPermissionMode, defaultPermissionPreset, defaultWorkspaceAccessMode, teammate.id]);
+  }, [defaultAuthorizationMode, defaultPermissionMode, defaultPermissionPreset, defaultWorkspaceAccessMode, teammate.id]);
 
   useEffect(() => {
     setSettingsForm(teammateToSettingsForm(teammate));
@@ -853,9 +845,6 @@ export function TeammateWorkspace({
     const scrollToLatest = (attempt: number): void => {
       privateFeedAutoFollowUntilRef.current = Date.now() + 1_000;
       privateFeedUserScrollIntentRef.current = false;
-      if (visibleMessages.length > 0) {
-        privateMessageFeedVirtualizer.scrollToIndex(0, { align: "end" });
-      }
       feed.scrollTop = feed.scrollHeight;
       privateFeedPinnedToLatestRef.current = true;
       setPrivateFeedLatestButtonVisible(false);
@@ -869,7 +858,7 @@ export function TeammateWorkspace({
     return () => {
       frameIds.forEach((scheduledFrameId) => globalThis.cancelAnimationFrame(scheduledFrameId));
     };
-  }, [latestVisiblePrivateMessageId, latestVisiblePrivateMessageSignature, loading, privateMessageFeedVirtualizer, visibleMessages.length, workspaceView]);
+  }, [latestVisiblePrivateMessageId, latestVisiblePrivateMessageSignature, loading, workspaceView]);
 
   useEffect(() => {
     if (workspaceView !== "chat" || !hasDirectRuntimeActivity || !cwd.trim()) {
@@ -1131,6 +1120,7 @@ export function TeammateWorkspace({
   }
 
   async function sendPrivateMessage(authorization: {
+    readonly authorizationMode: AuthorizationMode;
     readonly permissionPreset: PermissionPreset;
     readonly permissionConfirmation?: PermissionConfirmation;
   }): Promise<void> {
@@ -1170,7 +1160,7 @@ export function TeammateWorkspace({
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
         fileRefs,
         providerPresetId: teammate.providerPresetId,
-        authorizationMode: directAuthorizationMode,
+        authorizationMode: authorization.authorizationMode,
         workspaceAccessMode: selectedWorkspaceAccessMode,
         permissionPreset: authorization.permissionPreset,
         permissionConfirmation,
@@ -1191,6 +1181,7 @@ export function TeammateWorkspace({
             setMessages((current) => current.map((message) => message.id === data.messageId ? {
               ...message,
               body: data.body,
+              narrationSegments: data.narrationSegments ?? message.narrationSegments,
               status: "pending",
             } : message));
           });
@@ -1428,6 +1419,7 @@ export function TeammateWorkspace({
   }
 
   function handlePrivateComposerSubmit(authorization: {
+    readonly authorizationMode: AuthorizationMode;
     readonly permissionPreset: PermissionPreset;
     readonly permissionConfirmation?: PermissionConfirmation;
   }): void {
@@ -1445,6 +1437,7 @@ export function TeammateWorkspace({
   function handlePrivateComposerKeyDown(
     event: KeyboardEvent<HTMLDivElement>,
     authorization: {
+      readonly authorizationMode: AuthorizationMode;
       readonly permissionPreset: PermissionPreset;
       readonly permissionConfirmation?: PermissionConfirmation;
     },
@@ -1605,6 +1598,7 @@ export function TeammateWorkspace({
   function cancelPrivateFeedAutoFollow(): void {
     privateFeedAutoFollowUntilRef.current = 0;
     privateFeedUserScrollIntentRef.current = true;
+    privateFeedPinnedToLatestRef.current = false;
   }
 
   function scrollPrivateFeedToLatest(): void {
@@ -1614,9 +1608,6 @@ export function TeammateWorkspace({
     }
     privateFeedAutoFollowUntilRef.current = Date.now() + 1_000;
     privateFeedUserScrollIntentRef.current = false;
-    if (visibleMessages.length > 0) {
-      privateMessageFeedVirtualizer.scrollToIndex(0, { align: "end" });
-    }
     feed.scrollTop = feed.scrollHeight;
     privateFeedPinnedToLatestRef.current = true;
     setPrivateFeedLatestButtonVisible(false);
@@ -1770,8 +1761,6 @@ export function TeammateWorkspace({
           generatedMedia={currentGeneratedMedia}
           normalizedMessageSearchQuery={normalizedMessageSearchQuery}
           privateFeedRef={privateFeedRef}
-          privateMessageFeedVirtualizer={privateMessageFeedVirtualizer}
-          privateMessageFeedVirtualRows={privateMessageFeedVirtualRows}
           usedMemoryEvents={usedMemoryEvents}
           memoryById={memoryById}
           runs={runs}
@@ -1850,6 +1839,8 @@ export function TeammateWorkspace({
           onRemoveComposerFileReference={removeComposerFileReference}
           onRemovePendingLinkPreview={(previewId) => setPendingDirectLinkPreviewIds((current) => current.filter((id) => id !== previewId))}
           onRemovePendingAttachment={removePendingAttachment}
+          authorizationMode={selectedAuthorizationMode}
+          onAuthorizationModeChange={setSelectedAuthorizationMode}
           workspaceAccessMode={selectedWorkspaceAccessMode}
           onWorkspaceAccessModeChange={setSelectedWorkspaceAccessMode}
           onFullAccessPresetSelected={onConfirmFullAccessSelection}

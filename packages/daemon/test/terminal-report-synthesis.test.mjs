@@ -11,7 +11,168 @@ import {
 import { createRunnerRegistry } from "../dist/index.js";
 import { collectWorkflowTerminalReportEvidence } from "../dist/features/channels/terminal-report-evidence.js";
 import { synthesizeTerminalReportContent } from "../dist/features/channels/terminal-report-synthesis.js";
+import { buildTerminalReportPrompt } from "../dist/features/channels/terminal-report-prompt.js";
+import { configureTerminalReportStore, processWorkflowTerminalReport } from "../dist/features/channels/terminal-report-coordinator.js";
 import { createTerminalWorkflowFixture } from "./terminal-report-coordinator-fixture.mjs";
+
+test("terminal report model input omits restricted section bodies and duplicate ref aliases", async () => {
+  await withSynthesisFixture([], async ({ snapshot }) => {
+    const ref = { kind: "artifact", id: "privacy-artifact", visibility: "developer_only", sensitivity: "secret_adjacent" };
+    const publicAlias = { ...ref, visibility: "conversation", sensitivity: "normal" };
+    const input = { ...snapshot, references: [...snapshot.references, ref, publicAlias] };
+    for (const field of ["steps", "operations", "checks", "participants", "artifacts", "approvals", "risks"]) {
+      input[field] = [...snapshot[field], {
+        id: field === "artifacts" ? ref.id : `hidden-${field}`, agentId: "hidden-agent", kind: "artifact",
+        title: `PRIVACY_SENTINEL_${field}`, summary: `PRIVACY_SENTINEL_${field}`,
+        contributionSummaries: [`PRIVACY_SENTINEL_${field}`],
+        sourceRefs: [publicAlias],
+      }];
+    }
+    const before = structuredClone(input);
+    const generated = buildTerminalReportPrompt(input);
+    assert.doesNotMatch(generated.prompt, /PRIVACY_SENTINEL|privacy-artifact/u);
+    assert.equal(generated.allowedSourceRefKeys.includes("artifact:privacy-artifact"), false);
+    assert.match(generated.prompt, /Evidence snapshot:/u);
+    assert.deepEqual(input, before, "model projection must not mutate Host evidence");
+    assert.equal(buildTerminalReportPrompt({ ...input, references: [...input.references].reverse() })
+      .allowedSourceRefKeys.includes("artifact:privacy-artifact"), false);
+  });
+});
+
+test("terminal report synthesis repairs a model privacy downgrade before accepting content", async () => {
+  await withSynthesisFixture([], async ({ store, snapshot, runnerRegistry, runner, secretResolver }) => {
+    const privateRef = { kind: "memory", id: "privacy-memory", visibility: "folded_evidence", sensitivity: "private" };
+    const input = { ...snapshot, references: [...snapshot.references, privateRef] };
+    const valid = buildDeterministicTerminalReportContent(input);
+    runner.responses = [JSON.stringify({ ...valid, references: valid.references.map((ref) =>
+      ref.id === privateRef.id ? { ...ref, sensitivity: "normal" } : ref) }), JSON.stringify(valid)];
+    const result = await synthesizeTerminalReportContent({ store, snapshot: input, runnerRegistry, secretResolver, timeoutMs: 100 });
+    assert.equal(result.mode, "model");
+    assert.equal(result.attemptCount, 2);
+    assert.ok(result.validationCodes.includes("terminal_report_privacy_violation"));
+    assert.equal(result.content.references.find((ref) => ref.id === privateRef.id)?.sensitivity, "private");
+  });
+});
+
+test("withheld checks do not force a privacy-safe model report into repair and fallback", async () => {
+  await withSynthesisFixture([], async ({ store, snapshot, runnerRegistry, runner, secretResolver }) => {
+    const checkRef = { kind: "check", id: "check-private-synthesis", visibility: "conversation" };
+    const hiddenRef = { ...checkRef, visibility: "developer_only", sensitivity: "secret_adjacent" };
+    const input = { ...snapshot,
+      checks: [{ id: checkRef.id, title: "Private check", status: "passed", sourceRefs: [checkRef] }],
+      references: [...snapshot.references, hiddenRef],
+    };
+    const valid = buildDeterministicTerminalReportContent(snapshot);
+    runner.responses = [JSON.stringify({ ...valid, verification: [],
+      references: valid.references.filter((ref) => ref.kind !== "check") })];
+    const result = await synthesizeTerminalReportContent({ store, snapshot: input, runnerRegistry, secretResolver, timeoutMs: 100 });
+    assert.equal(result.mode, "model");
+    assert.equal(result.attemptCount, 1);
+    assert.deepEqual(result.content.verification, []);
+    assert.equal(result.content.outcome.status, snapshot.terminalState);
+    const modelSnapshot = JSON.parse(runner.runs[0].task.prompt.split("Evidence snapshot: ")[1]);
+    assert.deepEqual(modelSnapshot.checks, []);
+    assert.deepEqual(result.validationCodes, []);
+  });
+});
+
+test("Host-bound participant text retains the privacy lineage omitted by the model", async () => {
+  await withSynthesisFixture([], async ({ store, snapshot, runnerRegistry, runner, secretResolver }) => {
+    const restrictedRef = { kind: "memory", id: "host-private-contribution", visibility: "developer_only", sensitivity: "secret_adjacent" };
+    const input = {
+      ...snapshot,
+      participants: snapshot.participants.map((participant, index) => index === 0 ? {
+        ...participant,
+        contributionSummaries: ["PRIVACY_SENTINEL Host contribution"],
+        sourceRefs: [...participant.sourceRefs, restrictedRef],
+      } : participant),
+    };
+    const original = structuredClone(input);
+    const content = buildDeterministicTerminalReportContent(snapshot);
+    runner.responses = [JSON.stringify(content)];
+    const result = await synthesizeTerminalReportContent({ store, snapshot: input, runnerRegistry, secretResolver, timeoutMs: 100 });
+    assert.equal(result.mode, "model");
+    const participant = result.content.participants.find((row) => row.agentId === input.participants[0].agentId);
+    assert.match(participant.contribution, /PRIVACY_SENTINEL/u, "Host facts remain available in durable audit content");
+    assert.ok(participant.sourceRefs.some((ref) => ref.id === restrictedRef.id && ref.visibility === "developer_only" && ref.sensitivity === "secret_adjacent"),
+      "Host text must not be rebound without its original privacy policy");
+    assert.doesNotMatch(runner.runs[0].task.prompt, /PRIVACY_SENTINEL|host-private-contribution/u);
+    assert.deepEqual(input, original);
+  });
+});
+
+test("Host-bound artifact refs retain restrictions and do not overwrite a model downgrade", async () => {
+  await withSynthesisFixture([], async ({ store, snapshot, runnerRegistry, runner, secretResolver }) => {
+    const artifactRef = { kind: "artifact", id: "host-private-artifact", visibility: "developer_only", sensitivity: "secret_adjacent" };
+    const fileRef = { kind: "file", id: "private-proof.txt", visibility: "conversation", sensitivity: "normal" };
+    const input = { ...snapshot, artifacts: [...snapshot.artifacts, {
+      id: artifactRef.id, kind: "file", title: "Host private artifact", path: "private-proof.txt",
+      changedPaths: ["private-proof.txt"], status: "created", sourceRefs: [artifactRef, fileRef],
+    }] };
+    const original = structuredClone(input);
+    const valid = buildDeterministicTerminalReportContent(snapshot);
+    const artifact = { id: artifactRef.id, kind: "file", title: "Guessed artifact", sourceRefs: [] };
+    runner.responses = [JSON.stringify({ ...valid, artifacts: [...valid.artifacts, artifact] })];
+    const result = await synthesizeTerminalReportContent({ store, snapshot: input, runnerRegistry, secretResolver, timeoutMs: 100 });
+    assert.equal(result.mode, "model");
+    const bound = result.content.artifacts.find((row) => row.id === artifactRef.id);
+    assert.ok(bound.sourceRefs.some((ref) => ref.id === artifactRef.id && ref.visibility === "developer_only" && ref.sensitivity === "secret_adjacent"));
+    assert.doesNotMatch(runner.runs[0].task.prompt, /host-private-artifact|private-proof/u);
+
+    const downgraded = { ...artifact, sourceRefs: [{ ...artifactRef, visibility: "conversation", sensitivity: "normal" }] };
+    runner.responses = [JSON.stringify({ ...valid, artifacts: [...valid.artifacts, downgraded] }), JSON.stringify(valid)];
+    const repaired = await synthesizeTerminalReportContent({ store, snapshot: input, runnerRegistry, secretResolver, timeoutMs: 100 });
+    assert.equal(repaired.mode, "model");
+    assert.equal(repaired.attemptCount, 2, "Host enrichment must not overwrite a model downgrade before validation");
+    assert.ok(repaired.validationCodes.includes("terminal_report_privacy_violation"));
+    assert.deepEqual(input, original);
+  });
+});
+
+for (const scenario of [
+  { name: "first request timeout", invalidAttempts: 0, timeout: true, attempts: 1 },
+  { name: "repair request timeout", invalidAttempts: 1, timeout: true, attempts: 2 },
+  { name: "invalid output after repair", invalidAttempts: 2, timeout: false, attempts: 2 },
+]) {
+  test(`terminal report coordinator persists synthesis provenance after ${scenario.name}`, async () => {
+    await withSynthesisFixture([], async ({ store, snapshot, runner, secretResolver }) => {
+      runner.responses = Array(scenario.invalidAttempts).fill("not-json");
+      const adapter = {
+        async runTask(options) {
+          return runner.responses.length > 0
+            ? runner.runTask(options)
+            : new BlockingRunner().runTask(options);
+        },
+      };
+      configureTerminalReportStore(store, {
+        enabled: true,
+        runnerRegistry: registryFor(adapter),
+        secretResolver,
+        synthesisTimeoutMs: 20,
+      });
+      const result = await processWorkflowTerminalReport(store, snapshot.source.id);
+      const persisted = store.getTerminalReport(result.record.id);
+      const diagnostic = store.listRuntimeEvents(result.workUnit.id).find((event) =>
+        event.type === "work_unit_progress" && event.data.synthesisMode
+      ).data;
+      assert.equal(persisted.status, "fallback");
+      assert.equal(diagnostic.attemptCount, scenario.attempts);
+      assert.equal(persisted.attemptCount, diagnostic.attemptCount);
+      assert.equal(persisted.report.synthesis.attemptCount, diagnostic.attemptCount);
+      assert.equal(persisted.report.synthesis.providerPresetId, diagnostic.providerPresetId);
+      assert.equal(persisted.report.synthesis.model, diagnostic.model);
+      assert.deepEqual(persisted.report.synthesis.validationCodes, diagnostic.validationCodes);
+      assert.equal(diagnostic.fallbackReason, scenario.timeout
+        ? "terminal_report_synthesis_timeout"
+        : "terminal_report_synthesis_invalid_after_repair");
+      assert.equal(store.getConversationItem(persisted.resultItemId).status, "committed");
+      assert.equal(persisted.report.outcome.status, snapshot.terminalState);
+      const repeated = await processWorkflowTerminalReport(store, snapshot.source.id);
+      assert.equal(repeated.record.id, persisted.id);
+      assert.deepEqual(repeated.record.report.synthesis, persisted.report.synthesis);
+    });
+  });
+}
 
 test("terminal report synthesis accepts valid strict JSON on the first attempt", async () => {
   await withSynthesisFixture(["valid"], async ({ store, snapshot, runnerRegistry, runner, secretResolver }) => {

@@ -102,6 +102,7 @@ import { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-f
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
+import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
 
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, ResolvedDaemonConfig } from "./config.js";
@@ -231,6 +232,7 @@ export function createDaemonServer(
   const controlPlaneEvents = new ControlPlaneEventHub();
   const startupState = new StartupStateRegistry();
   const computerUsePreviews = new ComputerUseProjectionRegistry(dependencies.computerUseProjectionOptions);
+  const hostCapabilityBridge = new HostCapabilityBridgeController();
   const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents, startupState });
   const providerImportPreflight = new ProviderImportPreflightService({ secretResolver, controlPlaneEvents });
   let automationSchedulers: AutomationSchedulerRegistry;
@@ -241,6 +243,11 @@ export function createDaemonServer(
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
+      configureNormalNarrationPublication(store, (event) => controlPlaneEvents.publish(event));
+      void recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
+        // Do not leak database/provider details, but do not hide a failed recovery sweep.
+        console.warn("normal_narration_recovery_failed: pending publications remain recoverable");
+      });
       configureTerminalReportStore(store, {
         enabled: resolvedConfig.channels.terminalReports === true,
         runnerRegistry,
@@ -447,6 +454,7 @@ export function createDaemonServer(
       controlPlaneEvents,
       startupState,
       computerUsePreviews,
+      hostCapabilityBridge,
       replyDispatchCoordinator: channelReplyDispatchCoordinator,
       imageVisionSummarizer,
       webFetch,
@@ -527,20 +535,29 @@ export function createDaemonServer(
     officeDriverController,
     officeDocumentsPlugin,
     workspaceFileCapabilities,
+    hostCapabilityBridge,
   };
-  const server = createServer(async (request, response) => {
-    try {
-      await routeRequest(request, response, context);
-    } catch (error) {
-      if (!response.headersSent) {
-        writeJson(response, 500, {
-          error: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      } else {
-        response.end();
-      }
+  const server = createServer((request, response) => {
+    if (activeRuns.isShuttingDown()) {
+      writeJson(response, 503, { error: "runtime_shutting_down", message: "Runtime is shutting down." });
+      return;
     }
+    const completion = Promise.resolve().then(async () => {
+      try {
+        await routeRequest(request, response, context);
+      } catch (error) {
+        if (!response.headersSent) {
+          writeJson(response, 500, {
+            error: "internal_error",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        } else {
+          response.end();
+        }
+      }
+    });
+    // Closing a socket does not cancel its async route handler.
+    activeRuns.trackCompletion(completion);
   });
   const rpcWebSocketServer = attachRpcWebSocketServer(server, context);
   const chromeBrowserWebSocketServer = attachChromeBrowserWebSocketServer({
@@ -644,18 +661,20 @@ export function createDaemonServer(
     },
     stop: async () => {
       channelTurnDispatchReady = false;
+      channelTurnDispatchWorker.beginShutdown();
+      activeRuns.suspendAll("daemon_restart");
+      activeDirectReplies.cancelAll();
+      channelReplyDispatchCoordinator.close();
+      backgroundSchedulers.stopAll();
+      automationSchedulers.stopAll();
       cuaDriverActivationCoordinator.beginShutdown();
       const providerImportShutdown = providerImportPreflight.shutdown();
       await remoteAccess.stop();
       await chromeBrowserNativeBroker?.close();
       await new Promise<void>((resolve, reject) => {
-        activeRuns.suspendAll("daemon_restart");
-        activeDirectReplies.cancelAll();
-        channelReplyDispatchCoordinator.close();
-        backgroundSchedulers.stopAll();
-        automationSchedulers.stopAll();
         controlPlaneEvents.closeAll();
         computerUsePreviews.closeAll();
+        hostCapabilityBridge.close();
         cuaDriverDesktopBridgeAuthority.clear();
         lockedComputerControl?.close();
         chromeBrowserSessions.close();
@@ -671,11 +690,11 @@ export function createDaemonServer(
         });
         server.closeAllConnections();
       });
-      await activeRuns.waitForIdle();
       await channelTurnDispatchWorker.close();
       await automationSchedulers.waitForIdle();
       await providerImportShutdown;
       await cuaDriverActivationCoordinator.shutdown();
+      await activeRuns.waitForIdle();
       runtimeSupervisor.releaseAll();
       storeRegistry.closeAll();
     },
@@ -807,3 +826,4 @@ export async function startDaemon(
   await daemon.start();
   return daemon;
 }
+import { configureNormalNarrationPublication, recoverNormalNarrationPublications } from "./features/conversations/normal-narration-publication.js";

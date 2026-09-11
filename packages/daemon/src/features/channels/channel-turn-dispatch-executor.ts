@@ -14,6 +14,7 @@ import {
   type RunExecutionSink,
 } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
+import type { HostCapabilityBridgeController } from "../runs/host-capability-bridge-controller.js";
 import { resolveProviderForRun } from "../runs/providers.js";
 import { createAiChannelReply } from "./ai-replies.js";
 import {
@@ -51,6 +52,7 @@ export interface ChannelTurnDispatchExecutorOptions {
   readonly controlPlaneEvents: ControlPlaneEventHub;
   readonly startupState: StartupStateRegistry;
   readonly computerUsePreviews: ComputerUseProjectionRegistry;
+  readonly hostCapabilityBridge: HostCapabilityBridgeController;
   readonly replyDispatchCoordinator: ChannelReplyDispatchCoordinator;
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
   readonly webFetch?: typeof globalThis.fetch;
@@ -127,6 +129,7 @@ export function createChannelTurnDispatchExecutor(
         runnerRegistry: options.runnerRegistry,
         secretResolver: options.secretResolver,
         config: options.config,
+        hostCapabilityAvailable: (capabilityId) => options.hostCapabilityBridge.hasCapability(capabilityId),
       },
       imageVisionSummarizer: options.imageVisionSummarizer,
       replyDispatchCoordinator: options.replyDispatchCoordinator,
@@ -255,6 +258,7 @@ function createStartRun(options: ChannelTurnDispatchExecutorOptions) {
         controlPlaneEvents: options.controlPlaneEvents,
         startupState: options.startupState,
         computerUsePreviews: options.computerUsePreviews,
+        hostCapabilityBridge: options.hostCapabilityBridge,
       },
     );
 }
@@ -269,6 +273,8 @@ async function confirmAndOrchestrateProposal(
     resolveProviderForRun(store, request, options.secretResolver);
   };
   const confirmed = confirmChannelExecutionProposalWorkflow({
+    restrictedCommandRuntime: options.runtimeSupervisor.getRestrictedCommandRuntime(),
+    hostCapabilityAvailable: (capabilityId) => options.hostCapabilityBridge.hasCapability(capabilityId),
     store,
     cwd,
     proposalId,
@@ -334,6 +340,7 @@ function createStartOrchestratedRun(
           controlPlaneEvents: options.controlPlaneEvents,
           startupState: options.startupState,
           computerUsePreviews: options.computerUsePreviews,
+          hostCapabilityBridge: options.hostCapabilityBridge,
         },
       ).then(resolveOnce, () => resolveOnce(undefined));
     });

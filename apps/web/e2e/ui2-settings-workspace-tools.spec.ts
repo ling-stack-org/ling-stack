@@ -34,7 +34,7 @@ test("Model embedded boundary preserves loading, empty, failure, and exact retur
   });
 
   await page.goto("/");
-  const appNavigation = page.getByLabel("Ling Stack navigation");
+  const appNavigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await appNavigation.getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   const surface = await openWorkspaceTool(page, "Model Workbench", "providers");
@@ -141,7 +141,7 @@ test("Teammate loaded state keeps role detail and explicit app exit inside one b
   await firstTeammate.getByRole("button", { name: "Open chat in app" }).click();
   await expect(page.getByRole("heading", { name: "Ling Engineer 01", level: 1 })).toBeVisible();
   await expect(page.getByLabel("Settings sections")).toHaveCount(0);
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -191,7 +191,7 @@ test("Council loaded state keeps managed members read-only and supports explicit
   await surface.getByLabel("Channel usage").getByRole("button", { name: "Open channel in app" }).click();
   await expect(page.getByLabel("Channel message feed")).toBeVisible();
   await expect(page.getByLabel("Settings sections")).toHaveCount(0);
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -238,7 +238,7 @@ async function prepareSurface(
 }
 
 async function openWorkspaceTool(page: Page, label: string, view: WorkspaceToolView): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: label, exact: true }).click();
   return await expectWorkspaceToolView(page, view, label);
 }
@@ -255,7 +255,7 @@ async function expectWorkspaceToolView(page: Page, view: WorkspaceToolView, labe
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: label, exact: true }))
     .toHaveAttribute("aria-current", "page");
   await expect(page.getByLabel("Settings sections").locator('[aria-current="page"]')).toHaveCount(1);
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.locator(".settings-tool-return-row, .settings-workspace-tools")).toHaveCount(0);
   await expectWorkspaceToolBoundary(page, surface);
   return surface;

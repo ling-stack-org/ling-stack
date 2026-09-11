@@ -116,7 +116,7 @@ async function openBranchDraft(page: Page): Promise<{
   readonly input: Locator;
   readonly navigation: Locator;
 }> {
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const engineeringGroup = navigation.locator(".sidebar-channel-group").filter({ hasText: "Engineering" });
   await engineeringGroup.locator(".sidebar-row-shell").first().hover();
   await engineeringGroup.getByRole("button", { name: "Create branch" }).click();

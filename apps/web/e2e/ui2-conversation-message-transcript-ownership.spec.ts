@@ -1,4 +1,5 @@
-import { mkdir, readFile, readdir } from "node:fs/promises";
+import { readFile, readdir } from "node:fs/promises";
+import { timelineBatchGroup } from "./support/timeline-batch-group";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { installChannelWorkCellFixture, installNormalWorkCellFixture } from "./support/conversation-work-cell-fixture";
@@ -14,10 +15,6 @@ import {
 } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/conversations/message-transcript-ownership/",
-  import.meta.url,
-));
 const webSourceDirectory = fileURLToPath(new URL("../src/", import.meta.url));
 const packageSourceDirectory = fileURLToPath(new URL(
   "../../../packages/conversation-ui-react/src/",
@@ -59,14 +56,15 @@ test("1440x960 Ling Light owns a complete Channel Timeline and action feedback",
   await expectOwnMessageBubble(sourceRow);
   await expectMessageInteractionPolicy(sourceRow, "user", "Copy message");
   await expectMessageInteractionPolicy(assistantRow, "assistant", "Copy message");
-  await expect(blockedRow.getByRole("alert")).toContainText("Blocked channel response remains visible");
+  await expect(blockedRow).toContainText("Blocked channel response remains visible");
+  await expect(blockedRow.getByRole("alert")).toHaveCount(0);
   await expect(blockedRow.locator(".message-action-bar")).toHaveCount(0);
 
   const commandBatch = timeline.locator('[data-conversation-timeline-kind="commandBatch"][data-conversation-timeline-depth="0"]');
   await expect(commandBatch).toBeVisible();
   await expect(commandBatch).toHaveAttribute("data-conversation-batch-count", "3");
   await commandBatch.locator(".conversation-command-batch-header").click();
-  await expect(commandBatch.locator('[data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
+  await expect((await timelineBatchGroup(commandBatch)).locator('[data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
 
   const action = await exerciseActionBar(assistantRow, "Copy message");
   await expectActionHitArea(action);
@@ -119,9 +117,10 @@ test("1280x800 Ling Dark keeps Normal message states independent from Channel ow
   await expect(pending).toHaveClass(/message-bubble-pending/u);
   await expect(pending.locator(".message-pending-spinner")).toBeVisible();
   await expect(failed).toHaveClass(/failed/u);
-  await expect(failed.locator('.normal-conversation-message-error[data-tone="danger"]')).toBeVisible();
+  await expect(failed.locator(".normal-conversation-message-error")).toHaveCount(0);
   await expectMessageInteractionPolicy(own, "user", "Copy message");
   await expectMessageInteractionPolicy(ready, "assistant", "Copy message");
+  await expectMessageInteractionPolicy(failed, "assistant", "Copy message");
   const workCells = feed.locator('[data-conversation-timeline="true"]');
   expect(await workCells.count()).toBeGreaterThanOrEqual(1);
   await expect(workCells.first()).toBeVisible();
@@ -178,7 +177,7 @@ test("1440x960 imported Quiet Ocean keeps Teammate identity, attachments, Memory
   await expect(peer.getByRole("link", { name: "message-ownership-notes.md" })).toBeVisible();
   await expectMessageInteractionPolicy(own, "user", "Copy message");
   await expectMessageInteractionPolicy(peer, "assistant", "Copy message");
-  await expectMessageInteractionPolicy(blocked, "state", "Copy message");
+  await expect(blocked.locator(".message-action-bar")).toHaveCount(0);
 
   const memoryToggle = peer.locator(".conversation-evidence-toggle");
   await memoryToggle.click();
@@ -637,11 +636,10 @@ async function positionForCapture(row: Locator): Promise<void> {
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     fullPage: true,
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
 }
 

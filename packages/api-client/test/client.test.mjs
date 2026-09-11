@@ -1141,7 +1141,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
     decision: "Handoffs stay manual.",
     createdBy: "local-user",
   });
-  await client.updateChannelDecision("/repo", "decision 1", { status: "superseded" });
+  await client.updateChannelDecision("/repo", "decision 1", { status: "rejected" });
   await client.createChannelHandoff("/repo", "channel 1", {
     sourceTaskId: "task 1",
     fromParticipantId: "tian",
@@ -1231,7 +1231,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
   assert.equal(mock.calls[6].url, "http://daemon.test/channels/channel%201/decisions?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[6].body).sourceMessageId, "msg 1");
   assert.equal(mock.calls[7].url, "http://daemon.test/decisions/decision%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[7].body), { status: "superseded" });
+  assert.deepEqual(JSON.parse(mock.calls[7].body), { status: "rejected" });
   assert.equal(mock.calls[8].url, "http://daemon.test/channels/channel%201/handoffs?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[8].body).toParticipantId, "engineer");
   assert.equal(mock.calls[9].url, "http://daemon.test/handoffs/handoff%201?cwd=%2Frepo");

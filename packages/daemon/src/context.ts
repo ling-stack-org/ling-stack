@@ -10,6 +10,7 @@ import type {
   PiRunnerMcpToolCallResult,
   PiRunnerResult,
   PiRunnerRunOptions,
+  PiRunnerPreparedInput,
 } from "@ling-stack/runner-pi";
 import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "./config.js";
@@ -48,8 +49,11 @@ import type { ChromeBrowserPluginService } from "./features/plugins/chrome-brows
 import type { OfficeDriverController } from "./features/office-documents/driver-controller.js";
 import type { OfficeDocumentsPluginService } from "./features/plugins/office-documents.js";
 import type { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
+import type { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
 
 export interface RunnerAdapter {
+  /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
+  prepareTaskInput?(options: PiRunnerRunOptions): Promise<PiRunnerPreparedInput>;
   runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
   resumeTask?(input: RunnerNativeResumeInputV1): Promise<PiRunnerResult>;
 }
@@ -214,4 +218,5 @@ export interface DaemonContext {
   readonly officeDocumentsPlugin: OfficeDocumentsPluginService;
   /** Process-local transcript source grants; daemon restart invalidates all grants. */
   readonly workspaceFileCapabilities: WorkspaceFileCapabilityRegistry;
+  readonly hostCapabilityBridge: HostCapabilityBridgeController;
 }

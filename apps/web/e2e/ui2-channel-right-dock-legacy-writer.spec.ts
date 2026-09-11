@@ -76,7 +76,7 @@ test("T13-O.25-C light Channel Dock owns launcher, page, resize, and scroll geom
   expect(signals.pageErrors).toEqual([]);
 });
 
-test("T13-O.25-C dark reduced-motion Summary moves continuously with Channel Dock", async ({ page }) => {
+test("T13-O.25-C dark reduced-motion Summary yields to the Channel Dock without overlap", async ({ page }) => {
   const signals = collectBrowserSignals(page);
   await initializePage(page, "ling-dark", { width: 1280, height: 800, reducedMotion: "reduce" });
   await mockDaemon(page, createChannelDockState());
@@ -92,29 +92,21 @@ test("T13-O.25-C dark reduced-motion Summary moves continuously with Channel Doc
   await summaryButton.click();
   const summary = page.locator(".channel-progress-popover");
   await expect(summary).toBeVisible();
-  const closedLeft = (await summary.boundingBox())?.x ?? 0;
 
-  await startSummaryVisibilitySampler(page);
   await detailsButton.click();
   const panel = page.getByRole("complementary", { name: "Channel workspace dock" });
   await expect(panel).toBeVisible();
-  await expect(summary).toBeVisible();
-  await expect(summary).toHaveAttribute("data-right-dock-motion", "open");
-  await expectSummaryStayedVisible(page);
-  const openLeft = (await summary.boundingBox())?.x ?? closedLeft;
-  expect(openLeft).toBeLessThan(closedLeft - 180);
-  await expectSummaryBesideDock(summary, panel);
-  await assertReducedMotion(summary);
-  await captureIfEnabled(page, "1280x800-ling-dark-summary-with-channel-dock.png");
+  await expect(summary).toHaveCount(0);
+  await expect(summaryButton).toHaveAttribute("aria-pressed", "false");
+  await captureIfEnabled(page, "1280x800-ling-dark-channel-dock-without-summary-overlap.png");
 
-  await startSummaryVisibilitySampler(page);
   await toolbar.getByRole("button", { name: "Hide details" }).click();
-  await expect(summary).toBeVisible();
   await expect(panel).toHaveCount(0);
-  await expectSummaryStayedVisible(page);
-  const reopenedLeft = (await summary.boundingBox())?.x ?? 0;
-  expect(reopenedLeft).toBeGreaterThan(openLeft + 180);
+  await expect(summary).toHaveCount(0);
+  await summaryButton.click();
+  await expect(summary).toBeVisible();
   await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await assertReducedMotion(summary);
 
   await assertNoHorizontalOverflow(page, [
     ".task-workbench-main",
@@ -384,53 +376,6 @@ async function dragResizeHandle(page: Page, handle: Locator, deltaX: number): Pr
   await page.mouse.down();
   await page.mouse.move(Math.max(1, x + deltaX), y, { steps: 5 });
   await page.mouse.up();
-}
-
-async function startSummaryVisibilitySampler(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    type Sample = { readonly connected: boolean; readonly display: string; readonly left: number; readonly opacity: number; readonly visibility: string };
-    const target = globalThis as typeof globalThis & { __ui2ChannelSummarySamples?: Sample[] };
-    target.__ui2ChannelSummarySamples = [];
-    let remaining = 60;
-    const sample = (): void => {
-      const element = document.querySelector<HTMLElement>(".channel-progress-popover");
-      const style = element ? getComputedStyle(element) : null;
-      target.__ui2ChannelSummarySamples?.push({
-        connected: Boolean(element?.isConnected),
-        display: style?.display ?? "missing",
-        left: element?.getBoundingClientRect().left ?? -1,
-        opacity: Number(style?.opacity ?? 0),
-        visibility: style?.visibility ?? "missing",
-      });
-      remaining -= 1;
-      if (remaining > 0) requestAnimationFrame(sample);
-    };
-    requestAnimationFrame(sample);
-  });
-}
-
-async function expectSummaryStayedVisible(page: Page): Promise<void> {
-  await page.waitForTimeout(100);
-  const samples = await page.evaluate(() => {
-    type Sample = { readonly connected: boolean; readonly display: string; readonly left: number; readonly opacity: number; readonly visibility: string };
-    const target = globalThis as typeof globalThis & { __ui2ChannelSummarySamples?: Sample[] };
-    return target.__ui2ChannelSummarySamples ?? [];
-  });
-  expect(samples.length).toBeGreaterThan(1);
-  expect(samples.every((sample) => (
-    sample.connected
-    && sample.display !== "none"
-    && sample.visibility !== "hidden"
-    && sample.opacity > 0.01
-  ))).toBe(true);
-  expect(samples.every((sample) => sample.left >= 0)).toBe(true);
-}
-
-async function expectSummaryBesideDock(summary: Locator, panel: Locator): Promise<void> {
-  await expect.poll(async () => {
-    const [summaryBox, dockBox] = await Promise.all([summary.boundingBox(), panel.boundingBox()]);
-    return summaryBox && dockBox ? Math.round(dockBox.x - (summaryBox.x + summaryBox.width)) : -1;
-  }).toBeGreaterThanOrEqual(4);
 }
 
 async function assertMinimumHitAreas(locator: Locator): Promise<void> {

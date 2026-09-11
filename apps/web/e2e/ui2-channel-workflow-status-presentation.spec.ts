@@ -292,8 +292,7 @@ async function verifyWorkflowQueue(panel: Locator): Promise<void> {
   await expect(workflowStatus).toContainText("Waiting for approval");
   await expect(workflowStatus).toHaveAttribute("data-tone", "warning");
   await expect(queue.locator(".workflow-queue-head small")).not.toContainText("waiting_for_approval");
-  await expect(queue.locator(".workflow-queue-actions").getByRole("button", { name: "Advance" })).toBeEnabled();
-  await expect(queue.locator(".workflow-queue-actions").getByRole("button", { name: "Cancel" })).toBeEnabled();
+  await expect(queue.locator(".workflow-queue-actions")).toHaveCount(0);
 
   for (const [status, label, tone] of stepCases) {
     const card = queue.locator(".workflow-step-card").filter({ hasText: `Status case ${label}` });

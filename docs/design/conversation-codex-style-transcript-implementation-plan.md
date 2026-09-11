@@ -1,13 +1,15 @@
 # Codex-style Typed Transcript v3.9.1-final：实现计划
 
-Status: implementation plan；v3.9.1-final 组件级细设计已锁定。D0–E5 的 source implementation 与自动化闸门已在实现分支通过；E6 packaged macOS 真实案例和证据采集仍未验收，因此整体实现尚不能标记完成
+Status: implementation plan；v3.9.1-final 组件级细设计已锁定，实现进行中。历史 D0–E5 pass 不证明当前 combined WIP；本轮单一 root window、pending ordering 和 effective-attempt 改动须复验，E6 packaged macOS 尚未验收。当前完成判定统一读取 §6.2–§6.3，不从历史通过数量推断
 Date: 2026-09-01
-Design revision: Codex parity handoff 2026-09-01（设计先行；实现按 D0→E6 闸门推进）
-Base: `origin/main` @ `ebfadd1b`（2026-09-03 已 fetch 并合入实现分支）
+Design revision: unified viewport and root display model 2026-09-05（设计先行；实现按 D0→E6 闸门推进）
+Design baseline: `origin/main` @ `ebfadd1b`（历史设计基线；本轮记录 fetch 后远端 SHA、实现 SHA 和 WIP 内容指纹，不以本行证明已同步最新代码）
 Canonical design: [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
 Visual contract: [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
 Surface contract: [Conversation Surface Contract](conversation-surface-contract.md)
 Component design: [Conversation Codex-Parity Component Detailed Design](conversation-codex-parity-component-detailed-design.md)
+Execution-entry increment: [Channel Execution Capability Integration Plan](channel-execution-capability-integration-plan.md)（2026-09-06：已纳入计划，尚未实现）
+User-input and sandbox increment: [联合细设计与执行顺序](conversation-user-input-and-sandbox-integration.md)（2026-09-07：用户要求一起处理，设计已纳入、实现未完成）
 
 目标不是重写会话，而是把已有 durable facts 投影成一个简单、可追溯、跨 surface
 一致的 transcript。实现期间不修改用户当前 dirty checkout。
@@ -16,9 +18,11 @@ Component design: [Conversation Codex-Parity Component Detailed Design](conversa
 状态，详情原地 disclosure，三种会话及 depth-1 子 Agent 使用同一 renderer fingerprint。
 任何视觉优化都不能改变 item kind、顺序、lineage、completion 或 context 语义。
 
-v3.7 新增一条实现硬门槛：所有 surface 和子 Agent 必须通过同一个
-`mountConversationTimeline` 组合入口；不能通过复制 JSX、复用旧 WorkCell 或在 Composer/
-EnvironmentPopover 中补渲染来“看起来统一”。
+实现硬门槛：普通、私聊、频道共用 `ConversationTimelineFeed`、唯一 viewport、根
+`ConversationTimeline`、display model 和 renderer registry。每个 surface 调用一次
+`mountConversationTimeline`；子 Agent 是同一根窗口中的 depth-1 rows，不额外 mount。
+频道只增加 participant/roster、topic/branch 和 multi-agent fan-in。旧
+`ConversationVirtualFeed` 与仅测量一个 Timeline root 的外层 virtualizer 不保留。
 
 v3.9.1-final 只补接口级组件实现细节，不改变 v3.9 的事实权威和存储边界：SQLite 仍是 durable facts，
 batch 仍是 display-only，`terminalReport` 仍是 execute turn 的唯一结果。实现者必须先
@@ -35,7 +39,7 @@ macOS 六层，不能从某个页面的 CSS 或一段模型文本开始。
 | `E1` | Host evidence fold：`tool_start/update/end`、revision、terminal fence、invalidation | 同一 `actionId` 原地收敛，乱序/重复/迟到事件有 audit | `P1`、`S1`、`R5` |
 | `E2` | canonical atomic projector、owner/attempt/context 校验、display-only batching | fingerprint、split reason、child lineage 和 completion 隔离；batch 可展开恢复原子 identity | `P2`、`S2/S3`、`R6` |
 | `E3` | shared Timeline registry、Markdown/fact/nested renderer、Host file/diff/artifact viewer、document row geometry | exhaustive registry、单滚动 owner、capability issue/redeem、无右侧 bubble | `P3`、`S4`、部分 `P1b` |
-| `E4` | normal/private/channel/topic/branch/child surface cutover | 所有入口只调用一次 `mountConversationTimeline`，旧 caller 删除 | `P4`、`S5`、`R7` |
+| `E4` | normal/private/channel/topic/branch surface cutover + root-flattened child rows | 每个 surface 一次 mount、一个 viewport/root virtualizer，child 不另 mount；旧 caller 删除 | `P4`、`S5`、`R7` |
 | `E5` | approval、retry、SSE reconnect、daemon restart、fan-in、TerminalReport recovery | atomic evidence 结论与 latest generation 收敛 | `P5`、`S6`、`R8` |
 | `E6` | packaged macOS 真实 UI 与证据采集 | `simulation=false` 的 screenshot/semantic/lineage/log tuple | `P6`、`S7` |
 
@@ -43,7 +47,9 @@ macOS 六层，不能从某个页面的 CSS 或一段模型文本开始。
 依赖关系。实现顺序固定为 `D0 → E1 → E2 → E3 → E4 → E5 → E6`；E1/E2 的纯测试可并行，
 其余按该顺序串行推进。
 
-实现 worktree `/private/tmp/ling-typed-transcript-v3-clean` 基于最新 `origin/main`，主
+当前实现 worktree 为 `/Users/tianxiao/ling-typed-transcript-v3-recovered-20260906`（2026-09-06
+从保全的 WIP 与原 HEAD 恢复；原临时工作区不再开发）；是否包含最新 `origin/main`
+必须在本轮通过 fetch/ancestry 和 build manifest 核验。主
 checkout 与历史实验 worktree 的 dirty WIP 不作为实现输入。任何代码提交都必须从本文的
 设计闸门重新核验，不能把未审查的脏工作树当作基线。
 
@@ -55,7 +61,7 @@ checkout 与历史实验 worktree 的 dirty WIP 不作为实现输入。任何�
 
 `D0` 的唯一产物是 contract/type、fixture/selector 的失败测试和边界清单；允许修改
 closed union、纯 projector contract 和测试，但不切换 production surface。当前实现 worktree
-为 `/private/tmp/ling-typed-transcript-v3-clean`，首批 contract、renderer registry 和
+已从 `/private/tmp/ling-typed-transcript-v3-clean` 恢复到上述独立目录；首批 contract、renderer registry 和
 surface adapter 已在此基线上落地；后续提交按唯一的 E1→E6 切片推进。
 
 当前代码核对还暴露了一个必须在 D0 先锁定的 breaking contract：
@@ -124,12 +130,12 @@ source/automated evidence 已完成，E6 未完成前仍不得发布或宣称整
 
 D0 不引入 feature flag，也不保留旧 renderer 兼容分支；测试先失败是预期的设计闸门。
 
-### 0.1 当前基线与剩余工作
+### 0.1 历史切片证据与当前复验边界
 
-本计划不是从空白重写。当前实现 worktree 已经具备第一批基础设施，后续只补齐缺口，
-不另起一套 transcript：
+下表记录之前切片的通过报告，用来避免重复实现已有基础设施。数量不是当前测试结果；
+本轮合并后的源码、窗口化和状态折叠修改必须按 §6.2 重新验证，E6 逐案验收见 §6.3：
 
-| 已落地 | 证据 | 仍需完成 |
+| 已落地 | 历史证据（非本轮验收） | 仍需完成 |
 | --- | --- | --- |
 | closed item union、canonical snapshot、纯 projector、`protocolEvent`、`terminalReport` result anchor | contracts/UI-core/Web tests | packaged App 中验证唯一 result row |
 | 统一 `ConversationTimeline`、renderer registry、mount/fingerprint | Web source audit 与 `137/137` | packaged normal/private/channel/topic/branch/child 视觉等价 |
@@ -200,7 +206,8 @@ Host/SQLite facts -> one snapshot -> atomic projector -> optional batch -> one T
    `callbacks` 只是控制/Host 依赖，不得把 message、action、approval 拆成多份列表，也不
    允许 surface 在 JSX 中二次拼接历史。
 2. `userMessage`、`agentMessage`、`reasoning` 和 `plan` 保持 document/structured-document
-   阅读顺序；统一左对齐，不再出现普通会话独有的右侧方形 bubble。`plan` 使用独立
+   阅读顺序；正文内部保持左对齐，用户消息的头像在正文右侧、消息轨道靠右，Agent
+   头像与叙述/事实轨道在左侧，不再出现普通会话独有的方形 bubble。`plan` 使用独立
    `document.plan` renderer，但不拥有命令完成语义。
 3. command/file/tool/approval/protocol 是同一套 fact row：`icon + 动词 + 文本状态 + 一个
    disclosure`。状态词只使用 `Queued/Working/Waiting/Waiting for approval/Succeeded/
@@ -292,8 +299,8 @@ RunEvent/ExecutionAction/Approval/Artifact
    nested/batch/diagnostic renderer、Markdown/code/path、trusted ref、单 scroll owner。
    退出条件是 semantic fingerprint 稳定，无右侧 bubble、无第二纵向滚动区。
 5. **PR-E4 `refactor(web): cut over all conversation surfaces`**：normal/private/channel/
-   topic/branch/child 只调用一次 `mountConversationTimeline`；Topic/Branch 传真实 child
-   Thread，Agent child 传 parent Thread + participant span。退出条件是
+   topic/branch 每个 viewport 调用一次 `mountConversationTimeline`；Topic/Branch 传真实 child
+   Thread，Agent child 以 parent Thread + participant span 进入根 display rows。退出条件是
    `timelineOwnerCount=1`、`syntheticThreadCount=0`、所有旧 production caller 删除。
 6. **PR-E5 `test(transcript): prove recovery and fan-in`**：approval、retry、SSE reconnect、
    daemon restart、partial/complete fan-in、TerminalReport generation/supersession。退出
@@ -513,12 +520,20 @@ visible = batchCanonicalTranscriptItems(atomic)
 `visible` 只用于绘制；TerminalReport、fan-in、retry 继续读取 `atomic`。任何 batch
 wrapper 都必须携带 child ids 和 lineage，以便 disclosure 后恢复精确顺序。
 
+缺 canonical anchor 的历史诊断不能按最新 watermark 插到新 Turn 尾部。adapter 仅可从
+已验证的 Run → 唯一 TurnRun → 同 owner/workspace/thread 的 Turn.sourceItemId → 可见
+用户消息关系产出 `diagnosticId → afterItemId` 显示定位信息；该关系不证明 canonical
+Item 存在。共享 `buildSurfaceTimelineSnapshot` 在 batching 前统一应用定位，只移动
+diagnostic，保留所有 item 对象、sequence、sourceRefs、blocked 状态和非诊断项相对顺序。
+缺失、歧义、冲突、重复端点或非用户目标均保持原位；禁止 surface 自行二次排序、隐藏
+诊断或为排版伪造 canonical anchor。normal/private/channel 使用同一纯投影契约。
+
 ### E3（历史别名 S3 / R7）：共享 Timeline 和 renderer registry
 
 **实现**
 
 - `ConversationTimeline` 使用 exhaustive registry；消息走 document lane，事实走
-  `TimelineFactRow`，execute 结果走 `terminalReport` result row；user/agent 统一左对齐，plan 作为 structured-document 的低重量
+  `TimelineFactRow`，execute 结果走 `terminalReport` result row；用户头像在右、Agent 在左，正文内部均左对齐，plan 作为 structured-document 的低重量
   `document.plan` row，不承担执行完成语义；
 - `TimelineFactRow` 的状态 label 必须统一为设计闭集；旧的 `Pending`、`Completed`、
   `Done` 等 raw copy 不能直接透传。`Waiting` 保留为非审批等待，审批等待必须显示
@@ -551,7 +566,8 @@ channel/topic/branch/child 产生相同 `rendererKeys`、kind、status text、di
 不得创建新的纵向 `overflow:auto|scroll`。
 
 **Codex 风格 review gate**：document lane 不得有 fact-row 外框；fact row 首屏必须有
-动词 + 状态；成功历史默认收敛；active/failed/approval 只展开一层；同一 action 不得
+icon + 动作 + basename/真实命令，非成功状态明确；成功历史默认收敛；
+active/failed/approval 只展开一层；同一 action 不得
 同时出现在 message、WorkCell、result row 和 Composer；execute turn 不得在
 `terminalReport` 后再出现重复 final assistant summary。
 
@@ -565,6 +581,35 @@ batch 函数或第二个 scroll owner。nested depth=1 必须调用同一个 reg
 **实现验收顺序**：先让三种 surface 使用同一个 mount/fingerprint，再删除 route-local
 旧 renderer。不能先删 UI 再靠截图猜测是否仍然保持 item 顺序；每次 cutover 必须同时
 保留 semantic-state 和 lineage fixture，确保视觉简化不会降低事实可追溯性。
+
+#### E3 验收：默认事实行与详情唯一展示规则（本次验收细化）
+
+这是已确认 UI 规则的验收细化，不新增设计版本，也不改变事实状态或执行语义：
+
+1. 默认事实行只有一行 `icon + 动作 + 文件 basename / 真实命令 + optional disclosure`。
+   完整路径通过 hover/focus tooltip 展示；能否点击仍由 Host trusted ref 决定。
+2. 成功由动作完成态表达，不额外重复 `Succeeded/已完成`、`exit 0` 或耗时。状态仍保留在
+   typed model 和可访问语义中；本文其他状态枚举和示意图不是要求再显示一份成功标签。
+3. exit code 和耗时仅在展开详情中各出现一次，不同时出现在摘要、标题和详情。
+4. 展开只新增真实输出、错误、diff 或未展示的证据字段；不得复制标题、动作摘要或同一
+   输出。不因工具没有额外结果而用摘要填充详情；无新增内容时不提供空 disclosure。
+5. 失败、timeout、cancel 和 approval 必须明确显示，不能因“简洁”而隐藏，也不能合并
+   到成功 batch 中。正在执行的状态同样必须可辨识。
+6. normal、private、channel 和 child 使用同一个 renderer、batch/disclosure 规则。
+   child 只增加 participant 标识和 depth=1 缩进，不维护自己的工具 UI 或滚动容器。
+7. 同一消息的叙述按真实事件分段交错，但附件、生成媒体、错误和全文复制/反馈只由最后
+   一个叙述段承载。该展示 owner 不修改 canonical identity，也不跨 run/attempt/participant
+   共享；用户消息仍保留原编辑能力。复制动作明确对应整条消息，不能重复成每段一套。
+8. document 用户行的头像位于正文右侧，且与正文处于同一 grid row；用户消息轨道靠右，
+   正文内部保持左对齐。Agent 头像位于正文左侧，与叙述和事实行保持相同方向。
+   复制/编辑独占正文之后的动作行。DOM 顺序不得让头像被自动排到动作行，形成貌似
+   “空消息”的展示。不得把复用组件误解成用户和 Agent 都采用左侧头像。带独立作者栏的变体
+   保留作者/正文/动作三行；普通会话无头像时不得新增空头像列。共享样式和三 surface 的
+   宽/窄屏几何回归共同保证这一规则，不增加频道专属 renderer。
+
+组件测试和 packaged macOS 验收均检查：折叠行单行、完整路径 tooltip、成功态无重复
+元数据；展开后 exit/耗时各一次，且没有重复标题、摘要、输出。三 surface 与 child
+使用同一 fixture 核验相同 renderer 行为。
 
 ### E4（历史别名 S4 / R7）：surface cutover
 
@@ -580,6 +625,40 @@ child       -> parent anchor + depth=1 policy
 adapter 不允许按 kind 自己分支；`ConversationTimeline` 只接已解析的 canonical snapshot。
 禁止保留
 旧 workflow skeleton、第二纵向 activity panel 或 Composer 下方 summary。
+
+#### E4 私聊单 Agent 边界（已确认行为的实现约束）
+
+- 私聊只包含用户与选定 teammate。共享 UI 不代表共享参与者或调度权限；多 Agent 协作
+  只属于频道。其他 Agent 的名字若是用户主动粘贴的普通文字，不因此获得 participant 身份。
+- API、context builder、narration/media/transcript 与前端 adapter 必须核对
+  `teammateId + directThreadId + canonical private LingThread`。Run 还必须同 owner/thread、
+  无 channel/workflow，且有一致的 owning Turn/Run link；linked ID 本身不是授权。
+- 已有回复的幂等早返先校验 owner/lane/author；history helper 不得把异属消息重新标记
+  为当前 Agent。没有可证明的私聊归属时不读取 linked task/workflow 内容。
+- Feed 在构造正文、消息动作、附件和 activeRun 前过滤 owner；显式 runId 不匹配时，
+  禁止用 same-turn 兜底放行。切换 teammate 后旧 snapshot 与迟到响应均不得发布。
+- 私聊不发布其他 Agent 的事实、来源引用或协作按钮。当前 owner 的协作/子 Agent/频道
+  协议条目只能产生无外部目标与可操作 sourceRefs 的通用 scope-blocked 诊断；不能伪装成功。
+- Host 必须约束私聊 delegation 能力，不能只改 prompt 或隐藏 UI。按实际注册 capability
+  判定并在 dispatch/hydration 边界执行，不按工具名称猜测，也不禁用正常 read/bash/MCP。
+  外部 runner 无法证明遵循时必须如实列为未验收，不宣称单 Agent 保证已完成。
+- 用户显式“转为任务”仍可创建分配给当前 teammate 的频道任务，不能与自动跨 Agent
+  转派混为一谈。UI 组件仍复用，禁止新增私聊专属工具 renderer。
+
+最小回归：foreign author/owner/lane、同 turn 异 run、linked channel/foreign run、旧响应
+幂等早返、owner 协作条目、晚到 SSE/GET、合法 owner narration/tools 不回归；另以真实
+私聊请求确认没有跨 Agent 调度。该边界全部通过前不关闭 P 系列验收。
+
+#### E4 频道启动叙述必须读取真实状态
+
+proposal 被接受、workflow 已创建、Run 已启动是三件不同的事。pending 只表达正在检查
+执行条件；编排返回 blocked/approval/idle 时不得留下固定 Starting now。可核验的
+startedSteps/runId 只证明派发被接受；还需持久 Run 的 running + startedAt 才能表示已启动。
+Run 可能在其他 participant 的派发 await 期间取消、失败或等待审批；当前持久状态优先于
+started envelope，不得把 terminal/approval Run 写成排队或启动。多人混合状态分别列出，
+部分启动不得声称全部 required participant 已启动；单个 Run 完成不代表 workflow/fan-in 成功。
+这条规则不改变终态事实、权限或 fan-in；错误操作计划仍须独立修复，不能改文案后称
+原 C01 完成。测试须覆盖 pending、blocked 正常返回、抛异常、审批、idle、部分及全部启动。
 
 开发阶段不保留旧 renderer 兼容路径：
 
@@ -655,7 +734,7 @@ fingerprint、terminal fence 和 scroll owner，而不是只看最终文字。
 | E1 evidence | `packages/contracts/src/conversation-continuity.ts`、`packages/core/src/terminal-report-types.ts`、TerminalReport SQLite migration、`packages/daemon/src/features/runs/execution-actions.ts`、`execution-action-command-evidence.ts`、`execution-action-invalidation.ts`、`unified-exec.ts` | 增加专用 `terminal_report` Item/resultItemId；一次性迁移旧 publication；折叠 `tool_start/update/end`；固定 `actionId + revision + terminalFence`；bounded stdout/stderr；accepted update 发 invalidation | contract/migration round-trip、replay、重复 end、迟到 update、equal revision conflict 全绿；同一 action/result 只有一个 stable id；无运行时双读 |
 | E2 projection | `packages/contracts/src/conversations.ts`、`packages/conversation-ui-core/src/canonical-transcript-projector.ts`、`typed-transcript-batching.ts`、`timeline-fingerprint.ts` | detail projection 传 generation/resultItemId；严格 join final-result Item；统一排序、owner/attempt、context segment；project latest committed `terminalReport` 并抑制 `execution_summary`；display-only batch；缺 lineage/anchor fail closed | 乱序、retry、reply/execute、report generation/anchor/fingerprint、跨 agent/run/attempt、非邻近和 consequential 边界均覆盖；batch 展开精确恢复 |
 | E3 capability/viewer | daemon workspace-file action 与 `apps/web/src/shared/conversation/timeline/source-ref.ts` | 签发短期 opaque capability；绑定 workspace/thread/run/action/participant；callback 前二次 realpath/permission 校验；daemon epoch 失效；禁止 lineage 根据 path 自行填 `hostTarget` | 跨 workspace、symlink、过期、重启旧 token 全部 blocked；合法 file/diff 可打开，模型 path 仍只能复制 |
-| E3 renderer | `apps/web/src/shared/conversation/timeline/*`、`packages/conversation-ui-react/src/styles/blocks/message-frame.css` | Markdown AST、command/output、file/diff、tool、approval、protocol、`terminalReport` result、diagnostic、nested depth=1；一个 disclosure；document row 几何统一左对齐 | registry exhaustive；DOM semantic selectors 稳定；无方形 message bubble、无第二滚动区 |
+| E3 renderer | `apps/web/src/shared/conversation/timeline/*`、`packages/conversation-ui-react/src/styles/blocks/message-frame.css` | Markdown AST、command/output、file/diff、tool、approval、protocol、`terminalReport` result、diagnostic、nested depth=1；一个 disclosure；document row 按发送者统一定位，正文内部左对齐 | registry exhaustive；DOM semantic selectors 稳定；无方形 message bubble、无第二滚动区 |
 | E4 surface | normal/private/channel/topic/branch adapters 与 `apps/web/src/features/workspace/ChannelMessageRenderers.tsx` | 所有入口只构造 `ResolvedConversationSurface` 并调用 `mountConversationTimeline`；删除 route-local activity caller、旧 workflow skeleton 和 Composer summary | 同一 fixture 的 kind/order/status/disclosure/fingerprint 完全一致；差异仅 shell/policy/participant rail |
 | E4b channel scope | channel thread resolver、protocol event adapter | `protocolThreadId()` 不再生成 `channel:<id>`；root/topic/branch 使用真实 `LingThread.id` 和 anchor；解析失败生成 `scope_mismatch` | protocol 行可由 `lineage.json` 回链 SQLite thread；synthetic id 永不进入 Timeline snapshot |
 | E5 recovery | `workflow-fanin.ts`、`terminal-report-*`、retry/reconnect adapters | fan-in 等所有 required participant evidence 或 structured blocked；TerminalReport 只读 atomic；SSE/daemon restart 重建同 fingerprint | ready/plan/batch 数量不能 settle；旧 attempt 仅 audit；active row 原地恢复 |
@@ -740,12 +819,13 @@ evidence：
 - [ ] **T3a (P1)** final-result contract：移除 TerminalReport-as-assistant-message publication；
   增加 `presentationRole`、generation/resultItemId detail projection 和一次性 schema migration；
   迁移后 `rg` 不得存在 production `publishedMessageId`/TerminalReport Markdown renderer。
-- [ ] **T4 (P1)** shared Timeline cutover：normal/private/channel/child 全部只调用
-  `mountConversationTimeline`，删除生产 WorkCell/activity caller、旧 workflow skeleton、
+- [ ] **T4 (P1)** shared Timeline cutover：normal/private/channel 每个 viewport 只调用一次
+  `mountConversationTimeline`，child 只加入根 display rows；删除生产 WorkCell/activity caller、旧 workflow skeleton、
   Composer/Popover/Right Dock 重复 summary；同一 fixture fingerprint 必须一致。
 - [ ] **T4a (P1)** document geometry：保留 legacy `message-bubble-*` selector 作为迁移
-  标记，但 document row 统一 leading-column、左对齐、无 card chrome；同步迁移
-  `expectOwnMessageBubble` 一类旧断言，避免测试把右侧气泡重新锁回生产样式。
+  标记，但 document row 统一按发送者定位：用户头像右侧、Agent 头像左侧，正文内部
+  左对齐、无 card chrome；同步迁移 `expectOwnMessageBubble` 一类旧断言，分别检查
+  左右位置与气泡外框，不能因取消气泡而取消用户消息的右侧身份。
 - [ ] **T5 (P1)** fan-in/completion：ready/plan/batch 数量不得 settle；required participant
   evidence 或 structured blocked 未齐时保持 waiting，并指明缺失 participant。
 - [ ] **T6 (P2)** regression suite：补齐 Markdown AST fallback、single scroll owner、水平
@@ -860,7 +940,7 @@ scroll owner。频道必须把真实 root/topic/branch `LingThread.id` 传入；
 | E1 evidence | 完成 `WorkspaceFileCapabilityAuthority` 测试；把 `tool_start/update/end`、terminal fence、live invalidation 接到 durable fold | action/revision/fence fixture、scope rejection fixture | 不在 UI 先画假的执行行 |
 | E2 projection | 完成 atomic projector 的 owner/attempt/context 校验；收口唯一 batch 入口 | parity fixture、split reason、batch child lineage | 不把 batch 写入 SQLite 或参与 fan-in |
 | E3 host viewer | 三种 capability target 接入各自 viewer；callback 传完整 item lineage | file/diff/artifact issue→redeem 测试 | 不把 diff/artifact 降级为 `open_file` |
-| E4 surface cutover | normal/private/channel/topic/branch/child 只调用一次 `mountConversationTimeline`；移除 route-local WorkCell/summary | DOM fingerprint、`rg` caller audit、channel real-thread lineage | 不保留旧 production renderer |
+| E4 surface cutover | normal/private/channel/topic/branch 每个 viewport 一次 mount，child 为根 display rows；移除 route-local WorkCell/summary | DOM fingerprint、`rg` caller audit、channel real-thread lineage | 不保留旧 production renderer |
 | E5 recovery | approval deny、SSE reconnect、daemon restart、retry supersession、partial/complete fan-in | integration trace、latest-generation fingerprint | 不用 ready/plan/batch count settle |
 | E6 packaged QA | 运行 N/P/C/A/R/F/E 案例并采集 macOS 证据 | screenshot + semantic-state + lineage + redacted logs | 不用浏览器 mock 截图冒充真实验收 |
 
@@ -1004,7 +1084,9 @@ action row、TerminalReport 或 final summary；缺 participant 时用户看到�
 **代码边界**：`apps/desktop` packaged shell 和 evidence harness。Windows、移动端和
 mock-only 浏览器不在本轮范围。
 
-固定执行 `N-01/N-02/P-01/C-01/C-02/A-01/R-01/R-02/R-03/F-01/E-01`，每个案例保存
+基础案例为 `N-01/N-02/P-01/C-01/C-02/A-01/R-01/R-02/R-03/F-01/E-01`，本轮完整执行集
+以 §6.3 为准，另含连续上下文、topic/branch、协议动作、全部 typed kind、长历史与完整小项目。
+每个案例保存
 `case.json + screen-01.png + screen-02.png + semantic-state.json + lineage.json +
 logs.redacted.txt`。`case.json` 必须写 `simulation=false`、bundle/version/hash、真实
 thread/turn/run/attempt、输入和 daemon epoch。
@@ -1366,7 +1448,7 @@ fixture、同一组 semantic selectors 和同一份 lineage 作为输入；阶�
 | E1 | 乱序/重复/迟到 `tool_*`、equal revision conflict | `EvidenceFold`、terminal fence、同 action 原地 revision、live invalidation | fold replay + SQLite/SSE lineage |
 | E2 | batch split、expand round-trip、retry/approval boundary | 纯 canonical projector + 可逆 command/exploration batch | atomic evidence 与 display rows 对照 |
 | E3 | Markdown/code/path、bounded output、Host ref 过期 | shared Timeline、exhaustive registry、file/diff capability viewer | component/semantic selectors、单一 scroll owner |
-| E4 | normal/private/channel/topic/branch/child parity | 所有入口只调用一次 shared mount，删除旧 caller | 跨 surface fingerprint 完全一致 |
+| E4 | normal/private/channel/topic/branch 与 child parity | 每个 viewport 一次 shared mount，child 不额外 mount，删除旧 caller | 跨 surface fingerprint 完全一致 |
 | E5 | approval、retry、SSE reconnect、daemon restart、partial fan-in | 原子恢复、latest generation、structured blocked | recovery/fan-in tests + lineage |
 | E6 | packaged client 的真实连续 turn | 只验收 macOS packaged app，采集 UI/语义/事实证据 | `simulation=false` + screenshot/state/lineage/log 四件套 |
 
@@ -1394,7 +1476,7 @@ Composer/Popover 再拥有历史事实，必须先回到五份设计文档和 fi
 | E1 evidence fold | `packages/daemon/src/features/runs`、invalidation | 乱序/重复/低 revision/equal conflict/terminal fence late event | 同 `actionId` 原地 revision，audit 不重开 |
 | E2 projector + batch | `packages/conversation-ui-core`、core projection | owner/attempt/retry、split boundary、expand round-trip | atomic rows 与 display rows 对照，batch 不参与完成 |
 | E3 shared Timeline | `apps/web/src/shared/conversation/timeline`、Host viewer | Markdown/code/path、bounded output、capability 失效 | exhaustive registry、专用 viewer、单 scroll owner |
-| E4 surface cutover | normal/private/channel/topic/branch/child adapters | 同 fixture parity、duplicate owner、synthetic thread id | 所有入口一次 `mountConversationTimeline`，旧 caller 删除 |
+| E4 surface cutover | normal/private/channel/topic/branch adapters + child scope | 同 fixture parity、duplicate owner、synthetic thread id | 每 viewport 一次 mount，child 使用根窗口，旧 caller 删除 |
 | E5 recovery/fan-in | daemon TerminalReport、approval、retry、SSE/restart | partial fan-in、ready-only child、latest generation、deny/expired | atomic evidence settle，单一 result row |
 | E6 packaged macOS | `apps/desktop`、真实 daemon/Host | 连续 turn、live update、approval、retry、重连/重启 | `simulation=false` screenshot/semantic/lineage/log tuple |
 
@@ -1465,6 +1547,13 @@ Timeline item presentation metadata
   callback，禁止传任意 `ReactNode`；
 - protocol item 暴露受 Host 验证的 `availableActions` enum，renderer 通过 typed callback
   执行，不能由 route 重新绘制 action card；
+- protocol status 按 approval/decision/handoff/workflow/step/task/run/state-transition 分别
+  穷尽映射；decision `active` 不伪装 running，cancelled/skipped/pending approval 保留正确
+  语义；
+- `supersede_decision` 走 `BEGIN IMMEDIATE + source-active CAS + single-successor unique
+  index`，首次 `201`、等价复用 `200`、不同 payload 或 stale source `409`；
+- owning row 在 mutation pending 时提供同步 in-flight guard、disabled 与 `aria-busy`，但
+  正确性仍由 Store 事务和索引保证；
 - approval row 只呈现状态和 disclosure，decision dialog 是唯一 allow/deny 控制 owner；
 - `mountConversationTimeline` 的目标入参是 `ResolvedConversationSurface`，内部负责一次
   display projection 和 registry composition；surface 不再传第二份 message/action/report
@@ -1480,7 +1569,7 @@ Timeline item presentation metadata
 | 4 | child Agent | child-specific renderer 或独立 feed | depth=1 复用 registry，child 不拥有 virtualizer/scroll/history loader |
 | 5 | shell controls | `renderFactActions`、外部重复 summary/output | typed row control 或唯一 dialog；Composer/Popover/Right Dock 不复制事实 |
 
-#### E4a/E4b 当前切片（实现 worktree）
+#### E4a/E4b 切片记录与本轮统一窗口化
 
 已落地的两个切片只改变 surface composition，不改变事实来源：
 
@@ -1488,8 +1577,9 @@ Timeline item presentation metadata
   时间、编辑、附件、反馈和重试 chrome 包回 message item；`NormalConversationMessageRow`
   不再拥有 per-message Timeline fallback。
 - private：整个私聊 feed 先按真实 `LingThread.id` 构造一个 snapshot，所有 direct message
-  和其 WorkCell facts 在同一时间线排序；virtualizer 只测量一个 Timeline root，消息行仍由
-  surface chrome adapter 提供。没有 verified thread 时只显示一个
+  和其 facts 在同一时间线排序。曾经只测量一个 Timeline root 的外层 virtualizer 是已过时
+  的过渡实现；现与 normal/channel 一起使用 `ConversationTimelineFeed` 纯 shell。消息 chrome
+  由 surface adapter 提供。没有 verified thread 时只显示一个
   `diagnostic(scope_mismatch)`，不会生成 `private:<teammateId>` transcript id。
 
 private adapter 的排序退出条件还包括“每条消息 slice 只 rebasing 一次”：slice 内的
@@ -1498,23 +1588,22 @@ private adapter 的排序退出条件还包括“每条消息 slice 只 rebasing
 
 本轮继续收口 channel 的 surface contract：`ChannelMessageRenderers` 只导出
 `renderUnifiedTimeline`，`WorkspaceClientView` 不再把 `renderMessageFeedItem` 传入 channel
-feed，`ConversationVirtualFeed.renderVirtualRow` 作为 production 唯一 root renderer，
-`renderItem` 不再作为 virtual feed 或 fixture 的第二入口。旧的 channel per-item
+feed；`ConversationTimelineFeed` 直接容纳一次 mounted Timeline，只有该 Timeline 对 display
+rows 调用 `useVirtualizer`。已删除 `ConversationVirtualFeed`，`renderVirtualRow` 和
+`virtualRowIdentity` 不再是生产或 fixture 合同。旧的 channel per-item
 protocol/activity/workflow/run fact renderer 已删除，message chrome adapter 仍只负责作者、
 附件和 typed callbacks，且不改变 durable facts；topic reply panel 也已通过真实
-`resolvedThreadId` 构造一个 `topic_reply` snapshot，不能再直接 map `MessageRow`。退出条件已由
-source-contract 断言确认 channel root/branch/topic 只有 unified Timeline roots，TypeScript
-与 Web `137/137` 均通过；E4 source cutover 已完成，但这仍不替代 packaged App 中的
-channel/root/branch/topic 真实视觉、交互和恢复验收。
+`resolvedThreadId` 构造一个 `topic_reply` snapshot，不能再直接 map `MessageRow`。此前
+source-contract/typecheck/Web `137/137` 是历史切片报告；当前 combined WIP 必须重验，
+不能把这些数量升级为本轮 E4 或 packaged 完成证明。
 
-频道 virtualizer 的 root metadata 也已收口：`ConversationVirtualFeed` 使用显式
-`virtualRowIdentity={ id: "channel-timeline-root", kind: "timeline" }`，不会再把
-`older-loader` 或第一条消息作为整个 Timeline 的滚动锚点。该 identity 只服务于 DOM
-semantic selector、焦点和 older-load anchor，不参与 projector、batch 或 completion gate。
+三种 feed 的 `timelineId` 只标识 shell 内容；实际滚动锚点使用根 display row 的稳定
+`rowKey + offsetTop`。`older-loader`、首条消息或整个 Timeline root 均不能代替可见行。
+display model 将 child 展开为 `header + child rows`，由根窗口统一测量。pending message
+slice 的 `threadSequence` 与 private 一样仅 rebasing 一次，必须覆盖 `feedIndex > 0`。
 
-这些 surface 切片的 source 退出证据是 typecheck、source audit 和 Web `137/137` 语义测试
-通过，已满足 E4 自动化闸门。channel root/branch/topic/child 的真实视觉、交互、SSE reconnect
-和 daemon restart 仍需在 E6 packaged macOS 复核；不能用 source contract 通过替代 E6。
+本轮 E4 的 source/行为门槛集中在 §6.2；channel root/topic/branch/child 的真实视觉、
+交互、SSE reconnect 和 daemon restart 必须继续在 §6.3 的 E6 packaged macOS 中验收。
 
 ### 4.14.3 机械验收断言
 
@@ -1529,6 +1618,8 @@ item id + kind + order + status + rendererKey + disclosureCount
 
 - `mount calls per surface viewport = 1`；
 - `timeline owner count = 1`，child 只算 parent Timeline 的 nested rail；
+- `scroll owner count = 1`、`surface shell virtualizer count = 0`；
+- 长历史 `root virtualizer count = 1`，`nested Timeline/virtualizer count = 0`；
 - `synthetic transcript thread ids = 0`；
 - `route-local ordering/merge/renderFactActions = 0`；
 - message/resource/fact/result 的 fingerprint 只因 shell title、roster、policy hint 和
@@ -1536,17 +1627,26 @@ item id + kind + order + status + rendererKey + disclosureCount
 - virtualizer 只裁剪 visible window，不改变顺序、batch、TerminalReport generation 或
   stable identity。
 
+长历史与子 Agent 采用同一个 root-window contract：normal、private、channel 都把唯一
+feed ref 传给 shared Timeline；展开的 `subAgentActivity.childItems` 先被纯 display-model
+投影为 `header + child rows`，再进入根 virtualizer。禁止 child mount 第二个 Timeline 或
+virtualizer。虚拟化启用判据使用 potential row count，避免 collapsed/expanded 切换 DOM
+模式。500-child 用例的 CI 硬门槛为 mounted child rows `<=48`、一个 root virtualizer、零
+nested scroll owner，并能定位首尾 child；展开 p95 `<100ms` 记录为本机性能证据。
+
 ### 4.14.4 E4 测试文件和断言
 
-新增/扩展以下测试：
+以下为本轮已确认存在的测试入口；所列断言是验收要求，不代表目前每个入口已经覆盖
+整行。执行时按具体测试名确认覆盖，缺口在同一模块补齐；不为追随旧计划另建重复文件：
 
 | 测试 | 类型 | 核心断言 |
 | --- | --- | --- |
-| `packages/conversation-ui-core/test/conversation-timeline-surface-parity.test.mjs` | unit | 同 fixture 五种 surface 的 kind/order/status/renderer fingerprint 相同 |
-| `apps/web/test/conversation-surface-single-owner.test.mjs` | component/source contract | 每个 surface 只有一次 mount；无 synthetic private/channel thread；无 `renderFactActions` |
-| `apps/web/test/conversation-timeline-message-presentation.test.mjs` | component | paragraph/list/code/path/resource、copy/edit/feedback callback 不破坏 item identity |
-| `apps/web/test/conversation-timeline-protocol-actions.test.mjs` | component | enum + callback 只在 owning row/control slot 出现，不能生成外部重复卡 |
-| `apps/web/e2e/ui2-conversation-surface-parity.spec.ts` | E2E | normal/private/channel/topic/branch/child 的真实 DOM 只有一个 feed scroll owner |
+| `packages/conversation-ui-core/test/canonical-transcript-projector.test.mjs`、`surface-policy.test.mjs` | unit | 同 fixture 五种 surface 的 kind/order/status/renderer fingerprint 相同；policy 差异不改事实 |
+| `apps/web/test/channel-timeline-renderer-contract.test.mjs`、`conversation-timeline-semantic-contract.test.mjs` | source contract | 每 surface 一次 mount；唯一 shared shell/root window；无 synthetic thread 或第二 fact-action JSX slot |
+| `packages/conversation-ui-core/test/message-body.test.mjs`、`message-presentation.test.mjs` 和 Web 内容 E2E | unit + E2E | paragraph/list/code/path/resource、copy/edit/feedback callback 不破坏 item identity |
+| `apps/web/test/channel-protocol-timeline-status.test.mjs` 与 `apps/web/e2e/channel.spec.ts` protocol actions | unit + E2E | kind-specific status；enum + callback 仅 owning row 调用；真实 mutation 与 pending guard，无外部重复卡 |
+| `apps/web/test/conversation-timeline-display-model.test.mjs` | unit | collapsed/expanded flat rows、parent-isolated key、depth=2 diagnostic、collapsed child location |
+| `apps/web/e2e/app.spec.ts`、`teammates.spec.ts`、`channel.spec.ts`、`ui2-conversation-work-cell-activity.spec.ts` | E2E | normal/private/channel/topic/branch/child 的 DOM、窗口化、anchor、disclosure 和单一 feed scroll owner |
 
 失败路径必须单独断言：缺真实 Thread、缺 message lineage、过期 capability、未知 kind、
 late event、depth=2、partial fan-in 和 execute 后 duplicate summary 均显示结构化 blocked/
@@ -1555,10 +1655,10 @@ waiting，而不是静默移除或回退到 agentMessage。
 ### 4.14.5 与现有 WIP 的关系
 
 当前实现 worktree 的 evidence fold、TerminalReport、atomic projector、batch 和 shared
-renderer 改动继续作为输入；本节不要求重写这些模块，也不改变 SQLite 拓扑。normal/private
-surface-level mount 和 private synthetic fallback 已在当前切片收口并通过 web contract；
-尚未通过的是 channel/topic/branch caller 收口、E5 recovery/fan-in 和 packaged macOS 真实
-验证，不能用已经通过的 unit test 或截图替代。
+renderer 改动继续作为输入；本节不要求重写这些模块，也不改变 SQLite 拓扑。已有
+surface-level mount、真实 Thread scope 和 protocol actions 与本轮统一 scroll shell、
+child parent-flatten、pending sequence、effective-attempt 折叠一起接受 §6.2 的 combined
+验证，再执行 §6.3 的 packaged macOS 真实验收。历史测试和截图不替代当前证据。
 
 ## 4.15 Codex-parity 实现启动计划（本次设计锁定）
 
@@ -1571,7 +1671,7 @@ surface-level mount 和 private synthetic fallback 已在当前切片收口并�
 | E1 | 折叠 `tool_start/update/end`，同一 action 原地更新并触发 invalidation | `packages/daemon/src/features/runs` | duplicate/late/equal-revision/terminal-fence | 人：1 天 / Codex：30 分钟 |
 | E2 | 生成 atomic snapshot 和可逆 command/exploration batch | `packages/conversation-ui-core` | split reason、expand identity、completion 隔离 | 人：1 天 / Codex：30 分钟 |
 | E3 | 完成 `mountConversationTimeline`、三种 primitive、Host source viewer | `apps/web/src/shared/conversation/timeline` | exhaustive registry、Markdown/code/path、a11y、single scroll owner | 人：1.5 天 / Codex：45 分钟 |
-| E4 | normal/private/channel/topic/branch/child 只保留一次 surface-level mount | `apps/web/src/features/*` | 同 fixture fingerprint、无旧 caller/synthetic thread | 人：1.5 天 / Codex：45 分钟 |
+| E4 | normal/private/channel/topic/branch 每 viewport 一次 surface-level mount；child 进入根 display rows | `apps/web/src/features/*` | 同 fixture fingerprint、无旧 caller/synthetic thread | 人：1.5 天 / Codex：45 分钟 |
 | E5 | 接 approval/retry/SSE reconnect/daemon restart/fan-in/TerminalReport | `packages/daemon`, `packages/core` | latest generation、required evidence、structured blocked | 人：2 天 / Codex：1 小时 |
 | E6 | 启动 packaged macOS，执行真实 N/P/C/A/R/F/E 案例并保存证据 tuple | `apps/desktop`, `docs/design/ui2.0升级/evidence` | `simulation=false`、截图+semantic+lineage+脱敏日志 | 人：1 天 / Codex：30 分钟 |
 
@@ -1599,7 +1699,7 @@ desktop         -> packaged shell + real evidence collector
   `BatchSplitReason`，且 completion/fan-in 永远读取 `atomicItems`。
 - [ ] `T3` 让 `ConversationTimeline` 只接受 immutable snapshot；实现 Markdown AST、事实行、
   结果行和 depth-1 nested renderer，删除 generic message fallback。
-- [ ] `T4` 把 normal/private/channel/topic/branch/child 的 caller 收口到一次
+- [ ] `T4` 把 normal/private/channel/topic/branch 的 caller 收口到每 viewport 一次
   `mountConversationTimeline()`，并为每个 surface 加 `timelineOwnerCount=1` 断言。
 - [ ] `T5` 接通 Host capability 二次校验和 typed interaction；EnvironmentPopover 只显示
   active action 的两行，不复制历史。
@@ -1620,7 +1720,7 @@ desktop         -> packaged shell + real evidence collector
 
 | 领域 | 必测场景 | 证据 |
 | --- | --- | --- |
-| 内容 | paragraph/list/fence/inline code/path/link、user/agent 左对齐 | screenshot + semantic + component |
+| 内容 | paragraph/list/fence/inline code/path/link、用户头像右/Agent 头像左、正文内部左对齐 | screenshot + semantic + component |
 | 事实 | command/live update/file/diff/read/MCP/collab | stable id + source refs |
 | 结果 | reply → final agentMessage；execute → 单一 terminalReport；report 后无重复 summary | result renderer + semantic owner count + lineage |
 | 状态 | pending/running/waiting/succeeded/failed/cancelled/blocked | text + icon + detail |
@@ -1703,7 +1803,7 @@ scroll ownership。注释必须与本计划中的状态图同步，避免后续�
 ## 6. Packaged macOS evidence contract
 
 ```text
-docs/design/ui2.0升级/evidence/conversations/packaged-macos/real-ui-<timestamp>/<case-id>/
+/private/tmp/ling-transcript-v3-acceptance-<timestamp>/<case-id>/
   case.json
   build.txt
   screen-01.png
@@ -1727,6 +1827,10 @@ docs/design/ui2.0升级/evidence/conversations/packaged-macos/real-ui-<timestamp
 
 mock/API 截图可以辅助 debug，但不能替代 packaged macOS 证据。
 
+本轮使用新的独立证据目录；此前 conversation evidence 目录属于受保护的既有 WIP，
+不读取、不覆盖、不把其历史截图当作本轮测试。最终给用户可直接打开的案例索引、App
+名称和会话名称；目录的持久留存位置在交付 manifest 中注明。
+
 ### 6.1 验证命令与证据门槛
 
 每个阶段先跑窄范围，再扩大范围；命令失败必须保留原始输出，不得用截图替代：
@@ -1747,6 +1851,175 @@ corepack pnpm --filter @ling-stack/desktop package:mac
 macOS 至少完成一轮真实案例，并且每轮 evidence tuple 的 `case.json` 写明 build hash、
 thread/run/attempt、测试输入和是否为 simulation。全量 Web E2E 若含既有基线失败，必须
 在报告中分开列出，不能混入 typed transcript 的通过结论。
+
+### 6.2 当前 combined WIP 的 E1–E5 验收台账（2026-09-05）
+
+本节是当前验收的唯一汇总入口。上文 `[covered]`、`137/137`、`93/93` 等只记录历史
+切片，不能证明下列 combined 版本完成。此次文档审查已核对 production source 和现存
+测试文件，但没有重跑测试；以下各项均需执行者关联本轮命令输出、测试名和代码指纹，
+才可改为通过。不存在同名文件的旧计划测试名不是覆盖证据，应映射到现存用例或补缺。
+
+| Gate | 本轮必须验证的行为 | 当前代码/现存测试入口 | 本轮验收状态 |
+| --- | --- | --- | --- |
+| `G-00` 基线 | fetch 后记录 remote main、实现 HEAD、dirty diff 指纹；证明 remote main ancestry 或列明冲突；package 与被测源码同一构建 | Git ancestry、build manifest、package manifest | 待关联本轮证据 |
+| `G-01` E1 evidence | start/update/end 一个 actionId；accepted update 增 revision 并 invalidation；重复/乱序/equal-conflict/迟到事件不越 terminal fence；bounded/redacted tail | daemon `execution-action-command-evidence.test.mjs`、Core/Daemon evidence 相关测试 | 待 combined 复验 |
+| `G-02` E1 publication | 专用 result Item、report、supersession、invalidation 原子提交/回滚；migration round-trip；不再 assistant-message 双写 | Core `terminal-report-migration/store/idempotency.test.mjs`；Daemon `terminal-report-publication/recovery.test.mjs` | 待 combined 复验 |
+| `G-03` E2 projection | scope/anchor/owner/attempt/revision/context 校验；latest committed generation 严格 join；reply/execute 分流、重复 summary 抑制；所有 batch hard boundaries 与 exact child ids | UI-core projector/batching 与 `terminal-report-transcript.test.mjs` | 待 combined 复验 |
+| `G-04` E2/E4 顺序 | private 与 pending channel slice 从 local sequence 开始且只加一次 base；`feedIndex > 0` 时 narration/plan/fact 顺序正确 | Web `channel-timeline-renderer-contract.test.mjs`、normal/private projection 测试 | 待 combined 复验 |
+| `G-05` E3 render/Host | exhaustive kinds、paragraph/list/code/path、status copy、唯一 result/action owner；模型路径 copy-only；Host capability 的 scope/TTL/epoch/symlink 二次校验与 viewer | Web semantic/render/source-ref 测试；Web/Daemon `workspace-file-capability.test.mjs`；file/diff E2E | 待 combined 复验 |
+| `G-06` E4 单一 UI | normal/private/channel 生产调用共享 `ConversationTimelineFeed`；shell 无 `useVirtualizer`；每 viewport 一个 Timeline 与 scroll owner，root-only window；无旧 VirtualFeed/WorkCell caller | 三份 Feed 源码；Web surface contracts；`app.spec.ts`、`teammates.spec.ts`、`channel.spec.ts` | 待 combined 复验 |
+| `G-07` E4 parent-flatten | encoded parent-scoped row keys 不随 revision 变；manual disclosure 跨 SSE/虚拟卸载保留；collapsed child locator 先展开再定位；depth=2 diagnostic；retain key 清理有界 | `conversation-timeline-display-model.test.mjs`、`conversation-timeline-sub-agent-disclosure.test.mjs`、`conversation-timeline-view-retain-keys.test.mjs` | 待 combined 复验 |
+| `G-08` E4 长历史/性能 | normal 120/private 106/channel 121 行首尾可达、older-load、latest、键盘/鼠标保持正常；动态高度 anchor 漂移 ≤4px；500-child 根 virtualizer=1、nested=0、mounted child≤48、首尾可达、SSE 后 disclosure 保留 | `app.spec.ts`、`teammates.spec.ts`、`channel.spec.ts`、`ui2-conversation-work-cell-activity.spec.ts`；本机 20 次展开 p95 和 10/1,000/10,000 atomic 基准 | 待 combined 复验；性能数字必须实测 |
+| `G-09` E3/E5 protocol | 五个 typed mutations 仅 owning row 可调用；disabled/in-flight/aria-busy；kind-specific status；supersede 201/等价200/stale409，reject CAS，非法 status400；Inspector 无重复入口 | `channel-protocol-timeline-status.test.mjs`、Core decision/handoff idempotency tests、API client、Daemon channel tests、`channel.spec.ts` protocol actions | 待 combined 复验 |
+| `G-10` E5 completion | 同一 logical step/Turn 先选有效 attempt，再跨 required steps severity fold；repair succeeded 可替代其 failed primary，无关 success/validation 不能覆盖其他失败；partial fan-in 不成功，ready-only 明确 blocked | Daemon `terminal-report-evidence.test.mjs`、channel workflow/fan-in integration、UI-core TerminalReport tests | 待 combined 复验 |
+| `G-11` E5 recovery | running 时 SSE 中断/重连和 daemon restart；durable action/revision/fence/generation 收敛；deny/cancel 停止旧 runner；late end audit-only；restart 后旧 capability 无效 | Core `continuity-recovery.test.mjs`、Daemon TerminalReport recovery/channel tests、Web reconnect E2E | 待 combined 复验；真实进程/GUI 另需 E6 |
+| `G-12` 合并质量 | 相关 Core/Daemon/API/UI-core/UI-react/Web tests、typecheck/build；Desktop Node/renderer/a11y；docs/public/licenses/dependency-security/i18n；diff whitespace | 各 package 实际 scripts 与 root `check:*`；必要时为受保护路径显式限定检查范围并记录限制 | 待关联本轮全部 required gates |
+
+`G-10` 的 severity 聚合不能退化为“任何历史失败永远压过成功”：必须证明 supersession
+lineage；也不能退化为“最新 completed 覆盖整个 participant”。同一 participant 的两个
+独立 required step 中，一个 failed/blocked、另一个 completed 时，结论仍不能 succeeded。
+
+### 6.3 E6 packaged macOS 完整案例清单
+
+以下全部为待验收；用例表给出证明要求，不代表已经执行。可在同一真实会话中覆盖多项，
+但每个 case id 都要指向相应截图时间点、语义状态和 SQLite lineage。运行模型使用本轮
+用户指定的 OpenAI-compatible relay；manifest 只记录 provider/base URL、model 和
+`apiKeyRef=env:OPENAI_API_KEY`，不记录密钥。不得写入源码、SQLite、配置 JSON、日志或截图。
+
+| Case | 真实客户端操作 | 必须保留的断言/证据 |
+| --- | --- | --- |
+| `N-01` 内容 | 普通会话要求多个段落、标题/列表、inline/fenced code、链接及模型提及路径 | 用户轨道靠右、Agent 轨道靠左，正文内部左对齐；无头像时不占空列；换行/缩进/语言/copy 正常；basename+icon+完整路径 tooltip；模型路径不自动获导航权限 |
+| `N-02` 真实任务 | 连续 read×3、command start/update/end、创建/修改文件并打开 diff | command 原 row 更新；真实命令/cwd/exit/output 可读；文件/差异/输出可追溯；成功折叠、活动详情与状态正确 |
+| `N-03` 连续上下文 | 同一普通会话连续追问，给出项目关键事实/约束，跨超过 8 条消息继续完成相关任务并重开历史 | 关键事实正确使用且可追溯到历史/context source；任务产物与约束一致；明确选择性上下文边界，不能以一句“记得”证明记忆 |
+| `P-01` 私聊一致 | 在私聊真实执行与 `N-01/N-02` 等价的内容、命令和文件任务 | 同 kind 的 renderer/status/disclosure/geometry 一致；差异只为 participant chrome；真实 LingThread，无私聊专属卡 |
+| `C-01` 多 Agent | 频道至少两个 required participants 各有 narration、read、command/file/tool；展开每个 child | 每个动作有描述、icon、状态、命令/文件/输出；child 为根窗口 depth-1 rows，共享 registry；真实 participant/run/attempt lineage |
+| `C-02` 子 Agent 异常 | 实际 delegated attempt 无可执行证据/返回 structured blocked；验证 depth limit 的真实可触发路径 | 无 evidence 不 succeeded；说明缺失与下一步；depth=2 仅一个 diagnostic。若 depth=2 只能通过 fixture 注入，该子项标 simulation/未完成，不能冒充真实 Agent 行为 |
+| `C-03` 频道 scope | 从频道 root 新建 topic/reply 与 branch，分别继续任务、返回 parent | 真实各自 LingThread/anchor；不复制 parent transcript；相同 UI/状态/文件能力，root/topic/branch 都只有一个 viewport/Timeline |
+| `C-04` 协议操作 | 在真实记录上 advance/cancel workflow、retry step、supersede/reject decision | 操作只在 owning row；pending disabled/aria-busy；无 Inspector 重复入口；状态与 API/SQLite 最终记录一致，不能把 active decision 当 working |
+| `B-01` batch | 观察邻近安全 reads/commands 合并；再插入 narration、失败/审批、retry、不同 Agent/run/step 或 consequential action | 仅允许的邻近动作合并；exact child ids/sourceRefs 可还原；失败/审批/后果动作不被隐藏；contextSegmentId 与 fan-in 不受 batch 影响 |
+| `T-01` typed 内容 | 实际触发 plan、允许展示的 reasoning、MCP/dynamic/collab 工具、image view 和 compaction；逐项记录可用工具/触发条件 | 每种 kind 命中共享 renderer；工具结果与模型叙述分层；compaction 可回链保留历史。未配置/未触发的 kind 留待验，不能以静态消息或 fixture 代替 |
+| `A-01` 审批 | 在实际 gated action 上分别 pending→allow、deny、expired/cancel | 唯一 Composer/dialog 决策 owner；Timeline 等待状态可定位；deny/cancel/expiry 后旧 runner 不再执行新动作或追加成功结果 |
+| `R-01` retry | 实际失败 attempt 后修复并 retry 成功；保留旧失败历史 | 主结果使用 latest effective attempt；旧 attempt 可审计；无关 validation/success 不消除另一个 required-step failure；最终只有一个有效 result |
+| `R-02` SSE | 长命令仍 running 时断开传输，再重连 | 断开前/中/后截图与 cursor；同一 action row/lineage，revision 单调、terminal fence 不回退；disclosure/focus/scroll anchor 保持；不追加“恢复成功”结果卡 |
+| `R-03` daemon | 长命令仍 running 时重启真实 QA daemon，重新连接 | 记录旧/新 PID 与 epoch；SQLite facts/result generation 正确恢复；已丢进程不能伪装仍执行或成功；旧 capability 拒绝、新 capability 按权重签；disclosure/anchor 恢复 |
+| `F-01` fan-in | 两个 required participants 不同时间完成，至少观察一次 partial；再完成或显式 blocked | partial 明确 Waiting 和缺谁；required effective evidence 到齐才 settle；TerminalReport、专用 result Item、generation/fingerprint/sourceRefs 严格 join；batch/ready 文本不能完成任务 |
+| `V-01` Host viewer | 真实点击文件、diff、artifact，测试合法资源与过期/跨 workspace/重启后的旧引用 | tooltip 完整路径；Host 二次 scope/realpath/permission/TTL/epoch 校验；合法资源跳转；拒绝清楚可理解，无敏感输出 |
+| `H-01` 长历史 | 三种会话滚动首/尾、向上加载、回到底部、滚动中 streaming、动态内容展开、定位折叠 child | 每个 surface viewport=1、shell virtualizer=0、长历史 root virtualizer=1、nested Timeline=0；离底部>24px 不抢位置；anchor 漂移≤4px；键盘/focus/选择保持 |
+| `H-02` 密集 child | packaged 窗口内检查大量 child rows 的展开/折叠、首尾定位和 SSE 刷新 | 500-child 的 root=1/nested=0/mounted≤48 与 p95 数据属于明确的规模验收。若 500 项来自 synthetic fixture，标 simulation=true 作为性能补充；真实多 Agent 交互仍由 C-01/F-01 独立证明 |
+| `E-01` 环境/窄窗 | active action 下长 cwd、窄窗口、light/dark、reduced motion；用键盘开关 EnvironmentPopover | 最多两行 active ambient；terminal 后关闭；不复制 summary/输出；无水平溢出或第二纵向滚动，Escape 回到触发点，状态不只靠颜色 |
+| `J-01` 完整小项目 | 在独立 QA 项目中从要求→规划→创建代码→运行测试→失败修复→多 Agent 验证→最终交付连续完成，再追问修改 | 保留真实项目文件、命令 exit/测试结果、参与者证据及单一 TerminalReport；用户可以重开客户端逐轮检查全过程，不只看到预置完成截图 |
+
+每个案例都检查 Composer 下方、EnvironmentPopover、Inspector 不重复正文、事实或总结。
+截图至少含执行中和终态/展开态；reconnect/restart/approval/partial fan-in 还要保留中间
+状态。`semantic-state.json` 应带 kind/id/status/revision/rendererKey/depth/disclosure 和
+viewport/root/nested owner 计数；`lineage.json` 带 thread/turn/action/run/attempt/participant/
+workflowStep/sourceRefs、report/resultItem/generation，非适用字段明确 `null`。
+
+验收记录区分 `pass`、`fail`、`not_run`、`simulation`，不以总体 green 隐藏单项未执行。
+测试输入、packaged bundle 路径、version/build hash、daemon epoch/PID、relay model、日志
+时间范围与截图必须对应同一轮。不能复用旧构建、手工拼图、API-only 截图或直接改 SQLite
+制造成功；敏感字段扫描通过后再交付截图和日志。
+
+未决设计判定：无。单一 UI/viewport/root window、child depth 与 completion authority
+已经确定；尚未完成的是上表的执行证据和可能暴露的实现缺口。若真实工具/模型无法触发
+某项，保留该项 `not_run` 并说明缺少的运行能力，整体 E6 不提前标记完成。
+
+### 6.4 本机查询能力增量（2026-09-06，未实现/未验收）
+
+来自任务「定位并确认问题修复状态」的本机 IP 查询盲区纳入当前计划，细节见
+[能力整合方案](channel-execution-capability-integration-plan.md)。这是执行入口的缺口，
+不是换 UI renderer 就能修复的问题，也不是重新实施 Continuity v2。
+
+本增量沿用 `D0 → E1 → E2 → E3/E4 → E5 → E6`，不另起一套阶段编号：先锁定能力
+contract/权限/失败 fixture，再迁移 shell 安全模块、接 Host executor，最后走现有原子
+evidence、统一 Timeline 和 TerminalReport。旧 matcher 的自然语言发现职责最终删除，
+安全校验迁出且保护测试通过后才删除原文件；不保留二线 fallback。
+
+| 新增 case | 验收范围 | 当前状态 |
+| --- | --- | --- |
+| `K-01` 语义入口 | 查询本机 IP/网卡实际调用 Host 能力；询问 IP 概念或“先不要执行”只回复 | not_run |
+| `K-02` Host 结果 | IPv4/IPv6、多网卡、loopback、空结果、异常；无 shell/公网/MAC；有采集时间与截断说明 | not_run |
+| `K-03` 权限与输入 | 未授权、跨 participant/scope、未知能力、非法字段、缺命令、runner 不支持，均给精确原因 | not_run |
+| `K-04` shell 保护 | exact-command、executable policy、引号/转义、危险 shell 结构与审批/evidence 一致；生产旧 matcher import 为零 | not_run |
+| `K-05` 事实与恢复 | action identity、revision、retry/迟到事件、SSE/restart、结果不重新采集冒充旧事实；required fan-in | not_run |
+| `K-06` surface parity | normal/private/channel/child 同一 tool renderer；私聊无额外 Agent；结果不出现在 Composer 或环境浮窗 | not_run |
+| `K-07` packaged macOS | 新包真实自然语言查询，执行前后截图、API/SQLite lineage、模型/Host 证据和权限失败案例 | not_run |
+
+上述用例是 §6.2 `G-00–G-12`、§6.3 `N/P/C/B/T/A/R/F/V/H/E/J` **之外的增量**，
+不能覆盖、删减或把原表未完成项改成 pass。新能力的源代码、fixture 和新包须分别验收；
+本轮仅定位与设计整合，不以 matcher probe 或复制按钮 QA 冒充能力端到端通过。
+
+### 6.5 结构化提问与双平台沙盒增量（2026-09-07）
+
+来自「查找 Codex 问题说明」的结构化提问设计与「确认 Ling 沙盒与 Codex 处理方式」的
+原生沙盒 T0–T6 一起纳入。详见[联合细设计](conversation-user-input-and-sandbox-integration.md)
+和[平台计划](platform-native-sandbox-v1-implementation-plan.md)，不合并来源任务旧分支。
+
+- 同一总计划、独立模块：问答是用户决定，审批是权限事实，工具结果是执行事实；三者不互相代替。
+- D0 统一 scope/participant/run/attempt、状态、N03 新快照及 approval/policy 引用；接着 E1 存储，
+  E5 安全让出/定向恢复，平台 T2–T4 受限执行，E2–E4 共享 renderer/settings，最后 E6 联合验收。
+- normal/private/channel/child 共用问答 UI；子 Agent 答案不广播，只暂停有依赖的工作。
+  问答不进入 batch，不增加嵌套 Timeline，不用 Composer/Inspector/环境浮窗重复正文。
+- 待输入不直接复用等待 terminal run 的普通引导队列；回答 receipt 与 delivery 分开，
+  重启补投幂等，旧问题/取消/撤销权限不能唤醒旧 attempt。
+- macOS 和 Windows 均在首版交付；Windows 实机由同事验收、UAC 由其显式操作。
+  沙盒不可用时明确拒绝，不回退原始 Pi/宿主工具；不以配置 true 代替隔离证据。
+- U-01–U-10 和 S-01–S-06 全部 not_run；S 组须覆盖平台计划 §10 全部断言。
+  它们是 §6.2、§6.3、§6.4 的增量，原 G-00–G-12、packaged 全案例、K-01–K-07 一项不减。
+- U0 内容协议与 U1-A 原子存储已完成本地源码切片：25 项协议专项、20 项 SQLite 专项 + 1 项 workflow source guard；
+  Contracts 75/75、Core 529/529、UI-core 137/137、Web 216/216、Daemon 相关回归 40/40，
+  五包 typecheck 通过。包括未知字段及来源快照完整性的红→绿。
+  完整 U1 delivery/dependency、Runner/UI 未接，未更新 QA 包，不标完整 U 用例通过。
+  核心运行状态 consumer 审计已落盘，完整状态接线仍未完成；见联合设计 §8.1/§8.2/§8.3
+  及[运行生命周期细设计](conversation-user-input-runtime-lifecycle.md)。
+- U2-P 前置修复：真实 Pi SDK 与内存 SSE 复现 3 红并修复（启动前取消仍发请求、Host 边界异常被吞后仍继续）。
+  生命周期专项 13/13、Runner 全量 51/51，Runner build/typecheck、Daemon typecheck 通过；独立只读审查无阻塞项。
+  U2-P 当时未新增 yielded；后续 U2-C 的新增状态与原子存储如下。完整安全让出/答案恢复未接，
+  未开放提问工具、未打包/启动 App，不标 U2/U3 通过。
+- U2-C Core 原子等待切片：migration 132、checkpoint 原子提交、旧 fence 资源/事件隔离、
+  Turn sibling 等待投影、独立 workflow 状态与 lease、专用迟到审计和取消隔离已实现。
+  Core 554/554（含暂停专项 25）、Contracts 75/75、UI-core 137/137、Web 219/219；
+  Daemon 取消/审计 5/5、审批恢复/监督器 9/9，相关构建和状态消费者类型检查通过。
+  [交接证据](../../output/user-input-atomic-wait-u2c-handoff-20260907.md)列出尚未接通的 Host/Runner/U1/U3/U4。
+  此为源码切片，不减少 G-00–G-12、packaged 20 案、K-01–K-07、U-01–U-10、S-01–S-06。
+- N03 prepared-request、G-08 batch root windowing 和 Daemon 7 项失败仍保留原状态；
+  U2 captured hydration、两执行入口的原子写入准入与先获准后写总结已经继续落地，详见
+  [生命周期 §8](conversation-user-input-runtime-lifecycle.md)与
+  [本轮证据](../../output/user-input-execution-admission-u2-handoff-20260907.md)。
+  此切片不完成完整暂停、投递/恢复、共享问答 UI，也不清除原 7 项能力失败。
+  不能因沙盒计划加入便认为所有 execute/fan-in 问题自动修好。
+
+本次已确认整合范围；实施前的状态/Runner 边界、T0 可构建性及外部测试授权见联合设计末尾。
+
+U4-B1（2026-09-08）：共享问答 DTO 合并、request/delivery 防回退、同版本冲突关闭、
+无正文撤回标记、Host cursor 分页范围、读取 epoch 和 ordinary/private/channel/topic 数据
+接线已实现；详见联合设计 §8.13 与 [交接](../../output/user-input-u4b1-handoff-20260908.md)。
+这不是完整 U4-B：typed rows/registry、child hydration、可关闭问答窗口及所有 packaged
+问答案例仍未完成；不开放真实提问工具，不把数据回归计为 U-01–U-10 GUI 通过。
+
+U4-B2-A（2026-09-08）：独立问答 typed union/projector、detail/child hydration、
+normal/private 共享历史 renderer 与 hover/focus copy 已实现；UI-core 153/153、
+Web 257/257，浏览器合成 DTO 案例 4/4、8 图检查。生产 channel feed 接线、窗口、
+实际投递/receiver ACK 及新包真实案例仍未完成，继续纳入本次计划，不计 U-01–U-10
+端到端通过。细节见联合设计 §8.14 与 [交接](../../output/user-input-u4b2a-handoff-20260908.md)。
+
+### 6.6 Harness 四项可靠性增量（2026-09-07）
+
+按用户最新结构化选择，将摘要失败/预算复核、Pi 单次长 Run 压缩、Memory 召回与新鲜度、
+工具结果预算纳入当前总计划；自动经验提炼和语义检索后置。完整细设计、模块边界、H0–H5
+执行顺序及 H-01–H-06 退出条件见 [Harness 联合设计](harness-context-reliability-integration.md)。
+H1-A 执行协调层已验证（11 项专项、47 项相关回归）；完整 H1–H4 尚未完成，完整验收仍为
+not_run。详见细设计 §7.1；不得用旧包或单测替代新包真实案例。
+复用 Ling/Pi/SQLite，原 G/K/U/S/packaged 验收一项不减，既有权限待答仍独立有效。
+
+### 6.7 Skills 与自动审核完整链路（2026-09-08）
+
+按用户新要求纳入 SK1–SK4 与 AR0–AR6，细设计、Codex 固定 SHA 依据、模块边界、
+错误/恢复路径、SK/AR 验收见 [联合实施增量](skills-autoreview-harness-integration.md)。
+自动审核目标是“通过后自动批准并继续”，不是只给建议；实际启用需 reviewer/provider 和策略
+配置及完整安全验收。复用 U/H/N03/T，原 E/G/K/U/S/H/packaged 案例不减。
+SK/AR 当前只完成设计接线，不标实现；Memory 已按同文 §5 确认的共享范围修复误拦截，
+73 项专项通过，不替代全量回归与真实模型/新包验收。
 
 ## 7. Commit 形状
 
@@ -1790,6 +2063,318 @@ renderer 和大范围 route cleanup 混成一个不可审查提交。
 
 ## GSTACK REVIEW REPORT
 
+### N03 后续切片：accepted-input 持久冻结（2026-09-06）
+
+契约依据：typed transcript 详细设计 §22。当前已封存/安装 QA 包不包含本切片；源码与
+包状态分别报告，不复用旧包验收结论。
+
+- [x] **N03-A1 红测**：no-Run 同 key、新增历史 event 后 fingerprint 不变；关闭重开 DB
+  后不调用 collector；两连接竞争只产生一份 source/snapshot；changed payload 拒绝。
+- [x] **N03-A2 core**：复用 `conversation_context_snapshots`，区分 `fork_context` 与
+  `normal_conversation_accepted_input`/version 1；增加原子 ingest+capture+snapshot facade，
+  同连接同步事务，无 await，附件归属一起提交或回滚，capture/insert 失败全回滚，snapshot 永不覆盖。
+- [x] **N03-A3 daemon**：normal/replacement/local-user continuation 共用 accepted snapshot；
+  no-Run replay 不再 rehydrate；缺失、未知版本、篡改、错误用途、跨 scope fail closed；
+  accepted/Run 双证据一致，新 Run 带内部快照 ID，旧 Run 仅恢复原 durable request。
+- [x] **N03-A4 验证**：独立红→绿、SQLite migration/reopen/rollback/fork 兼容、core/daemon
+  focused/typecheck/build；单独列实际文件表和新产物状态。构建使用 `output/.build-lock`。
+  本切片证据：`output/n03-accepted-input-handoff-20260906.md`；core 全量 496/496，
+  accepted 原子专项最终 12/12（含全量之后新增的 COMMIT 失败用例），daemon 聚焦 68/68。
+  独立最终代码复审尚未完成；以上为实现者验证，不等同于重新打包或真实 QA 验收。
+- [ ] **N03-P prepared request**：按 §22.3 首次持久化 materialization/config 后的最终输入；
+  当前切片不得假装该要求已完成，也不提前创建假 Run/WorkUnit 代替 context snapshot。
+  - [x] **P-store**（2026-09-08）：request/execution 两阶段首次写定，完整前驱指纹链，
+    同步 SQLite 事务、只读序列化保护、reopen/rollback/跨 writer 收敛；复用现有表。
+  - [x] **P-request**（2026-09-08）：普通/新建/编辑/local-user intervention/manual resume
+    接统一 DTO 与准备 owner；no-Run 不重复配置/附件准备；Run/prepared 双证据校验；
+    编辑 revision 幂等并保留 fileRefs；手动恢复带 accepted 与 prepared 引用；不写凭据。
+    Core 全量 778/778；最新 Daemon 入口专项 55/55；build/typecheck 通过。
+    全量与保留失败详见 `output/internal-chain-n03-request-handoff-20260908.md`。
+  - [x] **P-execution-Pi**（2026-09-08）：真实 SDK 准备器接入 Orchestrator，execution 在
+    WorkUnit/Run 前首次写定；no-Run/reopen/并发获胜、当前 provider/MCP/Memory/Skill/审批复验，
+    新旧 Run 引用对照；初始 schema 与 handler 分离。新增 pre-Run SSE 必达收尾，见设计 §22.3.2。
+    Runner 全量 125/125，Core 全量 779/779；最终普通输入/execution/SSE/媒体/停机专项
+    79/79；Daemon 最终全量 1646/1653，仍有原 7 项 workflow capability gate 失败。
+    Daemon 最终全量结果与保留项记录于 `output/internal-chain-n03-execution-handoff-20260908.md`。
+  - [ ] **P-execution-other-adapters**：外部 Codex/OpenClaw 尚无自身准备/消费合同；新的
+    normal prepared 输入明确拒绝，不伪装 Pi 边界、不静默丢弃 system/append/MCP 字段。
+    外部 Relay 运行授权仍待单独决定；本次不调用外部模型或变更配置。
+- [ ] **N03-T 后续 publication**：canonical terminal assistant publisher/payload/UI、system
+  source 与真实跨 thread fork seed 分别验收，不能以 A1–A4 全绿称全 N03 完成。
+  - [x] **T-system 内部接线**（2026-09-08）：持久 intervention/父 Run 来源验证；系统输入
+    独立 accepted/request/Pi execution，保留 system actor，no-Run/reopen 不复用父 prompt；
+    hydration 作为 context 数据；详情 DTO 保留 system role、按 intervention ID 去重（含
+    no-Run/被替代 Turn）；终态报告来源对应关系复验和系统报告重开唯一性已验证。
+    Core 全量 780/780、Web 324/324、联合专项 141/141；最终 Daemon 1655/1662，原 7 项
+    workflow 失败名称不变。没有新增表或修改真实历史，没有新包/真实模型/GUI 证据。
+    详见 `output/internal-chain-n03-system-handoff-20260908.md`。
+  - [x] **T-assistant-publication 内部接线**（2026-09-08）：独立 typed narration 契约、
+    固定 Run/Attempt 来源、消息边界/水位；同事务 Item/outbox、retry supersession、
+    重开恢复、回滚、失败/取消和容量错误；终态调用与独立分页恢复 worker，详情 GET
+    只读 canonical 记录。UI 分段复用共享 projection，保留流式 logical ID，单一复制归属，
+    通过 logical/canonical 双身份抑制旧 DTO 双显；没有将 batch 当执行事实。
+    失败执行的文字仍以 committed Item 保留，deliveryStatus 单独表示失败，下一轮上下文
+    不丢失它。内部验证详见 output/internal-chain-n03-narration-handoff-20260908.md。
+  - [ ] **T-assistant-publication packaged 验收**：上述为内部测试，不是新 GUI/真实模型、
+    SSE 断网或真实 daemon restart 的验收；需与联合计划统一在专用 macOS 包验证。
+  - [x] **T-fork 内部接线**（2026-09-08）：原子 normal seed 与用途隔离、稳定 fork key、
+    父来源分组/消息边界/水位、共享 projector 接缝与预算遗漏、子 accepted/request/Pi
+    execution、no-Run/reopen/Run replay、精确 inline 来源与脱敏拒绝、删除依赖保护已验证。
+    Core 797/797，Contracts/UI-core/Web 579/579；Daemon 1675/1682，7 个原基线失败
+    added=[] / removed=[]。详见 output/internal-chain-n03-fork-handoff-20260908.md。
+  - [ ] **T-fork packaged 验收**：fork-only 后继续输入、fork-run、嵌套分支、真实
+    断网/重启与 UI 案例仍需在专用 macOS 包验收。本次没有更新或启动客户端。
+
+### 真实案例后续：总结兜底追溯与原始 Markdown（2026-09-06）
+
+这是一轮局部修复/诊断，不替代 §6.2–§6.4 的完整验收。当前安装的
+`child-order-hover-20260906` QA 包不包含下面新增的 synthesis provenance 修复。
+
+- [x] 只读核验 C02R/C03 的 `runtime_events`：C02R 首次校验返回
+  `terminal_report_unverified_success_claim`，第二次 synthesis 超时；C03 首次 synthesis
+  45 秒超时。两者不是“未配置模型”，也不能算模型总结通过。
+- [x] 修正 fallback builder/coordinator：`synthesis.attemptCount`、provider、model 从真实
+  synthesis result 传递到 report JSON 与 SQLite，不再把已尝试 1/2 次写成 0。
+  fallback mode、Host outcome、fingerprint、校验和超时规则不变；不回写既有历史。
+- [x] 4 条新增回归先在旧实现失败；修复后构造、存储、发布、幂等与恢复相关测试
+  80/80 通过，Core/Daemon 编译通过。
+- [x] SDK SSE 字节级解析与 Ling 事件适配/叙述重放专项 9/9：独立空白 delta、中文
+  分包、Markdown heading 与 fenced code 缩进原样保留；不通过 UI 正则补写源文本。
+- [x] 扩大到 Core 与 Runner 全量本地测试 536/536 通过（包含上述新增用例，数字不累加）。
+- [ ] C03 原始回复中 `。` 后紧接 `###` 的生成问题：持久化事件已确认没有换行，
+  但未保留当时 relay 原始 HTTP payload，不能区分 relay 与模型端的生成原因。
+  本地 SSE fixture 不是这项真实生成验收；需新包新案例验证有效 Markdown 输出。
+- [x] 新 provenance 修复重新打包、安装：已随 `report-privacy-20260906` 安装至专用 QA App；四项 package manifest checks 通过。
+- [ ] 新包实际生成报告的 SQLite/GUI 联合验收：启动涉及测试 Relay 凭据，被安全审核拦截，待用户确认外部端点。
+
+本轮 `git fetch origin main` 后远端为 `44f48cf85e6218b1e07213de588222ef9a7719a8`，
+实现 HEAD `284f8c3c05f468a256adb4cee64c4455da834a4b` 已包含该基线；WIP 未提交。
+命令、结果和剩余项见 `output/terminal-report-provenance-handoff-20260906.md`。
+未决设计判定：无新增设计选择。原全矩阵和隐私/source-ref、prepared request、恢复与
+Host 本机查询等未完成项保持原状态，不以本轮局部通过上调 E6。
+
+### 报告隐私完整链路增量（2026-09-06）
+
+- [x] **Host enrichment 隐私收口**：补回 participant contribution/artifact refs 时携带
+  完整 Host sourceRefs；保留模型弱标记供 validator 拒绝，不能用 Host 覆盖来掩盖降级。
+  两项新增测试修复前 0/2、修复后 2/2。
+- [x] **隐藏检查误重试修复**：只有 model-visible checks 才触发非空 verification 要求；
+  不改变 Host terminal state、证据核验、Completion Gate。新增 core 2 项与 synthesis 1 项均红→绿。
+- [x] **最终源码回归**：Core/UI-core 637/637；隐私与 synthesis 专项 25/25；
+  Daemon 全量 1428/1435，7 项失败名称与此前完全相同，无新增失败；浏览器 fixture 10/10。
+  日志 `output/privacy-final-core-ui-tests-20260906.log` 与
+  `/private/tmp/ling-privacy-final-tests.q38dvb/daemon-loopback.log`；截图
+  `output/playwright/privacy-host-enrichment-20260906/`。均不等于真实 packaged 验收。
+- [x] **Host 增量重新打包**：已生成 `/private/tmp/ling-privacy-package-final.90JR0s/package/mac-arm64/Ling Stack.app`；
+  5 项 manifest checks、严格签名校验通过，未安装/启动。仅 ad-hoc QA，不是公证发布包。
+  Desktop Node 19 文件集合 134/134（不是全部 Node），独立 preview renderer 28/28、a11y 3/3；
+  后两者使用模拟 IPC，不是真实频道验收。日志位于同一临时目录。
+- [x] **最新展示增量打包**（2026-09-07）：重复文件入口修复已随最新 build 打包，
+  `/private/tmp/ling-privacy-display-package.3chGBh/package-manifest.json` 的 6 项 checks 全 true；
+  严格 codesign 校验 exit 0，资源路径测试 4/4。Web 在 ASAR 外，另外核对了 Web 文件树。
+- [ ] **最新包真实验收**：新包未安装/启动，不能沿用旧 manifest/hash 或模拟截图宣称 packaged GUI 通过。
+  外部 Relay 仍待用户明确确认。
+
+- [x] Host 校验不可降级 visibility/sensitivity；同身份引用以最严格标记为准。
+- [x] 总结模型输入按完整 section 过滤受限正文和引用，公开副本不可绕过；不修改 Host 原始快照。
+- [x] Normal/private/channel 共用 DTO 隐私适配及内容投影，正文、命令、路径、详情与复制执行相同策略。
+- [x] Canonical ref 去重保留最严格标记；restricted outcome 保留 Host 终态及本地化安全标题，不显示模型正文。
+- [x] 红→绿回归；Core/UI-core 全量 635/635、Web 全量 211/211、Daemon 报告专项 85/85；构建/类型检查通过。
+- [x] 浏览器 API fixture 10/10：三种 surface 的公开/受限 outcome、展开详情、复制过滤、hover/focus 与 touch。
+  仅为 simulation，不冒充真实模型或 packaged GUI。截图位于 `output/playwright/privacy-20260906/`。
+- [x] 前一版隐私 QA 包已安装；当时源码打包指纹、ASAR、Daemon bundle、Web tree 四项校验通过；旧包可恢复备份。
+  该包不包含本节 Host enrichment/隐藏检查增量；已实测两处源码哈希与旧 manifest 不同。
+- [ ] 新 QA 包启动与真实模型案例：安全审核拒绝通过 FIFO 注入凭据并连接 nobody.host；等待用户明确确认。
+  已停止等待中的凭据传递进程。未改真实历史，新客户端目前未启动。
+- [ ] Daemon 全量仍有 7 项失败（1425/1432）：频道命令/打开目标的能力绑定、participant execute 与 callback publication。
+  记录在 `output/privacy-daemon-full-tests-20260906.log`，不得以报告专项通过代替这些闸门。
+
+完整修复、证据、当前客户端状态见 `output/terminal-report-privacy-handoff-20260906.md`。
+未决设计判定：无新增设计选择；测试端点授权待确认。§6.2–§6.4 全矩阵保持不变，整体仍未完成。
+
+### 报告展示与复制增量验证（2026-09-06）
+
+- [x] change/artifact fallback 与真实 ref 重复入口红→绿：旧实现浏览器 count=2，修后 count=1。
+  helper 在隐私过滤后执行，仅去除冗余 fallback，保留不同真实 refs、原始身份、权限和完整路径 tooltip。
+- [x] Web 全量 215/215；三种会话隐私/复制 fixture 10/10，保存默认隐藏与 hover 显示对照截图。
+  详情 `output/privacy-display-final-handoff-20260906.md`；全部浏览器证据均 simulation=true。
+- [x] G-08 本地长历史/虚拟化子集 4/4：normal 120/private 106/channel 121、anchor ≤4px、
+  synthetic 500-child root=1/nested=0/mounted≤48 与键盘/刷新保留。
+- [x] G-08 本地 p95（2026-09-07）：500-child 20 次展开最终 p95=29.5ms，最大采样挂载 38 行，root=1/nested=0。
+  已补 10/1,000/10,000 叙述与读取的 projector/batch、worker RSS 和原始采样；不将纯投影行数当 DOM 数。
+- [x] 性能根因修复：序号查找从反复全扫描改为所选修订索引；1,000 条的序号读取 1,004,999→8,999。
+  同时红→绿补齐较新修订移入已占用序号的冲突校验。UI-core 136/136、Web 215/215、长历史/性能 E2E 4/4。
+  完整方法、数据和限制见 `.gstack/benchmark-reports/2026-09-07-benchmark.md`。
+- [x] G-08 各规模实际 DOM 测量（2026-09-07）：普通消息 10/1,000/10,000 的首/中/尾逻辑行数完整，
+  3/3 通过，大规模最大挂载17行/351 DOM；读取与命令各3种规模也已采样，原始 action ids 完整。
+- [x] G-08 batch 根窗口切片（2026-09-08）：header/atomic children 共用 root display rows，
+  两层 disclosure 定位、leadingItems、稳定 identity 和 revision/回收保留已接通。原六项规模红测
+  已过，10,000 读取/命令本次展开分别为296/232 DOM、22个事实行，完整10,003行首尾可达；
+  三 scope 定位3/3、原长历史/500-child4/4、Web324/324、UI-core167/167。详见新交接，
+  所有浏览器数据均 synthetic，不是 macOS 模型验收。
+- [ ] G-08 全部 evidence joins 复杂度审计、packaged GUI、完整 channel batch SSE 验收仍未完成。
+  扩展检查有6项既有消息/报告/引用断言失败，已用只读修改前源码覆盖复现，不因批次绿测消除。
+  证据与逐项剩余清单：`output/internal-chain-batch-root-handoff-20260908.md`。
+- [x] 新性能增量已重新打包：`/private/tmp/ling-g08-current-package.bErO54/package/mac-arm64/Ling Stack.app`；
+  manifest 七项内容检查全 true，严格 codesign 通过；UI-core 136/136、Web 215/215、Desktop resource-paths 4/4。
+  本次只是回读已有构建/测试日志，并未再次运行测试。包为 ad-hoc QA，未安装/启动，未真实模型/GUI 验收。
+  源码 fingerprint `d9b62abfcb532fc0e1988d09bb7db49994645566c53f05756c219818b8136e9f`，
+  manifest 位于同一临时目录；本轮后续文档整合不在该历史源码 fingerprint 中，不表示新问答/沙盒已编译。
+
+未决设计判定（2026-09-08 更新）：内部 batch/N03/MCP/普通私聊完整链路范围已获授权，
+不再按文件数量确认。batch 局部、N03 request/Pi execution 和 system 续接已接线，
+terminal assistant publication 的内部存储/恢复/共享展示和 normal fork 的
+冻结/独立接受/真实 Pi SDK preparation 已接通并回归；其他 Runner 边界、
+fork 与 terminal publication 的 packaged/完整验收仍未完成；
+外部 Relay、T2-B 和 AR 范围继续单独待决。
+
+### U3 答案续接：原子输入 seed（2026-09-09）
+
+- [x] 首次 delivery claim 同事务冻结结构化问题/已接受答案/checkpoint，与唯一 successorRunId 绑定；
+  保留原 WorkUnit/Turn/participant/workflowStep，不创建新 Turn、不修改旧输入，不新增 SQLite 表。
+- [x] 三 surface、stored Task/workflow 归属、两连接竞争、reopen/lease 重领、COMMIT 回滚、损坏拒绝、
+  历史 assignment 冻结与取消保留审计；错误分类与正文/Host metadata 分层校验均有回归。
+- [x] seed 专项 27/27，相关问答 174/174，Core 824/824；Daemon 1675/1682，原 7 fail 集合不变。
+  Core/Daemon 构建和 Web typecheck 通过，代码与证据见 `output/user-input-continuation-seed-u3-handoff-20260909.md`。
+- [ ] prepared request/execution、唯一 successor Run/Attempt 原子绑定、当前 fence、receiver ACK 和崩溃回查。
+  seed 已存在不等于 applied；普通新运行入口仍创建 WorkUnit，不能直接当问答续接入口。
+- [ ] U2 Host 安全停止、调度/恢复分流、U4 API/controller/共享回答窗口及 macOS 真模型/GUI 全矩阵。
+
+本切片没有新增待决设计；既有外部 Relay、T2-B 和 AR 选择保持待决，不由内部链路授权代答。
+总目标仍未完成，不以局部存储测试代替实际续接、客户端或多 Agent 验收。
+
+### U3 准备：原子 Run 创建基础（2026-09-09）
+
+- [x] 普通 Run 创建和内部 joined primitive 共用事务实现，Run/Turn/selected skill 审计一起提交。
+  修复审计失败留下 Run 的半提交窗口、rollback 异常覆盖以及 snapshot 重入修改创建身份。
+- [x] 内部 joined 方法不发模型请求、不创建 Attempt、不提交调用方事务、不写答案 applied；
+  不增加公开续接接口，不放开 orchestrator 的 duplicate guard，不新增 SQLite 表。
+- [ ] 后续 coordinator 仍须将 seed/prepared input、完整 fence、唯一 successor Attempt、
+  原 WorkUnit/Turn/Task/step 的当前指针与真实 receiver ACK 一起接通并验证恢复。
+
+完整证据见 `output/user-input-run-creation-transaction-u3-handoff-20260909.md`。
+这是实际创建链路修复及 U3 的前置能力，不是完整问答续接已完成。
+
+### U3 Runner 接收边界（2026-09-09）
+
+- [x] 先补生命周期设计 §4.2，再增加 `onPreparedInputAccepted`、独立接收 helper 和 adapter 接线。
+  SDK 输入匹配后、prompt 前回报不可变 Run/Attempt/task/fingerprint；准备阶段不回报。
+- [x] Host 返回前不 prompt，拒绝/取消/迟到回调不继续执行；冻结基线防止回调期间重写并重算指纹。
+  后续模型失败仍失败，多轮工具只接收一次，并发执行互不污染，重建后给 Host 相同幂等身份。
+- [x] 原始 12 项红测 1 pass/11 fail；最终 Runner 148/148、Electron 内嵌 Node 专项 37/37；
+  Runner/Daemon build 通过。完整中间结果、环境失败及 Daemon 重验见交接文档。
+- [x] Daemon 使用独立临时配置/工作区重验 1675/1682，原 7 失败名称集合 added=[]、removed=[]；
+  未将受限环境下的端口/数据库启动错误当成代码回归，也未抹去该次失败记录。
+- [ ] Host 唯一 successor/prepared refs 原子 admission、完整 fence + durable receipt/ACK、applied/resumed、
+  receiver 恢复和三 surface 接线。回调成功不是模型发送或任务成功，接口存在不表示产品已消费。
+- [ ] U2 全部 executor 停止证明、U4 入口/回答窗口、原 7 Daemon 与 6 Web E2E、macOS 真模型/GUI 仍保留。
+
+证据：`output/user-input-runner-receiver-u3-handoff-20260909.md`。未提交、未打包、未改真实数据库。
+本切片无新增用户选择；完整后代所有权/生产回写机制和外部 Relay/AR 原待决不变。
+
+### T2-B 执行副本与七项频道失败收尾（2026-09-09）
+
+- [x] 用户已允许一并验证执行副本、受控回写与后代停止；覆盖前文 T2-B 的验证范围待答记录，
+  不代表技术验收通过，也不代答外部 Relay、AR 或新的系统部署选择。
+- [x] 七项频道失败重跑 7/7 fail，确认五项在同一 run_command 启动门禁被挡住，
+  另两项分别缺独立 Host open capability 和自然语言命令目标绑定。不得删除断言或 skip 凑绿。
+- [x] 临时执行副本/变更提案原型已加入；实机硬链接保护、源目录拒写、小型 Node 子命令与产物通过。
+  夹具回写只演示单文件 replace、冻结输出与冲突拒绝，不是产品发布或多文件原子提交。
+- [ ] 完整后代停止：实机 detached 后代仍在 leader 取消后写副本；required 测试保持 fail。
+- [ ] 原生目录 FD、输入读取授权、依赖与 symlink 支持、并发回写 journal、崩溃恢复和权限接线。
+- [ ] 恢复七项正向频道场景、全量回归和真实 macOS App 的项目/多 Agent 验收。
+
+固定 Codex 源码、准确结果及限制见 `output/native-sandbox-t2b-copy-validation-20260909.md`。
+此验证未修改产品源码、SQLite、QA App 或 Git index；完整联合目标继续 active。
+
+### U3 Host admission / durable ACK（2026-09-09，当前增量）
+
+本节更新前文 U3 seed、Run 创建和 Runner 切片中的未完成项；旧测试数仅保留为历史基线。
+
+- [x] request/execution 的不可变持久化、父引用和 claim 校验；不新增表、不保存凭据。
+- [x] 唯一 successor Run/Attempt、原 WorkUnit/Turn/Task/step 当前指针、完整 fence 与 resuming 原子提交。
+- [x] Pi receiver → Host receipt / applied / resumed 的原子 ACK，重复接收不得再次请求模型。
+- [x] stored Task、workflow step、取消/归档、独立审批、双连接竞争、COMMIT 回滚及损坏拒绝专项 48/48。
+- [x] 最终 Core 882/882；Daemon 1683/1690，原 7 项失败名称 added=[] / removed=[]；Electron 内嵌 Node 专项 48/48。
+  Core/Daemon build、Web typecheck 和 diff whitespace 均通过。Electron 运行时测试不是 GUI。
+- [x] 从 seed 生成真实 prepared request 的 Daemon builder：完成情况由下节更新。
+- [ ] 真实 prepared execution builder；执行配置/有效 options 解析仍未接通，不能把 fixture 当产品实现。
+- [ ] 当前权限/资源/启动 CAS、真实 orchestrator/scheduler 消费、崩溃回查与丢失执行处理。
+  不能只把新 helper 塞入旧入口：旧入口会新建 WorkUnit，且重复启动的失败不能误伤合法执行。
+- [ ] U2 全 executor 停止、U4 API/共享窗口、原 7 Daemon/6 Web E2E、T2-B 和 macOS 真模型/GUI 验收。
+
+证据：`output/user-input-host-admission-u3-handoff-20260909.md`。未 stage/commit/push，未改真实数据或 QA App。
+没有新增内部设计决策；后代完整生命周期/生产回写、外部 Relay/AR 的原待决仍保留。总目标未完成。
+
+### U3 请求构建与 SDK 接收联合验证（2026-09-09，当前增量）
+
+- [x] 三 surface 请求从冻结 seed 与同 Run 事件构建；保留 WorkUnit/Turn/Task/participant/step、
+  typed operation ownership、provider identity 与原 sourcePolicyIntent，不复制旧审批和凭据。
+- [x] 缺源输入、历史断档、超预算、权限或 provider 漂移、取消/租约过期显式拒绝；普通新建 Run 入口
+  拒绝 answer continuation，防止错误新建 WorkUnit。
+- [x] 原请求专项 29/29；联合 SDK 接收专项 14/14，真实 builder 读取 SQLite 答案后，
+  SDK 首个请求与冻结内容逐字一致；Markdown、重开、新话题隔离、重复接收与 ACK 失败均覆盖。
+- [x] 合并 readiness 和副本原型的定向测试 65/65；Electron 内嵌 Node 联合 43/43；0 skip。
+- [x] Daemon 最终 1718/1725，原 7 fail 名称 added=[] / removed=[]；Web typecheck、Daemon build 通过。
+- [ ] 真实 execution builder/current provider+MCP+Skill+Memory+policy 重验与冻结有效 Runner options。
+  原执行 SDK system prompt 内的运行时 Memory/Skill 尚未完整复用，不得使用新历史或新召回冒充恢复。
+- [ ] coordinator startup CAS、资源所有权、真实 scheduler、restart/disconnect recovery；
+  本轮测试仍手工组合 execution plan/启动状态，不是这些产品链路的实现。
+- [ ] 原 7 Daemon 与 6 Web E2E 失败、U2 全 executor 停止、U4 API/共享窗口、T2-B、
+  H1/H2/H4、SK/AR、外部 adapter，以及 macOS packaged 全 20 案/真模型/截图仍保留。
+
+原七项根因与最新全量结果见 `output/user-input-prepared-request-u3-handoff-20260909.md`。
+本增量未提交、未改 QA App、未调度 Agent；无新增内部设计决策，总目标仍未完成。
+
+### U3 三 surface 源输入统一捕获（2026-09-09，当前增量）
+
+- [x] 将原 normal 的 SDK 输入 capture/read/restore/Memory eligibility 提取为共享模块；normal 保留父引用/CAS。
+- [x] 所有实际 Pi source Run 在执行前捕获真实 SDK 输入并持久化 `runnerExecutionInput`，保留运行时追加
+  Memory/Skill 文本及有效工具定义；普通/私聊/频道共用同一接线，不接受外部伪造输入。
+- [x] SDK/sandbox await 后重验当前 provider/MCP/Memory/runner，随后解析当前 Host policy；不恢复旧授权。
+- [x] 专项27/27；Electron 内嵌 Node 联合70/70；真实本机 Pi SSE 创建/协作/续聊保存3/3；
+  Daemon1728/1735（原7fail名称不变），build/Web typecheck/diff check PASS。
+- [ ] U3 source snapshot 消费与 execution builder：原 request builder 仍需读取实际源 SDK task/追加文本，
+  完整冻结新 Run 有效 options，并确保第二次问答仍能从 successor 的实际输入继续。
+- [ ] 专用 coordinator/启动 CAS/资源/fence、U2 全 executor、U4窗口/API、原7/6失败、T2-B、
+  H1/H2/H4、SK/AR、外部 adapter、macOS packaged20案/真模型/截图保持未完成。
+
+证据：`output/run-source-prepared-input-u3-handoff-20260909.md`。未改 Git index、真实数据或 QA App；
+没有新的内部设计决策。后代生命周期/生产回写与外部 Relay/AR 原待决仍保留，总目标继续 active。
+
+### 七项收尾增量：Host 打开能力的结构化失败（2026-09-09）
+
+- [x] 修复 capability 缺失被误报为 ready/clarify；按 source 持久化 blocked，
+  缺执行能力不要求用户重复补文件内容，也不通过 bash/读取工具降级。
+- [x] 完整绑定验证在 capability 判断之前；保留 malformed/source/owner/path/graph 拒绝。
+- [x] failed decision 写入失败不进入 ordinary reply fallback；SQLite 重开补齐同一 blocker，
+  并发重放保持一条 item/decision，后续新 turn 不受污染。
+- [x] 10/10 新测试（含真实 Pi + 本机 HTTP/SSE）；Daemon 全量 1738/1745、7 fail、0 skip；build/diff check PASS。
+- [ ] 独立 Host 打开工具、独立授权、实际打开回执与原第 2 项正向验收仍未完成。
+- [ ] 原其余六项、T2-B、U2/U3、三种会话与 macOS packaged/真实模型/截图仍未完成。
+
+证据：`output/channel-host-open-blocker-handoff-20260909.md`。不把错误路径已修复当成
+打开能力已完成，不移除原七项测试。原生后代停止/生产回写的安全合同仍未改变；
+采用 best-effort 取消或增加新的隔离运行环境属于待确认的架构变化，不在本轮代选。
+
+### 七项收尾增量：独立 Host 工具桥接（2026-09-09）
+
+- [x] 闭集 catalog/input validator、独立 Pi extension、Host 保留名称、执行前后 gate、
+  durable approval ID、取消与失败传播；实际 SDK 准备/工具生命周期回归。
+- [x] 非秘密 Host schema 进入实际 prepared input；撤销/替换拒绝，不继承新能力或旧 grant。
+- [x] 独立 `host_capability` approval/action/target；SQLite 审批与恢复载荷读回；复用已有
+  dynamicToolCall，不伪造 MCP/Bash 事实，不新增 renderer 或数据库表。
+- [ ] Host executor/当前能力发现与三 surface 权限交集、生产 dispatcher 接线、typed open
+  operation/effect/evidence、实际查看器回执。binder 仍 blocked，原第 2 项尚未通过。
+- [ ] 原七项正向场景、macOS 命令取消保证待决、U2/U3/U4 其余链路及真模型/App/截图
+  保持原范围，不能因为基础层通过而勾选完成。
+
+证据：`output/host-capability-bridge-handoff-20260909.md`。这不是重新实现第 9 节错误
+提示，而是在其后补真正工具的协议基础；不把 schema 注册或审批当成已打开文件。
+
+以下仍是历史审查记录，不是本轮重新运行 gstack 的结果，也不证明
+当前 combined WIP 已通过。2026-09-05 本次三文档核对后的完成判定，以 §6.2–§6.3 为准。
+
 | Review | Trigger | Why | Runs | Status | Findings |
 |--------|---------|-----|------|--------|----------|
 | CEO Review | `/plan-ceo-review` | Scope & strategy | 0 | — | 未运行，本轮为已确定的工程设计收口 |
@@ -1807,3 +2392,7 @@ recovery/fan-in 和执行板。实现尚未完成，
 参考。
 
 NO UNRESOLVED DECISIONS
+
+2026-09-09 当前增量的未决判定：以上英文 verdict 仅为历史审查记录。
+macOS 原生后代停止/回写合同仍待确认实现机制；本轮没有批准弱化为 best-effort，
+也没有批准新的隔离运行环境。推迟该选择会继续阻塞原五项命令验收和严格 U2 停止凭据。

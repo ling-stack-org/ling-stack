@@ -26,7 +26,7 @@ test("MJ-01-reach-empty: production entry, initial loading, empty repair", async
   const control = createMediaRouteControl();
   control.listDelayMs = 350;
   await prepare(page, state, control, false);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await page.getByRole("radio", { name: "Generation tasks" }).click();
   await expect(page.locator('[data-media-jobs-list-state="loading"]')).toBeVisible();
   await expect(page.locator('[data-media-jobs-list-state="empty"]')).toBeVisible();

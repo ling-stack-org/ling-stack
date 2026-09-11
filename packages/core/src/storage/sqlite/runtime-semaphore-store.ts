@@ -18,6 +18,17 @@ export class SqliteRuntimeSemaphoreStore {
     const id = createRuntimeSemaphoreSlotId();
     try {
       this.context.database.exec("BEGIN IMMEDIATE;");
+      const current = this.context.database.prepare(`
+        SELECT 1 FROM work_unit_attempts AS attempts
+        JOIN work_units AS units ON units.id = attempts.work_unit_id
+        WHERE attempts.id=? AND attempts.work_unit_id=? AND attempts.runtime_instance_id=?
+          AND attempts.fencing_token=? AND units.active_attempt_id=attempts.id
+          AND units.workspace_id=? AND attempts.status IN ('created','started','waiting_for_approval','cancelling')
+      `).get(input.attemptId, input.workUnitId, input.runtimeInstanceId, input.fencingToken, input.workspaceId);
+      if (!current || (input.ownerType === "work_unit_attempt" && input.ownerId !== input.attemptId)) {
+        this.context.database.exec("ROLLBACK;");
+        return undefined;
+      }
       this.expireRuntimeSemaphoreSlots(input.acquiredAt);
       const activeCount = readNumber(
         this.context.database

@@ -33,6 +33,9 @@ import type {
   WorkflowParticipantProviderBindingV1,
 } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
+import type { WorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
+import type { UserInputContinuationContext } from "./user-input-continuation-context.js";
+import type { NormalConversationContextSnapshot } from "../conversations/normal-conversation-context.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import {
   isRecord,
@@ -53,6 +56,7 @@ export interface PreselectedMemoryUse {
 export interface RunRequest extends Omit<
   PiRunnerRunOptions,
   | "onApprovalRequired"
+  | "onToolBefore"
   | "onEvent"
   | "provider"
   | "tools"
@@ -72,6 +76,8 @@ export interface RunRequest extends Omit<
   readonly delegatedRequirement?: DelegatedStepRequirementV1;
   /** Internal-only Host execution bindings for workflow-owned operations. */
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
+  /** Internal-only full accepted plan plus exact step-owned IDs, durably captured at dispatch. */
+  readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
   readonly threadId?: string;
   readonly turnId?: string;
   readonly runnerId?: string;
@@ -103,6 +109,17 @@ export interface RunRequest extends Omit<
   readonly preselectedMemoryUse?: PreselectedMemoryUse;
   /** Internal-only evidence version for conversation-derived runs. External request parsing does not accept it. */
   readonly contextProjection?: ConversationContextProjectionMetadata;
+  /** Internal-only frozen normal input evidence. External request parsing never accepts it. */
+  readonly normalConversationContext?: NormalConversationContextSnapshot;
+  /** Internal acceptance evidence; never parsed from an external RunRequest. */
+  readonly normalConversationAcceptedSnapshotId?: string;
+  /** Internal immutable request preparation, never accepted by external parsing. */
+  readonly normalConversationPreparedRequestRef?: { readonly id: string; readonly fingerprint: string };
+  readonly normalConversationPreparedExecutionRef?: { readonly id: string; readonly fingerprint: string };
+  /** Host-produced source SDK input. External parsing never accepts or restores it as authority. */
+  readonly runnerExecutionInput?: import("./prepared-runner-input.js").PreparedRunnerInput;
+  /** Internal-only answer continuation lineage; external parsing never accepts this field. */
+  readonly userInputContinuationContext?: UserInputContinuationContext;
   /** Internal-only override used by trusted multi-reply channel orchestration. */
   readonly channelParallelLimit?: number;
 }

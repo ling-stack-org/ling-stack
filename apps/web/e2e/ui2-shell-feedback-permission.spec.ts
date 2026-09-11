@@ -20,7 +20,7 @@ test("offline feedback preserves the active view and scopes reconnect loading", 
   await page.goto("/");
 
   const shell = page.locator("main.app-shell");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const connectionStatus = page.locator(".app-connection-status");
   const feedback = page.getByRole("alert").filter({ hasText: "Local service is unavailable" });
   await expect(feedback).toBeVisible();
@@ -53,7 +53,7 @@ test("full access confirmation preserves draft, focus, and permission evidence",
   await mockDaemon(page, state, { healthResponses: [true] });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "New conversation" }).click();
   const home = page.getByLabel("Conversation home");
   await expect(home.getByRole("button", { name: /Selected permission preset Full access/ })).toBeVisible();

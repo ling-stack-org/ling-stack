@@ -441,6 +441,8 @@ function compareRunActivity(left: RunSession, right: RunSession): number {
 }
 
 function lingThreadStatusFromWorkspaceRun(run: RunSession): LingThread["status"] {
+  // Only the Host thread projection can assert a durable input wait.
+  if (run.status === "yielded") return "blocked";
   if (run.status === "queued") {
     return "open";
   }

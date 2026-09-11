@@ -119,6 +119,14 @@ test("teammate direct execution honors server-owned Mobile tool and idempotency 
     store: {
       paths: { cwd: "/workspace" },
       findLingThreadByOwner: () => lingThread,
+      listConversationMessageRevisions: () => [],
+      getConversationItemByIdempotencyKey: () => undefined,
+      appendConversationUserTurn: (input) => {
+        assert.equal(input.threadId, lingThread.id);
+        assert.equal(input.teammateId, teammate.id);
+        assert.equal(input.payload.body, sourceMessage.body);
+        return { turnId: "turn_private_mobile", item: { id: input.itemId } };
+      },
     },
     teammate,
     directThread,

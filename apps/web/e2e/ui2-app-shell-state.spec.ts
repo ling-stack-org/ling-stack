@@ -21,7 +21,7 @@ test("AppShell returns from Settings to the exact view and selected channel with
 
   const root = page.locator("html");
   const shell = page.locator("main.app-shell");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await shell.evaluate((element) => element.setAttribute("data-ui2-shell-state-marker", "preserved"));
   await expect(root).toHaveAttribute("data-ui-surface", "home");
 
@@ -60,7 +60,7 @@ test("AppShell keeps one fixed theme while route presentation surfaces change", 
 
   const root = page.locator("html");
   const shell = page.locator("main.app-shell");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await shell.evaluate((element) => element.setAttribute("data-ui2-route-marker", "preserved"));
   await expect(root).toHaveAttribute("data-ui-theme", "ling-dark");
   await expect(root).toHaveAttribute("data-theme-selection", "fixed");
@@ -104,7 +104,7 @@ test("persistent Sidebar does not project conversation detail loading while navi
   });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const recentSection = navigation.locator('[data-sidebar-section="recent"]');
   const recentStatus = recentSection.locator(".sidebar-section-status");
   const recentConversation = navigation.getByRole("button", { name: "Open recent conversation 1" });
@@ -139,7 +139,7 @@ test("persistent Sidebar stays stable across every visible main navigation targe
   await page.goto("/");
 
   const root = page.locator("html");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const initialGeometry = await readSidebarGeometry(navigation);
   await startSidebarStabilityRecorder(page);
 
@@ -233,7 +233,7 @@ async function expectNoPageOverflow(page: Page): Promise<void> {
 
 async function startSidebarStabilityRecorder(page: Page): Promise<void> {
   await page.evaluate(() => {
-    const root = document.querySelector<HTMLElement>('[aria-label="Ling Stack navigation"]');
+    const root = document.querySelector<HTMLElement>("aside.left-nav");
     if (!root) throw new Error("Sidebar navigation is unavailable");
     const sections = new Map(
       [...root.querySelectorAll<HTMLElement>("[data-sidebar-section]")]
@@ -258,7 +258,7 @@ async function startSidebarStabilityRecorder(page: Page): Promise<void> {
       sections,
     };
     const record = (): void => {
-      const currentRoot = document.querySelector<HTMLElement>('[aria-label="Ling Stack navigation"]');
+      const currentRoot = document.querySelector<HTMLElement>("aside.left-nav");
       if (currentRoot !== snapshot.root) snapshot.rootReplaced = true;
       for (const [id, section] of snapshot.sections) {
         const currentSection = currentRoot?.querySelector<HTMLElement>(`[data-sidebar-section="${id}"]`);

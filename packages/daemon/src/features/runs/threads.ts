@@ -16,6 +16,7 @@ import type {
   RunStore,
 } from "@ling-stack/core";
 import type { RunRequest } from "./schemas.js";
+import { publishNormalNarrationAfterRun } from "../conversations/normal-narration-publication.js";
 
 export function ensureLingThreadForRun(store: RunStore, runRequest: RunRequest, now: string): LingThread {
   if (runRequest.threadId) {
@@ -222,6 +223,7 @@ export function updateLingThreadForTerminalRunStatus(
     now,
   );
   syncLingThreadGoalForTerminalRun(store, run, now);
+  publishNormalNarrationAfterRun(store, run.id, now);
   return updatedThread;
 }
 
