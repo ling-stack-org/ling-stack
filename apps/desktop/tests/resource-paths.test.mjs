@@ -53,10 +53,11 @@ test("packaged Web entry keeps public assets relative and exposes the shared Des
   ]);
   const javascriptBundles = await readJavascriptBundles(join(webDistRoot, "assets"));
 
-  assert.match(script, /icons\/ling-stack-gpt-image-2-icon\.png/u);
+  assert.match(javascriptBundles, /ling-mark-compact\.svg/u);
+  assert.ok(script.length > 0);
   assert.match(javascriptBundles, /avatars\/teammates/u);
   const [conversationMark, teammateAvatar] = await Promise.all([
-    readFile(join(webDistRoot, "icons", "ling-stack-gpt-image-2-icon.png")),
+    readFile(join(webDistRoot, "icons", "ling-mark-compact.svg")),
     readFile(join(webDistRoot, "avatars", "teammates", "engineer.png")),
   ]);
   assert.ok(conversationMark.byteLength > 0);

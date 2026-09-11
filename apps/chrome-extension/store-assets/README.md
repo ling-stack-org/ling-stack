@@ -9,7 +9,7 @@ so the reviewed Store listing can be tied to the exact extension revision.
 - `screenshots/plugin-manager-light-1280x800.png`: English pairing flow with a non-live fixture code.
 - `screenshots/plugin-manager-dark-1280x800.png`: Chinese connected state.
 - `source/promo-440x280.html`: deterministic source for the promotional image.
-- `source/ling-icon-512.png`: promotional source derived from the committed desktop Ling icon.
+- `source/ling-icon-512.png`: direct 512px render of the shared precision vector master.
 
 The screenshots are generated from the Plugin Manager acceptance fixture. Before final publication,
 compare them with the signed release build and obtain human approval; never capture a live pairing
@@ -20,6 +20,8 @@ credential, account name, private URL, or user workspace data.
 From the repository root:
 
 ```sh
+corepack pnpm --filter @ling-stack/desktop generate:icons
+
 corepack pnpm --filter @ling-stack/web exec playwright screenshot \
   --viewport-size "440, 280" \
   "file://$(pwd)/apps/chrome-extension/store-assets/source/promo-440x280.html" \

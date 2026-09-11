@@ -21,9 +21,7 @@
   height: 64px;
   margin-bottom: 12px;
   border: 0;
-  border-radius: 999px;
   background: transparent;
-  overflow: hidden;
 }
 
 .conversation-home-mark img {
