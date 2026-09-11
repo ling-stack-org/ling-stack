@@ -16,6 +16,7 @@ import type {
   PermissionConfirmation,
   PermissionPreset,
   ProviderThinkingMode,
+  ReasoningSummaryMode,
   RunSession,
   RunIntervention,
   SessionPermissionMode,
@@ -46,6 +47,7 @@ export interface ConversationHomeModelOption {
 export interface ConversationHomeModelSelection {
   readonly providerPresetId?: string;
   readonly thinkingLevel?: ProviderThinkingMode;
+  readonly reasoningSummary?: ReasoningSummaryMode;
 }
 
 export interface ConversationHomeMessage {
@@ -120,6 +122,7 @@ export interface ConversationHomeProps {
   readonly initialProjectLabel?: string;
   readonly initialProviderPresetId?: string;
   readonly initialThinkingLevel?: ProviderThinkingMode;
+  readonly initialReasoningSummary?: ReasoningSummaryMode;
   readonly initialAuthorizationMode?: AuthorizationMode;
   readonly initialWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly initialPermissionMode?: SessionPermissionMode;

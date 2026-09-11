@@ -4,6 +4,7 @@ import {
   DEFAULT_SKILL_GOVERNANCE_POLICY,
   DEFAULT_WORKSPACE_ID,
   type LingConversationTone,
+  type ReasoningSummaryMode,
   type ResponseLanguagePreference,
   type SkillGovernancePolicy,
   type UpdateWorkspaceSettingsInput,
@@ -47,6 +48,7 @@ export class SqliteWorkspaceSettingsStore {
       locale: nullableUpdate(input.locale, current.locale),
       responseLanguage: nullableUpdate(input.responseLanguage, current.responseLanguage),
       lingConversationTone: nullableUpdate(input.lingConversationTone, current.lingConversationTone),
+      defaultReasoningSummary: nullableUpdate(input.defaultReasoningSummary, current.defaultReasoningSummary),
       defaultProviderPresetId: nullableUpdate(input.defaultProviderPresetId, current.defaultProviderPresetId),
       mediaGenerationDefaults: nullableUpdate(input.mediaGenerationDefaults, current.mediaGenerationDefaults),
       defaultAuthorizationMode: permissionDefaults.authorizationMode,
@@ -93,6 +95,12 @@ function parseOptionalLingConversationTone(value: unknown): LingConversationTone
   return value === "friendly" || value === "pragmatic" || value === "none" ? value : undefined;
 }
 
+function parseOptionalReasoningSummaryMode(value: unknown): ReasoningSummaryMode | undefined {
+  return value === "auto" || value === "concise" || value === "detailed" || value === "none"
+    ? value
+    : undefined;
+}
+
 function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSettings {
   const parsed = parseJsonObject(value);
   const defaultPermissionMode = parseOptionalSessionPermissionMode(parsed.defaultPermissionMode) ?? "workspace_write";
@@ -107,6 +115,7 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     locale: isSupportedLocale(parsed.locale) ? parsed.locale : undefined,
     responseLanguage: parseOptionalResponseLanguagePreference(parsed.responseLanguage),
     lingConversationTone: parseOptionalLingConversationTone(parsed.lingConversationTone),
+    defaultReasoningSummary: parseOptionalReasoningSummaryMode(parsed.defaultReasoningSummary),
     defaultProviderPresetId: typeof parsed.defaultProviderPresetId === "string" && parsed.defaultProviderPresetId.trim() ? parsed.defaultProviderPresetId : undefined,
     mediaGenerationDefaults: parseMediaGenerationDefaults(parsed.mediaGenerationDefaults),
     defaultAuthorizationMode: parseOptionalAuthorizationMode(parsed.defaultAuthorizationMode) ?? legacySelection.authorizationMode,

@@ -106,6 +106,7 @@ export function buildRunInterventionContinuationRequest(
     permissionMode,
     permissionConfirmation,
     thinkingLevel: readSnapshotThinkingLevel(snapshot, "thinkingLevel"),
+    reasoningSummary: readSnapshotReasoningSummary(snapshot, "reasoningSummary"),
     systemPrompt: channelContinuation?.systemPromptInstruction ?? inheritedSystemPrompt,
     appendSystemPrompt,
     contextProjection: channelContinuation?.contextProjection ?? normalInput?.context.projection ??
@@ -296,6 +297,13 @@ function readSnapshotThinkingLevel(record: Record<string, unknown>, key: string)
     value === "high" ||
     value === "xhigh"
   )
+    ? value
+    : undefined;
+}
+
+function readSnapshotReasoningSummary(record: Record<string, unknown>, key: string): RunRequest["reasoningSummary"] {
+  const value = record[key];
+  return value === "auto" || value === "concise" || value === "detailed" || value === "none"
     ? value
     : undefined;
 }

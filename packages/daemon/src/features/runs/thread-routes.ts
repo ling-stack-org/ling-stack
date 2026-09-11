@@ -1244,6 +1244,7 @@ function buildForkRunRunRequest(input: {
     permissionMode: readSnapshotSessionPermissionMode(requestSnapshot, "permissionMode"),
     permissionConfirmation: readSnapshotPermissionConfirmation(requestSnapshot, "permissionConfirmation"),
     thinkingLevel: readSnapshotThinkingLevel(requestSnapshot, "thinkingLevel"),
+    reasoningSummary: readSnapshotReasoningSummary(requestSnapshot, "reasoningSummary"),
     systemPrompt: readSnapshotString(requestSnapshot, "systemPrompt"),
     appendSystemPrompt: readSnapshotStringArray(requestSnapshot, "appendSystemPrompt"),
     agentDir: readSnapshotString(requestSnapshot, "agentDir"),
@@ -1606,6 +1607,7 @@ function buildLingThreadResumeContext(input: {
       permissionMode: readSnapshotSessionPermissionMode(requestSnapshot, "permissionMode"),
       permissionConfirmation: readSnapshotPermissionConfirmation(requestSnapshot, "permissionConfirmation"),
       thinkingLevel: readSnapshotThinkingLevel(requestSnapshot, "thinkingLevel"),
+      reasoningSummary: readSnapshotReasoningSummary(requestSnapshot, "reasoningSummary"),
       systemPrompt: readSnapshotString(requestSnapshot, "systemPrompt"),
       appendSystemPrompt: readSnapshotStringArray(requestSnapshot, "appendSystemPrompt"),
       agentDir: readSnapshotString(requestSnapshot, "agentDir"),
@@ -2006,6 +2008,13 @@ function readSnapshotThinkingLevel(record: Record<string, unknown>, key: string)
   const value = record[key];
   return typeof value === "string" && ["off", "minimal", "low", "medium", "high", "xhigh"].includes(value)
     ? value as RunRequest["thinkingLevel"]
+    : undefined;
+}
+
+function readSnapshotReasoningSummary(record: Record<string, unknown>, key: string): RunRequest["reasoningSummary"] {
+  const value = record[key];
+  return typeof value === "string" && ["auto", "concise", "detailed", "none"].includes(value)
+    ? value as RunRequest["reasoningSummary"]
     : undefined;
 }
 

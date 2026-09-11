@@ -78,6 +78,11 @@ export type LingConversationTone = "friendly" | "pragmatic" | "none";
 
 export const lingConversationTones: readonly LingConversationTone[] = ["friendly", "pragmatic", "none"];
 
+/** Provider-designated public reasoning summary verbosity; never raw chain-of-thought. */
+export type ReasoningSummaryMode = "auto" | "concise" | "detailed" | "none";
+
+export const reasoningSummaryModes: readonly ReasoningSummaryMode[] = ["auto", "concise", "detailed", "none"];
+
 export const DEFAULT_LING_CONVERSATION_TONE: LingConversationTone = "pragmatic";
 
 export type SkillGovernanceGenerationMode = "off" | "approval_only" | "semi_auto" | "auto_candidate";
@@ -494,6 +499,7 @@ export interface WorkspaceSettings {
   readonly locale?: InterfaceLocale;
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly lingConversationTone?: LingConversationTone;
+  readonly defaultReasoningSummary?: ReasoningSummaryMode;
   readonly defaultProviderPresetId?: string;
   readonly mediaGenerationDefaults?: import("./media-generation-routing-types.js").WorkspaceMediaGenerationDefaults;
   readonly defaultAuthorizationMode?: AuthorizationMode;
@@ -512,6 +518,7 @@ export interface UpdateWorkspaceSettingsInput {
   readonly locale?: InterfaceLocale | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly lingConversationTone?: LingConversationTone | null;
+  readonly defaultReasoningSummary?: ReasoningSummaryMode | null;
   readonly defaultProviderPresetId?: string | null;
   readonly mediaGenerationDefaults?: import("./media-generation-routing-types.js").WorkspaceMediaGenerationDefaults | null;
   readonly defaultAuthorizationMode?: AuthorizationMode | null;

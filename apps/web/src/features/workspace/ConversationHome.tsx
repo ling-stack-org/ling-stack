@@ -7,7 +7,7 @@ import {
   SquareTerminal,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import type { AuthorizationMode, ConversationAttachment, PermissionConfirmation, PermissionPreset, ProviderThinkingMode } from "../../types.js";
+import type { AuthorizationMode, ConversationAttachment, PermissionConfirmation, PermissionPreset, ProviderThinkingMode, ReasoningSummaryMode } from "../../types.js";
 import {
   filterSlashCommandPickerOptions,
   composerWorkspaceFileParts,
@@ -74,6 +74,7 @@ export function ConversationHome({
   initialProjectLabel = "",
   initialProviderPresetId = "",
   initialThinkingLevel = "off",
+  initialReasoningSummary = "auto",
   initialAuthorizationMode,
   initialWorkspaceAccessMode,
   initialPermissionMode,
@@ -110,6 +111,7 @@ export function ConversationHome({
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [selectedProviderPresetId, setSelectedProviderPresetId] = useState(initialProviderPresetId.trim());
   const [selectedThinkingLevel, setSelectedThinkingLevel] = useState<ProviderThinkingMode>(initialThinkingLevel);
+  const [selectedReasoningSummary, setSelectedReasoningSummary] = useState<ReasoningSummaryMode>(initialReasoningSummary);
   const [selectedAuthorizationMode, setSelectedAuthorizationMode] = useState<AuthorizationMode>(() => resolveAuthorizationMode(
     initialAuthorizationMode,
     initialPermissionMode,
@@ -379,7 +381,8 @@ export function ConversationHome({
   useEffect(() => {
     setSelectedProviderPresetId(initialProviderPresetId.trim());
     setSelectedThinkingLevel(initialThinkingLevel);
-  }, [conversationIdentityController.ownerKey, initialProviderPresetId, initialThinkingLevel]);
+    setSelectedReasoningSummary(initialReasoningSummary);
+  }, [conversationIdentityController.ownerKey, initialProviderPresetId, initialReasoningSummary, initialThinkingLevel]);
 
   useEffect(() => {
     if (permissionSelectionBoundThreadRef.current === conversationIdentityController.identity) {
@@ -495,6 +498,7 @@ export function ConversationHome({
         model: {
           providerPresetId,
           ...(thinkingEnabled && selectedThinkingLevel !== "off" ? { thinkingLevel: selectedThinkingLevel } : {}),
+          reasoningSummary: selectedReasoningSummary,
         },
         authorization: {
           authorizationMode: selectedAuthorizationMode,
@@ -665,6 +669,12 @@ export function ConversationHome({
     actionFeedback.clear("validation");
   }
 
+  function selectReasoningSummary(mode: ReasoningSummaryMode): void {
+    if (composerBusy || activeReply) return;
+    setSelectedReasoningSummary(mode);
+    actionFeedback.clear("validation");
+  }
+
   const composerNode = (
     <NormalConversationComposer
       draft={draft}
@@ -682,6 +692,7 @@ export function ConversationHome({
       defaultProviderPresetId={defaultProviderPresetId}
       defaultProviderLabel={defaultProviderLabel}
       selectedThinkingLevel={selectedThinkingLevel}
+      selectedReasoningSummary={selectedReasoningSummary}
       sendBusy={sendBusy}
       activeRun={Boolean(activeReply)}
       stopping={stopping}
@@ -715,6 +726,7 @@ export function ConversationHome({
       }}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
+      onReasoningSummaryChange={selectReasoningSummary}
       onSubmit={submitDraft}
       onStop={activeReply && onStopConversation ? () => onStopConversation(activeReply) : undefined}
     />

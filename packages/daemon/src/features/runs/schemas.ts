@@ -2,6 +2,7 @@ import {
   authorizationModes,
   readOnlyRunTools,
   lingConversationTones,
+  reasoningSummaryModes,
   permissionModeForPreset,
   permissionPresets,
   providerTransports,
@@ -17,6 +18,7 @@ import {
   type LingTurnCreatedByActor,
   type LingConversationTone,
   type PermissionPreset,
+  type ReasoningSummaryMode,
   type ResponseLanguage,
   type RunContinuationReason,
   type RunTool,
@@ -94,6 +96,7 @@ export interface RunRequest extends Omit<
   readonly idempotencyKey?: string;
   readonly lingConversationTone?: LingConversationTone;
   readonly responseLanguage?: ResponseLanguage;
+  readonly reasoningSummary?: ReasoningSummaryMode;
   readonly conversationAttachmentIds?: readonly string[];
   readonly conversationFileRefs?: readonly ChannelMessageFileRef[];
   readonly parentRunId?: string;
@@ -192,6 +195,7 @@ export function parseRunRequest(value: unknown): RunRequest {
     permissionMode,
     permissionConfirmation: readOptionalPermissionConfirmation(value, "permissionConfirmation"),
     thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
+    reasoningSummary: readOptionalReasoningSummary(value, "reasoningSummary"),
     systemPrompt: readOptionalString(value, "systemPrompt"),
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     agentDir: readOptionalString(value, "agentDir"),
@@ -215,6 +219,15 @@ function readOptionalLingConversationTone(record: Record<string, unknown>, key: 
     throw new Error(`${key} must be one of: ${lingConversationTones.join(", ")}`);
   }
   return value as LingConversationTone;
+}
+
+function readOptionalReasoningSummary(record: Record<string, unknown>, key: string): ReasoningSummaryMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) return undefined;
+  if (!reasoningSummaryModes.includes(value as ReasoningSummaryMode)) {
+    throw new Error(`${key} must be one of: ${reasoningSummaryModes.join(", ")}`);
+  }
+  return value as ReasoningSummaryMode;
 }
 
 function readOptionalResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguage | undefined {

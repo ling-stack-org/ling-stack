@@ -127,6 +127,7 @@ export async function startConversationReplacementRun(input: {
       ?? (input.previousRun?.cwd && input.previousRun.cwd !== input.workspaceCwd ? input.previousRun.cwd : undefined),
     providerPresetId,
     thinkingLevel: readThinkingLevel(readOptionalRecordString(previousSnapshot, "thinkingLevel")),
+    reasoningSummary: readReasoningSummary(readOptionalRecordString(previousSnapshot, "reasoningSummary")),
     permissionPreset: input.permissionPreset ?? readPermissionPreset(readOptionalRecordString(previousSnapshot, "permissionPreset")),
     permissionMode: readPermissionMode(readOptionalRecordString(previousSnapshot, "permissionMode")),
     responseLanguage: readResponseLanguagePreference(readOptionalRecordString(previousSnapshot, "responseLanguage")),
@@ -140,6 +141,7 @@ export async function startConversationReplacementRun(input: {
       turn,
       input: streamInput,
       lingConversationTone: effectiveConfig.values.lingConversationTone.value,
+      defaultReasoningSummary: effectiveConfig.values.reasoningSummary.value,
       attachments,
       attachmentMaterializations,
       normalConversationContext: prepared.context,
@@ -153,6 +155,7 @@ export async function startConversationReplacementRun(input: {
 
 const defaultConversationTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const thinkingLevels: readonly RunThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const reasoningSummaryModes = ["auto", "concise", "detailed", "none"] as const;
 const runTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const permissionPresets: readonly PermissionPreset[] = ["read_only", "workspace_collaboration", "full_access", "custom"];
 const permissionModes: readonly SessionPermissionMode[] = ["ask_everything", "balanced", "workspace_write", "full_access", "custom"];
@@ -335,6 +338,7 @@ export async function handleConversationStream(
       turn,
       input: { ...input, idempotencyKey: prepared.idempotencyKey },
       lingConversationTone: effectiveConfig!.values.lingConversationTone.value,
+      defaultReasoningSummary: effectiveConfig!.values.reasoningSummary.value,
       attachments: conversationAttachments,
       attachmentMaterializations,
       normalConversationContext: prepared.context,
@@ -591,6 +595,7 @@ export function buildConversationDetail(
       projectPath: readOptionalRecordString(latestSnapshot, "projectPath") || latestProjectPath,
       providerPresetId: latestRun?.providerPresetId ?? readOptionalRecordString(latestSnapshot, "providerPresetId"),
       thinkingLevel: readThinkingLevel(readOptionalRecordString(latestSnapshot, "thinkingLevel")),
+      reasoningSummary: readReasoningSummary(readOptionalRecordString(latestSnapshot, "reasoningSummary")),
       authorizationMode: readAuthorizationMode(readOptionalRecordString(latestSnapshot, "authorizationMode")),
       workspaceAccessMode: readWorkspaceAccessMode(readOptionalRecordString(latestSnapshot, "workspaceAccessMode")),
       permissionPreset: readPermissionPreset(readOptionalRecordString(latestSnapshot, "permissionPreset")),
@@ -654,6 +659,7 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
     projectPath: readOptionalString(value, "projectPath")?.trim() || undefined,
     providerPresetId,
     thinkingLevel: readThinkingLevel(readOptionalString(value, "thinkingLevel")),
+    reasoningSummary: readReasoningSummary(readOptionalString(value, "reasoningSummary")),
     authorizationMode: readAuthorizationMode(readOptionalString(value, "authorizationMode")),
     workspaceAccessMode: readWorkspaceAccessMode(readOptionalString(value, "workspaceAccessMode")),
     permissionPreset: readPermissionPreset(readOptionalString(value, "permissionPreset")),
@@ -699,6 +705,7 @@ function buildConversationRunRequest(input: {
   readonly turn: LingTurn;
   readonly input: ConversationStreamRequest;
   readonly lingConversationTone: LingConversationTone;
+  readonly defaultReasoningSummary: NonNullable<ConversationStreamRequest["reasoningSummary"]>;
   readonly attachments: readonly ConversationAttachment[];
   readonly attachmentMaterializations: ReadonlyMap<string, ConversationAttachmentMaterialization>;
   readonly normalConversationContext: NormalConversationContextSnapshot;
@@ -739,6 +746,7 @@ function buildConversationRunRequest(input: {
     permissionMode: input.input.permissionMode,
     permissionConfirmation: input.input.permissionConfirmation,
     thinkingLevel: input.input.thinkingLevel,
+    reasoningSummary: input.input.reasoningSummary ?? input.defaultReasoningSummary,
     lingConversationTone: input.lingConversationTone,
     responseLanguage,
     appendSystemPrompt,
@@ -941,6 +949,12 @@ function readOptionalRecordString(record: Record<string, unknown>, key: string):
 
 function readThinkingLevel(value: string | undefined): RunThinkingLevel | undefined {
   return value && thinkingLevels.includes(value as RunThinkingLevel) ? value as RunThinkingLevel : undefined;
+}
+
+function readReasoningSummary(value: string | undefined): ConversationStreamRequest["reasoningSummary"] {
+  return value && (reasoningSummaryModes as readonly string[]).includes(value)
+    ? value as ConversationStreamRequest["reasoningSummary"]
+    : undefined;
 }
 
 function readPermissionPreset(value: string | undefined): PermissionPreset | undefined {

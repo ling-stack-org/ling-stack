@@ -1,9 +1,18 @@
 import type { Translate } from "../../i18n.js";
-import type { ProviderThinkingMode } from "../../types.js";
+import type { ProviderThinkingMode, ReasoningSummaryMode } from "../../types.js";
 import type { ConversationHomeModelOption } from "./normal-conversation-types.js";
 
 export function normalConversationModelLabel(option: ConversationHomeModelOption): string {
   return option.label?.trim() || option.model;
+}
+
+export const reasoningSummaryOptions: readonly ReasoningSummaryMode[] = ["auto", "concise", "detailed", "none"];
+
+export function reasoningSummaryLabel(mode: ReasoningSummaryMode, t: Translate): string {
+  if (mode === "auto") return t("Automatic");
+  if (mode === "concise") return t("Concise");
+  if (mode === "detailed") return t("Detailed");
+  return t("None");
 }
 
 export function normalConversationThinkingOptions(

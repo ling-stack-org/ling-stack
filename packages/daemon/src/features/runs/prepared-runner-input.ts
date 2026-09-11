@@ -7,7 +7,7 @@ import { isRecord } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
 import { inlineProviderDescriptor } from "../conversations/normal-conversation-prepared-provider.js";
 
-const inputKeys = ["cwd", "task", "provider", "tools", "mcpTools", "thinkingLevel", "systemPrompt",
+const inputKeys = ["cwd", "task", "provider", "tools", "mcpTools", "thinkingLevel", "reasoningSummary", "systemPrompt",
   "appendSystemPrompt", "agentDir", "runtimePaths", "runtimeToolFeatures", "mediaGenerationTools", "initialToolSurface", "hostCapabilityTools"] as const;
 type PreparedOptions = Omit<Pick<PiRunnerRunOptions, (typeof inputKeys)[number]>, "tools"> & { readonly tools?: RunRequest["tools"] };
 export interface PreparedRunnerInput {
@@ -109,6 +109,10 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
   }
   for (const key of ["mcpTools", "mediaGenerationTools"]) if (value.input[key] !== undefined &&
     (!Array.isArray(value.input[key]) || !(value.input[key] as unknown[]).every(isRecord))) throw new Error("Invalid prepared execution tool list");
+  if (value.input.reasoningSummary !== undefined &&
+    !["auto", "concise", "detailed", "none"].includes(String(value.input.reasoningSummary))) {
+    throw new Error("Invalid prepared reasoning summary mode");
+  }
   return structuredClone(value) as unknown as PreparedRunnerInput;
 }
 function json<T>(value: T): T { return value === undefined ? value : JSON.parse(JSON.stringify(value)) as T; }

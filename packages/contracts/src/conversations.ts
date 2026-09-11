@@ -1,6 +1,6 @@
 import type { ChannelAttachmentKind, ChannelMention, ChannelMessageFileRef } from "./channels.js";
 import type { ApprovalRequest, LingApprovalCheckpoint } from "./approvals.js";
-import type { AuthorizationMode, ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, RunThinkingLevel, RunTool, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
+import type { AuthorizationMode, ConversationPendingReplacement, PermissionConfirmation, PermissionPreset, ReasoningSummaryMode, RunThinkingLevel, RunTool, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
 import type { ExecutionAction, ExecutionActionSourceRef } from "./execution-actions.js";
 import type { ResponseLanguagePreference } from "./settings.js";
 import type { ConversationActiveReplyTarget, RunEventEnvelope, RunIntervention, RunSession } from "./runtime.js";
@@ -102,6 +102,7 @@ export interface ConversationStreamRequest {
   readonly projectPath?: string;
   readonly providerPresetId: string;
   readonly thinkingLevel?: RunThinkingLevel;
+  readonly reasoningSummary?: ReasoningSummaryMode;
   readonly authorizationMode?: AuthorizationMode;
   readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
@@ -194,6 +195,7 @@ export interface ConversationDetailResponse {
     readonly projectPath?: string;
     readonly providerPresetId?: string;
     readonly thinkingLevel?: RunThinkingLevel;
+    readonly reasoningSummary?: ReasoningSummaryMode;
     readonly authorizationMode?: AuthorizationMode;
     readonly workspaceAccessMode?: WorkspaceAccessMode;
     readonly permissionPreset?: PermissionPreset;

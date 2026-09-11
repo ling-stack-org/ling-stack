@@ -1024,6 +1024,44 @@ test("stable payload equality does not depend on object key order", () => {
   assert.equal(projection.diagnostics.some((entry) => entry.code === "owner_conflict"), false);
 });
 
+test("reasoning summaries reconcile stale and equal revisions without entering terminal evidence", () => {
+  const anchor = { ...item("assistant-summary", 3, "assistant_message", { body: "Done", format: "markdown", streaming: false, deliveryStatus: "ready" }),
+    turnId: "turn-1", domainRefs: [{ type: "run", id: "run-1" }] };
+  const base = { scope, sourceSequence: 3, sourceRevision: "reasoning-v2", items: [anchor], actions: [],
+    turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+    reasoningSummaries: [reasoningSummary(2, "Newest safe summary")] };
+  const stale = { ...base, sourceRevision: "reasoning-v1", reasoningSummaries: [reasoningSummary(1, "Stale safe summary")] };
+  const forward = projectCanonicalConversationTimeline(mergeCanonicalTranscriptInputs(base, stale));
+  const reversed = projectCanonicalConversationTimeline(mergeCanonicalTranscriptInputs(stale, base));
+  assert.deepEqual(reversed.items, forward.items);
+  assert.equal(forward.items.find((entry) => entry.kind === "reasoning")?.summary, "Newest safe summary");
+  assert.deepEqual(forward.terminalEvidence, []);
+
+  const conflict = { ...base, sourceRevision: "reasoning-conflict", reasoningSummaries: [reasoningSummary(2, "Conflicting safe summary")] };
+  const rejected = projectCanonicalConversationTimeline(mergeCanonicalTranscriptInputs(base, conflict));
+  assert.equal(rejected.items.some((entry) => entry.kind === "reasoning"), false);
+  assert.equal(rejected.diagnostics.some((entry) => entry.code === "owner_conflict"), true);
+  assert.deepEqual(rejected.terminalEvidence, []);
+});
+
+test("child reasoning requires exact run participant and attempt lineage", () => {
+  const anchor = { ...item("child-summary", 4, "assistant_message", { body: "Child done", format: "markdown", streaming: false, deliveryStatus: "ready" }),
+    turnId: "turn-1", actorType: "teammate", actorId: "qa", domainRefs: [{ type: "run", id: "run-1" }] };
+  const valid = reasoningSummary(3, "Checked by QA", { participantId: "qa", attemptId: "attempt-1", anchorItemId: anchor.id });
+  const projected = projectCanonicalConversationTimeline({ scope: childScope, sourceSequence: 4, sourceRevision: "child-reasoning",
+    items: [anchor], actions: [], turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }], reasoningSummaries: [valid] });
+  assert.equal(projected.items.find((entry) => entry.kind === "reasoning")?.summary, "Checked by QA");
+  assert.deepEqual(projected.terminalEvidence, []);
+
+  for (const mismatch of [{ runId: "other-run" }, { participantId: "engineer" }, { attemptId: "other-attempt" }]) {
+    const result = projectCanonicalConversationTimeline({ scope: childScope, sourceSequence: 4, sourceRevision: JSON.stringify(mismatch),
+      items: [anchor], actions: [], turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+      reasoningSummaries: [{ ...valid, ...mismatch }] });
+    assert.equal(result.items.some((entry) => entry.kind === "reasoning"), false);
+    assert.ok(result.diagnostics.some((entry) => ["scope_mismatch", "missing_lineage"].includes(entry.code)));
+  }
+});
+
 test("canonical input merge is order-independent for reconnect and reordered deltas", () => {
   const initial = {
     scope,
@@ -1125,6 +1163,21 @@ function action(id, revision, overrides = {}) {
 
 function conversationRef(id) {
   return { kind: "conversation_item", id };
+}
+
+function reasoningSummary(revision, text, overrides = {}) {
+  const runId = overrides.runId ?? "run-1";
+  const anchorItemId = overrides.anchorItemId ?? "assistant-summary";
+  const attemptId = overrides.attemptId ?? "attempt-1";
+  const participantId = overrides.participantId ?? "ling";
+  const eventId = `reasoning-event-${revision}`;
+  return {
+    id: "reasoning-summary-1", revision, workspaceId: "workspace-1", threadId: "thread-1", turnId: "turn-1",
+    runId, attemptId, participantId,
+    anchorItemId, eventId, eventSequence: revision, text, parts: [text], semantic: "safe_summary", source: "openai_responses",
+    truncated: false, sourceRefs: [conversationRef(anchorItemId), { kind: "run", id: runId }, { kind: "run_event", id: eventId },
+      { kind: "attempt", id: attemptId }, { kind: "participant", id: participantId }],
+  };
 }
 
 function batch(items, segments) {

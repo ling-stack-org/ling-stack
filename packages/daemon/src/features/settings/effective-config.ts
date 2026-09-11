@@ -29,6 +29,7 @@ interface UserSettingsLayer {
   readonly locale?: WorkspaceSettings["locale"];
   readonly responseLanguage?: WorkspaceSettings["responseLanguage"];
   readonly lingConversationTone?: WorkspaceSettings["lingConversationTone"];
+  readonly defaultReasoningSummary?: WorkspaceSettings["defaultReasoningSummary"];
 }
 
 interface UserConfigLayer {
@@ -136,6 +137,16 @@ export async function buildEffectiveConfigResponse(input: {
         paths.user.settingsPath,
         DEFAULT_LING_CONVERSATION_TONE,
       ),
+      reasoningSummary: effectiveValue(
+        workspaceSettings.defaultReasoningSummary,
+        "workspace",
+        paths.workspace.databasePath,
+        "defaultReasoningSummary",
+        userSettings?.defaultReasoningSummary,
+        "user",
+        paths.user.settingsPath,
+        "auto",
+      ),
       skillGovernancePolicy: effectiveValue(
         workspaceSettings.skillGovernancePolicy,
         "workspace",
@@ -172,6 +183,7 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
     locale: readNullableLocale(record.locale),
     responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
     lingConversationTone: readNullableLingConversationTone(record.lingConversationTone),
+    defaultReasoningSummary: readNullableReasoningSummaryMode(record.defaultReasoningSummary),
     defaultProviderPresetId: readNullableString(record.defaultProviderPresetId, "defaultProviderPresetId"),
     mediaGenerationDefaults: readNullableMediaGenerationDefaults(record.mediaGenerationDefaults),
     defaultAuthorizationMode: readNullableAuthorizationMode(record.defaultAuthorizationMode),
@@ -279,6 +291,7 @@ async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigD
     locale?: WorkspaceSettings["locale"];
     responseLanguage?: WorkspaceSettings["responseLanguage"];
     lingConversationTone?: WorkspaceSettings["lingConversationTone"];
+    defaultReasoningSummary?: WorkspaceSettings["defaultReasoningSummary"];
   } = {};
   const theme = readOptionalTheme(record.theme, path, diagnostics);
   if (theme) {
@@ -295,6 +308,10 @@ async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigD
   const lingConversationTone = readOptionalLingConversationTone(record.lingConversationTone, path, diagnostics);
   if (lingConversationTone) {
     result.lingConversationTone = lingConversationTone;
+  }
+  const defaultReasoningSummary = readOptionalReasoningSummaryMode(record.defaultReasoningSummary, path, diagnostics);
+  if (defaultReasoningSummary) {
+    result.defaultReasoningSummary = defaultReasoningSummary;
   }
   return Object.keys(result).length > 0 ? result : {};
 }
@@ -396,6 +413,16 @@ function readNullableLingConversationTone(value: unknown): UpdateWorkspaceSettin
   }
   if (value !== "friendly" && value !== "pragmatic" && value !== "none") {
     throw new Error("lingConversationTone must be friendly, pragmatic, none, or null");
+  }
+  return value;
+}
+
+function readNullableReasoningSummaryMode(value: unknown): UpdateWorkspaceSettingsInput["defaultReasoningSummary"] {
+  if (value === undefined || value === null) {
+    return value;
+  }
+  if (value !== "auto" && value !== "concise" && value !== "detailed" && value !== "none") {
+    throw new Error("defaultReasoningSummary must be auto, concise, detailed, none, or null");
   }
   return value;
 }
@@ -580,6 +607,26 @@ function readOptionalLingConversationTone(value: unknown, path: string, diagnost
     level: "warning",
     code: "user_settings_invalid_ling_conversation_tone",
     message: "lingConversationTone must be friendly, pragmatic, or none.",
+    path,
+  });
+  return undefined;
+}
+
+function readOptionalReasoningSummaryMode(
+  value: unknown,
+  path: string,
+  diagnostics: EffectiveConfigDiagnostic[],
+): WorkspaceSettings["defaultReasoningSummary"] | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  if (value === "auto" || value === "concise" || value === "detailed" || value === "none") {
+    return value;
+  }
+  diagnostics.push({
+    level: "warning",
+    code: "user_settings_invalid_reasoning_summary",
+    message: "defaultReasoningSummary must be auto, concise, detailed, or none.",
     path,
   });
   return undefined;

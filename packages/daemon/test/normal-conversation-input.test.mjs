@@ -93,6 +93,16 @@ test("prepared normal conversation preserves typed composer file-ref provenance"
   assert.ok(observed?.normalConversationPreparedRequestRef?.fingerprint);
 });
 
+test("normal conversation freezes an explicit reasoning summary selection", async (t) => {
+  const f = await fixture(t);
+  f.store.updateWorkspaceSettings({ defaultReasoningSummary: "concise" }, new Date().toISOString());
+  let observed;
+  const response = await dispatch(f, { reasoningSummary: "none" }, async (request) => { observed = request; });
+  assert.equal(response.statusCode, 200, response.body);
+  assert.equal(observed?.reasoningSummary, "none");
+  assert.ok(observed?.normalConversationPreparedRequestRef?.fingerprint);
+});
+
 test("idempotent route replay reuses the exact persisted Run input after database reopen", async (t) => {
   const f = await fixture(t);
   let first;
@@ -128,18 +138,19 @@ test("invalid attachments and replay body drift create no partial input", async 
 test("no-Run retry after reopen reuses the prepared request without reading configuration", async (t) => {
   const f = await fixture(t);
   let first;
-  f.store.updateWorkspaceSettings({ lingConversationTone: "friendly" }, new Date().toISOString());
+  f.store.updateWorkspaceSettings({ lingConversationTone: "friendly", defaultReasoningSummary: "detailed" }, new Date().toISOString());
   await dispatch(f, { tools: ["read"] }, async (request) => { first = request; throw new Error("STOP_BEFORE_RUN"); });
   assert.ok(first);
   assert.equal(f.store.listLingTurnRuns(first.turnId).length, 0);
   f.store.close(); f.store = createSqliteRunStore(f.cwd);
-  f.store.updateWorkspaceSettings({ lingConversationTone: "pragmatic" }, new Date().toISOString());
+  f.store.updateWorkspaceSettings({ lingConversationTone: "pragmatic", defaultReasoningSummary: "none" }, new Date().toISOString());
   f.store.getWorkspaceSettings = () => assert.fail("prepared replay must not prepare configuration again");
   let replay;
   const response = await dispatch(f, { tools: ["bash"], providerPresetId: "changed" }, async (request) => { replay = request; });
   assert.equal(response.statusCode, 200, response.body);
   assert.deepEqual(replay, first);
   assert.equal(replay.lingConversationTone, "friendly");
+  assert.equal(replay.reasoningSummary, "detailed");
   assert.deepEqual(replay.tools, ["read"]);
   assert.ok(replay.normalConversationPreparedRequestRef?.fingerprint);
 });

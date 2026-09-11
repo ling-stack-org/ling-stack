@@ -7,6 +7,9 @@ export type RunTool = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write
 
 export type RunThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
 
+/** Provider-designated public reasoning summary verbosity; never raw chain-of-thought. */
+export type ReasoningSummaryMode = "auto" | "concise" | "detailed" | "none";
+
 export type SessionPermissionMode = "ask_everything" | "balanced" | "workspace_write" | "full_access" | "custom";
 
 export type PermissionPreset = "read_only" | "workspace_collaboration" | "full_access" | "custom";

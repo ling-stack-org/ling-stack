@@ -6362,4 +6362,13 @@ export const zhCN = {
   "Diff preview unavailable": "差异预览不可用",
   "Collapse details": "收起详情",
   "Expand details": "展开详情",
+  "Concise": "简洁",
+  "Detailed": "详细",
+  "Reasoning summary": "推理摘要",
+  "Selected reasoning summary {label}": "已选择推理摘要：{label}",
+  "Summary {label}": "摘要 {label}",
+  "Choose how much provider-safe reasoning summary to show.": "选择展示多少由模型提供的安全推理摘要。",
+  "Choose how much provider-safe reasoning summary appears in conversations. Raw reasoning is never shown.": "选择会话中展示多少由模型提供的安全推理摘要；原始推理过程永不展示。",
+  "Reasoning summary preference applied": "推理摘要偏好已应用",
+  "Reasoning summary preference was not applied.": "推理摘要偏好未能应用。",
 } as const satisfies Readonly<Record<string, string>>;

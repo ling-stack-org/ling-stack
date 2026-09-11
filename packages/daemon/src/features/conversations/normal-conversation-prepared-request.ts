@@ -13,7 +13,7 @@ import { inlineProviderDescriptor, restorePreparedInlineProvider } from "./norma
 const requestKeys = new Set([
   "workspaceCwd", "cwd", "task", "providerPresetId", "provider", "threadId", "turnId", "teammateId",
   "createdByActor", "tools", "authorizationMode", "workspaceAccessMode", "permissionPreset", "permissionMode",
-  "permissionConfirmation", "thinkingLevel", "lingConversationTone", "responseLanguage", "appendSystemPrompt",
+  "permissionConfirmation", "thinkingLevel", "reasoningSummary", "lingConversationTone", "responseLanguage", "appendSystemPrompt",
   "conversationAttachmentIds", "conversationFileRefs", "normalConversationContext", "normalConversationAcceptedSnapshotId",
   "contextProjection", "idempotencyKey", "runnerId", "requestedSkillId", "skipProviderPreflight", "approvalProfile",
   "systemPrompt", "agentDir", "skipMemoryRecall", "sourceMessageId", "linkedMessageId", "parentRunId",

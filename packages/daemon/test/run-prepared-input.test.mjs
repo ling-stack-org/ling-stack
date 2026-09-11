@@ -31,6 +31,7 @@ async function fixture(t, surface = "normal") {
   f.request = { cwd, workspaceCwd: cwd, threadId: f.thread.id, task: { id: "source-task", title: "SOURCE_TASK", prompt: "SOURCE_TASK: preserve the existing files.", channelId: channel?.id },
     teammateId, tools: ["read"], providerPresetId: f.preset.id, agentDir: join(cwd, "agent"),
     systemPrompt: "Frozen source system.", appendSystemPrompt: ["ORIGINAL_APPEND"], createdByActor: "local-user" };
+  store.updateWorkspaceSettings({ defaultReasoningSummary: "detailed" }, now);
   class FixtureRunner extends PiRunnerAdapter {
     async prepareTaskInput(options) {
       const result = await super.prepareTaskInput(options);
@@ -65,6 +66,9 @@ for (const surface of ["normal", "private", "channel"]) {
     const run = f.store.getRun(runId), source = run.requestSnapshot.runnerExecutionInput;
     assert.equal(source.input.cwd, f.cwd); assert.equal(source.input.task.id, f.request.task.id);
     assert.deepEqual(source.input.tools, ["read"]);
+    assert.equal(f.calls[0].reasoningSummary, "detailed");
+    assert.equal(run.requestSnapshot.reasoningSummary, "detailed");
+    assert.equal(source.input.reasoningSummary, "detailed");
     assert.match(source.preparedInput.systemPrompt, /Frozen source system/);
     assert.match(source.preparedInput.systemPrompt, /ORIGINAL_APPEND/);
     assert.match(source.preparedInput.systemPrompt, /FROZEN_SOURCE_MEMORY/);

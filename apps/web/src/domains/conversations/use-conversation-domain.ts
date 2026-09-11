@@ -14,6 +14,7 @@ import type {
   PermissionConfirmation,
   PermissionPreset,
   ProviderThinkingMode,
+  ReasoningSummaryMode,
   ResponseLanguagePreference,
   RunThinkingLevel,
   RunTool,
@@ -37,6 +38,7 @@ export interface ConversationSendInput {
   readonly projectPath?: string;
   readonly providerPresetId: string;
   readonly thinkingLevel?: ProviderThinkingMode;
+  readonly reasoningSummary?: ReasoningSummaryMode;
   readonly authorizationMode?: AuthorizationMode;
   readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
@@ -410,6 +412,7 @@ export function useConversationDomain(input: {
         projectPath: message.projectPath,
         providerPresetId: message.providerPresetId,
         thinkingLevel: normalizeThinkingLevel(message.thinkingLevel),
+        reasoningSummary: message.reasoningSummary,
         authorizationMode: message.authorizationMode,
         workspaceAccessMode: message.workspaceAccessMode,
         permissionPreset: message.permissionPreset,

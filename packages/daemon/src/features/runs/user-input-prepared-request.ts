@@ -15,9 +15,9 @@ export interface UserInputPreparedRequest {
   readonly ref: { readonly id: string; readonly fingerprint: string };
   readonly request: RunRequest;
 }
-const inheritedKeys = ["tools", "requestedSkillId", "thinkingLevel", "systemPrompt", "appendSystemPrompt", "agentDir",
+const inheritedKeys = ["tools", "requestedSkillId", "thinkingLevel", "reasoningSummary", "systemPrompt", "appendSystemPrompt", "agentDir",
   "runtimeToolFeatures", "lingConversationTone", "responseLanguage", "skillOptimizationMode"] as const;
-const executionKeys = ["tools", "thinkingLevel", "systemPrompt", "appendSystemPrompt", "agentDir", "runtimeToolFeatures"] as const;
+const executionKeys = ["tools", "thinkingLevel", "reasoningSummary", "systemPrompt", "appendSystemPrompt", "agentDir", "runtimeToolFeatures"] as const;
 const internalKeys = ["providerBinding", "delegatedRequirement", "executionOperationBindings", "workflowOperationExecution",
   "directWorkspaceBinding", "directWorkspaceSnapshot"] as const;
 

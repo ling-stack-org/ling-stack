@@ -100,7 +100,7 @@ test("provider-safe reasoning is placed before its final topic reply without exp
     anchorItemId: "reply-after", eventId: "event-summary", eventSequence: 7,
     text: "检查了边界。", parts: ["检查了边界。"], semantic: "safe_summary", source: "openai_responses",
     truncated: false, sourceRefs: [{ kind: "conversation_item", id: "reply-after" }, { kind: "run", id: "run" },
-      { kind: "run_event", id: "event-summary" }], createdAt: now,
+      { kind: "run_event", id: "event-summary" }, { kind: "participant", id: "engineer" }], createdAt: now,
   }];
   const rows = projectTopicReplyTimeline(data);
   const reasoningIndex = rows.findIndex(row => row.kind === "reasoning");

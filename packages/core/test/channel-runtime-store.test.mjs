@@ -114,6 +114,27 @@ test("sqlite workspace settings persist Ling conversation tone", async () => {
   }
 });
 
+test("sqlite workspace settings persist provider-safe reasoning summary mode", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-reasoning-summary-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    assert.equal(store.getWorkspaceSettings().defaultReasoningSummary, undefined);
+    assert.equal(store.updateWorkspaceSettings({ defaultReasoningSummary: "detailed" }, "2026-09-12T04:30:00.000Z").defaultReasoningSummary, "detailed");
+    store.close();
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      assert.equal(reopened.getWorkspaceSettings().defaultReasoningSummary, "detailed");
+      assert.equal(reopened.updateWorkspaceSettings({ defaultReasoningSummary: "none" }, "2026-09-12T04:31:00.000Z").defaultReasoningSummary, "none");
+      assert.equal(reopened.updateWorkspaceSettings({ defaultReasoningSummary: null }, "2026-09-12T04:32:00.000Z").defaultReasoningSummary, undefined);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite workspace settings round-trip every supported interface and response locale", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-locales-"));
   const store = createSqliteRunStore(cwd);

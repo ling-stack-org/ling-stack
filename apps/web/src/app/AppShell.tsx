@@ -2756,6 +2756,7 @@ export function AppShell(): React.JSX.Element {
                   initialProjectLabel={selectedConversationProjectLabel}
                   initialProviderPresetId={selectedConversationDetail?.defaults.providerPresetId ?? ""}
                   initialThinkingLevel={selectedConversationDetail?.defaults.thinkingLevel ?? "off"}
+                  initialReasoningSummary={selectedConversationDetail?.defaults.reasoningSummary ?? workspaceSettings?.defaultReasoningSummary ?? "auto"}
                   initialAuthorizationMode={selectedConversationDetail?.defaults.authorizationMode ?? workspaceSettings?.defaultAuthorizationMode}
                   initialWorkspaceAccessMode={selectedConversationDetail?.defaults.workspaceAccessMode ?? workspaceSettings?.defaultWorkspaceAccessMode}
                   initialPermissionMode={selectedConversationDetail?.defaults.permissionMode ?? workspaceSettings?.defaultPermissionMode}
@@ -2829,6 +2830,7 @@ export function AppShell(): React.JSX.Element {
                       projectPath: input.project.projectPath,
                       providerPresetId: input.model.providerPresetId || defaultConversationProviderPresetId,
                       thinkingLevel: input.model.thinkingLevel,
+                      reasoningSummary: input.model.reasoningSummary,
                       authorizationMode: input.authorization.authorizationMode,
                       workspaceAccessMode: input.authorization.workspaceAccessMode,
                       permissionMode: input.authorization.permissionMode,

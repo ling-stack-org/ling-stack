@@ -4483,4 +4483,13 @@ export const enUS = {
     "Persistence": "Persistence",
     "Run record saved": "Run record saved",
     "not loaded": "not loaded",
+    "Concise": "Concise",
+    "Detailed": "Detailed",
+    "Reasoning summary": "Reasoning summary",
+    "Selected reasoning summary {label}": "Selected reasoning summary {label}",
+    "Summary {label}": "Summary {label}",
+    "Choose how much provider-safe reasoning summary to show.": "Choose how much provider-safe reasoning summary to show.",
+    "Choose how much provider-safe reasoning summary appears in conversations. Raw reasoning is never shown.": "Choose how much provider-safe reasoning summary appears in conversations. Raw reasoning is never shown.",
+    "Reasoning summary preference applied": "Reasoning summary preference applied",
+    "Reasoning summary preference was not applied.": "Reasoning summary preference was not applied.",
   } as const satisfies Readonly<Record<string, string>>;

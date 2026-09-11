@@ -845,7 +845,9 @@ function projectReasoningSummaries(
     const refs = toSourceRefs(ensureAnchorRef(record.sourceRefs, record.anchorItemId));
     if (record.workspaceId !== input.scope.workspaceId || record.threadId !== input.scope.threadId
       || (input.scope.runId && record.runId !== input.scope.runId)
-      || (input.scope.participantId && record.participantId && record.participantId !== input.scope.participantId)) {
+      || (input.scope.turnId && record.turnId !== input.scope.turnId)
+      || (input.scope.attemptId && record.attemptId !== input.scope.attemptId)
+      || (input.scope.participantId && record.participantId !== input.scope.participantId)) {
       diagnostics.push({ code: "scope_mismatch", sourceRefs: refs, message: `Reasoning summary ${record.id} belongs to another scope.` });
       continue;
     }
@@ -861,9 +863,13 @@ function projectReasoningSummaries(
       && record.text.length > 0
       && record.parts.length > 0
       && record.text === record.parts.join("\n\n")
+      && anchor.domainRefs?.filter((ref) => ref.type === "run").length === 1
+      && anchor.domainRefs?.some((ref) => ref.type === "run" && ref.id === record.runId) === true
       && refs.some((ref) => ref.kind === "conversation_item" && ref.id === anchor.id)
       && refs.some((ref) => ref.kind === "run" && ref.id === record.runId)
-      && refs.some((ref) => ref.kind === "run_event" && ref.id === record.eventId);
+      && refs.some((ref) => ref.kind === "run_event" && ref.id === record.eventId)
+      && (!record.attemptId || refs.some((ref) => ref.kind === "attempt" && ref.id === record.attemptId))
+      && (!record.participantId || refs.some((ref) => ref.kind === "participant" && ref.id === record.participantId));
     if (!valid) {
       diagnostics.push({ code: "missing_lineage", sourceRefs: refs, message: `Reasoning summary ${record.id} is malformed or missing durable Run lineage.` });
       continue;

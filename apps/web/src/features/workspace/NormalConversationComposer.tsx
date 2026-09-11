@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type Ref } from "react";
-import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, Plus, Search, SlidersHorizontal, Square } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, ListTree, Plus, Search, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import { useI18n } from "../../i18n.js";
 import {
@@ -28,11 +28,13 @@ import {
   StatusIndicator,
 } from "../../shared/ui/index.js";
 import { ComposerPendingAssetStrip, type ActiveSlashCommandPicker, type PendingAttachmentItem } from "../../shared/components/index.js";
-import type { AuthorizationMode, ConversationAttachment, PermissionPreset, ProviderThinkingMode } from "../../types.js";
+import type { AuthorizationMode, ConversationAttachment, PermissionPreset, ProviderThinkingMode, ReasoningSummaryMode } from "../../types.js";
 import {
   normalConversationModelLabel,
   normalConversationThinkingLabel,
   normalConversationThinkingOptions,
+  reasoningSummaryLabel,
+  reasoningSummaryOptions,
 } from "./normal-conversation-composer-options.js";
 import type { ConversationHomeModelOption } from "./normal-conversation-types.js";
 
@@ -52,6 +54,7 @@ export interface NormalConversationComposerProps {
   readonly defaultProviderPresetId: string;
   readonly defaultProviderLabel: string;
   readonly selectedThinkingLevel: ProviderThinkingMode;
+  readonly selectedReasoningSummary: ReasoningSummaryMode;
   readonly sendBusy: boolean;
   readonly activeRun: boolean;
   readonly stopping: boolean;
@@ -73,6 +76,7 @@ export interface NormalConversationComposerProps {
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onModelChange: (option: ConversationHomeModelOption) => void;
   readonly onThinkingLevelChange: (level: ProviderThinkingMode) => void;
+  readonly onReasoningSummaryChange: (mode: ReasoningSummaryMode) => void;
   readonly onSubmit: () => void | Promise<void>;
   readonly onStop?: () => void | Promise<void>;
 }
@@ -105,12 +109,14 @@ export function NormalConversationComposer({
   onStop,
   onSubmit,
   onThinkingLevelChange,
+  onReasoningSummaryChange,
   pendingAttachments,
   authorizationMode,
   permissionPreset,
   fullAccessConfirmed,
   selectedProviderPresetId,
   selectedThinkingLevel,
+  selectedReasoningSummary,
   sendBusy,
   slashActiveIndex,
   slashOptions,
@@ -120,6 +126,7 @@ export function NormalConversationComposer({
   const { t } = useI18n();
   const [modelMenuOpen, setModelMenuOpen] = useState(false);
   const [thinkingMenuOpen, setThinkingMenuOpen] = useState(false);
+  const [reasoningSummaryMenuOpen, setReasoningSummaryMenuOpen] = useState(false);
   const [modelSearch, setModelSearch] = useState("");
   const modelSearchRef = useRef<HTMLInputElement | null>(null);
   const activeProviderPresetId = selectedProviderPresetId || defaultProviderPresetId;
@@ -133,6 +140,7 @@ export function NormalConversationComposer({
   const thinkingEnabled = thinkingOptions.length > 0;
   const activeThinkingLabel = normalConversationThinkingLabel(selectedThinkingLevel, t);
   const thinkingOff = selectedThinkingLevel === "off";
+  const activeReasoningSummaryLabel = reasoningSummaryLabel(selectedReasoningSummary, t);
   const normalizedModelSearch = modelSearch.trim().toLowerCase();
   const visibleModelOptions = useMemo(() => {
     if (!normalizedModelSearch) {
@@ -152,6 +160,7 @@ export function NormalConversationComposer({
     }
     setModelMenuOpen(false);
     setThinkingMenuOpen(false);
+    setReasoningSummaryMenuOpen(false);
   }, [activeRun, sendBusy]);
 
   useEffect(() => {
@@ -177,6 +186,11 @@ export function NormalConversationComposer({
   function selectThinkingLevel(level: ProviderThinkingMode): void {
     onThinkingLevelChange(level);
     setThinkingMenuOpen(false);
+  }
+
+  function selectReasoningSummary(mode: ReasoningSummaryMode): void {
+    onReasoningSummaryChange(mode);
+    setReasoningSummaryMenuOpen(false);
   }
 
   const configurationLocked = sendBusy || activeRun;
@@ -342,6 +356,47 @@ export function NormalConversationComposer({
                       </MenuRadioItem>
                     );
                   })}
+                </MenuRadioGroup>
+              </MenuContent>
+            </Menu>
+          ) : null}
+          {thinkingEnabled ? (
+            <Menu open={reasoningSummaryMenuOpen} onOpenChange={setReasoningSummaryMenuOpen}>
+              <MenuTrigger asChild>
+                <Button
+                  className="conversation-reasoning-summary-button"
+                  variant="ghost"
+                  size="sm"
+                  leadingIcon={<ListTree size={15} />}
+                  trailingIcon={<ChevronDown className={reasoningSummaryMenuOpen ? "expanded" : ""} size={13} />}
+                  aria-label={t("Selected reasoning summary {label}", { label: activeReasoningSummaryLabel })}
+                  title={t("Choose how much provider-safe reasoning summary to show.")}
+                  disabled={configurationLocked}
+                >
+                  {t("Summary {label}", { label: activeReasoningSummaryLabel })}
+                </Button>
+              </MenuTrigger>
+              <MenuContent
+                className="conversation-reasoning-summary-menu"
+                side="top"
+                align="end"
+                sideOffset={8}
+                aria-label={t("Reasoning summary")}
+              >
+                <MenuRadioGroup value={selectedReasoningSummary}>
+                  {reasoningSummaryOptions.map((mode) => (
+                    <MenuRadioItem
+                      key={mode}
+                      value={mode}
+                      onSelect={(event) => {
+                        event.preventDefault();
+                        selectReasoningSummary(mode);
+                      }}
+                    >
+                      <span>{reasoningSummaryLabel(mode, t)}</span>
+                      {mode === selectedReasoningSummary ? <Check size={14} /> : null}
+                    </MenuRadioItem>
+                  ))}
                 </MenuRadioGroup>
               </MenuContent>
             </Menu>

@@ -347,6 +347,9 @@ async function executeAdmittedRunRequest(
       ? mergeApprovalProfiles(runRequest.approvalProfile, selectedSkill.skill.approvalProfile)
       : runRequest.approvalProfile;
     runtimeSettings = loadWorkspaceRuntimeSettings(store, runnerRegistry);
+    const effectiveReasoningSummary = runRequest.reasoningSummary
+      ?? store.getWorkspaceSettings().defaultReasoningSummary
+      ?? "auto";
     const runnerRequestSource: RunnerRequestSource = runRequest.runnerId
       ? getExplicitRunnerRequestSource(runRequest)
       : skillTeammate?.runnerId ? "teammate_default" : "workspace_default";
@@ -387,6 +390,7 @@ async function executeAdmittedRunRequest(
       tools: runtimeTools,
       mcpTools,
       thinkingLevel: resolveProviderRunThinkingLevel(resolvedProvider, runRequest.thinkingLevel),
+      reasoningSummary: effectiveReasoningSummary,
       systemPrompt: runRequest.systemPrompt,
       appendSystemPrompt: appendSystemPrompt.length > 0 ? appendSystemPrompt : undefined,
       agentDir: runRequest.agentDir,
@@ -407,6 +411,7 @@ async function executeAdmittedRunRequest(
     durableRunRequest = {
       ...runRequest,
       task: durableTaskSnapshot,
+      reasoningSummary: effectiveReasoningSummary,
       preselectedMemoryUse: undefined,
       runnerExecutionInput: undefined,
     };
