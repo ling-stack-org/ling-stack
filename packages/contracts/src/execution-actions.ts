@@ -1,4 +1,7 @@
 import type { ApprovalActionType, ApprovalRisk } from "./approvals.js";
+import type { HostOpenLocalTargetReceiptV1 } from "./host-open-receipt.js";
+
+export type ExecutionActionType = ApprovalActionType | "runtime_diagnostic";
 
 export type ExecutionActionStatus =
   | "proposed"
@@ -33,7 +36,8 @@ export interface ExecutionActionTargetRef {
     | "external_work_action"
     | "file"
     | "command"
-    | "mcp_tool";
+    | "mcp_tool"
+    | "host_capability";
   readonly id?: string;
   readonly label?: string;
   readonly path?: string;
@@ -98,10 +102,31 @@ export interface ExecutionActionCommandEvidence {
   readonly resultArtifactId?: string;
 }
 
+/** Bounded display evidence from accepted tool events, not navigation authority. */
+export interface ExecutionActionToolEvidence {
+  readonly toolName: string;
+  readonly inputSummary: string;
+  readonly outputText?: string;
+  readonly outputTruncated: boolean;
+  readonly latestEventSeq: number;
+}
+
+export interface ExecutionActionRuntimeDiagnostic {
+  readonly code: "execution_loop_detected";
+  readonly loopKind: "exact_repeat" | "repeated_update" | "cycle" | "no_progress_budget";
+  readonly repeatedCount: number;
+  readonly noProgressActionCount: number;
+  readonly cycleLength?: number;
+  readonly fingerprint: string;
+  readonly retryable: false;
+}
+
 export interface ExecutionAction {
   readonly id: string;
   /** Monotonic event/approval revision for in-place transcript replacement. */
   readonly revision: number;
+  /** Accepted tool_start sequence; unlike revision, this never moves on update. */
+  readonly sourceEventSequence?: number;
   readonly workspaceId: string;
   readonly threadId?: string;
   readonly runId?: string;
@@ -111,7 +136,7 @@ export interface ExecutionAction {
   readonly workflowStepId?: string;
   readonly approvalId?: string;
   readonly toolCallId?: string;
-  readonly actionType: ApprovalActionType;
+  readonly actionType: ExecutionActionType;
   readonly risk: ApprovalRisk;
   readonly status: ExecutionActionStatus;
   readonly title: string;
@@ -125,6 +150,10 @@ export interface ExecutionAction {
   readonly scopeSummary?: string;
   readonly policySnapshot?: unknown;
   readonly commandEvidence?: ExecutionActionCommandEvidence;
+  readonly toolEvidence?: ExecutionActionToolEvidence;
+  readonly runtimeDiagnostic?: ExecutionActionRuntimeDiagnostic;
+  /** Original-call Host launch evidence, not proof of window visibility. */
+  readonly hostOpenReceipt?: HostOpenLocalTargetReceiptV1;
   readonly createdAt: string;
   readonly updatedAt?: string;
   readonly resolvedAt?: string;

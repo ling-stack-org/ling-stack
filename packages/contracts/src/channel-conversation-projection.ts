@@ -58,6 +58,9 @@ export function isChannelMessageConversationItem(item: ConversationItemV1): bool
 
 function projectBody(item: ConversationItemV1): string {
   switch (item.kind) {
+    case "user_input_request":
+    case "user_input_answer":
+      throw new Error("User-input anchors require domain projection, not message projection");
     case "user_message":
     case "assistant_message":
       return item.payload.body;

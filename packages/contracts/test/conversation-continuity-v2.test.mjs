@@ -125,6 +125,8 @@ test("golden fixture serialization is deterministic and rejects v1 action names"
 
 test("ConversationItem v1 validates every typed payload kind", () => {
   const payloads = {
+    user_input_request: { requestId: "request-1", requestVersion: 1 },
+    user_input_answer: { requestId: "request-1", requestVersion: 1, answerId: "answer-1" },
     user_message: {
       body: "需要，开始吧",
       format: "plain_text",

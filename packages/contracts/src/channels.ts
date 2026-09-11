@@ -872,7 +872,8 @@ export interface UpdateChannelDecisionRequest {
   readonly decision?: string;
   readonly rationale?: string;
   readonly alternatives?: readonly string[];
-  readonly status?: ChannelDecisionStatus;
+  /** Item PATCH only supports the terminal reject transition. Supersession uses collection POST. */
+  readonly status?: "rejected";
 }
 
 export interface ChannelDecisionListResponse {

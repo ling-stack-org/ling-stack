@@ -15,6 +15,7 @@ import type { McpToolDefaultApproval } from "./mcp.js";
 import type { RetentionTombstone } from "./retention.js";
 import type { ConversationActiveReplyTarget, WorkUnit } from "./runtime.js";
 import type { ConversationGeneratedMedia } from "./media.js";
+import type { ConversationDetailResponse, ConversationNarrationSegment } from "./conversations.js";
 
 export interface TeammatePersonaDraftRequest {
   readonly content: string;
@@ -264,6 +265,8 @@ export interface TeammateDirectMessage {
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
   readonly body: string;
+  /** Host-derived assistant message boundaries; never a second durable history. */
+  readonly narrationSegments?: readonly ConversationNarrationSegment[];
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
   readonly fileRefs: readonly ChannelMessageFileRef[];
@@ -471,6 +474,7 @@ export interface TeammateDirectMessageStreamDeltaEvent {
   readonly messageId: string;
   readonly delta: string;
   readonly body: string;
+  readonly narrationSegments?: readonly ConversationNarrationSegment[];
 }
 
 export interface TeammateDirectMessageStreamRunLinkedEvent {
@@ -506,6 +510,8 @@ export interface TeammateDirectMessageListResponse {
   readonly teammateId: string;
   readonly thread: TeammateDirectThread;
   readonly messages: readonly TeammateDirectMessage[];
+  /** Canonical private facts from the owning LingThread; not the direct-message table. */
+  readonly timeline?: ConversationDetailResponse;
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly hasMore?: boolean;
   readonly nextBeforeMessageId?: string;

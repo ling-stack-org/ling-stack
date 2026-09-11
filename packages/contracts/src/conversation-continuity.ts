@@ -1,3 +1,7 @@
+import type { ChannelOperationBindingV1 } from "./channel-operation-bindings.js";
+import type { UserInputRunEventPositionV1 } from "./user-input-event-position.js";
+import type { CommittedRunNarrationV1 } from "./committed-run-narration.js";
+
 export const conversationDomainRefTypes = [
   "conversation_item",
   "turn",
@@ -17,6 +21,8 @@ export const conversationDomainRefTypes = [
   "memory",
   "context_summary",
   "context_snapshot",
+  "user_input_request",
+  "user_input_answer",
   "external_work",
   "automation",
 ] as const;
@@ -58,6 +64,8 @@ export const conversationItemKindsV1 = [
   "tool_result",
   "approval_request",
   "approval_decision",
+  "user_input_request",
+  "user_input_answer",
   "handoff",
   "operation_state",
   "artifact_ref",
@@ -138,6 +146,7 @@ export const conversationAssistantDeliveryStatusesV1 = [
 export type ConversationAssistantDeliveryStatusV1 = (typeof conversationAssistantDeliveryStatusesV1)[number];
 
 export interface ConversationAssistantMessagePayloadV1 {
+  readonly runNarration?: CommittedRunNarrationV1;
   readonly body: string;
   readonly format: "plain_text" | "markdown";
   readonly streaming: boolean;
@@ -222,6 +231,9 @@ export interface ConversationSystemEventPayloadV1 {
 }
 
 export interface ConversationItemPayloadByKindV1 {
+  /** Immutable anchors; content and mutable status live in the user-input domain. */
+  readonly user_input_request: { readonly requestId: string; readonly requestVersion: number; readonly runEventPosition?: UserInputRunEventPositionV1 };
+  readonly user_input_answer: { readonly requestId: string; readonly requestVersion: number; readonly answerId: string; readonly runEventPosition?: UserInputRunEventPositionV1 };
   readonly user_message: ConversationUserMessagePayloadV1;
   readonly assistant_message: ConversationAssistantMessagePayloadV1;
   readonly tool_call: ConversationToolCallPayloadV1;
@@ -441,16 +453,20 @@ export type CommandMatchPolicyV1 =
 
 export interface ChannelIntentExecutionOperationV1 {
   readonly id: string;
-  readonly kind: "file_create" | "file_edit" | "open_local_target" | "run_command";
+  readonly kind: "file_read" | "file_create" | "file_edit" | "open_local_target" | "run_command";
   readonly targetKind: "file" | "directory" | "command" | "workspace";
   readonly targetRef: ConversationDomainRef;
   readonly commandMatchPolicy?: CommandMatchPolicyV1;
   readonly required: boolean;
   readonly dependsOn: readonly string[];
+  /** Absent only on persisted legacy plans; new typed candidates require binding. */
+  readonly binding?: ChannelOperationBindingV1;
 }
 
 export interface ChannelIntentExecutionPlanV1 {
   readonly operations: readonly ChannelIntentExecutionOperationV1[];
+  readonly bindingVersion?: 1;
+  readonly fingerprint?: string;
 }
 
 export const requiredParticipantRequirementsV1 = ["required", "optional"] as const;

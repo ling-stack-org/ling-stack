@@ -122,6 +122,7 @@ export type WorkUnitStatus =
   | "claimed"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "cancelling"
   | "succeeded"
   | "failed"
@@ -133,6 +134,7 @@ export type WorkUnitAttemptStatus =
   | "started"
   | "waiting_for_approval"
   | "cancelling"
+  | "yielded"
   | "succeeded"
   | "failed"
   | "cancelled"
@@ -154,6 +156,7 @@ export type RuntimeEventType =
   | "work_unit_heartbeat"
   | "work_unit_progress"
   | "work_unit_approval_requested"
+  | "work_unit_waiting_for_input"
   | "work_unit_cancelling"
   | "work_unit_succeeded"
   | "work_unit_failed"
@@ -410,18 +413,22 @@ export interface RuntimeSemaphoreListResponse {
 }
 
 export type RunEventType =
+  | "host_command_prepared"
+  | "host_command_settled"
   | "run_created"
   | "run_start"
   | "turn_start"
   | "turn_end"
   | "assistant_text_delta"
   | "assistant_thinking_delta"
+  | "assistant_reasoning_summary"
   | "tool_hydration_request"
   | "tool_hydration_end"
   | "message_end"
   | "tool_start"
   | "tool_update"
   | "tool_end"
+  | "loop_detected"
   | "run_end"
   | "run_error"
   | "run_cancelled"
@@ -454,6 +461,8 @@ export type RunEventType =
  * fields instead of treating the entire event as arbitrary JSON.
  */
 export interface RunEventDataByType {
+  readonly host_command_prepared: import("./host-command-journal.js").HostCommandPreparedV1 & { readonly [key: string]: unknown };
+  readonly host_command_settled: import("./host-command-journal.js").HostCommandSettledV1 & { readonly [key: string]: unknown };
   readonly run_created: {
     readonly taskId?: string;
     readonly workUnitId?: string;
@@ -479,6 +488,16 @@ export interface RunEventDataByType {
   };
   readonly assistant_thinking_delta: {
     readonly text: string;
+    readonly [key: string]: unknown;
+  };
+  readonly assistant_reasoning_summary: {
+    readonly text: string;
+    readonly parts: readonly string[];
+    readonly semantic: "safe_summary";
+    readonly source: "openai_responses";
+    readonly truncated: boolean;
+    /** Host fills this from the admitted RuntimeAttempt fence before persistence. */
+    readonly attemptId?: string;
     readonly [key: string]: unknown;
   };
   readonly tool_hydration_request: {
@@ -519,6 +538,21 @@ export interface RunEventDataByType {
     readonly toolName: string;
     readonly result?: unknown;
     readonly isError: boolean;
+    readonly [key: string]: unknown;
+  };
+  readonly loop_detected: {
+    readonly code: "execution_loop_detected";
+    readonly attemptId: string;
+    readonly loopKind: "exact_repeat" | "repeated_update" | "cycle" | "no_progress_budget";
+    readonly observedEventType: "tool_start" | "tool_update" | "tool_end";
+    readonly observedEventSeq: number;
+    readonly repeatedCount: number;
+    readonly noProgressActionCount: number;
+    readonly cycleLength?: number;
+    /** SHA-256 over bounded canonical metadata. Raw arguments/results are never persisted here. */
+    readonly fingerprint: string;
+    readonly message: string;
+    readonly retryable: false;
     readonly [key: string]: unknown;
   };
   readonly run_end: {
@@ -744,11 +778,20 @@ export interface RunCancelResponse {
   readonly active: boolean;
   readonly run?: RunSession;
   readonly event?: RunEventEnvelope;
+  /** Logical cancellation; the immutable source Run remains yielded. No answer content is exposed. */
+  readonly inputWait?: {
+    readonly requestId: string;
+    readonly requestVersion: number;
+    readonly waitRevision: number;
+    readonly workUnitId: string;
+    readonly turnId: string;
+    readonly status: "cancelled";
+  };
 }
 
 export type RunInterventionMode = "queue_followup" | "interrupt_redirect";
 
-export type RunContinuationReason = RunInterventionMode | "manual_resume";
+export type RunContinuationReason = RunInterventionMode | "manual_resume" | "user_input_answer";
 
 export type RunInterventionStatus =
   | "queued"

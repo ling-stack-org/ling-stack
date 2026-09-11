@@ -25,7 +25,7 @@ export type LingTraceSpanKind =
   | "external_action"
   | "error";
 
-export type LingTraceStatus = RunStatus | "skipped";
+export type LingTraceStatus = RunStatus | "waiting_for_input" | "skipped";
 
 export interface LingTraceRefs {
   readonly threadId?: string;
