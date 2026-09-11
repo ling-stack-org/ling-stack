@@ -1,4 +1,7 @@
 import type { Api, ImageContent, Model, ModelThinkingLevel, OpenAICompletionsCompat, TextContent, ThinkingLevelMap, Transport } from "@earendil-works/pi-ai";
+import type { PiRunnerPreparedInput } from "./prepared-input.js";
+import type { PiRunnerHostCapabilityToolDefinition, PiRunnerHostCapabilityCallRequest } from "./host-capability-types.js";
+export type * from "./host-capability-types.js";
 import type { ToolDefaultApproval, ToolSideEffectLevel } from "@ling-stack/plugin-sdk";
 
 export type PiRunnerBuiltinToolName = "read" | "bash" | "edit" | "write" | "grep" | "find" | "ls";
@@ -14,6 +17,7 @@ export type PiRunnerProviderApi =
   | "mistral-conversations";
 
 export type PiRunnerProviderTransport = Transport;
+export type PiRunnerReasoningSummaryMode = "auto" | "concise" | "detailed" | "none";
 
 export interface PiRunnerProviderConfig {
   readonly provider: string;
@@ -266,7 +270,37 @@ export interface PiRunnerToolHydrationRejection {
 
 export type PiRunnerToolHydrationResponse = PiRunnerHydratedToolSurface | PiRunnerToolHydrationRejection;
 
+/** Host asks this physical execution to stop; it does not authorize a successor. */
+export interface PiRunnerUserInputYieldDirective {
+  readonly kind: "user_input_required";
+  readonly requestId: string;
+  readonly requestVersion: number;
+}
+
+/** Receiver evidence only: no model transport, completion, permission or durable ACK is implied. */
+export interface PiRunnerPreparedInputReceipt {
+  readonly schemaVersion: 1;
+  readonly boundary: "pi-session-ready";
+  readonly runId: string;
+  readonly attemptId: string;
+  readonly taskId: string;
+  readonly preparedInputFingerprint: string;
+}
+
 export interface PiRunnerRunOptions {
+  /** Initial schema capabilities; not execution handlers or authorization grants. */
+  readonly initialToolSurface?: { readonly mediaGeneration: boolean; readonly toolHydration: boolean };
+  /** Host-owned preparation evidence; never a permission grant or a session history. */
+  readonly preparedInput?: PiRunnerPreparedInput;
+  /**
+   * Called once per runTask after SDK input validation, before prompting. Requires
+   * preparedInput, runId and runnerAttemptId. Host must atomically verify its full
+   * fence and frozen refs before persisting ACK; retries need Host idempotency.
+   * Cancellation ends the Runner wait, not the Host callback's external work.
+   */
+  readonly onPreparedInputAccepted?: (
+    receipt: PiRunnerPreparedInputReceipt, signal: AbortSignal,
+  ) => void | Promise<void>;
   readonly runId?: string;
   readonly runnerAttemptId?: string;
   readonly cwd: string;
@@ -274,8 +308,13 @@ export interface PiRunnerRunOptions {
   readonly provider: PiRunnerProviderConfig;
   readonly tools?: readonly PiRunnerToolName[];
   readonly mcpTools?: readonly PiRunnerMcpToolDefinition[];
+  /** Host-selected schema surface, not an authorization grant. */
+  readonly hostCapabilityTools?: readonly PiRunnerHostCapabilityToolDefinition[];
+  readonly onHostCapabilityCall?: (request: PiRunnerHostCapabilityCallRequest) => PiRunnerToolHandledResult | Promise<PiRunnerToolHandledResult>;
   readonly mediaGenerationTools?: readonly PiRunnerMediaGenerationToolDefinition[];
   readonly thinkingLevel?: ModelThinkingLevel;
+  /** Provider-designated public reasoning summary; never raw model thinking. */
+  readonly reasoningSummary?: PiRunnerReasoningSummaryMode;
   readonly systemPrompt?: string;
   readonly appendSystemPrompt?: readonly string[];
   readonly agentDir?: string;
@@ -284,6 +323,14 @@ export interface PiRunnerRunOptions {
   readonly sandbox?: PiRunnerSandboxBinding;
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: PiRunnerEvent) => void;
+  /** Host authority check for every tool, including tools outside the approval catalog. */
+  readonly onToolBefore?: (request: {
+    readonly toolCallId: string;
+    readonly toolName: string;
+    readonly input: unknown;
+    readonly cwd: string;
+  }) => { readonly allowed: true } | { readonly allowed: false; readonly code: string; readonly reason: string }
+    | Promise<{ readonly allowed: true } | { readonly allowed: false; readonly code: string; readonly reason: string }>;
   readonly onApprovalRequired?: (
     request: PiRunnerApprovalRequest,
   ) => PiRunnerApprovalDecision | Promise<PiRunnerApprovalDecision>;
@@ -295,7 +342,7 @@ export interface PiRunnerRunOptions {
   ) => PiRunnerToolHydrationResponse | Promise<PiRunnerToolHydrationResponse>;
   readonly onTaskContinuationBoundary?: (
     boundary: "before_agent_start" | "before_provider_request" | "tool_call",
-  ) => Promise<void>;
+  ) => Promise<void | PiRunnerUserInputYieldDirective>;
   readonly onMcpToolCall?: (request: PiRunnerMcpToolCallRequest) => PiRunnerMcpToolCallResult | Promise<PiRunnerMcpToolCallResult>;
   readonly onMediaGenerationToolCall?: (
     request: PiRunnerMediaGenerationToolCallRequest,
@@ -376,6 +423,14 @@ export type PiRunnerEvent =
   | { readonly type: "turn_end" }
   | { readonly type: "assistant_text_delta"; readonly text: string }
   | { readonly type: "assistant_thinking_delta"; readonly text: string }
+  | {
+      readonly type: "assistant_reasoning_summary";
+      readonly text: string;
+      readonly parts: readonly string[];
+      readonly semantic: "safe_summary";
+      readonly source: "openai_responses";
+      readonly truncated: boolean;
+    }
   | {
       readonly type: "tool_hydration_request";
       readonly runId: string;

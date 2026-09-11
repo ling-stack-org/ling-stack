@@ -58,7 +58,7 @@ test("tool hydration extension loads schemas and preserves MCP approval", async 
         details: { ok: true },
       };
     },
-  })({ registerTool: (tool) => registered.set(tool.name, tool) });
+  })({ on() {}, registerTool: (tool) => registered.set(tool.name, tool) });
 
   assert.equal(registered.has(TOOL_HYDRATION_LOAD_TOOL_NAME), true);
   assert.equal(registered.has(TOOL_HYDRATION_CALL_TOOL_NAME), true);
@@ -128,7 +128,7 @@ test("tool hydration discards a successful MCP result after runner cancellation"
       controller.abort(abortReason);
       return { content: [{ type: "text", text: "late" }] };
     },
-  })({ registerTool: (tool) => registered.set(tool.name, tool) });
+  })({ on() {}, registerTool: (tool) => registered.set(tool.name, tool) });
 
   await registered.get(TOOL_HYDRATION_LOAD_TOOL_NAME).execute("tool_load_cancel", {
     scopeKind: "namespace",
@@ -162,7 +162,7 @@ test("tool hydration stops after approval when the runner is cancelled", async (
       toolCalls += 1;
       return { content: [{ type: "text", text: "must not run" }] };
     },
-  })({ registerTool: (tool) => registered.set(tool.name, tool) });
+  })({ on() {}, registerTool: (tool) => registered.set(tool.name, tool) });
 
   await registered.get(TOOL_HYDRATION_LOAD_TOOL_NAME).execute("tool_load_approval_cancel", {
     scopeKind: "tool",
@@ -181,7 +181,7 @@ test("tool hydration stops after approval when the runner is cancelled", async (
 
 test("tool hydration extension rejects hydrated tool calls before load", async () => {
   const registered = new Map();
-  createLingStackToolHydrationExtension(baseOptions())({ registerTool: (tool) => registered.set(tool.name, tool) });
+  createLingStackToolHydrationExtension(baseOptions())({ on() {}, registerTool: (tool) => registered.set(tool.name, tool) });
 
   await assert.rejects(
     registered.get(TOOL_HYDRATION_CALL_TOOL_NAME).execute("tool_call", {
@@ -225,7 +225,7 @@ test("tool hydration extension fails closed when approval is missing for ask too
         generatedAt: "2026-06-19T05:00:00.000Z",
       };
     },
-  })({ registerTool: (tool) => registered.set(tool.name, tool) });
+  })({ on() {}, registerTool: (tool) => registered.set(tool.name, tool) });
 
   await registered.get(TOOL_HYDRATION_LOAD_TOOL_NAME).execute("tool_load", {
     scopeKind: "tool",

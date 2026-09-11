@@ -21,7 +21,7 @@ test("MCP proxy forwards the runner execution signal to the daemon call handler"
       requests.push(request);
       return { content: [{ type: "text", text: "ok" }] };
     },
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on() {}, registerTool: (tool) => registered.push(tool) });
 
   const controller = new AbortController();
   const result = await registered[0].execute(
@@ -55,7 +55,7 @@ test("MCP proxy discards a successful daemon result after runner cancellation", 
       controller.abort(abortReason);
       return { content: [{ type: "text", text: "late" }] };
     },
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on() {}, registerTool: (tool) => registered.push(tool) });
 
   await assert.rejects(
     registered[0].execute("tool_call_late_cancel", {}, controller.signal),
@@ -88,7 +88,7 @@ test("MCP proxy stops after approval when the runner is cancelled", async () => 
       toolCalls += 1;
       return { content: [{ type: "text", text: "must not run" }] };
     },
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on() {}, registerTool: (tool) => registered.push(tool) });
 
   await assert.rejects(
     registered[0].execute("tool_call_approval_cancel", {}, controller.signal),

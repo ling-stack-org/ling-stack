@@ -1,10 +1,11 @@
 import { createEditToolDefinition, createWriteToolDefinition, type ExtensionFactory, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { normalizeHandledToolResult } from "../content.js";
+import { createHostToolResultAdapter } from "../host-tool-results.js";
 import type { PiRunnerApprovalDecision, PiRunnerRunOptions } from "../types.js";
 import { isRecord } from "../utils.js";
 
 export function createLingStackFileMutationToolExtension(options: PiRunnerRunOptions): ExtensionFactory {
   return (pi) => {
+    const adaptResult = createHostToolResultAdapter(pi);
     const originalEdit = createEditToolDefinition(options.cwd) as ToolDefinition;
     const originalWrite = createWriteToolDefinition(options.cwd) as ToolDefinition;
 
@@ -14,9 +15,14 @@ export function createLingStackFileMutationToolExtension(options: PiRunnerRunOpt
       description: `${originalEdit.description} You may also provide patchText with a Codex-compatible apply-patch envelope for multi-file edits.`,
       parameters: createPatchableEditParameters(originalEdit.parameters),
       async execute(toolCallId, params, signal, onUpdate, ctx) {
+        signal?.throwIfAborted();
         const decision = await requireFileMutationApproval(options, "edit", toolCallId, params);
+        signal?.throwIfAborted();
         if (decision.handledResult) {
-          return normalizeHandledToolResult(decision.handledResult);
+          return adaptResult(toolCallId, "edit", {
+            ...decision.handledResult,
+            isError: !decision.approved || decision.handledResult.isError === true,
+          });
         }
         return originalEdit.execute(toolCallId, params, signal, onUpdate, ctx);
       },
@@ -31,9 +37,14 @@ export function createLingStackFileMutationToolExtension(options: PiRunnerRunOpt
       description: `${originalWrite.description} For structured multi-file changes, provide patchText with a Codex-compatible apply-patch envelope.`,
       parameters: createPatchableWriteParameters(originalWrite.parameters),
       async execute(toolCallId, params, signal, onUpdate, ctx) {
+        signal?.throwIfAborted();
         const decision = await requireFileMutationApproval(options, "write", toolCallId, params);
+        signal?.throwIfAborted();
         if (decision.handledResult) {
-          return normalizeHandledToolResult(decision.handledResult);
+          return adaptResult(toolCallId, "write", {
+            ...decision.handledResult,
+            isError: !decision.approved || decision.handledResult.isError === true,
+          });
         }
         return originalWrite.execute(toolCallId, params, signal, onUpdate, ctx);
       },
@@ -60,7 +71,7 @@ async function requireFileMutationApproval(
     task: options.task,
     cwd: options.cwd,
   });
-  if (!decision.approved) {
+  if (!decision.approved && !decision.handledResult) {
     throw new Error(decision.reason ?? `Ling Stack approval denied ${toolName}.`);
   }
   return decision;

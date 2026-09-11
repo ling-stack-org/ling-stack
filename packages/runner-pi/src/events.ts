@@ -1,5 +1,16 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
 import type { PiRunnerEvent } from "./types.js";
+import { extractSafeReasoningSummary } from "./reasoning-summary.js";
+
+export function translatePiEvents(event: AgentSessionEvent): readonly PiRunnerEvent[] {
+  if (event.type === "message_end") {
+    const terminal = messageEndEvent(event.message);
+    const summary = extractSafeReasoningSummary(event.message);
+    return summary ? [{ type: "assistant_reasoning_summary", ...summary }, terminal] : [terminal];
+  }
+  const translated = translatePiEvent(event);
+  return translated ? [translated] : [];
+}
 
 export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | undefined {
   switch (event.type) {
@@ -37,7 +48,7 @@ export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | unde
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         result: event.result,
-        isError: event.isError || isHandledUnifiedExecError(event.result),
+        isError: event.isError,
       };
     default:
       return undefined;
@@ -119,25 +130,6 @@ function getContentKinds(message: unknown): readonly string[] {
       : "other";
   });
   return [...new Set(kinds)];
-}
-
-function isHandledUnifiedExecError(result: unknown): boolean {
-  if (!isRecord(result)) {
-    return false;
-  }
-  if (result.isError === true) {
-    return true;
-  }
-  const details = result.details;
-  if (!isRecord(details)) {
-    return false;
-  }
-  const unifiedExec = details.unifiedExec;
-  if (!isRecord(unifiedExec)) {
-    return false;
-  }
-  const status = unifiedExec.status;
-  return status === "failed" || status === "timed_out" || status === "cancelled";
 }
 
 function getMessageRole(message: unknown): string {

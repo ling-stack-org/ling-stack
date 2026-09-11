@@ -1,16 +1,38 @@
-import { join } from "node:path";
-import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
-import { createAgentSession, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
-import { DEFAULT_TOOLS } from "./constants.js";
-import { translatePiEvent } from "./events.js";
-import { TOOL_HYDRATION_CALL_TOOL_NAME, TOOL_HYDRATION_LOAD_TOOL_NAME } from "./extensions/tool-hydration.js";
-import { createLingStackResourceLoader } from "./resource-loader.js";
+import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
+import { translatePiEvents } from "./events.js";
+import { createInitializedPiSession } from "./session-factory.js";
+import { assertPreparedPiSession, capturePreparedPiInput, type PiRunnerPreparedInput } from "./prepared-input.js";
+import { createPiPreparedInputReceiver } from "./prepared-input-receiver.js";
 import { fetchProvider } from "./provider-http.js";
+import { createPiSessionStopper, createPiTaskBoundary } from "./task-boundary.js";
+import { PiRunnerYielded } from "./task-yield.js";
 import type { PiRunnerEvent, PiRunnerProviderConfig, PiRunnerResult, PiRunnerRunOptions } from "./types.js";
 import { formatTaskPrompt, throwIfAborted } from "./utils.js";
 
 export class PiRunnerAdapter {
+  /** Assemble exact SDK input without executing, emitting Run events, or persisting a session. */
+  async prepareTaskInput(options: PiRunnerRunOptions): Promise<PiRunnerPreparedInput> {
+    const session = await createInitializedPiSession(options, (runtime) => {
+      this.registerCustomProviderIfNeeded(runtime, options.provider);
+      const noModelRequest = (): never => { throw new Error("Model execution is forbidden during input preparation"); };
+      runtime.streamSimple = noModelRequest;
+      runtime.stream = noModelRequest;
+    });
+    try {
+      throwIfAborted(options.signal);
+      return capturePreparedPiInput(session, options);
+    } finally {
+      session.dispose();
+    }
+  }
+
+  /** Resolves only on completion; required input rejects with PiRunnerYielded after SDK idle. */
   async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
+    const sourceSignal = options.signal;
+    const inputReceiver = createPiPreparedInputReceiver(options);
+    if (inputReceiver) options = { ...options, preparedInput: inputReceiver.preparedInput };
+    const boundary = createPiTaskBoundary(options);
+    options = boundary.options;
     const events: PiRunnerEvent[] = [];
     const emit = (event: PiRunnerEvent): void => {
       events.push(event);
@@ -19,63 +41,24 @@ export class PiRunnerAdapter {
 
     throwIfAborted(options.signal);
 
-    const modelRuntime = await ModelRuntime.create({
-      credentials: new InMemoryCredentialStore(),
-      modelsPath: null,
-      modelsStore: new InMemoryModelsStore(),
+    const session = await createInitializedPiSession(options, (modelRuntime) => {
+      this.registerCustomProviderIfNeeded(modelRuntime, options.provider);
+      boundary.bindModelRuntime(modelRuntime);
     });
-    if (options.provider.apiKey) {
-      await modelRuntime.setRuntimeApiKey(options.provider.provider, options.provider.apiKey);
-    }
-
-    this.registerCustomProviderIfNeeded(modelRuntime, options.provider);
-
-    const model = modelRuntime.getModel(options.provider.provider, options.provider.model);
-    if (!model) {
-      throw new Error(`Pi model not found: ${options.provider.provider}/${options.provider.model}`);
-    }
-
     const cwd = options.cwd;
-    const agentDir = options.agentDir ?? options.runtimePaths?.piDir ?? join(cwd, ".ling-stack", "pi");
-    const settingsManager = SettingsManager.inMemory({
-      compaction: { enabled: false },
-      retry: { enabled: true, maxRetries: 1 },
-      transport: options.provider.providerTransport ?? "auto",
-    });
-    const resourceLoader = await createLingStackResourceLoader(options, agentDir, settingsManager);
-    const activeTools = [
-      ...(options.tools ?? DEFAULT_TOOLS),
-      ...(options.mcpTools?.map((tool) => tool.registeredName) ?? []),
-      ...(options.onMediaGenerationToolCall
-        ? (options.mediaGenerationTools ?? []).filter((tool) => tool.targets.length > 0).map((tool) => tool.name)
-        : []),
-      ...(options.onToolHydrationRequest ? [TOOL_HYDRATION_LOAD_TOOL_NAME, TOOL_HYDRATION_CALL_TOOL_NAME] : []),
-    ];
 
-    const { session } = await createAgentSession({
-      cwd,
-      agentDir,
-      modelRuntime,
-      model,
-      thinkingLevel: options.thinkingLevel ?? "medium",
-      tools: activeTools,
-      resourceLoader,
-      sessionManager: SessionManager.inMemory(cwd),
-      settingsManager,
-    });
-
+    const stopSession = createPiSessionStopper(session);
     const onAbort = (): void => {
-      void session.abort();
+      // Wait outside the tool/extension callback; awaiting here can deadlock
+      // the very SDK work whose completion makes the session idle.
+      void stopSession().catch(() => undefined);
     };
     if (options.signal) {
       options.signal.addEventListener("abort", onAbort, { once: true });
     }
 
     const unsubscribe = session.subscribe((event) => {
-      const translated = translatePiEvent(event);
-      if (translated) {
-        emit(translated);
-      }
+      for (const translated of translatePiEvents(event)) emit(translated);
     });
 
     emit({
@@ -88,8 +71,16 @@ export class PiRunnerAdapter {
 
     try {
       throwIfAborted(options.signal);
+      assertPreparedPiSession(session, options);
+      if (inputReceiver) {
+        // Host persistence is outside SDK extension hooks, whose failures can be swallowed.
+        await inputReceiver.accept(options.signal!);
+        boundary.assertOpen();
+        assertPreparedPiSession(session, options);
+      }
       await session.prompt(formatTaskPrompt(options.task), { source: "rpc" });
-      throwIfAborted(options.signal);
+      await session.waitForIdle();
+      boundary.assertOpen();
       const terminalFailure = findTerminalFailure(events);
       if (terminalFailure) {
         throw new Error(terminalFailure);
@@ -105,12 +96,29 @@ export class PiRunnerAdapter {
         messages: session.state.messages as readonly unknown[],
       };
     } catch (error) {
+      let stopFailure: Error | undefined;
+      try {
+        await stopSession();
+        await session.waitForIdle();
+      } catch (failure) {
+        // Even a non-Error/falsy rejection means cleanup was not proven.
+        stopFailure = failure instanceof Error ? failure : new Error("Runner SDK cleanup failed.");
+      }
+      if (!stopFailure && !boundary.failure && !sourceSignal?.aborted && boundary.yieldRequest) {
+        // Only SDK settlement is proven here. The Host must separately verify
+        // its executor jobs and captured fence before persisting a checkpoint.
+        throw new PiRunnerYielded(boundary.yieldRequest, new Date().toISOString());
+      }
+      let failure = boundary.failure ?? stopFailure ?? error;
+      if (!boundary.failure && !stopFailure && sourceSignal?.aborted) {
+        try { throwIfAborted(sourceSignal); } catch (cancelled) { failure = cancelled; }
+      }
       emit({
         type: "run_error",
         taskId: options.task.id,
-        message: error instanceof Error ? error.message : String(error),
+        message: failure instanceof Error ? failure.message : String(failure),
       });
-      throw error;
+      throw failure;
     } finally {
       if (options.signal) {
         options.signal.removeEventListener("abort", onAbort);

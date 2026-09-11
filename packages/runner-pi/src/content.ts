@@ -4,6 +4,7 @@ import type { PiRunnerMcpToolCallResult, PiRunnerToolHandledResult } from "./typ
 
 export function normalizeMcpToolResultContent(
   content: PiRunnerMcpToolCallResult["content"],
+  isError = false,
 ): (TextContent | ImageContent)[] {
   const normalized: (TextContent | ImageContent)[] = [];
   for (const item of content) {
@@ -13,33 +14,16 @@ export function normalizeMcpToolResultContent(
       normalized.push({ type: "image", data: item.data, mimeType: item.mimeType });
     }
   }
-  return normalized.length > 0 ? normalized : [{ type: "text", text: "MCP tool completed without textual output." }];
+  return normalized.length > 0 ? normalized : [{
+    type: "text",
+    text: isError ? "Ling Stack tool call failed without textual output." : "Ling Stack tool completed without textual output.",
+  }];
 }
 
-export function normalizeHandledToolResult(result: PiRunnerToolHandledResult): AgentToolResult<any> {
-  if (result.isError) {
-    throw new Error(formatHandledToolError(result));
-  }
+/** Normalize content without discarding failure evidence; status is bridged by host-tool-results. */
+export function normalizeHandledToolResult(result: PiRunnerToolHandledResult): AgentToolResult<unknown> {
   return {
-    content: normalizeMcpToolResultContent(result.content),
+    content: normalizeMcpToolResultContent(result.content, result.isError === true),
     details: result.details,
   };
-}
-
-export function normalizeHandledToolResultPreservingError(result: PiRunnerToolHandledResult): AgentToolResult<any> {
-  const normalized: AgentToolResult<any> & { readonly isError: boolean } = {
-    content: normalizeMcpToolResultContent(result.content),
-    details: result.details,
-    isError: result.isError ?? false,
-  };
-  return normalized;
-}
-
-function formatHandledToolError(result: PiRunnerToolHandledResult): string {
-  const text = result.content
-    .filter((item): item is TextContent => item.type === "text")
-    .map((item) => item.text)
-    .join("\n")
-    .trim();
-  return text || "Ling Stack handled tool call failed.";
 }
