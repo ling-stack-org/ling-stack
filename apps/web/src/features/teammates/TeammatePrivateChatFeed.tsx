@@ -33,6 +33,7 @@ import type { TeammateDirectLinkPreview, TeammateDirectMessage, TeammatePrivateA
 import { TeammateAvatarView } from "./TeammateAvatarView.js";
 import type { TeammatePrivateChatSurfaceProps } from "./teammate-private-chat-types.js";
 import {
+  buildTeammatePrivateUnverifiedEvidenceMap,
   buildTeammatePrivateWorkCellMap,
   projectTeammatePrivateMessage,
   teammateReferenceFileName,
@@ -44,7 +45,14 @@ import type { TeammatePrivateMessageController } from "./useTeammatePrivateMessa
 import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
 import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
 import { timelineMessageChromeOwnerIds } from "../../shared/conversation/timeline/timeline-message-chrome-owners.js";
-import { privateGeneratedMediaForMessage, projectTeammatePrivateTimelineItems, resolveTeammatePrivateDiagnosticPlacements, selectTeammatePrivateMessages } from "./teammate-private-timeline-items.js";
+import {
+  privateGeneratedMediaForMessage,
+  privateTimelineOwnedRunIds,
+  projectTeammatePrivateTimelineItems,
+  resolveTeammatePrivateDiagnosticPlacements,
+  selectTeammatePrivateMessages,
+  selectTeammatePrivateOwnedMessages,
+} from "./teammate-private-timeline-items.js";
 import { useTeammatePrivateTimeline } from "./use-teammate-private-timeline.js";
 
 export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
@@ -106,6 +114,7 @@ export function TeammatePrivateChatFeed({
   privateAttachmentById,
   privateFeedRef,
   providerRecovered,
+  runs,
   taskCreateBusyKeys,
   taskCreateErrors,
   taskChannelOptions,
@@ -118,7 +127,7 @@ export function TeammatePrivateChatFeed({
 }: TeammatePrivateChatFeedProps): React.JSX.Element {
   const { t } = useI18n();
   const timelineItemLocatorRef = useRef<ConversationTimelineItemLocator | null>(null);
-  const ownerMessageText = useMemo(() => selectTeammatePrivateMessages(candidateMessages, {
+  const ownerMessageText = useMemo(() => selectTeammatePrivateOwnedMessages(candidateMessages, {
     teammateId: teammate.id, directThreadId: threadId,
   }), [candidateMessages, teammate.id, threadId]);
   const canonical = useTeammatePrivateTimeline({
@@ -134,22 +143,31 @@ export function TeammatePrivateChatFeed({
     canonicalThreadId: canonical.threadId, runs: canonical.runs, runLinks: canonical.runLinks,
     turns: canonical.turns,
   }), [canonical.directThreadId, canonical.runLinks, canonical.runs, canonical.threadId, canonical.turns, teammate.id, threadId]);
-  // All downstream body/chrome/media/action paths consume this owner-filtered list.
-  const visibleMessages = useMemo(() => selectTeammatePrivateMessages(candidateMessages, privateScope), [candidateMessages, privateScope]);
+  const visibleMessages = useMemo(() => selectTeammatePrivateOwnedMessages(candidateMessages, privateScope), [candidateMessages, privateScope]);
+  const executionMessages = useMemo(() => selectTeammatePrivateMessages(visibleMessages, privateScope), [privateScope, visibleMessages]);
+  const executionMessageById = useMemo(() => new Map(executionMessages.map((message) => [message.id, message])), [executionMessages]);
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
   const composerGateApprovalByRunId = useMemo(
     () => buildComposerGateApprovalPresentationByRunId(composerGateApprovals, t),
     [composerGateApprovals, t],
   );
   const workCellByMessageId = useMemo(() => buildTeammatePrivateWorkCellMap({
-    messages: visibleMessages,
+    messages: executionMessages,
     teammateId: teammate.id,
     runs: canonical.runs ?? [],
     executionActions,
     approvals,
     terminalReports,
     t,
-  }), [approvals, canonical.runs, executionActions, teammate.id, t, terminalReports, visibleMessages]);
+  }), [approvals, canonical.runs, executionActions, executionMessages, teammate.id, t, terminalReports]);
+  const unverifiedEvidenceByMessageId = useMemo(() => buildTeammatePrivateUnverifiedEvidenceMap({
+    messages: visibleMessages,
+    teammateId: teammate.id,
+    authorizedRunIds: privateTimelineOwnedRunIds(privateScope),
+    runs,
+    executionActions,
+    t,
+  }), [executionActions, privateScope, runs, t, teammate.id, visibleMessages]);
   const projectionByMessageId = useMemo(
     () => new Map(visibleMessages.map((message) => [message.id, projectTeammatePrivateMessage({
       localUserDisplayName,
@@ -160,7 +178,7 @@ export function TeammatePrivateChatFeed({
     })])),
     [localUserDisplayName, providerRecovered, t, teammate.displayName, visibleMessages],
   );
-  const activeMessage = [...visibleMessages].reverse().find((message) => {
+  const activeMessage = [...executionMessages].reverse().find((message) => {
     const projection = projectionByMessageId.get(message.id);
     return Boolean(projection?.pendingAiReply && message.linkedRunId);
   });
@@ -176,7 +194,9 @@ export function TeammatePrivateChatFeed({
         return {
           message,
           body: projectionByMessageId.get(message.id)?.body ?? message.body,
-          facts: workCell ? conversationTimelineItemsForModel(workCell.model, composerApprovalId) : [],
+          facts: workCell
+            ? conversationTimelineItemsForModel(workCell.model, composerApprovalId)
+            : unverifiedEvidenceByMessageId.get(message.id) ?? [],
         };
       }),
       runLinks: canonical.runLinks,
@@ -187,7 +207,7 @@ export function TeammatePrivateChatFeed({
       canonicalMessageIds: canonical.messageIds,
       canonicalState: canonical.status,
     });
-  }, [canonical, composerGateApprovalByRunId, privateScope, projectionByMessageId, visibleMessages, workCellByMessageId]);
+  }, [canonical, composerGateApprovalByRunId, privateScope, projectionByMessageId, unverifiedEvidenceByMessageId, visibleMessages, workCellByMessageId]);
   const timelineSnapshot = useMemo(() => buildSurfaceTimelineSnapshot({
     surface: "teammate_direct",
     threadId: canonical.threadId ?? threadId,
@@ -230,7 +250,8 @@ export function TeammatePrivateChatFeed({
 
   function renderPrivateMessageRow(message: TeammateDirectMessage, body: React.ReactNode, ownsMessageChrome: boolean): React.JSX.Element {
     const workCell = workCellByMessageId.get(message.id);
-    const messageGeneratedMedia = privateGeneratedMediaForMessage(generatedMedia, message);
+    const executionMessage = executionMessageById.get(message.id);
+    const messageGeneratedMedia = executionMessage ? privateGeneratedMediaForMessage(generatedMedia, executionMessage) : [];
     const projection = projectionByMessageId.get(message.id) ?? projectTeammatePrivateMessage({
       localUserDisplayName,
       message,

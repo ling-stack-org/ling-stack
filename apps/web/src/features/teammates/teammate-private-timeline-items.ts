@@ -28,7 +28,16 @@ function privateMessageOwnerMatches(message: TeammateDirectMessage, scope: Teamm
 /** Message ownership proves text visibility, independently of execution lineage. */
 function privateMessageIsOwned(message: TeammateDirectMessage, scope: TeammatePrivateTimelineScope): boolean {
   return privateMessageOwnerMatches(message, scope) && (message.authorType === "local-user" ||
-    (message.authorType === "ai-teammate" && message.authorId === scope.teammateId));
+    (message.authorType === "ai-teammate" && message.authorId === scope.teammateId) ||
+    (message.authorType === "system" && message.authorId === "system"));
+}
+
+/** Text visibility depends only on the direct-message owner, not Run lineage. */
+export function selectTeammatePrivateOwnedMessages(
+  messages: readonly TeammateDirectMessage[],
+  scope: TeammatePrivateTimelineScope,
+): readonly TeammateDirectMessage[] {
+  return messages.filter((message) => privateMessageIsOwned(message, scope));
 }
 
 /** Linked IDs are not authority: only a private owner Run with one Turn link is usable. */
@@ -46,7 +55,7 @@ export function selectTeammatePrivateMessages(
   scope: TeammatePrivateTimelineScope,
 ): readonly TeammateDirectMessage[] {
   const ownedRuns = privateTimelineOwnedRunIds(scope);
-  return messages.filter((message) => privateMessageIsOwned(message, scope)).map((message) => {
+  return selectTeammatePrivateOwnedMessages(messages, scope).map((message) => {
     if (!message.linkedRunId || ownedRuns.has(message.linkedRunId)) return message;
     const { linkedRunId: _unprovedRun, ...ownedMessage } = message;
     return ownedMessage;
@@ -70,7 +79,7 @@ export function privateTimelineResponseIsOwned(
   if (response.teammateId !== scope.teammateId || response.thread.teammateId !== scope.teammateId ||
     (scope.directThreadId && response.thread.id !== scope.directThreadId) ||
     response.messages.some((message) => message.workspaceId !== response.thread.workspaceId ||
-      !(message.authorType === "system" ? privateMessageOwnerMatches : privateMessageIsOwned)(message, { ...scope, directThreadId: response.thread.id }))) return false;
+      !privateMessageIsOwned(message, { ...scope, directThreadId: response.thread.id }))) return false;
   const detail = response.timeline;
   if (!detail) return true;
   if (detail.thread.kind !== "teammate_direct" || detail.thread.teammateId !== scope.teammateId ||
@@ -116,7 +125,10 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
   const messages = input.messages.flatMap((entry) => {
     const message = ownedMessages.get(entry.message.id);
     if (!message || !privateMessageIsOwned(entry.message, input)) return [];
-    return [{ ...entry, message, facts: message.linkedRunId ? entry.facts : [] }];
+    const unverifiedDiagnostics = !message.linkedRunId && entry.message.linkedRunId
+      ? sanitizePrivateUnverifiedDiagnostics(entry.facts, message.id)
+      : [];
+    return [{ ...entry, message, facts: message.linkedRunId ? entry.facts : [], unverifiedDiagnostics }];
   });
   const turnIdByRunId = new Map(input.runLinks?.map((link) => [link.runId, link.turnId]) ?? []);
   const visibleIds = new Set(messages.map(({ message }) => message.id));
@@ -211,7 +223,7 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
     });
   }
   const narration: ConversationTimelineMessageItem[] = [];
-  messages.forEach(({ message, body, facts: unfilteredFacts }, messageIndex) => {
+  messages.forEach(({ message, body, facts: unfilteredFacts, unverifiedDiagnostics }, messageIndex) => {
     const facts = unfilteredFacts.filter((item) => itemIsOwned(item) && !isPrivateScopeBlocked(item));
     const existing = canonical.find((item) => (item.kind === "userMessage" || item.kind === "agentMessage") && sourceMessageId(item) === message.id);
     const turnId = message.linkedRunId ? turnIdByRunId.get(message.linkedRunId) : undefined;
@@ -245,20 +257,29 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
     } else if (!existing) {
       items.push({ ...messageItem, ...(message.linkedRunId ? { runId: message.linkedRunId } : {}) });
     }
-    if (!input.canonical && input.canonicalState !== "loading" && input.canonicalState !== undefined && facts.length > 0) {
-      items.push({
-        id: `diagnostic:private-canonical:${message.id}`,
-        kind: "diagnostic",
-        revision: facts.reduce((max, item) => Math.max(max, item.revision), 0),
-        threadSequence,
-        partIndex: messageItem.partIndex + 1,
-        status: "blocked",
-        runId: message.linkedRunId,
-        sourceRefs: facts.flatMap((item) => item.sourceRefs.filter((ref) => ref.kind !== "conversation_item")),
-        title: "Activity unavailable",
-        description: input.canonicalState === "error" ? "Execution evidence could not be loaded." : "Execution evidence is missing required lineage.",
-        summary: input.canonicalState === "error" ? "Execution evidence could not be loaded." : "Execution evidence is missing required lineage.",
-      });
+    if (!input.canonical && input.canonicalState !== "loading" && input.canonicalState !== undefined &&
+      (facts.length > 0 || unverifiedDiagnostics.length > 0)) {
+      if (input.canonicalState === "loaded" && unverifiedDiagnostics.length > 0) {
+        items.push(...unverifiedDiagnostics.map((diagnostic, index) => ({
+          ...diagnostic,
+          threadSequence,
+          partIndex: messageItem.partIndex + index + 1,
+        })));
+      } else {
+        items.push({
+          id: `diagnostic:private-canonical:${message.id}`,
+          kind: "diagnostic",
+          revision: facts.reduce((max, item) => Math.max(max, item.revision), 0),
+          threadSequence,
+          partIndex: messageItem.partIndex + 1,
+          status: "blocked",
+          runId: message.linkedRunId,
+          sourceRefs: facts.flatMap((item) => item.sourceRefs.filter((ref) => ref.kind !== "conversation_item")),
+          title: "Activity unavailable",
+          description: input.canonicalState === "error" ? "Execution evidence could not be loaded." : "Execution evidence is missing required lineage.",
+          summary: input.canonicalState === "error" ? "Execution evidence could not be loaded." : "Execution evidence is missing required lineage.",
+        });
+      }
     }
   });
   if (scopeBlocked) items.push({
@@ -278,6 +299,41 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
   return interleaveConversationUserInputRows(
     mergeConversationRunNarration(atomic.filter(item => !isUserInput(item)), narration), atomic.filter(isUserInput),
   );
+}
+
+const safePrivateUnverifiedDiagnosticSummaries = new Set([
+  "Command batch lineage is incomplete.",
+  "Exploration batch lineage is incomplete.",
+  "Missing action, run, participant, or source lineage.",
+  "Execution evidence is missing required lineage.",
+]);
+
+function sanitizePrivateUnverifiedDiagnostics(
+  facts: readonly ConversationTimelineItem[],
+  messageId: string,
+): readonly ConversationTimelineItem[] {
+  const summaries = new Set<string>();
+  return facts.flatMap((item, index) => {
+    if (item.kind !== "diagnostic" || item.status !== "blocked") return [];
+    const candidate = item.summary?.trim() || item.description?.trim() || "";
+    const summary = safePrivateUnverifiedDiagnosticSummaries.has(candidate)
+      ? candidate
+      : "Execution evidence is missing required lineage.";
+    if (summaries.has(summary)) return [];
+    summaries.add(summary);
+    return [{
+      id: `diagnostic:private-unverified:${messageId}:${index}`,
+      kind: "diagnostic" as const,
+      revision: item.revision,
+      threadSequence: 0,
+      partIndex: index,
+      status: "blocked" as const,
+      sourceRefs: [],
+      title: "Activity unavailable",
+      description: summary,
+      summary,
+    }];
+  });
 }
 
 /**
