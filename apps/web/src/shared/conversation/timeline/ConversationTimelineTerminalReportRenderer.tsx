@@ -1,29 +1,49 @@
-import { CheckCircle2, CircleAlert, FileCheck2, ShieldAlert } from "lucide-react";
+import { CheckCircle2, CircleAlert, Copy, FileCheck2, ShieldAlert } from "lucide-react";
+import { MessageActionBar } from "@ling-stack/conversation-ui-react";
 import { isUserVisibleTerminalReportArtifact, visibleTerminalReportTimelineItem } from "@ling-stack/conversation-ui-core";
 import type {
+  ConversationInteractionSurfaceKind,
   ConversationOperationSourceRef,
+  ConversationTimelineScopeKind,
   ConversationTimelineTerminalReportArtifact,
   ConversationTimelineTerminalReportItem,
 } from "@ling-stack/conversation-ui-core";
+import { useI18n } from "../../../i18n.js";
 import { TimelineFactRow } from "./TimelineFactRow.js";
+import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import { ConversationWorkspaceRecoveryControls } from "../blocks/ConversationWorkspaceRecoveryControls.js";
 import { ConversationTimelineFileReference } from "./ConversationTimelineFileChangeDetail.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 import { terminalReportDisplaySourceRefs } from "./terminal-report-display-refs.js";
+import { terminalReportCopyText } from "./terminal-report-copy-text.js";
 import "./conversation-terminal-response.css";
+
+const interactionSurfaceByScope: Record<ConversationTimelineScopeKind, ConversationInteractionSurfaceKind> = {
+  normal: "normal_conversation",
+  private: "teammate_direct",
+  channel_root: "channel_root",
+  topic: "topic_reply",
+  branch: "channel_branch",
+  run_detail: "run_thread",
+  child: "run_thread",
+};
 
 export function ConversationTimelineTerminalReportRenderer({
   item: inputItem,
   depth,
+  scopeKind = "normal",
   cwd,
   onOpenSourceRef,
 }: {
   readonly item: ConversationTimelineTerminalReportItem;
   readonly depth: 0 | 1;
+  readonly scopeKind?: ConversationTimelineScopeKind;
   readonly cwd?: string;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
 }): React.JSX.Element {
+  const { t } = useI18n();
   const item = visibleTerminalReportTimelineItem(inputItem);
+  const copyText = terminalReportCopyText(item);
   const artifactCount = item.artifacts.filter(isUserVisibleTerminalReportArtifact).length;
   const counts = [
     item.changeCount ? `${item.changeCount} changes` : "",
@@ -34,6 +54,14 @@ export function ConversationTimelineTerminalReportRenderer({
   ].filter(Boolean).join(" · ");
   return (
     <div className="conversation-timeline-terminal-response" data-conversation-terminal-response={item.reportId} data-conversation-action-owner>
+      {item.summary ? (
+        <MessageBodyRenderer
+          className="conversation-timeline-result-summary"
+          text={item.summary}
+          cwd={cwd}
+          compact={false}
+        />
+      ) : null}
       <TimelineFactRow
         item={item}
         depth={depth}
@@ -42,6 +70,19 @@ export function ConversationTimelineTerminalReportRenderer({
         icon={item.status === "succeeded" ? <CheckCircle2 size={14} aria-hidden="true" /> : item.status === "failed" || item.status === "blocked" ? <CircleAlert size={14} aria-hidden="true" /> : <FileCheck2 size={14} aria-hidden="true" />}
         detail={<TerminalReportDetail item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} />}
       />
+      {copyText ? (
+        <MessageActionBar
+          surface={interactionSurfaceByScope[scopeKind]}
+          copiedLabel={t("Copied")}
+          actions={[{
+            id: "copy-terminal-report",
+            kind: "copy",
+            label: t("Copy message"),
+            icon: <Copy size={14} aria-hidden="true" />,
+            copyText,
+          }]}
+        />
+      ) : null}
     </div>
   );
 }
