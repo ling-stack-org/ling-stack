@@ -192,6 +192,12 @@ export function createRunApprovalHandler(options: {
    * the approval HTTP route before this run loop observed it.
    */
   readonly onExistingApprovalDecisionEvent?: (envelope: RunEventEnvelope) => void;
+  /**
+   * Optional isolated reviewer for smart authorization. The callback may
+   * resolve the pending approval through the Store CAS or leave it pending for
+   * the existing human path.
+   */
+  readonly reviewPendingApproval?: (approval: ApprovalRequest) => Promise<void>;
 }): PiRunnerRunOptions["onApprovalRequired"] {
   const sourceFence = options.sourceFence ? Object.freeze({ ...options.sourceFence }) : undefined;
   const hostAuthority = createHostCapabilityAuthority({ ...options, sourceFence });
@@ -505,6 +511,20 @@ export function createRunApprovalHandler(options: {
       role: "preview",
       appendAndMaybeStream: options.appendAndMaybeStream,
     });
+
+    if (
+      !mandatoryApproval
+      && options.effectivePolicySnapshot?.authorizationMode === "smart"
+      && options.reviewPendingApproval
+    ) {
+      try {
+        await options.reviewPendingApproval(approval);
+      } catch {
+        // Automatic review is advisory until its fenced Store CAS succeeds.
+        // Any technical failure leaves the durable approval pending so the
+        // existing human decision path remains available.
+      }
+    }
 
     const resolvedApproval = await waitForApprovalDecision(options.store, approval.id, options.signal);
     const afterWaitRejection = rejectHost(resolvedApproval.status === "approved" ? resolvedApproval.id : undefined);

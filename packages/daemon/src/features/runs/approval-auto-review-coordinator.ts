@@ -23,7 +23,7 @@ export interface ApprovalAutoReviewRequest {
 export type ApprovalAutoReviewOutcome =
   | {
       readonly status: "resolved";
-      readonly verdict: ApprovalAutoReviewVerdict;
+      readonly verdict: ApprovalAutoReviewVerdict & { readonly decision: "approve" | "deny" };
       readonly attempts: number;
     }
   | {
@@ -164,10 +164,11 @@ async function runReview(job: ReviewJob, maxTransientRetries: number): Promise<A
       if (!parsed.ok) {
         return manual("invalid_output", "Automatic reviewer returned an invalid verdict; manual approval is required.", attempts);
       }
-      if (parsed.verdict.decision === "manual") {
-        return manual("reviewer_manual", parsed.verdict.reason, attempts);
+      const verdict = parsed.verdict;
+      if (verdict.decision === "manual") {
+        return manual("reviewer_manual", verdict.reason, attempts);
       }
-      return { status: "resolved", verdict: parsed.verdict, attempts };
+      return { status: "resolved", verdict: { ...verdict, decision: verdict.decision }, attempts };
     } catch (error) {
       if (job.controller.signal.aborted || isAbortError(error)) return abortedOutcome(job, attempts);
       if (attempts <= maxTransientRetries && isTransientTransportError(error)) continue;

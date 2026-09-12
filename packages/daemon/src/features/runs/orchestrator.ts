@@ -49,7 +49,7 @@ import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
 import { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import { loadWorkspaceRuntimeSettings } from "../../runtime/runner-settings.js";
-import { UnsupportedRunnerError, type RunnerRegistry, type RunnerResolution } from "../../runtime/runners.js";
+import { DEFAULT_RUNNER_ID, UnsupportedRunnerError, type RunnerRegistry, type RunnerResolution } from "../../runtime/runners.js";
 import { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { checkPlatformNativeSandboxBackend } from "../../runtime/sandbox/platform-native.js";
@@ -109,6 +109,7 @@ import {
 import { appendExecutionActionInvalidation } from "./execution-action-invalidation.js";
 import { listConversationMediaGenerationTargets } from "../media/conversation-targets.js";
 import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
+import { reviewPendingApprovalAutomatically } from "./approval-auto-review-host.js";
 import { hasCurrentRunCallbackIdentity } from "./run-callback-ownership.js";
 import {
   ensureLingThreadForRun,
@@ -918,10 +919,14 @@ async function executeAdmittedRunRequest(
     return undefined;
   }
 
-  if (!store || !run || !workUnit || !attempt || !runtime || !runnerResolution || !thread) {
+  if (!store || !run || !workUnit || !attempt || !runtime || !runnerResolution || !thread
+    || !resolvedProvider || !effectivePolicySnapshot || !runtimeSettings) {
     writeRunPreparationFailure(sink, 500, { error: "run_storage_unavailable", message: "Run was not initialized." });
     return undefined;
   }
+  const activeProvider = resolvedProvider;
+  const activeEffectivePolicySnapshot = effectivePolicySnapshot;
+  const activeRuntimeSettings = runtimeSettings;
 
   sink.writeReady({ ok: true, runId: run.id });
   try {
@@ -1338,6 +1343,35 @@ async function executeAdmittedRunRequest(
       workspaceCwd,
       unifiedExecEnabled: runnerRequest.runtimeToolFeatures?.unifiedExec === true,
       shellSnapshotEnabled: runnerRequest.runtimeToolFeatures?.shellSnapshot === true,
+      reviewPendingApproval: activeEffectivePolicySnapshot.authorizationMode === "smart"
+        ? async (approval) => {
+            let reviewerRunner;
+            try {
+              reviewerRunner = runnerRegistry.resolve({
+                requestedRunnerId: DEFAULT_RUNNER_ID,
+                allowFallback: false,
+                allowedRunnerIds: activeRuntimeSettings.allowedRunnerIds,
+                providerApi: activeProvider.api,
+                tools: [],
+              }).runner.adapter;
+            } catch {
+              return;
+            }
+            await reviewPendingApprovalAutomatically({
+              store,
+              runtimeSupervisor,
+              runner: reviewerRunner,
+              provider: activeProvider,
+              providerPresetId: runRequest.providerPresetId,
+              run,
+              approval,
+              sourceFence: runnerCallbackFence,
+              effectivePolicySnapshot: activeEffectivePolicySnapshot,
+              signal: abortController.signal,
+              extraSecrets: resolvedSecretValues,
+            });
+          }
+        : undefined,
       onApprovalWaitStarted: beginApprovalHardTimeoutPause,
       onApprovalResolved: (approval) => {
         // The decision may already have a durable Run event (for example when

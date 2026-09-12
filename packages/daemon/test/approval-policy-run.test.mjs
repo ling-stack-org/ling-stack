@@ -856,6 +856,83 @@ test("session permission mode snapshots the effective run policy without relaxin
   }
 });
 
+test("smart authorization resolves an asked command through an isolated system reviewer", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-smart-review-"));
+  const runner = new SmartApprovalProbeRunner("approve");
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory(workspaceCwd) {
+      const store = createSqliteRunStore(workspaceCwd);
+      stores.set(workspaceCwd, store);
+      return store;
+    },
+  });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const { events, runId } = await postRunAndCollectEvents(daemon.url, {
+      ...runBody(cwd, "task_smart_review_approve"),
+      authorizationMode: "smart",
+      workspaceAccessMode: "workspace_write",
+    });
+
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, true);
+    assert.equal(events.some((event) => event.event === "approval_requested"), true);
+    assert.equal(events.some((event) => event.event === "approval_approved"), true);
+    const [resolved] = await listApprovals(daemon.url, cwd, runId);
+    assert.equal(resolved.status, "approved");
+    assert.equal(resolved.resolvedBy, "system-reviewer");
+
+    assert.equal(runner.reviews.length, 1);
+    assert.deepEqual(runner.reviews[0].tools, []);
+    assert.deepEqual(runner.reviews[0].mcpTools, []);
+    assert.equal(runner.reviews[0].thinkingLevel, "off");
+    assert.equal(runner.reviews[0].reasoningSummary, "none");
+
+    const [reviewUnit] = stores.get(cwd).listWorkUnits({ kind: "approval_review", limit: 10 });
+    assert.equal(reviewUnit.status, "succeeded");
+    assert.equal(reviewUnit.ownerId, resolved.id);
+    assert.match(reviewUnit.request.evidenceFingerprint, /^[a-f0-9]{64}$/);
+    assert.equal(Object.hasOwn(reviewUnit.request, "evidence"), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("smart authorization preserves the pending human path when the reviewer returns manual", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-smart-review-manual-"));
+  const runner = new SmartApprovalProbeRunner("manual");
+  const daemon = await startDaemonForTest(runner);
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, {
+      ...runBody(cwd, "task_smart_review_manual"),
+      authorizationMode: "smart",
+      workspaceAccessMode: "workspace_write",
+    });
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const approvalId = requested.data.data.approvalId;
+
+    const [pending] = await listApprovals(daemon.url, cwd, ready.data.runId);
+    assert.equal(pending.status, "pending");
+    assert.equal(runner.decisions.length, 0);
+    assert.equal(runner.reviews.length, 1);
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(approvalId)}/deny?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "Manual reviewer fallback regression",
+    });
+    await sse.collectRemaining();
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("full access permission mode requires explicit confirmation before creating a run", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-session-policy-confirm-"));
   const runner = new ApprovalProbeRunner({
@@ -5165,6 +5242,35 @@ class ApprovalProbeRunner {
       events: [],
       messages: [{ role: "assistant", content: "done" }],
     };
+  }
+}
+
+class SmartApprovalProbeRunner extends ApprovalProbeRunner {
+  constructor(verdict) {
+    super({
+      toolCallId: `tool_smart_${verdict}`,
+      toolName: "bash",
+      input: { command: "printf 'smart-review-ok\\n'" },
+    });
+    this.verdict = verdict;
+    this.reviews = [];
+  }
+
+  async runTask(options) {
+    if (options.task.id.startsWith("approval-review:")) {
+      this.reviews.push(options);
+      options.onEvent?.({
+        type: "message_end",
+        role: "assistant",
+        text: JSON.stringify({
+          schemaVersion: 1,
+          decision: this.verdict,
+          reason: this.verdict === "manual" ? "The target needs human confirmation." : "The exact scoped test is necessary.",
+        }),
+      });
+      return { taskId: options.task.id, events: [], messages: [] };
+    }
+    return super.runTask(options);
   }
 }
 
