@@ -1258,6 +1258,7 @@ export class SqliteRunStore implements RunStore {
     this.approvalResumes = new SqliteApprovalResumeStore(
       { database: this.database },
       {
+        getApprovalRequest: (id) => this.getApprovalRequest(id),
         getApprovalCheckpoint: (id) => this.getApprovalCheckpoint(id),
         updateApprovalCheckpointStatus: (id, input, now) => this.updateApprovalCheckpointStatus(id, input, now),
         getRun: (id) => this.getRun(id),

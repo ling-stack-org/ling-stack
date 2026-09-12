@@ -167,9 +167,22 @@ export interface CommitApprovalResumeCheckpointQuarantineInput {
   readonly now: string;
 }
 
+export interface CommitApprovalReviewDeniedTerminalInput {
+  readonly kind: "system_review_denied";
+  readonly checkpointId: string;
+  readonly expectedCheckpointRevision: number;
+  readonly approvalId: string;
+  readonly runId: string;
+  readonly workUnitId: string;
+  readonly attemptId: string;
+  readonly reason: string;
+  readonly now: string;
+}
+
 export type CommitApprovalResumeTerminalInput =
   | CommitApprovalResumeVerifiedTerminalInput
-  | CommitApprovalResumeCheckpointQuarantineInput;
+  | CommitApprovalResumeCheckpointQuarantineInput
+  | CommitApprovalReviewDeniedTerminalInput;
 
 export type CommitApprovalResumeTerminalResult =
   | {
@@ -185,6 +198,15 @@ export type CommitApprovalResumeTerminalResult =
       readonly ok: true;
       readonly kind: "checkpoint_quarantine";
       readonly checkpoint: LingApprovalCheckpoint;
+      readonly controlPlaneEvents: readonly ControlPlaneEvent[];
+    }
+  | {
+      readonly ok: true;
+      readonly kind: "system_review_denied";
+      readonly checkpoint: LingApprovalCheckpoint;
+      readonly run: RunSession;
+      readonly workUnit: WorkUnit;
+      readonly attempt: WorkUnitAttempt;
       readonly controlPlaneEvents: readonly ControlPlaneEvent[];
     }
   | { readonly ok: false; readonly code: "approval_resume_terminal_stale" | "approval_resume_lineage_mismatch" };

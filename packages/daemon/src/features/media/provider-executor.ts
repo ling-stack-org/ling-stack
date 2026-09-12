@@ -33,6 +33,7 @@ import {
   synchronizeConversationMediaWorkUnitTerminal,
 } from "./conversation-runtime-recovery.js";
 import type { MediaJobExecutionResult, MediaRuntimeHandle, RunMediaJobHooks } from "./executor.js";
+import { restoreOrRecoverMediaRuntimeHandle } from "./runtime-recovery.js";
 import { requiresMediaProductionApproval } from "./media-cost-approval.js";
 import { assertMediaJobProvider, createMediaAdapterForProvider } from "./provider.js";
 import { selectInitialMediaSceneResult } from "./scene-result-selection.js";
@@ -134,7 +135,12 @@ async function runProviderMediaJobExecutionOwner(input: {
       }
       handle = store.getMediaJobExecutionHandle(job.id);
     }
-    supervised = restoreRuntimeHandle(store, handle) ?? restoreConversationRuntimeHandle(store, job.id) ?? input.hooks.startRuntimeWorkUnit({
+    supervised = restoreOrRecoverMediaRuntimeHandle({
+      store,
+      handle,
+      hooks: input.hooks,
+      reason: "media-provider-daemon-recovery",
+    }) ?? restoreConversationRuntimeHandle(store, job.id) ?? input.hooks.startRuntimeWorkUnit({
       store,
       kind: "media_job",
       ownerType: "media_job",
@@ -547,13 +553,6 @@ async function cancelPersistedProviderOperation(
   } catch {
     // The local cancellation remains authoritative when the original target cannot be reconstructed.
   }
-}
-
-function restoreRuntimeHandle(store: RunStore, handle: ReturnType<RunStore["getMediaJobExecutionHandle"]>): MediaRuntimeHandle | undefined {
-  if (!handle?.workUnitId || !handle.attemptId) return undefined;
-  const workUnit = store.getWorkUnit(handle.workUnitId);
-  const attempt = store.getWorkUnitAttempt(handle.attemptId);
-  return workUnit && attempt ? { workUnit, attempt } : undefined;
 }
 
 function restoreConversationRuntimeHandle(store: RunStore, mediaJobId: string): MediaRuntimeHandle | undefined {

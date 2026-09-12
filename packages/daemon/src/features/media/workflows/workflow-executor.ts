@@ -11,6 +11,7 @@ import {
   synchronizeConversationMediaWorkUnitTerminal,
 } from "../conversation-runtime-recovery.js";
 import type { MediaJobExecutionResult, MediaRuntimeHandle, RunMediaJobHooks } from "../executor.js";
+import { restoreOrRecoverMediaRuntimeHandle } from "../runtime-recovery.js";
 import { requiresMediaProductionApproval } from "../media-cost-approval.js";
 import { selectInitialMediaSceneResult } from "../scene-result-selection.js";
 import { createComfyUiWorkflowAdapter } from "./workflow-adapter.js";
@@ -105,7 +106,12 @@ async function runWorkflowMediaJobExecutionOwner(input: {
       }
       handle = store.getMediaJobExecutionHandle(job.id);
     }
-    supervised = restoreRuntimeHandle(store, handle) ?? restoreConversationRuntimeHandle(store, job.id) ?? input.hooks.startRuntimeWorkUnit({
+    supervised = restoreOrRecoverMediaRuntimeHandle({
+      store,
+      handle,
+      hooks: input.hooks,
+      reason: "media-workflow-daemon-recovery",
+    }) ?? restoreConversationRuntimeHandle(store, job.id) ?? input.hooks.startRuntimeWorkUnit({
       store,
       kind: "media_job",
       ownerType: "media_job",
@@ -438,13 +444,6 @@ function clearScheduled(mediaJobId: string): void {
   const timer = scheduled.get(mediaJobId);
   if (timer) clearTimeout(timer);
   scheduled.delete(mediaJobId);
-}
-
-function restoreRuntimeHandle(store: RunStore, handle: ReturnType<RunStore["getMediaJobExecutionHandle"]>): MediaRuntimeHandle | undefined {
-  if (!handle?.workUnitId || !handle.attemptId) return undefined;
-  const workUnit = store.getWorkUnit(handle.workUnitId);
-  const attempt = store.getWorkUnitAttempt(handle.attemptId);
-  return workUnit && attempt ? { workUnit, attempt } : undefined;
 }
 
 function restoreConversationRuntimeHandle(store: RunStore, mediaJobId: string): MediaRuntimeHandle | undefined {

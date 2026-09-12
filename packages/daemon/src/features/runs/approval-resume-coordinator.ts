@@ -19,7 +19,7 @@ import { resolveRunnerResumeCapabilities, type RunnerRegistry } from "../../runt
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { finalizeOrchestratedWorkflowStepRun } from "../channels/orchestrator.js";
-import { workflowExactCommandBindingRejection } from "./approvals.js";
+import { appendApprovalDecisionEvent, workflowExactCommandBindingRejection } from "./approvals.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
 import { workflowStepExecutionOperationBindings } from "../channels/workflow-operation-evidence.js";
 import { acquireRunRuntimeSemaphores, prepareRunConcurrency } from "./concurrency.js";
@@ -33,6 +33,11 @@ export type ApprovalResumeStartResult =
   | { readonly status: "not_applicable"; readonly reason: string }
   | { readonly status: "already_active"; readonly runId: string; readonly attemptId?: string }
   | { readonly status: "started"; readonly runId: string; readonly attemptId: string }
+  | { readonly status: "blocked"; readonly runId?: string; readonly reason: string };
+
+export type ApprovalReviewDenialFinalizeResult =
+  | { readonly status: "finalized"; readonly runId: string }
+  | { readonly status: "not_applicable"; readonly reason: string }
   | { readonly status: "blocked"; readonly runId?: string; readonly reason: string };
 
 export class ApprovalResumeCoordinator {
@@ -57,6 +62,70 @@ export class ApprovalResumeCoordinator {
         this.resumeAfterApproval({ store, approval });
       }
     }
+  }
+
+  finalizeRecoveredSystemReviewDenial(input: {
+    readonly store: RunStore;
+    readonly approval: ApprovalRequest;
+  }): ApprovalReviewDenialFinalizeResult {
+    const checkpoint = input.store.getApprovalCheckpointForApproval(input.approval.id);
+    if (input.approval.status !== "denied" || input.approval.resolvedBy !== "system-reviewer") {
+      return { status: "not_applicable", reason: `approval_${input.approval.status}` };
+    }
+    if (!checkpoint || checkpoint.status !== "denied" || !checkpoint.resumeBasis) {
+      return { status: "blocked", runId: input.approval.runId, reason: "approval_review_denial_checkpoint_invalid" };
+    }
+    const run = input.store.getRun(checkpoint.resumeBasis.runId);
+    const workUnit = input.store.getWorkUnit(checkpoint.resumeBasis.workUnitId);
+    const attempt = input.store.getWorkUnitAttempt(checkpoint.resumeBasis.priorAttemptId);
+    if (!run || !workUnit || !attempt
+      || run.workUnitId !== workUnit.id
+      || attempt.workUnitId !== workUnit.id) {
+      return { status: "blocked", runId: input.approval.runId, reason: "approval_review_denial_lineage_missing" };
+    }
+    if (run.status === "failed" && workUnit.status === "failed") {
+      this.publishRecoveredApprovalDecision(input.store, input.approval);
+      syncLingThreadForTerminalRun(input.store, run.id, new Date().toISOString());
+      void this.reconcileTerminalRun(input.store, run.id, new Date().toISOString()).catch(() => undefined);
+      return { status: "finalized", runId: run.id };
+    }
+    if (run.status !== "waiting_for_approval"
+      || workUnit.status !== "waiting_for_approval"
+      || workUnit.activeAttemptId !== attempt.id
+      || attempt.status !== "lost"
+      || attempt.errorCode !== "runtime_suspend") {
+      return { status: "blocked", runId: run.id, reason: "approval_review_denial_state_mismatch" };
+    }
+    const now = new Date().toISOString();
+    const terminal = input.store.commitApprovalResumeTerminal({
+      kind: "system_review_denied",
+      checkpointId: checkpoint.id,
+      expectedCheckpointRevision: checkpoint.revision,
+      approvalId: input.approval.id,
+      runId: run.id,
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      reason: input.approval.decisionReason ?? "Automatic reviewer denied the action.",
+      now,
+    });
+    if (!terminal.ok) {
+      return { status: "blocked", runId: run.id, reason: terminal.code };
+    }
+    const summaryPath = getRunSummaryPath(input.store.paths, run.id);
+    writeTerminalSummary(summaryPath, {
+      runId: run.id,
+      status: "failed",
+      taskId: run.taskId,
+      eventCount: input.store.countEvents(run.id),
+      startedAt: run.startedAt,
+      endedAt: now,
+      errorMessage: input.approval.decisionReason ?? "Automatic reviewer denied the action.",
+    });
+    for (const event of terminal.controlPlaneEvents) this.options.controlPlaneEvents?.publish(event);
+    this.publishRecoveredApprovalDecision(input.store, input.approval);
+    syncLingThreadForTerminalRun(input.store, run.id, now);
+    void this.reconcileTerminalRun(input.store, run.id, now).catch(() => undefined);
+    return { status: "finalized", runId: run.id };
   }
 
   resumeAfterApproval(input: { readonly store: RunStore; readonly approval: ApprovalRequest }): ApprovalResumeStartResult {
@@ -577,6 +646,17 @@ export class ApprovalResumeCoordinator {
       );
     }
     await this.options.afterRunTerminal?.(terminalRun);
+  }
+
+  private publishRecoveredApprovalDecision(store: RunStore, approval: ApprovalRequest): void {
+    if (!approval.runId) return;
+    const exists = store.listEvents(approval.runId, { limit: 1000 }).some((event) =>
+      event.type === "approval_denied"
+      && typeof event.data === "object"
+      && event.data !== null
+      && "approvalId" in event.data
+      && event.data.approvalId === approval.id);
+    if (!exists) appendApprovalDecisionEvent(store, approval);
   }
 }
 

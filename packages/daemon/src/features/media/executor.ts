@@ -50,6 +50,13 @@ export interface MediaRuntimeHandle {
   readonly attempt: WorkUnitAttempt;
 }
 
+export interface MediaRuntimeRecoveryRequest {
+  readonly store: MediaRuntimeStartStore;
+  readonly workUnit: WorkUnit;
+  readonly reason: string;
+  readonly providerPresetId?: string;
+}
+
 export interface MediaRuntimeTerminalTransitionRequest {
   readonly store: MediaRuntimeTerminalStore;
   readonly workUnitId: string;
@@ -65,6 +72,7 @@ export interface MediaRuntimeTerminalTransitionRequest {
 
 export interface RunMediaJobHooks {
   readonly startRuntimeWorkUnit: (input: MediaRuntimeStartRequest) => MediaRuntimeHandle;
+  readonly recoverRuntimeWorkUnit: (input: MediaRuntimeRecoveryRequest) => MediaRuntimeHandle | undefined;
   readonly transitionRuntimeWorkUnitTerminal: (input: MediaRuntimeTerminalTransitionRequest) => void;
   readonly transitionRuntimeWorkUnitCancelled: (input: {
     readonly store: MediaRuntimeTerminalStore;

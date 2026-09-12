@@ -18,6 +18,7 @@ import type {
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import {
+  retryRuntimeWorkUnit,
   startRuntimeWorkUnit,
   transitionWorkUnitCancelled,
   transitionWorkUnitTerminal,
@@ -303,6 +304,7 @@ function createMediaJobHooks(
 ): RunMediaJobHooks {
   return {
     startRuntimeWorkUnit: (request) => startRuntimeWorkUnit({ ...request, runtimeSupervisor }),
+    recoverRuntimeWorkUnit: (request) => retryRuntimeWorkUnit({ ...request, runtimeSupervisor }),
     transitionRuntimeWorkUnitTerminal: (request) => {
       transitionWorkUnitTerminal(request.store, {
         workUnitId: request.workUnitId,

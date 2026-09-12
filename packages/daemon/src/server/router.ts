@@ -307,6 +307,7 @@ import {
   handleWorkUnitRoute,
 } from "../runtime/routes.js";
 import {
+  retryRuntimeWorkUnit,
   startRuntimeWorkUnit,
   transitionWorkUnitCancelled,
   transitionWorkUnitTerminal,
@@ -458,6 +459,7 @@ export async function routeRequest(
 
   const mediaJobHooks: RunMediaJobHooks = {
     startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
+    recoverRuntimeWorkUnit: (input) => retryRuntimeWorkUnit({ ...input, runtimeSupervisor }),
     transitionRuntimeWorkUnitTerminal: (input) => {
       transitionWorkUnitTerminal(input.store, {
         workUnitId: input.workUnitId,

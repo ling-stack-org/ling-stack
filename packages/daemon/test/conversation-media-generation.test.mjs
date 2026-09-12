@@ -39,6 +39,7 @@ import { buildChannelReplyContinuationContext } from "../dist/features/channels/
 import { buildRunInterventionContinuationRequest } from "../dist/features/runs/run-intervention-continuation-request.js";
 import { RuntimeSupervisor } from "../dist/runtime/supervisor.js";
 import {
+  retryRuntimeWorkUnit,
   startRuntimeWorkUnit,
   transitionWorkUnitCancelled,
   transitionWorkUnitTerminal,
@@ -1721,6 +1722,7 @@ class MediaToolProbeRunner {
 function mediaRuntimeHooks(runtimeSupervisor) {
   return {
     startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
+    recoverRuntimeWorkUnit: (input) => retryRuntimeWorkUnit({ ...input, runtimeSupervisor }),
     transitionRuntimeWorkUnitTerminal: (input) => transitionWorkUnitTerminal(input.store, {
       workUnitId: input.workUnitId,
       attemptId: input.attemptId,

@@ -9,6 +9,7 @@ import type {
   LingApprovalCheckpoint,
   UpdateApprovalCheckpointStatusInput,
 } from "../../approval-checkpoints.js";
+import type { ApprovalRequest } from "../../approval-types.js";
 import type {
   AppendControlPlaneEventInput,
   ControlPlaneEvent,
@@ -28,6 +29,7 @@ import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 interface ApprovalResumeStorePorts {
+  readonly getApprovalRequest: (id: string) => ApprovalRequest | undefined;
   readonly getApprovalCheckpoint: (id: string) => LingApprovalCheckpoint | undefined;
   readonly updateApprovalCheckpointStatus: (
     id: string,
@@ -382,6 +384,9 @@ export class SqliteApprovalResumeStore {
     if (input.kind === "checkpoint_quarantine") {
       return this.commitApprovalResumeCheckpointQuarantine(input);
     }
+    if (input.kind === "system_review_denied") {
+      return this.commitApprovalReviewDeniedTerminal(input);
+    }
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
       const checkpoint = this.ports.getApprovalCheckpoint(input.checkpointId);
@@ -510,6 +515,121 @@ export class SqliteApprovalResumeStore {
       });
       this.context.database.exec("COMMIT;");
       return reloadTerminalResult(this.ports, checkpoint.id, run.id, workUnit.id, attempt.id, controlPlaneEvents);
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.context.database);
+      if (error instanceof ApprovalResumeTransitionAbort) {
+        return {
+          ok: false,
+          code: error.code === "approval_resume_lineage_mismatch"
+            ? "approval_resume_lineage_mismatch"
+            : "approval_resume_terminal_stale",
+        };
+      }
+      throw error;
+    }
+  }
+
+  private commitApprovalReviewDeniedTerminal(
+    input: Extract<CommitApprovalResumeTerminalInput, { readonly kind: "system_review_denied" }>,
+  ): CommitApprovalResumeTerminalResult {
+    this.context.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const approval = this.ports.getApprovalRequest(input.approvalId);
+      const checkpoint = this.ports.getApprovalCheckpoint(input.checkpointId);
+      const run = this.ports.getRun(input.runId);
+      const workUnit = this.ports.getWorkUnit(input.workUnitId);
+      const attempt = this.ports.getWorkUnitAttempt(input.attemptId);
+      if (!approval
+        || approval.status !== "denied"
+        || approval.resolvedBy !== "system-reviewer"
+        || !checkpoint
+        || checkpoint.status !== "denied"
+        || checkpoint.revision !== input.expectedCheckpointRevision
+        || !run
+        || run.status !== "waiting_for_approval"
+        || !workUnit
+        || workUnit.status !== "waiting_for_approval") {
+        throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
+      }
+      if (approval.runId !== input.runId
+        || checkpoint.approvalId !== input.approvalId
+        || checkpoint.runId !== input.runId
+        || checkpoint.resumeBasis?.workUnitId !== input.workUnitId
+        || checkpoint.resumeBasis.priorAttemptId !== input.attemptId
+        || run.workUnitId !== input.workUnitId
+        || workUnit.activeAttemptId !== input.attemptId
+        || !attempt
+        || attempt.workUnitId !== input.workUnitId
+        || attempt.status !== "lost"
+        || attempt.errorCode !== "runtime_suspend") {
+        throw new ApprovalResumeTransitionAbort("approval_resume_lineage_mismatch");
+      }
+
+      const runTransition = this.ports.transitionRunStatus({
+        runId: run.id,
+        expectedStatus: "waiting_for_approval",
+        event: "approval_denied",
+        actor: "system",
+        reason: input.reason,
+        idempotencyKey: systemReviewDeniedIdempotencyKey(input, "run-transition"),
+        now: input.now,
+        endedAt: input.now,
+        errorMessage: input.reason,
+      });
+      const workUnitTransition = this.ports.transitionWorkUnitStatus({
+        ...toRuntimeAttemptFence(attempt),
+        terminalAttemptOwnership: { kind: "lost_attempt_reconciliation" as const },
+        expectedStatus: "waiting_for_approval",
+        event: "runner_failed",
+        actor: "system",
+        reason: input.reason,
+        idempotencyKey: systemReviewDeniedIdempotencyKey(input, "work-unit-transition"),
+        now: input.now,
+        endedAt: input.now,
+        errorCode: "approval_denied",
+        errorMessage: input.reason,
+      });
+      if (!runTransition.ok || !workUnitTransition.ok) {
+        throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
+      }
+      const task = this.ports.getTask(run.taskId);
+      if (task?.status === "running") {
+        const taskTransition = this.ports.transitionTaskStatus({
+          taskId: task.id,
+          expectedStatus: "running",
+          event: "run_failed",
+          actor: "system",
+          reason: input.reason,
+          idempotencyKey: systemReviewDeniedIdempotencyKey(input, "task-transition"),
+          now: input.now,
+          currentRunId: run.id,
+        });
+        if (!taskTransition.ok) {
+          throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
+        }
+      }
+      const fence = toRuntimeAttemptFence(attempt);
+      this.ports.releaseResourceLeasesForAttempt(fence, input.now, "approval-review-denied");
+      this.ports.releaseRuntimeSemaphoreSlotsForAttempt(fence, input.now, "approval-review-denied");
+      const controlPlaneEvents = appendResumeInvalidations(this.ports, {
+        workspaceId: workUnit.workspaceId,
+        cwd: run.cwd,
+        runId: run.id,
+        workUnitId: workUnit.id,
+        approvalId: approval.id,
+        action: "blocked",
+        idempotencyPrefix: `approval-review-denied:${checkpoint.id}:${checkpoint.revision}:${attempt.id}`,
+        now: input.now,
+      });
+      this.context.database.exec("COMMIT;");
+      return reloadSystemReviewDeniedResult(
+        this.ports,
+        checkpoint.id,
+        run.id,
+        workUnit.id,
+        attempt.id,
+        controlPlaneEvents,
+      );
     } catch (error) {
       rollbackOwnedSqliteTransaction(this.context.database);
       if (error instanceof ApprovalResumeTransitionAbort) {
@@ -681,12 +801,37 @@ function reloadTerminalResult(
   return { ok: true, kind: "verified_lineage", checkpoint, run, workUnit, attempt, controlPlaneEvents };
 }
 
+function reloadSystemReviewDeniedResult(
+  ports: ApprovalResumeStorePorts,
+  checkpointId: string,
+  runId: string,
+  workUnitId: string,
+  attemptId: string,
+  controlPlaneEvents: readonly ControlPlaneEvent[],
+): Extract<CommitApprovalResumeTerminalResult, { ok: true; kind: "system_review_denied" }> {
+  const checkpoint = ports.getApprovalCheckpoint(checkpointId);
+  const run = ports.getRun(runId);
+  const workUnit = ports.getWorkUnit(workUnitId);
+  const attempt = ports.getWorkUnitAttempt(attemptId);
+  if (!checkpoint || !run || !workUnit || !attempt) {
+    throw new Error("System review denial committed but could not be reloaded.");
+  }
+  return { ok: true, kind: "system_review_denied", checkpoint, run, workUnit, attempt, controlPlaneEvents };
+}
+
 function claimIdempotencyKey(input: CommitApprovalResumeClaimInput, suffix: string): string {
   return `approval-resume-claim:${input.checkpointId}:${input.expectedCheckpointRevision}:${input.replacementAttempt.id}:${suffix}`;
 }
 
 function terminalIdempotencyKey(input: CommitApprovalResumeVerifiedTerminalInput, suffix: string): string {
   return `approval-resume-terminal:${input.checkpointId}:${input.expectedCheckpointRevision}:${input.attemptId}:${input.status}:${suffix}`;
+}
+
+function systemReviewDeniedIdempotencyKey(
+  input: Extract<CommitApprovalResumeTerminalInput, { readonly kind: "system_review_denied" }>,
+  suffix: string,
+): string {
+  return `approval-review-denied:${input.checkpointId}:${input.expectedCheckpointRevision}:${input.attemptId}:${suffix}`;
 }
 
 function isAttemptTerminal(

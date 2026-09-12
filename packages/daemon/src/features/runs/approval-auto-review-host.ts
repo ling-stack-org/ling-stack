@@ -13,6 +13,8 @@ import { DEFAULT_RUNNER_ID } from "../../runtime/runners.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import {
   startRuntimeWorkUnit,
+  startQueuedRuntimeWorkUnit,
+  retryRuntimeWorkUnit,
   transitionWorkUnitCancelled,
   transitionWorkUnitTerminal,
 } from "../../runtime/work-units.js";
@@ -55,6 +57,8 @@ export interface ReviewPendingApprovalAutomaticallyInput {
   readonly sourceAuthority?: "active_execution" | "recoverable_suspension";
 }
 
+const MAX_APPROVAL_REVIEW_WORK_UNIT_ATTEMPTS = 2;
+
 /**
  * Owns one durable approval-review WorkUnit from evidence capture through the
  * fenced Store verdict. Parsed model output becomes authority only after CAS.
@@ -85,30 +89,22 @@ export async function reviewPendingApprovalAutomatically(
     toolCallId: evidence.snapshot.action.toolCallId,
     sideEffect: input.approval.payload,
   });
-  const reviewUnit = startRuntimeWorkUnit({
-    store: input.store,
-    runtimeSupervisor: input.runtimeSupervisor,
-    kind: "approval_review",
-    ownerType: "approval",
-    ownerId: input.approval.id,
-    channelId: input.run.channelId,
-    teammateId: input.run.teammateId,
-    providerPresetId: input.providerPresetId,
-    requestedRunnerId: DEFAULT_RUNNER_ID,
-    effectiveRunnerId: DEFAULT_RUNNER_ID,
-    idempotencyKey: `approval_review:${input.approval.id}:${evidence.fingerprint}`,
-    request: {
-      schemaVersion: 1,
-      approvalId: input.approval.id,
-      approvalCreatedAt: input.approval.createdAt,
-      runId: input.run.id,
-      sourceWorkUnitId: input.sourceFence.workUnitId,
-      sourceAttemptId: input.sourceFence.attemptId,
-      policyUpdatedAt: input.effectivePolicySnapshot.workspacePolicyUpdatedAt,
-      evidenceFingerprint: evidence.fingerprint,
-      actionFingerprint,
-    },
-  });
+  const reviewRequest = {
+    schemaVersion: 1,
+    approvalId: input.approval.id,
+    approvalCreatedAt: input.approval.createdAt,
+    runId: input.run.id,
+    sourceWorkUnitId: input.sourceFence.workUnitId,
+    sourceAttemptId: input.sourceFence.attemptId,
+    policyUpdatedAt: input.effectivePolicySnapshot.workspacePolicyUpdatedAt,
+    evidenceFingerprint: evidence.fingerprint,
+    actionFingerprint,
+  } as const;
+  const reviewUnitStart = beginApprovalReviewWorkUnit(input, evidence.fingerprint, reviewRequest);
+  if (!reviewUnitStart.ok) {
+    return reviewUnitStart.outcome;
+  }
+  const reviewUnit = reviewUnitStart.reviewUnit;
   const coordinator = input.coordinator ?? approvalAutoReviewCoordinator;
   const outcome = await coordinator.review({
     signal: input.signal,
@@ -175,6 +171,134 @@ export async function reviewPendingApprovalAutomatically(
     ...outcome,
     workUnitId: reviewUnit.workUnit.id,
   };
+}
+
+function beginApprovalReviewWorkUnit(
+  input: ReviewPendingApprovalAutomaticallyInput,
+  evidenceFingerprint: string,
+  request: Readonly<Record<string, unknown>>,
+):
+  | { readonly ok: true; readonly reviewUnit: ReturnType<typeof startRuntimeWorkUnit> }
+  | { readonly ok: false; readonly outcome: Extract<ApprovalAutoReviewHostOutcome, { readonly status: "manual" }> } {
+  const idempotencyKey = `approval_review:${input.approval.id}:${evidenceFingerprint}`;
+  const existing = input.store.findWorkUnitByIdempotency({
+    kind: "approval_review",
+    ownerType: "approval",
+    ownerId: input.approval.id,
+    idempotencyKey,
+  });
+  if (!existing) {
+    return {
+      ok: true,
+      reviewUnit: startRuntimeWorkUnit({
+        store: input.store,
+        runtimeSupervisor: input.runtimeSupervisor,
+        kind: "approval_review",
+        ownerType: "approval",
+        ownerId: input.approval.id,
+        channelId: input.run.channelId,
+        teammateId: input.run.teammateId,
+        providerPresetId: input.providerPresetId,
+        requestedRunnerId: DEFAULT_RUNNER_ID,
+        effectiveRunnerId: DEFAULT_RUNNER_ID,
+        idempotencyKey,
+        request,
+      }),
+    };
+  }
+  if (!matchesReviewRequest(existing.request, request)) {
+    return manualStartOutcome("review_identity_changed", "A prior automatic review has conflicting durable identity.", existing.id, existing.attemptCount);
+  }
+  const settledManual = readSettledManualOutcome(input.store, existing.id);
+  if (existing.status === "succeeded" && settledManual) {
+    return { ok: false, outcome: { ...settledManual, workUnitId: existing.id } };
+  }
+  if (input.sourceAuthority !== "recoverable_suspension") {
+    return manualStartOutcome("review_already_exists", "Automatic review is already recorded for this evidence.", existing.id, existing.attemptCount);
+  }
+  if (existing.attemptCount >= MAX_APPROVAL_REVIEW_WORK_UNIT_ATTEMPTS) {
+    return manualStartOutcome("recovery_limit", "Automatic review restart limit was reached; manual approval is required.", existing.id, existing.attemptCount);
+  }
+  if (existing.status === "queued") {
+    const restarted = startQueuedRuntimeWorkUnit({
+      store: input.store,
+      runtimeSupervisor: input.runtimeSupervisor,
+      workUnit: existing,
+      providerPresetId: input.providerPresetId,
+      requestedRunnerId: DEFAULT_RUNNER_ID,
+      effectiveRunnerId: DEFAULT_RUNNER_ID,
+      startedData: { reason: "approval-review-daemon-recovery", recovered: true },
+    });
+    if (!restarted) {
+      return manualStartOutcome("review_retry_stale", "Automatic review recovery lost its queued WorkUnit claim.", existing.id, existing.attemptCount);
+    }
+    return { ok: true, reviewUnit: restarted };
+  }
+  if (existing.status !== "stale" && existing.status !== "cancelled") {
+    return manualStartOutcome("review_not_recoverable", "The prior automatic review is not safely recoverable.", existing.id, existing.attemptCount);
+  }
+  const retried = retryRuntimeWorkUnit({
+    store: input.store,
+    runtimeSupervisor: input.runtimeSupervisor,
+    workUnit: existing,
+    reason: "approval-review-daemon-recovery",
+    providerPresetId: input.providerPresetId,
+    requestedRunnerId: DEFAULT_RUNNER_ID,
+    effectiveRunnerId: DEFAULT_RUNNER_ID,
+  });
+  if (!retried) {
+    return manualStartOutcome("review_retry_stale", "Automatic review recovery lost its WorkUnit claim.", existing.id, existing.attemptCount);
+  }
+  return { ok: true, reviewUnit: retried };
+}
+
+function readSettledManualOutcome(
+  store: RunStore,
+  workUnitId: string,
+): Extract<ApprovalAutoReviewHostOutcome, { readonly status: "manual" }> | undefined {
+  const event = [...store.listRuntimeEvents(workUnitId, { limit: 1000 })].reverse().find((candidate) => {
+    if (candidate.type !== "work_unit_progress" || !isRecord(candidate.data)) return false;
+    return candidate.data.phase === "manual_fallback" && candidate.data.code === "reviewer_manual";
+  });
+  if (!event || !isRecord(event.data)) return undefined;
+  return {
+    status: "manual",
+    code: "reviewer_manual",
+    reason: "Automatic reviewer previously requested a human decision.",
+    attempts: readNonNegativeInteger(event.data.attempts),
+  };
+}
+
+function matchesReviewRequest(actual: unknown, expected: Readonly<Record<string, unknown>>): boolean {
+  if (!isRecord(actual)) return false;
+  return [
+    "schemaVersion",
+    "approvalId",
+    "approvalCreatedAt",
+    "runId",
+    "sourceWorkUnitId",
+    "sourceAttemptId",
+    "policyUpdatedAt",
+    "evidenceFingerprint",
+    "actionFingerprint",
+  ].every((key) => actual[key] === expected[key]);
+}
+
+function manualStartOutcome(
+  code: string,
+  reason: string,
+  workUnitId: string,
+  attempts: number,
+): { readonly ok: false; readonly outcome: Extract<ApprovalAutoReviewHostOutcome, { readonly status: "manual" }> } {
+  return { ok: false, outcome: { status: "manual", code, reason, workUnitId, attempts } };
+}
+
+function readNonNegativeInteger(value: unknown): number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function appendReviewProgress(

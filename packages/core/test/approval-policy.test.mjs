@@ -2289,6 +2289,67 @@ test("system reviewer may recover only an exact startup-suspended pending approv
   }
 });
 
+test("recovered system reviewer denial atomically closes the waiting run, work unit, and task", async () => {
+  const fixture = await createApprovalResumeClaimFixture("system-reviewer-recovered-denial", { approve: false });
+  try {
+    const { store, approval, sideEffect, priorFence, run, workUnit, priorAttempt, checkpoint, task } = fixture;
+    const lostAt = "2026-08-16T01:00:10.000Z";
+    store.updateWorkUnitAttemptStatus({
+      ...priorFence,
+      status: "lost",
+      now: lostAt,
+      endedAt: lostAt,
+      errorCode: "runtime_suspend",
+      errorMessage: "runtime-startup-recoverable-approval",
+    });
+    const resolved = store.resolveApprovalBySystemReviewer({
+      approvalId: approval.id,
+      approvalCreatedAt: approval.createdAt,
+      runId: run.id,
+      toolCallId: approval.toolCallId,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect,
+      }),
+      workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+      sourceFence: priorFence,
+      sourceAuthority: "recoverable_suspension",
+      decision: "deny",
+      reason: "Recovered reviewer rejected the action.",
+    }, "2026-08-16T01:00:20.000Z");
+    assert.equal(resolved.ok, true);
+    const deniedCheckpoint = store.getApprovalCheckpoint(checkpoint.id);
+    assert.equal(deniedCheckpoint?.status, "denied");
+    assert.equal(store.getApprovalRequest(approval.id)?.resolvedBy, "system-reviewer");
+    assert.equal(store.getRun(run.id)?.status, "waiting_for_approval");
+    assert.equal(store.getWorkUnit(workUnit.id)?.status, "waiting_for_approval");
+    assert.equal(store.getWorkUnitAttempt(priorAttempt.id)?.status, "lost");
+    assert.equal(store.getTask(task.id)?.status, "running");
+
+    const terminal = store.commitApprovalResumeTerminal({
+      kind: "system_review_denied",
+      checkpointId: checkpoint.id,
+      expectedCheckpointRevision: deniedCheckpoint.revision,
+      approvalId: approval.id,
+      runId: run.id,
+      workUnitId: workUnit.id,
+      attemptId: priorAttempt.id,
+      reason: "Recovered reviewer rejected the action.",
+      now: "2026-08-16T01:00:30.000Z",
+    });
+    assert.equal(terminal.ok, true);
+    assert.equal(terminal.kind, "system_review_denied");
+    assert.equal(store.getRun(run.id)?.status, "failed");
+    assert.equal(store.getWorkUnit(workUnit.id)?.status, "failed");
+    assert.equal(store.getWorkUnitAttempt(priorAttempt.id)?.status, "lost");
+    assert.equal(store.getTask(task.id)?.status, "failed");
+    assert.equal(store.getApprovalCheckpoint(checkpoint.id)?.status, "denied");
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("sqlite store creates and resolves media approval requests", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-media-approval-"));
   const createdAt = "2026-05-24T00:00:00.000Z";

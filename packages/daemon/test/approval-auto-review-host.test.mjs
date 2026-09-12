@@ -33,18 +33,19 @@ const thread = {
   createdAt: now, updatedAt: now, surfaceKind: "channel_child", relationKind: "workflow_step", nextItemSequence: 1,
 };
 
-function createFixture({ verdict = "approve", casOk = true } = {}) {
+function createFixture({ verdict = "approve", casOk = true, recoverable = false } = {}) {
   const workUnits = new Map();
   const attempts = new Map();
   const runtimeEvents = [];
   let casInput;
+  let runnerCalls = 0;
   const store = {
     paths: { cwd: run.cwd },
     getApprovalPolicy: () => ({ updatedAt: now }),
     getLingTurnForRun: () => turn,
     getLingThread: () => thread,
     isCurrentRunExecutionOwner: () => true,
-    isRecoverableApprovalReviewOwner: () => false,
+    isRecoverableApprovalReviewOwner: () => recoverable,
     listLingTurnRuns: () => [{ turnId: turn.id, runId: run.id, attemptNumber: 1, role: "primary", createdAt: now }],
     listConversationItemsForTurn: () => [],
     readUserInputTranscript: () => [],
@@ -54,19 +55,29 @@ function createFixture({ verdict = "approve", casOk = true } = {}) {
       return unit;
     },
     getWorkUnit: (id) => workUnits.get(id),
+    findWorkUnitByIdempotency: (input) => [...workUnits.values()].find((unit) =>
+      unit.kind === input.kind && unit.ownerType === input.ownerType && unit.ownerId === input.ownerId
+      && unit.idempotencyKey === input.idempotencyKey),
     createWorkUnitAttempt: (input) => {
-      const attempt = { ...input, id: "review-attempt", fencingToken: "1", effectiveRunnerId: input.effectiveRunnerId, status: "created", createdAt: input.now };
+      const id = `review-attempt-${attempts.size + 1}`;
+      const attempt = { ...input, id, fencingToken: String(attempts.size + 1), effectiveRunnerId: input.effectiveRunnerId, status: "created", createdAt: input.now };
       attempts.set(attempt.id, attempt);
       const unit = workUnits.get(input.workUnitId);
-      workUnits.set(unit.id, { ...unit, attemptCount: 1, activeAttemptId: attempt.id });
+      workUnits.set(unit.id, { ...unit, attemptCount: input.attemptNumber, activeAttemptId: attempt.id });
       return attempt;
     },
     getWorkUnitAttempt: (id) => attempts.get(id),
     listWorkUnitAttempts: (workUnitId) => [...attempts.values()].filter((attempt) => attempt.workUnitId === workUnitId),
     transitionWorkUnitStatus: (input) => {
       const unit = workUnits.get(input.workUnitId);
-      const status = input.event === "claim" ? "claimed" : input.event === "runner_started" ? "running" : unit.status;
-      workUnits.set(unit.id, { ...unit, status, activeAttemptId: input.activeAttemptId ?? unit.activeAttemptId });
+      const status = input.event === "retry" ? "queued" : input.event === "claim" ? "claimed" : input.event === "runner_started" ? "running" : unit.status;
+      workUnits.set(unit.id, {
+        ...unit,
+        status,
+        activeAttemptId: input.activeAttemptId === null ? undefined : input.activeAttemptId ?? unit.activeAttemptId,
+        errorCode: input.errorCode === null ? undefined : input.errorCode ?? unit.errorCode,
+        errorMessage: input.errorMessage === null ? undefined : input.errorMessage ?? unit.errorMessage,
+      });
       return { ok: true, from: unit.status, to: status };
     },
     updateWorkUnitAttemptStatus: (input) => {
@@ -79,6 +90,7 @@ function createFixture({ verdict = "approve", casOk = true } = {}) {
       runtimeEvents.push(input);
       return { ...input, id: `event-${runtimeEvents.length}`, seq: runtimeEvents.length };
     },
+    listRuntimeEvents: () => runtimeEvents.map((event, index) => ({ ...event, id: `event-${index + 1}`, seq: index + 1 })),
     transitionWorkUnitAttemptTerminal: (input) => {
       const unit = workUnits.get(input.workUnitId);
       const attempt = attempts.get(input.attemptId);
@@ -96,6 +108,7 @@ function createFixture({ verdict = "approve", casOk = true } = {}) {
   };
   const runner = {
     runTask: async (options) => {
+      runnerCalls += 1;
       options.onEvent?.({
         type: "message_end", role: "assistant",
         text: JSON.stringify({ schemaVersion: 1, decision: verdict, reason: verdict === "manual" ? "Need a human." : "Scoped decision." }),
@@ -111,6 +124,7 @@ function createFixture({ verdict = "approve", casOk = true } = {}) {
     attempts,
     runtimeEvents,
     getCasInput: () => casInput,
+    getRunnerCalls: () => runnerCalls,
   };
 }
 
@@ -129,13 +143,29 @@ async function review(fixture) {
   });
 }
 
+async function recoveredReview(fixture) {
+  return reviewPendingApprovalAutomatically({
+    store: fixture.store,
+    runtimeSupervisor: fixture.runtimeSupervisor,
+    runner: fixture.runner,
+    provider: { provider: "provider", model: "model", apiKey: "secret-key" },
+    providerPresetId: "preset-1",
+    run,
+    approval,
+    sourceFence: fence,
+    sourceAuthority: "recoverable_suspension",
+    effectivePolicySnapshot: policy,
+    extraSecrets: ["secret-key"],
+  });
+}
+
 test("automatic review Host commits a model verdict only through the fenced Store CAS", async () => {
   const fixture = createFixture();
   const result = await review(fixture);
   assert.equal(result.status, "resolved");
   assert.equal(result.approval.status, "approved");
   assert.equal(fixture.workUnits.get("review-unit").status, "succeeded");
-  assert.equal(fixture.attempts.get("review-attempt").status, "succeeded");
+  assert.equal(fixture.attempts.get("review-attempt-1").status, "succeeded");
   assert.equal(fixture.getCasInput().sourceFence.attemptId, fence.attemptId);
   assert.equal(fixture.getCasInput().decision, "approve");
 
@@ -144,6 +174,29 @@ test("automatic review Host commits a model verdict only through the fenced Stor
   assert.equal(persistedRequest.approvalId, approval.id);
   assert.match(persistedRequest.evidenceFingerprint, /^[a-f0-9]{64}$/);
   assert.doesNotMatch(persistedJson, /secret-key|Only run the scoped test|pnpm test/);
+});
+
+test("automatic review recovery retries one interrupted WorkUnit but does not rerun a settled manual verdict", async () => {
+  const retryFixture = createFixture({ recoverable: true });
+  const first = await review(retryFixture);
+  assert.equal(first.status, "resolved");
+  retryFixture.workUnits.set("review-unit", {
+    ...retryFixture.workUnits.get("review-unit"),
+    status: "stale",
+    errorCode: "runtime_stale",
+  });
+  const recovered = await recoveredReview(retryFixture);
+  assert.equal(recovered.status, "resolved");
+  assert.equal(retryFixture.workUnits.get("review-unit").attemptCount, 2);
+  assert.equal(retryFixture.getRunnerCalls(), 2);
+
+  const manualFixture = createFixture({ verdict: "manual", recoverable: true });
+  const manual = await review(manualFixture);
+  assert.equal(manual.status, "manual");
+  const cached = await recoveredReview(manualFixture);
+  assert.equal(cached.status, "manual");
+  assert.equal(cached.code, "reviewer_manual");
+  assert.equal(manualFixture.getRunnerCalls(), 1);
 });
 
 test("automatic review Host keeps approval pending on manual verdict or stale CAS", async () => {

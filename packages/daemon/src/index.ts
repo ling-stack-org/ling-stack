@@ -46,6 +46,7 @@ import { ProviderStartupRefreshService } from "./features/providers/startup-refr
 import { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
+import { ApprovalAutoReviewRecoveryCoordinator } from "./features/runs/approval-auto-review-recovery.js";
 import { resumePendingMediaJobExecutions } from "./features/media/executor.js";
 import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
@@ -54,6 +55,7 @@ import { listExternalRunnerRegistrations } from "./runtime/external-runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
 import { RuntimeSupervisor } from "./runtime/supervisor.js";
 import {
+  retryRuntimeWorkUnit,
   startRuntimeWorkUnit,
   transitionWorkUnitCancelled,
   transitionWorkUnitTerminal,
@@ -240,6 +242,7 @@ export function createDaemonServer(
   let channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
   let channelTurnDispatchReady = false;
   let approvalResumeCoordinator: ApprovalResumeCoordinator | undefined;
+  let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
@@ -255,6 +258,7 @@ export function createDaemonServer(
         onPublished: ({ event }) => controlPlaneEvents.publish(event),
       });
       approvalResumeCoordinator?.registerStore(store);
+      approvalAutoReviewRecoveryCoordinator?.registerStore(store);
       startupOptionalWarmups?.start(cwd, store);
       reconcileAllContinuityWorkflows(store, { cause: "startup" });
       if (resolvedConfig.channels.terminalReports === true) {
@@ -441,6 +445,12 @@ export function createDaemonServer(
     controlPlaneEvents,
     afterRunTerminal: afterChannelRunTerminal,
   });
+  approvalAutoReviewRecoveryCoordinator = new ApprovalAutoReviewRecoveryCoordinator({
+    runtimeSupervisor,
+    runnerRegistry,
+    secretResolver,
+    approvalResumeCoordinator,
+  });
   channelTurnDispatchWorker = new ChannelTurnDispatchWorkerRegistry(
     runtimeSupervisor,
     createChannelTurnDispatchExecutor({
@@ -613,6 +623,9 @@ export function createDaemonServer(
         runnerRegistry,
         secretResolver,
       });
+      await approvalAutoReviewRecoveryCoordinator.recoverStore(
+        storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
+      );
       // Ephemeral control-plane servers are used by tests and embedded fixtures.
       // They must never claim the installation-global Remote Gateway listener.
       if (resolvedConfig.port !== 0) {
@@ -627,6 +640,7 @@ export function createDaemonServer(
         secretResolver,
         hooks: {
           startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
+          recoverRuntimeWorkUnit: (input) => retryRuntimeWorkUnit({ ...input, runtimeSupervisor }),
           transitionRuntimeWorkUnitTerminal: (input) => {
             transitionWorkUnitTerminal(input.store, {
               workUnitId: input.workUnitId,

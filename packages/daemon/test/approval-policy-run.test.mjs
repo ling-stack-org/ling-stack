@@ -933,6 +933,89 @@ test("smart authorization preserves the pending human path when the reviewer ret
   }
 });
 
+for (const decision of ["approve", "deny"]) {
+  const decisionVerb = decision === "approve" ? "approves" : "denies";
+  test(`smart approval review recovers exactly once after daemon restart and ${decisionVerb} safely`, { timeout: 20_000 }, async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-daemon-smart-review-restart-${decision}-`));
+    const outputPath = resolve(cwd, `smart-review-restart-${decision}.txt`);
+    const command = `printf '${decision}\\n' > ${JSON.stringify(outputPath)}`;
+    const firstRunner = new BlockingSmartApprovalProbeRunner({
+      toolCallId: `tool_smart_restart_${decision}`,
+      toolName: "bash",
+      input: { command },
+    });
+    let daemon = await startDaemonForTest(firstRunner, {}, { defaultWorkspaceCwd: cwd });
+    let daemonOpen = true;
+    try {
+      const provider = await createStaticChatProvider(daemon.url, cwd);
+      await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+      const response = await postRunStream(daemon.url, providerRunBody(
+        cwd,
+        `task_smart_review_restart_${decision}`,
+        provider.provider.id,
+        {
+          tools: ["bash"],
+          authorizationMode: "smart",
+          workspaceAccessMode: "workspace_write",
+        },
+      ));
+      const sse = createSseReader(response);
+      const ready = await sse.nextEvent();
+      const runId = ready.data.runId;
+      const requested = await waitForSseEvent(sse, "approval_requested");
+      const approvalId = requested.data.data.approvalId;
+      await firstRunner.waitUntilReviewStarted();
+
+      await daemon.close();
+      daemonOpen = false;
+      await sse.collectRemaining().catch(() => {});
+
+      const recoveredRunner = new SmartApprovalProbeRunner(decision);
+      daemon = await startDaemonForTest(recoveredRunner, {}, { defaultWorkspaceCwd: cwd });
+      daemonOpen = true;
+      const expectedStatus = decision === "approve" ? "succeeded" : "failed";
+      await waitForCondition(async () => {
+        const current = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
+        return current.status === expectedStatus;
+      }, `Timed out waiting for recovered smart review to ${decision}.`);
+
+      assert.equal(recoveredRunner.reviews.length, 1);
+      assert.equal(recoveredRunner.runs.length, 0);
+      if (decision === "approve") {
+        assert.equal(await readFile(outputPath, "utf8"), "approve\n");
+      } else {
+        await assert.rejects(() => access(outputPath), /ENOENT/u);
+      }
+
+      const store = createSqliteRunStore(cwd);
+      try {
+        const approval = store.getApprovalRequest(approvalId);
+        const run = store.getRun(runId);
+        const [reviewUnit] = store.listWorkUnits({ kind: "approval_review", ownerId: approvalId, limit: 10 });
+        const reviewAttempts = reviewUnit ? store.listWorkUnitAttempts(reviewUnit.id) : [];
+        assert.equal(approval?.status, decision === "approve" ? "approved" : "denied");
+        assert.equal(approval?.resolvedBy, "system-reviewer");
+        assert.equal(run?.status, expectedStatus);
+        assert.equal(reviewUnit?.status, "succeeded");
+        assert.equal(reviewAttempts.length, 2);
+        assert.equal(reviewAttempts[0]?.status === "cancelled" || reviewAttempts[0]?.status === "lost", true);
+        assert.equal(reviewAttempts[1]?.status, "succeeded");
+        assert.equal(
+          store.listEvents(runId, { limit: 1_000 })
+            .filter((event) => event.type === (decision === "approve" ? "approval_approved" : "approval_denied"))
+            .length,
+          1,
+        );
+      } finally {
+        store.close();
+      }
+    } finally {
+      if (daemonOpen) await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+}
+
 test("full access permission mode requires explicit confirmation before creating a run", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-session-policy-confirm-"));
   const runner = new ApprovalProbeRunner({
@@ -3709,6 +3792,20 @@ test("ComfyUI workflow polling resumes from the persisted execution handle after
     assert.equal(resumed.mediaJob.executionSource.kind, "workflow");
     const artifacts = await getJson(`${daemon.url}/media-jobs/${encodeURIComponent(tested.mediaJob.id)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(artifacts.artifacts.some((artifact) => artifact.type === "video"), true);
+    assert.equal(comfy.requests.filter((request) => request.method === "POST" && request.path === "/api/prompt").length, 1);
+
+    const store = createSqliteRunStore(cwd);
+    try {
+      const [workUnit] = store.listWorkUnits({ kind: "media_job", linkedMediaJobId: tested.mediaJob.id, limit: 10 });
+      assert.ok(workUnit);
+      const attempts = store.listWorkUnitAttempts(workUnit.id);
+      assert.equal(workUnit.status, "succeeded");
+      assert.equal(attempts.length, 2);
+      assert.equal(attempts[0]?.status, "lost");
+      assert.equal(attempts[1]?.status, "succeeded");
+    } finally {
+      store.close();
+    }
   } finally {
     await daemon.close().catch(() => undefined);
     await comfy.close();
@@ -5271,6 +5368,39 @@ class SmartApprovalProbeRunner extends ApprovalProbeRunner {
       return { taskId: options.task.id, events: [], messages: [] };
     }
     return super.runTask(options);
+  }
+}
+
+class BlockingSmartApprovalProbeRunner extends ApprovalProbeRunner {
+  constructor(request) {
+    super(request);
+    this.reviews = [];
+    this.reviewStarted = new Promise((resolveStarted) => {
+      this.resolveReviewStarted = resolveStarted;
+    });
+  }
+
+  async runTask(options) {
+    if (!options.task.id.startsWith("approval-review:")) {
+      return super.runTask(options);
+    }
+    this.reviews.push(options);
+    this.resolveReviewStarted?.();
+    await new Promise((resolveWait, rejectWait) => {
+      if (options.signal?.aborted) {
+        rejectWait(options.signal.reason ?? new Error("review_aborted"));
+        return;
+      }
+      options.signal?.addEventListener("abort", () => {
+        rejectWait(options.signal.reason ?? new Error("review_aborted"));
+      }, { once: true });
+      if (!options.signal) resolveWait();
+    });
+    return { taskId: options.task.id, events: [], messages: [] };
+  }
+
+  waitUntilReviewStarted() {
+    return withTimeout(this.reviewStarted, 5_000, "Timed out waiting for automatic review to start.");
   }
 }
 
