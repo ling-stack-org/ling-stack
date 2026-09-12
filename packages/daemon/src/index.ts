@@ -107,7 +107,8 @@ import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-r
 import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
 
 export { defaultDaemonConfig } from "./config.js";
-export type { DaemonConfig, ResolvedDaemonConfig } from "./config.js";
+export type { DaemonConfig, HarnessFeatureConfig, ResolvedDaemonConfig } from "./config.js";
+export { createHarnessFeatureSnapshot } from "./features/harness/index.js";
 export type { DaemonDependencies, ExternalSecretStore, McpBroker, RunnerAdapter } from "./context.js";
 export {
   createRunnerRegistry,

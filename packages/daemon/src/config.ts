@@ -15,6 +15,20 @@ export interface DaemonConfig {
   readonly cuaDriver?: CuaDriverFeatureConfig;
   readonly remoteAccess?: RemoteAccessFeatureConfig;
   readonly workspaceSnapshots?: WorkspaceSnapshotFeatureConfig;
+  readonly harness?: HarnessFeatureConfig;
+}
+
+export interface HarnessFeatureConfig {
+  readonly continuations?: { readonly mode?: "off" | "shadow" | "enforce" };
+  readonly toolBroker?: { readonly mode?: "off" | "shadow" | "enforce" };
+  readonly evaluations?: {
+    readonly mode?: "off" | "shadow" | "enforce";
+    readonly modelGate?: "shadow" | "enforce";
+  };
+  readonly delegations?: {
+    readonly mode?: "off" | "shadow" | "enforce";
+    readonly maxDepth?: number;
+  };
 }
 
 export interface WorkspaceSnapshotFeatureConfig {
@@ -166,6 +180,18 @@ export interface ResolvedDaemonConfig {
     readonly managementAllowedOrigins: readonly string[];
   };
   readonly workspaceSnapshots: Required<WorkspaceSnapshotFeatureConfig>;
+  readonly harness: {
+    readonly continuations: { readonly mode: "off" | "shadow" | "enforce" };
+    readonly toolBroker: { readonly mode: "off" | "shadow" | "enforce" };
+    readonly evaluations: {
+      readonly mode: "off" | "shadow" | "enforce";
+      readonly modelGate: "shadow" | "enforce";
+    };
+    readonly delegations: {
+      readonly mode: "off" | "shadow" | "enforce";
+      readonly maxDepth: number;
+    };
+  };
 }
 
 export const defaultDaemonConfig: DaemonConfig = {
@@ -236,7 +262,53 @@ export function resolveConfig(config: DaemonConfig): ResolvedDaemonConfig {
       maxSnapshots: boundedPositive(config.workspaceSnapshots?.maxSnapshots, 8, 8),
       retentionDays: boundedPositive(config.workspaceSnapshots?.retentionDays, 30, 3650),
     },
+    harness: {
+      continuations: {
+        mode: resolveHarnessMode(config.harness?.continuations?.mode, process.env.LING_STACK_HARNESS_CONTINUATIONS_MODE),
+      },
+      toolBroker: {
+        mode: resolveHarnessMode(config.harness?.toolBroker?.mode, process.env.LING_STACK_HARNESS_TOOL_BROKER_MODE),
+      },
+      evaluations: {
+        mode: resolveHarnessMode(config.harness?.evaluations?.mode, process.env.LING_STACK_HARNESS_EVALUATIONS_MODE),
+        modelGate: resolveHarnessModelGate(config.harness?.evaluations?.modelGate, process.env.LING_STACK_HARNESS_EVALUATION_MODEL_GATE),
+      },
+      delegations: {
+        mode: resolveHarnessMode(config.harness?.delegations?.mode, process.env.LING_STACK_HARNESS_DELEGATIONS_MODE),
+        maxDepth: resolveHarnessDelegationMaxDepth(
+          config.harness?.delegations?.maxDepth,
+          process.env.LING_STACK_HARNESS_DELEGATION_MAX_DEPTH,
+        ),
+      },
+    },
   };
+}
+
+function resolveHarnessMode(
+  explicit: "off" | "shadow" | "enforce" | undefined,
+  environment: string | undefined,
+): "off" | "shadow" | "enforce" {
+  const candidate: unknown = explicit ?? environment;
+  return candidate === "shadow" || candidate === "enforce" ? candidate : "off";
+}
+
+function resolveHarnessModelGate(
+  explicit: "shadow" | "enforce" | undefined,
+  environment: string | undefined,
+): "shadow" | "enforce" {
+  const candidate: unknown = explicit ?? environment;
+  return candidate === "enforce" ? "enforce" : "shadow";
+}
+
+function resolveHarnessDelegationMaxDepth(explicit: number | undefined, environment: string | undefined): number {
+  if (explicit !== undefined) {
+    return boundedPositive(explicit, 4, 16);
+  }
+  if (environment === undefined) {
+    return 4;
+  }
+  const parsed = Number(environment);
+  return boundedPositive(parsed, 4, 16);
 }
 
 function boundedPositive(value: number | undefined, fallback: number, hardMax: number): number {

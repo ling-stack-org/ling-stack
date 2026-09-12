@@ -1026,7 +1026,7 @@ Every enforcing PR must support rollback by disabling its feature flag and resta
 
 Synthesized from this review's findings. Each task derives from a specific reviewed gap.
 
-- [ ] **T1 (P0, human: ~1 day / CC: ~45 min)** — Harness foundation — Add contracts, state-machine primitives, narrow ports, feature flags, and composition seams.
+- [x] **T1 (P0, human: ~1 day / CC: ~45 min)** — Harness foundation — Add contracts, state-machine primitives, narrow ports, feature flags, and composition seams.
   - Surfaced by: Code Quality CQ1-CQ3.
   - Files: `packages/contracts/src/`, `packages/core/src/harness/`, `packages/daemon/src/features/harness/`.
   - Verify: contracts, core, and daemon package tests with every flag off.

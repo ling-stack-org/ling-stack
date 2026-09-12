@@ -1,0 +1,14 @@
+import type { HarnessFeatureSnapshotV1 } from "@ling-stack/contracts";
+import type { ResolvedDaemonConfig } from "../../config.js";
+
+export function createHarnessFeatureSnapshot(config: Pick<ResolvedDaemonConfig, "harness">): HarnessFeatureSnapshotV1 {
+  return {
+    schemaVersion: 1,
+    continuations: config.harness.continuations.mode,
+    toolBroker: config.harness.toolBroker.mode,
+    evaluations: config.harness.evaluations.mode,
+    evaluationModelGate: config.harness.evaluations.modelGate,
+    delegations: config.harness.delegations.mode,
+    delegationMaxDepth: config.harness.delegations.maxDepth,
+  };
+}

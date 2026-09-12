@@ -10,6 +10,7 @@ export * from "./user-input-event-position.js";
 export * from "./user-input-validation.js";
 export type * from "./artifacts.js";
 export type * from "./runtime.js";
+export * from "./harness.js";
 export * from "./run-event-validation.js";
 export type * from "./runner-readiness.js";
 export * from "./threads.js";
