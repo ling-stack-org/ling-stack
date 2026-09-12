@@ -1,7 +1,7 @@
 ---
 status: in-progress
 branch: codex/reasoning-summary-autoreview-implementation
-timestamp: 2026-09-12T04:07:13+08:00
+timestamp: 2026-09-13T01:27:17+08:00
 files_modified:
   - docs/design/reasoning-summary-autoreview-execution-checkpoint.md
 ---
@@ -13,14 +13,14 @@ files_modified:
 
 ## 1. 当前目标与约束
 
-- 更新基线：实际实现树已包含 `origin/main` 的 `76790031`。分支为 `codex/reasoning-summary-autoreview-implementation`，已存在两个验证提交：`debb8199`（typed runtime evidence contracts）和 `b590a13a`（execution lifecycle / safe summaries）。
+- 更新基线：实际实现树已包含 `origin/main` 的 `76790031`。分支为 `codex/reasoning-summary-autoreview-implementation`，当前实现 HEAD 为 `49c330d5`（automatic review restart recovery）。
 - 实际开发树：`/private/tmp/ling-v3-implementation.tEPHvb`。
 - 同事工作区 `/Users/tianxiao/ling-stack` 只读，禁止修改、清理、reset 或覆盖其中 WIP。
 - 原恢复树 `/Users/tianxiao/ling-typed-transcript-v3-recovered-20260906` 暂不直接修改；验证完成后再受控同步差异。
 - 只测试和打包 macOS，不处理 Windows。
 - 当前不推送、不创建 PR。用户已在 2026-09-12 明确允许：未提交内容过多并妨碍继续开发时，可先创建本地恢复检查点提交。此类提交只用于保存和恢复，不代表 PR-ready，也不能替代后续按功能审查、测试和整理提交历史。
 - 真实模型验收使用 `https://llm.gz.nobody.host/v1`；密钥只从环境中后缀 `_2` 的变量读取，禁止写入文档、日志、命令输出或截图。
-- 本次检查发现 434 个 tracked modified（含 2 个删除）、291 个 untracked，共 725 个工作树状态项。已经先通过两个独立验证提交保存 Contracts 和 Runner；其余跨功能内容已进入一个明确标记的本地恢复检查点。当前工作树应保持干净，后续不得把该检查点直接当成可合并 PR。
+- 历史 combined WIP 已通过本地检查点提交保存；当前工作树为干净状态。后续按独立、已验证的功能边界继续本地提交，不把恢复检查点本身直接当成可合并 PR。
 
 ## 2. 已完成且不得重复的源码核对
 
@@ -77,7 +77,7 @@ assistant_reasoning_summary {
 - 普通会话、Agent 私聊、频道外层和频道 child Agent 复用同一个 renderer。
 - `ConversationTimelineReasoningRenderer` 不再使用事实行 `TimelineFactRow`，改为弱化的 document lane。
 
-### 2.4 自动审核已确认现状
+### 2.4 自动审核实现前基线
 
 现有设置已经有：
 
@@ -85,7 +85,7 @@ assistant_reasoning_summary {
 - `smart / Help me approve`
 - `always`
 
-但当前 `createRunApprovalHandler()` 仍然只创建 pending approval 并等待人工，`smart` 不是完整自动审核。
+当时 `createRunApprovalHandler()` 仍然只创建 pending approval 并等待人工，`smart` 不是完整自动审核。该差距现已按第 2.5 节原则实现；本段只保留为设计决策来源，不代表当前源码状态。
 
 已存在 `resolvedBy: "system-reviewer"` 的公开/读取合同，但 Store resolve 输入仍只允许 `"local-user"`。`WorkUnitKind` 也尚无 `approval_review`。`approvals.ts` 已约 1335 行，禁止继续把完整 reviewer 堆进这个大文件。
 
@@ -115,33 +115,36 @@ assistant_reasoning_summary {
 - 提取最多 32 个 part、24,000 字符；非法签名 fail-closed，禁止回退到 raw `thinking` 或 `item.content`。
 - Responses payload 已支持 `auto/concise/detailed/none`，并保留已有 `onPayload` 返回结果；非 Responses provider 不修改。
 - Contracts 已加入事件类型和严格 payload 校验。
-- Runner 专项测试结果：9 tests，9 pass，0 fail。
-- Contracts 测试结果：85 tests，85 pass，0 fail。
-- Runner 构建已通过。此前临时树缺少包级 `node_modules` 链接导致的失败属于环境问题，补齐 16 个 workspace 包依赖链接后消失，不得再误判为代码故障。
-
-本轮新增完成并已验证：
-
-- Core typecheck、Daemon typecheck 和 Daemon build 通过。
-- `conversation-ui-core` 179/179、Web unit 338/338 通过，Web typecheck 通过。
+- `reasoningSummary` 已贯通 RunRequest、schema、workspace 默认设置、request snapshot、prepared input、continuation、automation 和四档 UI。
 - Daemon 从已有 RunEvent 派生 `CanonicalReasoningSummaryRecord`，支持超过 1000 条事件分页扫描及 daemon restart 重建，不新增 SQLite 表。
 - conversation detail / reconnect 对缺失 reasoning 集合 fail-closed；topic/thread reply 和 child Agent 已按 thread/run 贯通 reasoning timeline。
 - raw `assistant_thinking_delta` 不进入公开摘要；Host 排序已改为预建 sequence Map，避免重复 `items.find()` 的 O(n^2) 路径。
+- `conversation-ui-core` 已覆盖 stale/equal revision、reconnect merge、participant/run/attempt 隔离，以及 reasoning 不进入 TerminalReport/fan-in evidence。
+- 普通会话、私聊、频道外层及 child Agent 已接入共享 `ConversationTimelineReasoningRenderer`；最终视觉结果仍须由 packaged macOS E6 验收。
 
-尚未完成：
+本轮准确测试结果：
 
-- 补齐 stale/equal revision、reconnect merge、participant/run/attempt 隔离，以及 reasoning 不进入 TerminalReport/fan-in evidence 的专项覆盖。
-- 普通会话、私聊、频道外层及 child Agent 的共享 renderer 与归属隔离最终验收。
-- `ConversationTimelineReasoningRenderer` 的弱化 document lane 最终视觉验收。
-- `reasoningSummary` 在 RunRequest、schema、request snapshot、workspace/conversation 设置及四档 UI 中的完整贯通。
+- Runner Pi：180/180 pass。
+- Contracts：338/338 pass。
+- Daemon reasoning/config/prepared-input focused：52/52 pass。
+- conversation-ui-core：181/181 pass。
+- Web unit：338/338 pass。
+- Core/Daemon typecheck、Daemon build 和 Runner build 已通过；完整 combined gate 仍须按总计划重新运行。
 
 ### 3.2 自动审核
 
-- reviewer 独立模块和严格 parser。
-- evidence 构造、敏感信息裁剪和 token budget。
-- deadline、重试、取消和 daemon restart 恢复。
-- CAS resolve 与 `system-reviewer` Store 支持。
-- `smart` 模式接线；`ask` 和 `always` 行为不回退。
-- 审核通过后执行前的二次 action/policy/attempt fence。
+已完成并有专项测试证据：
+
+- reviewer 使用独立模块、严格 parser、bounded evidence 和敏感信息裁剪；原始 prompt/output、raw reasoning 和 API Key 不持久化。
+- `smart` 已接入自动审核；`ask` 与 `always` 保持各自既有语义。
+- 非法输出、证据不足、异常、共享 deadline 超时和技术重试耗尽均 fail-closed 到人工处理。
+- CAS resolve 支持 `system-reviewer`，并绑定 approval revision、policy、action fingerprint、Run 和 Attempt ownership。
+- approve 后先重新核验 action/policy/attempt fence，再创建 fenced replacement Attempt 执行原动作。
+- deny 后原子关闭 Run、WorkUnit 和 Task；取消、stale reviewer 和晚到结果不得重新放行动作。
+- daemon restart 只恢复精确 pending approval、lost `runtime_suspend` Attempt 和匹配 checkpoint/policy/action/evidence fingerprint 的 reviewer；reviewer 最多一次恢复，总 Attempt 上限 2。
+- 外部媒体恢复会绑定新的 Attempt，但不会重复提交已接受的付费任务。
+
+专项结果：Core approval-policy 67/67、approval-policy-run 94/94、automatic reviewer focused 17/17、conversation media 25/25、Daemon build pass、`git diff --check` pass。
 
 ### 3.3 一并验证的既有链路
 
@@ -156,17 +159,12 @@ assistant_reasoning_summary {
 
 ## 4. 下一步执行顺序
 
-1. 重新运行 O(n^2) 优化后的 Daemon reasoning 专项和 typecheck，保存准确结果。
-2. 补 stale/equal revision、reconnect merge、participant/run/attempt 隔离，以及 reasoning 不进入 TerminalReport/fan-in evidence 的测试。
-3. 完成 `reasoningSummary` 四档在 RunRequest、schema、request snapshot、continuation/retry、workspace/conversation 设置中的贯通。
-4. 写自动审核红测：严格 parser、manual fallback、deadline、取消、CAS stale、restart、执行前 fence。
-5. 新建 reviewer 小模块并接入 `smart`；补 Store `system-reviewer` resolve。
-6. 验证 Allow similar commands、审批恢复、最终总结、复制和三会话统一，不通过则按根因补齐。
-7. 更新仍标记 `NOT_IMPLEMENTED` 的设计状态，但不改写已实现历史。
-8. 先跑窄测试，再跑全量 test、typecheck、build。
-9. 打包最新 macOS 客户端，用真实 relay 完成普通会话、私聊、频道、多 Agent、审批、推理摘要、恢复、复制和最终总结案例。
-10. 保存真实客户端截图和日志证据供用户检查。
-11. 验证全部通过后，才考虑把本轮新增差异受控同步回恢复分支；仍不碰同事工作区。
+1. 按 `conversation-codex-style-transcript-implementation-plan.md` §6.2 重新执行当前 HEAD 的 G-00–G-12 combined gates，记录基线、源码、行为、安全与合并质量证据。
+2. 对 Host capability/open viewer、既定七项执行能力、structured user-input lifecycle、native sandbox 后代停止与恢复、TerminalReport/fan-in/reconnect/restart 做真实正向和故障路径验证；修复当前 HEAD 可复现的问题。
+3. 运行完整 test、typecheck、build，以及 docs/i18n/public/security/license 检查；不得用本节专项测试替代全量 gate。
+4. 打包最新 macOS 客户端，使用真实 relay 完成普通会话、私聊、频道、多 Agent、审批、Allow similar commands、推理摘要四档、恢复、复制、最终总结和完整小项目案例。
+5. 每个 E6 案例保存 screenshot、`semantic-state.json`、`lineage.json`、脱敏日志和 `case.json`；必须记录 build hash、thread/run/attempt、model 与 `simulation=false`。
+6. 全部验证通过后，再评估如何受控同步或整理提交；仍不碰同事工作区、不推送、不创建 PR。
 
 ## 5. 防止再次死循环的恢复协议
 
@@ -174,7 +172,7 @@ assistant_reasoning_summary {
 
 1. 先读本文。
 2. 用 `git rev-parse HEAD`、`git status --short` 和最近测试结果确认增量状态。
-3. 从第 4 节第一个未完成步骤继续；当前起点是 Daemon/Core 类型检查与持久化读取链路。
+3. 从第 4 节第一个未完成步骤继续；当前起点是 §6.2 的 G-00–G-12 combined gates。
 4. 不重新浏览整套 Codex 推理摘要源码，不重新输出同一份设计总结。
 5. 只有以下情况才允许局部复查外部源码：
    - 本地依赖版本变化导致 API 与本文不一致；
