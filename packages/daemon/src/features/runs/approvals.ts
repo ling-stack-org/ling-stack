@@ -538,7 +538,7 @@ export function createRunApprovalHandler(options: {
         runId: options.run.id,
         expectedStatus: "waiting_for_approval",
         event: "approval_approved",
-        actor: "local-user",
+        actor: resolvedApproval.resolvedBy === "system-reviewer" ? "system" : "local-user",
         reason: resolvedApproval.decisionReason,
         now: resolvedAt,
       });
@@ -558,7 +558,7 @@ export function createRunApprovalHandler(options: {
         runId: options.run.id,
         expectedStatus: "waiting_for_approval",
         event: "approval_denied",
-        actor: "local-user",
+        actor: resolvedApproval.resolvedBy === "system-reviewer" ? "system" : "local-user",
         reason: resolvedApproval.decisionReason,
         now: resolvedAt,
         endedAt: resolvedAt,
@@ -576,6 +576,32 @@ export function createRunApprovalHandler(options: {
     options.onApprovalResolved?.(resolvedApproval);
 
     if (resolvedApproval.status === "approved") {
+      const systemReviewRejection = systemReviewedApprovalExecutionRejection({
+        store: options.store,
+        run: options.run,
+        approval: resolvedApproval,
+        sourceFence,
+        effectivePolicySnapshot: options.effectivePolicySnapshot,
+        currentActionType: approvalInput.actionType,
+        currentToolCallId: request.toolCallId,
+        currentPayload: approvalInput.payload,
+      });
+      if (systemReviewRejection) {
+        return {
+          approved: false,
+          approvalId: resolvedApproval.id,
+          reason: systemReviewRejection,
+          ...(unifiedExecBash
+            ? {
+                handledResult: createUnifiedExecDeniedResult({
+                  toolCallId: request.toolCallId,
+                  approvalId: resolvedApproval.id,
+                  reason: systemReviewRejection,
+                }),
+              }
+            : {}),
+        };
+      }
       const beforeExecutionRejection = rejectHost(resolvedApproval.id);
       if (beforeExecutionRejection) return beforeExecutionRejection;
       let handledResult;
@@ -663,6 +689,44 @@ export function createRunApprovalHandler(options: {
         : {}),
     };
   };
+}
+
+export function systemReviewedApprovalExecutionRejection(input: {
+  readonly store: Pick<RunStore, "getApprovalPolicy" | "isCurrentRunExecutionOwner">;
+  readonly run: RunSession;
+  readonly approval: ApprovalRequest;
+  readonly sourceFence?: RuntimeAttemptFenceV1;
+  readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
+  readonly currentActionType: ApprovalRequest["actionType"];
+  readonly currentToolCallId: string;
+  readonly currentPayload: ApprovalPayload;
+}): string | undefined {
+  if (input.approval.resolvedBy !== "system-reviewer") return undefined;
+  if (!input.sourceFence || !input.effectivePolicySnapshot) {
+    return "system_review_execution_fence_missing: Automatic approval cannot execute without its captured policy and Attempt.";
+  }
+  if (input.store.getApprovalPolicy().updatedAt !== input.effectivePolicySnapshot.workspacePolicyUpdatedAt) {
+    return "system_review_policy_changed: Approval policy changed after automatic review; manual review is required.";
+  }
+  if (!input.store.isCurrentRunExecutionOwner(input.run.id, input.sourceFence, false)) {
+    return "system_review_execution_stale: The reviewed Run/Attempt is no longer the active execution owner.";
+  }
+  if (!input.approval.toolCallId) {
+    return "system_review_identity_missing: The reviewed tool call identity is missing.";
+  }
+  const reviewedFingerprint = approvalSideEffectFingerprintV1({
+    actionType: input.approval.actionType,
+    toolCallId: input.approval.toolCallId,
+    sideEffect: input.approval.payload,
+  });
+  const currentFingerprint = approvalSideEffectFingerprintV1({
+    actionType: input.currentActionType,
+    toolCallId: input.currentToolCallId,
+    sideEffect: input.currentPayload,
+  });
+  return reviewedFingerprint === currentFingerprint
+    ? undefined
+    : "system_review_effect_changed: The command, target, cwd, or payload changed after automatic review.";
 }
 
 /**
