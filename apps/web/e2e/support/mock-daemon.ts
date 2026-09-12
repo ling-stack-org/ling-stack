@@ -9,7 +9,7 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { ConversationGeneratedMedia, ConversationItemV1, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
 export const cwd = "/tmp/ling-stack-workspace";
@@ -73,6 +73,7 @@ export interface MockState {
   channelConversationItemExtras?: unknown[];
   conversationItems?: ConversationItemV1[];
   userInputs?: import("@ling-stack/contracts").UserInputTranscriptItemV1[];
+  conversationReasoningSummaries?: ConversationReasoningSummaryRecord[];
   conversationContextSnapshotsByThreadId?: Record<string, unknown[]>;
   channelMessageRouteDecisions: unknown[];
   channelIntentDecisions: unknown[];
@@ -7273,6 +7274,11 @@ export function buildMockConversationDetail(state: MockState, cwd: string, threa
   });
   const runIds = new Set(runs.map((run) => run.id));
   const interventions = state.runInterventions.filter((intervention) => runIds.has(intervention.sourceRunId));
+  const approvals = state.approvals.filter((approval) => approval.runId && runIds.has(approval.runId));
+  const approvalIds = new Set(approvals.map((approval) => approval.id));
+  const approvalCheckpoints = state.approvalCheckpoints.filter((checkpoint) =>
+    approvalIds.has(checkpoint.approvalId) || Boolean(checkpoint.runId && runIds.has(checkpoint.runId))
+  );
   const turnMessageIds = new Set(turnMessages.map((message) => message.id));
   const guidanceMessages = interventions.flatMap((intervention) => {
     const id = `conversation-user:intervention:${intervention.id}`;
@@ -7422,7 +7428,7 @@ export function buildMockConversationDetail(state: MockState, cwd: string, threa
     thread,
     turns,
     conversationItems: allConversationItems,
-    userInputs: state.userInputs?.filter(record => allConversationItems.some(item => item.id === record.itemId)),
+    userInputs: (state.userInputs ?? []).filter(record => allConversationItems.some(item => item.id === record.itemId)),
     supersessionTombstones: state.conversationSupersessionTombstonesByThreadId[thread.id] ?? {
       turnIds: [],
       runIds: [],
@@ -7431,6 +7437,9 @@ export function buildMockConversationDetail(state: MockState, cwd: string, threa
     contextSnapshots: state.conversationContextSnapshotsByThreadId?.[thread.id] ?? [],
     runLinks,
     runs,
+    reasoningSummaries: (state.conversationReasoningSummaries ?? []).filter((summary) =>
+      summary.threadId === thread.id && runIds.has(summary.runId)
+    ),
     executionActions: state.executionActions
       .filter((action) => action.threadId === thread.id || runs.some((run) => run.id === action.runId))
       .map((action) => ({
@@ -7440,7 +7449,8 @@ export function buildMockConversationDetail(state: MockState, cwd: string, threa
         revision: action.revision ?? 1,
         sourceRefs: action.sourceRefs ?? [],
       })),
-    approvals: state.approvals.filter((approval) => approval.runId && runIds.has(approval.runId)),
+    approvals,
+    approvalCheckpoints,
     interventions,
     terminalReports: state.terminalReports.filter((report) => isRecord(report) && report.threadId === thread.id),
     artifacts: runs.flatMap((run) => state.artifactsByRun[run.id] ?? []),
