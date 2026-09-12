@@ -638,6 +638,7 @@ function isWorkUnitKind(value: string): value is WorkUnitKind {
   return (
     value === "task_run" ||
     value === "conversation_run" ||
+    value === "approval_review" ||
     value === "channel_turn_dispatch" ||
     value === "channel_ai_reply" ||
     value === "channel_terminal_report" ||

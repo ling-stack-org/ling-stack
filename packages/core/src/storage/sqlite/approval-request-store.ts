@@ -6,8 +6,11 @@ import {
   type ApprovalStatus,
   type CreateApprovalRequestInput,
   type ListApprovalRequestsOptions,
+  type ResolveApprovalBySystemReviewerInput,
+  type ResolveApprovalBySystemReviewerResult,
   type ResolveApprovalRequestInput,
 } from "../../approval-types.js";
+import { approvalSideEffectFingerprintV1 } from "../../approval-checkpoints.js";
 import { redactSecrets } from "../../redaction.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
@@ -227,6 +230,94 @@ export class SqliteApprovalRequestStore {
       return this.approveApprovalRequestWithCommandRule(id, input, now);
     }
     return this.resolveApprovalRequest(id, "approved", input, now);
+  }
+
+  resolveApprovalBySystemReviewer(
+    input: ResolveApprovalBySystemReviewerInput,
+    now: string,
+  ): ResolveApprovalBySystemReviewerResult {
+    const existing = this.getApprovalRequest(input.approvalId);
+    if (!existing) return { ok: false, code: "approval_not_found" };
+    if (existing.status !== "pending") return { ok: false, code: "approval_not_pending" };
+    if (
+      existing.createdAt !== input.approvalCreatedAt
+      || existing.runId !== input.runId
+      || existing.toolCallId !== input.toolCallId
+    ) {
+      return { ok: false, code: "approval_identity_changed" };
+    }
+    const actualFingerprint = approvalSideEffectFingerprintV1({
+      actionType: existing.actionType,
+      toolCallId: existing.toolCallId,
+      sideEffect: existing.payload,
+    });
+    if (actualFingerprint !== input.sideEffectFingerprint) {
+      return { ok: false, code: "approval_effect_changed" };
+    }
+
+    this.context.database.exec("SAVEPOINT system_reviewer_approval_resolution");
+    try {
+      const status = input.decision === "approve" ? "approved" : "denied";
+      const decisionKind = input.decision === "approve" ? "approve_once" : "deny";
+      const update = this.context.database.prepare(`
+        UPDATE approval_requests
+        SET
+          status = ?,
+          resolved_at = ?,
+          resolved_by = 'system-reviewer',
+          decision_reason = ?,
+          decision_kind = ?,
+          decision_rule_id = NULL
+        WHERE id = ?
+          AND status = 'pending'
+          AND created_at = ?
+          AND run_id = ?
+          AND tool_call_id = ?
+          AND EXISTS (
+            SELECT 1 FROM approval_policies
+            WHERE workspace_id = ? AND updated_at = ?
+          )
+          AND ${runExecutionOwnerSql}
+      `).run(
+        status,
+        now,
+        input.reason,
+        decisionKind,
+        input.approvalId,
+        input.approvalCreatedAt,
+        input.runId,
+        input.toolCallId,
+        DEFAULT_WORKSPACE_ID,
+        input.workspacePolicyUpdatedAt,
+        ...runExecutionOwnerParameters(input.runId, input.sourceFence, false),
+      );
+      if (Number(update.changes) !== 1) {
+        const latest = this.getApprovalRequest(input.approvalId);
+        const policyUpdatedAt = this.context.database
+          .prepare("SELECT updated_at FROM approval_policies WHERE workspace_id = ?")
+          .get(DEFAULT_WORKSPACE_ID) as { updated_at?: unknown } | undefined;
+        const code: Extract<ResolveApprovalBySystemReviewerResult, { readonly ok: false }>["code"] =
+          !latest ? "approval_not_found"
+            : latest.status !== "pending" ? "approval_not_pending"
+              : latest.createdAt !== input.approvalCreatedAt || latest.runId !== input.runId || latest.toolCallId !== input.toolCallId
+                ? "approval_identity_changed"
+                : policyUpdatedAt?.updated_at !== input.workspacePolicyUpdatedAt
+                  ? "approval_policy_changed"
+                  : "approval_execution_stale";
+        this.context.database.exec("ROLLBACK TO system_reviewer_approval_resolution");
+        this.context.database.exec("RELEASE system_reviewer_approval_resolution");
+        return { ok: false, code };
+      }
+      const resolved = this.getApprovalRequest(input.approvalId);
+      if (!resolved) throw new Error(`System reviewer resolution disappeared: ${input.approvalId}`);
+      this.syncResolvedApproval(resolved, now);
+      this.context.database.exec("RELEASE system_reviewer_approval_resolution");
+      return { ok: true, approval: resolved };
+    } catch (error) {
+      this.context.database.exec("ROLLBACK TO system_reviewer_approval_resolution");
+      this.context.database.exec("RELEASE system_reviewer_approval_resolution");
+      throw error;
+    }
   }
 
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {

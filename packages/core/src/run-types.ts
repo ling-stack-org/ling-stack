@@ -2200,6 +2200,10 @@ export interface RunStore {
   getApprovalRequest(id: string): ApprovalRequest | undefined;
   listApprovalRequests(options?: ListApprovalRequestsOptions): ApprovalRequest[];
   approveApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
+  resolveApprovalBySystemReviewer(
+    input: import("./approval-types.js").ResolveApprovalBySystemReviewerInput,
+    now: string,
+  ): import("./approval-types.js").ResolveApprovalBySystemReviewerResult;
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   expireApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
@@ -2739,6 +2743,7 @@ export type ApprovalStoreFacet = RunStoreFacet<
   | "getApprovalRequest"
   | "listApprovalRequests"
   | "approveApprovalRequest"
+  | "resolveApprovalBySystemReviewer"
   | "denyApprovalRequest"
   | "expireApprovalRequest"
   | "cancelApprovalRequest"

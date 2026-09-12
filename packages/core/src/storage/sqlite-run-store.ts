@@ -4409,6 +4409,13 @@ export class SqliteRunStore implements RunStore {
     return this.approvalRequests.approveApprovalRequest(id, input, now);
   }
 
+  resolveApprovalBySystemReviewer(
+    input: import("../approval-types.js").ResolveApprovalBySystemReviewerInput,
+    now: string,
+  ): import("../approval-types.js").ResolveApprovalBySystemReviewerResult {
+    return this.approvalRequests.resolveApprovalBySystemReviewer(input, now);
+  }
+
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
     return this.approvalRequests.denyApprovalRequest(id, input, now);
   }

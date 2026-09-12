@@ -2143,6 +2143,9 @@ async function createApprovalResumeClaimFixture(suffix, options = {}) {
     task: store.getTask(task.id),
     workUnit: store.getWorkUnit(workUnit.id),
     priorAttempt: store.getWorkUnitAttempt(priorAttempt.id),
+    priorFence,
+    approval,
+    sideEffect,
     checkpoint,
     claim,
     async close() {
@@ -2151,6 +2154,77 @@ async function createApprovalResumeClaimFixture(suffix, options = {}) {
     },
   };
 }
+
+test("system reviewer approval resolution is fenced by approval, policy, effect, and active Attempt", async () => {
+  const approvedFixture = await createApprovalResumeClaimFixture("system-reviewer-approved", { approve: false });
+  try {
+    const { store, approval, sideEffect, priorFence, run } = approvedFixture;
+    const result = store.resolveApprovalBySystemReviewer({
+      approvalId: approval.id,
+      approvalCreatedAt: approval.createdAt,
+      runId: run.id,
+      toolCallId: approval.toolCallId,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect,
+      }),
+      workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+      sourceFence: priorFence,
+      decision: "approve",
+      reason: "System reviewer found the scoped command safe.",
+    }, "2026-08-16T01:00:30.000Z");
+    assert.equal(result.ok, true);
+    assert.equal(result.approval.status, "approved");
+    assert.equal(result.approval.resolvedBy, "system-reviewer");
+    assert.equal(result.approval.decisionKind, "approve_once");
+    assert.equal(store.getApprovalCheckpointForApproval(approval.id)?.status, "approved");
+  } finally {
+    await approvedFixture.close();
+  }
+
+  const staleFixture = await createApprovalResumeClaimFixture("system-reviewer-stale", { approve: false });
+  try {
+    const { store, approval, sideEffect, priorFence, run } = staleFixture;
+    const base = {
+      approvalId: approval.id,
+      approvalCreatedAt: approval.createdAt,
+      runId: run.id,
+      toolCallId: approval.toolCallId,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect,
+      }),
+      workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+      sourceFence: priorFence,
+      decision: "deny",
+      reason: "System reviewer denied the command.",
+    };
+    assert.deepEqual(store.resolveApprovalBySystemReviewer({
+      ...base,
+      sideEffectFingerprint: "stale-effect",
+    }, "2026-08-16T01:00:10.000Z"), { ok: false, code: "approval_effect_changed" });
+    assert.deepEqual(store.resolveApprovalBySystemReviewer({
+      ...base,
+      sourceFence: { ...priorFence, fencingToken: "999999" },
+    }, "2026-08-16T01:00:20.000Z"), { ok: false, code: "approval_execution_stale" });
+    store.updateApprovalPolicy({ allowedWritePaths: [".", "docs"] }, "2026-08-16T01:00:25.000Z");
+    assert.deepEqual(store.resolveApprovalBySystemReviewer(base, "2026-08-16T01:00:30.000Z"), {
+      ok: false,
+      code: "approval_policy_changed",
+    });
+    assert.equal(store.getApprovalRequest(approval.id)?.status, "pending");
+    store.approveApprovalRequest(approval.id, { reason: "Human won the race." }, "2026-08-16T01:00:40.000Z");
+    assert.deepEqual(store.resolveApprovalBySystemReviewer({
+      ...base,
+      workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+    }, "2026-08-16T01:00:50.000Z"), { ok: false, code: "approval_not_pending" });
+    assert.equal(store.getApprovalRequest(approval.id)?.resolvedBy, "local-user");
+  } finally {
+    await staleFixture.close();
+  }
+});
 
 test("sqlite store creates and resolves media approval requests", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-media-approval-"));

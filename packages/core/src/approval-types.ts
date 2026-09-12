@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import type { HostCapabilityCallV1 } from "@ling-stack/contracts";
+import type { HostCapabilityCallV1, RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
 import type { ApplyPatchFormat, PatchPlan, PatchSummary } from "./patch/index.js";
 import type { RunTool } from "./approval-policy.js";
 import type { UnifiedExecEnvironmentSummary } from "./exec/unified-exec-types.js";
@@ -271,10 +271,39 @@ export interface CreateApprovalRequestInput {
 
 export interface ResolveApprovalRequestInput {
   readonly reason?: string;
-  readonly resolvedBy?: "local-user";
+  readonly resolvedBy?: "local-user" | "system-reviewer";
   readonly decisionKind?: Extract<ApprovalDecisionKind, "approve_once" | "approve_command_rule">;
   readonly proposedRuleFingerprint?: string;
 }
+
+/**
+ * Immutable authority captured before an isolated reviewer starts. The Store
+ * rechecks every field in the same SQLite mutation that records the verdict.
+ */
+export interface ResolveApprovalBySystemReviewerInput {
+  readonly approvalId: string;
+  readonly approvalCreatedAt: string;
+  readonly runId: string;
+  readonly toolCallId: string;
+  readonly sideEffectFingerprint: string;
+  readonly workspacePolicyUpdatedAt: string;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly decision: "approve" | "deny";
+  readonly reason: string;
+}
+
+export type ResolveApprovalBySystemReviewerResult =
+  | { readonly ok: true; readonly approval: ApprovalRequest }
+  | {
+      readonly ok: false;
+      readonly code:
+        | "approval_not_found"
+        | "approval_not_pending"
+        | "approval_identity_changed"
+        | "approval_effect_changed"
+        | "approval_policy_changed"
+        | "approval_execution_stale";
+    };
 
 export interface ListApprovalRequestsOptions {
   readonly status?: ApprovalStatus;
