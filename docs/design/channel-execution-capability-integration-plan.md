@@ -174,7 +174,7 @@ channel narration footer、child 分段/ownership、prepared-request 和原始 G
 SQLite 关闭重开、decision 写入故障、并发重复、后续 turn 隔离及不合法输入。
 Daemon 全量 1738/1745，7 fail、0 skip。原打开成功测试没有修改或豁免，仍失败。
 不是真实模型、daemon 进程重启或 packaged GUI 验收。详见
-[本轮证据与剩余门槛](../../output/channel-host-open-blocker-handoff-20260909.md)。
+本轮证据与剩余门槛 (`channel-host-open-blocker-handoff-20260909.md`)。
 
 ## 10. Host 工具桥接与独立审批基础（2026-09-09，正向执行仍未接通）
 
@@ -211,7 +211,7 @@ HTTP/进程重启/packaged GUI 验收。当前 catalog 没有自动注入生产 
 URL 绕过现有内容预览安全边界。
 
 验证证据与下一步见
-[Host 能力桥接交接](../../output/host-capability-bridge-handoff-20260909.md)。
+Host 能力桥接交接 (`host-capability-bridge-handoff-20260909.md`)。
 
 ## 11. Host 原始调用校验与审批写入边界（2026-09-09）
 
@@ -240,7 +240,7 @@ URL 绕过现有内容预览安全边界。
 用已失效成员快照生成范围；不扩大 Memory 可见范围、不更换存储，也不靠重试掩盖错误。
 
 精确回归与最终全量记录见
-[Host 审批身份及初始化竞争交接](../../output/host-capability-authority-handoff-20260909.md)。
+Host 审批身份及初始化竞争交接 (`host-capability-authority-handoff-20260909.md`)。
 
 ## 12. 本机采集、SDK 证据集成及 Host 回调生命周期（2026-09-09）
 
@@ -272,7 +272,7 @@ URL 绕过现有内容预览安全边界。
 屏障，严格验证唯一成功、明确失败码和赢家字节不被覆盖，生产创建逻辑未修改。
 本阶段没有真实 daemon 进程重启、完整 surface projection、真实模型或 packaged GUI
 验证；没有更新 QA App 或生成新截图。完整回归结果见
-[本轮交接](../../output/host-capability-sdk-evidence-handoff-20260909.md)。
+本轮交接 (`host-capability-sdk-evidence-handoff-20260909.md`)。
 
 ## 13. 原七项之二：Host 打开回执与完成校验（2026-09-09）
 
@@ -308,4 +308,4 @@ URL 绕过现有内容预览安全边界。
 内层复用同一模块持有的快照，不提交外层事务，仍拒绝接管外部写事务。
 Core 903/903、Runner 169/169、Contracts 83/83、Web 类型检查与 build:ci 通过；
 Daemon 最终 1832/1839，原七项仍失败、0 skip，失败集合无新增/移除。
-详见[本轮证据与剩余实现](../../output/host-open-evidence-handoff-20260909.md)。
+详见本轮证据与剩余实现 (`host-open-evidence-handoff-20260909.md`)。

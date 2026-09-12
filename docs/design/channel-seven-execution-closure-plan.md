@@ -57,8 +57,8 @@ Host launch 回执只证明启动被接受；页面/窗口实际可见需要额�
 写入风险检查和审批恢复；SDK 不再自行回退执行 Bash。专项 54 项已通过。
 这仍不是七项或完整取消安全验收：其他写入效果的原子预约、跨 Store 物理范围协调、
 风险的客户端展示与可追溯处置、受限命令及 Host 打开仍需完成。
-详见[上一阶段进程观察](../../output/cancel-process-lifecycle-handoff-20260909.md)和
-[Host journal 阶段证据与后续边界](../../output/host-command-journal-handoff-20260909.md)。
+详见上一阶段进程观察 (`cancel-process-lifecycle-handoff-20260909.md`)和
+Host journal 阶段证据与后续边界 (`host-command-journal-handoff-20260909.md`)。
 
 | 编号 | 原目标 | 验收重点 |
 | --- | --- | --- |
@@ -135,7 +135,7 @@ Host launch 回执只证明启动被接受；页面/窗口实际可见需要额�
   不能产生未启动却永远不释放的风险记录。不能只删除 readiness/审批门禁。
 
 实际代码、红绿证据及剩余范围见
-[原生输入捕获阶段记录](../../output/native-input-capture-handoff-20260909.md)。
+原生输入捕获阶段记录 (`native-input-capture-handoff-20260909.md`)。
 无新增待用户决定的产品选项。生产调度、依赖语义、输出发布仍是未完成的实现事项。
 
 ## 7. 自然语言 Node 调用目标与具体命令分层
@@ -164,7 +164,7 @@ Host launch 回执只证明启动被接受；页面/窗口实际可见需要额�
   其他目标类型的内部接线仍属于既定完整计划，不要求用户改成手写命令作为永久方案。
 
 证据与尚未完成的生产执行入口见
-[Node 目标绑定实施记录](../../output/node-goal-binding-handoff-20260909.md)。
+Node 目标绑定实施记录 (`node-goal-binding-handoff-20260909.md`)。
 未决产品选择：无新增；执行器、Host 打开及真实 macOS App 验收继续保持未完成。
 
 ## 8. 受限命令后端、真实权限复验与频道调度接线
@@ -190,5 +190,5 @@ Host launch 回执只证明启动被接受；页面/窗口实际可见需要额�
   实际资源打包、完整依赖/输出发布、Host HTML 打开和 macOS GUI 验收仍属既定范围。
 
 完整证据、测试迁移说明与剩余范围见
-[受限命令接线实施记录](../../output/restricted-command-dispatch-handoff-20260909.md)。
+受限命令接线实施记录 (`restricted-command-dispatch-handoff-20260909.md`)。
 未决产品选择：无新增；不得把上述专项通过表述为原七项或整体计划完成。

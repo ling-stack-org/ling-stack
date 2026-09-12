@@ -136,7 +136,7 @@ verifyBeforeUse 约束保持。过期/替代排除、中文召回和 500 条截�
 无 teammate 共享、跨 workspace/channel、source 归属、私聊/秘密隔离和撤回；原 Core 错误断言
 按确认的行为改正，未删除负向隔离检查。73 项专项通过；Core 749/749，Daemon 1566 项中
 1559 pass/原 7 fail，失败名与前次全量
-一致，无新增失败。完整证据与边界见 [本次交接](../../output/memory-shared-scope-handoff-20260908.md)。
+一致，无新增失败。完整证据与边界见 本次交接 (`memory-shared-scope-handoff-20260908.md`)。
 没有新真实模型/GUI 验收，不能据此证明自由文本无泄露或整个 H3 已验收。
 
 ## 6. 实施顺序与新增验收

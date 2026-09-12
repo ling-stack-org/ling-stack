@@ -298,7 +298,7 @@ Windows 未初始化时：
 | fmt / JS syntax / diff | 通过 |
 | Clippy / 漏洞审计 / 发行签名 | 未运行或未验证；本机没有 Clippy，未擅自安装 |
 
-完整日志、manifest 路径和二进制哈希见[本次交接](../../output/native-sandbox-t0-handoff-20260907.md)。
+完整日志、manifest 路径和二进制哈希见本次交接 (`native-sandbox-t0-handoff-20260907.md`)。
 仍需：Windows 提取闭包及 setup/repair/uninstall owned-manifest 契约、可信打包身份，
 T1 策略编译、T2/T3 真执行和停止证明、T4 全工具接管、T5/T6 UI 与原全部平台验收。
 未解除 typed command/open capability gate，不把本切片登记为 S-01–S-06 联动通过。
@@ -322,7 +322,7 @@ Core 已新增独立 types、paths、validation、compiler 四个小模块，公
 Core 全量 652/652；Electron 44.1.1 内嵌 Node 专项 41/41；Daemon build pass，1491 项中
 1484 pass / 原 7 fail / 0 skip，与上一轮失败集合 added=[]、removed=[]。
 四个新编译模块 coverage line 99.10%、branch 95.92%、function 100%，仅为纯模块覆盖，不是端到端安全证明。
-详细日志见[策略切片交接](../../output/native-sandbox-t1-policy-handoff-20260907.md)。
+详细日志见策略切片交接 (`native-sandbox-t1-policy-handoff-20260907.md`)。
 
 T1-B 仍需从真实现行审批记录和 canonical workspace/path facts 建立投影、接入额外目录/网络/元数据 scope，
 在执行准入时校验撤销/expiry/fence 并消费一次性批准，再连接 T2/T3/T4。
@@ -362,7 +362,7 @@ symlink、prepare-to-spawn 目录替换、单次网络授权和普通子进程�
 
 [macos-boundary-smoke.mjs](../../native/sandbox/tests/macos-boundary-smoke.mjs) 保留两项真正失败的安全断言，
 退出码 1；不是 todo/skip，不改哨兵断言凑绿。夹具全部在独立临时目录，脱离后代自动退出并已确认 selfExpired。
-没有操作真实 SQLite、用户文件、系统策略、凭据或 QA App。详见[实机切片交接](../../output/native-sandbox-t2-macos-handoff-20260907.md)。
+没有操作真实 SQLite、用户文件、系统策略、凭据或 QA App。详见实机切片交接 (`native-sandbox-t2-macos-handoff-20260907.md`)。
 
 下一阶段先解决 T2-B 执行边界决策：如采用独立执行副本与受控回写，必须明确普通项目语义、
 文件身份/并发合入规则、开销和所有后代的生命周期所有权；不能仅以换工作目录或进程组充当隔离。
@@ -400,7 +400,7 @@ macOS fallback 枚举并复核的仍是同一 process group；`process.rs` 的 `
 下一步仍需验证覆盖所有后代的执行所有权，再确定原生目录 FD/回写 journal 与完整项目语义。
 不擅自安装虚拟化软件、创建系统服务、索取额外系统权限、回退 full_access，或解除原七项命令门禁。
 原七项频道场景、U2/U3 与完整 packaged 验收保持原范围；证据见
-[T2-B 验证交接](../../output/native-sandbox-t2b-copy-validation-20260909.md)。
+T2-B 验证交接 (`native-sandbox-t2b-copy-validation-20260909.md`)。
 
 ## 10. 测试计划与失败处理
 

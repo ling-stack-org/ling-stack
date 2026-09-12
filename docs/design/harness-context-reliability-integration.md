@@ -149,7 +149,7 @@ execution_failed，不向公共返回写入原始 error/plan。key 使用数据�
 专项 11/11、相关回归 47/47；新模块 line/branch/function coverage 100%。Daemon 全量
 1552 项：1545 pass / 原 7 fail / 0 skip，失败名相对 U4-A added=[]、removed=[]。
 Daemon build/typecheck 通过。未运行真实模型、OS 沙盒或 packaged GUI，不改 H-01–H-06 的 not_run。
-完整命令、限制和后续接缝见 [H1-A 交接](../../output/harness-summary-h1a-handoff-20260907.md)。
+完整命令、限制和后续接缝见 H1-A 交接 (`harness-summary-h1a-handoff-20260907.md`)。
 
 ### 7.2 H3 当前边界及后续接线（2026-09-08）
 
@@ -167,7 +167,7 @@ Daemon build/typecheck 通过。未运行真实模型、OS 沙盒或 packaged GU
 73 项专项通过，证据 /private/tmp/ling-h3-shared-scope-20260908.jOiEPE/targeted.log。
 最新 Core 749/749；Daemon 1566 项中 1559 pass/原 7 fail，逐条失败名对比无新增/消除。
 Core/Daemon build:ci、typecheck:ci 与 diff check 通过。详情见
-[本次交接](../../output/memory-shared-scope-handoff-20260908.md)；真实模型/GUI 仍未验，
+本次交接 (`memory-shared-scope-handoff-20260908.md`)；真实模型/GUI 仍未验，
 共享模型上下文不能证明自由文本不会泄露。
 具体范围及新纳入的技能/自动审核设计见
 [联合实施增量 §5](skills-autoreview-harness-integration.md#5-memory-边界更正与已确认范围)。
@@ -188,7 +188,7 @@ single-flight 仍等 generator 真实 settle，不能把 timeout 发出当作停
 红测 20 项中 6 fail；修复及新增边界后 25/25 通过。Daemon build:ci、typecheck:ci
 通过；全量 1590 项中 1583 pass / 原 7 fail / 0 skip，与 U4-B2-B 失败名对比
 added=[]、removed=[]。本次仅运行临时 SQLite/模拟生成器和 Daemon 测试，没有模型/GUI 证据。
-详见 [H1-B1 交接](../../output/harness-summary-outcomes-handoff-20260908.md)。
+详见 H1-B1 交接 (`harness-summary-outcomes-handoff-20260908.md`)。
 
 **仍未完成：** messages 上层仍需消费维护结果、重建投影、处理 planning failure；最终
 prepared request 含 system/tools/reserved output 的 soft degraded / hard blocked 容量门禁
@@ -260,7 +260,7 @@ lineCount 仍按既有有界产物内容统计，不能把它解释为超限原�
 既有命令执行/审批/超时/取消/产物/快照集成 10/10；Daemon build:ci/typecheck:ci 通过。
 全量 1607 项：1600 pass / 原 7 fail / 0 skip，与 H2-A 比较 added=[]、removed=[]。
 
-证据见 [H4-A 交接](../../output/harness-unicode-output-handoff-20260908.md) 和
+证据见 H4-A 交接 (`harness-unicode-output-handoff-20260908.md`) 和
 `/private/tmp/ling-h4-unicode-*.log`。这次没有新 App、新截图或 packaged GUI 测试。
 不改变 H-04/H-05/H-06 的联合 not_run，也不删除原 G/K/U/S 验收矩阵。
 

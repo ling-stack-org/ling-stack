@@ -89,11 +89,11 @@ test("existing canonical assistant omitted by budget or visibility cannot be res
 
 test("snapshot is detached, redaction-stable, and restored without any store access", async (t) => {
   const f = await fixture(t);
-  reply(f, user(f, 1, true), false, "Keep project AMBER and sk-not-a-real-secret-123456.");
+  reply(f, user(f, 1, true), false, "Keep project AMBER and sk-test-not-a-real-secret-123456.");
   const source = user(f, 2);
   const captured = capture({ store: f.store, threadId: f.thread.id, sourceItemId: source.sourceItemId });
   const serialized = JSON.stringify(captured);
-  assert.equal(serialized.includes("sk-not-a-real-secret"), false);
+  assert.equal(serialized.includes("sk-test-not-a-real-secret"), false);
   f.store.appendEvent("run-turn-1", "message_end", { role: "assistant", text: "LATE_HISTORY" });
   const restored = restore(JSON.parse(JSON.stringify(redactSecrets(captured))));
   assert.equal(JSON.stringify(restored), serialized);

@@ -47,7 +47,7 @@ macOS 六层，不能从某个页面的 CSS 或一段模型文本开始。
 依赖关系。实现顺序固定为 `D0 → E1 → E2 → E3 → E4 → E5 → E6`；E1/E2 的纯测试可并行，
 其余按该顺序串行推进。
 
-当前实现 worktree 为 `/Users/tianxiao/ling-typed-transcript-v3-recovered-20260906`（2026-09-06
+当前实现来自独立的 `<historical-recovery-worktree>`（2026-09-06
 从保全的 WIP 与原 HEAD 恢复；原临时工作区不再开发）；是否包含最新 `origin/main`
 必须在本轮通过 fetch/ancestry 和 build manifest 核验。主
 checkout 与历史实验 worktree 的 dirty WIP 不作为实现输入。任何代码提交都必须从本文的
@@ -1980,12 +1980,12 @@ evidence、统一 Timeline 和 TerminalReport。旧 matcher 的自然语言发�
   Turn sibling 等待投影、独立 workflow 状态与 lease、专用迟到审计和取消隔离已实现。
   Core 554/554（含暂停专项 25）、Contracts 75/75、UI-core 137/137、Web 219/219；
   Daemon 取消/审计 5/5、审批恢复/监督器 9/9，相关构建和状态消费者类型检查通过。
-  [交接证据](../../output/user-input-atomic-wait-u2c-handoff-20260907.md)列出尚未接通的 Host/Runner/U1/U3/U4。
+  交接证据 (`user-input-atomic-wait-u2c-handoff-20260907.md`)列出尚未接通的 Host/Runner/U1/U3/U4。
   此为源码切片，不减少 G-00–G-12、packaged 20 案、K-01–K-07、U-01–U-10、S-01–S-06。
 - N03 prepared-request、G-08 batch root windowing 和 Daemon 7 项失败仍保留原状态；
   U2 captured hydration、两执行入口的原子写入准入与先获准后写总结已经继续落地，详见
   [生命周期 §8](conversation-user-input-runtime-lifecycle.md)与
-  [本轮证据](../../output/user-input-execution-admission-u2-handoff-20260907.md)。
+  本轮证据 (`user-input-execution-admission-u2-handoff-20260907.md`)。
   此切片不完成完整暂停、投递/恢复、共享问答 UI，也不清除原 7 项能力失败。
   不能因沙盒计划加入便认为所有 execute/fan-in 问题自动修好。
 
@@ -1993,7 +1993,7 @@ evidence、统一 Timeline 和 TerminalReport。旧 matcher 的自然语言发�
 
 U4-B1（2026-09-08）：共享问答 DTO 合并、request/delivery 防回退、同版本冲突关闭、
 无正文撤回标记、Host cursor 分页范围、读取 epoch 和 ordinary/private/channel/topic 数据
-接线已实现；详见联合设计 §8.13 与 [交接](../../output/user-input-u4b1-handoff-20260908.md)。
+接线已实现；详见联合设计 §8.13 与 交接 (`user-input-u4b1-handoff-20260908.md`)。
 这不是完整 U4-B：typed rows/registry、child hydration、可关闭问答窗口及所有 packaged
 问答案例仍未完成；不开放真实提问工具，不把数据回归计为 U-01–U-10 GUI 通过。
 
@@ -2001,7 +2001,7 @@ U4-B2-A（2026-09-08）：独立问答 typed union/projector、detail/child hydr
 normal/private 共享历史 renderer 与 hover/focus copy 已实现；UI-core 153/153、
 Web 257/257，浏览器合成 DTO 案例 4/4、8 图检查。生产 channel feed 接线、窗口、
 实际投递/receiver ACK 及新包真实案例仍未完成，继续纳入本次计划，不计 U-01–U-10
-端到端通过。细节见联合设计 §8.14 与 [交接](../../output/user-input-u4b2a-handoff-20260908.md)。
+端到端通过。细节见联合设计 §8.14 与 交接 (`user-input-u4b2a-handoff-20260908.md`)。
 
 ### 6.6 Harness 四项可靠性增量（2026-09-07）
 

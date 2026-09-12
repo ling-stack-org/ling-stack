@@ -13,10 +13,10 @@ files_modified:
 
 ## 1. 当前目标与约束
 
-- 更新基线：实际实现树已包含 `origin/main` 的 `76790031`。分支为 `codex/reasoning-summary-autoreview-implementation`，当前实现 HEAD 为 `49c330d5`（automatic review restart recovery）。
+- 更新基线：实际实现树已包含 `origin/main` 的 `76790031`。分支为 `codex/reasoning-summary-autoreview-implementation`；最近完成验证的功能检查点为 `456b0ba8`（private system message purpose isolation），后续仅验证/文档提交可继续推进 HEAD。
 - 实际开发树：`/private/tmp/ling-v3-implementation.tEPHvb`。
-- 同事工作区 `/Users/tianxiao/ling-stack` 只读，禁止修改、清理、reset 或覆盖其中 WIP。
-- 原恢复树 `/Users/tianxiao/ling-typed-transcript-v3-recovered-20260906` 暂不直接修改；验证完成后再受控同步差异。
+- 同事的 `<main-checkout>` 只读，禁止修改、清理、reset 或覆盖其中 WIP。
+- 原 `<historical-recovery-worktree>` 暂不直接修改；验证完成后再受控同步差异。
 - 只测试和打包 macOS，不处理 Windows。
 - 当前不推送、不创建 PR。用户已在 2026-09-12 明确允许：未提交内容过多并妨碍继续开发时，可先创建本地恢复检查点提交。此类提交只用于保存和恢复，不代表 PR-ready，也不能替代后续按功能审查、测试和整理提交历史。
 - 真实模型验收使用 `https://llm.gz.nobody.host/v1`；密钥只从环境中后缀 `_2` 的变量读取，禁止写入文档、日志、命令输出或截图。

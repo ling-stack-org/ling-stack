@@ -106,7 +106,7 @@ test("normal conversation freezes an explicit reasoning summary selection", asyn
 test("idempotent route replay reuses the exact persisted Run input after database reopen", async (t) => {
   const f = await fixture(t);
   let first;
-  await dispatch(f, { message: "CURRENT_USER sk-not-a-real-secret-123456" }, async (request) => { first = request; persist(f, request); return "current-run"; });
+  await dispatch(f, { message: "CURRENT_USER sk-test-not-a-real-secret-123456" }, async (request) => { first = request; persist(f, request); return "current-run"; });
   assert.ok(first?.normalConversationContext);
   assert.deepEqual(redactSecrets(first.normalConversationContext), first.normalConversationContext);
   f.store.close();
@@ -114,13 +114,13 @@ test("idempotent route replay reuses the exact persisted Run input after databas
   f.store.appendEvent("old-run", "message_end", { role: "assistant", text: "AFTER_REOPEN" });
   f.store.readSnapshot = () => { throw new Error("same Run must not recapture history"); };
   let replay;
-  const response = await dispatch(f, { message: "CURRENT_USER sk-not-a-real-secret-123456" }, async (request) => { replay = request; return "current-run"; });
+  const response = await dispatch(f, { message: "CURRENT_USER sk-test-not-a-real-secret-123456" }, async (request) => { replay = request; return "current-run"; });
   assert.equal(response.statusCode, 200, response.body);
   assert.deepEqual(replay.normalConversationContext, first.normalConversationContext);
   assert.deepEqual(replay.task, first.task);
   assert.equal(f.store.listLingTurns({ threadId: f.thread.id, limit: 50 }).length, 2);
   assert.equal(f.store.listConversationItemsForTurn({ turnId: replay.turnId }).filter((item) => item.kind === "user_message").length, 1);
-  assert.equal(replay.task.prompt.includes("sk-not-a-real-secret"), false);
+  assert.equal(replay.task.prompt.includes("sk-test-not-a-real-secret"), false);
   assert.equal(replay.task.prompt.includes("AFTER_REOPEN"), false);
 });
 

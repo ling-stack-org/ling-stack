@@ -278,7 +278,7 @@ BEGIN IMMEDIATE 事务中提交；任一 INSERT 或 COMMIT 失败均 rollback，
 - [ ] 注册提问工具或外部创建路由前，必须同时接好 scope 内问题/答案 hydration、上下文与摘要
   消费、共享问答 renderer。不能让仅有引用的占位进入真实问答、被普通摘要推进覆盖水位后丢失答案。
 
-证据与命令见 [U1-A 交接](../../output/user-input-store-u1-handoff-20260907.md)。
+证据与命令见 U1-A 交接 (`user-input-store-u1-handoff-20260907.md`)。
 未重新打包、安装或启动 App；旧 QA 包不含本切片。新 U/S 联动仍全部 not_run。
 
 ### 8.3 U0-S 消费者审计与 U2-P Runner 前置修复（2026-09-07）
@@ -294,7 +294,7 @@ SDK 吞掉后仍继续成功。新增 task-boundary 模块与 Adapter 最小接�
 验证为 13/13 生命周期专项、Runner 全量 51/51；Runner build/typecheck、Daemon typecheck 通过。
 新模块 line/function coverage 100%、branch 85%。单工具与双并行工具取消均等待清理；
 不将 fire-and-forget abort 误报成已复现的提前收尾问题，也不将内存 transport 说成真实模型/完整 HTTP 验收。
-详见 [U2-P 证据交接](../../output/user-input-runner-boundary-u2p-handoff-20260907.md)。
+详见 U2-P 证据交接 (`user-input-runner-boundary-u2p-handoff-20260907.md`)。
 完整 U2/U3/U4/U5、沙盒和原 packaged 矩阵仍未完成。
 
 N03 prepared request、旧 Daemon 7 项失败与 G-08 batch root windowing 仍在总计划，
@@ -315,7 +315,7 @@ batch 原子 children 应先接根窗口后再测问答/child 的密集场景。
 Core 554/554（含暂停 25 项）、Contracts 75/75、UI-core 137/137、Web 219/219；
 Daemon 取消隔离/审计 5/5、审批恢复/监督器 9/9，本轮相关构建/类型检查通过。
 详见[运行生命周期 §7](conversation-user-input-runtime-lifecycle.md#7-u2-c原子等待切片及迟到写入边界2026-09-07)
-和[证据交接](../../output/user-input-atomic-wait-u2c-handoff-20260907.md)。
+和证据交接 (`user-input-atomic-wait-u2c-handoff-20260907.md`)。
 
 仍未开放问题工具或创建路由。Core 不能代替 Host 证明工具/进程停止；
 typed Runner yield、逻辑等待取消、restart、唯一 successor、冻结答案输入和 U4 真实 renderer 仍需完成。
@@ -329,7 +329,7 @@ captured hydration、执行事件准入和 summary/terminal callback 的增量�
 和状态 UPDATE；普通与审批恢复入口；完成权获准后才写派生总结；原身份的终态回调与
 新执行写入准入分开；旧 finally 不删除新 attempt 的 ActiveRun。
 完整边界与验证见[运行生命周期 §8](conversation-user-input-runtime-lifecycle.md)和
-[交接证据](../../output/user-input-execution-admission-u2-handoff-20260907.md)。
+交接证据 (`user-input-execution-admission-u2-handoff-20260907.md`)。
 
 正常取消、超时失败、interrupt redirect 仍须能收尾/续接；旧 success/failure/cancel、旧
 hydration schema 和迟到 rejection 不得进入新执行。只在原子事实获准后派生 artifact/summary，
@@ -343,7 +343,7 @@ Run/Attempt。HTTP/RPC 通过 typed inputWait 返回逻辑取消结果，不通�
 触碰 successor。已接受答案仍保留，未消费 outbox 变 obsolete；claimed/applied/错误 consumer 拒绝。
 同轮和不同轮 sibling 隔离、事务回滚、重复请求与 SQLite reopen 均已有回归证据。
 详见[运行生命周期 §4](conversation-user-input-runtime-lifecycle.md#4-续接取消与恢复)和
-[取消切片交接](../../output/user-input-wait-cancellation-u2-handoff-20260907.md)。
+取消切片交接 (`user-input-wait-cancellation-u2-handoff-20260907.md`)。
 
 Core 594/594、Electron 内嵌 Node 专项 54/54、Contracts 75/75、API client 51/51、Web 类型检查通过；
 Daemon 1480 pass / 7 fail，与前轮为同一失败集合。未重新打包 App，也未运行真实模型或 GUI。
@@ -355,7 +355,7 @@ U4 UI 与原 G/K/U/S/packaged 矩阵仍需完成，不把本切片登记为 U-09
 修复 sibling 的终态/重启失败覆盖整条 Thread 等待的问题，沿用 Core 共享等待投影，不改三 surface renderer。
 同/不同 Turn、其他活动执行、等待审批、损坏 checkpoint、嵌套事务/提交失败、双连接竞争与显式取消归档已有回归。
 Core 611/611、Electron 内嵌 Node 75/75、Web 219/219，Daemon 1484 pass / 原 7 fail；
-详细证据和中间发现的归档回归见[Thread 恢复交接](../../output/user-input-thread-recovery-u2-handoff-20260907.md)。
+详细证据和中间发现的归档回归见Thread 恢复交接 (`user-input-thread-recovery-u2-handoff-20260907.md`)。
 没有运行真实模型或 packaged GUI，没有把此局部 stop/start 记为整个 U-04/SSE/recovery 矩阵通过。
 
 ### 8.8 T0 独立 native 协议与构建入口（2026-09-07）
@@ -366,7 +366,7 @@ macOS ARM64 Rust 5/5、构建脚本 19/19、release 真实进程握手 19/19；m
 helper 不执行任何模型任务，明确报告 executionSupported/enforcementReady=false。
 本次未接管工具、未修改 readiness/权限、未进行平台初始化，也未更新 App。
 详见[平台计划 §9.1](platform-native-sandbox-v1-implementation-plan.md#91-t0-协议与本机构建切片2026-09-07)
-与[切片交接](../../output/native-sandbox-t0-handoff-20260907.md)。完整 T0/T1–T6 与 U2/U3/U4/U5 仍未完成。
+与切片交接 (`native-sandbox-t0-handoff-20260907.md`)。完整 T0/T1–T6 与 U2/U3/U4/U5 仍未完成。
 
 ### 8.9 T1-A 不可变沙盒策略编译（2026-09-07）
 
@@ -375,7 +375,7 @@ Plan Mode 写入和只读命令；单次目录/网络授权互不替代。保留
 初始 36 项红→绿；补 4 项真实词法缺陷红测后，专项 41/41、Core 652/652、Electron Node 41/41。
 Daemon 全量 1484 pass / 原 7 fail，没有新增失败；不是 sandbox/GUI 联动通过。
 详见[平台计划 §9.2](platform-native-sandbox-v1-implementation-plan.md#92-t1-a-不可变策略编译2026-09-07)
-与[本次交接](../../output/native-sandbox-t1-policy-handoff-20260907.md)。
+与本次交接 (`native-sandbox-t1-policy-handoff-20260907.md`)。
 Host 现行授权/路径投影、一次性批准消费、T2/T3 真执行、T4 全工具接管和完整 U/S/G/K/packaged 矩阵仍未完成。
 
 ### 8.10 T2-A 真实 macOS 验证与执行边界失败（2026-09-07）
@@ -387,7 +387,7 @@ Daemon 1520 pass / 原 7 fail，无新增普通回归。没有接入真实审批
 SDK idle、leader exit 或 process-group signal 不能据此解除必答等待并启动 successor。
 
 详见[平台计划 §9.3](platform-native-sandbox-v1-implementation-plan.md#93-t2-a-macos-实机后端与未通过的边界2026-09-07)
-和[实机证据交接](../../output/native-sandbox-t2-macos-handoff-20260907.md)。
+和实机证据交接 (`native-sandbox-t2-macos-handoff-20260907.md`)。
 T2-B 的隔离执行区/受控回写及后代生命周期方案需要先确认并验证；不在本切片擅自弱化验收、
 开放 capability、安装额外虚拟化组件或请求系统权限。原 U2/U3、T1-B/T3–T6 与全部矩阵仍未完成。
 
@@ -409,7 +409,7 @@ T2-B 的隔离执行区/受控回写及后代生命周期方案需要先确认�
   Host coordinator、真实安全让出、API/UI/hydration、N03 及全部原验收仍未完成。
 
 详细契约见[运行生命周期 §4](conversation-user-input-runtime-lifecycle.md#4-续接取消与恢复)，
-证据见[U1-B 交接](../../output/user-input-delivery-u1b-handoff-20260907.md)。
+证据见U1-B 交接 (`user-input-delivery-u1b-handoff-20260907.md`)。
 这不是 packaged GUI 测试；没有真实模型请求、重启 App、修改真实 SQLite 或提交/推送。
 
 
@@ -431,7 +431,7 @@ T2-B 的隔离执行区/受控回写及后代生命周期方案需要先确认�
   Daemon 1541 项中 1534 pass / 原 7 fail；相对 U1-B added=[]、removed=[]。
   首次沙箱全量存在 loopback listen EPERM，日志独立保留，不算代码通过证据。
 - 完整接线、U1/U2/U3/U4/U5、T2-B 和全部原矩阵仍未完成，不提前开放提问工具或提交入口。
-  证据与剩余边界见 [U4-A 交接](../../output/user-input-u4a-handoff-20260907.md)。
+  证据与剩余边界见 U4-A 交接 (`user-input-u4a-handoff-20260907.md`)。
 
 ### 8.13 U4-B1 客户端问答数据合并与读取隔离（2026-09-08）
 
@@ -469,7 +469,7 @@ T2-B 的隔离执行区/受控回写及后代生命周期方案需要先确认�
   hydration controller 字段已可供后续 renderer 消费，不能以此声称用户已看到问答 UI。
 
 此数据切片没有新增待决产品选项；N03/T2-B/Relay/SK/AR 等既有待决不代答。
-实现、最新回归与未验收边界见 [U4-B1 交接](../../output/user-input-u4b1-handoff-20260908.md)。
+实现、最新回归与未验收边界见 U4-B1 交接 (`user-input-u4b1-handoff-20260908.md`)。
 
 ### 8.14 U4-B2-A Typed 问答历史与共享 renderer（2026-09-08）
 
@@ -492,7 +492,7 @@ T2-B 的隔离执行区/受控回写及后代生命周期方案需要先确认�
 
 验证：UI-core 153/153、Web 257/257；normal/private × light/dark 浏览器 4/4，
 1440/900 宽度各留一图，共 8 图已检查。浏览器使用明确合成 DTO，不是真实模型或 SQLite
-问答案例；没有更新 QA App。详见 [U4-B2-A 交接](../../output/user-input-u4b2a-handoff-20260908.md)。
+问答案例；没有更新 QA App。详见 U4-B2-A 交接 (`user-input-u4b2a-handoff-20260908.md`)。
 本切片没有新增未决产品选项；既有 N03/T2-B/Relay/SK/AR 决策不代答。
 
 ### 8.15 U4-B2-B 问答排序补充（2026-09-08，实施中）

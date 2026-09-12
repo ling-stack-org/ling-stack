@@ -3106,7 +3106,7 @@ range；折叠 children 仍有稳定 location/disclosurePath，定位时依次�
 registry 的 batch renderer 只渲染受控 header，不直接 map 原子 children。ARIA group
 不产生第二个 scroll/virtualizer，batch membership 不进入 row identity；command 的
 leadingItems 保留精确原顺序。局部验证与未完成项见
-[batch 根窗口交接](../../output/internal-chain-batch-root-handoff-20260908.md)，不代表 packaged 验收。
+batch 根窗口交接 (`internal-chain-batch-root-handoff-20260908.md`)，不代表 packaged 验收。
 
 EnvironmentPopover 只绑定当前 `activeRunId/actionId`，最多两行：
 
@@ -3379,7 +3379,7 @@ Runner 准备。仅持久 route RunRequest 不满足本节最终输入冻结要�
 内部完整实施范围已获授权，无需按文件数量重新提问。当前 Core 两阶段存储及普通输入
 request、Pi execution 阶段消费者已接线；其他 Runner 边界与整体验收仍未完成，不以局部绿测
 宣称 N03 完成。入口、异常、重开与凭据隔离证据见
-[本次交接](../../output/internal-chain-n03-request-handoff-20260908.md)。
+本次交接 (`internal-chain-n03-request-handoff-20260908.md`)。
 
 - `request` 阶段绑定 accepted ID/fingerprint，首次写定附件 materialization 与会话配置
   后的输入 DTO；`execution` 阶段绑定获胜 request ID/fingerprint，覆盖后续 Memory、Skill、
@@ -3550,7 +3550,7 @@ workspace/thread/turn/run/workUnit/attempt/participant。来源从 run_created �
 普通/私聊在最终 narration merge 后使用共享问答交错，再进入 batch。来源不完整或边界冲突
 只显示无正文诊断；叙述和问答都不变成工具或完成事实。频道 child 使用其已验证外层 envelope。
 没有新增 SQLite 表、renderer 或 session。内部回归见
-[本次交接](../../output/internal-chain-results-lineage-handoff-20260908.md)；真实 macOS 验收仍未完成。
+本次交接 (`internal-chain-results-lineage-handoff-20260908.md`)；真实 macOS 验收仍未完成。
 
 ## 23. Host execution capability 与 transcript 的接缝（2026-09-06，待实现）
 

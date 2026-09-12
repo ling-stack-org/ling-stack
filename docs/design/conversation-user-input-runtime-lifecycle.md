@@ -121,7 +121,7 @@ N03 和问答内部链路已获连续实施授权；外部 Relay、强隔离和�
 Daemon 全量 1675/1682，原 7 项失败集合无增减；Core/Daemon 构建与 Web 类型检查通过。
 新存储模块专项覆盖率 line 97.06%、branch 94.19%、function 100%。
 已验证损坏来源/时间戳返回 typed invalid_record，基础设施错误保留原错误；未将普通输入校验错误
-或裸 applied 当恢复证据。详见 [U3 seed 交接](../../output/user-input-continuation-seed-u3-handoff-20260909.md)。
+或裸 applied 当恢复证据。详见 U3 seed 交接 (`user-input-continuation-seed-u3-handoff-20260909.md`)。
 
 ### 4.1 U3 准备：可组合的 Run 创建事务（2026-09-09）
 
@@ -145,7 +145,7 @@ Daemon 全量 1675/1682，原 7 项失败集合无增减；Core/Daemon 构建与
 仍未完成：实际 continuation preparation、唯一 successor Run/Attempt 领域绑定、
 receiver ACK/recovery、U2 Host 停止与 U4 提交入口，以及真实 macOS 模型/GUI。
 新基础能力不是普通入口放开 duplicate guard，也不代替原任务的完整问答恢复。
-验证与范围见 [原子 Run 创建交接](../../output/user-input-run-creation-transaction-u3-handoff-20260909.md)。
+验证与范围见 原子 Run 创建交接 (`user-input-run-creation-transaction-u3-handoff-20260909.md`)。
 
 ### 4.2 U3 Runner 接收边界（2026-09-09，Runner 切片已验证）
 
@@ -169,7 +169,7 @@ boundary 固定为 `pi-session-ready`：不是 provider HTTP 接收、不是模�
 本步骤限 Runner 接口、小接收模块、adapter 接线和回归。尚无 Daemon 接收消费者或 durable receipt，
 不会打开问答工具/路由、不会写真实数据库；不是完整 U3 或真实模型/GUI 验收。
 Runner 全量 148/148，Electron 内嵌 Node 专项 37/37；新模块覆盖率 line 93.62%、branch 95.65%、function 100%。
-完整证据及 Daemon 重验见 [Runner 接收交接](../../output/user-input-runner-receiver-u3-handoff-20260909.md)。
+完整证据及 Daemon 重验见 Runner 接收交接 (`user-input-runner-receiver-u3-handoff-20260909.md`)。
 
 ### 4.3 U3 Host 原子 admission 与 ACK（2026-09-09，存储/SDK 接收切片已验证，调度入口未接）
 
@@ -298,7 +298,7 @@ Daemon 全量 1728/1735，原 7 fail 名称 added=[] / removed=[]；Daemon build
 最终 Contracts 83/83、Core 901/901、Runner 169/169、Daemon 1803/1810（原 7 fail、0 skip）；
 Electron 内嵌 Node 联合 107/107，Web 类型检查与三包 build:ci 通过。
 证据及下一个 execution builder 实施单元见
-[源输入与 successor 交接](../../output/user-input-source-and-successor-u3-handoff-20260909.md)。
+源输入与 successor 交接 (`user-input-source-and-successor-u3-handoff-20260909.md`)。
 
 #### U1-B 领取租约与单一续接意图（历史切片）
 
@@ -329,7 +329,7 @@ claim owner/token/expiry、retryAt/errorCode、唯一 successorRunId。既有 pe
 最终专项 51/51、相关问答/等待 140/140、Core 703/703、Electron 内嵌 Node 51/51；
 Daemon 1520 pass / 原 7 fail，失败集合无变化。新模块 line 100%、branch 91.27%、function 96.43%。
 到期列表只负责发现，claim 未启动 Run、没有 applied ACK，也不是 GUI/完整 U3 验收。
-详见 [U1-B 交接](../../output/user-input-delivery-u1b-handoff-20260907.md)。
+详见 U1-B 交接 (`user-input-delivery-u1b-handoff-20260907.md`)。
 
 #### 已实现切片：安全让出后的用户取消（2026-09-07）
 
@@ -348,7 +348,7 @@ WorkUnit/Task/step，原 Run/Attempt 仍为 yielded，不追加旧执行事件�
   不 abort 后续注册的执行句柄；来源已替换或不再可取消时返回 HTTP 409 / RPC -32009。
 - 同轮、不同轮的 running/waiting sibling 均保持原 Run/Attempt/WorkUnit 和 Thread 状态。
 
-证据：[取消切片交接](../../output/user-input-wait-cancellation-u2-handoff-20260907.md)。
+证据：取消切片交接 (`user-input-wait-cancellation-u2-handoff-20260907.md`)。
 Core 全量 594/594，Electron 内嵌 Node 专项 54/54，Contracts 75/75、API client 51/51、Web 类型检查通过。
 Daemon 全量 1487 项中 1480 pass / 7 fail，失败名称与此前完全一致，不是全绿。
 这是可信测试夹具提交等待后的真实存储/HTTP/RPC 取消，不是真实 Runner 安全停止、GUI 或完整 U-09 验收。
@@ -370,7 +370,7 @@ Daemon 全量 1487 项中 1480 pass / 7 fail，失败名称与此前完全一致
 最终证据：Core 611/611，Electron 内嵌 Node 专项 75/75，Web 219/219 与类型检查通过；
 Daemon 1491 项中 1484 pass / 原 7 fail，新增失败为空。真实 loopback daemon 的 stop/start
 验证了源等待、单 attempt、零占用及 HTTP Thread 状态；崩溃 sibling 为夹具构造，没有实际 kill 进程。
-详见[Thread 恢复交接](../../output/user-input-thread-recovery-u2-handoff-20260907.md)。
+详见Thread 恢复交接 (`user-input-thread-recovery-u2-handoff-20260907.md`)。
 这不是任意历史脏状态的修复迁移、完整 startup recovery、真实模型或 packaged GUI 验收。
 
 restart 至少区分：request 写入前；request 已写但未停止；安全停止但事务未提交；
@@ -427,8 +427,8 @@ queued 观察者收到关闭错误但 durable 排队工作不被伪造完成；�
 默认停机等待不以时间推断安全；显式限时观察超时返回错误而不释放执行。
 这不证明 OS 后代、远端 MCP 或 media/plugin jobs 已停止，也不直接产生 UserInputQuiescence。
 未合作的 executor 仍需要后续可观察的阻塞/终止协议，不能靠恢复固定 sleep 解决。
-证据与尚未覆盖的 producer 见 [停机交接](../../output/user-input-shutdown-u2-handoff-20260907.md)。
-Runner typed yield 最终证据见 [Runner 交接](../../output/user-input-runner-yield-u2-handoff-20260907.md)。
+证据与尚未覆盖的 producer 见 停机交接 (`user-input-shutdown-u2-handoff-20260907.md`)。
+Runner typed yield 最终证据见 Runner 交接 (`user-input-runner-yield-u2-handoff-20260907.md`)。
 
 ## 5. U2-P：真实 SDK 前置修复证据
 
@@ -453,7 +453,7 @@ Adapter 将它接入自己的 ModelRuntime，模型入口及 payload hook 返回
 初始 7 项中 3 红；修复后扩展至 13/13，包括 tool boundary、并发 Run 隔离、双工具清理，
 以及 Host 拒绝和用户取消的两种竞争顺序。Runner 全量 51/51、Runner build/typecheck 与 Daemon typecheck 通过。
 新模块 coverage：line/function 100%、branch 85%；不代表整个 Runner 或完整 U2 覆盖率。
-证据日志索引见 [U2-P 交接](../../output/user-input-runner-boundary-u2p-handoff-20260907.md)。
+证据日志索引见 U2-P 交接 (`user-input-runner-boundary-u2p-handoff-20260907.md`)。
 
 ## 6. 下一完整实施单元及退出门槛
 
@@ -499,7 +499,7 @@ Adapter 将它接入自己的 ModelRuntime，模型入口及 payload hook 返回
 
 验证：Core 554/554（含 25 项暂停专项）、Contracts 75/75、UI-core 137/137、Web 219/219；
 Daemon 取消隔离/审计 5/5、审批恢复/监督器 9/9；Contracts/Core/Daemon 构建及 Web 类型检查通过。
-具体红→绿过程、日志和剩余入口见 [U2-C 交接](../../output/user-input-atomic-wait-u2c-handoff-20260907.md)。
+具体红→绿过程、日志和剩余入口见 U2-C 交接 (`user-input-atomic-wait-u2c-handoff-20260907.md`)。
 无真实模型请求、无 packaged App 测试、无真实数据库修改；不能标完整 U2/U3/U4/U5 或 G/K/S 通过。
 
 ## 8. Captured execution admission 与总结发布顺序（2026-09-07）
@@ -552,7 +552,7 @@ summary 不作为 SQLite authority，也不是新的 completion evidence。数�
 - 全量验证发现并修复本次 interrupt redirect 回归：Host 已取消原 Run 后仍需原身份 callback；
   新增 host-cancel / replaced-terminal 成对用例，不能靠恢复任意终态 callback 让测试通过。
 - 完整日志、全量失败清单与最终状态见
-  [执行写入隔离交接](../../output/user-input-execution-admission-u2-handoff-20260907.md)。
+  执行写入隔离交接 (`user-input-execution-admission-u2-handoff-20260907.md`)。
 
 这仍不是完整 U2：Runner typed yield、Host/SDK/OS 真正停止、逻辑等待取消、restart recovery、
 唯一 successor、答案投递/新冻结输入、共享提问 UI 与原 G/K/U/S/packaged 全部矩阵保持未完成。

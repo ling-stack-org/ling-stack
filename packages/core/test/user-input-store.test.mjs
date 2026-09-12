@@ -287,7 +287,7 @@ test("two independently opened SQLite connections accept only one conflicting an
 test("sensitive answers are rejected without rewriting user text or accepting a receipt", async (t) => {
   const f = await fixture(t);
   const request = f.ask();
-  assert.throws(() => f.submit(request, { answers: [{ questionId: "theme", kind: "text", text: "sk-not-a-real-secret-123456" }] }), code("sensitive_input"));
+  assert.throws(() => f.submit(request, { answers: [{ questionId: "theme", kind: "text", text: "sk-test-not-a-real-secret-123456" }] }), code("sensitive_input"));
   assert.equal(count(f, "user_input_answers"), 0);
 });
 
@@ -358,7 +358,7 @@ test("invalid expiry, sensitive questions and invalid delivery bounds cannot wri
   const f = await fixture(t);
   assert.throws(() => f.ask({ expiresAt: now }), code("request_expired"));
   assert.throws(() => f.ask({ expiresAt: "not-a-date" }), code("invalid_input"));
-  assert.throws(() => f.ask({ toolInput: { ...question, questions: [{ ...question.questions[0], prompt: "sk-not-a-real-secret-123456" }] } }), code("sensitive_input"));
+  assert.throws(() => f.ask({ toolInput: { ...question, questions: [{ ...question.questions[0], prompt: "sk-test-not-a-real-secret-123456" }] } }), code("sensitive_input"));
   for (const limit of [0, 501, NaN, 1.5]) assert.throws(() => f.store.listPendingUserInputDeliveries({ threadId: f.thread.id, limit }), code("invalid_input"));
   assert.equal(count(f, "user_input_requests"), 0);
 });

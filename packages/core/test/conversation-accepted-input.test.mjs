@@ -120,7 +120,7 @@ test("capture callback is read-only and rejects foreign projection or unredacted
   for (const mutate of [
     (value) => ({ ...value, projection: { ...value.projection, threadId: "foreign" } }),
     (value) => ({ ...value, projection: { ...value.projection, turnId: "foreign" } }),
-    (value) => ({ ...value, payload: { text: "sk-not-a-real-secret-123456" } }),
+    (value) => ({ ...value, payload: { text: "sk-test-not-a-real-secret-123456" } }),
   ]) assert.throws(() => f.store.appendConversationUserTurnWithAcceptedSnapshot(f.input, (result) => mutate(f.capture(result)), now));
   assert.equal(f.store.getLingTurn(f.input.turnId), undefined);
   assert.ok(f.store.appendConversationUserTurnWithAcceptedSnapshot(f.input, f.capture, now));
