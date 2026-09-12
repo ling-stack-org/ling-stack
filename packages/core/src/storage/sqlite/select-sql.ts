@@ -964,6 +964,7 @@ export function teammateDirectMessageSelectSql(whereClause: string): string {
       teammate_id,
       author_type,
       author_id,
+      system_purpose,
       body,
       attachment_ids_json,
       link_preview_ids_json,

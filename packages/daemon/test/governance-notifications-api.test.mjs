@@ -81,6 +81,7 @@ test("teammate direct governance notification delivers one private system messag
     const directMessages = await getJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
     const systemMessages = directMessages.messages.filter((message) => message.authorType === "system");
     assert.equal(systemMessages.length, 1);
+    assert.equal(systemMessages[0].systemPurpose, "governance_notification");
     assert.match(systemMessages[0].body, /Memory Review/);
     assert.doesNotMatch(systemMessages[0].body, /Private teammate memory body/);
 
@@ -202,6 +203,7 @@ test("workspace governance notifications deliver one Ling Agent digest", async (
     const directMessages = await getJson(`${daemon.url}/teammates/${encodeURIComponent(lingAgentId)}/direct-messages?cwd=${encodeURIComponent(cwd)}`);
     const systemMessages = directMessages.messages.filter((message) => message.authorType === "system");
     assert.equal(systemMessages.length, 1);
+    assert.equal(systemMessages[0].systemPurpose, "governance_notification");
     assert.match(systemMessages[0].body, /Workspace review digest: 2 items need attention/);
     assert.match(systemMessages[0].body, /Workspace review memory/);
     assert.doesNotMatch(systemMessages[0].body, /Workspace governance body/);

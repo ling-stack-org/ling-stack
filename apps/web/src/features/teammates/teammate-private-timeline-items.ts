@@ -29,6 +29,12 @@ function privateMessageOwnerMatches(message: TeammateDirectMessage, scope: Teamm
 function privateMessageIsOwned(message: TeammateDirectMessage, scope: TeammatePrivateTimelineScope): boolean {
   return privateMessageOwnerMatches(message, scope) && (message.authorType === "local-user" ||
     (message.authorType === "ai-teammate" && message.authorId === scope.teammateId) ||
+    (message.authorType === "system" && message.authorId === "system" && message.systemPurpose === "governance_notification"));
+}
+
+function privateMessageTransportIsOwned(message: TeammateDirectMessage, scope: TeammatePrivateTimelineScope): boolean {
+  return privateMessageOwnerMatches(message, scope) && (message.authorType === "local-user" ||
+    (message.authorType === "ai-teammate" && message.authorId === scope.teammateId) ||
     (message.authorType === "system" && message.authorId === "system"));
 }
 
@@ -79,7 +85,7 @@ export function privateTimelineResponseIsOwned(
   if (response.teammateId !== scope.teammateId || response.thread.teammateId !== scope.teammateId ||
     (scope.directThreadId && response.thread.id !== scope.directThreadId) ||
     response.messages.some((message) => message.workspaceId !== response.thread.workspaceId ||
-      !privateMessageIsOwned(message, { ...scope, directThreadId: response.thread.id }))) return false;
+      !privateMessageTransportIsOwned(message, { ...scope, directThreadId: response.thread.id }))) return false;
   const detail = response.timeline;
   if (!detail) return true;
   if (detail.thread.kind !== "teammate_direct" || detail.thread.teammateId !== scope.teammateId ||

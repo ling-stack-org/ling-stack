@@ -14603,6 +14603,7 @@ test("teammate direct prompt anchors latest attachment message instead of old gu
         teammateId,
         authorType: "system",
         authorId: "system",
+        systemPurpose: "execution_control",
         body: "排队引导：旧排队引导不应继续生效。",
         status: "ready",
       },

@@ -508,6 +508,7 @@ test("Ling Agent private chat renders workspace governance digest without source
       teammateId: "ling_agent",
       authorType: "system",
       authorId: "system",
+      systemPurpose: "governance_notification",
       body: [
         "Workspace review digest: 2 items need attention.",
         "- Warning: Memory candidate needs review: Workspace review memory (Memory Review)",

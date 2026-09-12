@@ -272,6 +272,7 @@ export class DirectReplyControlService {
           teammateId: input.teammate.id,
           authorType: queuedFollowup ? "local-user" : "system",
           authorId: queuedFollowup ? "local-user" : "system",
+          systemPurpose: queuedFollowup ? undefined : "execution_control",
           body: renderDirectGuidanceMessage(starting),
           attachmentIds: starting.messagePayload?.attachmentIds ?? [],
           linkPreviewIds: starting.messagePayload?.linkPreviewIds ?? [],

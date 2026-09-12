@@ -60,6 +60,7 @@ export function mapTeammateDirectMessage(row: Record<string, SQLOutputValue>): T
     teammateId: readString(row, "teammate_id"),
     authorType: readString(row, "author_type") as TeammateDirectMessageAuthorType,
     authorId: readNullableString(row, "author_id"),
+    systemPurpose: readNullableString(row, "system_purpose") as TeammateDirectMessage["systemPurpose"],
     body: readString(row, "body"),
     attachmentIds: parseJsonStringArray(readString(row, "attachment_ids_json")),
     linkPreviewIds: parseJsonStringArray(readString(row, "link_preview_ids_json")),

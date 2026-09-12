@@ -255,6 +255,8 @@ export interface TeammateDirectThread {
 
 export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
 
+export type TeammateDirectMessageSystemPurpose = "governance_notification" | "execution_control";
+
 export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "failed" | "cancelled";
 
 export interface TeammateDirectMessage {
@@ -264,6 +266,8 @@ export interface TeammateDirectMessage {
   readonly teammateId: string;
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
+  /** Host-issued purpose for system rows. Unknown system rows are never display authority. */
+  readonly systemPurpose?: TeammateDirectMessageSystemPurpose;
   readonly body: string;
   /** Host-derived assistant message boundaries; never a second durable history. */
   readonly narrationSegments?: readonly ConversationNarrationSegment[];

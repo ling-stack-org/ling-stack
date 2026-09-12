@@ -298,6 +298,8 @@ test("private DTO scope validation rejects foreign lanes and inconsistent TurnRu
   const systemHistory = structuredClone(response);
   systemHistory.messages.push({ ...systemHistory.messages[0], id: "system-continuation", authorType: "system", authorId: "system", body: "Continue the private run." });
   assert.equal(privateTimeline.privateTimelineResponseIsOwned(systemHistory, input), true);
+  assert.equal(privateTimeline.selectTeammatePrivateMessages(systemHistory.messages, input).some((message) => message.id === "system-continuation"), false);
+  systemHistory.messages.at(-1).systemPurpose = "governance_notification";
   assert.equal(privateTimeline.selectTeammatePrivateMessages(systemHistory.messages, input).some((message) => message.id === "system-continuation"), true);
   systemHistory.messages.at(-1).teammateId = "other-agent";
   assert.equal(privateTimeline.privateTimelineResponseIsOwned(systemHistory, input), false);

@@ -246,6 +246,8 @@ const CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_VERSION = 128;
 const CHANNEL_HANDOFF_WORKFLOW_IDEMPOTENCY_MIGRATION_NAME = "enforce_channel_handoff_workflow_idempotency";
 const CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_VERSION = 129;
 const CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_NAME = "enforce_channel_decision_supersession_idempotency";
+const TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_VERSION = 134;
+const TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_NAME = "add_teammate_direct_system_purpose";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -751,6 +753,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           intent TEXT NOT NULL,
           author_type TEXT NOT NULL,
           author_id TEXT,
+          system_purpose TEXT,
           body TEXT NOT NULL,
           mentions_json TEXT NOT NULL,
           attachment_ids_json TEXT NOT NULL,
@@ -5833,6 +5836,23 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     ON channel_decisions(supersedes_decision_id)
     WHERE supersedes_decision_id IS NOT NULL;
   `);
+
+  if (!context.hasMigration(TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_VERSION)) {
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      if (context.hasTable("teammate_direct_messages") && !context.hasColumn("teammate_direct_messages", "system_purpose")) {
+        database.exec("ALTER TABLE teammate_direct_messages ADD COLUMN system_purpose TEXT;");
+      }
+      context.recordMigration(
+        TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_VERSION,
+        TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_NAME,
+      );
+      database.exec("COMMIT;");
+    } catch (error) {
+      database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
 
   applyRunContextViewLineageMigration({
     database,

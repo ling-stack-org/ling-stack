@@ -990,6 +990,8 @@ export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "fai
 
 export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
 
+export type TeammateDirectMessageSystemPurpose = "governance_notification" | "execution_control";
+
 export interface ConversationPendingReplacement {
   readonly supersessionId: string;
   readonly idempotencyKey: string;
@@ -1003,6 +1005,8 @@ export interface TeammateDirectMessage {
   readonly teammateId: string;
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
+  /** Host-issued purpose for system rows. Unknown system rows are never display authority. */
+  readonly systemPurpose?: TeammateDirectMessageSystemPurpose;
   readonly body: string;
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
@@ -1026,6 +1030,7 @@ export interface CreateTeammateDirectMessageInput {
   readonly teammateId: string;
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
+  readonly systemPurpose?: TeammateDirectMessageSystemPurpose;
   readonly body: string;
   readonly attachmentIds?: readonly string[];
   readonly linkPreviewIds?: readonly string[];

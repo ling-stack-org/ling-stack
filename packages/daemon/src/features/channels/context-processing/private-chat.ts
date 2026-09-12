@@ -251,11 +251,7 @@ function privatePromptMessages(
 }
 
 function isHistoricalGuidanceMessage(message: TeammateDirectMessage): boolean {
-  if (message.authorType !== "system") {
-    return false;
-  }
-  const body = message.body.trim();
-  return body.startsWith("排队引导：") || body.startsWith("已停止上一条回复，并按新引导继续：");
+  return message.authorType === "system" && message.systemPurpose === "execution_control";
 }
 
 function renderPrivateMessageLine(
