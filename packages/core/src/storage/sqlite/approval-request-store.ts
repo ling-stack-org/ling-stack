@@ -277,7 +277,10 @@ export class SqliteApprovalRequestStore {
             SELECT 1 FROM approval_policies
             WHERE workspace_id = ? AND updated_at = ?
           )
-          AND ${runExecutionOwnerSql}
+          AND (
+            ${runExecutionOwnerSql}
+            OR (? = 1 AND ${recoverableApprovalReviewOwnerSql})
+          )
       `).run(
         status,
         now,
@@ -290,6 +293,13 @@ export class SqliteApprovalRequestStore {
         DEFAULT_WORKSPACE_ID,
         input.workspacePolicyUpdatedAt,
         ...runExecutionOwnerParameters(input.runId, input.sourceFence, false),
+        input.sourceAuthority === "recoverable_suspension" ? 1 : 0,
+        input.approvalId,
+        input.runId,
+        input.sourceFence.workUnitId,
+        input.sourceFence.attemptId,
+        input.sourceFence.runtimeInstanceId,
+        input.sourceFence.fencingToken,
       );
       if (Number(update.changes) !== 1) {
         const latest = this.getApprovalRequest(input.approvalId);
@@ -318,6 +328,19 @@ export class SqliteApprovalRequestStore {
       this.context.database.exec("RELEASE system_reviewer_approval_resolution");
       throw error;
     }
+  }
+
+  isRecoverableApprovalReviewOwner(approvalId: string, sourceFence: RuntimeAttemptFenceV1): boolean {
+    const approval = this.getApprovalRequest(approvalId);
+    if (!approval?.runId) return false;
+    return Boolean(this.context.database.prepare(`SELECT 1 WHERE ${recoverableApprovalReviewOwnerSql}`).get(
+      approvalId,
+      approval.runId,
+      sourceFence.workUnitId,
+      sourceFence.attemptId,
+      sourceFence.runtimeInstanceId,
+      sourceFence.fencingToken,
+    ));
   }
 
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
@@ -507,6 +530,31 @@ export class SqliteApprovalRequestStore {
     this.ports.rebuildLingThreadMetadataForApproval(resolved, now);
   }
 }
+
+const recoverableApprovalReviewOwnerSql = `EXISTS (
+  SELECT 1
+  FROM approval_requests AS recovery_approval
+  JOIN run_sessions AS recovery_run ON recovery_run.id = recovery_approval.run_id
+  JOIN work_units AS recovery_unit ON recovery_unit.id = recovery_run.work_unit_id
+  JOIN work_unit_attempts AS recovery_attempt ON recovery_attempt.id = recovery_unit.active_attempt_id
+  JOIN approval_checkpoints AS recovery_checkpoint ON recovery_checkpoint.approval_id = recovery_approval.id
+  WHERE recovery_approval.id = ?
+    AND recovery_approval.run_id = ?
+    AND recovery_approval.status = 'pending'
+    AND recovery_run.status = 'waiting_for_approval'
+    AND recovery_run.ended_at IS NULL
+    AND recovery_unit.id = ?
+    AND recovery_unit.linked_run_id = recovery_run.id
+    AND recovery_unit.status = 'waiting_for_approval'
+    AND recovery_attempt.id = ?
+    AND recovery_attempt.work_unit_id = recovery_unit.id
+    AND recovery_attempt.runtime_instance_id = ?
+    AND recovery_attempt.fencing_token = ?
+    AND recovery_attempt.status = 'lost'
+    AND recovery_attempt.ended_at IS NOT NULL
+    AND recovery_attempt.error_code = 'runtime_suspend'
+    AND recovery_checkpoint.status = 'pending'
+)`;
 
 function normalizeOptionalOwnerId(value: string | undefined): string | undefined {
   if (value === undefined) {

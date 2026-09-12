@@ -2226,6 +2226,69 @@ test("system reviewer approval resolution is fenced by approval, policy, effect,
   }
 });
 
+test("system reviewer may recover only an exact startup-suspended pending approval wait", async () => {
+  const fixture = await createApprovalResumeClaimFixture("system-reviewer-recovery", { approve: false });
+  try {
+    const { store, approval, sideEffect, priorFence, run, priorAttempt } = fixture;
+    const lostAt = "2026-08-16T01:00:10.000Z";
+    store.updateWorkUnitAttemptStatus({
+      ...priorFence,
+      status: "lost",
+      now: lostAt,
+      endedAt: lostAt,
+      errorCode: "runtime_suspend",
+      errorMessage: "runtime-startup-recoverable-approval",
+    });
+    assert.equal(store.isRecoverableApprovalReviewOwner(approval.id, priorFence), true);
+    const base = {
+      approvalId: approval.id,
+      approvalCreatedAt: approval.createdAt,
+      runId: run.id,
+      toolCallId: approval.toolCallId,
+      sideEffectFingerprint: approvalSideEffectFingerprintV1({
+        actionType: approval.actionType,
+        toolCallId: approval.toolCallId,
+        sideEffect,
+      }),
+      workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+      sourceFence: priorFence,
+      decision: "approve",
+      reason: "Recovered reviewer approved the immutable action.",
+    };
+    assert.deepEqual(store.resolveApprovalBySystemReviewer(base, "2026-08-16T01:00:20.000Z"), {
+      ok: false,
+      code: "approval_execution_stale",
+    });
+    const recovered = store.resolveApprovalBySystemReviewer({
+      ...base,
+      sourceAuthority: "recoverable_suspension",
+    }, "2026-08-16T01:00:30.000Z");
+    assert.equal(recovered.ok, true);
+    assert.equal(recovered.approval.resolvedBy, "system-reviewer");
+
+    assert.equal(store.isRecoverableApprovalReviewOwner(approval.id, priorFence), false);
+    assert.equal(store.getWorkUnitAttempt(priorAttempt.id)?.status, "lost");
+  } finally {
+    await fixture.close();
+  }
+
+  const wrongLoss = await createApprovalResumeClaimFixture("system-reviewer-non-recoverable", { approve: false });
+  try {
+    const lostAt = "2026-08-16T01:00:10.000Z";
+    wrongLoss.store.updateWorkUnitAttemptStatus({
+      ...wrongLoss.priorFence,
+      status: "lost",
+      now: lostAt,
+      endedAt: lostAt,
+      errorCode: "runner_crash",
+      errorMessage: "untrusted loss",
+    });
+    assert.equal(wrongLoss.store.isRecoverableApprovalReviewOwner(wrongLoss.approval.id, wrongLoss.priorFence), false);
+  } finally {
+    await wrongLoss.close();
+  }
+});
+
 test("sqlite store creates and resolves media approval requests", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-media-approval-"));
   const createdAt = "2026-05-24T00:00:00.000Z";

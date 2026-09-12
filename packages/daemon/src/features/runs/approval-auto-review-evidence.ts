@@ -24,6 +24,7 @@ type EvidenceStore = Pick<RunStore,
   | "getLingThread"
   | "getLingTurnForRun"
   | "isCurrentRunExecutionOwner"
+  | "isRecoverableApprovalReviewOwner"
   | "listConversationItemsForTurn"
   | "listLingTurnRuns"
   | "readUserInputTranscript"
@@ -121,6 +122,7 @@ export function buildApprovalAutoReviewEvidence(input: {
   readonly effectivePolicySnapshot: EffectiveRunPolicySnapshot;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly maxSnapshotChars?: number;
+  readonly sourceAuthority?: "active_execution" | "recoverable_suspension";
 }): ApprovalAutoReviewEvidenceResult {
   if (input.approval.status !== "pending") {
     return failure("approval_not_pending", "Automatic review only accepts a pending approval.");
@@ -132,7 +134,10 @@ export function buildApprovalAutoReviewEvidence(input: {
   if (input.effectivePolicySnapshot.authorizationMode !== "smart") {
     return failure("authorization_mode_mismatch", "Automatic review is available only in smart authorization mode.");
   }
-  if (!input.store.isCurrentRunExecutionOwner(input.run.id, input.sourceFence, false)) {
+  const sourceCurrent = input.sourceAuthority === "recoverable_suspension"
+    ? input.store.isRecoverableApprovalReviewOwner(input.approval.id, input.sourceFence)
+    : input.store.isCurrentRunExecutionOwner(input.run.id, input.sourceFence, false);
+  if (!sourceCurrent) {
     return failure("execution_stale", "Automatic review source Run or Attempt is no longer current.");
   }
   if (input.store.getApprovalPolicy().updatedAt !== input.effectivePolicySnapshot.workspacePolicyUpdatedAt) {

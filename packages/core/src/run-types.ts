@@ -2204,6 +2204,7 @@ export interface RunStore {
     input: import("./approval-types.js").ResolveApprovalBySystemReviewerInput,
     now: string,
   ): import("./approval-types.js").ResolveApprovalBySystemReviewerResult;
+  isRecoverableApprovalReviewOwner(approvalId: string, sourceFence: RuntimeAttemptFenceV1): boolean;
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   expireApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
   cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined;
@@ -2744,6 +2745,7 @@ export type ApprovalStoreFacet = RunStoreFacet<
   | "listApprovalRequests"
   | "approveApprovalRequest"
   | "resolveApprovalBySystemReviewer"
+  | "isRecoverableApprovalReviewOwner"
   | "denyApprovalRequest"
   | "expireApprovalRequest"
   | "cancelApprovalRequest"

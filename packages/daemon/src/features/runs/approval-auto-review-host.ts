@@ -52,6 +52,7 @@ export interface ReviewPendingApprovalAutomaticallyInput {
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly coordinator?: ApprovalAutoReviewCoordinator;
+  readonly sourceAuthority?: "active_execution" | "recoverable_suspension";
 }
 
 /**
@@ -68,6 +69,7 @@ export async function reviewPendingApprovalAutomatically(
     sourceFence: input.sourceFence,
     effectivePolicySnapshot: input.effectivePolicySnapshot,
     extraSecrets: input.extraSecrets,
+    sourceAuthority: input.sourceAuthority,
   });
   if (!evidence.ok) {
     return {
@@ -130,6 +132,7 @@ export async function reviewPendingApprovalAutomatically(
       sideEffectFingerprint: actionFingerprint,
       workspacePolicyUpdatedAt: input.effectivePolicySnapshot.workspacePolicyUpdatedAt,
       sourceFence: input.sourceFence,
+      sourceAuthority: input.sourceAuthority,
       decision: outcome.verdict.decision,
       reason: outcome.verdict.reason,
     }, new Date().toISOString());

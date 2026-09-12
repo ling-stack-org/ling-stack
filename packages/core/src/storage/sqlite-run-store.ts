@@ -4416,6 +4416,10 @@ export class SqliteRunStore implements RunStore {
     return this.approvalRequests.resolveApprovalBySystemReviewer(input, now);
   }
 
+  isRecoverableApprovalReviewOwner(approvalId: string, sourceFence: RuntimeAttemptFenceV1): boolean {
+    return this.approvalRequests.isRecoverableApprovalReviewOwner(approvalId, sourceFence);
+  }
+
   denyApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
     return this.approvalRequests.denyApprovalRequest(id, input, now);
   }

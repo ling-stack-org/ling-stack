@@ -288,6 +288,8 @@ export interface ResolveApprovalBySystemReviewerInput {
   readonly sideEffectFingerprint: string;
   readonly workspacePolicyUpdatedAt: string;
   readonly sourceFence: RuntimeAttemptFenceV1;
+  /** Recovery is allowed only for the exact startup-suspended approval wait. */
+  readonly sourceAuthority?: "active_execution" | "recoverable_suspension";
   readonly decision: "approve" | "deny";
   readonly reason: string;
 }

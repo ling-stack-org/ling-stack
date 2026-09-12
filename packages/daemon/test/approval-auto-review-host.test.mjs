@@ -44,6 +44,7 @@ function createFixture({ verdict = "approve", casOk = true } = {}) {
     getLingTurnForRun: () => turn,
     getLingThread: () => thread,
     isCurrentRunExecutionOwner: () => true,
+    isRecoverableApprovalReviewOwner: () => false,
     listLingTurnRuns: () => [{ turnId: turn.id, runId: run.id, attemptNumber: 1, role: "primary", createdAt: now }],
     listConversationItemsForTurn: () => [],
     readUserInputTranscript: () => [],

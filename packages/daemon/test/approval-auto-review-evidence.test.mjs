@@ -161,6 +161,7 @@ function createStore(overrides = {}) {
     getLingTurnForRun: () => turn,
     getLingThread: () => thread,
     isCurrentRunExecutionOwner: () => true,
+    isRecoverableApprovalReviewOwner: () => false,
     listLingTurnRuns: () => [{ turnId: turn.id, runId: run.id, attemptNumber: 1, role: "primary", createdAt: now }],
     listConversationItemsForTurn: () => overrides.items ?? [requestItem, answerItem],
     readUserInputTranscript: () => transcript,
