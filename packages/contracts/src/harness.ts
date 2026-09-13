@@ -56,9 +56,11 @@ export type HarnessToolExecutionState = (typeof HARNESS_TOOL_EXECUTION_STATES)[n
 export type HarnessToolExecutorKind = "bash" | "apply_patch" | "write";
 
 export const HARNESS_TOOL_EXECUTION_FAILURE_CODES = [
+  "tool.invalid_request",
   "tool.policy_denied",
   "tool.approval_denied",
   "tool.sandbox_unavailable",
+  "tool.executor_failed",
   "tool.execution_timeout",
   "tool.execution_cancelled",
   "tool.stale_attempt",
@@ -149,6 +151,8 @@ export interface HarnessToolExecutionV1 extends HarnessLeaseV1 {
   readonly attemptId: string;
   readonly continuationId?: string;
   readonly delegationStepId?: string;
+  /** Prior pre-effect execution replaced after approval recovery created a new Attempt. */
+  readonly supersedesExecutionId?: string;
   readonly toolCallId: string;
   readonly toolName: string;
   readonly executorKind: HarnessToolExecutorKind;
@@ -162,6 +166,7 @@ export interface HarnessToolExecutionV1 extends HarnessLeaseV1 {
   readonly executionFinishedAt?: string;
   readonly resultDigest?: string;
   readonly resultSummary?: Readonly<Record<string, unknown>>;
+  readonly evidenceArtifactIds: readonly string[];
   readonly failureCode?: HarnessToolExecutionFailureCode;
   readonly revision: number;
   readonly createdAt: string;

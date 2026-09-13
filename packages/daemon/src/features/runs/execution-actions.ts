@@ -34,6 +34,10 @@ import {
   executionActionStatusFromCommandEvidence,
 } from "./execution-action-command-evidence.js";
 import { deriveExecutionActionToolEvidence } from "./execution-action-tool-evidence.js";
+import {
+  deriveHarnessToolExecutionActionProjection,
+  listHarnessToolExecutionsForProjection,
+} from "./harness-tool-execution-projection.js";
 import { deriveHostOpenReceipt, type HostOpenEvidenceStore } from "./host-open-evidence.js";
 
 export interface ListExecutionActionsOptions {
@@ -240,6 +244,7 @@ function deriveToolActionsForRun(
   run: RunSession,
 ): ExecutionAction[] {
   const events = listAllRunEvents(store, run.id);
+  const harnessExecutions = listHarnessToolExecutionsForProjection(store, run.id);
   const runAttemptId = readRunAttemptId(events);
   const starts = new Map<string, RunEventEnvelope>();
   const ends = new Map<string, RunEventEnvelope>();
@@ -255,7 +260,11 @@ function deriveToolActionsForRun(
     }
   }
 
-  const toolCallIds = new Set([...starts.keys(), ...ends.keys()]);
+  const toolCallIds = new Set([
+    ...starts.keys(),
+    ...ends.keys(),
+    ...harnessExecutions.map((execution) => execution.toolCallId),
+  ]);
   const actions: ExecutionAction[] = [];
   for (const toolCallId of toolCallIds) {
     const start = starts.get(toolCallId);
@@ -266,10 +275,14 @@ function deriveToolActionsForRun(
       ? firstToolEndAfterStart(events, toolCallId, start.seq)
       : endCandidate;
     const source = start ?? end;
-    if (!source) {
-      continue;
-    }
-    const toolName = readToolName(source);
+    const eventAttemptId = readToolAttemptId(events, toolCallId) ?? runAttemptId;
+    const harnessProjection = deriveHarnessToolExecutionActionProjection({
+      store,
+      runId: run.id,
+      toolCallId,
+      attemptId: eventAttemptId,
+    });
+    const toolName = (source ? readToolName(source) : undefined) ?? harnessProjection?.execution.toolName;
     if (!toolName) {
       continue;
     }
@@ -294,11 +307,11 @@ function deriveToolActionsForRun(
     const latestToolEvent = findLatestAcceptedToolEvent(events, toolCallId, start, end);
     // A terminal Host receipt is pinned to the accepted start/end identity.
     // Diagnostic updates after that fence cannot reassign its historical owner.
-    const attemptId = hostOpenReceipt?.attemptId ?? readToolAttemptId(events, toolCallId) ?? runAttemptId;
+    const attemptId = harnessProjection?.execution.attemptId ?? hostOpenReceipt?.attemptId ?? eventAttemptId;
     actions.push(withExecutionActionLineage(store, {
       id: `tool:${run.id}:${toolCallId}`,
-      revision: latestToolEvent?.seq ?? 0,
-      sourceEventSequence: source.seq,
+      revision: (latestToolEvent?.seq ?? 0) + (harnessProjection?.execution.revision ?? 0),
+      ...(source ? { sourceEventSequence: source.seq } : {}),
       workspaceId: DEFAULT_WORKSPACE_ID,
       threadId: run.threadId,
       runId: run.id,
@@ -306,29 +319,40 @@ function deriveToolActionsForRun(
       workUnitId: run.workUnitId,
       participantId: run.teammateId ?? LING_AGENT_ID,
       workflowStepId: run.workflowStepId ?? classified.targetRefs.find((ref) => ref.type === "workflow_step")?.id,
+      approvalId: harnessProjection?.execution.approvalId,
       toolCallId,
       actionType: classified.actionType,
       risk: classified.risk,
-      status: hostOpenStatus ?? commandStatus ?? fallbackToolActionStatus(run, end),
+      status: harnessProjection?.status ?? hostOpenStatus ?? commandStatus ?? fallbackToolActionStatus(run, end),
       title: classified.title,
-      summary: classified.summary,
+      summary: harnessProjection?.summary ?? classified.summary,
       targetRefs: classified.targetRefs,
       previewArtifactIds: [],
-      resultArtifactIds: artifactIdsForToolCall(events, toolCallId),
+      resultArtifactIds: uniqueIds([
+        ...artifactIdsForToolCall(events, toolCallId),
+        ...(harnessProjection?.resultArtifactIds ?? []),
+      ]),
       scopes: classified.scopes,
       scopeSummary: classified.scopeSummary,
       policySnapshot: readRunPolicySnapshot(run),
       commandEvidence,
       toolEvidence,
       ...(hostOpenReceipt ? { hostOpenReceipt } : {}),
-      createdAt: start?.ts ?? end?.ts ?? run.createdAt,
-      updatedAt: latestToolEvent?.ts ?? start?.ts ?? end?.ts ?? run.updatedAt,
-      executedAt: start?.ts,
-      completedAt: end?.ts,
+      createdAt: [start?.ts, end?.ts, harnessProjection?.execution.createdAt, run.createdAt]
+        .filter((value): value is string => Boolean(value)).sort()[0]!,
+      updatedAt: latestTimestamp(
+        latestToolEvent?.ts,
+        start?.ts,
+        end?.ts,
+        harnessProjection?.execution.updatedAt,
+        run.updatedAt,
+      ),
+      executedAt: harnessProjection?.execution.executionStartedAt ?? start?.ts,
+      completedAt: harnessProjection?.execution.executionFinishedAt ?? end?.ts,
       // Keep every accepted lifecycle event reachable from the action. The
       // first durable tool_end is the terminal fence; later updates/duplicate
       // ends are stale diagnostics and must not become evidence for this row.
-      sourceRefs: lifecycleSourceRefs,
+      sourceRefs: [...lifecycleSourceRefs, ...(harnessProjection?.sourceRefs ?? [])],
       ...(lifecycleDiagnostics.length > 0 ? { diagnostics: lifecycleDiagnostics } : {}),
     }));
   }

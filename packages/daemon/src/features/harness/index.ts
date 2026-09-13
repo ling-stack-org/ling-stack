@@ -18,3 +18,4 @@ export * from "./continuations/coordinator.js";
 export * from "./continuations/daemon-recovery-coordinator.js";
 export * from "./continuations/reconstruction.js";
 export * from "./continuations/replay-package.js";
+export * from "./tool-execution/broker.js";

@@ -37,6 +37,7 @@ import type {
   SnapshotRestoreConfirmation,
   ListSnapshotRestoreRequestsOptions,
   RunnerContinuationV1,
+  HarnessToolExecutionV1,
 } from "@ling-stack/contracts";
 import type {
   ClaimRunnerContinuationInput,
@@ -49,6 +50,17 @@ import type {
   RunnerContinuationMutationResult,
   StartRunnerContinuationInput,
 } from "./harness/continuations.js";
+import type {
+  ClaimHarnessToolExecutionInput,
+  FailApprovedHarnessToolExecutionInput,
+  FinishHarnessToolExecutionInput,
+  HarnessToolExecutionMutationResult,
+  PrepareHarnessToolExecutionInput,
+  PreparedHarnessToolExecution,
+  ReconcileAbandonedHarnessToolExecutionsInput,
+  ResolveHarnessToolApprovalInput,
+  StartHarnessToolExecutionInput,
+} from "./harness/tool-executions.js";
 import type {
   ApprovalActionType,
   ApprovalCommandRule,
@@ -1716,6 +1728,18 @@ export interface RunStore {
   claimRunnerContinuation(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult;
   startRunnerContinuation(input: StartRunnerContinuationInput): RunnerContinuationMutationResult;
   finishRunnerContinuation(input: FinishRunnerContinuationInput): RunnerContinuationMutationResult;
+  getHarnessToolExecution(id: string): HarnessToolExecutionV1 | undefined;
+  findHarnessToolExecution(attemptId: string, toolCallId: string): HarnessToolExecutionV1 | undefined;
+  listHarnessToolExecutions(runId: string): readonly HarnessToolExecutionV1[];
+  prepareHarnessToolExecution(input: PrepareHarnessToolExecutionInput): PreparedHarnessToolExecution;
+  resolveHarnessToolApproval(input: ResolveHarnessToolApprovalInput): HarnessToolExecutionMutationResult;
+  claimHarnessToolExecution(input: ClaimHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  startHarnessToolExecution(input: StartHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  finishHarnessToolExecution(input: FinishHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  failApprovedHarnessToolExecution(input: FailApprovedHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  reconcileAbandonedHarnessToolExecutions(
+    input: ReconcileAbandonedHarnessToolExecutionsInput,
+  ): readonly HarnessToolExecutionV1[];
   updateWorkUnitAttemptStatus(input: {
     readonly attemptId: string;
     readonly workUnitId: string;

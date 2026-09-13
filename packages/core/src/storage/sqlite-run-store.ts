@@ -622,8 +622,10 @@ import { SqliteRuntimeSemaphoreStore } from "./sqlite/runtime-semaphore-store.js
 import { SqliteRuntimeRecoveryCoordinator } from "./sqlite/runtime-recovery-coordinator.js";
 import { SqliteRuntimeWorkUnitStore } from "./sqlite/runtime-work-unit-store.js";
 import { SqliteRunnerContinuationStore } from "./sqlite/runner-continuation-store.js";
+import { SqliteHarnessToolExecutionStore } from "./sqlite/harness-tool-execution-store.js";
 import { SqliteHarnessCommitCoordinator } from "./sqlite/harness-commit-coordinator.js";
 import { applyRunnerContinuationMigration } from "./sqlite/runner-continuation-migration.js";
+import { applyHarnessToolExecutionMigration } from "./sqlite/harness-tool-execution-migration.js";
 import { SqliteUserProfileStore } from "./sqlite/user-profile-store.js";
 import { SqliteWorkspaceSettingsStore } from "./sqlite/workspace-settings-store.js";
 import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
@@ -718,6 +720,7 @@ export class SqliteRunStore implements RunStore {
   private readonly runtimeRecovery: SqliteRuntimeRecoveryCoordinator;
   private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore;
   private readonly runnerContinuations: SqliteRunnerContinuationStore;
+  private readonly harnessToolExecutions: SqliteHarnessToolExecutionStore;
   private readonly harnessCommits: SqliteHarnessCommitCoordinator;
   private readonly userProfile: SqliteUserProfileStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
@@ -868,6 +871,16 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       this.runtimeWorkUnits,
       { getArtifact: (id) => this.getArtifact(id) },
+    );
+    this.harnessToolExecutions = new SqliteHarnessToolExecutionStore(
+      { database: this.database },
+      this.runtimeWorkUnits,
+      {
+        getRun: (id) => this.getRun(id),
+        getArtifact: (id) => this.getArtifact(id),
+        getApprovalRequest: (id) => this.getApprovalRequest(id),
+        getRunnerContinuation: (id) => this.getRunnerContinuation(id),
+      },
     );
     this.harnessCommits = new SqliteHarnessCommitCoordinator(
       { database: this.database },
@@ -1403,6 +1416,11 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
           applyRunnerContinuationMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyHarnessToolExecutionMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
@@ -2182,6 +2200,67 @@ export class SqliteRunStore implements RunStore {
     input: import("../harness/continuations.js").FinishRunnerContinuationInput,
   ): import("../harness/continuations.js").RunnerContinuationMutationResult {
     return this.runnerContinuations.finishRunnerContinuation(input);
+  }
+
+  getHarnessToolExecution(
+    id: string,
+  ): import("@ling-stack/contracts").HarnessToolExecutionV1 | undefined {
+    return this.harnessToolExecutions.getHarnessToolExecution(id);
+  }
+
+  findHarnessToolExecution(
+    attemptId: string,
+    toolCallId: string,
+  ): import("@ling-stack/contracts").HarnessToolExecutionV1 | undefined {
+    return this.harnessToolExecutions.findHarnessToolExecution(attemptId, toolCallId);
+  }
+
+  listHarnessToolExecutions(
+    runId: string,
+  ): readonly import("@ling-stack/contracts").HarnessToolExecutionV1[] {
+    return this.harnessToolExecutions.listHarnessToolExecutions(runId);
+  }
+
+  prepareHarnessToolExecution(
+    input: import("../harness/tool-executions.js").PrepareHarnessToolExecutionInput,
+  ): import("../harness/tool-executions.js").PreparedHarnessToolExecution {
+    return this.harnessToolExecutions.prepareHarnessToolExecution(input);
+  }
+
+  resolveHarnessToolApproval(
+    input: import("../harness/tool-executions.js").ResolveHarnessToolApprovalInput,
+  ): import("../harness/tool-executions.js").HarnessToolExecutionMutationResult {
+    return this.harnessToolExecutions.resolveHarnessToolApproval(input);
+  }
+
+  claimHarnessToolExecution(
+    input: import("../harness/tool-executions.js").ClaimHarnessToolExecutionInput,
+  ): import("../harness/tool-executions.js").HarnessToolExecutionMutationResult {
+    return this.harnessToolExecutions.claimHarnessToolExecution(input);
+  }
+
+  startHarnessToolExecution(
+    input: import("../harness/tool-executions.js").StartHarnessToolExecutionInput,
+  ): import("../harness/tool-executions.js").HarnessToolExecutionMutationResult {
+    return this.harnessToolExecutions.startHarnessToolExecution(input);
+  }
+
+  finishHarnessToolExecution(
+    input: import("../harness/tool-executions.js").FinishHarnessToolExecutionInput,
+  ): import("../harness/tool-executions.js").HarnessToolExecutionMutationResult {
+    return this.harnessToolExecutions.finishHarnessToolExecution(input);
+  }
+
+  failApprovedHarnessToolExecution(
+    input: import("../harness/tool-executions.js").FailApprovedHarnessToolExecutionInput,
+  ): import("../harness/tool-executions.js").HarnessToolExecutionMutationResult {
+    return this.harnessToolExecutions.failApprovedHarnessToolExecution(input);
+  }
+
+  reconcileAbandonedHarnessToolExecutions(
+    input: import("../harness/tool-executions.js").ReconcileAbandonedHarnessToolExecutionsInput,
+  ): readonly import("@ling-stack/contracts").HarnessToolExecutionV1[] {
+    return this.harnessToolExecutions.reconcileAbandonedHarnessToolExecutions(input);
   }
 
   updateWorkUnitAttemptStatus(

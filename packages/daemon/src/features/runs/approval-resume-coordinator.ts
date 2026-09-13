@@ -23,7 +23,10 @@ import { appendApprovalDecisionEvent, workflowExactCommandBindingRejection } fro
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
 import { workflowStepExecutionOperationBindings } from "../channels/workflow-operation-evidence.js";
 import { acquireRunRuntimeSemaphores, prepareRunConcurrency } from "./concurrency.js";
-import { executeUnifiedBashTool } from "./unified-exec.js";
+import {
+  executeHarnessedBashTool,
+  harnessToolBrokerModeForRun,
+} from "../harness/tool-execution/broker.js";
 import { appendRuntimeProgressForRunEvent, syncWorkUnitForRunEvent } from "./work-units.js";
 import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./threads.js";
 import { writeTerminalSummary } from "./terminal.js";
@@ -600,7 +603,8 @@ export class ApprovalResumeCoordinator {
         resumedFromApprovalId: input.approval.id,
         attemptId: input.attempt.id,
       });
-      const handled = await executeUnifiedBashTool({
+      const handled = await executeHarnessedBashTool({
+        mode: harnessToolBrokerModeForRun(input.run),
         restrictedCommandRuntime,
         store: input.store,
         sourceFence,

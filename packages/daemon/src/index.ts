@@ -257,6 +257,10 @@ export function createDaemonServer(
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
+      // A process may have crossed the shell side-effect boundary before the
+      // daemon disappeared. Expired executing claims are never retried; they
+      // become explicit unknown outcomes before any recovery dispatch runs.
+      store.reconcileAbandonedHarnessToolExecutions({ now: new Date().toISOString(), limit: 500 });
       configureNormalNarrationPublication(store, (event) => controlPlaneEvents.publish(event));
       void recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
         // Do not leak database/provider details, but do not hide a failed recovery sweep.

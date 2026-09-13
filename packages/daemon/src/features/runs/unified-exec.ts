@@ -46,6 +46,8 @@ export async function executeUnifiedBashTool(input: {
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly shellSnapshotEnabled?: boolean;
+  /** Called only after the bounded result and output artifacts are durable. */
+  readonly onDurableResult?: (result: PiRunnerToolHandledResult) => void;
 }): Promise<PiRunnerToolHandledResult> {
   const normalized = normalizeBashRequest(input.run, input.request, input.approvalId);
   if ("error" in normalized) {
@@ -138,6 +140,7 @@ async function executeUnifiedExec(input: {
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly shellSnapshotEnabled?: boolean;
+  readonly onDurableResult?: (result: PiRunnerToolHandledResult) => void;
 }): Promise<PiRunnerToolHandledResult> {
   throwIfAborted(input.signal);
   const secrets = input.extraSecrets ?? [];
@@ -252,6 +255,7 @@ async function executeUnifiedExec(input: {
       stderr: stderrSnapshot,
     });
     shellSnapshots.captureEnd(readUnifiedExecResult(handled));
+    input.onDurableResult?.(handled);
     throw createAbortError();
   }
 
@@ -276,6 +280,7 @@ async function executeUnifiedExec(input: {
     stderr: stderrSnapshot,
   });
   shellSnapshots.captureEnd(readUnifiedExecResult(handled));
+  input.onDurableResult?.(handled);
   return handled;
   } finally {
     // Unknown descendants may still be running. Retain their isolated files for
@@ -295,12 +300,13 @@ function writeSyntheticFailureResult(input: {
   readonly environmentSummary?: UnifiedExecEnvironmentSummary;
   readonly startedAt?: string;
   readonly startedMs?: number;
+  readonly onDurableResult?: (result: PiRunnerToolHandledResult) => void;
 }): PiRunnerToolHandledResult {
   const secrets = input.extraSecrets ?? [];
   const startedAt = input.startedAt ?? new Date().toISOString();
   const startedMs = input.startedMs ?? Date.now();
   const stderr = createSyntheticStreamCapture(input.message, secrets);
-  return writeUnifiedExecResult({
+  const handled = writeUnifiedExecResult({
     store: input.store,
     run: input.run,
     request: input.request,
@@ -317,6 +323,8 @@ function writeSyntheticFailureResult(input: {
     stdout: createSyntheticStreamCapture("", secrets),
     stderr,
   });
+  input.onDurableResult?.(handled);
+  return handled;
 }
 
 function writeUnifiedExecResult(input: {

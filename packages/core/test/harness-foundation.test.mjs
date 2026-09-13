@@ -246,6 +246,7 @@ function toolExecution(overrides = {}) {
     sideEffectFingerprint: "side_effect_fingerprint",
     policySnapshotArtifactId: "artifact_policy_1",
     sandboxProfileId: "workspace-write",
+    evidenceArtifactIds: [],
     revision: 0,
     createdAt,
     updatedAt: createdAt,

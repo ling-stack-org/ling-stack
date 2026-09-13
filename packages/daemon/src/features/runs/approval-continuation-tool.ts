@@ -17,7 +17,10 @@ import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { isRecord } from "../../shared/validation.js";
 import { workflowStepExecutionOperationBindings } from "../channels/workflow-operation-evidence.js";
 import { workflowExactCommandBindingRejection } from "./approvals.js";
-import { executeUnifiedBashTool } from "./unified-exec.js";
+import {
+  executeHarnessedBashTool,
+  harnessToolBrokerModeForRun,
+} from "../harness/tool-execution/broker.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
 
 /**
@@ -110,7 +113,8 @@ export async function prepareApprovedToolContinuation(input: {
       resumedFromApprovalId: approval.id,
       attemptId: input.attempt.id,
     } as RunEventDataByType["tool_start"]);
-    result = await executeUnifiedBashTool({
+    result = await executeHarnessedBashTool({
+      mode: harnessToolBrokerModeForRun(input.run),
       restrictedCommandRuntime,
       store: input.store,
       sourceFence: toRuntimeAttemptFence(input.attempt),

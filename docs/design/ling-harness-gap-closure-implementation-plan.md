@@ -1066,10 +1066,19 @@ Synthesized from this review's findings. Each task derives from a specific revie
     first failing files from the parallel all-file Daemon run pass independently
     (AI council 1/1 and approval/run integration 94/94); the aggregate runner remains a
     known shared-integration concurrency problem and is not used as H04 evidence.
-- [ ] **T5 (P0, human: ~2 days / CC: ~75 min)** — Tool Broker core — Add migration 136 and wrap daemon unified bash with prepare/approve/claim/evidence state.
+- [x] **T5 (P0, human: ~2 days / CC: ~75 min)** — Tool Broker core — Add migration 136 and wrap daemon unified bash with prepare/approve/claim/evidence state.
   - Surfaced by: Architecture D3 and test gaps G07-G10.
   - Files: core tool-execution domain/store and daemon harness tool broker.
   - Verify: approval, cancellation, timeout, crash-window, and atomic SQLite commit tests.
+  - Implemented: Attempt-fenced prepare and approval states, claim-token leases,
+    daemon-owned unified bash execution, atomic terminal evidence references, startup
+    reconciliation to `unknown_outcome`, and a rebuildable `ExecutionAction` projection.
+    Approval restart creates a successor execution on the new Attempt and atomically marks
+    the old pre-effect execution `superseded`; the lineage is retained through
+    `supersedesExecutionId` and source refs.
+  - Verified: daemon build; Harness/Core/broker focused suite 31/31 and the existing
+    approval, restart recovery, command journal, cancellation, output, and execution-action
+    regression set 152/152 pass.
 - [ ] **T6 (P0, human: ~2 days / CC: ~75 min)** — File mutation authority — Add daemon apply-patch/write executors and remove Pi native fallback in enforce mode.
   - Surfaced by: `packages/runner-pi/src/extensions/file-mutation.ts:16` and G11-G13.
   - Files: daemon harness executors, core patch helpers, runner-pi extension.
@@ -1145,7 +1154,7 @@ This plan is being implemented on the existing `codex/reasoning-summary-autorevi
 | Domain | Current branch evidence | Adoption verdict |
 | --- | --- | --- |
 | Continuation | Manual resume, queued follow-up, interrupt redirect, approval resume, immutable prepared input, context-view lineage, fresh Attempts, and stale-completion fences already exist. `RunnerAdapter.resumeTask()` is declared but has no production caller. | Reuse current lineage and recovery. Add the durable strategy/claim record and native-resume gate; do not rebuild Continuity or approval resume. |
-| Tool execution | `bash` is daemon-owned through unified exec; Codex-style patch envelopes are daemon-owned through `applyPatchActionDraft()`. Plain Pi `edit` and `write` still fall back to runner-native implementations after approval. | Treat bash and patch as the first broker executors. Close the plain edit/write ownership gap and persist one broker execution identity. |
+| Tool execution | Migration 136, the daemon bash broker, Attempt fencing, approval recovery supersession, crash-window reconciliation, atomic artifact refs, and the `ExecutionAction` evidence projection are implemented. Plain Pi `edit` and `write` still fall back to runner-native implementations after approval. | T5 is complete. Continue with T6 to move apply-patch/write behind daemon executors and delete the runner-native mutation fallback in enforce mode. |
 | Evaluation | Skill regression and channel-team evaluation models exist, but no generic run/suite/case/baseline/grade lineage exists. | Reuse grader and artifact utilities only. Add a generic append-only evaluation domain without changing completed Run status. |
 | Delegation | Accepted workflow graphs, participant manifests, required-evidence fan-in, step completion gates, and child presentation exist. Runtime `spawn/message/wait/interrupt/resume` and a restartable child tree do not. | Keep the workflow graph immutable. Add only the Step-scoped durable delegation overlay and root-budget/subset gates. |
 | Queue and recovery | Runtime semaphores, approval-review WorkUnits, leases, attempts, EventHub wake-up, and startup recovery patterns exist. | Reuse the WorkUnit/Attempt and claim patterns. Do not add a second scheduler framework or in-memory authority. |

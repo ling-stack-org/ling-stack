@@ -53,8 +53,14 @@ import {
 } from "./patch-actions.js";
 import {
   createUnifiedExecDeniedResult,
-  executeUnifiedBashTool,
 } from "./unified-exec.js";
+import {
+  executeHarnessedBashTool,
+  failHarnessBashBeforeExecution,
+  harnessToolBrokerModeForRun,
+  prepareHarnessBashApproval,
+  resolveHarnessBashApproval,
+} from "../harness/tool-execution/broker.js";
 import {
   applyRiskReviewToApprovalInput,
   applyRiskReviewToPolicyDecision,
@@ -201,6 +207,7 @@ export function createRunApprovalHandler(options: {
 }): PiRunnerRunOptions["onApprovalRequired"] {
   const sourceFence = options.sourceFence ? Object.freeze({ ...options.sourceFence }) : undefined;
   const hostAuthority = createHostCapabilityAuthority({ ...options, sourceFence });
+  const toolBrokerMode = harnessToolBrokerModeForRun(options.run);
   return async (request: PiRunnerApprovalRequest) => {
     const isHost = request.toolName.startsWith("host_");
     const rejectHost = (approvalId?: string) => {
@@ -358,12 +365,14 @@ export function createRunApprovalHandler(options: {
         return {
           approved: true,
           reason: policyDecision.reason,
-          handledResult: await executeUnifiedBashTool({
+          handledResult: await executeHarnessedBashTool({
+            mode: toolBrokerMode,
             restrictedCommandRuntime: options.restrictedCommandRuntime,
             store: options.store,
             sourceFence: sourceFence!,
             run: options.run,
             request,
+            effectivePolicySnapshot: options.effectivePolicySnapshot,
             appendAndMaybeStream: options.appendAndMaybeStream,
             signal: options.signal,
             extraSecrets: options.extraSecrets,
@@ -449,6 +458,20 @@ export function createRunApprovalHandler(options: {
         appendAndMaybeStream: options.appendAndMaybeStream,
         streamEnvelope: options.streamEnvelope,
       });
+      if (unifiedExecBash) {
+        prepareHarnessBashApproval({
+          mode: toolBrokerMode,
+          store: options.store,
+          sourceFence: sourceFence!,
+          run: options.run,
+          request,
+          approvalId: resolved.id,
+          effectivePolicySnapshot: options.effectivePolicySnapshot,
+          approvalState: "denied",
+          failureCode: "tool.policy_denied",
+          resultSummary: { reason: resolved.decisionReason ?? policyDecision.reason },
+        });
+      }
       return {
         approved: false,
         approvalId: resolved.id,
@@ -478,6 +501,18 @@ export function createRunApprovalHandler(options: {
     }, createdAt);
     if ("approved" in approval) return approval;
     bindRunApprovalResumeBasis(options, approval, createdAt);
+    if (unifiedExecBash) {
+      prepareHarnessBashApproval({
+        mode: toolBrokerMode,
+        store: options.store,
+        sourceFence: sourceFence!,
+        run: options.run,
+        request,
+        approvalId: approval.id,
+        effectivePolicySnapshot: options.effectivePolicySnapshot,
+        approvalState: "approval_pending",
+      });
+    }
     appendApprovalCreatedControlPlaneEvent(
       options.store,
       options.controlPlaneEvents,
@@ -533,6 +568,26 @@ export function createRunApprovalHandler(options: {
       return afterWaitRejection;
     }
     const resolvedAt = new Date().toISOString();
+    if (unifiedExecBash) {
+      resolveHarnessBashApproval({
+        mode: toolBrokerMode,
+        store: options.store,
+        sourceFence: sourceFence!,
+        run: options.run,
+        request,
+        approvalId: resolvedApproval.id,
+        effectivePolicySnapshot: options.effectivePolicySnapshot,
+        nextState: resolvedApproval.status === "approved"
+          ? "approved"
+          : resolvedApproval.status === "denied" ? "denied" : "cancelled",
+        failureCode: resolvedApproval.status === "approved"
+          ? undefined
+          : resolvedApproval.status === "denied" ? "tool.approval_denied" : "tool.execution_cancelled",
+        ...(resolvedApproval.status === "approved" ? {} : {
+          resultSummary: { reason: resolvedApproval.decisionReason ?? `approval_${resolvedApproval.status}` },
+        }),
+      });
+    }
     if (resolvedApproval.status === "expired") {
       appendApprovalExpiredControlPlaneEvent(
         options.store,
@@ -607,6 +662,19 @@ export function createRunApprovalHandler(options: {
         currentPayload: approvalInput.payload,
       });
       if (systemReviewRejection) {
+        if (unifiedExecBash) {
+          failHarnessBashBeforeExecution({
+            mode: toolBrokerMode,
+            store: options.store,
+            sourceFence: sourceFence!,
+            run: options.run,
+            request,
+            approvalId: resolvedApproval.id,
+            effectivePolicySnapshot: options.effectivePolicySnapshot,
+            failureCode: "tool.policy_denied",
+            resultSummary: { reason: systemReviewRejection },
+          });
+        }
         return {
           approved: false,
           approvalId: resolvedApproval.id,
@@ -628,7 +696,22 @@ export function createRunApprovalHandler(options: {
       // Approval does not extend authority. Re-read the immutable basis and the
       // current filesystem after the durable wait, immediately before effects.
       const executionRejection = rejectUnboundEffect(resolvedApproval.id);
-      if (executionRejection) return executionRejection;
+      if (executionRejection) {
+        if (unifiedExecBash) {
+          failHarnessBashBeforeExecution({
+            mode: toolBrokerMode,
+            store: options.store,
+            sourceFence: sourceFence!,
+            run: options.run,
+            request,
+            approvalId: resolvedApproval.id,
+            effectivePolicySnapshot: options.effectivePolicySnapshot,
+            failureCode: "tool.policy_denied",
+            resultSummary: { reason: executionRejection.reason },
+          });
+        }
+        return executionRejection;
+      }
       // Host execution has its own executor and receipt; never run file/Bash effects here.
       if (isHost) return { approved: true, approvalId: resolvedApproval.id, reason: resolvedApproval.decisionReason };
       const exclusiveCreate = await executeWorkflowOperationFileCreate({
@@ -638,13 +721,15 @@ export function createRunApprovalHandler(options: {
         approved: true, approvalId: resolvedApproval.id, reason: resolvedApproval.decisionReason, handledResult: exclusiveCreate,
       };
       if (unifiedExecBash) {
-        handledResult = await executeUnifiedBashTool({
+        handledResult = await executeHarnessedBashTool({
+          mode: toolBrokerMode,
           restrictedCommandRuntime: options.restrictedCommandRuntime,
           store: options.store,
           sourceFence: sourceFence!,
           run: options.run,
           request,
           approvalId: resolvedApproval.id,
+          effectivePolicySnapshot: options.effectivePolicySnapshot,
           appendAndMaybeStream: options.appendAndMaybeStream,
           signal: options.signal,
           extraSecrets: options.extraSecrets,

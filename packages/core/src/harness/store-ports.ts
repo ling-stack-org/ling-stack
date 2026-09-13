@@ -7,6 +7,17 @@ import type {
   RunnerContinuationV1,
 } from "@ling-stack/contracts";
 import type {
+  ClaimHarnessToolExecutionInput,
+  FailApprovedHarnessToolExecutionInput,
+  FinishHarnessToolExecutionInput,
+  HarnessToolExecutionMutationResult,
+  PrepareHarnessToolExecutionInput,
+  PreparedHarnessToolExecution,
+  ReconcileAbandonedHarnessToolExecutionsInput,
+  ResolveHarnessToolApprovalInput,
+  StartHarnessToolExecutionInput,
+} from "./tool-executions.js";
+import type {
   ClaimRunnerContinuationInput,
   CommitExistingRunContinuationPreparationFailureInput,
   CommitExistingRunContinuationPreparationFailureResult,
@@ -38,6 +49,16 @@ export interface RunnerContinuationStore {
 export interface HarnessToolExecutionStore {
   getHarnessToolExecution(id: string): HarnessToolExecutionV1 | undefined;
   findHarnessToolExecution(attemptId: string, toolCallId: string): HarnessToolExecutionV1 | undefined;
+  listHarnessToolExecutions(runId: string): readonly HarnessToolExecutionV1[];
+  prepareHarnessToolExecution(input: PrepareHarnessToolExecutionInput): PreparedHarnessToolExecution;
+  resolveHarnessToolApproval(input: ResolveHarnessToolApprovalInput): HarnessToolExecutionMutationResult;
+  claimHarnessToolExecution(input: ClaimHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  startHarnessToolExecution(input: StartHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  finishHarnessToolExecution(input: FinishHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  failApprovedHarnessToolExecution(input: FailApprovedHarnessToolExecutionInput): HarnessToolExecutionMutationResult;
+  reconcileAbandonedHarnessToolExecutions(
+    input: ReconcileAbandonedHarnessToolExecutionsInput,
+  ): readonly HarnessToolExecutionV1[];
 }
 
 export interface RunEvaluationStore {

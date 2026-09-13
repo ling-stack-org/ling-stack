@@ -21,6 +21,9 @@ test("schema 134 upgrades to runner continuation schema 135 and reruns idempoten
   const path = resolveRuntimePaths(cwd).databasePath;
   let database = new DatabaseSync(path);
   database.exec(`
+    DROP TABLE harness_tool_execution_artifacts;
+    DROP TABLE harness_tool_executions;
+    DELETE FROM schema_migrations WHERE version = 136;
     DROP TABLE runner_continuations;
     DELETE FROM schema_migrations WHERE version = 135;
   `);
