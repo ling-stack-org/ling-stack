@@ -339,6 +339,158 @@ test("successful claim, start and finish are fenced CAS transitions", async (t) 
   assert.equal(f.store.listClaimableRunnerContinuations({ now }).length, 0);
 });
 
+test("rejected native resume is atomically reprepared once with a fresh replay Attempt", async (t) => {
+  const f = await fixture(t);
+  const prepared = f.store.prepareContinuationAndAttempt({
+    ...f.input,
+    strategy: "native_resume",
+    runnerHandleRef: "artifact-native-handle",
+  });
+  const abandonedFence = toRuntimeAttemptFence(prepared.attempt);
+  const claimed = f.store.claimRunnerContinuation({ continuationId: prepared.continuation.id,
+    expectedRevision: 0, claimOwner: "daemon", claimToken: "claim-native", claimExpiresAt: expires, now });
+  assert.equal(claimed.ok, true);
+  const started = f.store.startRunnerContinuation({ continuationId: prepared.continuation.id,
+    expectedRevision: 1, claimOwner: "daemon", claimToken: "claim-native", targetFence: abandonedFence, now });
+  assert.equal(started.ok, true);
+  const pending = f.store.finishRunnerContinuation({ continuationId: prepared.continuation.id,
+    expectedRevision: 2, claimOwner: "daemon", claimToken: "claim-native", targetFence: abandonedFence,
+    nextState: "recovery_pending", failureCode: "continuation.handle_rejected", now: later });
+  assert.equal(pending.ok, true);
+
+  const reprepareInput = {
+    continuationId: prepared.continuation.id,
+    expectedRevision: 3,
+    expectedGeneration: 0,
+    claimOwner: "daemon",
+    claimToken: "claim-native",
+    abandonedTargetFence: abandonedFence,
+    targetAttempt: {
+      id: "attempt-target-replay",
+      runtimeInstanceId: "runtime-target-replay",
+      runnerId: "runner_pi_embedded",
+      effectiveRunnerId: "runner_pi_embedded",
+    },
+    now: later,
+  };
+  const replay = f.store.reprepareContinuationAndAttempt(reprepareInput);
+  assert.equal(replay.replayed, false);
+  assert.equal(replay.continuation.strategy, "deterministic_replay");
+  assert.equal(replay.continuation.state, "prepared");
+  assert.equal(replay.continuation.generation, 1);
+  assert.equal(replay.continuation.revision, 4);
+  assert.equal(replay.continuation.claimOwner, undefined);
+  assert.equal(replay.continuation.failureCode, undefined);
+  assert.equal(replay.attempt.id, "attempt-target-replay");
+  assert.equal(f.store.getWorkUnitAttempt(prepared.attempt.id).status, "lost");
+  assert.equal(f.store.getWorkUnit(f.targetUnit.id).activeAttemptId, replay.attempt.id);
+
+  const repeated = f.store.reprepareContinuationAndAttempt(reprepareInput);
+  assert.equal(repeated.replayed, true);
+  assert.equal(repeated.attempt.id, replay.attempt.id);
+  assert.equal(f.store.listWorkUnitAttempts(f.targetUnit.id).length, 2);
+  assert.throws(
+    () => f.store.reprepareContinuationAndAttempt({
+      ...reprepareInput,
+      targetAttempt: { ...reprepareInput.targetAttempt, id: "attempt-target-replay-other" },
+    }),
+    hasCode("continuation.idempotency_conflict"),
+  );
+});
+
+test("reprepare rollback restores the rejected native Attempt when continuation CAS fails", async (t) => {
+  const f = await fixture(t);
+  const prepared = f.store.prepareContinuationAndAttempt({ ...f.input, strategy: "native_resume",
+    runnerHandleRef: "artifact-native-handle" });
+  const abandonedFence = toRuntimeAttemptFence(prepared.attempt);
+  assert.equal(f.store.claimRunnerContinuation({ continuationId: prepared.continuation.id,
+    expectedRevision: 0, claimOwner: "daemon", claimToken: "claim-native-rollback", claimExpiresAt: expires, now }).ok, true);
+  assert.equal(f.store.startRunnerContinuation({ continuationId: prepared.continuation.id,
+    expectedRevision: 1, claimOwner: "daemon", claimToken: "claim-native-rollback", targetFence: abandonedFence, now }).ok, true);
+  assert.equal(f.store.finishRunnerContinuation({ continuationId: prepared.continuation.id,
+    expectedRevision: 2, claimOwner: "daemon", claimToken: "claim-native-rollback", targetFence: abandonedFence,
+    nextState: "recovery_pending", failureCode: "continuation.handle_rejected", now: later }).ok, true);
+  f.database.exec(`
+    CREATE TRIGGER reject_runner_reprepare
+    BEFORE UPDATE OF strategy ON runner_continuations
+    WHEN NEW.strategy = 'deterministic_replay'
+    BEGIN SELECT RAISE(ABORT, 'reject runner reprepare'); END;
+  `);
+  assert.throws(() => f.store.reprepareContinuationAndAttempt({
+    continuationId: prepared.continuation.id,
+    expectedRevision: 3,
+    expectedGeneration: 0,
+    claimOwner: "daemon",
+    claimToken: "claim-native-rollback",
+    abandonedTargetFence: abandonedFence,
+    targetAttempt: { id: "attempt-replay-rollback", runtimeInstanceId: "runtime-replay-rollback",
+      runnerId: "runner_pi_embedded", effectiveRunnerId: "runner_pi_embedded" },
+    now: later,
+  }), /reject runner reprepare/u);
+  assert.equal(f.store.getWorkUnitAttempt(prepared.attempt.id).status, "started");
+  assert.equal(f.store.getWorkUnit(f.targetUnit.id).activeAttemptId, prepared.attempt.id);
+  assert.equal(f.store.listWorkUnitAttempts(f.targetUnit.id).length, 1);
+  assert.equal(f.store.getRunnerContinuation(prepared.continuation.id).state, "recovery_pending");
+});
+
+test("reprepare requires a live claim lease and an approved native fallback reason", async (t) => {
+  const expiredLease = await fixture(t);
+  const expiredPrepared = expiredLease.store.prepareContinuationAndAttempt({
+    ...expiredLease.input,
+    strategy: "native_resume",
+    runnerHandleRef: "artifact-native-handle-expired",
+  });
+  const expiredFence = toRuntimeAttemptFence(expiredPrepared.attempt);
+  assert.equal(expiredLease.store.claimRunnerContinuation({ continuationId: expiredPrepared.continuation.id,
+    expectedRevision: 0, claimOwner: "daemon", claimToken: "claim-expired", claimExpiresAt: later, now }).ok, true);
+  assert.equal(expiredLease.store.startRunnerContinuation({ continuationId: expiredPrepared.continuation.id,
+    expectedRevision: 1, claimOwner: "daemon", claimToken: "claim-expired", targetFence: expiredFence, now }).ok, true);
+  assert.equal(expiredLease.store.finishRunnerContinuation({ continuationId: expiredPrepared.continuation.id,
+    expectedRevision: 2, claimOwner: "daemon", claimToken: "claim-expired", targetFence: expiredFence,
+    nextState: "recovery_pending", failureCode: "continuation.handle_rejected", now }).ok, true);
+  assert.throws(() => expiredLease.store.reprepareContinuationAndAttempt({
+    continuationId: expiredPrepared.continuation.id,
+    expectedRevision: 3,
+    expectedGeneration: 0,
+    claimOwner: "daemon",
+    claimToken: "claim-expired",
+    abandonedTargetFence: expiredFence,
+    targetAttempt: { id: "attempt-replay-after-expiry", runtimeInstanceId: "runtime-replay-after-expiry",
+      runnerId: "runner_pi_embedded", effectiveRunnerId: "runner_pi_embedded" },
+    now: expires,
+  }), hasCode("continuation.lineage_mismatch"));
+  assert.equal(expiredLease.store.getWorkUnitAttempt(expiredPrepared.attempt.id).status, "started");
+  assert.equal(expiredLease.store.listWorkUnitAttempts(expiredLease.targetUnit.id).length, 1);
+
+  const disallowedReason = await fixture(t);
+  const disallowedPrepared = disallowedReason.store.prepareContinuationAndAttempt({
+    ...disallowedReason.input,
+    strategy: "native_resume",
+    runnerHandleRef: "artifact-native-handle-disallowed",
+  });
+  const disallowedFence = toRuntimeAttemptFence(disallowedPrepared.attempt);
+  assert.equal(disallowedReason.store.claimRunnerContinuation({ continuationId: disallowedPrepared.continuation.id,
+    expectedRevision: 0, claimOwner: "daemon", claimToken: "claim-disallowed", claimExpiresAt: expires, now }).ok, true);
+  assert.equal(disallowedReason.store.startRunnerContinuation({ continuationId: disallowedPrepared.continuation.id,
+    expectedRevision: 1, claimOwner: "daemon", claimToken: "claim-disallowed", targetFence: disallowedFence, now }).ok, true);
+  assert.equal(disallowedReason.store.finishRunnerContinuation({ continuationId: disallowedPrepared.continuation.id,
+    expectedRevision: 2, claimOwner: "daemon", claimToken: "claim-disallowed", targetFence: disallowedFence,
+    nextState: "recovery_pending", failureCode: "continuation.source_attempt_stale", now: later }).ok, true);
+  assert.throws(() => disallowedReason.store.reprepareContinuationAndAttempt({
+    continuationId: disallowedPrepared.continuation.id,
+    expectedRevision: 3,
+    expectedGeneration: 0,
+    claimOwner: "daemon",
+    claimToken: "claim-disallowed",
+    abandonedTargetFence: disallowedFence,
+    targetAttempt: { id: "attempt-replay-disallowed", runtimeInstanceId: "runtime-replay-disallowed",
+      runnerId: "runner_pi_embedded", effectiveRunnerId: "runner_pi_embedded" },
+    now: later,
+  }), hasCode("continuation.lineage_mismatch"));
+  assert.equal(disallowedReason.store.getWorkUnitAttempt(disallowedPrepared.attempt.id).status, "started");
+  assert.equal(disallowedReason.store.listWorkUnitAttempts(disallowedReason.targetUnit.id).length, 1);
+});
+
 test("start rolls Attempt activation back when continuation CAS cannot commit", async (t) => {
   const f = await fixture(t);
   const prepared = f.store.prepareContinuationAndAttempt(f.input);

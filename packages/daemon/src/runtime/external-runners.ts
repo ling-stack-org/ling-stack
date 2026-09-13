@@ -65,6 +65,13 @@ export function listExternalRunnerRegistrations(config: RunnerConfig = {}): Regi
       supportedTools: profile.supportedTools,
       capabilities: profile.capabilities,
       resumeCapabilities: profile.resumeCapabilities,
+      nativeResumeConformance: {
+        revision: `${profile.id}:resume-protocol-v1`,
+        readinessPassed: runnerConfig.readinessPassed === true,
+        conformancePassed: runnerConfig.conformancePassed === true,
+        abortPropagationVerified: runnerConfig.conformancePassed === true,
+        approvalBridgeVerified: runnerConfig.conformancePassed === true,
+      },
       featureFlag: profile.featureFlag,
       disabledReason: enabled ? undefined : futureRunnerDisabledReason(profile.displayName, runnerConfig),
     };

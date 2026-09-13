@@ -88,6 +88,21 @@ export interface PreparedContinuation {
   readonly replayed: boolean;
 }
 
+export interface ReprepareContinuationInput {
+  readonly continuationId: string;
+  /** Revision of the recovery-pending native-resume generation. */
+  readonly expectedRevision: number;
+  readonly expectedGeneration: number;
+  readonly claimOwner: string;
+  readonly claimToken: string;
+  readonly abandonedTargetFence: RuntimeAttemptFenceV1;
+  /** Caller-created stable identity is required so a lost response can replay safely. */
+  readonly targetAttempt: Omit<CreateWorkUnitAttemptInput, "workUnitId" | "attemptNumber" | "status" | "now"> & {
+    readonly id: string;
+  };
+  readonly now: string;
+}
+
 export type RunnerContinuationMutationCode =
   | "not_found"
   | "stale_revision"

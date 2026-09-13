@@ -108,16 +108,20 @@ import { HostCapabilityBridgeController } from "./features/runs/host-capability-
 
 export { defaultDaemonConfig } from "./config.js";
 export type { DaemonConfig, HarnessFeatureConfig, ResolvedDaemonConfig } from "./config.js";
-export { createHarnessFeatureSnapshot } from "./features/harness/index.js";
-export type { DaemonDependencies, ExternalSecretStore, McpBroker, RunnerAdapter } from "./context.js";
+export * from "./features/harness/index.js";
+export type { DaemonDependencies, ExternalSecretStore, McpBroker, RunnerAdapter, RunnerNativeResumeInputV1 } from "./context.js";
 export {
   createRunnerRegistry,
   DEFAULT_RUNNER_ID,
   LEGACY_PI_RUNNER_ID,
   UnsupportedRunnerError,
   normalizeRunnerId,
+  resolveRunnerNativeResumeGate,
   resolveRunnerResumeCapabilities,
   type RegisteredRunner,
+  type RunnerNativeResumeConformanceV1,
+  type RunnerNativeResumeGateBlocker,
+  type RunnerNativeResumeGateV1,
   type RunnerResumeCapabilitiesV1,
   type RunnerRegistry,
   type RunnerResolution,
@@ -769,6 +773,13 @@ export function createDefaultRunnerRegistry(
       supportedTools: extension.supportedTools,
       capabilities: piCapabilities,
       resumeCapabilities: extension.resumeCapabilities,
+      nativeResumeConformance: {
+        revision: `${extension.runnerId}:${extension.manifest.version}:resume-v1`,
+        readinessPassed: true,
+        conformancePassed: true,
+        abortPropagationVerified: true,
+        approvalBridgeVerified: true,
+      },
       toolHydration: piToolHydration,
     },
     ...listExternalRunnerRegistrations(config),

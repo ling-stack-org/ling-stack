@@ -1040,10 +1040,18 @@ Synthesized from this review's findings. Each task derives from a specific revie
   - Implemented: migration 135, mapper/store, SQLite commit coordinator, explicit target
     Attempt precondition, immutable replay checks, claim-token ABA fencing, and fenced
     claim/start/finish transitions. Contracts 85/85 and Core 952/952 pass.
-- [ ] **T3 (P0, human: ~1.5 days / CC: ~60 min)** — Runner reconstruction — Implement native-resume gates and immutable deterministic replay.
+- [x] **T3 (P0, human: ~1.5 days / CC: ~60 min)** — Runner reconstruction — Implement native-resume gates and immutable deterministic replay.
   - Surfaced by: Architecture D2 and Codex resume reference audit.
   - Files: daemon harness continuation, runtime runners, runner conformance fixtures.
   - Verify: G01-G03 with Pi and a fake native runner.
+  - Implemented: SQLite-sealed replay packages, secret and size bounds, stable replay
+    fingerprints, native handle artifacts, workspace/policy/source lineage checks, explicit
+    readiness/conformance/abort/approval gates, and one atomic native-to-replay generation.
+  - Verified: Contracts 85/85, Core 952/952, H03 focused Core 13/13, reconstruction 9/9,
+    runner registry 15/15, and the serial Daemon continuation/approval/workflow matrix
+    241/241 pass. The default all-file Daemon command was not used as evidence because its
+    parallel workers deadlocked on shared integration resources; the stable serial matrix
+    completed with a real exit code.
 - [ ] **T4 (P0, human: ~1 day / CC: ~45 min)** — Continuation integration — Route all six origins into `RunnerContinuation` while preserving current turn/run semantics.
   - Surfaced by: Scope challenge and existing continuation fragmentation.
   - Files: daemon run threads, interventions, approval resume, recovery, and orchestrator wiring.

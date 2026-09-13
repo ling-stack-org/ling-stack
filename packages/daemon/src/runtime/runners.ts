@@ -19,6 +19,7 @@ export interface RegisteredRunner {
   readonly featureFlag?: string;
   readonly disabledReason?: string;
   readonly resumeCapabilities: RunnerResumeCapabilitiesV1;
+  readonly nativeResumeConformance: RunnerNativeResumeConformanceV1;
 }
 
 export interface RunnerResumeCapabilitiesV1 {
@@ -26,14 +27,50 @@ export interface RunnerResumeCapabilitiesV1 {
   readonly hostApprovalContinuation: readonly ApprovalActionType[];
 }
 
-export type RunnerRegistrationInput = Omit<RegisteredRunner, "resumeCapabilities"> & {
+export interface RunnerNativeResumeConformanceV1 {
+  /** Changes whenever the adapter protocol or verified resume behavior changes. */
+  readonly revision: string;
+  readonly readinessPassed: boolean;
+  readonly conformancePassed: boolean;
+  readonly abortPropagationVerified: boolean;
+  readonly approvalBridgeVerified: boolean;
+}
+
+export type RunnerNativeResumeGateBlocker =
+  | "runner_disabled"
+  | "native_resume_not_declared"
+  | "resume_adapter_missing"
+  | "resume_readiness_not_passed"
+  | "resume_conformance_not_passed"
+  | "resume_abort_not_verified"
+  | "resume_approval_bridge_not_verified"
+  | "resume_capability_revision_changed";
+
+export interface RunnerNativeResumeGateV1 {
+  readonly ok: boolean;
+  readonly revision: string;
+  readonly blockers: readonly RunnerNativeResumeGateBlocker[];
+}
+
+export type RunnerRegistrationInput = Omit<RegisteredRunner, "resumeCapabilities" | "nativeResumeConformance"> & {
   readonly resumeCapabilities?: RunnerResumeCapabilitiesV1;
+  readonly nativeResumeConformance?: RunnerNativeResumeConformanceV1;
 };
 
 export const noRunnerResumeCapabilities: RunnerResumeCapabilitiesV1 = {
   nativeResume: false,
   hostApprovalContinuation: [],
 };
+
+function unverifiedNativeResumeConformance(runnerId: string): RunnerNativeResumeConformanceV1 {
+  return {
+    revision: `${runnerId}:native-resume-unverified:v1`,
+    readinessPassed: false,
+    conformancePassed: false,
+    abortPropagationVerified: false,
+    approvalBridgeVerified: false,
+  };
+}
 
 export interface RunnerResolutionInput {
   readonly requestedRunnerId?: string;
@@ -73,6 +110,7 @@ export function createRunnerRegistry(registrations: readonly RunnerRegistrationI
   const runners: readonly RegisteredRunner[] = registrations.map((runner) => ({
     ...runner,
     resumeCapabilities: runner.resumeCapabilities ?? noRunnerResumeCapabilities,
+    nativeResumeConformance: runner.nativeResumeConformance ?? unverifiedNativeResumeConformance(runner.id),
   }));
   const byId = new Map<string, RegisteredRunner>();
   for (const runner of runners) {
@@ -154,11 +192,31 @@ export function createRunnerRegistry(registrations: readonly RunnerRegistrationI
 
 export function resolveRunnerResumeCapabilities(runner: RegisteredRunner): RunnerResumeCapabilitiesV1 {
   return {
-    nativeResume: runner.status === "enabled"
-      && runner.resumeCapabilities.nativeResume
-      && typeof runner.adapter.resumeTask === "function",
+    nativeResume: resolveRunnerNativeResumeGate(runner).ok,
     hostApprovalContinuation: runner.resumeCapabilities.hostApprovalContinuation,
   };
+}
+
+export function resolveRunnerNativeResumeGate(
+  runner: RegisteredRunner,
+  expectedRevision?: string,
+): RunnerNativeResumeGateV1 {
+  // Injected registries and recovery fixtures may not have passed through
+  // createRunnerRegistry. Missing evidence must disable native resume, not crash
+  // an unrelated approval or deterministic-replay path.
+  const conformance = runner.nativeResumeConformance ?? unverifiedNativeResumeConformance(runner.id);
+  const blockers: RunnerNativeResumeGateBlocker[] = [];
+  if (runner.status !== "enabled") blockers.push("runner_disabled");
+  if (!runner.resumeCapabilities.nativeResume) blockers.push("native_resume_not_declared");
+  if (typeof runner.adapter.resumeTask !== "function") blockers.push("resume_adapter_missing");
+  if (!conformance.readinessPassed) blockers.push("resume_readiness_not_passed");
+  if (!conformance.conformancePassed) blockers.push("resume_conformance_not_passed");
+  if (!conformance.abortPropagationVerified) blockers.push("resume_abort_not_verified");
+  if (!conformance.approvalBridgeVerified) blockers.push("resume_approval_bridge_not_verified");
+  if (expectedRevision !== undefined && expectedRevision !== conformance.revision) {
+    blockers.push("resume_capability_revision_changed");
+  }
+  return { ok: blockers.length === 0, revision: conformance.revision, blockers };
 }
 
 function shouldAllowFallback(input: RunnerResolutionInput, requestSource: RunnerRequestSource): boolean {

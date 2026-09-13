@@ -8,6 +8,7 @@ import {
   RunnerContinuationStoreError,
   type PrepareContinuationInput,
   type PreparedContinuation,
+  type ReprepareContinuationInput,
 } from "../../harness/continuations.js";
 import type { RunStore } from "../../run-types.js";
 import { toRuntimeAttemptFence, type WorkUnitAttempt } from "../../runtime-supervisor-types.js";
@@ -120,6 +121,92 @@ export class SqliteHarnessCommitCoordinator {
     }
   }
 
+  /**
+   * Replaces one rejected native-resume Attempt with exactly one deterministic
+   * replay Attempt. The abandoned fence, continuation generation, and lease are
+   * checked in the same transaction that moves the Work Unit active pointer.
+   */
+  reprepareContinuationAndAttempt(input: ReprepareContinuationInput): PreparedContinuation {
+    validateReprepareInput(input);
+    this.context.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const current = this.continuations.getRunnerContinuation(input.continuationId);
+      if (!current) throw new RunnerContinuationStoreError("continuation.lineage_mismatch");
+
+      if (current.state === "prepared"
+        && current.strategy === "deterministic_replay"
+        && current.generation === input.expectedGeneration + 1) {
+        const replay = this.replayReprepared(input, current);
+        this.context.database.exec("COMMIT;");
+        return replay;
+      }
+
+      if (current.revision !== input.expectedRevision
+        || current.state !== "recovery_pending"
+        || current.strategy !== "native_resume"
+        || current.generation !== input.expectedGeneration
+        || current.claimOwner !== input.claimOwner
+        || current.claimToken !== input.claimToken
+        || !current.claimExpiresAt
+        || current.claimExpiresAt <= input.now
+        || !["continuation.handle_missing", "continuation.handle_rejected", "continuation.runner_not_conformant"].includes(current.failureCode ?? "")) {
+        throw new RunnerContinuationStoreError("continuation.lineage_mismatch");
+      }
+      const abandoned = this.runtimeWorkUnits.getWorkUnitAttempt(input.abandonedTargetFence.attemptId);
+      const workUnit = this.runtimeWorkUnits.getWorkUnit(current.workUnitId);
+      if (!abandoned
+        || !workUnit
+        || current.targetAttemptId !== abandoned.id
+        || workUnit.activeAttemptId !== abandoned.id
+        || !sameFence(toRuntimeAttemptFence(abandoned), input.abandonedTargetFence)) {
+        throw new RunnerContinuationStoreError("continuation.target_attempt_lost");
+      }
+      if (input.targetAttempt.runnerId !== current.runnerId
+        || (input.targetAttempt.effectiveRunnerId ?? input.targetAttempt.runnerId) !== current.runnerId
+        || input.targetAttempt.providerPresetId !== abandoned.providerPresetId) {
+        throw new RunnerContinuationStoreError("continuation.lineage_mismatch");
+      }
+
+      const attempt = this.runtimeWorkUnits.createWorkUnitAttemptWithinTransaction({
+        ...input.targetAttempt,
+        workUnitId: current.workUnitId,
+        attemptNumber: workUnit.attemptCount + 1,
+        status: "created",
+        now: input.now,
+      });
+      const updated = this.context.database.prepare(`
+        UPDATE runner_continuations
+        SET target_attempt_id = ?, strategy = 'deterministic_replay', state = 'prepared',
+            generation = generation + 1, revision = revision + 1,
+            claim_owner = NULL, claim_token = NULL, claim_expires_at = NULL,
+            next_attempt_at = NULL, failure_code = NULL,
+            failure_detail_artifact_id = NULL, updated_at = ?, completed_at = NULL
+        WHERE id = ? AND revision = ? AND state = 'recovery_pending'
+          AND strategy = 'native_resume' AND generation = ?
+          AND target_attempt_id = ? AND claim_owner = ? AND claim_token = ?
+      `).run(
+        attempt.id,
+        input.now,
+        current.id,
+        input.expectedRevision,
+        input.expectedGeneration,
+        abandoned.id,
+        input.claimOwner,
+        input.claimToken,
+      );
+      if (Number(updated.changes) !== 1) {
+        throw new RunnerContinuationStoreError("continuation.target_attempt_lost");
+      }
+      const continuation = this.continuations.getRunnerContinuation(current.id);
+      if (!continuation) throw new RunnerContinuationStoreError("continuation.lineage_mismatch");
+      this.context.database.exec("COMMIT;");
+      return { continuation, attempt, replayed: false };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.context.database);
+      throw error;
+    }
+  }
+
   private replayExisting(input: PrepareContinuationInput, existing: RunnerContinuationV1): PreparedContinuation {
     const attempt = existing.targetAttemptId
       ? this.runtimeWorkUnits.getWorkUnitAttempt(existing.targetAttemptId)
@@ -152,6 +239,28 @@ export class SqliteHarnessCommitCoordinator {
       throw new RunnerContinuationStoreError("continuation.idempotency_conflict");
     }
     return { continuation: existing, attempt, replayed: true };
+  }
+
+  private replayReprepared(input: ReprepareContinuationInput, current: RunnerContinuationV1): PreparedContinuation {
+    const attempt = current.targetAttemptId
+      ? this.runtimeWorkUnits.getWorkUnitAttempt(current.targetAttemptId)
+      : undefined;
+    const abandoned = this.runtimeWorkUnits.getWorkUnitAttempt(input.abandonedTargetFence.attemptId);
+    if (!attempt || !abandoned
+      || abandoned.status !== "lost"
+      || !sameFence(toRuntimeAttemptFence(abandoned), input.abandonedTargetFence)
+      || attempt.id !== input.targetAttempt.id
+      || attempt.workUnitId !== current.workUnitId
+      || attempt.runtimeInstanceId !== input.targetAttempt.runtimeInstanceId
+      || attempt.runnerId !== input.targetAttempt.runnerId
+      || attempt.requestedRunnerId !== input.targetAttempt.requestedRunnerId
+      || attempt.effectiveRunnerId !== (input.targetAttempt.effectiveRunnerId ?? input.targetAttempt.runnerId)
+      || !sameJson(attempt.fallbackReason, input.targetAttempt.fallbackReason)
+      || attempt.providerPresetId !== input.targetAttempt.providerPresetId
+      || (input.targetAttempt.fencingToken !== undefined && attempt.fencingToken !== input.targetAttempt.fencingToken)) {
+      throw new RunnerContinuationStoreError("continuation.idempotency_conflict");
+    }
+    return { continuation: current, attempt, replayed: true };
   }
 }
 
@@ -186,6 +295,34 @@ function validatePrepareInput(input: PrepareContinuationInput): void {
     || !RUNNER_CONTINUATION_STRATEGIES.includes(input.strategy)
     || !Number.isSafeInteger(input.generation)
     || input.generation < 0) {
+    throw new RunnerContinuationStoreError("continuation.invalid_input");
+  }
+  assertTimestamp(input.now);
+}
+
+function validateReprepareInput(input: ReprepareContinuationInput): void {
+  for (const [value, label] of [
+    [input.continuationId, "continuation id"],
+    [input.claimOwner, "claim owner"],
+    [input.claimToken, "claim token"],
+    [input.abandonedTargetFence.workUnitId, "abandoned work unit id"],
+    [input.abandonedTargetFence.attemptId, "abandoned attempt id"],
+    [input.abandonedTargetFence.runtimeInstanceId, "abandoned runtime instance id"],
+    [input.abandonedTargetFence.fencingToken, "abandoned fencing token"],
+    [input.targetAttempt.id, "target attempt id"],
+    [input.targetAttempt.runtimeInstanceId, "target runtime instance id"],
+    [input.targetAttempt.runnerId, "target runner id"],
+    [input.targetAttempt.requestedRunnerId, "requested runner id"],
+    [input.targetAttempt.effectiveRunnerId, "effective runner id"],
+    [input.targetAttempt.providerPresetId, "provider preset id"],
+    [input.targetAttempt.fencingToken, "target fencing token"],
+  ] as const) {
+    if (value !== undefined && (!value.trim() || value !== value.trim() || value.length > 4096)) {
+      throw new RunnerContinuationStoreError("continuation.invalid_input");
+    }
+  }
+  if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0
+    || !Number.isSafeInteger(input.expectedGeneration) || input.expectedGeneration < 0) {
     throw new RunnerContinuationStoreError("continuation.invalid_input");
   }
   assertTimestamp(input.now);

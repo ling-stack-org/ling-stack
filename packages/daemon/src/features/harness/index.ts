@@ -12,3 +12,7 @@ export function createHarnessFeatureSnapshot(config: Pick<ResolvedDaemonConfig, 
     delegationMaxDepth: config.harness.delegations.maxDepth,
   };
 }
+
+export * from "./continuations/native-handle.js";
+export * from "./continuations/reconstruction.js";
+export * from "./continuations/replay-package.js";

@@ -2126,6 +2126,12 @@ export class SqliteRunStore implements RunStore {
     return this.harnessCommits.prepareContinuationAndAttempt(input);
   }
 
+  reprepareContinuationAndAttempt(
+    input: import("../harness/continuations.js").ReprepareContinuationInput,
+  ): import("../harness/continuations.js").PreparedContinuation {
+    return this.harnessCommits.reprepareContinuationAndAttempt(input);
+  }
+
   claimRunnerContinuation(
     input: import("../harness/continuations.js").ClaimRunnerContinuationInput,
   ): import("../harness/continuations.js").RunnerContinuationMutationResult {

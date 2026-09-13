@@ -192,8 +192,30 @@ test("runner resume capability requires typed metadata, adapter operation, and e
       async resumeTask() { return { taskId: "task", events: [], messages: [] }; },
     },
     resumeCapabilities: { nativeResume: true, hostApprovalContinuation: [] },
+    nativeResumeConformance: {
+      revision: "native-test:1",
+      readinessPassed: true,
+      conformancePassed: true,
+      abortPropagationVerified: true,
+      approvalBridgeVerified: true,
+    },
   }]).list()[0];
   assert.equal(resolveRunnerResumeCapabilities(native).nativeResume, true);
+
+  const injectedWithoutConformance = {
+    id: "legacy-injected",
+    displayName: "Injected runner",
+    status: "enabled",
+    adapter: {
+      async runTask() { return { taskId: "task", events: [], messages: [] }; },
+      async resumeTask() { return { taskId: "task", events: [], messages: [] }; },
+    },
+    resumeCapabilities: { nativeResume: true, hostApprovalContinuation: ["bash"] },
+  };
+  assert.deepEqual(resolveRunnerResumeCapabilities(injectedWithoutConformance), {
+    nativeResume: false,
+    hostApprovalContinuation: ["bash"],
+  });
 });
 
 test("pi runner exposes daemon-hydrated tools only after the feature and conformance gates pass", () => {

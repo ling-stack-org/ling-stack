@@ -59,10 +59,20 @@ export interface RunnerAdapter {
 }
 
 export interface RunnerNativeResumeInputV1 {
+  readonly schemaVersion: 1;
   readonly runId: string;
+  readonly rootRunId: string;
+  readonly workUnitId: string;
   readonly attemptId: string;
+  readonly sourceAttemptId: string;
+  readonly runnerId: string;
+  readonly runnerCapabilityRevision: string;
+  readonly contextViewId: string;
+  readonly workspaceIdentity: string;
+  readonly policySnapshotFingerprint: string;
   readonly handleRef: string;
-  readonly signal?: AbortSignal;
+  /** Live Host callbacks, secrets, cancellation and current approval bridge are never persisted in the handle. */
+  readonly options: PiRunnerRunOptions;
 }
 
 export interface McpBroker {
