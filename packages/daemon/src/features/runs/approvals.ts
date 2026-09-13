@@ -38,7 +38,6 @@ import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import {
   appendExecutionActionArtifactEvents,
-  createExecutionActionResultArtifact,
   createExecutionActionPreviewArtifacts,
 } from "./action-artifacts.js";
 import {
@@ -46,21 +45,28 @@ import {
   classifyBashRiskFlags,
 } from "./action-classifier.js";
 import {
-  applyPatchActionDraft,
-  createPatchActionDraft,
   createPatchApprovalMetadata,
-  type PatchActionDraft,
 } from "./patch-actions.js";
 import {
   createUnifiedExecDeniedResult,
 } from "./unified-exec.js";
 import {
+  createFileMutationDeniedResult,
+  executeHarnessedFileMutationTool,
   executeHarnessedBashTool,
   failHarnessBashBeforeExecution,
+  failHarnessToolBeforeExecution,
   harnessToolBrokerModeForRun,
   prepareHarnessBashApproval,
+  prepareHarnessToolApproval,
   resolveHarnessBashApproval,
+  resolveHarnessToolApproval,
 } from "../harness/tool-execution/broker.js";
+import {
+  createFileMutationActionDraft,
+  createFileMutationRecoveryBasis,
+  type FileMutationActionDraft,
+} from "../harness/tool-execution/executors/file-mutation.js";
 import {
   applyRiskReviewToApprovalInput,
   applyRiskReviewToPolicyDecision,
@@ -69,7 +75,7 @@ import { evaluatePlanModeApprovalDenial } from "./plan-mode-policy.js";
 import { commandMatchesPolicy } from "../channels/command-operation-match.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
 import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
-import { executeWorkflowOperationFileCreate } from "./workflow-operation-file-create.js";
+import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
 import {
   createApprovalCommandRuleProposal,
   findMatchingApprovalCommandRulesForCommand,
@@ -231,12 +237,20 @@ export function createRunApprovalHandler(options: {
       }
     };
     const unifiedExecBash = options.unifiedExecEnabled === true && request.toolName === "bash";
+    const fileMutation = request.toolName === "write" || request.toolName === "edit";
     if (request.toolName === "bash" && !unifiedExecBash) {
       const reason = "host_command_executor_disabled: Bash requires the journaled Host executor; SDK fallback is disabled.";
       return { approved: false, reason, handledResult: createUnifiedExecDeniedResult({ toolCallId: request.toolCallId, reason }) };
     }
-    if (unifiedExecBash && !sourceFence) {
-      return { approved: false, reason: "stale_run_execution: Host command requires the captured source Attempt." };
+    if ((unifiedExecBash || (fileMutation && toolBrokerMode !== "off")) && !sourceFence) {
+      const reason = `stale_run_execution: Host ${unifiedExecBash ? "command" : "file mutation"} requires the captured source Attempt.`;
+      return {
+        approved: false,
+        reason,
+        ...(fileMutation
+          ? { handledResult: createFileMutationDeniedResult({ request }, reason) }
+          : { handledResult: createUnifiedExecDeniedResult({ toolCallId: request.toolCallId, reason }) }),
+      };
     }
     const rejectUnboundEffect = (approvalId?: string) => {
       const rejection = workflowOperationEffectRejection({ store: options.store, run: options.run, request,
@@ -247,7 +261,9 @@ export function createRunApprovalHandler(options: {
         approved: false,
         approvalId,
         reason,
-        ...(unifiedExecBash ? { handledResult: createUnifiedExecDeniedResult({ toolCallId: request.toolCallId, approvalId, reason }) } : {}),
+        ...(unifiedExecBash
+          ? { handledResult: createUnifiedExecDeniedResult({ toolCallId: request.toolCallId, approvalId, reason }) }
+          : fileMutation ? { handledResult: createFileMutationDeniedResult({ request, approvalId }, reason) } : {}),
       };
     };
     const effectRejection = rejectUnboundEffect();
@@ -267,37 +283,43 @@ export function createRunApprovalHandler(options: {
                 reason: bindingRejection,
               }),
             }
-          : {}),
+          : fileMutation ? { handledResult: createFileMutationDeniedResult({ request }, bindingRejection) } : {}),
       };
     }
     let patchMetadata: ReturnType<typeof createPatchApprovalMetadata> | undefined;
     try {
       patchMetadata = createPatchApprovalMetadata(request);
     } catch (error) {
+      const reason = formatPatchActionError(error);
       return {
         approved: false,
-        reason: formatPatchActionError(error),
+        reason,
+        ...(fileMutation ? { handledResult: createFileMutationDeniedResult({ request }, reason) } : {}),
       };
     }
 
     let approvalInput = toCreateApprovalRequestInput(options.run, request, patchMetadata?.payload);
     let policyDecision = evaluateApprovalPolicy(options.approvalPolicy, request, approvalInput.payload);
-    let patchDraft: PatchActionDraft | undefined;
-    if (patchMetadata && policyDecision.decision !== "deny") {
+    let fileMutationDraft: FileMutationActionDraft | undefined;
+    if (fileMutation && policyDecision.decision !== "deny") {
       try {
-        patchDraft = createPatchActionDraft({
+        fileMutationDraft = createFileMutationActionDraft({
           request,
-          patchText: patchMetadata.patchText,
           allowedWritePaths: options.approvalPolicy.allowedWritePaths,
         });
-        approvalInput = toCreateApprovalRequestInput(options.run, request, patchDraft.payload);
+        approvalInput = toCreateApprovalRequestInput(options.run, request, fileMutationDraft.payload);
       } catch (error) {
-        return {
-          approved: false,
-          reason: formatPatchActionError(error),
-        };
+        const reason = formatPatchActionError(error);
+        return { approved: false, reason, handledResult: createFileMutationDeniedResult({ request }, reason) };
       }
     }
+    const workflowContext = fileMutation ? validateWorkflowOperationRunContext({ store: options.store, run: options.run }) : undefined;
+    const typedExclusiveCreate = request.toolName === "write" && workflowContext?.status === "ready";
+    if (typedExclusiveCreate && fileMutationDraft?.executorKind === "apply_patch") {
+      const reason = "operation_binding_content_form_unsupported: Typed create requires a native path/content write; patch creation is not an exclusive-create capability.";
+      return { approved: false, reason, handledResult: createFileMutationDeniedResult({ request }, reason) };
+    }
+
     policyDecision = evaluateApprovalPolicy(options.approvalPolicy, request, approvalInput.payload);
     const riskReview = buildChannelTeamRiskReviewDecision({
       actionType: approvalInput.actionType,
@@ -357,10 +379,6 @@ export function createRunApprovalHandler(options: {
     if (policyDecision.decision === "allow") {
       const executionRejection = rejectUnboundEffect();
       if (executionRejection) return executionRejection;
-      const exclusiveCreate = await executeWorkflowOperationFileCreate({
-        store: options.store, run: options.run, request, signal: options.signal,
-      });
-      if (exclusiveCreate) return { approved: true, reason: policyDecision.reason, handledResult: exclusiveCreate };
       if (unifiedExecBash) {
         return {
           approved: true,
@@ -380,21 +398,23 @@ export function createRunApprovalHandler(options: {
           }),
         };
       }
-      if (patchDraft) {
-        const applied = await applyPatchActionDraft({
-          draft: patchDraft,
-          cwd: request.cwd,
-          allowedWritePaths: options.approvalPolicy.allowedWritePaths,
-          provenance: {
-            store: options.store,
-            run: options.run,
-            toolCallId: request.toolCallId,
-          },
-        });
+      if (fileMutationDraft) {
         return {
           approved: true,
           reason: policyDecision.reason,
-          handledResult: applied.handledResult,
+          handledResult: await executeHarnessedFileMutationTool({
+            mode: toolBrokerMode,
+            store: options.store,
+            sourceFence,
+            run: options.run,
+            request,
+            draft: fileMutationDraft,
+            allowedWritePaths: options.approvalPolicy.allowedWritePaths,
+            effectivePolicySnapshot: options.effectivePolicySnapshot,
+            appendAndMaybeStream: options.appendAndMaybeStream,
+            signal: options.signal,
+            requireExistingParentsForAdds: typedExclusiveCreate,
+          }),
         };
       }
       return {
@@ -471,6 +491,21 @@ export function createRunApprovalHandler(options: {
           failureCode: "tool.policy_denied",
           resultSummary: { reason: resolved.decisionReason ?? policyDecision.reason },
         });
+      } else if (fileMutationDraft && sourceFence) {
+        prepareHarnessToolApproval({
+          mode: toolBrokerMode,
+          store: options.store,
+          sourceFence,
+          run: options.run,
+          request,
+          approvalId: resolved.id,
+          effectivePolicySnapshot: options.effectivePolicySnapshot,
+          executorKind: fileMutationDraft.executorKind,
+          recoveryBasis: createFileMutationRecoveryBasis(fileMutationDraft),
+          approvalState: "denied",
+          failureCode: "tool.policy_denied",
+          resultSummary: { reason: resolved.decisionReason ?? policyDecision.reason },
+        });
       }
       return {
         approved: false,
@@ -484,7 +519,9 @@ export function createRunApprovalHandler(options: {
                 reason: resolved.decisionReason,
               }),
             }
-          : {}),
+          : fileMutation
+            ? { handledResult: createFileMutationDeniedResult({ request, approvalId: resolved.id }, resolved.decisionReason ?? policyDecision.reason) }
+            : {}),
       };
     }
 
@@ -510,6 +547,19 @@ export function createRunApprovalHandler(options: {
         request,
         approvalId: approval.id,
         effectivePolicySnapshot: options.effectivePolicySnapshot,
+        approvalState: "approval_pending",
+      });
+    } else if (fileMutationDraft && sourceFence) {
+      prepareHarnessToolApproval({
+        mode: toolBrokerMode,
+        store: options.store,
+        sourceFence,
+        run: options.run,
+        request,
+        approvalId: approval.id,
+        effectivePolicySnapshot: options.effectivePolicySnapshot,
+        executorKind: fileMutationDraft.executorKind,
+        recoveryBasis: createFileMutationRecoveryBasis(fileMutationDraft),
         approvalState: "approval_pending",
       });
     }
@@ -577,6 +627,27 @@ export function createRunApprovalHandler(options: {
         request,
         approvalId: resolvedApproval.id,
         effectivePolicySnapshot: options.effectivePolicySnapshot,
+        nextState: resolvedApproval.status === "approved"
+          ? "approved"
+          : resolvedApproval.status === "denied" ? "denied" : "cancelled",
+        failureCode: resolvedApproval.status === "approved"
+          ? undefined
+          : resolvedApproval.status === "denied" ? "tool.approval_denied" : "tool.execution_cancelled",
+        ...(resolvedApproval.status === "approved" ? {} : {
+          resultSummary: { reason: resolvedApproval.decisionReason ?? `approval_${resolvedApproval.status}` },
+        }),
+      });
+    } else if (fileMutationDraft && sourceFence) {
+      resolveHarnessToolApproval({
+        mode: toolBrokerMode,
+        store: options.store,
+        sourceFence,
+        run: options.run,
+        request,
+        approvalId: resolvedApproval.id,
+        effectivePolicySnapshot: options.effectivePolicySnapshot,
+        executorKind: fileMutationDraft.executorKind,
+        recoveryBasis: createFileMutationRecoveryBasis(fileMutationDraft),
         nextState: resolvedApproval.status === "approved"
           ? "approved"
           : resolvedApproval.status === "denied" ? "denied" : "cancelled",
@@ -674,6 +745,20 @@ export function createRunApprovalHandler(options: {
             failureCode: "tool.policy_denied",
             resultSummary: { reason: systemReviewRejection },
           });
+        } else if (fileMutationDraft && sourceFence) {
+          failHarnessToolBeforeExecution({
+            mode: toolBrokerMode,
+            store: options.store,
+            sourceFence,
+            run: options.run,
+            request,
+            approvalId: resolvedApproval.id,
+            effectivePolicySnapshot: options.effectivePolicySnapshot,
+            executorKind: fileMutationDraft.executorKind,
+            recoveryBasis: createFileMutationRecoveryBasis(fileMutationDraft),
+            failureCode: "tool.policy_denied",
+            resultSummary: { reason: systemReviewRejection },
+          });
         }
         return {
           approved: false,
@@ -687,7 +772,9 @@ export function createRunApprovalHandler(options: {
                   reason: systemReviewRejection,
                 }),
               }
-            : {}),
+            : fileMutation
+              ? { handledResult: createFileMutationDeniedResult({ request, approvalId: resolvedApproval.id }, systemReviewRejection) }
+              : {}),
         };
       }
       const beforeExecutionRejection = rejectHost(resolvedApproval.id);
@@ -709,17 +796,25 @@ export function createRunApprovalHandler(options: {
             failureCode: "tool.policy_denied",
             resultSummary: { reason: executionRejection.reason },
           });
+        } else if (fileMutationDraft && sourceFence) {
+          failHarnessToolBeforeExecution({
+            mode: toolBrokerMode,
+            store: options.store,
+            sourceFence,
+            run: options.run,
+            request,
+            approvalId: resolvedApproval.id,
+            effectivePolicySnapshot: options.effectivePolicySnapshot,
+            executorKind: fileMutationDraft.executorKind,
+            recoveryBasis: createFileMutationRecoveryBasis(fileMutationDraft),
+            failureCode: "tool.policy_denied",
+            resultSummary: { reason: executionRejection.reason },
+          });
         }
         return executionRejection;
       }
       // Host execution has its own executor and receipt; never run file/Bash effects here.
       if (isHost) return { approved: true, approvalId: resolvedApproval.id, reason: resolvedApproval.decisionReason };
-      const exclusiveCreate = await executeWorkflowOperationFileCreate({
-        store: options.store, run: options.run, request, signal: options.signal,
-      });
-      if (exclusiveCreate) return {
-        approved: true, approvalId: resolvedApproval.id, reason: resolvedApproval.decisionReason, handledResult: exclusiveCreate,
-      };
       if (unifiedExecBash) {
         handledResult = await executeHarnessedBashTool({
           mode: toolBrokerMode,
@@ -735,36 +830,21 @@ export function createRunApprovalHandler(options: {
           extraSecrets: options.extraSecrets,
           shellSnapshotEnabled: options.shellSnapshotEnabled,
         });
-      } else if (patchDraft) {
-        const applied = await applyPatchActionDraft({
-          draft: patchDraft,
-          cwd: request.cwd,
-          allowedWritePaths: options.approvalPolicy.allowedWritePaths,
-          previewArtifactIds: previewArtifacts.map((artifact) => artifact.id),
-          provenance: {
-            store: options.store,
-            run: options.run,
-            toolCallId: request.toolCallId,
-            approvalId: resolvedApproval.id,
-          },
-        });
-        handledResult = applied.handledResult;
-        const resultArtifact = createExecutionActionResultArtifact({
+      } else if (fileMutationDraft) {
+        handledResult = await executeHarnessedFileMutationTool({
+          mode: toolBrokerMode,
           store: options.store,
+          sourceFence,
           run: options.run,
-          approval: resolvedApproval,
-          filename: "patch-result.json",
-          type: "json",
-          title: `Patch result: ${patchDraft.plan.touchedPaths.join(", ")}`,
-          contentType: "application/json",
-          content: applied.resultArtifactContent,
-          now: new Date().toISOString(),
-        });
-        appendExecutionActionArtifactEvents({
-          artifacts: [resultArtifact],
-          approval: resolvedApproval,
-          role: "result",
+          request,
+          draft: fileMutationDraft,
+          allowedWritePaths: options.approvalPolicy.allowedWritePaths,
+          approvalId: resolvedApproval.id,
+          effectivePolicySnapshot: options.effectivePolicySnapshot,
+          previewArtifactIds: previewArtifacts.map((artifact) => artifact.id),
           appendAndMaybeStream: options.appendAndMaybeStream,
+          signal: options.signal,
+          requireExistingParentsForAdds: typedExclusiveCreate,
         });
       }
       return {
@@ -791,7 +871,14 @@ export function createRunApprovalHandler(options: {
                 `Ling Stack approval ${resolvedApproval.status} for ${resolvedApproval.actionType}.`,
             }),
           }
-        : {}),
+        : fileMutation
+          ? {
+              handledResult: createFileMutationDeniedResult(
+                { request, approvalId: resolvedApproval.id },
+                resolvedApproval.decisionReason ?? `Ling Stack approval ${resolvedApproval.status} for ${resolvedApproval.actionType}.`,
+              ),
+            }
+          : {}),
     };
   };
 }

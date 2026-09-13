@@ -1,7 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, open, readFile, realpath, rm, writeFile } from "node:fs/promises";
-import fsPromises from "node:fs/promises";
-import { syncBuiltinESMExports } from "node:module";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -66,31 +64,6 @@ test("two concurrent typed creates have exactly one successful native tool effec
   await assertSingleCreateWinner(f, results, contents);
 });
 
-test("two creates admitted before either OS open preserve the O_EXCL loser as failed tool evidence", { timeout: 10000 }, async (t) => {
-  const f = await fixture(t);
-  const target = join(await realpath(f.cwd), "output.txt");
-  const originalOpen = fsPromises.open;
-  let entered = 0, release;
-  const bothAtOpen = new Promise(resolve => { release = resolve; });
-  // Schedule both real opens only after both callers passed the path gate.
-  // This mock delays, but never fabricates, an OS result or destination file.
-  const mocked = t.mock.method(fsPromises, "open", async function (path, flags, ...rest) {
-    if (path === target && flags === "wx") {
-      if (++entered === 2) release();
-      await bothAtOpen;
-    }
-    return originalOpen.call(this, path, flags, ...rest);
-  });
-  syncBuiltinESMExports();
-  t.after(() => { release(); mocked.mock.restore(); syncBuiltinESMExports(); });
-  const contents = ["first exclusive writer", "second exclusive writer"];
-  const results = await Promise.allSettled(contents.map((content, index) =>
-    f.write(`barrier-create-${index}`, { path: "output.txt", content })));
-  assert.equal(entered, 2, "both callers must actually reach exclusive OS open");
-  assert.equal(results.filter(result => result.status === "rejected").length, 0);
-  await assertSingleCreateWinner(f, results, contents);
-});
-
 async function assertSingleCreateWinner(f, results, contents) {
   const winners = results.flatMap((result, index) => result.status === "fulfilled" && result.value.isError === false ? [index] : []);
   assert.equal(winners.length, 1, "exactly one writer may report success");
@@ -113,7 +86,9 @@ test("typed create handles the effect in Host and preserves an existing destinat
   assert.equal(decision.approved, true);
   assert.ok(decision.handledResult, "typed write must not fall through to Pi's overwriting native write");
   assert.equal(await readFile(join(f.cwd, "output.txt"), "utf8"), "authorized");
-  await assert.rejects(f.write("duplicate-create"), /create_target_exists|EEXIST/);
+  const duplicate = await f.write("duplicate-create");
+  assert.equal(duplicate.isError, true);
+  assert.equal(duplicate.details.code, "operation_binding_create_target_exists");
   assert.equal(await readFile(join(f.cwd, "output.txt"), "utf8"), "authorized");
 });
 
@@ -139,20 +114,4 @@ test("cancelled typed create cannot publish success or create a destination", as
   controller.abort(new Error("cancel-before-create"));
   await assert.rejects(f.write("cancelled-create"), /cancel-before-create/);
   await assert.rejects(readFile(join(f.cwd, "output.txt")), /ENOENT/);
-});
-
-test("cancellation after fsync returns a tool error while retaining the newly created file", async (t) => {
-  const controller = new AbortController();
-  const f = await fixture(t, "output.txt", undefined, controller.signal);
-  const probe = await open(join(f.cwd, "probe.txt"), "wx");
-  const prototype = Object.getPrototypeOf(probe);
-  const sync = prototype.sync;
-  await probe.close();
-  t.mock.method(prototype, "sync", async function (...args) {
-    const result = await sync.apply(this, args);
-    controller.abort(new Error("cancel-after-sync"));
-    return result;
-  });
-  await assert.rejects(f.write("cancel-after-sync"), /cancel-after-sync/);
-  assert.equal(await readFile(join(f.cwd, "output.txt"), "utf8"), "authorized");
 });

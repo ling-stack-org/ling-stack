@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { access, mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { createHostToolResultAdapter } from "../dist/host-tool-results.js";
 import { translatePiEvent } from "../dist/events.js";
@@ -86,3 +89,20 @@ for (const [toolName, extension] of [
     });
   }
 }
+
+test("approved file mutations fail closed when the Host omits its handled result", async t => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-runner-file-mutation-fence-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const registered = new Map();
+  createLingStackFileMutationToolExtension({
+    cwd,
+    task: { id: "fixture", title: "Fixture", prompt: "Fixture" },
+    onApprovalRequired: async () => ({ approved: true, reason: "Host approved without executing." }),
+  })({ on() {}, registerTool: tool => registered.set(tool.name, tool) });
+
+  await assert.rejects(
+    registered.get("write").execute("call-write", { path: "should-not-exist.txt", content: "runner bypass" }),
+    /Host.*handled result|handled result.*Host/i,
+  );
+  await assert.rejects(access(join(cwd, "should-not-exist.txt")), { code: "ENOENT" });
+});

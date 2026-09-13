@@ -48,6 +48,7 @@ import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-act
 import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
 import { ApprovalAutoReviewRecoveryCoordinator } from "./features/runs/approval-auto-review-recovery.js";
 import { DaemonRunnerRecoveryCoordinator } from "./features/harness/continuations/daemon-recovery-coordinator.js";
+import { reconcileHarnessToolExecutionsAtStartup } from "./features/harness/tool-execution/recovery.js";
 import {
   createDetachedRunExecutionSink,
   executeExistingRunContinuation,
@@ -260,7 +261,7 @@ export function createDaemonServer(
       // A process may have crossed the shell side-effect boundary before the
       // daemon disappeared. Expired executing claims are never retried; they
       // become explicit unknown outcomes before any recovery dispatch runs.
-      store.reconcileAbandonedHarnessToolExecutions({ now: new Date().toISOString(), limit: 500 });
+      reconcileHarnessToolExecutionsAtStartup({ cwd, store, now: new Date().toISOString(), limit: 500 });
       configureNormalNarrationPublication(store, (event) => controlPlaneEvents.publish(event));
       void recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
         // Do not leak database/provider details, but do not hide a failed recovery sweep.

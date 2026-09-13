@@ -7,6 +7,7 @@ import type {
 } from "@ling-stack/contracts";
 import {
   createHarnessToolExecutionId,
+  digestHarnessToolValue,
   HarnessToolExecutionStoreError,
   type ClaimHarnessToolExecutionInput,
   type FailApprovedHarnessToolExecutionInput,
@@ -15,6 +16,7 @@ import {
   type PrepareHarnessToolExecutionInput,
   type PreparedHarnessToolExecution,
   type ReconcileAbandonedHarnessToolExecutionsInput,
+  type ReconciledHarnessToolExecutionOutcome,
   type ResolveHarnessToolApprovalInput,
   type StartHarnessToolExecutionInput,
 } from "../../harness/tool-executions.js";
@@ -295,28 +297,66 @@ export class SqliteHarnessToolExecutionStore {
     input: ReconcileAbandonedHarnessToolExecutionsInput,
   ): readonly HarnessToolExecutionV1[] {
     validateReconcileInput(input);
-    return this.transaction(() => {
-      const limit = input.limit ?? 100;
-      const rows = this.context.database.prepare(`
-        SELECT id FROM harness_tool_executions
-        WHERE state IN ('executing', 'committing_evidence')
-          AND claim_expires_at IS NOT NULL AND claim_expires_at <= ?
-        ORDER BY claim_expires_at ASC, id ASC LIMIT ?
-      `).all(input.now, limit) as Array<{ readonly id: string }>;
-      const updated: HarnessToolExecutionV1[] = [];
-      const resultSummary = boundedJson({ reason: "claim_expired_after_possible_side_effect" }, "reconciliation summary");
-      for (const row of rows) {
-        const result = this.context.database.prepare(`
-          UPDATE harness_tool_executions
-          SET state = 'unknown_outcome', revision = revision + 1,
-              failure_code = 'tool.unknown_side_effect_outcome', result_summary_json = ?,
-              execution_finished_at = ?, updated_at = ?, next_attempt_at = NULL
-          WHERE id = ? AND state IN ('executing', 'committing_evidence')
-            AND claim_expires_at IS NOT NULL AND claim_expires_at <= ?
-        `).run(resultSummary, input.now, input.now, row.id, input.now);
-        if (Number(result.changes) === 1) updated.push(this.getHarnessToolExecution(row.id)!);
+    const limit = input.limit ?? 100;
+    const rows = this.context.database.prepare(`
+      SELECT id FROM harness_tool_executions
+      WHERE state IN ('executing', 'committing_evidence')
+        AND claim_expires_at IS NOT NULL AND claim_expires_at <= ?
+      ORDER BY claim_expires_at ASC, id ASC LIMIT ?
+    `).all(input.now, limit) as Array<{ readonly id: string }>;
+    const updated: HarnessToolExecutionV1[] = [];
+    for (const row of rows) {
+      const current = this.getHarnessToolExecution(row.id);
+      if (!current) continue;
+      let classified: ReconciledHarnessToolExecutionOutcome | undefined;
+      try {
+        classified = input.classify?.(current);
+      } catch {
+        classified = undefined;
       }
-      return updated;
+      const outcome = classified ?? defaultUnknownReconciliation(current);
+      const recovered = this.reconcileExpiredExecution(current, outcome, input.now);
+      if (recovered) updated.push(recovered);
+    }
+    return updated;
+  }
+
+  private reconcileExpiredExecution(
+    current: HarnessToolExecutionV1,
+    outcome: ReconciledHarnessToolExecutionOutcome,
+    now: string,
+  ): HarnessToolExecutionV1 | undefined {
+    return this.transaction(() => {
+      const artifacts = uniqueEvidenceIds(outcome.evidenceArtifactIds);
+      if (artifacts.length !== outcome.evidenceArtifactIds.length
+        || artifacts.some((id) => this.ports.getArtifact(id)?.runId !== current.runId)) {
+        throw new HarnessToolExecutionStoreError("tool.invalid_input");
+      }
+      validateReconciledOutcome(outcome);
+      const result = this.context.database.prepare(`
+        UPDATE harness_tool_executions
+        SET state = ?, revision = revision + 1, result_digest = ?, result_summary_json = ?,
+            failure_code = ?, execution_finished_at = ?, updated_at = ?, next_attempt_at = NULL
+        WHERE id = ? AND revision = ? AND state IN ('executing', 'committing_evidence')
+          AND claim_expires_at IS NOT NULL AND claim_expires_at <= ?
+      `).run(
+        outcome.nextState,
+        outcome.resultDigest,
+        boundedJson(outcome.resultSummary, "reconciliation summary"),
+        outcome.failureCode ?? null,
+        now,
+        now,
+        current.id,
+        current.revision,
+        now,
+      );
+      if (Number(result.changes) !== 1) return undefined;
+      const insertArtifact = this.context.database.prepare(`
+        INSERT OR IGNORE INTO harness_tool_execution_artifacts (execution_id, artifact_id, ordinal)
+        VALUES (?, ?, ?)
+      `);
+      artifacts.forEach((artifactId, ordinal) => insertArtifact.run(current.id, artifactId, ordinal));
+      return this.getHarnessToolExecution(current.id)!;
     });
   }
 
@@ -624,6 +664,34 @@ function boundedJson(value: Readonly<Record<string, unknown>>, label: string): s
 
 function uniqueEvidenceIds(values: readonly string[]): string[] {
   return [...new Set(values)];
+}
+
+function defaultUnknownReconciliation(execution: HarnessToolExecutionV1): ReconciledHarnessToolExecutionOutcome {
+  const resultSummary = {
+    status: "unknown_outcome",
+    reason: "claim_expired_after_possible_side_effect",
+    executorKind: execution.executorKind,
+  };
+  return {
+    nextState: "unknown_outcome",
+    resultDigest: digestHarnessToolValue(resultSummary),
+    resultSummary,
+    evidenceArtifactIds: [],
+    failureCode: "tool.unknown_side_effect_outcome",
+  };
+}
+
+function validateReconciledOutcome(outcome: ReconciledHarnessToolExecutionOutcome): void {
+  validateDigest(outcome.resultDigest, "reconciliation result digest");
+  boundedJson(outcome.resultSummary, "reconciliation result summary");
+  if (outcome.evidenceArtifactIds.length > 256) throw new HarnessToolExecutionStoreError("tool.invalid_input");
+  outcome.evidenceArtifactIds.forEach((id) => validateIdentity(id, "reconciliation evidence artifact id"));
+  if (outcome.nextState === "succeeded" && outcome.failureCode) {
+    throw new HarnessToolExecutionStoreError("tool.invalid_input");
+  }
+  if (outcome.nextState !== "succeeded" && !outcome.failureCode) {
+    throw new HarnessToolExecutionStoreError("tool.invalid_input");
+  }
 }
 
 function approvalStatusMatches(status: ApprovalRequest["status"], state: ResolveHarnessToolApprovalInput["nextState"]): boolean {

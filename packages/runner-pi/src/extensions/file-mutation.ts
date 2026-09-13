@@ -24,7 +24,7 @@ export function createLingStackFileMutationToolExtension(options: PiRunnerRunOpt
             isError: !decision.approved || decision.handledResult.isError === true,
           });
         }
-        return originalEdit.execute(toolCallId, params, signal, onUpdate, ctx);
+        throw new Error("Ling Stack blocked edit: the Host did not return a handled result.");
       },
       renderCall: originalEdit.renderCall,
       renderResult: originalEdit.renderResult,
@@ -46,7 +46,7 @@ export function createLingStackFileMutationToolExtension(options: PiRunnerRunOpt
             isError: !decision.approved || decision.handledResult.isError === true,
           });
         }
-        return originalWrite.execute(toolCallId, params, signal, onUpdate, ctx);
+        throw new Error("Ling Stack blocked write: the Host did not return a handled result.");
       },
       renderCall: originalWrite.renderCall,
       renderResult: originalWrite.renderResult,

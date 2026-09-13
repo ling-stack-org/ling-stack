@@ -12,13 +12,24 @@ import {
 } from "@ling-stack/core";
 import type {
   HarnessMode,
+  HarnessToolExecutorKind,
   HarnessToolExecutionFailureCode,
   HarnessToolExecutionV1,
 } from "@ling-stack/contracts";
 import type { PiRunnerApprovalRequest, PiRunnerToolHandledResult } from "@ling-stack/runner-pi";
 import type { NativeRestrictedCommandRuntime } from "../../../runtime/sandbox/restricted-command-runtime.js";
 import { isRecord } from "../../../shared/validation.js";
+import {
+  appendExecutionActionArtifactEvents,
+  createExecutionActionResultArtifact,
+} from "../../runs/action-artifacts.js";
+import { applyPatchActionDraft } from "../../runs/patch-actions.js";
 import { createUnifiedExecDeniedResult, executeUnifiedBashTool } from "../../runs/unified-exec.js";
+import {
+  createFileMutationRecoveryBasis,
+  type FileMutationActionDraft,
+  type FileMutationRecoveryBasis,
+} from "./executors/file-mutation.js";
 
 const TOOL_EXECUTION_LEASE_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -33,6 +44,27 @@ export interface HarnessBashToolContext {
   readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
 }
 
+export interface HarnessFileMutationToolContext {
+  readonly mode: HarnessMode;
+  readonly store: RunStore;
+  readonly sourceFence?: RuntimeAttemptFenceV1;
+  readonly run: RunSession;
+  readonly request: PiRunnerApprovalRequest;
+  readonly draft: FileMutationActionDraft;
+  readonly allowedWritePaths: readonly string[];
+  readonly approvalId?: string;
+  readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
+  readonly previewArtifactIds?: readonly string[];
+  readonly appendAndMaybeStream: RunEventEmitter;
+  readonly signal?: AbortSignal;
+  readonly requireExistingParentsForAdds?: boolean;
+}
+
+export interface HarnessToolContext extends HarnessBashToolContext {
+  readonly executorKind: HarnessToolExecutorKind;
+  readonly recoveryBasis?: FileMutationRecoveryBasis;
+}
+
 export async function executeHarnessedBashTool(input: HarnessBashToolContext & {
   readonly restrictedCommandRuntime?: NativeRestrictedCommandRuntime;
   readonly appendAndMaybeStream: RunEventEmitter;
@@ -42,8 +74,9 @@ export async function executeHarnessedBashTool(input: HarnessBashToolContext & {
 }): Promise<PiRunnerToolHandledResult> {
   if (input.mode === "off") return executeUnifiedBashTool(input);
   let execution: HarnessToolExecutionV1 | undefined;
+  const context: HarnessToolContext = { ...input, executorKind: "bash" };
   try {
-    execution = prepareApprovedExecution(input);
+    execution = prepareApprovedExecution(context);
     if (isTerminal(execution.state)) {
       return createUnifiedExecDeniedResult({
         toolCallId: input.request.toolCallId,
@@ -58,7 +91,8 @@ export async function executeHarnessedBashTool(input: HarnessBashToolContext & {
         reason: "tool_approval_pending: Tool execution cannot start before its durable approval is resolved.",
       });
     }
-    execution = claimExecution(input, execution);
+    assertPolicySnapshotCurrent(context);
+    execution = claimExecution(context, execution);
     const started = input.store.startHarnessToolExecution({
       executionId: execution.id,
       expectedRevision: execution.revision,
@@ -70,6 +104,9 @@ export async function executeHarnessedBashTool(input: HarnessBashToolContext & {
     if (!started.ok) throw brokerMutationError("start", started.code);
     execution = started.value;
   } catch (error) {
+    if (execution?.state === "approved") {
+      failExecutionBeforeStart(context, execution, "tool.policy_denied", { reason: formatError(error) });
+    }
     if (input.mode === "shadow" && execution === undefined
       && !input.store.findHarnessToolExecution(input.sourceFence.attemptId, input.request.toolCallId)) {
       return executeUnifiedBashTool(input);
@@ -103,13 +140,115 @@ export async function executeHarnessedBashTool(input: HarnessBashToolContext & {
   } catch (error) {
     const current = input.store.getHarnessToolExecution(execution.id);
     if (current && !isTerminal(current.state)) {
-      commitUnknownOutcome(input, current, durableResult, error);
+      commitUnknownOutcome(context, current, durableResult, error);
     }
     throw error;
   }
 }
 
+export async function executeHarnessedFileMutationTool(
+  input: HarnessFileMutationToolContext,
+): Promise<PiRunnerToolHandledResult> {
+  if (input.mode === "off") return executeFileMutationDirectly(input);
+  if (!input.sourceFence) {
+    return createFileMutationDeniedResult(input, "stale_run_execution: File mutation requires the captured source Attempt.");
+  }
+  const context: HarnessToolContext = {
+    mode: input.mode,
+    store: input.store,
+    sourceFence: input.sourceFence,
+    run: input.run,
+    request: input.request,
+    approvalId: input.approvalId,
+    effectivePolicySnapshot: input.effectivePolicySnapshot,
+    executorKind: input.draft.executorKind,
+    recoveryBasis: createFileMutationRecoveryBasis(input.draft),
+  };
+  let execution: HarnessToolExecutionV1 | undefined;
+  try {
+    execution = prepareApprovedExecution(context);
+    const blocked = executionStartRejection(input, execution);
+    if (blocked) return blocked;
+    assertPolicySnapshotCurrent(context);
+    execution = claimExecution(context, execution);
+    execution = startExecution(context, execution);
+  } catch (error) {
+    if (execution?.state === "approved") {
+      failExecutionBeforeStart(context, execution, "tool.policy_denied", { reason: formatError(error) });
+    }
+    if (input.mode === "shadow" && execution === undefined
+      && !input.store.findHarnessToolExecution(input.sourceFence.attemptId, input.request.toolCallId)) {
+      return executeFileMutationDirectly(input);
+    }
+    return createFileMutationDeniedResult(input, `tool_broker_prepare_failed: ${formatError(error)}`);
+  }
+
+  try {
+    const applied = await applyPatchActionDraft({
+      draft: input.draft,
+      cwd: input.request.cwd,
+      allowedWritePaths: input.allowedWritePaths,
+      previewArtifactIds: input.previewArtifactIds,
+      provenance: {
+        store: input.store,
+        run: input.run,
+        executionId: execution.id,
+        toolCallId: input.request.toolCallId,
+        approvalId: input.approvalId,
+      },
+      signal: input.signal,
+      requireExistingParentsForAdds: input.requireExistingParentsForAdds,
+    });
+    const resultArtifact = createFileMutationResultEvidence(input, execution, applied.resultArtifactContent);
+    if (!resultArtifact) throw new Error("tool_evidence_result_artifact_missing");
+    const evidenceArtifactIds = [...new Set([...applied.evidenceArtifactIds, resultArtifact.id])];
+    const resultSummary = fileMutationResultSummary(applied.handledResult, applied.outcome, evidenceArtifactIds.length);
+    const outcome = fileMutationExecutionOutcome(applied.handledResult, applied.outcome);
+    finishExecution(context, execution, {
+      nextState: outcome.state,
+      failureCode: outcome.failureCode,
+      resultDigest: digestHarnessToolValue(resultSummary),
+      resultSummary,
+      evidenceArtifactIds,
+    });
+    return applied.handledResult;
+  } catch (error) {
+    const current = input.store.getHarnessToolExecution(execution.id);
+    if (current && !isTerminal(current.state)) {
+      commitUnknownOutcome(context, current, undefined, error);
+    }
+    throw error;
+  }
+}
+
+export function createFileMutationDeniedResult(
+  input: Pick<HarnessFileMutationToolContext, "request" | "approvalId">,
+  reason: string,
+): PiRunnerToolHandledResult {
+  const separator = reason.indexOf(":");
+  const code = separator > 0 ? reason.slice(0, separator) : undefined;
+  return {
+    isError: true,
+    content: [{ type: "text", text: reason }],
+    details: {
+      status: "denied",
+      toolCallId: input.request.toolCallId,
+      approvalId: input.approvalId,
+      reason,
+      ...(code ? { code } : {}),
+    },
+  };
+}
+
 export function prepareHarnessBashApproval(input: HarnessBashToolContext & {
+  readonly approvalState: "approval_pending" | "denied";
+  readonly failureCode?: Extract<HarnessToolExecutionFailureCode, "tool.policy_denied" | "tool.approval_denied">;
+  readonly resultSummary?: Readonly<Record<string, unknown>>;
+}): HarnessToolExecutionV1 | undefined {
+  return prepareHarnessToolApproval({ ...input, executorKind: "bash" });
+}
+
+export function prepareHarnessToolApproval(input: HarnessToolContext & {
   readonly approvalState: "approval_pending" | "denied";
   readonly failureCode?: Extract<HarnessToolExecutionFailureCode, "tool.policy_denied" | "tool.approval_denied">;
   readonly resultSummary?: Readonly<Record<string, unknown>>;
@@ -130,6 +269,14 @@ export function prepareHarnessBashApproval(input: HarnessBashToolContext & {
 }
 
 export function resolveHarnessBashApproval(input: HarnessBashToolContext & {
+  readonly nextState: "approved" | "denied" | "cancelled";
+  readonly failureCode?: Extract<HarnessToolExecutionFailureCode, "tool.approval_denied" | "tool.execution_cancelled">;
+  readonly resultSummary?: Readonly<Record<string, unknown>>;
+}): HarnessToolExecutionV1 | undefined {
+  return resolveHarnessToolApproval({ ...input, executorKind: "bash" });
+}
+
+export function resolveHarnessToolApproval(input: HarnessToolContext & {
   readonly nextState: "approved" | "denied" | "cancelled";
   readonly failureCode?: Extract<HarnessToolExecutionFailureCode, "tool.approval_denied" | "tool.execution_cancelled">;
   readonly resultSummary?: Readonly<Record<string, unknown>>;
@@ -164,26 +311,25 @@ export function failHarnessBashBeforeExecution(input: HarnessBashToolContext & {
   readonly failureCode: HarnessToolExecutionFailureCode;
   readonly resultSummary?: Readonly<Record<string, unknown>>;
 }): HarnessToolExecutionV1 | undefined {
+  return failHarnessToolBeforeExecution({ ...input, executorKind: "bash" });
+}
+
+export function failHarnessToolBeforeExecution(input: HarnessToolContext & {
+  readonly failureCode: HarnessToolExecutionFailureCode;
+  readonly resultSummary?: Readonly<Record<string, unknown>>;
+}): HarnessToolExecutionV1 | undefined {
   if (input.mode === "off") return undefined;
   const current = input.store.findHarnessToolExecution(input.sourceFence.attemptId, input.request.toolCallId);
   if (!current) {
     if (input.mode === "enforce") throw new Error("tool_execution_identity_missing");
     return undefined;
   }
-  const failed = input.store.failApprovedHarnessToolExecution({
-    executionId: current.id,
-    expectedRevision: current.revision,
-    sourceFence: input.sourceFence,
-    nextState: input.failureCode === "tool.stale_attempt" ? "superseded" : "failed",
-    failureCode: input.failureCode,
-    resultSummary: input.resultSummary,
-    now: new Date().toISOString(),
-  });
-  if (!failed.ok) {
-    if (input.mode === "enforce") throw brokerMutationError("fail_before_execution", failed.code);
+  try {
+    return failExecutionBeforeStart(input, current, input.failureCode, input.resultSummary);
+  } catch (error) {
+    if (input.mode === "enforce") throw error;
     return undefined;
   }
-  return failed.value;
 }
 
 export function harnessToolBrokerModeForRun(run: RunSession): HarnessMode {
@@ -197,7 +343,7 @@ export function effectivePolicySnapshotForHarnessRun(run: RunSession): Effective
   return run.requestSnapshot.effectivePolicySnapshot as unknown as EffectiveRunPolicySnapshot;
 }
 
-function prepareApprovedExecution(input: HarnessBashToolContext): HarnessToolExecutionV1 {
+function prepareApprovedExecution(input: HarnessToolContext): HarnessToolExecutionV1 {
   const existing = input.store.findHarnessToolExecution(input.sourceFence.attemptId, input.request.toolCallId);
   if (existing) return existing;
   return input.store.prepareHarnessToolExecution({
@@ -206,7 +352,7 @@ function prepareApprovedExecution(input: HarnessBashToolContext): HarnessToolExe
   }).execution;
 }
 
-function prepareBasis(input: HarnessBashToolContext) {
+function prepareBasis(input: HarnessToolContext) {
   const policySnapshot = input.effectivePolicySnapshot ?? effectivePolicySnapshotForHarnessRun(input.run);
   if (!policySnapshot) throw new Error("tool_policy_snapshot_missing");
   const requestDigest = digestHarnessToolValue({
@@ -250,6 +396,8 @@ function prepareBasis(input: HarnessBashToolContext) {
     sideEffectFingerprint,
     mode: input.mode,
     policySnapshot,
+    executorKind: input.executorKind,
+    recoveryBasis: input.recoveryBasis,
   });
   return {
     runId: input.run.id,
@@ -258,7 +406,7 @@ function prepareBasis(input: HarnessBashToolContext) {
     supersedesExecutionId: priorApprovalExecution?.id,
     toolCallId: input.request.toolCallId,
     toolName: input.request.toolName,
-    executorKind: "bash" as const,
+    executorKind: input.executorKind,
     requestDigest,
     sideEffectFingerprint,
     policySnapshotArtifactId: policySnapshotArtifact.id,
@@ -277,17 +425,20 @@ function ensurePolicySnapshotArtifact(input: {
   readonly sideEffectFingerprint: string;
   readonly mode: HarnessMode;
   readonly policySnapshot: EffectiveRunPolicySnapshot;
+  readonly executorKind: HarnessToolExecutorKind;
+  readonly recoveryBasis?: FileMutationRecoveryBasis;
 }): RunArtifact {
   const sealedPayload = {
     schemaVersion: 1,
     runId: input.run.id,
     attemptId: input.attemptId,
     toolCallId: input.toolCallId,
-    executorKind: "bash",
+    executorKind: input.executorKind,
     brokerMode: input.mode,
     requestDigest: input.requestDigest,
     sideEffectFingerprint: input.sideEffectFingerprint,
     effectivePolicySnapshot: input.policySnapshot,
+    ...(input.recoveryBasis ? { fileMutationRecovery: input.recoveryBasis } : {}),
   };
   const identity = digestHarnessToolValue(sealedPayload);
   const artifactId = `artifact_harness_tool_policy_${identity.slice(0, 32)}`;
@@ -316,7 +467,7 @@ function ensurePolicySnapshotArtifact(input: {
   }
 }
 
-function claimExecution(input: HarnessBashToolContext, current: HarnessToolExecutionV1): HarnessToolExecutionV1 {
+function claimExecution(input: HarnessToolContext, current: HarnessToolExecutionV1): HarnessToolExecutionV1 {
   if (current.state !== "approved" && current.state !== "claimed") {
     throw new Error(`tool_execution_not_claimable:${current.state}`);
   }
@@ -333,6 +484,185 @@ function claimExecution(input: HarnessBashToolContext, current: HarnessToolExecu
   });
   if (!claimed.ok) throw brokerMutationError("claim", claimed.code);
   return claimed.value;
+}
+
+function startExecution(input: HarnessToolContext, execution: HarnessToolExecutionV1): HarnessToolExecutionV1 {
+  const started = input.store.startHarnessToolExecution({
+    executionId: execution.id,
+    expectedRevision: execution.revision,
+    claimOwner: execution.claimOwner!,
+    claimToken: execution.claimToken!,
+    sourceFence: input.sourceFence,
+    now: new Date().toISOString(),
+  });
+  if (!started.ok) throw brokerMutationError("start", started.code);
+  return started.value;
+}
+
+function executionStartRejection(
+  input: Pick<HarnessFileMutationToolContext, "request" | "approvalId">,
+  execution: HarnessToolExecutionV1,
+): PiRunnerToolHandledResult | undefined {
+  if (isTerminal(execution.state)) {
+    return createFileMutationDeniedResult(input, `tool_execution_already_terminal: ${execution.state}`);
+  }
+  if (execution.state === "approval_pending") {
+    return createFileMutationDeniedResult(
+      input,
+      "tool_approval_pending: Tool execution cannot start before its durable approval is resolved.",
+    );
+  }
+  return undefined;
+}
+
+function assertPolicySnapshotCurrent(input: HarnessToolContext): void {
+  const snapshot = input.effectivePolicySnapshot ?? effectivePolicySnapshotForHarnessRun(input.run);
+  if (!snapshot) throw new Error("tool_policy_snapshot_missing");
+  if (input.store.getApprovalPolicy().updatedAt !== snapshot.workspacePolicyUpdatedAt) {
+    throw new Error("tool_policy_changed: Workspace policy changed after this Run captured its execution authority.");
+  }
+}
+
+function failExecutionBeforeStart(
+  input: HarnessToolContext,
+  current: HarnessToolExecutionV1,
+  failureCode: HarnessToolExecutionFailureCode,
+  resultSummary?: Readonly<Record<string, unknown>>,
+): HarnessToolExecutionV1 {
+  const failed = input.store.failApprovedHarnessToolExecution({
+    executionId: current.id,
+    expectedRevision: current.revision,
+    sourceFence: input.sourceFence,
+    nextState: failureCode === "tool.stale_attempt" ? "superseded" : "failed",
+    failureCode,
+    resultSummary,
+    now: new Date().toISOString(),
+  });
+  if (!failed.ok) throw brokerMutationError("fail_before_execution", failed.code);
+  return failed.value;
+}
+
+async function executeFileMutationDirectly(input: HarnessFileMutationToolContext): Promise<PiRunnerToolHandledResult> {
+  const applied = await applyPatchActionDraft({
+    draft: input.draft,
+    cwd: input.request.cwd,
+    allowedWritePaths: input.allowedWritePaths,
+    previewArtifactIds: input.previewArtifactIds,
+    provenance: {
+      store: input.store,
+      run: input.run,
+      toolCallId: input.request.toolCallId,
+      approvalId: input.approvalId,
+    },
+    signal: input.signal,
+    requireExistingParentsForAdds: input.requireExistingParentsForAdds,
+  });
+  if (input.approvalId) createFileMutationResultEvidence(input, undefined, applied.resultArtifactContent);
+  return applied.handledResult;
+}
+
+function createFileMutationResultEvidence(
+  input: HarnessFileMutationToolContext,
+  execution: HarnessToolExecutionV1 | undefined,
+  content: string,
+): RunArtifact | undefined {
+  const approval = input.approvalId ? input.store.getApprovalRequest(input.approvalId) : undefined;
+  if (approval) {
+    const artifact = createExecutionActionResultArtifact({
+      store: input.store,
+      run: input.run,
+      approval,
+      filename: "patch-result.json",
+      type: "json",
+      title: `Patch result: ${input.draft.plan.touchedPaths.join(", ")}`,
+      contentType: "application/json",
+      content,
+      now: new Date().toISOString(),
+    });
+    appendExecutionActionArtifactEvents({
+      artifacts: [artifact],
+      approval,
+      role: "result",
+      appendAndMaybeStream: input.appendAndMaybeStream,
+    });
+    return artifact;
+  }
+  if (!execution) return undefined;
+  const sealedPayload = JSON.parse(content) as unknown;
+  const artifactId = `artifact_harness_tool_result_${safeSegment(execution.id)}`;
+  const existing = input.store.getArtifact(artifactId);
+  if (existing) return existing;
+  return input.store.createArtifact({
+    id: artifactId,
+    runId: input.run.id,
+    type: "json",
+    path: `harness/tool-executions/${safeSegment(execution.attemptId)}/${safeSegment(execution.toolCallId)}/result.json`,
+    title: `Harness file mutation result: ${input.request.toolName}`,
+    contentType: "application/json",
+    sealedPayload,
+    createdAt: new Date().toISOString(),
+  });
+}
+
+function fileMutationResultSummary(
+  handled: PiRunnerToolHandledResult,
+  outcome: "applied" | "not_applied" | "rolled_back" | "diverged",
+  artifactCount: number,
+): Readonly<Record<string, unknown>> {
+  const details = isRecord(handled.details) ? handled.details : {};
+  return {
+    status: typeof details.status === "string" ? details.status : handled.isError ? "failed" : "applied",
+    outcome,
+    touchedPaths: Array.isArray(details.touchedPaths)
+      ? details.touchedPaths.filter((path): path is string => typeof path === "string").slice(0, 256)
+      : [],
+    artifactCount,
+    cancelled: details.cancelled === true,
+  };
+}
+
+function fileMutationExecutionOutcome(
+  handled: PiRunnerToolHandledResult,
+  outcome: "applied" | "not_applied" | "rolled_back" | "diverged",
+): {
+  readonly state: "succeeded" | "failed" | "cancelled" | "unknown_outcome";
+  readonly failureCode?: HarnessToolExecutionFailureCode;
+} {
+  if (outcome === "applied" && handled.isError !== true) return { state: "succeeded" };
+  if (outcome === "diverged") return { state: "unknown_outcome", failureCode: "tool.unknown_side_effect_outcome" };
+  if (isRecord(handled.details) && handled.details.cancelled === true) {
+    return { state: "cancelled", failureCode: "tool.execution_cancelled" };
+  }
+  return { state: "failed", failureCode: "tool.executor_failed" };
+}
+
+function finishExecution(
+  input: HarnessToolContext,
+  execution: HarnessToolExecutionV1,
+  result: {
+    readonly nextState: "succeeded" | "failed" | "cancelled" | "unknown_outcome";
+    readonly resultDigest: string;
+    readonly resultSummary: Readonly<Record<string, unknown>>;
+    readonly evidenceArtifactIds: readonly string[];
+    readonly failureCode?: HarnessToolExecutionFailureCode;
+  },
+): void {
+  const current = input.store.getHarnessToolExecution(execution.id);
+  if (!current || isTerminal(current.state)) return;
+  const finished = input.store.finishHarnessToolExecution({
+    executionId: current.id,
+    expectedRevision: current.revision,
+    claimOwner: current.claimOwner!,
+    claimToken: current.claimToken!,
+    sourceFence: input.sourceFence,
+    nextState: result.nextState,
+    resultDigest: result.resultDigest,
+    resultSummary: result.resultSummary,
+    evidenceArtifactIds: result.evidenceArtifactIds,
+    failureCode: result.failureCode,
+    now: new Date().toISOString(),
+  });
+  if (!finished.ok) throw brokerMutationError("finish", finished.code);
 }
 
 function finishFromHandledResult(
@@ -365,7 +695,7 @@ function finishFromHandledResult(
 }
 
 function commitUnknownOutcome(
-  input: HarnessBashToolContext,
+  input: HarnessToolContext,
   current: HarnessToolExecutionV1,
   durableResult: PiRunnerToolHandledResult | undefined,
   error: unknown,

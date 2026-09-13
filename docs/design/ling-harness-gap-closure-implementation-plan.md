@@ -1079,10 +1079,30 @@ Synthesized from this review's findings. Each task derives from a specific revie
   - Verified: daemon build; Harness/Core/broker focused suite 31/31 and the existing
     approval, restart recovery, command journal, cancellation, output, and execution-action
     regression set 152/152 pass.
-- [ ] **T6 (P0, human: ~2 days / CC: ~75 min)** — File mutation authority — Add daemon apply-patch/write executors and remove Pi native fallback in enforce mode.
+- [x] **T6 (P0, human: ~2 days / CC: ~75 min)** — File mutation authority — Add daemon apply-patch/write executors and remove Pi native fallback in enforce mode.
   - Surfaced by: `packages/runner-pi/src/extensions/file-mutation.ts:16` and G11-G13.
   - Files: daemon harness executors, core patch helpers, runner-pi extension.
   - Verify: traversal, symlink, divergence, large output, and redaction tests.
+  - Implemented: Pi `edit` and `write` now fail closed unless Host returns a handled
+    result. Daemon native write, exact edit, and Codex-compatible apply-patch share one
+    Attempt-fenced ToolExecution lifecycle with approval linkage, policy snapshot,
+    stable execution identity, patch/result/provenance evidence, and hash-only recovery
+    basis. Typed `file_create` remains existing-parent and no-clobber; patch-shaped typed
+    create cannot downgrade into the ordinary replacement writer.
+  - Safety: execution rechecks cancellation, workspace policy, lexical scope, symlink
+    resolution, and `.ling-stack` exclusion immediately before effects. Updates use
+    same-directory fsynced atomic replacement while preserving executable mode; creates
+    use a hard-link no-clobber publish. Partial multi-file failure rolls back only this
+    execution's verified postimages; concurrent external changes become `diverged`
+    instead of being overwritten.
+  - Recovery: expired file ToolExecutions classify durable pre/post hashes as
+    `not_applied -> failed`, `applied -> succeeded`, or `diverged -> unknown_outcome`.
+    The state transition and evidence refs commit in one SQLite transaction. Shell and
+    unclassifiable effects retain the conservative `unknown_outcome` fallback.
+  - Verified: Runner Pi 182/182, Core Harness/ToolExecution 24/24, Daemon
+    broker/approval/workflow/patch/recovery 233/233, and the narrow H06 boundary matrix
+    41/41 pass. Runner/Core/Daemon builds and `git diff --check` pass. Full repository and
+    packaged macOS acceptance remain part of the final combined gate, not T6 evidence.
 - [ ] **T7 (P1, human: ~1 day / CC: ~45 min)** — Runner tool conformance — Gate native runner tools on approval, sandbox, evidence, cancellation, and fencing parity.
   - Surfaced by: Architecture D3 and Codex tool-orchestrator audit.
   - Files: runner registry/conformance tests and daemon broker adapters.
@@ -1154,7 +1174,7 @@ This plan is being implemented on the existing `codex/reasoning-summary-autorevi
 | Domain | Current branch evidence | Adoption verdict |
 | --- | --- | --- |
 | Continuation | Manual resume, queued follow-up, interrupt redirect, approval resume, immutable prepared input, context-view lineage, fresh Attempts, and stale-completion fences already exist. `RunnerAdapter.resumeTask()` is declared but has no production caller. | Reuse current lineage and recovery. Add the durable strategy/claim record and native-resume gate; do not rebuild Continuity or approval resume. |
-| Tool execution | Migration 136, the daemon bash broker, Attempt fencing, approval recovery supersession, crash-window reconciliation, atomic artifact refs, and the `ExecutionAction` evidence projection are implemented. Plain Pi `edit` and `write` still fall back to runner-native implementations after approval. | T5 is complete. Continue with T6 to move apply-patch/write behind daemon executors and delete the runner-native mutation fallback in enforce mode. |
+| Tool execution | Migration 136, the daemon bash/file broker, Attempt fencing, approval recovery supersession, crash-window reconciliation, atomic artifact refs, and the `ExecutionAction` evidence projection are implemented. Pi `edit` and `write` fail closed without a Host handled result; daemon executors own native write, exact edit, and apply-patch effects. | T5 and T6 are complete. Continue with T7 to reject external runners that cannot prove the same approval, sandbox, cancellation, fencing, and evidence behavior. |
 | Evaluation | Skill regression and channel-team evaluation models exist, but no generic run/suite/case/baseline/grade lineage exists. | Reuse grader and artifact utilities only. Add a generic append-only evaluation domain without changing completed Run status. |
 | Delegation | Accepted workflow graphs, participant manifests, required-evidence fan-in, step completion gates, and child presentation exist. Runtime `spawn/message/wait/interrupt/resume` and a restartable child tree do not. | Keep the workflow graph immutable. Add only the Step-scoped durable delegation overlay and root-budget/subset gates. |
 | Queue and recovery | Runtime semaphores, approval-review WorkUnits, leases, attempts, EventHub wake-up, and startup recovery patterns exist. | Reuse the WorkUnit/Attempt and claim patterns. Do not add a second scheduler framework or in-memory authority. |

@@ -7,6 +7,7 @@ import test from "node:test";
 import {
   createSqliteRunStore,
   DEFAULT_WORKSPACE_ID,
+  digestHarnessToolValue,
   resolveRuntimePaths,
   toRuntimeAttemptFence,
 } from "../dist/index.js";
@@ -322,6 +323,90 @@ test("expired executing claims become unknown_outcome and cannot be blindly retr
   assert.equal(f.store.claimHarnessToolExecution({ executionId: prepared.execution.id, expectedRevision: 3,
     claimOwner: "daemon", claimToken: "claim-retry", claimExpiresAt: expires,
     sourceFence: f.input.sourceFence, now: later }).code, "invalid_transition");
+});
+
+for (const [name, nextState, failureCode] of [
+  ["applied", "succeeded", undefined],
+  ["not_applied", "failed", "tool.executor_failed"],
+  ["diverged", "unknown_outcome", "tool.unknown_side_effect_outcome"],
+]) {
+  test(`expired claims atomically commit a classifier-proven ${name} outcome`, async (t) => {
+    const f = await fixture(t);
+    const prepared = f.store.prepareHarnessToolExecution(f.input);
+    assert.equal(f.store.claimHarnessToolExecution({ executionId: prepared.execution.id, expectedRevision: 0,
+      claimOwner: "daemon", claimToken: `claim-classified-${name}`, claimExpiresAt: expired,
+      sourceFence: f.input.sourceFence, now }).ok, true);
+    assert.equal(f.store.startHarnessToolExecution({ executionId: prepared.execution.id, expectedRevision: 1,
+      claimOwner: "daemon", claimToken: `claim-classified-${name}`,
+      sourceFence: f.input.sourceFence, now }).ok, true);
+    const artifact = f.store.createArtifact({
+      id: `artifact-recovery-${name}`,
+      runId: f.run.id,
+      type: "json",
+      path: `harness/recovery-${name}.json`,
+      sealedPayload: { outcome: name },
+      createdAt: later,
+    });
+    const summary = { status: nextState, outcome: name };
+
+    const [recovered] = f.store.reconcileAbandonedHarnessToolExecutions({
+      now: later,
+      classify: () => ({
+        nextState,
+        resultDigest: digestHarnessToolValue(summary),
+        resultSummary: summary,
+        evidenceArtifactIds: [artifact.id],
+        ...(failureCode ? { failureCode } : {}),
+      }),
+    });
+
+    assert.equal(recovered.state, nextState);
+    assert.equal(recovered.failureCode, failureCode);
+    assert.equal(recovered.resultDigest, digestHarnessToolValue(summary));
+    assert.deepEqual(recovered.resultSummary, summary);
+    assert.deepEqual(recovered.evidenceArtifactIds, [artifact.id]);
+  });
+}
+
+test("classifier evidence failure rolls recovery state and artifact refs back together", async (t) => {
+  const f = await fixture(t);
+  const prepared = f.store.prepareHarnessToolExecution(f.input);
+  assert.equal(f.store.claimHarnessToolExecution({ executionId: prepared.execution.id, expectedRevision: 0,
+    claimOwner: "daemon", claimToken: "claim-recovery-rollback", claimExpiresAt: expired,
+    sourceFence: f.input.sourceFence, now }).ok, true);
+  assert.equal(f.store.startHarnessToolExecution({ executionId: prepared.execution.id, expectedRevision: 1,
+    claimOwner: "daemon", claimToken: "claim-recovery-rollback",
+    sourceFence: f.input.sourceFence, now }).ok, true);
+  const artifact = f.store.createArtifact({
+    id: "artifact-recovery-rollback",
+    runId: f.run.id,
+    type: "json",
+    path: "harness/recovery-rollback.json",
+    sealedPayload: { outcome: "applied" },
+    createdAt: later,
+  });
+  const summary = { status: "succeeded", outcome: "applied" };
+  f.database.exec(`
+    CREATE TRIGGER reject_recovery_evidence
+    BEFORE INSERT ON harness_tool_execution_artifacts
+    BEGIN SELECT RAISE(ABORT, 'reject recovery evidence'); END;
+  `);
+
+  assert.throws(() => f.store.reconcileAbandonedHarnessToolExecutions({
+    now: later,
+    classify: () => ({
+      nextState: "succeeded",
+      resultDigest: digestHarnessToolValue(summary),
+      resultSummary: summary,
+      evidenceArtifactIds: [artifact.id],
+    }),
+  }), /reject recovery evidence/u);
+
+  const stored = f.store.getHarnessToolExecution(prepared.execution.id);
+  assert.equal(stored.state, "executing");
+  assert.equal(stored.revision, 2);
+  assert.equal(stored.resultDigest, undefined);
+  assert.deepEqual(stored.evidenceArtifactIds, []);
 });
 
 test("stale Attempt cannot commit success and is reconciled as unknown", async (t) => {

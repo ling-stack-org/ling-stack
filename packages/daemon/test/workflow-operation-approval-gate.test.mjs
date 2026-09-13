@@ -22,10 +22,10 @@ test("an approval wait cannot authorize a file whose path became a symlink", asy
   } finally { await f.close(); }
 });
 
-test("an approved multi-file patch is not applied when step ownership changes during the wait", async () => {
+test("an approved typed create is not applied when step ownership changes during the wait", async () => {
   const f = await fixture([typedOperation("file_create", "output.txt")]);
   try {
-    const result = await f.approve({ toolName: "write", input: { patchText: "*** Begin Patch\n*** Add File: output.txt\n+new\n*** End Patch" } }, () => {
+    const result = await f.approve({ toolName: "write", input: { path: "output.txt", content: "new" } }, () => {
       f.store.updateChannelWorkflowStep(f.step.id, { runId: null }, new Date().toISOString());
     });
     assert.equal(result.approved, false);

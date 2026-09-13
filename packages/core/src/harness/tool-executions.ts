@@ -148,6 +148,16 @@ export interface FailApprovedHarnessToolExecutionInput {
 export interface ReconcileAbandonedHarnessToolExecutionsInput {
   readonly now: string;
   readonly limit?: number;
+  /** Optional daemon-owned classifier for side effects that can be proven from durable pre/post images. */
+  readonly classify?: (execution: HarnessToolExecutionV1) => ReconciledHarnessToolExecutionOutcome | undefined;
+}
+
+export interface ReconciledHarnessToolExecutionOutcome {
+  readonly nextState: Extract<HarnessToolExecutionState, "succeeded" | "failed" | "unknown_outcome">;
+  readonly resultDigest: string;
+  readonly resultSummary: Readonly<Record<string, unknown>>;
+  readonly evidenceArtifactIds: readonly string[];
+  readonly failureCode?: HarnessToolExecutionFailureCode;
 }
 
 export type HarnessToolExecutionStoreErrorCode =

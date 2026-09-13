@@ -1,9 +1,10 @@
 ---
 status: in-progress
 branch: codex/reasoning-summary-autoreview-implementation
-timestamp: 2026-09-13T01:27:17+08:00
+timestamp: 2026-09-13T23:57:23+08:00
 files_modified:
   - docs/design/reasoning-summary-autoreview-execution-checkpoint.md
+  - docs/design/ling-harness-gap-closure-implementation-plan.md
 ---
 
 # 推理摘要与自动审核执行检查点
@@ -157,14 +158,30 @@ assistant_reasoning_summary {
 - 压缩失败处理、单次长任务压缩、Memory 召回与新鲜度、工具结果预算。
 - restricted command、HTML opener 和既定七项执行能力矩阵。
 
+### 3.4 Harness H06 文件变更权威
+
+已完成并有专项测试证据：
+
+- Pi 原生 `edit/write` fallback 已删除；Host 遗漏 `handledResult` 时 fail-closed，不再绕过 Ling。
+- Daemon 已统一接管 native write、exact edit 和 Codex-compatible apply-patch，并接入同一个 ToolExecution prepare/approval/claim/execute/evidence 生命周期。
+- typed `file_create` 使用 existing-parent、hard-link no-clobber；patch-shaped typed create 直接拒绝，不会退回普通覆盖写入。
+- 写入前重新核验取消、Attempt、policy、路径、symlink 和 `.ling-stack`；更新使用同目录 fsync + atomic rename，并保留文件执行权限。
+- 多文件部分失败只回滚本次已写入且仍匹配 postimage 的路径；外部并发修改触发 `diverged/unknown_outcome`，不会被覆盖。
+- 启动恢复使用 policy artifact 中的 hash-only pre/post basis，把过期文件执行区分为 `not_applied`、`applied`、`diverged`；状态和 evidence refs 在同一 SQLite 事务提交。
+- H06 证据：Runner Pi 182/182、Core Harness/ToolExecution 24/24、Daemon broker/approval/workflow/patch/recovery 233/233、窄边界 41/41；Runner/Core/Daemon build 与 `git diff --check` 通过。
+
+这部分尚未做完整仓库测试和 packaged macOS 验收，因此这里只声明 H06 实现完成，不声明整个 Harness 或总计划完成。
+
 ## 4. 下一步执行顺序
 
-1. 按 `conversation-codex-style-transcript-implementation-plan.md` §6.2 重新执行当前 HEAD 的 G-00–G-12 combined gates，记录基线、源码、行为、安全与合并质量证据。
-2. 对 Host capability/open viewer、既定七项执行能力、structured user-input lifecycle、native sandbox 后代停止与恢复、TerminalReport/fan-in/reconnect/restart 做真实正向和故障路径验证；修复当前 HEAD 可复现的问题。
-3. 运行完整 test、typecheck、build，以及 docs/i18n/public/security/license 检查；不得用本节专项测试替代全量 gate。
-4. 打包最新 macOS 客户端，使用真实 relay 完成普通会话、私聊、频道、多 Agent、审批、Allow similar commands、推理摘要四档、恢复、复制、最终总结和完整小项目案例。
-5. 每个 E6 案例保存 screenshot、`semantic-state.json`、`lineage.json`、脱敏日志和 `case.json`；必须记录 build hash、thread/run/attempt、model 与 `simulation=false`。
-6. 全部验证通过后，再评估如何受控同步或整理提交；仍不碰同事工作区、不推送、不创建 PR。
+1. 从 Harness T7/H07 继续：建立 external-runner tool conformance，默认禁用 runner-native mutation，故意不合规的 adapter 必须 fail-closed。
+2. 完成 Harness evaluation 与 dynamic delegation 剩余阶段，再按依赖顺序接入现有 Run/Attempt/Workflow 边界，不重建顶层 orchestrator。
+3. 按 `conversation-codex-style-transcript-implementation-plan.md` §6.2 重新执行当前 HEAD 的 G-00–G-12 combined gates，记录基线、源码、行为、安全与合并质量证据。
+4. 对 Host capability/open viewer、既定七项执行能力、structured user-input lifecycle、native sandbox 后代停止与恢复、TerminalReport/fan-in/reconnect/restart 做真实正向和故障路径验证；修复当前 HEAD 可复现的问题。
+5. 运行完整 test、typecheck、build，以及 docs/i18n/public/security/license 检查；不得用本节专项测试替代全量 gate。
+6. 打包最新 macOS 客户端，使用真实 relay 完成普通会话、私聊、频道、多 Agent、审批、Allow similar commands、推理摘要四档、恢复、复制、最终总结和完整小项目案例。
+7. 每个 E6 案例保存 screenshot、`semantic-state.json`、`lineage.json`、脱敏日志和 `case.json`；必须记录 build hash、thread/run/attempt、model 与 `simulation=false`。
+8. 全部验证通过后，再评估如何受控同步或整理提交；仍不碰同事工作区、不推送、不创建 PR。
 
 ## 5. 防止再次死循环的恢复协议
 
@@ -172,7 +189,7 @@ assistant_reasoning_summary {
 
 1. 先读本文。
 2. 用 `git rev-parse HEAD`、`git status --short` 和最近测试结果确认增量状态。
-3. 从第 4 节第一个未完成步骤继续；当前起点是 §6.2 的 G-00–G-12 combined gates。
+3. 从第 4 节第一个未完成步骤继续；当前唯一实现起点是 Harness T7/H07 external-runner tool conformance。
 4. 不重新浏览整套 Codex 推理摘要源码，不重新输出同一份设计总结。
 5. 只有以下情况才允许局部复查外部源码：
    - 本地依赖版本变化导致 API 与本文不一致；
