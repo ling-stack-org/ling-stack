@@ -6,10 +6,24 @@ import type {
   RunEvaluationV1,
   RunnerContinuationV1,
 } from "@ling-stack/contracts";
+import type {
+  ClaimRunnerContinuationInput,
+  FinishRunnerContinuationInput,
+  ListClaimableRunnerContinuationsInput,
+  PrepareContinuationInput,
+  PreparedContinuation,
+  RunnerContinuationMutationResult,
+  StartRunnerContinuationInput,
+} from "./continuations.js";
 
 export interface RunnerContinuationStore {
   getRunnerContinuation(id: string): RunnerContinuationV1 | undefined;
   findRunnerContinuationByIdempotencyKey(idempotencyKey: string): RunnerContinuationV1 | undefined;
+  listClaimableRunnerContinuations(input: ListClaimableRunnerContinuationsInput): readonly RunnerContinuationV1[];
+  prepareContinuationAndAttempt(input: PrepareContinuationInput): PreparedContinuation;
+  claimRunnerContinuation(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult;
+  startRunnerContinuation(input: StartRunnerContinuationInput): RunnerContinuationMutationResult;
+  finishRunnerContinuation(input: FinishRunnerContinuationInput): RunnerContinuationMutationResult;
 }
 
 export interface HarnessToolExecutionStore {

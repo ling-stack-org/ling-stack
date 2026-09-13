@@ -110,6 +110,8 @@ export type DelegationFailureCode = (typeof DELEGATION_FAILURE_CODES)[number];
 
 export interface HarnessLeaseV1 {
   readonly claimOwner?: string;
+  /** Unique claim generation. Prevents ABA when a restarted worker reuses an owner id. */
+  readonly claimToken?: string;
   readonly claimExpiresAt?: string;
   readonly nextAttemptAt?: string;
 }

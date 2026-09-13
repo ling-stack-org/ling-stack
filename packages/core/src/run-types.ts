@@ -36,7 +36,17 @@ import type {
   CreateSnapshotRestoreConfirmationInput,
   SnapshotRestoreConfirmation,
   ListSnapshotRestoreRequestsOptions,
+  RunnerContinuationV1,
 } from "@ling-stack/contracts";
+import type {
+  ClaimRunnerContinuationInput,
+  FinishRunnerContinuationInput,
+  ListClaimableRunnerContinuationsInput,
+  PrepareContinuationInput,
+  PreparedContinuation,
+  RunnerContinuationMutationResult,
+  StartRunnerContinuationInput,
+} from "./harness/continuations.js";
 import type {
   ApprovalActionType,
   ApprovalCommandRule,
@@ -1689,6 +1699,13 @@ export interface RunStore {
   createWorkUnitAttempt(input: CreateWorkUnitAttemptInput): WorkUnitAttempt;
   getWorkUnitAttempt(attemptId: string): WorkUnitAttempt | undefined;
   listWorkUnitAttempts(workUnitId: string): WorkUnitAttempt[];
+  getRunnerContinuation(id: string): RunnerContinuationV1 | undefined;
+  findRunnerContinuationByIdempotencyKey(idempotencyKey: string): RunnerContinuationV1 | undefined;
+  listClaimableRunnerContinuations(input: ListClaimableRunnerContinuationsInput): readonly RunnerContinuationV1[];
+  prepareContinuationAndAttempt(input: PrepareContinuationInput): PreparedContinuation;
+  claimRunnerContinuation(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult;
+  startRunnerContinuation(input: StartRunnerContinuationInput): RunnerContinuationMutationResult;
+  finishRunnerContinuation(input: FinishRunnerContinuationInput): RunnerContinuationMutationResult;
   updateWorkUnitAttemptStatus(input: {
     readonly attemptId: string;
     readonly workUnitId: string;

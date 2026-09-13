@@ -314,6 +314,7 @@ context_snapshot_artifact_id
 runner_handle_ref               nullable opaque ref
 idempotency_key
 claim_owner
+claim_token                    unique lease generation; prevents same-owner ABA
 claim_expires_at
 next_attempt_at
 generation
@@ -349,7 +350,9 @@ native_resume handle rejected
 
 Transition rules:
 
-1. `prepared -> claimed` creates or binds a new target attempt in the same SQLite transaction.
+1. `prepareContinuationAndAttempt()` writes `prepared` and creates or binds the new target
+   Attempt in one SQLite transaction. `prepared -> claimed` only grants a token-fenced lease;
+   it never allocates another Attempt.
 2. A continuation cannot reuse a terminal or lost attempt's fence.
 3. `running -> succeeded` requires the current run, work unit, attempt, lease, and continuation generation to match.
 4. A native handle failure may fall back to deterministic replay once per generation. Repeated rejection becomes `continuation.handle_rejected`.
@@ -1030,10 +1033,13 @@ Synthesized from this review's findings. Each task derives from a specific revie
   - Surfaced by: Code Quality CQ1-CQ3.
   - Files: `packages/contracts/src/`, `packages/core/src/harness/`, `packages/daemon/src/features/harness/`.
   - Verify: contracts, core, and daemon package tests with every flag off.
-- [ ] **T2 (P0, human: ~1.5 days / CC: ~60 min)** — Continuation storage — Add migration 135, continuation store, idempotency, leases, and atomic attempt creation.
+- [x] **T2 (P0, human: ~1.5 days / CC: ~60 min)** — Continuation storage — Add migration 135, continuation store, idempotency, leases, and atomic attempt creation.
   - Surfaced by: Architecture D2 and test gaps G04-G06.
   - Files: core SQLite migrations/stores and harness continuation domain.
   - Verify: v134 migration, rerun, rollback, duplicate claim, and stale-fence tests.
+  - Implemented: migration 135, mapper/store, SQLite commit coordinator, explicit target
+    Attempt precondition, immutable replay checks, claim-token ABA fencing, and fenced
+    claim/start/finish transitions. Contracts 85/85 and Core 952/952 pass.
 - [ ] **T3 (P0, human: ~1.5 days / CC: ~60 min)** — Runner reconstruction — Implement native-resume gates and immutable deterministic replay.
   - Surfaced by: Architecture D2 and Codex resume reference audit.
   - Files: daemon harness continuation, runtime runners, runner conformance fixtures.

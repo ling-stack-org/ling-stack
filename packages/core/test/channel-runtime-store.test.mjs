@@ -2188,6 +2188,7 @@ test("sqlite runtime supervisor migration self-heals missing runtime tables whil
     const database = new DatabaseSync(databasePath);
     try {
       database.exec(`
+        DROP TABLE IF EXISTS runner_continuations;
         DROP TABLE IF EXISTS runtime_semaphore_slots;
         DROP TABLE IF EXISTS runtime_heartbeats;
         DROP TABLE IF EXISTS runtime_events;
