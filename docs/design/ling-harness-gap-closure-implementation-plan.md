@@ -1103,10 +1103,28 @@ Synthesized from this review's findings. Each task derives from a specific revie
     broker/approval/workflow/patch/recovery 233/233, and the narrow H06 boundary matrix
     41/41 pass. Runner/Core/Daemon builds and `git diff --check` pass. Full repository and
     packaged macOS acceptance remain part of the final combined gate, not T6 evidence.
-- [ ] **T7 (P1, human: ~1 day / CC: ~45 min)** — Runner tool conformance — Gate native runner tools on approval, sandbox, evidence, cancellation, and fencing parity.
+- [x] **T7 (P1, human: ~1 day / CC: ~45 min)** — Runner tool conformance — Gate native runner tools on approval, sandbox, evidence, cancellation, and fencing parity.
   - Surfaced by: Architecture D3 and Codex tool-orchestrator audit.
-  - Files: runner registry/conformance tests and daemon broker adapters.
-  - Verify: a deliberately non-conformant fake runner is rejected.
+  - Implemented: `RegisteredRunner` now carries an adapter revision, side-effect map,
+    and typed `RunnerToolExecutionConformanceV1` receipt. Registry resolution rejects
+    missing receipts, adapter revision drift, uncurated tools, unclassified side effects,
+    and missing evidence/abort/Attempt/workspace gates with a durable
+    `runner_tool_conformance_failed` fallback reason.
+  - External boundary: `codex-app-server` and `openclaw-acp` receipts curate only
+    `read/grep/find/ls`; runner-native mutation, shell, network, provider-secret,
+    delivery, and MCP effects stay disabled. The adapter repeats the receipt, requested
+    tool, side-effect, and revision checks when a backend proposal actually arrives.
+    `approvalBridgeVerified` is no longer hard-coded, and optional backend claims such as
+    approval bridge or native resume do not enable unsupported Ling behavior.
+  - Config/API: removed the external `conformancePassed` config escape hatch. Readiness
+    reports typed per-capability evidence and blocker codes instead of deriving every
+    safety claim from one boolean. The remaining `readinessPassed` flag only gates endpoint
+    bootstrap and cannot authorize a tool.
+  - Verified: Daemon build passes; external registry/readiness/adapter/bridge/conformance,
+    hydration, reconstruction, and approval-recovery focused tests 63/63 pass; Contracts
+    85/85, API client 52/52, Core fallback/migration 2/2, Web typecheck, and
+    `git diff --check` pass. Full repository and packaged macOS acceptance remain part of
+    the final combined gate.
 - [ ] **T8 (P1, human: ~1.5 days / CC: ~60 min)** — Evaluation foundation — Add migration 137, append-only records, scheduler, and deterministic rule grader.
   - Surfaced by: Architecture D4 and performance P1/P3.
   - Files: core evaluation domain/store and daemon evaluation scheduler.

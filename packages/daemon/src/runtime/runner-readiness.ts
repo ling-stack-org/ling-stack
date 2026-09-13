@@ -1,3 +1,10 @@
+import type {
+  RunnerReadinessBlocker,
+  RunnerReadinessBlockerCode,
+  RunnerReadinessReport,
+  RunnerReadinessSummary,
+  RunnerToolExecutionConformanceView,
+} from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../config.js";
 import { checkCodexAppServerReadiness } from "./adapters/codex-app-server.js";
 import { checkOpenClawAcpReadiness } from "./adapters/openclaw-acp.js";
@@ -8,50 +15,20 @@ import {
   OPENCLAW_ACP_RUNNER_ID,
   readExternalRunnerConfig,
 } from "./external-runners.js";
-import type { RegisteredRunner, RunnerRegistry } from "./runners.js";
+import {
+  resolveRunnerToolExecutionGate,
+  type RegisteredRunner,
+  type RunnerRegistry,
+  type RunnerToolExecutionGateBlocker,
+} from "./runners.js";
 
-export type RunnerReadinessStatus = "ready" | "blocked" | "degraded" | "unknown";
-
-export type RunnerReadinessBlockerCode =
-  | "feature_flag_disabled"
-  | "missing_endpoint"
-  | "endpoint_unreachable"
-  | "missing_capability_negotiation"
-  | "conformance_not_passed"
-  | "tool_surface_not_curated"
-  | "approval_bridge_not_verified"
-  | "workspace_boundary_not_verified"
-  | "artifact_import_not_verified"
-  | "sandbox_profile_missing"
-  | "sandbox_backend_unverified"
-  | "sandbox_artifact_import_unverified"
-  | "sandbox_network_policy_unverified"
-  | "sandbox_policy_unverified"
-  | "sandbox_os_unsupported"
-  | "sandbox_execution_wrapper_missing"
-  | "adapter_not_implemented";
-
-export interface RunnerReadinessBlocker {
-  readonly code: RunnerReadinessBlockerCode;
-  readonly message: string;
-}
-
-export interface RunnerReadinessSummary {
-  readonly status: RunnerReadinessStatus;
-  readonly checkedAt: string;
-  readonly blockingReasons: readonly RunnerReadinessBlocker[];
-}
-
-export interface RunnerReadinessReport extends RunnerReadinessSummary {
-  readonly runnerId: string;
-  readonly featureFlagEnabled: boolean;
-  readonly conformancePassed: boolean;
-  readonly endpointReachable?: boolean;
-  readonly capabilityNegotiated?: boolean;
-  readonly approvalBridgeVerified?: boolean;
-  readonly workspaceBoundaryVerified?: boolean;
-  readonly artifactImportVerified?: boolean;
-}
+export type {
+  RunnerReadinessBlocker,
+  RunnerReadinessBlockerCode,
+  RunnerReadinessReport,
+  RunnerReadinessStatus,
+  RunnerReadinessSummary,
+} from "@ling-stack/contracts";
 
 export interface RunnerReadinessOptions {
   readonly now?: string;
@@ -121,10 +98,7 @@ export function buildStaticRunnerReadinessReport(
       status: runner.status === "enabled" ? "ready" : "blocked",
       checkedAt,
       featureFlagEnabled: runner.status === "enabled",
-      conformancePassed: runner.status === "enabled",
-      approvalBridgeVerified: runner.status === "enabled",
-      workspaceBoundaryVerified: runner.status === "enabled",
-      artifactImportVerified: runner.status === "enabled",
+      toolExecutionConformance: buildToolExecutionConformanceView(runner, runner.status === "enabled"),
       blockingReasons: runner.status === "enabled" ? [] : [{ code: "adapter_not_implemented", message: runner.disabledReason ?? "Runner is disabled." }],
     };
   }
@@ -135,8 +109,8 @@ export function buildStaticRunnerReadinessReport(
   const featureFlagEnabled = runnerConfig.enabled === true;
   const endpointConfigured = Boolean(runnerConfig.endpoint);
   const readinessPassed = runnerConfig.readinessPassed === true;
-  const conformancePassed = runnerConfig.conformancePassed === true;
-  const sharedGatesVerified = conformancePassed;
+  const toolGate = resolveRunnerToolExecutionGate(runner, runner.supportedTools ?? []);
+  const toolConformanceBlockers = toolGate.blockers.filter((blocker) => blocker !== "runner_disabled");
 
   if (!featureFlagEnabled) {
     blockers.push({ code: "feature_flag_disabled", message: "Feature flag is disabled." });
@@ -151,14 +125,12 @@ export function buildStaticRunnerReadinessReport(
     blockers.push({ code: "endpoint_unreachable", message: "Runner readiness has not been confirmed." });
     blockers.push({ code: "missing_capability_negotiation", message: "Runner capability negotiation has not been confirmed." });
   }
-  if (!conformancePassed) {
-    blockers.push({ code: "conformance_not_passed", message: "Runner conformance has not passed." });
+  if (toolConformanceBlockers.length > 0) {
+    blockers.push({ code: "tool_conformance_not_passed", message: "Runner tool execution conformance has not passed." });
   }
-  if (!sharedGatesVerified) {
-    blockers.push({ code: "tool_surface_not_curated", message: "External runner tool surface has not been verified by conformance." });
-    blockers.push({ code: "approval_bridge_not_verified", message: "External runner approval bridge has not been verified by conformance." });
-    blockers.push({ code: "workspace_boundary_not_verified", message: "External runner workspace boundary has not been verified by conformance." });
-    blockers.push({ code: "artifact_import_not_verified", message: "External runner artifact import has not been verified by conformance." });
+  blockers.push(...toolConformanceBlockers.map(readinessBlockerFromToolGate));
+  if (!runner.toolExecutionConformance.artifactImportVerified) {
+    blockers.push({ code: "artifact_import_not_verified", message: "External runner artifact import is not verified." });
   }
 
   return finishReport({
@@ -166,14 +138,99 @@ export function buildStaticRunnerReadinessReport(
     status: "blocked",
     checkedAt,
     featureFlagEnabled,
-    conformancePassed,
     endpointReachable: endpointConfigured ? readinessPassed : false,
     capabilityNegotiated: endpointConfigured ? readinessPassed : false,
-    approvalBridgeVerified: sharedGatesVerified,
-    workspaceBoundaryVerified: sharedGatesVerified,
-    artifactImportVerified: sharedGatesVerified,
+    toolExecutionConformance: buildToolExecutionConformanceView(runner, toolConformanceBlockers.length === 0),
     blockingReasons: blockers,
   });
+}
+
+function buildToolExecutionConformanceView(
+  runner: RegisteredRunner,
+  verified: boolean,
+): RunnerToolExecutionConformanceView {
+  if (runner.executionBoundary === "embedded") {
+    return {
+      status: verified ? "verified" : "blocked",
+      adapterRevision: runner.adapterRevision,
+      receiptAdapterRevision: runner.adapterRevision,
+      curatedTools: runner.supportedTools ?? [],
+      toolSideEffects: runner.toolSideEffects,
+      allowedSideEffects: [...new Set(Object.values(runner.toolSideEffects))],
+      nativeSideEffectMode: "daemon_brokered",
+      toolSurfaceCurated: true,
+      approvalBridgeVerified: true,
+      sandboxBindingVerified: true,
+      evidenceCommitVerified: true,
+      abortPropagationVerified: true,
+      attemptFencingVerified: true,
+      workspaceBoundaryVerified: true,
+      artifactImportVerified: true,
+    };
+  }
+  const receipt = runner.toolExecutionConformance;
+  return {
+    status: verified ? "verified" : "blocked",
+    adapterRevision: runner.adapterRevision,
+    receiptAdapterRevision: receipt.adapterRevision,
+    curatedTools: receipt.curatedTools,
+    toolSideEffects: receipt.toolSideEffects,
+    allowedSideEffects: receipt.allowedSideEffects,
+    nativeSideEffectMode: receipt.nativeSideEffectMode,
+    toolSurfaceCurated: receipt.toolSurfaceCurated,
+    approvalBridgeVerified: receipt.approvalBridgeVerified,
+    sandboxBindingVerified: receipt.sandboxBindingVerified,
+    evidenceCommitVerified: receipt.evidenceCommitVerified,
+    abortPropagationVerified: receipt.abortPropagationVerified,
+    attemptFencingVerified: receipt.attemptFencingVerified,
+    workspaceBoundaryVerified: receipt.workspaceBoundaryVerified,
+    artifactImportVerified: receipt.artifactImportVerified,
+  };
+}
+
+function readinessBlockerFromToolGate(blocker: RunnerToolExecutionGateBlocker): RunnerReadinessBlocker {
+  const code = toolGateBlockerCode(blocker);
+  return { code, message: toolGateBlockerMessage(blocker) };
+}
+
+function toolGateBlockerCode(blocker: RunnerToolExecutionGateBlocker): RunnerReadinessBlockerCode {
+  switch (blocker) {
+    case "tool_conformance_revision_mismatch": return "tool_conformance_revision_mismatch";
+    case "tool_surface_not_curated":
+    case "tool_not_curated":
+    case "tool_side_effect_unclassified":
+    case "tool_side_effect_mismatch":
+    case "tool_side_effect_not_allowed": return "tool_surface_not_curated";
+    case "tool_side_effect_mode_unverified":
+    case "native_side_effects_disabled": return "tool_side_effect_mode_unverified";
+    case "approval_bridge_not_verified": return "approval_bridge_not_verified";
+    case "sandbox_binding_not_verified": return "sandbox_backend_unverified";
+    case "evidence_commit_not_verified": return "evidence_commit_not_verified";
+    case "abort_propagation_not_verified": return "abort_propagation_not_verified";
+    case "attempt_fencing_not_verified": return "attempt_fencing_not_verified";
+    case "workspace_boundary_not_verified": return "workspace_boundary_not_verified";
+    case "runner_disabled": return "tool_conformance_not_passed";
+  }
+}
+
+function toolGateBlockerMessage(blocker: RunnerToolExecutionGateBlocker): string {
+  switch (blocker) {
+    case "tool_conformance_revision_mismatch": return "Tool conformance receipt does not match the active adapter revision.";
+    case "tool_surface_not_curated": return "External runner tool surface is not curated.";
+    case "tool_not_curated": return "A registered external tool is absent from the conformance receipt.";
+    case "tool_side_effect_unclassified": return "An external tool has no side-effect classification.";
+    case "tool_side_effect_mismatch": return "The runner and receipt disagree about a tool side-effect class.";
+    case "tool_side_effect_not_allowed": return "An external tool side-effect class is outside the verified receipt.";
+    case "tool_side_effect_mode_unverified": return "External runner native side-effect mode is unverified.";
+    case "native_side_effects_disabled": return "External runner native side effects are disabled for the registered tool surface.";
+    case "approval_bridge_not_verified": return "External runner approval bridge is not verified.";
+    case "sandbox_binding_not_verified": return "External runner sandbox binding is not verified.";
+    case "evidence_commit_not_verified": return "External runner tool evidence commit is not verified.";
+    case "abort_propagation_not_verified": return "External runner abort propagation is not verified.";
+    case "attempt_fencing_not_verified": return "External runner Attempt fencing is not verified.";
+    case "workspace_boundary_not_verified": return "External runner workspace boundary is not verified.";
+    case "runner_disabled": return "Runner is disabled.";
+  }
 }
 
 async function checkExternalRunnerReadiness(

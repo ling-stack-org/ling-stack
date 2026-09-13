@@ -1285,6 +1285,13 @@ test("sqlite work units link run sessions and enforce CAS transitions", async ()
       channelId: channel.id,
       taskId: task.id,
       providerPresetId: "provider_runtime",
+      runnerId: "pi",
+      requestedRunnerId: "external-test",
+      effectiveRunnerId: "pi",
+      fallbackReason: {
+        code: "runner_tool_conformance_failed",
+        message: "External runner receipt does not authorize the requested tool.",
+      },
       idempotencyKey: "wu-key-1",
       createdByActor: "user",
       request: { prompt: task.prompt, apiKey: "secret-value" },
@@ -1292,6 +1299,8 @@ test("sqlite work units link run sessions and enforce CAS transitions", async ()
     });
     assert.equal(workUnit.status, "queued");
     assert.equal(workUnit.attemptCount, 0);
+    assert.equal(workUnit.fallbackReason?.code, "runner_tool_conformance_failed");
+    assert.equal(store.getWorkUnit(workUnit.id)?.fallbackReason?.code, "runner_tool_conformance_failed");
     assert.deepEqual(workUnit.request, { prompt: task.prompt, apiKey: "[REDACTED]" });
     assert.equal(
       store.findWorkUnitByIdempotency({
@@ -2188,6 +2197,7 @@ test("sqlite runtime supervisor migration self-heals missing runtime tables whil
     const database = new DatabaseSync(databasePath);
     try {
       database.exec(`
+        DROP TABLE IF EXISTS harness_tool_executions;
         DROP TABLE IF EXISTS runner_continuations;
         DROP TABLE IF EXISTS runtime_semaphore_slots;
         DROP TABLE IF EXISTS runtime_heartbeats;

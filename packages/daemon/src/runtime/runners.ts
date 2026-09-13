@@ -1,7 +1,22 @@
 import type { ApprovalActionType, RunnerFallbackPolicy, RunnerFallbackReason, RunnerRequestSource } from "@ling-stack/core";
-import type { RunnerToolHydrationCapability } from "@ling-stack/contracts";
+import type {
+  RunnerToolHydrationCapability,
+  RunnerToolSideEffectClass,
+} from "@ling-stack/contracts";
 import type { PiRunnerProviderApi } from "@ling-stack/runner-pi";
 import type { RunnerAdapter } from "../context.js";
+import {
+  createUnverifiedToolExecutionConformance,
+  resolveRunnerToolExecutionGate,
+  type RunnerToolExecutionConformanceV1,
+} from "./runner-tool-conformance.js";
+
+export { resolveRunnerToolExecutionGate };
+export type { RunnerToolExecutionConformanceV1 };
+export type {
+  RunnerToolExecutionGateBlocker,
+  RunnerToolExecutionGateV1,
+} from "./runner-tool-conformance.js";
 
 export const DEFAULT_RUNNER_ID = "pi";
 export const LEGACY_PI_RUNNER_ID = "pi-coding-agent";
@@ -18,6 +33,10 @@ export interface RegisteredRunner {
   readonly toolHydration?: RunnerToolHydrationCapability;
   readonly featureFlag?: string;
   readonly disabledReason?: string;
+  readonly executionBoundary: "embedded" | "external";
+  readonly adapterRevision: string;
+  readonly toolSideEffects: Readonly<Record<string, RunnerToolSideEffectClass>>;
+  readonly toolExecutionConformance: RunnerToolExecutionConformanceV1;
   readonly resumeCapabilities: RunnerResumeCapabilitiesV1;
   readonly nativeResumeConformance: RunnerNativeResumeConformanceV1;
 }
@@ -52,7 +71,19 @@ export interface RunnerNativeResumeGateV1 {
   readonly blockers: readonly RunnerNativeResumeGateBlocker[];
 }
 
-export type RunnerRegistrationInput = Omit<RegisteredRunner, "resumeCapabilities" | "nativeResumeConformance"> & {
+export type RunnerRegistrationInput = Omit<
+  RegisteredRunner,
+  | "executionBoundary"
+  | "adapterRevision"
+  | "toolSideEffects"
+  | "toolExecutionConformance"
+  | "resumeCapabilities"
+  | "nativeResumeConformance"
+> & {
+  readonly executionBoundary?: "embedded" | "external";
+  readonly adapterRevision?: string;
+  readonly toolSideEffects?: Readonly<Record<string, RunnerToolSideEffectClass>>;
+  readonly toolExecutionConformance?: RunnerToolExecutionConformanceV1;
   readonly resumeCapabilities?: RunnerResumeCapabilitiesV1;
   readonly nativeResumeConformance?: RunnerNativeResumeConformanceV1;
 };
@@ -107,11 +138,18 @@ export function normalizeRunnerId(id: string | undefined): string | undefined {
 }
 
 export function createRunnerRegistry(registrations: readonly RunnerRegistrationInput[], defaultRunnerId: string = DEFAULT_RUNNER_ID): RunnerRegistry {
-  const runners: readonly RegisteredRunner[] = registrations.map((runner) => ({
-    ...runner,
-    resumeCapabilities: runner.resumeCapabilities ?? noRunnerResumeCapabilities,
-    nativeResumeConformance: runner.nativeResumeConformance ?? unverifiedNativeResumeConformance(runner.id),
-  }));
+  const runners: readonly RegisteredRunner[] = registrations.map((runner) => {
+    const adapterRevision = runner.adapterRevision ?? `${runner.id}:adapter-unversioned:v1`;
+    return {
+      ...runner,
+      executionBoundary: runner.executionBoundary ?? "embedded",
+      adapterRevision,
+      toolSideEffects: runner.toolSideEffects ?? {},
+      toolExecutionConformance: runner.toolExecutionConformance ?? createUnverifiedToolExecutionConformance(adapterRevision),
+      resumeCapabilities: runner.resumeCapabilities ?? noRunnerResumeCapabilities,
+      nativeResumeConformance: runner.nativeResumeConformance ?? unverifiedNativeResumeConformance(runner.id),
+    };
+  });
   const byId = new Map<string, RegisteredRunner>();
   for (const runner of runners) {
     registerRunnerId(byId, runner.id, runner);
@@ -296,6 +334,13 @@ function getUnsupportedCapabilityReason(
     return {
       code: "unsupported_tool",
       message: `Runner ${runner.id} does not support tool ${unsupportedTool}.`,
+    };
+  }
+  const toolGate = resolveRunnerToolExecutionGate(runner, input.tools ?? []);
+  if (!toolGate.ok) {
+    return {
+      code: "runner_tool_conformance_failed",
+      message: `Runner ${runner.id} tool execution conformance failed: ${toolGate.blockers.join(", ")}.`,
     };
   }
   return undefined;

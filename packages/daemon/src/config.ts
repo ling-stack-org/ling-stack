@@ -144,7 +144,6 @@ export interface CodexAppServerRunnerConfig {
   readonly baseUrl?: string;
   readonly launchMode?: "external";
   readonly readinessPassed?: boolean;
-  readonly conformancePassed?: boolean;
 }
 
 export interface OpenClawAcpRunnerConfig {
@@ -152,7 +151,6 @@ export interface OpenClawAcpRunnerConfig {
   readonly endpoint?: string;
   readonly workspaceMode?: "bound_path";
   readonly readinessPassed?: boolean;
-  readonly conformancePassed?: boolean;
 }
 
 export interface ResolvedDaemonConfig {

@@ -124,6 +124,7 @@ export {
   normalizeRunnerId,
   resolveRunnerNativeResumeGate,
   resolveRunnerResumeCapabilities,
+  resolveRunnerToolExecutionGate,
   type RegisteredRunner,
   type RunnerNativeResumeConformanceV1,
   type RunnerNativeResumeGateBlocker,
@@ -132,6 +133,9 @@ export {
   type RunnerRegistry,
   type RunnerResolution,
   type RunnerResolutionInput,
+  type RunnerToolExecutionConformanceV1,
+  type RunnerToolExecutionGateBlocker,
+  type RunnerToolExecutionGateV1,
 } from "./runtime/runners.js";
 export type { RunnerFallbackReason } from "@ling-stack/core";
 export { ActiveRunRegistry } from "./runtime/active-runs.js";
@@ -822,6 +826,7 @@ export function createDefaultRunnerRegistry(
   const extension = getPiRunnerExtension();
   const piToolHydration = resolvePiRunnerToolHydrationCapability(config);
   const piSandboxBindingEnabled = config.runners?.pi?.sandboxBinding?.enabled === true;
+  const piAdapterRevision = `${extension.runnerId}:${extension.manifest.version}:adapter-v1`;
   const piCapabilities = [
     ...extension.manifest.capabilities,
     ...(config.runtimeTools?.requestPermissions ? ["runtime:request-permissions"] : []),
@@ -836,9 +841,43 @@ export function createDefaultRunnerRegistry(
       displayName: extension.manifest.name,
       status: "enabled",
       adapter: runner,
+      executionBoundary: "embedded",
+      adapterRevision: piAdapterRevision,
       aliases: [LEGACY_PI_RUNNER_ID],
       supportedProviderApis: extension.supportedProviderApis,
       supportedTools: extension.supportedTools,
+      toolSideEffects: {
+        read: "workspace_read",
+        grep: "workspace_read",
+        find: "workspace_read",
+        ls: "workspace_read",
+        bash: "shell",
+        edit: "workspace_write",
+        write: "workspace_write",
+      },
+      toolExecutionConformance: {
+        adapterRevision: piAdapterRevision,
+        curatedTools: extension.supportedTools,
+        toolSideEffects: {
+          read: "workspace_read",
+          grep: "workspace_read",
+          find: "workspace_read",
+          ls: "workspace_read",
+          bash: "shell",
+          edit: "workspace_write",
+          write: "workspace_write",
+        },
+        allowedSideEffects: ["workspace_read", "workspace_write", "shell"],
+        nativeSideEffectMode: "daemon_brokered",
+        toolSurfaceCurated: true,
+        approvalBridgeVerified: true,
+        sandboxBindingVerified: true,
+        evidenceCommitVerified: true,
+        abortPropagationVerified: true,
+        attemptFencingVerified: true,
+        workspaceBoundaryVerified: true,
+        artifactImportVerified: true,
+      },
       capabilities: piCapabilities,
       resumeCapabilities: extension.resumeCapabilities,
       nativeResumeConformance: {

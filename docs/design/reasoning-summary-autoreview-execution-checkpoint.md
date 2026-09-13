@@ -172,10 +172,23 @@ assistant_reasoning_summary {
 
 这部分尚未做完整仓库测试和 packaged macOS 验收，因此这里只声明 H06 实现完成，不声明整个 Harness 或总计划完成。
 
+### 3.5 Harness H07 External Runner 工具一致性
+
+已完成并有专项测试证据：
+
+- External runner 不再读取可由配置自报的 `conformancePassed` 布尔值；工具授权来自与 adapter revision 绑定的 typed receipt。
+- Registry 在选择 runner 时校验 curated tools、side-effect class、evidence commit、abort propagation、Attempt fencing 与 workspace boundary；失败写入稳定的 `runner_tool_conformance_failed` 原因。
+- Adapter 收到实际 `tool_proposal` 后再次校验 receipt、revision 和本次 Run 的 requested tools，缺 receipt、旧 revision、未请求工具和副作用工具全部 fail-closed。
+- 当前 Codex App Server 与 OpenClaw ACP 只开放 `read/grep/find/ls` 和 `none/workspace_read`；原生命令、写入、网络、凭据、外部投递与 MCP 继续禁用。
+- `approvalBridgeVerified` 硬编码已删除；外部 backend 宣称 approval/native-resume 能力不会自动成为 Ling 的执行事实。
+- Readiness API 改为逐项输出 tool execution conformance evidence，不再由一个 boolean 推导工具面、审批、workspace 和 artifact 全部已验证。
+
+专项结果：Daemon build pass；runner registry/readiness/external adapter/bridge/conformance、hydration、reconstruction 与 approval recovery 63/63；Contracts 85/85；API client 52/52；Core fallback/migration 2/2；Web typecheck 与 `git diff --check` pass。全仓与 packaged macOS 仍属于最终 combined gate。
+
 ## 4. 下一步执行顺序
 
-1. 从 Harness T7/H07 继续：建立 external-runner tool conformance，默认禁用 runner-native mutation，故意不合规的 adapter 必须 fail-closed。
-2. 完成 Harness evaluation 与 dynamic delegation 剩余阶段，再按依赖顺序接入现有 Run/Attempt/Workflow 边界，不重建顶层 orchestrator。
+1. 从 Harness T8/H08 继续：实现 evaluation foundation，再完成 T9 calibration。
+2. 完成 Harness dynamic delegation T10–T12，并按依赖顺序接入现有 Run/Attempt/Workflow 边界，不重建顶层 orchestrator。
 3. 按 `conversation-codex-style-transcript-implementation-plan.md` §6.2 重新执行当前 HEAD 的 G-00–G-12 combined gates，记录基线、源码、行为、安全与合并质量证据。
 4. 对 Host capability/open viewer、既定七项执行能力、structured user-input lifecycle、native sandbox 后代停止与恢复、TerminalReport/fan-in/reconnect/restart 做真实正向和故障路径验证；修复当前 HEAD 可复现的问题。
 5. 运行完整 test、typecheck、build，以及 docs/i18n/public/security/license 检查；不得用本节专项测试替代全量 gate。
@@ -189,7 +202,7 @@ assistant_reasoning_summary {
 
 1. 先读本文。
 2. 用 `git rev-parse HEAD`、`git status --short` 和最近测试结果确认增量状态。
-3. 从第 4 节第一个未完成步骤继续；当前唯一实现起点是 Harness T7/H07 external-runner tool conformance。
+3. 从第 4 节第一个未完成步骤继续；当前唯一实现起点是 Harness T8/H08 evaluation foundation。
 4. 不重新浏览整套 Codex 推理摘要源码，不重新输出同一份设计总结。
 5. 只有以下情况才允许局部复查外部源码：
    - 本地依赖版本变化导致 API 与本文不一致；

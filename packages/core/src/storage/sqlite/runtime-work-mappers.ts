@@ -269,7 +269,8 @@ function parseOptionalRunnerFallbackReason(value: string | undefined): RunnerFal
     (code === "missing_requested_runner" ||
       code === "disabled_requested_runner" ||
       code === "unsupported_provider_api" ||
-      code === "unsupported_tool") &&
+      code === "unsupported_tool" ||
+      code === "runner_tool_conformance_failed") &&
     typeof message === "string"
   ) {
     return { code, message };

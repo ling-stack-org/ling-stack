@@ -188,7 +188,8 @@ export interface RunnerFallbackReason {
     | "missing_requested_runner"
     | "disabled_requested_runner"
     | "unsupported_provider_api"
-    | "unsupported_tool";
+    | "unsupported_tool"
+    | "runner_tool_conformance_failed";
   readonly message: string;
 }
 
