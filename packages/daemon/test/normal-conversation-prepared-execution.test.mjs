@@ -291,3 +291,27 @@ test("MCP replay pins schema/membership while respecting current approval and ri
     assert.throws(() => restoreNormalConversationExecutionOptions(payload, { ...current, mcpTools }), /revoked|schema changed/);
   }
 });
+
+test("prepared runtime capabilities allow Host additions but reject required capability revocation", () => {
+  const provider = { provider: "fixture", model: "fixture", baseUrl: "https://fixture.invalid" };
+  const frozenFeatures = { requestPermissions: false, unifiedExec: false, shellSnapshot: false };
+  const payload = { input: { provider, runtimeToolFeatures: frozenFeatures }, toolHydrationEnabled: false };
+  const current = { provider, runtimeToolFeatures: { requestPermissions: true, unifiedExec: true, shellSnapshot: true } };
+  assert.deepEqual(
+    restoreNormalConversationExecutionOptions(payload, current).runtimeToolFeatures,
+    frozenFeatures,
+    "new Host capabilities must not enter frozen model input",
+  );
+
+  for (const feature of ["requestPermissions", "unifiedExec", "shellSnapshot"]) {
+    const required = { ...frozenFeatures, [feature]: true };
+    const revoked = { ...current.runtimeToolFeatures, [feature]: false };
+    assert.throws(
+      () => restoreNormalConversationExecutionOptions(
+        { ...payload, input: { ...payload.input, runtimeToolFeatures: required } },
+        { ...current, runtimeToolFeatures: revoked },
+      ),
+      /runtime tool capabilities changed/i,
+    );
+  }
+});

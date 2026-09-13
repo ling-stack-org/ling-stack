@@ -32,6 +32,8 @@ import type {
   ChannelIntentExecutionOperationV1,
   ConversationContextProjectionMetadata,
   DelegatedStepRequirementV1,
+  HarnessFeatureSnapshotV1,
+  RunnerContinuationOrigin,
   WorkflowParticipantProviderBindingV1,
 } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
@@ -121,6 +123,10 @@ export interface RunRequest extends Omit<
   readonly normalConversationPreparedExecutionRef?: { readonly id: string; readonly fingerprint: string };
   /** Host-produced source SDK input. External parsing never accepts or restores it as authority. */
   readonly runnerExecutionInput?: import("./prepared-runner-input.js").PreparedRunnerInput;
+  /** Internal-only immutable Harness rollout snapshot. External parsing never accepts this field. */
+  readonly harnessFeatureSnapshot?: HarnessFeatureSnapshotV1;
+  /** Internal-only normalized continuation origin. External parsing never accepts this field. */
+  readonly harnessContinuationOrigin?: RunnerContinuationOrigin;
   /** Internal-only answer continuation lineage; external parsing never accepts this field. */
   readonly userInputContinuationContext?: UserInputContinuationContext;
   /** Internal-only override used by trusted multi-reply channel orchestration. */

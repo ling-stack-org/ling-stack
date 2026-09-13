@@ -47,6 +47,11 @@ import { ProviderImportPreflightService } from "./features/providers/import-pref
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
 import { ApprovalAutoReviewRecoveryCoordinator } from "./features/runs/approval-auto-review-recovery.js";
+import { DaemonRunnerRecoveryCoordinator } from "./features/harness/continuations/daemon-recovery-coordinator.js";
+import {
+  createDetachedRunExecutionSink,
+  executeExistingRunContinuation,
+} from "./features/runs/orchestrator.js";
 import { resumePendingMediaJobExecutions } from "./features/media/executor.js";
 import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
@@ -248,6 +253,7 @@ export function createDaemonServer(
   let channelTurnDispatchReady = false;
   let approvalResumeCoordinator: ApprovalResumeCoordinator | undefined;
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
+  let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
@@ -264,6 +270,7 @@ export function createDaemonServer(
       });
       approvalResumeCoordinator?.registerStore(store);
       approvalAutoReviewRecoveryCoordinator?.registerStore(store);
+      daemonRunnerRecoveryCoordinator?.registerStore(store);
       startupOptionalWarmups?.start(cwd, store);
       reconcileAllContinuityWorkflows(store, { cause: "startup" });
       if (resolvedConfig.channels.terminalReports === true) {
@@ -442,6 +449,7 @@ export function createDaemonServer(
       startupState,
       computerUsePreviews,
     });
+    daemonRunnerRecoveryCoordinator?.recoverStore(store);
   };
   approvalResumeCoordinator = new ApprovalResumeCoordinator({
     runtimeSupervisor,
@@ -449,12 +457,64 @@ export function createDaemonServer(
     runnerRegistry,
     controlPlaneEvents,
     afterRunTerminal: afterChannelRunTerminal,
+    executeExistingRunContinuation: ({ cwd, runId, approvalId, preparedExecution }) =>
+      executeExistingRunContinuation(
+        {
+          cwd,
+          runId,
+          origin: "approval_resume",
+          idempotencyDiscriminator: approvalId,
+          preparedExecution,
+        },
+        createDetachedRunExecutionSink(),
+        runnerRegistry,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        mcpBroker,
+        {
+          controlPlaneEvents,
+          startupState,
+          computerUsePreviews,
+          hostCapabilityBridge,
+          afterRunTerminal: afterChannelRunTerminal,
+        },
+      ),
   });
   approvalAutoReviewRecoveryCoordinator = new ApprovalAutoReviewRecoveryCoordinator({
     runtimeSupervisor,
     runnerRegistry,
     secretResolver,
     approvalResumeCoordinator,
+  });
+  daemonRunnerRecoveryCoordinator = new DaemonRunnerRecoveryCoordinator({
+    runtimeSupervisor,
+    activeRuns,
+    executeExistingRunContinuation: ({ cwd, runId, origin, idempotencyDiscriminator, preparedExecution }) =>
+      executeExistingRunContinuation(
+        {
+          cwd,
+          runId,
+          origin,
+          idempotencyDiscriminator,
+          preparedExecution,
+        },
+        createDetachedRunExecutionSink(),
+        runnerRegistry,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        mcpBroker,
+        {
+          controlPlaneEvents,
+          startupState,
+          computerUsePreviews,
+          hostCapabilityBridge,
+          afterRunTerminal: afterChannelRunTerminal,
+        },
+      ),
   });
   channelTurnDispatchWorker = new ChannelTurnDispatchWorkerRegistry(
     runtimeSupervisor,
@@ -631,6 +691,8 @@ export function createDaemonServer(
       await approvalAutoReviewRecoveryCoordinator.recoverStore(
         storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
       );
+      daemonRunnerRecoveryCoordinator.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+      daemonRunnerRecoveryCoordinator.start();
       // Ephemeral control-plane servers are used by tests and embedded fixtures.
       // They must never claim the installation-global Remote Gateway listener.
       if (resolvedConfig.port !== 0) {
@@ -679,6 +741,7 @@ export function createDaemonServer(
       });
     },
     stop: async () => {
+      daemonRunnerRecoveryCoordinator.beginShutdown();
       channelTurnDispatchReady = false;
       channelTurnDispatchWorker.beginShutdown();
       activeRuns.suspendAll("daemon_restart");

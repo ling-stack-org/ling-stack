@@ -85,6 +85,48 @@ test("actual first model context equals the prepared snapshot with current crede
   assert.equal(f.hostCalls(), 0);
 });
 
+test("approved tool continuation resumes from the durable Host result without executing the tool again", async (t) => {
+  const f = await fixture(t);
+  const preparedInput = await f.runner.prepareTaskInput(f.options);
+  const resultBeforeToolCalls = f.hostCalls();
+  const result = await f.runner.runTask({
+    ...f.options,
+    runId: "approved-fixture-run",
+    runnerAttemptId: "resume-fixture-attempt",
+    preparedInput,
+    approvedToolContinuation: {
+      schemaVersion: 1,
+      kind: "approved_tool_result",
+      approvalId: "approval-1",
+      sideEffectFingerprint: "fingerprint-1",
+      toolCallId: "call-approved",
+      toolName: "bash",
+      args: { command: "printf approved" },
+      result: { content: [{ type: "text", text: "approved output" }], isError: false },
+    },
+  });
+  assert.equal(result.taskId, f.options.task.id);
+  assert.equal(f.contexts.length, 1, "resume must make only the post-tool provider request");
+  assert.deepEqual(f.contexts[0].messages.map((message) => message.role), ["user", "assistant", "toolResult"]);
+  assert.deepEqual(f.contexts[0].messages[1].content, [{
+    type: "toolCall",
+    id: "call-approved",
+    name: "bash",
+    arguments: { command: "printf approved" },
+  }]);
+  assert.deepEqual(f.contexts[0].messages[2], {
+    role: "toolResult",
+    toolCallId: "call-approved",
+    toolName: "bash",
+    content: [{ type: "text", text: "approved output" }],
+    details: undefined,
+    isError: false,
+    timestamp: 0,
+  });
+  assert.equal(f.hostCalls(), resultBeforeToolCalls, "historical approved evidence must not re-enter a tool handler");
+  assert.equal(f.wireRequests.length, 1);
+});
+
 for (const change of ["prompt", "system", "tool-schema", "tool-set", "model", "fingerprint"]) {
   test(`prepared ${change} drift fails before any model transport`, async (t) => {
     const f = await fixture(t);

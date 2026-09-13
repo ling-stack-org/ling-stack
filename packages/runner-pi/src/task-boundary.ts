@@ -3,6 +3,7 @@ import type { PiRunnerRunOptions, PiRunnerUserInputYieldDirective } from "./type
 import { readUserInputYieldDirective } from "./task-yield.js";
 import { throwIfAborted } from "./utils.js";
 import { assertPreparedPiModelContext } from "./prepared-input.js";
+import { assertApprovedToolContinuationModelContext } from "./approved-tool-continuation.js";
 import { applyReasoningSummaryModeToPayload } from "./reasoning-summary.js";
 
 /** Internal latch only. The public yielded outcome requires an idle SDK first. */
@@ -102,7 +103,19 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions) {
       runtime.streamSimple = (model, context, streamOptions) => {
         assertOpen();
         const verifyInitialInput = firstRequest && options.preparedInput ? () => {
-          try { assertPreparedPiModelContext(options.preparedInput!, model, context); }
+          try {
+            if (options.approvedToolContinuation) {
+              assertApprovedToolContinuationModelContext(
+                options.preparedInput!,
+                options.provider,
+                options.approvedToolContinuation,
+                model,
+                context,
+              );
+            } else {
+              assertPreparedPiModelContext(options.preparedInput!, model, context);
+            }
+          }
           catch (error) {
             failure ??= error instanceof Error ? error : new Error("Invalid Pi prepared input");
             stop.abort(failure);

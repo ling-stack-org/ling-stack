@@ -1364,6 +1364,124 @@ test("approval resume claim rolls back every durable write boundary", async (t) 
   }
 });
 
+test("approval resume claim atomically prepares the Harness continuation and Attempt", async () => {
+  const fixture = await createApprovalResumeClaimFixture("harness-atomic");
+  try {
+    const attemptId = "attempt_resume_claim_harness_atomic_2";
+    const artifact = fixture.store.createArtifact({
+      id: "artifact_resume_claim_harness_atomic",
+      runId: fixture.run.id,
+      type: "json",
+      path: `${fixture.run.id}/continuation.json`,
+      contentType: "application/vnd.ling.runner-continuation-replay+json",
+      sealedPayload: { schemaVersion: 1, runId: fixture.run.id },
+      createdAt: fixture.claim.now,
+    });
+    const { replacementAttempt: _replacementAttempt, ...claimBase } = fixture.claim;
+    const claim = {
+      ...claimBase,
+      continuationPreparation: {
+        runId: fixture.run.id,
+        workUnitId: fixture.workUnit.id,
+        sourceFence: fixture.priorFence,
+        expectedTargetAttemptId: fixture.priorAttempt.id,
+        origin: "approval_resume",
+        strategy: "deterministic_replay",
+        runnerId: "pi",
+        runnerCapabilityRevision: "pi:test",
+        contextViewId: fixture.run.contextViewId,
+        contextSnapshotArtifactId: artifact.id,
+        idempotencyKey: `runner-continuation:${fixture.run.id}:${fixture.priorAttempt.id}:approval_resume:0:${fixture.approval.id}`,
+        generation: 0,
+        targetAttempt: {
+          id: attemptId,
+          runtimeInstanceId: "runtime_after_restart",
+          runnerId: "pi",
+          effectiveRunnerId: "pi",
+        },
+        now: fixture.claim.now,
+      },
+      runnerResumeHandle: { ...fixture.claim.runnerResumeHandle, attemptId },
+    };
+    const result = fixture.store.commitApprovalResumeClaim(claim);
+    assert.equal(result.ok, true);
+    assert.equal(result.attempt.id, attemptId);
+    assert.equal(result.attempt.status, "created");
+    assert.equal(result.runnerContinuation?.state, "prepared");
+    assert.equal(result.runnerContinuation?.targetAttemptId, attemptId);
+    assert.equal(result.workUnit.activeAttemptId, attemptId);
+    assert.equal(result.checkpoint.status, "resume_pending");
+    assert.equal(
+      fixture.store.listRuntimeEvents(fixture.workUnit.id, { limit: 100 }).some((event) =>
+        event.type === "work_unit_started" && event.attemptId === attemptId),
+      false,
+    );
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("approval resume rolls back Harness continuation preparation with the checkpoint CAS", async () => {
+  const fixture = await createApprovalResumeClaimFixture("harness-rollback");
+  try {
+    const attemptId = "attempt_resume_claim_harness_rollback_2";
+    const artifact = fixture.store.createArtifact({
+      id: "artifact_resume_claim_harness_rollback",
+      runId: fixture.run.id,
+      type: "json",
+      path: `${fixture.run.id}/continuation.json`,
+      contentType: "application/vnd.ling.runner-continuation-replay+json",
+      sealedPayload: { schemaVersion: 1, runId: fixture.run.id },
+      createdAt: fixture.claim.now,
+    });
+    const { replacementAttempt: _replacementAttempt, ...claimBase } = fixture.claim;
+    const idempotencyKey = `runner-continuation:${fixture.run.id}:${fixture.priorAttempt.id}:approval_resume:0:${fixture.approval.id}`;
+    const claim = {
+      ...claimBase,
+      continuationPreparation: {
+        runId: fixture.run.id,
+        workUnitId: fixture.workUnit.id,
+        sourceFence: fixture.priorFence,
+        expectedTargetAttemptId: fixture.priorAttempt.id,
+        origin: "approval_resume",
+        strategy: "deterministic_replay",
+        runnerId: "pi",
+        runnerCapabilityRevision: "pi:test",
+        contextViewId: fixture.run.contextViewId,
+        contextSnapshotArtifactId: artifact.id,
+        idempotencyKey,
+        generation: 0,
+        targetAttempt: {
+          id: attemptId,
+          runtimeInstanceId: "runtime_after_restart",
+          runnerId: "pi",
+          effectiveRunnerId: "pi",
+        },
+        now: fixture.claim.now,
+      },
+      runnerResumeHandle: { ...fixture.claim.runnerResumeHandle, attemptId },
+    };
+    const database = new DatabaseSync(fixture.store.paths.databasePath);
+    try {
+      database.exec(`
+        CREATE TRIGGER fail_harness_resume_checkpoint AFTER UPDATE OF status ON approval_checkpoints
+        WHEN NEW.id = '${fixture.checkpoint.id}' AND NEW.status = 'resume_pending'
+        BEGIN SELECT RAISE(ABORT, 'harness resume checkpoint fault'); END
+      `);
+    } finally {
+      database.close();
+    }
+    assert.throws(() => fixture.store.commitApprovalResumeClaim(claim), /harness resume checkpoint fault/u);
+    assert.equal(fixture.store.findRunnerContinuationByIdempotencyKey(idempotencyKey), undefined);
+    assert.equal(fixture.store.getWorkUnitAttempt(attemptId), undefined);
+    assert.equal(fixture.store.getWorkUnitAttempt(fixture.priorAttempt.id)?.status, "waiting_for_approval");
+    assert.equal(fixture.store.getWorkUnit(fixture.workUnit.id)?.activeAttemptId, fixture.priorAttempt.id);
+    assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.status, "approved");
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("approval wait suspension atomically preserves pending and approved logical work", async (t) => {
   for (const expectedCheckpointStatus of ["pending", "approved"]) {
     await t.test(expectedCheckpointStatus, async () => {
@@ -2010,6 +2128,8 @@ async function createApprovalResumeClaimFixture(suffix, options = {}) {
     taskSnapshot: task,
     providerSnapshot: { provider: "test-provider", model: "test-model" },
     requestSnapshot: { cwd },
+    contextViewId: `context_resume_claim_${suffix}`,
+    contextViewCreatedAt: now,
     createdAt: now,
   });
   assert.equal(store.transitionTaskStatus({

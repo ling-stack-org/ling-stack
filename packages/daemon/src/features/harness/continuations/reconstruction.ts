@@ -53,6 +53,7 @@ export async function executeRunnerContinuationReconstruction(input: {
 }): Promise<RunnerReconstructionResult> {
   const replay = readRunnerContinuationReplayArtifact({ store: input.store, continuation: input.continuation });
   assertReplayLineage(input, replay);
+  assertApprovalContinuationEvidence(input.continuation, replay, input.liveOptions);
   const options = restorePreparedRunnerOptions(replay.execution, input.liveOptions);
   const reboundOptions: PiRunnerRunOptions = {
     ...options,
@@ -116,6 +117,25 @@ export async function executeRunnerContinuationReconstruction(input: {
       return fallback(input.continuation, error.code);
     }
     throw error;
+  }
+}
+
+function assertApprovalContinuationEvidence(
+  continuation: RunnerContinuationV1,
+  replay: RunnerContinuationReplayPackageV1,
+  liveOptions: PiRunnerRunOptions,
+): void {
+  const toolContinuation = liveOptions.approvedToolContinuation;
+  if (continuation.origin !== "approval_resume") {
+    if (toolContinuation) throw new RunnerReconstructionLineageError();
+    return;
+  }
+  if (!toolContinuation) throw new RunnerReconstructionLineageError();
+  const evidence = replay.approvalEvidence.find((item) => item.approvalId === toolContinuation.approvalId);
+  if (!evidence
+    || evidence.decision !== "approved"
+    || evidence.sideEffectFingerprint !== toolContinuation.sideEffectFingerprint) {
+    throw new RunnerReconstructionLineageError();
   }
 }
 

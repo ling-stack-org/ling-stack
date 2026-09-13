@@ -339,6 +339,27 @@ test("successful claim, start and finish are fenced CAS transitions", async (t) 
   assert.equal(f.store.listClaimableRunnerContinuations({ now }).length, 0);
 });
 
+test("only explicitly deferred continuations enter the durable scheduled queue", async (t) => {
+  const f = await fixture(t);
+  const prepared = f.store.prepareContinuationAndAttempt(f.input);
+  assert.equal(f.store.listClaimableRunnerContinuations({ now, scheduledOnly: true }).length, 0);
+
+  const deferred = f.store.deferRunnerContinuation({
+    continuationId: prepared.continuation.id,
+    expectedRevision: prepared.continuation.revision,
+    now,
+    nextAttemptAt: later,
+  });
+  assert.equal(deferred.ok, true);
+  assert.equal(deferred.value.revision, 1);
+  assert.equal(deferred.value.nextAttemptAt, later);
+  assert.equal(f.store.listClaimableRunnerContinuations({ now, scheduledOnly: true }).length, 0);
+  assert.deepEqual(
+    f.store.listClaimableRunnerContinuations({ now: later, scheduledOnly: true }).map((item) => item.id),
+    [prepared.continuation.id],
+  );
+});
+
 test("rejected native resume is atomically reprepared once with a fresh replay Attempt", async (t) => {
   const f = await fixture(t);
   const prepared = f.store.prepareContinuationAndAttempt({

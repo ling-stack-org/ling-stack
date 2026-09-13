@@ -11,6 +11,14 @@ import type {
 } from "../../approval-checkpoints.js";
 import type { ApprovalRequest } from "../../approval-types.js";
 import type {
+  CommitExistingRunContinuationPreparationFailureInput,
+  FinishRunnerContinuationInput,
+  PrepareContinuationInput,
+  PreparedContinuation,
+  RunnerContinuationMutationResult,
+} from "../../harness/continuations.js";
+import type { RunnerContinuationV1 } from "@ling-stack/contracts";
+import type {
   AppendControlPlaneEventInput,
   ControlPlaneEvent,
   RunSession,
@@ -54,6 +62,22 @@ interface ApprovalResumeStorePorts {
   readonly getWorkUnitAttempt: (id: string) => WorkUnitAttempt | undefined;
   readonly createWorkUnitAttempt: (input: CreateWorkUnitAttemptInput) => WorkUnitAttempt;
   readonly createWorkUnitAttemptWithinTransaction: (input: CreateWorkUnitAttemptInput) => WorkUnitAttempt;
+  readonly prepareContinuationAndAttemptWithinTransaction: (input: PrepareContinuationInput) => PreparedContinuation;
+  readonly failRunnerContinuationPreparationWithinTransaction: (
+    input: Pick<
+      CommitExistingRunContinuationPreparationFailureInput,
+      | "continuationId"
+      | "expectedContinuationRevision"
+      | "expectedContinuationState"
+      | "claimOwner"
+      | "claimToken"
+      | "targetFence"
+      | "now"
+    >,
+  ) => RunnerContinuationV1 | undefined;
+  readonly finishRunnerContinuationWithinTransaction: (
+    input: FinishRunnerContinuationInput,
+  ) => RunnerContinuationMutationResult;
   readonly updateWorkUnitAttemptStatus: (input: {
     readonly attemptId: string;
     readonly workUnitId: string;
@@ -116,6 +140,13 @@ export class SqliteApprovalResumeStore {
   commitApprovalResumeClaim(input: CommitApprovalResumeClaimInput): CommitApprovalResumeClaimResult {
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
+      const continuationPreparation = input.continuationPreparation;
+      const replacementAttempt = input.replacementAttempt;
+      if (!continuationPreparation && !replacementAttempt) {
+        throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
+      }
+      const requestedReplacementAttemptId = continuationPreparation?.targetAttempt.id ?? replacementAttempt!.id;
+      const requestedReplacementWorkUnitId = continuationPreparation?.workUnitId ?? replacementAttempt!.workUnitId;
       const checkpoint = this.ports.getApprovalCheckpoint(input.checkpointId);
       if (!checkpoint
         || checkpoint.status !== input.expectedCheckpointStatus
@@ -126,9 +157,9 @@ export class SqliteApprovalResumeStore {
         || checkpoint.runId !== input.runId
         || checkpoint.resumeBasis?.runId !== input.runId
         || checkpoint.resumeBasis?.workUnitId !== input.workUnitId
-        || input.replacementAttempt.workUnitId !== input.workUnitId
+        || requestedReplacementWorkUnitId !== input.workUnitId
         || input.runnerResumeHandle.runId !== input.runId
-        || input.runnerResumeHandle.attemptId !== input.replacementAttempt.id) {
+        || input.runnerResumeHandle.attemptId !== requestedReplacementAttemptId) {
         throw new ApprovalResumeClaimAbort("approval_resume_lineage_mismatch");
       }
 
@@ -144,11 +175,20 @@ export class SqliteApprovalResumeStore {
       if (!workUnit || workUnit.status !== expectedStatus || workUnit.activeAttemptId !== input.expectedActiveAttemptId) {
         throw new ApprovalResumeClaimAbort("approval_resume_work_unit_state_stale");
       }
-      if (this.ports.getWorkUnitAttempt(input.replacementAttempt.id)) {
+      if (!continuationPreparation && this.ports.getWorkUnitAttempt(requestedReplacementAttemptId)) {
         throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
       }
 
-      if (input.attemptToLoseId) {
+      const preparedContinuation = continuationPreparation
+        ? this.ports.prepareContinuationAndAttemptWithinTransaction(continuationPreparation)
+        : undefined;
+      const replacementAttemptId = preparedContinuation?.attempt.id ?? requestedReplacementAttemptId;
+      if (replacementAttemptId !== requestedReplacementAttemptId
+        || (preparedContinuation && preparedContinuation.attempt.workUnitId !== input.workUnitId)) {
+        throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
+      }
+
+      if (input.attemptToLoseId && !preparedContinuation) {
         if (input.attemptToLoseId !== input.expectedActiveAttemptId) {
           throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
         }
@@ -196,26 +236,26 @@ export class SqliteApprovalResumeStore {
         throw new ApprovalResumeClaimAbort("approval_resume_checkpoint_stale");
       }
 
-      const createdAttempt = this.ports.createWorkUnitAttemptWithinTransaction({
-        ...input.replacementAttempt,
+      const createdAttempt = preparedContinuation?.attempt ?? this.ports.createWorkUnitAttemptWithinTransaction({
+        ...replacementAttempt!,
         status: "created",
       });
-      if (createdAttempt.id !== input.replacementAttempt.id) {
+      if (createdAttempt.id !== replacementAttemptId) {
         throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
       }
-      const attempt = this.ports.updateWorkUnitAttemptStatus({
-        attemptId: createdAttempt.id,
-        workUnitId: createdAttempt.workUnitId,
-        runtimeInstanceId: createdAttempt.runtimeInstanceId,
-        fencingToken: createdAttempt.fencingToken,
-        status: "started",
-        now: input.now,
-        startedAt: input.now,
-        lastHeartbeatAt: input.now,
-        errorCode: null,
-        errorMessage: null,
-      });
-      if (!attempt || attempt.status !== "started") {
+      const attempt = preparedContinuation ? createdAttempt : this.ports.updateWorkUnitAttemptStatus({
+          attemptId: createdAttempt.id,
+          workUnitId: createdAttempt.workUnitId,
+          runtimeInstanceId: createdAttempt.runtimeInstanceId,
+          fencingToken: createdAttempt.fencingToken,
+          status: "started",
+          now: input.now,
+          startedAt: input.now,
+          lastHeartbeatAt: input.now,
+          errorCode: null,
+          errorMessage: null,
+        });
+      if (!attempt || (preparedContinuation ? attempt.status !== "created" : attempt.status !== "started")) {
         throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
       }
 
@@ -250,22 +290,24 @@ export class SqliteApprovalResumeStore {
         }
       }
 
-      this.ports.appendRuntimeEvent({
-        workUnitId: workUnit.id,
-        attemptId: attempt.id,
-        runtimeInstanceId: attempt.runtimeInstanceId,
-        fencingToken: attempt.fencingToken,
-        type: "work_unit_started",
-        actor: "system",
-        ts: input.now,
-        data: {
-          reason: "approval_resume",
-          approvalId: input.approvalId,
-          priorAttemptId: input.expectedActiveAttemptId,
-          resumeBasisFingerprint: checkpoint.resumeBasis?.fingerprint,
-          recoveryMode: input.mode,
-        },
-      });
+      if (!preparedContinuation) {
+        this.ports.appendRuntimeEvent({
+          workUnitId: workUnit.id,
+          attemptId: attempt.id,
+          runtimeInstanceId: attempt.runtimeInstanceId,
+          fencingToken: attempt.fencingToken,
+          type: "work_unit_started",
+          actor: "system",
+          ts: input.now,
+          data: {
+            reason: "approval_resume",
+            approvalId: input.approvalId,
+            priorAttemptId: input.expectedActiveAttemptId,
+            resumeBasisFingerprint: checkpoint.resumeBasis?.fingerprint,
+            recoveryMode: input.mode,
+          },
+        });
+      }
 
       const controlPlaneEvents = appendClaimInvalidations(this.ports, input, workUnit.workspaceId, run.cwd);
       this.context.database.exec("COMMIT;");
@@ -283,6 +325,7 @@ export class SqliteApprovalResumeStore {
         run: committedRun,
         workUnit: committedWorkUnit,
         attempt: committedAttempt,
+        runnerContinuation: preparedContinuation?.continuation,
         controlPlaneEvents,
       };
     } catch (error) {
@@ -411,6 +454,39 @@ export class SqliteApprovalResumeStore {
         throw new ApprovalResumeTransitionAbort("approval_resume_lineage_mismatch");
       }
 
+      let terminalContinuation: RunnerContinuationV1 | undefined;
+      if (input.runnerContinuationTerminal) {
+        const continuation = input.runnerContinuationTerminal;
+        if (continuation.targetFence.workUnitId !== input.workUnitId
+          || continuation.targetFence.attemptId !== input.attemptId) {
+          throw new ApprovalResumeTransitionAbort("approval_resume_lineage_mismatch");
+        }
+        if (continuation.expectedState === "running") {
+          const finished = this.ports.finishRunnerContinuationWithinTransaction({
+            continuationId: continuation.continuationId,
+            expectedRevision: continuation.expectedRevision,
+            claimOwner: continuation.claimOwner,
+            claimToken: continuation.claimToken,
+            targetFence: continuation.targetFence,
+            nextState: input.status,
+            now: input.now,
+          });
+          if (!finished.ok) throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
+          terminalContinuation = finished.value;
+        } else {
+          terminalContinuation = this.ports.failRunnerContinuationPreparationWithinTransaction({
+            continuationId: continuation.continuationId,
+            expectedContinuationRevision: continuation.expectedRevision,
+            expectedContinuationState: continuation.expectedState,
+            claimOwner: continuation.claimOwner,
+            claimToken: continuation.claimToken,
+            targetFence: continuation.targetFence,
+            now: input.now,
+          });
+          if (!terminalContinuation) throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
+        }
+      }
+
       const updatedCheckpoint = this.ports.updateApprovalCheckpointStatus(checkpoint.id, {
         status: input.checkpointStatus,
         expectedStatus: checkpoint.status,
@@ -514,7 +590,15 @@ export class SqliteApprovalResumeStore {
         now: input.now,
       });
       this.context.database.exec("COMMIT;");
-      return reloadTerminalResult(this.ports, checkpoint.id, run.id, workUnit.id, attempt.id, controlPlaneEvents);
+      return reloadTerminalResult(
+        this.ports,
+        checkpoint.id,
+        run.id,
+        workUnit.id,
+        attempt.id,
+        controlPlaneEvents,
+        terminalContinuation,
+      );
     } catch (error) {
       rollbackOwnedSqliteTransaction(this.context.database);
       if (error instanceof ApprovalResumeTransitionAbort) {
@@ -790,7 +874,8 @@ function reloadTerminalResult(
   workUnitId: string,
   attemptId: string,
   controlPlaneEvents: readonly ControlPlaneEvent[],
-): Extract<CommitApprovalResumeTerminalResult, { ok: true }> {
+  runnerContinuation?: RunnerContinuationV1,
+): Extract<CommitApprovalResumeTerminalResult, { readonly ok: true; readonly kind: "verified_lineage" }> {
   const checkpoint = ports.getApprovalCheckpoint(checkpointId);
   const run = ports.getRun(runId);
   const workUnit = ports.getWorkUnit(workUnitId);
@@ -798,7 +883,16 @@ function reloadTerminalResult(
   if (!checkpoint || !run || !workUnit || !attempt) {
     throw new Error("Approval resume terminal transition committed but could not be reloaded.");
   }
-  return { ok: true, kind: "verified_lineage", checkpoint, run, workUnit, attempt, controlPlaneEvents };
+  return {
+    ok: true,
+    kind: "verified_lineage",
+    checkpoint,
+    run,
+    workUnit,
+    attempt,
+    runnerContinuation,
+    controlPlaneEvents,
+  };
 }
 
 function reloadSystemReviewDeniedResult(
@@ -820,7 +914,8 @@ function reloadSystemReviewDeniedResult(
 }
 
 function claimIdempotencyKey(input: CommitApprovalResumeClaimInput, suffix: string): string {
-  return `approval-resume-claim:${input.checkpointId}:${input.expectedCheckpointRevision}:${input.replacementAttempt.id}:${suffix}`;
+  const attemptId = input.continuationPreparation?.targetAttempt.id ?? input.replacementAttempt!.id;
+  return `approval-resume-claim:${input.checkpointId}:${input.expectedCheckpointRevision}:${attemptId}:${suffix}`;
 }
 
 function terminalIdempotencyKey(input: CommitApprovalResumeVerifiedTerminalInput, suffix: string): string {

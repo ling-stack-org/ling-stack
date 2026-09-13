@@ -327,7 +327,7 @@ export class SqliteRunSessionStore {
         input.startedAt ?? run.startedAt ?? null,
         input.endedAt === undefined ? run.endedAt ?? null : input.endedAt,
         input.errorMessage === undefined ? run.errorMessage ?? null : input.errorMessage,
-        input.summaryPath ?? run.summaryPath ?? null,
+        input.summaryPath === undefined ? run.summaryPath ?? null : input.summaryPath,
         input.now,
         input.runId,
         result.from,

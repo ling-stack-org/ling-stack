@@ -876,6 +876,15 @@ export class SqliteRunStore implements RunStore {
       {
         getRun: (id) => this.getRun(id),
         getArtifact: (id) => this.getArtifact(id),
+        getTask: (id) => this.getTask(id),
+        transitionRunStatus: (input) => this.transitionRunStatus(input),
+        transitionTaskStatus: (input) => this.transitionTaskStatus(input),
+        transitionWorkUnitStatus: (input) => this.transitionWorkUnitStatus(input),
+        appendRuntimeEvent: (input) => this.appendRuntimeEvent(input),
+        releaseResourceLeasesForAttempt: (fence, releasedAt, releaseReason) =>
+          this.releaseResourceLeasesForAttempt(fence, releasedAt, releaseReason),
+        releaseRuntimeSemaphoreSlotsForAttempt: (fence, releasedAt, releaseReason) =>
+          this.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason),
       },
     );
     this.lingThreads = new SqliteLingThreadStore(
@@ -982,6 +991,7 @@ export class SqliteRunStore implements RunStore {
       appendRunEvent: (runId, type, data) => this.appendEvent(runId, type, data),
       markRunFailed: (runId, endedAt, errorMessage) => this.markRunFailed(runId, endedAt, errorMessage),
       getRun: (runId) => this.getRun(runId),
+      getWorkUnit: (workUnitId) => this.getWorkUnit(workUnitId),
       getLingThread: (threadId) => this.getLingThread(threadId),
       updateLingThread: (threadId, input, now) => this.updateLingThread(threadId, input, now),
       listRecoverableChannelWorkflows: () => this.channelWorkflows.listRecoverableChannelWorkflows(),
@@ -1287,6 +1297,12 @@ export class SqliteRunStore implements RunStore {
         getWorkUnitAttempt: (id) => this.getWorkUnitAttempt(id),
         createWorkUnitAttempt: (input) => this.createWorkUnitAttempt(input),
         createWorkUnitAttemptWithinTransaction: (input) => this.createWorkUnitAttemptWithinTransaction(input),
+        prepareContinuationAndAttemptWithinTransaction: (input) =>
+          this.harnessCommits.prepareContinuationAndAttemptWithinTransaction(input),
+        failRunnerContinuationPreparationWithinTransaction: (input) =>
+          this.runnerContinuations.failPreparationWithinTransaction(input),
+        finishRunnerContinuationWithinTransaction: (input) =>
+          this.runnerContinuations.finishRunnerContinuationWithinTransaction(input),
         updateWorkUnitAttemptStatus: (input) => this.updateWorkUnitAttemptStatus(input),
         releaseRuntimeSemaphoreSlotsForAttempt: (fence, releasedAt, releaseReason) =>
           this.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason),
@@ -2126,10 +2142,28 @@ export class SqliteRunStore implements RunStore {
     return this.harnessCommits.prepareContinuationAndAttempt(input);
   }
 
+  commitExistingRunContinuation(
+    input: import("../harness/continuations.js").CommitExistingRunContinuationInput,
+  ): import("../harness/continuations.js").CommitExistingRunContinuationResult {
+    return this.harnessCommits.commitExistingRunContinuation(input);
+  }
+
+  commitExistingRunContinuationPreparationFailure(
+    input: import("../harness/continuations.js").CommitExistingRunContinuationPreparationFailureInput,
+  ): import("../harness/continuations.js").CommitExistingRunContinuationPreparationFailureResult {
+    return this.harnessCommits.commitExistingRunContinuationPreparationFailure(input);
+  }
+
   reprepareContinuationAndAttempt(
     input: import("../harness/continuations.js").ReprepareContinuationInput,
   ): import("../harness/continuations.js").PreparedContinuation {
     return this.harnessCommits.reprepareContinuationAndAttempt(input);
+  }
+
+  deferRunnerContinuation(
+    input: import("../harness/continuations.js").DeferRunnerContinuationInput,
+  ): import("../harness/continuations.js").RunnerContinuationMutationResult {
+    return this.runnerContinuations.deferRunnerContinuation(input);
   }
 
   claimRunnerContinuation(
@@ -2332,8 +2366,8 @@ export class SqliteRunStore implements RunStore {
     readonly idempotencyKey?: string;
     readonly now: string;
     readonly startedAt?: string;
-    readonly endedAt?: string;
-    readonly summaryPath?: string;
+    readonly endedAt?: string | null;
+    readonly summaryPath?: string | null;
     readonly errorMessage?: string | null;
   }): TransitionResult<RunStatus> {
     const result = this.runSessions.transitionRunStatus(input);

@@ -52,7 +52,7 @@ export function restorePreparedRunnerOptions(
     return { ...frozen, defaultApproval: live.defaultApproval, sideEffectLevel: live.sideEffectLevel };
   });
   if (payload.toolHydrationEnabled && !(current.initialToolSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
-    !isDeepStrictEqual(payload.input.runtimeToolFeatures, json(current.runtimeToolFeatures))) {
+    !requiredRuntimeToolFeaturesRemainAvailable(payload.input.runtimeToolFeatures, current.runtimeToolFeatures)) {
     throw new HttpError(409, "prepared_tool_capability_changed", "Prepared runtime tool capabilities changed.");
   }
   for (const tool of payload.input.mediaGenerationTools ?? []) {
@@ -116,3 +116,11 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
   return structuredClone(value) as unknown as PreparedRunnerInput;
 }
 function json<T>(value: T): T { return value === undefined ? value : JSON.parse(JSON.stringify(value)) as T; }
+
+function requiredRuntimeToolFeaturesRemainAvailable(
+  frozen: PiRunnerRunOptions["runtimeToolFeatures"],
+  current: PiRunnerRunOptions["runtimeToolFeatures"],
+): boolean {
+  return (["requestPermissions", "unifiedExec", "shellSnapshot"] as const)
+    .every((feature) => frozen?.[feature] !== true || current?.[feature] === true);
+}

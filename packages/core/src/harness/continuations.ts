@@ -11,6 +11,8 @@ import type {
   RuntimeAttemptFenceV1,
   WorkUnitAttempt,
 } from "../runtime-supervisor-types.js";
+import type { RunSession } from "../run-types.js";
+import type { Task } from "../workspace-types.js";
 import { transitionHarnessEntity, type HarnessTransitionResult } from "./common.js";
 
 const transitions: Readonly<Record<RunnerContinuationState, ReadonlySet<RunnerContinuationState>>> = {
@@ -88,6 +90,67 @@ export interface PreparedContinuation {
   readonly replayed: boolean;
 }
 
+export interface CommitExistingRunContinuationInput {
+  readonly preparation: PrepareContinuationInput;
+  readonly expectedRunStatus: Extract<RunSession["status"], "failed" | "queued" | "running">;
+  readonly expectedWorkUnitStatus: "failed" | "stale";
+  readonly expectedTaskStatus?: Extract<Task["status"], "failed" | "claimed" | "running">;
+  readonly actor: "system" | "local-user";
+  readonly reason: string;
+  readonly now: string;
+}
+
+export type CommitExistingRunContinuationResult =
+  | {
+      readonly ok: true;
+      readonly run: RunSession;
+      readonly workUnit: import("../runtime-supervisor-types.js").WorkUnit;
+      readonly attempt: WorkUnitAttempt;
+      readonly continuation: RunnerContinuationV1;
+      readonly replayed: boolean;
+    }
+  | {
+      readonly ok: false;
+      readonly code:
+        | "continuation.activation_lineage_stale"
+        | "continuation.activation_state_stale"
+        | "continuation.activation_transition_failed";
+    };
+
+export interface CommitExistingRunContinuationPreparationFailureInput {
+  readonly continuationId: string;
+  readonly expectedContinuationRevision: number;
+  readonly expectedContinuationState: Extract<RunnerContinuationState, "prepared" | "claimed">;
+  readonly claimOwner?: string;
+  readonly claimToken?: string;
+  readonly runId: string;
+  readonly expectedRunStatus: Extract<RunSession["status"], "queued" | "running">;
+  readonly workUnitId: string;
+  readonly expectedWorkUnitStatus: "queued" | "claimed";
+  readonly targetFence: RuntimeAttemptFenceV1;
+  readonly expectedAttemptStatus: "created";
+  readonly errorCode: string;
+  readonly errorMessage: string;
+  readonly now: string;
+}
+
+export type CommitExistingRunContinuationPreparationFailureResult =
+  | {
+      readonly ok: true;
+      readonly run: RunSession;
+      readonly task: Task;
+      readonly workUnit: import("../runtime-supervisor-types.js").WorkUnit;
+      readonly attempt: WorkUnitAttempt;
+      readonly continuation: RunnerContinuationV1;
+    }
+  | {
+      readonly ok: false;
+      readonly code:
+        | "continuation.preparation_failure_lineage_stale"
+        | "continuation.preparation_failure_state_stale"
+        | "continuation.preparation_failure_transition_failed";
+    };
+
 export interface ReprepareContinuationInput {
   readonly continuationId: string;
   /** Revision of the recovery-pending native-resume generation. */
@@ -125,6 +188,13 @@ export interface ClaimRunnerContinuationInput {
   readonly now: string;
 }
 
+export interface DeferRunnerContinuationInput {
+  readonly continuationId: string;
+  readonly expectedRevision: number;
+  readonly now: string;
+  readonly nextAttemptAt: string;
+}
+
 export interface StartRunnerContinuationInput {
   readonly continuationId: string;
   readonly expectedRevision: number;
@@ -150,6 +220,8 @@ export interface FinishRunnerContinuationInput {
 export interface ListClaimableRunnerContinuationsInput {
   readonly now: string;
   readonly limit?: number;
+  /** Only rows explicitly deferred by the daemon after a queueable conflict. */
+  readonly scheduledOnly?: boolean;
 }
 
 export type RunnerContinuationStoreErrorCode =

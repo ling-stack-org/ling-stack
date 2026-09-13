@@ -208,6 +208,7 @@ import { handleExecutionActionsCollection } from "../features/runs/execution-act
 import {
   createDetachedRunExecutionSink,
   createSseRunExecutionSink,
+  executeExistingRunContinuation,
   executeRunRequest,
   type RunExecutionSink,
 } from "../features/runs/orchestrator.js";
@@ -430,6 +431,76 @@ export async function routeRequest(
       computerUsePreviews,
     });
   };
+  const retryTaskRun = (input: {
+    readonly cwd: string;
+    readonly store: RunStore;
+    readonly run: RunSession;
+  }): Promise<
+    | { readonly ok: true; readonly runId: string }
+    | { readonly ok: false; readonly statusCode: number; readonly error: string; readonly message: string }
+  > => new Promise((resolveRetry) => {
+    let settled = false;
+    const settle = (result:
+      | { readonly ok: true; readonly runId: string }
+      | { readonly ok: false; readonly statusCode: number; readonly error: string; readonly message: string }): void => {
+      if (settled) return;
+      settled = true;
+      resolveRetry(result);
+    };
+    const detached = createDetachedRunExecutionSink();
+    const sink: RunExecutionSink = {
+      ...detached,
+      writeReady: () => settle({ ok: true, runId: input.run.id }),
+      writeError: (statusCode, body) => {
+        const value = body && typeof body === "object" ? body as Record<string, unknown> : {};
+        settle({
+          ok: false,
+          statusCode,
+          error: typeof value.error === "string" ? value.error : "runner_retry_failed",
+          message: typeof value.message === "string" ? value.message : "Task Run retry failed before Runner dispatch.",
+        });
+      },
+      end: () => settle({
+        ok: false,
+        statusCode: 409,
+        error: "runner_retry_not_started",
+        message: "Task Run retry ended before Runner dispatch.",
+      }),
+    };
+    void executeExistingRunContinuation(
+      {
+        cwd: input.cwd,
+        runId: input.run.id,
+        origin: "runner_retry",
+        idempotencyDiscriminator: `manual-retry:${input.run.id}:${input.run.updatedAt}`,
+      },
+      sink,
+      runnerRegistry,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      {
+        afterRunTerminal: maybeContinueRunInterventions,
+        controlPlaneEvents,
+        startupState,
+        computerUsePreviews,
+        hostCapabilityBridge,
+      },
+    ).then((runId) => {
+      if (!settled) {
+        settle(runId
+          ? { ok: true, runId }
+          : { ok: false, statusCode: 409, error: "runner_retry_not_started", message: "Task Run retry was not started." });
+      }
+    }, (error) => settle({
+      ok: false,
+      statusCode: 500,
+      error: "runner_retry_failed",
+      message: error instanceof Error ? error.message : String(error),
+    }));
+  });
   const startTeammateDirectRun = async (runRequest: RunRequest, sink: RunExecutionSink): Promise<string | undefined> =>
     executeRunRequest(
       runRequest,
@@ -1476,7 +1547,8 @@ export async function routeRequest(
 
   const workUnitRoute = parseWorkUnitRoute(url.pathname);
   if (workUnitRoute) {
-    handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled, controlPlaneEvents);
+    await handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute,
+      ensureRunCancelled, controlPlaneEvents, retryTaskRun);
     return;
   }
 

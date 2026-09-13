@@ -40,6 +40,7 @@ import type {
 } from "@ling-stack/contracts";
 import type {
   ClaimRunnerContinuationInput,
+  DeferRunnerContinuationInput,
   FinishRunnerContinuationInput,
   ListClaimableRunnerContinuationsInput,
   PrepareContinuationInput,
@@ -1704,7 +1705,14 @@ export interface RunStore {
   findRunnerContinuationByIdempotencyKey(idempotencyKey: string): RunnerContinuationV1 | undefined;
   listClaimableRunnerContinuations(input: ListClaimableRunnerContinuationsInput): readonly RunnerContinuationV1[];
   prepareContinuationAndAttempt(input: PrepareContinuationInput): PreparedContinuation;
+  commitExistingRunContinuation(
+    input: import("./harness/continuations.js").CommitExistingRunContinuationInput,
+  ): import("./harness/continuations.js").CommitExistingRunContinuationResult;
+  commitExistingRunContinuationPreparationFailure(
+    input: import("./harness/continuations.js").CommitExistingRunContinuationPreparationFailureInput,
+  ): import("./harness/continuations.js").CommitExistingRunContinuationPreparationFailureResult;
   reprepareContinuationAndAttempt(input: ReprepareContinuationInput): PreparedContinuation;
+  deferRunnerContinuation(input: DeferRunnerContinuationInput): RunnerContinuationMutationResult;
   claimRunnerContinuation(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult;
   startRunnerContinuation(input: StartRunnerContinuationInput): RunnerContinuationMutationResult;
   finishRunnerContinuation(input: FinishRunnerContinuationInput): RunnerContinuationMutationResult;
@@ -1780,8 +1788,8 @@ export interface RunStore {
     readonly idempotencyKey?: string;
     readonly now: string;
     readonly startedAt?: string;
-    readonly endedAt?: string;
-    readonly summaryPath?: string;
+    readonly endedAt?: string | null;
+    readonly summaryPath?: string | null;
     readonly errorMessage?: string | null;
   }): TransitionResult<RunStatus>;
   acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined;

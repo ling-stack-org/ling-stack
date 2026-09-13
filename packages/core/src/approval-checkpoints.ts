@@ -1,4 +1,5 @@
 import { createHash, randomUUID } from "node:crypto";
+import type { RunnerContinuationV1 } from "@ling-stack/contracts";
 import type {
   ApprovalActionType,
   ApprovalPayload,
@@ -7,7 +8,13 @@ import type {
   ApprovalStatus,
 } from "./approval-types.js";
 import type { ControlPlaneEvent, RunSession } from "./run-types.js";
-import type { CreateWorkUnitAttemptInput, WorkUnit, WorkUnitAttempt } from "./runtime-supervisor-types.js";
+import type { PrepareContinuationInput } from "./harness/continuations.js";
+import type {
+  CreateWorkUnitAttemptInput,
+  RuntimeAttemptFenceV1,
+  WorkUnit,
+  WorkUnitAttempt,
+} from "./runtime-supervisor-types.js";
 
 export type LingApprovalCheckpointStatus =
   | ApprovalStatus
@@ -101,7 +108,11 @@ export interface ListApprovalCheckpointsOptions {
 
 export type ApprovalResumeClaimMode = "activate_waiting" | "replace_running";
 
-export interface CommitApprovalResumeClaimInput {
+export type ApprovalResumeContinuationPreparation = Omit<PrepareContinuationInput, "targetAttempt"> & {
+  readonly targetAttempt: PrepareContinuationInput["targetAttempt"] & { readonly id: string };
+};
+
+interface CommitApprovalResumeClaimBase {
   readonly checkpointId: string;
   readonly expectedCheckpointStatus: "approved" | "resume_pending";
   readonly expectedCheckpointRevision: number;
@@ -110,11 +121,22 @@ export interface CommitApprovalResumeClaimInput {
   readonly workUnitId: string;
   readonly expectedActiveAttemptId: string;
   readonly attemptToLoseId?: string;
-  readonly replacementAttempt: CreateWorkUnitAttemptInput & { readonly id: string };
   readonly runnerResumeHandle: RunnerResumeHandle;
   readonly mode: ApprovalResumeClaimMode;
   readonly now: string;
 }
+
+export type CommitApprovalResumeClaimInput = CommitApprovalResumeClaimBase & (
+  | {
+      readonly replacementAttempt: CreateWorkUnitAttemptInput & { readonly id: string };
+      readonly continuationPreparation?: never;
+    }
+  | {
+      /** The approval transaction creates the continuation and replacement Attempt together. */
+      readonly replacementAttempt?: never;
+      readonly continuationPreparation: ApprovalResumeContinuationPreparation;
+    }
+);
 
 export type CommitApprovalResumeClaimResult =
   | {
@@ -123,6 +145,7 @@ export type CommitApprovalResumeClaimResult =
       readonly run: RunSession;
       readonly workUnit: WorkUnit;
       readonly attempt: WorkUnitAttempt;
+      readonly runnerContinuation?: RunnerContinuationV1;
       readonly controlPlaneEvents: readonly ControlPlaneEvent[];
     }
   | {
@@ -153,6 +176,14 @@ export interface CommitApprovalResumeVerifiedTerminalInput {
   readonly errorCode?: string;
   readonly errorMessage?: string;
   readonly summaryPath?: string;
+  readonly runnerContinuationTerminal?: {
+    readonly continuationId: string;
+    readonly expectedRevision: number;
+    readonly expectedState: Extract<RunnerContinuationV1["state"], "prepared" | "claimed" | "running">;
+    readonly claimOwner: string;
+    readonly claimToken: string;
+    readonly targetFence: RuntimeAttemptFenceV1;
+  };
   readonly now: string;
 }
 
@@ -192,6 +223,7 @@ export type CommitApprovalResumeTerminalResult =
       readonly run: RunSession;
       readonly workUnit: WorkUnit;
       readonly attempt: WorkUnitAttempt;
+      readonly runnerContinuation?: RunnerContinuationV1;
       readonly controlPlaneEvents: readonly ControlPlaneEvent[];
     }
   | {

@@ -54,6 +54,7 @@ export type RunTransitionEvent =
   | "approval_expired"
   | "runner_succeeded"
   | "runner_failed"
+  | "retry"
   | "cancel";
 
 export type ApprovalTransitionEvent = "approve" | "deny" | "expire" | "cancel_owner";
@@ -163,7 +164,7 @@ const lingTurnTerminalStatuses = new Set<LingTurnStatus>(["succeeded", "failed",
 
 const taskTransitions: Readonly<Record<TaskStatus, Partial<Record<TaskTransitionEvent, TaskStatus>>>> = {
   todo: { claim: "claimed", cancel: "cancelled" },
-  claimed: { start_run: "running", cancel: "cancelled" },
+  claimed: { start_run: "running", run_failed: "failed", cancel: "cancelled" },
   running: {
     run_succeeded: "done",
     user_input_requested: "waiting_for_input",
@@ -181,7 +182,7 @@ const taskTransitions: Readonly<Record<TaskStatus, Partial<Record<TaskTransition
 };
 
 const runTransitions: Readonly<Record<RunStatus, Partial<Record<RunTransitionEvent, RunStatus>>>> = {
-  queued: { runner_started: "running", cancel: "cancelled" },
+  queued: { runner_started: "running", runner_failed: "failed", cancel: "cancelled" },
   running: {
     runner_yielded: "yielded",
     approval_requested: "waiting_for_approval",
@@ -198,7 +199,7 @@ const runTransitions: Readonly<Record<RunStatus, Partial<Record<RunTransitionEve
   },
   yielded: {},
   succeeded: {},
-  failed: {},
+  failed: { retry: "queued" },
   cancelled: {},
 };
 

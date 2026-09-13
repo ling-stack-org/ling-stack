@@ -8,6 +8,9 @@ import type {
 } from "@ling-stack/contracts";
 import type {
   ClaimRunnerContinuationInput,
+  CommitExistingRunContinuationPreparationFailureInput,
+  CommitExistingRunContinuationPreparationFailureResult,
+  DeferRunnerContinuationInput,
   FinishRunnerContinuationInput,
   ListClaimableRunnerContinuationsInput,
   PrepareContinuationInput,
@@ -22,7 +25,11 @@ export interface RunnerContinuationStore {
   findRunnerContinuationByIdempotencyKey(idempotencyKey: string): RunnerContinuationV1 | undefined;
   listClaimableRunnerContinuations(input: ListClaimableRunnerContinuationsInput): readonly RunnerContinuationV1[];
   prepareContinuationAndAttempt(input: PrepareContinuationInput): PreparedContinuation;
+  commitExistingRunContinuationPreparationFailure(
+    input: CommitExistingRunContinuationPreparationFailureInput,
+  ): CommitExistingRunContinuationPreparationFailureResult;
   reprepareContinuationAndAttempt(input: ReprepareContinuationInput): PreparedContinuation;
+  deferRunnerContinuation(input: DeferRunnerContinuationInput): RunnerContinuationMutationResult;
   claimRunnerContinuation(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult;
   startRunnerContinuation(input: StartRunnerContinuationInput): RunnerContinuationMutationResult;
   finishRunnerContinuation(input: FinishRunnerContinuationInput): RunnerContinuationMutationResult;

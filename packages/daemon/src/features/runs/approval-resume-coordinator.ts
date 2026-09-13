@@ -28,6 +28,17 @@ import { appendRuntimeProgressForRunEvent, syncWorkUnitForRunEvent } from "./wor
 import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./threads.js";
 import { writeTerminalSummary } from "./terminal.js";
 import { auditIgnoredRunnerCompletion } from "./stale-completion.js";
+import {
+  readStoredEffectivePolicySnapshot,
+  readStoredRunnerExecution,
+} from "./existing-run-request.js";
+import {
+  finishPreparedRunnerContinuation,
+  materializeExistingRunContinuation,
+  prepareExistingRunContinuationPlan,
+  type ExistingRunContinuationPlan,
+  type PreparedRunnerContinuationExecution,
+} from "../harness/index.js";
 
 export type ApprovalResumeStartResult =
   | { readonly status: "not_applicable"; readonly reason: string }
@@ -41,12 +52,20 @@ export type ApprovalReviewDenialFinalizeResult =
   | { readonly status: "blocked"; readonly runId?: string; readonly reason: string };
 
 export class ApprovalResumeCoordinator {
+  private readonly harnessDispatches = new Set<string>();
+
   constructor(private readonly options: {
     readonly runtimeSupervisor: RuntimeSupervisor;
     readonly activeRuns: ActiveRunRegistry;
     readonly runnerRegistry: RunnerRegistry;
     readonly controlPlaneEvents?: ControlPlaneEventHub;
     readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
+    readonly executeExistingRunContinuation?: (input: {
+      readonly cwd: string;
+      readonly runId: string;
+      readonly approvalId: string;
+      readonly preparedExecution: PreparedRunnerContinuationExecution;
+    }) => Promise<string | undefined>;
   }) {}
 
   registerStore(store: RunStore): void {
@@ -169,7 +188,38 @@ export class ApprovalResumeCoordinator {
     }
     const now = new Date().toISOString();
     const runtime = this.options.runtimeSupervisor.getRuntime(input.store.paths.cwd, input.store);
-    const attemptId = createWorkUnitAttemptId();
+    let harnessPlan: ExistingRunContinuationPlan | undefined;
+    if (readHarnessContinuationEnforced(run.requestSnapshot)) {
+      const policySnapshot = readStoredEffectivePolicySnapshot(run.requestSnapshot);
+      const execution = readStoredRunnerExecution(run);
+      if (!runner || !policySnapshot || !execution) {
+        const reason = "approval_resume_harness_source_incomplete";
+        this.failResume(input.store, checkpoint, reason);
+        return { status: "blocked", runId: run.id, reason };
+      }
+      try {
+        harnessPlan = prepareExistingRunContinuationPlan({
+          store: input.store,
+          run,
+          workUnit,
+          sourceAttempt: priorAttempt,
+          runtime,
+          runner,
+          origin: "approval_resume",
+          policySnapshot,
+          execution,
+          workspaceCwd: input.store.paths.cwd,
+          now,
+          idempotencyDiscriminator: input.approval.id,
+          approvalEvidence: [approvalReplayEvidence(input.approval, checkpoint)],
+        });
+      } catch (error) {
+        const reason = `approval_resume_harness_prepare_failed:${formatError(error)}`;
+        this.failResume(input.store, checkpoint, reason);
+        return { status: "blocked", runId: run.id, reason };
+      }
+    }
+    const attemptId = harnessPlan?.preparation.targetAttempt.id ?? createWorkUnitAttemptId();
     const claim = input.store.commitApprovalResumeClaim({
       checkpointId: checkpoint.id,
       expectedCheckpointStatus: "approved",
@@ -179,18 +229,20 @@ export class ApprovalResumeCoordinator {
       workUnitId: workUnit.id,
       expectedActiveAttemptId: priorAttempt.id,
       attemptToLoseId: priorAttempt.id,
-      replacementAttempt: {
-        id: attemptId,
-        workUnitId: workUnit.id,
-        attemptNumber: workUnit.attemptCount + 1,
-        runtimeInstanceId: runtime.runtimeInstanceId,
-        runnerId: priorAttempt.runnerId,
-        requestedRunnerId: priorAttempt.requestedRunnerId,
-        effectiveRunnerId: priorAttempt.effectiveRunnerId,
-        fallbackReason: priorAttempt.fallbackReason,
-        providerPresetId: priorAttempt.providerPresetId,
-        now,
-      },
+      ...(harnessPlan
+        ? { continuationPreparation: harnessPlan.preparation }
+        : { replacementAttempt: {
+            id: attemptId,
+            workUnitId: workUnit.id,
+            attemptNumber: workUnit.attemptCount + 1,
+            runtimeInstanceId: runtime.runtimeInstanceId,
+            runnerId: priorAttempt.runnerId,
+            requestedRunnerId: priorAttempt.requestedRunnerId,
+            effectiveRunnerId: priorAttempt.effectiveRunnerId,
+            fallbackReason: priorAttempt.fallbackReason,
+            providerPresetId: priorAttempt.providerPresetId,
+            now,
+          } }),
       runnerResumeHandle: {
         kind: "ling_continuation",
         runnerId: workUnit.effectiveRunnerId ?? workUnit.runnerId,
@@ -209,7 +261,23 @@ export class ApprovalResumeCoordinator {
     if (!claim.ok) {
       return { status: "blocked", runId: run.id, reason: claim.code };
     }
-    return this.startClaimedBashAttempt(input.store, input.approval, claim);
+    let harnessExecution: PreparedRunnerContinuationExecution | undefined;
+    if (harnessPlan) {
+      try {
+        if (!claim.runnerContinuation) throw new Error("Approval resume continuation was not committed.");
+        harnessExecution = materializeExistingRunContinuation(harnessPlan, {
+          continuation: claim.runnerContinuation,
+          attempt: claim.attempt,
+          replayed: false,
+        });
+      } catch (error) {
+        const reason = `approval_resume_harness_start_failed:${formatError(error)}`;
+        this.failResume(input.store, claim.checkpoint, reason);
+        return { status: "blocked", runId: run.id, reason };
+      }
+      return this.startClaimedHarnessAttempt(input.store, input.approval, claim, harnessExecution);
+    }
+    return this.startClaimedBashAttempt(input.store, input.approval, claim, harnessExecution);
   }
 
   private recoverResumePending(
@@ -260,7 +328,8 @@ export class ApprovalResumeCoordinator {
     }
 
     const phase = readResumeToolPhase(store, run.id, approval, checkpoint, boundAttempt.id);
-    if (phase.toolEnd) {
+    const harnessEnforced = readHarnessContinuationEnforced(run.requestSnapshot);
+    if (phase.toolEnd && !harnessEnforced) {
       const handled = readHandledToolResult(phase.toolEnd);
       if (!handled) {
         const reason = "approval_resume_result_invalid";
@@ -276,7 +345,7 @@ export class ApprovalResumeCoordinator {
       this.options.activeRuns.trackCompletion(completion);
       return { status: "started", runId: run.id, attemptId: boundAttempt.id };
     }
-    if (phase.toolStart) {
+    if (phase.toolStart && !phase.toolEnd) {
       const reason = "approval_resume_effect_unknown";
       this.failResume(store, checkpoint, reason);
       return { status: "blocked", runId: run.id, reason };
@@ -287,6 +356,68 @@ export class ApprovalResumeCoordinator {
       const reason = "approval_resume_state_mismatch";
       this.failResume(store, checkpoint, reason);
       return { status: "blocked", runId: run.id, reason };
+    }
+
+    if (harnessEnforced) {
+      const runner = this.options.runnerRegistry.get(
+        workUnit.effectiveRunnerId ?? workUnit.runnerId ?? boundAttempt.runnerId,
+      );
+      const policySnapshot = readStoredEffectivePolicySnapshot(run.requestSnapshot);
+      const execution = readStoredRunnerExecution(run);
+      if (!runner || !policySnapshot || !execution) {
+        const reason = "approval_resume_harness_source_incomplete";
+        this.failResume(store, checkpoint, reason);
+        return { status: "blocked", runId: run.id, reason };
+      }
+      const runtime = this.options.runtimeSupervisor.getRuntime(store.paths.cwd, store);
+      let plan: ExistingRunContinuationPlan;
+      try {
+        plan = prepareExistingRunContinuationPlan({
+          store,
+          run,
+          workUnit,
+          sourceAttempt: boundAttempt,
+          runtime,
+          runner,
+          origin: "approval_resume",
+          policySnapshot,
+          execution,
+          workspaceCwd: store.paths.cwd,
+          now: new Date().toISOString(),
+          idempotencyDiscriminator: approval.id,
+          approvalEvidence: [approvalReplayEvidence(approval, checkpoint)],
+        });
+      } catch (error) {
+        const reason = `approval_resume_harness_prepare_failed:${formatError(error)}`;
+        this.failResume(store, checkpoint, reason);
+        return { status: "blocked", runId: run.id, reason };
+      }
+      const now = new Date().toISOString();
+      const replacement = store.commitApprovalResumeClaim({
+        checkpointId: checkpoint.id,
+        expectedCheckpointStatus: "resume_pending",
+        expectedCheckpointRevision: checkpoint.revision,
+        approvalId: approval.id,
+        runId: run.id,
+        workUnitId: workUnit.id,
+        expectedActiveAttemptId: boundAttempt.id,
+        attemptToLoseId: boundAttempt.id,
+        continuationPreparation: plan.preparation,
+        runnerResumeHandle: lingContinuationHandle(approval, checkpoint, workUnit, plan.preparation.targetAttempt.id),
+        mode: run.status === "waiting_for_approval" ? "activate_waiting" : "replace_running",
+        now,
+      });
+      if (!replacement.ok || !replacement.runnerContinuation) {
+        return { status: "blocked", runId: run.id, reason: replacement.ok
+          ? "approval_resume_continuation_missing"
+          : replacement.code };
+      }
+      const harnessExecution = materializeExistingRunContinuation(plan, {
+        continuation: replacement.runnerContinuation,
+        attempt: replacement.attempt,
+        replayed: false,
+      });
+      return this.startClaimedHarnessAttempt(store, approval, replacement, harnessExecution);
     }
 
     const runtime = this.options.runtimeSupervisor.getRuntime(store.paths.cwd, store);
@@ -310,10 +441,51 @@ export class ApprovalResumeCoordinator {
     return this.startClaimedBashAttempt(store, approval, replacement);
   }
 
+  private startClaimedHarnessAttempt(
+    store: RunStore,
+    approval: ApprovalRequest,
+    claim: Extract<ReturnType<RunStore["commitApprovalResumeClaim"]>, { ok: true }>,
+    execution: PreparedRunnerContinuationExecution,
+  ): ApprovalResumeStartResult {
+    for (const event of claim.controlPlaneEvents) this.options.controlPlaneEvents?.publish(event);
+    if (!this.options.executeExistingRunContinuation) {
+      const reason = "approval_resume_harness_dispatch_unavailable";
+      this.failResume(store, claim.checkpoint, reason);
+      return { status: "blocked", runId: claim.run.id, reason };
+    }
+    if (this.harnessDispatches.has(claim.run.id)) {
+      return { status: "already_active", runId: claim.run.id, attemptId: claim.attempt.id };
+    }
+    this.harnessDispatches.add(claim.run.id);
+    let completion: Promise<string | undefined>;
+    try {
+      completion = this.options.executeExistingRunContinuation({
+        cwd: store.paths.cwd,
+        runId: claim.run.id,
+        approvalId: approval.id,
+        preparedExecution: execution,
+      });
+    } catch (error) {
+      this.harnessDispatches.delete(claim.run.id);
+      const reason = `approval_resume_harness_dispatch_failed:${formatError(error)}`;
+      this.failResume(store, claim.checkpoint, reason);
+      return { status: "blocked", runId: claim.run.id, reason };
+    }
+    void completion.then((runId) => {
+      if (!runId) this.failResume(store, claim.checkpoint, "approval_resume_harness_dispatch_failed");
+    }, (error) => {
+      this.failResume(store, claim.checkpoint, `approval_resume_harness_dispatch_failed:${formatError(error)}`);
+    }).finally(() => {
+      this.harnessDispatches.delete(claim.run.id);
+    });
+    return { status: "started", runId: claim.run.id, attemptId: claim.attempt.id };
+  }
+
   private startClaimedBashAttempt(
     store: RunStore,
     approval: ApprovalRequest,
     claim: Extract<ReturnType<RunStore["commitApprovalResumeClaim"]>, { ok: true }>,
+    harnessExecution?: PreparedRunnerContinuationExecution,
   ): ApprovalResumeStartResult {
     for (const event of claim.controlPlaneEvents) this.options.controlPlaneEvents?.publish(event);
     const abortController = new AbortController();
@@ -325,6 +497,7 @@ export class ApprovalResumeCoordinator {
       workUnit: claim.workUnit,
       attempt: claim.attempt,
       abortController,
+      harnessExecution,
     })).finally(() => {
       if (this.options.activeRuns.get(claim.run.id)?.attemptId === claim.attempt.id) this.options.activeRuns.delete(claim.run.id);
     });
@@ -347,6 +520,7 @@ export class ApprovalResumeCoordinator {
     readonly workUnit: WorkUnit;
     readonly attempt: WorkUnitAttempt;
     readonly abortController: AbortController;
+    readonly harnessExecution?: PreparedRunnerContinuationExecution;
   }): Promise<void> {
     const payload = input.approval.payload;
     if (payload.type !== "bash") return;
@@ -494,6 +668,7 @@ export class ApprovalResumeCoordinator {
       readonly run: RunSession;
       readonly workUnit: WorkUnit;
       readonly attempt: WorkUnitAttempt;
+      readonly harnessExecution?: PreparedRunnerContinuationExecution;
     },
     cause: string,
   ): void {
@@ -515,6 +690,14 @@ export class ApprovalResumeCoordinator {
       now,
     });
     if (!suspended.ok) return;
+    if (input.harnessExecution && input.harnessExecution.continuation.state === "running") {
+      finishPreparedRunnerContinuation({
+        store: input.store,
+        execution: input.harnessExecution,
+        nextState: "recovery_pending",
+        now,
+      });
+    }
     for (const event of suspended.controlPlaneEvents) this.options.controlPlaneEvents?.publish(event);
   }
 
@@ -526,6 +709,7 @@ export class ApprovalResumeCoordinator {
       readonly run: RunSession;
       readonly workUnit: WorkUnit;
       readonly attempt: WorkUnitAttempt;
+      readonly harnessExecution?: PreparedRunnerContinuationExecution;
     },
     status: "succeeded" | "failed",
     errorCode?: string,
@@ -569,6 +753,14 @@ export class ApprovalResumeCoordinator {
     if (!terminal.ok) {
       auditIgnoredRunnerCompletion({ ...input, reportedStatus: status, now });
       return;
+    }
+    if (input.harnessExecution && input.harnessExecution.continuation.state === "running") {
+      finishPreparedRunnerContinuation({
+        store: input.store,
+        execution: input.harnessExecution,
+        nextState: status,
+        now,
+      });
     }
     writeTerminalSummary(summaryPath, {
       runId: input.run.id, status, taskId: input.run.taskId,
@@ -698,6 +890,29 @@ function validateResumeBasis(
     }
   }
   return { ok: true, run, workUnit, priorAttempt };
+}
+
+function approvalReplayEvidence(
+  approval: ApprovalRequest,
+  checkpoint: LingApprovalCheckpoint,
+) {
+  const basis = checkpoint.resumeBasis;
+  if (!basis || approval.status !== "approved") {
+    throw new Error("Approval replay evidence is incomplete.");
+  }
+  const sideEffectFingerprint = approvalSideEffectFingerprintV1({
+    actionType: approval.actionType,
+    toolCallId: approval.toolCallId ?? "",
+    sideEffect: approval.payload,
+  });
+  if (!approval.toolCallId || basis.sideEffectFingerprint !== sideEffectFingerprint) {
+    throw new Error("Approval replay evidence does not match its durable resume basis.");
+  }
+  return {
+    approvalId: approval.id,
+    decision: "approved" as const,
+    sideEffectFingerprint,
+  };
 }
 
 function readCurrentResumeLineage(
@@ -846,6 +1061,12 @@ function readStopIntent(value: unknown): import("../../runtime/active-runs.js").
 
 function isTerminalRunStatus(status: RunSession["status"]): boolean {
   return status === "succeeded" || status === "failed" || status === "cancelled";
+}
+
+function readHarnessContinuationEnforced(value: unknown): boolean {
+  return isRecord(value)
+    && isRecord(value.harnessFeatureSnapshot)
+    && value.harnessFeatureSnapshot.continuations === "enforce";
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

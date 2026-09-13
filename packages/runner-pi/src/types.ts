@@ -71,6 +71,23 @@ export interface PiRunnerToolHandledResult {
   readonly isError?: boolean;
 }
 
+/**
+ * Durable Host evidence used to continue an interrupted Agent turn after one
+ * approved tool call has already completed. This is transcript evidence, not
+ * authority to execute the tool again.
+ */
+export interface PiRunnerApprovedToolContinuation {
+  readonly schemaVersion: 1;
+  readonly kind: "approved_tool_result";
+  readonly approvalId: string;
+  readonly sideEffectFingerprint: string;
+  readonly toolCallId: string;
+  readonly toolName: string;
+  readonly args: unknown;
+  readonly result: PiRunnerToolHandledResult;
+  readonly assistantText?: string;
+}
+
 export type PiRunnerPermissionRequestKind =
   | "core_tool"
   | "write_scope"
@@ -292,6 +309,8 @@ export interface PiRunnerRunOptions {
   readonly initialToolSurface?: { readonly mediaGeneration: boolean; readonly toolHydration: boolean };
   /** Host-owned preparation evidence; never a permission grant or a session history. */
   readonly preparedInput?: PiRunnerPreparedInput;
+  /** Resume after a Host-executed approved tool result without replaying the tool call. */
+  readonly approvedToolContinuation?: PiRunnerApprovedToolContinuation;
   /**
    * Called once per runTask after SDK input validation, before prompting. Requires
    * preparedInput, runId and runnerAttemptId. Host must atomically verify its full

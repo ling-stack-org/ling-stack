@@ -3,6 +3,8 @@ import type { RunnerContinuationV1 } from "@ling-stack/contracts";
 import {
   transitionRunnerContinuation,
   type ClaimRunnerContinuationInput,
+  type CommitExistingRunContinuationPreparationFailureInput,
+  type DeferRunnerContinuationInput,
   type FinishRunnerContinuationInput,
   type ListClaimableRunnerContinuationsInput,
   type RunnerContinuationMutationResult,
@@ -46,14 +48,51 @@ export class SqliteRunnerContinuationStore {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
       throw new Error("Runner continuation claim limit must be between 1 and 500.");
     }
+    const scheduledClause = input.scheduledOnly ? "AND next_attempt_at IS NOT NULL" : "";
     return this.context.database
       .prepare(`${runnerContinuationSelectSql(`
         WHERE state = 'prepared'
           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
           AND (claim_owner IS NULL OR claim_expires_at IS NULL OR claim_expires_at <= ?)
+          ${scheduledClause}
       `)} ORDER BY COALESCE(next_attempt_at, created_at) ASC, created_at ASC, id ASC LIMIT ?`)
       .all(input.now, input.now, limit)
       .map((row) => mapRunnerContinuation(row as Record<string, SQLOutputValue>));
+  }
+
+  deferRunnerContinuation(input: DeferRunnerContinuationInput): RunnerContinuationMutationResult {
+    validateDeferInput(input);
+    return this.transaction(() => {
+      const current = this.getRunnerContinuation(input.continuationId);
+      if (!current) return { ok: false, code: "not_found" };
+      const target = this.currentTargetAttempt(current);
+      if (!target || target.status !== "created") return { ok: false, code: "continuation.target_attempt_lost" };
+      if (current.revision !== input.expectedRevision) return { ok: false, code: "stale_revision" };
+      if (current.state !== "prepared") return { ok: false, code: "invalid_transition" };
+      const update = this.context.database.prepare(`
+        UPDATE runner_continuations
+        SET revision = revision + 1,
+            claim_owner = NULL, claim_token = NULL, claim_expires_at = NULL,
+            next_attempt_at = ?, updated_at = ?
+        WHERE id = ? AND revision = ? AND state = 'prepared'
+          AND EXISTS (
+            SELECT 1
+            FROM work_units wu
+            JOIN work_unit_attempts wa ON wa.id = runner_continuations.target_attempt_id
+            WHERE wu.id = runner_continuations.work_unit_id
+              AND wu.active_attempt_id = wa.id
+              AND wa.work_unit_id = wu.id
+              AND wa.status = 'created'
+          )
+      `).run(
+        input.nextAttemptAt,
+        input.now,
+        input.continuationId,
+        input.expectedRevision,
+      );
+      if (Number(update.changes) !== 1) return { ok: false, code: "stale_revision" };
+      return { ok: true, value: this.getRunnerContinuation(input.continuationId)!, replayed: false };
+    });
   }
 
   insertWithinTransaction(continuation: RunnerContinuationV1): RunnerContinuationV1 {
@@ -97,6 +136,54 @@ export class SqliteRunnerContinuationStore {
     const stored = this.getRunnerContinuation(continuation.id);
     if (!stored) throw new Error(`Failed to create runner continuation: ${continuation.id}`);
     return stored;
+  }
+
+  failPreparationWithinTransaction(
+    input: Pick<
+      CommitExistingRunContinuationPreparationFailureInput,
+      | "continuationId"
+      | "expectedContinuationRevision"
+      | "expectedContinuationState"
+      | "claimOwner"
+      | "claimToken"
+      | "targetFence"
+      | "now"
+    >,
+  ): RunnerContinuationV1 | undefined {
+    const current = this.getRunnerContinuation(input.continuationId);
+    if (!current
+      || current.revision !== input.expectedContinuationRevision
+      || current.state !== input.expectedContinuationState
+      || !this.currentTargetAttempt(current, input.targetFence)
+      || (current.state === "claimed"
+        && (current.claimOwner !== input.claimOwner || current.claimToken !== input.claimToken))) {
+      return undefined;
+    }
+    const transition = transitionRunnerContinuation({
+      current,
+      expectedRevision: input.expectedContinuationRevision,
+      nextState: "failed",
+      now: input.now,
+    });
+    if (!transition.ok) return undefined;
+    const next = transition.value;
+    const updated = this.context.database.prepare(`
+      UPDATE runner_continuations
+      SET state = ?, revision = ?, failure_code = NULL,
+          failure_detail_artifact_id = NULL, next_attempt_at = NULL,
+          updated_at = ?, completed_at = ?
+      WHERE id = ? AND revision = ? AND state = ? AND target_attempt_id = ?
+    `).run(
+      next.state,
+      next.revision,
+      next.updatedAt,
+      next.completedAt ?? input.now,
+      current.id,
+      current.revision,
+      current.state,
+      input.targetFence.attemptId,
+    );
+    return Number(updated.changes) === 1 ? this.getRunnerContinuation(current.id) : undefined;
   }
 
   claimRunnerContinuation(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult {
@@ -199,55 +286,60 @@ export class SqliteRunnerContinuationStore {
 
   finishRunnerContinuation(input: FinishRunnerContinuationInput): RunnerContinuationMutationResult {
     validateExecutionMutationInput(input);
-    return this.transaction(() => {
-      const current = this.getRunnerContinuation(input.continuationId);
-      if (!current) return { ok: false, code: "not_found" };
-      if (input.failureDetailArtifactId) {
-        const artifact = this.ports.getArtifact(input.failureDetailArtifactId);
-        if (!artifact || artifact.runId !== current.runId) return { ok: false, code: "invalid_transition" };
-      }
-      if (!this.matchesLease(current, input) || !current.claimExpiresAt || current.claimExpiresAt <= input.now) {
-        return { ok: false, code: "lease_mismatch" };
-      }
-      if (!this.currentTargetAttempt(current, input.targetFence)) {
-        return { ok: false, code: "continuation.target_attempt_lost" };
-      }
-      if (current.state === input.nextState) {
-        return { ok: true, value: current, replayed: true };
-      }
-      if (current.revision !== input.expectedRevision) return { ok: false, code: "stale_revision" };
-      const transition = transitionRunnerContinuation({
-        current,
-        expectedRevision: input.expectedRevision,
-        nextState: input.nextState,
-        now: input.now,
-      });
-      if (!transition.ok) return { ok: false, code: transition.code };
-      const next = transition.value;
-      const update = this.context.database.prepare(`
-        UPDATE runner_continuations
-        SET state = ?, revision = ?, failure_code = ?, failure_detail_artifact_id = ?,
-            next_attempt_at = ?, updated_at = ?, completed_at = ?
-        WHERE id = ? AND revision = ? AND state = ?
-          AND claim_owner = ? AND claim_token = ? AND claim_expires_at > ?
-      `).run(
-        next.state,
-        next.revision,
-        input.failureCode ?? null,
-        input.failureDetailArtifactId ?? null,
-        input.nextState === "recovery_pending" ? input.nextAttemptAt ?? null : null,
-        next.updatedAt,
-        next.completedAt ?? null,
-        input.continuationId,
-        input.expectedRevision,
-        current.state,
-        input.claimOwner,
-        input.claimToken,
-        input.now,
-      );
-      if (Number(update.changes) !== 1) return { ok: false, code: "stale_revision" };
-      return { ok: true, value: this.getRunnerContinuation(input.continuationId)!, replayed: false };
+    return this.transaction(() => this.finishRunnerContinuationWithinTransaction(input));
+  }
+
+  finishRunnerContinuationWithinTransaction(
+    input: FinishRunnerContinuationInput,
+  ): RunnerContinuationMutationResult {
+    validateExecutionMutationInput(input);
+    const current = this.getRunnerContinuation(input.continuationId);
+    if (!current) return { ok: false, code: "not_found" };
+    if (input.failureDetailArtifactId) {
+      const artifact = this.ports.getArtifact(input.failureDetailArtifactId);
+      if (!artifact || artifact.runId !== current.runId) return { ok: false, code: "invalid_transition" };
+    }
+    if (!this.matchesLease(current, input) || !current.claimExpiresAt || current.claimExpiresAt <= input.now) {
+      return { ok: false, code: "lease_mismatch" };
+    }
+    if (!this.currentTargetAttempt(current, input.targetFence)) {
+      return { ok: false, code: "continuation.target_attempt_lost" };
+    }
+    if (current.state === input.nextState) {
+      return { ok: true, value: current, replayed: true };
+    }
+    if (current.revision !== input.expectedRevision) return { ok: false, code: "stale_revision" };
+    const transition = transitionRunnerContinuation({
+      current,
+      expectedRevision: input.expectedRevision,
+      nextState: input.nextState,
+      now: input.now,
     });
+    if (!transition.ok) return { ok: false, code: transition.code };
+    const next = transition.value;
+    const update = this.context.database.prepare(`
+      UPDATE runner_continuations
+      SET state = ?, revision = ?, failure_code = ?, failure_detail_artifact_id = ?,
+          next_attempt_at = ?, updated_at = ?, completed_at = ?
+      WHERE id = ? AND revision = ? AND state = ?
+        AND claim_owner = ? AND claim_token = ? AND claim_expires_at > ?
+    `).run(
+      next.state,
+      next.revision,
+      input.failureCode ?? null,
+      input.failureDetailArtifactId ?? null,
+      input.nextState === "recovery_pending" ? input.nextAttemptAt ?? null : null,
+      next.updatedAt,
+      next.completedAt ?? null,
+      input.continuationId,
+      input.expectedRevision,
+      current.state,
+      input.claimOwner,
+      input.claimToken,
+      input.now,
+    );
+    if (Number(update.changes) !== 1) return { ok: false, code: "stale_revision" };
+    return { ok: true, value: this.getRunnerContinuation(input.continuationId)!, replayed: false };
   }
 
   private classifyClaimFailure(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult {
@@ -303,6 +395,18 @@ function validateClaimInput(input: ClaimRunnerContinuationInput): void {
   assertTimestamp(input.now);
   assertTimestamp(input.claimExpiresAt);
   if (input.claimExpiresAt <= input.now) throw new Error("Runner continuation claim must expire after now.");
+}
+
+function validateDeferInput(input: DeferRunnerContinuationInput): void {
+  validateIdentity(input.continuationId, "continuation id");
+  if (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 0) {
+    throw new Error("Runner continuation revision must be a non-negative safe integer.");
+  }
+  assertTimestamp(input.now);
+  assertTimestamp(input.nextAttemptAt);
+  if (input.nextAttemptAt < input.now) {
+    throw new Error("Runner continuation retry time cannot precede the defer time.");
+  }
 }
 
 function validateExecutionMutationInput(input: StartRunnerContinuationInput | FinishRunnerContinuationInput): void {

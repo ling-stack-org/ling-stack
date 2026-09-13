@@ -2,6 +2,7 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { translatePiEvents } from "./events.js";
 import { createInitializedPiSession } from "./session-factory.js";
 import { assertPreparedPiSession, capturePreparedPiInput, type PiRunnerPreparedInput } from "./prepared-input.js";
+import { installApprovedToolContinuation, readApprovedToolContinuation } from "./approved-tool-continuation.js";
 import { createPiPreparedInputReceiver } from "./prepared-input-receiver.js";
 import { fetchProvider } from "./provider-http.js";
 import { createPiSessionStopper, createPiTaskBoundary } from "./task-boundary.js";
@@ -78,8 +79,19 @@ export class PiRunnerAdapter {
         boundary.assertOpen();
         assertPreparedPiSession(session, options);
       }
-      await session.prompt(formatTaskPrompt(options.task), { source: "rpc" });
-      await session.waitForIdle();
+      if (options.approvedToolContinuation) {
+        if (!options.preparedInput) {
+          throw new Error("Approved tool continuation requires prepared input evidence.");
+        }
+        const continuation = readApprovedToolContinuation(options.approvedToolContinuation);
+        await options.onTaskContinuationBoundary?.("before_agent_start");
+        boundary.assertOpen();
+        installApprovedToolContinuation(session, options.preparedInput, options.provider, continuation);
+        await session.agent.continue();
+      } else {
+        await session.prompt(formatTaskPrompt(options.task), { source: "rpc" });
+        await session.waitForIdle();
+      }
       boundary.assertOpen();
       const terminalFailure = findTerminalFailure(events);
       if (terminalFailure) {

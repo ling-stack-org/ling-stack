@@ -70,6 +70,10 @@ export class RuntimeSupervisor {
     return this.config.sandbox;
   }
 
+  getHarnessFeatures(): ResolvedDaemonConfig["harness"] {
+    return this.config.harness;
+  }
+
   getRestrictedCommandRuntime(): NativeRestrictedCommandRuntime | undefined {
     const config = this.config.sandbox.restrictedCommands;
     if (config) this.restrictedCommandRuntime ??= new NativeRestrictedCommandRuntime(config);

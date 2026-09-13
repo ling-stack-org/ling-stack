@@ -14,5 +14,7 @@ export function createHarnessFeatureSnapshot(config: Pick<ResolvedDaemonConfig, 
 }
 
 export * from "./continuations/native-handle.js";
+export * from "./continuations/coordinator.js";
+export * from "./continuations/daemon-recovery-coordinator.js";
 export * from "./continuations/reconstruction.js";
 export * from "./continuations/replay-package.js";
