@@ -1052,10 +1052,20 @@ Synthesized from this review's findings. Each task derives from a specific revie
     241/241 pass. The default all-file Daemon command was not used as evidence because its
     parallel workers deadlocked on shared integration resources; the stable serial matrix
     completed with a real exit code.
-- [ ] **T4 (P0, human: ~1 day / CC: ~45 min)** — Continuation integration — Route all six origins into `RunnerContinuation` while preserving current turn/run semantics.
+- [x] **T4 (P0, human: ~1 day / CC: ~45 min)** — Continuation integration — Route all six origins into `RunnerContinuation` while preserving current turn/run semantics.
   - Surfaced by: Scope challenge and existing continuation fragmentation.
   - Files: daemon run threads, interventions, approval resume, recovery, and orchestrator wiring.
   - Verify: existing manual/queue/interrupt/approval regression suites plus restart recovery.
+  - Implemented: manual resume, queued follow-up, interrupt redirect, approval resume,
+    runner retry, and daemon recovery now prepare or adopt one durable continuation with
+    immutable prepared input, a fresh fenced Attempt, scheduled conflict recovery, and
+    terminal resource release. Approval restart replays durable tool evidence without
+    executing the approved side effect twice; effect-unknown remains fail-closed.
+  - Verified: daemon build; focused Core 137/137, approval recovery 13/13,
+    continuation/prepared-input integration 30/30, and Runner Pi 181/181 pass. The two
+    first failing files from the parallel all-file Daemon run pass independently
+    (AI council 1/1 and approval/run integration 94/94); the aggregate runner remains a
+    known shared-integration concurrency problem and is not used as H04 evidence.
 - [ ] **T5 (P0, human: ~2 days / CC: ~75 min)** — Tool Broker core — Add migration 136 and wrap daemon unified bash with prepare/approve/claim/evidence state.
   - Surfaced by: Architecture D3 and test gaps G07-G10.
   - Files: core tool-execution domain/store and daemon harness tool broker.
