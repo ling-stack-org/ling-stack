@@ -4,6 +4,8 @@ import {
   assertDelegationBudgetSubset,
   assertNonNegativeSafeInteger,
   delegationIdempotencyKey,
+  digestRunEvaluationValue,
+  gradeDeterministicRunEvaluation,
   harnessToolExecutionIdempotencyKey,
   isHarnessLeaseClaimable,
   isUniqueStringSubset,
@@ -106,6 +108,48 @@ test("run evaluations support leased retries but keep completed results terminal
   }), { ok: false, code: "invalid_transition" });
 });
 
+test("deterministic rule grader canonicalizes JSON and rejects executable or malformed values", () => {
+  const caseDefinition = {
+    schemaVersion: 1,
+    kind: "deterministic_json_rule",
+    graderId: "json-contract",
+    graderVersion: "1",
+    failureSeverity: "error",
+    assertions: [
+      { type: "deep_equal", baselinePath: ["status"], candidatePath: ["status"] },
+      { type: "contains", baselinePath: ["required"], candidatePath: ["actual"] },
+      { type: "exists", candidatePath: ["actual", "nested"] },
+      { type: "number_range", candidatePath: ["latencyMs"], minimum: 0, maximum: 25 },
+    ],
+  };
+  const baseline = { required: { a: 1, b: [2] }, status: "ok" };
+  const candidate = { latencyMs: 12, actual: { b: [2, 3], nested: true, a: 1 }, status: "ok" };
+  const first = gradeDeterministicRunEvaluation({ caseDefinition, baseline, candidate });
+  const second = gradeDeterministicRunEvaluation({
+    caseDefinition: { ...caseDefinition },
+    baseline: { status: "ok", required: { b: [2], a: 1 } },
+    candidate: { status: "ok", actual: { a: 1, nested: true, b: [2, 3] }, latencyMs: 12 },
+  });
+  assert.deepEqual(first, second);
+  assert.equal(first.verdict, "pass");
+  assert.equal(first.score, 1);
+  assert.equal(digestRunEvaluationValue({ b: 2, a: 1 }), digestRunEvaluationValue({ a: 1, b: 2 }));
+
+  assert.throws(() => gradeDeterministicRunEvaluation({
+    caseDefinition: { ...caseDefinition, assertions: [] }, baseline, candidate,
+  }), /between 1 and 100/u);
+  assert.throws(() => gradeDeterministicRunEvaluation({
+    caseDefinition: { ...caseDefinition, assertions: [{ type: "execute", command: "rm" }] },
+    baseline,
+    candidate,
+  }), /Unsupported rule assertion/u);
+  assert.throws(() => gradeDeterministicRunEvaluation({
+    caseDefinition,
+    baseline,
+    candidate: { invalid: undefined },
+  }), /not JSON-safe/u);
+});
+
 test("delegation steps preserve the interrupt and resume lifecycle", () => {
   let current = delegation();
   for (const nextState of [
@@ -198,14 +242,61 @@ test("harness identities are deterministic at their authority boundaries", () =>
   );
   assert.equal(harnessToolExecutionIdempotencyKey("attempt_1", "tool_1"), "harness-tool:attempt_1:tool_1");
   assert.equal(delegationIdempotencyKey("attempt_1", "spawn_1"), "delegation:attempt_1:spawn_1");
-  assert.equal(runEvaluationIdempotencyKey({
+  const evaluationKey = runEvaluationIdempotencyKey({
+    rootRunId: "run_root",
     runId: "run_1",
     suiteId: "suite_1",
     suiteVersion: "1",
+    suiteArtifactId: "artifact_suite_1",
+    suiteDigest: "a".repeat(64),
     caseId: "case_1",
     caseVersion: "3",
+    caseArtifactId: "artifact_case_1",
+    caseDigest: "b".repeat(64),
+    baselineId: "baseline_1",
+    baselineVersion: "2",
+    baselineArtifactId: "artifact_baseline_1",
+    baselineDigest: "c".repeat(64),
     candidateArtifactId: "artifact_1",
-  }), "run-evaluation:run_1:suite_1:1:case_1:3:artifact_1");
+    candidateDigest: "d".repeat(64),
+  });
+  assert.match(evaluationKey, /^run-evaluation:[a-f0-9]{64}$/u);
+  assert.equal(evaluationKey, runEvaluationIdempotencyKey({
+    candidateDigest: "d".repeat(64),
+    candidateArtifactId: "artifact_1",
+    baselineDigest: "c".repeat(64),
+    baselineArtifactId: "artifact_baseline_1",
+    baselineVersion: "2",
+    baselineId: "baseline_1",
+    caseDigest: "b".repeat(64),
+    caseArtifactId: "artifact_case_1",
+    caseVersion: "3",
+    caseId: "case_1",
+    suiteDigest: "a".repeat(64),
+    suiteArtifactId: "artifact_suite_1",
+    suiteVersion: "1",
+    suiteId: "suite_1",
+    runId: "run_1",
+    rootRunId: "run_root",
+  }));
+  assert.notEqual(evaluationKey, runEvaluationIdempotencyKey({
+    rootRunId: "run_root",
+    runId: "run_1",
+    suiteId: "suite_1",
+    suiteVersion: "1",
+    suiteArtifactId: "artifact_suite_copy",
+    suiteDigest: "a".repeat(64),
+    caseId: "case_1",
+    caseVersion: "3",
+    caseArtifactId: "artifact_case_1",
+    caseDigest: "b".repeat(64),
+    baselineId: "baseline_1",
+    baselineVersion: "2",
+    baselineArtifactId: "artifact_baseline_1",
+    baselineDigest: "c".repeat(64),
+    candidateArtifactId: "artifact_1",
+    candidateDigest: "d".repeat(64),
+  }));
 });
 
 function continuation(overrides = {}) {
@@ -262,11 +353,19 @@ function evaluation(overrides = {}) {
     runId: "run_1",
     suiteId: "suite_1",
     suiteVersion: "1",
+    suiteArtifactId: "artifact_suite_1",
+    suiteDigest: "a".repeat(64),
     caseId: "case_1",
     caseVersion: "1",
+    caseArtifactId: "artifact_case_1",
+    caseDigest: "b".repeat(64),
     baselineId: "baseline_1",
     baselineVersion: "1",
+    baselineArtifactId: "artifact_baseline_1",
+    baselineDigest: "c".repeat(64),
     candidateArtifactId: "artifact_candidate_1",
+    candidateDigest: "d".repeat(64),
+    idempotencyKey: "evaluation-key",
     state: "queued",
     revision: 0,
     createdAt,

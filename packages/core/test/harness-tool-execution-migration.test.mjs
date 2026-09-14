@@ -21,6 +21,9 @@ test("schema 135 upgrades to ToolExecution schema 136 and reruns idempotently", 
   const path = resolveRuntimePaths(cwd).databasePath;
   let database = new DatabaseSync(path);
   database.exec(`
+    DROP TABLE run_evaluation_grades;
+    DROP TABLE run_evaluations;
+    DELETE FROM schema_migrations WHERE version = 137;
     DROP TABLE harness_tool_execution_artifacts;
     DROP TABLE harness_tool_executions;
     DELETE FROM schema_migrations WHERE version = 136;

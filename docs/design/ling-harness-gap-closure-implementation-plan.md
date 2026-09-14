@@ -1125,10 +1125,21 @@ Synthesized from this review's findings. Each task derives from a specific revie
     85/85, API client 52/52, Core fallback/migration 2/2, Web typecheck, and
     `git diff --check` pass. Full repository and packaged macOS acceptance remain part of
     the final combined gate.
-- [ ] **T8 (P1, human: ~1.5 days / CC: ~60 min)** — Evaluation foundation — Add migration 137, append-only records, scheduler, and deterministic rule grader.
+- [x] **T8 (P1, human: ~1.5 days / CC: ~60 min)** — Evaluation foundation — Add migration 137, append-only records, scheduler, and deterministic rule grader.
   - Surfaced by: Architecture D4 and performance P1/P3.
-  - Files: core evaluation domain/store and daemon evaluation scheduler.
-  - Verify: G14, G16, G17 and no normal-run semaphore use.
+  - Implemented: migration 137 creates immutable evaluation lineage and append-only grade
+    rows. Suite, case, baseline, and candidate identities bind exact sealed artifact IDs
+    and digests into a stable hashed idempotency key. SQLite claim token, lease, and
+    revision CAS fence completion, failure, retry, and expired-worker recovery.
+  - Grader/scheduler: the JSON-only rule grader uses a closed deterministic assertion
+    schema and rejects malformed input or artifact digest drift. The daemon scheduler has
+    an independent low-priority concurrency pool, treats SQLite claim state as authority,
+    contains worker failures, and drains before store shutdown without acquiring a normal
+    Run semaphore.
+  - Verified: G14, G16, and G17 pass. Core/migration compatibility 30/30, Daemon scheduler
+    7/7, Contracts 85/85, Core full 990/990, and Daemon config/scheduler/shutdown 25/25
+    pass. Core/Daemon builds and `git diff --check` pass. Packaged macOS remains part of
+    the final combined gate.
 - [ ] **T9 (P1, human: ~1.5 days / CC: ~60 min)** — Evaluation calibration — Add model/human grades, artifacts, cost/latency, and promotion reports.
   - Surfaced by: Test T2 and gaps G15/G18.
   - Files: daemon graders, evaluation APIs/projections, fixtures.
@@ -1192,8 +1203,8 @@ This plan is being implemented on the existing `codex/reasoning-summary-autorevi
 | Domain | Current branch evidence | Adoption verdict |
 | --- | --- | --- |
 | Continuation | Manual resume, queued follow-up, interrupt redirect, approval resume, immutable prepared input, context-view lineage, fresh Attempts, and stale-completion fences already exist. `RunnerAdapter.resumeTask()` is declared but has no production caller. | Reuse current lineage and recovery. Add the durable strategy/claim record and native-resume gate; do not rebuild Continuity or approval resume. |
-| Tool execution | Migration 136, the daemon bash/file broker, Attempt fencing, approval recovery supersession, crash-window reconciliation, atomic artifact refs, and the `ExecutionAction` evidence projection are implemented. Pi `edit` and `write` fail closed without a Host handled result; daemon executors own native write, exact edit, and apply-patch effects. | T5 and T6 are complete. Continue with T7 to reject external runners that cannot prove the same approval, sandbox, cancellation, fencing, and evidence behavior. |
-| Evaluation | Skill regression and channel-team evaluation models exist, but no generic run/suite/case/baseline/grade lineage exists. | Reuse grader and artifact utilities only. Add a generic append-only evaluation domain without changing completed Run status. |
+| Tool execution | Migration 136, the daemon bash/file broker, Attempt fencing, approval recovery supersession, crash-window reconciliation, atomic artifact refs, the `ExecutionAction` evidence projection, and external-runner conformance receipts are implemented. Pi `edit` and `write` fail closed without a Host handled result; daemon executors own native write, exact edit, and apply-patch effects. | T5-T7 are complete. Preserve the same approval, sandbox, cancellation, fencing, and evidence boundary while later phases add delegation. |
+| Evaluation | Migration 137, immutable run/suite/case/baseline/candidate lineage, append-only rule grades, SQLite claim recovery, deterministic JSON grading, and a separate low-priority scheduler are implemented. | T8 is complete. Continue with T9 model/human grades, cost/latency artifacts, and promotion analysis; model grading remains shadow-only. |
 | Delegation | Accepted workflow graphs, participant manifests, required-evidence fan-in, step completion gates, and child presentation exist. Runtime `spawn/message/wait/interrupt/resume` and a restartable child tree do not. | Keep the workflow graph immutable. Add only the Step-scoped durable delegation overlay and root-budget/subset gates. |
 | Queue and recovery | Runtime semaphores, approval-review WorkUnits, leases, attempts, EventHub wake-up, and startup recovery patterns exist. | Reuse the WorkUnit/Attempt and claim patterns. Do not add a second scheduler framework or in-memory authority. |
 | UI | Typed canonical transcript, nested sub-agent presentation, approval cards, TerminalReport and artifacts are already implemented in the current branch. | No new transcript renderer. New harness states project into the existing typed timeline and diagnostics. |

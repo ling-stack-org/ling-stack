@@ -623,9 +623,11 @@ import { SqliteRuntimeRecoveryCoordinator } from "./sqlite/runtime-recovery-coor
 import { SqliteRuntimeWorkUnitStore } from "./sqlite/runtime-work-unit-store.js";
 import { SqliteRunnerContinuationStore } from "./sqlite/runner-continuation-store.js";
 import { SqliteHarnessToolExecutionStore } from "./sqlite/harness-tool-execution-store.js";
+import { SqliteRunEvaluationStore } from "./sqlite/run-evaluation-store.js";
 import { SqliteHarnessCommitCoordinator } from "./sqlite/harness-commit-coordinator.js";
 import { applyRunnerContinuationMigration } from "./sqlite/runner-continuation-migration.js";
 import { applyHarnessToolExecutionMigration } from "./sqlite/harness-tool-execution-migration.js";
+import { applyRunEvaluationMigration } from "./sqlite/run-evaluation-migration.js";
 import { SqliteUserProfileStore } from "./sqlite/user-profile-store.js";
 import { SqliteWorkspaceSettingsStore } from "./sqlite/workspace-settings-store.js";
 import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
@@ -721,6 +723,7 @@ export class SqliteRunStore implements RunStore {
   private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore;
   private readonly runnerContinuations: SqliteRunnerContinuationStore;
   private readonly harnessToolExecutions: SqliteHarnessToolExecutionStore;
+  private readonly runEvaluations: SqliteRunEvaluationStore;
   private readonly harnessCommits: SqliteHarnessCommitCoordinator;
   private readonly userProfile: SqliteUserProfileStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
@@ -880,6 +883,13 @@ export class SqliteRunStore implements RunStore {
         getArtifact: (id) => this.getArtifact(id),
         getApprovalRequest: (id) => this.getApprovalRequest(id),
         getRunnerContinuation: (id) => this.getRunnerContinuation(id),
+      },
+    );
+    this.runEvaluations = new SqliteRunEvaluationStore(
+      { database: this.database },
+      {
+        getRun: (id) => this.getRun(id),
+        getArtifact: (id) => this.getArtifact(id),
       },
     );
     this.harnessCommits = new SqliteHarnessCommitCoordinator(
@@ -1421,6 +1431,11 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
           applyHarnessToolExecutionMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyRunEvaluationMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
@@ -2261,6 +2276,76 @@ export class SqliteRunStore implements RunStore {
     input: import("../harness/tool-executions.js").ReconcileAbandonedHarnessToolExecutionsInput,
   ): readonly import("@ling-stack/contracts").HarnessToolExecutionV1[] {
     return this.harnessToolExecutions.reconcileAbandonedHarnessToolExecutions(input);
+  }
+
+  getRunEvaluation(id: string): import("@ling-stack/contracts").RunEvaluationV1 | undefined {
+    return this.runEvaluations.getRunEvaluation(id);
+  }
+
+  findRunEvaluationByIdempotencyKey(
+    idempotencyKey: string,
+  ): import("@ling-stack/contracts").RunEvaluationV1 | undefined {
+    return this.runEvaluations.findRunEvaluationByIdempotencyKey(idempotencyKey);
+  }
+
+  listRunEvaluations(
+    input: import("../harness/evaluations.js").ListRunEvaluationsInput = {},
+  ): readonly import("@ling-stack/contracts").RunEvaluationV1[] {
+    return this.runEvaluations.listRunEvaluations(input);
+  }
+
+  listClaimableRunEvaluations(
+    input: import("../harness/evaluations.js").ListClaimableRunEvaluationsInput,
+  ): readonly import("@ling-stack/contracts").RunEvaluationV1[] {
+    return this.runEvaluations.listClaimableRunEvaluations(input);
+  }
+
+  listRunEvaluationGrades(
+    evaluationId: string,
+  ): readonly import("@ling-stack/contracts").RunEvaluationGradeV1[] {
+    return this.runEvaluations.listRunEvaluationGrades(evaluationId);
+  }
+
+  enqueueRunEvaluation(
+    input: import("../harness/evaluations.js").EnqueueRunEvaluationInput,
+  ): import("../harness/evaluations.js").EnqueuedRunEvaluation {
+    return this.runEvaluations.enqueueRunEvaluation(input);
+  }
+
+  claimRunEvaluation(
+    input: import("../harness/evaluations.js").ClaimRunEvaluationInput,
+  ): import("../harness/evaluations.js").RunEvaluationMutationResult {
+    return this.runEvaluations.claimRunEvaluation(input);
+  }
+
+  startRunEvaluation(
+    input: import("../harness/evaluations.js").StartRunEvaluationInput,
+  ): import("../harness/evaluations.js").RunEvaluationMutationResult {
+    return this.runEvaluations.startRunEvaluation(input);
+  }
+
+  requeueRunEvaluation(
+    input: import("../harness/evaluations.js").RequeueRunEvaluationInput,
+  ): import("../harness/evaluations.js").RunEvaluationMutationResult {
+    return this.runEvaluations.requeueRunEvaluation(input);
+  }
+
+  failRunEvaluation(
+    input: import("../harness/evaluations.js").FailRunEvaluationInput,
+  ): import("../harness/evaluations.js").RunEvaluationMutationResult {
+    return this.runEvaluations.failRunEvaluation(input);
+  }
+
+  completeRunEvaluation(
+    input: import("../harness/evaluations.js").CompleteRunEvaluationInput,
+  ): import("../harness/evaluations.js").CompleteRunEvaluationResult {
+    return this.runEvaluations.completeRunEvaluation(input);
+  }
+
+  appendRunEvaluationGrade(
+    input: import("../harness/evaluations.js").AppendRunEvaluationGradeInput,
+  ): import("../harness/evaluations.js").AppendRunEvaluationGradeResult {
+    return this.runEvaluations.appendRunEvaluationGrade(input);
   }
 
   updateWorkUnitAttemptStatus(

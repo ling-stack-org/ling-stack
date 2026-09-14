@@ -49,6 +49,7 @@ import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coord
 import { ApprovalAutoReviewRecoveryCoordinator } from "./features/runs/approval-auto-review-recovery.js";
 import { DaemonRunnerRecoveryCoordinator } from "./features/harness/continuations/daemon-recovery-coordinator.js";
 import { reconcileHarnessToolExecutionsAtStartup } from "./features/harness/tool-execution/recovery.js";
+import { RunEvaluationSchedulerRegistry } from "./features/harness/evaluations/scheduler.js";
 import {
   createDetachedRunExecutionSink,
   executeExistingRunContinuation,
@@ -259,6 +260,7 @@ export function createDaemonServer(
   let approvalResumeCoordinator: ApprovalResumeCoordinator | undefined;
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
   let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
+  let runEvaluationScheduler: RunEvaluationSchedulerRegistry | undefined;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
@@ -280,6 +282,7 @@ export function createDaemonServer(
       approvalResumeCoordinator?.registerStore(store);
       approvalAutoReviewRecoveryCoordinator?.registerStore(store);
       daemonRunnerRecoveryCoordinator?.registerStore(store);
+      runEvaluationScheduler?.registerStore(store);
       startupOptionalWarmups?.start(cwd, store);
       reconcileAllContinuityWorkflows(store, { cause: "startup" });
       if (resolvedConfig.channels.terminalReports === true) {
@@ -287,6 +290,9 @@ export function createDaemonServer(
       }
       if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     },
+  });
+  runEvaluationScheduler = new RunEvaluationSchedulerRegistry({
+    enabled: resolvedConfig.harness.evaluations.mode !== "off",
   });
   const chromeBrowserSessions = new ChromeBrowserSessionController({
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
@@ -700,6 +706,7 @@ export function createDaemonServer(
       await approvalAutoReviewRecoveryCoordinator.recoverStore(
         storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
       );
+      runEvaluationScheduler.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
       daemonRunnerRecoveryCoordinator.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
       daemonRunnerRecoveryCoordinator.start();
       // Ephemeral control-plane servers are used by tests and embedded fixtures.
@@ -751,6 +758,7 @@ export function createDaemonServer(
     },
     stop: async () => {
       daemonRunnerRecoveryCoordinator.beginShutdown();
+      runEvaluationScheduler.beginShutdown();
       channelTurnDispatchReady = false;
       channelTurnDispatchWorker.beginShutdown();
       activeRuns.suspendAll("daemon_restart");
@@ -783,6 +791,7 @@ export function createDaemonServer(
       });
       await channelTurnDispatchWorker.close();
       await automationSchedulers.waitForIdle();
+      await runEvaluationScheduler.waitForIdle();
       await providerImportShutdown;
       await cuaDriverActivationCoordinator.shutdown();
       await activeRuns.waitForIdle();

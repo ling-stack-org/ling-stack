@@ -1,7 +1,7 @@
 ---
 status: in-progress
 branch: codex/reasoning-summary-autoreview-implementation
-timestamp: 2026-09-13T23:57:23+08:00
+timestamp: 2026-09-14T08:19:13+08:00
 files_modified:
   - docs/design/reasoning-summary-autoreview-execution-checkpoint.md
   - docs/design/ling-harness-gap-closure-implementation-plan.md
@@ -14,14 +14,14 @@ files_modified:
 
 ## 1. 当前目标与约束
 
-- 更新基线：实际实现树已包含 `origin/main` 的 `76790031`。分支为 `codex/reasoning-summary-autoreview-implementation`；最近完成验证的功能检查点为 `456b0ba8`（private system message purpose isolation），后续仅验证/文档提交可继续推进 HEAD。
+- 更新基线：实际实现树已包含 `origin/main` 的 `76790031`。分支为 `codex/reasoning-summary-autoreview-implementation`；H07 已提交到 `47338dc1`，H08 evaluation foundation 由包含本文更新的下一笔原子提交记录。
 - 实际开发树：`/private/tmp/ling-v3-implementation.tEPHvb`。
 - 同事的 `<main-checkout>` 只读，禁止修改、清理、reset 或覆盖其中 WIP。
 - 原 `<historical-recovery-worktree>` 暂不直接修改；验证完成后再受控同步差异。
 - 只测试和打包 macOS，不处理 Windows。
 - 当前不推送、不创建 PR。用户已在 2026-09-12 明确允许：未提交内容过多并妨碍继续开发时，可先创建本地恢复检查点提交。此类提交只用于保存和恢复，不代表 PR-ready，也不能替代后续按功能审查、测试和整理提交历史。
 - 真实模型验收使用 `https://llm.gz.nobody.host/v1`；密钥只从环境中后缀 `_2` 的变量读取，禁止写入文档、日志、命令输出或截图。
-- 历史 combined WIP 已通过本地检查点提交保存；当前工作树为干净状态。后续按独立、已验证的功能边界继续本地提交，不把恢复检查点本身直接当成可合并 PR。
+- 历史 combined WIP 已通过本地检查点提交保存；后续继续按独立、已验证的功能边界创建本地提交，不把恢复检查点本身直接当成可合并 PR。
 
 ## 2. 已完成且不得重复的源码核对
 
@@ -185,9 +185,32 @@ assistant_reasoning_summary {
 
 专项结果：Daemon build pass；runner registry/readiness/external adapter/bridge/conformance、hydration、reconstruction 与 approval recovery 63/63；Contracts 85/85；API client 52/52；Core fallback/migration 2/2；Web typecheck 与 `git diff --check` pass。全仓与 packaged macOS 仍属于最终 combined gate。
 
+### 3.6 Harness H08 Evaluation Foundation
+
+已完成并有专项和全量测试证据：
+
+- migration 137 新增 `run_evaluations` 与 append-only `run_evaluation_grades`；不为历史 Run 伪造评分。
+- suite、case、baseline、candidate 都绑定精确 artifact ID、sealed payload SHA-256 和稳定 hashed idempotency key；定义或 artifact identity 变化会追加新 evaluation，不会覆写旧事实。
+- evaluation claim 使用 SQLite lease、claim token、revision CAS 和 canonical UTC 时间；数据库约束禁止无 lease 的 `claimed/grading` 状态，过期 worker 不能 complete、fail 或 requeue 新 owner 的任务。
+- grade identity 由 evaluation、grader type/id/version 唯一约束；grade update/delete 被 trigger 禁止；grade 与 evaluation terminal transition 在同一事务提交。
+- deterministic rule grader 只接受封闭 JSON schema，支持 `deep_equal`、`contains`、`exists` 和 `number_range`；未知字段、未知 assertion、循环对象、非有限数字和 sealed artifact digest 不一致全部 fail-closed。
+- Daemon evaluation scheduler 使用独立低优先级并发池，默认并发 1；SQLite claim 是 authority，timer 只是唤醒；不调用普通 Run semaphore。worker 内部异常会被 registry 收口，未完成 lease 保留给过期恢复。
+- shutdown 先停止 evaluation 唤醒，再等待 in-flight worker，最后才关闭 store；不会让后台 grader 在 SQLite close 后继续写入。
+
+本轮准确验证结果：
+
+- H08 Core/迁移兼容集中门禁：30/30 pass。
+- H08 Daemon scheduler：7/7 pass。
+- Contracts：85/85 pass。
+- Core 全量：990/990 pass。
+- Daemon harness config、scheduler 与真实 shutdown 集成：25/25 pass。
+- Core/Daemon build 与 `git diff --check` pass。
+
+这只代表 H08 完成。model/human grader、cost/latency artifact、promotion report 与 G15/G18 仍属于 H09；完整仓库 combined gate 和 packaged macOS 验收仍未执行。
+
 ## 4. 下一步执行顺序
 
-1. 从 Harness T8/H08 继续：实现 evaluation foundation，再完成 T9 calibration。
+1. 从 Harness T9/H09 继续：实现 model/human grades、cost/latency artifact 和 promotion report，并保持 model grader shadow-only。
 2. 完成 Harness dynamic delegation T10–T12，并按依赖顺序接入现有 Run/Attempt/Workflow 边界，不重建顶层 orchestrator。
 3. 按 `conversation-codex-style-transcript-implementation-plan.md` §6.2 重新执行当前 HEAD 的 G-00–G-12 combined gates，记录基线、源码、行为、安全与合并质量证据。
 4. 对 Host capability/open viewer、既定七项执行能力、structured user-input lifecycle、native sandbox 后代停止与恢复、TerminalReport/fan-in/reconnect/restart 做真实正向和故障路径验证；修复当前 HEAD 可复现的问题。
@@ -202,7 +225,7 @@ assistant_reasoning_summary {
 
 1. 先读本文。
 2. 用 `git rev-parse HEAD`、`git status --short` 和最近测试结果确认增量状态。
-3. 从第 4 节第一个未完成步骤继续；当前唯一实现起点是 Harness T8/H08 evaluation foundation。
+3. 从第 4 节第一个未完成步骤继续；当前唯一实现起点是 Harness T9/H09 evaluation calibration。
 4. 不重新浏览整套 Codex 推理摘要源码，不重新输出同一份设计总结。
 5. 只有以下情况才允许局部复查外部源码：
    - 本地依赖版本变化导致 API 与本文不一致；

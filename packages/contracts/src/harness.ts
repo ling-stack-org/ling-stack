@@ -71,8 +71,12 @@ export type HarnessToolExecutionFailureCode = (typeof HARNESS_TOOL_EXECUTION_FAI
 
 export const RUN_EVALUATION_STATES = ["queued", "claimed", "grading", "completed", "failed", "cancelled"] as const;
 export type RunEvaluationState = (typeof RUN_EVALUATION_STATES)[number];
-export type RunEvaluationGraderType = "rule" | "model" | "human";
-export type RunEvaluationVerdict = "pass" | "fail" | "abstain" | "error";
+export const RUN_EVALUATION_GRADER_TYPES = ["rule", "model", "human"] as const;
+export type RunEvaluationGraderType = (typeof RUN_EVALUATION_GRADER_TYPES)[number];
+export const RUN_EVALUATION_VERDICTS = ["pass", "fail", "abstain", "error"] as const;
+export type RunEvaluationVerdict = (typeof RUN_EVALUATION_VERDICTS)[number];
+export const RUN_EVALUATION_SEVERITIES = ["info", "warning", "error", "critical"] as const;
+export type RunEvaluationSeverity = (typeof RUN_EVALUATION_SEVERITIES)[number];
 
 export const RUN_EVALUATION_FAILURE_CODES = [
   "evaluation.grader_unavailable",
@@ -180,11 +184,19 @@ export interface RunEvaluationV1 extends HarnessLeaseV1 {
   readonly runId: string;
   readonly suiteId: string;
   readonly suiteVersion: string;
+  readonly suiteArtifactId: string;
+  readonly suiteDigest: string;
   readonly caseId: string;
   readonly caseVersion: string;
+  readonly caseArtifactId: string;
+  readonly caseDigest: string;
   readonly baselineId: string;
   readonly baselineVersion: string;
+  readonly baselineArtifactId: string;
+  readonly baselineDigest: string;
   readonly candidateArtifactId: string;
+  readonly candidateDigest: string;
+  readonly idempotencyKey: string;
   readonly state: RunEvaluationState;
   readonly revision: number;
   readonly createdAt: string;
@@ -202,7 +214,7 @@ export interface RunEvaluationGradeV1 {
   readonly graderVersion: string;
   readonly verdict: RunEvaluationVerdict;
   readonly score?: number;
-  readonly severity?: string;
+  readonly severity?: RunEvaluationSeverity;
   readonly rationaleArtifactId?: string;
   readonly rawOutputArtifactId?: string;
   readonly costInputTokens?: number;
@@ -210,6 +222,8 @@ export interface RunEvaluationGradeV1 {
   readonly costAmountMicros?: number;
   readonly latencyMs?: number;
   readonly adjudicationStatus?: string;
+  /** Canonical digest of every immutable grader-result field except row id and creation time. */
+  readonly gradeDigest: string;
   readonly createdAt: string;
 }
 

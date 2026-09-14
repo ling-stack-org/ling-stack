@@ -1,4 +1,19 @@
 import type {
+  AppendRunEvaluationGradeInput,
+  AppendRunEvaluationGradeResult,
+  ClaimRunEvaluationInput,
+  CompleteRunEvaluationInput,
+  CompleteRunEvaluationResult,
+  EnqueuedRunEvaluation,
+  EnqueueRunEvaluationInput,
+  FailRunEvaluationInput,
+  ListClaimableRunEvaluationsInput,
+  ListRunEvaluationsInput,
+  RequeueRunEvaluationInput,
+  RunEvaluationMutationResult,
+  StartRunEvaluationInput,
+} from "./evaluations.js";
+import type {
   DelegationMessageV1,
   DelegationStepV1,
   HarnessToolExecutionV1,
@@ -63,7 +78,17 @@ export interface HarnessToolExecutionStore {
 
 export interface RunEvaluationStore {
   getRunEvaluation(id: string): RunEvaluationV1 | undefined;
+  findRunEvaluationByIdempotencyKey(idempotencyKey: string): RunEvaluationV1 | undefined;
+  listRunEvaluations(input?: ListRunEvaluationsInput): readonly RunEvaluationV1[];
+  listClaimableRunEvaluations(input: ListClaimableRunEvaluationsInput): readonly RunEvaluationV1[];
   listRunEvaluationGrades(evaluationId: string): readonly RunEvaluationGradeV1[];
+  enqueueRunEvaluation(input: EnqueueRunEvaluationInput): EnqueuedRunEvaluation;
+  claimRunEvaluation(input: ClaimRunEvaluationInput): RunEvaluationMutationResult;
+  startRunEvaluation(input: StartRunEvaluationInput): RunEvaluationMutationResult;
+  requeueRunEvaluation(input: RequeueRunEvaluationInput): RunEvaluationMutationResult;
+  failRunEvaluation(input: FailRunEvaluationInput): RunEvaluationMutationResult;
+  completeRunEvaluation(input: CompleteRunEvaluationInput): CompleteRunEvaluationResult;
+  appendRunEvaluationGrade(input: AppendRunEvaluationGradeInput): AppendRunEvaluationGradeResult;
 }
 
 export interface DelegationStore {

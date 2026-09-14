@@ -38,6 +38,8 @@ import type {
   ListSnapshotRestoreRequestsOptions,
   RunnerContinuationV1,
   HarnessToolExecutionV1,
+  RunEvaluationGradeV1,
+  RunEvaluationV1,
 } from "@ling-stack/contracts";
 import type {
   ClaimRunnerContinuationInput,
@@ -61,6 +63,21 @@ import type {
   ResolveHarnessToolApprovalInput,
   StartHarnessToolExecutionInput,
 } from "./harness/tool-executions.js";
+import type {
+  AppendRunEvaluationGradeInput,
+  AppendRunEvaluationGradeResult,
+  ClaimRunEvaluationInput,
+  CompleteRunEvaluationInput,
+  CompleteRunEvaluationResult,
+  EnqueuedRunEvaluation,
+  EnqueueRunEvaluationInput,
+  FailRunEvaluationInput,
+  ListClaimableRunEvaluationsInput,
+  ListRunEvaluationsInput,
+  RequeueRunEvaluationInput,
+  RunEvaluationMutationResult,
+  StartRunEvaluationInput,
+} from "./harness/evaluations.js";
 import type {
   ApprovalActionType,
   ApprovalCommandRule,
@@ -1740,6 +1757,18 @@ export interface RunStore {
   reconcileAbandonedHarnessToolExecutions(
     input: ReconcileAbandonedHarnessToolExecutionsInput,
   ): readonly HarnessToolExecutionV1[];
+  getRunEvaluation(id: string): RunEvaluationV1 | undefined;
+  findRunEvaluationByIdempotencyKey(idempotencyKey: string): RunEvaluationV1 | undefined;
+  listRunEvaluations(input?: ListRunEvaluationsInput): readonly RunEvaluationV1[];
+  listClaimableRunEvaluations(input: ListClaimableRunEvaluationsInput): readonly RunEvaluationV1[];
+  listRunEvaluationGrades(evaluationId: string): readonly RunEvaluationGradeV1[];
+  enqueueRunEvaluation(input: EnqueueRunEvaluationInput): EnqueuedRunEvaluation;
+  claimRunEvaluation(input: ClaimRunEvaluationInput): RunEvaluationMutationResult;
+  startRunEvaluation(input: StartRunEvaluationInput): RunEvaluationMutationResult;
+  requeueRunEvaluation(input: RequeueRunEvaluationInput): RunEvaluationMutationResult;
+  failRunEvaluation(input: FailRunEvaluationInput): RunEvaluationMutationResult;
+  completeRunEvaluation(input: CompleteRunEvaluationInput): CompleteRunEvaluationResult;
+  appendRunEvaluationGrade(input: AppendRunEvaluationGradeInput): AppendRunEvaluationGradeResult;
   updateWorkUnitAttemptStatus(input: {
     readonly attemptId: string;
     readonly workUnitId: string;
