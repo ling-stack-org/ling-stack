@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   buildDialogOwnedApprovalPresentationByRunId,
   dialogOwnedApprovalPresentationForWorkCell,
+  composerGateApprovalPresentationForRunId,
 } from "../src/lib/runtime-approval-presentation.ts";
 
 const t = (key, values = {}) => key.replace(/\{(\w+)\}/gu, (_, name) => String(values[name] ?? ""));
@@ -53,6 +54,14 @@ test("dialog-owned approval projection resolves payload run ids and strips cwd f
     runId: "run-payload",
     actionSentence: "Modify file: apps/web/src/App.tsx",
   });
+});
+
+test("composer approval ownership resolves directly from the durable run id", () => {
+  const presentations = buildDialogOwnedApprovalPresentationByRunId([
+    view({ id: "approval-run", runId: "run-direct", actionType: "bash", payload: { type: "bash", command: "pnpm test" } }),
+  ], t);
+  assert.deepEqual(composerGateApprovalPresentationForRunId("run-direct", presentations), presentations.get("run-direct"));
+  assert.equal(composerGateApprovalPresentationForRunId(" ", presentations), undefined);
 });
 
 function view(input) {

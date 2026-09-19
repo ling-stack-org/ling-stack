@@ -6,7 +6,7 @@ import { formatDateTime } from "../../lib/formatting.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
   buildComposerGateApprovalPresentationByRunId,
-  composerGateApprovalPresentationForWorkCell,
+  composerGateApprovalPresentationForRunId,
 } from "../../lib/runtime-approval-presentation.js";
 import {
   AvatarInitial,
@@ -188,9 +188,10 @@ export function TeammatePrivateChatFeed({
       ...privateScope,
       messages: visibleMessages.map((message) => {
         const workCell = workCellByMessageId.get(message.id);
-        const composerApprovalId = workCell
-          ? composerGateApprovalPresentationForWorkCell(workCell.model, composerGateApprovalByRunId)?.approvalId
-          : undefined;
+        const composerApprovalId = composerGateApprovalPresentationForRunId(
+          message.linkedRunId,
+          composerGateApprovalByRunId,
+        )?.approvalId;
         return {
           message,
           body: projectionByMessageId.get(message.id)?.body ?? message.body,
@@ -249,7 +250,6 @@ export function TeammatePrivateChatFeed({
   }
 
   function renderPrivateMessageRow(message: TeammateDirectMessage, body: React.ReactNode, ownsMessageChrome: boolean): React.JSX.Element {
-    const workCell = workCellByMessageId.get(message.id);
     const executionMessage = executionMessageById.get(message.id);
     const messageGeneratedMedia = executionMessage ? privateGeneratedMediaForMessage(generatedMedia, executionMessage) : [];
     const projection = projectionByMessageId.get(message.id) ?? projectTeammatePrivateMessage({
