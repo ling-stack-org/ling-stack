@@ -13,7 +13,7 @@ import {
 
 const appliedAt = "2026-09-13T00:00:00.000Z";
 
-test("schema 135 upgrades to ToolExecution schema 136 and reruns idempotently", async (t) => {
+test("schema 135 upgrades to ToolExecution schema 136 while preserving later migrations", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-tool-execution-upgrade-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   let store = createSqliteRunStore(cwd);
@@ -28,7 +28,7 @@ test("schema 135 upgrades to ToolExecution schema 136 and reruns idempotently", 
     DROP TABLE harness_tool_executions;
     DELETE FROM schema_migrations WHERE version = 136;
   `);
-  assert.equal(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 135);
+  assert.equal(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 138);
   database.close();
 
   store = createSqliteRunStore(cwd);
@@ -39,6 +39,7 @@ test("schema 135 upgrades to ToolExecution schema 136 and reruns idempotently", 
     database.prepare("SELECT name FROM schema_migrations WHERE version = 136").get().name,
     HARNESS_TOOL_EXECUTION_MIGRATION_NAME,
   );
+  assert.equal(database.prepare("SELECT 1 FROM schema_migrations WHERE version = 138").get()?.["1"], 1);
   const columns = new Set(database.prepare("PRAGMA table_info(harness_tool_executions)").all().map((row) => row.name));
   assert.ok(columns.has("claim_token"));
   assert.ok(columns.has("side_effect_fingerprint"));

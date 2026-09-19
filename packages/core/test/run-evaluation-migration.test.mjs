@@ -12,7 +12,7 @@ import {
 
 const appliedAt = "2026-09-14T00:00:00.000Z";
 
-test("schema 136 upgrades to evaluation schema 137 and reruns idempotently", async (t) => {
+test("schema 136 upgrades to evaluation schema 137 while preserving later migrations", async (t) => {
   const cwd = await mkdtemp(join(tmpdir(), "ling-evaluation-upgrade-"));
   t.after(() => rm(cwd, { recursive: true, force: true }));
   let store = createSqliteRunStore(cwd);
@@ -24,7 +24,7 @@ test("schema 136 upgrades to evaluation schema 137 and reruns idempotently", asy
     DROP TABLE run_evaluations;
     DELETE FROM schema_migrations WHERE version = 137;
   `);
-  assert.equal(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 136);
+  assert.equal(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 138);
   database.close();
 
   store = createSqliteRunStore(cwd);
@@ -33,6 +33,7 @@ test("schema 136 upgrades to evaluation schema 137 and reruns idempotently", asy
   t.after(() => database.close());
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version = 137").get().name,
     RUN_EVALUATION_MIGRATION_NAME);
+  assert.equal(database.prepare("SELECT 1 FROM schema_migrations WHERE version = 138").get()?.["1"], 1);
   const columns = new Set(database.prepare("PRAGMA table_info(run_evaluations)").all().map((row) => row.name));
   assert.ok(columns.has("suite_digest"));
   assert.ok(columns.has("candidate_digest"));
