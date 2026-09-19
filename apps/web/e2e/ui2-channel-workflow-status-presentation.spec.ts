@@ -73,8 +73,6 @@ test("workflow, step, and run status presentation is exhaustive and the legacy o
   expect(cardSource).not.toContain("StatusBadge");
   expect(cardSource).not.toContain("<StatusBadge");
   expect(cardSource).not.toContain("{workflow.status} ·");
-  expect(cardSource).not.toContain("ChannelExecutionProposalDecision");
-  expect(cardSource).not.toContain("Task confirmation");
   expect(cardSource.trimEnd().split("\n").length).toBeLessThanOrEqual(1650);
   expect(componentSource).toContain('StatusIndicator } from "../../shared/ui/index.js"');
   expect(componentSource).not.toContain("@radix-ui");
@@ -233,7 +231,10 @@ function channelMessage(id: string, body: string): Record<string, unknown> {
 }
 
 async function verifyProposalSurface(page: Page, testInfo: TestInfo, evidencePrefix: string): Promise<void> {
-  await expect(page.getByRole("dialog", { name: "Task confirmation" })).toHaveCount(0);
+  const dialog = page.getByRole("dialog", { name: "Task confirmation" });
+  if (await dialog.isVisible().catch(() => false)) {
+    await dialog.getByRole("button", { name: "Close" }).click();
+  }
   const editableSummary = page.getByLabel("Task proposal summary").filter({ hasText: "Editable workflow proposal" });
   const editableSummaryRow = editableSummary.locator("..");
   await expect(editableSummaryRow).toHaveClass(/channel-execution-proposal-summary-row/u);
@@ -244,32 +245,37 @@ async function verifyProposalSurface(page: Page, testInfo: TestInfo, evidencePre
   await expect(editableSummary).toContainText("Engineer · Pending confirmation");
   await capture(page, testInfo, `${evidencePrefix}-task-summary.png`);
   await editableSummary.getByRole("button", { name: "View task" }).click();
-  const editableGate = page.locator('[data-conversation-decision-kind="task_proposal"]');
-  await expect(editableGate).toBeVisible();
-  await expect(editableGate).toContainText("Allow this task?");
-  await expect(editableGate).toContainText("Engineer wants to start task");
-  await expect(editableGate).toContainText("Editable workflow proposal");
-  await expect(editableGate).toContainText("Read files");
-  await expect(editableGate).toContainText("Run commands");
-  await expect(editableGate).not.toContainText("Permission-sensitive actions still require confirmation");
-  await expect(editableGate.getByRole("button", { name: "Deny" })).toBeVisible();
-  await expect(editableGate.getByRole("button", { name: "Allow", exact: true })).toBeVisible();
-  await expect(editableGate.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
-  await expect(page.locator(".conversation-composer").filter({ has: page.getByRole("textbox") })).toHaveCount(0);
-  await capture(page, testInfo, `${evidencePrefix}-task-gate.png`);
+  const editable = dialog.locator(".channel-execution-proposal-decision");
+  await expect(editable).toBeVisible();
+  await expect(editable).toContainText("Task");
+  await expect(editable).toContainText("Agent");
+  await expect(editable).toContainText("Engineer");
+  await expect(editable).toContainText("Required permissions");
+  await expect(editable).toContainText("Read files");
+  await expect(editable).toContainText("Run commands");
+  await expect(editable).not.toContainText("Permission-sensitive actions still require confirmation");
+  await expect(editable.locator(".channel-proposal-details, .channel-proposal-collaboration")).toHaveCount(0);
+  await expect(editable.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
+  await expect(editable.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
+  await capture(page, testInfo, `${evidencePrefix}-task-confirmation.png`);
+  await editable.getByRole("button", { name: "Edit", exact: true }).click();
+  await expect(editable.getByLabel("Scope")).toBeVisible();
+  await editable.getByRole("button", { name: "Cancel", exact: true }).click();
+  await dialog.getByRole("button", { name: "Close" }).click();
 
   const linkedSummary = page.getByLabel("Task proposal summary").filter({ hasText: "Linked status proposal" });
   await expect(linkedSummary).toContainText("Ling Agent · Execution failed");
   await linkedSummary.getByRole("button", { name: "View task" }).click();
-  const linkedGate = page.locator('[data-conversation-decision-kind="task_proposal"]');
-  await expect(linkedGate).toContainText("Linked status proposal");
-  await expect(linkedGate).toContainText("Ling Agent");
-  await expect(linkedGate).toContainText("Read files");
-  await expect(linkedGate).toContainText("The linked run stopped after a provider validation error");
-  await expect(linkedGate.getByRole("button", { name: "Deny" })).toBeVisible();
-  await expect(linkedGate.getByRole("button", { name: "Allow", exact: true })).toBeVisible();
-  await expect(linkedGate).not.toContainText("waiting_for_approval");
-  await expect(page.getByRole("dialog", { name: "Task confirmation" })).toHaveCount(0);
+  const linked = dialog.locator(".channel-execution-proposal-decision");
+  await expect(linked).toBeVisible();
+  await expect(linked).toContainText("Linked status proposal");
+  await expect(linked).toContainText("Ling Agent");
+  await expect(linked).toContainText("Read files");
+  await expect(linked).toContainText("The linked run stopped after a provider validation error");
+  await expect(linked.locator(".channel-workflow-linked-statuses")).toHaveCount(0);
+  await expect(linked.getByRole("button", { name: "Open run" })).toBeVisible();
+  await expect(linked).not.toContainText("waiting_for_approval");
+  await dialog.getByRole("button", { name: "Close" }).click();
 }
 
 async function openRuntimePanel(page: Page): Promise<Locator> {
@@ -335,7 +341,7 @@ function collectRuntimeErrors(page: Page): string[] {
 async function expectContained(page: Page, panel: Locator): Promise<void> {
   const overflow = await page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth);
   expect(overflow).toBeLessThanOrEqual(1);
-  for (const locator of [panel.locator(".workflow-queue-card"), panel.locator(".workflow-step-card"), page.locator(".channel-execution-proposal-summary"), page.locator(".conversation-decision-gate")]) {
+  for (const locator of [panel.locator(".workflow-queue-card"), panel.locator(".workflow-step-card"), page.locator(".channel-execution-proposal-summary"), page.locator(".channel-execution-proposal-decision")]) {
     const count = await locator.count();
     for (let index = 0; index < count; index += 1) {
       expect(await locator.nth(index).evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);

@@ -325,7 +325,7 @@ test("channel dock uses shared controls across launcher and deep pages", async (
   expect(runtimeErrors).toEqual([]);
 });
 
-test("channel approval composer gate, settings, and dock remain contained at 1280 in dark mode", async ({ page }) => {
+test("channel approval dialog, settings, and dock remain contained at 1280 in dark mode", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "pending" });
@@ -346,15 +346,16 @@ test("channel approval composer gate, settings, and dock remain contained at 128
   });
   await page.goto("/");
   await openEngineeringChannel(page);
-  const approvalGate = page.getByRole("region", { name: "Allow this action?" });
-  await expect(approvalGate).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Allow this action?" })).toHaveCount(0);
+  const approvalDialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(approvalDialog).toBeVisible();
+  await expect(approvalDialog).toHaveAttribute("data-size", "sm");
+  await expect(approvalDialog).toHaveAttribute("data-dismissible", "false");
   await expectNoDocumentOverflow(page);
-  await captureEvidence(page, "1280x800-ling-dark-runtime-approval-composer-gate.png");
+  await captureEvidence(page, "1280x800-ling-dark-runtime-approval-dialog.png");
   await page.keyboard.press("Escape");
-  await expect(approvalGate).toBeVisible();
-  await approvalGate.getByRole("button", { name: "Deny" }).click();
-  await expect(approvalGate).toHaveCount(0);
+  await expect(approvalDialog).toBeVisible();
+  await approvalDialog.getByRole("button", { name: "Deny" }).click();
+  await expect(approvalDialog).toHaveCount(0);
   await openChannelSettings(page);
 
   const settings = page.getByRole("region", { name: "Channel settings" });

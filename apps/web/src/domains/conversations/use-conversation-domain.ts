@@ -488,7 +488,6 @@ export function useConversationDomain(input: {
             handlers.onMessageAccepted?.(event);
             messageAccepted = true;
             if (event.activeReply) handlers.onReplyLinked?.(event.activeReply);
-            void refreshConversationThreads(workspaceCwd);
           }
           return;
         }
@@ -535,10 +534,7 @@ export function useConversationDomain(input: {
           if (event.assistantMessage && canCommitToSurface(activeThreadId)) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]));
           }
-          if (canCommitToSurface(activeThreadId)) {
-            handlers.onBlocked?.(event);
-            void refreshConversationThreads(workspaceCwd);
-          }
+          if (canCommitToSurface(activeThreadId)) handlers.onBlocked?.(event);
           return;
         }
         if (parsed.event === "error") {
