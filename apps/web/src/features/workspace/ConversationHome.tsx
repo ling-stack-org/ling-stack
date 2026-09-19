@@ -28,7 +28,7 @@ import { useWorkspaceBottomPanelResizeController } from "./useWorkspaceBottomPan
 import { useWorkspaceRightDockController } from "./useWorkspaceRightDockController.js";
 import { useConversationPanelPresence } from "./useConversationPanelPresence.js";
 import { NormalConversationComposer } from "./NormalConversationComposer.js";
-import { RuntimeApprovalDialogQueue } from "../approvals/RuntimeApprovalDialogQueue.js";
+import { RuntimeApprovalComposerGate } from "../approvals/RuntimeApprovalComposerGate.js";
 import { NormalConversationEmptyState } from "./NormalConversationEmptyState.js";
 import { NormalConversationPage } from "./NormalConversationPage.js";
 import {
@@ -729,14 +729,16 @@ export function ConversationHome({
     />
   );
 
-  const approvalDialogNode = (
-    <RuntimeApprovalDialogQueue
+  const approvalGateNode = (
+    <RuntimeApprovalComposerGate
       approvals={inlineApprovalViews}
       approvalErrors={approvalErrors}
       resolvingApprovals={resolvingApprovals}
+      surface="normal_conversation"
       onResolve={onResolveApproval}
     />
   );
+  const visibleComposerNode = inlineApprovalViews.length > 0 ? approvalGateNode : composerNode;
 
   if (messages.length > 0) {
     return (
@@ -783,10 +785,7 @@ export function ConversationHome({
           visibleMessages,
           runById,
           detailContext,
-          // Pending approvals are rendered by the surface-level dialog queue.
-          // Keep the timeline feed's legacy composer-gate input empty so the
-          // same approval is not rendered a second time inside the transcript.
-          composerGateApprovals: [],
+          composerGateApprovals: inlineApprovalViews,
           generatedMedia: detailContext?.generatedMedia ?? [],
           projectPath: project.projectPath,
           workspaceCwd,
@@ -805,7 +804,7 @@ export function ConversationHome({
           onOpenReview: openConversationReview,
           onOpenRun,
         }}
-        composerNode={composerNode}
+        composerNode={visibleComposerNode}
         panelsProps={{
           workspaceCwd,
           currentThreadId: detailContext?.threadId,
@@ -824,15 +823,13 @@ export function ConversationHome({
           onCloseTerminal: () => setConversationTerminalOpen(false),
         }}
         />
-        {approvalDialogNode}
       </>
     );
   }
 
   return (
     <>
-      <NormalConversationEmptyState composerNode={composerNode} onApplyShortcut={applyShortcut} />
-      {approvalDialogNode}
+      <NormalConversationEmptyState composerNode={visibleComposerNode} onApplyShortcut={applyShortcut} />
     </>
   );
 }
