@@ -12,6 +12,7 @@ import {
 } from "../lib/providers.js";
 import { readRunWorkspaceCwd } from "../lib/run-evidence.js";
 import { mergeWorkflowSteps } from "./app-shell-selectors.js";
+import { coordinateChannelExecutionProposalConfirmation } from "./channel-execution-proposal-confirmation.js";
 import type {
   AiTeammate,
   Channel,
@@ -190,34 +191,41 @@ export function useTaskRunController(input: {
     }
   }
 
-  async function blockChannelExecutionProposal(proposal: ChannelExecutionProposal, message: string): Promise<void> {
-    input.reportWorkflowError(proposal.id, message);
-    await markChannelExecutionProposal(proposal, { status: "blocked", errorMessage: message });
-  }
-
   async function confirmChannelExecutionProposal(proposal: ChannelExecutionProposal): Promise<void> {
     const workspaceCwd = input.form.cwd.trim();
     if (!workspaceCwd) {
       input.reportWorkflowError(proposal.id, input.t("Local workspace is not ready."));
       return;
     }
-    try {
-      input.clearWorkflowError(proposal.id);
-      const response = await input.confirmChannelExecutionProposalWorkflow(workspaceCwd, proposal.id);
-      input.upsertChannelExecutionProposal(response.proposal);
-      input.setChannelWorkflows((current) => [response.workflow, ...current.filter((workflow) => workflow.id !== response.workflow.id)]);
-      input.setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
-      await Promise.all([
-        input.refreshRuns(workspaceCwd),
-        input.refreshChannelProtocol(proposal.channelId),
-        input.refreshChannelExecutionProposals(proposal.channelId),
-        input.refreshUsedMemoryAudit(workspaceCwd),
-      ]);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      input.reportWorkflowError(proposal.id, message);
-      await blockChannelExecutionProposal(proposal, message);
-    }
+    input.clearWorkflowError(proposal.id);
+    await coordinateChannelExecutionProposalConfirmation({
+      proposal,
+      workspaceCwd,
+      confirm: input.confirmChannelExecutionProposalWorkflow,
+      publishConfirmed: (response) => {
+        input.upsertChannelExecutionProposal(response.proposal);
+        input.setChannelWorkflows((current) => [response.workflow, ...current.filter((workflow) => workflow.id !== response.workflow.id)]);
+        input.setChannelWorkflowSteps((current) => mergeWorkflowSteps(current, response.workflowSteps));
+      },
+      refreshAfterConfirmation: async () => {
+        await Promise.all([
+          input.refreshRuns(workspaceCwd),
+          input.refreshChannelProtocol(proposal.channelId),
+          input.refreshChannelExecutionProposals(proposal.channelId),
+          input.refreshUsedMemoryAudit(workspaceCwd),
+        ]);
+      },
+      refreshAfterConfirmationFailure: async () => {
+        // The endpoint may already have persisted `blocked` with a newer
+        // revision. Re-read that authority instead of PATCHing the stale row.
+        await input.refreshChannelExecutionProposals(proposal.channelId);
+      },
+      reportConfirmationError: (message) => input.reportWorkflowError(proposal.id, message),
+      reportRefreshError: (_stage, message) => input.reportWorkspaceError(
+        proposal.channelId,
+        input.t("Channel execution proposal refresh failed: {message}", { message }),
+      ),
+    });
   }
 
   async function cancelChannelExecutionProposal(proposal: ChannelExecutionProposal): Promise<void> {
