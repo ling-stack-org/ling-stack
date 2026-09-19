@@ -140,6 +140,69 @@ cancel 和 participant isolation 回归。
 出现两个 control owner，本分支暂以后一套为准：runtime approval 与 task proposal 都在共享
 Composer slot 决策；只有在产品明确重新选择全局 Dialog 后，才另开设计变更，不在本修复中偷偷切换。
 
+## Packaged Continuity 剩余失败的根因与处理
+
+第一次修复 restricted-command helper 后，packaged harness 的最后一个失败是：
+
+```text
+terminal_reports: {"reports":[]}
+```
+
+这不是 fallback 报告被 SQLite 的 `effectiveOnly` 逻辑过滤，也不是 packaged daemon
+没有写入报告。对失败包留下的同一份数据库做了三层核验：
+
+1. `ling_terminal_reports` 已有一条 `status = 'fallback'`、`outcome_status = 'succeeded'`、
+   `result_item_id` 非空的 workflow 报告；
+2. 对应的 `conversation_items` 已有 `kind = 'terminal_report'` 且 payload 的 `reportId`
+   与报告一致；
+3. 使用当前 `SqliteRunStore.listTerminalReports({ channelId, effectiveOnly: true })`
+   直接读取同一数据库可以得到该报告；现有 daemon API 回归也覆盖 committed/fallback 和
+   generation 过滤。
+
+实际时序是：workflow 的 Host completion gate 先提交 `succeeded`，随后
+`maybeScheduleWorkflowTerminalReport` 异步执行 evidence barrier、synthesis/fallback 和
+publication。因而 workflow endpoint 已经是 `succeeded` 时，terminal-report collection
+短暂返回空集合是合法的中间状态；几百毫秒后报告才从公开 API 可见。原 packaged harness
+把这个中间状态误判成永久失败。
+
+处理方式是只改验收等待边界，不放宽 daemon 的 fail-closed 规则：harness 在 workflow gate
+成功后轮询 terminal-report collection，直到公开 API 返回唯一的 succeeded report，再继续
+检查每个 run 的 `tool_start/tool_end`、terminal item lineage 和 SQLite integrity。这样既
+保留真实异步 publication 语义，也避免用“数据库最终会有记录”替代用户可见 API 证据。
+
+本次对应修改：
+
+- `apps/desktop/tests/run-packaged-continuity-smoke.mjs`：增加 terminal report publication
+  的有界等待，并明确 workflow settlement 与 report publication 是两个 durable 步骤；
+- daemon/core 源码没有为绕过验收而放宽 `effectiveOnly`、fallback 或 eligibility 规则；
+- 现有 `packages/daemon/test/terminal-report-api.test.mjs` 已验证 fallback 报告可公开读取、
+  developer-only synthesis metadata 会被剥离、历史 generation 只返回最新有效版本。
+
+## Packaged macOS 验收结果
+
+修正 harness 后使用真实 packaged app 重新运行：
+
+- App：`/Users/tianxiao/Applications/Ling Stack V3 TenDay QA Fixed.app`；
+- Artifact：`/private/tmp/ling-v3-ten-day-qa-package-fixed/Ling-Stack-fixed-macos-arm64.zip`；
+- 报告：`/private/tmp/ling-v3-ten-day-packaged-continuity-fixed-2/report.json`；
+- 结果：`status = passed`，macOS arm64，真实 packaged daemon/app 流程。
+
+已通过的检查包括：
+
+- packaged app 启动、daemon readiness、release migration rollback/recovery；
+- SSE disconnect/reconnect，reconnect replay 到 `ready`；
+- 两个 required participant 的 workflow completion gate `verified`；
+- terminal report 公开 API 返回唯一 succeeded report，且 `terminal_report` item lineage 正确；
+- 每个 run 都有真实 `tool_start` 与 `tool_end` evidence；
+- naked-ready 被 `required_operation_evidence_missing` 阻断；
+- workspace default provider 缺失被阻断且无 workflow/run/side effect；
+- restart safe checkpoint、no-checkpoint interruption、effect-unknown approval recovery；
+- daemon restart 后 canonical replay 幂等、无重复 user item；
+- SQLite foreign-key/integrity、workflow/step/run/evidence/report/result-item lineage 全部通过。
+
+这次结果只证明当前 packaged 连续性与恢复链路已经达到本分支的验收门槛，不等于根工作区
+原有 71 项 WIP 已经全部移植或解决；根工作区仍保持原样。
+
 ## 原 WIP 审计结论（不自动接入）
 
 逐文件将原工作区内容与本地 `main` 比较后，发现：

@@ -913,10 +913,19 @@ try {
   if (!decision || decision.participantManifest?.participants?.length !== 2) throw new Error("participant_manifest_not_persisted");
   if (new Set(decision.participantManifest.participants.map((participant) => participant.participantId)).size !== 2) throw new Error("participant_manifest_not_distinct");
 
-  const terminalReportsResponse = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/terminal-reports${cwdQuery}`);
-  if (terminalReportsResponse.status !== 200 || terminalReportsResponse.body.reports?.length !== 1 || terminalReportsResponse.body.reports[0].outcome.status !== "succeeded") {
-    throw new Error(`terminal_reports:${terminalReportsResponse.text}`);
-  }
+  // Workflow settlement and terminal-report publication are separate durable
+  // steps. The workflow can be succeeded before the async report coordinator
+  // finishes its evidence barrier and publishes the fallback/model report.
+  // Do not treat that valid intermediate empty collection as a packaged
+  // failure; wait for the public API to expose the committed/fallback report.
+  const terminalReportsResponse = await waitFor(async () => {
+    const response = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/terminal-reports${cwdQuery}`);
+    return response.status === 200
+      && response.body.reports?.length === 1
+      && response.body.reports[0].outcome?.status === "succeeded"
+      ? response
+      : undefined;
+  }, "terminal_report_publication_timeout", 150);
   for (const step of workflowSteps) {
     const eventsResponse = await request(baseUrl, `/runs/${encodeURIComponent(step.runId)}/events${cwdQuery}`);
     const events = eventsResponse.body.events ?? [];

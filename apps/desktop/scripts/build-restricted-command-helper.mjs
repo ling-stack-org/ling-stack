@@ -1,4 +1,6 @@
-import { cpSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
+import { cpSync, chmodSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
@@ -20,11 +22,21 @@ try {
   rmGenerated(staged); mkdirSync(staged, { recursive: false, mode: 0o700 });
   cpSync(join(build, "ling-sandbox-runner"), join(staged, "ling-sandbox-runner"), { errorOnExist: true });
   chmodSync(join(staged, "ling-sandbox-runner"), 0o755);
-  cpSync(join(build, "manifest.json"), join(staged, "manifest.json"), { errorOnExist: true });
   cpSync(join(build, "licenses"), join(staged, "licenses"), { recursive: true, errorOnExist: true });
-  const packagedManifest = JSON.parse(readFileSync(join(staged, "manifest.json"), "utf8"));
-  requireBuild(packagedManifest.binary.sha256 === manifest.binary.sha256
-    && lstatSync(join(staged, "ling-sandbox-runner")).size === manifest.binary.sizeBytes);
+  const packagedBinary = join(staged, "ling-sandbox-runner");
+  normalizeDarwinCodeSignature(packagedBinary);
+  const packagedManifest = {
+    ...manifest,
+    binary: {
+      ...manifest.binary,
+      sha256: createHash("sha256").update(readFileSync(packagedBinary)).digest("hex"),
+      sizeBytes: lstatSync(packagedBinary).size,
+    },
+  };
+  writeFileSync(join(staged, "manifest.json"), `${JSON.stringify(packagedManifest, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+  requireBuild(packagedManifest.binary.sizeBytes > 0
+    && packagedManifest.binary.sizeBytes <= manifest.binary.sizeBytes
+    && packagedManifest.binary.sha256 !== manifest.binary.sha256);
   rmGenerated(destination);
   renameSync(staged, destination);
   process.stdout.write(JSON.stringify({ target: manifest.target, helperVersion: manifest.helperVersion,
@@ -34,6 +46,13 @@ try {
 }
 function requireBuild(value) {
   if (!value) throw new Error("restricted_command_package_build_invalid");
+}
+function normalizeDarwinCodeSignature(path) {
+  const result = spawnSync("/usr/bin/codesign", ["--remove-signature", path], {
+    encoding: "utf8",
+    windowsHide: true,
+  });
+  requireBuild(!result.error && !result.signal && result.status === 0);
 }
 function rmGenerated(path) {
   if (!path.startsWith(resolve(desktopRoot, "dist") + "/")) throw new Error("restricted_command_package_path_invalid");
