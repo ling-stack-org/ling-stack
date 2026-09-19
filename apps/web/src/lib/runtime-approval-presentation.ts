@@ -41,6 +41,25 @@ export function composerGateApprovalPresentationForWorkCell(
   return presentations.get(model.anchorRunId);
 }
 
+// The dialog queue and the legacy composer gate use the same durable
+// approval-to-run projection. Keep the dialog vocabulary as a named adapter so
+// the queue can evolve independently without duplicating ownership logic.
+export type DialogOwnedApprovalPresentation = ComposerGateApprovalPresentation;
+
+export function buildDialogOwnedApprovalPresentationByRunId(
+  approvals: readonly InlineApprovalView[],
+  t: Translate,
+): ReadonlyMap<string, DialogOwnedApprovalPresentation> {
+  return buildComposerGateApprovalPresentationByRunId(approvals, t);
+}
+
+export function dialogOwnedApprovalPresentationForWorkCell(
+  model: ConversationOperationCellViewModel,
+  presentations: ReadonlyMap<string, DialogOwnedApprovalPresentation>,
+): DialogOwnedApprovalPresentation | undefined {
+  return composerGateApprovalPresentationForWorkCell(model, presentations);
+}
+
 export function runtimeApprovalActionSentence(
   approval: ApprovalRequest,
   fallbackTarget: string,
