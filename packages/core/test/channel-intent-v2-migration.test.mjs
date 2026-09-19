@@ -158,6 +158,9 @@ test("fresh database applies migrations 113 through 121 with reopen and integrit
   assert.equal(workflowStepColumns.has("participant_authority_json"), true);
   const proposalColumns = new Set(database.prepare("PRAGMA table_info(channel_execution_proposals)").all().map((row) => row.name));
   assert.equal(proposalColumns.has("blocker_json"), true);
+  assert.equal(proposalColumns.has("revision"), true);
+  assert.equal(proposalColumns.has("confirmation_claim_id"), true);
+  assert.equal(proposalColumns.has("confirmation_claim_expires_at"), true);
   assert.deepEqual(database.prepare("PRAGMA foreign_key_check").all(), []);
   assert.equal(database.prepare("PRAGMA integrity_check").get().integrity_check, "ok");
   database.close();

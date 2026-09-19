@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type AiTeammate,
   type Channel,
@@ -59,29 +60,63 @@ type ProposalParticipant = {
 };
 
 const confirmableProposalStatuses = new Set<ChannelExecutionProposal["status"]>(["draft", "blocked", "run_failed"]);
+const CHANNEL_PROPOSAL_CONFIRMATION_LEASE_MS = 5 * 60 * 1000;
 
 export function confirmChannelExecutionProposalWorkflow(
   input: ConfirmChannelExecutionProposalWorkflowInput,
 ): ConfirmChannelExecutionProposalWorkflowResult {
   const now = input.now ?? new Date().toISOString();
-  const proposal = input.store.getChannelExecutionProposal(input.proposalId);
-  if (!proposal) {
+  const observed = input.store.getChannelExecutionProposal(input.proposalId);
+  if (!observed) {
     throw new HttpError(404, "proposal_not_found", `Channel proposal not found: ${input.proposalId}`);
   }
 
-  const existing = existingLinkedWorkflow(input.store, proposal);
-  if (existing && proposal.status === "accepted") {
+  const existing = existingLinkedWorkflow(input.store, observed);
+  if (existing && observed.status === "accepted") {
     return existing;
   }
 
+  const claimId = `proposal-confirm:${randomUUID()}`;
+  const claimExpiresAt = new Date(Date.parse(now) + CHANNEL_PROPOSAL_CONFIRMATION_LEASE_MS).toISOString();
+  const claim = input.store.claimChannelExecutionProposal(input.proposalId, claimId, now, claimExpiresAt);
+  if (claim.kind === "not_found") {
+    throw new HttpError(404, "proposal_not_found", `Channel proposal not found: ${input.proposalId}`);
+  }
+  if (claim.kind === "busy") {
+    throw new HttpError(409, "proposal_confirmation_in_progress", "This channel proposal is already being confirmed.");
+  }
+  if (claim.kind === "stale") {
+    throw new HttpError(409, "proposal_stale", "This channel proposal changed before confirmation. Refresh it and retry.");
+  }
+  const proposal = claim.proposal;
+
   try {
-    return confirmChannelExecutionProposalWorkflowOrThrow(input, proposal, now);
+    const orphanedWorkflow = existingLinkedWorkflow(input.store, proposal);
+    if (orphanedWorkflow) {
+      const accepted = input.store.updateChannelExecutionProposal(proposal.id, {
+        status: "accepted",
+        linkedTaskId: null,
+        linkedRunId: null,
+        linkedWorkflowId: orphanedWorkflow.workflow.id,
+        errorMessage: null,
+        blocker: null,
+        expectedRevision: proposal.revision,
+        confirmationClaimId: claimId,
+      }, now);
+      if (!accepted) {
+        throw new HttpError(409, "proposal_stale", "The proposal changed while recovering its existing workflow.");
+      }
+      return { ...orphanedWorkflow, proposal: accepted };
+    }
+    return confirmChannelExecutionProposalWorkflowOrThrow(input, proposal, now, claimId);
   } catch (error) {
     if (error instanceof HttpError && error.statusCode !== 404) {
       input.store.updateChannelExecutionProposal(proposal.id, {
         status: "blocked",
         errorMessage: error.message,
         blocker: error instanceof WorkflowParticipantProviderPreflightError ? error.blocker : null,
+        expectedRevision: proposal.revision,
+        confirmationClaimId: claimId,
       }, now);
     }
     throw error;
@@ -92,6 +127,7 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
   input: ConfirmChannelExecutionProposalWorkflowInput,
   proposal: ChannelExecutionProposal,
   now: string,
+  confirmationClaimId: string,
 ): ConfirmChannelExecutionProposalWorkflowResult {
   if (!confirmableProposalStatuses.has(proposal.status)) {
     throw new HttpError(409, "proposal_not_confirmable", `Proposal cannot be confirmed from status: ${proposal.status}`);
@@ -248,7 +284,13 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
     ...(proposal.shaping ? { shaping: { ...proposal.shaping, status: "converted_to_task" as const, updatedAt: now } } : {}),
     errorMessage: null,
     blocker: null,
+    expectedRevision: proposal.revision,
+    confirmationClaimId,
   }, now) ?? proposal;
+
+  if (accepted === proposal) {
+    throw new HttpError(409, "proposal_stale", "The proposal changed while creating its workflow.");
+  }
 
   return { proposal: accepted, workflow, workflowSteps };
 }
@@ -275,10 +317,11 @@ function existingLinkedWorkflow(
   store: RunStore,
   proposal: ChannelExecutionProposal,
 ): ConfirmChannelExecutionProposalWorkflowResult | undefined {
-  if (!proposal.linkedWorkflowId) {
-    return undefined;
-  }
-  const workflow = store.getChannelWorkflow(proposal.linkedWorkflowId);
+  const workflow = proposal.linkedWorkflowId
+    ? store.getChannelWorkflow(proposal.linkedWorkflowId)
+    : store
+      .listChannelWorkflows({ channelId: proposal.channelId, limit: 500 })
+      .find((candidate) => candidate.metadata?.sourceProposalId === proposal.id);
   if (!workflow) {
     return undefined;
   }

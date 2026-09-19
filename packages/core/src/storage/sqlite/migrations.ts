@@ -248,6 +248,8 @@ const CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_VERSION = 129;
 const CHANNEL_DECISION_SUPERSESSION_IDEMPOTENCY_MIGRATION_NAME = "enforce_channel_decision_supersession_idempotency";
 const TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_VERSION = 134;
 const TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_NAME = "add_teammate_direct_system_purpose";
+const CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_VERSION = 138;
+const CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_NAME = "add_channel_execution_proposal_cas";
 
 export function configureSqliteRunStoreDatabase(database: DatabaseSync): void {
   database.exec(`
@@ -1488,6 +1490,7 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
       database.exec(`
         CREATE TABLE IF NOT EXISTS channel_execution_proposals (
           id TEXT PRIMARY KEY,
+          revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1),
           workspace_id TEXT NOT NULL,
           channel_id TEXT NOT NULL,
           source_message_id TEXT NOT NULL,
@@ -1507,6 +1510,8 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
           linked_workflow_id TEXT,
           error_message TEXT,
           blocker_json TEXT,
+          confirmation_claim_id TEXT,
+          confirmation_claim_expires_at TEXT,
           created_at TEXT NOT NULL,
           updated_at TEXT NOT NULL,
           FOREIGN KEY(workspace_id) REFERENCES workspaces(id) ON DELETE CASCADE,
@@ -5847,6 +5852,36 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
         TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_VERSION,
         TEAMMATE_DIRECT_SYSTEM_PURPOSE_MIGRATION_NAME,
       );
+      database.exec("COMMIT;");
+    } catch (error) {
+      database.exec("ROLLBACK;");
+      throw error;
+    }
+  }
+
+  const hasChannelExecutionProposalCasMigration = context.hasMigration(CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_VERSION);
+  if (
+    !hasChannelExecutionProposalCasMigration
+    || !context.hasColumn("channel_execution_proposals", "revision")
+    || !context.hasColumn("channel_execution_proposals", "confirmation_claim_id")
+    || !context.hasColumn("channel_execution_proposals", "confirmation_claim_expires_at")
+  ) {
+    database.exec("BEGIN IMMEDIATE;");
+    try {
+      if (context.hasTable("channel_execution_proposals")) {
+        if (!context.hasColumn("channel_execution_proposals", "revision")) {
+          database.exec("ALTER TABLE channel_execution_proposals ADD COLUMN revision INTEGER NOT NULL DEFAULT 1 CHECK(revision >= 1);");
+        }
+        if (!context.hasColumn("channel_execution_proposals", "confirmation_claim_id")) {
+          database.exec("ALTER TABLE channel_execution_proposals ADD COLUMN confirmation_claim_id TEXT;");
+        }
+        if (!context.hasColumn("channel_execution_proposals", "confirmation_claim_expires_at")) {
+          database.exec("ALTER TABLE channel_execution_proposals ADD COLUMN confirmation_claim_expires_at TEXT;");
+        }
+      }
+      if (!hasChannelExecutionProposalCasMigration) {
+        context.recordMigration(CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_VERSION, CHANNEL_EXECUTION_PROPOSAL_CAS_MIGRATION_NAME);
+      }
       database.exec("COMMIT;");
     } catch (error) {
       database.exec("ROLLBACK;");

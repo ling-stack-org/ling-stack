@@ -247,6 +247,7 @@ import type {
   ChannelContextSummary,
   ChannelDecision,
   ChannelExecutionProposal,
+  ChannelExecutionProposalClaimResult,
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelHandoff,
@@ -2073,6 +2074,12 @@ export interface RunStore {
   getChannelExecutionProposal(id: string): ChannelExecutionProposal | undefined;
   listChannelExecutionProposals(options: ListChannelExecutionProposalsOptions): ChannelExecutionProposal[];
   updateChannelExecutionProposal(id: string, input: UpdateChannelExecutionProposalInput, now: string): ChannelExecutionProposal | undefined;
+  claimChannelExecutionProposal(
+    id: string,
+    claimId: string,
+    now: string,
+    claimExpiresAt: string,
+  ): ChannelExecutionProposalClaimResult;
   createChannelAttachment(input: CreateChannelAttachmentInput): ChannelAttachment;
   getChannelAttachment(id: string): ChannelAttachment | undefined;
   listChannelAttachments(options: ListChannelAttachmentsOptions): ChannelAttachment[];
@@ -2719,6 +2726,7 @@ export type ChannelStoreFacet = RunStoreFacet<
   | "getChannelExecutionProposal"
   | "listChannelExecutionProposals"
   | "updateChannelExecutionProposal"
+  | "claimChannelExecutionProposal"
   | "createChannelAttachment"
   | "getChannelAttachment"
   | "listChannelAttachments"

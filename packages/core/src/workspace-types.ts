@@ -1500,6 +1500,8 @@ export interface ChannelRequirementShaping {
 
 export interface ChannelExecutionProposal {
   readonly id: string;
+  /** Monotonic durable version used for proposal edits and execution claims. */
+  readonly revision: number;
   readonly workspaceId: string;
   readonly channelId: string;
   readonly sourceMessageId: string;
@@ -1545,6 +1547,10 @@ export interface CreateChannelExecutionProposalInput {
 }
 
 export interface UpdateChannelExecutionProposalInput {
+  /** When provided, the mutation must win a durable compare-and-swap. */
+  readonly expectedRevision?: number;
+  /** Internal owner token for completing a confirmation claim. */
+  readonly confirmationClaimId?: string;
   readonly title?: string;
   readonly prompt?: string;
   readonly assigneeTeammateId?: string;
@@ -1561,6 +1567,12 @@ export interface UpdateChannelExecutionProposalInput {
   readonly errorMessage?: string | null;
   readonly blocker?: WorkflowParticipantProviderBlockerV1 | null;
 }
+
+export type ChannelExecutionProposalClaimResult =
+  | { readonly kind: "claimed"; readonly proposal: ChannelExecutionProposal }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "stale"; readonly proposal: ChannelExecutionProposal }
+  | { readonly kind: "busy"; readonly proposal: ChannelExecutionProposal };
 
 export interface ListChannelExecutionProposalsOptions {
   readonly channelId: string;

@@ -574,7 +574,14 @@ export async function handleChannelExecutionProposalItem(
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseChannelExecutionProposalUpdateInput(body);
       const updated = store.updateChannelExecutionProposal(proposalId, input, new Date().toISOString());
-      writeJson(response, 200, { proposal: updated ?? proposal });
+      if (!updated) {
+        writeJson(response, 409, {
+          error: "proposal_stale_or_claimed",
+          message: "Channel proposal changed or is currently being confirmed. Refresh it before retrying.",
+        });
+        return;
+      }
+      writeJson(response, 200, { proposal: updated });
       return;
     }
 

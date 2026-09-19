@@ -238,6 +238,117 @@ test("provider runtime availability mapper records transient failures only", () 
   assert.equal(promptLeak, undefined);
 });
 
+test("channel proposal confirmation claim is durable, first-writer-wins, and recoverable", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-proposal-cas-"));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-09-19T10:00:00.000Z";
+  try {
+    const { channel, message } = createStoreChannelAndMessage(store, cwd, "prepare a safe change");
+    const proposal = store.createChannelExecutionProposal({
+      channelId: channel.id,
+      sourceMessageId: message.id,
+      proposedByTeammateId: "ling_agent",
+      title: "Safe change",
+      prompt: "Prepare a safe change",
+      assigneeTeammateId: "ling_agent",
+      status: "draft",
+    }, now);
+    assert.equal(proposal.revision, 1);
+
+    const first = store.claimChannelExecutionProposal(
+      proposal.id,
+      "proposal-confirm:first",
+      now,
+      "2026-09-19T10:05:00.000Z",
+    );
+    assert.equal(first.kind, "claimed");
+    assert.equal(first.proposal.revision, 2);
+
+    const second = store.claimChannelExecutionProposal(
+      proposal.id,
+      "proposal-confirm:second",
+      now,
+      "2026-09-19T10:05:00.000Z",
+    );
+    assert.equal(second.kind, "busy");
+
+    assert.equal(store.updateChannelExecutionProposal(proposal.id, {
+      status: "cancelled",
+    }, now), undefined, "a stale UI cancel cannot steal an active confirmation claim");
+    assert.equal(store.updateChannelExecutionProposal(proposal.id, {
+      status: "blocked",
+      expectedRevision: 1,
+    }, now), undefined, "an old revision cannot overwrite a claimed proposal");
+
+    const blocked = store.updateChannelExecutionProposal(proposal.id, {
+      status: "blocked",
+      errorMessage: "provider unavailable",
+      expectedRevision: first.proposal.revision,
+      confirmationClaimId: "proposal-confirm:first",
+    }, now);
+    assert.equal(blocked?.status, "blocked");
+    assert.equal(blocked?.revision, 3);
+
+    const recovered = store.claimChannelExecutionProposal(
+      proposal.id,
+      "proposal-confirm:recovery",
+      "2026-09-19T10:06:00.000Z",
+      "2026-09-19T10:11:00.000Z",
+    );
+    assert.equal(recovered.kind, "claimed", "blocked proposals can be retried after the prior claim is released");
+    assert.equal(recovered.proposal.revision, 4);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("an expired proposal confirmation lease can be reclaimed without releasing the old claim", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-proposal-lease-expiry-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-09-19T11:00:00.000Z";
+    const { channel, message } = createStoreChannelAndMessage(store, cwd, "recover an abandoned confirmation");
+    const proposal = store.createChannelExecutionProposal({
+      channelId: channel.id,
+      sourceMessageId: message.id,
+      proposedByTeammateId: "ling_agent",
+      title: "Abandoned confirmation",
+      prompt: "Recover an abandoned confirmation",
+      assigneeTeammateId: "ling_agent",
+      status: "draft",
+    }, now);
+
+    const first = store.claimChannelExecutionProposal(
+      proposal.id,
+      "proposal-confirm:abandoned",
+      now,
+      "2026-09-19T11:05:00.000Z",
+    );
+    assert.equal(first.kind, "claimed");
+    assert.equal(first.proposal.revision, 2);
+
+    const recovered = store.claimChannelExecutionProposal(
+      proposal.id,
+      "proposal-confirm:recovered",
+      "2026-09-19T11:06:00.000Z",
+      "2026-09-19T11:11:00.000Z",
+    );
+    assert.equal(recovered.kind, "claimed");
+    assert.equal(recovered.proposal.revision, 3);
+
+    assert.equal(store.updateChannelExecutionProposal(proposal.id, {
+      status: "blocked",
+      errorMessage: "The expired owner cannot finalize this proposal.",
+      expectedRevision: first.proposal.revision,
+      confirmationClaimId: "proposal-confirm:abandoned",
+    }, "2026-09-19T11:06:00.000Z"), undefined);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel branches follow archive restore and delete lifecycle", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-branches-"));
   const stores = [];

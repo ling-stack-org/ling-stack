@@ -665,6 +665,7 @@ export interface ChannelRequirementShaping {
 
 export interface ChannelExecutionProposal {
   readonly id: string;
+  readonly revision: number;
   readonly workspaceId: string;
   readonly channelId: string;
   readonly sourceMessageId: string;
@@ -703,6 +704,7 @@ export interface CreateChannelExecutionProposalRequest {
 }
 
 export interface UpdateChannelExecutionProposalRequest {
+  readonly expectedRevision?: number;
   readonly title?: string;
   readonly prompt?: string;
   readonly assigneeTeammateId?: string;

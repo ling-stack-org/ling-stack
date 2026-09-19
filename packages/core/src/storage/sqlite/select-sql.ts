@@ -1111,6 +1111,7 @@ export function channelExecutionProposalSelectSql(whereClause: string): string {
   return `
     SELECT
       id,
+      revision,
       workspace_id,
       channel_id,
       source_item_id AS source_message_id,
@@ -1130,6 +1131,8 @@ export function channelExecutionProposalSelectSql(whereClause: string): string {
       linked_workflow_id,
       error_message,
       blocker_json,
+      confirmation_claim_id,
+      confirmation_claim_expires_at,
       created_at,
       updated_at
     FROM channel_execution_proposals

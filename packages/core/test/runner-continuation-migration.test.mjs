@@ -23,7 +23,7 @@ test("schema 134 upgrades to runner continuation schema 135 and reruns idempoten
   database.exec(`
     DROP TABLE run_evaluation_grades;
     DROP TABLE run_evaluations;
-    DELETE FROM schema_migrations WHERE version = 137;
+    DELETE FROM schema_migrations WHERE version IN (137, 138);
     DROP TABLE harness_tool_execution_artifacts;
     DROP TABLE harness_tool_executions;
     DELETE FROM schema_migrations WHERE version = 136;

@@ -3576,6 +3576,15 @@ export class SqliteRunStore implements RunStore {
     return this.channelProposals.updateChannelExecutionProposal(id, input, now);
   }
 
+  claimChannelExecutionProposal(
+    id: string,
+    claimId: string,
+    now: string,
+    claimExpiresAt: string,
+  ) {
+    return this.channelProposals.claimChannelExecutionProposal(id, claimId, now, claimExpiresAt);
+  }
+
   createChannelAttachment(input: CreateChannelAttachmentInput): ChannelAttachment {
     if (this.legacyContinuityFixtureMode) {
       const attachment: ChannelAttachment = {
@@ -4890,7 +4899,7 @@ export class SqliteRunStore implements RunStore {
     now: string,
   ): ChannelExecutionProposal {
     const proposal: ChannelExecutionProposal = {
-      id: createChannelExecutionProposalId(), workspaceId: DEFAULT_WORKSPACE_ID,
+      id: createChannelExecutionProposalId(), revision: 1, workspaceId: DEFAULT_WORKSPACE_ID,
       channelId: input.channelId, sourceMessageId: input.sourceMessageId,
       proposedByTeammateId: input.proposedByTeammateId, title: input.title, prompt: input.prompt,
       assigneeTeammateId: input.assigneeTeammateId, acceptanceCriteria: input.acceptanceCriteria ?? [],
@@ -4905,20 +4914,20 @@ export class SqliteRunStore implements RunStore {
     };
     this.database.prepare(`
       INSERT INTO channel_execution_proposals (
-        id, workspace_id, channel_id, source_message_id, proposed_by_teammate_id,
+        id, revision, workspace_id, channel_id, source_message_id, proposed_by_teammate_id,
         title, prompt, assignee_teammate_id, acceptance_criteria_json,
         collaboration_steps_json, required_tools_json, risk_summary, response_language,
         shaping_json, status, linked_task_id, linked_run_id, linked_workflow_id,
-        error_message, created_at, updated_at
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        error_message, confirmation_claim_id, confirmation_claim_expires_at, created_at, updated_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
-      proposal.id, proposal.workspaceId, proposal.channelId, proposal.sourceMessageId,
+      proposal.id, proposal.revision, proposal.workspaceId, proposal.channelId, proposal.sourceMessageId,
       proposal.proposedByTeammateId, proposal.title, proposal.prompt, proposal.assigneeTeammateId,
       JSON.stringify(proposal.acceptanceCriteria), JSON.stringify(proposal.collaborationSteps),
       JSON.stringify(proposal.requiredTools), proposal.riskSummary ?? null, proposal.responseLanguage ?? null,
       proposal.shaping ? JSON.stringify(proposal.shaping) : null, proposal.status,
       proposal.linkedTaskId ?? null, proposal.linkedRunId ?? null, proposal.linkedWorkflowId ?? null,
-      proposal.errorMessage ?? null, now, now,
+      proposal.errorMessage ?? null, null, null, now, now,
     );
     return proposal;
   }

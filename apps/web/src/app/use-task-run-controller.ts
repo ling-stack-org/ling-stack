@@ -178,7 +178,10 @@ export function useTaskRunController(input: {
   ): Promise<ChannelExecutionProposal | undefined> {
     try {
       input.clearWorkflowError(proposal.id);
-      const response = await input.updateChannelExecutionProposal(input.form.cwd.trim(), proposal.id, request);
+      const response = await input.updateChannelExecutionProposal(input.form.cwd.trim(), proposal.id, {
+        ...request,
+        expectedRevision: request.expectedRevision ?? proposal.revision,
+      });
       input.upsertChannelExecutionProposal(response.proposal);
       return response.proposal;
     } catch (error) {
