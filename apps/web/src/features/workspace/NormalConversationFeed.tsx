@@ -6,7 +6,7 @@ import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js"
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import {
   buildComposerGateApprovalPresentationByRunId,
-  composerGateApprovalPresentationForWorkCell,
+  composerGateApprovalPresentationForRunId,
   type ComposerGateApprovalPresentation,
 } from "../../lib/runtime-approval-presentation.js";
 import {
@@ -286,9 +286,7 @@ export function NormalConversationFeed({
                   item={item}
                   bodyNodeOverride={body}
                   ownsMessageChrome={messageChromeOwnerIds.has(messageItem.id)}
-                  composerGateApproval={item.workCell
-                    ? composerGateApprovalPresentationForWorkCell(item.workCell, composerGateApprovalByRunId)
-                    : undefined}
+                  composerGateApproval={composerGateApprovalPresentationForRunId(item.message.runId, composerGateApprovalByRunId)}
                   generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
                   feedback={feedbackById[item.message.id]}
                   editing={editingMessageId === item.message.id}

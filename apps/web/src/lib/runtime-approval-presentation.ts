@@ -41,6 +41,22 @@ export function composerGateApprovalPresentationForWorkCell(
   return presentations.get(model.anchorRunId);
 }
 
+/**
+ * Resolve the composer-owned approval directly from the durable Run owner.
+ *
+ * Timeline renderers and surface adapters should not need a WorkCell merely to
+ * decide whether the Composer must show an approval gate. The Run id is the
+ * canonical ownership boundary; WorkCell lookup remains an input adapter for
+ * legacy evidence only.
+ */
+export function composerGateApprovalPresentationForRunId(
+  runId: string | undefined,
+  presentations: ReadonlyMap<string, ComposerGateApprovalPresentation>,
+): ComposerGateApprovalPresentation | undefined {
+  const normalizedRunId = runId?.trim();
+  return normalizedRunId ? presentations.get(normalizedRunId) : undefined;
+}
+
 // The dialog queue and the legacy composer gate use the same durable
 // approval-to-run projection. Keep the dialog vocabulary as a named adapter so
 // the queue can evolve independently without duplicating ownership logic.

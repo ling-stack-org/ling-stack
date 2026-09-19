@@ -1,7 +1,6 @@
 import {
   createConversationTimelineMessageItem,
   projectConversationMessagePresentation,
-  type ConversationWorkCellViewModel,
   type ConversationTimelineItem,
 } from "@ling-stack/conversation-ui-core";
 import type { Translate } from "../../i18n.js";
@@ -24,8 +23,6 @@ export interface NormalConversationFeedItem {
   readonly bodyStreaming: boolean;
   readonly errorText: string;
   readonly timelineItems: readonly ConversationTimelineItem[];
-  readonly workCell?: ConversationWorkCellViewModel;
-  readonly workCellCwd: string;
   readonly workspaceMayHaveChanged: boolean;
 }
 
@@ -51,7 +48,7 @@ export function projectNormalConversationFeedItems(input: {
     const typedTimelineItems = linkedRun
       ? canonicalFactsForMessage(input.detailContext?.timelineProjection?.items ?? [], message, linkedRun.id)
       : [];
-    const workCell = message.role === "assistant" && message.threadId && linkedRun && conversationRunHasVisibleWork({
+    const legacyFactsAdapter = message.role === "assistant" && message.threadId && linkedRun && conversationRunHasVisibleWork({
       run: linkedRun,
       approvals: runApprovals,
       executionActions,
@@ -89,7 +86,14 @@ export function projectNormalConversationFeedItems(input: {
       status: message.status,
       fileRefs: message.fileRefs,
     });
-    const facts = workCell ? conversationTimelineItemsForModel(workCell) : [];
+    // Canonical typed facts own the normal surface whenever they are present.
+    // The WorkCell path is only a source adapter for optimistic/older detail
+    // responses and is never exposed as a renderer owner.
+    const facts = typedTimelineItems.length > 0
+      ? typedTimelineItems
+      : legacyFactsAdapter
+        ? conversationTimelineItemsForModel(legacyFactsAdapter)
+        : [];
     const timelineItems = [messageItem, ...facts];
 
     return {
@@ -104,8 +108,6 @@ export function projectNormalConversationFeedItems(input: {
       bodyStreaming,
       errorText: messagePresentation.errorText,
       timelineItems,
-      workCell,
-      workCellCwd: linkedRun?.cwd ?? input.workspaceCwd.trim(),
       workspaceMayHaveChanged: runMayHaveWorkspaceChanges(relatedRun),
     };
   });
