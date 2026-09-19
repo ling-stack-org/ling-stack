@@ -429,21 +429,14 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
   if (!terminalReportsEnabledForStore(store)) {
     return;
   }
-  const latestPublishedBySource = new Map<string, LingTerminalReportRecord>();
   for (const record of store.listTerminalReports({ limit: 500 })) {
-    if (!terminalReportIsEligibleForDisplay(store, record)
-      || (record.status !== "committed" && record.status !== "fallback")
-      || !record.report) {
-      continue;
+    if (
+      terminalReportIsEligibleForDisplay(store, record) &&
+      (record.status === "committed" || record.status === "fallback") &&
+      record.report
+    ) {
+      publishTerminalReportWithInvalidation(store, record.report, undefined, new Date().toISOString());
     }
-    const sourceKey = `${record.sourceKind}:${record.sourceId}`;
-    const current = latestPublishedBySource.get(sourceKey);
-    if (!current || record.generation > current.generation) {
-      latestPublishedBySource.set(sourceKey, record);
-    }
-  }
-  for (const record of latestPublishedBySource.values()) {
-    publishTerminalReportWithInvalidation(store, record.report!, undefined, new Date().toISOString());
   }
   for (const channel of store.listChannels({ limit: 500 })) {
     for (const workflow of store.listChannelWorkflows({ channelId: channel.id, limit: 500 })) {

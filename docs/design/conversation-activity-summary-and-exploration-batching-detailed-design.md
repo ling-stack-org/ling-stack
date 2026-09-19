@@ -1,8 +1,8 @@
 # Conversation Activity Summary And Exploration Batching Detailed Design
 
-Status: approved design; implementation pending
+Status: approved projection design; renderer contract superseded by typed transcript
 Date: 2026-08-23
-Last verified: 2026-08-25
+Last verified: 2026-08-30
 Scope: completed work-cell activity summaries, read-operation batching, shared
 conversation projections, Continuity v2 integration boundaries, and validation
 
@@ -11,6 +11,17 @@ Related docs:
 - [Conversation Command Execution Batching Detailed Design](conversation-command-execution-batching-detailed-design.md)
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
+- [Ling Typed Transcript Detailed Design](conversation-typed-transcript-detailed-design.md)
+
+## 2026-08-30 Typed Transcript Boundary
+
+本文只保留 activity summary 和 exploration batching 的确定性算法。新实现必须先
+投影 atomic `ConversationTimelineItem`，再调用本文的 batching；不得在
+`ConversationWorkCell.tsx`、频道路由或 Composer 中重新实现计数、分组或完成判断。
+`command_batch`/`exploration_batch` 仍是 display-only wrapper，不新增 SQLite 表，
+不写回 `conversation_items`，也不能跨 agent、run、attempt、workflow step、approval
+或 consequential action。批次数量永远不是 TerminalReport 或 multi-agent fan-in 的
+完成依据。
 
 ## 1. Purpose
 

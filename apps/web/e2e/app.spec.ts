@@ -467,7 +467,7 @@ test("recent conversations only show records created from the conversation home"
   await expect(navigation.locator(".sidebar-recent-row").first()).toContainText("Second local conversation");
 });
 
-test("normal conversation queues approvals in its composer gate", async ({ page }) => {
+test("normal conversation queues blocking approval dialogs without resizing the composer", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   const threadId = "thread_normal_inline_approvals";
@@ -480,7 +480,7 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
     kind: "conversation",
     title: "Normal inline approvals",
     objective: "Verify normal conversation approvals.",
-    status: "waiting_for_approval",
+    status: "running",
     activeRunId: runId,
     lastRunId: runId,
     createdAt: timestamp,
@@ -515,35 +515,10 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
     eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
     threadId,
     turnId,
-    workUnitId: "work_unit_normal_inline_approvals",
     createdAt: timestamp,
     startedAt: timestamp,
     updatedAt: timestamp,
   });
-  state.workUnits = [{
-    id: "work_unit_normal_inline_approvals",
-    workspaceId: "workspace_default",
-    kind: "conversation_run",
-    ownerType: "conversation_turn",
-    ownerId: turnId,
-    teammateId: "ling_agent",
-    idempotencyKey: "work_unit_normal_inline_approvals",
-    status: "waiting_for_approval",
-    priority: 0,
-    attemptCount: 1,
-    createdByActor: "local-user",
-    request: {},
-    timeoutPolicy: {
-      heartbeatIntervalMs: 10_000,
-      heartbeatTimeoutMs: 45_000,
-      idleTimeoutMs: 600_000,
-      hardTimeoutMs: 3_600_000,
-      cancelGraceMs: 15_000,
-    },
-    linkedRunId: runId,
-    createdAt: timestamp,
-    updatedAt: timestamp,
-  }];
   state.eventsByRun[runId] = [{
     id: `event_${runId}`,
     runId,
@@ -577,40 +552,21 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
     },
   ];
   await mockDaemon(page, state);
-  await page.route(/\/approvals\/approval_normal_edit\/deny(?:\?.*)?$/u, async (route) => {
-    const approval = state.approvals.find((item) => item.id === "approval_normal_edit");
-    const thread = state.threads.find((item) => item.id === threadId);
-    if (!approval || !thread) {
-      await route.fulfill({ status: 404, json: { error: "fixture_not_found" } });
-      return;
-    }
-    approval.status = "denied";
-    approval.resolvedAt = "2026-07-20T02:00:02.000Z";
-    approval.resolvedBy = "local-user";
-    setTimeout(() => {
-      thread.status = "failed";
-      thread.activeRunId = undefined;
-      thread.updatedAt = approval.resolvedAt;
-    }, 150);
-    await route.fulfill({ json: { approval } });
-  });
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  const recentShell = navigation.locator(".sidebar-recent-row-shell").filter({ hasText: "Normal inline approvals" });
-  const recentRow = recentShell.locator(".sidebar-recent-row");
-  await expect(recentShell).toContainText("Waiting for approval");
+  const recentRow = navigation.locator(".sidebar-recent-row").filter({ hasText: "Normal inline approvals" });
   await recentRow.click();
   const conversation = page.getByLabel("Conversation page");
-  const gate = conversation.getByRole("region", { name: "Allow this action?" });
-  await expect(gate).toBeVisible();
-  await expect(conversation.getByLabel("New conversation composer")).toHaveCount(0);
-  await expect(page.getByRole("dialog", { name: "Allow this action?" })).toHaveCount(0);
-  await expect(gate).toContainText("Run command: echo normal");
-  await expect(gate).not.toContainText("Approve normal shell command");
-  await expect(gate).not.toContainText("pending approvals");
-  await expect(gate).not.toContainText("Approve normal file edit");
-  const pendingWorkCell = conversation.locator('[data-approval-presentation-owner="composer_gate"]');
+  const composer = conversation.getByLabel("New conversation composer");
+  const dialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Run command: echo normal");
+  await expect(dialog).not.toContainText("Approve normal shell command");
+  await expect(dialog).not.toContainText("pending approvals");
+  await expect(dialog).not.toContainText("Approve normal file edit");
+  await expect(composer.locator(".approval-inline-strip")).toHaveCount(0);
+  const pendingWorkCell = conversation.locator('[data-approval-presentation-owner="dialog"]');
   await expect(pendingWorkCell).toBeVisible();
   await expect(pendingWorkCell).toContainText("Waiting for approval");
   await expect(pendingWorkCell).toContainText("Run command: echo normal");
@@ -618,104 +574,57 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
   await expect(pendingWorkCell).not.toContainText("Approve normal file edit");
   await expect(pendingWorkCell.locator(".conversation-work-cell-evidence-summary")).toHaveCount(0);
   await expect(pendingWorkCell.locator(".conversation-operation-shell-body")).toHaveCount(0);
-  await navigation.getByRole("button", { name: "New conversation" }).click();
-  await expect(page.getByLabel("Conversation home")).toBeVisible();
-  await recentRow.click();
-  await expect(gate).toBeVisible();
+  const composerHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
 
-  await gate.getByRole("button", { name: "Allow once" }).click();
+  await page.keyboard.press("Escape");
+  await expect(dialog).toBeVisible();
+  await page.mouse.click(4, 4);
+  await expect(dialog).toBeVisible();
+
+  await dialog.getByRole("button", { name: "Allow" }).click();
   await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_shell")?.status).toBe("approved");
-  await expect(gate).toContainText("Modify file: README.md");
-  await expect(gate).not.toContainText("Approve normal file edit");
-  await expect(gate).not.toContainText("pending approvals");
+  await expect(dialog).toContainText("Modify file: README.md");
+  await expect(dialog).not.toContainText("Approve normal file edit");
+  await expect(dialog).not.toContainText("pending approvals");
 
-  await gate.getByRole("button", { name: "Deny" }).click();
+  await dialog.getByRole("button", { name: "Deny" }).click();
   await expect.poll(() => state.approvals.find((approval) => approval.id === "approval_normal_edit")?.status).toBe("denied");
-  await expect(gate).toHaveCount(0);
-  await expect(conversation.getByLabel("New conversation composer")).toBeVisible();
-  await expect(recentShell).not.toContainText("Waiting for approval");
+  await expect(dialog).toHaveCount(0);
+  expect(await composer.evaluate((element) => element.getBoundingClientRect().height)).toBe(composerHeight);
+  await expect(recentRow).toBeFocused();
 });
 
-test("teammate private chat resolves its runtime approval through its composer gate", async ({ page }) => {
+test("teammate private chat resolves its runtime approval through the shared dialog", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   const teammateId = "teammate_private_approval";
   const runId = "run_private_approval";
-  const directThreadId = `tdthread_${teammateId}`;
-  const executionThreadId = "thread_private_approval";
-  const sourceMessageId = "tdmsg_private_approval_source";
-  const replyMessageId = "tdmsg_private_approval_reply";
-  const workUnitId = "work_unit_private_approval";
+  const threadId = `tdthread_${teammateId}`;
   state.aiTeammates = [createMockTeammate({ id: teammateId, displayName: "Private Approver" })];
   state.runs.unshift({
     ...state.runs[0],
     id: runId,
-    channelId: undefined,
-    taskId: undefined,
     teammateId,
-    threadId: executionThreadId,
-    workUnitId,
+    threadId: "thread_private_approval",
     status: "waiting_for_approval",
     updatedAt: "2026-07-20T03:00:00.000Z",
   });
-  state.workUnits = [{
-    id: workUnitId,
+  state.teammateDirectMessages = [{
+    id: "tdmsg_private_approval",
     workspaceId: "workspace_default",
-    kind: "teammate_direct_reply",
-    ownerType: "teammate_direct_message",
-    ownerId: sourceMessageId,
+    threadId,
     teammateId,
-    idempotencyKey: workUnitId,
-    status: "waiting_for_approval",
-    priority: 0,
-    attemptCount: 1,
-    createdByActor: "user",
-    request: { sourceMessageId },
-    timeoutPolicy: {
-      heartbeatIntervalMs: 10_000,
-      heartbeatTimeoutMs: 45_000,
-      idleTimeoutMs: 600_000,
-      hardTimeoutMs: 3_600_000,
-      cancelGraceMs: 15_000,
-    },
+    authorType: "ai-teammate",
+    authorId: teammateId,
+    body: "Waiting for the private approval.",
+    attachmentIds: [],
+    linkPreviewIds: [],
+    fileRefs: [],
+    status: "ready",
     linkedRunId: runId,
-    linkedMessageId: replyMessageId,
     createdAt: "2026-07-20T03:00:00.000Z",
     updatedAt: "2026-07-20T03:00:00.000Z",
   }];
-  state.teammateDirectMessages = [
-    {
-      id: sourceMessageId,
-      workspaceId: "workspace_default",
-      threadId: directThreadId,
-      teammateId,
-      authorType: "local-user",
-      authorId: "local-user",
-      body: "Please update the private notes.",
-      attachmentIds: [],
-      linkPreviewIds: [],
-      fileRefs: [],
-      status: "ready",
-      createdAt: "2026-07-20T02:59:59.000Z",
-      updatedAt: "2026-07-20T02:59:59.000Z",
-    },
-    {
-      id: replyMessageId,
-      workspaceId: "workspace_default",
-      threadId: directThreadId,
-      teammateId,
-      authorType: "ai-teammate",
-      authorId: teammateId,
-      body: "Waiting for the private approval.",
-      attachmentIds: [],
-      linkPreviewIds: [],
-      fileRefs: [],
-      status: "pending",
-      linkedRunId: runId,
-      createdAt: "2026-07-20T03:00:00.000Z",
-      updatedAt: "2026-07-20T03:00:00.000Z",
-    },
-  ];
   state.approvals = [{
     id: "approval_private_edit",
     runId,
@@ -731,20 +640,21 @@ test("teammate private chat resolves its runtime approval through its composer g
   await page.goto("/");
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Private Approver" }).click();
-  const gate = page.getByRole("region", { name: "Allow this action?" });
-  await expect(page.locator(".teammate-direct-composer")).toHaveCount(0);
-  await expect(gate).toContainText("Modify file: private-notes.md");
-  await expect(gate).not.toContainText("Approve private file edit");
-  const pendingWorkCell = page.locator('.teammate-private-feed-owner [data-approval-presentation-owner="composer_gate"]');
+  const composer = page.locator(".teammate-direct-composer");
+  const composerHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
+  const dialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(dialog).toContainText("Modify file: private-notes.md");
+  await expect(dialog).not.toContainText("Approve private file edit");
+  const pendingWorkCell = page.locator('.teammate-private-feed-owner [data-approval-presentation-owner="dialog"]');
   await expect(pendingWorkCell).toBeVisible();
   await expect(pendingWorkCell).toContainText("Waiting for approval");
   await expect(pendingWorkCell).toContainText("Modify file: private-notes.md");
   await expect(pendingWorkCell).not.toContainText("Approve private file edit");
   await expect(pendingWorkCell.locator(".conversation-operation-shell-body")).toHaveCount(0);
-  await gate.getByRole("button", { name: "Deny" }).click();
+  await dialog.getByRole("button", { name: "Deny" }).click();
   await expect.poll(() => state.approvals[0]?.status).toBe("denied");
-  await expect(gate).toHaveCount(0);
-  await expect(page.locator(".teammate-direct-composer")).toBeVisible();
+  await expect(dialog).toHaveCount(0);
+  expect(await composer.evaluate((element) => element.getBoundingClientRect().height)).toBe(composerHeight);
 });
 
 test("normal conversation full access confirms before creating the run", async ({ page }) => {
@@ -778,7 +688,7 @@ test("normal conversation full access confirms before creating the run", async (
   await expect(home.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", "Inspect trusted files");
 
   await home.getByRole("button", { name: "Send" }).click();
-  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Enable full access" }).click();
+  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Start with full access" }).click();
   await expect.poll(() => state.runs.length).toBe(1);
   await expect.poll(() => {
     const snapshot = state.runs[0]?.requestSnapshot;

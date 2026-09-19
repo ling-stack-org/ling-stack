@@ -28,7 +28,7 @@ import { useWorkspaceBottomPanelResizeController } from "./useWorkspaceBottomPan
 import { useWorkspaceRightDockController } from "./useWorkspaceRightDockController.js";
 import { useConversationPanelPresence } from "./useConversationPanelPresence.js";
 import { NormalConversationComposer } from "./NormalConversationComposer.js";
-import { RuntimeApprovalComposerGate } from "../approvals/RuntimeApprovalComposerGate.js";
+import { RuntimeApprovalDialogQueue } from "../approvals/RuntimeApprovalDialogQueue.js";
 import { NormalConversationEmptyState } from "./NormalConversationEmptyState.js";
 import { NormalConversationPage } from "./NormalConversationPage.js";
 import {
@@ -691,13 +691,10 @@ export function ConversationHome({
       onOpenModelWorkbench={onOpenModelWorkbench}
       onRemoveAttachment={attachmentController.removeAttachment}
       onPermissionPresetChange={(preset) => {
-        if (preset !== "full_access" || !onConfirmFullAccessSelection) {
-          setSelectedPermissionPreset(preset);
-          return;
+        if (preset === "full_access") {
+          onConfirmFullAccessSelection?.();
         }
-        void onConfirmFullAccessSelection().then((confirmation) => {
-          if (confirmation) setSelectedPermissionPreset(preset);
-        });
+        setSelectedPermissionPreset(preset);
       }}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
@@ -706,16 +703,14 @@ export function ConversationHome({
     />
   );
 
-  const approvalGateNode = (
-    <RuntimeApprovalComposerGate
+  const approvalDialogNode = (
+    <RuntimeApprovalDialogQueue
       approvals={inlineApprovalViews}
       approvalErrors={approvalErrors}
       resolvingApprovals={resolvingApprovals}
-      surface="normal_conversation"
       onResolve={onResolveApproval}
     />
   );
-  const visibleComposerNode = inlineApprovalViews.length > 0 ? approvalGateNode : composerNode;
 
   if (messages.length > 0) {
     return (
@@ -760,7 +755,7 @@ export function ConversationHome({
           visibleMessages,
           runById,
           detailContext,
-          composerGateApprovals: inlineApprovalViews,
+          dialogOwnedApprovals: inlineApprovalViews,
           generatedMedia: detailContext?.generatedMedia ?? [],
           projectPath: project.projectPath,
           workspaceCwd,
@@ -779,7 +774,7 @@ export function ConversationHome({
           onOpenReview: openConversationReview,
           onOpenRun,
         }}
-        composerNode={visibleComposerNode}
+        composerNode={composerNode}
         panelsProps={{
           workspaceCwd,
           currentThreadId: detailContext?.threadId,
@@ -798,13 +793,15 @@ export function ConversationHome({
           onCloseTerminal: () => setConversationTerminalOpen(false),
         }}
         />
+        {approvalDialogNode}
       </>
     );
   }
 
   return (
     <>
-      <NormalConversationEmptyState composerNode={visibleComposerNode} onApplyShortcut={applyShortcut} />
+      <NormalConversationEmptyState composerNode={composerNode} onApplyShortcut={applyShortcut} />
+      {approvalDialogNode}
     </>
   );
 }

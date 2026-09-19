@@ -1,10 +1,9 @@
-import type { AiTeammate, ApprovalRequest, Channel, ChannelWorkflowStep, LingThreadStatus, RunSession, Task, WorkUnit } from "../types.js";
+import type { AiTeammate, ApprovalRequest, Channel, LingThreadStatus, RunSession, Task } from "../types.js";
 import type {
   SidebarNotification,
   SidebarPrimaryStatus,
 } from "../features/navigation/SidebarNavigation.js";
 import { effectiveApprovalStatus } from "../lib/approvals.js";
-import { resolveRuntimeApprovalOwner, resolveRuntimeRunOwner } from "../lib/runtime-approval-ownership.js";
 import type { ChannelUnreadState } from "./app-shell-selectors.js";
 
 interface ChannelProjectionInput {
@@ -15,8 +14,6 @@ interface ChannelProjectionInput {
   readonly runs: readonly RunSession[];
   readonly selectedChannelId: string;
   readonly tasks: readonly Task[];
-  readonly workUnits: readonly WorkUnit[];
-  readonly workflowSteps?: readonly ChannelWorkflowStep[];
 }
 
 interface TeammateProjectionInput {
@@ -24,23 +21,19 @@ interface TeammateProjectionInput {
   readonly runs: readonly RunSession[];
   readonly tasks: readonly Task[];
   readonly teammates: readonly AiTeammate[];
-  readonly workUnits: readonly WorkUnit[];
 }
 
 export function buildSidebarChannelNotifications(
   input: ChannelProjectionInput,
 ): Readonly<Record<string, SidebarNotification>> {
+  const runById = new Map(input.runs.map((item) => [item.id, item]));
   const taskById = new Map(input.tasks.map((item) => [item.id, item]));
-  const ownershipContext = { runs: input.runs, tasks: input.tasks, workUnits: input.workUnits, workflowSteps: input.workflowSteps };
-  const pendingByChannel = countPendingApprovals(input.approvals, (approval) => {
-    const owner = resolveRuntimeApprovalOwner(approval, ownershipContext);
-    return owner?.kind === "channel" ? owner.channelId : undefined;
-  });
-  const latestRunByChannel = latestByOwner(input.runs, (run) => {
-    const owner = resolveRuntimeRunOwner(run, { workUnits: input.workUnits });
-    if (owner?.kind === "channel") return owner.channelId;
-    return owner ? undefined : taskById.get(run.taskId)?.channelId;
-  });
+  const pendingByChannel = countPendingApprovals(input.approvals, (approval) =>
+    approval.channelId
+      ?? (approval.runId ? runById.get(approval.runId)?.channelId : undefined)
+      ?? (approval.taskId ? taskById.get(approval.taskId)?.channelId : undefined));
+  const latestRunByChannel = latestByOwner(input.runs, (run) =>
+    run.channelId ?? taskById.get(run.taskId)?.channelId);
   const latestTaskByChannel = latestByOwner(input.tasks, (task) => task.channelId);
   const notifications: Record<string, SidebarNotification> = {};
 
@@ -73,18 +66,10 @@ export function buildSidebarTeammateNotifications(
   input: TeammateProjectionInput,
 ): Readonly<Record<string, SidebarNotification>> {
   const taskById = new Map(input.tasks.map((item) => [item.id, item]));
-  const ownershipContext = { runs: input.runs, tasks: input.tasks, workUnits: input.workUnits };
-  const pendingByTeammate = countPendingApprovals(input.approvals, (approval) => {
-    const owner = resolveRuntimeApprovalOwner(approval, ownershipContext);
-    return owner?.kind === "teammate_direct" ? owner.teammateId : undefined;
-  });
-  const latestRunByTeammate = latestByOwner(input.runs, (run) => {
-    const owner = resolveRuntimeRunOwner(run, { workUnits: input.workUnits });
-    if (owner?.kind === "teammate_direct") return owner.teammateId;
-    return owner || run.threadId
-      ? undefined
-      : run.teammateId ?? taskById.get(run.taskId)?.assigneeTeammateId;
-  });
+  const pendingByTeammate = countPendingApprovals(input.approvals, (approval) =>
+    approval.taskId ? taskById.get(approval.taskId)?.assigneeTeammateId : undefined);
+  const latestRunByTeammate = latestByOwner(input.runs, (run) =>
+    run.teammateId ?? taskById.get(run.taskId)?.assigneeTeammateId);
   const latestTaskByTeammate = latestByOwner(input.tasks, (task) => task.assigneeTeammateId);
   const notifications: Record<string, SidebarNotification> = {};
 
@@ -109,23 +94,11 @@ export function buildSidebarTeammateNotifications(
 export function projectSidebarConversationStatus(
   status: LingThreadStatus,
   activeRunOrStream: boolean,
-  pendingApproval = false,
 ): SidebarPrimaryStatus | undefined {
-  if (pendingApproval || status === "waiting_for_approval") return "waiting";
+  if (status === "waiting_for_approval") return "waiting";
   if (status === "failed" || status === "blocked") return "failed";
   if (status === "running" || activeRunOrStream) return "running";
   return undefined;
-}
-
-export function buildSidebarConversationApprovalCounts(
-  approvals: readonly ApprovalRequest[],
-  runs: readonly RunSession[],
-  workUnits: readonly WorkUnit[],
-): ReadonlyMap<string, number> {
-  return countPendingApprovals(approvals, (approval) => {
-    const owner = resolveRuntimeApprovalOwner(approval, { runs, workUnits });
-    return owner?.kind === "normal_conversation" ? owner.threadId : undefined;
-  });
 }
 
 function countPendingApprovals(
@@ -160,8 +133,8 @@ function derivePrimaryStatus(input: {
   readonly run?: RunSession;
   readonly task?: Task;
 }): SidebarPrimaryStatus | undefined {
-  if (input.pendingCount > 0 || input.run?.status === "waiting_for_approval") return "waiting";
   if (input.paused) return "paused";
+  if (input.pendingCount > 0 || input.run?.status === "waiting_for_approval") return "waiting";
   if (input.run?.status === "failed" || input.task?.status === "failed" || input.task?.status === "blocked") {
     return "failed";
   }

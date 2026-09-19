@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-08-27
+Last verified: 2026-08-30
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -26,6 +26,11 @@ CI/Release artifacts instead of the default documentation tree.
 
 ## Conversations And Channels
 
+Typed transcript v2 的规范入口是下面三份文档：先读详细设计，再读视觉规范，最后按
+实现计划分阶段落地。早期 WorkCell、activity summary 和 TerminalReport 文档仍保留
+历史/局部算法，但遇到渲染 owner、事实边界或 surface parity 冲突时，以 typed
+transcript 规范为准。
+
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
@@ -37,6 +42,9 @@ CI/Release artifacts instead of the default documentation tree.
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
 - [Conversation Activity Summary And Exploration Batching](conversation-activity-summary-and-exploration-batching-detailed-design.md)
+- [Ling Typed Transcript Detailed Design](conversation-typed-transcript-detailed-design.md)
+- [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
+- [Codex-Style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)
 - [Channel Execution Completion Implementation Plan](channel-execution-completion-implementation-plan.md)
 - [Post-Compaction Workspace Undo](post-compaction-undo.md)
 - [Post-Compaction Snapshot Restore](post-compaction-snapshot-restore.md)

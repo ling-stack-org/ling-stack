@@ -104,7 +104,6 @@ test("sidebar channel notifications honor all, mentions, muted, and approval blo
     runs: [],
     selectedChannelId: "channel_selected",
     tasks: [],
-    workUnits: [],
   })).toEqual({
     channel_muted: { count: 1, primaryStatus: "waiting" },
     channel_all: { unread: true },

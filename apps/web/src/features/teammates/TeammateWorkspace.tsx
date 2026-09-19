@@ -86,7 +86,6 @@ import type {
   TeammateDirectMessageStreamReadyEvent,
   UpdateAiTeammateRequest,
   UserProfile,
-  WorkUnit,
   WorkspaceAccessMode,
   TerminalReportDto,
 } from "../../types.js";
@@ -103,7 +102,7 @@ import { TeammatePermissionsTab } from "./TeammatePermissionsTab.js";
 import { TeammateProfileTab } from "./TeammateProfileTab.js";
 import { TeammatePrivateChatSurface } from "./TeammatePrivateChatSurface.js";
 import { TeammateRenameDialog } from "./TeammateRenameDialog.js";
-import { RuntimeApprovalComposerGate } from "../approvals/RuntimeApprovalComposerGate.js";
+import { RuntimeApprovalDialogQueue } from "../approvals/RuntimeApprovalDialogQueue.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import { TeammateSettingsHeader } from "./TeammateSettingsHeader.js";
 import { TeammateSettingsNavigation } from "./TeammateSettingsNavigation.js";
@@ -157,7 +156,6 @@ export function TeammateWorkspace({
   workspaceDefaultProviderPresetId,
   channels,
   runs,
-  workUnits,
   skillPack,
   onUpdateTeammate,
   onTeammateUpdated,
@@ -199,7 +197,6 @@ export function TeammateWorkspace({
   readonly workspaceDefaultProviderPresetId?: string;
   readonly channels: readonly Channel[];
   readonly runs: readonly RunSession[];
-  readonly workUnits: readonly WorkUnit[];
   readonly skillPack: SkillPack | undefined;
   readonly onUpdateTeammate: (
     teammateId: string,
@@ -224,7 +221,7 @@ export function TeammateWorkspace({
   readonly onDirectConversationChange?: (threadId?: string) => void;
   readonly fullAccessConfirmed?: boolean;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
-  readonly onConfirmFullAccessSelection?: () => Promise<PermissionConfirmation | undefined>;
+  readonly onConfirmFullAccessSelection?: () => PermissionConfirmation;
   readonly defaultPermissionMode?: SessionPermissionMode;
   readonly defaultPermissionPreset?: PermissionPreset;
   readonly workspacePolicy?: ApprovalPolicy;
@@ -481,17 +478,11 @@ export function TeammateWorkspace({
   }, [runs, teammate.id, visibleMessages]);
   const visibleDirectRunKey = visibleDirectRunIds.join("|");
   const directApprovalViews = useMemo(
-    () => currentDirectRuntime ? buildInlineApprovalViews(currentDirectRuntime.approvals, {
-      owner: {
-        kind: "teammate_direct",
-        teammateId: teammate.id,
-        threadId: currentDirectRuntime.thread.id,
-      },
-      runs,
-      teammateDirectMessages: currentMessages,
-      workUnits,
-    }) : [],
-    [currentDirectRuntime, currentMessages, runs, teammate.id, workUnits],
+    () => buildInlineApprovalViews(currentDirectRuntime?.approvals ?? [], {
+      activeRunId: runs.find((run) => visibleDirectRunIds.includes(run.id) && run.status === "waiting_for_approval")?.id,
+      visibleRunIds: visibleDirectRunIds,
+    }),
+    [currentDirectRuntime?.approvals, runs, visibleDirectRunKey],
   );
   const hasActiveVisibleDirectRun = useMemo(() => {
     const visibleRunIds = new Set(visibleDirectRunIds);
@@ -1751,7 +1742,7 @@ export function TeammateWorkspace({
           runs={runs}
           executionActions={directExecutionActions}
           approvals={currentDirectRuntime?.approvals ?? []}
-          composerGateApprovals={directApprovalViews}
+          dialogOwnedApprovals={directApprovalViews}
           terminalReports={terminalReports}
           dockViewModel={privateDockViewModel}
           providerRecovered={providerRecovered}
@@ -1784,17 +1775,6 @@ export function TeammateWorkspace({
           composerFileReferenceParts={composerFileReferenceParts}
           composerFileReferenceTokens={composerFileReferenceTokens}
           composerDragActive={composerDragActive}
-          composerGateNode={directApprovalViews.length > 0 ? (
-            <RuntimeApprovalComposerGate
-              approvals={directApprovalViews}
-              approvalErrors={approvalErrors}
-              resolvingApprovals={resolvingApprovals}
-              surface="teammate_direct"
-              onResolve={(approvalId, decision, reason) => {
-                void Promise.resolve(onResolveApproval(approvalId, decision, reason)).then(() => refreshDirectRuntime());
-              }}
-            />
-          ) : undefined}
           onPrivateFeedScroll={handlePrivateFeedScroll}
           onCancelPrivateFeedAutoFollow={cancelPrivateFeedAutoFollow}
           onScrollToLatest={scrollPrivateFeedToLatest}
@@ -1928,6 +1908,14 @@ export function TeammateWorkspace({
           ) : null}
         </div>
       ) : null}
+      <RuntimeApprovalDialogQueue
+        approvals={workspaceView === "chat" ? directApprovalViews : []}
+        approvalErrors={approvalErrors}
+        resolvingApprovals={resolvingApprovals}
+        onResolve={(approvalId, decision, reason) => {
+          void Promise.resolve(onResolveApproval(approvalId, decision, reason)).then(() => refreshDirectRuntime());
+        }}
+      />
     </div>
   );
 }

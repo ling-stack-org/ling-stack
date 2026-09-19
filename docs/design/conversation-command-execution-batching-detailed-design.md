@@ -1,8 +1,8 @@
 # Conversation Command Execution Batching Detailed Design
 
-Status: implemented on `main`
+Status: atomic evidence contract implemented on `main`; typed renderer cutover pending
 Date: 2026-07-13
-Last verified: 2026-08-03
+Last verified: 2026-08-30
 Scope: persisted command evidence, live command output projection, deterministic command
 batching, shared conversation view models, Web rendering, refresh behavior, and tests
 
@@ -12,6 +12,15 @@ Related docs:
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Ling Agent Terminal Report Protocol](ling-agent-terminal-report-protocol.md)
+- [Ling Typed Transcript Detailed Design](conversation-typed-transcript-detailed-design.md)
+
+## 2026-08-30 Typed Transcript Boundary
+
+本文的 command batching 只定义如何在 atomic command evidence 之上做可逆的显示降噪。
+`ConversationTimeline`、`TimelineFactRow`、普通/私聊/频道统一 surface 和子 Agent
+嵌套规则以 typed transcript 设计为准。batch 不拥有 action、completion、fan-in 或
+context；实现不得把 stdout chunk 追加成消息，也不得在 Composer、TerminalReport
+或右侧 dock 再渲染一份相同命令。
 
 ## 1. Purpose
 

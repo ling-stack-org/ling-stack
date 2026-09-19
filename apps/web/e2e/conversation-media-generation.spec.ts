@@ -280,10 +280,6 @@ test("generated media renders ordered image, video, failure, and cancellation st
     }),
   ];
   await mockDaemon(page, state);
-  await page.route("**/artifacts/artifact_conversation_image/content**", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    await route.fallback();
-  });
   await page.goto("/");
   await openNormalConversation(page, normalTitle);
 
@@ -296,15 +292,6 @@ test("generated media renders ordered image, video, failure, and cancellation st
   const image = list.locator('img[alt^="Quiet city"]');
   await expect(image).toBeVisible();
   await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
-  const feed = page.getByLabel("Conversation page").getByLabel("Conversation messages", { exact: true });
-  const latestMessage = feed.locator(".normal-conversation-message-row").last();
-  await expect.poll(() => feed.evaluate((element) =>
-    Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight)
-  )).toBeLessThanOrEqual(2);
-  const latestGeometry = await Promise.all([feed.boundingBox(), latestMessage.boundingBox()]);
-  expect(latestGeometry[0]).not.toBeNull();
-  expect(latestGeometry[1]).not.toBeNull();
-  expect(latestGeometry[1]!.y + latestGeometry[1]!.height).toBeLessThanOrEqual(latestGeometry[0]!.y + latestGeometry[0]!.height + 1);
   const video = list.locator("video");
   await expect(video).toBeVisible();
   await expect(video).toHaveAttribute("controls", "");

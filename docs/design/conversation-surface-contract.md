@@ -2,7 +2,7 @@
 
 Status: active design contract for the shared conversation UI
 Date: 2026-06-28
-Updated: 2026-08-06
+Updated: 2026-08-30
 Scope: normal conversation, channel root, channel branch, topic reply, teammate private
 chat, run/thread detail, and future Desktop/PC conversation renderers
 
@@ -19,6 +19,21 @@ Related docs:
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
 - [Conversation Media Generation Tools](conversation-media-generation-tools.md)
+- [Ling Typed Transcript Detailed Design](conversation-typed-transcript-detailed-design.md)
+- [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
+
+## 2026-08-30 Typed Transcript Override
+
+`conversation-typed-transcript-detailed-design.md` 是会话内容和事实渲染的最新规范，
+`conversation-codex-parity-visual-spec.md` 是视觉和交互规范。本文件中早期的
+“WorkCell/Capability block”措辞描述的是迁移前基线：在新实现里分别映射为
+`ConversationTimeline` 的 typed item 和 `TimelineFactRow`，不得继续创建 route-local
+WorkCell、summary、TerminalReport 或 activity renderer。
+
+本文件仍然拥有 surface policy：普通会话、队友私聊、频道 root/topic/branch 的
+权限、roster、mention、model controls 和布局 chrome 可以不同；但 item kind、状态
+语义、renderer registry、disclosure、scroll ownership 和证据边界必须遵守 typed
+transcript 规范。若本文件与 typed transcript 在“怎么渲染事实”上冲突，以后者为准。
 
 2026-07-30 model ownership update: private chat still has no composer model picker. A
 user-created teammate uses its fixed model; a built-in teammate explicitly follows the
@@ -63,10 +78,12 @@ The current shared UI slice established these baseline decisions:
   a separate bubble surface,
 - normal conversation preserves `threadId`, `turnId`, and `runId` from the transcript so
   compact work can attach to the owning assistant row,
-- normal conversation renders a compact work cell only when that assistant row has a
-  `runId` that maps to a real `RunSession`,
-- teammate private chat renders a compact work cell only when an AI message has a
-  `linkedRunId` that maps to a real run in the selected teammate scope,
+- pre-v2 normal conversation rendered a compact WorkCell only when that assistant row had
+  a `runId` mapped to a real `RunSession`; the typed-transcript cutover replaces this
+  route-local condition with canonical item projection,
+- pre-v2 teammate private chat rendered a compact WorkCell only when an AI message had a
+  `linkedRunId`; the typed-transcript cutover uses the same canonical item projection as
+  normal and channel surfaces,
 - channel assistant turns keep teammate collaboration content above the copy, feedback,
   and topic-reply action row,
 - evidence/source panels are quieter and avoid duplicate labels when no real source or
@@ -157,8 +174,9 @@ message/composer/evidence model.
    can show selected model/assistant work, but not channel teammate rosters by default.
 7. Topic reply is channel-specific. Do not show topic-reply controls in normal
    conversation or teammate private chat.
-8. Work cells and evidence are shared capabilities, not run-thread-only UI. Surface
-   policy decides whether they are inline, collapsed, or routed to detail.
+8. Typed timeline items and evidence are shared capabilities, not run-thread-only UI.
+   Surface policy decides whether a typed item is inline, collapsed, or routed to detail;
+   it must not create a second WorkCell renderer.
 9. Raw ids, provider metadata, token counts, workflow packet names, and JSON payloads are
    not default feed copy. They belong in expanded evidence or developer raw detail.
 10. Surface-specific CSS may position the shared components, but must not redefine their
@@ -206,29 +224,21 @@ message/composer/evidence model.
     keyword routing, separate MediaJob state machines, or surface-specific media cards.
     MediaJob remains the artifact owner; the conversation surface consumes a read model
     linked through the parent Run and child WorkUnit.
-23. Pending local runtime approvals are owned by their conversation surface, not by a
-    global blocking dialog. A background channel, normal conversation, or teammate
-    private chat shows a visible green `Waiting for approval` label on its Sidebar row
-    without interrupting the active conversation. When the user opens the owning session,
-    one shared `RuntimeApprovalComposerGate` replaces that session's Composer and presents
-    one localized action sentence plus direct deny/allow actions. The gate must not mount
-    a page backdrop, trap focus outside the session, disable Sidebar navigation, or affect
-    another session's Composer. The same ordered approval read model marks its owning Run
-    as `composer_gate_pending`: the transcript may show one non-interactive localized
-    status marker, but must not render an expandable WorkCell, approval operation rows,
-    evidence groups, raw permission labels, or duplicate decision controls until the
-    Composer-owned approval resolves. Complete payload and history remain available in
-    Run detail and audit surfaces.
-    Ownership resolution must use the linked Work Unit kind before teammate identity:
-    `conversation_run` is a normal conversation and `teammate_direct_reply` is a private
-    chat. A normal Ling Agent Run may carry `teammateId`, so that field alone must never
-    move its approval into the teammate Sidebar or Composer.
-24. Channel execution proposals render a compact transcript summary. An actionable
-    proposal is a session-owned decision and replaces only its channel Composer, after any
-    runtime approval gate. The shared decision shell shows one sentence naming task,
-    assignee, and localized permission categories, followed only by deny and allow. The
-    summary can select its proposal for the owning Composer. When a proposal exists, that
-    summary is the only default
+23. Pending local runtime approvals are decided in one shared blocking dialog outside the
+    Composer and virtual feed. Channel, normal conversation, and teammate private chat
+    use the same risk/time ordering and direct allow/deny behavior. The dialog shows only
+    one localized action sentence plus necessary mutation feedback; audit metadata and
+    decision reasons do not appear there. Composer slots must not resize when an approval
+    appears or resolves. The same ordered approval read model marks its owning Run as
+    `dialog_owned_pending`: the transcript may show one non-interactive localized status
+    marker, but must not render an expandable WorkCell, approval operation rows, evidence
+    groups, raw permission labels, or duplicate decision controls until the dialog-owned
+    approval resolves. Complete payload and history remain available in Run detail and
+    audit surfaces.
+24. Channel execution proposals render a compact transcript summary. Their editable task
+    scope and authorization actions live in a dismissible dialog mounted outside the
+    virtual feed. A newly actionable proposal may auto-open once and must remain
+    reopenable from its summary. When a proposal exists, that summary is the only default
     feed representation of requirement shaping. Internal shaping status, teammate ids,
     and collaboration records remain audit data; only an actual unanswered user question
     may render as a separate compact decision-needed row. The compact summary is visually
@@ -261,7 +271,7 @@ message/composer/evidence model.
 | File references | Yes | Yes | Yes | Limited | Yes | Yes |
 | Web/search source icons | When actual search occurred | When actual search occurred | When actual search occurred | When actual search occurred | When actual search occurred | When actual search occurred |
 | Evidence bundle | Yes, compact | Yes, compact | Yes, compact | Compact, attached to source | Yes, compact/private | Rich |
-| Work cell | Yes, compact | Yes | Yes | Only if promoted | Yes, compact/private | Rich |
+| Typed timeline / fact rows | Yes | Yes | Yes | Only if promoted | Yes | Rich |
 | Approval state | Yes | Yes | Yes | Only if promoted | Yes | Yes |
 | Multi-teammate activity | No by default | Yes | Yes | No by default | No | Only if linked from channel work |
 | Teammate avatar stack | No by default | Yes | Yes | No by default | Selected teammate only | Contextual |
@@ -587,7 +597,10 @@ Rules:
 - raw provider/runtime metadata stays in expanded or developer detail,
 - evidence is attached to the owning turn, not duplicated in a right drawer by default.
 
-### WorkCell
+### Typed Timeline (replaces WorkCell)
+
+`ConversationTimeline`/`TimelineFactRow` now own the visible operation contract. The former
+WorkCell vocabulary below is retained only as a migration map for existing callers:
 
 Owns:
 
@@ -602,19 +615,14 @@ Rules:
 - one user task gets one default visible work object,
 - running state mutates to terminal state in place,
 - channel teammate activity belongs above the message action row,
-- normal conversation and private chat may render compact work cells when actual work
-  happened,
-- a successful text-only chat run is not visible work. WorkCell appears only for tool or
+- normal conversation, private chat, and channel render the same typed fact rows when
+  actual work happened,
+- a successful text-only chat run is not visible work. A fact row appears only for tool or
   execution actions, non-approved approvals, files/artifacts, durable changes/risks, or a
   failed/approval-blocked run,
 - generic successful verification summaries such as `1 check passed` do not create a
-  WorkCell by themselves,
-- run/thread detail can render the richest version of the same work contract.
-
-The operation shell owns alignment, not content padding. Every visual child is rendered
-through a semantic head, body, or static-content slot. Static status content uses the
-shared operation-cell inline inset on both sides; consumers must not rely on parent padding
-or add screenshot-specific margins.
+  fact row by themselves,
+- run/thread detail can render the richest version of the same typed timeline contract.
 
 ## Surface Policies
 
@@ -1119,11 +1127,6 @@ Every future slice touching conversation UI should keep or add focused tests for
   initial channel reply, queued channel continuation and teammate private chat must not turn
   that tool-only result into an empty-response error or synthetic acknowledgement. A successful
   run with neither visible text nor generated-media projection still fails at message level.
-- while a conversation feed is pinned to the latest turn, late layout growth from generated
-  media, previews, fonts, or other asynchronous content must preserve that bottom pin. The
-  complete outer message row must remain scrollable above the Composer boundary; measuring an
-  inner WorkCell or text block is not sufficient overlap evidence. If the user has intentionally
-  scrolled away from the latest turn, asynchronous growth must not pull them back to the bottom.
 
 ## Implementation Slice Status
 
@@ -1301,15 +1304,16 @@ or the core-only Slice 3 extraction.
 
 Deferred decisions:
 
-- whether the right floating activity panel becomes a shared shell slot or remains
-  channel-only until the next visual pass,
+- the right floating activity panel decision is resolved by `EnvironmentPopover`: it is a
+  shared active-run slot, never a second transcript or history log,
 - whether `turnId` fallback can be enabled after an explicit turn-run relation and
   regression tests exist,
 - whether thread-level work belongs under one selected row, a separate thread summary
   strip, or only run/thread detail,
 - whether second-wave components such as `ConversationWorkCell`, evidence previews,
   file chips, and code/diff renderers are dependency-clean enough for
-  `packages/conversation-ui-react`,
+  `packages/conversation-ui-react` is superseded by the typed timeline cutover; R4/R5
+  implement them under the shared renderer registry,
 - whether screenshot regression becomes mandatory in CI or stays local/manual until the
   fixtures stabilize.
 

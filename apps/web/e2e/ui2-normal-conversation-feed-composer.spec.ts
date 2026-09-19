@@ -351,6 +351,207 @@ test("normal conversation unlocks into guidance when the reply run is linked", a
   ))).toBe(1);
 });
 
+test("normal conversation does not reset scroll for same-height stream revisions", async ({ page }) => {
+  await prepareSurface(page, "light", 1440, 800);
+  await page.addInitScript(() => {
+    type ScrollProbe = {
+      scrollToCalls: number;
+      emitChunk?: (content: string, seq: number) => void;
+      finish?: () => void;
+    };
+    const probe: ScrollProbe = { scrollToCalls: 0 };
+    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: ScrollProbe }).__normalConversationScrollProbe = probe;
+    const originalScrollTo = HTMLElement.prototype.scrollTo;
+    HTMLElement.prototype.scrollTo = function scrollTo(...args: Parameters<HTMLElement["scrollTo"]>): void {
+      if (this.classList.contains("normal-conversation-feed")) probe.scrollToCalls += 1;
+      originalScrollTo.apply(this, args);
+    };
+
+    const originalFetch = globalThis.fetch.bind(globalThis);
+    globalThis.fetch = async (input: RequestInfo | URL, init?: RequestInit): Promise<Response> => {
+      const request = new Request(input, init);
+      const url = new URL(request.url);
+      if (request.method !== "POST" || !url.pathname.endsWith("/conversations/stream")) {
+        return originalFetch(input, init);
+      }
+      const body = await request.clone().json() as Record<string, unknown>;
+      const threadId = String(body.threadId ?? "thread_ui2_normal_composer_controls");
+      const turnId = "turn_scroll_stability";
+      const runId = "run_scroll_stability";
+      const createdAt = "2026-08-29T05:00:00.000Z";
+      const thread = {
+        id: threadId,
+        workspaceId: "workspace_default",
+        kind: "conversation",
+        title: "UI2 composer controls",
+        status: "open",
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const turn = {
+        id: turnId,
+        workspaceId: "workspace_default",
+        threadId,
+        kind: "manual_followup",
+        status: "running",
+        title: "Scroll stability",
+        userInstruction: String(body.message ?? ""),
+        teammateId: "ling_agent",
+        activeRunId: runId,
+        createdByActor: "local-user",
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const userMessage = {
+        id: "user_scroll_stability",
+        role: "user",
+        content: String(body.message ?? ""),
+        status: "succeeded",
+        threadId,
+        turnId,
+        runId,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const pendingAssistant = {
+        id: "assistant_scroll_stability",
+        role: "assistant",
+        authorId: "ling_agent",
+        authorLabel: "Ling Agent",
+        content: "A",
+        status: "running",
+        threadId,
+        turnId,
+        runId,
+        createdAt,
+        updatedAt: createdAt,
+      };
+      const run = {
+        id: runId,
+        status: "succeeded",
+        cwd: String(body.projectPath ?? ""),
+        taskId: `conversation:${turnId}`,
+        providerPresetId: String(body.providerPresetId ?? "provider_ui2_normal_primary"),
+        providerName: "local-relay",
+        providerModel: "gpt-5.5",
+        taskSnapshot: {},
+        providerSnapshot: {},
+        requestSnapshot: {},
+        eventLogPath: `.ling-stack/sessions/${runId}.jsonl`,
+        threadId,
+        workUnitId: "wu_scroll_stability",
+        createdAt,
+        startedAt: createdAt,
+        endedAt: createdAt,
+        updatedAt: createdAt,
+      };
+      const encoder = new TextEncoder();
+      let latestAssistant = pendingAssistant;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          const emit = (event: string, data: unknown): void => {
+            controller.enqueue(encoder.encode(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`));
+          };
+          emit("ready", { thread, turn, userMessage, assistantMessage: pendingAssistant, runId });
+          probe.emitChunk = (content, seq) => {
+            const updatedAt = `2026-08-29T05:00:0${seq}.000Z`;
+            latestAssistant = { ...pendingAssistant, content, updatedAt };
+            emit("run_event", {
+              threadId,
+              turnId,
+              runId,
+              event: { id: `event_scroll_stability_${seq}`, runId, seq, ts: updatedAt, type: "assistant_text_delta", data: { text: content } },
+              assistantMessage: latestAssistant,
+            });
+          };
+          probe.finish = () => {
+            emit("done", {
+              thread: { ...thread, status: "succeeded" },
+              turn: { ...turn, status: "succeeded" },
+              run,
+              assistantMessage: { ...latestAssistant, status: "succeeded" },
+            });
+            controller.close();
+          };
+        },
+      });
+      return new Response(stream, { status: 200, headers: { "Content-Type": "text/event-stream" } });
+    };
+  });
+
+  const state = createBaseState({ approvalStatus: "expired" });
+  installProviders(state);
+  const threadId = installStableConversationFixture(state);
+  state.eventsByRun.run_ui2_normal_composer_controls = [{
+    ...state.eventsByRun.run_ui2_normal_composer_controls[0],
+    data: { text: Array.from({ length: 80 }, (_, index) => `Existing response line ${index + 1}`).join("\n") },
+  }];
+  await mockDaemon(page, state);
+  await page.goto("/");
+  await openConversation(page, "UI2 composer controls");
+
+  const conversation = page.getByLabel("Conversation page");
+  const feed = conversation.getByLabel("Conversation messages", { exact: true });
+  await expect.poll(() => feed.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  const composer = conversation.getByLabel("New conversation composer");
+  await composer.getByRole("textbox", { name: "Conversation message" }).fill("Keep streaming scroll stable");
+  await composer.getByRole("button", { name: "Send" }).click();
+  await expect.poll(() => page.evaluate(() => Boolean(
+    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: { emitChunk?: unknown } })
+      .__normalConversationScrollProbe?.emitChunk,
+  ))).toBe(true);
+
+  await page.evaluate(() => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { emitChunk?: (content: string, seq: number) => void };
+    }).__normalConversationScrollProbe;
+    probe?.emitChunk?.("AB", 1);
+  });
+  await expect(conversation.getByText("AB", { exact: true })).toBeVisible();
+  await page.waitForTimeout(50);
+  await page.evaluate(() => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { scrollToCalls: number };
+    }).__normalConversationScrollProbe;
+    if (probe) probe.scrollToCalls = 0;
+  });
+
+  for (const [content, seq] of [["ABC", 2], ["ABCD", 3], ["ABCDE", 4]] as const) {
+    await page.evaluate(({ content: nextContent, seq: nextSeq }) => {
+      const probe = (globalThis as typeof globalThis & {
+        __normalConversationScrollProbe?: { emitChunk?: (content: string, seq: number) => void };
+      }).__normalConversationScrollProbe;
+      probe?.emitChunk?.(nextContent, nextSeq);
+    }, { content, seq });
+    await expect(conversation.getByText(content, { exact: true })).toBeVisible();
+    await page.waitForTimeout(50);
+  }
+
+  expect(await page.evaluate(() => (
+    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: { scrollToCalls: number } })
+      .__normalConversationScrollProbe?.scrollToCalls ?? -1
+  ))).toBe(0);
+  const beforeGrowth = await feed.evaluate((element) => element.scrollHeight);
+  const growingContent = Array.from({ length: 30 }, (_, index) => `Stream line ${index + 1}`).join("\n");
+  await page.evaluate((content) => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { emitChunk?: (content: string, seq: number) => void };
+    }).__normalConversationScrollProbe;
+    probe?.emitChunk?.(content, 5);
+  }, growingContent);
+  await expect(conversation.getByText(growingContent, { exact: true })).toBeVisible();
+  await expect.poll(() => feed.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
+  await expect.poll(() => feed.evaluate((element) => Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight))).toBeLessThanOrEqual(2);
+  expect(await feed.evaluate((element) => element.scrollHeight)).toBeGreaterThan(beforeGrowth);
+  await page.evaluate(() => {
+    const probe = (globalThis as typeof globalThis & {
+      __normalConversationScrollProbe?: { finish?: () => void };
+    }).__normalConversationScrollProbe;
+    probe?.finish?.();
+  });
+  expect(state.threads.some((thread) => thread.id === threadId)).toBe(true);
+});
+
 test("normal conversation replacement retry keeps the original idempotency key", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -602,12 +803,6 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 }
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
-  const sessionDirectory = process.env.LING_SESSION_VALIDATION_DIR?.replace(/\/$/u, "");
-  if (sessionDirectory) {
-    await mkdir(sessionDirectory, { recursive: true });
-    await page.screenshot({ animations: "disabled", fullPage: true, path: `${sessionDirectory}/${filename}` });
-    return;
-  }
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
   await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({ animations: "disabled", fullPage: true, path: `${evidenceDirectory}${filename}` });

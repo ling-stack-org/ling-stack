@@ -5,8 +5,8 @@ import { useI18n } from "../../i18n.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import {
-  buildComposerGateApprovalPresentationByRunId,
-  composerGateApprovalPresentationForWorkCell,
+  buildDialogOwnedApprovalPresentationByRunId,
+  dialogOwnedApprovalPresentationForWorkCell,
 } from "../../lib/runtime-approval-presentation.js";
 import {
   AvatarInitial,
@@ -46,7 +46,7 @@ export type TeammatePrivateChatFeedProps = Pick<TeammatePrivateChatSurfaceProps,
   | "approvals"
   | "cwd"
   | "directLinkPreviewById"
-  | "composerGateApprovals"
+  | "dialogOwnedApprovals"
   | "executionActions"
   | "generatedMedia"
   | "latestButtonVisible"
@@ -83,7 +83,7 @@ export function TeammatePrivateChatFeed({
   approvals,
   cwd,
   directLinkPreviewById,
-  composerGateApprovals,
+  dialogOwnedApprovals,
   executionActions,
   generatedMedia,
   latestButtonVisible,
@@ -117,9 +117,9 @@ export function TeammatePrivateChatFeed({
   const { t } = useI18n();
   const localUserDisplayName = userProfile?.displayName.trim() || t("You");
   const runById = useMemo(() => new Map(runs.map((run) => [run.id, run])), [runs]);
-  const composerGateApprovalByRunId = useMemo(
-    () => buildComposerGateApprovalPresentationByRunId(composerGateApprovals, t),
-    [composerGateApprovals, t],
+  const dialogOwnedApprovalByRunId = useMemo(
+    () => buildDialogOwnedApprovalPresentationByRunId(dialogOwnedApprovals, t),
+    [dialogOwnedApprovals, t],
   );
   const workCellByMessageId = useMemo(() => buildTeammatePrivateWorkCellMap({
     messages: visibleMessages,
@@ -295,7 +295,7 @@ export function TeammatePrivateChatFeed({
                       <ConversationWorkCell
                         model={workCell.model}
                         surface="teammate_direct"
-                        composerGateApproval={composerGateApprovalPresentationForWorkCell(workCell.model, composerGateApprovalByRunId)}
+                        dialogOwnedApproval={dialogOwnedApprovalPresentationForWorkCell(workCell.model, dialogOwnedApprovalByRunId)}
                         cwd={workCellRun?.cwd ?? cwd.trim()}
                         detailsState={{ status: "loaded", groups: workCell.model.groups, evidenceLinks: workCell.model.evidenceLinks }}
                         onOpenRun={onOpenRun}
