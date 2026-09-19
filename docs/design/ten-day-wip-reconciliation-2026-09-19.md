@@ -139,3 +139,21 @@ cancel 和 participant isolation 回归。
 现有 Playwright 合同都规定 proposal 使用 owning channel 的 Composer decision shell。为避免再次
 出现两个 control owner，本分支暂以后一套为准：runtime approval 与 task proposal 都在共享
 Composer slot 决策；只有在产品明确重新选择全局 Dialog 后，才另开设计变更，不在本修复中偷偷切换。
+
+## 原 WIP 审计结论（不自动接入）
+
+逐文件将原工作区内容与本地 `main` 比较后，发现：
+
+- 多数未跟踪文件是 `main` 的逐字重复副本；
+- 其余 UI WIP 包含将三种会话切回全局 Dialog、删除 ComposerGate，以及把
+  `composerGateApprovals` 改名为 `dialogOwnedApprovals` 的整套替代方案；这与当前
+  Composer-owned contract 冲突，本轮不移植；
+- `packages/daemon/src/features/channels/terminal-report-coordinator.ts` 的 WIP 会在恢复时
+  逐条重新发布所有 committed/fallback report，并删除“同一 source 只恢复最新 generation”的
+  回归测试。这会重新引入旧 generation 重复结果，属于回退，明确不接入；
+- 原 WIP 中删除 `ConversationDecisionGate`、`RuntimeApprovalComposerGate`、
+  `ChannelExecutionProposalComposerGate` 和 ownership resolver 的动作，均没有满足消费者清零
+  和新 adapter 证据，明确不接入。
+
+因此本轮只提交了可验证的审批接线修复；其余 WIP 继续留在受保护的原工作区，等待逐项审计，
+不会用一次大合并掩盖不同设计之间的冲突。
