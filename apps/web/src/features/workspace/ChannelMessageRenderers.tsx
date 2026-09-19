@@ -29,7 +29,8 @@ import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import { attachmentCanPreview, type PreviewRequest } from "../../lib/previews.js";
 import {
   buildComposerGateApprovalPresentationByRunId,
-  composerGateApprovalPresentationForWorkCell,
+  composerGateApprovalPresentationForRunId,
+  composerGateApprovalPresentationForRunIds,
 } from "../../lib/runtime-approval-presentation.js";
 import { filterUsedMemoryEventsByResponse } from "../../shared/components/index.js";
 import {
@@ -306,6 +307,7 @@ function channelTurnTimelineItems(
   workflowProgressByWorkflowId: ReadonlyMap<string, WorkflowProgressModel>,
   workflowErrors: Readonly<Record<string, string>>,
   orchestratingWorkflowId: string,
+  composerApprovalId?: string,
 ): readonly ConversationTimelineItem[] {
   const projectNarration = (
     messages: readonly ChannelMessage[],
@@ -342,7 +344,9 @@ function channelTurnTimelineItems(
     turn.blocks.flatMap((block) => block.kind === "conversation_item" ? [block.item] : []),
     surface,
   );
-  const projectedFacts = turn.operationCell ? conversationTimelineItemsForModel(turn.operationCell) : [];
+  const projectedFacts = turn.operationCell
+    ? conversationTimelineItemsForModel(turn.operationCell, composerApprovalId)
+    : [];
   const workflow = turn.operationRef?.kind === "workflow" ? workflowById.get(turn.operationRef.workflowId) : undefined;
   const facts = projectedFacts.some(hasWorkflowTimelineContent) || !workflow
     ? projectedFacts
@@ -948,6 +952,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
           input.workflowProgressByWorkflowId,
           input.workflowErrors,
           input.orchestratingWorkflowId,
+          composerGateApprovalPresentationForRunIds(
+            turn.operationCell?.runIds ?? [],
+            composerGateApprovalByRunId,
+          )?.approvalId,
         )) {
           addItem(item, sequence);
           if ((item.kind === "userMessage" || item.kind === "agentMessage") && item.itemId) {
@@ -989,7 +997,10 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         const workCellItems = workCell && !input.auditActivityVisible
           ? conversationTimelineItemsForModel(
             workCell,
-            composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)?.approvalId,
+            composerGateApprovalPresentationForRunIds(
+              progressModel?.runIds ?? workCell.runIds,
+              composerGateApprovalByRunId,
+            )?.approvalId,
           )
           : [];
         if (workCellItems.some(hasWorkflowTimelineContent)) {
@@ -1008,7 +1019,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         if (workCell && workCell.anchorRunId === run.id && !input.auditActivityVisible) {
           for (const item of conversationTimelineItemsForModel(
             workCell,
-            composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)?.approvalId,
+            composerGateApprovalPresentationForRunId(run.id, composerGateApprovalByRunId)?.approvalId,
           )) addItem(item, sequence);
         } else {
           addItem(channelProtocolTimelineItem(activity, input.t), sequence);

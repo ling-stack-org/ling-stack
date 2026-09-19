@@ -32,13 +32,33 @@ export function composerGateApprovalPresentationForWorkCell(
   model: ConversationOperationCellViewModel,
   presentations: ReadonlyMap<string, ComposerGateApprovalPresentation>,
 ): ComposerGateApprovalPresentation | undefined {
-  for (const runId of model.runIds) {
-    const presentation = presentations.get(runId);
+  return composerGateApprovalPresentationForRunIds(
+    [...model.runIds, model.anchorRunId],
+    presentations,
+  );
+}
+
+/**
+ * Resolve the first pending composer approval owned by a set of durable Runs.
+ * Workflow projections may span several participant Runs, while a normal or
+ * private turn usually has one. Keeping the lookup at the Run boundary lets
+ * every surface use the same ownership rule without consulting a WorkCell.
+ */
+export function composerGateApprovalPresentationForRunIds(
+  runIds: readonly (string | undefined)[],
+  presentations: ReadonlyMap<string, ComposerGateApprovalPresentation>,
+): ComposerGateApprovalPresentation | undefined {
+  for (const runId of runIds) {
+    const normalizedRunId = runId?.trim();
+    if (!normalizedRunId) {
+      continue;
+    }
+    const presentation = presentations.get(normalizedRunId);
     if (presentation) {
       return presentation;
     }
   }
-  return presentations.get(model.anchorRunId);
+  return undefined;
 }
 
 /**

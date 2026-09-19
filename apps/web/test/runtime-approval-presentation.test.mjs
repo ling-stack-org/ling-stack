@@ -4,6 +4,7 @@ import {
   buildDialogOwnedApprovalPresentationByRunId,
   dialogOwnedApprovalPresentationForWorkCell,
   composerGateApprovalPresentationForRunId,
+  composerGateApprovalPresentationForRunIds,
 } from "../src/lib/runtime-approval-presentation.ts";
 
 const t = (key, values = {}) => key.replace(/\{(\w+)\}/gu, (_, name) => String(values[name] ?? ""));
@@ -62,6 +63,17 @@ test("composer approval ownership resolves directly from the durable run id", ()
   ], t);
   assert.deepEqual(composerGateApprovalPresentationForRunId("run-direct", presentations), presentations.get("run-direct"));
   assert.equal(composerGateApprovalPresentationForRunId(" ", presentations), undefined);
+});
+
+test("composer approval ownership resolves workflow participants by durable run ids", () => {
+  const presentations = buildDialogOwnedApprovalPresentationByRunId([
+    view({ id: "approval-run-2", runId: "run-participant-2", actionType: "bash", payload: { type: "bash", command: "pnpm test" } }),
+  ], t);
+  assert.deepEqual(
+    composerGateApprovalPresentationForRunIds(["run-participant-1", "run-participant-2"], presentations),
+    presentations.get("run-participant-2"),
+  );
+  assert.equal(composerGateApprovalPresentationForRunIds([" ", undefined], presentations), undefined);
 });
 
 function view(input) {
