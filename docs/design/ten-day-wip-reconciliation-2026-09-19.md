@@ -140,6 +140,80 @@ cancel 和 participant isolation 回归。
 出现两个 control owner，本分支暂以后一套为准：runtime approval 与 task proposal 都在共享
 Composer slot 决策；只有在产品明确重新选择全局 Dialog 后，才另开设计变更，不在本修复中偷偷切换。
 
+## 清理授权后的最终边界（2026-09-19）
+
+用户已确认“以最新设计为主，旧实现可以清理”。这项授权只覆盖已经能证明被新设计取代的
+WIP，不等于把所有 71 个工作区条目整体丢弃。
+
+### 可以直接清理的 9 项
+
+以下内容只存在于原 WIP 工作区，且已经被当前主线或 Composer-owned 设计取代：
+
+1. `apps/web/src/features/approvals/RuntimeApprovalDialogQueue.tsx`：全局审批队列，
+   被 owning session 的 `RuntimeApprovalComposerGate` 取代。
+2. `apps/web/src/features/workspace/ChannelExecutionProposalDialog.tsx`：中心频道提案
+   Dialog，会产生第二个 control owner，被频道 Composer decision shell 取代。
+3. 原 WIP 中与 `main` 逐字相同的 7 个重复副本：
+   - `apps/web/e2e/ui2-channel-proposal-input-migration.spec.ts`
+   - `apps/web/src/features/workspace/ChannelExecutionProposalEditor.tsx`
+   - `docs/design/conversation-codex-parity-visual-spec.md`
+   - `docs/design/conversation-codex-style-transcript-implementation-plan.md`
+   - `docs/design/conversation-typed-transcript-detailed-design.md`
+   - `docs/design/ling-harness-gap-closure-implementation-plan.md`
+   - `docs/design/platform-native-sandbox-v1-implementation-plan.md`
+
+删除这些原 WIP 副本不会删除最新 `main` 中的对应内容；它们只是旧工作区里未被跟踪的
+重复文件。执行前应保留可恢复快照，清理后用 `git status` 和路径哈希复核。
+
+### 不能删除的 4 项
+
+原 WIP 对以下共享组件的删除属于错误替代实现，应恢复到最新主线，而不是继续保留删除：
+
+- `apps/web/src/features/approvals/ConversationDecisionGate.tsx`
+- `apps/web/src/features/approvals/RuntimeApprovalComposerGate.tsx`
+- `apps/web/src/features/workspace/ChannelExecutionProposalComposerGate.tsx`
+- `apps/web/src/lib/runtime-approval-ownership.ts`
+
+它们仍有真实消费者，并且是三种会话统一审批 UI 的基础。删除它们会直接违背当前设计。
+
+### 不能整体丢弃的内容
+
+原 WIP 中其余已跟踪修改不能按“旧”一次性回滚：其中混有频道提案并发/取消回归、
+Codex 风格 transcript 投影、Full Access/Permission Preset 和 UI 验收用例。它们必须逐文件
+对照最新 `main` 重新移植；不能用一次大合并掩盖不同设计的冲突。
+
+## 与最新设计的冲突核验
+
+当前清理分支基于 `main@fa7783b9`，与最新设计的核心边界一致：
+
+- 三种会话共享同一 Composer-owned runtime approval gate；频道只额外保留多 Agent/提案语义。
+- 事实来自 Host/daemon evidence 和 canonical timeline，不能用 ready 文本、batch 数量或
+  UI 摘要判定完成。
+- TerminalReport publication 与 workflow settlement 分离，harness 等公开 API 的真实报告，
+  不放宽 daemon 的 fail-closed 规则。
+- 不恢复全局 Dialog、不恢复旧 generation 全量重发布、不替换 workspace 根配置。
+
+因此，本分支当前 3 个实现提交与最新设计没有结构性冲突；冲突只存在于原 WIP 的旧替代方案。
+
+## 剩余工作量（不是 71 项功能）
+
+清理后剩余 **5 个实现/验收闭环**，外加一次 PR 落地：
+
+1. **频道提案闭环**：stale/concurrent decision、cancel、participant isolation，以及
+   Composer proposal shell 的完整回归。
+2. **Codex 风格 transcript 生产接线**：`tool_start/update/end` 折叠为稳定 action，
+   command/exploration batching、activity summary 和 source refs 在三种会话及子 Agent
+   统一 renderer 中真实落地。
+3. **三种会话真实 GUI/CUA 验收**：普通会话、队友私聊、频道，核对审批、叙述、命令、文件
+   变更、复制和收尾摘要的统一展示。
+4. **Full Access / Permission Preset 真实验收**：设置入口、审批策略、Allow once / Allow
+   similar / Deny / cancel 的真实浏览器与 macOS packaged 流程。
+5. **恢复与发布复核**：PR/CI、远端 `main` hash、SSE reconnect、daemon restart、fan-in 和
+   TerminalReport lineage 的最终回归；Windows 原生沙盒不计入本轮 macOS 完成门槛。
+
+最终完成条件仍是：上述 5 个闭环均有源码/测试证据，且至少有一次真实 packaged macOS
+GUI 证据；否则只能称为“设计完成”或“逻辑测试通过”，不能称为整体完成。
+
 ## Packaged Continuity 剩余失败的根因与处理
 
 第一次修复 restricted-command helper 后，packaged harness 的最后一个失败是：
