@@ -904,8 +904,8 @@ try {
   }
 
   const itemsResponse = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/items${cwdQuery}`);
-  const items = itemsResponse.body.items ?? [];
-  const userItems = items.filter((item) => item.kind === "user_message");
+  const initialItems = itemsResponse.body.items ?? [];
+  const userItems = initialItems.filter((item) => item.kind === "user_message");
   if (userItems.length !== 1) throw new Error(`duplicate_user_items:${userItems.length}`);
   const sourceTurnId = userItems[0].turnId;
   const intentResponse = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/intent-decisions${cwdQuery}`);
@@ -938,6 +938,18 @@ try {
   const expectedResultItemId = typeof terminalReport.resultItemId === "string" && terminalReport.resultItemId.length > 0
     ? terminalReport.resultItemId
     : `result_terminal_report:${terminalReportId}`;
+  // The report coordinator commits the terminal-report item after the report
+  // becomes publicly readable. Refresh the canonical item snapshot before
+  // asserting lineage; otherwise a valid async publication is mistaken for a
+  // missing or duplicate terminal item.
+  const settledItemsResponse = await waitFor(async () => {
+    const response = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/items${cwdQuery}`);
+    const currentItems = response.body.items ?? [];
+    return response.status === 200 && currentItems.some((item) => item.kind === "terminal_report" && item.id === expectedResultItemId)
+      ? response
+      : undefined;
+  }, "terminal_item_publication_timeout", 150);
+  const items = settledItemsResponse.body.items ?? [];
   const terminalItems = items.filter((item) => item.kind === "terminal_report" && item.id === expectedResultItemId);
   if (terminalItems.length !== 1) throw new Error(`duplicate_terminal_items:${terminalItems.length}`);
   if (terminalItems[0].payload?.reportId !== terminalReportId) throw new Error("terminal_report_item_lineage_mismatch");
