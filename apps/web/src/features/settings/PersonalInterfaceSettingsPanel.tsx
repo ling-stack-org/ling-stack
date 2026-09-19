@@ -1,7 +1,6 @@
 import { Languages } from "lucide-react";
 import { useState } from "react";
 import { useI18n, type Locale } from "../../i18n.js";
-import { SupportedLocaleOptions } from "../../i18n/SupportedLocaleOptions.js";
 import type { ResponseLanguagePreference, UserProfile } from "../../types.js";
 import { ProfilePage } from "../profile/ProfilePage.js";
 
@@ -22,14 +21,12 @@ export function PersonalSettingsPanel({
 
 export function InterfacePreferencesSettingsPanel({
   workspaceResponseLanguage,
-  onProductLanguageChange,
   onWorkspaceResponseLanguageChange,
 }: {
   readonly workspaceResponseLanguage: ResponseLanguagePreference;
-  readonly onProductLanguageChange: (locale: Locale) => Promise<boolean>;
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
 }): React.JSX.Element {
-  const { locale, localeLoadError, pendingLocale, t } = useI18n();
+  const { locale, setLocale, t } = useI18n();
   const [surface, setSurface] = useState<"overview" | "quick-studio">("overview");
 
   if (surface === "quick-studio") {
@@ -52,30 +49,25 @@ export function InterfacePreferencesSettingsPanel({
           <h2 id="settings-interface-language-title">{t("Language")}</h2>
         </header>
         <div className="settings-interface-language-grid">
-          <Field
-            label={t("Product language")}
-            error={localeLoadError ? <span role="alert">{t("settings.language.load_failed")}</span> : undefined}
-          >
+          <Field label={t("Product language")}>
             <Select
               aria-label={t("Product language")}
-              data-product-language
-              value={pendingLocale ?? locale}
-              disabled={pendingLocale !== undefined}
-              aria-busy={pendingLocale !== undefined}
-              onChange={(event) => void onProductLanguageChange(event.target.value as Locale)}
+              value={locale}
+              onChange={(event) => setLocale(event.target.value as Locale)}
             >
-              <SupportedLocaleOptions />
+              <option value="zh-CN">{t("Chinese")}</option>
+              <option value="en-US">{t("English")}</option>
             </Select>
           </Field>
           <Field label={t("AI response language")}>
             <Select
               value={workspaceResponseLanguage}
-              data-response-language
               onChange={(event) => onWorkspaceResponseLanguageChange(event.target.value as ResponseLanguagePreference)}
               aria-label={t("AI response language")}
             >
               <option value="follow_user">{t("Follow user message")}</option>
-              <SupportedLocaleOptions />
+              <option value="zh-CN">{t("Chinese")}</option>
+              <option value="en-US">{t("English")}</option>
             </Select>
           </Field>
         </div>

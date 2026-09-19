@@ -1,4 +1,3 @@
-import { providerCompactModelLabel } from "../../lib/providers.js";
 import type { ProviderPreset } from "../../types.js";
 
 export function channelLingAgentModelLabel(
@@ -6,5 +5,5 @@ export function channelLingAgentModelLabel(
   providers: readonly ProviderPreset[],
 ): string {
   const provider = providers.find((item) => item.id === providerPresetId);
-  return provider ? providerCompactModelLabel(provider) : "";
+  return provider ? `${provider.displayName} / ${provider.model}` : "";
 }

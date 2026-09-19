@@ -56,35 +56,8 @@ test("standard profile keeps one header action owner and scoped draft lifecycle"
 
   await nameInput.fill("Interface Systems Engineer");
   await profile.getByLabel("Description").fill("Owns compact interaction systems and visual regression coverage.");
-  const advanced = profile.locator(".teammate-profile-advanced");
   await profile.getByText("Advanced profile", { exact: true }).click();
-  await expect(advanced).toHaveAttribute("data-appearance", "plain");
-  await expect(advanced).toHaveCSS("border-top-width", "0px");
-  await expect(advanced).toHaveCSS("border-bottom-width", "0px");
-  await expect(advanced.locator(".ling-ui-inspector-section-body")).toHaveCSS("padding-left", "0px");
-  await expect(advanced.locator(".teammate-profile-advanced-body")).toHaveCSS("gap", "16px");
-  await expect(profile.getByText("Role profile", { exact: true })).toHaveCount(0);
-  const longSystemPrompt = [
-    "Keep interaction behavior explicit and verifiable.",
-    "Inspect long user-provided context without changing the alignment of the profile form or introducing horizontal overflow.",
-    "Preserve actionable evidence after a failed save so the user can correct the draft and retry.",
-  ].join("\n\n");
-  await profile.getByLabel("System prompt").fill(longSystemPrompt);
-  const descriptionBox = await profile.getByLabel("Description").boundingBox();
-  const systemPromptBox = await profile.getByLabel("System prompt").boundingBox();
-  const importActionBox = await profile.getByRole("button", { name: "Import role profile" }).boundingBox();
-  expect(descriptionBox).not.toBeNull();
-  expect(systemPromptBox).not.toBeNull();
-  expect(importActionBox).not.toBeNull();
-  expect(Math.abs((descriptionBox?.x ?? 0) - (systemPromptBox?.x ?? 0))).toBeLessThanOrEqual(1);
-  expect(Math.abs((systemPromptBox?.x ?? 0) - (importActionBox?.x ?? 0))).toBeLessThanOrEqual(1);
-  const profileBox = await profile.boundingBox();
-  const managementBox = await page.getByLabel("Manage teammate").boundingBox();
-  expect(profileBox).not.toBeNull();
-  expect(managementBox).not.toBeNull();
-  expect(Math.abs((managementBox?.y ?? 0) - ((profileBox?.y ?? 0) + (profileBox?.height ?? 0)) - 24)).toBeLessThanOrEqual(1);
-  await profile.getByRole("button", { name: "Import role profile" }).scrollIntoViewIfNeeded();
-  await captureEvidence(page, "1440x960-ling-light-standard-profile-expanded-long-text.png");
+  await profile.getByLabel("System prompt").fill("Keep interaction behavior explicit and verifiable.");
   await page.getByLabel("Single agent settings").getByRole("button", { name: "Save changes" }).click();
 
   await expect(page.getByText("Teammate profile saved", { exact: true })).toBeVisible();
@@ -96,7 +69,7 @@ test("standard profile keeps one header action owner and scoped draft lifecycle"
   }).toEqual([
     "Interface Systems Engineer",
     "Owns compact interaction systems and visual regression coverage.",
-    longSystemPrompt,
+    "Keep interaction behavior explicit and verifiable.",
   ]);
   await expect(page.getByText("Teammate profile saved", { exact: true })).toHaveCount(0, { timeout: 5_000 });
   await expect(profile.getByText("Saved", { exact: true })).toHaveCount(0);
@@ -237,9 +210,9 @@ test("avatar choose crop drag zoom cancel upload and remove share the verified d
   expect(runtimeErrors).toEqual([]);
 });
 
-test("persona import only fills the profile draft and failed save preserves imported values", async ({ page }) => {
+test("persona remains folded, keyboard reachable, and preserves its draft when apply fails", async ({ page }) => {
   await prepareSurface(page, {
-    theme: "dark",
+    theme: "light",
     width: 1280,
     height: 800,
     locale: "en-US",
@@ -251,19 +224,10 @@ test("persona import only fills the profile draft and failed save preserves impo
     displayName: "Persona Reviewer",
     providerPresetId: "provider_ready",
   }));
-  let profileUpdateRequests = 0;
-  page.on("request", (request) => {
-    const path = new URL(request.url()).pathname;
-    if (request.method() === "PATCH" && path.endsWith("/teammates/teammate_profile_persona")) {
-      profileUpdateRequests += 1;
-    }
-  });
   await mockDaemon(page, state, { failTeammateProfileUpdates: true });
   await page.goto("/");
 
   const profile = await openProfile(page, "Persona Reviewer");
-  const saveAction = page.getByLabel("Single agent settings").getByRole("button", { name: "Save changes" });
-  await expect(saveAction).toBeDisabled();
   const advancedTrigger = profile.locator(".teammate-profile-advanced > summary");
   await advancedTrigger.focus();
   await advancedTrigger.press("Enter");
@@ -271,56 +235,23 @@ test("persona import only fills the profile draft and failed save preserves impo
   const importRoleProfile = profile.getByRole("button", { name: "Import role profile" });
   await importRoleProfile.focus();
   await importRoleProfile.press("Enter");
-  let persona = page.getByRole("dialog", { name: "Import role profile" });
+  const persona = page.getByRole("dialog", { name: "Import role profile" });
   await persona.getByRole("radio", { name: "Paste content" }).click();
-  await persona.getByLabel("Role profile content").fill("# Cancelled Persona\nThis preview must not mutate the profile form.");
-  await persona.getByRole("button", { name: "Check content" }).click();
-  await expect(persona.getByLabel("Role profile preview")).toBeVisible();
-  await persona.getByRole("button", { name: "Cancel" }).click();
-  await expect(persona).toHaveCount(0);
-  await expect(profile.getByLabel("Teammate name")).toHaveValue("Persona Reviewer");
-  await expect(profile.getByLabel("Description")).toHaveValue("Owns scoped implementation in the Engineering channel.");
-  await expect(profile.getByLabel("System prompt")).toHaveValue("You are the Engineering AI teammate.");
-  await expect(saveAction).toBeDisabled();
-  expect(profileUpdateRequests).toBe(0);
-
-  await importRoleProfile.click();
-  persona = page.getByRole("dialog", { name: "Import role profile" });
-  await persona.getByRole("radio", { name: "Paste content" }).click();
-  const importedContent = [
+  await persona.getByLabel("Role profile content").fill([
     "# Evidence Reviewer",
-    "Review long interface evidence, preserve the user's full draft after a failed save, and keep a concise conclusion.",
-    "Keep system instructions explicit across long content so wrapping can be verified without horizontal overflow.",
-    "Treat the top-level Save changes action as the only durable submission path.",
+    "Review long interface evidence and keep a concise conclusion.",
     "Do not grant tools, approvals, secrets, or external send permissions.",
-  ].join("\n\n");
-  await persona.getByLabel("Role profile content").fill(importedContent);
+  ].join("\n"));
   await persona.getByRole("button", { name: "Check content" }).click();
   await expect(persona.getByLabel("Role profile preview")).toBeVisible();
   await expect(persona.getByText("Permission-like persona text was ignored for authority changes.")).toBeVisible();
   await persona.getByLabel("Role profile preview").scrollIntoViewIfNeeded();
-  await captureEvidence(page, "1280x800-ling-dark-persona-preview.png");
+  await captureEvidence(page, "1280x800-ling-light-persona-draft.png");
 
   await persona.getByRole("button", { name: "Apply to profile" }).click();
-  await expect(persona).toHaveCount(0);
-  await expect(profile.getByLabel("Teammate name")).toHaveValue("Evidence Reviewer");
-  await expect(profile.getByLabel("Description")).toHaveValue("Review long interface evidence, preserve the user's full draft after a failed save, and keep a concise conclusion.");
-  await expect(profile.getByLabel("System prompt")).toHaveValue(importedContent);
-  await expect(saveAction).toBeEnabled();
-  expect(profileUpdateRequests).toBe(0);
-  const durableBeforeSave = state.aiTeammates.find((item) => isRecord(item) && item.id === "teammate_profile_persona");
-  expect(isRecord(durableBeforeSave) ? durableBeforeSave.displayName : undefined).toBe("Persona Reviewer");
-  await profile.getByRole("button", { name: "Import role profile" }).scrollIntoViewIfNeeded();
-  await captureEvidence(page, "1280x800-ling-dark-persona-imported-dirty.png");
-
-  await saveAction.click();
-  await expect(profile.getByText("Profile changes were not saved. Try again.", { exact: true })).toBeVisible();
-  await expect(profile.getByLabel("Teammate name")).toHaveValue("Evidence Reviewer");
-  await expect(profile.getByLabel("Description")).toHaveValue("Review long interface evidence, preserve the user's full draft after a failed save, and keep a concise conclusion.");
-  await expect(profile.getByLabel("System prompt")).toHaveValue(importedContent);
-  await expect(saveAction).toBeEnabled();
-  expect(profileUpdateRequests).toBe(1);
-  await captureEvidence(page, "1280x800-ling-dark-persona-imported-save-failure.png");
+  await expect(persona.getByText("Persona changes were not saved. Try again.", { exact: true })).toBeVisible();
+  await expect(persona.getByLabel("Role profile preview")).toBeVisible();
+  await expect(persona.getByLabel("Role profile content")).toHaveValue(/Evidence Reviewer/u);
   await expectNoPageOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });

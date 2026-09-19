@@ -7,9 +7,6 @@ import {
   type ResponseLanguagePreference,
   type RunStore,
 } from "@ling-stack/core";
-import {
-  responseLanguageInstruction as explicitResponseLanguageInstruction,
-} from "@ling-stack/localization";
 import { resolveEffectiveChannelCollaborationProtocol, type ChannelProtocolFieldSource } from "./collaboration-protocol.js";
 
 export type ResponseLanguageResolutionSource =
@@ -21,7 +18,6 @@ export type ResponseLanguageResolutionSource =
 
 export interface ResponseLanguageResolution {
   readonly language: ResponseLanguage;
-  readonly instructionLanguage: ResponseLanguagePreference;
   readonly source: ResponseLanguageResolutionSource;
 }
 
@@ -35,37 +31,25 @@ export interface ResolveChannelResponseLanguageInput {
 export function resolveChannelResponseLanguage(input: ResolveChannelResponseLanguageInput): ResponseLanguageResolution {
   const explicitLanguage = input.explicitLanguage ?? detectExplicitResponseLanguage(input.sourceText);
   if (explicitLanguage) {
-    return { language: explicitLanguage, instructionLanguage: explicitLanguage, source: "message" };
+    return { language: explicitLanguage, source: "message" };
   }
 
   const projectInstructionLanguage = readProjectInstructionLanguage(input.store, input.channel);
   if (projectInstructionLanguage) {
-    return {
-      language: projectInstructionLanguage,
-      instructionLanguage: projectInstructionLanguage,
-      source: "project_instructions",
-    };
+    return { language: projectInstructionLanguage, source: "project_instructions" };
   }
 
   const protocol = resolveEffectiveChannelCollaborationProtocol({
     store: input.store,
     channel: input.channel,
   });
-  return resolveProtocolPreference(
-    protocol.protocol.responseLanguage,
-    input.sourceText,
-    protocol.sources.responseLanguage.source,
-  );
+  return resolveProtocolPreference(protocol.protocol.responseLanguage, input.sourceText, protocol.sources.responseLanguage.source);
 }
 
-export function responseLanguageInstruction(language: ResponseLanguagePreference): string {
-  return language === "follow_user"
-    ? "Match the language of the most recent user message for user-visible output; do not force non-Chinese text to English. Keep code, logs, command output, errors, file names, API fields, and evidence excerpts in their original language."
-    : explicitResponseLanguageInstruction(language);
-}
-
-export function fallbackResponseLanguage(language: ResponseLanguagePreference | undefined): ResponseLanguage {
-  return !language || language === "follow_user" ? "en-US" : language;
+export function responseLanguageInstruction(language: ResponseLanguage): string {
+  return language === "zh-CN"
+    ? "用户可读输出请使用中文；代码、日志、命令输出、错误、文件名、API 字段和证据摘录保持原文。"
+    : "Use English for user-visible output; keep code, logs, command output, errors, file names, API fields, and evidence excerpts in their original language.";
 }
 
 function resolveProtocolPreference(
@@ -76,7 +60,6 @@ function resolveProtocolPreference(
   if (preference === "workspace" || preference === "follow_user") {
     return {
       language: inferUserLanguage(sourceText),
-      instructionLanguage: "follow_user",
       source: source === "channel_setting"
         ? "channel"
         : source === "workspace_setting"
@@ -86,7 +69,6 @@ function resolveProtocolPreference(
   }
   return {
     language: preference,
-    instructionLanguage: preference,
     source: source === "workspace_setting" ? "workspace" : "channel",
   };
 }

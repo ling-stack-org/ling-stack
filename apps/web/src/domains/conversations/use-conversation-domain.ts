@@ -352,7 +352,6 @@ export function useConversationDomain(input: {
     const originThreadId = selectedConversationThreadIdRef.current;
     const originSurfaceIdentity = conversationSurfaceIdentityRef.current;
     let activeThreadId = originThreadId;
-    let messageAccepted = false;
     const busyOperation = conversationStreamBusyOwner.begin({
       workspaceCwd,
       identity: originSurfaceIdentity,
@@ -470,9 +469,7 @@ export function useConversationDomain(input: {
             scheduleEvidenceRefresh();
             handlers.onReady?.(event);
             handlers.onMessageAccepted?.(event);
-            messageAccepted = true;
             if (event.activeReply) handlers.onReplyLinked?.(event.activeReply);
-            void refreshConversationThreads(workspaceCwd);
           }
           return;
         }
@@ -509,9 +506,7 @@ export function useConversationDomain(input: {
             handlers.onThreadBound?.(activeThreadId);
             retargetStreamOperation(activeThreadId);
           }
-          if (event.error && !event.assistantMessage && !messageAccepted) {
-            conversationErrors.report(streamOperation, event.error);
-          }
+          if (event.error) conversationErrors.report(streamOperation, event.error);
           if (event.thread && canCommitToSurface(activeThreadId)) {
             commitSelectedConversationThreadId(activeThreadId);
             commitConversationSurfaceIdentity(activeThreadId);
@@ -519,23 +514,18 @@ export function useConversationDomain(input: {
           if (event.assistantMessage && canCommitToSurface(activeThreadId)) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]));
           }
-          if (canCommitToSurface(activeThreadId)) {
-            handlers.onBlocked?.(event);
-            void refreshConversationThreads(workspaceCwd);
-          }
+          if (canCommitToSurface(activeThreadId)) handlers.onBlocked?.(event);
           return;
         }
         if (parsed.event === "error") {
           const event = JSON.parse(parsed.data) as ConversationStreamBlockedEvent;
-          const messageText = event.error || event.assistantMessage?.errorMessage || "Ling Agent run failed.";
+          const messageText = event.error || event.assistantMessage?.content || "Ling Agent run failed.";
           if (event.thread) {
             activeThreadId = event.thread.id;
             handlers.onThreadBound?.(activeThreadId);
             retargetStreamOperation(activeThreadId);
           }
-          if (!event.assistantMessage && !messageAccepted) {
-            conversationErrors.report(streamOperation, messageText);
-          }
+          conversationErrors.report(streamOperation, messageText);
           if (event.assistantMessage && canCommitToSurface(activeThreadId)) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]));
           }

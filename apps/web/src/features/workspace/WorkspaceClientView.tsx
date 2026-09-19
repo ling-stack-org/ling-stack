@@ -57,9 +57,7 @@ import {
   listChannelTerminalReports,
 } from "../../api/channels.js";
 import { useI18n, type Translate } from "../../i18n.js";
-import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
-import { isChannelNotificationLevel } from "../../lib/channel-notifications.js";
 import { buildInlineApprovalViews } from "../../lib/inline-approvals.js";
 import type { ChannelActivityItem } from "../../lib/channel-activity.js";
 import {
@@ -112,7 +110,6 @@ import {
 import {
   canUseProviderForRun,
   isMediaProvider,
-  providerDisplaySourceLabel,
   providerPreflightReady,
   providerRunPreflightBlocker,
 } from "../../lib/providers.js";
@@ -196,6 +193,7 @@ import type {
   ConversationActiveReplyTarget,
   ChannelTeamMetricsProjection,
   ChannelExecutionProposal,
+  UpdateChannelExecutionProposalRequest,
   ChannelWorkflow,
   ChannelWorkflowStep,
   ChannelWorkflowStepStartMode,
@@ -236,7 +234,7 @@ import type {
   UserProfile,
 } from "../../types.js";
 import { ApprovalCard } from "../approvals/ApprovalCard.js";
-import { RuntimeApprovalComposerGate } from "../approvals/RuntimeApprovalComposerGate.js";
+import { RuntimeApprovalDialogQueue } from "../approvals/RuntimeApprovalDialogQueue.js";
 import type { ApprovalResolution } from "../approvals/types.js";
 import type { LocalTeammateDraft } from "../teammates/index.js";
 import { ChannelTeamMetricsPanel } from "./ChannelTeamMetricsPanel.js";
@@ -250,7 +248,7 @@ import {
   type ChannelTeammateRelationFeedback,
 } from "./ChannelSettingsPanels.js";
 import { ChannelComposer } from "./ChannelComposer.js";
-import { ChannelExecutionProposalComposerGate } from "./ChannelExecutionProposalComposerGate.js";
+import { ChannelExecutionProposalDialog } from "./ChannelExecutionProposalDialog.js";
 import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { ChannelFeedLatestControl, ChannelFeedStatus } from "./ChannelFeedChrome.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
@@ -495,6 +493,7 @@ export function WorkspaceClientView({
   onSendMessage,
   onConfirmExecutionProposal,
   onCancelExecutionProposal,
+  onUpdateExecutionProposal,
   onUploadAttachments,
   onCreateLinkPreview,
   onDeleteAttachment,
@@ -680,6 +679,10 @@ export function WorkspaceClientView({
   }) => Promise<{ readonly errorMessage?: string }>;
   readonly onConfirmExecutionProposal: (proposal: ChannelExecutionProposal) => Promise<void>;
   readonly onCancelExecutionProposal: (proposal: ChannelExecutionProposal) => Promise<void>;
+  readonly onUpdateExecutionProposal: (
+    proposal: ChannelExecutionProposal,
+    input: UpdateChannelExecutionProposalRequest,
+  ) => Promise<ChannelExecutionProposal | undefined>;
   readonly onUploadAttachments: (files: readonly File[]) => Promise<readonly ChannelAttachment[]>;
   readonly onCreateLinkPreview: (url: string) => Promise<ChannelLinkPreview | undefined>;
   readonly onDeleteAttachment: (attachmentId: string) => void;
@@ -726,12 +729,7 @@ export function WorkspaceClientView({
   readonly onCancelWorkUnit: (workUnitId: string) => void;
   readonly onRetryWorkUnit: (workUnitId: string) => void;
   readonly onReconcileWorkUnit: (workUnitId: string) => void;
-  readonly onResolveApproval: (
-    approvalId: string,
-    decision: ApprovalResolution,
-    reason?: string,
-    proposedRuleFingerprint?: string,
-  ) => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onClaimWorkItem: (workItemId: string) => void;
   readonly onHeartbeatWorkItem: (workItemId: string, claimToken: string) => void;
   readonly onReleaseWorkItem: (workItemId: string, claimToken: string) => void;
@@ -1313,6 +1311,16 @@ export function WorkspaceClientView({
     }
     return runIds;
   }, [workflowProgressByWorkflowId]);
+  const selectedChannelTaskIds = useMemo(
+    () => tasks.filter((task) => task.channelId === selectedChannelId).map((task) => task.id),
+    [selectedChannelId, tasks],
+  );
+  const blockedWorkflowStepIds = useMemo(
+    () => channelWorkflowStepsForDisplay
+      .filter((step) => step.channelId === selectedChannelId && (step.status === "waiting_for_approval" || step.status === "blocked"))
+      .map((step) => step.id),
+    [channelWorkflowStepsForDisplay, selectedChannelId],
+  );
   const latestRun = channelRuns[0];
   const {
     activityToolsOpen,
@@ -1440,13 +1448,13 @@ export function WorkspaceClientView({
   const inlineApprovalViews = useMemo(
     () =>
       buildInlineApprovalViews(approvals, {
-        owner: { kind: "channel", channelId: selectedChannelId },
-        runs,
-        tasks,
-        workUnits,
-        workflowSteps: channelWorkflowSteps,
+        activeChannelId: selectedChannelId,
+        activeRunId,
+        visibleRunIds: channelRuns.map((item) => item.id),
+        visibleTaskIds: selectedChannelTaskIds,
+        blockedWorkflowStepIds,
       }),
-    [approvals, channelWorkflowSteps, runs, selectedChannelId, tasks, workUnits],
+    [activeRunId, approvals, blockedWorkflowStepIds, channelRuns, selectedChannelId, selectedChannelTaskIds],
   );
   const pendingApprovalCount = pendingChannelApprovals.length;
   const selectedApproval = selectedApprovalId
@@ -1485,13 +1493,7 @@ export function WorkspaceClientView({
       description={providerBlocker}
       statusNode={<ChannelActiveStatusIndicator kind="provider-blocked" />}
       metaItems={[
-        {
-          id: "provider",
-          label: t("Provider"),
-          value: effectiveProvider
-            ? providerDisplaySourceLabel(effectiveProvider.displayName, effectiveProvider.model)
-            : t("No model selected"),
-        },
+        { id: "provider", label: t("Provider"), value: effectiveProvider?.displayName ?? t("No model selected") },
       ]}
       actions={[
         {
@@ -1862,6 +1864,7 @@ export function WorkspaceClientView({
       setSidePanelOpen(false);
       setChannelSettingsPageOpen(false);
       setChannelEnvironmentPageOpen(false);
+      setEnvironmentCommitDialogOpen(false);
       setProgressPopoverOpen(false);
       setSelectedApprovalId("");
       setCreateTaskOpen(false);
@@ -1887,24 +1890,54 @@ export function WorkspaceClientView({
   const [selectedExecutionProposalTarget, setSelectedExecutionProposalTarget] = useState<{
     readonly channelId: string;
     readonly proposalId: string;
+    readonly versionKey: string;
   }>();
+  const autoOpenedExecutionProposalVersionsRef = useRef(new Set<string>());
+  const selectedExecutionProposal = selectedExecutionProposalTarget?.channelId === selectedChannelId
+    ? channelExecutionProposals.find((proposal) =>
+        proposal.channelId === selectedChannelId && proposal.id === selectedExecutionProposalTarget.proposalId
+      )
+    : undefined;
   const newestActionableExecutionProposal = [...channelExecutionProposals]
     .filter((proposal) =>
       proposal.channelId === selectedChannelId &&
-      isActionableExecutionProposal(proposal)
+      (proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed")
     )
     .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt) || right.createdAt.localeCompare(left.createdAt))[0];
-  const explicitlySelectedExecutionProposal = selectedExecutionProposalTarget?.channelId === selectedChannelId
-    ? channelExecutionProposals.find((proposal) =>
-        proposal.channelId === selectedChannelId &&
-        proposal.id === selectedExecutionProposalTarget.proposalId &&
-        isActionableExecutionProposal(proposal)
-      )
+  const newestActionableExecutionProposalVersionKey = newestActionableExecutionProposal
+    ? `${selectedChannelId}:${newestActionableExecutionProposal.id}:${newestActionableExecutionProposal.updatedAt}`
     : undefined;
-  const selectedExecutionProposal = explicitlySelectedExecutionProposal ?? newestActionableExecutionProposal;
+
+  useEffect(() => {
+    const current = selectedExecutionProposalTarget;
+    if (!selectedChannelId) {
+      if (current) setSelectedExecutionProposalTarget(undefined);
+      return;
+    }
+    if (current?.channelId === selectedChannelId && selectedExecutionProposal?.status !== "accepted") return;
+    if (!newestActionableExecutionProposal || !newestActionableExecutionProposalVersionKey) {
+      if (current?.channelId === selectedChannelId && !selectedExecutionProposal) {
+        autoOpenedExecutionProposalVersionsRef.current.delete(current.versionKey);
+      }
+      if (current) setSelectedExecutionProposalTarget(undefined);
+      return;
+    }
+    if (autoOpenedExecutionProposalVersionsRef.current.has(newestActionableExecutionProposalVersionKey)) {
+      if (current) setSelectedExecutionProposalTarget(undefined);
+      return;
+    }
+    autoOpenedExecutionProposalVersionsRef.current.add(newestActionableExecutionProposalVersionKey);
+    setSelectedExecutionProposalTarget({
+      channelId: selectedChannelId,
+      proposalId: newestActionableExecutionProposal.id,
+      versionKey: newestActionableExecutionProposalVersionKey,
+    });
+  }, [newestActionableExecutionProposalVersionKey, selectedChannelId]);
 
   function openExecutionProposal(proposal: ChannelExecutionProposal): void {
-    setSelectedExecutionProposalTarget({ channelId: proposal.channelId, proposalId: proposal.id });
+    const versionKey = `${proposal.channelId}:${proposal.id}:${proposal.updatedAt}`;
+    autoOpenedExecutionProposalVersionsRef.current.add(versionKey);
+    setSelectedExecutionProposalTarget({ channelId: proposal.channelId, proposalId: proposal.id, versionKey });
   }
   const channelRunsForFiles = channelRuns;
 
@@ -2051,6 +2084,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
   }, [selectedTask, selectedTaskId]);
 
@@ -2060,6 +2094,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     onSelectTask(taskId);
   }
@@ -2093,6 +2128,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     if (mode === "runtime") {
       onRefreshRuntime();
@@ -2108,6 +2144,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(channelHasProgressPopoverContent);
     setAttentionProgressExpanded(true);
     setCreateTaskOpen(false);
@@ -2121,6 +2158,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setCreateTaskOpen(false);
     setActiveWorkThreadId("");
@@ -2162,6 +2200,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -2397,6 +2436,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setActivityToolsOpen(false);
     setProgressPopoverOpen(false);
     setTeammateManagerOpen(false);
@@ -3299,6 +3339,29 @@ export function WorkspaceClientView({
     }
   }
 
+  function repairProposalModelBinding(
+    blocker: NonNullable<ChannelExecutionProposal["blocker"]>,
+  ): void {
+    if (blocker.repairTarget === "model_workbench") {
+      onOpenProviders();
+      return;
+    }
+    if (blocker.repairTarget === "channel_settings") {
+      openChannelSettingsPage();
+      return;
+    }
+    channelHeader.closeSearch();
+    setTeammateManagerOpen(true);
+    setChannelSettingsPageOpen(false);
+    setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
+    setProgressPopoverOpen(false);
+    setWorkspaceSettingsOpen(false);
+    setActivityToolsOpen(false);
+    setSidePanelOpen(false);
+    onChannelCreateOpenChange(false);
+  }
+
   const messageRenderers = createChannelMessageRenderers({
     activeRunId,
     allLocalTeammateById,
@@ -3317,7 +3380,7 @@ export function WorkspaceClientView({
     conversationWorkCellByThreadId,
     conversationWorkCellByWorkflowId,
     conversationWorkCellDetailsByKey,
-    composerGateApprovals: inlineApprovalViews,
+    dialogOwnedApprovals: inlineApprovalViews,
     cwd,
     executionProposalsByMessageId,
     formatBytes,
@@ -3490,23 +3553,6 @@ export function WorkspaceClientView({
       onSubmit={handleChannelComposerSubmit}
     />
   );
-  const channelComposerNode = inlineApprovalViews.length > 0 ? (
-    <RuntimeApprovalComposerGate
-      approvals={inlineApprovalViews}
-      approvalErrors={approvalErrors}
-      resolvingApprovals={resolvingApprovals}
-      surface="channel"
-      onResolve={onResolveApproval}
-    />
-  ) : selectedExecutionProposal ? (
-    <ChannelExecutionProposalComposerGate
-      assigneeLabel={teammateLabel(selectedExecutionProposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))}
-      errorMessage={workflowErrors[selectedExecutionProposal.id]}
-      proposal={selectedExecutionProposal}
-      onAllow={onConfirmExecutionProposal}
-      onDeny={onCancelExecutionProposal}
-    />
-  ) : channelComposer;
 
   const channelHasChatContent = channelMessagesForDisplay.length > 0 || channelContextSummaries.length > 0;
   const collaborationTaskCards = useMemo(
@@ -3552,6 +3598,7 @@ export function WorkspaceClientView({
     channelHeader.closeSearch();
     setChannelSettingsPageOpen(true);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setSidePanelOpen(false);
     setCreateTaskOpen(false);
     setConversationDetailOverlay(undefined);
@@ -3572,6 +3619,7 @@ export function WorkspaceClientView({
     channelHeader.closeSearch();
     setChannelEnvironmentPageOpen(true);
     setChannelSettingsPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setSidePanelOpen(false);
     setCreateTaskOpen(false);
     setConversationDetailOverlay(undefined);
@@ -3640,6 +3688,7 @@ export function WorkspaceClientView({
     onClearChannelFeedback("workspace", selectedChannel.id);
     setChannelRenameOpen(true);
     setChannelMoreOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setConversationDetailOverlay(undefined);
     setProgressPopoverOpen(false);
     setActivityToolsOpen(false);
@@ -3688,6 +3737,7 @@ export function WorkspaceClientView({
     setConversationDetailOverlay(undefined);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
     setWorkspaceSettingsOpen(false);
@@ -3704,6 +3754,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(true);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setConversationDetailOverlay(undefined);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -3730,6 +3781,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -3745,6 +3797,7 @@ export function WorkspaceClientView({
     setSidePanelOpen(false);
     setChannelSettingsPageOpen(false);
     setChannelEnvironmentPageOpen(false);
+    setEnvironmentCommitDialogOpen(false);
     setProgressPopoverOpen(false);
     setChannelMoreOpen(false);
     setActivityToolsOpen(false);
@@ -3760,23 +3813,18 @@ export function WorkspaceClientView({
       metrics={channelTeamMetricsState.metrics}
       labels={{
         title: t("Team metrics"),
+        subtitle: t("Read-only team activity and evidence"),
         evidence: t("Evidence"),
-        current: t("Current"),
-        total: t("Total"),
+        visibleEvidence: t("visible evidence"),
+        teamEvidence: t("team evidence"),
+        health: t("Health"),
         active: t("Active"),
         delayed: t("Delayed"),
         unavailable: t("Unavailable"),
         riskReview: t("Risk review"),
-        risk: t("Risk"),
-        warnings: t("Warnings"),
-        failed: t("Failed"),
-        critical: t("Critical"),
         learningQueue: t("Learning queue"),
-        recommendation: t("Recommendation"),
-        accepted: t("Accepted"),
-        rejected: t("Rejected"),
-        pending: t("Pending"),
         agentActivity: t("Agent activity"),
+        noAgentActivity: t("No agent evidence yet"),
       }}
     />
   ) : channelTeamMetricsError ? (
@@ -4007,9 +4055,6 @@ export function WorkspaceClientView({
     ...channelRightDock.mainStyle,
     ...progressSummaryLayout.style,
   } as CSSProperties;
-  const taskWorkbenchTitlebarStyle = {
-    "--channel-progress-popover-right": `${progressSummaryLayout.dockOffset}px`,
-  } as CSSProperties;
 
   function toggleChannelTeammateManager(): void {
     const nextOpen = !teammateManagerOpen;
@@ -4018,6 +4063,7 @@ export function WorkspaceClientView({
       channelHeader.closeSearch();
       setChannelSettingsPageOpen(false);
       setChannelEnvironmentPageOpen(false);
+      setEnvironmentCommitDialogOpen(false);
       setProgressPopoverOpen(false);
     }
     setWorkspaceSettingsOpen(false);
@@ -4041,14 +4087,12 @@ export function WorkspaceClientView({
       style={taskWorkbenchWindowStyle}
       aria-label={t("Workspace")}
     >
-      <DesktopTitlebarSurface>
       <header
         className={[
           "channel-header task-workbench-header",
           channelUtilityPageOpen ? "settings-page-header" : "",
           channelHeader.searchOpen && !channelUtilityPageOpen ? "channel-header-searching" : "",
         ].filter(Boolean).join(" ")}
-        style={taskWorkbenchTitlebarStyle}
         data-desktop-window-drag-region="true"
       >
         <div className="channel-title-area">
@@ -4063,6 +4107,7 @@ export function WorkspaceClientView({
                   <SlidersHorizontal size={17} />
                   <strong>{t("Channel settings")}</strong>
                 </span>
+                <small>{selectedChannel?.name ? `#${selectedChannel.name}` : t("No channel selected")}</small>
               </div>
             </div>
           ) : channelEnvironmentPageOpen ? (
@@ -4076,6 +4121,7 @@ export function WorkspaceClientView({
                   <Command size={17} />
                   <strong>{t("Environment")}</strong>
                 </span>
+                <small>{selectedChannel?.name ? `#${selectedChannel.name}` : t("No channel selected")}</small>
               </div>
             </div>
           ) : (
@@ -4154,6 +4200,7 @@ export function WorkspaceClientView({
                         setProgressPopoverOpen(false);
                         setChannelSettingsPageOpen(false);
                         setChannelEnvironmentPageOpen(false);
+                        setEnvironmentCommitDialogOpen(false);
                         setTeammateManagerOpen(false);
                       }}
                     >
@@ -4256,6 +4303,7 @@ export function WorkspaceClientView({
             setChannelSettingsPageOpen(false);
             channelHeader.closeSearch();
             setChannelEnvironmentPageOpen(false);
+            setEnvironmentCommitDialogOpen(false);
             setCreateTaskOpen(false);
             setChannelMoreOpen(false);
             setActivityToolsOpen(false);
@@ -4272,17 +4320,16 @@ export function WorkspaceClientView({
             }
             setChannelSettingsPageOpen(false);
             setChannelEnvironmentPageOpen(false);
+            setEnvironmentCommitDialogOpen(false);
             setCreateTaskOpen(false);
             setChannelMoreOpen(false);
             setActivityToolsOpen(false);
             setTeammateManagerOpen(false);
             setChannelBottomPanelOpen(true);
           }}
-          detailsOpen={channelRightDockExpanded}
-          detailsDisabled={!channelRightDock.available}
-          detailsLabel={channelRightDockExpanded ? t("Hide details") : t("Show details")}
+          detailsOpen={channelRightDockIntentOpen}
+          detailsLabel={channelRightDockIntentOpen ? t("Hide details") : t("Show details")}
           onToggleDetails={() => {
-            if (!channelRightDock.available) return;
             if (channelRightDockIntentOpen) {
               closeChannelRightDock();
               return;
@@ -4296,7 +4343,6 @@ export function WorkspaceClientView({
           </div>
         ) : null}
       </header>
-      </DesktopTitlebarSurface>
 
       {teammateManagerOpen ? (
         <section ref={teammateManagerPanelRef} className="workbench-settings-panel channel-teammate-dock" aria-label={t("AI teammate management")}>
@@ -4378,6 +4424,7 @@ export function WorkspaceClientView({
         ) : channelEnvironmentPageOpen ? (
           <ChannelEnvironmentPage
             summary={channelEnvironmentSummary}
+            channelName={selectedChannel?.name}
             workspacePickerCwd={cwd}
             onChangeWorkspacePath={changeChannelEnvironmentWorkspacePath}
             onOpenReview={() => openRightDockPage("review")}
@@ -4491,7 +4538,7 @@ export function WorkspaceClientView({
           }}
           conversationBlockActionMenuNode={conversationBlockActionMenuNode}
           conversationDetailOverlayNode={conversationDetailOverlayNode}
-          composerNode={channelComposerNode}
+          composerNode={channelComposer}
           threadReply={threadReplyController.activeThreadRoot ? {
             cwd,
             rootMessage: threadReplyController.activeThreadRoot,
@@ -4534,7 +4581,7 @@ export function WorkspaceClientView({
             onOpenTriageResult: openActivityTriageResult,
           } : undefined}
         />
-        {channelRightDock.resizable ? (
+        {channelRightDockVisible ? (
           <button
             className="channel-side-panel-resize-handle"
             type="button"
@@ -4633,6 +4680,25 @@ export function WorkspaceClientView({
           onClose={() => setChannelBottomPanelOpen(false)}
         />
       ) : null}
+      <RuntimeApprovalDialogQueue
+        approvals={inlineApprovalViews}
+        approvalErrors={approvalErrors}
+        resolvingApprovals={resolvingApprovals}
+        onResolve={onResolveApproval}
+      />
+      <ChannelExecutionProposalDialog
+        proposal={inlineApprovalViews.length === 0 ? selectedExecutionProposal : undefined}
+        assigneeLabel={selectedExecutionProposal
+          ? teammateLabel(selectedExecutionProposal.assigneeTeammateId, teammateOptions, t("Deleted teammate"))
+          : ""}
+        teammates={teammateOptions}
+        onClose={() => setSelectedExecutionProposalTarget(undefined)}
+        onConfirm={onConfirmExecutionProposal}
+        onCancel={onCancelExecutionProposal}
+        onUpdate={onUpdateExecutionProposal}
+        onOpenRun={openRunInPanel}
+        onRepairModelBinding={repairProposalModelBinding}
+      />
     </div>
   );
 }
@@ -4662,10 +4728,6 @@ function formatAge(value: string | undefined): string {
 
 function workflowIdFromWorkCellThreadId(value: string): string {
   return value.startsWith("workflow:") ? value.slice("workflow:".length) : value;
-}
-
-function isActionableExecutionProposal(proposal: ChannelExecutionProposal): boolean {
-  return proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed";
 }
 
 function runCanBeStopped(run: RunSession): boolean {
@@ -4725,6 +4787,10 @@ function clearSavedChannelNotificationLevel(cwd: string, channelId: string): voi
 
 function channelNotificationStorageKey(cwd: string, channelId: string): string {
   return `ling-stack.channelNotifications.${encodeURIComponent(cwd)}.${encodeURIComponent(channelId)}`;
+}
+
+function isChannelNotificationLevel(value: string | null | undefined): value is ChannelNotificationLevel {
+  return value === "all" || value === "mentions" || value === "muted";
 }
 
 function resolveChannelWorkspaceBinding(channel: Channel, cwd: string): ChannelWorkspaceBinding {

@@ -18,8 +18,6 @@ export interface ConversationTranscriptMessage {
   readonly authorId?: string;
   readonly authorLabel?: string;
   readonly content: string;
-  /** Runtime/provider failure kept separate from assistant narrative content. */
-  readonly errorMessage?: string;
   readonly attachments?: readonly ConversationAttachment[];
   readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly status: ConversationTranscriptStatus;

@@ -3,9 +3,8 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
-import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { createSqliteRunStore, resolveRuntimePaths } from "../../core/dist/index.js";
+import { createSqliteRunStore } from "../../core/dist/index.js";
 import {
   configureTerminalReportStore,
   processRunTerminalReport,
@@ -358,89 +357,6 @@ test("workflow terminal report creates a superseding revision when late Host evi
     );
   } finally {
     store.close();
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
-test("terminal report recovery republishes only the latest committed revision per source", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-recovery-history-"));
-  const store = createSqliteRunStore(cwd);
-  let reopened;
-  try {
-    const fixture = createTerminalWorkflowFixture(store, cwd, "recovery-history");
-    store.updateChannelWorkflow(fixture.workflow.id, { status: "blocked" }, "2026-07-11T05:19:00.000Z");
-    configureTerminalReportStore(store, { enabled: true, barrierDeadlineMs: 50, barrierPollIntervalMs: 5 });
-
-    const first = await processWorkflowTerminalReport(store, fixture.workflow.id, {
-      now: "2026-07-11T05:20:00.000Z",
-    });
-    assert.ok(first.message);
-
-    // Leave generation 1 committed but without its publication marker, as if
-    // the daemon crashed between report commit and message publication.
-    store.close();
-    const database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
-    try {
-      database.prepare("UPDATE ling_terminal_reports SET published_message_id = NULL WHERE id = ?").run(first.record.id);
-      database.prepare("DELETE FROM conversation_items WHERE id = ?").run(first.message?.id);
-    } finally {
-      database.close();
-    }
-    reopened = createSqliteRunStore(cwd);
-    configureTerminalReportStore(reopened, { enabled: true, barrierDeadlineMs: 50, barrierPollIntervalMs: 5 });
-    const sourceTurnId = fixture.workflow.metadata.sourceTurnId;
-    assert.ok(sourceTurnId);
-    reopened.transitionLingTurnStatus({
-      turnId: sourceTurnId,
-      expectedStatus: "blocked",
-      event: "start",
-      actor: "system",
-      reason: "workflow retry",
-      idempotencyKey: "recovery-history-retry",
-      now: "2026-07-11T05:20:10.000Z",
-    });
-    reopened.transitionChannelWorkflowStatus({
-      workflowId: fixture.workflow.id,
-      expectedStatus: "blocked",
-      event: "start",
-      actor: "system",
-      reason: "workflow retry",
-      now: "2026-07-11T05:20:11.000Z",
-    });
-    reopened.transitionChannelWorkflowStatus({
-      workflowId: fixture.workflow.id,
-      expectedStatus: "running",
-      event: "all_steps_succeeded",
-      actor: "system",
-      reason: "workflow retry completed",
-      now: "2026-07-11T05:20:12.000Z",
-    });
-    reopened.appendEvent(fixture.qaRun.id, "tool_start", {
-      toolCallId: "qa_recovery_history",
-      toolName: "bash",
-      args: { command: "pnpm test" },
-    });
-    reopened.appendEvent(fixture.qaRun.id, "tool_end", {
-      toolCallId: "qa_recovery_history",
-      toolName: "bash",
-      isError: false,
-    });
-    const second = await processWorkflowTerminalReport(reopened, fixture.workflow.id, {
-      now: "2026-07-11T05:21:00.000Z",
-    });
-    assert.ok(second.message);
-    assert.equal(second.record.generation, 2);
-
-    await recoverTerminalReports(reopened);
-    assert.deepEqual(
-      listChannelItemViewsFixture(reopened, { channelId: fixture.channel.id, limit: 100 })
-        .filter((message) => message.id.startsWith("message_terminal_report_"))
-        .map((message) => message.id),
-      [second.message?.id],
-    );
-  } finally {
-    try { store.close(); } catch {}
-    try { reopened?.close(); } catch {}
     await rm(cwd, { recursive: true, force: true });
   }
 });

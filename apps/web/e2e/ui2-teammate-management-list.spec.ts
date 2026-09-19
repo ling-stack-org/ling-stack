@@ -30,8 +30,7 @@ test("teammate management searches and filters one-status rows", async ({ page }
   const readyRow = teammateRow(list, "Ling Architect");
   await expect(readyRow.locator(".teammate-row-status")).toHaveCount(1);
   await expect(readyRow.locator(".teammate-row-status.ready")).toContainText("Ready teammate");
-  await expect(readyRow.locator(".teammate-model-pill")).toHaveText("gpt-5.5");
-  await expect(readyRow).not.toContainText("gpt-5.5 · gpt-5.5");
+  await expect(readyRow).toContainText("Local Relay / gpt-5.5");
   await expect(readyRow).toContainText("Engineering");
   const readyRowColumns = await readyRow.evaluate((element) => {
     const summary = element.querySelector<HTMLElement>(".teammate-management-row-summary")?.getBoundingClientRect();
@@ -228,7 +227,7 @@ function createManagementState(): ReturnType<typeof createBaseState> {
 function readyProvider(): Record<string, unknown> {
   return createChatProvider({
     id: "provider_ready",
-    displayName: "gpt-5.5 · gpt-5.5",
+    displayName: "Local Relay",
     model: "gpt-5.5",
     lastCheck: { ok: true, message: "Ready", checkedAt: "2026-07-20T00:00:00.000Z" },
   });

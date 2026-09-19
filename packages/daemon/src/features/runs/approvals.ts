@@ -58,10 +58,6 @@ import {
 } from "./risk-review-approval-adapter.js";
 import { evaluatePlanModeApprovalDenial } from "./plan-mode-policy.js";
 import { commandMatchesPolicy } from "../channels/command-operation-match.js";
-import {
-  commandArgvForRuleMatching,
-  createApprovalCommandRuleProposal,
-} from "./approval-command-rules.js";
 
 const APPROVAL_TIMEOUT_MS = 30 * 60 * 1000;
 const APPROVAL_POLL_INTERVAL_MS = 500;
@@ -91,8 +87,6 @@ export function appendApprovalDecisionEvent(
     status: approval.status,
     resolvedBy: approval.resolvedBy,
     decisionReason: approval.decisionReason,
-    decisionKind: approval.decisionKind,
-    decisionRuleId: approval.decisionRuleId,
   });
 }
 
@@ -154,7 +148,6 @@ export function createRunApprovalHandler(options: {
   readonly delegatedRequirementFingerprint?: string;
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly approvalPolicy: ApprovalPolicy;
-  readonly approvalProfile?: SkillApprovalProfile;
   readonly effectivePolicySnapshot?: EffectiveRunPolicySnapshot;
   readonly appendAndMaybeStream: RunEventEmitter;
   readonly streamEnvelope: (envelope: RunEventEnvelope) => void;
@@ -250,42 +243,6 @@ export function createRunApprovalHandler(options: {
         decision: "deny",
         reason: planModeDenial.reason,
       };
-    }
-
-    const mandatoryApproval = approvalProfileRequiresApproval(
-      options.approvalProfile,
-      request.toolName,
-      approvalInput.actionType,
-    );
-    if (
-      policyDecision.decision === "ask" &&
-      !mandatoryApproval &&
-      approvalInput.payload.type === "bash"
-    ) {
-      const argv = commandArgvForRuleMatching(approvalInput.payload.command);
-      const matchingRule = argv
-        ? options.store.findMatchingApprovalCommandRule("bash", argv)
-        : undefined;
-      if (matchingRule) {
-        policyDecision = {
-          decision: "allow",
-          reason: `Ling Stack workspace command rule allowed bash: ${matchingRule.display}.`,
-        };
-      } else {
-        const proposedCommandRule = createApprovalCommandRuleProposal({
-          command: approvalInput.payload.command,
-          requestedPrefix: readInputStringList(request.input, "prefix_rule"),
-          risk: approvalInput.risk,
-          riskFlags: approvalInput.payload.riskFlags,
-        });
-        if (proposedCommandRule) {
-          approvalInput = {
-            ...approvalInput,
-            availableDecisions: ["approve_once", "approve_command_rule", "deny"],
-            proposedCommandRule,
-          };
-        }
-      }
     }
 
     if (policyDecision.decision === "allow") {
@@ -827,22 +784,7 @@ function approvalRequestEventPayload(
     payload: approval.payload,
     previewArtifactIds: previewArtifacts.map((artifact) => artifact.id),
     expiresAt: approval.expiresAt,
-    availableDecisions: approval.availableDecisions,
-    proposedCommandRule: approval.proposedCommandRule,
   };
-}
-
-function approvalProfileRequiresApproval(
-  profile: SkillApprovalProfile | undefined,
-  toolName: string,
-  actionType: ApprovalRequest["actionType"],
-): boolean {
-  if (!profile || profile.mode === "none") return false;
-  if (profile.mode === "strict" && riskyRunTools.includes(toolName as (typeof riskyRunTools)[number])) {
-    return true;
-  }
-  return profile.requiredForTools?.includes(toolName as RunTool) === true ||
-    profile.requiredForActions?.includes(actionType) === true;
 }
 
 function evaluateApprovalPolicy(
@@ -1199,12 +1141,6 @@ function readInputArray(input: unknown, key: string): unknown[] {
   }
   const value = input[key];
   return Array.isArray(value) ? value : [];
-}
-
-function readInputStringList(input: unknown, key: string): string[] | undefined {
-  const values = readInputArray(input, key);
-  if (values.length === 0 || values.some((item) => typeof item !== "string")) return undefined;
-  return values as string[];
 }
 
 function truncatePreview(value: string, limit = APPROVAL_PREVIEW_LIMIT): string {

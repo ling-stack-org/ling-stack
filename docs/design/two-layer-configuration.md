@@ -158,7 +158,7 @@ interface LingConfigPaths {
 | Recent workspaces | Yes | No | Local machine state, not project state. |
 | Theme and locale defaults | Yes | Optional override in `workspace_settings` | Web should show effective value and source. |
 | Response language default | Yes | Optional channel/workspace override | Channel policy remains workspace state. |
-| Channel notification levels | No | Yes | Scoped to workspace/channel identity; presentation filtering only, never execution control. |
+| Channel notification levels | No | Yes | Scoped to workspace/channel identity. |
 | Channel activity views | No | Yes | These are workspace information architecture choices. |
 | Provider profile templates | Yes | Imported snapshot | Global updates must not silently alter existing workspace presets. |
 | Provider presets used by records | No | Yes, SQLite | Channels, teammates, and runs reference workspace preset ids. |

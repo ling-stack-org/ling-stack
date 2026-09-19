@@ -103,43 +103,6 @@ test("terminal report projection keeps semantic sections and removes private dev
   assert.equal(report.revisionKey, "terminal_report_1:fingerprint_1");
 });
 
-test("terminal report projection keeps Markdown summaries and bounds model titles", () => {
-  const longTitle = `这是一段错误地回显到标题里的 workflow 提示词。${"继续执行要求。".repeat(40)}`;
-  const report = terminalReportToViewModel({
-    id: "terminal_report_markdown",
-    status: "committed",
-    language: "zh-CN",
-    outcome: {
-      status: "succeeded",
-      title: longTitle,
-      summary: "完成说明：\n\n- 已创建文件\n- 已验证内容\n\n```bash\nnode app.js\n```",
-      corrections: [],
-      sourceRefs: [],
-    },
-    changes: [],
-    verification: [],
-    participants: [{
-      agentId: "engineer",
-      displayName: "Engineer",
-      status: "completed",
-      contribution: "实现完成。\n\n```ts\nconst ok = true;\n```",
-      sourceRefs: [],
-    }],
-    artifacts: [],
-    risks: [],
-    references: [],
-    evidenceFingerprint: "fingerprint_markdown",
-    committedAt: "2026-07-11T00:00:00.000Z",
-  });
-
-  const outcome = report.rows.find((row) => row.reportSection === "outcome");
-  const participant = report.rows.find((row) => row.reportSection === "participant");
-  assert.equal(outcome?.description, "完成说明：\n\n- 已创建文件\n- 已验证内容\n\n```bash\nnode app.js\n```");
-  assert.equal(outcome?.title.endsWith("..."), true);
-  assert.equal(outcome?.title.includes("这是一段错误地回显到标题里的"), true);
-  assert.match(participant?.description ?? "", /```ts\nconst ok = true;/u);
-});
-
 test("terminal report artifact workspace paths require one trusted changed-file source ref", () => {
   const report = terminalReportToViewModel({
     id: "terminal_report_workspace_files",
@@ -229,39 +192,4 @@ test("terminal report artifact workspace paths require one trusted changed-file 
   assert.equal(artifacts.find((item) => item.id.endsWith(":ambiguous_file_refs"))?.workspaceFilePath, undefined);
   assert.equal(artifacts.find((item) => item.id.endsWith(":developer_only_file_ref"))?.workspaceFilePath, undefined);
   assert.equal(artifacts.find((item) => item.id.endsWith(":unsupported_kind"))?.workspaceFilePath, undefined);
-});
-
-test("terminal report renders approval decision instead of hiding it behind risk status", () => {
-  const report = terminalReportToViewModel({
-    id: "terminal_report_approval",
-    status: "fallback",
-    language: "zh-CN",
-    outcome: {
-      status: "blocked",
-      title: "任务未完成",
-      summary: "命令未执行。",
-      corrections: [],
-      sourceRefs: [],
-    },
-    changes: [],
-    verification: [],
-    participants: [],
-    artifacts: [],
-    risks: [{
-      id: "approval-risk-1",
-      severity: "critical",
-      status: "unresolved",
-      approvalDecision: "denied",
-      summary: "Approval denied: git push",
-      nextAction: "The requested action was not executed.",
-      sourceRefs: [{ kind: "approval", id: "approval-1", visibility: "conversation" }],
-    }],
-    references: [],
-    evidenceFingerprint: "fingerprint_approval",
-    committedAt: "2026-08-20T00:00:00.000Z",
-  });
-
-  const risk = report.rows.find((row) => row.reportSection === "risk");
-  assert.equal(risk?.meta, "已拒绝");
-  assert.equal(risk?.description, "The requested action was not executed.");
 });

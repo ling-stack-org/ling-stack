@@ -21,10 +21,6 @@
   height: 100%;
 }
 
-.council-workspace-page.titlebar-window {
-  grid-template-rows: minmax(0, 1fr);
-}
-
 .council-workspace-summary {
   display: flex;
   align-items: center;

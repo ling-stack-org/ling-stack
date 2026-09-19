@@ -41,50 +41,6 @@
   width: 100%;
 }
 
-.settings-command-rules {
-  display: grid;
-  min-width: 0;
-  gap: var(--ling-space-3);
-  padding-block: var(--ling-space-5);
-  border-top: 1px solid var(--ling-border-default);
-}
-
-.settings-command-rules-header {
-  display: flex;
-  min-width: 0;
-  align-items: center;
-  justify-content: space-between;
-  gap: var(--ling-space-4);
-}
-
-.settings-command-rules-empty,
-.settings-command-rules-error {
-  margin: 0;
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
-}
-
-.settings-command-rules-error {
-  color: var(--ling-status-danger);
-}
-
-.settings-command-rule-list {
-  display: grid;
-  min-width: 0;
-}
-
-.settings-command-rule-row {
-  grid-template-columns: minmax(0, 1fr) auto;
-  padding-inline: 0;
-}
-
-.settings-command-rule-row code {
-  font-family: var(--ling-font-mono);
-  font-size: var(--ling-font-sm);
-  overflow-wrap: anywhere;
-}
-
 @media (max-width: 1080px) {
   .settings-authorization-row {
     grid-template-columns: minmax(0, 1fr);

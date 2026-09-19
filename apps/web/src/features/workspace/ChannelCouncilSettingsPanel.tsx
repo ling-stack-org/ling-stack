@@ -9,11 +9,11 @@ import {
   InlineFeedback,
   Select,
   Skeleton,
+  StatusIndicator,
 } from "../../shared/ui/index.js";
 import {
   aiCouncilBoundaryLabels,
   aiCouncilCapacityLabel,
-  aiCouncilHealthFindings,
   aiCouncilHealthLabels,
   aiCouncilRoutingModeLabel,
 } from "../../lib/ai-councils.js";
@@ -73,6 +73,11 @@ export function ChannelCouncilSettingsPanel({
           <UsersRound size={15} />
           <strong>{t("Channel councils")}</strong>
         </span>
+        <StatusIndicator
+          compact
+          label={loading ? t("Loading") : t("{count} council(s) attached", { count: attachedAiCouncils.length })}
+          tone="neutral"
+        />
       </div>
 
       {loading && attachedAiCouncils.length === 0 ? (
@@ -96,7 +101,6 @@ export function ChannelCouncilSettingsPanel({
               ?.members.filter((item) => item.enabled && item.teammate && !isLingAgentTeammate(item.teammate)).length ?? 0;
             const capacityLabel = aiCouncilCapacityLabel(council, t);
             const boundaryLabels = aiCouncilBoundaryLabels(council, t);
-            const healthFindings = aiCouncilHealthFindings(aiCouncilHealthReport, council.id);
             const healthLabels = aiCouncilHealthLabels(aiCouncilHealthReport, council.id, t);
             return (
               <DataRow
@@ -120,13 +124,14 @@ export function ChannelCouncilSettingsPanel({
                       {capacityLabel ? <span>{capacityLabel}</span> : null}
                       {boundaryLabels.map((label) => <span key={label}>{label}</span>)}
                     </span>
-                    {healthFindings.length > 0 && healthLabels.length > 0 ? (
+                    {healthLabels.length > 0 ? (
                       <InlineFeedback className="channel-council-health" tone="warning" aria-label={t("Council health")}>
                         {healthLabels.join(" · ")}
                       </InlineFeedback>
                     ) : null}
                   </span>
                 )}
+                status={preferred ? <StatusIndicator compact label={t("Preferred")} tone="info" /> : undefined}
                 actions={(
                   <span className="channel-council-actions">
                     <Button

@@ -2,7 +2,15 @@
 
 Status: active implementation plan
 Owner: conversation UI package and product-surface maintainers
-Last verified: 2026-08-07
+Last verified: 2026-08-30
+
+## Canonical Transcript Plan
+
+对于会话正文、事实行、command/exploration batching、子 Agent 和环境浮窗，执行
+[Ling Typed Transcript Detailed Design](conversation-typed-transcript-detailed-design.md)
+及其 [Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)。
+本文下面的 WorkCell、evidence block 和 surface slice 记录的是已交付的迁移前基础；
+新代码不得在这些旧边界上再造第二套 renderer 或 summary owner。
 
 ## Owning Contracts
 
@@ -106,27 +114,19 @@ and consumption work.
 - Channel-only teammate routing, topic replies, goals, plans and multi-agent activity remain
   channel-only.
 
-## Active Approval And Proposal Composer-Gate Slice
+## Active Approval And Proposal Dialog Slice
 
-- Replace global pending-approval dialogs with one shared session-owned Composer gate;
-  background owners surface through Sidebar waiting labels without blocking the active
-  conversation.
+- Replace Composer-owned pending approval strips with one shared blocking dialog queue.
   Channel, normal conversation, and teammate private chat keep their existing eligibility
   projections and domain callbacks; no shared component fetches or mutates daemon state.
-- Render runtime approval and channel task confirmation through one shared
-  `ConversationDecisionGate` shell. Reduce each active gate to one localized action
-  sentence and direct allow/deny actions.
+- Reduce the active dialog to one localized action sentence and direct allow/deny actions.
   Keep raw payload, policy context, ids, risk metadata, and optional decision reasons in
-  durable audit surfaces rather than progressively disclosing them in the gate.
+  durable audit surfaces rather than progressively disclosing them in the dialog.
 - Keep immutable approval outcomes in WorkCell/transcript history and keep external-action
   approvals in their existing Review Queue path.
-- Replace the large channel execution-proposal feed card with a compact summary. An
-  actionable proposal replaces only its owning channel Composer, after any runtime
-  approval gate and before the normal Composer. Its summary can reactivate that channel's
-  gate, but a proposal from another channel cannot block the selected channel.
-- The task gate contains one sentence naming the task, assignee, and localized permission
-  categories, followed only by deny and allow actions. Editing, cancellation wording,
-  technical proposal detail, and passive dismissal do not appear in the decision path.
+- Replace the large channel execution-proposal feed card with a compact summary and mount
+  the editable, dismissible proposal dialog at `WorkspaceClientView` level. Auto-open only
+  the newest newly actionable proposal once per proposal revision.
 - Make that compact proposal summary the sole default feed projection for requirement
   shaping. Suppress internal status and collaboration records; preserve only real
   unanswered user questions as compact decision-needed rows.
@@ -134,11 +134,8 @@ and consumption work.
   ownership, and `ConversationComposerShell.approvalNode` API while removing its production
   consumers.
 - Acceptance requires stable Composer geometry, single-item risk/time queue ordering,
-  mutation retry, focus restoration, proposal summary reactivation, strict owning-channel
-  isolation, and all three conversation surfaces.
-- Keep the normal-conversation feed pinned through asynchronous outer-row growth such as a
-  delayed generated image. Regression geometry must compare the complete top-level message row
-  with the feed/Composer boundary rather than a nested WorkCell article.
+  mutation retry, focus restoration, proposal dismiss/reopen, and all three conversation
+  surfaces.
 
 ## Active Recent Conversation Git Preview Slice
 
@@ -152,27 +149,6 @@ and consumption work.
 - Verify Git, non-Git, duplicate-workspace, unavailable, light/dark, and horizontal
   overflow states. Final evidence also includes a real message-submission run in the
   in-app browser rather than fixture screenshots only.
-
-## Recent Conversation Failure Acknowledgement Slice
-
-- Keep `failed` and `blocked` on the durable thread and Run records; only the Sidebar
-  attention projection becomes acknowledged.
-- Persist a local watermark keyed by workspace and conversation. Compare it with the
-  thread failure revision so reloads stay quiet while a later failure becomes visible.
-- Acknowledge only after the conversation is actually selected. Failed navigation must
-  leave the red dot visible.
-- Verify initial failure, successful open, reload persistence, later failure reappearance,
-  and preservation of the underlying failed thread state.
-
-## Recent Conversation Single-Line Slice
-
-- Remove redundant conversation-type metadata from the recent-conversation view model and
-  shared object-row markup rather than hiding a second line with CSS.
-- Keep each recent row at `32px`, preserve its icon/title horizontal origin, and assert that
-  both centers differ by no more than one pixel.
-- Keep long-title fading, hover/focus movement, status projection and absolute action overlays
-  unchanged. The shared preview remains viewport-bounded and scrollbar-free; overflowing
-  preview lines move horizontally instead of widening the surface.
 
 ## Remaining Work
 
@@ -189,9 +165,6 @@ and consumption work.
 ### WorkCell Boundary
 
 - Finish the shared WorkCell shell and typed operation/result projections.
-- Keep the shell itself layout-neutral. Header, expandable body, and static status content
-  each own an explicit content slot; static content uses the shared operation-cell inline
-  inset so pending markers cannot collapse against the shell edges.
 - Keep run, approval and artifact state in existing domains; the package receives view
   models and callbacks only.
 - Preserve quiet normal messages and compact durable warning/approval history.
@@ -215,9 +188,6 @@ and consumption work.
   typed adapters.
 - Do not move Electron IPC, window lifecycle or media ownership into the UI package.
 - Verify compact windows independently from full AppShell geometry.
-- A Web fixture that assigns `window.lingDesktop.platform` proves only conditional Web
-  layout. Native titlebar placement must be accepted from the built Electron application
-  running the current source revision.
 
 ## Module Boundaries
 

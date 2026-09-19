@@ -100,12 +100,14 @@ export interface ChannelEnvironmentSummary {
 
 export function ChannelEnvironmentPage({
   summary,
+  channelName,
   workspacePickerCwd,
   onChangeWorkspacePath,
   onOpenReview,
   onOpenCommit,
 }: {
   readonly summary: ChannelEnvironmentSummary;
+  readonly channelName?: string;
   readonly workspacePickerCwd: string;
   readonly onChangeWorkspacePath: (path: string) => Promise<void>;
   readonly onOpenReview: () => void;
@@ -116,7 +118,6 @@ export function ChannelEnvironmentPage({
   const [directoryError, setDirectoryError] = useState("");
   const surfaceState = deriveEnvironmentSurfaceState(summary);
   const gitState = deriveGitRowState(summary, t);
-  const gitFailureMessage = environmentGitFailureMessage(summary.gitStatusLoadState, t);
   const workspaceReady = summary.workspace?.status === "ready";
   const commitDisabledReason = summary.commitAction?.disabledReason
     ?? t("Commit and push require a daemon Git action and approval policy. This first version is read-only.");
@@ -149,13 +150,16 @@ export function ChannelEnvironmentPage({
       data-environment-state={surfaceState.id}
     >
       <header className="channel-environment-page-header">
-        <h2>{t("Environment")}</h2>
+        <div>
+          <h2>{t("Environment")}</h2>
+          <span>{channelName ? `#${channelName}` : t("Current channel")}</span>
+        </div>
         <StatusIndicator label={t(surfaceState.label)} tone={surfaceState.tone} />
       </header>
 
-      {gitFailureMessage ? (
+      {summary.gitStatusLoadState.status === "error" ? (
         <InlineFeedback tone="danger" title={t("Git status unavailable")}>
-          {gitFailureMessage}
+          {summary.gitStatusLoadState.errorMessage}
         </InlineFeedback>
       ) : null}
       {directoryError ? <InlineFeedback tone="danger">{directoryError}</InlineFeedback> : null}
@@ -167,16 +171,11 @@ export function ChannelEnvironmentPage({
 
       <div className="channel-environment-list" role="list">
         <DataRow
-          className="channel-environment-workspace-row"
           compact
           role="listitem"
           data-environment-row="workspace"
           identity={<EnvironmentIdentity icon={<FolderOpen />} label={t("Local environment")} />}
-          summary={summary.workspace?.path ? (
-            <code className="channel-environment-path" title={summary.workspace.path}>
-              {summary.workspace.path}
-            </code>
-          ) : t("No local workspace is bound to this channel.")}
+          summary={summary.workspace?.path || t("No local workspace is bound to this channel.")}
           status={<StatusIndicator label={summary.workspace?.modeLabel ?? t("Unavailable")} tone={workspaceReady ? "success" : "danger"} />}
           actions={(
             <Button
@@ -262,22 +261,13 @@ function EnvironmentMetric({ icon, label, value }: { readonly icon: ReactNode; r
 }
 
 function deriveEnvironmentSurfaceState(summary: ChannelEnvironmentSummary): { readonly id: string; readonly label: string; readonly tone: StatusTone } {
-  const loadedGitState = summary.gitStatusLoadState.status === "loaded" ? summary.gitStatusLoadState.statusValue.state : undefined;
-  if (
-    summary.gitStatusLoadState.status === "error" ||
-    loadedGitState === "error" ||
-    loadedGitState === "unavailable" ||
-    summary.workspace?.status === "blocked" ||
-    summary.workspace?.status === "missing"
-  ) {
+  if (summary.gitStatusLoadState.status === "error" || summary.workspace?.status === "blocked" || summary.workspace?.status === "missing") {
     return { id: "blocked", label: "Needs attention", tone: "danger" };
   }
-  if (summary.changes?.conflictedFileCount) {
-    return { id: "conflict", label: "Needs attention", tone: "danger" };
-  }
+  if (summary.changes?.conflictedFileCount) return { id: "conflict", label: "Needs attention", tone: "danger" };
   if (summary.gitStatusLoadState.status === "loading") return { id: "loading", label: "Loading", tone: "info" };
   if (summary.changes || summary.review) return { id: "attention", label: "Needs attention", tone: "warning" };
-  return { id: loadedGitState === "not_git_repo" ? "not-git-repository" : "ready", label: "Ready", tone: "success" };
+  return { id: "ready", label: "Ready", tone: "success" };
 }
 
 function deriveGitRowState(summary: ChannelEnvironmentSummary, t: Translate): { readonly label: string; readonly tone: StatusTone } {
@@ -292,18 +282,6 @@ function deriveGitRowState(summary: ChannelEnvironmentSummary, t: Translate): { 
 function environmentEvidenceSummary(summary: ChannelEnvironmentSummary, t: Translate): string {
   const count = (summary.browser?.count ?? 0) + (summary.sources?.count ?? 0) + (summary.output?.count ?? 0);
   return count === 0 ? t("No linked resources") : t("{count} linked items", { count });
-}
-
-function environmentGitFailureMessage(state: ChannelGitStatusLoadState, t: Translate): string | undefined {
-  if (state.status === "error") return state.errorMessage;
-  if (state.status !== "loaded") return undefined;
-  if (state.statusValue.state === "unavailable") {
-    return state.statusValue.unavailableReason ?? t("Git status unavailable");
-  }
-  if (state.statusValue.state === "error") {
-    return state.statusValue.errorMessage ?? t("Git status failed");
-  }
-  return undefined;
 }
 
 export function ChannelEnvironmentDiffStat({ additions, deletions }: { readonly additions: number; readonly deletions: number }): React.JSX.Element {

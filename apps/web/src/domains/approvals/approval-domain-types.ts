@@ -1,4 +1,4 @@
-export type ApprovalResolution = "approve" | "approve_once" | "approve_command_rule" | "deny";
+export type ApprovalResolution = "approve" | "deny";
 
 export type ExternalActionOperation = "execute" | "cancel";
 

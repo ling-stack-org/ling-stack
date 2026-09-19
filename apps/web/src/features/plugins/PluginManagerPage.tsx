@@ -1,6 +1,5 @@
 import { useMemo } from "react";
 import { useI18n } from "../../i18n.js";
-import { useDesktopTitlebarPlacement } from "../../app/DesktopTitlebarSurface.js";
 import { PLUGIN_DRAFT_ID } from "../../domains/plugins/use-plugins-domain.js";
 import { CuaDriverInstallDrawer } from "./CuaDriverInstallDrawer.js";
 import { PluginCreateDialog } from "./PluginCreateDialog.js";
@@ -17,7 +16,6 @@ export type { PluginManagerPageProps } from "./plugin-manager-types.js";
 
 export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Element {
   const { t } = useI18n();
-  const titlebarPlacement = useDesktopTitlebarPlacement();
   const copy = useMemo(() => buildPluginManagerCopy(t), [t]);
   const controller = usePluginManagerController({
     plugins: props.plugins,
@@ -113,7 +111,7 @@ export function PluginManagerPage(props: PluginManagerPageProps): React.JSX.Elem
   return (
     <div className="plugin-manager-page">
       <section
-        className={`settings-plugin-manager titlebar-${titlebarPlacement}`}
+        className="settings-plugin-manager"
         aria-labelledby="plugin-manager-title"
         data-retained-refresh={controller.retainedRefreshError ? "true" : undefined}
       >

@@ -3,6 +3,7 @@ import { useI18n } from "../../i18n.js";
 import { Button, IconButton } from "../../shared/ui/index.js";
 
 export function TeammateSettingsHeader({
+  teammateName,
   profileActive,
   profileDirty,
   savingProfile,
@@ -20,6 +21,7 @@ export function TeammateSettingsHeader({
   onResetPermissions,
   onSavePermissions,
 }: {
+  readonly teammateName: string;
   readonly profileActive: boolean;
   readonly profileDirty: boolean;
   readonly savingProfile: boolean;
@@ -54,6 +56,7 @@ export function TeammateSettingsHeader({
             <SlidersHorizontal size={17} aria-hidden="true" />
             <h2>{t("Teammate settings")}</h2>
           </span>
+          <small title={teammateName}>{teammateName}</small>
         </div>
       </div>
       {profileActive ? (

@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-09-03
+Last verified: 2026-08-27
 Document type: governance index
 
 ## Purpose
@@ -31,12 +31,9 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 | [Channel Execution Completion](channel-execution-completion-implementation-plan.md) | Required-participant fan-in, operation evidence, TerminalReport/source-Turn convergence, clean-break Attempt fencing, restart recovery, migration rollback/reopen, and aggregate source verification are green on the isolated delivery branch | Review the isolated diff, open PR/CI, merge, verify the actual remote `main` merge commit, then clean exact QA resources |
 | [Channel Context Processing](channel-context-processing-layer-implementation-plan.md) | Channel and direct-message context views exist | Condensation, quote eligibility, persistence and redaction ownership are closed |
 | [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin-implementation-plan.md) | Manual V1 pairing and six approved browser tools exist; Native Messaging `0.1.1` implementation is active | Automatic Host connection, dual-platform package gates, real Chrome acceptance and Store resubmission close |
-| [Project Defect Remediation 2026-09](project-defect-remediation-plan-2026-09.md) | Source remediation and automated Web/daemon/native regression are green across right-dock review, Runs, Profile i18n, Native Broker startup, and Native migration | Real macOS/Windows packaged-client and Chrome-extension environment acceptance closes |
-| [Workspace Command Rule Approval](workspace-command-rule-approval-implementation-plan.md) | Approval contracts, storage, daemon matching, and Composer split-button implementation exist | Real-browser proof of once versus persistent approval, cross-surface/restart behavior, revoke, and unsafe-command rejection closes |
 | [Permission Presets](codex-inspired-settings-permission-presets-implementation-plan.md) | Enforcement modes exist | Preset UI, effective preview and run audit agree with daemon enforcement |
 | [Conversation Surface](conversation-surface-contract-implementation-plan.md) | Shared primitives and initial package extraction are implemented | WorkCell, evidence, attachment, package CSS and Desktop-consumption boundaries close |
 | [Conversation Media Generation](conversation-media-generation-tools-implementation-plan.md) | Runner tools, target resolution, background MediaJob projection, and three-surface integration are defined | Shared tool registration, idempotent paid-task creation, recovery projection, and browser acceptance close |
-| [Conversation Right Dock Responsive Visibility](conversation-right-dock-responsive-visibility-implementation-plan.md) | Shared requested/rendered/available state and narrow-width layout ownership are implemented | Real-browser proof at and around `900px` across channel, normal conversation, and private chat, including restoration and no reserved blank region, closes |
 | [Bundled CUA Driver](cua-driver-bundled-embedded-implementation-plan.md) | Packaging, integrity and platform foundations exist | Computer Control Settings surface and remaining signed platform gates close |
 | [Desktop Computer Use PiP](desktop-computer-use-picture-in-picture-implementation-plan.md) | Renderer and fail-closed local harness exist | Signed macOS, Windows, assistive-technology and clean-host release gates pass |
 | [External Work Phase 8.0](external-work-phase-8.0-adapter-registry-implementation.md) | Approved registry refactor; not yet implemented | Generic GitHub/Linear registry lands without behavior drift |

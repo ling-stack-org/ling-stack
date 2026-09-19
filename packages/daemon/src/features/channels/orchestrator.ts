@@ -32,7 +32,6 @@ import {
 import { ensureDeterministicWorkflowSelectorDecision } from "./workflow-selector.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
 import { finalizeDelegatedWorkflowStepFromCanonicalState } from "./workflow-step-finalizer.js";
-import { preserveMarkdownLayout } from "./markdown-text.js";
 import { reconcileWorkflowFromCanonicalState } from "./workflow-reconciliation.js";
 import { syncWorkflowSourceTurnProgress } from "./workflow-source-turn.js";
 import {
@@ -876,9 +875,10 @@ function readRunAssistantTextSummary(store: RunStore, runId: string): string | u
     .listEvents(runId, { limit: 1000 })
     .filter((event) => event.type === "assistant_text_delta")
     .map((event) => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
-    .join("");
-  const normalizedText = preserveMarkdownLayout(text);
-  return normalizedText || undefined;
+    .join("")
+    .replace(/\s+/g, " ")
+    .trim();
+  return text || undefined;
 }
 
 function readRunArtifactResultSummary(store: RunStore, runId: string): string | undefined {

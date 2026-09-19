@@ -73,26 +73,24 @@ test("AUTO-CREATE uses one keyboard-safe shared dialog and preserves failed manu
   await initializePage(page, "en-US", "light");
   await page.emulateMedia({ reducedMotion: "reduce" });
   const appState = createBaseState({ approvalStatus: "pending" });
-  appState.providers = [createChatProvider({ id: "provider_local", displayName: "gpt-test · gpt-test", model: "gpt-test" })];
+  appState.providers = [createChatProvider({ id: "provider_local", displayName: "Relay", model: "gpt-test" })];
   await mockDaemon(page, appState);
   const fixture = createAutomationFixture();
   await mockAutomationApi(page, fixture, appState);
   const monitor = watchRuntime(page);
 
   await openAutomations(page);
-  const createAutomationButton = page.getByRole("button", { name: "Create automation" });
-  await createAutomationButton.click();
+  const surface = page.locator("[data-automation-ui2-page]");
+  await surface.getByRole("button", { name: "Create automation" }).click();
   let dialog = page.getByRole("dialog", { name: "New automation" });
   await expect(dialog.getByRole("radio")).toHaveCount(3);
   expect(await dialog.evaluate((element) => getComputedStyle(element).animationName)).toBe("none");
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
 
-  await createAutomationButton.click();
+  await surface.getByRole("button", { name: "Create automation" }).click();
   dialog = page.getByRole("dialog", { name: "New automation" });
   await dialog.getByRole("radio", { name: "Manual setup" }).click();
-  await expect(dialog.getByLabel("Model").locator('option[value="provider_local"]')).toHaveText("gpt-test · 127.0.0.1:8317");
-  await expect(dialog).not.toContainText("gpt-test · gpt-test");
   await dialog.getByRole("button", { name: "Create automation" }).click();
   await expect(dialog.getByLabel("Automation name")).toBeFocused();
   await dialog.getByLabel("Automation name").fill("Daily evidence review");
@@ -106,7 +104,7 @@ test("AUTO-CREATE uses one keyboard-safe shared dialog and preserves failed manu
   await dialog.getByRole("button", { name: "Create automation" }).click();
   await expect(dialog).toHaveCount(0);
   await dismissToasts(page);
-  await createAutomationButton.click();
+  await surface.getByRole("button", { name: "Create automation" }).click();
   dialog = page.getByRole("dialog", { name: "New automation" });
 
   await dialog.getByRole("radio", { name: "Use template" }).click();
@@ -260,9 +258,7 @@ test("AUTO-THEME keeps imported Theme Pack ownership on the list and shared crea
   await assertNoHorizontalOverflow(page, surface);
   await captureEvidence(page, "1440x960-quiet-ocean-list-inspector.png", { width: 1440, height: 960 });
 
-  await page.locator("[data-desktop-window-titlebar-surface='true']")
-    .getByRole("button", { name: "Create automation" })
-    .click();
+  await surface.getByRole("button", { name: "Create automation" }).click();
   const dialog = page.getByRole("dialog", { name: "New automation" });
   await expect(dialog).toBeVisible();
   await expectBackgroundToMatchToken(dialog, "--ling-bg-elevated");

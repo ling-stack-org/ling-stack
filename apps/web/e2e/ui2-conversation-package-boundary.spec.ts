@@ -223,25 +223,14 @@ function installRichCopyFixture(state: MockState): void {
 }
 
 function installStructuredActivityFixture(state: MockState): void {
-  state.channelMessages = [];
-  state.channelConversationItemExtras = [{
-    schemaVersion: 1,
-    id: "item_ui2_package_structured",
-    workspaceId: "workspace_default",
-    channelId: "channel_engineering",
-    threadId: "thread_channel_channel_engineering",
-    sequence: 1,
-    kind: "system_event",
-    status: "committed",
-    actorType: "system",
-    visibility: "channel",
-    payload: { eventType: "task_link", summary: "Structured package boundary" },
-    domainRefs: [],
-    revision: 1,
+  state.channelMessages = [channelMessage({
+    authorId: "system",
+    authorType: "system",
+    body: "Structured package boundary",
     createdAt: "2026-07-24T04:20:00.000Z",
-    updatedAt: "2026-07-24T04:20:00.000Z",
-    committedAt: "2026-07-24T04:20:00.000Z",
-  }];
+    id: "message_ui2_package_structured",
+    kind: "task_link",
+  })];
   state.channelDecisions = [{
     id: "decision_ui2_package_boundary",
     workspaceId: "workspace_default",

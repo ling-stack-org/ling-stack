@@ -18,12 +18,8 @@ export interface ChannelRightDockController {
   readonly windowRef: MutableRefObject<HTMLDivElement | null>;
   readonly mainRef: MutableRefObject<HTMLDivElement | null>;
   readonly pageRequest: WorkspaceRightDockPageRequest | undefined;
-  readonly requestedOpen: boolean;
-  readonly available: boolean;
-  readonly renderedOpen: boolean;
   readonly visible: boolean;
   readonly expanded: boolean;
-  readonly resizable: boolean;
   readonly resizing: boolean;
   readonly width: number;
   readonly containerWidth: number;
@@ -53,12 +49,8 @@ export function useChannelRightDockController(input: ChannelRightDockControllerI
     windowRef,
     mainRef,
     pageRequest: controller.pageRequest,
-    requestedOpen: controller.requestedOpen,
-    available: controller.available,
-    renderedOpen: controller.renderedOpen,
     visible: controller.visible,
     expanded: controller.expanded,
-    resizable: controller.resizable,
     resizing: controller.resizing,
     width: controller.width,
     containerWidth: controller.containerWidth,

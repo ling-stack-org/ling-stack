@@ -15,8 +15,6 @@ test("channel settings uses shared tabs and stable section boundaries", async ({
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "expired" });
-  state.workspaceSettings.channelNotifications = { channel_preserved: "all" };
-  state.channelTeamMetricsByChannel.channel_engineering = detailedTeamMetricsFixture();
   await mockDaemon(page, state);
   await page.goto("/");
   await openChannelSettings(page);
@@ -36,56 +34,6 @@ test("channel settings uses shared tabs and stable section boundaries", async ({
     await expect(panel).toHaveCount(1);
   }
 
-  await tabs.getByRole("tab", { name: "Workspace" }).click();
-  const workspacePanel = settings.locator(".channel-settings-workspace-panel");
-  const tabContent = settings.locator(".channel-settings-tab-content");
-  const [workspacePanelBox, tabContentBox] = await Promise.all([
-    workspacePanel.boundingBox(),
-    tabContent.boundingBox(),
-  ]);
-  expect(workspacePanelBox).not.toBeNull();
-  expect(tabContentBox).not.toBeNull();
-  expect(Math.abs(
-    (workspacePanelBox!.x + workspacePanelBox!.width / 2)
-      - (tabContentBox!.x + tabContentBox!.width / 2),
-  )).toBeLessThanOrEqual(1);
-  await expect.poll(() => Math.round(workspacePanelBox?.width ?? 0)).toBe(880);
-  const currentWorkspace = settings.getByRole("region", { name: "Channel workspace" });
-  await expect(currentWorkspace.locator(".channel-workspace-mode-label")).toHaveText("Local");
-  await expect(currentWorkspace.locator(".ling-ui-status-indicator")).toHaveCount(0);
-  await expect(currentWorkspace.locator(".channel-workspace-summary")).toHaveCount(0);
-  await captureEvidence(page, "1440x960-ling-light-channel-workspace-centered.png");
-
-  await tabs.getByRole("tab", { name: "Health" }).click();
-  const healthPanel = settings.getByRole("region", { name: "Team metrics" });
-  await expect(healthPanel).toBeVisible();
-  await expect(healthPanel.locator(".channel-team-metrics-tile")).toHaveCount(4);
-  await expect(healthPanel.locator(".channel-team-metrics-breakdown")).toHaveCount(2);
-  await expect(healthPanel.locator(".channel-team-metrics-stat")).toHaveCount(8);
-  await expect(healthPanel.locator(".channel-team-metrics-health")).toHaveCount(0);
-  await expect(healthPanel.locator("small")).toHaveCount(0);
-  await expect(healthPanel).not.toContainText("Read-only team activity and evidence");
-  await expect(healthPanel).not.toContainText("pending");
-  await expect(healthPanel).not.toContainText("late");
-  await expect(healthPanel).not.toContainText("blocked");
-  await expect(healthPanel).not.toContainText("risk signals");
-  await expect(healthPanel).not.toContainText("recommendations");
-  await expect(healthPanel).not.toContainText("Pattern Store");
-  await expect(healthPanel).not.toContainText("No agent evidence yet");
-  await expect(healthPanel.getByRole("region", { name: "Risk review" })).toContainText("Risk2Warnings1Failed1Critical1");
-  await expect(healthPanel.getByRole("region", { name: "Learning queue" })).toContainText("Recommendation3Accepted2Rejected1Pending1");
-  await expect(healthPanel).toContainText("Architect checked boundaries.");
-  await expect(healthPanel).toHaveCSS("border-top-width", "0px");
-  const healthSections = healthPanel.locator(":scope > .channel-settings-section-head, :scope > .channel-team-metrics-grid, :scope > .channel-team-metrics-breakdowns, :scope > .channel-team-metrics-agents");
-  const healthSectionBoxes = await healthSections.evaluateAll((elements) => elements.map((element) => {
-    const box = element.getBoundingClientRect();
-    return { top: box.top, bottom: box.bottom };
-  }));
-  expect(healthSectionBoxes).toHaveLength(4);
-  expect(healthSectionBoxes.slice(1).map((box, index) => Math.round(box.top - healthSectionBoxes[index]!.bottom)))
-    .toEqual([14, 14, 14]);
-  await captureEvidence(page, "1440x960-ling-light-channel-health-compact.png");
-
   await tabs.getByRole("tab", { name: "General" }).focus();
   await page.keyboard.press("End");
   await expect(tabs.getByRole("tab", { name: "Health" })).toHaveAttribute("aria-selected", "true");
@@ -93,40 +41,6 @@ test("channel settings uses shared tabs and stable section boundaries", async ({
   await expect(tabs.getByRole("tab", { name: "General" })).toHaveAttribute("aria-selected", "true");
   const notificationOptions = settings.locator(".channel-notification-option");
   await expect(notificationOptions).toHaveCount(3);
-  const allOption = settings.getByRole("radio", { name: "All activity" });
-  const mentionsOption = settings.getByRole("radio", { name: "Mentions and approvals" });
-  const mutedOption = settings.getByRole("radio", { name: "Muted" });
-  await expect(mentionsOption).toHaveAttribute("data-state", "on");
-  await expect(mentionsOption).toHaveAttribute("aria-checked", "true");
-  await expect(allOption).toHaveAttribute("data-state", "off");
-  const selectedVisual = await mentionsOption.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { backgroundColor: style.backgroundColor, boxShadow: style.boxShadow };
-  });
-  const unselectedVisual = await allOption.evaluate((element) => {
-    const style = getComputedStyle(element);
-    return { backgroundColor: style.backgroundColor, boxShadow: style.boxShadow };
-  });
-  expect(selectedVisual.backgroundColor).not.toBe(unselectedVisual.backgroundColor);
-  expect(selectedVisual.boxShadow).not.toBe("none");
-  await captureEvidence(page, "1440x960-ling-light-channel-notifications-mentions.png");
-
-  await mutedOption.click();
-  await expect(mutedOption).toHaveAttribute("data-state", "on");
-  await expect(mutedOption).toHaveAttribute("aria-checked", "true");
-  await expect(settings.locator(".channel-notification-description")).toHaveText("Only critical approval blockers can surface.");
-  await expect.poll(() => state.workspaceSettings.channelNotifications?.channel_engineering).toBe("muted");
-  expect(state.workspaceSettings.channelNotifications?.channel_preserved).toBe("all");
-  await captureEvidence(page, "1440x960-ling-light-channel-notifications-muted.png");
-
-  await allOption.click();
-  await expect(allOption).toHaveAttribute("data-state", "on");
-  await expect(allOption).toHaveAttribute("aria-checked", "true");
-  await expect(settings.locator(".channel-notification-description")).toHaveText("Notify for messages, tasks, runs, files, and approvals.");
-  await expect.poll(() => state.workspaceSettings.channelNotifications?.channel_engineering).toBe("all");
-  expect(state.workspaceSettings.channelNotifications?.channel_preserved).toBe("all");
-  await captureEvidence(page, "1440x960-ling-light-channel-notifications-all.png");
-
   expect(await notificationOptions.evaluateAll((options) => options.every((option) => {
     const optionBox = option.getBoundingClientRect();
     const labelBox = option.querySelector("strong")?.getBoundingClientRect();
@@ -135,50 +49,8 @@ test("channel settings uses shared tabs and stable section boundaries", async ({
       && labelBox!.right <= optionBox.right + 1
       && (option.querySelector("strong")?.scrollWidth ?? 1) <= (option.querySelector("strong")?.clientWidth ?? 0);
   }))).toBe(true);
-  await expect(settings.locator(".channel-settings-tabs-scroll")).toHaveCSS("border-bottom-width", "1px");
-  const generalSurfaces = settings.locator(".channel-settings-general-panel .channel-settings-surface");
-  await expect(generalSurfaces).toHaveCount(2);
-  expect(await generalSurfaces.evaluateAll((surfaces) => surfaces.map((surface) => (
-    getComputedStyle(surface).borderTopWidth
-  )))).toEqual(["0px", "0px"]);
   await expectNoDocumentOverflow(page);
   await captureEvidence(page, "1440x960-ling-light-channel-settings-general.png");
-  expect(runtimeErrors).toEqual([]);
-});
-
-test("channel settings keeps notifications in General and uses a compact Chinese dark health summary", async ({ page }) => {
-  await prepareSurface(page, "dark", 1440, 960, "zh-CN");
-  const runtimeErrors = collectRuntimeErrors(page);
-  const state = createBaseState({ approvalStatus: "expired" });
-  state.channelTeamMetricsByChannel.channel_engineering = detailedTeamMetricsFixture();
-  await mockDaemon(page, state);
-  await page.goto("/");
-  await openChannelSettings(page, "zh-CN");
-
-  const settings = page.locator("[data-ui2-channel-settings='true']");
-  await expect(settings.locator(".channel-notification-option")).toHaveCount(3);
-  await captureEvidence(page, "1440x960-ling-dark-zh-channel-settings-general-notifications.png");
-
-  await settings.getByRole("tab", { name: "健康" }).click();
-  const healthPanel = settings.locator(".channel-team-metrics-panel");
-  await expect(healthPanel.locator(".channel-team-metrics-tile")).toHaveCount(4);
-  await expect(healthPanel.locator(".channel-team-metrics-breakdown")).toHaveCount(2);
-  await expect(healthPanel.locator(".channel-team-metrics-stat")).toHaveCount(8);
-  await expect(healthPanel.locator(".channel-team-metrics-health")).toHaveCount(0);
-  await expect(healthPanel.locator("small")).toHaveCount(0);
-  await expect(healthPanel).not.toContainText("只读团队活动和证据");
-  await expect(healthPanel).not.toContainText("pending");
-  await expect(healthPanel).not.toContainText("late");
-  await expect(healthPanel).not.toContainText("blocked");
-  await expect(healthPanel).not.toContainText("risk signals");
-  await expect(healthPanel).not.toContainText("recommendations");
-  await expect(healthPanel).not.toContainText("Pattern Store");
-  await expect(healthPanel).toContainText("风险评审");
-  await expect(healthPanel).toContainText("学习队列");
-  await expect(healthPanel).toContainText("Architect checked boundaries.");
-  await expect(healthPanel).toHaveCSS("border-top-width", "0px");
-  await captureEvidence(page, "1440x960-ling-dark-zh-channel-health-compact.png");
-  await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -188,10 +60,10 @@ test("channel settings changes only the Ling Agent model and keeps teammate mode
   const state = createBaseState({ approvalStatus: "expired" });
   const readyCheck = { ok: true, message: "Ready", checkedAt: "2026-07-30T00:00:00.000Z" };
   state.providers = [
-    createChatProvider({ id: "provider_workspace", displayName: "gpt-workspace · gpt-workspace", model: "gpt-workspace", lastCheck: readyCheck }),
+    createChatProvider({ id: "provider_workspace", displayName: "Workspace Relay", model: "gpt-workspace", lastCheck: readyCheck }),
     createChatProvider({ id: "provider_ling", displayName: "Ling Relay", model: "gpt-ling", lastCheck: readyCheck }),
-    createChatProvider({ id: "provider_ling_next", displayName: "gpt-ling-next · gpt-ling-next", model: "gpt-ling-next", lastCheck: readyCheck }),
-    createChatProvider({ id: "provider_fixed", displayName: "gpt-fixed · gpt-fixed", model: "gpt-fixed", lastCheck: readyCheck }),
+    createChatProvider({ id: "provider_ling_next", displayName: "Next Ling Relay", model: "gpt-ling-next", lastCheck: readyCheck }),
+    createChatProvider({ id: "provider_fixed", displayName: "Fixed Relay", model: "gpt-fixed", lastCheck: readyCheck }),
   ];
   state.workspaceSettings.defaultProviderPresetId = "provider_workspace";
   state.channels = state.channels.map((channel) => isRecord(channel)
@@ -242,11 +114,9 @@ test("channel settings changes only the Ling Agent model and keeps teammate mode
   const lingRow = settings.locator(".channel-teammate-chip").filter({ hasText: "Ling Agent" });
   const workspaceRow = settings.locator(".channel-teammate-chip").filter({ hasText: "Workspace Engineer" });
   const fixedRow = settings.locator(".channel-teammate-chip").filter({ hasText: "Fixed Reviewer" });
-  await expect(lingRow.locator(".channel-teammate-model-source")).toHaveText("gpt-ling-next");
-  await expect(workspaceRow.locator(".channel-teammate-model-source")).toHaveText("gpt-workspace");
-  await expect(fixedRow.locator(".channel-teammate-model-source")).toHaveText("gpt-fixed");
-  await expect(settings).not.toContainText("gpt-ling-next · gpt-ling-next");
-  await captureEvidence(page, "1440x960-ling-light-channel-members-model-labels.png");
+  await expect(lingRow).toContainText("Ling Agent model · Next Ling Relay / gpt-ling-next");
+  await expect(workspaceRow).toContainText("Workspace default · Workspace Relay / gpt-workspace");
+  await expect(fixedRow).toContainText("Fixed model · Fixed Relay / gpt-fixed");
   await expect(settings.locator(".channel-teammate-chip").getByRole("combobox")).toHaveCount(0);
   expect(state.aiTeammates.map((teammate) => teammate.providerPresetId)).toEqual([undefined, undefined, "provider_fixed"]);
   await expectNoDocumentOverflow(page);
@@ -325,7 +195,7 @@ test("channel dock uses shared controls across launcher and deep pages", async (
   expect(runtimeErrors).toEqual([]);
 });
 
-test("channel approval composer gate, settings, and dock remain contained at 1280 in dark mode", async ({ page }) => {
+test("channel approval dialog, settings, and dock remain contained at 1280 in dark mode", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "pending" });
@@ -346,15 +216,16 @@ test("channel approval composer gate, settings, and dock remain contained at 128
   });
   await page.goto("/");
   await openEngineeringChannel(page);
-  const approvalGate = page.getByRole("region", { name: "Allow this action?" });
-  await expect(approvalGate).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Allow this action?" })).toHaveCount(0);
+  const approvalDialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(approvalDialog).toBeVisible();
+  await expect(approvalDialog).toHaveAttribute("data-size", "sm");
+  await expect(approvalDialog).toHaveAttribute("data-dismissible", "false");
   await expectNoDocumentOverflow(page);
-  await captureEvidence(page, "1280x800-ling-dark-runtime-approval-composer-gate.png");
+  await captureEvidence(page, "1280x800-ling-dark-runtime-approval-dialog.png");
   await page.keyboard.press("Escape");
-  await expect(approvalGate).toBeVisible();
-  await approvalGate.getByRole("button", { name: "Deny" }).click();
-  await expect(approvalGate).toHaveCount(0);
+  await expect(approvalDialog).toBeVisible();
+  await approvalDialog.getByRole("button", { name: "Deny" }).click();
+  await expect(approvalDialog).toHaveCount(0);
   await openChannelSettings(page);
 
   const settings = page.getByRole("region", { name: "Channel settings" });
@@ -567,32 +438,23 @@ test("channel dock reaches loaded, failure, and detail states across every launc
   expect(runtimeErrors).toEqual([]);
 });
 
-async function openChannelSettings(page: Page, locale: "en-US" | "zh-CN" = "en-US"): Promise<void> {
+async function openChannelSettings(page: Page): Promise<void> {
   await openEngineeringChannel(page);
-  const labels = locale === "zh-CN"
-    ? { more: "更多频道视图", settings: "设置", region: "频道设置" }
-    : { more: "More channel views", settings: "Settings", region: "Channel settings" };
-  await page.getByRole("button", { name: labels.more }).click();
-  await page.getByRole("menuitem", { name: labels.settings }).click();
-  await expect(page.getByRole("region", { name: labels.region })).toBeVisible();
+  await page.getByRole("button", { name: "More channel views" }).click();
+  await page.getByRole("menuitem", { name: "Settings" }).click();
+  await expect(page.getByRole("region", { name: "Channel settings" })).toBeVisible();
 }
 
-async function prepareSurface(
-  page: Page,
-  theme: "light" | "dark",
-  width: number,
-  height: number,
-  locale: "en-US" | "zh-CN" = "en-US",
-): Promise<void> {
+async function prepareSurface(page: Page, theme: "light" | "dark", width: number, height: number): Promise<void> {
   await page.setViewportSize({ width, height });
-  await page.addInitScript(({ themeId, localeId }) => {
+  await page.addInitScript((themeId) => {
     const selection = { mode: "fixed", themeId: `ling-${themeId}` };
-    localStorage.setItem("ling-stack.locale", localeId);
+    localStorage.setItem("ling-stack.locale", "en-US");
     localStorage.setItem("ling-stack.themeSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themeBootstrapSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themePreference", themeId);
     localStorage.setItem("ling-stack.themeBootstrapPreference", themeId);
-  }, { themeId: theme, localeId: locale });
+  }, theme);
 }
 
 function governanceNotification(): MockState["governanceNotifications"][number] {
@@ -615,59 +477,6 @@ function governanceNotification(): MockState["governanceNotifications"][number] 
     dedupeKey: "memory:memory_candidate_ui2:channel:channel_engineering",
     createdAt: "2026-07-19T03:00:00.000Z",
     updatedAt: "2026-07-19T03:01:00.000Z",
-  };
-}
-
-function detailedTeamMetricsFixture(): Record<string, unknown> {
-  return {
-    channelId: "channel_engineering",
-    generatedAt: "2026-08-31T00:00:00.000Z",
-    visibleEvidence: {
-      channelId: "channel_engineering",
-      generatedAt: "2026-08-31T00:00:00.000Z",
-      totalCount: 7,
-      countsByKind: { team_evidence: 7 },
-      pendingCount: 2,
-      failedCount: 1,
-    },
-    summary: {
-      healthState: "attention_needed",
-      totalEvidenceCount: 9,
-      activeEvidenceCount: 2,
-      delayedEvidenceCount: 1,
-      unavailableEvidenceCount: 1,
-      reliabilityIncidentCount: 1,
-      availabilityIncidentCount: 0,
-    },
-    agents: [{
-      agentId: "architect",
-      evidenceCount: 3,
-      completedCount: 2,
-      delayedCount: 1,
-      unavailableCount: 0,
-      adoptedCount: 1,
-      rejectedCount: 0,
-      reliabilityIncidentCount: 0,
-      latestSummary: "Architect checked boundaries.",
-    }],
-    attention: {
-      activeAgentCount: 1,
-      evidenceKindCounts: { specialist_note: 3 },
-      evidenceStatusCounts: { pending: 2, completed: 6, unavailable: 1 },
-    },
-    riskReview: {
-      riskSignalCount: 2,
-      dissentSignalCount: 1,
-      openReliabilityIncidentCount: 1,
-      openCriticalReliabilityIncidentCount: 1,
-    },
-    learningQueue: {
-      recommendationEvidenceCount: 3,
-      adoptedEvidenceCount: 2,
-      rejectedEvidenceCount: 1,
-      provisionalRuleCount: 1,
-      note: "Pattern Store is inspect-only here.",
-    },
   };
 }
 

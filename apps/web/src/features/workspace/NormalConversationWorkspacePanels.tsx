@@ -49,7 +49,7 @@ export function NormalConversationWorkspacePanels({
   const effectiveCwd = workspaceCwd.trim();
   return (
     <>
-      {dockController.resizable ? (
+      {dockController.visible ? (
         <button
           className="workspace-right-dock-resize-handle"
           type="button"

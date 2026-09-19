@@ -75,7 +75,6 @@ for (const fixture of [
     await expect(peerMessage.locator(":scope > .message-content > header")).toHaveCSS("clip-path", "inset(50%)");
     await expectMessageFrameContained(ownMessage);
     await expectMessageFrameContained(peerMessage);
-    await expectMessageWidthPolicy(ownMessage, peerMessage);
 
     const composerTheme = await composer.evaluate((element) => {
       const probe = document.createElement("span");
@@ -544,27 +543,6 @@ test("normal conversation does not reset scroll for same-height stream revisions
   await expect.poll(() => feed.evaluate((element) => element.scrollHeight > element.clientHeight)).toBe(true);
   await expect.poll(() => feed.evaluate((element) => Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight))).toBeLessThanOrEqual(2);
   expect(await feed.evaluate((element) => element.scrollHeight)).toBeGreaterThan(beforeGrowth);
-
-  const latest = conversation.getByRole("button", { name: "Jump to latest message" });
-  await feed.evaluate((element) => {
-    element.scrollTop = 0;
-    element.dispatchEvent(new Event("scroll", { bubbles: true }));
-  });
-  await expect(latest).toBeVisible();
-  const awayContent = Array.from({ length: 60 }, (_, index) => `Away stream line ${index + 1}`).join("\n");
-  await page.evaluate((content) => {
-    const probe = (globalThis as typeof globalThis & {
-      __normalConversationScrollProbe?: { emitChunk?: (content: string, seq: number) => void };
-    }).__normalConversationScrollProbe;
-    probe?.emitChunk?.(content, 6);
-  }, awayContent);
-  await expect(conversation.getByText(awayContent, { exact: true })).toBeVisible();
-  await expect.poll(() => feed.evaluate((element) => element.scrollTop)).toBeLessThanOrEqual(2);
-  await expect(latest).toBeVisible();
-  await expect.poll(() => feed.evaluate((element) => Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight))).toBeGreaterThan(56);
-  await latest.click();
-  await expect.poll(() => feed.evaluate((element) => Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight))).toBeLessThanOrEqual(2);
-
   await page.evaluate(() => {
     const probe = (globalThis as typeof globalThis & {
       __normalConversationScrollProbe?: { finish?: () => void };
@@ -572,76 +550,6 @@ test("normal conversation does not reset scroll for same-height stream revisions
     probe?.finish?.();
   });
   expect(state.threads.some((thread) => thread.id === threadId)).toBe(true);
-});
-
-test("normal conversation coalesces tail reconciliation per animation frame", async ({ page }) => {
-  await prepareSurface(page, "light", 1440, 800);
-  await page.addInitScript(() => {
-    type ScrollProbe = {
-      rafCalls: number;
-      triggerResize?: () => void;
-    };
-    const probe: ScrollProbe = { rafCalls: 0 };
-    const observers: Array<{ trigger: () => void }> = [];
-    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: ScrollProbe }).__normalConversationScrollProbe = probe;
-
-    const originalRequestAnimationFrame = globalThis.requestAnimationFrame.bind(globalThis);
-    globalThis.requestAnimationFrame = (callback) => {
-      probe.rafCalls += 1;
-      return originalRequestAnimationFrame(callback);
-    };
-
-    class FakeResizeObserver {
-      private readonly callback: ResizeObserverCallback;
-
-      constructor(callback: ResizeObserverCallback) {
-        this.callback = callback;
-        observers.push(this);
-      }
-
-      observe(_target: Element): void {}
-
-      unobserve(_target: Element): void {}
-
-      disconnect(): void {
-        const index = observers.indexOf(this);
-        if (index >= 0) observers.splice(index, 1);
-      }
-
-      trigger(): void {
-        this.callback([], this as unknown as ResizeObserver);
-      }
-    }
-    globalThis.ResizeObserver = FakeResizeObserver as unknown as typeof ResizeObserver;
-    probe.triggerResize = () => observers.slice().forEach((observer) => observer.trigger());
-  });
-
-  const state = createBaseState({ approvalStatus: "expired" });
-  installProviders(state);
-  installStableConversationFixture(state);
-  await mockDaemon(page, state);
-  await page.goto("/");
-  await openConversation(page, "UI2 composer controls");
-  await page.waitForTimeout(100);
-  await page.evaluate(() => {
-    const probe = (globalThis as typeof globalThis & {
-      __normalConversationScrollProbe?: { rafCalls: number };
-    }).__normalConversationScrollProbe;
-    if (probe) probe.rafCalls = 0;
-  });
-
-  await page.evaluate(() => {
-    const probe = (globalThis as typeof globalThis & {
-      __normalConversationScrollProbe?: { triggerResize?: () => void };
-    }).__normalConversationScrollProbe;
-    probe?.triggerResize?.();
-    probe?.triggerResize?.();
-    probe?.triggerResize?.();
-  });
-  await expect.poll(() => page.evaluate(() => (
-    (globalThis as typeof globalThis & { __normalConversationScrollProbe?: { rafCalls: number } })
-      .__normalConversationScrollProbe?.rafCalls ?? -1
-  ))).toBe(1);
 });
 
 test("normal conversation replacement retry keeps the original idempotency key", async ({ page }) => {
@@ -867,21 +775,6 @@ async function expectAlignedColumns(feed: Locator, composer: Locator): Promise<v
   }).toBe(true);
 }
 
-async function expectMessageWidthPolicy(ownMessage: Locator, peerMessage: Locator): Promise<void> {
-  const [ownRow, ownContent, peerRow, peerContent] = await Promise.all([
-    ownMessage.boundingBox(),
-    ownMessage.locator(":scope > .message-content").boundingBox(),
-    peerMessage.boundingBox(),
-    peerMessage.locator(":scope > .message-content").boundingBox(),
-  ]);
-  expect(ownRow).not.toBeNull();
-  expect(ownContent).not.toBeNull();
-  expect(peerRow).not.toBeNull();
-  expect(peerContent).not.toBeNull();
-  expect(ownContent!.width).toBeLessThan(ownRow!.width);
-  expect(Math.abs(peerContent!.width - peerRow!.width)).toBeLessThanOrEqual(1);
-}
-
 async function expectInputContained(input: Locator, field: Locator): Promise<void> {
   const inputBox = await input.boundingBox();
   const fieldBox = await field.boundingBox();
@@ -910,12 +803,6 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 }
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
-  const sessionDirectory = process.env.LING_SESSION_VALIDATION_DIR?.replace(/\/$/u, "");
-  if (sessionDirectory) {
-    await mkdir(sessionDirectory, { recursive: true });
-    await page.screenshot({ animations: "disabled", fullPage: true, path: `${sessionDirectory}/${filename}` });
-    return;
-  }
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
   await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({ animations: "disabled", fullPage: true, path: `${evidenceDirectory}${filename}` });

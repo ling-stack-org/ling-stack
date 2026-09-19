@@ -11,18 +11,6 @@
   background: var(--ling-bg-canvas);
 }
 
-.teammate-workspace.settings-mode.titlebar-window {
-  grid-template-rows: 49px minmax(0, 1fr);
-}
-
-.teammate-workspace.settings-mode.titlebar-window > .teammate-settings-nav {
-  grid-row: 1;
-}
-
-.teammate-workspace.settings-mode.titlebar-window > .teammate-settings-tab-content {
-  grid-row: 2;
-}
-
 .teammate-settings-header {
   position: relative;
   grid-column: 1;
@@ -213,6 +201,7 @@
   padding: 0;
 }
 
+.teammate-profile-settings-stack > .teammate-danger-panel,
 .teammate-tools-permissions-panel > .teammate-mcp-panel {
   padding-top: var(--ling-space-8);
   border-top: 1px solid var(--ling-border-default);

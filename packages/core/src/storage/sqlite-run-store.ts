@@ -11,7 +11,6 @@ import type {
   UpsertChromeBrowserCredentialInput,
 } from "../chrome-browser-types.js";
 import {
-  type ApprovalCommandRule,
   type ApprovalRequest,
   type CreateApprovalRequestInput,
   type ListApprovalRequestsOptions,
@@ -4133,18 +4132,6 @@ export class SqliteRunStore implements RunStore {
 
   cancelApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
     return this.approvalRequests.cancelApprovalRequest(id, input, now);
-  }
-
-  listApprovalCommandRules(options: { readonly includeRevoked?: boolean } = {}): ApprovalCommandRule[] {
-    return this.approvalRequests.listApprovalCommandRules(options);
-  }
-
-  findMatchingApprovalCommandRule(toolName: "bash", argv: readonly string[]): ApprovalCommandRule | undefined {
-    return this.approvalRequests.findMatchingApprovalCommandRule(toolName, argv);
-  }
-
-  revokeApprovalCommandRule(id: string, now: string): ApprovalCommandRule | undefined {
-    return this.approvalRequests.revokeApprovalCommandRule(id, now);
   }
 
   createApprovalCheckpoint(input: CreateApprovalCheckpointInput, now: string): LingApprovalCheckpoint {

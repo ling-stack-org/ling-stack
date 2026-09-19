@@ -1,5 +1,4 @@
 import type { SQLOutputValue } from "node:sqlite";
-import { isSupportedLocale } from "@ling-stack/localization";
 import {
   DEFAULT_SKILL_GOVERNANCE_POLICY,
   DEFAULT_WORKSPACE_ID,
@@ -86,7 +85,7 @@ function createDefaultWorkspaceSettings(now: string): WorkspaceSettings {
 }
 
 function parseOptionalResponseLanguagePreference(value: unknown): ResponseLanguagePreference | undefined {
-  return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
+  return value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
 }
 
 function parseOptionalLingConversationTone(value: unknown): LingConversationTone | undefined {
@@ -104,7 +103,7 @@ function parseWorkspaceSettings(value: string, updatedAt: string): WorkspaceSett
     schemaVersion: 1 as const,
     workspaceCwd: typeof parsed.workspaceCwd === "string" && parsed.workspaceCwd.trim() ? parsed.workspaceCwd : undefined,
     theme: parsedTheme,
-    locale: isSupportedLocale(parsed.locale) ? parsed.locale : undefined,
+    locale: typeof parsed.locale === "string" && parsed.locale.trim() ? parsed.locale : undefined,
     responseLanguage: parseOptionalResponseLanguagePreference(parsed.responseLanguage),
     lingConversationTone: parseOptionalLingConversationTone(parsed.lingConversationTone),
     defaultProviderPresetId: typeof parsed.defaultProviderPresetId === "string" && parsed.defaultProviderPresetId.trim() ? parsed.defaultProviderPresetId : undefined,

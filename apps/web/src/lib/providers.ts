@@ -17,13 +17,6 @@ import {
   type ProviderModelCapabilitySnapshot,
 } from "@ling-stack/core/provider-model-capabilities";
 import { providerWorkbenchReady } from "./provider-workbench-readiness.js";
-import {
-  formatProviderModelRouteLabel,
-  providerCompactModelLabel,
-  providerDisplaySourceLabel,
-} from "./provider-model-labels.js";
-
-export { providerCompactModelLabel, providerDisplaySourceLabel } from "./provider-model-labels.js";
 
 type ProviderTranslate = (key: string, values?: Readonly<Record<string, string | number>>) => string;
 
@@ -526,9 +519,8 @@ export function providerModelRouteLabel(
   provider: ProviderPreset,
   templates: readonly ProviderTemplate[] = [],
 ): string {
-  const modelLabel = providerCompactModelLabel(provider);
   const routeLabel = providerRouteShortLabel(provider, templates);
-  return formatProviderModelRouteLabel(modelLabel, routeLabel);
+  return routeLabel ? `${provider.model} · ${routeLabel}` : provider.model;
 }
 
 export function providerRouteShortLabel(
@@ -975,6 +967,19 @@ function providerEndpointHost(value: string): string {
   } catch {
     return "";
   }
+}
+
+function providerDisplaySourceLabel(displayName: string, model: string): string {
+  const trimmedDisplayName = displayName.trim();
+  const trimmedModel = model.trim();
+  if (!trimmedDisplayName || !trimmedModel) {
+    return trimmedDisplayName;
+  }
+  const suffixes = [` · ${trimmedModel}`, ` / ${trimmedModel}`, ` - ${trimmedModel}`];
+  const matchingSuffix = suffixes.find((suffix) => trimmedDisplayName.toLowerCase().endsWith(suffix.toLowerCase()));
+  return matchingSuffix
+    ? trimmedDisplayName.slice(0, -matchingSuffix.length).trim()
+    : trimmedDisplayName;
 }
 
 function translateProviderText(

@@ -155,10 +155,8 @@ test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, 
     const qaContribution = report.participants.find((participant) => participant.agentId === "qa")?.contribution ?? "";
     assert.match(engineerContribution, /Changed files: packages\/core\/src\/terminal-report-types\.ts \(completed\)/u);
     assert.match(engineerContribution, /Changed files: apps\/web\/src\/lib\/terminal-report\.ts \(completed\)/u);
-    assert.match(engineerContribution, /Verified: verification \(completed\)/u);
-    assert.match(qaContribution, /Verified: verification \(failed\)/u);
-    assert.doesNotMatch(engineerContribution, /pnpm typecheck/u);
-    assert.doesNotMatch(qaContribution, /pnpm typecheck/u);
+    assert.match(engineerContribution, /Executed command: pnpm typecheck \(completed\)/u);
+    assert.match(qaContribution, /Executed command: pnpm typecheck \(failed\)/u);
     assert.doesNotMatch(qaContribution, /terminal-report-types|terminal-report\.ts/u);
     assert.doesNotMatch(engineerContribution, /发现类型检查失败/u);
   } finally {
@@ -296,7 +294,7 @@ test("failed edit actions never become changed paths", async () => {
   }
 });
 
-test("terminal evidence infers the user language when a legacy run has no language snapshot", async () => {
+test("terminal evidence infers legacy conversation language when the run snapshot has no language", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-language-fallback-"));
   const store = createSqliteRunStore(cwd);
   try {
@@ -335,62 +333,6 @@ test("terminal evidence infers the user language when a legacy run has no langua
 
     assert.equal(collectRunTerminalReportEvidence(store, run.id).language, "zh-CN");
     assert.equal(collectTurnTerminalReportEvidence(store, turn.id).language, "zh-CN");
-  } finally {
-    store.close();
-    await rm(cwd, { recursive: true, force: true });
-  }
-});
-
-test("workflow terminal evidence promotes delegated node assertions into verification", async () => {
-  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-workflow-check-evidence-"));
-  const store = createSqliteRunStore(cwd);
-  try {
-    const now = "2026-07-11T05:00:00.000Z";
-    const channel = store.createChannel({ name: "Workflow check evidence", boundPath: cwd }, now);
-    const workflow = store.createChannelWorkflow({
-      channelId: channel.id,
-      title: "Verify generated file",
-      objective: "Verify generated file",
-      status: "succeeded",
-      createdBy: "ling_agent",
-    }, now);
-    const created = createWorkflowRun(store, {
-      cwd,
-      channelId: channel.id,
-      workflowId: workflow.id,
-      teammateId: "qa",
-      title: "QA verification",
-      status: "succeeded",
-      resultSummary: "The generated file matches the expected content.",
-      runId: "run_terminal_workflow_node_check",
-      createdAt: now,
-    });
-    store.updateChannelWorkflowStep(created.step.id, {
-      metadata: {
-        executionPlan: {
-          operations: [{
-            id: "verify_target",
-            kind: "run_command",
-            targetKind: "command",
-            targetRef: { type: "command", label: "Verify generated file" },
-            commandMatchPolicy: { kind: "executable", executable: "node" },
-            required: true,
-            dependsOn: [],
-          }],
-        },
-        executionOperationIds: ["verify_target"],
-      },
-    }, now);
-    appendUnifiedBashAction(store, created.run.id, "node -e \"if (actual !== expected) process.exit(1)\"", now);
-
-    const snapshot = collectWorkflowTerminalReportEvidence(store, workflow.id, { generatedAt: now });
-    assert.equal(snapshot.checks.length, 1);
-    assert.equal(snapshot.checks[0]?.status, "passed");
-    assert.match(snapshot.checks[0]?.command ?? "", /^node -e/u);
-    const report = buildDeterministicTerminalReport(snapshot, { id: "terminal_report_workflow_node_check", committedAt: now });
-    assert.equal(validateTerminalReport(report, snapshot).ok, true);
-    assert.equal(report.verification.length, 1);
-    assert.equal(report.verification[0]?.status, "passed");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -442,34 +384,6 @@ function appendToolAction(store, runId, toolCallId, toolName, args, isError, at,
   if (resultArtifactId) {
     store.appendEvent(runId, "artifact_created", { toolCallId, artifactId: resultArtifactId });
   }
-}
-
-function appendUnifiedBashAction(store, runId, command, at) {
-  const toolCallId = `bash_${command.replaceAll(/\W+/gu, "_")}`;
-  store.appendEvent(runId, "tool_start", { toolCallId, toolName: "bash", args: { command } });
-  store.appendEvent(runId, "tool_end", {
-    toolCallId,
-    toolName: "bash",
-    isError: false,
-    result: {
-      details: {
-        unifiedExec: {
-          status: "succeeded",
-          command: { kind: "shell", command, shell: "bash" },
-          cwd: "/workspace",
-          startedAt: at,
-          endedAt: at,
-          durationMs: 0,
-          exitCode: 0,
-          timedOut: false,
-          cancelled: false,
-          stdout: { byteCount: 0, lineCount: 0, preview: "", truncated: false },
-          stderr: { byteCount: 0, lineCount: 0, preview: "", truncated: false },
-          artifacts: [],
-        },
-      },
-    },
-  });
 }
 
 function runInput(overrides) {

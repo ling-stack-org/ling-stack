@@ -591,7 +591,6 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
     runtime: desktopRuntime,
     computerUse,
     getMainWindow: () => mainWindow ?? loadingMainWindow,
-    windowControlsEnabled: process.platform === "win32",
     navigationIntents: desktopNavigationIntents,
     themeStore: desktopRendererThemeStore,
     mobileAccess: new DesktopMobileAccessClient({
@@ -605,7 +604,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   let createdWindow: BrowserWindow | undefined;
   try {
     const loadedWindow = await createMainWindow({
-      backgroundColor: nativeTheme.shouldUseDarkColors ? "#1f1f1f" : "#ffffff",
+      backgroundColor: nativeTheme.shouldUseDarkColors ? "#111315" : "#f6f7f8",
       daemonBaseUrl,
       themePackageFirstPaint: createDesktopThemePackageFirstPaintState(
         initializedThemePackages.value,

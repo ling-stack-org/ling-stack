@@ -9,26 +9,6 @@ const localeFiles = {
   "en-US": { file: path.join(srcRoot, "i18n/locales/en-US.ts"), exportName: "enUS" },
   "zh-CN": { file: path.join(srcRoot, "i18n/locales/zh-CN.ts"), exportName: "zhCN" },
 };
-const additionalLocaleFiles = {
-  "en-US": path.resolve(webRoot, "../../packages/localization/catalogs/additional-source.json"),
-  "zh-CN": path.resolve(webRoot, "../../packages/localization/catalogs/additional-zh-CN.json"),
-};
-
-function parseAdditionalLocale(file) {
-  const parsed = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-    throw new Error(`Expected an object in ${file}`);
-  }
-  return new Set(Object.keys(parsed));
-}
-
-function mergeLocaleKeys(primary, additional) {
-  const duplicates = [...additional].filter((key) => primary.keys.has(key));
-  return {
-    keys: new Set([...primary.keys, ...additional]),
-    duplicates: [...primary.duplicates, ...duplicates],
-  };
-}
 
 function propertyName(node) {
   if (ts.isStringLiteral(node) || ts.isNumericLiteral(node)) {
@@ -125,9 +105,7 @@ const audit = withTypeScriptSourceFiles(allSourceFiles, (sourceFiles) => ({
   chinese: parseLocale(localeFiles["zh-CN"], sourceFiles.get(path.resolve(localeFiles["zh-CN"].file))),
   literalTranslations: collectLiteralTranslationKeys(allSourceFiles, sourceFiles),
 }));
-const english = mergeLocaleKeys(audit.english, parseAdditionalLocale(additionalLocaleFiles["en-US"]));
-const chinese = mergeLocaleKeys(audit.chinese, parseAdditionalLocale(additionalLocaleFiles["zh-CN"]));
-const { literalTranslations } = audit;
+const { english, chinese, literalTranslations } = audit;
 const missingChinese = [...literalTranslations.keys].filter((key) => !chinese.keys.has(key));
 const englishOnlyKeys = [...english.keys].filter((key) => !chinese.keys.has(key));
 const failures = [];

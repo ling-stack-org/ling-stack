@@ -10,10 +10,8 @@ import {
   type TerminalReportContent,
   type TerminalReportEvidenceRisk,
   type TerminalReportEvidenceSnapshot,
-  type TerminalReportRisk,
   type WorkUnit,
 } from "@ling-stack/core";
-import { formatSynchronousCatalogMessage } from "@ling-stack/localization";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { collectRunTerminalReportEvidence, collectTurnTerminalReportEvidence, collectWorkflowTerminalReportEvidence } from "./terminal-report-evidence.js";
@@ -218,10 +216,9 @@ export async function processWorkflowTerminalReport(
       id: `terminal-report-barrier-timeout:${workflowId}`,
       severity: "warning",
       status: "unverified",
-      summary: formatSynchronousCatalogMessage(
-        snapshot.language,
-        "terminal_report.evidence.reporting_barrier_expired",
-      ),
+      summary: snapshot.language === "zh-CN"
+        ? "报告等待窗口已结束，部分尾部操作可能尚未形成完整证据。"
+        : "The reporting barrier expired; some trailing operations may not have complete evidence.",
       sourceRefs: snapshot.references.filter((ref) => ref.kind === "workflow" && ref.id === workflowId),
     });
   }
@@ -407,9 +404,6 @@ function buildModelTerminalReport(
       validationCodes: metadata.validationCodes,
     },
     ...content,
-    // Approval decisions are host facts. Preserve/repair them even when the
-    // synthesizer omits the corresponding risk or returns an ambiguous label.
-    risks: mergeCanonicalApprovalRisks(snapshot, content.risks),
     // Participant identity and contribution are projected from the canonical
     // evidence snapshot. The model may narrate the report, but it must not be
     // able to copy Engineer's prose into QA (or invent a participant).
@@ -431,66 +425,18 @@ function buildModelTerminalReport(
   };
 }
 
-function mergeCanonicalApprovalRisks(
-  snapshot: TerminalReportEvidenceSnapshot,
-  risks: readonly TerminalReportRisk[],
-): readonly TerminalReportRisk[] {
-  const result = risks.map((risk) => ({ ...risk }));
-  for (const approval of snapshot.approvals) {
-    if (approval.status === "approved") {
-      continue;
-    }
-    const existingIndex = result.findIndex((risk) =>
-      risk.id === `approval-risk:${approval.id}` ||
-      risk.sourceRefs.some((ref) => ref.kind === "approval" && ref.id === approval.id),
-    );
-    if (existingIndex >= 0) {
-      result[existingIndex] = {
-        ...result[existingIndex],
-        approvalDecision: approval.status,
-      };
-      continue;
-    }
-    const denied = approval.status === "denied";
-    const expired = approval.status === "expired";
-    result.push({
-      id: `approval-risk:${approval.id}`,
-      severity: denied ? "critical" : "warning",
-      status: approval.status === "cancelled" ? "accepted" : approval.status === "pending" ? "unverified" : "unresolved",
-      approvalDecision: approval.status,
-      summary: `${denied ? "Approval denied" : expired ? "Approval expired" : approval.status === "cancelled" ? "Approval cancelled" : "Approval pending"}: ${approval.title}`,
-      nextAction: denied
-        ? "The requested action was not executed."
-        : expired
-          ? "The requested action was not executed before approval expired."
-          : approval.status === "pending"
-            ? "Resolve the approval before continuing."
-            : undefined,
-      sourceRefs: approval.sourceRefs,
-    });
-  }
-  return result;
-}
-
 export async function recoverTerminalReports(store: RunStore): Promise<void> {
   if (!terminalReportsEnabledForStore(store)) {
     return;
   }
-  const latestPublishedBySource = new Map<string, LingTerminalReportRecord>();
   for (const record of store.listTerminalReports({ limit: 500 })) {
-    if (!terminalReportIsEligibleForDisplay(store, record)
-      || (record.status !== "committed" && record.status !== "fallback")
-      || !record.report) {
-      continue;
+    if (
+      terminalReportIsEligibleForDisplay(store, record) &&
+      (record.status === "committed" || record.status === "fallback") &&
+      record.report
+    ) {
+      publishTerminalReportWithInvalidation(store, record.report, undefined, new Date().toISOString());
     }
-    const sourceKey = `${record.sourceKind}:${record.sourceId}`;
-    const current = latestPublishedBySource.get(sourceKey);
-    if (!current || record.generation > current.generation) {
-      latestPublishedBySource.set(sourceKey, record);
-    }
-  }
-  for (const record of latestPublishedBySource.values()) {
-    publishTerminalReportWithInvalidation(store, record.report!, undefined, new Date().toISOString());
   }
   for (const channel of store.listChannels({ limit: 500 })) {
     for (const workflow of store.listChannelWorkflows({ channelId: channel.id, limit: 500 })) {

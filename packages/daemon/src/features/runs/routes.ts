@@ -14,7 +14,6 @@ import {
   type RunStore,
   type RunStatus,
   type RunTool,
-  type ResolveApprovalRequestInput,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
@@ -33,7 +32,6 @@ import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { buildArtifactPreview } from "../previews/content-preview.js";
 import { inferArtifactContentType, resolveArtifactContentPath } from "./artifacts.js";
 import { parseRunRequest, type RunRequest } from "./schemas.js";
-import { isApprovalCommandRuleProposalCurrent } from "./approval-command-rules.js";
 
 export async function handleRun(
   request: IncomingMessage,
@@ -472,33 +470,7 @@ export async function handleApprovalItem(
 
   try {
     const body = await readOptionalJsonBody(request, config.maxBodyBytes);
-    const decisionKind = route.action === "approve" && isRecord(body)
-      ? readOptionalString(body, "decisionKind")
-      : undefined;
-    if (decisionKind !== undefined && decisionKind !== "approve_once" && decisionKind !== "approve_command_rule") {
-      writeJson(response, 400, { error: "bad_request", message: `Unsupported approval decision kind: ${decisionKind}` });
-      return;
-    }
-    const proposedRuleFingerprint = isRecord(body) ? readOptionalString(body, "proposedRuleFingerprint") : undefined;
-    if (decisionKind === "approve_command_rule") {
-      if (!isApprovalCommandRuleProposalCurrent(approval)) {
-        writeJson(response, 409, { error: "approval_command_rule_stale", message: "Approval command rule proposal is unavailable or stale." });
-        return;
-      }
-      if (proposedRuleFingerprint !== approval.proposedCommandRule?.fingerprint) {
-        writeJson(response, 409, { error: "approval_command_rule_fingerprint_mismatch", message: "Approval command rule fingerprint does not match the pending proposal." });
-        return;
-      }
-    }
-    const normalizedDecisionKind: ResolveApprovalRequestInput["decisionKind"] = decisionKind === "approve_command_rule"
-      ? "approve_command_rule"
-      : decisionKind === "approve_once" ? "approve_once" : undefined;
-    const decision: ResolveApprovalRequestInput = {
-      reason: isRecord(body) ? readOptionalString(body, "reason") : undefined,
-      resolvedBy: "local-user" as const,
-      ...(route.action === "approve" ? { decisionKind: normalizedDecisionKind ?? "approve_once" } : {}),
-      ...(proposedRuleFingerprint ? { proposedRuleFingerprint } : {}),
-    };
+    const decision = { reason: isRecord(body) ? readOptionalString(body, "reason") : undefined, resolvedBy: "local-user" as const };
     const now = new Date().toISOString();
     const updated =
       route.action === "approve"
@@ -522,57 +494,11 @@ export async function handleApprovalItem(
     syncExternalWorkActionForApproval(store, updated, now);
     writeJson(response, 200, { approval: updated, ...(mediaJob ? { mediaJob } : {}) });
   } catch (error) {
-    const commandRuleConflict = error instanceof Error && error.message.includes("command rule");
-    writeJson(response, commandRuleConflict ? 409 : 400, {
-      error: error instanceof Error && error.message.includes("not pending")
-        ? "approval_not_pending"
-        : commandRuleConflict ? "approval_command_rule_conflict" : "bad_request",
+    writeJson(response, 400, {
+      error: error instanceof Error && error.message.includes("not pending") ? "approval_not_pending" : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }
-}
-
-export function handleApprovalCommandRulesCollection(
-  request: IncomingMessage,
-  response: ServerResponse,
-  url: URL,
-  storeRegistry: RunStoreRegistry,
-): void {
-  if (request.method !== "GET") {
-    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for approval command rules` });
-    return;
-  }
-  const cwd = url.searchParams.get("cwd");
-  if (!cwd) {
-    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
-    return;
-  }
-  const store = storeRegistry.getStore(cwd);
-  writeJson(response, 200, { cwd, rules: store.listApprovalCommandRules() });
-}
-
-export function handleApprovalCommandRuleItem(
-  request: IncomingMessage,
-  response: ServerResponse,
-  url: URL,
-  storeRegistry: RunStoreRegistry,
-  ruleId: string,
-): void {
-  if (request.method !== "DELETE") {
-    writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for approval command rules` });
-    return;
-  }
-  const cwd = url.searchParams.get("cwd");
-  if (!cwd) {
-    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required" });
-    return;
-  }
-  const rule = storeRegistry.getStore(cwd).revokeApprovalCommandRule(ruleId, new Date().toISOString());
-  if (!rule) {
-    writeJson(response, 404, { error: "approval_command_rule_not_found", message: `Active approval command rule not found: ${ruleId}` });
-    return;
-  }
-  writeJson(response, 200, { rule });
 }
 
 function parseApprovalPolicyUpdateInput(value: unknown): ApprovalPolicyUpdateInput {

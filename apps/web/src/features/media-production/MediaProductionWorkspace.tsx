@@ -21,10 +21,6 @@ import { SceneDeleteDialog } from "./SceneDeleteDialog.js";
 import { SceneResultPreviewDialog } from "./SceneResultPreviewDialog.js";
 import { deriveProjectRunReview, deriveSceneReadiness } from "./media-production-view-models.js";
 import { useI18n } from "../../i18n.js";
-import {
-  DesktopTitlebarSurface,
-  useDesktopTitlebarPlacement,
-} from "../../app/DesktopTitlebarSurface.js";
 import { useLingToast } from "../../shared/ui/index.js";
 import { useMediaWorkflowController } from "./workflows/use-media-workflow-controller.js";
 import { MediaWorkflowLibraryDialog } from "./workflows/MediaWorkflowLibraryDialog.js";
@@ -49,7 +45,6 @@ export function MediaProductionWorkspace({
   jobsPanel,
 }: MediaProductionPageProps): React.JSX.Element {
   const { t } = useI18n();
-  const titlebarPlacement = useDesktopTitlebarPlacement();
   const { showToast } = useLingToast();
   const [view, setView] = useState<MediaProductionView>("studio");
   const [leftDockOpen, setLeftDockOpen] = useState(readLeftDockPreference);
@@ -269,8 +264,7 @@ export function MediaProductionWorkspace({
   }
 
   return (
-    <div className={`media-production-page canvas-first titlebar-${titlebarPlacement} ${view === "jobs" ? "showing-jobs" : "showing-studio"}`}>
-      <DesktopTitlebarSurface>
+    <div className={`media-production-page canvas-first ${view === "jobs" ? "showing-jobs" : "showing-studio"}`}>
       <MediaProductionCanvasToolbar
         projectName={project?.mediaProject.name}
         sceneCount={project?.scenes.length ?? 0}
@@ -283,7 +277,6 @@ export function MediaProductionWorkspace({
         onRunProject={() => project && setOverlay({ kind: "run-project", projectId: project.mediaProject.id, trigger: activeElement() })}
         onConfigureVideoModel={onConfigureVideoModel}
       />
-      </DesktopTitlebarSurface>
 
       {view === "jobs" ? <div className="media-production-jobs-view">{jobsPanel({
         jobContext: jobHostBridge.context,

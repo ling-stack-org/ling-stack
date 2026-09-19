@@ -13,7 +13,6 @@ import {
   type TeammateDirectThread,
   type WorkspaceAccessMode,
 } from "@ling-stack/core";
-import { formatServerCatalogMessage, isSupportedLocale } from "@ling-stack/localization";
 import { buildPrivateChatContextView } from "../channels/context-processing/private-chat.js";
 import { renderChannelContextView } from "../channels/context-processing/render.js";
 import { createProviderBackedImageVisionSummarizer } from "../channels/materialization/provider-vision.js";
@@ -44,7 +43,7 @@ import {
   filterSupersededTeammateDirectMessages,
 } from "../conversations/supersession-projection.js";
 import { runHasConversationGeneratedMedia } from "../media/conversation-projection.js";
-import { fallbackResponseLanguage, responseLanguageInstruction } from "../channels/response-language.js";
+import { inferUserLanguage } from "../channels/response-language.js";
 
 export type StartTeammateDirectRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -93,7 +92,6 @@ export async function createAiTeammateDirectReply(input: {
     requestedProviderPresetId: input.providerPresetId,
     workspaceDefaultProviderPresetId: input.store.getWorkspaceSettings().defaultProviderPresetId,
   });
-  const responseLanguagePreference = input.store.getWorkspaceSettings().responseLanguage ?? "follow_user";
   const now = new Date().toISOString();
   const pending = input.store.createTeammateDirectMessage(
     {
@@ -201,7 +199,6 @@ export async function createAiTeammateDirectReply(input: {
       });
     const systemPrompt = [
       buildDirectSystemPrompt(input.teammate, renderedMemory.prompt, input.continuationReason),
-      responseLanguageInstruction(responseLanguagePreference),
       input.systemPromptAppend,
     ].filter((line): line is string => Boolean(line?.trim())).join("\n");
     const execution = resolveTeammateDirectExecutionContext({
@@ -218,7 +215,6 @@ export async function createAiTeammateDirectReply(input: {
       workspaceAccessMode: input.workspaceAccessMode,
       permissionPreset: input.permissionPreset,
       permissionConfirmation: input.permissionConfirmation,
-      responseLanguage: responseLanguagePreference === "follow_user" ? undefined : responseLanguagePreference,
       requestedSkillId: input.requestedSkillId,
       skillOptimizationMode: input.skillOptimizationMode,
       continuationReason: input.continuationReason,
@@ -352,13 +348,9 @@ function finishProjectedRun(
   if (run?.status === "succeeded") {
     const hasGeneratedMedia = runHasConversationGeneratedMedia(store, run.id);
     if (!text && !hasGeneratedMedia) {
-      const snapshotLanguage = run.requestSnapshot && typeof run.requestSnapshot === "object"
-        ? (run.requestSnapshot as Record<string, unknown>).responseLanguage
-        : undefined;
-      const message = formatServerCatalogMessage(
-        isSupportedLocale(snapshotLanguage) ? snapshotLanguage : fallbackResponseLanguage(undefined),
-        "daemon.conversation.empty_result",
-      );
+      const message = inferUserLanguage(sourceText) === "zh-CN"
+        ? "模型没有返回可显示内容，请重试或切换模型。"
+        : "The model returned no displayable content. Retry or choose another model.";
       return finishDirectMessage(store, messageId, {
         body: message,
         status: "failed",

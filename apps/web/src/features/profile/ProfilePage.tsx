@@ -4,7 +4,6 @@ import { getUserProfile, updateUserProfile } from "../../api/profile.js";
 import { listRuns } from "../../api/runs.js";
 import { listSkills } from "../../api/skills.js";
 import { useI18n, type Locale } from "../../i18n.js";
-import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 import { useFocusRevalidationToken } from "../../shared/hooks/use-focus-revalidation-token.js";
 import { Button, Field, Input, useLingToast } from "../../shared/ui/index.js";
 import type { RunSession, SkillRegistryEntry, UserProfile } from "../../types.js";
@@ -21,7 +20,6 @@ export function ProfilePage({
   readonly variant?: "standalone" | "settings";
 }): React.JSX.Element {
   const { locale, t } = useI18n();
-  const fallbackDisplayName = t("Ling User");
   const focusRevalidationToken = useFocusRevalidationToken();
   const { showToast } = useLingToast();
   const avatarTriggerRef = useRef<HTMLButtonElement>(null);
@@ -36,7 +34,6 @@ export function ProfilePage({
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [message, setMessage] = useState("");
-  const [messageTone, setMessageTone] = useState<"error" | "success">("error");
 
   const metrics = useMemo(() => buildProfileMetrics(runs, skills, t("Not recorded")), [runs, skills, t]);
   const activity = useMemo(
@@ -70,7 +67,6 @@ export function ProfilePage({
       setRuns(runsResponse.runs);
       setSkills(skillsResponse.skills);
     } catch {
-      setMessageTone("error");
       setMessage(t("Profile could not be loaded. Try reopening this page."));
     } finally {
       setLoading(false);
@@ -99,12 +95,10 @@ export function ProfilePage({
       onProfileChange?.(response.profile);
       setDisplayName(response.profile.displayName);
       setAvatarDataUrl(response.profile.avatarDataUrl);
-      setMessageTone("success");
       setMessage("");
       showToast({ message: t("Profile saved"), scope: "profile:save", tone: "success" });
       return response.profile;
     } catch {
-      setMessageTone("error");
       setMessage(t("Profile changes were not saved. Try again."));
       return undefined;
     } finally {
@@ -142,7 +136,7 @@ export function ProfilePage({
     setAvatarCropSource(undefined);
     setAvatarDataUrl(avatarDataUrlPatch);
     const savedProfile = await saveProfilePatch({
-      displayName: displayName || profile?.displayName || fallbackDisplayName,
+      displayName: displayName || profile?.displayName || "Ling User",
       avatarDataUrl: avatarDataUrlPatch,
     });
     if (!savedProfile) {
@@ -162,7 +156,6 @@ export function ProfilePage({
       return;
     }
     if (!file.type.startsWith("image/")) {
-      setMessageTone("error");
       setMessage(t("Choose an image file"));
       event.target.value = "";
       return;
@@ -171,14 +164,13 @@ export function ProfilePage({
       setAvatarCropSource(await fileToDataUrl(file));
       setMessage("");
     } catch {
-      setMessageTone("error");
       setMessage(t("The image could not be opened. Choose another file."));
     } finally {
       event.target.value = "";
     }
   }
 
-  const initials = initialsFromName(displayName || profile?.displayName || fallbackDisplayName);
+  const initials = initialsFromName(displayName || profile?.displayName || "Ling User");
   const visibleHandle = profile?.handle || "local-user";
 
   if (variant === "settings") {
@@ -218,35 +210,33 @@ export function ProfilePage({
 
   return (
     <div className="profile-page">
-      <DesktopTitlebarSurface>
       <header className="profile-topbar" data-desktop-window-drag-region="true">
         <div>
-          <p className="profile-kicker">{t("User profile")}</p>
-          <h1>{profile?.displayName ?? (displayName || fallbackDisplayName)}</h1>
+          <p className="profile-kicker">个人资料</p>
+          <h1>{profile?.displayName ?? (displayName || "Ling User")}</h1>
         </div>
         <div className="profile-actions">
           <button className="primary-button compact-button" type="button" onClick={() => void saveProfile()} disabled={!hasProfileChanges || saving}>
             {saving ? <RefreshCw size={14} /> : <Check size={14} />}
-            <span>{saving ? t("Saving profile") : t("Save profile")}</span>
+            <span>{saving ? "保存中" : "保存资料"}</span>
           </button>
         </div>
       </header>
-      </DesktopTitlebarSurface>
 
-      <section className="profile-hero" aria-label={t("Profile overview")}>
+      <section className="profile-hero" aria-label="个人资料概览">
         <button
           className={avatarDataUrl ? "profile-avatar-button has-avatar" : "profile-avatar-button"}
           type="button"
           onClick={() => fileInputRef.current?.click()}
-          aria-label={t("Change avatar")}
-          title={t("Change avatar")}
+          aria-label="更换头像"
+          title="更换头像"
         >
           {avatarDataUrl ? <img src={avatarDataUrl} alt="" /> : <span>{initials}</span>}
           <span className="profile-avatar-edit"><Camera size={15} /></span>
         </button>
         <input ref={fileInputRef} data-ling-control-native="true" type="file" accept="image/*" hidden onChange={(event) => void handleAvatarChange(event)} />
         <form className="profile-identity-form" onSubmit={(event) => void saveProfile(event)}>
-          <Field className="profile-identity-field" controlId="standalone-profile-display-name" label={t("Display name")}>
+          <Field className="profile-identity-field" controlId="standalone-profile-display-name" label="昵称">
             <Input
               value={displayName}
               maxLength={80}
@@ -256,40 +246,42 @@ export function ProfilePage({
             />
           </Field>
           <div className="profile-identity-readonly" data-profile-handle-readonly="true">
-            <span>{t("Username")}</span>
+            <span>用户名</span>
             <strong>@{visibleHandle}</strong>
           </div>
-          <p>{t("Local profile")}</p>
+          <p>本地个人资料</p>
         </form>
       </section>
 
-      <section className="profile-stat-strip" aria-label={t("Usage summary")}>
-        <ProfileStat value={formatCompactNumber(metrics.totalEstimatedTokens, locale)} label={t("Estimated tokens")} />
-        <ProfileStat value={formatCompactNumber(metrics.peakEstimatedTokens, locale)} label={t("Peak tokens")} />
-        <ProfileStat value={formatDuration(metrics.longestDurationMs, locale)} label={t("Longest task")} />
-        <ProfileStat value={t("{count} days", { count: metrics.currentStreakDays })} label={t("Current streak")} />
-        <ProfileStat value={t("{count} days", { count: metrics.longestStreakDays })} label={t("Longest streak")} />
+      <section className="profile-stat-strip" aria-label="Token 和连续使用统计">
+        <ProfileStat value={formatCompactNumber(metrics.totalEstimatedTokens, locale)} label="累计估算 Token" />
+        <ProfileStat value={formatCompactNumber(metrics.peakEstimatedTokens, locale)} label="峰值估算 Token" />
+        <ProfileStat value={formatDuration(metrics.longestDurationMs, locale)} label="最长任务时长" />
+        <ProfileStat value={`${metrics.currentStreakDays} 天`} label="当前连续天数" />
+        <ProfileStat value={`${metrics.longestStreakDays} 天`} label="最长连续天数" />
       </section>
 
-      <section className="profile-activity-section" aria-label={t("Token activity")}>
+      <section className="profile-activity-section" aria-label="Token 活动">
         <div className="profile-section-head">
-          <h2>{t("Token activity")}</h2>
-          <div className="profile-segmented" role="tablist" aria-label={t("Token activity range")}>
+          <h2>Token 活动</h2>
+          <div className="profile-segmented" role="tablist" aria-label="Token 活动粒度">
             {([
-              ["day", "Daily"],
-              ["week", "Weekly"],
-              ["total", "Cumulative"],
+              ["day", "每日"],
+              ["week", "每周"],
+              ["total", "累计"],
             ] as const).map(([mode, label]) => (
               <button key={mode} type="button" className={activityMode === mode ? "active" : ""} onClick={() => setActivityMode(mode)}>
-                {t(label)}
+                {label}
               </button>
             ))}
           </div>
         </div>
         <div className="profile-activity-body">
-          <div className="profile-heatmap" role="img" aria-label={t("Token activity heatmap for the past year")}>
+          <div className="profile-heatmap" role="img" aria-label="过去一年 Token 活动热力图">
             <div className="profile-heatmap-grid">
-              {activity.cells.map((cell) => <span key={cell.date} className={`profile-heatmap-cell level-${cell.level}`} title={t("{date}: {value} estimated tokens", { date: cell.date, value: formatCompactNumber(cell.value, locale) })} />)}
+              {activity.cells.map((cell) => (
+                <span key={cell.date} className={`profile-heatmap-cell level-${cell.level}`} title={`${cell.date}: ${formatCompactNumber(cell.value, locale)} 估算 Token`} />
+              ))}
             </div>
             <div className="profile-heatmap-months" aria-hidden="true">
               {activity.monthLabels.map((label) => <span key={`${label.month}-${label.column}`} style={{ gridColumn: label.column }}>{label.month}</span>)}
@@ -299,35 +291,35 @@ export function ProfilePage({
       </section>
 
       <div className="profile-detail-grid">
-        <section className="profile-insights" aria-label={t("Usage insights")}>
-          <h2>{t("Usage insights")}</h2>
-          <ProfileInsight icon={<ShieldCheck size={16} />} label={t("Task success rate")} value={`${metrics.successRate}%`} />
-          <ProfileInsight icon={<Bot size={16} />} label={t("Top model")} value={metrics.topModel} />
-          <ProfileInsight icon={<Sparkles size={16} />} label={t("Skills used")} value={String(metrics.exploredSkillCount)} />
-          <ProfileInsight icon={<Pencil size={16} />} label={t("Skills explored")} value={String(metrics.totalSkillCount)} />
-          <ProfileInsight icon={<Check size={16} />} label={t("Sessions")} value={String(metrics.sessionCount)} />
+        <section className="profile-insights" aria-label="活动洞察">
+          <h2>活动洞察</h2>
+          <ProfileInsight icon={<ShieldCheck size={16} />} label="任务成功率" value={`${metrics.successRate}%`} />
+          <ProfileInsight icon={<Bot size={16} />} label="最常用的模型" value={metrics.topModel} />
+          <ProfileInsight icon={<Sparkles size={16} />} label="已探索的技能" value={String(metrics.exploredSkillCount)} />
+          <ProfileInsight icon={<Pencil size={16} />} label="使用的技能总数" value={String(metrics.totalSkillCount)} />
+          <ProfileInsight icon={<Check size={16} />} label="会话总数" value={String(metrics.sessionCount)} />
         </section>
 
-        <section className="profile-top-skills" aria-label={t("Most used skills")}>
-          <h2>{t("Most used skills")}</h2>
+        <section className="profile-top-skills" aria-label="最常用的技能">
+          <h2>最常用的技能</h2>
           {metrics.topSkills.length > 0 ? (
             <div className="profile-skill-list">
               {metrics.topSkills.map((skill) => (
                 <div key={skill.id} className="profile-skill-row">
                   <span className="profile-skill-icon"><Sparkles size={14} /></span>
                   <strong>{skill.label}</strong>
-                  <span>{t("{count} runs", { count: skill.count })}</span>
+                  <span>{skill.count} 次运行</span>
                 </div>
               ))}
             </div>
           ) : (
-            <p className="profile-empty">{t("No skill-backed runs yet.")}</p>
+            <p className="profile-empty">还没有带技能的运行记录。</p>
           )}
         </section>
       </div>
 
       {message ? (
-        <div className={messageTone === "success" ? "profile-message ok" : "profile-message"}>
+        <div className={message.includes("已") ? "profile-message ok" : "profile-message"}>
           <span>{message}</span>
           {!profile ? <Button size="sm" variant="secondary" onClick={() => void refresh()}>{t("Retry")}</Button> : null}
         </div>
@@ -339,8 +331,7 @@ export function ProfilePage({
           onConfirm={(croppedAvatarDataUrl) => {
             setAvatarDataUrl(croppedAvatarDataUrl);
             setAvatarCropSource(undefined);
-            setMessageTone("success");
-            setMessage(t("Avatar adjusted; save to apply"));
+            setMessage("头像已调整，保存后生效");
           }}
         />
       ) : null}
@@ -575,27 +566,18 @@ function formatCompactNumber(value: number, locale: Locale): string {
 
 function formatDuration(value: number, locale: Locale): string {
   if (value <= 0) {
-    return formatDurationUnit(0, "minute", locale);
+    return locale === "zh-CN" ? "0 分" : "0 min";
   }
   const minutes = Math.round(value / 60_000);
   if (minutes < 60) {
-    return formatDurationUnit(minutes, "minute", locale);
+    return locale === "zh-CN" ? `${minutes} 分` : `${minutes} min`;
   }
   const hours = Math.floor(minutes / 60);
   const rest = minutes % 60;
-  const values = [
-    formatDurationUnit(hours, "hour", locale),
-    rest ? formatDurationUnit(rest, "minute", locale) : undefined,
-  ].filter((item): item is string => Boolean(item));
-  return new Intl.ListFormat(locale, { style: "narrow", type: "unit" }).format(values);
-}
-
-function formatDurationUnit(value: number, unit: "hour" | "minute", locale: Locale): string {
-  return new Intl.NumberFormat(locale, {
-    style: "unit",
-    unit,
-    unitDisplay: "short",
-  }).format(value);
+  if (locale === "zh-CN") {
+    return rest ? `${hours} 小时 ${rest} 分` : `${hours} 小时`;
+  }
+  return rest ? `${hours} hr ${rest} min` : `${hours} hr`;
 }
 
 function initialsFromName(value: string): string {

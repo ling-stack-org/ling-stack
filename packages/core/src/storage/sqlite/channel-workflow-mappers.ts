@@ -10,7 +10,6 @@ import {
   isWorkflowCompletionGateV1,
   type WorkflowParticipantAuthorityV1,
 } from "@ling-stack/contracts";
-import { isSupportedLocale } from "@ling-stack/localization";
 import type { RunTool } from "../../approval-policy.js";
 import type { SkillApprovalProfile } from "../../skill-types.js";
 import {
@@ -22,7 +21,7 @@ import {
   type ChannelWorkflowStep,
   type ChannelWorkflowStepMetadata,
   type ChannelWorkflowStepStatus,
-  type ResponseLanguagePreference,
+  type ResponseLanguage,
   type WorkflowFanInPolicy,
   type WorkflowFanInContextReview,
   type WorkflowHandoffIntent,
@@ -683,8 +682,8 @@ function parseOptionalApprovalProfileValue(value: unknown): SkillApprovalProfile
     : undefined;
 }
 
-function parseOptionalResponseLanguage(value: unknown): ResponseLanguagePreference | undefined {
-  return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
+function parseOptionalResponseLanguage(value: unknown): ResponseLanguage | undefined {
+  return value === "zh-CN" || value === "en-US" ? value : undefined;
 }
 
 function isWorkflowSelectorTargetKindValue(value: unknown): value is WorkflowSelectorTargetKind {

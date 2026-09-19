@@ -124,6 +124,7 @@
   min-width: 0;
   padding-top: var(--ling-space-5);
   border: 0;
+  border-top: 1px solid var(--ling-border-default);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
@@ -303,12 +304,8 @@
   line-height: var(--ling-line-xs);
 }
 
-.channel-settings-workspace-panel {
-  width: min(880px, 100%);
-}
-
 .channel-workspace-settings {
-  width: 100%;
+  width: min(880px, 100%);
 }
 
 .channel-workspace-control {
@@ -321,16 +318,6 @@
   border-radius: 0;
   background: transparent;
   box-shadow: none;
-}
-
-.channel-workspace-mode-label {
-  min-width: 0;
-  overflow: hidden;
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .channel-workspace-summary {
@@ -464,10 +451,6 @@
   border-color: var(--ling-border-strong);
 }
 
-.channel-council-card > .ling-ui-data-row-actions {
-  grid-column: 4;
-}
-
 .channel-council-summary {
   display: grid;
   min-width: 0;
@@ -522,6 +505,7 @@
 .channel-settings-health-panel > .channel-team-metrics-panel {
   padding-top: var(--ling-space-5);
   border: 0;
+  border-top: 1px solid var(--ling-border-default);
   border-radius: 0;
   background: transparent;
   box-shadow: none;
@@ -538,10 +522,6 @@
 
   .channel-council-card .ling-ui-data-row-summary {
     grid-column: 1;
-  }
-
-  .channel-council-card > .ling-ui-data-row-actions {
-    grid-column: 2;
   }
 }
 

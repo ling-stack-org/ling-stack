@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { DesktopTitlebarSurface } from "../../app/DesktopTitlebarSurface.js";
 
 export function PageActionHeader({
   title,
@@ -17,7 +16,6 @@ export function PageActionHeader({
   readonly className?: string;
 }): React.JSX.Element {
   return (
-    <DesktopTitlebarSurface>
     <header
       className={["page-action-header", className].filter(Boolean).join(" ")}
       data-desktop-window-drag-region="true"
@@ -34,6 +32,5 @@ export function PageActionHeader({
         </div>
       ) : null}
     </header>
-    </DesktopTitlebarSurface>
   );
 }

@@ -6,7 +6,6 @@
 @import url("./themes/built-in-themes.css") layer(ling.tokens.theme);
 @import url("./controls/icon.css") layer(ling.primitives);
 @import url("./controls/button.css") layer(ling.primitives);
-@import url("./controls/split-button.css") layer(ling.primitives);
 @import url("./controls/form-controls.css") layer(ling.primitives);
 @import url("./controls/switch.css") layer(ling.primitives);
 @import url("./overlays/menu-tooltip.css") layer(ling.primitives);

@@ -24,7 +24,7 @@ test("Sidebar foundation keeps one bounded expanded navigation surface", async (
   const navigation = page.getByLabel("Ling Stack navigation");
   const scrollRegion = navigation.locator(".sidebar-scroll-region");
   await expect(navigation).toBeVisible();
-  await expectWidth(navigation, 292);
+  await expectWidth(navigation, 240);
   await expect(scrollRegion).toHaveCount(1);
 
   const scrollGeometry = await scrollRegion.evaluate((element) => {
@@ -152,30 +152,25 @@ test("Sidebar branch draft and section menu stay contained in dark reduced-motio
   expect(runtimeErrors).toEqual([]);
 });
 
-test("Sidebar compact state keeps a 48px navigation rail and returns to the 292px foundation", async ({ page }) => {
+test("Sidebar compact rail returns to the expanded 240px foundation", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", 1280, 800);
   await mockDaemon(page, createDenseSidebarState());
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
-  await expectWidth(navigation, 292);
+  await expectWidth(navigation, 240);
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await expectWidth(navigation, 48);
-  await expect(navigation).toHaveAttribute("data-sidebar-mode", "compact");
   await expect(page.locator("main.app-shell")).toHaveClass(/channel-sidebar-collapsed/);
-  await expect(page.locator(".sidebar-rail-launcher")).toHaveCount(3);
-  await expect.poll(async () => page.locator("main.app-shell").evaluate((element) => (
-    Math.round(Number.parseFloat(getComputedStyle(element).gridTemplateColumns))
-  ))).toBe(48);
+  await expect(navigation.getByRole("button", { name: "Channel actions" })).toBeHidden();
   await expectNoHorizontalOverflow(page.locator("html"));
-  await captureEvidence(page, "1280x800-ling-light-sidebar-compact.png");
+  await captureEvidence(page, "1280x800-ling-light-compact-rail.png");
 
   await page.getByRole("button", { name: "Show navigation" }).click();
-  const restoredNavigation = page.getByLabel("Ling Stack navigation");
-  await expectWidth(restoredNavigation, 292);
+  await expectWidth(navigation, 240);
   await expect(page.locator("main.app-shell")).not.toHaveClass(/channel-sidebar-collapsed/);
-  await expect(restoredNavigation.getByRole("button", { name: "Channel actions" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Channel actions" })).toBeVisible();
   await expectNoHorizontalOverflow(page.locator("html"));
   await captureEvidence(page, "1280x800-ling-light-reexpanded.png");
   expect(runtimeErrors).toEqual([]);
@@ -189,27 +184,19 @@ test("Sidebar foundation preserves shell geometry across the 900 and 901px bound
   await page.goto("/");
 
   const shell = page.locator("main.app-shell");
-  let navigation = page.getByLabel("Ling Stack navigation");
-  await expectBoundaryGeometry(page, shell, navigation, 901, 292);
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await expectBoundaryGeometry(page, shell, navigation, 901, 240);
   await captureEvidence(page, "901x800-ling-dark-expanded-boundary.png");
 
   await page.setViewportSize({ width: 900, height: 800 });
-  await expectWidth(navigation, 48);
-  await expect(navigation).toHaveAttribute("data-sidebar-mode", "compact");
-  await expect.poll(async () => shell.evaluate((element) => (
-    Math.round(Number.parseFloat(getComputedStyle(element).gridTemplateColumns))
-  ))).toBe(48);
+  await expectBoundaryGeometry(page, shell, navigation, 900, 48);
   await expect(page.getByRole("button", { name: "Show navigation" })).toBeVisible();
   await captureEvidence(page, "900x800-ling-dark-compact-boundary.png");
 
   await page.setViewportSize({ width: 901, height: 800 });
-  await expectWidth(page.getByLabel("Ling Stack navigation"), 48);
-  await expect.poll(async () => shell.evaluate((element) => (
-    Math.round(Number.parseFloat(getComputedStyle(element).gridTemplateColumns))
-  ))).toBe(48);
+  await expectBoundaryGeometry(page, shell, navigation, 901, 48);
   await page.getByRole("button", { name: "Show navigation" }).click();
-  navigation = page.getByLabel("Ling Stack navigation");
-  await expectBoundaryGeometry(page, shell, navigation, 901, 292);
+  await expectBoundaryGeometry(page, shell, navigation, 901, 240);
   await captureEvidence(page, "901x800-ling-dark-reexpanded-boundary.png");
   await expectReducedMotion(navigation);
   await expectNoHorizontalOverflow(page.locator("html"));

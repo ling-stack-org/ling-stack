@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { createComputerUsePreviewViewModel } from "../dist/renderer/computer-use-preview/preview-view-model.js";
-import { loadComputerUsePreviewTranslator } from "../dist/renderer/computer-use-preview/messages.js";
 
 test("preview view model exposes explicit runtime/source states", () => {
   const cases = [
@@ -73,9 +72,8 @@ test("view model exposes structured pending and failed Stop feedback", () => {
   assert.equal(failed.menuActions.find((action) => action.id === "stop")?.label, "Try Stop again");
 });
 
-test("view model localizes status, actions, and Stop recovery without translating runtime detail", async () => {
-  const translate = await loadComputerUsePreviewTranslator("zh-CN");
-  const live = createComputerUsePreviewViewModel(snapshot({ locale: "zh-CN", statusDetail: undefined }), {}, translate);
+test("view model localizes status, actions, and Stop recovery without translating runtime detail", () => {
+  const live = createComputerUsePreviewViewModel(snapshot({ locale: "zh-CN", statusDetail: undefined }));
   assert.equal(live.label, "实时");
   assert.deepEqual(live.primaryActions.map((action) => action.label), ["打开任务", "隐藏"]);
   assert.deepEqual(live.menuActions.map((action) => action.label), ["重置位置", "关闭窗口", "停止 Computer Use"]);
@@ -84,7 +82,7 @@ test("view model localizes status, actions, and Stop recovery without translatin
     locale: "zh-CN",
     sourceStatus: "permission_denied",
     canOpenSettings: true,
-  }), {}, translate);
+  }));
   assert.equal(permission.label, "需要权限");
   assert.equal(permission.detail, "需要屏幕录制权限");
   assert.deepEqual(permission.menuActions.map((action) => action.label), [
@@ -98,7 +96,6 @@ test("view model localizes status, actions, and Stop recovery without translatin
   const failedStop = createComputerUsePreviewViewModel(
     snapshot({ locale: "zh-CN" }),
     { stopCommandState: "failed" },
-    translate,
   );
   assert.equal(failedStop.label, "停止失败");
   assert.equal(failedStop.detail, "Computer Use 仍在运行，请重试。");
@@ -108,14 +105,13 @@ test("view model localizes status, actions, and Stop recovery without translatin
     locale: "zh-CN",
     sourceStatus: "failed",
     statusDetail: "capture_transport_error_42",
-  }), {}, translate);
+  }));
   assert.equal(dynamicFailure.label, "失败");
   assert.equal(dynamicFailure.detail, "capture_transport_error_42");
 });
 
-test("unsupported renderer locale falls back to English", async () => {
-  const translate = await loadComputerUsePreviewTranslator("xx-YY");
-  const viewModel = createComputerUsePreviewViewModel(snapshot({ locale: "xx-YY" }), {}, translate);
+test("unsupported renderer locale falls back to English", () => {
+  const viewModel = createComputerUsePreviewViewModel(snapshot({ locale: "fr-FR" }));
   assert.equal(viewModel.label, "Live");
   assert.equal(viewModel.primaryActions[0].label, "Open task");
 });

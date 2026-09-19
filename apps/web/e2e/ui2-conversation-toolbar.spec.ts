@@ -23,7 +23,6 @@ for (const fixture of [
       id: "provider_ui2_conversation_toolbar",
       displayName: "Local Relay",
       model: "gpt-5.5",
-      lastCheck: { ok: true, message: "Ready", checkedAt: "2026-07-24T03:00:00.000Z" },
     })];
     state.aiTeammates = [createMockTeammate({
       id: "teammate_ui2_conversation_toolbar",

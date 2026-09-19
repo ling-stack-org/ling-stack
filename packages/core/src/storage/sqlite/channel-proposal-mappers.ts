@@ -2,7 +2,6 @@ import type { SQLOutputValue } from "node:sqlite";
 import {
   isWorkflowParticipantProviderBlockerV1,
 } from "@ling-stack/contracts";
-import { isSupportedLocale } from "@ling-stack/localization";
 import {
   type ChannelExecutionProposal,
   type ChannelExecutionProposalStepSource,
@@ -10,7 +9,7 @@ import {
   type ChannelProtocolSourceRef,
   type ChannelProtocolSourceRefType,
   type ChannelRequirementShaping,
-  type ResponseLanguagePreference,
+  type ResponseLanguage,
 } from "../../workspace-types.js";
 import {
   isJsonRecord,
@@ -117,8 +116,8 @@ function parseChannelExecutionProposalStepSources(value: unknown): readonly Chan
   return sources.length > 0 ? sources : undefined;
 }
 
-function parseOptionalResponseLanguage(value: unknown): ResponseLanguagePreference | undefined {
-  return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
+function parseOptionalResponseLanguage(value: unknown): ResponseLanguage | undefined {
+  return value === "zh-CN" || value === "en-US" ? value : undefined;
 }
 
 function parseOptionalChannelRequirementShaping(value: string | undefined): ChannelRequirementShaping | undefined {

@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
-import type { TurnWorkspaceChangesResponse } from "@ling-stack/contracts";
+import type { RunWorkspaceChangesResponse } from "@ling-stack/contracts";
 import {
   installChannelWorkCellFixture,
 } from "./support/conversation-work-cell-fixture";
@@ -27,11 +27,11 @@ test("artifact Undo and Reapply use one guarded recovery Dialog and refresh stat
   const mutationGate = new Promise<void>((resolve) => {
     releaseMutation = resolve;
   });
-  await installRecoveryRoute(page, fixture, async (route, action) => {
+  await installRecoveryRoute(page, fixture.runId, async (route, action) => {
     mutationCalls += 1;
     await mutationGate;
     state = action === "undo" ? "undone" : "applied";
-    await route.fulfill({ json: recoveryResponse(fixture, state) });
+    await route.fulfill({ json: recoveryResponse(fixture.runId, state) });
   }, () => state);
 
   await page.goto("/");
@@ -104,7 +104,7 @@ test("artifact recovery failure stays actionable in a dark reduced-motion Dialog
   await mockDaemon(page, fixture.state);
   let state: RecoveryState = "applied";
   let mutationCalls = 0;
-  await installRecoveryRoute(page, fixture, async (route, action) => {
+  await installRecoveryRoute(page, fixture.runId, async (route, action) => {
     mutationCalls += 1;
     if (mutationCalls <= 2) {
       await route.fulfill({
@@ -114,7 +114,7 @@ test("artifact recovery failure stays actionable in a dark reduced-motion Dialog
       return;
     }
     state = action === "undo" ? "undone" : "applied";
-    await route.fulfill({ json: recoveryResponse(fixture, state) });
+    await route.fulfill({ json: recoveryResponse(fixture.runId, state) });
   }, () => state);
 
   await page.goto("/");
@@ -164,18 +164,15 @@ function installRecoveryFixture(state: MockState, suffix: string): {
   readonly runId: string;
   readonly state: MockState;
   readonly threadId: string;
-  readonly turnId: string;
 } {
   const { runId, threadId } = installChannelWorkCellFixture(state, `artifact_recovery_${suffix}`);
-  const turnId = state.turnRunLinks.find((link) => link.runId === runId)?.turnId;
-  if (!turnId) throw new Error(`Recovery fixture must link run ${runId} to a Turn`);
   const createdAt = "2026-07-26T02:00:00.000Z";
   const artifacts: MockArtifact[] = [
     diffArtifact(runId, `artifact_recovery_${suffix}_tsx`, "src/RecoverySurface.tsx", createdAt),
     diffArtifact(runId, `artifact_recovery_${suffix}_css`, "src/recovery-surface.css", createdAt),
   ];
   state.artifactsByRun[runId] = artifacts;
-  return { runId, state, threadId, turnId };
+  return { runId, state, threadId };
 }
 
 function diffArtifact(runId: string, id: string, path: string, createdAt: string): MockArtifact {
@@ -202,34 +199,28 @@ function diffArtifact(runId: string, id: string, path: string, createdAt: string
 
 async function installRecoveryRoute(
   page: Page,
-  fixture: Pick<ReturnType<typeof installRecoveryFixture>, "runId" | "threadId" | "turnId">,
+  runId: string,
   onMutation: (route: Route, action: "undo" | "reapply") => Promise<void>,
   readState: () => RecoveryState,
 ): Promise<void> {
-  await page.route(new RegExp(`/turns/${fixture.turnId}/workspace-changes(?:/(undo|reapply))?(?:\\?.*)?$`, "u"), async (route) => {
+  await page.route(new RegExp(`/runs/${runId}/workspace-changes(?:/(undo|reapply))?(?:\\?.*)?$`, "u"), async (route) => {
     const path = new URL(route.request().url()).pathname;
     const action = path.endsWith("/undo") ? "undo" : path.endsWith("/reapply") ? "reapply" : undefined;
     if (route.request().method() === "POST" && action) {
       await onMutation(route, action);
       return;
     }
-    await route.fulfill({ json: recoveryResponse(fixture, readState()) });
+    await route.fulfill({ json: recoveryResponse(runId, readState()) });
   });
 }
 
-function recoveryResponse(
-  fixture: Pick<ReturnType<typeof installRecoveryFixture>, "runId" | "threadId" | "turnId">,
-  state: RecoveryState,
-): TurnWorkspaceChangesResponse {
+function recoveryResponse(runId: string, state: RecoveryState): RunWorkspaceChangesResponse {
   return {
     cwd,
-    threadId: fixture.threadId,
-    turnId: fixture.turnId,
-    runIds: [fixture.runId],
+    runId,
     state,
     canUndo: state === "applied",
     canReapply: state === "undone",
-    provenanceComplete: true,
     files: [
       { path: "src/RecoverySurface.tsx", operationCount: 1, additions: 1, deletions: 1 },
       { path: "src/recovery-surface.css", operationCount: 1, additions: 1, deletions: 1 },

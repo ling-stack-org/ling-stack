@@ -1,6 +1,24 @@
 .channel-team-metrics-panel {
-  display: grid;
   gap: 14px;
+}
+
+.channel-team-metrics-health {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: 12px;
+  padding: 4px 8px;
+  text-transform: capitalize;
+}
+
+.channel-team-metrics-health.state-degraded {
+  border-color: var(--danger-border);
+  color: var(--danger-text);
+}
+
+.channel-team-metrics-health.state-attention_needed {
+  border-color: var(--warning-border);
+  color: var(--warning-text);
 }
 
 .channel-team-metrics-grid {
@@ -9,19 +27,25 @@
   grid-template-columns: repeat(4, minmax(0, 1fr));
 }
 
-.channel-team-metrics-tile {
+.channel-team-metrics-tile,
+.channel-team-metrics-split article {
   background: var(--surface-panel-muted);
   border: 1px solid var(--border);
   border-radius: 8px;
-  display: grid;
-  gap: 6px;
-  min-height: 66px;
   padding: 10px;
 }
 
-.channel-team-metrics-tile span {
-  color: var(--text-strong);
-  font-size: 13px;
+.channel-team-metrics-tile {
+  display: grid;
+  gap: 4px;
+}
+
+.channel-team-metrics-tile span,
+.channel-team-metrics-tile small,
+.channel-team-metrics-split small,
+.channel-team-metrics-agent-row small {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 .channel-team-metrics-tile strong {
@@ -29,80 +53,28 @@
   font-size: 18px;
 }
 
-.channel-team-metrics-tile-values,
-.channel-team-metrics-secondary-value,
-.channel-team-metrics-group-head {
-  align-items: center;
-  display: flex;
-}
-
-.channel-team-metrics-tile-values,
-.channel-team-metrics-group-head {
-  justify-content: space-between;
-}
-
-.channel-team-metrics-secondary-value {
-  gap: 6px;
-}
-
-.channel-team-metrics-secondary-value > span {
-  font-size: 12px;
-}
-
-.channel-team-metrics-secondary-value > strong {
-  font-size: 14px;
-}
-
-.channel-team-metrics-breakdowns {
+.channel-team-metrics-split {
   display: grid;
   gap: 8px;
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
-.channel-team-metrics-breakdown,
-.channel-team-metrics-agents {
-  background: var(--surface-panel-muted);
-  border: 1px solid var(--border);
-  border-radius: 8px;
-  display: grid;
-  gap: 10px;
-  padding: 10px;
-}
-
-.channel-team-metrics-group-head {
+.channel-team-metrics-split h4,
+.channel-team-metrics-agents h4 {
   color: var(--text-strong);
-  min-height: 20px;
+  font-size: 13px;
+  margin: 0 0 6px;
 }
 
-.channel-team-metrics-breakdown dl {
+.channel-team-metrics-split p,
+.channel-team-metrics-agents p {
+  color: var(--text-muted);
+  margin: 0;
+}
+
+.channel-team-metrics-agents {
   display: grid;
   gap: 8px;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
-  margin: 0;
-}
-
-.channel-team-metrics-stat {
-  display: grid;
-  gap: 4px;
-  min-width: 0;
-}
-
-.channel-team-metrics-stat dt,
-.channel-team-metrics-stat dd {
-  color: var(--text-strong);
-  margin: 0;
-}
-
-.channel-team-metrics-stat dt {
-  font-size: 12px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.channel-team-metrics-stat dd {
-  font-size: 18px;
-  font-weight: 700;
 }
 
 .channel-team-metrics-agent-row {
@@ -111,40 +83,30 @@
   display: grid;
   gap: 10px;
   grid-template-columns: minmax(0, 1fr) auto;
-  padding: 8px 0 0;
+  padding-top: 8px;
 }
 
 .channel-team-metrics-agent-row div {
   display: grid;
-  gap: 4px;
+  gap: 2px;
   min-width: 0;
 }
 
 .channel-team-metrics-agent-row strong,
-.channel-team-metrics-agent-row span {
+.channel-team-metrics-agent-row small {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.channel-team-metrics-agent-row span {
-  color: var(--text-strong);
-  font-size: 13px;
-}
-
-.channel-team-metrics-agent-evidence {
-  align-items: baseline;
-  display: flex;
-  gap: 4px;
+.channel-team-metrics-agent-row > span {
+  color: var(--text-muted);
+  font-size: 12px;
 }
 
 @media (max-width: 760px) {
   .channel-team-metrics-grid,
-  .channel-team-metrics-breakdowns {
+  .channel-team-metrics-split {
     grid-template-columns: 1fr;
-  }
-
-  .channel-team-metrics-breakdown dl {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }

@@ -66,15 +66,10 @@ test("1440x960 Ling Light owns a complete Channel turn, transcript disclosure, t
   await expect(operationBlock).toBeVisible();
   await expect(terminalBlock).toBeVisible();
 
-  const proposalSummary = feed.locator('[aria-label="Task proposal summary"]').filter({
+  const transcript = feed.locator("[data-conversation-transcript-block]").filter({
     hasText: "Clarify the message and transcript ownership boundary",
   });
-  await expect(proposalSummary).toHaveCount(1);
-  await expect(proposalSummary).toBeVisible();
-
-  const transcript = feed.getByRole("region", { name: "Decision needed", exact: true });
   await expect(transcript).toHaveCount(1);
-  await expect(transcript).not.toContainText("Clarify the message and transcript ownership boundary");
   const collapseTranscript = transcript.getByRole("button", { name: "Collapse transcript block" });
   await expect(collapseTranscript).toHaveAttribute("aria-expanded", "true");
   await collapseTranscript.click();
@@ -273,10 +268,7 @@ function installChannelTranscriptFixture(state: MockState): void {
     shaping: {
       status: "needs_user_clarification",
       summary: "Clarify the message and transcript ownership boundary",
-      openQuestions: [
-        "Which transcript state should remain expanded?",
-        "Keep the focused block expanded for evidence.",
-      ],
+      openQuestions: ["Which transcript state should remain expanded?"],
       clarifications: [{
         id: "clarification_ui2_transcript_contract",
         authorType: "local-user",

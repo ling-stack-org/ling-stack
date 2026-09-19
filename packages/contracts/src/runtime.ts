@@ -2,7 +2,6 @@ import type { RunStatus, RunTool } from "./shared.js";
 import type { ResourceLease } from "./workflows.js";
 import type { RunnerReadinessSummary } from "./runner-readiness.js";
 import type { RunnerToolHydrationCapability } from "./tool-surfaces.js";
-import type { ApprovalCommandRuleProposal, ApprovalDecisionKind } from "./approvals.js";
 
 export type RuntimePermissionRequestKind =
   | "core_tool"
@@ -541,21 +540,16 @@ export interface RunEventDataByType {
     readonly title?: string;
     readonly description?: string;
     readonly expiresAt?: string;
-    readonly availableDecisions?: readonly ApprovalDecisionKind[];
-    readonly proposedCommandRule?: ApprovalCommandRuleProposal;
     readonly [key: string]: unknown;
   };
   readonly approval_approved: {
     readonly approvalId: string;
     readonly decisionReason?: string;
-    readonly decisionKind?: ApprovalDecisionKind;
-    readonly decisionRuleId?: string;
     readonly [key: string]: unknown;
   };
   readonly approval_denied: {
     readonly approvalId: string;
     readonly decisionReason?: string;
-    readonly decisionKind?: ApprovalDecisionKind;
     readonly [key: string]: unknown;
   };
   readonly approval_expired: {

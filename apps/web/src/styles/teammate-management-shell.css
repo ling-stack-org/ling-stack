@@ -27,10 +27,6 @@
   background: var(--ling-bg-panel);
 }
 
-.teammates-page.titlebar-window {
-  grid-template-rows: minmax(0, 1fr);
-}
-
 .teammates-page.settings-return-mode {
   grid-template-rows: minmax(0, 1fr);
 }

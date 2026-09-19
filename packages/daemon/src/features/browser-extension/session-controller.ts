@@ -271,10 +271,11 @@ export class ChromeBrowserSessionController {
     if (store.getManagedPlugin(CHROME_BROWSER_PLUGIN_ID)?.enabled !== true) {
       throw new ChromeBrowserSessionError("chrome_browser_disabled", "Chrome access is disabled in Ling.");
     }
-    const migratedLegacyCredential = store.listChromeBrowserCredentials(
+    const migratedLegacyCredential = store.revokeChromeBrowserCredentials(
       "workspace_default",
       CHROME_BROWSER_PLUGIN_ID,
-    ).some((credential) => !credential.revokedAt);
+      this.now().toISOString(),
+    ) > 0;
     this.failures.delete(cwd);
     this.hostState = "ready";
     this.extensionState = "connected";
@@ -297,18 +298,6 @@ export class ChromeBrowserSessionController {
       if (transport.isOpen()) transport.close(1011, "chrome_socket_error");
     });
     return { migratedLegacyCredential };
-  }
-
-  /** Commit legacy credential migration only after the Native peer accepted ready. */
-  commitNativeCredentialMigration(cwd: string): number {
-    this.assertOpen();
-    const count = this.store(cwd).revokeChromeBrowserCredentials(
-      "workspace_default",
-      CHROME_BROWSER_PLUGIN_ID,
-      this.now().toISOString(),
-    );
-    this.publish(cwd);
-    return count;
   }
 
   observeNativeState(input: {

@@ -258,6 +258,12 @@
   gap: var(--ling-space-5);
 }
 
+.channel-environment-page-header > div {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
 .channel-environment-page-header h2 {
   margin: 0;
   color: var(--ling-text-strong);
@@ -266,43 +272,15 @@
   line-height: 26px;
 }
 
+.channel-environment-page-header > div > span {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
 .channel-environment-list {
   min-width: 0;
   border-top: 1px solid var(--ling-border-default);
-}
-
-.channel-environment-list > .ling-ui-data-row {
-  grid-template-columns: 180px minmax(0, 1fr) 144px 112px;
-}
-
-.channel-environment-list > .ling-ui-data-row > .ling-ui-data-row-identity {
-  grid-column: 1;
-}
-
-.channel-environment-list > .ling-ui-data-row > .ling-ui-data-row-summary {
-  grid-column: 2;
-}
-
-.channel-environment-list > .ling-ui-data-row > .ling-ui-data-row-status {
-  grid-column: 3;
-  justify-self: stretch;
-}
-
-.channel-environment-list > .ling-ui-data-row > .ling-ui-data-row-actions {
-  grid-column: 4;
-}
-
-.channel-environment-path {
-  display: block;
-  min-width: 0;
-  max-width: 100%;
-  overflow: hidden;
-  color: var(--ling-text-muted);
-  font-family: ui-monospace, "SFMono-Regular", Menlo, Monaco, Consolas, monospace;
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-  text-overflow: ellipsis;
-  white-space: nowrap;
 }
 
 .channel-environment-identity {
@@ -339,11 +317,12 @@
 }
 
 .channel-environment-change-status {
-  display: grid;
+  display: inline-flex;
   min-width: 0;
   align-items: center;
-  justify-items: start;
-  gap: var(--ling-space-1);
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: var(--ling-space-3);
 }
 
 .channel-environment-diff-stat {
@@ -413,6 +392,51 @@
   overflow-wrap: anywhere;
 }
 
+.channel-environment-commit-body {
+  display: grid;
+  gap: var(--ling-space-5);
+}
+
+.channel-environment-commit-body .environment-commit-message {
+  min-height: 96px;
+  resize: vertical;
+}
+
+.channel-environment-commit-dialog > .ling-ui-dialog-footer {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.channel-environment-commit-dialog > .ling-ui-dialog-footer > .ling-ui-button {
+  width: 100%;
+}
+
+.channel-environment-switch-row {
+  display: flex;
+  min-width: 0;
+  min-height: var(--ling-control-md);
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-5);
+}
+
+.channel-environment-switch-row > span {
+  display: grid;
+  min-width: 0;
+  gap: var(--ling-space-1);
+}
+
+.channel-environment-switch-row strong {
+  color: var(--ling-text-strong);
+  font-size: var(--ling-font-sm);
+}
+
+.channel-environment-switch-row small {
+  color: var(--ling-text-muted);
+  font-size: var(--ling-font-xs);
+  line-height: var(--ling-line-xs);
+}
+
 @media (max-width: 1100px) {
   .channel-environment-page {
     padding-inline: var(--ling-space-5);
@@ -420,31 +444,6 @@
 
   .channel-environment-evidence-grid {
     grid-template-columns: minmax(0, 1fr);
-  }
-
-  .channel-environment-list > .ling-ui-data-row {
-    grid-template-columns: minmax(0, 1fr) auto;
-  }
-
-  .channel-environment-list > .ling-ui-data-row > .ling-ui-data-row-identity {
-    grid-column: 1;
-    grid-row: 1;
-  }
-
-  .channel-environment-list > .ling-ui-data-row > .ling-ui-data-row-summary {
-    grid-column: 1;
-    grid-row: 2;
-  }
-
-  .channel-environment-list > .ling-ui-data-row > .ling-ui-data-row-status {
-    grid-column: 2;
-    grid-row: 1;
-    justify-self: end;
-  }
-
-  .channel-environment-list > .ling-ui-data-row > .ling-ui-data-row-actions {
-    grid-column: 2;
-    grid-row: 2;
   }
 }
 

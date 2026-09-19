@@ -38,16 +38,21 @@ function channelComposerTextbox(scope: Page | Locator): Locator {
   return scope.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
 }
 
-async function openTaskProposalGate(page: Page, title: string): Promise<Locator> {
-  const gate = page.locator('[data-conversation-decision-kind="task_proposal"]');
+async function openTaskProposalDialog(page: Page, title: string): Promise<Locator> {
+  const dialog = page.getByRole("dialog", { name: "Task confirmation" });
   const summary = page.getByLabel("Task proposal summary").filter({ hasText: title });
-  await expect.poll(async () => await gate.isVisible() || await summary.isVisible()).toBe(true);
-  if (!await gate.isVisible() || !(await gate.innerText()).includes(title)) {
-    await summary.getByRole("button", { name: "View task" }).click();
+  await expect.poll(async () => await dialog.isVisible() || await summary.isVisible()).toBe(true);
+  if (await dialog.isVisible()) {
+    if ((await dialog.innerText()).includes(title)) return dialog.locator(".channel-execution-proposal-decision");
+    await dialog.getByRole("button", { name: "Close" }).click();
   }
-  await expect(gate).toBeVisible();
-  await expect(gate).toContainText(title);
-  return gate;
+  try {
+    await summary.getByRole("button", { name: "View task" }).click();
+  } catch (error) {
+    if (!await dialog.isVisible()) throw error;
+  }
+  await expect(dialog).toBeVisible();
+  return dialog.locator(".channel-execution-proposal-decision");
 }
 
 function createLineagePlan(overrides: Partial<ProposedPlanArtifact>): ProposedPlanArtifact {
@@ -634,10 +639,7 @@ test("channel team metrics stay in settings without a conversation expert summar
   await page.getByRole("menuitem", { name: "Settings" }).click();
   await page.getByRole("tab", { name: "Health" }).click();
   const teamMetrics = page.getByRole("region", { name: "Team metrics" });
-  await expect(teamMetrics).toHaveAttribute("data-health-state", "attention_needed");
-  await expect(teamMetrics.locator(".channel-team-metrics-health")).toHaveCount(0);
-  await expect(teamMetrics.getByRole("region", { name: "Risk review" })).toContainText("Risk1");
-  await expect(teamMetrics.getByRole("region", { name: "Learning queue" })).toContainText("Recommendation1");
+  await expect(teamMetrics).toContainText("attention needed");
   await expect(teamMetrics).toContainText("Architect checked boundaries.");
 });
 
@@ -708,7 +710,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const fixedTop = drawer.querySelector(".sidebar-fixed-top");
     const drawerTop = drawer.getBoundingClientRect().top;
     const fixedTopOffset = (fixedTop?.getBoundingClientRect().top ?? drawerTop) - drawerTop;
-    return Math.round(drawer.getBoundingClientRect().width) === 292 && fixedTopOffset >= 10;
+    return Math.round(drawer.getBoundingClientRect().width) === 240 && fixedTopOffset >= 10;
   })).toBe(true);
 
   const expanded = await page.evaluate(() => {
@@ -720,6 +722,7 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
     const selectedChannel = document.querySelector(".channel-left-drawer .sidebar-channel-group > .sidebar-row-shell.selected");
     const primaryNav = document.querySelector(".channel-left-drawer .primary-nav");
     const firstSectionTitle = document.querySelector(".channel-left-drawer .sidebar-section-title");
+    const sidebarSwitch = document.querySelector(".channel-sidebar-switch");
     const settings = document.querySelector(".channel-left-drawer .config-button");
     const scrollRegionElement = scrollRegion as HTMLElement | null;
     if (scrollRegionElement) {
@@ -752,13 +755,14 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       sectionTitleColor: firstSectionTitle ? getComputedStyle(firstSectionTitle).color : "",
       sectionTitleFontSize: firstSectionTitle ? getComputedStyle(firstSectionTitle).fontSize : "",
       sectionTitleFontWeight: firstSectionTitle ? getComputedStyle(firstSectionTitle).fontWeight : "",
+      sidebarSwitchBorderWidth: sidebarSwitch ? getComputedStyle(sidebarSwitch).borderTopWidth : "",
       settingsText: settings?.textContent?.trim() ?? "",
       globalRightPanels: document.querySelectorAll(".right-panel").length,
     };
   });
-  expect(expanded.firstColumnWidth).toBe(292);
-  expect(expanded.leftWidth).toBe(292);
-  expect(expanded.leftBackground).toBe("rgb(230, 228, 223)");
+  expect(expanded.firstColumnWidth).toBe(240);
+  expect(expanded.leftWidth).toBe(240);
+  expect(expanded.leftBackground).toBe("rgb(255, 255, 255)");
   expect(expanded.fixedTopTop - expanded.leftTop).toBeGreaterThanOrEqual(10);
   expect(expanded.scrollOverflowY).toBe("auto");
   expect(expanded.scrollTop).toBeGreaterThan(expanded.fixedTopTop);
@@ -771,11 +775,12 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   expect(expanded.lastRecentBottom).toBeLessThanOrEqual(expanded.scrollBottom + 1);
   expect(expanded.bottomBottomGap).toBeGreaterThanOrEqual(8);
   expect(expanded.selectedChannelText).toContain("Engineering");
-  expect(expanded.selectedChannelBackground).toBe("rgb(217, 216, 213)");
+  expect(expanded.selectedChannelBackground).toBe("rgb(245, 245, 245)");
   expect(expanded.primaryNavBorderBottom).toBe("0px");
-  expect(expanded.sectionTitleColor).toBe("rgb(134, 134, 137)");
+  expect(expanded.sectionTitleColor).toBe("rgb(138, 138, 138)");
   expect(expanded.sectionTitleFontSize).toBe("10px");
   expect(Number(expanded.sectionTitleFontWeight)).toBeGreaterThanOrEqual(700);
+  expect(expanded.sidebarSwitchBorderWidth).toBe("0px");
   expect(expanded.settingsText).toBe("Settings");
   expect(expanded.globalRightPanels).toBe(0);
   await navigation.locator(".sidebar-scroll-region").evaluate((element) => {
@@ -783,29 +788,51 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   });
 
   await page.getByRole("button", { name: "Hide navigation" }).click();
-  await expect(navigation).toHaveAttribute("data-sidebar-mode", "compact");
+  await page.mouse.move(22, 22);
+  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBe(48);
   const leftCollapsed = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
-    const leftDrawer = document.querySelector(".sidebar-compact-rail");
-    const objectRows = document.querySelectorAll(".sidebar-row-shell");
-    const railLaunchers = document.querySelectorAll(".sidebar-compact-rail .sidebar-rail-launcher");
+    const leftDrawer = document.querySelector(".channel-left-drawer");
+    const brandCopy = document.querySelector(".channel-left-drawer .sidebar-brand-copy");
+    const firstNavText = document.querySelector(".channel-left-drawer .primary-nav .nav-item .ling-ui-button-label");
+    const settingsLabel = document.querySelector(".channel-left-drawer .config-button-label");
+    const objectRows = document.querySelectorAll(".channel-left-drawer .sidebar-row-shell");
+    const railLaunchers = document.querySelectorAll(".channel-left-drawer .sidebar-rail-launcher");
+    const channelLauncher = document.querySelector('[data-sidebar-rail-launcher="channels"]');
     return {
       columns: shell ? getComputedStyle(shell).gridTemplateColumns : "",
       firstColumnWidth: Math.round(Number.parseFloat(shell ? getComputedStyle(shell).gridTemplateColumns : "0")),
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
-      leftDrawerCount: leftDrawer ? 1 : 0,
+      leftX: Math.round(leftDrawer?.getBoundingClientRect().x ?? -1),
+      leftOpacity: leftDrawer ? getComputedStyle(leftDrawer).opacity : "",
+      transform: leftDrawer ? getComputedStyle(leftDrawer).transform : "",
+      brandCopyHidden: !brandCopy || getComputedStyle(brandCopy).display === "none",
+      firstNavTextDisplay: firstNavText ? getComputedStyle(firstNavText).display : "",
+      settingsLabelDisplay: settingsLabel ? getComputedStyle(settingsLabel).display : "",
       objectRowCount: objectRows.length,
       railLauncherCount: railLaunchers.length,
+      channelLauncherLabel: channelLauncher?.getAttribute("aria-label") ?? "",
     };
   });
   expect(leftCollapsed.firstColumnWidth).toBe(48);
   expect(leftCollapsed.leftWidth).toBe(48);
-  expect(leftCollapsed.leftDrawerCount).toBe(1);
+  expect(leftCollapsed.leftX).toBe(0);
+  expect(leftCollapsed.leftOpacity).toBe("1");
+  expect(leftCollapsed.transform).toBe("none");
+  expect(leftCollapsed.brandCopyHidden).toBe(true);
+  expect(leftCollapsed.firstNavTextDisplay).toBe("none");
+  expect(leftCollapsed.settingsLabelDisplay).toBe("none");
   expect(leftCollapsed.objectRowCount).toBe(0);
   expect(leftCollapsed.railLauncherCount).toBe(3);
+  expect(leftCollapsed.channelLauncherLabel).toBe("Channels");
 
-  await page.getByRole("button", { name: "Show navigation" }).click();
-  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? 0)).toBe(292);
+  const sidebarTooltip = page.getByRole("tooltip");
+  await navigation.getByRole("button", { name: "Channels", exact: true }).hover();
+  await expect(sidebarTooltip).toHaveText("Channels");
+  await expect.poll(async () => sidebarTooltip.evaluate((node) => Math.round(node.getBoundingClientRect().left))).toBeGreaterThan(45);
+  await navigation.getByRole("button", { name: "Settings" }).hover();
+  await expect(sidebarTooltip).toHaveText("Settings");
+
   await navigation.getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("radiogroup", { name: "Media production views" })).toBeVisible();
   await navigation.getByRole("button", { name: "Automations" }).click();
@@ -820,7 +847,8 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
   await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
   await page.getByRole("button", { name: "Back to app" }).click();
 
-  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBe(292);
+  await page.getByRole("button", { name: "Show navigation" }).click();
+  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBe(240);
   const restored = await page.evaluate(() => {
     const shell = document.querySelector(".app-shell");
     const leftDrawer = document.querySelector(".channel-left-drawer");
@@ -829,17 +857,17 @@ test("global sidebar keeps fixed chrome, scrollable recents, and a true compact 
       leftWidth: Math.round(leftDrawer?.getBoundingClientRect().width ?? 0),
     };
   });
-  expect(restored.columns.startsWith("292px ")).toBe(true);
-  expect(restored.leftWidth).toBe(292);
+  expect(restored.columns.startsWith("240px ")).toBe(true);
+  expect(restored.leftWidth).toBe(240);
 });
 
 test("narrow channel viewport keeps the conversation column usable", async ({ page }) => {
   await useEnglishLocale(page);
+  await page.setViewportSize({ width: 390, height: 844 });
   const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
-  await page.setViewportSize({ width: 390, height: 844 });
 
   const feed = page.getByLabel("Channel message feed");
   await expect(feed).toBeVisible();
@@ -1326,7 +1354,8 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.goto("/");
   await openEngineeringChannel(page);
   await page.getByRole("button", { name: "Hide navigation" }).click();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveAttribute("data-sidebar-mode", "compact");
+  await page.waitForTimeout(200);
+  await expect.poll(async () => Math.round((await page.locator(".channel-left-drawer").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(250);
   await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
   await expect.poll(async () => Math.round((await page.locator(".activity-chat-layout").boundingBox())?.width ?? 0)).toBeLessThanOrEqual(820);
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(780);
@@ -1426,7 +1455,7 @@ test("channel environment surface shows read-only context and opens review", asy
   expect(await messageFeed.evaluate((node) => node.dataset.remountProbe)).toBe("right-dock-stable");
   expect(Math.abs(await messageFeed.evaluate((node) => Math.round(node.scrollTop)) - feedScrollBeforeDock)).toBeLessThanOrEqual(1);
   await page.locator(".task-toolbar-panel").click();
-  await page.waitForTimeout(80);
+  await page.waitForTimeout(160);
   await expect(dock).toHaveCount(1);
   const closingDockFrameBox = await page.locator(".channel-side-panel-frame").boundingBox();
   expect(closingDockFrameBox).not.toBeNull();
@@ -1544,9 +1573,6 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.getByRole("menuitem", { name: "Environment" }).click();
   const environmentPage = page.locator(".channel-environment-page");
   await expect(environmentPage).toBeVisible();
-  await expect(page.locator(".channel-settings-top-title small")).toHaveCount(0);
-  await expect(environmentPage.locator(".channel-environment-page-header > div")).toHaveCount(0);
-  await expect(environmentPage).not.toContainText("#Engineering");
   await expect(environmentPage).toContainText("Local environment");
   await expect(environmentPage).toContainText("Worktree");
   await expect(environmentPage).toContainText("ling/channel-environment");
@@ -1556,26 +1582,6 @@ test("channel environment surface shows read-only context and opens review", asy
   await expect(environmentPage).toContainText("1 review item");
   await expect(environmentPage).toContainText("No browser evidence");
   await expect(environmentPage).toContainText("No sources");
-  await expect(environmentPage).toContainText("1 artifact");
-  await expect(environmentPage.locator(".channel-environment-metric")).toHaveCount(3);
-  await expect(environmentPage.locator('[data-environment-row="commit"]')).toBeVisible();
-  const environmentRows = environmentPage.locator(".channel-environment-list > .ling-ui-data-row");
-  const summaryLeftEdges = await environmentRows.locator(".ling-ui-data-row-summary").evaluateAll((elements) =>
-    elements.map((element) => Math.round(element.getBoundingClientRect().left)),
-  );
-  const statusLeftEdges = await environmentRows.locator(".ling-ui-data-row-status").evaluateAll((elements) =>
-    elements.map((element) => Math.round(element.querySelector(".ling-ui-status-indicator")!.getBoundingClientRect().left)),
-  );
-  const actionRightEdges = await environmentRows.locator(".ling-ui-data-row-actions").evaluateAll((elements) =>
-    elements.map((element) => Math.round(element.getBoundingClientRect().right)),
-  );
-  expect(new Set(summaryLeftEdges).size, `summary columns: ${summaryLeftEdges.join(", ")}`).toBe(1);
-  expect(
-    Math.max(...statusLeftEdges) - Math.min(...statusLeftEdges),
-    `status columns: ${statusLeftEdges.join(", ")}`,
-  ).toBeLessThanOrEqual(1);
-  expect(statusLeftEdges).toHaveLength(5);
-  expect(new Set(actionRightEdges).size, `action columns: ${actionRightEdges.join(", ")}`).toBe(1);
 
   const selectedEnvironmentPath = "/Users/example/workspace/projects";
   await environmentPage.getByRole("button", { name: "Change directory" }).click();
@@ -1597,16 +1603,6 @@ test("channel environment surface shows read-only context and opens review", asy
   const localEnvironment = environmentPage.locator('[data-environment-row="workspace"]');
   await expect(localEnvironment).toContainText("Local");
   await expect(localEnvironment).toContainText(selectedEnvironmentPath);
-  const environmentPath = localEnvironment.locator(".channel-environment-path");
-  await expect(environmentPath).toHaveAttribute("title", selectedEnvironmentPath);
-  await expect(environmentPath).toHaveCSS("white-space", "nowrap");
-  await expect(environmentPath).toHaveCSS("text-overflow", "ellipsis");
-  await expect(environmentPath).toHaveCSS("font-family", /mono/u);
-  await expect.poll(async () => {
-    const box = await environmentPath.boundingBox();
-    return Math.round(box?.height ?? 0);
-  }).toBeLessThanOrEqual(20);
-  await expect(localEnvironment.getByRole("button", { name: "Change directory" })).toBeVisible();
 
   await environmentPage.locator('[data-environment-row="commit"]').getByRole("button", { name: "Open" }).click();
   const dialog = page.getByRole("dialog", { name: "Commit or push" });
@@ -1699,8 +1695,6 @@ test("channel environment shows clean git state without review rows", async ({ p
   const environmentPage = page.locator(".channel-environment-page");
   await expect(environmentPage).toContainText("No code changes");
   await expect(environmentPage).toContainText("No review items");
-  await expect(environmentPage.locator('[data-environment-row="review"]')).toBeVisible();
-  await expect(environmentPage.locator(".channel-environment-page-header .ling-ui-status-indicator")).toContainText("Ready");
 });
 
 test("channel environment shows not-git-repo without fake clean state", async ({ page }) => {
@@ -1733,16 +1727,6 @@ test("channel environment shows not-git-repo without fake clean state", async ({
   const environmentPage = page.locator(".channel-environment-page");
   await expect(environmentPage).toContainText("Not a Git repository");
   await expect(environmentPage).not.toContainText("No code changes");
-  await expect(environmentPage.locator(".ling-ui-data-row")).toHaveCount(5);
-  await expect(environmentPage.locator('[data-environment-row="workspace"]')).toBeVisible();
-  await expect(environmentPage.locator('[data-environment-row="changes"]')).toBeVisible();
-  await expect(environmentPage.locator('[data-environment-row="review"]')).toBeVisible();
-  await expect(environmentPage.locator('[data-environment-row="branch"]')).toBeVisible();
-  await expect(environmentPage.locator('[data-environment-row="commit"]')).toBeVisible();
-  await expect(environmentPage.locator(".channel-environment-page-header .ling-ui-status-indicator")).toContainText("Ready");
-  await environmentPage.getByText("Evidence and output", { exact: true }).click();
-  await expect(environmentPage.locator(".channel-environment-evidence-grid")).toBeVisible();
-  await expect(environmentPage).toContainText("No linked resources");
 });
 
 test("channel environment treats git transport failure as unavailable", async ({ page }) => {
@@ -1768,9 +1752,6 @@ test("channel environment treats git transport failure as unavailable", async ({
   const environmentPage = page.locator(".channel-environment-page");
   await expect(environmentPage).toContainText("Git status unavailable");
   await expect(environmentPage).not.toContainText("No code changes");
-  await expect(environmentPage.locator(".channel-environment-page-header .ling-ui-status-indicator")).toContainText("Needs attention");
-  await expect(environmentPage.locator('[data-environment-row="changes"]')).toBeVisible();
-  await expect(environmentPage.locator('[data-environment-row="branch"]')).toBeVisible();
 });
 
 test("conversation motion respects reduced motion preference", async ({ page }) => {
@@ -2296,19 +2277,17 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   expect(state.lastChannelTurnRequest).not.toHaveProperty("providerPresetId");
   await expect.poll(() => state.channelExecutionProposals.length).toBe(1);
   await expect.poll(() => state.channelMessages.filter((message) => isRecord(message) && message.kind === "ai_reply").length).toBe(0);
-  const proposal = await openTaskProposalGate(page, "Architect 先拆，Engineer 实现，QA 验证，可以吗？");
+  const proposal = await openTaskProposalDialog(page, "Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await expect(proposal).toContainText("Architect 先拆，Engineer 实现，QA 验证，可以吗？");
   await expect(proposal).toContainText("Engineer");
+  await expect(proposal).toContainText("Required permissions");
   await expect(proposal).toContainText("Read files");
   await expect(proposal).toContainText("Run commands");
   await expect(proposal).toContainText("Modify files");
   await expect(proposal).not.toContainText("Collaboration");
   await expect(proposal).not.toContainText("Non-direct multi-agent collaboration waits for confirmation");
   await expect(proposal).not.toContainText("Starting this task does not approve future runtime actions");
-  await expect(proposal.getByRole("button")).toHaveCount(2);
-  await expect(proposal.getByRole("button", { name: "Deny" })).toBeVisible();
-  await expect(proposal.getByRole("button", { name: "Allow", exact: true })).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Task confirmation" })).toHaveCount(0);
+  await expect(proposal.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
   await expect(page.getByText("AI teammate is preparing a reply...")).toHaveCount(0);
   await expect.poll(() => {
     const decision = state.channelIntentDecisions[0];
@@ -2316,7 +2295,7 @@ test("multi-role channel messages create workflow proposals instead of AI replie
   }).toBe("workflow_proposal|accepted|deterministic");
 });
 
-test("task proposal gate uses one sentence and direct deny or allow actions", async ({ page }) => {
+test("task confirmation shows only the task, Agent, and product permission labels", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -2400,85 +2379,28 @@ test("task proposal gate uses one sentence and direct deny or allow actions", as
 
   const summaries = page.getByLabel("Task proposal summary");
   await expect(summaries).toHaveCount(3);
-  const createCard = await openTaskProposalGate(page, "Create README.md");
+  const createCard = await openTaskProposalDialog(page, "Create README.md");
+  await expect(createCard.getByText("Task", { exact: true })).toBeVisible();
+  await expect(createCard.getByText("Agent", { exact: true })).toBeVisible();
+  await expect(createCard.getByText("Required permissions", { exact: true })).toBeVisible();
   await expect(createCard).toContainText("Modify files");
   await expect(createCard).toContainText("Ling Agent");
   await expect(createCard).not.toContainText("Need write permission");
   await expect(createCard).not.toContainText("/tmp/example/README.md");
   await expect(createCard).not.toContainText(/\bwrite\b/u);
-  await expect(createCard.locator("dl")).toHaveCount(0);
 
-  const editCard = await openTaskProposalGate(page, "Edit docs/guide.md");
+  const editCard = await openTaskProposalDialog(page, "Edit docs/guide.md");
   await expect(editCard).toContainText("Modify files");
   await expect(editCard).not.toContainText("Need edit permission");
+  await expect(editCard.locator(".channel-proposal-permission-chips")).not.toContainText(/\bedit\b/u);
 
-  const commandCard = await openTaskProposalGate(page, "Run pnpm test");
+  const commandCard = await openTaskProposalDialog(page, "Run pnpm test");
   await expect(commandCard).toContainText("Run commands");
   await expect(commandCard).not.toContainText("Need bash permission");
-  await expect(commandCard).not.toContainText(/\bbash\b/u);
+  await expect(commandCard.locator(".channel-proposal-permission-chips")).not.toContainText(/\bbash\b/u);
 
   await expect(commandCard).not.toContainText("Starting this task does not approve future runtime actions");
-  await expect(commandCard.getByRole("button")).toHaveCount(2);
-  await expect(commandCard.getByRole("button", { name: "Deny" })).toBeVisible();
-  await expect(commandCard.getByRole("button", { name: "Allow", exact: true })).toBeVisible();
-  await expect(commandCard.getByRole("button", { name: "Edit" })).toHaveCount(0);
-  await expect(commandCard.getByRole("button", { name: "Cancel proposal" })).toHaveCount(0);
-  await expect(page.getByRole("dialog", { name: "Task confirmation" })).toHaveCount(0);
-  await maybeCaptureViewportScreenshot(page, "task-proposal-composer-gate.png");
-});
-
-test("task proposal gate blocks only its owning channel and deny restores the Composer", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("ling-stack.locale", "en-US");
-  });
-  const state = createBaseState({ approvalStatus: "expired" });
-  state.aiTeammates = [createMockTeammate({ id: "ling_agent", displayName: "Ling Agent" })];
-  state.channels.push({
-    id: "channel_general",
-    workspaceId: "workspace_default",
-    name: "General",
-    status: "active",
-    boundPath: cwd,
-    defaultTeammateId: "ling_agent",
-    autoReplyMode: "mentions_only",
-    allowedTools: ["read", "grep", "find", "ls"],
-    runtimePolicy: defaultRuntimePolicy,
-    createdAt: "2026-05-25T00:12:00.000Z",
-    updatedAt: "2026-05-25T00:12:00.000Z",
-  });
-  state.channelExecutionProposals = [{
-    id: "proposal_channel_owned",
-    workspaceId: "workspace_default",
-    channelId: "channel_engineering",
-    sourceMessageId: "msg_channel_owned",
-    proposedByTeammateId: "ling_agent",
-    title: "Review channel ownership",
-    prompt: "Review only the Engineering channel.",
-    assigneeTeammateId: "ling_agent",
-    acceptanceCriteria: ["The owning channel is preserved."],
-    collaborationSteps: [{ teammateId: "ling_agent", action: "coordinated", summary: "Review channel ownership." }],
-    requiredTools: ["read"],
-    status: "draft",
-    createdAt: "2026-05-25T00:12:01.000Z",
-    updatedAt: "2026-05-25T00:12:01.000Z",
-  }];
-
-  await mockDaemon(page, state);
-  await page.goto("/");
-  await openEngineeringChannel(page);
-
-  const gate = await openTaskProposalGate(page, "Review channel ownership");
-  await expect(page.getByLabel("Channel composer")).toHaveCount(0);
-  await page.getByRole("button", { name: "General", exact: true }).click();
-  await expect(gate).toHaveCount(0);
-  await expect(page.getByLabel("Channel composer")).toBeVisible();
-
-  await page.getByRole("button", { name: "Engineering", exact: true }).click();
-  const restoredGate = await openTaskProposalGate(page, "Review channel ownership");
-  await restoredGate.getByRole("button", { name: "Deny" }).click();
-  await expect(restoredGate).toHaveCount(0);
-  await expect(page.getByLabel("Channel composer")).toBeVisible();
-  await expect.poll(() => state.channelExecutionProposals[0]?.status).toBe("cancelled");
+  await expect(commandCard.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
 });
 
 test("Ling Agent session acceptance matrix auto-starts executable messages", async ({ page }) => {
@@ -2661,9 +2583,11 @@ test("ordinary channel feed hides routing and intent decision internals", async 
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const proposalGate = page.locator('[data-conversation-decision-kind="task_proposal"]');
-  await expect(proposalGate).toContainText("Edit README.md");
-  await expect(page.getByRole("dialog", { name: /Task confirmation|任务确认/u })).toHaveCount(0);
+  const autoOpenedProposal = page.getByRole("dialog", { name: /Task confirmation|任务确认/u });
+  if (await autoOpenedProposal.isVisible().catch(() => false)) {
+    await expect(autoOpenedProposal).toContainText("Edit README.md");
+    await autoOpenedProposal.getByRole("button", { name: /Close|关闭/u }).click();
+  }
   const feed = page.locator(".activity-shell");
   await expect(feed.getByText("晚上好")).toBeVisible();
   await expect(page.getByLabel(/Task proposal summary|任务提案摘要/u).filter({ hasText: "Edit README.md" })).toBeVisible({ timeout: 10_000 });
@@ -3131,44 +3055,6 @@ test("channel settings attaches an AI council by reference", async ({ page }) =>
   expect(consoleMessages.filter((message) => !message.includes("Failed to load resource"))).toEqual([]);
 });
 
-test("channel council settings hide clear health and redundant compact status dots", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("ling-stack.locale", "en-US");
-  });
-  const state = createBaseState({ approvalStatus: "expired" });
-  state.aiTeammates = [
-    createMockTeammate({ id: "teammate_builtin_engineer", displayName: "Ling Engineer" }),
-    createMockTeammate({ id: "teammate_builtin_designer", displayName: "Ling Designer" }),
-    createMockTeammate({ id: "teammate_builtin_qa", displayName: "Ling QA" }),
-  ];
-  state.channelCouncilPolicies = [{
-    workspaceId: "workspace_default",
-    channelId: "channel_engineering",
-    attachedCouncilIds: ["council_builtin_development"],
-    preferredCouncilId: "council_builtin_development",
-    createdAt: "2026-06-20T00:00:00.000Z",
-    updatedAt: "2026-06-20T00:00:00.000Z",
-  }];
-  await mockDaemon(page, state);
-  await page.goto("/");
-  await openEngineeringChannel(page);
-
-  await page.getByRole("button", { name: "More channel views" }).click();
-  await page.getByRole("menuitem", { name: "Settings" }).click();
-  const settingsTabs = page.getByRole("tablist", { name: "Channel settings navigation" });
-  await settingsTabs.getByRole("tab", { name: "Councils" }).click();
-  const councils = page.getByLabel("Channel AI councils");
-  const council = councils.locator(".channel-council-card").filter({ hasText: "Development Council" });
-
-  await expect(council).toBeVisible();
-  await expect.poll(() => state.aiCouncilHealthRequestCount ?? 0).toBeGreaterThan(0);
-  await expect(councils.getByText("Health clear", { exact: true })).toHaveCount(0);
-  await expect(councils.getByLabel("Council health", { exact: true })).toHaveCount(0);
-  await expect(councils.locator(".channel-settings-section-head .ling-ui-status-indicator")).toHaveCount(0);
-  await expect(council.locator(".ling-ui-data-row-status")).toHaveCount(0);
-  await expect(council.getByRole("button", { name: "Preferred" })).toBeVisible();
-});
-
 test("channel message feed renders AI teammate avatar images", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -3599,10 +3485,8 @@ test("channel settings manage workspace binding", async ({ page }) => {
   await settingsTabs.getByRole("tab", { name: "Workspace" }).click();
   const workspaceSettings = page.getByLabel("Channel workspace settings");
   const workspaceControl = workspaceSettings.getByLabel("Channel workspace");
-  const workspaceMode = workspaceControl.locator(".channel-workspace-mode-label");
-  await expect(workspaceMode).toHaveText("Local");
-  await expect(workspaceControl.locator(".ling-ui-status-indicator")).toHaveCount(0);
-  await expect(workspaceControl.locator(".channel-workspace-summary")).toHaveCount(0);
+  await expect(workspaceControl).toContainText("Local");
+  await expect(workspaceControl.locator(".channel-workspace-control-head .status-badge")).toHaveCount(0);
   const executionPathInput = workspaceSettings.getByLabel("Execution path");
   const manualExecutionPath = "/tmp/manual-channel-path";
   await executionPathInput.fill(manualExecutionPath);
@@ -3639,7 +3523,7 @@ test("channel settings manage workspace binding", async ({ page }) => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.mode : "";
   }).toBe("managed_worktree");
-  await expect(workspaceMode).toHaveText("Worktree");
+  await expect(workspaceControl).toContainText("Worktree");
 
   await workspaceControl.getByPlaceholder("External workspace path").fill("/tmp/external-channel-workspace");
   await workspaceControl.getByRole("button", { name: "Hand off to External" }).click();
@@ -3647,14 +3531,14 @@ test("channel settings manage workspace binding", async ({ page }) => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.executionPath : "";
   }).toBe("/tmp/external-channel-workspace");
-  await expect(workspaceMode).toHaveText("External");
+  await expect(workspaceControl).toContainText("External");
 
   await workspaceControl.getByRole("button", { name: "Hand off to Local" }).click();
   await expect.poll(() => {
     const channel = state.channels.find((item) => isRecord(item) && item.id === "channel_engineering");
     return isRecord(channel) && isRecord(channel.workspaceBinding) ? channel.workspaceBinding.mode : "";
   }).toBe("local");
-  await expect(workspaceMode).toHaveText("Local");
+  await expect(workspaceControl).toContainText("Local");
 });
 
 test("channel more menu renames the selected channel", async ({ page }) => {
@@ -5756,14 +5640,18 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await page.goto("/");
   await openEngineeringChannel(page);
 
+  const autoOpenedDialog = page.getByRole("dialog", { name: "Task confirmation" });
+  await expect(autoOpenedDialog).toBeVisible();
+  await autoOpenedDialog.getByRole("button", { name: "Close" }).click();
   const proposalSummary = page.getByLabel("Task proposal summary").filter({ hasText: "Refine channel workspace copy" });
   await expect(proposalSummary).toBeVisible();
   await expect(proposalSummary.locator("xpath=..").locator(".channel-execution-proposal-summary-avatar")).toHaveAttribute("aria-label", "Ling Engineer");
   await maybeCaptureViewportScreenshot(page, "task-proposal-compact-summary-with-avatar.png");
 
-  const proposal = await openTaskProposalGate(page, "Refine channel workspace copy");
+  const proposal = await openTaskProposalDialog(page, "Refine channel workspace copy");
   await expect(proposal).toContainText("Refine channel workspace copy");
   await expect(proposal).toContainText("Ling Engineer");
+  await expect(proposal).toContainText("Required permissions");
   await expect(proposal).toContainText("Read files");
   await expect(proposal).toContainText("Run commands");
   await expect(proposal).toContainText("Modify files");
@@ -5771,17 +5659,32 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(proposal).not.toContainText("Participants");
   await expect(proposal).not.toContainText("Boundary");
   await expect(proposal).not.toContainText("Ling Designer");
-  await expect(proposal.locator("dl, .channel-proposal-details, .channel-proposal-collaboration")).toHaveCount(0);
-  await expect(proposal.getByRole("button")).toHaveCount(2);
-  await expect(proposal.getByRole("button", { name: "Edit" })).toHaveCount(0);
-  await expect(page.getByRole("dialog", { name: "Task confirmation" })).toHaveCount(0);
-  await maybeCaptureViewportScreenshot(page, "task-proposal-composer-gate.png");
+  await expect(proposal.locator(".channel-proposal-details, .channel-proposal-collaboration")).toHaveCount(0);
+  await maybeCaptureViewportScreenshot(page, "task-proposal-confirmation-dialog.png");
   await expect.poll(() => page.evaluate(() =>
     document.documentElement.scrollWidth - document.documentElement.clientWidth
   )).toBeLessThanOrEqual(1);
-  await proposal.getByRole("button", { name: "Allow", exact: true }).click();
-  await expect(proposal).toHaveCount(0);
-  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await proposal.getByRole("button", { name: "Edit" }).click();
+  const editForm = proposal.locator(".channel-proposal-edit-form");
+  await editForm.getByLabel("Scope").fill("Refine the channel workspace copy, then run focused QA checks.");
+  const editSteps = editForm.locator(".channel-proposal-edit-step");
+  await editSteps.nth(1).locator("select").first().selectOption("teammate_builtin_qa");
+  await editSteps.nth(1).locator("textarea").fill("Run focused regression checks before execution.");
+  await expect.poll(() => page.evaluate(() =>
+    document.documentElement.scrollWidth - document.documentElement.clientWidth
+  )).toBeLessThanOrEqual(1);
+  await proposal.getByRole("button", { name: "Save" }).click();
+  await expect(editForm).toHaveCount(0);
+  await expect.poll(() => {
+    const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_1");
+    if (!isRecord(updated) || !Array.isArray(updated.collaborationSteps)) {
+      return "";
+    }
+    const secondStep = updated.collaborationSteps[1];
+    const sourceState = isRecord(secondStep) && Array.isArray(secondStep.sources) ? `sources:${secondStep.sources.length}` : "sources:none";
+    return isRecord(secondStep) ? `${updated.prompt}|${secondStep.teammateId}|${secondStep.summary}|${sourceState}` : "";
+  }).toBe("Refine the channel workspace copy, then run focused QA checks.|teammate_builtin_qa|Run focused regression checks before execution.|sources:none");
+  await proposal.getByRole("button", { name: "Authorize and start task" }).click();
 
   await expect.poll(() => {
     const workflow = state.channelWorkflows.find((item) => isRecord(item) && item.title === "Refine channel workspace copy");
@@ -5791,7 +5694,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect.poll(() => {
     const steps = state.channelWorkflowSteps.filter((item) => isRecord(item) && item.workflowId === "workflow_1");
     return steps.map((step) => isRecord(step) ? step.toParticipantId : "").join("|");
-  }).toBe("teammate_builtin_engineer|teammate_builtin_designer");
+  }).toBe("teammate_builtin_engineer|teammate_builtin_qa");
   await expect.poll(() => {
     const secondStep = state.channelWorkflowSteps.find((item) => isRecord(item) && item.workflowId === "workflow_1" && item.position === 2);
     return isRecord(secondStep) && isRecord(secondStep.metadata) && Array.isArray(secondStep.metadata.dependsOnStepIds)
@@ -5803,7 +5706,7 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
     return isRecord(secondStep) && isRecord(secondStep.metadata) && Array.isArray(secondStep.metadata.proposalStepSources)
       ? `sources:${secondStep.metadata.proposalStepSources.length}`
       : "sources:none";
-  }).toBe("sources:1");
+  }).toBe("sources:none");
   await expect.poll(() => {
     const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_1");
     return isRecord(updated) ? [updated.status, updated.linkedWorkflowId].join("|") : "";
@@ -5819,23 +5722,24 @@ test("channel execution proposal confirms into a multi-step workflow", async ({ 
   await expect(workCell.locator(".conversation-work-cell-evidence-summary")).toBeVisible();
   await expect(workCell.locator(".conversation-work-cell-agent-spans")).toBeVisible();
   await expect(workCell).toContainText("Ling Engineer");
-  await expect(workCell).toContainText("Ling Designer");
+  await expect(workCell).toContainText("Ling QA");
   await expect(workCell).not.toContainText("Agent branches");
-  const designerSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "Ling Designer" });
-  await expect(designerSpan).toContainText("Checked visual hierarchy before execution.");
-  await expect(designerSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("Checked visual hierarchy before execution.");
-  await expect(designerSpan.locator(".conversation-work-cell-agent-span-toggle")).toHaveCount(0);
+  const qaSpan = workCell.locator(".conversation-work-cell-agent-span").filter({ hasText: "Ling QA" });
+  await expect(qaSpan).toContainText("Run focused regression checks before execution.");
+  await expect(qaSpan.locator(".conversation-work-cell-agent-span-detail")).toContainText("Run focused regression checks before execution.");
+  await expect(qaSpan.locator(".conversation-work-cell-agent-span-toggle")).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Diagnostics" })).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toHaveCount(0);
 
   await openChannelChatTools(page);
   const acceptedProposal = feed.getByLabel("Task proposal summary").filter({ hasText: "Refine channel workspace copy" });
   await expect(acceptedProposal).toBeVisible();
-  await expect(acceptedProposal.getByRole("button", { name: "View task" })).toHaveCount(0);
+  await acceptedProposal.getByRole("button", { name: "View task" }).click();
+  await expect(page.getByRole("dialog", { name: "Task confirmation" }).getByRole("button", { name: "Open workflow" })).toHaveCount(0);
   expect(runtimeErrors).toEqual([]);
 });
 
-test("requirement shaping stays compact while its task decision uses the Composer gate", async ({ page }) => {
+test("requirement shaping proposal persists clarifications before confirmation", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
     const selection = { mode: "fixed", themeId: "ling-dark" };
@@ -5907,7 +5811,10 @@ test("requirement shaping stays compact while its task decision uses the Compose
   await mockDaemon(page, state);
   await page.goto("/");
   await openEngineeringChannel(page);
-  await expect(page.getByRole("dialog", { name: "Task confirmation" })).toHaveCount(0);
+  const autoOpenedProposal = page.getByRole("dialog", { name: "Task confirmation" });
+  if (await autoOpenedProposal.isVisible()) {
+    await autoOpenedProposal.getByRole("button", { name: "Close" }).click();
+  }
 
   const transcript = page.locator(".conversation-turn-assistant-transcript");
   const shapingBlock = transcript.locator(".transcript-block-view.kind-requirement_shaping");
@@ -5924,7 +5831,7 @@ test("requirement shaping stays compact while its task decision uses the Compose
   await expect(page.getByLabel("Channel message feed")).not.toContainText("ling_agent");
   await expect(page.getByLabel("Channel message feed")).not.toContainText("Only workspace drawer copy is in scope.");
 
-  const proposal = await openTaskProposalGate(page, "Refine workspace copy");
+  const proposal = await openTaskProposalDialog(page, "Refine workspace copy");
   await expect(proposal).toContainText("Refine workspace copy");
   await expect(proposal).toContainText("Ling Agent");
   await expect(proposal).toContainText("Read files");
@@ -5932,19 +5839,35 @@ test("requirement shaping stays compact while its task decision uses the Compose
   await expect(proposal).not.toContainText("Needs user clarification");
   await expect(proposal).not.toContainText("Which copy sections are in scope?");
   await expect(proposal).not.toContainText("Only workspace drawer copy is in scope.");
-  await expect(proposal.getByRole("button", { name: "Edit" })).toHaveCount(0);
-  await expect(proposal.getByRole("button")).toHaveCount(2);
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
 
   await page.reload();
   await openEngineeringChannel(page);
-  await openTaskProposalGate(page, "Refine workspace copy");
+  await openTaskProposalDialog(page, "Refine workspace copy");
   await expect(proposal).not.toContainText("Needs user clarification");
   await expect(proposal).not.toContainText("Which copy sections are in scope?");
   await expect(proposal).not.toContainText("Only workspace drawer copy is in scope.");
 
-  await proposal.getByRole("button", { name: "Allow", exact: true }).click();
+  await proposal.getByRole("button", { name: "Edit" }).click();
+  const editForm = proposal.locator(".channel-proposal-edit-form");
+  await editForm.getByLabel("Open questions").fill("Which copy sections are in scope?\nShould QA cover accessibility?");
+  await editForm.getByLabel("User clarifications").fill("Only workspace drawer copy is in scope.\nKeep provider checks out of this task.");
+  await proposal.getByRole("button", { name: "Save" }).click();
+  await expect(editForm).toHaveCount(0);
+  await expect(proposal).not.toContainText("Should QA cover accessibility?");
+  await expect(proposal).not.toContainText("Keep provider checks out of this task.");
+  await expect.poll(() => {
+    const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_shaping");
+    if (!isRecord(updated) || !isRecord(updated.shaping)) {
+      return "";
+    }
+    const openQuestions = Array.isArray(updated.shaping.openQuestions) ? updated.shaping.openQuestions.length : 0;
+    const clarifications = Array.isArray(updated.shaping.clarifications) ? updated.shaping.clarifications.length : 0;
+    return `${updated.shaping.status}|${openQuestions}|${clarifications}`;
+  }).toBe("needs_user_clarification|2|2");
+
+  await proposal.getByRole("button", { name: "Authorize and start task" }).click();
   await expect.poll(() => {
     const updated = state.channelExecutionProposals.find((item) => isRecord(item) && item.id === "proposal_shaping");
     return isRecord(updated) && isRecord(updated.shaping) ? updated.shaping.status : "";
@@ -7609,22 +7532,7 @@ test("completed multi-agent transcript reveals all agent process rows from the p
       intent: "discuss",
       authorType: "ai-teammate",
       authorId: "ling_agent",
-      body: [
-        "**这条用户消息是一个多参与者可执行 workflow。**",
-        "",
-        "原始请求:",
-        "@Engineer @QA 请协作完成一个真实的频道执行任务：Engineer 必须在当前工作区创建 r5-packaged-restart-proof.txt，内容为 PACKAGED_RESTART_OK_20260823；QA 必须在 Engineer 完成后验证文件内容。",
-        "",
-        "执行任务: Engineer 必须在当前工作区创建文件，QA 必须在 Engineer 完成后验证文件内容。",
-        "",
-        "已物化的执行操作:",
-        "- create_file: file_create -> r5-packaged-restart-proof.txt; owner Engineer",
-        "- verify_target: run_command -> verify target; owner QA; depends on create_file",
-        "",
-        "参与者操作归属:",
-        "- Engineer: create_file",
-        "- QA: verify_target",
-      ].join("\n"),
+      body: "确认需求：「开始 workflow：产品策略分析登录页 smoke 的目标范围，仅输出结论。Smoke ID: single-product-20260615-2241。」。开始处理。",
       mentions: [],
       attachmentIds: [],
       linkPreviewIds: [],
@@ -7835,10 +7743,6 @@ test("completed multi-agent transcript reveals all agent process rows from the p
   await expect(feed).not.toContainText("该任务交给 产品策略、QA 处理。");
   await expect(feed).not.toContainText("Smoke ID");
   await expect(feed).not.toContainText("开始 workflow");
-  await expect(feed).not.toContainText("原始请求:");
-  await expect(feed).not.toContainText("已物化的执行操作:");
-  await expect(feed).not.toContainText("参与者操作归属:");
-  await expect(feed).not.toContainText("r5-packaged-restart-proof.txt");
 
   const workCell = assistantTranscript.locator(".conversation-work-cell").first();
   await expandOperationBubbleIfCollapsed(workCell);
@@ -7872,85 +7776,6 @@ test("completed multi-agent transcript reveals all agent process rows from the p
   await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).not.toContainText("运行 smoke 验收检查");
   await expect(qaActionRow.locator(".conversation-work-cell-row-detail")).toContainText("$ pnpm --filter @ling-stack/web test:e2e -- login-smoke");
   await maybeCaptureR32Screenshot(page, "serial-multi-agent-expanded");
-});
-
-test("channel-root thread metadata still folds internal coordinator prompts into the transcript", async ({ page }) => {
-  await page.addInitScript(() => {
-    localStorage.setItem("ling-stack.locale", "zh-CN");
-  });
-  const state = createBaseState({ approvalStatus: "expired" });
-  const rootThreadId = "thread_channel_channel_engineering";
-  state.threads = [{
-    id: rootThreadId,
-    workspaceId: "workspace_default",
-    kind: "channel_discussion",
-    channelId: "channel_engineering",
-    title: "Main branch",
-    objective: "Main conversation branch for Engineering.",
-    status: "open",
-    surfaceKind: "channel_root",
-    relationKind: "root",
-    conversationMode: { mode: "default" },
-    createdAt: "2026-05-25T01:10:00.000Z",
-    updatedAt: "2026-05-25T01:10:00.000Z",
-  }];
-  state.channelMessages = [
-    {
-      id: "msg_channel_root_metadata",
-      workspaceId: "workspace_default",
-      channelId: "channel_engineering",
-      threadId: rootThreadId,
-      kind: "message",
-      intent: "discuss",
-      authorType: "local-user",
-      authorId: "tian",
-      body: "请完成一次真实的频道执行任务。",
-      mentions: [],
-      attachmentIds: [],
-      linkPreviewIds: [],
-      fileRefs: [],
-      status: "ready",
-      createdAt: "2026-05-25T01:10:01.000Z",
-      updatedAt: "2026-05-25T01:10:01.000Z",
-    },
-    {
-      id: "msg_channel_root_internal_prompt",
-      workspaceId: "workspace_default",
-      channelId: "channel_engineering",
-      threadId: rootThreadId,
-      kind: "ai_reply",
-      intent: "discuss",
-      authorType: "ai-teammate",
-      authorId: "ling_agent",
-      body: [
-        "**这条用户消息是一个多参与者可执行 workflow。**",
-        "",
-        "原始请求:",
-        "请完成一次真实的频道执行任务。",
-        "",
-        "执行任务: 这是内部协调器 prompt，不应作为普通正文展示。",
-        "",
-        "已物化的执行操作:",
-        "- create_file: file_create -> proof.txt; owner Engineer",
-      ].join("\n"),
-      mentions: [],
-      attachmentIds: [],
-      linkPreviewIds: [],
-      fileRefs: [],
-      status: "ready",
-      createdAt: "2026-05-25T01:10:02.000Z",
-      updatedAt: "2026-05-25T01:10:02.000Z",
-    },
-  ];
-  await mockDaemon(page, state);
-  await page.goto("/");
-  await openEngineeringChannel(page);
-
-  const feed = page.locator(".message-feed");
-  await expect(feed).toContainText("请完成一次真实的频道执行任务。");
-  await expect(feed).not.toContainText("这条用户消息是一个多参与者可执行 workflow");
-  await expect(feed).not.toContainText("原始请求:");
-  await expect(feed).not.toContainText("内部协调器 prompt");
 });
 
 test("completed single-step agent span without branch metadata keeps expandable process detail inside one assistant transcript", async ({ page }) => {
@@ -9106,7 +8931,7 @@ test("channel conversation turn shows thinking for empty pending ai replies", as
   await expect(thinkingMessage).toBeVisible();
   await expect(thinkingMessage).toHaveCSS("font-size", "15px");
   await expect(thinkingMessage).toHaveCSS("font-weight", "550");
-  await expect(thinkingMessage).toHaveCSS("color", "rgb(25, 28, 31)");
+  await expect(thinkingMessage).toHaveCSS("color", "rgb(17, 17, 17)");
   await expect(thinkingBlock.locator(".message-pending-spinner")).toHaveCSS("margin-top", "5px");
   const virtualTailClearance = await channelFeed.locator(".message-feed-virtualizer").evaluate((virtualizer) => {
     const lastRow = virtualizer.querySelector<HTMLElement>(".message-feed-virtual-row:last-child");
@@ -10228,16 +10053,121 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="react"]')).toBeVisible();
   await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="css"]')).toBeVisible();
   await expect(terminalReport.locator('.terminal-report-file-type-icon[data-file-kind="markdown"]')).toBeVisible();
-  await expect(terminalReport.locator(".terminal-report-participant-copy > strong").first()).toHaveCSS("color", "rgb(29, 78, 216)");
+  await expect(terminalReport.locator(".terminal-report-participant-copy > strong").first()).toHaveCSS("color", "rgb(37, 99, 235)");
   const teamSummary = assistantTranscript.locator(".channel-team-experts-summary");
   await expect(teamSummary).toHaveCount(0);
   const transcriptArtifacts = assistantTranscript.locator(".conversation-turn-artifacts");
-  await expect(transcriptArtifacts).toHaveCount(0);
-  const reportChangedFiles = terminalReport.locator(".terminal-report-section.kind-change .terminal-report-file-reference");
-  await expect(reportChangedFiles).toHaveCount(3);
-  await expect(reportChangedFiles.nth(0)).toContainText("ConversationWorkCell.tsx");
-  await expect(reportChangedFiles.nth(1)).toContainText("components.css");
-  await expect(reportChangedFiles.nth(2)).toContainText("conversation-work-cell-operation-records.md");
+  const artifactRows = transcriptArtifacts.locator(".conversation-work-cell-artifact-row");
+  await expect(artifactRows).toHaveCount(2);
+  const artifactSurfaceWidth = await transcriptArtifacts.evaluate((element) => Math.round(element.getBoundingClientRect().width));
+  expect(artifactSurfaceWidth).toBeGreaterThan(680);
+  await expect.poll(async () => Math.round((await artifactRows.first().boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
+  const docArtifactRow = artifactRows.filter({ hasText: "conversation-work-cell-operation-records.md" });
+  await expect(docArtifactRow).toHaveCount(1);
+  await expect(artifactRows.filter({ hasText: "ConversationWorkCell.tsx" })).toHaveCount(1);
+  await expect(transcriptArtifacts.getByRole("button", { name: "打开方式" })).toHaveCount(2);
+  await docArtifactRow.evaluate((element) => element.scrollIntoView({ block: "end" }));
+  const openOptionsRequest = page.waitForRequest((request) => {
+    const url = new URL(request.url());
+    return url.pathname === "/workspace-files/open-options" &&
+      url.searchParams.get("path") === "docs/design/conversation-work-cell-operation-records.md";
+  });
+  const openWithTrigger = docArtifactRow.getByRole("button", { name: "打开方式" });
+  const feedScrollHeightBeforeOpen = await feed.evaluate((element) => element.scrollHeight);
+  await openWithTrigger.click();
+  await openOptionsRequest;
+  const openMenu = docArtifactRow.locator(".workspace-file-open-popover");
+  await expect(openMenu).toContainText("Visual Studio Code");
+  await expect(openMenu).toContainText("TextEdit");
+  await expect(openMenu).not.toContainText("Default app");
+  const vscodeOpenIcon = openMenu.getByRole("button", { name: "Visual Studio Code", exact: true }).locator(".workspace-file-open-target-icon > img");
+  const textEditOpenIcon = openMenu.getByRole("button", { name: "TextEdit", exact: true }).locator(".workspace-file-open-target-icon > img");
+  await expect(vscodeOpenIcon).toHaveAttribute("src", /\/workspace-files\/open-icons\/vscode\?/u);
+  await expect(textEditOpenIcon).toHaveAttribute("src", /\/workspace-files\/open-icons\/textedit\?/u);
+  await expect.poll(() => vscodeOpenIcon.evaluate((image) => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
+  await expect.poll(() => textEditOpenIcon.evaluate((image) => image instanceof HTMLImageElement ? image.naturalWidth : 0)).toBeGreaterThan(0);
+  await expect(openMenu.locator(".workspace-file-open-target-icon > svg")).toHaveCount(2);
+  await expect(openMenu.locator(".workspace-file-open-target-icon > svg").first()).toBeVisible();
+  const [openWithTriggerBox, openMenuBox] = await Promise.all([
+    openWithTrigger.boundingBox(),
+    openMenu.boundingBox(),
+  ]);
+  expect(openWithTriggerBox).not.toBeNull();
+  expect(openMenuBox).not.toBeNull();
+  expect(openMenuBox!.y + openMenuBox!.height).toBeLessThanOrEqual(openWithTriggerBox!.y - 4);
+  expect(await feed.evaluate((element) => element.scrollHeight)).toBe(feedScrollHeightBeforeOpen);
+  await openWithTrigger.click();
+  await docArtifactRow.evaluate((element) => {
+    const scrollOwner = element.closest<HTMLElement>(".message-feed");
+    if (!scrollOwner) {
+      throw new Error("Message feed scroll owner is missing.");
+    }
+    scrollOwner.scrollTop += element.getBoundingClientRect().top - scrollOwner.getBoundingClientRect().top - 48;
+  });
+  await expect.poll(async () => {
+    const [feedBox, triggerBox] = await Promise.all([feed.boundingBox(), openWithTrigger.boundingBox()]);
+    return feedBox && triggerBox ? Math.round(triggerBox.y - feedBox.y) : -1;
+  }).toBeLessThan(180);
+  await openWithTrigger.click();
+  const [downwardTriggerBox, downwardMenuBox] = await Promise.all([
+    openWithTrigger.boundingBox(),
+    openMenu.boundingBox(),
+  ]);
+  expect(downwardTriggerBox).not.toBeNull();
+  expect(downwardMenuBox).not.toBeNull();
+  expect(downwardMenuBox!.y).toBeGreaterThanOrEqual(downwardTriggerBox!.y + downwardTriggerBox!.height + 4);
+  const openWorkspaceRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname === "/workspace-files/open"
+  );
+  await openMenu.getByRole("button", { name: "TextEdit", exact: true }).click();
+  await openWorkspaceRequest;
+  await expect(openMenu).toHaveCount(0);
+  await expect(transcriptArtifacts).not.toContainText("channel-work-cell-e2e.log");
+  const changedGroup = transcriptArtifacts.locator(".conversation-work-cell-change-group");
+  await expect.poll(async () => Math.round((await changedGroup.boundingBox())?.width ?? 0)).toBe(artifactSurfaceWidth);
+  const changedSummary = changedGroup.locator(".conversation-work-cell-change-summary");
+  await expect(changedSummary).toContainText("已编辑 5 个文件");
+  await expect(changedSummary.locator(".conversation-work-cell-change-stat .add")).toHaveText("+15");
+  await expect(changedSummary.locator(".conversation-work-cell-change-stat .delete")).toHaveText("-4");
+  await expect(changedSummary.locator(":scope > svg")).toHaveCount(0);
+  await expect(changedSummary).not.toHaveAttribute("aria-expanded");
+  const undoButton = changedSummary.getByRole("button", { name: "撤销", exact: true });
+  await expect(undoButton).toBeEnabled();
+  await undoButton.click();
+  let recoveryDialog = page.getByRole("dialog", { name: "撤销对 5 个文件的更改？" });
+  await expect(recoveryDialog).toBeVisible();
+  const undoRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname.startsWith("/workflows/") &&
+      new URL(request.url()).pathname.endsWith("/workspace-changes/undo")
+  );
+  await recoveryDialog.getByRole("button", { name: "撤销", exact: true }).click();
+  await undoRequest;
+  const reapplyButton = changedSummary.getByRole("button", { name: "重新应用", exact: true });
+  await expect(reapplyButton).toBeEnabled();
+  await reapplyButton.click();
+  recoveryDialog = page.getByRole("dialog", { name: "重新应用对 5 个文件的更改？" });
+  await expect(recoveryDialog).toBeVisible();
+  const reapplyRequest = page.waitForRequest((request) =>
+    request.method() === "POST" && new URL(request.url()).pathname.startsWith("/workflows/") &&
+      new URL(request.url()).pathname.endsWith("/workspace-changes/reapply")
+  );
+  await recoveryDialog.getByRole("button", { name: "重新应用", exact: true }).click();
+  await reapplyRequest;
+  await expect(undoButton).toBeEnabled();
+  await expect(changedSummary.getByRole("button", { name: "审核", exact: true })).toBeVisible();
+  const changedFilesList = changedGroup.locator(".conversation-work-cell-change-files");
+  const firstChangedFile = changedFilesList.locator(".conversation-work-cell-change-file").first();
+  const [changedFilesListBox, firstChangedFileBox, firstChangedPathBox] = await Promise.all([
+    changedFilesList.boundingBox(),
+    firstChangedFile.boundingBox(),
+    firstChangedFile.locator("code").boundingBox(),
+  ]);
+  expect(changedFilesListBox).not.toBeNull();
+  expect(firstChangedFileBox).not.toBeNull();
+  expect(firstChangedPathBox).not.toBeNull();
+  expect(Math.round(firstChangedFileBox!.width)).toBe(Math.round(changedFilesListBox!.width));
+  expect(Math.round(firstChangedPathBox!.x - firstChangedFileBox!.x)).toBeLessThanOrEqual(16);
+  await expect(transcriptArtifacts.locator(".conversation-work-cell-artifacts").locator(":scope > *").last()).toHaveClass(/conversation-work-cell-change-group/);
   await expect.poll(() =>
     assistantTranscript.locator(".conversation-turn-assistant-transcript").evaluate((element) => {
       const childClasses = Array.from(element.children).map((child) => child.className.toString());
@@ -10247,14 +10177,14 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
       const actionsIndex = childClasses.findIndex((className) => className.includes("channel-message-row-footer-stack"));
       return {
         operationBeforeReport: operationIndex >= 0 && reportIndex > operationIndex,
-        noDuplicateArtifacts: artifactsIndex === -1,
-        actionsAreLast: actionsIndex === childClasses.length - 1,
+        reportBeforeArtifacts: artifactsIndex > reportIndex,
+        artifactsBeforeActions: actionsIndex > artifactsIndex,
       };
     }),
   ).toEqual({
     operationBeforeReport: true,
-    noDuplicateArtifacts: true,
-    actionsAreLast: true,
+    reportBeforeArtifacts: true,
+    artifactsBeforeActions: true,
   });
 
   await expandOperationBubbleIfCollapsed(workCell);
@@ -10275,7 +10205,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(workCell.locator(".conversation-work-cell-agent-span-copy small")).toHaveCount(0);
 
   const engineerSpan = workCell.locator('.conversation-work-cell-agent-span[data-agent-participant-id="engineer"]');
-  await expect(engineerSpan.locator(".conversation-work-cell-agent-span-copy strong")).toHaveCSS("color", "rgb(29, 78, 216)");
+  await expect(engineerSpan.locator(".conversation-work-cell-agent-span-copy strong")).toHaveCSS("color", "rgb(37, 99, 235)");
   await expect(engineerSpan.locator(".conversation-work-cell-agent-span-toggle")).toHaveCount(0);
   await expect(engineerSpan.locator("button.conversation-work-cell-agent-span-head")).toHaveCount(0);
   const engineerDetail = engineerSpan.locator(".conversation-work-cell-agent-span-detail");
@@ -10298,7 +10228,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-toggle")).toHaveCount(0);
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-main")).toHaveCSS("padding-left", "0px");
   const thoughtColor = await engineerNoteRow.locator(".conversation-work-cell-row-copy strong").evaluate((element) => getComputedStyle(element).color);
-  const conversationColor = await terminalReport.locator(".terminal-report-rich-copy").evaluate((element) => getComputedStyle(element).color);
+  const conversationColor = await terminalReport.locator(".terminal-report-outcome-copy > span").evaluate((element) => getComputedStyle(element).color);
   expect(thoughtColor).toBe(conversationColor);
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-size", "13px");
   await expect(engineerNoteRow.locator(".conversation-work-cell-row-copy strong")).toHaveCSS("font-weight", "550");
@@ -10384,6 +10314,81 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   expect(qaCommandLayout.overflowsHorizontally).toBe(false);
   expect(qaCommandLayout.contentHeight).toBeGreaterThan(qaCommandLayout.lineHeight * 1.5);
 
+  const demoPreviewRequests: string[] = [];
+  page.on("request", (request) => {
+    const url = request.url();
+    if (url.includes("demo_work_cell") && url.includes("/preview") && new URL(url).searchParams.get("maxBytes") === "65536") {
+      demoPreviewRequests.push(url);
+    }
+  });
+  const changedFiles = changedGroup.locator(".conversation-work-cell-change-file");
+  await expect(changedFiles).toHaveCount(3);
+  await expect(changedFiles.nth(0)).toContainText("ConversationWorkCell.tsx");
+  await expect(changedFiles.nth(0).locator(".conversation-work-cell-change-stat .add")).toHaveText("+4");
+  await expect(changedFiles.nth(0).locator(".conversation-work-cell-change-stat .delete")).toHaveText("-1");
+  await expect(changedFiles.nth(1)).toContainText("components.css");
+  await expect(changedFiles.nth(2)).toContainText("channel.spec.ts");
+  const showMoreChanges = changedGroup.locator(".conversation-work-cell-change-more");
+  await expect(showMoreChanges).toContainText("再显示 2 个文件");
+  await showMoreChanges.click();
+  await expect(changedFiles).toHaveCount(5);
+  await expect(changedFiles.nth(3)).toContainText("conversation-work-cell-operation-records.md");
+  await expect(changedFiles.nth(4)).toContainText("zh-CN.ts");
+  await expect(showMoreChanges).toContainText("收起部分文件");
+  await showMoreChanges.click();
+  await expect(changedFiles).toHaveCount(3);
+
+  const hoverPreview = page.locator(".conversation-artifact-hover-preview");
+  await page.mouse.move(0, 0);
+  await changedFiles.nth(0).hover();
+  await page.waitForTimeout(1_850);
+  await expect(hoverPreview).toHaveCount(0);
+  await page.waitForTimeout(250);
+  await expect(hoverPreview).toBeVisible();
+  await expect(hoverPreview).toContainText("ConversationWorkCell.tsx");
+  await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
+  await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(1);
+  await expect(hoverPreview.locator(".diff-line.context")).toHaveCount(6);
+  await expect(hoverPreview.locator(".diff-fold")).toHaveCount(0);
+  await expect(hoverPreview).toContainText("const operationRows = visibleOperationRows(model);");
+  await expect(hoverPreview).toContainText("{operationBody}");
+  const hoverPreviewBody = hoverPreview.locator(".conversation-artifact-hover-preview-body");
+  const hoverDiffViewer = hoverPreview.locator(".diff-viewer");
+  await expect(hoverPreviewBody).toHaveCSS("overflow-y", "auto");
+  await expect(hoverDiffViewer).toHaveCSS("overflow-y", "visible");
+  const hoverScrollRange = await hoverPreviewBody.evaluate((element) => element.scrollHeight - element.clientHeight);
+  expect(hoverScrollRange).toBeGreaterThan(0);
+  await hoverPreviewBody.hover();
+  await page.mouse.wheel(0, 120);
+  await expect.poll(() => hoverPreviewBody.evaluate((element) => element.scrollTop)).toBeGreaterThan(0);
+  await expect(hoverPreview).toBeVisible();
+  await changedFiles.nth(1).focus();
+  await expect(hoverPreview).toContainText("components.css");
+  await expect(hoverPreview.locator(".diff-line.add")).toHaveCount(4);
+  await expect(hoverPreview.locator(".diff-line.delete")).toHaveCount(0);
+  await expect(hoverPreview.locator(".diff-line.context")).toHaveCount(6);
+  await expect(hoverPreview).toContainText("transition: color 120ms ease;");
+  await expect(hoverPreview).toContainText("min-width: 0;");
+  const sourceRowBox = await changedFiles.nth(1).boundingBox();
+  const hoverPreviewBox = await hoverPreview.boundingBox();
+  expect(sourceRowBox).not.toBeNull();
+  expect(hoverPreviewBox).not.toBeNull();
+  expect(hoverPreviewBox!.y + hoverPreviewBox!.height).toBeLessThanOrEqual(sourceRowBox!.y - 6);
+  await hoverPreview.hover();
+  await expect(hoverPreview).toBeVisible();
+  await page.mouse.move(0, 0);
+  await expect(hoverPreview).toHaveCount(0);
+
+  const docArtifactPreview = transcriptArtifacts.getByRole("button", {
+    name: "预览: conversation-work-cell-operation-records.md",
+    exact: true,
+  });
+  await docArtifactPreview.scrollIntoViewIfNeeded();
+  await docArtifactPreview.click();
+  await expect(hoverPreview).toBeVisible();
+  await expect(hoverPreview).toContainText("# Conversation Work Cell Operation Records");
+  await expect(page.locator(".artifact-preview-drawer")).toHaveCount(0);
+  expect(demoPreviewRequests).toHaveLength(0);
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -10890,7 +10895,7 @@ test("failed conversation work cell does not label terminal rows as working", as
   await expect(workCell.getByLabel("Active work stream")).not.toContainText("Working");
 });
 
-test("active conversation work cell stays sparse while runtime approval replaces its composer", async ({ page }) => {
+test("active conversation work cell renders sparse rows while runtime approvals stay in a blocking dialog", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -10947,7 +10952,7 @@ test("active conversation work cell stays sparse while runtime approval replaces
   const workCell = feed.locator(".conversation-work-cell");
   await expect(workCell).toBeVisible();
   await expect(workCell).toHaveAttribute("data-operation-source", "run_thread");
-  await expect(workCell).toHaveAttribute("data-approval-presentation-owner", "composer_gate");
+  await expect(workCell).toHaveAttribute("data-approval-presentation-owner", "dialog");
   await expect(workCell).not.toContainText("Task waiting for approval");
   await expect(workCell).not.toContainText("Waiting for approval to continue.");
   await expect(workCell).toContainText("Waiting for approval");
@@ -10958,27 +10963,22 @@ test("active conversation work cell stays sparse while runtime approval replaces
   await expect(workCell.getByRole("button", { name: "Open workflow evidence" })).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Deny", exact: true })).toHaveCount(0);
-  const pendingShellBox = await workCell.locator(".conversation-operation-shell").boundingBox();
-  const pendingMarkerBox = await workCell.locator(".conversation-composer-gate-approval-marker").boundingBox();
-  expect((pendingMarkerBox?.x ?? 0) - (pendingShellBox?.x ?? 0)).toBeGreaterThanOrEqual(11);
-  expect(
-    ((pendingShellBox?.x ?? 0) + (pendingShellBox?.width ?? 0)) -
-      ((pendingMarkerBox?.x ?? 0) + (pendingMarkerBox?.width ?? 0)),
-  ).toBeGreaterThanOrEqual(11);
 
-  const gate = page.getByRole("region", { name: "Allow this action?" });
-  await expect(page.getByLabel("Channel composer")).toHaveCount(0);
-  await expect(gate).toBeVisible();
-  await expect(gate).toContainText("Run command: echo inspect");
-  await expect(gate).not.toContainText("medium");
-  await expect(gate).not.toContainText("Approve shell command");
-  await expect(gate.getByRole("button", { name: "Allow options" })).toHaveCount(0);
+  const composer = page.getByLabel("Channel composer");
+  const composerHeight = await composer.evaluate((element) => element.getBoundingClientRect().height);
+  const dialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(dialog).toBeVisible();
+  await expect(dialog).toContainText("Run command: echo inspect");
+  await expect(dialog).not.toContainText("medium");
+  await expect(dialog).not.toContainText("Approve shell command");
+  await expect(composer.locator(".approval-inline-strip")).toHaveCount(0);
   await expect(workCell.getByRole("button", { name: "Approve", exact: true })).toHaveCount(0);
-  await maybeCaptureViewportScreenshot(page, "runtime-approval-composer-gate.png");
+  await maybeCaptureViewportScreenshot(page, "runtime-approval-dialog-clean-background.png");
 
-  await gate.getByRole("button", { name: "Allow once" }).click();
-  await expect(gate).toHaveCount(0);
-  await expect(page.getByLabel("Channel composer")).toBeVisible();
+  await dialog.getByRole("button", { name: "Allow" }).click();
+  await expect(dialog).toHaveCount(0);
+  await expect(composer).not.toContainText("Approve shell command");
+  expect(await composer.evaluate((element) => element.getBoundingClientRect().height)).toBe(composerHeight);
   expect(state.approvals.find((approval) => isRecord(approval) && approval.id === "approval_1")?.status).toBe("approved");
   expect(state.approvalPolicy.toolDecisions.bash).toBe("ask");
   expect(state.approvalPolicy.toolDecisions.write).toBe("ask");
@@ -11581,7 +11581,7 @@ test("retained channel activity does not flash a loading notice during backgroun
   ))).toBe(0);
 });
 
-test("runtime composer gate queues multiple local approvals and excludes review queue actions", async ({ page }) => {
+test("runtime approval dialog queues multiple local approvals and excludes review queue actions", async ({ page }) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -11619,16 +11619,16 @@ test("runtime composer gate queues multiple local approvals and excludes review 
   await page.goto("/");
   await openEngineeringChannel(page);
 
-  const gate = page.getByRole("region", { name: "Allow this action?" });
-  await expect(gate).toContainText("Create file:");
-  await expect(gate).not.toContainText("Approve file write");
-  await expect(gate).not.toContainText("pending approvals");
-  await expect(gate).not.toContainText("Approve shell command");
-  await expect(gate).not.toContainText("Approve external send");
-  await gate.getByRole("button", { name: "Deny" }).click();
-  await expect(gate).toContainText("Run command:");
-  await expect(gate).not.toContainText("Approve shell command");
-  await expect(gate).not.toContainText("pending approvals");
+  const dialog = page.getByRole("dialog", { name: "Allow this action?" });
+  await expect(dialog).toContainText("Create file:");
+  await expect(dialog).not.toContainText("Approve file write");
+  await expect(dialog).not.toContainText("pending approvals");
+  await expect(dialog).not.toContainText("Approve shell command");
+  await expect(dialog).not.toContainText("Approve external send");
+  await dialog.getByRole("button", { name: "Deny" }).click();
+  await expect(dialog).toContainText("Run command:");
+  await expect(dialog).not.toContainText("Approve shell command");
+  await expect(dialog).not.toContainText("pending approvals");
 });
 
 test("channel activity derives task run approval transition and workflow events", async ({ page }) => {

@@ -7,9 +7,6 @@
     "ling-stack": "./dist/index.js"
   },
   "scripts": {
-    "build:ci": "tsc -p tsconfig.json",
-    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
-    "test:ci": "node --test test/*.test.mjs",
     "build": "corepack pnpm --filter @ling-stack/browser-host build && tsc -p tsconfig.json",
     "typecheck": "corepack pnpm --filter @ling-stack/browser-host build && tsc -p tsconfig.json --noEmit",
     "lint": "echo \"lint not configured yet\"",

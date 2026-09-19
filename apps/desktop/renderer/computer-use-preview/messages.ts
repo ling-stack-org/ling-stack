@@ -1,75 +1,134 @@
 import {
-  formatCatalogMessage,
-  loadCatalog,
-  type TranslationCatalog,
-  type TranslationValues,
-} from "@ling-stack/localization";
-import { catalog as englishCatalog } from "@ling-stack/localization/catalogs/en-US";
-import {
   DEFAULT_COMPUTER_USE_PREVIEW_LOCALE,
   isComputerUsePreviewLocale,
   type ComputerUsePreviewLocale,
 } from "../../shared/desktop-capabilities.js";
 
-const messageIds = {
-  windowTitle: "desktop.computer_use.window_title",
-  previewLabel: "desktop.computer_use.preview_label",
-  previewAccessibleLabel: "desktop.computer_use.preview_accessible_label",
-  livePreviewLabel: "desktop.computer_use.live_preview_label",
-  inProgressLabel: "desktop.computer_use.in_progress_label",
-  previewActionsLabel: "desktop.computer_use.preview_actions_label",
-  moreLabel: "desktop.computer_use.more_label",
-  morePreviewActionsLabel: "desktop.computer_use.more_preview_actions_label",
-  previewMenuLabel: "desktop.computer_use.preview_menu_label",
-  pageDeckLabel: "desktop.computer_use.page_deck_label",
-  pagePositionLabel: "desktop.computer_use.page_position_label",
-  activatingPageAction: "desktop.computer_use.activating_page_action",
-  activatePageAction: "desktop.computer_use.activate_page_action",
-  closePageAction: "desktop.computer_use.close_page_action",
-  viewAllPagesAction: "desktop.computer_use.view_all_pages_action",
-  availablePagesLabel: "desktop.computer_use.available_pages_label",
-  failedLabel: "desktop.computer_use.failed_label",
-  computerUseFailedDetail: "desktop.computer_use.failed_detail",
-  completedLabel: "desktop.computer_use.completed_label",
-  computerUseCompletedDetail: "desktop.computer_use.completed_detail",
-  stoppedLabel: "desktop.computer_use.stopped_label",
-  computerUseStoppedDetail: "desktop.computer_use.stopped_detail",
-  stoppingLabel: "desktop.computer_use.stopping_label",
-  waitingForStopConfirmationDetail: "desktop.computer_use.waiting_for_stop_detail",
-  requestingStopDetail: "desktop.computer_use.requesting_stop_detail",
-  stopFailedLabel: "desktop.computer_use.stop_failed_label",
-  stopFailedDetail: "desktop.computer_use.stop_failed_detail",
-  permissionRequiredLabel: "desktop.computer_use.permission_required_label",
-  permissionRequiredDetail: "desktop.computer_use.permission_required_detail",
-  previewCaptureFailedDetail: "desktop.computer_use.capture_failed_detail",
-  approvalRequiredLabel: "desktop.computer_use.approval_required_label",
-  approvalRequiredDetail: "desktop.computer_use.approval_required_detail",
-  pausedLabel: "desktop.computer_use.paused_label",
-  computerUsePausedDetail: "desktop.computer_use.paused_detail",
-  reconnectingLabel: "desktop.computer_use.reconnecting_label",
-  reconnectingDetail: "desktop.computer_use.reconnecting_detail",
-  connectingLabel: "desktop.computer_use.connecting_label",
-  connectingDetail: "desktop.computer_use.connecting_detail",
-  liveLabel: "desktop.computer_use.live_label",
-  openTaskAction: "desktop.computer_use.open_task_action",
-  openTaskFailedLabel: "desktop.computer_use.open_task_failed_label",
-  openTaskFailedDetail: "desktop.computer_use.open_task_failed_detail",
-  tryOpenTaskAgainAction: "desktop.computer_use.try_open_task_again_action",
-  hideAction: "desktop.computer_use.hide_action",
-  resetPositionAction: "desktop.computer_use.reset_position_action",
-  closeWindowAction: "desktop.computer_use.close_window_action",
-  screenSettingsAction: "desktop.computer_use.screen_settings_action",
-  retryCaptureAction: "desktop.computer_use.retry_capture_action",
-  tryStopAgainAction: "desktop.computer_use.try_stop_again_action",
-  stopComputerUseAction: "desktop.computer_use.stop_action",
-  stopAndRevokeAction: "desktop.computer_use.stop_and_revoke_action",
-  lockedControlArmedLabel: "desktop.computer_use.locked_armed_label",
-  lockedControlAttestingLabel: "desktop.computer_use.locked_attesting_label",
-  lockedControlActiveLabel: "desktop.computer_use.locked_active_label",
-  lockedControlPausedLabel: "desktop.computer_use.locked_paused_label",
+const enUS = {
+  windowTitle: "{target} — {status} — Ling Computer Use preview",
+  previewLabel: "Computer Use preview for {target}",
+  previewAccessibleLabel: "Computer Use preview for {target}, status {status}",
+  livePreviewLabel: "Live Computer Use preview",
+  inProgressLabel: "In progress",
+  previewActionsLabel: "Computer Use preview actions",
+  moreLabel: "More",
+  morePreviewActionsLabel: "More preview actions",
+  previewMenuLabel: "Preview actions",
+  pageDeckLabel: "Computer Use pages",
+  pagePositionLabel: "{target}, {status}, page {position} of {count}",
+  activatingPageAction: "Switching to {target}",
+  activatePageAction: "Show {target}",
+  closePageAction: "Close page {target}",
+  viewAllPagesAction: "View all ({count})",
+  availablePagesLabel: "Available Computer Use pages",
+  failedLabel: "Failed",
+  computerUseFailedDetail: "Computer Use failed",
+  completedLabel: "Completed",
+  computerUseCompletedDetail: "Computer Use completed",
+  stoppedLabel: "Stopped",
+  computerUseStoppedDetail: "Computer Use stopped",
+  stoppingLabel: "Stopping",
+  waitingForStopConfirmationDetail: "Waiting for the runtime to confirm stop",
+  requestingStopDetail: "Requesting runtime stop",
+  stopFailedLabel: "Stop failed",
+  stopFailedDetail: "Computer Use is still running. Try again.",
+  permissionRequiredLabel: "Permission required",
+  permissionRequiredDetail: "Screen recording permission is required",
+  previewCaptureFailedDetail: "Preview capture failed",
+  approvalRequiredLabel: "Approval required",
+  approvalRequiredDetail: "Waiting for approval before continuing",
+  pausedLabel: "Paused",
+  computerUsePausedDetail: "Computer Use is paused",
+  reconnectingLabel: "Reconnecting",
+  reconnectingDetail: "Trying to restore the preview",
+  connectingLabel: "Connecting",
+  connectingDetail: "Preparing the approved preview source",
+  liveLabel: "Live",
+  openTaskAction: "Open task",
+  openTaskFailedLabel: "Unable to open task",
+  openTaskFailedDetail: "The task is still running. Try again.",
+  tryOpenTaskAgainAction: "Try again",
+  hideAction: "Hide",
+  resetPositionAction: "Reset position",
+  closeWindowAction: "Close window",
+  screenSettingsAction: "Screen settings",
+  retryCaptureAction: "Retry capture",
+  tryStopAgainAction: "Try Stop again",
+  stopComputerUseAction: "Stop Computer Use",
+  stopAndRevokeAction: "Stop and revoke",
+  lockedControlArmedLabel: "Locked control armed",
+  lockedControlAttestingLabel: "Securing locked session",
+  lockedControlActiveLabel: "Controlling while locked",
+  lockedControlPausedLabel: "Locked control paused",
 } as const;
 
-export type ComputerUsePreviewMessageKey = keyof typeof messageIds;
+export type ComputerUsePreviewMessageKey = keyof typeof enUS;
+
+const zhCN = {
+  windowTitle: "{target} — {status} — Ling Computer Use 预览",
+  previewLabel: "{target} 的 Computer Use 预览",
+  previewAccessibleLabel: "{target}的 Computer Use 预览，状态：{status}",
+  livePreviewLabel: "实时 Computer Use 预览",
+  inProgressLabel: "进行中",
+  previewActionsLabel: "Computer Use 预览操作",
+  moreLabel: "更多",
+  morePreviewActionsLabel: "更多预览操作",
+  previewMenuLabel: "预览操作",
+  pageDeckLabel: "Computer Use 页面",
+  pagePositionLabel: "{target}，{status}，第 {position} 页，共 {count} 页",
+  activatingPageAction: "正在切换到 {target}",
+  activatePageAction: "显示 {target}",
+  closePageAction: "关闭页面 {target}",
+  viewAllPagesAction: "查看全部（{count}）",
+  availablePagesLabel: "可用的 Computer Use 页面",
+  failedLabel: "失败",
+  computerUseFailedDetail: "Computer Use 执行失败",
+  completedLabel: "已完成",
+  computerUseCompletedDetail: "Computer Use 已完成",
+  stoppedLabel: "已停止",
+  computerUseStoppedDetail: "Computer Use 已停止",
+  stoppingLabel: "正在停止",
+  waitingForStopConfirmationDetail: "正在等待运行时确认停止",
+  requestingStopDetail: "正在请求运行时停止",
+  stopFailedLabel: "停止失败",
+  stopFailedDetail: "Computer Use 仍在运行，请重试。",
+  permissionRequiredLabel: "需要权限",
+  permissionRequiredDetail: "需要屏幕录制权限",
+  previewCaptureFailedDetail: "预览捕获失败",
+  approvalRequiredLabel: "需要批准",
+  approvalRequiredDetail: "正在等待批准后继续",
+  pausedLabel: "已暂停",
+  computerUsePausedDetail: "Computer Use 已暂停",
+  reconnectingLabel: "正在重新连接",
+  reconnectingDetail: "正在尝试恢复预览",
+  connectingLabel: "正在连接",
+  connectingDetail: "正在准备已授权的预览来源",
+  liveLabel: "实时",
+  openTaskAction: "打开任务",
+  openTaskFailedLabel: "无法打开任务",
+  openTaskFailedDetail: "任务仍在运行，请重试。",
+  tryOpenTaskAgainAction: "重试",
+  hideAction: "隐藏",
+  resetPositionAction: "重置位置",
+  closeWindowAction: "关闭窗口",
+  screenSettingsAction: "屏幕设置",
+  retryCaptureAction: "重试捕获",
+  tryStopAgainAction: "再次尝试停止",
+  stopComputerUseAction: "停止 Computer Use",
+  stopAndRevokeAction: "停止并撤销授权",
+  lockedControlArmedLabel: "锁定控制已待命",
+  lockedControlAttestingLabel: "正在保护锁定会话",
+  lockedControlActiveLabel: "正在锁定状态下控制",
+  lockedControlPausedLabel: "锁定控制已暂停",
+} satisfies Readonly<Record<ComputerUsePreviewMessageKey, string>>;
+
+const catalogs: Readonly<Record<ComputerUsePreviewLocale, Readonly<Record<ComputerUsePreviewMessageKey, string>>>> = {
+  "en-US": enUS,
+  "zh-CN": zhCN,
+};
+
+type TranslationValues = Readonly<Record<string, string | number>>;
+
 export type ComputerUsePreviewTranslate = (
   key: ComputerUsePreviewMessageKey,
   values?: TranslationValues,
@@ -79,15 +138,17 @@ export function normalizeComputerUsePreviewLocale(value: unknown): ComputerUsePr
   return isComputerUsePreviewLocale(value) ? value : DEFAULT_COMPUTER_USE_PREVIEW_LOCALE;
 }
 
-export function createComputerUsePreviewTranslator(
-  _value: unknown,
-  catalog: TranslationCatalog = englishCatalog.messages,
-): ComputerUsePreviewTranslate {
-  return (key, values) => formatCatalogMessage(catalog, englishCatalog.messages, messageIds[key], values);
+export function createComputerUsePreviewTranslator(value: unknown): ComputerUsePreviewTranslate {
+  const catalog = catalogs[normalizeComputerUsePreviewLocale(value)];
+  return (key, values) => formatMessage(catalog[key], values);
 }
 
-export async function loadComputerUsePreviewTranslator(value: unknown): Promise<ComputerUsePreviewTranslate> {
-  const locale = normalizeComputerUsePreviewLocale(value);
-  const catalog = await loadCatalog(locale);
-  return createComputerUsePreviewTranslator(locale, catalog.messages);
+function formatMessage(template: string, values?: TranslationValues): string {
+  if (!values) {
+    return template;
+  }
+  return template.replace(/\{([A-Za-z0-9_]+)\}/g, (match, key: string) => {
+    const value = values[key];
+    return value === undefined ? match : String(value);
+  });
 }

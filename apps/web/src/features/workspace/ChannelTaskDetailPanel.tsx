@@ -18,7 +18,7 @@ import { useI18n } from "../../i18n.js";
 import { effectiveApprovalStatus } from "../../lib/approvals.js";
 import { formatDateTime } from "../../lib/formatting.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
-import { canUseProviderForRun, providerCompactModelLabel } from "../../lib/providers.js";
+import { canUseProviderForRun } from "../../lib/providers.js";
 import { buildRunRepairHint, displayLinkedRunStatus } from "../../lib/run-evidence.js";
 import {
   buildLocalEffectivePolicyPreview,
@@ -231,7 +231,7 @@ export function TaskDetailPanel({
 
       <div className="channel-task-meta" aria-label={t("Task context")}>
         <span><Hash size={13} />{taskChannel?.name ?? task.channelId}</span>
-        <span><Command size={13} />{effectiveProvider ? providerCompactModelLabel(effectiveProvider) : t("No model selected")}</span>
+        <span><Command size={13} />{effectiveProvider?.displayName ?? t("No model selected")}</span>
         <span><Clock3 size={13} />{formatDateTime(task.updatedAt)}</span>
         {task.requestedSkillId ? <span><SquareTerminal size={13} />{task.requestedSkillId}</span> : null}
       </div>

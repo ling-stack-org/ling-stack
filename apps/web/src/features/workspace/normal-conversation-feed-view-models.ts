@@ -1,7 +1,4 @@
-import {
-  projectConversationMessagePresentation,
-  type ConversationWorkCellViewModel,
-} from "@ling-stack/conversation-ui-core";
+import type { ConversationWorkCellViewModel } from "@ling-stack/conversation-ui-core";
 import type { Translate } from "../../i18n.js";
 import { buildConversationWorkCellViewModel } from "../../lib/conversation-work-cell.js";
 import { conversationRunHasVisibleWork } from "../../lib/conversation-runtime-visibility.js";
@@ -60,17 +57,9 @@ export function projectNormalConversationFeedItems(input: {
       t: input.t,
       terminalReport,
     }) : undefined;
+    const errorText = normalConversationMessageErrorText(message, linkedRun?.status);
+    const hasStructuredTerminalReport = Boolean(workCell?.terminalReportRows.length);
     const bodyStreaming = message.status === "running" || message.status === "pending";
-    const messagePresentation = projectConversationMessagePresentation({
-      content: message.content,
-      errorMessage: message.errorMessage,
-      status: message.status,
-      runtimeFailed: linkedRun?.status === "failed",
-      streaming: bodyStreaming,
-      streamingPlaceholder: input.t("Ling Agent is thinking..."),
-    });
-
-    const hasStructuredTerminalReport = message.role === "assistant" && Boolean(workCell?.terminalReportRows.length);
 
     return {
       message,
@@ -78,12 +67,11 @@ export function projectNormalConversationFeedItems(input: {
       authorName: conversationMessageAuthorName(message, input.t),
       createdAtLabel: formatConversationTimeLabel(message.createdAt),
       className: normalConversationMessageClassName(message),
-      // A committed TerminalReport owns the terminal result in the transcript.
-      // Keep the model narrative available for chat-only turns, but do not
-      // render the same completion twice beside the report/work-cell facts.
-      body: hasStructuredTerminalReport ? "" : messagePresentation.body,
+      body: errorText || hasStructuredTerminalReport
+        ? ""
+        : message.content || (bodyStreaming ? input.t("Ling Agent is thinking...") : ""),
       bodyStreaming,
-      errorText: messagePresentation.errorText,
+      errorText,
       workCell,
       workCellCwd: linkedRun?.cwd ?? input.workspaceCwd.trim(),
       workspaceMayHaveChanged: runMayHaveWorkspaceChanges(relatedRun),
@@ -95,12 +83,13 @@ export function normalConversationMessageErrorText(
   message: ConversationHomeMessage,
   runStatus?: RunSession["status"],
 ): string {
-  return message.role === "user" ? "" : projectConversationMessagePresentation({
-    content: message.content,
-    errorMessage: message.errorMessage,
-    status: message.status,
-    runtimeFailed: runStatus === "failed",
-  }).errorText;
+  if (message.role === "user") {
+    return "";
+  }
+  if (message.status !== "blocked" && message.status !== "failed" && runStatus !== "failed" && runStatus !== "cancelled") {
+    return "";
+  }
+  return message.content.trim();
 }
 
 export function formatConversationTimeLabel(value: string): string {

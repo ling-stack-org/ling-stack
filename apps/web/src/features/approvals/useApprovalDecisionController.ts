@@ -8,12 +8,7 @@ export function useApprovalDecisionController(input: {
   readonly resolvingDecision?: ApprovalResolution;
   readonly errorMessage?: string;
   readonly reasonPolicy?: "risk_based" | "none";
-  readonly onResolve: (
-    approvalId: string,
-    decision: ApprovalResolution,
-    reason?: string,
-    proposedRuleFingerprint?: string,
-  ) => void;
+  readonly onResolve: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
 }) {
   const [decisionReason, setDecisionReason] = useState("");
   const [dialogOpen, setDialogOpen] = useState(false);
@@ -61,7 +56,7 @@ export function useApprovalDecisionController(input: {
     submit(decision);
   }
 
-  function submit(decision: ApprovalResolution, proposedRuleFingerprint?: string): void {
+  function submit(decision: ApprovalResolution): void {
     if (status !== "pending" || isResolving) return;
     if (decision === "approve" && reasonRequired && !trimmedReason) {
       setReasonError("High-risk approvals need a decision reason.");
@@ -70,7 +65,7 @@ export function useApprovalDecisionController(input: {
     setReasonError("");
     setAttempted(true);
     setAttemptedDecision(decision);
-    input.onResolve(input.approval.id, decision, trimmedReason || undefined, proposedRuleFingerprint);
+    input.onResolve(input.approval.id, decision, trimmedReason || undefined);
   }
 
   function setOpen(open: boolean): void {

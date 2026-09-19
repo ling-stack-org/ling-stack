@@ -403,21 +403,6 @@
   overflow-wrap: anywhere;
 }
 
-.conversation-work-cell-rich-description {
-  color: var(--conversation-text-muted);
-  font-size: 12px;
-  font-weight: 400;
-  line-height: 1.35;
-}
-
-.conversation-work-cell-rich-description > * {
-  margin: 0;
-}
-
-.conversation-work-cell-rich-description > * + * {
-  margin-top: 5px;
-}
-
 .conversation-work-cell-row-detail code {
   width: fit-content;
   max-width: min(520px, 100%);
@@ -429,17 +414,6 @@
   text-overflow: ellipsis;
   white-space: nowrap;
   font-size: 12px;
-}
-
-/* Command output is a real evidence payload. Preserve its line structure;
- * only the dedicated shell-command label above remains single-line. */
-.conversation-work-cell-row-detail code:not(.conversation-work-cell-shell-command) {
-  display: block;
-  width: 100%;
-  overflow-x: auto;
-  overflow-wrap: anywhere;
-  font-family: "SFMono-Regular", Consolas, monospace;
-  white-space: pre-wrap;
 }
 
 .conversation-work-cell-change-preview {
@@ -553,10 +527,9 @@
 
 .conversation-work-cell-row.shell .conversation-work-cell-row-detail code:not(.conversation-work-cell-shell-command) {
   max-width: 100%;
-  overflow-x: auto;
-  overflow-wrap: anywhere;
-  text-overflow: clip;
-  white-space: pre-wrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .conversation-work-cell-row.command-execution .conversation-work-cell-row-detail code:not(.conversation-work-cell-shell-command),

@@ -2,7 +2,7 @@ import { type ReactNode, useEffect, useState } from "react";
 import type { ComputerControlController } from "../../domains/computer-control/use-computer-control-controller.js";
 import { shouldHideCuaDriverInternalRows, CUA_DRIVER_MCP_SERVER_ID } from "../../domains/computer-control/computer-control-surface.js";
 import type { McpBusyAction } from "../../domains/mcp/use-mcp-domain.js";
-import { useI18n, type Locale } from "../../i18n.js";
+import { useI18n } from "../../i18n.js";
 import type {
   AuthorizationMode,
   Channel,
@@ -79,7 +79,6 @@ export function SettingsPage({
   selectedRun,
   onWorkspaceDefaultAuthorizationChange,
   onWorkspaceDefaultWorkspaceAccessChange,
-  onProductLanguageChange,
   onWorkspaceResponseLanguageChange,
   onRefreshStartup,
   onRefreshExternalWork,
@@ -148,7 +147,6 @@ export function SettingsPage({
   readonly selectedRun: RunSession | undefined;
   readonly onWorkspaceDefaultAuthorizationChange: (mode: AuthorizationMode) => void;
   readonly onWorkspaceDefaultWorkspaceAccessChange: (mode: WorkspaceAccessMode) => void;
-  readonly onProductLanguageChange: (locale: Locale) => Promise<boolean>;
   readonly onWorkspaceResponseLanguageChange: (language: ResponseLanguagePreference) => void;
   readonly onRefreshStartup: () => void;
   readonly onRefreshExternalWork: () => void;
@@ -322,7 +320,6 @@ export function SettingsPage({
         {visibleActiveSection === "interface-preferences" && !workspaceToolDetailOpen ? (
           <InterfacePreferencesSettingsPanel
             workspaceResponseLanguage={workspaceResponseLanguage}
-            onProductLanguageChange={onProductLanguageChange}
             onWorkspaceResponseLanguageChange={onWorkspaceResponseLanguageChange}
           />
         ) : null}
@@ -335,7 +332,6 @@ export function SettingsPage({
 
         {visibleActiveSection === "approval-strategy" && !workspaceToolDetailOpen ? (
           <ExecutionPermissionsSettingsPanel
-            cwd={cwd}
             workspaceDefaultAuthorizationMode={workspaceDefaultAuthorizationMode}
             workspaceDefaultWorkspaceAccessMode={workspaceDefaultWorkspaceAccessMode}
             workspaceDefaultPermissionMode={workspaceDefaultPermissionMode}

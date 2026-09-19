@@ -11,6 +11,20 @@
   -webkit-backdrop-filter: none;
 }
 
+.channel-notification-option {
+  border-color: var(--border);
+  background: var(--surface-panel-strong);
+  color: var(--text-muted);
+  box-shadow: none;
+  backdrop-filter: none;
+  -webkit-backdrop-filter: none;
+}
+
+.channel-notification-option.active {
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
 .provider-run-notice.neutral strong {
   color: var(--text-strong);
 }

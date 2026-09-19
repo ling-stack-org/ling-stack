@@ -334,7 +334,6 @@ const MAIN_FEED_INTERNAL_PATTERNS: readonly RegExp[] = [
   /\braw prompt text excluded\b/iu,
   /\braw logs excluded\b/iu,
   /\braw artifact bodies excluded\b/iu,
-  /\bUnified exec (?:stdout|stderr|result)\b/iu,
   /\bsource refs\b/iu,
   /\bcompactions\b/iu,
   /\bchannel_collaboration_protocol\b/iu,

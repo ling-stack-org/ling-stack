@@ -74,14 +74,13 @@ test("sidebar channel notifications honor all, mentions, muted, and approval blo
     channel_all: { unread: true, mentioned: false },
     channel_mentions: { unread: true, mentioned: true },
     channel_mentions_without_mention: { unread: true, mentioned: false },
-    channel_muted_regular: { unread: true, mentioned: true },
-    channel_muted_critical: { unread: true, mentioned: true },
+    channel_muted: { unread: true, mentioned: true },
     channel_default: { unread: true, mentioned: true },
     channel_selected: { unread: true, mentioned: true },
   } satisfies Record<string, ChannelUnreadState>;
   const pendingApproval = {
-    id: "approval_muted_regular",
-    channelId: "channel_muted_regular",
+    id: "approval_muted",
+    channelId: "channel_muted",
     actionType: "bash",
     risk: "medium",
     title: "Approval required",
@@ -90,31 +89,23 @@ test("sidebar channel notifications honor all, mentions, muted, and approval blo
     status: "pending",
     createdAt: "2026-07-15T00:00:00.000Z",
   } satisfies ApprovalRequest;
-  const criticalApproval = {
-    ...pendingApproval,
-    id: "approval_muted_critical",
-    channelId: "channel_muted_critical",
-    risk: "critical",
-  } satisfies ApprovalRequest;
 
   expect(buildSidebarChannelNotifications({
-    approvals: [pendingApproval, criticalApproval],
+    approvals: [pendingApproval],
     channels: Object.keys(unreadById).map(channel),
     channelUnreadById: unreadById,
     notificationLevels: {
       channel_all: "all",
       channel_mentions: "mentions",
       channel_mentions_without_mention: "mentions",
-      channel_muted_regular: "muted",
-      channel_muted_critical: "muted",
+      channel_muted: "muted",
       channel_selected: "all",
     },
     runs: [],
     selectedChannelId: "channel_selected",
     tasks: [],
-    workUnits: [],
   })).toEqual({
-    channel_muted_critical: { count: 1, primaryStatus: "waiting" },
+    channel_muted: { count: 1, primaryStatus: "waiting" },
     channel_all: { unread: true },
     channel_mentions: { unread: true },
     channel_default: { unread: true },

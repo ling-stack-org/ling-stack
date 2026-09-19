@@ -1,5 +1,4 @@
 import type { SQLOutputValue } from "node:sqlite";
-import { isSupportedLocale } from "@ling-stack/localization";
 import {
   DEFAULT_WORKSPACE_ID,
   channelAutoReplyModes,
@@ -314,7 +313,7 @@ function isChannelProtocolSourceRefTypeValue(value: unknown): value is ChannelPr
 }
 
 function parseOptionalChannelResponseLanguage(value: unknown): boolean {
-  return value === "workspace" || value === "follow_user" || isSupportedLocale(value);
+  return value === "workspace" || value === "follow_user" || value === "zh-CN" || value === "en-US";
 }
 
 function validateNonEmptyString(value: string, label: string): void {

@@ -63,9 +63,8 @@ export interface ComputerUsePreviewViewModel {
 export function createComputerUsePreviewViewModel(
   snapshot: ComputerUsePipRendererSnapshot,
   transient: ComputerUsePreviewTransientState = {},
-  translate?: ComputerUsePreviewTranslate,
 ): ComputerUsePreviewViewModel {
-  const t = translate ?? createComputerUsePreviewTranslator(snapshot.locale);
+  const t = createComputerUsePreviewTranslator(snapshot.locale);
   const presentation = presentationFor(snapshot, transient, t);
   const actions = actionsFor(snapshot, transient, t);
   const commandIssue = transient.openCommandState === "failed" ? {

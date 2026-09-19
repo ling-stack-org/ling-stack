@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
@@ -11,122 +11,179 @@ import {
 } from "./support/mock-state";
 
 const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/shell/sidebar-collapse/",
+  "../../../docs/design/ui2.0升级/evidence/shell/sidebar-rail-sections/",
   import.meta.url,
 ));
 
-test("Sidebar collapse atomically swaps expanded navigation for an icon-only compact rail", async ({ page }) => {
+const sectionNames = ["Channels", "AI Teammates", "Recent conversations"] as const;
+
+test("Sidebar dense compact rail renders three fixed launchers and keeps Settings fixed", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", 1440, 960);
-  await mockDaemon(page, createSidebarState({ dense: true }));
-  await page.goto("/");
-
-  const navigation = page.getByLabel("Ling Stack navigation");
-  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? -1)).toBe(292);
-  await expect(navigation.locator(".sidebar-product-row")).toHaveCount(0);
-
-  await page.evaluate(() => {
-    const frames: Array<{ readonly compactCount: number; readonly expandedCount: number; readonly expandedTextCount: number }> = [];
-    Object.assign(window, { __lingSidebarCollapseFrames: frames });
-    document.querySelector<HTMLButtonElement>(".desktop-window-sidebar-toggle")?.click();
-    let remaining = 8;
-    const sample = (): void => {
-      frames.push({
-        compactCount: document.querySelectorAll(".sidebar-compact-rail").length,
-        expandedCount: document.querySelectorAll(".channel-left-drawer").length,
-        expandedTextCount: document.querySelectorAll(".sidebar-section-title, .sidebar-row-shell").length,
-      });
-      remaining -= 1;
-      if (remaining > 0) requestAnimationFrame(sample);
-    };
-    requestAnimationFrame(sample);
-  });
-
-  await expect(page.locator("main.app-shell")).toHaveClass(/channel-sidebar-collapsed/u);
-  await expect(navigation).toHaveAttribute("data-sidebar-mode", "compact");
-  await page.waitForTimeout(180);
-  const frames = await page.evaluate(() => (
-    window as typeof window & {
-      __lingSidebarCollapseFrames?: Array<{ readonly compactCount: number; readonly expandedCount: number; readonly expandedTextCount: number }>;
-    }
-  ).__lingSidebarCollapseFrames ?? []);
-  expect(frames).toHaveLength(8);
-  expect(frames.every((frame) => frame.compactCount === 1 && frame.expandedCount === 0 && frame.expandedTextCount === 0)).toBe(true);
-  await expect(page.locator(".sidebar-rail-launcher")).toHaveCount(3);
-  await expect(page.locator(".channel-left-drawer")).toHaveCount(0);
-  await expect.poll(async () => page.locator("main.app-shell").evaluate((shell) => (
-    Math.round(Number.parseFloat(getComputedStyle(shell).gridTemplateColumns))
-  ))).toBe(48);
-  await expectNoHorizontalOverflow(page);
-  await captureEvidence(page, "1440x960-ling-light-sidebar-compact.png");
-
-  await page.getByRole("button", { name: "Show navigation" }).click();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
-  await expect.poll(async () => Math.round((await page.getByLabel("Ling Stack navigation").boundingBox())?.width ?? -1)).toBe(292);
-  expect(runtimeErrors).toEqual([]);
-});
-
-test("Sidebar remains a single scrollable 292px surface in dense dark mode", async ({ page }) => {
-  const runtimeErrors = collectRuntimeErrors(page);
-  await prepareSurface(page, "dark", 1280, 800);
-  await mockDaemon(page, createSidebarState({ dense: true }));
+  await mockDaemon(page, createRailState({ dense: true }));
   await page.goto("/");
 
   const navigation = page.getByLabel("Ling Stack navigation");
   const scrollRegion = navigation.locator(".sidebar-scroll-region");
-  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? -1)).toBe(292);
-  const metrics = await scrollRegion.evaluate((element) => ({
+  await expectWidth(navigation, 240);
+  await page.getByRole("button", { name: "Hide navigation" }).click();
+  await expectWidth(navigation, 48);
+
+  const launchers = navigation.locator(".sidebar-rail-launcher");
+  await expect(launchers).toHaveCount(3);
+  for (const name of sectionNames) {
+    const launcher = navigation.getByRole("button", { name, exact: true });
+    await expect(launcher).toBeVisible();
+    await expect(launcher).not.toHaveAttribute("aria-expanded", /.+/u);
+    await expectInside(navigation, launcher);
+  }
+  await expect(navigation.locator(".sidebar-row, .sidebar-row-shell")).toHaveCount(0);
+  await expect(navigation.locator(".sidebar-rail-preview, .sidebar-rail-stack")).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Rail Designer 1", exact: true })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Open recent conversation 1" })).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Channel actions" })).toBeHidden();
+  await expect(navigation.getByRole("button", { name: "AI teammate actions" })).toBeHidden();
+  await expect(navigation.getByRole("button", { name: "Recent conversation actions" })).toBeHidden();
+
+  const settings = navigation.getByRole("button", { name: "Settings" });
+  await expect(settings).toBeVisible();
+  await expectInside(navigation, settings);
+  expect(await settings.evaluate((element) => element.closest(".sidebar-scroll-region") === null)).toBe(true);
+  await expectSingleScrollOwner(navigation, scrollRegion);
+  const railScrollMetrics = await scrollRegion.evaluate((element) => ({
     clientHeight: element.clientHeight,
-    overflowX: getComputedStyle(element).overflowX,
-    overflowY: getComputedStyle(element).overflowY,
     scrollHeight: element.scrollHeight,
   }));
-  expect(metrics.overflowX).toBe("hidden");
-  expect(metrics.overflowY).toBe("auto");
-  expect(metrics.scrollHeight).toBeGreaterThan(metrics.clientHeight);
-  await expect(navigation.locator(".sidebar-rail-launcher")).toHaveCount(0);
-  await expectNoHorizontalOverflow(page);
-  await captureEvidence(page, "1280x800-ling-dark-sidebar-expanded.png");
+  expect(railScrollMetrics.scrollHeight).toBeLessThanOrEqual(railScrollMetrics.clientHeight + 1);
+  await expectNoHorizontalOverflow(page.locator("html"));
+  await captureEvidence(page, "1440x960-ling-light-compact-launchers.png");
   expect(runtimeErrors).toEqual([]);
 });
 
-test("narrow desktop starts with compact navigation and can open the full Sidebar", async ({ page }) => {
+test("Sidebar dark compact launchers expose one portal tooltip without object action leakage", async ({ page }) => {
   const runtimeErrors = collectRuntimeErrors(page);
-  await prepareSurface(page, "dark", 900, 800);
-  await mockDaemon(page, createSidebarState());
+  await prepareSurface(page, "dark", 1280, 800);
+  await mockDaemon(page, createRailState());
   await page.goto("/");
 
-  const shell = page.locator("main.app-shell");
-  await expect(shell).toHaveClass(/channel-sidebar-collapsed/u);
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveAttribute("data-sidebar-mode", "compact");
-  await expect(page.locator(".sidebar-rail-launcher")).toHaveCount(3);
-  await expect.poll(async () => shell.evaluate((element) => (
-    Math.round(Number.parseFloat(getComputedStyle(element).gridTemplateColumns))
-  ))).toBe(48);
-
-  await page.getByRole("button", { name: "Show navigation" }).click();
   const navigation = page.getByLabel("Ling Stack navigation");
-  await expect(navigation).toBeVisible();
-  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? -1)).toBe(292);
-  await expectNoHorizontalOverflow(page);
+  await page.getByRole("button", { name: "Hide navigation" }).click();
+  await expectWidth(navigation, 48);
+
+  const identities = sectionNames.map((name) => ({
+    locator: navigation.getByRole("button", { name, exact: true }),
+    tooltip: name,
+  }));
+
+  for (const [index, identity] of identities.entries()) {
+    await identity.locator.scrollIntoViewIfNeeded();
+    if (index < identities.length - 1) {
+      await identity.locator.hover();
+    } else {
+      await identity.locator.focus();
+      await expect(identity.locator).toBeFocused();
+    }
+    await expectPortalTooltip(page, identity.tooltip);
+    const tooltip = page.getByRole("tooltip");
+    await expect(tooltip).toHaveAttribute("data-side", "right");
+    const [launcherBox, tooltipBox] = await Promise.all([
+      identity.locator.boundingBox(),
+      tooltip.boundingBox(),
+    ]);
+    expect(launcherBox).not.toBeNull();
+    expect(tooltipBox).not.toBeNull();
+    expect(tooltipBox!.x).toBeGreaterThan(launcherBox!.x + launcherBox!.width);
+    await captureEvidence(page, `1280x800-ling-dark-launcher-${index + 1}-tooltip.png`);
+  }
+
+  await expect(page.getByRole("menu")).toHaveCount(0);
+  await expect(navigation.getByRole("button", { name: "Channel actions" })).toBeHidden();
+  await expect(navigation.getByRole("button", { name: "AI teammate actions" })).toBeHidden();
+  await expect(navigation.getByRole("button", { name: "Recent conversation actions" })).toBeHidden();
+  await expect(navigation.getByRole("button", { name: "Create branch" })).toBeHidden();
+  await expect(navigation.getByRole("button", { name: "Archive channel" })).toBeHidden();
+  await expect(navigation.getByRole("button", { name: "Archive teammate" })).toBeHidden();
+  await expect(navigation.getByRole("button", { name: "Archive conversation" })).toBeHidden();
+  await expectNoHorizontalOverflow(page.locator("html"));
   expect(runtimeErrors).toEqual([]);
 });
 
-function createSidebarState(options: { readonly dense?: boolean } = {}): MockState {
+test("Sidebar launcher opens its section and preserves other expanded-state disclosures", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
+  await prepareSurface(page, "light", 1280, 800);
+  await mockDaemon(page, createRailState());
+  await page.goto("/");
+
+  const navigation = page.getByLabel("Ling Stack navigation");
+  const channels = navigation.getByRole("button", { name: "Channels" });
+  const teammates = navigation.getByRole("button", { name: "AI Teammates" });
+  await channels.click();
+  await expect(channels).toHaveAttribute("aria-expanded", "false");
+  await teammates.click();
+  await expect(teammates).toHaveAttribute("aria-expanded", "false");
+
+  await page.getByRole("button", { name: "Hide navigation" }).click();
+  await expectWidth(navigation, 48);
+  await expect(navigation.locator(".sidebar-rail-launcher")).toHaveCount(3);
+  await expect(navigation.locator(".sidebar-section-list")).toHaveCount(0);
+  await navigation.getByRole("button", { name: "Channels", exact: true }).click();
+  await expectWidth(navigation, 240);
+  await expect(navigation.getByRole("button", { name: "Channels" })).toHaveAttribute("aria-expanded", "true");
+  await expect(navigation.getByRole("button", { name: "AI Teammates" })).toHaveAttribute("aria-expanded", "false");
+  await expect(navigation.getByRole("button", { name: "Recent conversations" })).toHaveAttribute("aria-expanded", "true");
+  await expect(navigation.getByRole("button", { name: "Rail Designer 1", exact: true })).toBeHidden();
+  await expect(navigation.getByRole("button", { name: "Open recent conversation 1" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toBeVisible();
+  await expectNoHorizontalOverflow(page.locator("html"));
+  await captureEvidence(page, "1280x800-ling-light-launcher-opens-channels.png");
+  expect(runtimeErrors).toEqual([]);
+});
+
+test("Sidebar keeps 900 and 901px rail geometry stable during a reduced-motion rapid round trip", async ({ page }) => {
+  const runtimeErrors = collectRuntimeErrors(page);
+  await page.emulateMedia({ reducedMotion: "reduce" });
+  await prepareSurface(page, "dark", 900, 800);
+  await mockDaemon(page, createRailState());
+  await page.goto("/");
+
+  const shell = page.locator(".app-shell");
+  const navigation = page.getByLabel("Ling Stack navigation");
+  await expectShellGeometry(page, shell, navigation, 900, 48);
+  await expectReducedMotion(navigation);
+  await expectReducedMotion(navigation.locator(".sidebar-rail-launcher").first());
+  await captureEvidence(page, "900x800-ling-dark-compact-launcher-boundary.png");
+
+  await page.setViewportSize({ width: 901, height: 800 });
+  await page.getByRole("button", { name: "Show navigation" }).click();
+  await expectShellGeometry(page, shell, navigation, 901, 240);
+  await captureEvidence(page, "901x800-ling-dark-expanded-after-launcher-round-trip.png");
+
+  await page.getByRole("button", { name: "Hide navigation" }).click();
+  await page.getByRole("button", { name: "Show navigation" }).click();
+  await page.getByRole("button", { name: "Hide navigation" }).click();
+  await page.getByRole("button", { name: "Show navigation" }).click();
+  await expectShellGeometry(page, shell, navigation, 901, 240);
+  await expectReducedMotion(navigation);
+  await expectNoHorizontalOverflow(page.locator("html"));
+  expect(runtimeErrors).toEqual([]);
+});
+
+function createRailState(options: { readonly dense?: boolean } = {}): MockState {
   const state = createBaseState({ approvalStatus: "expired" });
-  const channelCount = options.dense ? 14 : 3;
-  const teammateCount = options.dense ? 10 : 3;
-  const conversationCount = options.dense ? 9 : 3;
+  const channelCount = options.dense ? 9 : 3;
+  const teammateCount = options.dense ? 8 : 3;
+  const conversationCount = options.dense ? 7 : 3;
   state.channels = [
     ...state.channels,
     ...Array.from({ length: channelCount - 1 }, (_, index) => channel(
-      `channel_sidebar_${index + 2}`,
-      `Delivery channel ${index + 2}`,
+      `channel_rail_${index + 2}`,
+      `Rail channel ${index + 2}`,
     )),
   ];
   state.aiTeammates = Array.from({ length: teammateCount }, (_, index) => createMockTeammate({
-    id: `teammate_sidebar_${index + 1}`,
-    displayName: `Specialist ${index + 1}`,
+    id: `teammate_rail_${index + 1}`,
+    displayName: `Rail Designer ${index + 1}`,
   }));
   state.threads = Array.from({ length: conversationCount }, (_, index) => conversationThread(index));
   return state;
@@ -151,11 +208,11 @@ function conversationThread(index: number): Record<string, unknown> {
   const suffix = index + 1;
   const timestamp = `2026-07-24T00:${String(index).padStart(2, "0")}:00.000Z`;
   return {
-    id: `thread_sidebar_${suffix}`,
+    id: `thread_rail_${suffix}`,
     workspaceId: "workspace_default",
     kind: "conversation",
-    title: `Recent conversation ${suffix}`,
-    objective: `Verify Sidebar conversation ${suffix}`,
+    title: `Rail conversation ${suffix}`,
+    objective: `Verify compact rail conversation ${suffix}`,
     status: "open",
     createdAt: timestamp,
     updatedAt: timestamp,
@@ -180,8 +237,77 @@ async function prepareSurface(
   }, theme);
 }
 
-async function expectNoHorizontalOverflow(page: Page): Promise<void> {
-  const metrics = await page.locator("html").evaluate((element) => ({
+async function expectPortalTooltip(page: Page, text: string): Promise<void> {
+  const tooltip = page.getByRole("tooltip");
+  await expect(tooltip).toHaveCount(1);
+  await expect(tooltip).toHaveText(text);
+  expect(await tooltip.evaluate((element) => element.closest("aside") === null)).toBe(true);
+}
+
+async function expectWidth(locator: Locator, width: number): Promise<void> {
+  await expect.poll(async () => Math.round((await locator.boundingBox())?.width ?? 0)).toBe(width);
+}
+
+async function expectInside(parent: Locator, child: Locator): Promise<void> {
+  const [parentBox, childBox] = await Promise.all([parent.boundingBox(), child.boundingBox()]);
+  expect(parentBox).not.toBeNull();
+  expect(childBox).not.toBeNull();
+  expect(childBox!.x).toBeGreaterThanOrEqual(parentBox!.x - 1);
+  expect(childBox!.y).toBeGreaterThanOrEqual(parentBox!.y - 1);
+  expect(childBox!.x + childBox!.width).toBeLessThanOrEqual(parentBox!.x + parentBox!.width + 1);
+  expect(childBox!.y + childBox!.height).toBeLessThanOrEqual(parentBox!.y + parentBox!.height + 1);
+}
+
+async function expectSingleScrollOwner(navigation: Locator, expectedOwner: Locator): Promise<void> {
+  const ownerClasses = await navigation.evaluate((element) => [element, ...element.querySelectorAll<HTMLElement>("*")]
+    .filter((candidate) => {
+      const overflowY = getComputedStyle(candidate).overflowY;
+      return overflowY === "auto" || overflowY === "scroll";
+    })
+    .map((candidate) => candidate.className));
+  expect(ownerClasses).toEqual(["sidebar-scroll-region"]);
+  await expect(expectedOwner).toHaveCSS("overflow-y", "auto");
+  await expectInside(navigation, expectedOwner);
+}
+
+async function expectShellGeometry(
+  page: Page,
+  shell: Locator,
+  navigation: Locator,
+  viewportWidth: number,
+  sidebarWidth: number,
+): Promise<void> {
+  await expectWidth(navigation, sidebarWidth);
+  await expect.poll(async () => shell.evaluate((element) => {
+    const [firstColumn] = getComputedStyle(element).gridTemplateColumns.split(" ");
+    return Math.round(Number.parseFloat(firstColumn));
+  })).toBe(sidebarWidth);
+  const shellBox = await shell.boundingBox();
+  expect(shellBox).not.toBeNull();
+  expect(Math.round(shellBox!.x)).toBe(0);
+  expect(Math.round(shellBox!.width)).toBe(viewportWidth);
+  await expectNoHorizontalOverflow(page.locator("html"));
+}
+
+async function expectReducedMotion(locator: Locator): Promise<void> {
+  const maximumDuration = await locator.evaluate((element) => {
+    const parseCssTime = (value: string): number => {
+      const normalized = value.trim();
+      if (normalized.endsWith("ms")) return Number.parseFloat(normalized);
+      if (normalized.endsWith("s")) return Number.parseFloat(normalized) * 1_000;
+      return Number.parseFloat(normalized) || 0;
+    };
+    const styles = getComputedStyle(element);
+    const durations = [styles.animationDuration, styles.transitionDuration]
+      .flatMap((value) => value.split(","))
+      .map(parseCssTime);
+    return Math.max(0, ...durations);
+  });
+  expect(maximumDuration).toBeLessThanOrEqual(1);
+}
+
+async function expectNoHorizontalOverflow(locator: Locator): Promise<void> {
+  const metrics = await locator.evaluate((element) => ({
     clientWidth: element.clientWidth,
     scrollWidth: element.scrollWidth,
   }));

@@ -94,8 +94,8 @@
 @import "./styles/teammate-management-memory.css";
 @import "./styles/teammate-management-memory-overlays.css";
 @import "./styles/app/sidebar-layout.css";
-@import "./styles/app/sidebar-rail-sections.css";
 @import "./styles/sidebar.css";
+@import "./styles/app/sidebar-rail-sections.css";
 @import "./styles/settings-shell.css";
 @import "./styles/settings-workspace-tools.css";
 @import "./styles/settings-default-authorization.css";

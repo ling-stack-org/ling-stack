@@ -57,12 +57,6 @@ Settings is a management workspace, not a second copy of the main app.
 - Settings-owned actions must stay inside Settings.
 - Leaving Settings requires `Back to app` or an explicit `Open ... in app`
   label.
-- On macOS, the shared `48px` Desktop titlebar owns the traffic-light safe area. Settings
-  begins below that row, and `Back to app` fills the navigation content width without a
-  separate top offset, narrowing, or horizontal translation.
-- The native traffic lights, Sidebar toggle, active title and titlebar actions share the
-  same `y=24px` visual centerline. Native and renderer chrome must not use separate vertical
-  alignment rules.
 - Diagnostics opened from Settings must render inside the Settings shell.
 - Long explanations, policy previews, paths, runner ids, plugin ids, and source
   evidence are collapsed by default.
@@ -142,9 +136,8 @@ UI 2.0 实施以 [Toast 与 InlineFeedback](./ui2.0升级/components/02-浮层�
   must not assign arbitrary icon colors or dimensions.
 - Remote icon fonts, PNG action icons, emoji controls, and character icons are
   not allowed. Brand/language/file-type icons require a documented local exception.
-- `LingStackLogo.tsx` and favicon use the approved precision brand masters in
-  [Iconography](ui2.0升级/foundations/07-Iconography与图标色系.md). Ordinary UI or
-  theme changes must not redraw, recolor, distort, or substitute these assets.
+- `LingStackLogo.tsx` and the current favicon assets are protected: do not
+  replace, redraw, recolor, distort, or substitute them during UI 2.0 work.
 - Menus use fixed icon cells and a consistent row height.
 - Menu descriptions are opt-in; they should not be used for routine actions.
 
@@ -165,10 +158,6 @@ UI 2.0 实施以 [Toast 与 InlineFeedback](./ui2.0升级/components/02-浮层�
   operating-system appearance; it is not itself a theme.
 - The first painted frame must match the resolved Theme Pack, color scheme,
   and semantic token snapshot.
-- The first visible frame is a text-free full-window surface. Product names,
-  loading labels, and fallback copy must not become visible while localization
-  catalogs or the application tree are still loading; an accessible loading
-  name may remain nonvisual.
 - Theme Packs may change semantic colors, surfaces, shadows, client material,
   and approved local artwork. They must not change layout, typography scale,
   control geometry, icons, Logo, navigation, or business behavior.
@@ -178,31 +167,6 @@ UI 2.0 实施以 [Toast 与 InlineFeedback](./ui2.0升级/components/02-浮层�
   arbitrary CSS, JavaScript, remote resources, fonts, or brand replacements.
 - `ling-light` and `ling-dark` must be checked on Settings, conversations,
   plugin/skill diagnostics, dialogs, menus, empty states, Web, macOS, and Windows.
-- The built-in Light shell uses a white main panel, warm `#e6e4df` Sidebar,
-  `#d9d8d5` selection, `#deddda` hover and `#ededed` dividers. The built-in Dark
-  shell preserves the same hierarchy with `#1f1f1f` main, `#282725` Sidebar,
-  `#3a3936` selection, `#32312f` hover and `#41403d` dividers.
-- Imported Theme Packs remain authoritative for their semantic tokens. The
-  shell consumes tokens and must not branch on a built-in Theme Pack id.
-
-## Desktop Chrome
-
-- macOS, Windows and Web Desktop share one `48px` application chrome row and
-  one Header surface owner. The Sidebar is `292px` when expanded and a stable
-  `48px` compact rail when collapsed.
-- The compact rail is a separate icon-only navigation component. It keeps
-  existing shortcuts and tooltips available, but never renders expanded
-  product text, object rows or a duplicate Sidebar toggle.
-- The expanded Sidebar begins with the existing New conversation command. It
-  does not add a static product-name or brand row above navigation. Only
-  working Ling actions appear; reference-product actions without a Ling state
-  or command are omitted.
-- The expanded titlebar leading segment matches the Sidebar surface. When the
-  Sidebar collapses, that titlebar segment joins the main panel background;
-  the compact rail below remains a distinct Sidebar navigation surface.
-- macOS keeps native traffic lights. Windows uses renderer-owned, typed window
-  controls. Web has no operating-system controls. All interactive descendants
-  are `no-drag`, keyboard reachable and labeled in every supported locale.
 
 ## Motion
 

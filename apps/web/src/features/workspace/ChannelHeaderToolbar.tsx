@@ -13,7 +13,6 @@ export interface ChannelHeaderToolbarProps {
   readonly bottomPanelOpen: boolean;
   readonly detailsLabel: string;
   readonly detailsOpen: boolean;
-  readonly detailsDisabled?: boolean;
   readonly emptyTeammateActionActive: boolean;
   readonly emptyTeammateActionDisabled: boolean;
   readonly emptyTeammateActionLabel: string;
@@ -43,7 +42,6 @@ export function ChannelHeaderToolbar({
   bottomPanelOpen,
   detailsLabel,
   detailsOpen,
-  detailsDisabled = false,
   emptyTeammateActionActive,
   emptyTeammateActionDisabled,
   emptyTeammateActionLabel,
@@ -120,7 +118,6 @@ export function ChannelHeaderToolbar({
             actionId="details"
             active={detailsOpen}
             className="task-toolbar-panel"
-            disabled={detailsDisabled}
             aria-expanded={detailsOpen}
             icon={DetailsIcon}
             label={detailsLabel}

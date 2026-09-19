@@ -2,7 +2,6 @@ import { Check, ChevronDown, Folder, FolderOpen, Loader2, Plus, Search, UserPlus
 import { useEffect, useMemo, useRef, useState } from "react";
 import { selectWorkspaceDirectory } from "../../api/workspace-directory.js";
 import { useI18n } from "../../i18n.js";
-import { SupportedLocaleOptions } from "../../i18n/SupportedLocaleOptions.js";
 import { canUseConversationProvider, providerPreflightReady } from "../../lib/providers.js";
 import { DialogSection } from "../../shared/components/index.js";
 import {
@@ -389,7 +388,8 @@ export function ChannelCreateDialog({
                   >
                     <option value="workspace">{t("Workspace default")}</option>
                     <option value="follow_user">{t("Follow user message")}</option>
-                    <SupportedLocaleOptions />
+                    <option value="zh-CN">{t("Chinese")}</option>
+                    <option value="en-US">{t("English")}</option>
                   </Select>
                 </label>
                 <ChannelWriteLockField form={form} onChange={updateRuntimeForm} />

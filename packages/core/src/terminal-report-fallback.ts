@@ -10,7 +10,6 @@ import type {
   TerminalReportVerification,
 } from "./terminal-report-types.js";
 import { createTerminalReportId } from "./terminal-report-types.js";
-import { formatSynchronousCatalogMessage } from "@ling-stack/localization";
 
 export interface BuildDeterministicTerminalReportInput {
   readonly id?: string;
@@ -128,12 +127,21 @@ function fallbackOutcomeSummary(snapshot: TerminalReportEvidenceSnapshot): strin
   const completed = snapshot.steps.filter((step) => step.status === "succeeded").length;
   const total = snapshot.steps.length;
   const suffix = total > 1
-    ? formatSynchronousCatalogMessage(snapshot.language, "terminal_report.outcome.steps", { completed, total })
+    ? snapshot.language === "zh-CN" ? `完成 ${completed}/${total} 个步骤。` : `Completed ${completed}/${total} steps.`
     : "";
-  const lead = formatSynchronousCatalogMessage(
-    snapshot.language,
-    `terminal_report.outcome.${snapshot.terminalState}`,
-  );
+  if (snapshot.language === "zh-CN") {
+    const lead = snapshot.terminalState === "succeeded" ? "任务已完成。"
+      : snapshot.terminalState === "partially_succeeded" ? "任务已部分完成。"
+        : snapshot.terminalState === "blocked" ? "任务当前受阻。"
+          : snapshot.terminalState === "cancelled" ? "任务已取消。"
+            : "任务执行失败。";
+    return [lead, suffix].filter(Boolean).join(" ");
+  }
+  const lead = snapshot.terminalState === "succeeded" ? "The task completed."
+    : snapshot.terminalState === "partially_succeeded" ? "The task partially completed."
+      : snapshot.terminalState === "blocked" ? "The task is blocked."
+        : snapshot.terminalState === "cancelled" ? "The task was cancelled."
+          : "The task failed.";
   return [lead, suffix].filter(Boolean).join(" ");
 }
 
@@ -155,7 +163,7 @@ function fallbackChanges(snapshot: TerminalReportEvidenceSnapshot): TerminalRepo
       id: `change:${index}:${path}`,
       kind: inferChangeKind(path),
       title: path,
-      summary: formatSynchronousCatalogMessage(snapshot.language, "terminal_report.change.updated", { path }),
+      summary: snapshot.language === "zh-CN" ? `已更新 ${path}` : `Updated ${path}`,
       paths: [path],
       addedLines: artifact?.addedLines,
       deletedLines: artifact?.deletedLines,
@@ -173,11 +181,7 @@ function fallbackRisks(snapshot: TerminalReportEvidenceSnapshot): TerminalReport
         id: `check-risk:${check.id}`,
         severity: "warning",
         status: "unverified",
-        summary: check.summary ?? formatSynchronousCatalogMessage(
-          snapshot.language,
-          "terminal_report.risk.check_unverified",
-          { title: check.title },
-        ),
+        summary: check.summary ?? (snapshot.language === "zh-CN" ? `${check.title} 未完成验证。` : `${check.title} was not verified.`),
         sourceRefs: check.sourceRefs,
       });
     }
@@ -198,7 +202,7 @@ function sourceRefsForChangedPath(snapshot: TerminalReportEvidenceSnapshot, path
 }
 
 function fallbackParticipantContribution(displayName: string, language: TerminalReportEvidenceSnapshot["language"]): string {
-  return formatSynchronousCatalogMessage(language, "terminal_report.participant.completed", { displayName });
+  return language === "zh-CN" ? `${displayName} 完成了分配的工作。` : `${displayName} completed the assigned work.`;
 }
 
 function inferChangeKind(path: string): TerminalReportChange["kind"] {

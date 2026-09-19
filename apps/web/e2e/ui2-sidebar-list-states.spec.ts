@@ -107,52 +107,6 @@ test("Recent conversations keep a stable header while the initial list uses a Sk
   expect(runtimeErrors).toEqual([]);
 });
 
-test("Opening a failed recent conversation acknowledges only the current failure revision", async ({ page }) => {
-  const runtimeErrors = collectRuntimeErrors(page);
-  await prepareSurface(page, "dark", 1280, 800);
-  const state = createBaseState({ approvalStatus: "expired" });
-  const failedTitle = "Failed command conversation";
-  state.threads = [
-    {
-      ...conversationThread(0),
-      id: "thread_failed_attention",
-      title: failedTitle,
-      status: "failed",
-      updatedAt: "2026-07-19T00:10:00.000Z",
-      metadata: { lastActivityAt: "2026-07-19T00:10:00.000Z" },
-    },
-    {
-      ...conversationThread(1),
-      id: "thread_open_attention",
-      title: "Healthy conversation",
-      updatedAt: "2026-07-19T00:09:00.000Z",
-      metadata: { lastActivityAt: "2026-07-19T00:09:00.000Z" },
-    },
-  ];
-  await mockDaemon(page, state);
-  await page.goto("/");
-
-  const navigation = page.getByLabel("Ling Stack navigation");
-  const failedRow = rowFor(navigation, failedTitle);
-  await expectPrimaryStatus(navigation, failedTitle, "failed");
-  await failedRow.getByRole("button", { name: "Open recent conversation 1" }).click();
-  await expect(failedRow.getByRole("button", { name: "Open recent conversation 1" })).toHaveAttribute("aria-current", "page");
-  await expect(failedRow.locator('[data-sidebar-primary-status="failed"]')).toHaveCount(0);
-  expect(state.threads[0]!.status).toBe("failed");
-
-  await page.reload();
-  await expect(rowFor(page.getByLabel("Ling Stack navigation"), failedTitle).locator('[data-sidebar-primary-status="failed"]')).toHaveCount(0);
-
-  state.threads[0] = {
-    ...state.threads[0]!,
-    updatedAt: "2026-07-19T00:11:00.000Z",
-    metadata: { lastActivityAt: "2026-07-19T00:11:00.000Z" },
-  };
-  await page.reload();
-  await expectPrimaryStatus(page.getByLabel("Ling Stack navigation"), failedTitle, "failed");
-  expect(runtimeErrors).toEqual([]);
-});
-
 async function expectPrimaryStatus(navigation: Locator, name: string, status: string): Promise<void> {
   const row = rowFor(navigation, name);
   await expect(row.locator(`[data-sidebar-primary-status="${status}"]`)).toHaveCount(1);

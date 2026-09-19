@@ -9,18 +9,15 @@ import {
   type ChannelWorkflowStepStatus,
   type RunStore,
   type RunTool,
-  type ResponseLanguage,
   type SkillApprovalProfile,
   type Task,
 } from "@ling-stack/core";
-import { formatServerCatalogMessage } from "@ling-stack/localization";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
-import { fallbackResponseLanguage } from "./response-language.js";
 import {
   compileWorkflowTemplate,
   isWorkflowTemplateCompileRequest,
@@ -1236,19 +1233,26 @@ function workflowTerminalCoordinatorReplyBody(
   workflow: ChannelWorkflow,
   steps: readonly ChannelWorkflowStep[],
 ): string {
-  const language = fallbackResponseLanguage(workflow.metadata?.responseLanguage);
-  const title = workflow.title.trim() || formatServerCatalogMessage(language, "daemon.workflow.default_title");
+  const language = workflow.metadata?.responseLanguage === "en-US" ? "en-US" : "zh-CN";
+  const title = workflow.title.trim() || (language === "en-US" ? "this task" : "这次任务");
   const blocker = workflowTerminalBlocker(workflow, steps, language);
   const resultSummary = workflowTerminalResultSummary(steps);
+  if (language === "en-US") {
+    if (workflow.status === "succeeded") {
+      return resultSummary ? `Done: "${title}".\nResult: ${resultSummary}` : `Done: "${title}".`;
+    }
+    if (workflow.status === "cancelled") {
+      return `Stopped: "${title}".`;
+    }
+    return `Not completed: "${title}". Reason: ${blocker}.`;
+  }
   if (workflow.status === "succeeded") {
-    return resultSummary
-      ? formatServerCatalogMessage(language, "daemon.workflow.succeeded_with_result", { title, result: resultSummary })
-      : formatServerCatalogMessage(language, "daemon.workflow.succeeded", { title });
+    return resultSummary ? `完成：「${title}」。\n结果：${resultSummary}` : `完成：「${title}」。`;
   }
   if (workflow.status === "cancelled") {
-    return formatServerCatalogMessage(language, "daemon.workflow.cancelled", { title });
+    return `已停止：「${title}」。`;
   }
-  return formatServerCatalogMessage(language, "daemon.workflow.not_completed", { title, reason: blocker });
+  return `未完成：「${title}」。原因：${blocker}。`;
 }
 
 function workflowTerminalResultSummary(steps: readonly ChannelWorkflowStep[]): string | undefined {
@@ -1266,7 +1270,7 @@ function isGenericRunSuccessSummary(summary: string): boolean {
 function workflowTerminalBlocker(
   workflow: ChannelWorkflow,
   steps: readonly ChannelWorkflowStep[],
-  language: ResponseLanguage,
+  language: "en-US" | "zh-CN",
 ): string {
   const blockedStep = steps.find((step) => step.status === "blocked" || step.status === "failed" || step.status === "cancelled");
   const blocker = blockedStep?.blocker?.trim();
@@ -1274,12 +1278,12 @@ function workflowTerminalBlocker(
     return blocker;
   }
   if (workflow.status === "failed") {
-    return formatServerCatalogMessage(language, "daemon.workflow.failed_reason");
+    return language === "en-US" ? "Workflow failed." : "工作流执行失败。";
   }
   if (workflow.status === "blocked") {
-    return formatServerCatalogMessage(language, "daemon.workflow.blocked_reason");
+    return language === "en-US" ? "Workflow is blocked." : "工作流已阻塞。";
   }
-  return formatServerCatalogMessage(language, "daemon.workflow.missing_reason");
+  return language === "en-US" ? "No additional reason was recorded." : "没有记录更多原因。";
 }
 
 function renderWorkflowStepContextPackPrompt(pack: ContextPack): string {

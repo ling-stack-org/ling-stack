@@ -8,6 +8,7 @@ export function SidebarObjectRow({
   ariaLabel,
   buttonClassName,
   children,
+  description,
   icon,
   onSelect,
   selected = false,
@@ -22,6 +23,7 @@ export function SidebarObjectRow({
   readonly ariaLabel: string;
   readonly buttonClassName?: string;
   readonly children: ReactNode;
+  readonly description?: ReactNode;
   readonly icon: ReactNode;
   readonly onSelect: () => void;
   readonly selected?: boolean;
@@ -54,7 +56,7 @@ export function SidebarObjectRow({
     observer.observe(viewport);
     observer.observe(track);
     return () => observer.disconnect();
-  }, [children]);
+  }, [children, description]);
 
   const scrollDuration = Math.min(3200, Math.max(700, titleOverflow * 20));
 
@@ -82,6 +84,7 @@ export function SidebarObjectRow({
             <span ref={titleViewportRef} className="sidebar-row-title-viewport">
               <span ref={titleTrackRef} className="sidebar-row-title-track">{children}</span>
             </span>
+            {description ? <small className="sidebar-row-description">{description}</small> : null}
           </span>
         </Button>
       </SidebarTooltip>

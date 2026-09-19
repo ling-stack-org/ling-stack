@@ -3,17 +3,17 @@ import type { ApprovalRequest } from "../types.js";
 import type { ConversationOperationCellViewModel } from "./conversation-work-cell.js";
 import type { InlineApprovalView } from "./inline-approvals.js";
 
-export interface ComposerGateApprovalPresentation {
+export interface DialogOwnedApprovalPresentation {
   readonly approvalId: string;
   readonly runId: string;
   readonly actionSentence: string;
 }
 
-export function buildComposerGateApprovalPresentationByRunId(
+export function buildDialogOwnedApprovalPresentationByRunId(
   approvals: readonly InlineApprovalView[],
   t: Translate,
-): ReadonlyMap<string, ComposerGateApprovalPresentation> {
-  const presentations = new Map<string, ComposerGateApprovalPresentation>();
+): ReadonlyMap<string, DialogOwnedApprovalPresentation> {
+  const presentations = new Map<string, DialogOwnedApprovalPresentation>();
   for (const item of approvals) {
     const runId = approvalRunId(item.approval);
     if (!runId || presentations.has(runId)) {
@@ -28,10 +28,10 @@ export function buildComposerGateApprovalPresentationByRunId(
   return presentations;
 }
 
-export function composerGateApprovalPresentationForWorkCell(
+export function dialogOwnedApprovalPresentationForWorkCell(
   model: ConversationOperationCellViewModel,
-  presentations: ReadonlyMap<string, ComposerGateApprovalPresentation>,
-): ComposerGateApprovalPresentation | undefined {
+  presentations: ReadonlyMap<string, DialogOwnedApprovalPresentation>,
+): DialogOwnedApprovalPresentation | undefined {
   for (const runId of model.runIds) {
     const presentation = presentations.get(runId);
     if (presentation) {

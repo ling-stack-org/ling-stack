@@ -1,7 +1,6 @@
 import { useRef, useState } from "react";
 import { Play } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { providerCompactModelLabel } from "../../lib/providers.js";
 import {
   Button,
   Dialog,
@@ -77,7 +76,7 @@ export function ProjectRunReviewDialog({
                   <li key={item.sceneId}>
                     <span>{String(item.sortOrder + 1).padStart(2, "0")}</span>
                     <strong title={item.sceneTitle}>{item.sceneTitle}</strong>
-                    <small>{item.workflow?.definition.name ?? (item.provider ? providerCompactModelLabel(item.provider) : t("Default video model"))}</small>
+                    <small>{item.workflow?.definition.name ?? item.provider?.displayName ?? t("Default video model")}</small>
                   </li>
                 ))}
               </ol>

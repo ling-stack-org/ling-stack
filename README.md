@@ -1,5 +1,5 @@
 <div align="center">
-  <img src="apps/web/public/icons/ling-mark.svg" alt="Ling Stack" width="88" height="88" />
+  <img src="apps/web/public/favicon.png" alt="Ling Stack" width="88" height="88" />
   <h1>Ling Stack</h1>
   <p><strong>A local-first workspace for AI teammates, models, tools, approvals, and auditable work.</strong></p>
   <p>
@@ -28,6 +28,11 @@ Ling Stack brings conversations, channels, AI teammates, model configuration, sk
 tools, media generation, approvals, artifacts, and runtime history into one local
 workspace. It is designed for work that needs more structure and accountability than a
 standalone chat window.
+
+![Ling Stack local workspace overview](docs/design/assets/ling-stack-workspace-overview.png)
+
+The screenshot above is a deterministic public demo with neutral sample content. It does
+not contain a maintainer workspace, account, provider key, or live task data.
 
 ## Why Ling Stack
 

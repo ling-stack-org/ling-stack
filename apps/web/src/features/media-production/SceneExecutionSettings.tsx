@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { Settings2, Workflow } from "lucide-react";
 import { resolveMediaProviderRuntimeState } from "@ling-stack/core/provider-media-normalization";
 import { useI18n } from "../../i18n.js";
-import { providerModelRouteLabel } from "../../lib/providers.js";
 import { Button, Checkbox, Field, InlineFeedback, Input, InspectorSection, Select, Textarea } from "../../shared/ui/index.js";
 import type { MediaProject, MediaProjectAsset, MediaScene, MediaSceneVideoImageInput, MediaWorkflowInputField, MediaWorkflowDefinitionDetail, ProviderPreset, RunArtifact } from "../../types.js";
 import type { MediaProductionActions, MediaProductionFailure, MediaScenePatch } from "./media-production-types.js";
@@ -209,9 +208,9 @@ function DirectSettings(input: DirectSettingsProps): React.JSX.Element {
         void input.save("provider", { providerPresetId: providerPresetId || null });
       }}>
         <option value="">{t("Default")}</option>
-        {input.source.providers.map((provider) => <option key={provider.id} value={provider.id}>{providerModelRouteLabel(provider)}</option>)}
+        {input.source.providers.map((provider) => <option key={provider.id} value={provider.id}>{provider.displayName} · {provider.model}</option>)}
         {input.source.providerId && !input.source.providers.some((provider) => provider.id === input.source.providerId)
-          ? <option value={input.source.providerId} disabled>{input.source.selectedProvider ? providerModelRouteLabel(input.source.selectedProvider) : t("Not ready")}</option> : null}
+          ? <option value={input.source.providerId} disabled>{input.source.selectedProvider?.displayName ?? t("Not ready")}</option> : null}
       </Select>
     </Field>
     {input.feedback("provider")}

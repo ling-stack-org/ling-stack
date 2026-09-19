@@ -21,7 +21,6 @@ export interface ConversationTopToolbarProps {
   readonly terminalDisabled?: boolean;
   readonly terminalLabel: string;
   readonly detailsActive: boolean;
-  readonly detailsDisabled?: boolean;
   readonly detailsLabel: string;
   readonly onToggleSearch: () => void;
   readonly onOpenFiles?: () => void;
@@ -45,7 +44,6 @@ export function ConversationTopToolbar({
   terminalDisabled = false,
   terminalLabel,
   detailsActive,
-  detailsDisabled = false,
   detailsLabel,
   onToggleSearch,
   onOpenFiles,
@@ -101,7 +99,6 @@ export function ConversationTopToolbar({
         actionId="details"
         active={detailsActive}
         className="conversation-toolbar-details task-toolbar-panel"
-        disabled={detailsDisabled}
         aria-expanded={detailsActive}
         icon={DetailsIcon}
         label={detailsLabel}

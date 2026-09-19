@@ -84,7 +84,7 @@ export function ProfileSettingsSurface({
   const skipBlurCommitRef = useRef(false);
   const [editingName, setEditingName] = useState(false);
   const [draftName, setDraftName] = useState(displayName);
-  const resolvedName = displayName.trim() || t("Ling User");
+  const resolvedName = displayName.trim() || "Ling User";
 
   useEffect(() => {
     if (!editingName) {

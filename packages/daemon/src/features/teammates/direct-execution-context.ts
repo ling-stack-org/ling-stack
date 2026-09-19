@@ -5,7 +5,6 @@ import {
   type LingThread,
   type PermissionConfirmation,
   type PermissionPreset,
-  type ResponseLanguage,
   type RunTool,
   type RunStore,
   type SkillOptimizationMode,
@@ -35,7 +34,6 @@ export function resolveTeammateDirectExecutionContext(input: {
   readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
   readonly permissionConfirmation?: PermissionConfirmation;
-  readonly responseLanguage?: ResponseLanguage;
   readonly requestedSkillId?: string;
   readonly skillOptimizationMode?: SkillOptimizationMode;
   readonly continuationReason?: "queue_followup" | "interrupt_redirect";
@@ -66,7 +64,6 @@ export function resolveTeammateDirectExecutionContext(input: {
       permissionPreset: input.permissionPreset,
       permissionMode,
       permissionConfirmation: input.permissionConfirmation,
-      responseLanguage: input.responseLanguage,
       thinkingLevel: "medium",
       systemPrompt: input.systemPrompt,
       skipMemoryRecall: true,

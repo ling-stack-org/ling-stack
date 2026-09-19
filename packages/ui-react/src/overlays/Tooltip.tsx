@@ -33,14 +33,13 @@ export function TooltipProvider({
 
 export interface TooltipProps {
   readonly children: ReactElement;
-  readonly collisionPadding?: number;
   readonly content: ReactNode;
   readonly side?: "top" | "right" | "bottom" | "left";
   readonly sideOffset?: number;
   readonly className?: string;
 }
 
-export function Tooltip({ children, className, collisionPadding = 8, content, side = "top", sideOffset = 6 }: TooltipProps) {
+export function Tooltip({ children, className, content, side = "top", sideOffset = 6 }: TooltipProps) {
   const hasProvider = useContext(TooltipProviderContext);
   const portalContainer = useOverlayPortalContainer();
   const tooltip = (
@@ -49,7 +48,6 @@ export function Tooltip({ children, className, collisionPadding = 8, content, si
       <TooltipPrimitive.Portal container={portalContainer ?? undefined}>
         <TooltipPrimitive.Content
           className={mergeClassNames("ling-ui-tooltip", className)}
-          collisionPadding={collisionPadding}
           data-ling-overlay="tooltip"
           side={side}
           sideOffset={sideOffset}

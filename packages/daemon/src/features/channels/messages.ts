@@ -21,7 +21,6 @@ import {
   type RunSession,
   type RunStore,
 } from "@ling-stack/core";
-import { formatServerCatalogMessage } from "@ling-stack/localization";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -40,7 +39,6 @@ import {
   queueChannelReplyFollowup,
   resolveChannelReplyTargetTeammateId,
 } from "./channel-reply-dispatch.js";
-import { fallbackResponseLanguage } from "./response-language.js";
 import type { ChannelReplyDispatchCoordinator } from "./channel-reply-dispatch-coordinator.js";
 import {
   acquireChannelReplyLane,
@@ -824,20 +822,18 @@ function coordinatorWorkflowStartBody(
   sourceMessage: ChannelMessage,
 ): string {
   const title = proposal.title.trim() || sourceMessage.body.trim() || "this task";
-  return formatServerCatalogMessage(
-    fallbackResponseLanguage(proposal.responseLanguage),
-    "daemon.channel.workflow_start.confirmed",
-    { title },
-  );
+  if (proposal.responseLanguage === "en-US") {
+    return `Confirmed: "${title}". Starting now.`;
+  }
+  return `确认需求：「${title}」。开始处理。`;
 }
 
 function coordinatorWorkflowStartFailedBody(proposal: ChannelExecutionProposal, error: unknown): string {
   const message = error instanceof Error ? error.message : String(error);
-  return formatServerCatalogMessage(
-    fallbackResponseLanguage(proposal.responseLanguage),
-    "daemon.channel.workflow_start.blocked",
-    { message },
-  );
+  if (proposal.responseLanguage === "en-US") {
+    return `I tried to start this workflow, but it was blocked before execution: ${message}`;
+  }
+  return `我尝试开始这次 workflow，但执行前被阻塞：${message}`;
 }
 
 function persistChannelIntentDecision(

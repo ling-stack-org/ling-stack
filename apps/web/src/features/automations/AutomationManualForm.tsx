@@ -13,7 +13,6 @@ import {
   Select,
   Textarea,
 } from "../../shared/ui/index.js";
-import { providerModelRouteLabel } from "../../lib/providers.js";
 import type { Channel, CreateAutomationRequest, LingThread, ProviderPreset } from "../../types.js";
 import { AutomationScheduleFields } from "./AutomationScheduleFields.js";
 import {
@@ -114,7 +113,7 @@ export function AutomationManualForm({
           >
             <option value="">{t("Select model")}</option>
             {chatProviders.map((provider) => (
-              <option key={provider.id} value={provider.id}>{providerModelRouteLabel(provider)}</option>
+              <option key={provider.id} value={provider.id}>{provider.displayName} · {provider.model}</option>
             ))}
           </Select>
         </Field>

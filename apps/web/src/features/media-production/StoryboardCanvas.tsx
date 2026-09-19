@@ -15,7 +15,6 @@ import {
   type ReactFlowInstance,
 } from "@xyflow/react";
 import { Clapperboard, ImageIcon, Play, Plus, Sparkles } from "lucide-react";
-import { providerCompactModelLabel } from "../../lib/providers.js";
 import { Button, EmptyState, IconButton } from "../../shared/ui/index.js";
 import { useI18n, type Translate } from "../../i18n.js";
 import type { MediaScene } from "../../types.js";
@@ -99,7 +98,7 @@ function StoryboardSceneNode({ data }: NodeProps<Node<StoryboardNodeData>>): Rea
           </span>
           {data.readiness?.workflow || data.readiness?.provider ? (
             <span className="storyboard-scene-node-source">
-              {data.readiness.workflow?.definition.name ?? (data.readiness.provider ? providerCompactModelLabel(data.readiness.provider) : "")}
+              {data.readiness.workflow?.definition.name ?? data.readiness.provider?.displayName}
             </span>
           ) : null}
         </span>

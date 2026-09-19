@@ -1,5 +1,4 @@
 import type { ChannelMessage, RunIntervention, RunSession, RunStore } from "@ling-stack/core";
-import { formatServerCatalogMessage } from "@ling-stack/localization";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
 import {
@@ -132,15 +131,13 @@ export function createChannelReplyContinuationProjection(input: {
             errorMessage: null,
           });
         }
-        const emptyResponseLanguage = resolveChannelResponseLanguage({
+        const emptyResponseMessage = resolveChannelResponseLanguage({
           store: input.store,
           channel,
           sourceText: sourceMessage.body,
-        }).language;
-        const emptyResponseMessage = formatServerCatalogMessage(
-          emptyResponseLanguage,
-          "daemon.conversation.empty_result",
-        );
+        }).language === "zh-CN"
+          ? "模型没有返回可显示内容，请重试或切换模型。"
+          : "The model returned no displayable content. Retry or choose another model.";
         return finishContinuationReply(input.store, replyMessageId, {
           body: emptyResponseMessage,
           status: "failed",

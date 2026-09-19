@@ -836,14 +836,6 @@ export function parseApprovalRoute(pathname: string): { readonly approvalId: str
   return undefined;
 }
 
-export function parseApprovalCommandRuleRoute(pathname: string): { readonly ruleId: string } | undefined {
-  const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
-  if (segments.length === 2 && segments[0] === "approval-command-rules") {
-    return { ruleId: segments[1] };
-  }
-  return undefined;
-}
-
 export function parseExternalWorkActionRoute(pathname: string): { readonly actionId: string; readonly action?: "cancel" | "execute" } | undefined {
   const segments = pathname.split("/").filter(Boolean).map(decodeURIComponent);
   if (segments.length === 3 && segments[0] === "external-work" && segments[1] === "actions") {

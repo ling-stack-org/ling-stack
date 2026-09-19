@@ -1,5 +1,4 @@
 import type { SQLOutputValue } from "node:sqlite";
-import { isSupportedLocale } from "@ling-stack/localization";
 import {
   channelAutoReplyModes,
   channelWorkflowPreferences,
@@ -180,7 +179,7 @@ function readOptionalStringValue(value: unknown): string | undefined {
 }
 
 function parseOptionalChannelResponseLanguage(value: unknown): ChannelResponseLanguage | undefined {
-  return value === "workspace" || value === "follow_user" || isSupportedLocale(value) ? value : undefined;
+  return value === "workspace" || value === "follow_user" || value === "zh-CN" || value === "en-US" ? value : undefined;
 }
 
 function isChannelProtocolSourceRefTypeValue(value: unknown): value is ChannelProtocolSourceRefType {

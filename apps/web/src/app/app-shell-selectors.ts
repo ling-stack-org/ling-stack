@@ -12,7 +12,6 @@ import type {
 } from "../types.js";
 import type { LocalTeammateDraft } from "../features/teammates/index.js";
 import { deriveChannelTasks } from "../lib/channel-artifacts.js";
-import { providerCompactModelLabel } from "../lib/providers.js";
 import type { ViewId } from "./view-types.js";
 
 export function selectDesktopComputerUseConversation(input: {
@@ -90,7 +89,7 @@ export function aiTeammateToLocalDraft(
     approvalProfile: teammate.approvalProfile,
     status: teammate.status,
     modelLabel: provider
-      ? providerCompactModelLabel(provider)
+      ? `${provider.displayName} / ${provider.model}`
       : teammate.modelBindingMode === "workspace_default"
         ? "Workspace default is not configured"
         : "No model selected",

@@ -1,7 +1,6 @@
 export type TerminalReportSourceKind = "workflow" | "run" | "turn";
 export type TerminalReportOutcomeStatus = "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
 export type TerminalReportCheckStatus = "passed" | "failed" | "blocked" | "cancelled" | "skipped" | "not_run" | "unknown";
-export type TerminalReportApprovalDecision = "pending" | "approved" | "denied" | "expired" | "cancelled";
 
 export interface TerminalReportSourceRefDto {
   readonly kind: string;
@@ -68,7 +67,6 @@ export interface TerminalReportRiskDto {
   readonly status: "unresolved" | "mitigated" | "accepted" | "unverified";
   readonly summary: string;
   readonly nextAction?: string;
-  readonly approvalDecision?: TerminalReportApprovalDecision;
   readonly sourceRefs: readonly TerminalReportSourceRefDto[];
 }
 
@@ -82,7 +80,7 @@ export interface TerminalReportDto {
   readonly sourceMessageId?: string;
   readonly source: { readonly kind: TerminalReportSourceKind; readonly id: string };
   readonly status: "committed" | "fallback";
-  readonly language: SupportedLocale;
+  readonly language: "zh-CN" | "en-US";
   readonly outcome: {
     readonly status: TerminalReportOutcomeStatus;
     readonly title: string;
@@ -117,4 +115,3 @@ export interface TerminalReportResponse {
 export interface TerminalReportListResponse {
   readonly reports: readonly TerminalReportDto[];
 }
-import type { SupportedLocale } from "@ling-stack/localization";

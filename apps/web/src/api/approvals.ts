@@ -1,6 +1,4 @@
 import type {
-  ApprovalCommandRuleListResponse,
-  ApprovalCommandRuleMutationResponse,
   ApprovalListResponse,
   ApprovalMutationResponse,
   ApprovalPolicyFormState,
@@ -24,24 +22,8 @@ export async function updateApprovalPolicy(cwd: string, form: ApprovalPolicyForm
   return daemonClient.updateApprovalPolicy(cwd, approvalPolicyFormToPayload(form));
 }
 
-export async function listApprovalCommandRules(cwd: string): Promise<ApprovalCommandRuleListResponse> {
-  return daemonClient.listApprovalCommandRules(cwd);
-}
-
-export async function revokeApprovalCommandRule(cwd: string, ruleId: string): Promise<ApprovalCommandRuleMutationResponse> {
-  return daemonClient.revokeApprovalCommandRule(cwd, ruleId);
-}
-
-export async function approveApproval(
-  cwd: string,
-  approvalId: string,
-  input: {
-    readonly reason?: string;
-    readonly decisionKind?: "approve_once" | "approve_command_rule";
-    readonly proposedRuleFingerprint?: string;
-  } = {},
-): Promise<ApprovalMutationResponse> {
-  return daemonClient.approveApproval(cwd, approvalId, input);
+export async function approveApproval(cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
+  return resolveApproval(cwd, approvalId, "approve", reason);
 }
 
 export async function denyApproval(cwd: string, approvalId: string, reason?: string): Promise<ApprovalMutationResponse> {
@@ -55,6 +37,6 @@ async function resolveApproval(
   reason?: string,
 ): Promise<ApprovalMutationResponse> {
   return action === "approve"
-    ? daemonClient.approveApproval(cwd, approvalId, { reason, decisionKind: "approve_once" })
+    ? daemonClient.approveApproval(cwd, approvalId, reason)
     : daemonClient.denyApproval(cwd, approvalId, reason);
 }

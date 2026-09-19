@@ -24,24 +24,6 @@ export type ApprovalRisk = "low" | "medium" | "high" | "critical";
 
 export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "cancelled";
 export type LingApprovalCheckpointStatus = ApprovalStatus | "resume_pending" | "resumed" | "resume_failed";
-export type ApprovalDecisionKind = "approve_once" | "approve_command_rule" | "deny";
-
-export interface ApprovalCommandRuleProposal {
-  readonly prefix: readonly string[];
-  readonly display: string;
-  readonly fingerprint: string;
-  readonly version: 1;
-}
-
-export interface ApprovalCommandRule extends ApprovalCommandRuleProposal {
-  readonly id: string;
-  readonly workspaceId: string;
-  readonly toolName: "bash";
-  readonly sourceApprovalId?: string;
-  readonly createdBy: "local-user";
-  readonly createdAt: string;
-  readonly revokedAt?: string;
-}
 
 export interface RunnerResumeHandle {
   readonly kind: "ling_continuation" | "runner_native";
@@ -73,10 +55,6 @@ export interface ApprovalRequest {
   readonly resolvedAt?: string;
   readonly resolvedBy?: "local-user";
   readonly decisionReason?: string;
-  readonly availableDecisions?: readonly ApprovalDecisionKind[];
-  readonly proposedCommandRule?: ApprovalCommandRuleProposal;
-  readonly decisionKind?: ApprovalDecisionKind;
-  readonly decisionRuleId?: string;
 }
 
 export interface LingApprovalCheckpoint {
@@ -117,17 +95,6 @@ export interface ApprovalMutationResponse {
 
 export interface ResolveApprovalRequest {
   readonly reason?: string;
-  readonly decisionKind?: "approve_once" | "approve_command_rule";
-  readonly proposedRuleFingerprint?: string;
-}
-
-export interface ApprovalCommandRuleListResponse {
-  readonly cwd: string;
-  readonly rules: readonly ApprovalCommandRule[];
-}
-
-export interface ApprovalCommandRuleMutationResponse {
-  readonly rule: ApprovalCommandRule;
 }
 
 export type ApprovalToolDecision = "allow" | "ask" | "deny";

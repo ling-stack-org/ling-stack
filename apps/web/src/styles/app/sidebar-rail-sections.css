@@ -1,51 +1,75 @@
-/* Compact Sidebar is a dedicated icon-only surface, never a compressed expanded Sidebar. */
-.sidebar-compact-rail {
-  grid-area: nav;
-  display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
-  align-items: start;
+/* Collapsed AppShell Sidebar launcher rail. Object lists only exist in the expanded Sidebar. */
+:root {
+  --sidebar-rail-shell-layer: 1;
+  --sidebar-rail-control-layer: 0;
+  --sidebar-rail-control-hover-layer: 1;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer {
+  z-index: var(--sidebar-rail-shell-layer);
   width: var(--sidebar-collapsed-width);
-  height: 100%;
-  min-height: 0;
-  padding: 8px 6px 10px;
-  border-right: 1px solid var(--border);
-  background: var(--surface-sidebar);
+  padding: 10px 6px;
+  transform: none;
+  opacity: 1;
+  box-shadow: none;
   overflow: hidden;
 }
 
-.sidebar-compact-rail-top,
-.sidebar-compact-rail-sections,
-.sidebar-compact-rail-bottom,
-.sidebar-compact-rail .primary-nav-compact {
+.app-shell.channel-sidebar-collapsed .sidebar-fixed-top {
+  gap: 8px;
+}
+
+.app-shell.channel-sidebar-collapsed .sidebar-brand-row {
+  grid-template-columns: 1fr;
+  justify-items: center;
+}
+
+.app-shell.channel-sidebar-collapsed .sidebar-scroll-region {
   display: flex;
   flex-direction: column;
   align-items: center;
-  width: 100%;
-  gap: 4px;
-}
-
-.sidebar-compact-rail-sections {
+  align-content: start;
+  gap: 8px;
+  height: 100%;
   min-height: 0;
-  padding-top: 12px;
-  overflow-x: hidden;
+  margin: 0;
+  padding: 2px 0 8px;
   overflow-y: auto;
+  overflow-x: hidden;
   overscroll-behavior: contain;
-  scrollbar-width: none;
 }
 
-.sidebar-compact-rail-sections::-webkit-scrollbar {
-  display: none;
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .primary-nav {
+  justify-items: center;
+  gap: 8px;
 }
 
-.sidebar-compact-rail-bottom {
-  align-self: end;
-  padding-top: 8px;
-  border-top: 1px solid var(--border);
-}
-
-.app-shell .sidebar-compact-rail .sidebar-compact-rail-action,
-.app-shell .sidebar-compact-rail .primary-nav-compact .nav-item {
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-section {
   display: grid;
+  place-items: center;
+  width: 36px;
+  min-height: 36px;
+  margin: 0;
+  overflow: visible;
+}
+
+.app-shell.channel-sidebar-collapsed .sidebar-rail-launcher-shell {
+  position: relative;
+  display: grid;
+  place-items: center;
+  width: 36px;
+  height: 36px;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-sidebar-switch,
+.app-shell.channel-sidebar-collapsed .sidebar-command-button,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .nav-item,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-launcher,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .config-button {
+  position: relative;
+  z-index: var(--sidebar-rail-control-layer);
+  display: grid;
+  grid-template-columns: 1fr;
   place-items: center;
   width: 36px;
   min-width: 36px;
@@ -57,26 +81,96 @@
   background: transparent;
   color: var(--text-muted);
   box-shadow: none;
+  transition:
+    background-color var(--ling-motion-fast) var(--ling-ease-standard),
+    color var(--ling-motion-fast) var(--ling-ease-standard),
+    box-shadow var(--ling-motion-fast) var(--ling-ease-standard);
 }
 
-.app-shell .sidebar-compact-rail :is(.sidebar-compact-rail-action, .primary-nav-compact .nav-item):hover,
-.app-shell .sidebar-compact-rail :is(.sidebar-compact-rail-action, .primary-nav-compact .nav-item):focus-visible {
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .nav-item,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-launcher {
+  --ling-button-label-display: none;
+  --ling-button-leading-size: 20px;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-launcher svg {
+  width: 18px;
+  height: 18px;
+}
+
+.app-shell.channel-sidebar-collapsed .channel-left-drawer :is(
+  .nav-item,
+  .sidebar-rail-launcher,
+  .config-button,
+  .sidebar-command-button,
+  .channel-sidebar-switch
+):hover,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer :is(
+  .nav-item,
+  .sidebar-rail-launcher,
+  .config-button,
+  .sidebar-command-button,
+  .channel-sidebar-switch
+):focus-visible {
+  z-index: var(--sidebar-rail-control-hover-layer);
   background: var(--surface-hover);
   color: var(--text-strong);
+  box-shadow: var(--ling-shadow-low);
 }
 
-.app-shell .sidebar-compact-rail :is(.sidebar-compact-rail-action, .primary-nav-compact .nav-item).active,
-.app-shell .sidebar-compact-rail :is(.sidebar-compact-rail-action, .primary-nav-compact .nav-item)[aria-pressed="true"] {
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .nav-item.active,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .sidebar-rail-launcher[aria-pressed="true"],
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .config-button.active {
   background: var(--surface-selected);
   color: var(--text-strong);
 }
 
-.app-shell .sidebar-compact-rail :is(.sidebar-compact-rail-action, .primary-nav-compact .nav-item) svg {
-  width: 18px;
-  height: 18px;
-  stroke-width: 2;
+.app-shell.channel-sidebar-collapsed .channel-sidebar-switch {
+  justify-self: center;
+  background: var(--surface-selected);
+  color: var(--text-strong);
 }
 
-.app-shell .sidebar-compact-rail .primary-nav-compact .nav-item[hidden] {
+.app-shell.channel-sidebar-collapsed .sidebar-command-button {
+  justify-self: center;
+  margin-left: 0;
+  background: var(--surface-selected);
+  color: var(--text-strong);
+}
+
+.app-shell.channel-sidebar-collapsed .sidebar-command-button > span,
+.app-shell.channel-sidebar-collapsed .channel-left-drawer .config-button-label {
   display: none;
+}
+
+.app-shell.channel-sidebar-collapsed .sidebar-rail-launcher-status {
+  position: absolute;
+  right: 0;
+  bottom: 1px;
+  z-index: var(--sidebar-rail-control-hover-layer);
+  width: 10px;
+  height: 10px;
+  border: 2px solid var(--surface-panel);
+  border-radius: 50%;
+  background: var(--surface-panel);
+  pointer-events: none;
+}
+
+.app-shell.channel-sidebar-collapsed .sidebar-bottom {
+  justify-items: center;
+  padding-top: 8px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .app-shell.channel-sidebar-collapsed .channel-left-drawer,
+  .app-shell.channel-sidebar-collapsed .channel-left-drawer :is(
+    .nav-item,
+    .sidebar-rail-launcher,
+    .config-button,
+    .sidebar-command-button,
+    .channel-sidebar-switch
+  ) {
+    animation: none;
+    transition-duration: var(--ling-motion-instant);
+  }
 }

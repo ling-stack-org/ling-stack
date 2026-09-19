@@ -1,7 +1,27 @@
 /* Codex-style global sidebar shell. Keep this file focused on shell chrome only. */
 :root {
-  --sidebar-expanded-width: 292px;
+  --sidebar-expanded-width: 240px;
   --sidebar-collapsed-width: 48px;
+  --sidebar-rail-motion-duration: var(--ling-motion-slow);
+  --sidebar-rail-motion-ease: var(--ling-ease-standard);
+}
+
+.app-shell.channel-drawer-shell {
+  transition: grid-template-columns var(--sidebar-rail-motion-duration) var(--sidebar-rail-motion-ease);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --sidebar-rail-motion-duration: var(--ling-motion-instant);
+  }
+
+  .app-shell.channel-drawer-shell {
+    transition-duration: var(--ling-motion-instant);
+  }
+
+  .app-shell.channel-drawer-shell .channel-left-drawer {
+    transition-duration: var(--ling-motion-instant);
+  }
 }
 
 @media (max-width: 900px) {
@@ -29,6 +49,13 @@
     overflow: hidden;
   }
 
+  .task-workbench-main.with-channel-side-panel {
+    grid-template-columns: minmax(0, 1fr);
+    padding-right: 0;
+  }
+
+  .task-workbench-main.with-channel-side-panel .channel-side-panel,
+  .task-workbench-main.with-channel-side-panel .channel-side-panel-resize-handle,
   .activity-chat-layout.with-thread > .thread-reply-panel {
     display: none;
   }

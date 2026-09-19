@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, type Dispatch, type SetStateAction } from "react";
 import { legacyPermissionFromAuthorizationAndAccess } from "@ling-stack/core/session-permissions";
-import { isSupportedLocale } from "@ling-stack/localization";
 import { clearSavedLocale, readSavedLocale, type Locale } from "../i18n.js";
 import { clearSavedThemePreference, readSavedThemePreference, type ThemePreference } from "../theme.js";
 import { getEffectiveConfig } from "../api/config.js";
@@ -32,7 +31,6 @@ export interface WorkspaceSettingsController {
   readonly error: WorkspaceSettingsError | undefined;
   readonly clearError: () => void;
   readonly updateWorkspaceCwd: (cwd: string) => void;
-  readonly updateInterfaceLocale: (locale: Locale) => Promise<boolean>;
   readonly patchWorkspaceSettings: (
     patch: UpdateWorkspaceSettingsRequest,
     options?: ErrorPresentationOptions,
@@ -44,7 +42,7 @@ export function useWorkspaceSettingsController(input: {
   readonly form: RunFormState;
   readonly setForm: Dispatch<SetStateAction<RunFormState>>;
   readonly locale: Locale;
-  readonly setLocale: (locale: Locale, beforeCommit?: () => Promise<void>) => Promise<boolean>;
+  readonly setLocale: (locale: Locale) => void;
   readonly themePreference: ThemePreference;
   readonly setThemePreference: (preference: ThemePreference) => void;
   readonly setChannelForm: Dispatch<SetStateAction<ChannelCreateFormState>>;
@@ -128,26 +126,6 @@ export function useWorkspaceSettingsController(input: {
     }
   }
 
-  async function updateInterfaceLocale(nextLocale: Locale): Promise<boolean> {
-    if (input.daemonHealthy !== true || !workspaceCwd) {
-      return false;
-    }
-    return input.setLocale(nextLocale, async () => {
-      const settings = await patchWorkspaceSettings(
-        { locale: nextLocale },
-        { errorOwner: "caller" },
-      );
-      if (settings?.locale !== nextLocale) {
-        throw new Error("Workspace did not persist the selected language.");
-      }
-      interfaceSettingsSyncRef.current = {
-        cwd: workspaceCwd,
-        theme: input.themePreference,
-        locale: nextLocale,
-      };
-    });
-  }
-
   function isCurrentMutation(
     request: FocusedErrorRequest<"workspace-settings", WorkspaceSettingsErrorAction>,
   ): boolean {
@@ -189,7 +167,7 @@ export function useWorkspaceSettingsController(input: {
         }, workspaceLayer));
         setEffectiveConfig(response);
         input.setThemePreference(nextTheme);
-        void input.setLocale(nextLocale);
+        input.setLocale(nextLocale);
         interfaceSettingsSyncRef.current = { cwd: workspaceCwd, theme: nextTheme, locale: nextLocale };
 
         const migrationPatch: {
@@ -278,7 +256,7 @@ export function useWorkspaceSettingsController(input: {
           setEffectiveConfig(response);
           input.setForm((current) => syncRunFormPermissionDefaults(current, workspaceLayer));
           input.setThemePreference(nextTheme);
-          void input.setLocale(nextLocale);
+          input.setLocale(nextLocale);
           interfaceSettingsSyncRef.current = { cwd: workspaceCwd, theme: nextTheme, locale: nextLocale };
           clearSavedThemePreference();
           clearSavedLocale();
@@ -305,13 +283,13 @@ export function useWorkspaceSettingsController(input: {
       return;
     }
     const synced = interfaceSettingsSyncRef.current;
-    if (synced?.cwd !== workspaceCwd || synced.theme === input.themePreference) {
+    if (synced?.cwd !== workspaceCwd || (synced.theme === input.themePreference && synced.locale === input.locale)) {
       return;
     }
     const timeout = globalThis.setTimeout(() => {
       const request = errorOwner.begin("workspace-settings", workspaceCwd, "sync-interface");
       errorOwner.clear(request);
-      void updateWorkspaceSettings(workspaceCwd, { theme: input.themePreference })
+      void updateWorkspaceSettings(workspaceCwd, { theme: input.themePreference, locale: input.locale })
         .then((response) => {
           if (!isCurrentMutation(request)) return;
           setWorkspaceSettings(response.settings);
@@ -341,7 +319,6 @@ export function useWorkspaceSettingsController(input: {
     error: errorOwner.latest() as WorkspaceSettingsError | undefined,
     clearError: errorOwner.clearAll,
     updateWorkspaceCwd,
-    updateInterfaceLocale,
     patchWorkspaceSettings,
   };
 }
@@ -373,5 +350,5 @@ function syncRunFormPermissionDefaults(current: RunFormState, settings: Workspac
 }
 
 function isWorkspaceSettingsLocale(value: string | undefined): value is Locale {
-  return isSupportedLocale(value);
+  return value === "en-US" || value === "zh-CN";
 }

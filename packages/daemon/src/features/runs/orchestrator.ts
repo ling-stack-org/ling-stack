@@ -1181,7 +1181,6 @@ export async function executeRunRequest(
       delegatedRequirementFingerprint: runRequest.delegatedRequirement?.fingerprint,
       executionOperationBindings: runRequest.executionOperationBindings,
       approvalPolicy,
-      approvalProfile: runtimeApprovalProfile,
       effectivePolicySnapshot,
       appendAndMaybeStream,
       streamEnvelope,

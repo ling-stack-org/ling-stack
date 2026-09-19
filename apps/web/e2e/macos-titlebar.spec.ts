@@ -11,135 +11,87 @@ import {
 
 const viewport = { width: 1440, height: 919 } as const;
 
-test("macOS Home chrome owns a fixed layout row and keeps the collapsed compact rail", async ({ page }, testInfo) => {
-  await prepareSurface(page, "macos", { theme: "light" });
+test("macOS Home chrome overlays content, survives Sidebar collapse, and preserves Web geometry", async ({ page }) => {
+  await prepareSurface(page);
   const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
 
   await expect(page.getByLabel("Conversation home")).toBeVisible();
+  await expect(page.locator("[data-desktop-window-chrome='true']")).toHaveCount(0);
+  const webGeometry = await readHomeGeometry(page);
+
+  await installDesktopHost(page, "macos");
+  await page.reload();
+
   const shell = page.locator("main.app-shell.desktop-macos");
   const chrome = shell.locator("[data-desktop-window-chrome='true']");
-  const leading = chrome.locator(".desktop-window-chrome-leading");
-  const titlebarSurface = chrome.locator("[data-desktop-window-titlebar-surface='true']");
-  const trafficLightExclusion = chrome.locator(".desktop-window-traffic-light-exclusion");
-  const sidebarToggle = page.locator(".desktop-window-sidebar-toggle");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const sidebarRegion = chrome.locator("[data-desktop-window-drag-owner='sidebar']");
+  const contentFallback = chrome.locator("[data-desktop-window-drag-owner='content-fallback']");
+  const sidebarToggle = page.locator(".channel-sidebar-switch");
   const newConversation = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" });
 
   await expect(shell).toBeVisible();
   await expect(chrome).toHaveCount(1);
-  await expect.poll(async () => roundedBox(chrome)).toEqual({
-    height: 48,
-    width: viewport.width,
-    x: 0,
-    y: 0,
+  await expect.poll(() => readTrafficLightExclusion(page)).toEqual({
+    appRegion: "no-drag",
+    height: "28px",
+    left: "0px",
+    pointerEvents: "none",
+    top: "0px",
+    width: "76px",
   });
-  await expectDragRegion(leading);
-  await expectDragRegion(titlebarSurface);
-  await expect.poll(async () => roundedBox(trafficLightExclusion)).toEqual({
-    height: 48,
-    width: 76,
-    x: 0,
-    y: 0,
-  });
-  await expect.poll(async () => titlebarBackgrounds(chrome, leading)).toEqual({
-    chrome: "rgb(255, 255, 255)",
-    leading: "rgb(230, 228, 223)",
-  });
-  await expect.poll(async () => expandedSidebarDivider(shell, leading, navigation)).toEqual({
-    dividerBottom: 0,
-    dividerColor: "rgb(237, 237, 237)",
-    dividerLeft: 291,
-    dividerTop: 0,
-    dividerWidth: 1,
-    leadingRight: 292,
-    navigationBorderWidth: 0,
-    navigationRight: 292,
-  });
+  await expectDragRegion(sidebarRegion);
+  await expectDragRegion(contentFallback);
+  await expect.poll(() => readHomeGeometry(page)).toEqual(webGeometry);
   await expectNoDragControl(sidebarToggle);
-  await expect(page.locator(".channel-sidebar-switch")).toHaveCount(0);
-  await expect.poll(async () => {
-    const navigationBox = await navigation.boundingBox();
-    const workspaceBox = await page.locator("main.app-shell > .workspace").boundingBox();
-    return {
-      navigationHeight: Math.round(navigationBox?.height ?? -1),
-      navigationTop: Math.round(navigationBox?.y ?? -1),
-      workspaceHeight: Math.round(workspaceBox?.height ?? -1),
-      workspaceTop: Math.round(workspaceBox?.y ?? -1),
-    };
-  }).toEqual({
-    navigationHeight: viewport.height - 48,
-    navigationTop: 48,
-    workspaceHeight: viewport.height - 48,
-    workspaceTop: 48,
-  });
   await expect.poll(async () => {
     const toggleBox = await sidebarToggle.boundingBox();
     const newConversationBox = await newConversation.boundingBox();
     if (!toggleBox || !newConversationBox) return undefined;
     return {
       height: Math.round(toggleBox.height),
-      left: Math.round(toggleBox.x),
+      leftOfTrafficLights: Math.round(toggleBox.x) < 76,
       overlapsNewConversation: rectanglesOverlap(toggleBox, newConversationBox),
-      top: Math.round(toggleBox.y),
       width: Math.round(toggleBox.width),
     };
   }).toEqual({
     height: 32,
-    left: 84,
+    leftOfTrafficLights: false,
     overlapsNewConversation: false,
-    top: 8,
     width: 32,
   });
-  await captureIfRequested(page, testInfo.outputPath("home-expanded.png"));
-
-  const expandedToggleBox = await sidebarToggle.boundingBox();
 
   await sidebarToggle.click();
   await expect(shell).toHaveClass(/channel-sidebar-collapsed/u);
-  await expect.poll(async () => roundedBox(chrome)).toEqual({
-    height: 48,
-    width: viewport.width,
-    x: 0,
-    y: 0,
-  });
-  await expect.poll(async () => Math.round((await titlebarSurface.boundingBox())?.x ?? -1)).toBe(124);
-  await expect.poll(async () => titlebarBackgrounds(chrome, leading)).toEqual({
-    chrome: "rgb(255, 255, 255)",
-    leading: "rgb(255, 255, 255)",
-  });
+  await expectDragRegion(contentFallback);
   await expect.poll(async () => {
-    const collapsedToggleBox = await sidebarToggle.boundingBox();
-    if (!expandedToggleBox || !collapsedToggleBox) return undefined;
+    const box = await contentFallback.boundingBox();
+    return Boolean(box && box.width > 0 && box.height >= 28);
+  }).toBe(true);
+  await expect.poll(async () => Math.round((await contentFallback.boundingBox())?.x ?? -1)).toBe(76);
+  await expect.poll(async () => {
+    const toggleBox = await sidebarToggle.boundingBox();
+    const newConversationBox = await newConversation.boundingBox();
+    if (!toggleBox || !newConversationBox) return undefined;
     return {
-      height: Math.round(collapsedToggleBox.height),
-      left: Math.round(collapsedToggleBox.x),
-      samePosition: Math.round(expandedToggleBox.x) === Math.round(collapsedToggleBox.x)
-        && Math.round(expandedToggleBox.y) === Math.round(collapsedToggleBox.y),
-      top: Math.round(collapsedToggleBox.y),
-      width: Math.round(collapsedToggleBox.width),
+      newConversationBelowToggle: newConversationBox.y > toggleBox.y,
+      newConversationHeight: Math.round(newConversationBox.height),
+      newConversationWidth: Math.round(newConversationBox.width),
+      toggleHeight: Math.round(toggleBox.height),
+      toggleWidth: Math.round(toggleBox.width),
     };
   }).toEqual({
-    height: 32,
-    left: 84,
-    samePosition: true,
-    top: 8,
-    width: 32,
-  });
-  await expect(navigation).toHaveAttribute("data-sidebar-mode", "compact");
-  await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? -1)).toBe(48);
-  await expect(page.locator(".sidebar-rail-launcher")).toHaveCount(3);
-  await expect.poll(async () => roundedBox(page.locator("main.app-shell > .workspace"))).toMatchObject({
-    width: viewport.width - 48,
-    x: 48,
-    y: 48,
+    newConversationBelowToggle: true,
+    newConversationHeight: 36,
+    newConversationWidth: 36,
+    toggleHeight: 36,
+    toggleWidth: 36,
   });
   await expect(page.getByLabel("Conversation home")).toBeVisible();
-  await captureIfRequested(page, testInfo.outputPath("home-collapsed.png"));
 });
 
-test("macOS normal-conversation and channel headers are draggable while their controls remain clickable", async ({ page }, testInfo) => {
+test("macOS normal-conversation and channel headers are draggable while their controls remain clickable", async ({ page }) => {
   await prepareSurface(page, "macos");
   const state = createBaseState({ approvalStatus: "expired" });
   installNormalConversationFixture(state);
@@ -150,33 +102,18 @@ test("macOS normal-conversation and channel headers are draggable while their co
   await navigation.locator(".sidebar-recent-row").filter({ hasText: normalConversationFixtureTitle }).click();
 
   const conversation = page.getByLabel("Conversation page");
-  const titlebarSurface = page.locator("[data-desktop-window-titlebar-surface='true']");
-  const normalHeader = titlebarSurface.locator("[data-ui2-normal-conversation-header='true']");
+  const normalHeader = conversation.locator("[data-ui2-normal-conversation-header='true']");
   const searchTrigger = normalHeader.getByRole("button", { name: "Search" });
-  const sidebarToggle = page.locator(".desktop-window-sidebar-toggle");
   await expectDragRegion(normalHeader);
-  await expect(conversation.locator("[data-ui2-normal-conversation-header='true']")).toHaveCount(0);
-  await expect.poll(async () => roundedBox(normalHeader)).toMatchObject({ height: 48, y: 0 });
-  await expect.poll(async () => ({
-    actionCenters: await roundedCenterYs(normalHeader.getByRole("button")),
-    sidebarToggleCenter: await roundedCenterY(sidebarToggle),
-    titleCenter: await roundedCenterY(normalHeader.getByRole("heading", { name: normalConversationFixtureTitle })),
-  })).toEqual({
-    actionCenters: [24, 24, 24, 24],
-    sidebarToggleCenter: 24,
-    titleCenter: 24,
-  });
   await expectNoDragControl(searchTrigger);
-  await captureIfRequested(page, testInfo.outputPath("normal-conversation.png"));
   await searchTrigger.click();
   await expect(normalHeader.getByRole("textbox", { name: "Search conversation messages" })).toBeFocused();
+  await expect(page.locator("[data-desktop-window-drag-owner='content-fallback']")).toBeHidden();
 
   await navigation.getByRole("button", { name: "Engineering" }).click();
-  const channelHeader = titlebarSurface.locator(".channel-header[data-desktop-window-drag-region='true']");
+  const channelHeader = page.locator(".channel-header[data-desktop-window-drag-region='true']");
   const channelMenuTrigger = channelHeader.getByRole("button", { name: "More channel views" });
   await expectDragRegion(channelHeader);
-  await expect(page.locator(".task-workbench-window > .channel-header")).toHaveCount(0);
-  await expect.poll(async () => roundedBox(channelHeader)).toMatchObject({ height: 48, y: 0 });
   await expectNoDragControl(channelMenuTrigger);
   await channelMenuTrigger.click();
   const channelMenu = page.getByRole("menu", { name: "More channel views" });
@@ -184,23 +121,9 @@ test("macOS normal-conversation and channel headers are draggable while their co
   await page.keyboard.press("Escape");
   await expect(channelMenu).toBeHidden();
   await expect(channelMenuTrigger).toBeFocused();
-  await captureIfRequested(page, testInfo.outputPath("channel.png"));
-
-  await channelMenuTrigger.click();
-  await page.getByRole("menuitem", { name: "Settings" }).click();
-  const channelSettingsTitle = channelHeader.locator(".channel-settings-header-title");
-  await expect(channelSettingsTitle.locator("small")).toHaveCount(0);
-  await expect(channelHeader).not.toContainText("#Engineering");
-  await expect.poll(async () => ({
-    headerCenter: await roundedCenterY(channelHeader),
-    titleCenter: await roundedCenterY(channelSettingsTitle),
-  })).toEqual({
-    headerCenter: 24,
-    titleCenter: 24,
-  });
 });
 
-test("macOS Settings and Media stay below or inside the shared titlebar", async ({ page }, testInfo) => {
+test("macOS Settings and Media expose stable drag markers without swallowing toolbar actions", async ({ page }) => {
   await prepareSurface(page, "macos");
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
@@ -208,55 +131,24 @@ test("macOS Settings and Media stay below or inside the shared titlebar", async 
   const navigation = page.getByLabel("Ling Stack navigation");
   await navigation.getByRole("button", { name: "Settings" }).click();
 
-  const titlebar = page.locator("[data-desktop-window-chrome='true']");
-  const titlebarSurface = page.locator("[data-desktop-window-titlebar-surface='true']");
-  const settingsNavigation = page.locator(".settings-section-nav");
+  const settingsNavigation = page.locator(".settings-section-nav[data-desktop-window-drag-region='true']");
   const backButton = settingsNavigation.getByRole("button", { name: "Back to app" });
-  const settingsTitle = titlebarSurface.getByRole("heading", { name: "User profile" });
-  await expect.poll(async () => roundedBox(titlebar)).toMatchObject({ height: 48, y: 0 });
-  await expect(settingsTitle).toBeVisible();
-  await expect(page.locator(".settings-layout .settings-window-titlebar")).toHaveCount(0);
-  await expect.poll(async () => Math.round((await settingsNavigation.boundingBox())?.y ?? -1)).toBe(48);
-  await expect.poll(async () => settingsBackGeometry(settingsNavigation, backButton)).toEqual({
-    fillsContentWidth: true,
-    leftAlignedToContent: true,
-    top: 68,
-  });
-  await captureIfRequested(page, testInfo.outputPath("settings.png"));
+  await expectDragRegion(settingsNavigation);
+  await expectNoDragControl(backButton);
+  await expect.poll(async () => Math.round((await backButton.boundingBox())?.x ?? -1)).toBeGreaterThanOrEqual(76);
+  await expect.poll(async () => Math.round((await backButton.boundingBox())?.y ?? -1)).toBe(32);
   await backButton.click();
   await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
 
   await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
-  const mediaToolbar = titlebarSurface.locator(".media-production-canvas-toolbar[data-desktop-window-drag-region='true']");
+  const mediaToolbar = page.locator(".media-production-canvas-toolbar[data-desktop-window-drag-region='true']");
   const jobsButton = mediaToolbar.getByRole("radio", { name: "Generation tasks" });
   await expectDragRegion(mediaToolbar);
-  await expect.poll(async () => roundedBox(mediaToolbar)).toMatchObject({ height: 48, y: 0 });
-  await expect(page.locator(".media-production-page > .media-production-canvas-toolbar")).toHaveCount(0);
   await expectNoDragControl(jobsButton);
   await jobsButton.click();
   await expect(page.locator(".media-production-page")).toHaveClass(/showing-jobs/u);
   await expect(page.locator(".media-production-jobs-view")).toBeVisible();
-  await captureIfRequested(page, testInfo.outputPath("media.png"));
 });
-
-for (const theme of ["light", "dark"] as const) {
-  test(`macOS Settings keeps one continuous sidebar surface in ${theme} mode`, async ({ page }, testInfo) => {
-    await prepareSurface(page, "macos", { theme });
-    await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
-    await page.goto("/");
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-
-    const chrome = page.locator("[data-desktop-window-chrome='true']");
-    const settingsNavigation = page.locator(".settings-section-nav");
-    await expect.poll(async () => settingsSidebarSurface(chrome, settingsNavigation)).toEqual({
-      contentMatchesTitlebar: true,
-      sidebarMatchesTitlebar: true,
-      sidebarWidth: 281,
-      titlebarSidebarWidth: 281,
-    });
-    await captureIfRequested(page, testInfo.outputPath(`settings-${theme}.png`));
-  });
-}
 
 test("macOS portal overlays subtract the underlying shell drag region", async ({ page }) => {
   await prepareSurface(page, "macos");
@@ -305,106 +197,7 @@ test("macOS portal overlays subtract the underlying shell drag region", async ({
   await expect(preview).toHaveAttribute("data-clicked", "true");
 });
 
-test("macOS management surfaces share one titlebar owner", async ({ page }, testInfo) => {
-  const browserErrors: string[] = [];
-  page.on("pageerror", (error) => browserErrors.push(error.message));
-  page.on("console", (message) => {
-    if (message.type() === "error" && !message.text().startsWith("Failed to load resource:")) {
-      browserErrors.push(message.text());
-    }
-  });
-  await prepareSurface(page, "macos");
-  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
-  await page.goto("/");
-
-  const navigation = page.getByLabel("Ling Stack navigation");
-  const titlebarSurface = page.locator("[data-desktop-window-titlebar-surface='true']");
-
-  await navigation.getByRole("button", { name: "Plugin Manager" }).click();
-  await expectSingleTitlebarOwner(titlebarSurface, "Plugin Manager");
-  await expect(page.locator(".settings-plugin-manager > .plugin-manager-header")).toHaveCount(0);
-
-  await navigation.getByRole("button", { name: "Automations" }).click();
-  await expectSingleTitlebarOwner(titlebarSurface, "Automations");
-  await expect(page.locator(".automation-ui2-page > .automation-ui2-header")).toHaveCount(0);
-
-  await navigation.getByRole("button", { name: "Settings" }).click();
-  const settingsSections = page.getByLabel("Settings sections");
-  await expectSingleTitlebarOwner(titlebarSurface, "User profile");
-
-  await settingsSections.getByRole("button", { name: "Model Workbench" }).click();
-  await expectSingleTitlebarOwner(titlebarSurface, "Model Workbench");
-  await expect(page.locator(".provider-workbench > .provider-workbench-header")).toHaveCount(0);
-  await captureIfRequested(page, testInfo.outputPath("model-workbench.png"));
-
-  await settingsSections.getByRole("button", { name: "Teammate Management" }).click();
-  await expectSingleTitlebarOwner(titlebarSurface, "AI Teammates");
-  await expect(page.locator(".teammates-page > .teammates-page-header")).toHaveCount(0);
-
-  await settingsSections.getByRole("button", { name: "Council Workspace" }).click();
-  await expectSingleTitlebarOwner(titlebarSurface, "Council Workspace");
-  await expect(page.locator(".council-workspace-page > .council-workspace-header")).toHaveCount(0);
-  await expect(browserErrors).toEqual([]);
-});
-
-test("macOS titlebar stays bounded at 1280x800 in dark mode", async ({ page }, testInfo) => {
-  const compactViewport = { width: 1280, height: 800 } as const;
-  await prepareSurface(page, "macos", { theme: "dark", viewport: compactViewport });
-  await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
-  await page.goto("/");
-
-  const shell = page.locator("main.app-shell.desktop-macos");
-  const chrome = shell.locator("[data-desktop-window-chrome='true']");
-  const leading = chrome.locator(".desktop-window-chrome-leading");
-  const sidebarToggle = chrome.locator(".desktop-window-sidebar-toggle");
-  await expect(page.locator("html")).toHaveAttribute("data-theme", "dark");
-  await expect.poll(async () => roundedBox(chrome)).toEqual({
-    height: 48,
-    width: compactViewport.width,
-    x: 0,
-    y: 0,
-  });
-  await expect.poll(async () => titlebarBackgrounds(chrome, leading)).toEqual({
-    chrome: "rgb(31, 31, 31)",
-    leading: "rgb(40, 39, 37)",
-  });
-  await expect.poll(async () => expandedSidebarDivider(shell, leading, page.getByLabel("Ling Stack navigation"))).toEqual({
-    dividerBottom: 0,
-    dividerColor: "rgb(65, 64, 61)",
-    dividerLeft: 291,
-    dividerTop: 0,
-    dividerWidth: 1,
-    leadingRight: 292,
-    navigationBorderWidth: 0,
-    navigationRight: 292,
-  });
-
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "Engineering" })).toBeVisible();
-  const geometry = await page.evaluate(() => {
-    const workspace = document.querySelector<HTMLElement>(".app-shell.desktop-macos > .workspace");
-    return {
-      documentWidth: document.documentElement.scrollWidth,
-      viewportWidth: document.documentElement.clientWidth,
-      workspaceHeight: workspace?.getBoundingClientRect().height,
-      workspaceTop: workspace?.getBoundingClientRect().top,
-    };
-  });
-  expect(geometry.documentWidth).toBe(geometry.viewportWidth);
-  expect(geometry.workspaceHeight).toBe(compactViewport.height - 48);
-  expect(geometry.workspaceTop).toBe(48);
-  await captureIfRequested(page, testInfo.outputPath("channel-dark-1280x800.png"));
-
-  await sidebarToggle.click();
-  await expect(shell).toHaveClass(/channel-sidebar-collapsed/u);
-  await expect.poll(async () => titlebarBackgrounds(chrome, leading)).toEqual({
-    chrome: "rgb(31, 31, 31)",
-    leading: "rgb(31, 31, 31)",
-  });
-  await captureIfRequested(page, testInfo.outputPath("channel-collapsed-dark-1280x800.png"));
-});
-
-test("macOS private chat mounts one Header in the titlebar and keeps one dock divider", async ({ page }, testInfo) => {
+test("macOS private chat stays flush with the titlebar and keeps one dock divider", async ({ page }, testInfo) => {
   const browserErrors: string[] = [];
   page.on("pageerror", (error) => browserErrors.push(error.message));
   page.on("console", (message) => {
@@ -433,8 +226,7 @@ test("macOS private chat mounts one Header in the titlebar and keeps one dock di
   await page.goto("/");
   await page.locator(".channel-left-drawer .sidebar-row-main").filter({ hasText: "Ling Agent" }).click();
 
-  const titlebarSurface = page.locator("[data-desktop-window-titlebar-surface='true']");
-  const header = titlebarSurface.locator(".teammate-chat-header[data-desktop-window-drag-region='true']");
+  const header = page.locator(".teammate-chat-header[data-desktop-window-drag-region='true']");
   const detailsButton = header.locator(".conversation-toolbar-details");
   await expectDragRegion(header);
   await expectNoDragControl(detailsButton);
@@ -460,8 +252,6 @@ test("macOS private chat mounts one Header in the titlebar and keeps one dock di
     return {
       workspacePaddingTop: workspaceStyle?.paddingTop,
       workspacePaddingLeft: workspaceStyle?.paddingLeft,
-      workspaceHeight: workspaceRect?.height,
-      workspaceTop: workspaceRect?.top,
       headerHeight: headerRect?.height,
       headerTop: headerRect?.top,
       headerLeftInset: workspaceRect && headerRect ? headerRect.left - workspaceRect.left : undefined,
@@ -474,13 +264,11 @@ test("macOS private chat mounts one Header in the titlebar and keeps one dock di
 
   expect(metrics.workspacePaddingTop).toBe("0px");
   expect(metrics.workspacePaddingLeft).toBe("0px");
-  expect(metrics.workspaceHeight).toBe(viewport.height - 48);
-  expect(metrics.workspaceTop).toBe(48);
   expect(metrics.headerHeight).toBe(48);
   expect(metrics.headerTop).toBe(0);
   expect(metrics.headerLeftInset).toBe(0);
   expect(metrics.identityLeftInset).toBe(18);
-  expect(metrics.identityTopInset).toBe(9);
+  expect(metrics.identityTopInset).toBeCloseTo(8.5, 1);
   expect(metrics.handleLineWidth).toBe("1px");
   expect(metrics.dockBorderLeftWidth).toBe("0px");
   expect(browserErrors).toEqual([]);
@@ -490,121 +278,51 @@ test("macOS private chat mounts one Header in the titlebar and keeps one dock di
 });
 
 for (const host of [
-  { label: "Web", platform: undefined, dragRegion: false, leadingWidth: 48 },
-  { label: "Windows", platform: "windows" as const, dragRegion: true, leadingWidth: 48 },
+  { label: "Web", platform: undefined },
+  { label: "Windows", platform: "windows" as const },
 ]) {
-  test(`${host.label} shares the fixed titlebar and keeps the collapsed compact rail`, async ({ page }) => {
+  test(`${host.label} does not activate the macOS Desktop chrome`, async ({ page }) => {
     await prepareSurface(page, host.platform);
     await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
     await page.goto("/");
 
     const shell = page.locator("main.app-shell");
-    const chrome = page.locator("[data-desktop-window-chrome='true']");
-    const titlebarSurface = chrome.locator("[data-desktop-window-titlebar-surface='true']");
-    const sidebarToggle = chrome.locator(".desktop-window-sidebar-toggle");
-    const navigation = page.getByLabel("Ling Stack navigation");
     await expect(shell).not.toHaveClass(/desktop-macos/u);
-    await expect(chrome).toHaveCount(1);
-    await expect.poll(async () => roundedBox(chrome)).toEqual({
-      height: 48,
-      width: viewport.width,
-      x: 0,
-      y: 0,
-    });
-    await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? -1)).toBe(292);
-    await expect(sidebarToggle).toBeVisible();
-    const expandedToggleBox = await sidebarToggle.boundingBox();
-    await sidebarToggle.click();
-    await expect(shell).toHaveClass(/channel-sidebar-collapsed/u);
-    await expect(navigation).toHaveAttribute("data-sidebar-mode", "compact");
-    await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? -1)).toBe(48);
-    await expect(page.locator(".sidebar-rail-launcher")).toHaveCount(3);
-    await expect.poll(async () => Math.round((await titlebarSurface.boundingBox())?.x ?? -1)).toBe(host.leadingWidth);
-    await expect.poll(async () => roundedBox(page.locator("main.app-shell > .workspace"))).toMatchObject({
-      width: viewport.width - 48,
-      x: 48,
-      y: 48,
-    });
-    const collapsedToggleBox = await sidebarToggle.boundingBox();
-    expect(expandedToggleBox).not.toBeNull();
-    expect(collapsedToggleBox).not.toBeNull();
-    expect(roundedRectangle(expandedToggleBox!)).toEqual(roundedRectangle(collapsedToggleBox!));
-    await sidebarToggle.click();
-    await expect(shell).not.toHaveClass(/channel-sidebar-collapsed/u);
-    await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+    await expect(page.locator("[data-desktop-window-chrome='true']")).toHaveCount(0);
 
     await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
-    const channelHeader = titlebarSurface.locator(".channel-header[data-desktop-window-drag-region='true']");
+    const channelHeader = page.locator(".channel-header[data-desktop-window-drag-region='true']");
     await expect(channelHeader).toBeVisible();
-    await expect(page.locator(".task-workbench-window > .channel-header")).toHaveCount(0);
-    expect(await appRegion(channelHeader)).toBe(host.dragRegion ? "drag" : "none");
-
-    const windowControls = chrome.locator(".desktop-window-controls");
-    if (host.platform === "windows") {
-      await expect(windowControls.getByRole("button")).toHaveCount(3);
-      await windowControls.getByRole("button", { name: "Maximize window" }).click();
-      await expect(windowControls.getByRole("button", { name: "Restore window" })).toBeVisible();
-    } else {
-      await expect(windowControls).toHaveCount(0);
-    }
+    expect(await appRegion(channelHeader)).not.toBe("drag");
   });
 }
 
-async function prepareSurface(
-  page: Page,
-  platform?: "macos" | "windows",
-  options: {
-    readonly theme?: "dark" | "light";
-    readonly viewport?: { readonly width: number; readonly height: number };
-  } = {},
-): Promise<void> {
-  await page.setViewportSize(options.viewport ?? viewport);
-  await page.addInitScript(({ desktopPlatform, theme }) => {
+async function prepareSurface(page: Page, platform?: "macos" | "windows"): Promise<void> {
+  await page.setViewportSize(viewport);
+  await page.addInitScript((desktopPlatform) => {
     localStorage.setItem("ling-stack.locale", "en-US");
-    if (theme) {
-      const themeId = theme === "dark" ? "ling-dark" : "ling-light";
-      const selection = JSON.stringify({ mode: "fixed", themeId });
-      localStorage.setItem("ling-stack.themeSelection", selection);
-      localStorage.setItem("ling-stack.themeBootstrapSelection", selection);
-      localStorage.setItem("ling-stack.themePreference", theme);
-      localStorage.setItem("ling-stack.themeBootstrapPreference", theme);
-    }
     if (desktopPlatform) {
-      let maximized = false;
-      const stateListeners = new Set<(state: { readonly maximized: boolean }) => void>();
       Object.defineProperty(window, "lingDesktop", {
         configurable: true,
         value: {
           platform: desktopPlatform,
           daemonBaseUrl: "http://127.0.0.1:17891",
-          ...(desktopPlatform === "windows"
-            ? {
-                windowControls: {
-                  getState: async () => ({ maximized }),
-                  minimize: async () => ({ accepted: true }),
-                  toggleMaximize: async () => {
-                    maximized = !maximized;
-                    for (const listener of stateListeners) listener({ maximized });
-                    return { accepted: true };
-                  },
-                  close: async () => ({ accepted: true }),
-                  onStateChanged: (listener: (state: { readonly maximized: boolean }) => void) => {
-                    stateListeners.add(listener);
-                    listener({ maximized });
-                    return () => stateListeners.delete(listener);
-                  },
-                },
-              }
-            : {}),
         },
       });
     }
-  }, { desktopPlatform: platform, theme: options.theme });
+  }, platform);
 }
 
-async function captureIfRequested(page: Page, path: string): Promise<void> {
-  if (process.env.LING_DESIGN_QA_CAPTURE !== "1") return;
-  await page.screenshot({ path });
+async function installDesktopHost(page: Page, platform: "macos" | "windows"): Promise<void> {
+  await page.addInitScript((desktopPlatform) => {
+    Object.defineProperty(window, "lingDesktop", {
+      configurable: true,
+      value: {
+        platform: desktopPlatform,
+        daemonBaseUrl: "http://127.0.0.1:17891",
+      },
+    });
+  }, platform);
 }
 
 async function expectDragRegion(locator: Locator): Promise<void> {
@@ -617,109 +335,8 @@ async function expectNoDragControl(locator: Locator): Promise<void> {
   await expect.poll(() => appRegion(locator)).toBe("no-drag");
 }
 
-async function expectSingleTitlebarOwner(titlebarSurface: Locator, heading: string): Promise<void> {
-  await expect(titlebarSurface.locator(":scope > *")).toHaveCount(1);
-  await expect(titlebarSurface.getByRole("heading", { name: heading })).toBeVisible();
-}
-
-async function roundedCenterY(locator: Locator): Promise<number> {
-  const box = await locator.boundingBox();
-  return Math.round((box?.y ?? -1) + (box?.height ?? 0) / 2);
-}
-
-async function roundedCenterYs(locator: Locator): Promise<number[]> {
-  const centers: number[] = [];
-  for (let index = 0; index < await locator.count(); index += 1) {
-    centers.push(await roundedCenterY(locator.nth(index)));
-  }
-  return centers;
-}
-
 async function appRegion(locator: Locator): Promise<string> {
   return locator.evaluate((element) => getComputedStyle(element).getPropertyValue("-webkit-app-region").trim());
-}
-
-async function titlebarBackgrounds(
-  chrome: Locator,
-  leading: Locator,
-): Promise<{ readonly chrome: string; readonly leading: string }> {
-  return {
-    chrome: await chrome.evaluate((element) => getComputedStyle(element).backgroundColor),
-    leading: await leading.evaluate((element) => getComputedStyle(element).backgroundColor),
-  };
-}
-
-async function expandedSidebarDivider(
-  shell: Locator,
-  leading: Locator,
-  navigation: Locator,
-): Promise<{
-  readonly dividerBottom: number;
-  readonly dividerColor: string;
-  readonly dividerLeft: number;
-  readonly dividerTop: number;
-  readonly dividerWidth: number;
-  readonly leadingRight: number;
-  readonly navigationBorderWidth: number;
-  readonly navigationRight: number;
-}> {
-  const leadingBox = await leading.boundingBox();
-  const navigationBox = await navigation.boundingBox();
-  const styles = await shell.evaluate((element) => {
-    const divider = getComputedStyle(element, "::before");
-    const navigationElement = document.querySelector<HTMLElement>("[aria-label='Ling Stack navigation']");
-    return {
-      dividerBottom: Number.parseFloat(divider.bottom),
-      dividerColor: divider.backgroundColor,
-      dividerLeft: Number.parseFloat(divider.left),
-      dividerTop: Number.parseFloat(divider.top),
-      dividerWidth: Number.parseFloat(divider.width),
-      navigationBorderWidth: navigationElement
-        ? Number.parseFloat(getComputedStyle(navigationElement).borderRightWidth)
-        : -1,
-    };
-  });
-  return {
-    dividerBottom: Math.round(styles.dividerBottom),
-    dividerColor: styles.dividerColor,
-    dividerLeft: Math.round(styles.dividerLeft),
-    dividerTop: Math.round(styles.dividerTop),
-    dividerWidth: Math.round(styles.dividerWidth),
-    leadingRight: Math.round((leadingBox?.x ?? -1) + (leadingBox?.width ?? 0)),
-    navigationBorderWidth: Math.round(styles.navigationBorderWidth),
-    navigationRight: Math.round((navigationBox?.x ?? -1) + (navigationBox?.width ?? 0)),
-  };
-}
-
-async function settingsSidebarSurface(
-  chrome: Locator,
-  navigation: Locator,
-): Promise<{
-  readonly contentMatchesTitlebar: boolean;
-  readonly sidebarMatchesTitlebar: boolean;
-  readonly sidebarWidth: number;
-  readonly titlebarSidebarWidth: number;
-}> {
-  const navigationBox = await navigation.boundingBox();
-  const colors = await chrome.evaluate((element) => {
-    const sidebarSurface = getComputedStyle(element, "::before");
-    const navigationElement = document.querySelector(".settings-section-nav");
-    const contentElement = document.querySelector(".settings-content-stack");
-    return {
-      content: contentElement ? getComputedStyle(contentElement).backgroundColor : "",
-      navigation: navigationElement ? getComputedStyle(navigationElement).backgroundColor : "",
-      titlebar: getComputedStyle(element).backgroundColor,
-      titlebarSidebar: sidebarSurface.backgroundColor,
-      titlebarSidebarWidth: Math.round(Number.parseFloat(sidebarSurface.width)),
-    };
-  });
-  const sidebarWidth = Math.round(navigationBox?.width ?? -1);
-  return {
-    contentMatchesTitlebar: colors.content === colors.titlebar,
-    sidebarMatchesTitlebar: colors.navigation === colors.titlebarSidebar,
-    sidebarWidth,
-    titlebarSidebarWidth: colors.titlebarSidebarWidth,
-  };
 }
 
 function rectanglesOverlap(
@@ -732,58 +349,60 @@ function rectanglesOverlap(
     && left.y + left.height > right.y;
 }
 
-function roundedRectangle(rectangle: {
-  readonly height: number;
-  readonly width: number;
-  readonly x: number;
-  readonly y: number;
-}): { readonly height: number; readonly width: number; readonly x: number; readonly y: number } {
-  return {
-    height: Math.round(rectangle.height),
-    width: Math.round(rectangle.width),
-    x: Math.round(rectangle.x),
-    y: Math.round(rectangle.y),
-  };
-}
-
-async function roundedBox(locator: Locator): Promise<{
-  readonly height: number;
-  readonly width: number;
-  readonly x: number;
-  readonly y: number;
-} | undefined> {
-  const box = await locator.boundingBox();
-  return box ? {
-    height: Math.round(box.height),
-    width: Math.round(box.width),
-    x: Math.round(box.x),
-    y: Math.round(box.y),
-  } : undefined;
-}
-
-async function settingsBackGeometry(navigation: Locator, button: Locator): Promise<{
-  readonly fillsContentWidth: boolean;
-  readonly leftAlignedToContent: boolean;
-  readonly top: number;
+async function readTrafficLightExclusion(page: Page): Promise<{
+  readonly appRegion: string;
+  readonly height: string;
+  readonly left: string;
+  readonly pointerEvents: string;
+  readonly top: string;
+  readonly width: string;
 }> {
-  const navigationBox = await navigation.boundingBox();
-  const buttonBox = await button.boundingBox();
-  if (!navigationBox || !buttonBox) {
-    return { fillsContentWidth: false, leftAlignedToContent: false, top: -1 };
-  }
-  const padding = await navigation.evaluate((element) => {
-    const style = getComputedStyle(element);
+  return page.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>("main.app-shell.desktop-macos");
+    if (!shell) throw new Error("missing macOS shell");
+    const style = getComputedStyle(shell, "::after");
     return {
-      clientWidth: element.clientWidth,
-      left: Number.parseFloat(style.paddingLeft),
-      right: Number.parseFloat(style.paddingRight),
+      appRegion: style.getPropertyValue("-webkit-app-region").trim(),
+      height: style.height,
+      left: style.left,
+      pointerEvents: style.pointerEvents,
+      top: style.top,
+      width: style.width,
     };
   });
-  const expectedLeft = navigationBox.x + padding.left;
-  const expectedWidth = padding.clientWidth - padding.left - padding.right;
-  return {
-    fillsContentWidth: Math.abs(buttonBox.width - expectedWidth) <= 1,
-    leftAlignedToContent: Math.abs(buttonBox.x - expectedLeft) <= 1,
-    top: Math.round(buttonBox.y),
-  };
+}
+
+async function readHomeGeometry(page: Page): Promise<{
+  readonly homeHeight: number;
+  readonly homeLeft: number;
+  readonly homeTop: number;
+  readonly homeWidth: number;
+  readonly shellHeight: number;
+  readonly shellPaddingTop: string;
+  readonly workspaceHeight: number;
+  readonly workspaceLeft: number;
+  readonly workspaceTop: number;
+  readonly workspaceWidth: number;
+}> {
+  return page.evaluate(() => {
+    const shell = document.querySelector<HTMLElement>("main.app-shell");
+    const workspace = document.querySelector<HTMLElement>("main.app-shell > .workspace");
+    const home = document.querySelector<HTMLElement>("[aria-label='Conversation home']");
+    if (!shell || !workspace || !home) throw new Error("missing Home geometry target");
+    const shellBox = shell.getBoundingClientRect();
+    const workspaceBox = workspace.getBoundingClientRect();
+    const homeBox = home.getBoundingClientRect();
+    return {
+      homeHeight: Math.round(homeBox.height),
+      homeLeft: Math.round(homeBox.left),
+      homeTop: Math.round(homeBox.top),
+      homeWidth: Math.round(homeBox.width),
+      shellHeight: Math.round(shellBox.height),
+      shellPaddingTop: getComputedStyle(shell).paddingTop,
+      workspaceHeight: Math.round(workspaceBox.height),
+      workspaceLeft: Math.round(workspaceBox.left),
+      workspaceTop: Math.round(workspaceBox.top),
+      workspaceWidth: Math.round(workspaceBox.width),
+    };
+  });
 }

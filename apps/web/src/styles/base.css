@@ -8,22 +8,22 @@
   text-rendering: geometricPrecision;
   --app-bg: #ffffff;
   --window-bg: #ffffff;
-  --surface-sidebar: #e6e4df;
+  --surface-sidebar: #ffffff;
   --surface-panel: #ffffff;
   --surface-panel-strong: #ffffff;
   --surface-subtle: #f5f5f5;
-  --surface-hover: #deddda;
-  --surface-selected: #d9d8d5;
-  --surface-pressed: #d0cfcc;
+  --surface-hover: #f5f5f5;
+  --surface-selected: #f5f5f5;
+  --surface-pressed: #eeeeee;
   --surface-muted: var(--surface-subtle);
-  --text-strong: #191c1f;
-  --text: #353638;
-  --text-muted: #656568;
-  --text-soft: #868689;
+  --text-strong: #111111;
+  --text: #111111;
+  --text-muted: #6b6b6b;
+  --text-soft: #8a8a8a;
   --text-primary: var(--text-strong);
   --text-secondary: var(--text-muted);
-  --border: #ededed;
-  --border-strong: #d0cfcc;
+  --border: #e5e5e5;
+  --border-strong: #d8d8d8;
   --border-subtle: var(--border);
   --hairline: rgba(17, 17, 17, 0.04);
   --accent: #111111;
@@ -196,12 +196,6 @@ body {
   min-height: 100vh;
   background: var(--app-bg);
   color: var(--text);
-}
-
-[data-i18n-bootstrap] {
-  position: fixed;
-  inset: 0;
-  background: var(--app-bg);
 }
 
 button,

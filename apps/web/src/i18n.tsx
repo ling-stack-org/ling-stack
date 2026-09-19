@@ -1,24 +1,14 @@
-import {
-  LOCALE_DESCRIPTORS,
-  formatCatalogMessage,
-  isSupportedLocale,
-  loadCatalog,
-  matchSupportedLocale,
-  type SupportedLocale,
-  type TranslationCatalog,
-} from "@ling-stack/localization";
-import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { createContext, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { dictionaries } from "./i18n/dictionaries.js";
 
-export type Locale = SupportedLocale;
+export type Locale = "en-US" | "zh-CN";
 
 type TranslationValues = Readonly<Record<string, string | number>>;
 export type Translate = (key: string, values?: TranslationValues) => string;
 
 interface I18nContextValue {
   readonly locale: Locale;
-  readonly pendingLocale: Locale | undefined;
-  readonly localeLoadError: string | undefined;
-  readonly setLocale: (locale: Locale, beforeCommit?: () => Promise<void>) => Promise<boolean>;
+  readonly setLocale: (locale: Locale) => void;
   readonly t: Translate;
 }
 
@@ -28,104 +18,29 @@ const fallbackLocale: Locale = "en-US";
 
 const I18nContext = createContext<I18nContextValue>({
   locale: defaultLocale,
-  pendingLocale: undefined,
-  localeLoadError: undefined,
-  setLocale: async () => false,
+  setLocale: () => undefined,
   t: (key) => key,
 });
 
 export function I18nProvider({ children }: { readonly children: ReactNode }): React.JSX.Element {
-  const initialLocaleRef = useRef<Locale>(resolveInitialLocale());
-  const localeRef = useRef<Locale>(initialLocaleRef.current);
-  const requestGenerationRef = useRef(0);
-  const [locale, setLocaleState] = useState<Locale>(initialLocaleRef.current);
-  const [catalog, setCatalog] = useState<TranslationCatalog | undefined>();
-  const [fallbackCatalog, setFallbackCatalog] = useState<TranslationCatalog | undefined>();
-  const [pendingLocale, setPendingLocale] = useState<Locale | undefined>();
-  const [localeLoadError, setLocaleLoadError] = useState<string | undefined>();
-
-  useEffect(() => {
-    let cancelled = false;
-    const fallbackPromise = loadCatalog(fallbackLocale);
-    const selectedPromise = initialLocaleRef.current === fallbackLocale
-      ? fallbackPromise
-      : loadCatalog(initialLocaleRef.current);
-    void Promise.all([fallbackPromise, selectedPromise])
-      .then(([fallback, selected]) => {
-        if (cancelled) return;
-        setFallbackCatalog(fallback.messages);
-        setCatalog(selected.messages);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) return;
-        void fallbackPromise.then((fallback) => {
-          if (cancelled) return;
-          localeRef.current = fallbackLocale;
-          setLocaleState(fallbackLocale);
-          setFallbackCatalog(fallback.messages);
-          setCatalog(fallback.messages);
-          setLocaleLoadError(error instanceof Error ? error.message : String(error));
-        });
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, []);
-
-  const setLocale = useCallback(async (
-    nextLocale: Locale,
-    beforeCommit?: () => Promise<void>,
-  ): Promise<boolean> => {
-    if (!isSupportedLocale(nextLocale) || nextLocale === localeRef.current) {
-      return false;
-    }
-    const generation = requestGenerationRef.current + 1;
-    requestGenerationRef.current = generation;
-    setPendingLocale(nextLocale);
-    setLocaleLoadError(undefined);
-    try {
-      const nextCatalog = await loadCatalog(nextLocale);
-      if (requestGenerationRef.current !== generation) return false;
-      await beforeCommit?.();
-      if (requestGenerationRef.current !== generation) return false;
-      localeRef.current = nextLocale;
-      setCatalog(nextCatalog.messages);
-      setLocaleState(nextLocale);
-      setPendingLocale(undefined);
-      return true;
-    } catch (error: unknown) {
-      if (requestGenerationRef.current !== generation) return false;
-      setPendingLocale(undefined);
-      setLocaleLoadError(error instanceof Error ? error.message : String(error));
-      return false;
-    }
-  }, []);
+  const [locale, setLocaleState] = useState<Locale>(() => resolveInitialLocale());
 
   useEffect(() => {
     if (globalThis.document) {
       globalThis.document.documentElement.lang = locale;
-      globalThis.document.documentElement.dir = LOCALE_DESCRIPTORS[locale].direction;
     }
   }, [locale]);
 
   const value = useMemo<I18nContextValue>(
     () => ({
       locale,
-      pendingLocale,
-      localeLoadError,
-      setLocale,
-      t: (key, values) => formatCatalogMessage(catalog ?? {}, fallbackCatalog ?? {}, key, values),
+      setLocale: setLocaleState,
+      t: (key, values) => formatTranslation(dictionaries[locale][key] ?? dictionaries[fallbackLocale][key] ?? key, values),
     }),
-    [catalog, fallbackCatalog, locale, localeLoadError, pendingLocale, setLocale],
+    [locale],
   );
 
-  return (
-    <I18nContext.Provider value={value}>
-      {catalog && fallbackCatalog
-        ? children
-        : <div aria-busy="true" aria-label={formatCatalogMessage(catalog ?? {}, fallbackCatalog ?? {}, "Loading")} data-i18n-bootstrap role="status" />}
-    </I18nContext.Provider>
-  );
+  return <I18nContext.Provider value={value}>{children}</I18nContext.Provider>;
 }
 
 export function useI18n(): I18nContextValue {
@@ -135,7 +50,7 @@ export function useI18n(): I18nContextValue {
 export function readSavedLocale(): Locale | undefined {
   try {
     const saved = globalThis.localStorage?.getItem(storageKey);
-    return isSupportedLocale(saved) ? saved : undefined;
+    return saved === "zh-CN" || saved === "en-US" ? saved : undefined;
   } catch {
     return undefined;
   }
@@ -149,10 +64,22 @@ export function clearSavedLocale(): void {
   }
 }
 
-export function resolveInitialLocale(): Locale {
+function resolveInitialLocale(): Locale {
   const saved = readSavedLocale();
   if (saved) {
     return saved;
   }
-  return matchSupportedLocale(globalThis.navigator?.languages ?? [], defaultLocale);
+  const browserLanguage = globalThis.navigator?.language?.toLowerCase() ?? "";
+  return browserLanguage.startsWith("zh") ? "zh-CN" : defaultLocale;
+}
+
+function formatTranslation(template: string, values?: TranslationValues): string {
+  if (!values) {
+    return template;
+  }
+
+  return template.replace(/\{([A-Za-z0-9_]+)\}/g, (match, key) => {
+    const value = values[key];
+    return value === undefined ? match : String(value);
+  });
 }

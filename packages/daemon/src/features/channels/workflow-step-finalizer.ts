@@ -21,7 +21,6 @@ import {
 } from "@ling-stack/contracts";
 import { isRecord } from "../../shared/validation.js";
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
-import { preserveMarkdownLayout } from "./markdown-text.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
 import {
   prepareDeterministicWorkflowStepOutputArtifact,
@@ -557,9 +556,10 @@ function workflowStepRunResultSummary(store: RunStore, run: RunSession): string 
   const text = store.listEvents(run.id, { limit: 1000 })
     .filter((event) => event.type === "assistant_text_delta")
     .map((event) => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
-    .join("");
-  const normalizedText = preserveMarkdownLayout(text);
-  if (normalizedText) return normalizedText;
+    .join("")
+    .replace(/\s+/gu, " ")
+    .trim();
+  if (text) return text;
   const labels = store.listArtifacts(run.id)
     .filter((artifact) => artifact.type === "file" || artifact.type === "diff")
     .map((artifact) => artifact.title?.trim() || artifact.path)

@@ -12,10 +12,6 @@ import type {
   WorkflowStepTemplate,
 } from "@ling-stack/core/skill-types";
 import { useI18n } from "../../i18n.js";
-import {
-  DesktopTitlebarSurface,
-  useDesktopTitlebarPlacement,
-} from "../../app/DesktopTitlebarSurface.js";
 import { MetaRow } from "../../shared/components/index.js";
 import {
   Button,
@@ -88,7 +84,6 @@ export function AiTeammatesPage({
   readonly defaultProviderId?: string;
 }): React.JSX.Element {
   const { t } = useI18n();
-  const titlebarPlacement = useDesktopTitlebarPlacement();
   const templates = skillPack?.teammateTemplates ?? [];
   const skills = skillPack?.skills ?? [];
   const workflow = skillPack?.workflowTemplates.find((item) => item.id === "autoplan-lite") ?? skillPack?.workflowTemplates[0];
@@ -127,16 +122,14 @@ export function AiTeammatesPage({
   }
 
   return (
-    <div className={`${settingsToolMode ? "teammates-page settings-return-mode" : "teammates-page"} titlebar-${titlebarPlacement}`}>
-      {!settingsToolMode || titlebarPlacement === "window" ? (
-        <DesktopTitlebarSurface>
+    <div className={settingsToolMode ? "teammates-page settings-return-mode" : "teammates-page"}>
+      {!settingsToolMode ? (
         <header className="teammates-page-header" data-desktop-window-drag-region="true">
           <div>
             <h1>{t("AI Teammates")}</h1>
             <p>{t("{count} configured", { count: activeLocalTeammates.length })}</p>
           </div>
         </header>
-        </DesktopTitlebarSurface>
       ) : null}
 
       <TeammateCreateDrawer

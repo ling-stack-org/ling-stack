@@ -2,10 +2,6 @@
   grid-template-rows: 64px 52px auto minmax(0, 1fr);
 }
 
-.plugin-manager-page > .settings-plugin-manager.titlebar-window[data-retained-refresh="true"] {
-  grid-template-rows: 52px auto minmax(0, 1fr);
-}
-
 .plugin-manager-retained-feedback {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto;

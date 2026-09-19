@@ -61,83 +61,54 @@ export function createChromeBrowserNativeBroker(input: {
     await publishChromeBrowserRuntimeDescriptor(descriptor, input.descriptorPath);
   };
 
-  async function closeServer(activeServer: Server | undefined): Promise<void> {
-    if (!activeServer || !activeServer.listening) return;
-    await new Promise<void>((resolve) => activeServer.close(() => resolve()));
-  }
-
-  async function cleanStartFailure(): Promise<void> {
-    if (refreshTimer) clearInterval(refreshTimer);
-    refreshTimer = undefined;
-    for (const socket of sockets) socket.destroy();
-    sockets.clear();
-    const activeServer = server;
-    server = undefined;
-    await closeServer(activeServer);
-    const failedDescriptor = descriptor;
-    descriptor = undefined;
-    if (failedDescriptor) {
-      await removeChromeBrowserRuntimeDescriptor(failedDescriptor.generation, input.descriptorPath).catch(() => undefined);
-    }
-  }
-
   return {
     async start() {
       if (server) return;
-      try {
-        const hostPath = input.hostPath ?? safeDefaultHostPath();
-        let hostInstalled = false;
-        if (hostPath) {
-          try {
-            hostInstalled = (await browserHostStatus({ hostPath })).installed;
-          } catch {
-            hostInstalled = false;
-          }
+      const hostPath = input.hostPath ?? safeDefaultHostPath();
+      let hostInstalled = false;
+      if (hostPath) {
+        try {
+          hostInstalled = (await browserHostStatus({ hostPath })).installed;
+        } catch {
+          hostInstalled = false;
         }
-        input.controller.observeNativeState({
-          cwd: input.workspaceCwd,
-          hostState: hostInstalled ? "ready" : "missing",
-        });
-        server = createServer((socket) => {
-          if (!isLoopbackAddress(socket.remoteAddress)) {
-            socket.destroy();
-            return;
-          }
-          sockets.add(socket);
-          socket.once("close", () => sockets.delete(socket));
-          const transport = createChromeBrowserNativeSocketTransport(socket);
-          const removeHelloListener = transport.onMessage((raw) => {
-            removeHelloListener();
-            void acceptHello(raw, transport).catch(() => {
-              void sendError(transport, "native_protocol_invalid").finally(() => transport.close(4002, "native_protocol_invalid"));
-            });
-          });
-        });
-        await new Promise<void>((resolve, reject) => {
-          server!.once("error", reject);
-          server!.listen(0, "127.0.0.1", () => {
-            server!.off("error", reject);
-            resolve();
-          });
-        });
-        const address = server.address();
-        if (!address || typeof address === "string") throw new Error("chrome_native_broker_address_invalid");
-        descriptor = createChromeBrowserRuntimeDescriptor({
-          port: address.port,
-          nowMs: now(),
-          ttlMs: descriptorTtlMs,
-          token: token(),
-        });
-        await publish();
-        refreshTimer = setInterval(() => {
-          void publish().catch(() => {
-            void cleanStartFailure().catch(() => undefined);
-          });
-        }, descriptorRefreshMs);
-      } catch (error) {
-        await cleanStartFailure();
-        throw error;
       }
+      input.controller.observeNativeState({
+        cwd: input.workspaceCwd,
+        hostState: hostInstalled ? "ready" : "missing",
+      });
+      server = createServer((socket) => {
+        if (!isLoopbackAddress(socket.remoteAddress)) {
+          socket.destroy();
+          return;
+        }
+        sockets.add(socket);
+        socket.once("close", () => sockets.delete(socket));
+        const transport = createChromeBrowserNativeSocketTransport(socket);
+        const removeHelloListener = transport.onMessage((raw) => {
+          removeHelloListener();
+          void acceptHello(raw, transport).catch(() => {
+            void sendError(transport, "native_protocol_invalid").finally(() => transport.close(4002, "native_protocol_invalid"));
+          });
+        });
+      });
+      await new Promise<void>((resolve, reject) => {
+        server!.once("error", reject);
+        server!.listen(0, "127.0.0.1", () => {
+          server!.off("error", reject);
+          resolve();
+        });
+      });
+      const address = server.address();
+      if (!address || typeof address === "string") throw new Error("chrome_native_broker_address_invalid");
+      descriptor = createChromeBrowserRuntimeDescriptor({
+        port: address.port,
+        nowMs: now(),
+        ttlMs: descriptorTtlMs,
+        token: token(),
+      });
+      await publish();
+      refreshTimer = setInterval(() => void publish().catch(() => undefined), descriptorRefreshMs);
     },
     async close() {
       if (refreshTimer) clearInterval(refreshTimer);
@@ -146,8 +117,10 @@ export function createChromeBrowserNativeBroker(input: {
       sockets.clear();
       const activeServer = server;
       server = undefined;
-      await closeServer(activeServer);
-      if (descriptor) await removeChromeBrowserRuntimeDescriptor(descriptor.generation, input.descriptorPath).catch(() => undefined);
+      if (activeServer) {
+        await new Promise<void>((resolve) => activeServer.close(() => resolve()));
+      }
+      if (descriptor) await removeChromeBrowserRuntimeDescriptor(descriptor.generation, input.descriptorPath);
       descriptor = undefined;
     },
     descriptor: () => descriptor,
@@ -199,9 +172,6 @@ export function createChromeBrowserNativeBroker(input: {
         ...(hello.browserVersion ? { browserVersion: hello.browserVersion } : {}),
       });
       await sendReady(transport, true, migration.migratedLegacyCredential);
-      if (migration.migratedLegacyCredential) {
-        input.controller.commitNativeCredentialMigration(input.workspaceCwd);
-      }
     } catch (error) {
       await sendError(transport, error instanceof ChromeBrowserSessionError && error.code === "chrome_browser_disabled"
         ? "plugin_disabled"

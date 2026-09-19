@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-09-03
+Last verified: 2026-08-30
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -26,21 +26,25 @@ CI/Release artifacts instead of the default documentation tree.
 
 ## Conversations And Channels
 
+Typed transcript v2 的规范入口是下面三份文档：先读详细设计，再读视觉规范，最后按
+实现计划分阶段落地。早期 WorkCell、activity summary 和 TerminalReport 文档仍保留
+历史/局部算法，但遇到渲染 owner、事实边界或 surface parity 冲突时，以 typed
+transcript 规范为准。
+
 - [Conversation Surface Contract](conversation-surface-contract.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
 - [Conversation Full Access Confirmation](conversation-session-full-access-confirmation.md)
 - [Conversation Right Dock Workspace Tools](conversation-right-dock-workspace-tools.md)
-- [Project Defect Remediation Contract 2026-09](project-defect-remediation-contract-2026-09.md)
-- [Project Defect Remediation Plan 2026-09](project-defect-remediation-plan-2026-09.md)
 - [Conversation Shared Capabilities](conversation-shared-capabilities.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Conversation Continuity v2](channel-conversation-continuity-v2.md)
-- [Channel Environment Information Hierarchy](channel-environment-information-hierarchy.md)
 - [Conversation Activity Summary And Exploration Batching](conversation-activity-summary-and-exploration-batching-detailed-design.md)
-- [Conversation Right Dock Responsive Visibility Implementation Plan](conversation-right-dock-responsive-visibility-implementation-plan.md)
+- [Ling Typed Transcript Detailed Design](conversation-typed-transcript-detailed-design.md)
+- [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
+- [Codex-Style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)
 - [Channel Execution Completion Implementation Plan](channel-execution-completion-implementation-plan.md)
 - [Post-Compaction Workspace Undo](post-compaction-undo.md)
 - [Post-Compaction Snapshot Restore](post-compaction-snapshot-restore.md)
@@ -66,7 +70,6 @@ CI/Release artifacts instead of the default documentation tree.
 ## Runtime, Security, And Storage
 
 - [Approval Policy](approval-policy.md)
-- [Workspace Command Rule Approval Implementation Plan](workspace-command-rule-approval-implementation-plan.md)
 - [Inline Runtime Approval](inline-runtime-approval-detailed-design.md)
 - [State Machines And Recovery](state-machine-recovery.md)
 - [Multi-Channel Concurrency](multi-channel-concurrency.md)
@@ -102,7 +105,6 @@ part of the current product acceptance scope.
 
 ## Web, Desktop, And UI 2.0
 
-- [Internationalization And Language Parity](internationalization-language-parity.md)
 - [UI 2.0 Documentation](ui2.0升级/README.md)
 - [UI 2.0 Product Contract](ui2.0升级/00-UI2.0整体升级方案.md)
 - [UI 2.0 Acceptance Contract](ui2.0升级/03-UI2.0验收总规范.md)
@@ -111,7 +113,6 @@ part of the current product acceptance scope.
 - [Data Revalidation And Manual Refresh Policy](data-revalidation-and-manual-refresh-policy.md)
 - [Web Modularization](web-modularization.md)
 - [Web E2E Acceptance Matrix](web-e2e-acceptance-matrix.md)
-- [Codex Window Shell Parity](codex-window-shell-parity.md)
 - [Desktop Shell](desktop-shell.md)
 - [Sidebar, Approval, And Proposal Dialogs Implementation Plan](sidebar-approval-proposal-dialogs-implementation-plan.md)
 - [Desktop Release](../release/desktop.md)

@@ -37,7 +37,7 @@ export function buildTerminalReportPrompt(
     verification: [{ id: "string", title: "string", status: "passed|failed|blocked|cancelled|skipped|not_run|unknown", summary: "string optional", command: "string optional", sourceRefs: [sourceRefShape()] }],
     participants: [{ agentId: "string", displayName: "string", roleKey: "string optional", status: "completed|failed|blocked|cancelled", contribution: "string", sourceRefs: [sourceRefShape()] }],
     artifacts: [{ id: "string", kind: "file|diff|document|image|test_result|commit|pull_request|deployment|external|other", title: "string", path: "string optional", href: "string optional", summary: "string optional", sourceRefs: [sourceRefShape()] }],
-    risks: [{ id: "string", severity: "info|warning|critical", status: "unresolved|mitigated|accepted|unverified", approvalDecision: "pending|approved|denied|expired|cancelled optional", summary: "string", nextAction: "string optional", sourceRefs: [sourceRefShape()] }],
+    risks: [{ id: "string", severity: "info|warning|critical", status: "unresolved|mitigated|accepted|unverified", summary: "string", nextAction: "string optional", sourceRefs: [sourceRefShape()] }],
     references: [sourceRefShape()],
   };
   const repairBlock = repair

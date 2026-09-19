@@ -41,7 +41,7 @@ test("T13-P.9EF.C draft generations bind only their own ready thread without rem
   expect(domainSource).not.toContain('identity: originThreadId || "draft"');
   expect(appShellSource).toContain("conversationIdentity={conversationIdentity}");
   expect(appShellSource).not.toMatch(/<ConversationHome[^>]*\bkey=/su);
-  expect(conversationHomeSource.split("\n").length - 1).toBeLessThanOrEqual(820);
+  expect(conversationHomeSource.split("\n").length - 1).toBeLessThanOrEqual(800);
 
   let current = identitySnapshot("draft:1");
   const guard = createNormalConversationIdentityCommitGuard({
@@ -416,7 +416,6 @@ function createConversationIdentityState(): MockState {
     id: "provider_conversation_draft_identity",
     displayName: "Draft Identity Relay",
     model: "gpt-5.5",
-    lastCheck: { ok: true, message: "Ready", checkedAt: "2026-07-27T03:00:00.000Z" },
   })];
   return state;
 }

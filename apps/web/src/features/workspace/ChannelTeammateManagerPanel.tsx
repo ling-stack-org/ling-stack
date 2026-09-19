@@ -115,7 +115,11 @@ export function ChannelTeammateManagerPanel({
                     data-teammate-model-binding={modelBinding}
                     title={effectiveModelLabel}
                   >
-                    {effectiveModelLabel}
+                    {lingAgent
+                      ? t("Ling Agent model · {model}", { model: effectiveModelLabel })
+                      : followsWorkspaceDefault
+                        ? t("Workspace default · {model}", { model: effectiveModelLabel })
+                        : t("Fixed model · {model}", { model: effectiveModelLabel })}
                   </span>
                 )}
                 actions={(

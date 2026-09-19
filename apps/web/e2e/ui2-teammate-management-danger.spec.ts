@@ -30,29 +30,14 @@ test("Profile management area uses shared controls, contained Input focus, one-E
   await page.goto("/");
 
   const panel = await openDanger(page, ordinaryName);
-  const disable = panel.getByRole("button", { name: "Disable" });
-  await expect(disable).toHaveClass(/ling-ui-button/);
-  await expect(disable).toHaveAttribute("data-variant", "secondary");
+  await expect(panel.getByRole("button", { name: "Disable" })).toHaveClass(/ling-ui-button/);
   const trigger = panel.getByRole("button", { name: "Hard delete" });
   await expect(trigger).toHaveClass(/ling-ui-button/);
-  await expect(trigger).toHaveAttribute("data-variant", "secondary");
-  await expect(trigger.locator("xpath=ancestor::article")).not.toHaveAttribute("data-destructive", "true");
-  await expect(panel).toHaveCSS("border-top-width", "0px");
-  await expect(panel.locator(".teammate-danger-heading")).toHaveCSS("border-bottom-width", "0px");
-  await expect(page.locator(".teammate-profile-advanced")).toHaveAttribute("data-appearance", "plain");
   await captureEvidence(page, "1440x960-ling-light-danger-default.png");
-
-  await page.locator(".teammate-profile-advanced").getByText("Advanced profile", { exact: true }).click();
-  const personaActions = page.locator(".teammate-profile-persona-actions");
-  await expect(personaActions).toBeVisible();
-  await expect(page.getByText("Role profile", { exact: true })).toHaveCount(0);
-  await personaActions.scrollIntoViewIfNeeded();
-  await captureEvidence(page, "1440x960-ling-light-profile-expanded-no-duplicate-separators.png");
 
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "Hard delete private data" });
   await expect(dialog).toBeVisible();
-  await expect(dialog.getByRole("button", { name: "Hard delete" })).toHaveAttribute("data-variant", "danger");
   await expect(dialog.getByRole("button", { name: "Cancel" })).toBeFocused();
   const reason = dialog.getByRole("textbox", { name: "Reason" });
   const shell = reason.locator("..");
@@ -316,14 +301,10 @@ async function openTeammateSettings(
   await navButton.click();
   const chatHeader = page.locator("[data-ui2-teammate-chat-header]");
   await expect(chatHeader).toBeVisible();
-  const showDetails = chatHeader.getByRole("button", { name: labels.details });
-  if (await showDetails.count() > 0) {
-    await expect(showDetails).toBeEnabled();
-    await showDetails.click();
+  if (await page.getByLabel(labels.dock).count() === 0) {
+    await chatHeader.getByRole("button", { name: labels.details }).click();
   }
-  const dock = page.getByLabel(labels.dock);
-  await expect(dock).toBeVisible();
-  await dock.getByRole("button", { name: labels.settings }).click();
+  await page.getByLabel(labels.dock).getByRole("button", { name: labels.settings }).click();
   const settings = page.getByLabel(labels.settingsSections);
   await expect(settings).toBeVisible();
   return settings;

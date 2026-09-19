@@ -3,7 +3,7 @@ import { BookOpen, CheckCircle2, ChevronDown, CircleAlert, Clock3, FilePenLine, 
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
 import { projectConversationActivity, type ConversationAgentActivitySpan, type ConversationArtifactStripItem, type ConversationCommandBatchItem, type ConversationOperationCellViewModel, type ConversationWorkCellEvidenceLink, type ConversationWorkCellGroup, type ConversationWorkCellItem, type ConversationWorkCellRow, type ConversationWorkCellRowDetailLine } from "../../../lib/conversation-work-cell.js";
-import type { ComposerGateApprovalPresentation } from "../../../lib/runtime-approval-presentation.js";
+import type { DialogOwnedApprovalPresentation } from "../../../lib/runtime-approval-presentation.js";
 import type { PreviewContentResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
 import type { ConversationSurfaceKind, TerminalReportProjectionPolicy } from "../tokens/conversation-surface-policy.js";
@@ -11,7 +11,6 @@ import { ConversationArtifactStrip, type ConversationWorkspaceReviewTarget } fro
 import { ConversationCommandBatch } from "./ConversationCommandBatch.js";
 import { ConversationExplorationBatch } from "./ConversationExplorationBatch.js";
 import { DiffViewer } from "./DiffViewer.js";
-import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 import { TerminalReportBlock, type TerminalReportFileTarget } from "./TerminalReportBlock.js";
 import { useConversationBlockView } from "../view-store/use-conversation-block-view.js";
 import { useWorkCellActivityVisibility } from "./use-work-cell-activity-visibility.js";
@@ -37,15 +36,15 @@ export interface ConversationWorkCellProps {
   readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
   readonly showArtifactStrip?: boolean;
   readonly showTerminalReport?: boolean;
-  readonly composerGateApproval?: ComposerGateApprovalPresentation;
+  readonly dialogOwnedApproval?: DialogOwnedApprovalPresentation;
   readonly terminalReportProjectionPolicy?: Partial<TerminalReportProjectionPolicy>;
   readonly onOpenWorkspaceFile?: (target: TerminalReportFileTarget) => void;
   readonly onOpenWorkspaceReview?: (target: ConversationWorkspaceReviewTarget) => void;
 }
 
 export function ConversationWorkCell(props: ConversationWorkCellProps): React.JSX.Element {
-  if (props.composerGateApproval) {
-    return <ComposerGatePendingWorkCell model={props.model} approval={props.composerGateApproval} />;
+  if (props.dialogOwnedApproval) {
+    return <DialogOwnedPendingWorkCell model={props.model} approval={props.dialogOwnedApproval} />;
   }
   return <ConversationWorkCellContent {...props} />;
 }
@@ -87,17 +86,13 @@ function ConversationWorkCellContent({
       ? singleAgentRows
       : fallbackRows;
   const operationItems = model.operationItems ?? projectConversationActivity(operationRows);
+  const showOperationRows = operationItems.length > 0;
   const terminalReportRendered = showTerminalReport && model.terminalReportRows.length > 0;
-  const reportOwnsChanges = terminalReportRendered && model.terminalReportRows.some((row) => row.reportSection === "change");
-  const visibleOperationItems = reportOwnsChanges
-    ? operationItems.filter((item) => item.kind !== "operation" || item.row.kind !== "edit")
-    : operationItems;
-  const showOperationRows = visibleOperationItems.length > 0;
   const statusLabel = model.kicker ?? workCellStatusLabel(model.status, active, t);
+  const artifactStripSummary = showArtifactStrip ? buildArtifactStripSummary(model.artifactStripItems, t) : undefined;
   const visibleArtifactItems = showArtifactStrip
     ? model.artifactStripItems.filter((item) => item.kind === "artifact" || item.kind === "changed")
     : [];
-  const artifactStripSummary = showArtifactStrip ? buildArtifactStripSummary(visibleArtifactItems, t) : undefined;
   const recoveryTarget = visibleArtifactItems.find((item) => item.kind === "changed")?.recoveryTarget;
   const referencesOnly = !showArtifactStrip;
   const evidenceSummary = model.terminalReportRows.length > 0
@@ -239,7 +234,7 @@ function ConversationWorkCellContent({
             ) : null}
 
             {showOperationRows ? (
-              <ActiveTurnItemStream items={visibleOperationItems} cwd={cwd} loadPreview={loadPreview} />
+              <ActiveTurnItemStream items={operationItems} cwd={cwd} loadPreview={loadPreview} />
             ) : null}
             {!terminalReportRendered ? evidenceDisclosure : null}
           </div>
@@ -252,7 +247,6 @@ function ConversationWorkCellContent({
           rows={model.terminalReportRows}
           renderParticipantAvatar={renderParticipantAvatar}
           surface={surface}
-          cwd={cwd}
           projectionPolicy={terminalReportProjectionPolicy}
           onOpenWorkspaceFile={onOpenWorkspaceFile ? (target) => onOpenWorkspaceFile({ ...target, cwd }) : undefined}
         />
@@ -261,7 +255,6 @@ function ConversationWorkCellContent({
         <ConversationArtifactStrip
           items={visibleArtifactItems}
           cwd={cwd}
-          hideChangedFileDetails={reportOwnsChanges}
           recoveryTarget={recoveryTarget}
           loadPreview={loadPreview}
           onOpenWorkspaceReview={onOpenWorkspaceReview}
@@ -276,32 +269,30 @@ function ConversationWorkCellContent({
   );
 }
 
-function ComposerGatePendingWorkCell({
+function DialogOwnedPendingWorkCell({
   model,
   approval,
 }: {
   readonly model: ConversationOperationCellViewModel;
-  readonly approval: ComposerGateApprovalPresentation;
+  readonly approval: DialogOwnedApprovalPresentation;
 }): React.JSX.Element {
   const { t } = useI18n();
   const statusLabel = `${t("Waiting for approval")}: ${approval.actionSentence}`;
   return (
     <article
-      className="conversation-work-cell conversation-operation-cell active status-waiting_for_approval no-rail presentation-composer-gate-pending"
+      className="conversation-work-cell conversation-operation-cell active status-waiting_for_approval no-rail presentation-dialog-owned-pending"
       data-thread-id={model.threadId}
       data-operation-source={model.sourceKind}
-      data-approval-presentation-owner="composer_gate"
+      data-approval-presentation-owner="dialog"
       data-approval-id={approval.approvalId}
       aria-label={statusLabel}
     >
       <span className="visually-hidden" role="status" aria-live="polite">{statusLabel}</span>
       <div className="conversation-operation-shell conversation-operation-bubble active tone-waiting collapsed">
-        <div className="conversation-operation-shell-static-content">
-          <div className="conversation-composer-gate-approval-marker">
-            <CircleAlert aria-hidden="true" size={15} />
-            <strong>{t("Waiting for approval")}</strong>
-            <span>{approval.actionSentence}</span>
-          </div>
+        <div className="conversation-dialog-owned-approval-marker">
+          <CircleAlert aria-hidden="true" size={15} />
+          <strong>{t("Waiting for approval")}</strong>
+          <span>{approval.actionSentence}</span>
         </div>
       </div>
     </article>
@@ -924,7 +915,7 @@ function WorkCellRow({
         </span>
       ) : null}
       <span className="conversation-work-cell-row-copy">
-        <strong>{displayableRowTitle(row.title)}</strong>
+        <strong>{row.title}</strong>
         {changeSummary ? (
           <span className="conversation-work-cell-change-stat" aria-label={`+${changeSummary.additions} -${changeSummary.deletions}`}>
             <span className="add">+{changeSummary.additions}</span>
@@ -959,7 +950,7 @@ function WorkCellRow({
       {expanded && hasDetail ? (
         <div className={row.presentation === "shell" ? "conversation-work-cell-row-detail conversation-work-cell-shell-detail" : "conversation-work-cell-row-detail"}>
           {shellCommand ? <code className="conversation-work-cell-shell-command">$ {shellCommand}</code> : null}
-          {displayDescription ? <MessageBodyRenderer className="conversation-work-cell-rich-description" text={displayDescription} cwd={cwd} compact /> : null}
+          {displayDescription ? <small>{displayDescription}</small> : null}
           {detailLines.map((line, index) => (
             line.kind === "code"
               ? <code key={`${line.kind}:${index}`}>{line.text}</code>
@@ -1098,11 +1089,6 @@ function displayableRowDescription(title: string, description?: string): string 
     return undefined;
   }
   return trimmed;
-}
-
-function displayableRowTitle(title: string): string {
-  const normalized = title.replace(/\s+/gu, " ").trim();
-  return normalized.length > 180 ? `${normalized.slice(0, 177).trimEnd()}...` : normalized;
 }
 
 function displayableRowMeta(meta?: string): string | undefined {

@@ -8,8 +8,8 @@
 }
 
 .first-run-dialog-steps {
-  display: flex;
-  align-items: center;
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: var(--ling-space-2);
   margin: 0;
   padding: 0;
@@ -25,26 +25,9 @@
   font-size: var(--ling-font-xs);
 }
 
-.first-run-dialog-steps li:not(:last-child) {
-  flex: 1 1 0;
-}
-
-.first-run-dialog-steps li:last-child {
-  flex: 0 0 auto;
-}
-
-.first-run-dialog-steps li > span {
-  flex: 0 0 auto;
-  overflow-wrap: normal;
-  white-space: nowrap;
-  word-break: keep-all;
-}
-
 .first-run-dialog-steps li::after {
-  width: auto;
-  min-width: var(--ling-space-6);
+  width: 100%;
   height: 1px;
-  flex: 1 1 auto;
   margin-left: var(--ling-space-2);
   background: var(--ling-border-default);
   content: "";
@@ -109,23 +92,5 @@
   .first-run-dialog > .ling-ui-dialog-footer {
     align-items: stretch;
     flex-direction: column-reverse;
-  }
-}
-
-@media (max-width: 480px) {
-  .first-run-dialog-steps {
-    display: grid;
-    align-items: start;
-    gap: var(--ling-space-3);
-  }
-
-  .first-run-dialog-steps li,
-  .first-run-dialog-steps li:not(:last-child),
-  .first-run-dialog-steps li:last-child {
-    flex: none;
-  }
-
-  .first-run-dialog-steps li::after {
-    display: none;
   }
 }

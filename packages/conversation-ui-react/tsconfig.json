@@ -2,7 +2,6 @@
   "compilerOptions": {
     "declaration": true,
     "jsx": "react-jsx",
-    "lib": ["ES2022", "DOM", "WebWorker.ImportScripts", "ScriptHost", "DOM.Iterable", "DOM.AsyncIterable", "ES2025.Float16"],
     "module": "NodeNext",
     "moduleResolution": "NodeNext",
     "outDir": "dist",

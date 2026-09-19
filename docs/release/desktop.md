@@ -88,21 +88,9 @@ Windows 发布决策记录显式关闭。
 
 ## 每次提交的本地基线
 
-Desktop 产品语言由
-[Internationalization And Language Parity](../design/internationalization-language-parity.md)
-定义。打包候选必须离线携带注册表声明的全部 55 个产品 locale、英语 fallback 和对应
-catalog source revision，且 Web 主窗口、Computer Use preview 与 Electron 原生恢复文案使用同一注册表。
-仅有 Electron native menu locale 资源不代表 Ling 产品界面已支持该语言。
-
-语言候选需要通过 package verifier，并将 locale registry SHA、catalog source revision、source
-commit 和 app bundle fingerprint 写入验收证据。发布前必须使用 packaged `.app` 逐项切换
-55 个 locale；dev server、源码字典检查或代表语言截图不能替代该门禁。
-
 ```bash
 corepack pnpm --filter @ling-stack/desktop typecheck
 corepack pnpm --filter @ling-stack/desktop build
-corepack pnpm --filter @ling-stack/desktop verify:packaged-language-parity
-corepack pnpm --filter @ling-stack/desktop accept:packaged-language-parity
 corepack pnpm --filter @ling-stack/browser-host test
 corepack pnpm --filter @ling-stack/browser-host build:native
 corepack pnpm --filter @ling-stack/desktop verify:release-schemas

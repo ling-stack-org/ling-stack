@@ -1,106 +1,21 @@
-.conversation-decision-gate {
-  box-sizing: border-box;
-  display: grid;
-  min-width: 0;
-  gap: var(--ling-space-4);
-  padding: var(--ling-space-5);
-  border: 1px solid var(--ling-border-default);
-  color: var(--ling-text-default);
+.runtime-approval-dialog {
+  width: min(440px, calc(100vw - 32px));
 }
 
-.conversation-decision-gate-copy {
-  display: grid;
-  min-width: 0;
-  grid-template-columns: 28px minmax(0, 1fr);
-  align-items: start;
-  gap: var(--ling-space-3);
+.runtime-approval-dialog-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
 }
 
-.conversation-decision-gate-icon {
-  display: inline-grid;
-  width: 28px;
-  height: 28px;
-  place-items: center;
-  border-radius: var(--ling-radius-md);
-  color: var(--ling-text-default);
-  background: var(--ling-bg-subtle);
+.runtime-approval-dialog-body {
+  gap: 12px;
 }
 
-.conversation-decision-gate-copy strong,
-.conversation-decision-gate-copy p,
-.conversation-decision-gate-error {
+.runtime-approval-dialog-summary {
   margin: 0;
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.55;
   overflow-wrap: anywhere;
-}
-
-.conversation-decision-gate-copy strong {
-  display: block;
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
-}
-
-.conversation-decision-gate-copy p {
-  margin-top: var(--ling-space-1);
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
-}
-
-.conversation-decision-gate-error {
-  padding-left: 40px;
-  color: var(--ling-status-danger);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-}
-
-.conversation-decision-gate-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: var(--ling-space-2);
-}
-
-.conversation-decision-split-button {
-  min-width: 0;
-}
-
-.conversation-decision-allow-menu {
-  width: min(300px, calc(100vw - 32px));
-}
-
-.conversation-decision-menu-copy {
-  display: grid;
-  min-width: 0;
-  gap: 2px;
-}
-
-.conversation-decision-menu-label {
-  color: var(--ling-text-default);
-  font-size: var(--ling-font-sm);
-  line-height: var(--ling-line-sm);
-}
-
-.conversation-decision-menu-description {
-  color: var(--ling-text-muted);
-  font-size: var(--ling-font-xs);
-  line-height: var(--ling-line-xs);
-  white-space: normal;
-  overflow-wrap: anywhere;
-}
-
-@media (max-width: 560px) {
-  .conversation-decision-gate {
-    padding: var(--ling-space-4);
-  }
-
-  .conversation-decision-gate-actions > .ling-ui-button {
-    flex: 1 1 0;
-  }
-
-  .conversation-decision-split-button {
-    flex: 1 1 auto;
-  }
-
-  .conversation-decision-split-button .ling-ui-split-button-primary {
-    flex: 1 1 auto;
-  }
 }

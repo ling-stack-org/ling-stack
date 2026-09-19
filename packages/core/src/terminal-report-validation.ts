@@ -108,13 +108,6 @@ export function validateTerminalReportContent(
   }
 
   const checksById = new Map(snapshot.checks.map((check) => [check.id, check]));
-  if (snapshot.terminalState === "succeeded" && snapshot.checks.length > 0 && content.verification.length === 0) {
-    issues.push(issue(
-      "terminal_report_unverified_success_claim",
-      "verification",
-      "A successful evidence snapshot with checks must include verification rows.",
-    ));
-  }
   for (const [index, verification] of content.verification.entries()) {
     const matched = verification.sourceRefs.some((ref) => ref.kind === "check" && checksById.has(ref.id));
     if ((verification.status === "passed" || verification.status === "failed") && !matched) {

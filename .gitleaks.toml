@@ -1,6 +1,0 @@
- [extend]
- useDefault = true
-
-[[allowlists]]
-description = "Generated localization catalogs contain deterministic source hashes, not credentials."
-paths = ['''.*packages/localization/catalogs.*''']

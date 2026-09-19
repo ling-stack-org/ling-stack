@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { projectConversationMessagePresentation } from "@ling-stack/conversation-ui-core";
 import {
   CheckCircle2,
   ChevronUp,
@@ -30,8 +29,8 @@ import { formatDateTime } from "../../lib/formatting.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import { attachmentCanPreview, type PreviewRequest } from "../../lib/previews.js";
 import {
-  buildComposerGateApprovalPresentationByRunId,
-  composerGateApprovalPresentationForWorkCell,
+  buildDialogOwnedApprovalPresentationByRunId,
+  dialogOwnedApprovalPresentationForWorkCell,
 } from "../../lib/runtime-approval-presentation.js";
 import { filterUsedMemoryEventsByResponse } from "../../shared/components/index.js";
 import {
@@ -61,7 +60,7 @@ import {
   type ConversationWorkspaceReviewTarget,
   type TerminalReportFileTarget,
 } from "../../shared/conversation/index.js";
-import { InlineFeedback, Tooltip } from "../../shared/ui/index.js";
+import { Tooltip } from "../../shared/ui/index.js";
 import type {
   ApprovalRequest,
   Channel,
@@ -124,7 +123,7 @@ export interface ChannelMessageRenderersInput {
   readonly conversationWorkCellByThreadId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly conversationWorkCellByWorkflowId: ReadonlyMap<string, ConversationWorkCellViewModel>;
   readonly conversationWorkCellDetailsByKey: Readonly<Record<string, ConversationWorkCellDetailsState>>;
-  readonly composerGateApprovals: readonly InlineApprovalView[];
+  readonly dialogOwnedApprovals: readonly InlineApprovalView[];
   readonly cwd: string;
   readonly executionProposalsByMessageId: ReadonlyMap<string, readonly ChannelExecutionProposal[]>;
   readonly formatBytes: (value: number) => string;
@@ -192,7 +191,7 @@ export interface ChannelMessageRenderers {
 
 export function createChannelMessageRenderers(input: ChannelMessageRenderersInput): ChannelMessageRenderers {
   const channelSurface = input.selectedChannelBranchRootThreadId ? "channel_branch" : "channel_root";
-  const composerGateApprovalByRunId = buildComposerGateApprovalPresentationByRunId(input.composerGateApprovals, input.t);
+  const dialogOwnedApprovalByRunId = buildDialogOwnedApprovalPresentationByRunId(input.dialogOwnedApprovals, input.t);
   function renderLingAgentAvatar(): ReactNode {
     const teammate = input.allLocalTeammateById.get(LING_AGENT_AUTHOR_ID);
     return (
@@ -319,29 +318,9 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
     const copyText = conversationTurnAssistantCopyText(turn, input.t);
     const transcriptContext: WorkspaceTranscriptRenderContext = { detailsState, onLoadDetails };
     const terminalSummaryRendered = conversationTurnHasTerminalSummary(turn);
-    const terminalReportOwnsChanges = Boolean(
-      turn.operationCell?.terminalReportRows.some((row) => row.reportSection === "change"),
-    );
-    const terminalReportChangedPaths = new Set(
-      (turn.operationCell?.terminalReportRows ?? []).flatMap((row) =>
-        row.reportSection === "change"
-          ? (row.detailLines ?? []).flatMap((line) => line.kind === "file_ref" ? [line.path] : [])
-          : []),
-    );
     const externalArtifactItems = terminalSummaryRendered
-      ? (turn.operationCell?.artifactStripItems ?? []).filter((item) => {
-        if (item.kind === "changed") {
-          return !terminalReportOwnsChanges;
-        }
-        if (item.kind === "artifact" && terminalReportOwnsChanges && item.workspaceFilePath) {
-          return !terminalReportChangedPaths.has(item.workspaceFilePath);
-        }
-        return true;
-      })
+      ? turn.operationCell?.artifactStripItems ?? []
       : [];
-    const hasExternalArtifactContent = externalArtifactItems.some((item) =>
-      item.kind === "artifact" || item.kind === "changed",
-    );
     const externalArtifactCwd = turn.operationCell
       ? input.runById.get(turn.operationCell.anchorRunId)?.cwd ?? input.cwd
       : input.cwd;
@@ -362,7 +341,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               block,
               context: transcriptContext,
             }))}
-            {hasExternalArtifactContent ? (
+            {externalArtifactItems.length > 0 ? (
               <div className="conversation-turn-artifacts">
                 <ConversationArtifactStripPanel
                   items={externalArtifactItems}
@@ -499,7 +478,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={block.operationCell}
           surface={channelSurface}
-          composerGateApproval={composerGateApprovalPresentationForWorkCell(block.operationCell, composerGateApprovalByRunId)}
+          dialogOwnedApproval={dialogOwnedApprovalPresentationForWorkCell(block.operationCell, dialogOwnedApprovalByRunId)}
           cwd={operationCwd}
           detailsState={context.detailsState}
           onOpenRun={block.operationCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
@@ -544,7 +523,6 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         rows={block.rows}
         renderParticipantAvatar={renderConversationParticipantAvatar}
         surface={channelSurface}
-        cwd={input.cwd}
         onOpenWorkspaceFile={input.onOpenTerminalReportFile}
       />
     );
@@ -745,16 +723,6 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       ? input.proposedPlanArtifactsById.get(proposedPlanBlock.plan.id) ?? proposedPlanBlock.plan
       : undefined;
     const visibleMessageBody = proposedPlanBlock?.displayBody ?? pendingAiReplyBody;
-    const displayableMessageBody = shouldHideStandaloneCoordinatorBody(message, visibleMessageBody)
-      ? ""
-      : visibleMessageBody;
-    const messagePresentation = projectConversationMessagePresentation({
-      content: displayableMessageBody,
-      errorMessage: message.errorMessage,
-      status: message.status,
-      streaming: pendingAiReply,
-      streamingPlaceholder: input.t("Thinking..."),
-    });
     const editing = input.editingMessageId === message.id;
     const generatedMedia = generatedMediaForMessage(input.generatedMedia, message);
     if (plainChatMessage) {
@@ -764,9 +732,6 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             surface={channelSurface}
             className={message.status === "blocked" ? "channel-message-row blocked" : "channel-message-row"}
             authorType={message.authorType}
-            tone={message.authorType === "ai-teammate" && message.status === "blocked"
-              ? "chat-blocked"
-              : message.authorType === "system" ? "system" : "chat"}
             avatar={renderChannelMessageAvatar(message)}
             authorName={messageAuthorLabel(message, input.teammateOptions, input.t("Deleted teammate"), input.localUserDisplayName, input.allLocalTeammateById)}
             createdAtLabel={formatDateTime(message.createdAt)}
@@ -788,7 +753,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
             ) : (
               <div className={pendingAiReply ? "message-body-shell message-body-with-spinner" : "message-body-shell"}>
                 {pendingAiReply ? <Loader2 className="message-pending-spinner spin" size={13} /> : null}
-                {messagePresentation.body.trim() ? <MessageBodyRenderer text={messagePresentation.body} cwd={input.cwd} compact streaming={pendingAiReply} onOpenLocalFile={input.onOpenFileReference} /> : null}
+                {visibleMessageBody.trim() ? <MessageBodyRenderer text={visibleMessageBody} cwd={input.cwd} compact streaming={pendingAiReply} onOpenLocalFile={input.onOpenFileReference} /> : null}
                 {proposedPlanBlock ? (
                   <ChannelProposedPlanBlock
                     plan={proposedPlan ?? proposedPlanBlock.plan}
@@ -814,26 +779,17 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 webEvidence={message.webEvidence}
               />
             ) : null}
-            errorNode={messagePresentation.errorText || message.pendingReplacement ? (
-              <>
-                {messagePresentation.errorText ? (
-                  <InlineFeedback className="channel-message-error" tone="danger">
-                    {messagePresentation.errorText}
-                  </InlineFeedback>
-                ) : null}
-                {message.pendingReplacement ? (
-                  <ConversationReplacementRetry
-                    failureReason={input.replacementRetryError || message.pendingReplacement.failureReason}
-                    retryLabel={input.t("Retry response")}
-                    retrying={input.replacementRetryingMessageId === message.id}
-                    onRetry={() => void input.onRetryMessageReplacement(message)}
-                  />
-                ) : null}
-              </>
+            errorNode={message.pendingReplacement ? (
+              <ConversationReplacementRetry
+                failureReason={input.replacementRetryError || message.pendingReplacement.failureReason}
+                retryLabel={input.t("Retry response")}
+                retrying={input.replacementRetryingMessageId === message.id}
+                onRetry={() => void input.onRetryMessageReplacement(message)}
+              />
             ) : null}
-            actionsNode={!editing && message.status !== "blocked" && message.authorType === "ai-teammate"
+            actionsNode={!editing && message.authorType === "ai-teammate"
               ? renderChannelAiMessageActions(message, message.body)
-              : !editing && message.status !== "blocked" && message.authorType === "local-user"
+              : !editing && message.authorType === "local-user"
                 ? (
                     <MessageActionBar
                       surface={channelSurface}
@@ -924,7 +880,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={workCell}
           surface={channelSurface}
-          composerGateApproval={composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)}
+          dialogOwnedApproval={dialogOwnedApprovalPresentationForWorkCell(workCell, dialogOwnedApprovalByRunId)}
           cwd={input.runById.get(workCell.anchorRunId)?.cwd ?? input.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[detailsKey] ?? { status: "not_loaded" }}
           onOpenRun={workCell.anchorRunId.startsWith("workflow:") ? undefined : input.onOpenRun}
@@ -1041,7 +997,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         <ConversationWorkCell
           model={workCell}
           surface={channelSurface}
-          composerGateApproval={composerGateApprovalPresentationForWorkCell(workCell, composerGateApprovalByRunId)}
+          dialogOwnedApproval={dialogOwnedApprovalPresentationForWorkCell(workCell, dialogOwnedApprovalByRunId)}
           cwd={run.cwd}
           detailsState={input.conversationWorkCellDetailsByKey[input.conversationWorkCellDetailsCacheKey(workCell.threadId)] ?? { status: "not_loaded" }}
           onOpenRun={input.onOpenRun}
@@ -1334,16 +1290,11 @@ function conversationCoordinatorDisplayBody(
   if (message.status === "pending" && !message.body.trim()) {
     return t("Thinking...");
   }
-  if (isGeneratedWorkflowCoordinatorBody(message.body) && !turn.operationCell) {
-    return "";
-  }
   if (!turn.operationCell || !shouldSanitizeGeneratedCoordinatorBody(message.body)) {
     return message.body;
   }
-  if (isGeneratedWorkflowCoordinatorBody(message.body)) {
-    const fallback = phase === "terminal"
-      ? conversationCoordinatorTerminalFallback(turn, t)
-      : conversationCoordinatorStartFallback(turn);
+  if (phase === "terminal" && isGeneratedWorkflowCoordinatorBody(message.body)) {
+    const fallback = conversationCoordinatorTerminalFallback(turn, t);
     return isDuplicateCoordinatorDisplayBody(turn, fallback) ? "" : fallback;
   }
   const cleaned = cleanGeneratedWorkflowText(message.body);
@@ -1352,12 +1303,12 @@ function conversationCoordinatorDisplayBody(
   }
   const fallback = phase === "terminal"
     ? conversationCoordinatorTerminalFallback(turn, t)
-    : conversationCoordinatorStartFallback(turn);
+    : conversationCoordinatorStartFallback(turn, t);
   return isDuplicateCoordinatorDisplayBody(turn, fallback) ? "" : fallback;
 }
 
 function shouldSanitizeGeneratedCoordinatorBody(body: string): boolean {
-  const text = trimGeneratedWorkflowDecoration(body);
+  const text = body.trim();
   if (!text) {
     return false;
   }
@@ -1370,32 +1321,14 @@ function shouldSanitizeGeneratedCoordinatorBody(body: string): boolean {
   if (/(Confirmed proposal|Overall scope|Assigned teammate|Step action|Acceptance criteria)\s*:/u.test(text)) {
     return true;
   }
-  if (generatedWorkflowBodyPrefix.test(text)) {
-    return true;
-  }
   return false;
 }
 
 function isGeneratedWorkflowCoordinatorBody(body: string): boolean {
-  const text = trimGeneratedWorkflowDecoration(body);
-  return /Smoke ID\s*:/iu.test(text) ||
-    /开始\s*workflow\s*[:：]/iu.test(text) ||
-    generatedWorkflowBodyPrefix.test(text) ||
-    /^(Done|Stopped|Not completed):\s*"/iu.test(text) ||
-    /^(完成|已停止|未完成)\s*[:：]/u.test(text);
-}
-
-const generatedWorkflowBodyPrefix = /^(?:这条用户消息(?:看起来是|是一个)|The user message (?:looks like|is a))/iu;
-
-function shouldHideStandaloneCoordinatorBody(message: ChannelMessage, body: string): boolean {
-  return message.kind === "ai_reply" &&
-    message.authorType === "ai-teammate" &&
-    message.authorId === LING_AGENT_AUTHOR_ID &&
-    isGeneratedWorkflowCoordinatorBody(body);
-}
-
-function trimGeneratedWorkflowDecoration(value: string): string {
-  return value.trim().replace(/^(?:[*_`>#-]+\s*)+/u, "");
+  return /Smoke ID\s*:/iu.test(body) ||
+    /开始\s*workflow\s*[:：]/iu.test(body) ||
+    /^(Done|Stopped|Not completed):\s*"/iu.test(body.trim()) ||
+    /^(完成|已停止|未完成)\s*[:：]/u.test(body.trim());
 }
 
 function conversationTurnHasTerminalSummary(turn: ConversationTurnViewModel): boolean {
@@ -1403,8 +1336,16 @@ function conversationTurnHasTerminalSummary(turn: ConversationTurnViewModel): bo
     turn.blocks.some((block) => block.kind === "coordinator_message" && block.phase === "terminal");
 }
 
-function conversationCoordinatorStartFallback(turn: ConversationTurnViewModel): string {
-  return ensureSentenceEnding(conversationTurnTaskText(turn));
+function conversationCoordinatorStartFallback(
+  turn: ConversationTurnViewModel,
+  t: (key: string, values?: Record<string, string | number>) => string,
+): string {
+  const task = conversationTurnTaskText(turn);
+  const agents = conversationTurnAgentLabels(turn);
+  const delegation = agents.length > 0
+    ? ` ${t("This task is assigned to {agents}.", { agents: formatAgentLabelList(agents) })}`
+    : "";
+  return `${ensureSentenceEnding(task)}${delegation}`.trim();
 }
 
 function conversationCoordinatorTerminalFallback(

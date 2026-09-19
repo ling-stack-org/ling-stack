@@ -5,9 +5,9 @@ import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import {
-  buildComposerGateApprovalPresentationByRunId,
-  composerGateApprovalPresentationForWorkCell,
-  type ComposerGateApprovalPresentation,
+  buildDialogOwnedApprovalPresentationByRunId,
+  dialogOwnedApprovalPresentationForWorkCell,
+  type DialogOwnedApprovalPresentation,
 } from "../../lib/runtime-approval-presentation.js";
 import {
   ConversationAttachmentStrip,
@@ -42,7 +42,7 @@ export interface NormalConversationFeedProps {
   readonly visibleMessages: readonly ConversationHomeMessage[];
   readonly runById: ReadonlyMap<string, RunSession>;
   readonly detailContext?: ConversationHomeDetailContext;
-  readonly composerGateApprovals: readonly InlineApprovalView[];
+  readonly dialogOwnedApprovals: readonly InlineApprovalView[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly projectPath?: string;
   readonly workspaceCwd: string;
@@ -64,7 +64,7 @@ export interface NormalConversationFeedProps {
 
 export function NormalConversationFeed({
   detailContext,
-  composerGateApprovals,
+  dialogOwnedApprovals,
   editSaving,
   editingMessageId,
   latestEditableUserMessageId,
@@ -92,9 +92,9 @@ export function NormalConversationFeed({
   const stickToLatestRef = useRef(true);
   const [latestButtonVisible, setLatestButtonVisible] = useState(false);
   const [feedbackById, setFeedbackById] = useState<Record<string, "up" | "down">>({});
-  const composerGateApprovalByRunId = useMemo(
-    () => buildComposerGateApprovalPresentationByRunId(composerGateApprovals, t),
-    [composerGateApprovals, t],
+  const dialogOwnedApprovalByRunId = useMemo(
+    () => buildDialogOwnedApprovalPresentationByRunId(dialogOwnedApprovals, t),
+    [dialogOwnedApprovals, t],
   );
   const feedItems = useMemo(() => projectNormalConversationFeedItems({
     detailContext,
@@ -162,13 +162,11 @@ export function NormalConversationFeed({
     return () => observer.disconnect();
   }, [itemIdentityKey, scheduleTailReconciliation]);
 
-  useLayoutEffect(() => {
-    return () => {
-      if (tailReconciliationFrameRef.current !== undefined) {
-        globalThis.cancelAnimationFrame(tailReconciliationFrameRef.current);
-        tailReconciliationFrameRef.current = undefined;
-      }
-    };
+  useLayoutEffect(() => () => {
+    if (tailReconciliationFrameRef.current !== undefined) {
+      globalThis.cancelAnimationFrame(tailReconciliationFrameRef.current);
+      tailReconciliationFrameRef.current = undefined;
+    }
   }, []);
 
   function handleFeedScroll(event: UIEvent<HTMLDivElement>): void {
@@ -201,8 +199,8 @@ export function NormalConversationFeed({
         renderItem={(item) => (
           <NormalConversationMessageRow
             item={item}
-            composerGateApproval={item.workCell
-              ? composerGateApprovalPresentationForWorkCell(item.workCell, composerGateApprovalByRunId)
+            dialogOwnedApproval={item.workCell
+              ? dialogOwnedApprovalPresentationForWorkCell(item.workCell, dialogOwnedApprovalByRunId)
               : undefined}
             generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
             feedback={feedbackById[item.message.id]}
@@ -227,7 +225,7 @@ export function NormalConversationFeed({
       />
       {latestButtonVisible ? (
         <IconButton
-          className="message-feed-latest-button normal-conversation-latest-button"
+          className="normal-conversation-latest-button"
           icon={ArrowDown}
           label={t("Jump to latest message")}
           onClick={() => scrollToLatest()}
@@ -238,7 +236,7 @@ export function NormalConversationFeed({
 }
 
 function NormalConversationMessageRow({
-  composerGateApproval,
+  dialogOwnedApproval,
   editSaving,
   editable,
   editing,
@@ -260,7 +258,7 @@ function NormalConversationMessageRow({
   workspaceCwd,
 }: {
   readonly item: NormalConversationFeedItem;
-  readonly composerGateApproval?: ComposerGateApprovalPresentation;
+  readonly dialogOwnedApproval?: DialogOwnedApprovalPresentation;
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
   readonly feedback?: "up" | "down";
   readonly editing: boolean;
@@ -282,14 +280,11 @@ function NormalConversationMessageRow({
 }): React.JSX.Element {
   const { t } = useI18n();
   const { message } = item;
-  const blockedAgentMessage = item.authorType === "ai-teammate"
-    && (Boolean(composerGateApproval) || message.status === "blocked");
   return (
     <MessageRow
       surface="normal_conversation"
       className={item.className}
       authorType={item.authorType}
-      tone={blockedAgentMessage ? "chat-blocked" : item.authorType === "system" ? "system" : "chat"}
       authorName={item.authorName}
       createdAtLabel={item.createdAtLabel}
       statusNode={message.editedAt ? <span className="conversation-message-edited-label">{t("Edited")}</span> : undefined}
@@ -353,7 +348,7 @@ function NormalConversationMessageRow({
             <ConversationWorkCell
               model={item.workCell}
               surface="normal_conversation"
-              composerGateApproval={composerGateApproval}
+              dialogOwnedApproval={dialogOwnedApproval}
               cwd={item.workCellCwd}
               onOpenRun={onOpenRun}
               onOpenWorkspaceFile={onOpenReportFile}
@@ -385,7 +380,7 @@ function NormalConversationMessageRow({
           ) : null}
         </>
       )}
-      actionsNode={message.content && !editing && !blockedAgentMessage ? (
+      actionsNode={message.content && !editing ? (
         <MessageActionBar
           surface="normal_conversation"
           className="normal-conversation-message-actions"

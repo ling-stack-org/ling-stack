@@ -37,12 +37,8 @@ export interface ConversationRightDockController {
   readonly rootRef: MutableRefObject<HTMLElement | null>;
   readonly containerRef: MutableRefObject<HTMLElement | null>;
   readonly pageRequest: WorkspaceRightDockPageRequest | undefined;
-  readonly requestedOpen: boolean;
-  readonly available: boolean;
-  readonly renderedOpen: boolean;
   readonly visible: boolean;
   readonly expanded: boolean;
-  readonly resizable: boolean;
   readonly resizing: boolean;
   readonly width: number;
   readonly containerWidth: number;
@@ -72,8 +68,6 @@ export const channelConversationRightDockVariables: ConversationRightDockLayoutV
   layoutHandleWidth: "--channel-side-panel-layout-handle-width",
 };
 
-export const conversationRightDockMaxHiddenViewportWidth = 900;
-
 export function useConversationRightDockController({
   initialOpen,
   intentOpen,
@@ -89,18 +83,15 @@ export function useConversationRightDockController({
   const [pageRequest, setPageRequest] = useState<WorkspaceRightDockPageRequest>();
   const [width, setWidth] = useState(defaultWidth);
   const [containerWidth, setContainerWidth] = useState(0);
-  const [viewportWidth, setViewportWidth] = useState(readViewportWidth);
   const [resizing, setResizing] = useState(false);
-  const available = viewportWidth > conversationRightDockMaxHiddenViewportWidth;
-  const projectedOpen = intentOpen && available;
-  const presence = useConversationPanelPresence(projectedOpen, initialOpen && available);
+  const presence = useConversationPanelPresence(intentOpen, initialOpen);
   const measuredContainerRef = useRef<HTMLElement | null>(null);
   const measuredContainerKeyRef = useRef<string | undefined>(undefined);
   const containerResizeObserverRef = useRef<ResizeObserver | undefined>(undefined);
   const containerWindowResizeListenerRef = useRef<(() => void) | undefined>(undefined);
   const layoutAnimationRef = useRef<number | undefined>(undefined);
-  const layoutWidthRef = useRef(initialOpen && available ? defaultWidth : 0);
-  const layoutHandleWidthRef = useRef(initialOpen && available ? channelRightDockResizeHandleWidth : 0);
+  const layoutWidthRef = useRef(initialOpen ? defaultWidth : 0);
+  const layoutHandleWidthRef = useRef(initialOpen ? channelRightDockResizeHandleWidth : 0);
   const motionUntilRef = useRef(0);
   const resizeDragRef = useRef<{
     readonly pointerId: number;
@@ -108,25 +99,21 @@ export function useConversationRightDockController({
     readonly containerWidth: number;
     readonly viewportWidth: number;
   } | undefined>(undefined);
-  const expanded = available && presence.expanded;
-  const visible = available && (projectedOpen || presence.rendered);
-  const resizable = visible && expanded;
-  const motionState: ConversationPanelMotionState = available
-    ? resizing ? "resizing" : presence.motionState
-    : "closed";
+  const visible = intentOpen || presence.rendered;
+  const motionState: ConversationPanelMotionState = resizing ? "resizing" : presence.motionState;
 
   useEffect(() => {
     if (initialOpen) setWidth(defaultWidth);
   }, [defaultWidth, initialOpen, resizeObserverKey]);
 
   useEffect(() => {
-    const duration = projectedOpen ? conversationPanelEnterDurationMs : conversationPanelExitDurationMs;
+    const duration = intentOpen ? conversationPanelEnterDurationMs : conversationPanelExitDurationMs;
     motionUntilRef.current = Date.now() + duration + conversationPanelUnmountBufferMs;
-  }, [projectedOpen]);
+  }, [intentOpen]);
 
   useLayoutEffect(() => {
     const { dockWidth: targetDockWidth, handleWidth: targetHandleWidth } = resolveChannelWorkspaceLayoutTargets({
-      rightDockExpanded: expanded,
+      rightDockExpanded: presence.expanded,
       rightDockWidth: width,
     });
     const elements = uniqueElements(rootRef.current, containerRef.current);
@@ -137,7 +124,7 @@ export function useConversationRightDockController({
     }
 
     const reducedMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
-    if (!available || resizing || reducedMotion) {
+    if (resizing || reducedMotion) {
       layoutWidthRef.current = targetDockWidth;
       layoutHandleWidthRef.current = targetHandleWidth;
       setLayoutVariables(elements, variables, targetDockWidth, targetHandleWidth);
@@ -157,7 +144,7 @@ export function useConversationRightDockController({
     }
 
     setLayoutVariables(elements, variables, startDockWidth, startHandleWidth);
-    const duration = expanded ? conversationPanelEnterDurationMs : conversationPanelExitDurationMs;
+    const duration = presence.expanded ? conversationPanelEnterDurationMs : conversationPanelExitDurationMs;
     const startedAt = globalThis.performance.now();
     const tick = (now: number): void => {
       const progress = Math.min(1, (now - startedAt) / duration);
@@ -181,22 +168,7 @@ export function useConversationRightDockController({
         layoutAnimationRef.current = undefined;
       }
     };
-  }, [available, containerRef, expanded, resizing, rootRef, variables, width]);
-
-  useEffect(() => {
-    const updateViewportWidth = (): void => {
-      const nextWidth = readViewportWidth();
-      setViewportWidth((current) => current === nextWidth ? current : nextWidth);
-    };
-    globalThis.addEventListener("resize", updateViewportWidth);
-    return () => globalThis.removeEventListener("resize", updateViewportWidth);
-  }, []);
-
-  useEffect(() => {
-    if (available) return;
-    resizeDragRef.current = undefined;
-    setResizing(false);
-  }, [available]);
+  }, [containerRef, presence.expanded, resizing, rootRef, variables, width]);
 
   useLayoutEffect(() => {
     const element = containerRef.current;
@@ -281,7 +253,6 @@ export function useConversationRightDockController({
   }
 
   function handleResizePointerDown(event: ReactPointerEvent<HTMLButtonElement>): void {
-    if (!resizable) return;
     if (event.pointerType === "mouse" && event.button !== 0) return;
     event.preventDefault();
     const rect = containerRef.current?.getBoundingClientRect();
@@ -326,12 +297,8 @@ export function useConversationRightDockController({
     rootRef,
     containerRef,
     pageRequest,
-    requestedOpen: intentOpen,
-    available,
-    renderedOpen: visible,
     visible,
-    expanded,
-    resizable,
+    expanded: presence.expanded,
     resizing,
     width,
     containerWidth,
@@ -368,10 +335,4 @@ function readLayoutVariable(element: HTMLElement | null, name: string, fallback:
   if (!element) return fallback;
   const value = Number.parseFloat(globalThis.getComputedStyle(element).getPropertyValue(name));
   return Number.isFinite(value) ? value : fallback;
-}
-
-function readViewportWidth(): number {
-  return typeof globalThis.innerWidth === "number" && globalThis.innerWidth > 0
-    ? globalThis.innerWidth
-    : Number.POSITIVE_INFINITY;
 }

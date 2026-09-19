@@ -4,24 +4,6 @@ import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
 import { createDaemonServer } from "../dist/index.js";
-import { SUPPORTED_LOCALES } from "../../localization/dist/index.js";
-import { parseWorkspaceSettingsUpdate } from "../dist/features/settings/effective-config.js";
-
-test("workspace settings schema accepts exactly the shared locale registry", () => {
-  for (const locale of SUPPORTED_LOCALES) {
-    const parsed = parseWorkspaceSettingsUpdate({ locale, responseLanguage: locale });
-    assert.equal(parsed.locale, locale);
-    assert.equal(parsed.responseLanguage, locale);
-  }
-  assert.throws(
-    () => parseWorkspaceSettingsUpdate({ locale: "xx-YY" }),
-    /locale must be a supported locale/u,
-  );
-  assert.throws(
-    () => parseWorkspaceSettingsUpdate({ responseLanguage: "xx-YY" }),
-    /responseLanguage must be follow_user, a supported locale, or null/u,
-  );
-});
 
 test("effective config reports user defaults and workspace execution sources", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-effective-config-workspace-"));
@@ -155,7 +137,7 @@ test("effective config reports user settings diagnostics without applying invali
       schemaVersion: 1,
       theme: "sepia",
       locale: "",
-      responseLanguage: "xx-YY",
+      responseLanguage: "fr-FR",
       lingConversationTone: "verbose",
     }), "utf8");
     await writeFile(resolve(userRoot, "config.json"), JSON.stringify({

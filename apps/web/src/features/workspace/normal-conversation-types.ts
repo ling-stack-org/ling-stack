@@ -52,7 +52,6 @@ export interface ConversationHomeMessage {
   readonly role: "user" | "assistant" | "system";
   readonly authorLabel?: string;
   readonly content: string;
-  readonly errorMessage?: string;
   readonly attachments?: readonly ConversationAttachment[];
   readonly fileRefs?: readonly ChannelMessageFileRef[];
   readonly status?: ConversationTranscriptStatus;
@@ -124,15 +123,10 @@ export interface ConversationHomeProps {
   readonly stopping?: boolean;
   readonly fullAccessConfirmed?: boolean;
   readonly onOpenRun?: (runId: string) => void;
-  readonly onResolveApproval: (
-    approvalId: string,
-    decision: ApprovalResolution,
-    reason?: string,
-    proposedRuleFingerprint?: string,
-  ) => void;
+  readonly onResolveApproval: (approvalId: string, decision: ApprovalResolution, reason?: string) => void;
   readonly onOpenModelWorkbench?: () => void;
   readonly onConfirmFullAccess?: () => Promise<PermissionConfirmation | undefined>;
-  readonly onConfirmFullAccessSelection?: () => Promise<PermissionConfirmation | undefined>;
+  readonly onConfirmFullAccessSelection?: () => PermissionConfirmation;
   readonly onFullAccessConversationBound?: (threadId: string) => void;
   readonly onRefreshConversation?: () => void | Promise<void>;
   readonly onStopConversation?: (target: ConversationActiveReplyTarget) => void | Promise<void>;

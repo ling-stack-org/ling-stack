@@ -15,7 +15,6 @@ import type {
   EffectiveConfigSource,
   EffectiveConfigValue,
 } from "@ling-stack/contracts";
-import { isSupportedLocale } from "@ling-stack/localization";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import {
   loadWorkspaceRuntimeSettingsWithSources,
@@ -26,7 +25,7 @@ import {
 
 interface UserSettingsLayer {
   readonly theme?: "light" | "dark" | "system";
-  readonly locale?: WorkspaceSettings["locale"];
+  readonly locale?: string;
   readonly responseLanguage?: WorkspaceSettings["responseLanguage"];
   readonly lingConversationTone?: WorkspaceSettings["lingConversationTone"];
 }
@@ -169,7 +168,7 @@ export function parseWorkspaceSettingsUpdate(value: unknown): UpdateWorkspaceSet
   return {
     workspaceCwd: readNullableString(record.workspaceCwd, "workspaceCwd"),
     theme: readNullableTheme(record.theme),
-    locale: readNullableLocale(record.locale),
+    locale: readNullableString(record.locale, "locale"),
     responseLanguage: readNullableResponseLanguagePreference(record.responseLanguage),
     lingConversationTone: readNullableLingConversationTone(record.lingConversationTone),
     defaultProviderPresetId: readNullableString(record.defaultProviderPresetId, "defaultProviderPresetId"),
@@ -276,7 +275,7 @@ async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigD
   }
   const result: {
     theme?: "light" | "dark" | "system";
-    locale?: WorkspaceSettings["locale"];
+    locale?: string;
     responseLanguage?: WorkspaceSettings["responseLanguage"];
     lingConversationTone?: WorkspaceSettings["lingConversationTone"];
   } = {};
@@ -284,7 +283,7 @@ async function readUserSettingsLayer(path: string, diagnostics: EffectiveConfigD
   if (theme) {
     result.theme = theme;
   }
-  const locale = readOptionalLocale(record.locale, path, diagnostics);
+  const locale = readOptionalNonEmptyString(record.locale, "locale", path, diagnostics, "user_settings_invalid_locale");
   if (locale) {
     result.locale = locale;
   }
@@ -371,18 +370,8 @@ function readNullableResponseLanguagePreference(value: unknown): UpdateWorkspace
   if (value === null) {
     return null;
   }
-  if (value !== "follow_user" && !isSupportedLocale(value)) {
-    throw new Error("responseLanguage must be follow_user, a supported locale, or null");
-  }
-  return value;
-}
-
-function readNullableLocale(value: unknown): UpdateWorkspaceSettingsInput["locale"] {
-  if (value === undefined || value === null) {
-    return value;
-  }
-  if (!isSupportedLocale(value)) {
-    throw new Error("locale must be a supported locale or null");
+  if (value !== "follow_user" && value !== "zh-CN" && value !== "en-US") {
+    throw new Error("responseLanguage must be follow_user, zh-CN, en-US, or null");
   }
   return value;
 }
@@ -541,29 +530,13 @@ function readOptionalResponseLanguage(value: unknown, path: string, diagnostics:
   if (value === undefined) {
     return undefined;
   }
-  if (value === "follow_user" || isSupportedLocale(value)) {
+  if (value === "follow_user" || value === "zh-CN" || value === "en-US") {
     return value;
   }
   diagnostics.push({
     level: "warning",
     code: "user_settings_invalid_response_language",
-    message: "responseLanguage must be follow_user or a supported locale.",
-    path,
-  });
-  return undefined;
-}
-
-function readOptionalLocale(value: unknown, path: string, diagnostics: EffectiveConfigDiagnostic[]): WorkspaceSettings["locale"] | undefined {
-  if (value === undefined) {
-    return undefined;
-  }
-  if (isSupportedLocale(value)) {
-    return value;
-  }
-  diagnostics.push({
-    level: "warning",
-    code: "user_settings_invalid_locale",
-    message: "locale must be a supported locale.",
+    message: "responseLanguage must be follow_user, zh-CN, or en-US.",
     path,
   });
   return undefined;

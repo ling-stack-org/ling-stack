@@ -13,7 +13,6 @@ import {
   type ComputerControlPermissionKind,
   type DesktopRect,
   type DesktopMobileAccessCapabilities,
-  type DesktopWindowState,
 } from "../shared/desktop-capabilities.js";
 import { DESKTOP_IPC_CHANNELS } from "../shared/ipc-channels.js";
 import type { ComputerUsePreviewCoordinator } from "./computer-use/coordinator.js";
@@ -45,7 +44,6 @@ export function registerDesktopIpc(input: {
   readonly navigationIntents?: DesktopNavigationIntentStore;
   readonly themeStore?: DesktopRendererThemeStore;
   readonly mobileAccess?: DesktopMobileAccessCapabilities;
-  readonly windowControlsEnabled?: boolean;
   readonly fixedComputerUseConversationId?: string;
   readonly ipcMainImpl?: Pick<IpcMain, "handle" | "on" | "removeHandler" | "removeAllListeners">;
 }): () => void {
@@ -64,41 +62,6 @@ export function registerDesktopIpc(input: {
     input.getMainWindow()?.webContents.id === event.sender.id;
   const isPreviewSender = (event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent): boolean =>
     input.computerUse.ownsPreviewWebContents(event.sender.id);
-  let windowControlOwner: BrowserWindow | undefined;
-  const reportWindowState = (): void => {
-    const state = readWindowState();
-    if (state) {
-      sendToLiveDesktopWindow(
-        input.getMainWindow(),
-        DESKTOP_IPC_CHANNELS.windowStateChanged,
-        state,
-      );
-    }
-  };
-  const ensureWindowControlOwner = (): BrowserWindow | undefined => {
-    const window = input.windowControlsEnabled ? input.getMainWindow() : undefined;
-    if (!window || window.isDestroyed()) return undefined;
-    if (windowControlOwner !== window) {
-      windowControlOwner?.off("maximize", reportWindowState);
-      windowControlOwner?.off("unmaximize", reportWindowState);
-      windowControlOwner?.off("restore", reportWindowState);
-      window.on("maximize", reportWindowState);
-      window.on("unmaximize", reportWindowState);
-      window.on("restore", reportWindowState);
-      windowControlOwner = window;
-    }
-    return window;
-  };
-  const readWindowState = (): DesktopWindowState | undefined => {
-    const window = ensureWindowControlOwner();
-    return window ? { maximized: window.isMaximized() } : undefined;
-  };
-  const readWindowForControl = (
-    event: Electron.IpcMainInvokeEvent | Electron.IpcMainEvent,
-  ): BrowserWindow | undefined => {
-    if (!input.windowControlsEnabled || !isMainWindowSender(event)) return undefined;
-    return ensureWindowControlOwner();
-  };
 
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.daemonStatus, async (event) =>
     isMainWindowSender(event) ? input.runtime.status : { state: "disconnected", baseUrl: "", ownedByDesktop: false });
@@ -184,30 +147,6 @@ export function registerDesktopIpc(input: {
     if (isMainWindowSender(event)) {
       themeStore.report(value);
     }
-  });
-  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.windowStateGet, async (event) =>
-    isMainWindowSender(event) ? readWindowState() : undefined);
-  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.windowMinimize, async (event) => {
-    const window = readWindowForControl(event);
-    if (!window) return { accepted: false, reason: "unauthorized_or_unsupported_window_control" };
-    window.minimize();
-    return { accepted: true };
-  });
-  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.windowToggleMaximize, async (event) => {
-    const window = readWindowForControl(event);
-    if (!window) return { accepted: false, reason: "unauthorized_or_unsupported_window_control" };
-    if (window.isMaximized()) {
-      window.unmaximize();
-    } else {
-      window.maximize();
-    }
-    return { accepted: true };
-  });
-  desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.windowClose, async (event) => {
-    const window = readWindowForControl(event);
-    if (!window) return { accepted: false, reason: "unauthorized_or_unsupported_window_control" };
-    window.close();
-    return { accepted: true };
   });
   desktopIpcMain.handle(DESKTOP_IPC_CHANNELS.computerUseSummaryGet, async (event) =>
     isMainWindowSender(event) ? input.computerUse.getSummary() : undefined);
@@ -483,9 +422,6 @@ export function registerDesktopIpc(input: {
   return () => {
     unsubscribeStatus();
     unsubscribeNavigationIntents();
-    windowControlOwner?.off("maximize", reportWindowState);
-    windowControlOwner?.off("unmaximize", reportWindowState);
-    windowControlOwner?.off("restore", reportWindowState);
     themeStore.dispose();
     for (const channel of Object.values(DESKTOP_IPC_CHANNELS)) {
       desktopIpcMain.removeHandler(channel);

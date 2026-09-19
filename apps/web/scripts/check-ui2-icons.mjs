@@ -3,7 +3,6 @@ import { relative, resolve } from "node:path";
 import { ts, visitTypeScriptNode, withTypeScriptSourceFiles } from "./typescript-ast.mjs";
 
 const typedActionOwners = [
-  "src/app/DesktopWindowChrome.tsx",
   "src/features/automations/AutomationDefinitionRow.tsx",
   "src/features/automations/AutomationDraftList.tsx",
   "src/features/automations/AutomationListPane.tsx",
@@ -21,8 +20,7 @@ const typedActionOwners = [
   "src/features/media-production/workflows/WorkflowConnectionWorkspace.tsx",
   "src/features/media-production/workflows/WorkflowLibraryWorkspace.tsx",
   "src/features/navigation/SidebarNavigation.tsx",
-  "src/features/navigation/SidebarCompactRail.tsx",
-  "src/features/navigation/SidebarPrimaryNavigation.tsx",
+  "src/features/navigation/SidebarSection.tsx",
   "src/features/navigation/SidebarSectionMenu.tsx",
   "src/features/plugins/CuaDriverInstallDrawer.tsx",
   "src/features/plugins/PluginRowActions.tsx",

@@ -20,14 +20,6 @@
   background: var(--ling-bg-panel);
 }
 
-.teammate-workspace.chat-mode.titlebar-window {
-  grid-template-rows: minmax(0, 1fr);
-}
-
-.teammate-workspace.chat-mode.titlebar-window > .teammate-private-chat {
-  grid-row: 1;
-}
-
 .teammate-workspace.chat-mode > .inline-error,
 .teammate-workspace.chat-mode > .client-empty-state {
   grid-column: 1 / -1;
@@ -234,4 +226,15 @@
   height: var(--ling-control-sm);
   min-height: var(--ling-control-sm);
   border-radius: var(--ling-radius-md);
+}
+
+@media (max-width: 900px) {
+  .teammate-private-chat.with-right-dock {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .teammate-private-chat.with-right-dock > .workspace-right-dock-resize-handle,
+  .teammate-private-chat.with-right-dock > .workspace-right-dock-frame {
+    display: none;
+  }
 }

@@ -18,10 +18,8 @@ import {
   X,
 } from "lucide-react";
 import { useCallback, useEffect, useLayoutEffect, useMemo, useState, useSyncExternalStore } from "react";
-import { DEFAULT_COMPUTER_USE_PREVIEW_LOCALE } from "../../shared/desktop-capabilities.js";
 import {
   createComputerUsePreviewTranslator,
-  loadComputerUsePreviewTranslator,
   normalizeComputerUsePreviewLocale,
 } from "./messages.js";
 import { ComputerUsePageDeck } from "./ComputerUsePageDeck.js";
@@ -47,28 +45,11 @@ export function ComputerUsePreviewApp({
 }) {
   const state = useSyncExternalStore(controller.subscribe, controller.getState, controller.getState);
   const { openCommandState, snapshot, stopCommandState } = state;
-  const requestedLocale = normalizeComputerUsePreviewLocale(snapshot.locale);
-  const [translation, setTranslation] = useState(() => ({
-    locale: DEFAULT_COMPUTER_USE_PREVIEW_LOCALE,
-    t: createComputerUsePreviewTranslator(DEFAULT_COMPUTER_USE_PREVIEW_LOCALE),
-  }));
-  const locale = translation.locale;
-  const t = translation.t;
-  useEffect(() => {
-    if (requestedLocale === translation.locale) return;
-    let cancelled = false;
-    void loadComputerUsePreviewTranslator(requestedLocale)
-      .then((nextTranslator) => {
-        if (!cancelled) setTranslation({ locale: requestedLocale, t: nextTranslator });
-      })
-      .catch(() => undefined);
-    return () => {
-      cancelled = true;
-    };
-  }, [requestedLocale, translation.locale]);
+  const locale = normalizeComputerUsePreviewLocale(snapshot.locale);
+  const t = useMemo(() => createComputerUsePreviewTranslator(locale), [locale]);
   const viewModel = useMemo(
-    () => createComputerUsePreviewViewModel(snapshot, { openCommandState, stopCommandState }, t),
-    [openCommandState, snapshot, stopCommandState, t],
+    () => createComputerUsePreviewViewModel(snapshot, { openCommandState, stopCommandState }),
+    [openCommandState, snapshot, stopCommandState],
   );
   const pageDeck = useMemo(() => createComputerUsePipPageDeckViewModel(snapshot), [snapshot]);
   const thumbnails = useComputerUsePageThumbnails(snapshot);

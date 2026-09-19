@@ -11,9 +11,6 @@
     }
   },
   "scripts": {
-    "build:ci": "tsc -p tsconfig.json",
-    "typecheck:ci": "tsc -p tsconfig.json --noEmit",
-    "test:ci": "node --test test/*.test.mjs",
     "build": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json",
     "typecheck": "corepack pnpm --filter @ling-stack/contracts build && corepack pnpm --filter @ling-stack/remote-protocol build && tsc -p tsconfig.json --noEmit",
     "test": "corepack pnpm run build && node --test test/*.test.mjs"
