@@ -9,11 +9,13 @@ import {
   createSqliteRunStore,
   validateTerminalReport,
 } from "../../core/dist/index.js";
+import { channelOperationPlanFingerprintV1 } from "../../contracts/dist/index.js";
 import {
   collectRunTerminalReportEvidence,
   collectTurnTerminalReportEvidence,
   collectWorkflowTerminalReportEvidence,
 } from "../dist/features/channels/terminal-report-evidence.js";
+import { createDelegatedStepRequirement } from "../dist/features/channels/workflow-step-requirement.js";
 
 test("workflow terminal evidence aggregates rounds, actions, checks, artifacts, and actual participants", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-workflow-evidence-"));
@@ -837,6 +839,137 @@ test("workflow terminal evidence promotes delegated node assertions into verific
     assert.equal(validateTerminalReport(report, snapshot).ok, true);
     assert.equal(report.verification.length, 1);
     assert.equal(report.verification[0]?.status, "passed");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workflow terminal evidence scopes required-operation risks to the owning step", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-terminal-report-operation-ownership-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-09-20T10:00:00.000Z";
+    const channel = store.createChannel({ name: "Operation ownership", boundPath: cwd }, now);
+    const workflow = store.createChannelWorkflow({
+      channelId: channel.id,
+      title: "Designer review and Engineer command",
+      objective: "Review the channel and run the required command.",
+      status: "succeeded",
+      createdBy: "ling_agent",
+    }, now);
+    const command = "node -e \"process.stdout.write('N05')\"";
+    const sourceRefs = [{ itemId: "source_n05", quote: `@Engineer 执行命令 ${command}` }];
+    const operations = [{
+      id: "run_n05_command",
+      kind: "run_command",
+      targetKind: "command",
+      targetRef: { type: "operation", id: "target:run_n05_command", label: command },
+      commandMatchPolicy: { kind: "exact_command", command },
+      required: true,
+      dependsOn: [],
+      binding: {
+        schemaVersion: 1,
+        ownerParticipantId: "teammate_builtin_engineer",
+        sourceRefs,
+        inputRefs: [],
+        outputRefs: [],
+        effectScope: {
+          readPaths: [],
+          writePaths: [],
+          exactCommands: [command],
+          allowEnvironmentAccess: false,
+          allowNetworkAccess: false,
+        },
+      },
+    }];
+    const executionPlan = {
+      bindingVersion: 1,
+      operations,
+      fingerprint: channelOperationPlanFingerprintV1(operations),
+    };
+    let designerStep = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Designer review",
+      prompt: "Review the channel rendering.",
+      toParticipantId: "teammate_builtin_designer",
+      toParticipantLabel: "Designer",
+      status: "succeeded",
+      metadata: {
+        executionPlan,
+        executionOperationIds: [],
+      },
+    }, now);
+    designerStep = store.updateChannelWorkflowStep(designerStep.id, {
+      metadata: {
+        ...designerStep.metadata,
+        delegatedRequirement: createDelegatedStepRequirement({
+          workflow,
+          step: designerStep,
+          participant: { expectedOutcome: "synthesis" },
+          manifestFingerprint: "manifest_n05",
+        }),
+      },
+    }, now);
+    let engineerStep = store.createChannelWorkflowStep({
+      workflowId: workflow.id,
+      title: "Engineer command",
+      prompt: "Run the N05 command.",
+      toParticipantId: "teammate_builtin_engineer",
+      toParticipantLabel: "Engineer",
+      status: "succeeded",
+      metadata: {
+        executionPlan,
+        executionOperationIds: ["run_n05_command"],
+      },
+    }, now);
+    engineerStep = store.updateChannelWorkflowStep(engineerStep.id, {
+      metadata: {
+        ...engineerStep.metadata,
+        delegatedRequirement: createDelegatedStepRequirement({
+          workflow,
+          step: engineerStep,
+          participant: { expectedOutcome: "execution" },
+          manifestFingerprint: "manifest_n05",
+        }),
+        executionVerification: {
+          status: "blocked",
+          checkedAt: now,
+          operationResults: [{
+            operationId: "run_n05_command",
+            status: "missing",
+            evidenceActionIds: [],
+            reasonCode: "required_operation_missing_evidence",
+          }],
+        },
+      },
+    }, now);
+
+    const unverified = collectWorkflowTerminalReportEvidence(store, workflow.id, { generatedAt: now });
+    assert.equal(unverified.risks.some((risk) =>
+      risk.id === `workflow-diagnostic:${designerStep.id}:operation_unverified`), false);
+    assert.equal(unverified.risks.some((risk) =>
+      risk.id === `workflow-diagnostic:${engineerStep.id}:operation_unverified`), true);
+
+    store.updateChannelWorkflowStep(engineerStep.id, {
+      metadata: {
+        ...engineerStep.metadata,
+        executionVerification: {
+          status: "verified",
+          checkedAt: "2026-09-20T10:00:01.000Z",
+          operationResults: [{
+            operationId: "run_n05_command",
+            status: "succeeded",
+            evidenceActionIds: ["action_n05_command"],
+          }],
+        },
+      },
+    }, "2026-09-20T10:00:01.000Z");
+    const verified = collectWorkflowTerminalReportEvidence(store, workflow.id, {
+      generatedAt: "2026-09-20T10:00:02.000Z",
+    });
+    assert.equal(verified.risks.some((risk) =>
+      risk.id.endsWith(":operation_unverified")), false);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

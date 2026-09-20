@@ -53,6 +53,20 @@ test("packaged continuity multi-agent fixture satisfies the current source-bound
   ]);
 });
 
+test("N05 fixture binds the command from the latest turn instead of an older repeated command", async () => {
+  const currentCommand = `node -e "process.stdout.write('N05-FIX-20260920-current')"`;
+  const sourceText = `@Designer 检查本频道消息渲染并返回一条 evidence。 @Engineer 执行命令 ${currentCommand}，并返回 stdout 与 exit code。`;
+  const prompt = [
+    "Item old-user-turn",
+    `@Designer 检查旧 evidence。 @Engineer 执行命令 node -e "process.stdout.write('N05-FIX-20260920-old')"，并返回 stdout。`,
+    "Latest user turn:",
+    "Turn envelope:",
+    `Text:\n${sourceText}`,
+  ].join("\\n");
+  const result = await assertFixtureBinds({ prompt, sourceText });
+  assert.equal(result.execution.operations[0].commandMatchPolicy.command, currentCommand);
+});
+
 test("packaged naked-ready fixture resolves the dynamic participant and still requires Host evidence", async () => {
   const participant = { id: "teammate_dynamic_naked", displayName: "Naked Ready", roleKey: "engineer", allowedTools: ["write"] };
   const sourceText = "@Naked Ready 请创建 naked-ready.txt 完成 naked-ready delegated task；只有真实 evidence 才能报告成功。";

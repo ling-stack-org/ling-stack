@@ -16,7 +16,7 @@ import { isChannelIntentExecutionPlanV1, channelOperationPlanFingerprintV1 } fro
 const c01 = "【C01 双 Agent 真实协作】请组织 Engineer 与 QA 两位队友协作验收当前工作区的 morning-todo 小项目，两位都是必需参与者。Engineer 先简短叙述，再真实读取 todo.mjs 和 app.js，检查实现并写入 morning-todo/engineer-review.md；QA 先简短叙述，再真实读取 todo.test.mjs 和 index.html，检查测试覆盖与键盘可访问性并写入 morning-todo/qa-review.md。两人只读现有代码，各自只写自己的 review 文件，不修改其他文件、不运行命令、不访问环境或密钥。必须等两位真实文件证据到齐才汇总；若不能委派或工具不可用，明确说明阻塞，不要用“我会做”宣称完成。汇总用两个自然段和三项列表，附两个报告文件链接。";
 const workflowChoice = { action: "workflow_proposal", reason: "Engineer 与 QA 分别读取源码、写自己的 review；只读现有代码，不运行命令，两份文件证据齐备后汇总。" };
 
-async function select(t, body = c01, modelOutput = workflowChoice) {
+async function select(t, body = c01, modelOutput = workflowChoice, options = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-c01-operation-contract-"));
   const store = createSqliteRunStore(cwd);
   t.after(async () => { store.close(); await rm(cwd, { recursive: true, force: true }); });
@@ -25,11 +25,17 @@ async function select(t, body = c01, modelOutput = workflowChoice) {
     api: "google-generative-ai", capabilities: ["chat"], input: ["text"], authHeader: false, enabled: true }, now);
   store.recordProviderCheckResult(provider.id, { ok: true, checkedAt: now, message: "Test fixture only; no provider request" });
   const channel = store.createChannel({ name: "C01 read-only", boundPath: cwd, defaultProviderPresetId: provider.id,
-    allowedTools: ["read", "grep", "find", "ls"] }, now);
-  for (const teammateId of ["teammate_builtin_engineer", "teammate_builtin_qa"]) {
+    allowedTools: options.allowedTools ?? ["read", "grep", "find", "ls"] }, now);
+  const participantIds = options.participantIds ?? ["teammate_builtin_engineer", "teammate_builtin_qa"];
+  for (const teammateId of participantIds) {
     store.replaceTeammateChannelMemberships(teammateId, [{ channelId: channel.id }], now);
   }
-  const sourceMessage = appendChannelItemFixture(store, { channelId: channel.id, authorType: "local-user", body }, now);
+  const sourceMessage = appendChannelItemFixture(store, {
+    channelId: channel.id,
+    authorType: "local-user",
+    body,
+    mentions: options.mentions ?? [],
+  }, now);
   let classifications = 0;
   const result = await selectChannelWorkflowIntent({ store, channel, sourceMessage,
     secretResolver: createCompositeSecretResolver({ env: {} }), config: { channels: { intentSelector: true } },
@@ -41,7 +47,7 @@ async function select(t, body = c01, modelOutput = workflowChoice) {
     } } } }) },
   });
   assert.equal(classifications, 1, "must exercise the real model-policy application path with a static JSON response");
-  assert.deepEqual(store.getChannel(channel.id).allowedTools, ["read", "grep", "find", "ls"]);
+  assert.deepEqual(store.getChannel(channel.id).allowedTools, options.allowedTools ?? ["read", "grep", "find", "ls"]);
   assert.equal(store.listRuns({ channelId: channel.id, limit: 20 }).length, 0);
   assert.equal(store.listTasks({ channelId: channel.id, limit: 20 }).length, 0);
   const decision = store.listChannelIntentDecisions({ sourceItemId: sourceMessage.id, limit: 10 })[0];
@@ -49,6 +55,58 @@ async function select(t, body = c01, modelOutput = workflowChoice) {
   const operations = decision?.execution?.operations ?? [];
   return { result, decision, operations, store, channel };
 }
+
+test("explicit review-only participant stays required when another participant owns the Host operation", async (t) => {
+  const command = `node -e "process.stdout.write('N05-FIX-20260918')"`;
+  const body = `@Designer 检查本频道消息渲染并返回一条 evidence。@Engineer 执行命令 ${command}，并返回 stdout 与 exit code。只有两个 participant evidence 都到齐后才汇总。`;
+  const modelOutput = {
+    action: "execute",
+    reason: "Designer supplies review evidence while Engineer owns the exact command.",
+    execution: {
+      schemaVersion: 2,
+      operations: [{
+        id: "run_n05_command",
+        kind: "run_command",
+        targetKind: "command",
+        required: true,
+        dependsOn: [],
+        owner: {
+          participantId: "teammate_builtin_engineer",
+          sourceQuote: "Engineer",
+        },
+        sourceQuote: `@Engineer 执行命令 ${command}`,
+        command: { text: command, sourceQuote: command },
+      }],
+    },
+  };
+  const { result, decision } = await select(t, body, modelOutput, {
+    participantIds: ["teammate_builtin_designer", "teammate_builtin_engineer"],
+    mentions: [
+      { id: "teammate_builtin_designer", label: "Designer", kind: "ai-teammate" },
+      { id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" },
+    ],
+    allowedTools: ["read", "bash"],
+  });
+
+  assert.equal(result.action, "workflow_proposal", JSON.stringify(result));
+  assert.equal(decision.action, "execute");
+  assert.deepEqual(decision.participantManifest.participants.map((participant) => ({
+    participantId: participant.participantId,
+    expectedOutcome: participant.expectedOutcome,
+    requiredOperationIds: participant.requiredOperationIds,
+  })), [
+    {
+      participantId: "teammate_builtin_designer",
+      expectedOutcome: "synthesis",
+      requiredOperationIds: [],
+    },
+    {
+      participantId: "teammate_builtin_engineer",
+      expectedOutcome: "execution",
+      requiredOperationIds: ["run_n05_command"],
+    },
+  ]);
+});
 
 test("C01 negated edits must not become file_edit of the first read input", async (t) => {
   const { operations } = await select(t);

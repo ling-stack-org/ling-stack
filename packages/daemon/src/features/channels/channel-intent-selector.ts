@@ -449,7 +449,11 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
   const explicitlyRequiredIds = new Set(explicitRequestedParticipantIds(input));
   const participants = candidates.filter((participant) => ownerIds.has(participant.teammate.id)
     || explicitlyRequiredIds.has(participant.teammate.id));
-  if (participants.some((participant) => !ownerIds.has(participant.teammate.id))) {
+  const decisionAction = output.action === "execute" ? "execute" : "workflow_proposal";
+  const participantManifest = createParticipantManifest(input, participants, decisionAction, binding.execution);
+  const participantsMissingRequiredOperations = participantManifest.participants.filter((participant) =>
+    !ownerIds.has(participant.participantId) && participant.expectedOutcome !== "synthesis");
+  if (participantsMissingRequiredOperations.length > 0) {
     const question = "必需参与者缺少明确操作（participant.operations），请补充其读取或输出要求；尚未开始执行。";
     return createClarifyReply(input, "missing_acceptance", "model_policy",
       "Required participants cannot be silently dropped from the bound operation graph.",
@@ -461,7 +465,7 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
     ...binding.capabilityBlockers.map((blocker) => `Participant ${blocker.participantId} is missing required tool ${blocker.tool} for ${blocker.operationId}.`),
     ...(missingChannelTools.length > 0 ? [`Workflow step requires tools not allowed in this channel: ${missingChannelTools.join(", ")}.`] : []),
   ].join("\n");
-  return createWorkflowProposal(input, reasonCode, output.action === "execute" ? "execute" : "workflow_proposal",
+  return createWorkflowProposal(input, reasonCode, decisionAction,
     "model_policy", output.reason, participants, binding.execution, capabilityBlocker ? {
       message: capabilityBlocker,
       code: binding.capabilityBlockers.length > 0 ? "participant_required_tools_unavailable" : "operation_binding_channel_tools_unavailable",

@@ -37,6 +37,38 @@ export function buildPackagedContinuityIntentFixture(input) {
     exactVerificationCommand,
   } = input;
 
+  // N05 is a review-only + execution participant case.  Keep the fixture's
+  // source quotes tied to the actual prompt so the Host binding contract can
+  // verify provenance instead of falling back to the older file/QA example.
+  if (/N05-FIX-20260920/iu.test(prompt)) {
+    // The selector context contains prior turns before the latest message.
+    // Match only the current turn so a repeated N05 command cannot be rebound
+    // to an older source quote and fail the Host provenance check.
+    const currentTurn = prompt.match(/Latest user turn:[\s\S]*$/iu)?.[0] ?? prompt;
+    const commandInstruction = currentTurn.match(/@Engineer\s+执行命令\s+(.+?)(?:，|,).*?stdout/iu);
+    const command = commandInstruction?.[1]?.trim()
+      ?? `node -e "process.stdout.write('N05-FIX-20260920')"`;
+    const commandSourceQuote = command;
+    const operationSourceQuote = commandInstruction?.[0]?.trim() ?? `@Engineer 执行命令 ${command}`;
+    return {
+      action: "execute",
+      reason: "Designer supplies review evidence while Engineer owns the exact command.",
+      execution: {
+        schemaVersion: 2,
+        operations: [{
+          id: "run_n05_command",
+          kind: "run_command",
+          targetKind: "command",
+          required: true,
+          dependsOn: [],
+          owner: explicitOwner("teammate_builtin_engineer", "@Engineer"),
+          sourceQuote: operationSourceQuote,
+          command: { text: command, sourceQuote: commandSourceQuote },
+        }],
+      },
+    };
+  }
+
   if (/naked-ready/i.test(prompt)) {
     return {
       action: "execute",
