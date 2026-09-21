@@ -33,13 +33,13 @@
     "expo-camera": "~57.0.3",
     "expo-dev-client": "~57.0.7",
     "expo-font": "~57.0.1",
-    "expo-image-picker": "~57.0.7",
+    "expo-image-picker": "~58.0.3",
     "expo-network": "~57.0.1",
     "expo-secure-store": "~57.0.1",
-    "react": "19.2.8",
+    "react": "19.3.0",
     "react-native": "0.87.1",
-    "react-native-safe-area-context": "~5.9.1",
-    "react-native-screens": "~4.27.0"
+    "react-native-safe-area-context": "~5.10.0",
+    "react-native-screens": "~4.28.0"
   },
   "devDependencies": {
     "expo-doctor": "1.20.4",
