@@ -1,9 +1,10 @@
 import {
   builtinMediaModelCandidates,
   enrichProviderModelOption,
+  normalizeProviderBaseUrlForAdapter,
   normalizeProviderThinkingModes,
   normalizeProviderThinkingSupport,
-  normalizeProviderBaseUrlForAdapter,
+  providerModelCatalogInfo,
   providerMediaKind,
   providerApis,
   providerCapabilities,
@@ -24,9 +25,15 @@ import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { isRecord, removeUndefined, validateUrl } from "../../shared/validation.js";
 import {
   ProviderSecretMaterializationError,
-  applyProviderAuthHeaders,
   materializeProviderSecrets,
 } from "./secret-materializer.js";
+import { isLocalProviderSecretRef } from "./secrets.js";
+import {
+  createProviderModelDiscoveryRequest,
+  providerModelDiscoveryItems,
+  providerModelDiscoveryNeedsApiKey,
+  supportsProviderModelDiscovery,
+} from "./model-discovery-adapters.js";
 
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
 const providerModelInputTypes = ["text", "image"] as const;
@@ -36,26 +43,26 @@ export async function listProviderModels(
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,
 ): Promise<ProviderModelListResponse> {
-  const preset = providerModelListInputToPreset(input);
+  const preset = providerModelListInputToPreset(store, input);
   if (preset.baseUrl) {
     validateUrl(preset.baseUrl, "baseUrl");
   }
   if (preset.api === "media-job") {
     return await listMediaProviderModels(store, preset, input, secretResolver);
   }
-  if (!["openai-completions", "openai-responses", "anthropic-messages"].includes(preset.api)) {
+  if (!supportsProviderModelDiscovery(preset)) {
     throw new HttpError(400, "unsupported_capability", `Model discovery is not implemented for ${preset.api}.`);
   }
   const materialized = materializeProviderModelListSecrets(store, preset, input, secretResolver);
-  if ((preset.api === "anthropic-messages" || preset.authHeader !== false) && !materialized.apiKeySecret.configured) {
+  if (providerModelDiscoveryNeedsApiKey(preset, materialized.headers) && !materialized.apiKeySecret.configured) {
     throw new HttpError(400, "secret_missing", "API key missing. Add an API key before fetching models.");
   }
 
-  const source = buildProviderModelsUrl(preset);
+  const request = createProviderModelDiscoveryRequest(preset, materialized.headers, materialized.apiKeySecret.value);
   try {
-    const response = await fetch(source, {
+    const response = await fetch(request.source, {
       method: "GET",
-      headers: applyProviderAuthHeaders(materialized.headers, preset, materialized.apiKeySecret.value),
+      headers: request.headers,
       signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
     });
     if (!response.ok) {
@@ -66,10 +73,7 @@ export async function listProviderModels(
       );
     }
     const body = await response.json() as unknown;
-    return {
-      source,
-      models: parseProviderModelsResponse(body, preset),
-    };
+    return providerModelListResponse(request.source, parseProviderModelsResponse(body, preset));
   } catch (error) {
     if (error instanceof HttpError) {
       throw error;
@@ -92,22 +96,22 @@ async function listMediaProviderModels(
   const builtin = builtinMediaModelCandidates(mediaKind);
   const materialized = materializeProviderModelListSecrets(store, preset, input, secretResolver);
   if (preset.authHeader === false && !materialized.apiKeySecret.configured) {
-    return { source: "builtin:generation-models", models: builtin };
+    return providerModelListResponse("builtin:generation-models", builtin);
   }
   if ((preset.authHeader !== false || preset.apiKeyRef) && !materialized.apiKeySecret.configured) {
     throw new HttpError(400, "secret_missing", "API key missing. Add an API key before fetching models.");
   }
 
-  const source = buildProviderModelsUrl(preset);
+  const request = createProviderModelDiscoveryRequest(preset, materialized.headers, materialized.apiKeySecret.value);
   try {
-    const response = await fetch(source, {
+    const response = await fetch(request.source, {
       method: "GET",
-      headers: applyProviderAuthHeaders(materialized.headers, preset, materialized.apiKeySecret.value),
+      headers: request.headers,
       signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
     });
     if (!response.ok) {
       if (builtin.length > 0) {
-        return { source: "builtin:generation-models", models: builtin };
+        return providerModelListResponse("builtin:generation-models", builtin);
       }
       throw new HttpError(
         response.status === 401 || response.status === 403 ? 401 : 400,
@@ -117,16 +121,13 @@ async function listMediaProviderModels(
     }
     const body = await response.json() as unknown;
     const models = parseProviderModelsResponse(body, preset);
-    return {
-      source,
-      models: models.length > 0 ? models : builtin,
-    };
+    return providerModelListResponse(request.source, models.length > 0 ? models : builtin);
   } catch (error) {
     if (error instanceof HttpError) {
       throw error;
     }
     if (builtin.length > 0) {
-      return { source: "builtin:generation-models", models: builtin };
+      return providerModelListResponse("builtin:generation-models", builtin);
     }
     throw new HttpError(
       400,
@@ -136,9 +137,36 @@ async function listMediaProviderModels(
   }
 }
 
-function providerModelListInputToPreset(input: ProviderModelListRequest): ProviderPreset {
+function providerModelListInputToPreset(
+  store: ProviderStoreFacet,
+  input: ProviderModelListRequest,
+): ProviderPreset {
+  const savedPreset = input.providerPresetId
+    ? store.getProviderPreset(input.providerPresetId)
+    : undefined;
+  if (input.providerPresetId && !savedPreset) {
+    throw new HttpError(404, "provider_not_found", `Provider preset not found: ${input.providerPresetId}`);
+  }
+
+  const requestedLocalRef = input.apiKeyRef && isLocalProviderSecretRef(input.apiKeyRef)
+    ? input.apiKeyRef
+    : undefined;
+  if (requestedLocalRef && requestedLocalRef !== savedPreset?.apiKeyRef) {
+    throw new HttpError(400, "invalid_secret_ref", "The local API key does not belong to this provider preset.");
+  }
+  const useSavedLocalSecret = !input.apiKey
+    && Boolean(savedPreset?.apiKeyRef && isLocalProviderSecretRef(savedPreset.apiKeyRef))
+    && (!requestedLocalRef || requestedLocalRef === savedPreset?.apiKeyRef);
+  if (useSavedLocalSecret && savedPreset && !providerModelConnectionMatchesSavedPreset(input, savedPreset)) {
+    throw new HttpError(
+      409,
+      "provider_model_connection_changed",
+      "Save the provider connection changes or enter the API key again before fetching models.",
+    );
+  }
+
   return {
-    id: "provider_model_probe",
+    id: useSavedLocalSecret && savedPreset ? savedPreset.id : "provider_model_probe",
     kind: input.kind,
     displayName: "Provider model probe",
     providerId: input.providerId,
@@ -146,9 +174,13 @@ function providerModelListInputToPreset(input: ProviderModelListRequest): Provid
     api: input.api,
     providerTransport: input.providerTransport,
     baseUrl: input.baseUrl,
-    apiKeyRef: input.apiKey ? "__request_api_key__" : input.apiKeyRef,
-    headers: input.headers ?? {},
-    secretHeaderRefs: input.secretHeaderRefs ?? {},
+    apiKeyRef: input.apiKey
+      ? "__request_api_key__"
+      : useSavedLocalSecret
+        ? savedPreset?.apiKeyRef
+        : input.apiKeyRef,
+    headers: useSavedLocalSecret ? savedPreset?.headers ?? {} : input.headers ?? {},
+    secretHeaderRefs: useSavedLocalSecret ? savedPreset?.secretHeaderRefs ?? {} : input.secretHeaderRefs ?? {},
     authHeader: input.authHeader ?? true,
     reasoning: false,
     thinkingModes: [],
@@ -159,6 +191,17 @@ function providerModelListInputToPreset(input: ProviderModelListRequest): Provid
     createdAt: new Date(0).toISOString(),
     updatedAt: new Date(0).toISOString(),
   };
+}
+
+function providerModelConnectionMatchesSavedPreset(
+  input: ProviderModelListRequest,
+  savedPreset: ProviderPreset,
+): boolean {
+  return input.kind === savedPreset.kind
+    && input.providerId === savedPreset.providerId
+    && input.api === savedPreset.api
+    && normalizeProviderBaseUrlForAdapter(input) === normalizeProviderBaseUrlForAdapter(savedPreset)
+    && (input.authHeader ?? true) === (savedPreset.authHeader ?? true);
 }
 
 function materializeProviderModelListSecrets(
@@ -182,21 +225,13 @@ function materializeProviderModelListSecrets(
   }
 }
 
-function buildProviderModelsUrl(preset: ProviderPreset): string {
-  return `${normalizeProviderBaseUrl(preset)}/models`;
-}
-
-function normalizeProviderBaseUrl(preset: ProviderPreset): string {
-  return normalizeProviderBaseUrlForAdapter(preset);
-}
-
 async function providerModelListFailureMessage(response: Response, redactionValues: readonly string[]): Promise<string> {
   const bodyText = redactTextWithSecrets(await readLimitedResponseText(response, 800), redactionValues);
   return `Provider returned HTTP ${response.status}${bodyText ? `: ${bodyText}` : "."}`;
 }
 
 function parseProviderModelsResponse(body: unknown, preset: ProviderPreset): readonly ProviderModelOption[] {
-  const data = isRecord(body) && Array.isArray(body.data) ? body.data : Array.isArray(body) ? body : [];
+  const data = providerModelDiscoveryItems(body, preset);
   const models: ProviderModelOption[] = [];
   const seen = new Set<string>();
   for (const item of data) {
@@ -211,6 +246,18 @@ function parseProviderModelsResponse(body: unknown, preset: ProviderPreset): rea
     }
   }
   return models;
+}
+
+function providerModelListResponse(
+  source: string,
+  models: readonly ProviderModelOption[],
+): ProviderModelListResponse {
+  return {
+    source,
+    fetchedAt: new Date().toISOString(),
+    catalog: providerModelCatalogInfo(),
+    models,
+  };
 }
 
 function parseProviderModelOption(value: unknown, preset: ProviderPreset): ProviderModelOption | undefined {

@@ -8,7 +8,9 @@ import {
   defaultProviderTemplates,
   enrichProviderModelOption,
   filterMediaModelOptions,
+  findProviderModelCatalogRecord,
   inferGenerationModelFamily,
+  isProviderModelCatalogStale,
   normalizeMediaProviderCompat,
   normalizeProviderPresetForMediaRuntime,
   resolveGenerationProviderRuntimeState,
@@ -168,6 +170,49 @@ test("provider model enrichment uses catalog fallback only when upstream is sile
   const unknownVision = enrichProviderModelOption({ id: "gpt-5" }, context);
   assert.notEqual(unknownVision.api, "media-job");
   assert.ok(!unknownVision.capabilities.includes("image_generate"));
+});
+
+test("versioned provider model catalog prefers exact metadata and preserves explicit upstream capabilities", () => {
+  const openAiContext = {
+    kind: "openai",
+    providerId: "openai",
+    api: "openai-responses",
+  };
+  const catalog = enrichProviderModelOption({ id: "gpt-5-nano" }, openAiContext);
+  assert.equal(catalog.capabilitySource, "model_catalog");
+  assert.equal(catalog.contextWindow, 400000);
+  assert.ok(catalog.capabilities.includes("reasoning"));
+  assert.ok(catalog.capabilities.includes("vision"));
+
+  const upstream = enrichProviderModelOption({
+    id: "gpt-5-nano",
+    capabilities: ["chat"],
+    capabilitySource: "upstream",
+    capabilityConfidence: "known",
+  }, openAiContext);
+  assert.deepEqual(upstream.capabilities, ["chat"]);
+  assert.equal(upstream.capabilitySource, "upstream");
+});
+
+test("unknown compatible relays use only unique exact catalog ids and otherwise stay conservative", () => {
+  const relayContext = {
+    kind: "openai-compatible",
+    providerId: "private-relay",
+    api: "openai-completions",
+  };
+  const unique = findProviderModelCatalogRecord("claude-sonnet-4-6", relayContext);
+  assert.equal(unique?.providerId, "anthropic");
+
+  const unknown = enrichProviderModelOption({ id: "future-private-model" }, relayContext);
+  assert.deepEqual(unknown.capabilities, ["chat"]);
+  assert.equal(unknown.capabilitySource, "conservative_default");
+  assert.equal(unknown.capabilityConfidence, "conservative");
+});
+
+test("provider model catalog stale calculation uses the reviewed 45 day threshold", () => {
+  assert.equal(isProviderModelCatalogStale("2026-08-20", new Date("2026-09-22T00:00:00.000Z")), false);
+  assert.equal(isProviderModelCatalogStale("2026-07-01", new Date("2026-09-22T00:00:00.000Z")), true);
+  assert.equal(isProviderModelCatalogStale("invalid", new Date("2026-09-22T00:00:00.000Z")), true);
 });
 
 test("live media transport auto-enable is restricted to implemented image adapters", () => {

@@ -7441,6 +7441,18 @@ function buildEmptyMockTeamMetrics(channelId: string): Record<string, unknown> {
   };
 }
 
+function mockProviderModelDiscoveryMetadata(stale = false): Record<string, unknown> {
+  return {
+    fetchedAt: "2026-09-22T03:00:00.000Z",
+    catalog: {
+      source: "models.dev",
+      version: "models.dev:test1234",
+      updatedAt: stale ? "2026-01-01" : "2026-09-21",
+      stale,
+    },
+  };
+}
+
 export async function mockDaemon(
   page: Page,
   state: MockState,
@@ -7450,6 +7462,7 @@ export async function mockDaemon(
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
     readonly providerModels?: readonly unknown[];
+    readonly providerModelCatalogStale?: boolean;
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
     readonly failTeammateAvatarUploads?: boolean;
     readonly failTeammateAvatarDeletes?: boolean;
@@ -7497,6 +7510,7 @@ export async function handleDaemonRoute(
     readonly templates?: readonly unknown[];
     readonly providerModelsUnsupported?: boolean;
     readonly providerModels?: readonly unknown[];
+    readonly providerModelCatalogStale?: boolean;
     readonly providerCheckModelUnsupportedProviderIds?: readonly string[];
     readonly failTeammateAvatarUploads?: boolean;
     readonly failTeammateAvatarDeletes?: boolean;
@@ -10512,6 +10526,7 @@ export async function handleDaemonRoute(
       await route.fulfill({
         json: {
           source: "https://api.example.com/v1/models",
+          ...mockProviderModelDiscoveryMetadata(options.providerModelCatalogStale),
           models: options.providerModels,
         },
       });
@@ -10522,6 +10537,7 @@ export async function handleDaemonRoute(
       await route.fulfill({
         json: {
           source: "https://ark.cn-beijing.volces.com/api/v3/models",
+          ...mockProviderModelDiscoveryMetadata(options.providerModelCatalogStale),
           models: [
             { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
             { id: "doubao-seedance-1-0-pro-250528", ownedBy: "volcengine" },
@@ -10535,6 +10551,7 @@ export async function handleDaemonRoute(
       await route.fulfill({
         json: {
           source: "https://ark.cn-beijing.volces.com/api/v3/models",
+          ...mockProviderModelDiscoveryMetadata(options.providerModelCatalogStale),
           models: [
             { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
             { id: "doubao-seedream-5-0-turbo-260128", ownedBy: "volcengine" },
@@ -10549,6 +10566,7 @@ export async function handleDaemonRoute(
       await route.fulfill({
         json: {
           source: "https://ark.cn-beijing.volces.com/api/v3/models",
+          ...mockProviderModelDiscoveryMetadata(options.providerModelCatalogStale),
           models: [
             { id: "doubao-seedream-5-0-260128", ownedBy: "volcengine" },
             { id: "doubao-seedance-1-0-pro-250528", ownedBy: "volcengine" },
@@ -10565,6 +10583,7 @@ export async function handleDaemonRoute(
     await route.fulfill({
       json: {
         source: "https://api.example.com/v1/models",
+        ...mockProviderModelDiscoveryMetadata(options.providerModelCatalogStale),
         models: [
           { id: "cliproxy-gpt-4o", ownedBy: "cliproxy" },
           { id: "gpt-image-2", ownedBy: "openai", api: "media-job", input: ["text", "image"], capabilities: ["image_generate"], capabilitySource: "upstream", capabilityConfidence: "known" },

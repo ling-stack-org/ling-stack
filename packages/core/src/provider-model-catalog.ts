@@ -1,8 +1,14 @@
 import { inferGenerationModelFamily } from "./provider-generation-models.js";
+import {
+  providerModelCatalogManifest,
+  providerModelCatalogRecords,
+} from "./provider-model-catalog.generated.js";
 import type {
   ProviderApi,
   ProviderCapability,
   ProviderKind,
+  ProviderModelCatalogInfo,
+  ProviderModelCatalogRecord,
   ProviderModelOption,
   ProviderModelOptionCapabilityConfidence,
   ProviderModelOptionCapabilitySource,
@@ -17,7 +23,7 @@ export interface ProviderModelCatalogContext {
 }
 
 interface ProviderModelCatalogEntry {
-  readonly modelPattern: RegExp;
+  readonly modelPattern?: RegExp;
   readonly providerIds?: readonly string[];
   readonly kinds?: readonly ProviderKind[];
   readonly api?: ProviderApi;
@@ -32,6 +38,39 @@ interface ProviderModelCatalogEntry {
   readonly source?: ProviderModelOptionCapabilitySource;
   readonly confidence?: ProviderModelOptionCapabilityConfidence;
 }
+
+const CATALOG_STALE_AFTER_MS = 45 * 24 * 60 * 60 * 1_000;
+const catalogProviderAliases: Readonly<Record<string, readonly string[]>> = {
+  "alibaba-bailian": ["alibaba"],
+  anthropic: ["anthropic"],
+  deepseek: ["deepseek"],
+  doubao: ["volcengine"],
+  gemini: ["google"],
+  glm: ["zhipuai", "zai"],
+  google: ["google"],
+  "google-gemini": ["google"],
+  minimax: ["minimax"],
+  mistral: ["mistral"],
+  moonshot: ["moonshotai"],
+  openai: ["openai"],
+  "openai-codex": ["openai"],
+  siliconflow: ["siliconflow"],
+  stepfun: ["stepfun"],
+  xai: ["xai"],
+};
+const kindCatalogProviderAliases: Partial<Record<ProviderKind, readonly string[]>> = {
+  anthropic: ["anthropic"],
+  deepseek: ["deepseek"],
+  doubao: ["volcengine"],
+  glm: ["zhipuai", "zai"],
+  google: ["google"],
+  minimax: ["minimax"],
+  openai: ["openai"],
+};
+const generatedCatalogByProviderAndModel = new Map<string, ProviderModelCatalogRecord>(
+  providerModelCatalogRecords.map((record) => [catalogRecordKey(record.providerId, record.id), record]),
+);
+const generatedCatalogByModel = buildGeneratedCatalogModelIndex(providerModelCatalogRecords);
 
 const FULL_REASONING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const satisfies readonly ProviderThinkingMode[];
 const STANDARD_REASONING_LEVELS = ["off", "low", "medium", "high"] as const satisfies readonly ProviderThinkingMode[];
@@ -127,17 +166,20 @@ export function enrichProviderModelOption(
   const upstreamThinkingSupport = normalizeProviderThinkingSupport(model.thinkingSupport);
   const upstreamThinkingModes = normalizeProviderThinkingModes(model.thinkingModes ?? upstreamThinkingSupport?.levels);
   const upstreamCapabilities = normalizeProviderCapabilities(model.capabilities);
+  const hasExplicitCapabilities = model.capabilities !== undefined;
   const upstreamInput = normalizeProviderInput(model.input);
   const generationFamily = inferGenerationModelFamily(model.id, context);
-  const catalogEntry = generationFamily ? undefined : findProviderModelCatalogEntry(model.id, context);
+  const catalogEntry = generationFamily
+    ? undefined
+    : findExactProviderModelCatalogEntry(model.id, context) ?? findProviderModelFamilyEntry(model.id, context);
   const thinkingSupport = upstreamThinkingSupport ?? catalogEntry?.thinkingSupport;
   const thinkingModes = normalizeProviderThinkingModes(upstreamThinkingModes ?? thinkingSupport?.levels);
   const api = model.api ?? generationFamily?.api ?? catalogEntry?.api;
-  const capabilities = normalizeProviderCapabilities([
-    ...(upstreamCapabilities ?? []),
+  const inferredCapabilities = normalizeProviderCapabilities([
     ...((generationFamily?.capabilities ?? catalogEntry?.capabilities) ?? []),
     ...(thinkingModes?.some((mode) => mode !== "off" && mode !== "auto") ? ["reasoning" as const] : []),
   ]);
+  const capabilities = hasExplicitCapabilities ? upstreamCapabilities ?? [] : inferredCapabilities;
 
   return omitUndefined({
     ...model,
@@ -154,6 +196,34 @@ export function enrichProviderModelOption(
     capabilitySource: model.capabilitySource ?? generationFamily?.capabilitySource ?? (catalogEntry ? catalogEntry.source ?? "model_catalog" : "conservative_default"),
     capabilityConfidence: model.capabilityConfidence ?? generationFamily?.capabilityConfidence ?? catalogEntry?.confidence ?? (catalogEntry ? "known" : "conservative"),
   });
+}
+
+export function providerModelCatalogInfo(now: Date = new Date()): ProviderModelCatalogInfo {
+  return {
+    source: providerModelCatalogManifest.source,
+    version: providerModelCatalogManifest.version,
+    updatedAt: providerModelCatalogManifest.updatedAt,
+    stale: isProviderModelCatalogStale(providerModelCatalogManifest.updatedAt, now),
+  };
+}
+
+export function isProviderModelCatalogStale(updatedAt: string, now: Date = new Date()): boolean {
+  const catalogTime = Date.parse(updatedAt);
+  return !Number.isFinite(catalogTime) || now.getTime() - catalogTime > CATALOG_STALE_AFTER_MS;
+}
+
+export function findProviderModelCatalogRecord(
+  modelId: string,
+  context: ProviderModelCatalogContext,
+): ProviderModelCatalogRecord | undefined {
+  const aliases = catalogProviderIds(context);
+  for (const providerId of aliases) {
+    const record = generatedCatalogByProviderAndModel.get(catalogRecordKey(providerId, modelId));
+    if (record) return record;
+  }
+  if (aliases.length > 0) return undefined;
+  const uniqueMatches = generatedCatalogByModel.get(normalizeCatalogLookupValue(modelId));
+  return uniqueMatches?.length === 1 ? uniqueMatches[0] : undefined;
 }
 
 export function normalizeProviderThinkingModes(value: readonly string[] | undefined): readonly ProviderThinkingMode[] | undefined {
@@ -199,22 +269,65 @@ export function providerThinkingModesToLevelMap(
   return map;
 }
 
-function findProviderModelCatalogEntry(modelId: string, context: ProviderModelCatalogContext): ProviderModelCatalogEntry | undefined {
+function findExactProviderModelCatalogEntry(modelId: string, context: ProviderModelCatalogContext): ProviderModelCatalogEntry | undefined {
+  const record = findProviderModelCatalogRecord(modelId, context);
+  if (!record) return undefined;
+  const thinkingModes = normalizeProviderThinkingModes(record.thinkingModes);
+  return omitUndefined({
+    displayName: record.displayName,
+    input: record.input,
+    capabilities: record.capabilities,
+    thinkingSupport: thinkingModes ? { levels: thinkingModes, dynamicAllowed: thinkingModes.includes("auto") } : undefined,
+    contextWindow: record.contextWindow,
+    maxTokens: record.maxTokens,
+    source: "model_catalog" as const,
+    confidence: "known" as const,
+  });
+}
+
+function findProviderModelFamilyEntry(modelId: string, context: ProviderModelCatalogContext): ProviderModelCatalogEntry | undefined {
   const providerId = context.providerId.toLowerCase();
-  return providerModelCatalog.find((entry) => {
-    if (!entry.modelPattern.test(modelId)) {
+  const entry = providerModelCatalog.find((candidate) => {
+    if (!candidate.modelPattern?.test(modelId)) {
       return false;
     }
-    if (entry.api && entry.api !== context.api && entry.api !== "media-job") {
+    if (candidate.api && candidate.api !== context.api && candidate.api !== "media-job") {
       return false;
     }
-    const providerMatches = entry.providerIds?.some((candidate) => candidate.toLowerCase() === providerId) ?? false;
-    const kindMatches = entry.kinds?.includes(context.kind) ?? false;
-    if (entry.providerIds || entry.kinds) {
+    const providerMatches = candidate.providerIds?.some((id) => id.toLowerCase() === providerId) ?? false;
+    const kindMatches = candidate.kinds?.includes(context.kind) ?? false;
+    if (candidate.providerIds || candidate.kinds) {
       return providerMatches || kindMatches;
     }
     return true;
   });
+  return entry ? { ...entry, source: entry.source ?? "provider_template" } : undefined;
+}
+
+function catalogProviderIds(context: ProviderModelCatalogContext): readonly string[] {
+  const providerId = normalizeCatalogLookupValue(context.providerId);
+  return catalogProviderAliases[providerId] ?? kindCatalogProviderAliases[context.kind] ?? [];
+}
+
+function buildGeneratedCatalogModelIndex(
+  records: readonly ProviderModelCatalogRecord[],
+): Map<string, readonly ProviderModelCatalogRecord[]> {
+  const index = new Map<string, ProviderModelCatalogRecord[]>();
+  for (const record of records) {
+    const key = normalizeCatalogLookupValue(record.id);
+    const matches = index.get(key) ?? [];
+    matches.push(record);
+    index.set(key, matches);
+  }
+  return index;
+}
+
+function catalogRecordKey(providerId: string, modelId: string): string {
+  return `${normalizeCatalogLookupValue(providerId)}\u0000${normalizeCatalogLookupValue(modelId)}`;
+}
+
+function normalizeCatalogLookupValue(value: string): string {
+  return value.trim().toLowerCase();
 }
 
 function normalizeProviderThinkingMode(value: string): ProviderThinkingMode | undefined {

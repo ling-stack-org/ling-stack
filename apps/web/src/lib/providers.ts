@@ -908,6 +908,9 @@ export function providerModelDiscoveryErrorMessage(error: unknown, t?: ProviderT
   if (normalized.includes("api key missing") || normalized.includes("secret_missing")) {
     return translateProviderText(t, "API key missing. Add an API key before fetching models.");
   }
+  if (normalized.includes("provider_model_connection_changed")) {
+    return translateProviderText(t, "Save the provider connection changes or enter the API key again before fetching models.");
+  }
   if (normalized.includes("auth_failed") || normalized.includes("401") || normalized.includes("403")) {
     return translateProviderText(t, "The API key was rejected. Check the key and account permission, then try again.");
   }
