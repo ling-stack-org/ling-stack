@@ -102,9 +102,9 @@ corepack pnpm exec playwright test e2e/model-workbench.spec.ts e2e/ui2-model-wor
   saved-local-secret boundary change.
 - Contracts, Core, daemon, API Client and Web typechecks: passed.
 - Web i18n check and runtime catalog compilation: passed.
-- The full localization catalog audit remains open: 53 non-English/Chinese catalogs
-  still need the shared Profile/UI backlog and the new P15 strings translated. P15 keeps
-  the English and Chinese runtime catalogs current and does not bulk-generate unrelated
-  locale translations.
+- The full localization catalog audit passed after updating the 53 non-English/Chinese
+  catalogs with the new P15 strings and source hashes: 55/55 catalogs, 6531 keys and 10
+  localization tests passed. Existing contextual translations for the `Run id` label were
+  preserved while the source revision was advanced.
 - Web focused model-workbench and dark-mode coverage: passed; real browser verification
   also covered existing local configuration, source provenance, dark mode and console.
