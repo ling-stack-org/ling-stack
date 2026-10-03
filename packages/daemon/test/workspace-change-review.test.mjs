@@ -107,7 +107,8 @@ test("scope/cwd/workspace mismatches are rejected instead of mixing evidence", a
 
 test("sealed full-file snapshots never appear in public artifact/event metadata; rendered diff redacts secrets", async (t) => {
   const f = await fixture(t); const run = f.run("secret");
-  const secret = "sk-abcdefghijklmnopqrstuvwxyz1234567890";
+  // Explicit synthetic placeholder that still matches the production secret redactor.
+  const secret = "sk-EXAMPLE0000000000000000000000000000";
   await writeFile(join(f.cwd, "app.txt"), `private baseline\n${secret}\n`);
   await f.apply(run, "*** Update File: app.txt\n@@\n-private baseline\n+updated");
   const [record] = f.store.listWorkspaceMutationRecords({ runId: run.id });

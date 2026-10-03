@@ -34,7 +34,7 @@ function plan(protocol, baseUrl, outputRules) {
 
 test("native observation plans reject credentials/query/hash/unknown protocol and freeze effective namespace", () => {
   const create = api().createMediaNativeObservationPlan;
-  for (const baseUrl of ["file:///tmp/media", "https://user:secret@example.test/v1", "https://example.test/v1?key=secret", "https://example.test/v1#fragment"]) {
+  for (const baseUrl of ["file:///tmp/media", "https://user:PLACEHOLDER@example.test/v1", "https://example.test/v1?key=secret", "https://example.test/v1#fragment"]) {
     assert.throws(() => create({ protocol: "image_response_v1", adapterId: "images", baseUrl }));
   }
   assert.throws(() => create({ protocol: "unknown", adapterId: "images", baseUrl: "https://example.test" }));

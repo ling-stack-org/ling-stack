@@ -5,7 +5,7 @@
 - 实施分支：`codex/e6-safe-continuation`。
 - 提交前 HEAD：`3ffd26818bb399c5bf7350ed38a14e6db0d26ed1`。
 - 保存范围：该专用工作树当前全部非忽略源码、测试、设计、语言目录、锁文件及已有 tracked 证据图片。原清点 572 路径，其中 203 个新文件；另加入本记录。
-- 不改根 checkout，不更换分支，不合并 main，不推送，不提交 PR，不改真实数据库/历史。
+- 本地保存步骤未改根 checkout、未更换分支、未合并 main、未推送/创建 PR、未改真实数据库/历史。用户随后另行授权远端草稿 PR 备份，见下方补充。
 - 唯一既有文件删除是旧 `apps/web/e2e/ui2-channel-proposal-input-migration.spec.ts`；它在本次保存请求前已处于删除状态，本次没有额外删代码。旧版本仍可从父提交恢复。
 
 ## 已核对的最新证据
@@ -42,4 +42,14 @@
 
 `output/` 内日志、截图、打包产物等仍保留在本地，按原忽略规则**不纳入这次代码提交**。不能把此 Git 保存点称为所有本地数据/测试数据库/安装包的备份。
 
-仓库安全扫描的 4 个命中已逐项核验为测试假值或 `/Users/u` 正则误报：两处 getter 第二次读取 sentinel、一处顺序字符构造的脱敏测试假 key、一处 `Users` 正则。这次不放宽扫描器或改动冻结夹具；没有把运行凭证写入提交。对外提交前仍应收口扫描误报。
+仓库安全扫描的 4 个命中已逐项核验为测试假值或 `/Users/u` 正则误报：两处 getter 第二次读取 sentinel、一处顺序字符构造的脱敏测试假 key、一处 `Users` 正则。本地保存步骤未放宽扫描器或改动冻结夹具；没有把运行凭证写入提交。该扫描不能标为 GREEN。
+
+## 后续授权：远端 Draft PR 备份
+
+- 原本地保存提交 `c051c30ef0d747a8046eb98807cc4f9fad3b186a` 保留，不 amend/reset。
+- 用户授权推送同一实施分支并创建 Draft PR；不合并、不改 main、不改版本、不作为发布候选。
+- 第一次推送被 pre-push 凭证扫描拦住，远端没有创建分支。两个命中均为测试合成值：带密码 URL 的拒绝夹具，以及 sealed snapshot/public diff 的脱敏假 key。
+- 用明确的 `PLACEHOLDER`/`EXAMPLE` 假值替代，保持非空 URL 凭证拒绝和 OpenAI-shaped redaction 测试语义；不放宽扫描器、不加入 allowlist、不跳过 hook。
+- 测试夹具清理只覆盖这两个测试文件。不会改变上述 Office writer 缺陷、生产 route 或 GUI 验收状态。
+- Node 22.22.1 的这两个测试文件定向回归实际 **29/29**，0 fail/cancel/skip，exit 0；`git diff --check` 通过。这不是全仓门禁或最新 packaged GUI 验收。
+- 推送/PR 的真实结果、完整 head hash 与 focused test 日志在本地接续入口读回记录；没有远端读回前不声称已备份。
