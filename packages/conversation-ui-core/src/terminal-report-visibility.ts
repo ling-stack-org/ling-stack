@@ -12,6 +12,7 @@ export interface TerminalReportVisibilityArtifact {
   readonly id: string;
   readonly title: string;
   readonly path?: string;
+  readonly sourceRefs?: readonly TerminalReportVisibilitySourceRef[];
 }
 
 export interface TerminalReportVisibilityChange {
@@ -59,7 +60,21 @@ export function isUserVisibleTerminalReportSourceRef(ref: TerminalReportVisibili
 }
 
 export function isUserVisibleTerminalReportArtifact(artifact: TerminalReportVisibilityArtifact): boolean {
-  return !isInternalTerminalReportArtifactText([artifact.title, artifact.path].filter(Boolean).join(" "));
+  return !isInternalTerminalReportArtifactText([artifact.title, artifact.path].filter(Boolean).join(" ")) &&
+    !isInternalTerminalReportArtifactPath(artifact.path, artifact.sourceRefs ?? []);
+}
+
+/** Legacy reports lack Host artifact roles; classify reserved storage paths structurally. */
+export function isInternalTerminalReportArtifactPath(
+  path: string | undefined,
+  sourceRefs: readonly TerminalReportVisibilitySourceRef[],
+): boolean {
+  if (!path) return false;
+  const normalized = path.replace(/\\/gu, "/").replace(/^\.\//u, "");
+  return normalized === ".ling-stack" || normalized.startsWith(".ling-stack/") ||
+    normalized.startsWith("harness/") || normalized.startsWith("workflows/") ||
+    normalized.startsWith("automation-context/") || normalized.startsWith("external-work/") ||
+    sourceRefs.some((ref) => ref.kind === "run" && normalized.startsWith(`${ref.id}/`));
 }
 
 /**

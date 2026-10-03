@@ -526,6 +526,62 @@ test("default projections hide superseded turns and response messages while audi
   }
 });
 
+test("normal conversation detail keeps workspace artifacts but not Host-only provenance payloads", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-artifact-visibility-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const createdAt = "2026-07-12T07:59:00.000Z";
+    const thread = store.createLingThread({
+      kind: "conversation", teammateId: LING_AGENT_ID, title: "Artifacts", objective: "Artifacts",
+    }, createdAt);
+    const turn = store.createLingTurn({
+      threadId: thread.id, kind: "initial_request", title: "Artifacts", userInstruction: "Inspect artifacts",
+      teammateId: LING_AGENT_ID, createdByActor: "local-user",
+    }, createdAt);
+    const run = store.createRun(createRunInput({ id: "run_artifact_visibility", cwd, threadId: thread.id, turnId: turn.id, createdAt }));
+    const internal = store.createArtifact({
+      runId: run.id, type: "json", path: `.ling-stack/provenance/${run.id}/inverse-plan.json`,
+      title: "Workspace inverse patch plan", sealedPayload: { secret: "SECRET_SENTINEL" }, createdAt,
+    });
+    const visible = store.createArtifact({
+      runId: run.id, type: "file", path: "reports/result.txt", title: "Result", createdAt,
+    });
+
+    const detail = buildConversationDetail(store, cwd, thread);
+    assert.deepEqual(detail.artifacts.map((artifact) => artifact.id), [visible.id]);
+    assert.equal(JSON.stringify(detail).includes("SECRET_SENTINEL"), false);
+    assert.deepEqual(store.getArtifact(internal.id)?.sealedPayload, { secret: "SECRET_SENTINEL" });
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("normal conversation detail includes only the edit-owned Run diff metadata", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-owned-diff-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const createdAt = "2026-09-28T00:00:00.000Z";
+    const thread = store.createLingThread({ kind: "conversation", teammateId: LING_AGENT_ID, title: "Diff", objective: "Diff" }, createdAt);
+    const turn = store.createLingTurn({ threadId: thread.id, kind: "initial_request", title: "Diff", userInstruction: "Edit todo.py", teammateId: LING_AGENT_ID, createdByActor: "local-user" }, createdAt);
+    const run = store.createRun(createRunInput({ id: "run_owned_diff", cwd, threadId: thread.id, turnId: turn.id, createdAt }));
+    const owned = store.createArtifact({ runId: run.id, type: "diff", path: `${run.id}/008-generated-edit-diff-todo.py.diff`, contentType: "text/x-diff", title: "Generated edit diff", sealedPayload: { private: "SECRET_SENTINEL" }, createdAt });
+    const unowned = store.createArtifact({ runId: run.id, type: "diff", path: `${run.id}/009-unowned.diff`, contentType: "text/x-diff", createdAt });
+    store.appendEvent(run.id, "tool_start", { toolCallId: "edit-1", toolName: "edit", args: { path: "todo.py" } });
+    store.appendEvent(run.id, "artifact_created", { toolCallId: "edit-1", artifactId: owned.id });
+    store.appendEvent(run.id, "tool_end", { toolCallId: "edit-1", toolName: "edit", result: { content: [{ type: "text", text: "edited" }] } });
+
+    const detail = buildConversationDetail(store, cwd, thread);
+    assert.deepEqual(detail.artifacts.map((artifact) => artifact.id), [owned.id]);
+    assert.equal(detail.executionActions.some((action) => action.actionType === "edit" && action.resultArtifactIds.includes(owned.id)), true);
+    assert.equal(JSON.stringify(detail).includes("SECRET_SENTINEL"), false);
+    assert.equal(detail.artifacts.some((artifact) => artifact.id === unowned.id), false);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("conversation detail projects approvals and queued guidance once with structured file references", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-runtime-projection-"));
   const store = createSqliteRunStore(cwd);

@@ -38,7 +38,7 @@
   row-gap: var(--ling-space-2);
 }
 
-[data-conversation-message-row] > :where(img, .avatar-initial, .user-profile-avatar) {
+[data-conversation-message-row] > :where(img, .avatar-initial, .user-profile-avatar, .conversation-message-avatar-placeholder) {
   box-sizing: border-box;
   width: var(--conversation-message-avatar-size);
   height: var(--conversation-message-avatar-size);
@@ -190,9 +190,9 @@
   background: var(--conversation-bg-muted, var(--ling-bg-subtle));
 }
 
-/* Codex-style document lane: narrative and typed timeline rows are not chat
-   bubbles. Keep the row/identity grid for accessibility, but remove the
-   panel treatment so one action cannot look like a second message card. */
+/* The document lane leaves Agent narrative and typed facts unboxed. User
+   messages keep their own bubble below; neither treatment changes identity,
+   timeline ownership or the separate message-action row. */
 [data-conversation-message-row].message-bubble-document > .message-content {
   width: 100%;
   max-width: min(100%, 760px);
@@ -225,6 +225,11 @@
 [data-conversation-message-row].message-bubble-document.message-bubble-own > .message-content {
   grid-column: 1;
   justify-self: end;
+  width: fit-content;
+  max-width: min(76%, var(--conversation-message-max-width));
+  padding: var(--ling-space-5) var(--ling-space-6);
+  border-radius: calc(var(--ling-radius-lg) * 2);
+  background: var(--conversation-bg-muted, var(--ling-bg-subtle));
 }
 
 [data-conversation-message-row].message-bubble-document.message-bubble-own > :where(img, .avatar-initial, .user-profile-avatar) {

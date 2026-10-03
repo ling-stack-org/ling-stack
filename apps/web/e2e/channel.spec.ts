@@ -1593,7 +1593,7 @@ test("channel environment surface shows read-only context and opens review", asy
   await page.mouse.up();
   await expect.poll(async () => Math.round((await dock.boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(840);
   await expect(popover).toBeHidden();
-  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
   await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
   await expect.poll(async () => Math.round((await page.locator(".activity-shell .channel-composer").boundingBox())?.width ?? 0)).toBeGreaterThanOrEqual(560);
   await page.locator(".task-toolbar-panel").click();
@@ -7582,7 +7582,7 @@ test("progress popover owns workflow status while the right drawer avoids duplic
 
   await page.locator(".task-toolbar-panel").click();
   await expect(progressPopover).toBeHidden();
-  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
   await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
   const panel = page.locator(".channel-side-panel.right-dock");
   await expect(panel).toHaveAttribute("aria-label", "Channel workspace dock");
@@ -12544,7 +12544,7 @@ test("channel activity derives task run approval transition and workflow events"
   await page.getByRole("button", { name: "Show details" }).click();
   const summaryButton = page.locator(".task-toolbar-progress");
   await expect(page.locator(".channel-progress-popover")).toBeHidden();
-  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
   await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
   const contextPanel = page.locator(".channel-side-panel.right-dock");
   await expect(contextPanel).toHaveAttribute("aria-label", "Channel workspace dock");

@@ -53,6 +53,9 @@ interface ReviewJob {
   settled: boolean;
   timedOut: boolean;
   cancelled: boolean;
+  /** Logical fallback may settle before the current Runner's cleanup has ended. */
+  executionCompletion?: Promise<void>;
+  executionSettled?: boolean;
 }
 
 /**
@@ -95,8 +98,17 @@ export function createApprovalAutoReviewCoordinator(
       job.started = true;
       active += 1;
       void runReview(job, maxTransientRetries)
-        .then((outcome) => finish(job, outcome))
-        .finally(() => {
+        .then(
+          (outcome) => finish(job, outcome),
+          () => finish(job, manual("execution_failed", "Automatic reviewer could not produce a trusted verdict; manual approval is required.", 0)),
+        )
+        .finally(async () => {
+          // An abort/deadline only returns control to the human. Keep the
+          // physical slot until the actual execute promise has settled, so
+          // abandoned cleanup cannot escape the process concurrency bound.
+          // Avoid adding a microtask when physical execution already ended:
+          // an async Host wrapper can immediately request the next review.
+          if (job.executionCompletion && !job.executionSettled) await job.executionCompletion;
           active -= 1;
           pump();
         });
@@ -158,7 +170,15 @@ async function runReview(job: ReviewJob, maxTransientRetries: number): Promise<A
     if (job.controller.signal.aborted) return abortedOutcome(job, attempts);
     attempts += 1;
     try {
-      const output = await raceWithAbort(job.input.execute(job.controller.signal), job.controller.signal);
+      const execution = Promise.resolve(job.input.execute(job.controller.signal));
+      // Observe rejection immediately, including synchronous cancellation
+      // inside execute before raceWithAbort installs its abort listener.
+      job.executionSettled = false;
+      job.executionCompletion = execution.then(
+        () => { job.executionSettled = true; },
+        () => { job.executionSettled = true; },
+      );
+      const output = await raceWithAbort(execution, job.controller.signal);
       if (job.controller.signal.aborted) return abortedOutcome(job, attempts);
       const parsed = parseApprovalAutoReviewVerdict(output);
       if (!parsed.ok) {

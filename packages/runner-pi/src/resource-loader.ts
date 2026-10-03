@@ -8,9 +8,11 @@ import { createLingStackMediaGenerationExtension } from "./extensions/media-gene
 import { createLingStackPermissionRequestExtension } from "./extensions/permissions.js";
 import { createLingStackToolHydrationExtension } from "./extensions/tool-hydration.js";
 import { createLingStackTaskContinuationExtension } from "./extensions/task-continuation.js";
+import { createLingStackUserInputExtension, isUserInputToolSurfaceEnabled } from "./extensions/user-input.js";
 import { createLingStackToolBeforeExtension } from "./extensions/tool-before.js";
+import { createLingStackModelContextBudgetExtension } from "./model-context-budget.js";
 import type { PiRunnerRunOptions } from "./types.js";
-import { getLingStackSystemPrompt } from "./utils.js";
+import { formatTaskPrompt, getLingStackSystemPrompt } from "./utils.js";
 
 export async function createLingStackResourceLoader(
   options: PiRunnerRunOptions,
@@ -30,7 +32,9 @@ export async function createLingStackResourceLoader(
     systemPrompt: getLingStackSystemPrompt(options),
     appendSystemPrompt: [...(options.appendSystemPrompt ?? [])],
     extensionFactories: [
+      createLingStackModelContextBudgetExtension({ acceptedTaskPrompt: options.preparedInput?.userPrompt ?? formatTaskPrompt(options.task) }),
       ...(options.onTaskContinuationBoundary ? [createLingStackTaskContinuationExtension(options)] : []),
+      ...(isUserInputToolSurfaceEnabled(options) ? [createLingStackUserInputExtension(options)] : []),
       ...(options.onToolBefore ? [createLingStackToolBeforeExtension(options)] : []),
       createLingStackFileMutationToolExtension(options),
       // Bash always has a Host result. Feature flags cannot re-enable an unjournaled SDK spawn.

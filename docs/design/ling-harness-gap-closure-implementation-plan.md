@@ -1023,7 +1023,7 @@ Every enforcing PR must support rollback by disabling its feature flag and resta
 - Lanes A, B, and C all need core exports and SQLite migration registration. H01 should create stable per-domain registration seams; final shared-file edits remain a controlled merge point.
 - Lane A and Lane C both touch attempt fencing and root-run lineage. Their public port contract must land in H01.
 - Lane C touches the channel workflow completion gate. Keep that integration in H12 so earlier delegation work does not conflict with unrelated channel WIP.
-- The user explicitly selected the existing clean implementation worktree and branch. Keep the dependency order, atomic commits, and fixed migration ownership here; do not touch the separate dirty UI2 checkout at `/Users/tianxiao/ling-stack`.
+- The user explicitly selected the existing clean implementation worktree and branch. Keep the dependency order, atomic commits, and fixed migration ownership here; do not touch the separate dirty UI2 checkout at `$HOME/ling-stack`.
 
 ## Implementation Tasks
 

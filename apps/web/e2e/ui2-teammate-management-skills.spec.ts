@@ -327,9 +327,8 @@ async function openTeammateSettings(
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   const chatHeader = page.locator("[data-ui2-teammate-chat-header]");
   await expect(chatHeader).toBeVisible();
-  if (await page.getByLabel(labels.dock).count() === 0) {
-    await chatHeader.getByRole("button", { name: labels.details }).click();
-  }
+  const showDetails = chatHeader.getByRole("button", { name: labels.details });
+  if (await showDetails.isVisible()) await showDetails.click();
   await page.getByLabel(labels.dock).getByRole("button", { name: labels.settings }).click();
   const settings = page.getByLabel(labels.settingsSections);
   await expect(settings).toBeVisible();

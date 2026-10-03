@@ -1,5 +1,6 @@
 import {
   projectCanonicalConversationTimeline,
+  isUserVisibleTerminalReportArtifact,
   terminalReportSourceRefs,
   userInputTranscriptRevisionSignature,
   reconcileCanonicalUserInputs,
@@ -115,9 +116,10 @@ export function projectConversationDetailTimeline(
       checkpointByApprovalId.get(approval.id),
       itemById,
       runById,
+      actions,
       detail.thread.id,
     )),
-    artifacts: detail.artifacts.map((artifact) => toCanonicalArtifactRecord(artifact, actions, itemById, detail.thread.id)),
+    artifacts: visibleDetailArtifacts(detail.artifacts, actions).map((artifact) => toCanonicalArtifactRecord(artifact, actions, itemById, detail.thread.id)),
     plans,
     compactions,
     reasoningSummaries,
@@ -346,9 +348,10 @@ function buildParticipantSpans(input: {
         input.detail.approvalCheckpoints.find((checkpoint) => checkpoint.approvalId === approval.id),
         new Map(childItems.map((item) => [item.id, item])),
         new Map([[childRun.id, childRun]]),
+        childActions,
         input.scope.threadId,
       )),
-      artifacts: (input.detail.artifacts ?? []).filter((artifact) => artifact.runId === childRun.id).map((artifact) => toCanonicalArtifactRecord(artifact, childActions, new Map(childItems.map((item) => [item.id, item])), input.scope.threadId)),
+      artifacts: visibleDetailArtifacts(input.detail.artifacts ?? [], childActions).filter((artifact) => artifact.runId === childRun.id).map((artifact) => toCanonicalArtifactRecord(artifact, childActions, new Map(childItems.map((item) => [item.id, item])), input.scope.threadId)),
       plans: [],
       compactions: [],
       reasoningSummaries: (input.detail.reasoningSummaries ?? [])
@@ -624,9 +627,13 @@ function toCanonicalApprovalRecord(
   checkpoint: ConversationDetailResponse["approvalCheckpoints"][number] | undefined,
   itemById: ReadonlyMap<string, CanonicalConversationItem>,
   runById: ReadonlyMap<string, RunSession>,
+  actions: readonly CanonicalExecutionAction[],
   threadId: string,
 ): import("@ling-stack/conversation-ui-core").CanonicalApprovalRecord {
-  const anchorItemId = findItemAnchor(itemById, (item) => item.kind === "approval_request",
+  const runId = checkpoint?.runId ?? approval.runId;
+  const run = runId ? runById.get(runId) : undefined;
+  const participantId = run?.teammateId ?? (run ? "ling" : undefined);
+  const explicitAnchorItemId = findItemAnchor(itemById, (item) => item.kind === "approval_request",
     (item) => readString(item.payload, "approvalRequestId") === approval.id ||
       readString(item.payload, "approvalId") === approval.id ||
       item.domainRefs?.some((ref) => ref.type === "approval" && ref.id === approval.id) === true)
@@ -634,10 +641,10 @@ function toCanonicalApprovalRecord(
       (item) => readString(item.payload, "approvalRequestId") === approval.id ||
         readString(item.payload, "approvalId") === approval.id ||
         item.domainRefs?.some((ref) => ref.type === "approval" && ref.id === approval.id) === true);
-  const runId = checkpoint?.runId ?? approval.runId;
-  const run = runId ? runById.get(runId) : undefined;
+  const actionAnchor = explicitAnchorItemId ? undefined
+    : verifiedApprovalActionAnchor(approval, runId, participantId, actions, itemById, threadId);
+  const anchorItemId = explicitAnchorItemId ?? actionAnchor?.itemId;
   const attemptId = checkpoint?.resumeBasis?.priorAttemptId;
-  const participantId = run?.teammateId ?? (run ? "ling" : undefined);
   const sourceRefs = withCanonicalRefs([], [
     { kind: "approval", id: approval.id },
     ...(checkpoint ? [{ kind: "approval_checkpoint", id: checkpoint.id }] : []),
@@ -658,12 +665,57 @@ function toCanonicalApprovalRecord(
     ...(participantId ? { participantId } : {}),
     ...(checkpoint?.workflowStepId ? { workflowStepId: checkpoint.workflowStepId } : {}),
     ...(approval.toolCallId ? { toolCallId: approval.toolCallId } : {}),
+    ...(actionAnchor ? { actionId: actionAnchor.actionId } : {}),
     ...(anchorItemId ? { anchorItemId } : {}),
     title: approval.title,
     summary: approval.description || approval.decisionReason,
     status: approval.status,
     sourceRefs,
   };
+}
+
+/** An approval may share its durable source Item with its correlated tool action. */
+function verifiedApprovalActionAnchor(
+  approval: ConversationDetailResponse["approvals"][number],
+  runId: string | undefined,
+  participantId: string | undefined,
+  actions: readonly CanonicalExecutionAction[],
+  itemById: ReadonlyMap<string, CanonicalConversationItem>,
+  threadId: string,
+): { readonly itemId: string; readonly actionId: string } | undefined {
+  if (!runId || !participantId) return undefined;
+  const action = uniqueMatch(actions, (candidate) =>
+    candidate.id === `approval:${approval.id}` &&
+    candidate.approvalId === approval.id &&
+    candidate.runId === runId &&
+    candidate.threadId === threadId &&
+    candidate.participantId === participantId &&
+    candidate.toolCallId === approval.toolCallId &&
+    candidate.sourceRefs.some((ref) => ref.kind === "approval" && ref.id === approval.id));
+  const anchorId = conversationAnchorId(action?.sourceRefs);
+  const anchor = anchorId ? itemById.get(anchorId) : undefined;
+  if (!anchor || !action || anchor.threadId !== threadId || anchor.workspaceId !== action.workspaceId) return undefined;
+  if (action.turnId && anchor.turnId !== action.turnId) return undefined;
+  return { itemId: anchor.id, actionId: action.id };
+}
+
+function visibleDetailArtifacts(
+  artifacts: ConversationDetailResponse["artifacts"],
+  actions: readonly CanonicalExecutionAction[],
+): ConversationDetailResponse["artifacts"] {
+  return artifacts.filter((artifact) => {
+    if (isUserVisibleTerminalReportArtifact({
+      id: artifact.id,
+      title: artifact.title ?? "",
+      path: artifact.path,
+      sourceRefs: artifact.runId ? [{ kind: "run", id: artifact.runId }] : [],
+    })) return true;
+    // Run storage is private by default. A diff may enter an edit row only
+    // when one exact Host action explicitly owns its result artifact.
+    return artifact.type === "diff" && Boolean(artifact.runId && uniqueMatch(actions, (action) =>
+      ["edit", "write", "file_edit", "file_write"].includes(action.actionType) &&
+      action.runId === artifact.runId && action.resultArtifactIds?.includes(artifact.id) === true));
+  });
 }
 
 function toCanonicalArtifactRecord(

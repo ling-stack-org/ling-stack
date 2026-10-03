@@ -92,7 +92,9 @@ export class SqliteRuntimeRecoveryCoordinator {
         }
       }
       if (!resumableApproval && runBeforeRecovery && this.isDaemonRecoverableHarnessRun(runBeforeRecovery)) {
-        // The daemon owns restart continuation for enforced Harness task runs.
+        // The daemon owns restart continuation for enforced Harness task,
+        // conversation, and private Runs. Channel reply children have their
+        // own dispatch recovery path and must not be claimed here.
         // Core preserves the logical Run until RuntimeSupervisor fences the
         // abandoned Attempt and the daemon creates its replacement atomically.
         continue;
@@ -125,13 +127,18 @@ export class SqliteRuntimeRecoveryCoordinator {
       return false;
     }
     const workUnit = this.ports.getWorkUnit(run.workUnitId);
+    const thread = run.threadId ? this.ports.getLingThread(run.threadId) : undefined;
     if (!workUnit
-      || workUnit.kind !== "task_run"
+      || !["task_run", "conversation_run", "teammate_direct_reply"].includes(workUnit.kind)
       || workUnit.linkedRunId !== run.id
       || !workUnit.activeAttemptId
       || !["claimed", "running", "cancelling"].includes(workUnit.status)) {
       return false;
     }
+    if (workUnit.kind === "conversation_run" && thread?.kind !== "conversation") return false;
+    if (workUnit.kind === "teammate_direct_reply"
+      && (thread?.kind !== "teammate_direct" || !run.teammateId
+        || thread.teammateId !== run.teammateId || workUnit.teammateId !== run.teammateId)) return false;
     const snapshot = run.requestSnapshot;
     if (!isRecord(snapshot) || !isRecord(snapshot.harnessFeatureSnapshot)) return false;
     return snapshot.harnessFeatureSnapshot.schemaVersion === 1

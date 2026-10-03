@@ -19,7 +19,7 @@ import {
 import { createRequiredParticipantManifestV1, createWorkflowParticipantAuthorityV1 } from "../../contracts/dist/index.js";
 import { PiRunnerAdapter } from "../../runner-pi/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
-import { buildContextPack, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
+import { buildContextPack, estimateTextTokens, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
 import { resolveChannelReplyExecutionTarget } from "../dist/features/channels/channel-reply-execution-target.js";
 import { resolveWorkflowParticipantRunProfile } from "../dist/features/channels/workflow-participant-run-profile.js";
@@ -528,6 +528,15 @@ test("context budget manager resolves provider modes and trims lower priority se
   assert.deepEqual(trimmed.sections.map((section) => section.id), ["must"]);
   assert.deepEqual(trimmed.droppedSectionIds, ["low", "high"]);
   assert.equal(trimmed.overBudget, false);
+
+  const protectedOnly = buildContextPack({
+    kind: "channel_reply",
+    providerPreset: { ...providerBase, contextWindow: 1800, maxTokens: 512 },
+    sections: [{ id: "current_user_turn", role: "user", priority: "must_keep", text: "full current request", estimatedTokens: 3_000 }],
+  });
+  assert.deepEqual(protectedOnly.sections.map((section) => section.id), ["current_user_turn"]);
+  assert.deepEqual(protectedOnly.droppedSectionIds, []);
+  assert.equal(protectedOnly.overBudget, true);
 });
 
 test("ling agent session view is open when channel has no active work", async () => {
@@ -3854,7 +3863,7 @@ test("conversation stream materializes uploaded attachments into the run prompt"
   }
 });
 
-test("channel message stream does not expose hidden task proposal blocks", async () => {
+test("channel message stream hides unbound task proposal blocks without creating approvals", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-stream-proposal-"));
   const runner = new ScriptedRunner([
     `可以开始。\n<ling_task_proposal>{"title":"Stream proposal","prompt":"Implement streaming","assigneeTeammateId":"teammate_builtin_engineer","acceptanceCriteria":["reply streams"],"collaborationSteps":[{"teammateId":"teammate_builtin_engineer","action":"coordinated","summary":"Implement"}],"requiredTools":["read"],"riskSummary":"low"}</ling_task_proposal>`,
@@ -3889,8 +3898,7 @@ test("channel message stream does not expose hidden task proposal blocks", async
     assert.equal(events[5].data.aiReply.body, "可以开始。");
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].title, "Stream proposal");
+    assert.equal(proposals.proposals.length, 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -4146,6 +4154,128 @@ test("channel hard summary uses the effective workspace provider before dispatch
     assert.equal(summaries[0].objective, "Preserve the durable historical objective.");
     assert.ok(summaries[0].coveredThroughSequence < currentItem.sequence);
     assert.match(runner.replyRuns[0].task.prompt, /Preserve the durable historical objective/);
+    const dispatch = store.findWorkUnitByIdempotency({
+      kind: "channel_turn_dispatch", ownerType: "ling_turn", ownerId: currentItem.turnId,
+      idempotencyKey: `channel-turn-dispatch:${currentItem.turnId}`,
+    });
+    assert.ok(dispatch);
+    const summaryEvents = store.listRuntimeEvents(dispatch.id)
+      .filter((event) => event.type === "work_unit_progress" && event.data.stage === "conversation_hard_summary");
+    assert.deepEqual(summaryEvents.map((event) => event.data.status), ["completed"]);
+    assert.equal(summaryEvents[0].attemptId, dispatch.activeAttemptId);
+    assert.equal(summaryEvents[0].data.sourceItemId, currentItem.id);
+
+    runner.failSummary = true;
+    for (let index = 10; index < 20; index += 1) {
+      const createdAt = new Date(Date.parse("2026-08-10T06:02:00.000Z") + index * 10_000).toISOString();
+      const turn = store.appendConversationUserTurn({
+        itemId: `item_proactive_summary_${index}`,
+        turnId: `turn_proactive_summary_${index}`,
+        channelId: channel.id,
+        threadId: thread.id,
+        title: `Historical fact ${index}`,
+        userInstruction: `Historical fact ${index}`,
+        payload: {
+          body: `Historical fact ${index}: ${"x".repeat(900)}`,
+          format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [],
+        },
+        idempotencyKey: `proactive-summary:${index}`,
+      }, createdAt);
+      const run = store.createRun({
+        id: `run_proactive_summary_${index}`,
+        cwd,
+        taskId: `task_proactive_summary_${index}`,
+        channelId: channel.id,
+        threadId: thread.id,
+        turnId: turn.turnId,
+        providerName: "test",
+        providerModel: "test",
+        taskSnapshot: { id: `task_proactive_summary_${index}`, title: `Historical fact ${index}`, prompt: `Historical fact ${index}` },
+        providerSnapshot: { provider: "test", model: "test" },
+        requestSnapshot: { cwd, task: { id: `task_proactive_summary_${index}`, title: `Historical fact ${index}`, prompt: `Historical fact ${index}` } },
+        createdAt: new Date(Date.parse(createdAt) + 1_000).toISOString(),
+      });
+      store.markRunStarted(run.id, new Date(Date.parse(createdAt) + 2_000).toISOString());
+      store.markRunSucceeded(run.id, new Date(Date.parse(createdAt) + 3_000).toISOString());
+    }
+    const failedSummaryTurn = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer continue with the retained facts after summary failure.",
+      mentions: [{ id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" }],
+      teammateId: "teammate_builtin_engineer",
+      requestAiReply: true,
+    });
+    const failedSource = store.getConversationItem(failedSummaryTurn.message.id);
+    assert.ok(failedSource);
+    const failedDispatch = store.findWorkUnitByIdempotency({
+      kind: "channel_turn_dispatch", ownerType: "ling_turn", ownerId: failedSource.turnId,
+      idempotencyKey: `channel-turn-dispatch:${failedSource.turnId}`,
+    });
+    assert.ok(failedDispatch);
+    const failedEvents = store.listRuntimeEvents(failedDispatch.id)
+      .filter((event) => event.type === "work_unit_progress" && event.data.stage === "conversation_hard_summary");
+    assert.deepEqual(failedEvents.map((event) => event.data.status), ["generation_failed"]);
+    assert.equal(failedEvents[0].data.fallback, "prepared_input_budget_gate");
+    assert.equal(store.listConversationContextSummaries({ threadId: thread.id }).length, 1);
+    const listedFallback = await waitForChannelMessageStatus(
+      daemon.url, cwd, channel.id, failedSummaryTurn.aiReply.id, "ready", failedSummaryTurn.message.threadId,
+    );
+    const fallbackReply = listedFallback.messages.find((message) => message.id === failedSummaryTurn.aiReply.id);
+    assert.equal(fallbackReply.body, "Reply after proactive summary.");
+    assert.equal(runner.replyRuns.length, 2);
+    const fallbackRun = runner.replyRuns[1];
+    const preparedTokens = estimateTextTokens(fallbackRun.systemPrompt) + estimateTextTokens(fallbackRun.task.prompt);
+    assert.ok(preparedTokens <= resolveProviderContextBudget(provider, "channel_reply").inputBudgetTokens);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel hard summary with no completed prefix records the limitation and blocks oversized input", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-no-summary-prefix-"));
+  const runner = new SummaryAwareRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      contextWindow: 1_800, maxTokens: 512,
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: `@Engineer analyze this full input: ${"x".repeat(12_000)}`,
+      mentions: [{ id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" }],
+      teammateId: "teammate_builtin_engineer",
+      providerPresetId: provider.id,
+      requestAiReply: true,
+    });
+    const listed = await waitForChannelMessageStatus(
+      daemon.url, cwd, channel.id, created.aiReply.id, "blocked", created.message.threadId,
+    );
+    assert.match(listed.messages.find((message) => message.id === created.aiReply.id).body, /context budget/u);
+    const store = stores.get(cwd);
+    const source = store.getConversationItem(created.message.id);
+    const dispatch = store.findWorkUnitByIdempotency({
+      kind: "channel_turn_dispatch", ownerType: "ling_turn", ownerId: source.turnId,
+      idempotencyKey: `channel-turn-dispatch:${source.turnId}`,
+    });
+    assert.ok(dispatch);
+    const events = store.listRuntimeEvents(dispatch.id)
+      .filter((event) => event.type === "work_unit_progress" && event.data.stage === "conversation_hard_summary");
+    assert.deepEqual(events.map((event) => event.data.status), ["no_eligible_prefix"]);
+    assert.equal(events[0].data.fallback, "prepared_input_budget_gate");
+    assert.equal(runner.runs.length, 0);
+    assert.equal(store.listRuns({ limit: 10 }).length, 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5977,6 +6107,7 @@ test("explicit custom executable participant is preserved ahead of same-role fal
     const executionRun = runner.executionRuns[0];
     assert.equal(executionRun.systemPrompt, systemPrompt);
     assert.equal(executionRun.appendSystemPrompt.includes(appendSystemPrompt), true);
+    assert.equal(executionRun.appendSystemPrompt.filter((prompt) => prompt.startsWith("Ling conversation response style v1:")).length, 1);
     assert.deepEqual(executionRun.tools, ["bash"]);
     const run = store.getRun(store.getChannelWorkflowStep(step.id).runId);
     assert.equal(run.teammateId, customEngineer.id);
@@ -6494,6 +6625,7 @@ test("multi-participant executable request blocks when one explicit participant 
     });
 
     assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(runner.selectorRuns.length, 1, "the operation graph must reach the model intent selector");
     assert.equal(runner.executionRuns.length, 0);
     const store = stores.get(cwd);
     assert.ok(store);
@@ -6730,12 +6862,13 @@ test("model-assisted thread follow-up clarifies instead of creating empty recent
     assert.equal(created.aiReply.kind, "ai_reply");
     assert.equal(created.aiReply.status, "ready");
     assert.equal(created.aiReply.authorId, "ling_agent");
-    assert.match(created.aiReply.body, /内容要求.*contentSource/);
+    assert.match(created.aiReply.body, /内容要求/u);
+    assert.doesNotMatch(created.aiReply.body, /contentSource/u);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["contentSource"]);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before final clarification");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -6773,9 +6906,10 @@ test("model-assisted local write request clarifies when no target validates", as
     assert.equal(created.aiReply.kind, "ai_reply");
     assert.equal(created.aiReply.status, "ready");
     assert.equal(created.aiReply.authorId, "ling_agent");
-    assert.match(created.aiReply.body, /确认.*target/i);
+    assert.match(created.aiReply.body, /输入和输出文件/u);
+    assert.doesNotMatch(created.aiReply.body, /\btarget\b/iu);
     assert.doesNotMatch(created.aiReply.body, /不能直接修改工作区|cannot directly modify|没有被授权执行工作区写入/i);
-    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before final clarification");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -7669,9 +7803,12 @@ test("model-assisted channel intent no_reply falls through to ordinary Ling repl
   }
 });
 
-test("model-assisted channel intent selector does not fall back to phrase-rule workflow proposal", async () => {
+test("model-assisted channel intent fallback cannot turn a reply block into a confirmable proposal", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-fallback-"));
-  const runner = new ScriptedRunner(["not json", "普通频道回复。"]);
+  const runner = new ScriptedRunner([
+    "not json",
+    `普通频道回复。<ling_task_proposal>{"title":"Unbound proposal","prompt":"Start three agents","acceptanceCriteria":["done"],"requiredTools":["read"]}</ling_task_proposal>`,
+  ]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
@@ -7702,8 +7839,12 @@ test("model-assisted channel intent selector does not fall back to phrase-rule w
     assert.equal(created.aiReply.kind, "ai_reply");
     assert.ok(["pending", "ready"].includes(created.aiReply.status));
     await waitForCondition(() => runner.runs.length === 2, "ordinary channel reply after selector parse failure");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    assert.equal(listed.messages.find((message) => message.id === created.aiReply.id).body, "普通频道回复。");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 0);
+    const allProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(allProposals.proposals.length, 0);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assertSingleReplyIntentDecision(decisions.decisions, created.message.id);
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
@@ -8270,7 +8411,7 @@ test("default_teammate creates a blocked Ling Agent reply when the channel has n
   }
 });
 
-test("explicit mentions still reply and keep proposal extraction enabled", async () => {
+test("explicit mentions keep reply text but cannot create an unbound proposal", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-explicit-route-"));
   const runner = new ScriptedRunner([
     `Visible explicit reply<ling_task_proposal>{"title":"Explicit proposal","prompt":"Create explicit task","acceptanceCriteria":["ok"],"requiredTools":["read"],"riskSummary":"explicit"}</ling_task_proposal>`,
@@ -8297,13 +8438,12 @@ test("explicit mentions still reply and keep proposal extraction enabled", async
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
     assert.equal(finalReply.body, "Visible explicit reply");
-    assert.match(runner.runs[0].systemPrompt, /include one hidden proposal block/);
+    assert.match(runner.runs[0].systemPrompt, /Do not include hidden proposal blocks/);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions[0].createdBy, "explicit_mention");
     assert.equal(decisions.decisions[0].status, "accepted");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].title, "Explicit proposal");
+    assert.equal(proposals.proposals.length, 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -15086,11 +15226,16 @@ class SummaryAwareRunner {
     this.runs = [];
     this.summaryRuns = [];
     this.replyRuns = [];
+    this.failSummary = false;
   }
 
   async runTask(options) {
     this.runs.push(options);
     const summary = /conversation summary coordinator/i.test(options.systemPrompt ?? "");
+    if (summary && this.failSummary) {
+      this.summaryRuns.push(options);
+      throw new Error("synthetic summary provider failure");
+    }
     const text = summary
       ? JSON.stringify({
           objective: "Preserve the durable historical objective.",

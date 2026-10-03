@@ -130,6 +130,11 @@ export interface ApprovalListResponse {
 export interface ApprovalMutationResponse {
   readonly approval: ApprovalRequest;
   readonly mediaJob?: MediaJob;
+  /** Decision is durable, but a downstream projection needs reconciliation. */
+  readonly postCommit?: {
+    readonly status: "deferred";
+    readonly code: "approval_postcommit_reconciliation_required";
+  };
 }
 
 export interface ResolveApprovalRequest {

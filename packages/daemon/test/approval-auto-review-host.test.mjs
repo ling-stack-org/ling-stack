@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
+import { setImmediate as tick } from "node:timers/promises";
 import { reviewPendingApprovalAutomatically } from "../dist/features/runs/approval-auto-review-host.js";
+import { createApprovalAutoReviewCoordinator } from "../dist/features/runs/approval-auto-review-coordinator.js";
+import { AttemptLocalWriterGroup } from "../dist/runtime/attempt-local-writers.js";
 
 const now = "2026-09-12T08:00:00.000Z";
 const fence = { workUnitId: "source-unit", attemptId: "source-attempt", runtimeInstanceId: "runtime-1", fencingToken: "1" };
@@ -128,7 +131,7 @@ function createFixture({ verdict = "approve", casOk = true, recoverable = false 
   };
 }
 
-async function review(fixture) {
+async function review(fixture, extra = {}) {
   return reviewPendingApprovalAutomatically({
     store: fixture.store,
     runtimeSupervisor: fixture.runtimeSupervisor,
@@ -140,6 +143,7 @@ async function review(fixture) {
     sourceFence: fence,
     effectivePolicySnapshot: policy,
     extraSecrets: ["secret-key"],
+    ...extra,
   });
 }
 
@@ -212,4 +216,34 @@ test("automatic review Host keeps approval pending on manual verdict or stale CA
   assert.equal(staleResult.status, "manual");
   assert.equal(staleResult.code, "approval_execution_stale");
   assert.equal(staleFixture.workUnits.get("review-unit").status, "failed");
+});
+
+test("automatic review Host passes captured local lifetime through prompt manual fallback to actual Runner cleanup", async () => {
+  const fixture = createFixture();
+  const group = new AttemptLocalWriterGroup({ ...fence, runId: run.id });
+  const abort = new AbortController();
+  const coordinator = createApprovalAutoReviewCoordinator({ maxConcurrent: 1, deadlineMs: 1000 });
+  let completeRunner;
+  const underlying = new Promise(resolve => { completeRunner = resolve; });
+  let captured;
+  fixture.runner.runTask = options => {
+    captured = options;
+    assert.equal(group.getSnapshot().writers.length, 2, "outer Host callback and actual Runner own distinct lifetime tickets");
+    return underlying;
+  };
+  const pending = group.wrapAsync("outer-approval-host", () => review(fixture, { localWriters: group, signal: abort.signal, coordinator }))();
+  abort.abort();
+  assert.equal((await pending).code, "cancelled");
+  const eventsAfterFallback = fixture.runtimeEvents.length;
+  assert.equal(fixture.getCasInput(), undefined);
+  assert.equal(group.getSnapshot().writers.length, 1, "Host result does not release the underlying reviewer");
+  group.close();
+  await assert.rejects(group.waitForIdle(0), /have not drained/);
+  captured.onEvent({ type: "message_end", role: "assistant", text: '{"schemaVersion":1,"decision":"approve","reason":"Too late."}' });
+  completeRunner({ events: [], messages: [] });
+  await group.waitForIdle(100);
+  await tick();
+  assert.deepEqual(group.getSnapshot().writers, []);
+  assert.equal(fixture.getCasInput(), undefined, "late model output cannot acquire approval authority");
+  assert.equal(fixture.runtimeEvents.length, eventsAfterFallback, "late cleanup performs no Host Store writes");
 });

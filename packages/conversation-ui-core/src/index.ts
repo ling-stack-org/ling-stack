@@ -50,7 +50,7 @@ export {
   projectConversationSubAgentActivity,
   projectConversationTimelineItems,
 } from "./transcript-item.js";
-export type { ActiveRunSnapshot, TimelineSnapshot } from "./timeline-snapshot.js";
+export type { ActiveRunSnapshot, TimelineSnapshot, TimelineRunLifecycle } from "./timeline-snapshot.js";
 export { createTimelineSnapshot } from "./timeline-snapshot.js";
 export { projectConversationRunNarration, mergeConversationRunNarration } from "./run-narration.js";
 export type { ConversationRunNarrationSegment } from "./run-narration.js";
@@ -167,7 +167,7 @@ export type {
   TerminalReportViewModel,
 } from "./terminal-report-view-model.js";
 export { terminalReportToViewModel } from "./terminal-report-view-model.js";
-export { isUserVisibleTerminalReportArtifact } from "./terminal-report-visibility.js";
+export { isUserVisibleTerminalReportArtifact, isUserVisibleTerminalReportSourceRef } from "./terminal-report-visibility.js";
 export { terminalReportSourceRefs, projectVisibleTerminalReportContent, visibleTerminalReportTimelineItem } from "./terminal-report-presentation.js";
 export type {
   ConversationInteractionPolicy,

@@ -1,5 +1,6 @@
 import type {
-  AppendConversationUserTurnResult,
+  AppendTeammateDirectInputResult,
+  TeammateDirectExecutionInput,
   LingThread,
   RunStore,
   TeammateDirectMessage,
@@ -13,8 +14,9 @@ export function ingestTeammateDirectExecutionSource(input: {
   readonly directThread: TeammateDirectThread;
   readonly message: TeammateDirectMessage;
   readonly title: string;
+  readonly executionInput: TeammateDirectExecutionInput;
   readonly continuationReason?: "queue_followup" | "interrupt_redirect";
-}, now: string): AppendConversationUserTurnResult {
+}, now: string): AppendTeammateDirectInputResult {
   const { store, message, thread } = input;
   const revisions = store.listConversationMessageRevisions({ surface: "teammate_direct", messageId: message.id });
   const revision = revisions.at(-1);
@@ -49,10 +51,11 @@ export function ingestTeammateDirectExecutionSource(input: {
     throw new Error("Teammate direct canonical replay scope mismatch");
   }
   // Canonical history stores the source message, never the rendered model prompt.
-  return store.appendConversationUserTurn({
+  return store.appendTeammateDirectUserTurnWithInputSnapshot({
     itemId,
     threadId: thread.id,
     teammateId: message.teammateId,
+    executionInput: input.executionInput,
     turnKind: input.continuationReason === "queue_followup" ? "queued_followup"
       : input.continuationReason === "interrupt_redirect" ? "interrupt_redirect"
       : revision && revision.revision > 1 ? "manual_followup" : "initial_request",

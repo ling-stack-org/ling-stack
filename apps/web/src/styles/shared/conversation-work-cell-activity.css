@@ -181,6 +181,10 @@ button.conversation-timeline-activity-main:not(:disabled):focus-visible .convers
   color: var(--danger);
 }
 
+.conversation-timeline-activity.status-partially_succeeded .conversation-timeline-activity-main > svg {
+  color: var(--conversation-status-waiting);
+}
+
 .conversation-timeline-activity.kind-approval:is(.status-waiting, .status-pending) .conversation-timeline-activity-main > svg {
   color: var(--conversation-status-waiting);
 }

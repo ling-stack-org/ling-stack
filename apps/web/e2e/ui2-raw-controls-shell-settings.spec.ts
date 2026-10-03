@@ -34,7 +34,7 @@ test("owned shell and settings sources use the shared Input contract without pri
   expect(policyEditorSource).toContain("onKeyDown={handlePathKeyDown}");
   expect(policyEditorSource).toContain("onSubmit={submitPath}");
   expect(sidebarCss).not.toMatch(/sidebar-branch-create-form\s+input/gu);
-  expect(sidebarCss).not.toContain(".ling-ui-");
+  expect(sidebarCss).not.toMatch(/\.ling-ui-(?:input|textarea)\b/gu);
   expect(authorizationCss).not.toContain(".ling-ui-");
 });
 

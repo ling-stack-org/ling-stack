@@ -716,10 +716,21 @@ export function ConversationHome({
       onRemoveAttachment={attachmentController.removeAttachment}
       onAuthorizationModeChange={setSelectedAuthorizationMode}
       onPermissionPresetChange={(preset) => {
-        if (preset === "full_access") {
-          onConfirmFullAccessSelection?.();
+        if (preset !== "full_access") {
+          setSelectedPermissionPreset(preset);
+          return;
         }
-        setSelectedPermissionPreset(preset);
+        if (!onConfirmFullAccessSelection) {
+          actionFeedback.report("validation", t("Use full access for this conversation after explicit confirmation."));
+          return;
+        }
+        void onConfirmFullAccessSelection()
+          .then((confirmation) => {
+            if (confirmation) setSelectedPermissionPreset(preset);
+          })
+          .catch((error: unknown) => {
+            actionFeedback.report("validation", error instanceof Error ? error.message : String(error));
+          });
       }}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
@@ -754,7 +765,6 @@ export function ConversationHome({
           searchOpen: normalConversationHeader.searchOpen,
           searchQuery: messageSearchQuery,
           searchTriggerRef: normalConversationHeader.searchTriggerRef,
-          summaryActive: conversationSummaryOpen,
           terminalActive: conversationTerminalOpen,
           terminalDisabled: !workspaceCwd.trim(),
           detailsActive: conversationDockController.expanded,

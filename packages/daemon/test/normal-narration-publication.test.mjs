@@ -49,6 +49,7 @@ test("terminal hook publishes canonical narration and detail reads it without re
   assert.equal(dto.canonicalItemId, item.id);
   assert.equal(dto.id, "conversation-assistant:" + f.turn.turnId);
   assert.equal(dto.content, item.payload.body);
+  assert.equal(dto.contentSource, "run_narration");
   f.store.listEvents = original;
   const detail = buildConversationDetail(f.store, f.cwd, f.store.getLingThread(f.thread.id));
   assert.equal(detail.messages.filter(message => message.role === "assistant").length, 1);

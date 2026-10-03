@@ -68,9 +68,13 @@ export function FullAccessConfirmationDialog({
 
 function restoreFocusWhenReady(target: HTMLElement | null | undefined, attempt = 0): void {
   if (!target?.isConnected) return;
-  if (!target.matches(":disabled")) {
-    target.focus();
-    if (document.activeElement === target) return;
+  const selectedRadio = target.matches('[role="radio"][aria-checked="false"]')
+    ? target.closest('[role="radiogroup"]')?.querySelector<HTMLElement>('[role="radio"][aria-checked="true"]')
+    : null;
+  const focusTarget = selectedRadio ?? target;
+  if (!focusTarget.matches(":disabled")) {
+    focusTarget.focus({ preventScroll: true });
+    if (document.activeElement === focusTarget) return;
   }
   if (attempt >= 4) return;
   globalThis.requestAnimationFrame(() => restoreFocusWhenReady(target, attempt + 1));

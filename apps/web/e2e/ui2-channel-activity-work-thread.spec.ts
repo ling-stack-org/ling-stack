@@ -53,11 +53,10 @@ test("Channel Activity keeps filters, search, drilldown, and triage contained", 
   await captureEvidence(page, "1440x960-ling-light-search-no-result.png");
 
   await search.fill("run_failed");
-  const runEvent = page.locator(".message-bubble")
-    .filter({ hasText: "Run event" })
-    .filter({ hasText: "Inspect workspace" });
+  const runEvent = page.locator('[data-conversation-timeline-item="protocolEvent"]')
+    .filter({ hasText: "Run for Inspect workspace" });
   await expect(runEvent).toBeVisible();
-  await runEvent.getByRole("button", { name: "Details" }).click();
+  await runEvent.getByRole("button", { name: "Details", exact: true }).click();
 
   const drilldown = page.getByLabel("Activity details");
   await expect(drilldown).toBeVisible();

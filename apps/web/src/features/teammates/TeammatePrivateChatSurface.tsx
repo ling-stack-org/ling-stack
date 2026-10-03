@@ -96,7 +96,11 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
       ].filter(Boolean).join(" ")}
       ariaLabel={t("Private chat")}
       feedNode={<TeammatePrivateChatFeed {...props} messageController={messageController} />}
-      composerNode={props.composerGateNode ?? <TeammatePrivateChatComposer {...props} controller={composerController} />}
+      composerNode={props.composerGateNode != null ? (
+        <div className="teammate-private-composer-owner" data-ui2-teammate-private-composer="true">
+          {props.composerGateNode}
+        </div>
+      ) : <TeammatePrivateChatComposer {...props} controller={composerController} />}
       sideNode={(
         <>
           {dockController.resizable ? (

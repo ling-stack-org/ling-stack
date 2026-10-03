@@ -57,6 +57,43 @@ test("private transcript returns real canonical anchors, complete actions and ow
   assert.equal(database.prepare("PRAGMA data_version").get().data_version, beforeVersion, "projection must not write any SQLite rows");
 });
 
+test("private transcript excludes internal provenance artifacts without hiding workspace artifacts", async (t) => {
+  const { store } = await fixture(t);
+  const own = createSource(store, engineer, "artifact-visibility");
+  const run = createRun(store, own, "artifact-visibility");
+  const internal = store.createArtifact({
+    runId: run.id, type: "json", path: `.ling-stack/provenance/${run.id}/forward-plan.json`,
+    title: "Workspace forward patch plan", sealedPayload: { privatePatch: "SECRET_SENTINEL" }, createdAt: now,
+  });
+  const visible = store.createArtifact({
+    runId: run.id, type: "json", path: "reports/result.json", title: "Result",
+    sealedPayload: { result: "public" }, createdAt: now,
+  });
+
+  const transcript = buildTeammateDirectTranscript(store, engineer);
+  assert.deepEqual(transcript.artifacts.map((artifact) => artifact.id), [visible.id]);
+  assert.equal("sealedPayload" in transcript.artifacts[0], false);
+  assert.equal(JSON.stringify(transcript).includes("SECRET_SENTINEL"), false);
+  assert.deepEqual(store.getArtifact(internal.id)?.sealedPayload, { privatePatch: "SECRET_SENTINEL" });
+});
+
+test("private transcript includes its own edit-owned Run diff but not unowned internal artifacts", async (t) => {
+  const { store } = await fixture(t);
+  const own = createSource(store, engineer, "owned-diff");
+  const run = createRun(store, own, "owned-diff");
+  const owned = store.createArtifact({ runId: run.id, type: "diff", path: `${run.id}/008-generated-edit-diff-todo.py.diff`, contentType: "text/x-diff", sealedPayload: { private: "SECRET_SENTINEL" }, createdAt: now });
+  const unowned = store.createArtifact({ runId: run.id, type: "diff", path: `${run.id}/009-unowned.diff`, contentType: "text/x-diff", createdAt: now });
+  store.appendEvent(run.id, "tool_start", { toolCallId: "edit-1", toolName: "edit", args: { path: "todo.py" } });
+  store.appendEvent(run.id, "artifact_created", { toolCallId: "edit-1", artifactId: owned.id });
+  store.appendEvent(run.id, "tool_end", { toolCallId: "edit-1", toolName: "edit", result: { content: [{ type: "text", text: "edited" }] } });
+
+  const transcript = buildTeammateDirectTranscript(store, engineer);
+  assert.deepEqual(transcript.artifacts.map((artifact) => artifact.id), [owned.id]);
+  assert.equal(transcript.executionActions.some((action) => action.actionType === "edit" && action.resultArtifactIds.includes(owned.id)), true);
+  assert.equal(transcript.artifacts.some((artifact) => artifact.id === unowned.id), false);
+  assert.equal(JSON.stringify(transcript).includes("SECRET_SENTINEL"), false);
+});
+
 test("private transcript cannot expose another teammate's canonical items or linked runs", async (t) => {
   const { store } = await fixture(t);
   const own = createSource(store, engineer, "engineer");

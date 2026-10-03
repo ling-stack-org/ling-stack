@@ -1010,6 +1010,12 @@ export function WorkspaceClientView({
     () => channelWorkCellDemoFixture ? [...channelMessages, ...channelWorkCellDemoFixture.channelMessages] : channelMessages,
     [channelMessages, channelWorkCellDemoFixture],
   );
+  const channelConversationItemsForDisplay = useMemo(
+    () => channelWorkCellDemoFixture
+      ? [...channelConversationItems, ...channelWorkCellDemoFixture.conversationItems]
+      : channelConversationItems,
+    [channelConversationItems, channelWorkCellDemoFixture],
+  );
   const visibleChannelMessageIds = useMemo(
     () => new Set(channelMessagesForDisplay.map((message) => message.id)),
     [channelMessagesForDisplay],
@@ -1605,7 +1611,7 @@ export function WorkspaceClientView({
     () => buildConversationTurnProjection({
       channelId: selectedChannelId,
       messages: channelMessagesForDisplay,
-      conversationItems: channelConversationItems,
+      conversationItems: channelConversationItemsForDisplay,
       proposals: channelExecutionProposals,
       intentDecisions: channelIntentDecisions,
       workflows: channelWorkflowsForDisplay,
@@ -1621,7 +1627,7 @@ export function WorkspaceClientView({
       channelExecutionProposals,
       channelIntentDecisions,
       channelMessagesForDisplay,
-      channelConversationItems,
+      channelConversationItemsForDisplay,
       channelRuns,
       channelWorkflowStepsForDisplay,
       channelWorkflowsForDisplay,
@@ -3275,6 +3281,7 @@ export function WorkspaceClientView({
   }
 
   const messageRenderers = createChannelMessageRenderers({
+    runLifecycles: runById,
     allLocalTeammateById,
     allLocalTeammateByName,
     attachmentContentUrl,
@@ -3283,7 +3290,7 @@ export function WorkspaceClientView({
     channelAttachmentById,
     channelLinkPreviewById,
     channelMessageFeedbackById,
-    channelConversationItems,
+    channelConversationItems: channelConversationItemsForDisplay,
     channelUserInputs,
     channelReasoningSummaries,
     channelWorkflows: channelWorkflowsForDisplay,
@@ -3326,6 +3333,7 @@ export function WorkspaceClientView({
     onOpenExecutionProposal: openExecutionProposal,
     onOpenFileReference: () => openRightDockPage("files"),
     onOpenTerminalReportFile: (target) => openRightDockPage("files", target),
+    onOpenReview: (target) => openRightDockPage("review", undefined, target),
     onOpenThreadForMessage: threadReplyController.openThreadForMessage,
     onInvokeProtocolAction: invokeTimelineProtocolAction,
     onRefineProposedPlan: handleRefineProposedPlan,
@@ -4197,7 +4205,7 @@ export function WorkspaceClientView({
           emptyTeammateActionDisabled={!selectedChannelId}
           emptyTeammateActionLabel={t("AI teammate management")}
           onToggleEmptyTeammateAction={toggleChannelTeammateManager}
-          progressActive={progressPopoverVisible}
+          progressActive={progressSummaryLayout.visible}
           progressExpanded={progressSummaryLayout.visible && progressPopoverPresence.expanded}
           progressLabel={t("Summary")}
           onToggleProgress={() => {

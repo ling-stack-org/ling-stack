@@ -382,6 +382,30 @@
   line-height: 16px;
 }
 
+.conversation-timeline-terminal-entry-summary {
+  color: var(--conversation-text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.conversation-timeline-terminal-entry-sources > summary {
+  color: var(--conversation-text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.conversation-timeline-terminal-entry-sources > summary:hover,
+.conversation-timeline-terminal-entry-sources > summary:focus-visible {
+  color: var(--conversation-text-strong);
+}
+
+.conversation-timeline-terminal-lineage-ref {
+  color: var(--conversation-text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
 @media (max-width: 720px) {
   .conversation-timeline-activity-main {
     grid-template-columns: 16px minmax(0, 1fr) 14px;

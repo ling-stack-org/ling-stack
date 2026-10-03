@@ -11,6 +11,8 @@ import {
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
 import { resolveTeammateDirectRunOwner } from "./direct-run-owner.js";
 import { projectConversationReasoningSummaries } from "../conversations/reasoning-summary-projection.js";
+import { projectConversationArtifacts } from "../runs/public-artifacts.js";
+import { projectTeammateDirectInputSnapshots, projectTeammateDirectPublicRun } from "./direct-input-snapshot-projection.js";
 
 /**
  * Read an existing teammate's canonical facts without creating history or
@@ -69,7 +71,7 @@ export function buildTeammateDirectTranscript(
   const terminalReports = (options.includeSuperseded ? reports : filterSupersededTerminalReports(reports, supersession))
     .filter((record) => record.report && (record.status === "committed" || record.status === "fallback"))
     .map((record) => ({
-      ...projectTerminalReportDto(record.report!), generation: record.generation, resultItemId: record.resultItemId!,
+      ...projectTerminalReportDto(record.report!, record.evidenceSnapshot), generation: record.generation, resultItemId: record.resultItemId!,
     }));
   const visibleSource = (source: { readonly sourceTurnId?: string; readonly sourceRunId?: string; readonly sourceMessageId?: string }) =>
     (!source.sourceTurnId || turnIds.has(source.sourceTurnId)) &&
@@ -79,6 +81,7 @@ export function buildTeammateDirectTranscript(
   const approvalCheckpoints = approvals
     .map((approval) => store.getApprovalCheckpointForApproval(approval.id))
     .filter((checkpoint): checkpoint is NonNullable<typeof checkpoint> => Boolean(checkpoint));
+  const executionActions = runs.flatMap((run) => listAllExecutionActionsForRun(store, run.id));
   return {
     cwd: store.paths.cwd,
     thread,
@@ -87,7 +90,7 @@ export function buildTeammateDirectTranscript(
     userInputs,
     supersessionTombstones: projectConversationSupersessionTombstones(supersession),
     runLinks,
-    runs,
+    runs: runs.map(projectTeammateDirectPublicRun),
     reasoningSummaries: projectConversationReasoningSummaries({
       store,
       thread,
@@ -95,15 +98,18 @@ export function buildTeammateDirectTranscript(
       runs,
       items: conversationItems,
     }),
-    executionActions: runs.flatMap((run) => listAllExecutionActionsForRun(store, run.id)),
+    executionActions,
     approvals,
     approvalCheckpoints,
     interventions: runs.flatMap((run) => store.listRunInterventions({ sourceRunId: run.id, limit: 500 })),
     terminalReports,
-    artifacts: runs.flatMap((run) => store.listArtifacts(run.id)),
+    artifacts: projectConversationArtifacts(runs.flatMap((run) => store.listArtifacts(run.id)), executionActions),
     plans: store.listProposedPlanArtifacts({ threadId: thread.id, limit: 500 }).filter(visibleSource),
     compactionCheckpoints: store.listCompactionCheckpoints({ threadId: thread.id, limit: 500 }).filter(visibleSource),
-    contextSnapshots: store.listConversationContextSnapshots({ threadId: thread.id, limit: 500 }),
+    contextSnapshots: [
+      ...store.listConversationContextSnapshots({ threadId: thread.id, limit: 500 }),
+      ...projectTeammateDirectInputSnapshots({ store, thread, turns, runs, items: conversationItems }),
+    ],
     contextSummaries: store.listConversationContextSummaries({
       threadId: thread.id, statuses: ["active", "superseded", "invalidated"], limit: 500,
     }),

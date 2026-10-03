@@ -6,7 +6,7 @@ import test from "node:test";
 import { createCompositeSecretResolver, createSqliteRunStore } from "@ling-stack/core";
 import { appendChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import { selectChannelWorkflowIntent } from "../dist/features/channels/channel-intent-selector.js";
-import { bindChannelOperationPlan } from "../dist/features/channels/channel-operation-bindings.js";
+import { bindChannelOperationPlan, isChannelOperationCandidatePlanV2 } from "../dist/features/channels/channel-operation-bindings.js";
 import { assignExecutionOperationOwners, requiredToolsForExecutionOperations } from "../dist/features/channels/workflow-operation-ownership.js";
 import { confirmChannelExecutionProposalWorkflow } from "../dist/features/channels/proposal-workflows.js";
 import { isChannelIntentExecutionPlanV1, channelOperationPlanFingerprintV1 } from "@ling-stack/contracts";
@@ -37,24 +37,121 @@ async function select(t, body = c01, modelOutput = workflowChoice, options = {})
     mentions: options.mentions ?? [],
   }, now);
   let classifications = 0;
+  const prompts = [];
   const result = await selectChannelWorkflowIntent({ store, channel, sourceMessage,
     secretResolver: createCompositeSecretResolver({ env: {} }), config: { channels: { intentSelector: true } },
     runnerRegistry: { resolve: () => ({ runner: { adapter: { runTask: async (input) => {
       classifications += 1;
+      prompts.push(input.task.prompt);
       assert.deepEqual(input.tools, []);
-      input.onEvent({ type: "assistant_text_delta", text: JSON.stringify(modelOutput) });
+      if (classifications === 2 && options.repairError) throw options.repairError;
+      const output = options.repairOutput && classifications === 2 ? options.repairOutput : modelOutput;
+      input.onEvent({ type: "assistant_text_delta", text: JSON.stringify(output) });
       return { messages: [] };
     } } } }) },
   });
-  assert.equal(classifications, 1, "must exercise the real model-policy application path with a static JSON response");
+  const expectedClassifications = options.expectedClassifications ?? (
+    (modelOutput.action === "execute" || modelOutput.action === "workflow_proposal")
+      && !isChannelOperationCandidatePlanV2(modelOutput.execution) ? 2 : 1);
+  assert.equal(classifications, expectedClassifications,
+    "must exercise the real model-policy application path with the expected bounded request count");
   assert.deepEqual(store.getChannel(channel.id).allowedTools, options.allowedTools ?? ["read", "grep", "find", "ls"]);
   assert.equal(store.listRuns({ channelId: channel.id, limit: 20 }).length, 0);
   assert.equal(store.listTasks({ channelId: channel.id, limit: 20 }).length, 0);
   const decision = store.listChannelIntentDecisions({ sourceItemId: sourceMessage.id, limit: 10 })[0];
   assert.notEqual(decision?.action, "reply", decision?.reason);
   const operations = decision?.execution?.operations ?? [];
-  return { result, decision, operations, store, channel };
+  return { result, decision, operations, store, channel, prompts };
 }
+
+test("incomplete operation graph gets one bounded repair before Host binding", async (t) => {
+  const valid = c01BoundCandidate();
+  const malformed = structuredClone(valid);
+  delete malformed.operations[0].owner;
+  const { result, decision, prompts } = await select(t, c01,
+    { action: "execute", reason: "Source-bound work", execution: malformed },
+    { repairOutput: { action: "execute", reason: "Repaired graph", execution: valid }, expectedClassifications: 2 });
+  assert.equal(result.action, "workflow_proposal");
+  assert.equal(decision.action, "execute");
+  assert.match(prompts[1], /one corrected strict JSON object/u);
+});
+
+test("valid-shaped owner-span mistakes receive one repair without weakening Host binding", async (t) => {
+  const valid = c01BoundCandidate();
+  const invalid = structuredClone(valid);
+  invalid.operations[0].sourceQuote = "真实读取 todo.mjs 和 app.js";
+  assert.equal(isChannelOperationCandidatePlanV2(invalid), true);
+  const { result, decision, operations, prompts } = await select(t, c01,
+    { action: "execute", reason: "Two source-bound participants", execution: invalid },
+    { repairOutput: { action: "execute", reason: "Corrected verbatim owner span", execution: valid }, expectedClassifications: 2 });
+  assert.equal(result.action, "workflow_proposal");
+  assert.equal(decision.action, "execute");
+  assert.equal(operations.length, 6);
+  assert.deepEqual(operations.map((operation) => operation.binding.ownerParticipantId),
+    valid.operations.map((operation) => operation.owner.participantId));
+  assert.match(prompts[1], /owner.sourceQuote/u);
+  assert.match(prompts[1], /instruction span/u);
+  assert.deepEqual(operations.filter((operation) => operation.kind === "file_create").map((operation) => operation.targetRef.label),
+    ["morning-todo/engineer-review.md", "morning-todo/qa-review.md"]);
+});
+
+test("repeated semantic binding failure stays closed after exactly one repair", async (t) => {
+  const invalid = c01BoundCandidate();
+  invalid.operations[0].owner = invalid.operations[3].owner;
+  const { result, decision, operations, prompts } = await select(t, c01,
+    { action: "execute", reason: "Invalid cross-owner span", execution: invalid }, { expectedClassifications: 2 });
+  assert.equal(prompts.length, 2);
+  assert.equal(result.action, "clarify");
+  assert.deepEqual(decision.clarification.missingFields, ["owner.sourceQuote"]);
+  assert.deepEqual(operations, []);
+  assert.doesNotMatch(result.aiReply.body, /owner\.sourceQuote/u, "internal validator fields are audit facts, not user prose");
+});
+
+test("semantic repair cannot evade the binding gate by changing to a text reply", async (t) => {
+  const invalid = c01BoundCandidate();
+  invalid.operations[0].sourceQuote = "真实读取 todo.mjs 和 app.js";
+  const { result, decision, operations } = await select(t, c01,
+    { action: "execute", reason: "Invalid owner span", execution: invalid },
+    { repairOutput: { action: "reply", reason: "Pretend that work was completed" }, expectedClassifications: 2 });
+  assert.equal(result.action, "clarify");
+  assert.equal(decision.action, "clarify");
+  assert.deepEqual(operations, []);
+});
+
+test("failed semantic repair transport retains the original fail-closed decision", async (t) => {
+  const invalid = c01BoundCandidate();
+  invalid.operations[0].sourceQuote = "真实读取 todo.mjs 和 app.js";
+  const { result, decision, operations, prompts } = await select(t, c01,
+    { action: "execute", reason: "Invalid owner span", execution: invalid },
+    { repairError: new Error("Fixture transport disconnected"), expectedClassifications: 2 });
+  assert.equal(prompts.length, 2);
+  assert.equal(result.action, "clarify");
+  assert.match(decision.reason, /instruction span/u);
+  assert.deepEqual(operations, []);
+});
+
+test("repair cannot evade Host source binding by inventing a quote", async (t) => {
+  const malformed = structuredClone(c01BoundCandidate());
+  delete malformed.operations[0].owner;
+  const invented = structuredClone(c01BoundCandidate());
+  invented.operations[0].sourceQuote = "a source quote not present in the user turn";
+  const { result, decision } = await select(t, c01,
+    { action: "execute", reason: "Incomplete work", execution: malformed },
+    { repairOutput: { action: "execute", reason: "Invented provenance", execution: invented }, expectedClassifications: 2 });
+  assert.equal(result.action, "clarify");
+  assert.equal(decision.action, "clarify");
+});
+
+test("repeated malformed operation graph stops after one repair request", async (t) => {
+  const malformed = structuredClone(c01BoundCandidate());
+  delete malformed.operations[0].owner;
+  const { result, decision, prompts } = await select(t, c01,
+    { action: "execute", reason: "Incomplete work", execution: malformed },
+    { expectedClassifications: 2 });
+  assert.equal(prompts.length, 2);
+  assert.equal(result.action, "clarify");
+  assert.equal(decision.action, "clarify");
+});
 
 test("explicit review-only participant stays required when another participant owns the Host operation", async (t) => {
   const command = `node -e "process.stdout.write('N05-FIX-20260918')"`;
@@ -216,7 +313,8 @@ for (const [name, mutate] of [
   test(`typed binding fails closed for ${name} without accepting a guessed plan`, async (t) => {
     const candidate = c01BoundCandidate(); mutate(candidate);
     const { result, decision, operations } = await select(t, c01,
-      { action: "execute", reason: "Invalid candidate must not trigger materialization fallback", execution: candidate });
+      { action: "execute", reason: "Invalid candidate must not trigger materialization fallback", execution: candidate },
+      { expectedClassifications: 2 });
     assert.equal(result.action, "clarify");
     assert.equal(decision.action, "clarify");
     assert.deepEqual(operations, []);

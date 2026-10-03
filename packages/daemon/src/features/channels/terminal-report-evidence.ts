@@ -28,11 +28,13 @@ import {
 import type { ChannelIntentExecutionOperationV1 } from "@ling-stack/contracts";
 import { formatSynchronousCatalogMessage, isSupportedLocale } from "@ling-stack/localization";
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
+import { isWorkspaceDeliverableArtifact } from "../runs/public-artifacts.js";
 import { redactEvidenceText } from "./context-processing/evidence.js";
 import { inferUserLanguage } from "./response-language.js";
 import { boundedMarkdownText } from "./markdown-text.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
+import { collectTerminalInterruptionRisks, terminalReportFailureSummary } from "./terminal-report-interruption-risks.js";
 import { extractWorkflowStepChangedPaths } from "./workflow-step-packets.js";
 
 export interface TerminalReportEvidenceBudgets {
@@ -102,10 +104,13 @@ export function collectWorkflowTerminalReportEvidence(
     steps,
     executedActions,
   );
-  const checks = collectWorkflowChecks(store, evidence, budgets.summaryCharacters, options.generatedAt ?? evidence.workflow.updatedAt);
+  const interruptionRisks = collectTerminalInterruptionRisks(store,
+    uniqueById(evidence.steps.flatMap(item => item.linkedRun ? [item.linkedRun] : [])), language, executedActions);
+  const checks = collectWorkflowChecks(store, evidence, budgets.summaryCharacters,
+    options.generatedAt ?? evidence.workflow.updatedAt, interruptionRisks);
   const approvals = evidence.approvals.map(mapApproval);
   const participants = aggregateWorkflowParticipants(store, evidence, budgets.summaryCharacters);
-  const risks = collectWorkflowRisks(evidence, checks, budgets.summaryCharacters);
+  const risks = [...interruptionRisks, ...collectWorkflowRisks(evidence, checks, budgets.summaryCharacters)];
 
   return finalizeSnapshot({
     workspaceId: evidence.workflow.workspaceId,
@@ -156,12 +161,14 @@ export function collectRunTerminalReportEvidence(
   const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions, new Map([[run.id, run.cwd]]));
   const changedPaths = changedPathsFromActions(executedActions, run.cwd);
   const terminalState = deriveAtomicUnitStatus(sourceTerminalState, executedActions);
+  const language = options.language ?? languageForRun(run, turn?.userInstruction ?? task?.prompt ?? task?.title) ?? "en-US";
+  const interruptionRisks = collectTerminalInterruptionRisks(store, [run], language, executedActions);
   const teammate = run.teammateId ? store.getAiTeammate(run.teammateId) : undefined;
   const workflowStep = run.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
   const rejectedContext = workflowStepResultContextRejected(workflowStep);
   const resultSummary = rejectedContext
     ? undefined
-    : readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? run.errorMessage;
+    : readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? terminalReportFailureSummary(run, language);
 
   return finalizeSnapshot({
     workspaceId: turn?.workspaceId ?? thread?.workspaceId ?? "workspace_default",
@@ -172,7 +179,7 @@ export function collectRunTerminalReportEvidence(
     sourceMessageId: turn?.sourceItemId,
     source: { kind: "run", id: run.id },
     objective: boundedMarkdownEvidenceText(workflowStep?.prompt || task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
-    language: options.language ?? languageForRun(run, turn?.userInstruction ?? task?.prompt ?? task?.title) ?? "en-US",
+    language,
     terminalState,
     terminalAt: run.endedAt ?? run.updatedAt,
     steps: [{
@@ -182,13 +189,13 @@ export function collectRunTerminalReportEvidence(
       teammateId: run.teammateId,
       runId: run.id,
       resultSummary: resultSummary ? boundedMarkdownEvidenceText(resultSummary, budgets.summaryCharacters) : undefined,
-      blocker: run.errorMessage ? boundedText(run.errorMessage, budgets.summaryCharacters) : undefined,
+      blocker: run.errorMessage ? boundedText(terminalReportFailureSummary(run, language)!, budgets.summaryCharacters) : undefined,
       changedPaths,
       artifactIds: artifactsRaw.map((artifact) => artifact.id),
-      sourceRefs: uniqueRefs([sourceRef, ...artifactsRaw.map((artifact) => artifactRef(artifact))]),
+      sourceRefs: uniqueRefs([sourceRef, ...artifactsRaw.filter(isWorkspaceDeliverableArtifact).map((artifact) => artifactRef(artifact))]),
     }],
     operations: executedActions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters, run.cwd)),
-    checks: executedActions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters)),
+    checks: executedActions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters, { interruptionRisks })),
     participants: run.teammateId && runHasAgentActivity(store, run) ? [{
       agentId: run.teammateId,
       displayName: teammate?.displayName ?? run.teammateId,
@@ -205,7 +212,8 @@ export function collectRunTerminalReportEvidence(
       workspaceFileRefsByArtifactId.get(artifact.id) ?? [],
     )),
     approvals: approvalsRaw.map(mapApproval),
-    risks: collectRunRisks(run, executedActions, approvalsRaw, sourceRef, budgets.summaryCharacters),
+    risks: [...interruptionRisks,
+      ...collectRunRisks(run, executedActions, approvalsRaw, sourceRef, budgets.summaryCharacters, language)],
     references: [
       sourceRef,
       ...(turn ? [sourceRefFor("turn", turn.id, turn.title)] : []),
@@ -238,6 +246,8 @@ export function collectTurnTerminalReportEvidence(
   const runCwds = new Map(runs.map((run) => [run.id, run.cwd] as const));
   const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions, runCwds);
   const sourceRef = sourceRefFor("turn", turn.id, turn.title);
+  const language = options.language ?? runs.map(run => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction);
+  const interruptionRisks = collectTerminalInterruptionRisks(store, runs, language, executedActions);
   const participants = aggregateRunParticipants(store, runs, runLinks, budgets.summaryCharacters);
   const effectiveOutcomeRunIds = selectEffectiveOutcomeRunIds(runs, runLinks);
   const terminalState = deriveCompositeAtomicTerminalState(
@@ -259,7 +269,7 @@ export function collectTurnTerminalReportEvidence(
     sourceMessageId: turn.sourceItemId,
     source: { kind: "turn", id: turn.id },
     objective: boundedMarkdownEvidenceText(turn.userInstruction || turn.title, budgets.summaryCharacters),
-    language: options.language ?? runs.map((run) => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction),
+    language,
     terminalState,
     terminalAt: turn.completedAt ?? turn.updatedAt,
     steps: runs.map((run, index) => mapTurnRunStep(
@@ -276,7 +286,7 @@ export function collectTurnTerminalReportEvidence(
       budgets.summaryCharacters,
       action.runId ? runCwds.get(action.runId) : undefined,
     )),
-    checks: executedActions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters)),
+    checks: executedActions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters, { interruptionRisks })),
     participants,
     artifacts: artifactsRaw.map((artifact) => mapArtifact(
       artifact,
@@ -284,7 +294,8 @@ export function collectTurnTerminalReportEvidence(
       workspaceFileRefsByArtifactId.get(artifact.id) ?? [],
     )),
     approvals: approvalsRaw.map(mapApproval),
-    risks: collectTurnRisks(turn, runs, executedActions, approvalsRaw, sourceRef, budgets.summaryCharacters),
+    risks: [...interruptionRisks,
+      ...collectTurnRisks(turn, runs, executedActions, approvalsRaw, sourceRef, budgets.summaryCharacters, language)],
     references: [
       sourceRef,
       ...(turn.sourceItemId ? [sourceRefFor("conversation_item", turn.sourceItemId, "Source item")] : []),
@@ -376,7 +387,7 @@ function mapWorkflowStep(item: WorkflowEvidence["steps"][number], maxCharacters:
     sourceRefs: uniqueRefs([
       sourceRefFor("workflow_step", step.id, step.title),
       ...(step.runId ? [sourceRefFor("run", step.runId, step.title)] : []),
-      ...item.linkedArtifacts.map((artifact) => artifactRef(artifact)),
+      ...item.linkedArtifacts.filter(isWorkspaceDeliverableArtifact).map((artifact) => artifactRef(artifact)),
     ]),
   };
 }
@@ -407,7 +418,7 @@ function mapTurnRunStep(
     sourceRefs: uniqueRefs([
       sourceRefFor("turn", turn.id, turn.title),
       sourceRefFor("run", run.id, task?.title ?? "Run"),
-      ...artifacts.map((artifact) => artifactRef(artifact)),
+      ...artifacts.filter(isWorkspaceDeliverableArtifact).map((artifact) => artifactRef(artifact)),
     ]),
   };
 }
@@ -434,7 +445,8 @@ function mapOperation(
       ...(action.runId ? [sourceRefFor("run", action.runId, "Operation run")] : []),
       ...action.resultArtifactIds
         .map((id) => artifactsById.get(id))
-        .filter((artifact): artifact is RunArtifact => Boolean(artifact))
+        .filter((artifact): artifact is RunArtifact => artifact !== undefined)
+        .filter(isWorkspaceDeliverableArtifact)
         .map((artifact) => artifactRef(artifact)),
       ...action.targetRefs.map(targetRefToSourceRef).filter((ref): ref is TerminalReportSourceRef => Boolean(ref)),
     ]),
@@ -444,12 +456,16 @@ function mapOperation(
 function mapCheck(
   action: ExecutionAction,
   maxCharacters: number,
-  overrides: { readonly title?: string } = {},
+  overrides: { readonly title?: string; readonly interruptionRisks?: readonly TerminalReportEvidenceRisk[] } = {},
 ): TerminalReportEvidenceCheck {
+  // A terminal Run/action fence is not a command exit receipt. Resolve this
+  // from the same accepted lifecycle facts as the mandatory Host warning.
+  const unconfirmed = overrides.interruptionRisks?.find(risk => risk.sourceRefs.some(ref =>
+    ref.kind === "operation" && ref.id === action.id));
   return {
     id: action.id,
     title: boundedText(overrides.title || action.title || "Verification", maxCharacters),
-    status: action.status === "succeeded" ? "passed"
+    status: unconfirmed ? "unknown" : action.status === "succeeded" ? "passed"
       : action.status === "failed" ? "failed"
         : action.status === "cancelled" ? "cancelled"
           : action.status === "denied" || action.status === "expired" ? "blocked"
@@ -459,7 +475,7 @@ function mapCheck(
     command: action.commandEvidence?.command
       ? boundedText(action.commandEvidence.command, maxCharacters)
       : undefined,
-    summary: action.status === "succeeded" ? "Command completed successfully."
+    summary: unconfirmed ? unconfirmed.summary : action.status === "succeeded" ? "Command completed successfully."
       : action.status === "failed" ? "Command failed."
         : undefined,
     runId: action.runId,
@@ -482,11 +498,12 @@ function collectWorkflowChecks(
   evidence: WorkflowEvidence,
   maxCharacters: number,
   checkedAt: string,
+  interruptionRisks: readonly TerminalReportEvidenceRisk[],
 ): TerminalReportEvidenceCheck[] {
   const checksById = new Map<string, TerminalReportEvidenceCheck>();
   for (const action of evidence.actions) {
     if (hasExecutedActionEvidence(action) && isCheckAction(action)) {
-      checksById.set(action.id, mapCheck(action, maxCharacters));
+      checksById.set(action.id, mapCheck(action, maxCharacters, { interruptionRisks }));
     }
   }
 
@@ -522,6 +539,7 @@ function collectWorkflowChecks(
         if (action) {
           checksById.set(action.id, mapCheck(action, maxCharacters, {
             title: operation.targetRef.label || item.step.title,
+            interruptionRisks,
           }));
           continue;
         }
@@ -842,6 +860,7 @@ function collectRunRisks(
   approvals: readonly ApprovalRequest[],
   sourceRef: TerminalReportSourceRef,
   maxCharacters: number,
+  language: TerminalReportLanguage,
 ): TerminalReportEvidenceRisk[] {
   const risks: TerminalReportEvidenceRisk[] = [];
   if (run.status === "failed" || run.errorMessage) {
@@ -849,7 +868,7 @@ function collectRunRisks(
       id: `run-failure:${run.id}`,
       severity: "critical",
       status: "unresolved",
-      summary: boundedText(run.errorMessage ?? "Run failed.", maxCharacters),
+      summary: boundedText(terminalReportFailureSummary(run, language) ?? "Run failed.", maxCharacters),
       sourceRefs: [sourceRef],
     });
   }
@@ -858,7 +877,7 @@ function collectRunRisks(
       id: `action-failure:${action.id}`,
       severity: "critical",
       status: "unresolved",
-      summary: boundedText(`${action.title}: ${action.summary}`, maxCharacters),
+      summary: boundedText(toolValidationFailureSummary(action) ?? `${action.title}: ${action.summary}`, maxCharacters),
       sourceRefs: [sourceRefFor("operation", action.id, action.title)],
     });
   }
@@ -868,6 +887,15 @@ function collectRunRisks(
   return uniqueById(risks);
 }
 
+function toolValidationFailureSummary(action: ExecutionAction): string | undefined {
+  const evidence = action.toolEvidence;
+  if (!evidence?.outputText) return undefined;
+  const match = /^Validation failed for tool "([a-z][a-z0-9_-]{0,63})":\r?\n[ \t]*- ([A-Za-z_][A-Za-z0-9_-]{0,63}): must have required properties ([A-Za-z_][A-Za-z0-9_-]{0,63})(?:\r?\n|$)/u.exec(evidence.outputText);
+  if (!match || match[1] !== evidence.toolName || match[2] !== match[3]) return undefined;
+  // Only project the validated field name, never arbitrary tool output into a report or later context.
+  return `${evidence.toolName}: missing required ${match[2]} argument`;
+}
+
 function collectTurnRisks(
   turn: LingTurn,
   runs: readonly RunSession[],
@@ -875,6 +903,7 @@ function collectTurnRisks(
   approvals: readonly ApprovalRequest[],
   sourceRef: TerminalReportSourceRef,
   maxCharacters: number,
+  language: TerminalReportLanguage,
 ): TerminalReportEvidenceRisk[] {
   const risks = runs.flatMap((run) => collectRunRisks(
     run,
@@ -882,6 +911,7 @@ function collectTurnRisks(
     approvals.filter((approval) => approval.runId === run.id),
     sourceRefFor("run", run.id, turn.title),
     maxCharacters,
+    language,
   ));
   if (turn.status === "blocked") {
     risks.push({
@@ -972,7 +1002,8 @@ function isCheckAction(action: ExecutionAction): boolean {
   }
   const command = (action.commandEvidence?.command || action.summary).trim().toLowerCase();
   if (/(?:^|\s)(?:pnpm|npm|yarn|bun)\s+(?:run\s+)?(?:test|typecheck|lint|build|check)(?:\s|$)/u.test(command) ||
-    /(?:^|\s)(?:pytest|vitest|jest|tsc|eslint|cargo\s+test|go\s+test)(?:\s|$)/u.test(command)) {
+    /(?:^|\s)(?:pytest|vitest|jest|tsc|eslint|cargo\s+test|go\s+test)(?:\s|$)/u.test(command) ||
+    /(?:^|\s)python(?:3(?:\.\d+)?)?\s+-m\s+(?:unittest|pytest)(?:\s|$)/u.test(command)) {
     return true;
   }
   // Custom verifier scripts are common in delegated workflows (for example,
@@ -1046,7 +1077,10 @@ function deriveAtomicUnitStatus(
     .filter(hasExecutedActionEvidence)
     .filter(isTerminalOutcomeAction)
     .map((action) => operationStatus(action.status));
-  if (sourceState === "failed" || statuses.includes("failed")) return "failed";
+  if (sourceState === "failed") return "failed";
+  if (statuses.includes("failed")) {
+    return statuses.includes("succeeded") ? "partially_succeeded" : "failed";
+  }
   if (sourceState === "blocked" || statuses.includes("blocked") || statuses.includes("unknown")) return "blocked";
   if (sourceState === "cancelled" || statuses.includes("cancelled")) return "cancelled";
   return "succeeded";
@@ -1058,8 +1092,8 @@ function deriveCompositeAtomicTerminalState(
 ): TerminalReportOutcomeStatus {
   if (unitStates.length === 0) return sourceState;
   const states = sourceState === "succeeded" ? [...unitStates] : [...unitStates, sourceState];
-  const succeeded = states.some((status) => status === "succeeded");
-  const failed = states.some((status) => status === "failed");
+  const succeeded = states.some((status) => status === "succeeded" || status === "partially_succeeded");
+  const failed = states.some((status) => status === "failed" || status === "partially_succeeded");
   const blocked = states.some((status) => status === "blocked");
   const cancelled = states.some((status) => status === "cancelled");
   if (succeeded && (failed || blocked || cancelled)) return "partially_succeeded";
@@ -1155,7 +1189,7 @@ function artifactRef(artifact: RunArtifact, folded = false): TerminalReportSourc
     "artifact",
     artifact.id,
     artifact.title?.trim() || artifact.path,
-    shouldFold ? "folded_evidence" : "conversation",
+    isWorkspaceDeliverableArtifact(artifact) ? (shouldFold ? "folded_evidence" : "conversation") : "developer_only",
     artifact.type === "log" ? "secret_adjacent" : "normal",
   );
 }

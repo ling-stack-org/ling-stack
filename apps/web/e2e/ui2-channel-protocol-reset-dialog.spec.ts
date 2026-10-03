@@ -132,11 +132,12 @@ test("T13-P.6-F resets once through a busy-safe Dialog, restores focus, and emit
 
   await trigger.click();
   dialog = page.getByRole("dialog", { name: "Reset channel protocol?" });
+  await dialog.getByRole("button", { name: "Cancel" }).click();
+  await expect(dialog).toHaveCount(0);
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
     .getByRole("button", { name: "Research", exact: true })
     .click();
   await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
-  await expect(dialog).toHaveCount(0);
   expect(resetRequests).toBe(0);
   const currentDock = page.getByRole("complementary", { name: "Channel workspace dock" });
   if (await currentDock.isVisible().catch(() => false)) {

@@ -140,6 +140,7 @@ test("persistent Sidebar stays stable across every visible main navigation targe
 
   const root = page.locator("html");
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  await expect(navigation.getByRole("button", { name: "Open recent conversation 1" })).toBeVisible();
   const initialGeometry = await readSidebarGeometry(navigation);
   await startSidebarStabilityRecorder(page);
 

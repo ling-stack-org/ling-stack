@@ -32,6 +32,7 @@ import { createRestrictedCommandDispatch } from "./restricted-command-dispatch.j
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
 import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
 import { createStreamCapture, createSyntheticStreamCapture, toStreamSummary, type StreamCaptureSnapshot } from "./unified-exec-output.js";
+import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -48,29 +49,45 @@ export async function executeUnifiedBashTool(input: {
   readonly shellSnapshotEnabled?: boolean;
   /** Called only after the bounded result and output artifacts are durable. */
   readonly onDurableResult?: (result: PiRunnerToolHandledResult) => void;
+  readonly hostOperation?: HostCommandOperation;
 }): Promise<PiRunnerToolHandledResult> {
-  const normalized = normalizeBashRequest(input.run, input.request, input.approvalId);
-  if ("error" in normalized) {
-    return writeSyntheticFailureResult({
+  let delegated = false;
+  try {
+    input.hostOperation?.assertMayPrepare();
+    const normalized = normalizeBashRequest(input.run, input.request, input.approvalId);
+    if ("error" in normalized) {
+      return writeSyntheticFailureResult({
+        ...input,
+        request: normalized.request,
+        message: normalized.error,
+        status: "failed",
+      });
+    }
+    const rejection = validateWorkflowOperationRunContext(input).status === "legacy"
+      ? undefined : workflowOperationEffectRejection(input);
+    if (rejection) return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
+      approvalId: input.approvalId, reason: rejection.code + ": " + rejection.reason });
+    let restrictedDispatch: ReturnType<typeof createRestrictedCommandDispatch>;
+    try { restrictedDispatch = createRestrictedCommandDispatch(input); }
+    catch (error) { return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
+      approvalId: input.approvalId, reason: formatError(error) }); }
+    delegated = true;
+    return await executeUnifiedExec({
       ...input,
+      restrictedDispatch,
       request: normalized.request,
-      message: normalized.error,
-      status: "failed",
     });
+  } finally {
+    // Before internal command preparation there has been no OS/native producer
+    // dispatch. Early denial/invalid input is a real instrumented no-start.
+    if (!delegated && input.hostOperation) {
+      try { input.hostOperation.settleNoStart(); }
+      catch (error) {
+        input.hostOperation.markUnknown("command_pre_dispatch_unconfirmed");
+        throw error;
+      }
+    }
   }
-  const rejection = validateWorkflowOperationRunContext(input).status === "legacy"
-    ? undefined : workflowOperationEffectRejection(input);
-  if (rejection) return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
-    approvalId: input.approvalId, reason: rejection.code + ": " + rejection.reason });
-  let restrictedDispatch: ReturnType<typeof createRestrictedCommandDispatch>;
-  try { restrictedDispatch = createRestrictedCommandDispatch(input); }
-  catch (error) { return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
-    approvalId: input.approvalId, reason: formatError(error) }); }
-  return executeUnifiedExec({
-    ...input,
-    restrictedDispatch,
-    request: normalized.request,
-  });
 }
 
 export function createUnifiedExecDeniedResult(input: {
@@ -141,24 +158,37 @@ async function executeUnifiedExec(input: {
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly shellSnapshotEnabled?: boolean;
   readonly onDurableResult?: (result: PiRunnerToolHandledResult) => void;
+  readonly hostOperation?: HostCommandOperation;
 }): Promise<PiRunnerToolHandledResult> {
-  throwIfAborted(input.signal);
   const secrets = input.extraSecrets ?? [];
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
   let environment = buildEnvironment(input.request.cwd, input.request.environment);
-  let prepared: Awaited<ReturnType<NativeRestrictedCommandRuntime["prepare"]>> | undefined;
+  let prepared: (Awaited<ReturnType<NativeRestrictedCommandRuntime["prepare"]>> & {
+    readonly finishHostPreparation?: () => void;
+  }) | undefined;
   let cleanupSafe = false;
-  const ticket = input.store.prepareHostCommandExecution({
-    runId: input.run.id, sourceFence: input.sourceFence, toolCallId: input.request.toolCallId,
-    cwd: input.request.cwd, command: input.request.command,
-  });
+  let ticket: ReturnType<RunStore["prepareHostCommandExecution"]> | undefined;
+  let preparationAttempted = false;
+  let spawnEntered = false;
+  let noStartSettled = false;
+  let commandPreparationAttempted = false;
   try {
+    throwIfAborted(input.signal);
+    input.hostOperation?.assertMayPrepare();
+    commandPreparationAttempted = true;
+    ticket = input.store.prepareHostCommandExecution({
+      runId: input.run.id, sourceFence: input.sourceFence, toolCallId: input.request.toolCallId,
+      cwd: input.request.cwd, command: input.request.command,
+    });
+    input.hostOperation?.bindCommandExecution(ticket.executionId);
     try {
+      preparationAttempted = input.restrictedDispatch !== undefined;
       prepared = await input.restrictedDispatch?.prepare();
       if (prepared) environment = { env: {}, summary: prepared.environmentSummary };
     } catch (error) {
       input.store.settleHostCommandExecution(ticket, { kind: "not_started" });
+      noStartSettled = true;
       cleanupSafe = true;
       throwIfAborted(input.signal);
       return writeSyntheticFailureResult({ ...input, message: formatError(error), status: "failed",
@@ -180,10 +210,13 @@ async function executeUnifiedExec(input: {
   let launchError: unknown;
   try {
     shellSnapshots.captureStart({ startedAt, startedMs });
-    input.store.launchHostCommandExecution(ticket, () => {
+    const launch = () => {
       throwIfAborted(input.signal);
+      spawnEntered = true;
       child = prepared ? prepared.spawn() : spawnCommand(input.request.command, { cwd: input.request.cwd, env: environment.env });
-    });
+    };
+    if (input.hostOperation) input.hostOperation.launch(ticket, launch);
+    else input.store.launchHostCommandExecution(ticket, launch);
   } catch (error) {
     if (child) {
       // An OS process exists even if the database commit failed. Do not call it not_started.
@@ -191,6 +224,7 @@ async function executeUnifiedExec(input: {
       launchError = error;
     } else {
       input.store.settleHostCommandExecution(ticket, { kind: "not_started" });
+      noStartSettled = true;
       cleanupSafe = true;
       throwIfAborted(input.signal);
       const handled = writeSyntheticFailureResult({
@@ -285,7 +319,26 @@ async function executeUnifiedExec(input: {
   } finally {
     // Unknown descendants may still be running. Retain their isolated files for
     // inspection, alongside the journal's stop_unconfirmed reservation.
-    if (cleanupSafe) prepared?.dispose();
+    try {
+      if (cleanupSafe) prepared?.dispose();
+    } finally {
+      try { prepared?.finishHostPreparation?.(); }
+      finally {
+        if (input.hostOperation) {
+          // A returned command result, clean leader close, cancellation or
+          // native preparation callback cannot prove the whole physical scope.
+          if (spawnEntered || preparationAttempted || (commandPreparationAttempted && !noStartSettled)) {
+            input.hostOperation.markUnknown("command_physical_scope_unverified");
+          } else {
+            try { input.hostOperation.settleNoStart(); }
+            catch (error) {
+              input.hostOperation.markUnknown("command_preparation_unconfirmed");
+              throw error;
+            }
+          }
+        }
+      }
+    }
   }
 }
 

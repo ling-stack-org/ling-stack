@@ -27,7 +27,7 @@ async function fixture(t, { unsupported = false, actorType = "local_user" } = {}
   const f = { cwd, registry, supervisor, active, errors: [], calls: [], preparations: [], controls: {} };
   const store = registry.getStore(cwd);
   f.store = store;
-  t.after(async () => { supervisor.releaseAll(); registry.closeAll(); await rm(cwd, { recursive: true, force: true }); });
+  t.after(async () => { f.supervisor.releaseAll(); f.registry.closeAll(); await rm(cwd, { recursive: true, force: true }); });
   const now = new Date().toISOString();
   f.preset = store.createProviderPreset({ kind: "openai-compatible", displayName: "N03 fixture", providerId: "n03-fixture", model: "fixture",
     api: "openai-completions", baseUrl: "https://fixture.invalid/v1", authHeader: false, reasoning: false, capabilities: ["chat"], enabled: true }, now);
@@ -59,7 +59,7 @@ async function fixture(t, { unsupported = false, actorType = "local_user" } = {}
   f.adapter = unsupported ? { runTask: () => assert.fail("unsupported preparation must not execute") } : new FixtureRunner();
   f.runners = createRunnerRegistry([{ id: "pi", displayName: "Fixture", status: "enabled", adapter: f.adapter }]);
   f.dispatch = () => executeRunRequest(f.request, { ...createDetachedRunExecutionSink(), writeError: (_status, body) => f.errors.push(body) },
-    f.runners, registry, active, supervisor, { resolve: () => ({ configured: false }) }, {});
+    f.runners, f.registry, f.active, f.supervisor, { resolve: () => ({ configured: false }) }, {});
   return f;
 }
 
@@ -139,7 +139,14 @@ test("no-Run restart reuses execution Memory/SDK input without re-selection", as
   assert.match(first.payload.preparedInput.systemPrompt, /MEMORY_ONE/);
   assert.equal(f.store.listRuns().length, 0);
   f.store.createWorkUnit = create;
-  f.supervisor.releaseAll(); f.registry.closeAll(); f.store = f.registry.getStore(f.cwd);
+  f.supervisor.releaseAll(); f.registry.closeAll();
+  assert.throws(() => f.registry.getStore(f.cwd), /registry is closed/, "a stopped daemon cannot resurrect SQLite");
+  // A restart constructs fresh process-owned registries, not a reopen of the
+  // closed generation. Persisted Memory/SDK input must survive that boundary.
+  f.registry = new RunStoreRegistry(createSqliteRunStore);
+  f.active = new ActiveRunRegistry();
+  f.supervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: f.cwd }));
+  f.store = f.registry.getStore(f.cwd);
   f.store.recallMemory = () => assert.fail("no-Run replay must not recall Memory again");
   f.adapter.prepareTaskInput = () => assert.fail("no-Run replay must not prepare SDK input again");
   f.errors.length = 0;
@@ -205,6 +212,10 @@ test("a real conversation route ends its SSE with blocked when preparation fails
   assert.equal(response.writableEnded, true, "prepare error must not leave the client waiting indefinitely");
   assert.equal(response.body.match(/event: blocked/g)?.length, 1);
   assert.equal(response.body.includes("event: done"), false);
+  const streamMessages = response.body.split("\n").filter(line => line.startsWith("data: "))
+    .map(line => JSON.parse(line.slice(6))).flatMap(dto => dto.assistantMessage ? [dto.assistantMessage] : []);
+  assert.ok(streamMessages.length > 0);
+  assert.ok(streamMessages.every(message => message.contentSource === "host_status"), "pre-Run errors are never model prose");
   assert.equal(f.store.listRuns().length, 0);
 });
 

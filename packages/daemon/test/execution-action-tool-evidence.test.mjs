@@ -76,6 +76,22 @@ test("read output updates in place and excludes stale or late lifecycle evidence
   assert.equal(terminal.status, "succeeded");
 });
 
+test("settled tool facts do not change when the owning Run later advances", () => {
+  for (const toolName of ["read", "edit", "registered_lookup"]) {
+    const start = toolEvent(1, "tool_start", { toolName, args: { path: "README.md" } });
+    const end = toolEvent(2, "tool_end", { result: { content: [{ type: "text", text: "Actual result" }] } });
+    const settled = actionFor([start, end]);
+    const afterNarration = actionFor([start, end, event(3, "message_delta", { text: "Continuing the task." })]);
+    const afterRunResult = actionFor([start, end, event(4, "result", { summary: "Task complete." })]);
+
+    // Detail snapshot unions preserve equal-revision conflicts. Unrelated Run
+    // timestamps must not create two different records for one settled action.
+    assert.equal(settled.updatedAt, end.ts, toolName);
+    assert.deepEqual(afterNarration, settled, `${toolName}: narration`);
+    assert.deepEqual(afterRunResult, settled, `${toolName}: Run result`);
+  }
+});
+
 test("directory listing keeps its cwd default and does not invent output", () => {
   const action = actionFor([toolEvent(1, "tool_start", { toolName: "ls", args: {} })]);
   assert.equal(action.summary, "/repo");
@@ -160,9 +176,11 @@ test("MCP output uses one identity through update, failure, empty terminal and l
   const live = actionFor([start, update]);
   assert.equal(live.toolEvidence?.outputText, "Searching\nfirst result");
   const end = toolEvent(4, "tool_end", { isError: true, result: { content: [{ type: "text", text: "Lookup rejected" }] } });
+  const settled = actionFor([start, update, end]);
   const terminal = actionFor([toolEvent(5, "tool_update", { partialResult: { text: "late result" } }), end, update, start]);
   assert.equal(terminal.id, live.id);
-  assert.equal(terminal.revision, 4);
+  assert.ok(terminal.revision > settled.revision, "late diagnostics invalidate the DTO, not its settled tool evidence");
+  assert.deepEqual(terminal.toolEvidence, settled.toolEvidence);
   assert.equal(terminal.status, "failed");
   assert.equal(terminal.toolEvidence.outputText, "Lookup rejected");
   assert.equal(terminal.toolEvidence.latestEventSeq, 4);

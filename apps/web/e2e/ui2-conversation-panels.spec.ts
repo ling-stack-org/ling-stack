@@ -151,7 +151,7 @@ test("normal conversation summary uses the channel panel motion", async ({ page 
   const maximumDockWidth = await page.evaluate(() => Math.floor(globalThis.innerWidth * 0.5));
   await expect.poll(async () => (await dockFrame.boundingBox())?.width ?? 0).toBeLessThanOrEqual(maximumDockWidth);
   await expect(summary).toBeHidden();
-  await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "true");
+  await expect(toolbar.getByRole("button", { name: "Summary" })).not.toHaveAttribute("aria-pressed", "true");
   await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-expanded", "false");
   await page.mouse.up();
 
@@ -471,7 +471,11 @@ async function openSummaryAndDock(
   await toolbar.getByRole("button", { name: "Show details" }).click();
   await expect(dock).toBeVisible();
   const summaryButton = toolbar.getByRole("button", { name: "Summary" });
-  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  if (summaryWithDock) {
+    await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  } else {
+    await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
+  }
   await expect(summaryButton).toHaveAttribute("aria-expanded", summaryWithDock ? "true" : "false");
   await expect.poll(async () => dock.evaluate((element) => {
     const rect = element.getBoundingClientRect();
@@ -567,7 +571,7 @@ async function expectSummaryConcealAndRestore(
   await toolbar.getByRole("button", { name: "Show details" }).click();
   await expect(dock).toBeVisible();
   await expect(summary).toBeHidden();
-  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
   await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
 
   await page.getByRole("button", { name: "Hide navigation" }).click();

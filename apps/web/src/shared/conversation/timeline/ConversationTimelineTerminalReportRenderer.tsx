@@ -1,63 +1,52 @@
-import { CheckCircle2, CircleAlert, Copy, FileCheck2, ShieldAlert } from "lucide-react";
-import { MessageActionBar } from "@ling-stack/conversation-ui-react";
+import { CheckCircle2, CircleAlert, FileCheck2, ShieldAlert } from "lucide-react";
 import { isUserVisibleTerminalReportArtifact, visibleTerminalReportTimelineItem } from "@ling-stack/conversation-ui-core";
 import type {
-  ConversationInteractionSurfaceKind,
   ConversationOperationSourceRef,
-  ConversationTimelineScopeKind,
   ConversationTimelineTerminalReportArtifact,
   ConversationTimelineTerminalReportItem,
 } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
 import { TimelineFactRow } from "./TimelineFactRow.js";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
-import { ConversationWorkspaceRecoveryControls } from "../blocks/ConversationWorkspaceRecoveryControls.js";
 import { ConversationTimelineFileReference } from "./ConversationTimelineFileChangeDetail.js";
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
-import { terminalReportDisplaySourceRefs } from "./terminal-report-display-refs.js";
-import { terminalReportCopyText } from "./terminal-report-copy-text.js";
+import { terminalReportDisplaySourceRefs, terminalReportSourceRefGroups } from "./terminal-report-display-refs.js";
+import { terminalReportDisplayPolicy } from "./terminal-report-display-policy.js";
+import { terminalReportFallbackSummary } from "./terminal-report-fallback-summary.js";
 import "./conversation-terminal-response.css";
-
-const interactionSurfaceByScope: Record<ConversationTimelineScopeKind, ConversationInteractionSurfaceKind> = {
-  normal: "normal_conversation",
-  private: "teammate_direct",
-  channel_root: "channel_root",
-  topic: "topic_reply",
-  branch: "channel_branch",
-  run_detail: "run_thread",
-  child: "run_thread",
-};
 
 export function ConversationTimelineTerminalReportRenderer({
   item: inputItem,
   depth,
-  scopeKind = "normal",
+  hasNarration = false,
   cwd,
   onOpenSourceRef,
 }: {
   readonly item: ConversationTimelineTerminalReportItem;
   readonly depth: 0 | 1;
-  readonly scopeKind?: ConversationTimelineScopeKind;
+  readonly hasNarration?: boolean;
   readonly cwd?: string;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
-}): React.JSX.Element {
+}): React.JSX.Element | null {
   const { t } = useI18n();
   const item = visibleTerminalReportTimelineItem(inputItem);
-  const copyText = terminalReportCopyText(item);
+  const policy = terminalReportDisplayPolicy(item, hasNarration);
+  if (!policy.visible) return null;
+  const fallbackSummary = hasNarration ? "" : terminalReportFallbackSummary(item);
   const artifactCount = item.artifacts.filter(isUserVisibleTerminalReportArtifact).length;
-  const counts = [
-    item.changeCount ? `${item.changeCount} changes` : "",
-    item.verificationCount ? `${item.verificationCount} checks` : "",
-    item.participantCount ? `${item.participantCount} agents` : "",
-    artifactCount ? `${artifactCount} artifacts` : "",
-    item.riskCount ? `${item.riskCount} risks` : "",
-  ].filter(Boolean).join(" · ");
+  const visibleParticipantCount = item.participants.length > 1 || item.participants.some((participant) => participant.status !== "completed")
+    ? item.participants.length
+    : 0;
+  const hasDetail = item.corrections.length > 0 || item.changes.length > 0 || item.verification.length > 0 ||
+    visibleParticipantCount > 0 || artifactCount > 0 || item.risks.length > 0 ||
+    item.references.some((ref) => Boolean(ref.path || ref.label));
+  const compactStatusOnly = !hasDetail && !item.summary.trim();
   return (
-    <div className="conversation-timeline-terminal-response" data-conversation-terminal-response={item.reportId} data-conversation-action-owner>
-      {item.summary ? (
+    <div className="conversation-timeline-terminal-response" data-conversation-terminal-response={item.reportId}>
+      {fallbackSummary ? (
         <MessageBodyRenderer
           className="conversation-timeline-result-summary"
-          text={item.summary}
+          text={fallbackSummary}
           cwd={cwd}
           compact={false}
         />
@@ -65,24 +54,14 @@ export function ConversationTimelineTerminalReportRenderer({
       <TimelineFactRow
         item={item}
         depth={depth}
-        title={item.title}
-        meta={`generation ${item.generation}${counts ? ` · ${counts}` : ""}`}
-        icon={item.status === "succeeded" ? <CheckCircle2 size={14} aria-hidden="true" /> : item.status === "failed" || item.status === "blocked" ? <CircleAlert size={14} aria-hidden="true" /> : <FileCheck2 size={14} aria-hidden="true" />}
-        detail={<TerminalReportDetail item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} />}
+        title={t("Execution details")}
+        compact={compactStatusOnly}
+        defaultExpanded={policy.needsAttention}
+        statusLabel={policy.needsAttention && item.status === "succeeded" ? t("Needs attention") : undefined}
+        meta=""
+        icon={policy.needsAttention ? <CircleAlert size={14} aria-hidden="true" /> : item.status === "succeeded" ? <CheckCircle2 size={14} aria-hidden="true" /> : <FileCheck2 size={14} aria-hidden="true" />}
+        detail={hasDetail || hasNarration && Boolean(item.summary) ? <TerminalReportDetail item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} showSummary={hasNarration} /> : undefined}
       />
-      {copyText ? (
-        <MessageActionBar
-          surface={interactionSurfaceByScope[scopeKind]}
-          copiedLabel={t("Copied")}
-          actions={[{
-            id: "copy-terminal-report",
-            kind: "copy",
-            label: t("Copy message"),
-            icon: <Copy size={14} aria-hidden="true" />,
-            copyText,
-          }]}
-        />
-      ) : null}
     </div>
   );
 }
@@ -91,36 +70,30 @@ function TerminalReportDetail({
   item,
   cwd,
   onOpenSourceRef,
+  showSummary = false,
 }: {
   readonly item: ConversationTimelineTerminalReportItem;
   readonly cwd?: string;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
+  readonly showSummary?: boolean;
 }): React.JSX.Element {
   const visibleArtifacts = item.artifacts.filter(isUserVisibleTerminalReportArtifact);
   const visibleParticipants = item.participants.length > 1 || item.participants.some((participant) => participant.status !== "completed")
     ? item.participants
     : [];
-  const recoveryTarget = item.turnId
-    ? { kind: "turn" as const, id: item.turnId }
-    : item.runId ? { kind: "run" as const, id: item.runId } : undefined;
+  const sourceGroups = terminalReportSourceRefGroups(item.references);
+  const visibleSourceCount = sourceGroups.resources.length + sourceGroups.lineage.length;
   return (
     <div className="conversation-timeline-terminal-report" data-terminal-report-id={item.reportId} data-terminal-report-generation={item.generation}>
+      {showSummary && item.summary ? <MessageBodyRenderer text={item.summary} cwd={cwd} compact={false} /> : null}
       <ReportSection title="Corrections" count={item.corrections.length}>
         {item.corrections.map((correction) => (
-          <ReportEntry key={correction.id} item={item} title={correction.correctedFact} meta={correction.confidence} summary={`Previously: ${correction.originalAssumption}`} refs={correction.sourceRefs} onOpenSourceRef={onOpenSourceRef} />
+          <ReportEntry key={correction.id} item={item} title={correction.correctedFact} meta={correction.confidence} summary={`Previously: ${correction.originalAssumption}`} refs={correction.sourceRefs} cwd={cwd} onOpenSourceRef={onOpenSourceRef} />
         ))}
       </ReportSection>
       <ReportSection
         title="Changes"
         count={item.changes.length}
-        actions={recoveryTarget ? (
-          <ConversationWorkspaceRecoveryControls
-            className="conversation-timeline-terminal-recovery"
-            cwd={cwd}
-            fileCountFallback={terminalReportFileCount(item)}
-            target={recoveryTarget}
-          />
-        ) : undefined}
       >
         {item.changes.map((change) => (
           <ReportEntry
@@ -129,6 +102,7 @@ function TerminalReportDetail({
             title={change.title}
             meta={[change.kind, change.addedLines === undefined ? "" : `+${change.addedLines}`, change.deletedLines === undefined ? "" : `-${change.deletedLines}`].filter(Boolean).join(" · ")}
             summary={change.summary}
+            cwd={cwd}
             refs={terminalReportDisplaySourceRefs(
               change.sourceRefs,
               change.paths.map((path) => ({ kind: "file", id: `report-path:${change.id}:${path}`, path, label: path })),
@@ -145,23 +119,23 @@ function TerminalReportDetail({
       </ReportSection>
       <ReportSection title="Verification" count={item.verification.length}>
         {item.verification.map((verification) => (
-          <ReportEntry key={verification.id} item={item} title={verification.title} meta={formatVerificationMeta(verification)} summary={verification.summary} command={verification.command} refs={verification.sourceRefs} onOpenSourceRef={onOpenSourceRef} />
+          <ReportEntry key={verification.id} item={item} title={verification.title} meta={formatVerificationMeta(verification)} summary={verification.summary} command={verification.command} refs={verification.sourceRefs} cwd={cwd} onOpenSourceRef={onOpenSourceRef} />
         ))}
       </ReportSection>
       <ReportSection title="Agents" count={visibleParticipants.length}>
         {visibleParticipants.map((participant) => (
-          <ReportEntry key={participant.agentId} item={item} title={participant.displayName} meta={[participant.roleKey, participant.status].filter(Boolean).join(" · ")} summary={participant.contribution} refs={participant.sourceRefs} onOpenSourceRef={onOpenSourceRef} />
+          <ReportEntry key={participant.agentId} item={item} title={participant.displayName} meta={[participant.roleKey, participant.status].filter(Boolean).join(" · ")} summary={participant.contribution} refs={participant.sourceRefs} cwd={cwd} onOpenSourceRef={onOpenSourceRef} />
         ))}
       </ReportSection>
       <ReportSection title="Artifacts" count={visibleArtifacts.length}>
-        {visibleArtifacts.map((artifact) => <ArtifactEntry key={artifact.id} artifact={artifact} item={item} onOpenSourceRef={onOpenSourceRef} />)}
+        {visibleArtifacts.map((artifact) => <ArtifactEntry key={artifact.id} artifact={artifact} item={item} cwd={cwd} onOpenSourceRef={onOpenSourceRef} />)}
       </ReportSection>
       <ReportSection title="Risks" count={item.risks.length}>
         {item.risks.map((risk) => (
-          <ReportEntry key={risk.id} item={item} title={risk.summary} meta={[risk.severity, risk.status, risk.approvalDecision].filter(Boolean).join(" · ")} summary={risk.nextAction} refs={risk.sourceRefs} icon={<ShieldAlert size={12} aria-hidden="true" />} onOpenSourceRef={onOpenSourceRef} />
+          <ReportEntry key={risk.id} item={item} title={risk.summary} meta={[risk.severity, risk.status, risk.approvalDecision].filter(Boolean).join(" · ")} summary={risk.nextAction} refs={risk.sourceRefs} icon={<ShieldAlert size={12} aria-hidden="true" />} cwd={cwd} onOpenSourceRef={onOpenSourceRef} />
         ))}
       </ReportSection>
-      <ReportSection title="Sources" count={item.references.length}>
+      <ReportSection title="Sources" count={visibleSourceCount}>
         <ReportSourceRefs item={item} refs={item.references} onOpenSourceRef={onOpenSourceRef} />
       </ReportSection>
     </div>
@@ -169,11 +143,14 @@ function TerminalReportDetail({
 }
 
 function ReportSection({ title, count, children, actions }: { readonly title: string; readonly count: number; readonly children: React.ReactNode; readonly actions?: React.ReactNode }): React.JSX.Element | null {
+  const { t } = useI18n();
   if (count === 0) return null;
+  const label = title === "Verification" ? t("Checks") : title === "Agents" ? t("Participants") :
+    title === "Artifacts" ? t("Artifacts") : title === "Risks" ? t("Risks") : title === "Sources" ? t("Sources") : title;
   return (
     <section className="conversation-timeline-terminal-section" data-terminal-report-section={title.toLowerCase()}>
       <div className="conversation-timeline-terminal-section-head">
-        <h4>{title}<span>{count}</span></h4>
+        <h4>{label}<span>{count}</span></h4>
         {actions}
       </div>
       <div className="conversation-timeline-terminal-section-list">{children}</div>
@@ -189,6 +166,7 @@ function ReportEntry({
   refs,
   icon,
   item,
+  cwd,
   onOpenSourceRef,
 }: {
   readonly title: string;
@@ -198,19 +176,20 @@ function ReportEntry({
   readonly refs: readonly ConversationOperationSourceRef[];
   readonly icon?: React.ReactNode;
   readonly item: ConversationTimelineTerminalReportItem;
+  readonly cwd?: string;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
 }): React.JSX.Element {
   return (
     <article className="conversation-timeline-terminal-entry">
       <div className="conversation-timeline-terminal-entry-head">{icon}<strong>{title}</strong>{meta ? <small>{meta}</small> : null}</div>
-      {summary ? <p>{summary}</p> : null}
+      {summary ? <MessageBodyRenderer className="conversation-timeline-terminal-entry-summary" text={summary} cwd={cwd} compact /> : null}
       {command ? <code className="conversation-timeline-detail-code">$ {command}</code> : null}
       <ReportSourceRefs item={item} refs={refs} onOpenSourceRef={onOpenSourceRef} />
     </article>
   );
 }
 
-function ArtifactEntry({ artifact, item, onOpenSourceRef }: { readonly artifact: ConversationTimelineTerminalReportArtifact; readonly item: ConversationTimelineTerminalReportItem; readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler }): React.JSX.Element {
+function ArtifactEntry({ artifact, item, cwd, onOpenSourceRef }: { readonly artifact: ConversationTimelineTerminalReportArtifact; readonly item: ConversationTimelineTerminalReportItem; readonly cwd?: string; readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler }): React.JSX.Element {
   const refs = terminalReportDisplaySourceRefs(artifact.sourceRefs, artifact.path ? [{
       kind: artifact.kind === "diff" ? "diff" : artifact.kind === "file" ? "file" : "artifact",
       id: artifact.id,
@@ -224,34 +203,34 @@ function ArtifactEntry({ artifact, item, onOpenSourceRef }: { readonly artifact:
       summary={artifact.summary}
       refs={refs}
       item={item}
+      cwd={cwd}
       onOpenSourceRef={onOpenSourceRef}
     />
   );
 }
 
 function ReportSourceRefs({ item, refs, onOpenSourceRef }: { readonly item: ConversationTimelineTerminalReportItem; readonly refs: readonly ConversationOperationSourceRef[]; readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler }): React.JSX.Element | null {
-  const visible = uniqueSourceRefs(refs).filter((ref) => Boolean(ref.path || ref.label));
-  if (visible.length === 0) return null;
-  return <div className="conversation-timeline-ref-list">{visible.map((ref) => (
-    <ConversationTimelineFileReference
-      key={`${ref.kind}:${ref.id}:${ref.path ?? ""}`}
-      file={{ fileRef: ref, displayName: basename(ref.path ?? ref.label ?? ref.id), change: "edited" }}
-      item={item}
-      onOpenSourceRef={onOpenSourceRef}
-    />
-  ))}</div>;
-}
-
-function terminalReportFileCount(item: ConversationTimelineTerminalReportItem): number {
-  const paths = new Set([
-    ...item.changes.flatMap((change) => change.paths),
-    ...item.artifacts.flatMap((artifact) => artifact.path ? [artifact.path] : []),
-  ]);
-  return paths.size || item.changeCount;
-}
-
-function uniqueSourceRefs(refs: readonly ConversationOperationSourceRef[]): readonly ConversationOperationSourceRef[] {
-  return [...new Map(refs.map((ref) => [`${ref.kind}:${ref.id}:${ref.path ?? ""}`, ref])).values()];
+  const { t } = useI18n();
+  const { resources, lineage } = terminalReportSourceRefGroups(refs);
+  if (resources.length === 0 && lineage.length === 0) return null;
+  return <>
+    {resources.length > 0 ? <div className="conversation-timeline-ref-list">{resources.map((ref) => (
+      <ConversationTimelineFileReference
+        key={JSON.stringify([ref.kind, ref.id, ref.path ?? ""])}
+        file={{ fileRef: ref, displayName: basename(ref.path ?? ref.label ?? ref.id), change: "edited" }}
+        item={item}
+        onOpenSourceRef={onOpenSourceRef}
+      />
+    ))}</div> : null}
+    {lineage.length > 0 ? <details className="conversation-timeline-terminal-entry-sources">
+      <summary>{t("Sources")} · {lineage.length}</summary>
+      <div className="conversation-timeline-ref-list">{lineage.map((ref) => (
+        <span className="conversation-timeline-terminal-lineage-ref" key={JSON.stringify([ref.kind, ref.id, ref.path ?? ""])} title={ref.path ?? ref.label ?? ref.id}>
+          {ref.label ?? ref.path ?? ref.id}
+        </span>
+      ))}</div>
+    </details> : null}
+  </>;
 }
 
 function basename(value: string): string {

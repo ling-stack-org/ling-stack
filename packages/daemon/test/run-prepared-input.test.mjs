@@ -72,6 +72,11 @@ for (const surface of ["normal", "private", "channel"]) {
     assert.match(source.preparedInput.systemPrompt, /Frozen source system/);
     assert.match(source.preparedInput.systemPrompt, /ORIGINAL_APPEND/);
     assert.match(source.preparedInput.systemPrompt, /FROZEN_SOURCE_MEMORY/);
+    const stylePrompts = f.calls[0].appendSystemPrompt.filter((prompt) => prompt.startsWith("Ling conversation response style v1:"));
+    assert.equal(stylePrompts.length, 1, "every conversation surface receives the same response style exactly once");
+    assert.match(source.preparedInput.systemPrompt, /Prefer natural paragraphs for short answers/);
+    assert.deepEqual(source.input.appendSystemPrompt, f.calls[0].appendSystemPrompt, "style is part of the frozen SDK input");
+    assert.equal(run.requestSnapshot.runnerExecutionInput.input.appendSystemPrompt.filter((prompt) => prompt.startsWith("Ling conversation response style v1:")).length, 1, "style remains traceable in the actual execution input, not a rewritten original request");
     assert.deepEqual(source.usedMemory.memoryIds, ["source-memory"]);
     assert.equal(source.input.provider.apiKey, undefined); assert.equal(source.input.provider.headers, undefined);
     for (const key of ["onEvent", "onToolBefore", "onApprovalRequired", "onPreparedInputAccepted", "signal", "sandbox", "runId", "runnerAttemptId"])

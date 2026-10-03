@@ -3,6 +3,8 @@ import type { ResourceLease } from "./workflows.js";
 import type { RunnerReadinessSummary } from "./runner-readiness.js";
 import type { RunnerToolHydrationCapability } from "./tool-surfaces.js";
 import type { ApprovalCommandRuleProposal, ApprovalDecisionKind } from "./approvals.js";
+import type { RunProviderErrorDiagnostic, RunProviderRetryEvidence } from "./provider-diagnostics.js";
+import type { HarnessFeatureSnapshotV1 } from "./harness.js";
 
 export type RuntimePermissionRequestKind =
   | "core_tool"
@@ -80,6 +82,8 @@ export interface DaemonHealthResponse {
 }
 
 export interface DaemonFeatureFlags {
+  /** Validated effective Host snapshot; unavailable when absent or unsupported. */
+  readonly harness?: HarnessFeatureSnapshotV1;
   readonly channels: {
     readonly autoRoute: boolean;
     readonly intentSelector?: boolean;
@@ -421,6 +425,9 @@ export type RunEventType =
   | "run_start"
   | "turn_start"
   | "turn_end"
+  | "provider_retry"
+  | "context_compaction_start"
+  | "context_compaction_end"
   | "assistant_text_delta"
   | "assistant_thinking_delta"
   | "assistant_reasoning_summary"
@@ -462,6 +469,14 @@ export type RunEventType =
  * `type`, so consumers can narrow the payload before reading event-specific
  * fields instead of treating the entire event as arbitrary JSON.
  */
+export interface RunTokenUsageEvidence {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly totalTokens: number;
+}
+
 export interface RunEventDataByType {
   readonly host_command_prepared: import("./host-command-journal.js").HostCommandPreparedV1 & { readonly [key: string]: unknown };
   readonly host_command_settled: import("./host-command-journal.js").HostCommandSettledV1 & { readonly [key: string]: unknown };
@@ -484,6 +499,30 @@ export interface RunEventDataByType {
   };
   readonly turn_start: { readonly [key: string]: unknown };
   readonly turn_end: { readonly [key: string]: unknown };
+  readonly provider_retry: RunProviderRetryEvidence & {
+    /** Host RuntimeAttempt identity, distinct from the SDK retryAttempt counter. */
+    readonly attemptId?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly context_compaction_start: {
+    readonly reason: "manual" | "threshold" | "overflow";
+    readonly policyVersion: "pi_sdk_lifecycle_v1";
+    /** Filled by Host from the admitted RuntimeAttempt, not by the SDK. */
+    readonly attemptId?: string;
+    readonly [key: string]: unknown;
+  };
+  readonly context_compaction_end: {
+    readonly reason: "manual" | "threshold" | "overflow";
+    readonly policyVersion: "pi_sdk_lifecycle_v1";
+    /** SDK installation is not a durable Host recovery checkpoint. */
+    readonly outcome: "sdk_installed" | "aborted" | "failed";
+    readonly willRetry: boolean;
+    readonly tokensBefore?: number;
+    readonly estimatedTokensAfter?: number;
+    readonly usage?: RunTokenUsageEvidence;
+    readonly attemptId?: string;
+    readonly [key: string]: unknown;
+  };
   readonly assistant_text_delta: {
     readonly text: string;
     readonly [key: string]: unknown;
@@ -520,7 +559,9 @@ export interface RunEventDataByType {
     readonly text?: string;
     readonly stopReason?: string;
     readonly errorMessage?: string;
+    readonly errorDiagnostic?: RunProviderErrorDiagnostic;
     readonly contentKinds?: readonly string[];
+    readonly usage?: RunTokenUsageEvidence;
     readonly [key: string]: unknown;
   };
   readonly tool_start: {
@@ -564,6 +605,7 @@ export interface RunEventDataByType {
   };
   readonly run_error: {
     readonly message: string;
+    readonly errorDiagnostic?: RunProviderErrorDiagnostic;
     readonly [key: string]: unknown;
   };
   readonly run_cancelled: {

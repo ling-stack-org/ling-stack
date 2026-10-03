@@ -1,5 +1,6 @@
 import type { PiRunnerEvent, PiRunnerProviderConfig } from "@ling-stack/runner-pi";
 import type { RunnerAdapter } from "../../context.js";
+import type { AttemptLocalWriterGroup } from "../../runtime/attempt-local-writers.js";
 import { isRecord } from "../../shared/validation.js";
 
 export type ApprovalAutoReviewExecutionFailureCode =
@@ -22,6 +23,8 @@ export interface ExecuteApprovalAutoReviewModelInput {
   readonly evidenceFingerprint: string;
   readonly serializedEvidence: string;
   readonly signal?: AbortSignal;
+  /** Trusted Host-local lifetime accounting, never a Core safe/stop receipt. */
+  readonly localWriters?: AttemptLocalWriterGroup;
 }
 
 const REVIEWER_SYSTEM_PROMPT = [
@@ -37,6 +40,19 @@ const REVIEWER_SYSTEM_PROMPT = [
 export async function executeApprovalAutoReviewModel(
   input: ExecuteApprovalAutoReviewModelInput,
 ): Promise<string> {
+  // Each actual retry gets its own captured producer. Admission closure must
+  // reject here, before Runner/provider dispatch, rather than after a result.
+  const finish = input.localWriters?.reserve(`approval-review-runner:${input.approvalId}:${input.evidenceFingerprint}`);
+  try {
+    input.signal?.throwIfAborted();
+    return await runApprovalAutoReviewModel(input);
+  } finally {
+    // The caller's timeout/manual result does not own this completion closure.
+    finish?.();
+  }
+}
+
+async function runApprovalAutoReviewModel(input: ExecuteApprovalAutoReviewModelInput): Promise<string> {
   const assistantOutputs: string[] = [];
   let observedToolActivity = false;
   const result = await input.runner.runTask({

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { HostCapabilityDaemonClientError } from "../dist/main/host-capabilities/daemon-client.js";
 import { HostCapabilityRuntime } from "../dist/main/host-capabilities/runtime.js";
 
 test("Host runtime publishes availability and performs claim-begin-preview-result in order", async () => {
@@ -82,6 +83,80 @@ test("Host runtime rolls back a launched preview and retries a lost result ackno
   assert.equal(completeCalls, 6, "three success acknowledgements and three failure acknowledgements are bounded");
   assert.equal(launchClosed, true);
   await runtime.stop();
+});
+
+test("Host runtime re-registers authority after a daemon restart before the heartbeat", async () => {
+  const command = fixtureCommand();
+  let availabilityCount = 0;
+  let lostAuthority = false;
+  let delivered = false;
+  const completed = [];
+  const runtime = new HostCapabilityRuntime({
+    daemonBaseUrl: "http://127.0.0.1:17891",
+    bridgeToken: "secret",
+    desktopInstanceId: "desktop-runtime",
+    daemonClientFactory: () => ({
+      async publishAvailability() { availabilityCount += 1; },
+      async claim(signal) {
+        if (!lostAuthority) {
+          lostAuthority = true;
+          throw new HostCapabilityDaemonClientError("request_rejected", "host_capability_authority_invalid");
+        }
+        if (availabilityCount < 2) throw new HostCapabilityDaemonClientError("request_rejected", "host_capability_authority_invalid");
+        if (!delivered) { delivered = true; return command; }
+        await untilAborted(signal);
+        return undefined;
+      },
+      async begin() {},
+      async complete(result) { completed.push(result); },
+    }),
+    previewManager: { async launch() { return { window: {}, close() {} }; }, async close() {} },
+    heartbeatMs: 60_000,
+    errorBackoffMs: 1,
+  });
+  try {
+    await runtime.start();
+    await waitFor(() => completed.length === 1);
+    assert.equal(availabilityCount, 2);
+    assert.equal(completed[0].ok, true);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("Host runtime restart rebinds authority without closing the reusable preview manager", async () => {
+  let clientCount = 0;
+  let availabilityCount = 0;
+  let previewCloseCount = 0;
+  const previewManager = {
+    async launch() { return { window: {}, close() {} }; },
+    async close() { previewCloseCount += 1; },
+  };
+  const runtime = new HostCapabilityRuntime({
+    daemonBaseUrl: "http://127.0.0.1:17891",
+    bridgeToken: "secret",
+    desktopInstanceId: "desktop-restart-test",
+    daemonClientFactory: () => {
+      clientCount += 1;
+      return {
+        async publishAvailability() { availabilityCount += 1; },
+        async claim(signal) { return await untilAborted(signal); },
+        async begin() {},
+        async complete() {},
+      };
+    },
+    previewManager,
+    heartbeatMs: 60_000,
+    errorBackoffMs: 1,
+  });
+
+  await runtime.start();
+  await runtime.restart();
+  assert.equal(clientCount, 2);
+  assert.equal(availabilityCount, 2);
+  assert.equal(previewCloseCount, 0);
+  await runtime.stop();
+  assert.equal(previewCloseCount, 1);
 });
 
 function fixtureCommand() {

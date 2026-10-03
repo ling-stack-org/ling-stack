@@ -269,7 +269,11 @@ function outcomeMatchesTarget(
   outcome: TerminalReportOutcomeStatus,
   target: "succeeded" | "blocked" | "failed" | "cancelled",
 ): boolean {
-  if (target === "succeeded") return outcome === "succeeded";
+  // A verified workflow may finish all required work while its atomic audit
+  // retains a recovered tool failure. Keep that conservative report outcome;
+  // it must not strand the finished source Turn without a published result.
+  // Required-participant authority is independently revalidated above.
+  if (target === "succeeded") return outcome === "succeeded" || outcome === "partially_succeeded";
   if (target === "blocked") return outcome === "blocked" || outcome === "partially_succeeded";
   return outcome === target;
 }

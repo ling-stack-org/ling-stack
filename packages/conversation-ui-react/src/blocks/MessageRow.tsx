@@ -16,6 +16,8 @@ export interface MessageRowProps {
   readonly surface: ConversationInteractionSurfaceKind;
   readonly authorType: MessageRowAuthorType;
   readonly avatar?: ReactNode;
+  /** Reserve the identity column without repeating an avatar for this response. */
+  readonly identityContinuation?: boolean;
   readonly authorName: string;
   readonly createdAtLabel?: string;
   readonly tone?: MessageRowTone;
@@ -41,6 +43,7 @@ export function MessageRow({
   surface,
   authorType,
   avatar,
+  identityContinuation = false,
   authorName,
   createdAtLabel,
   tone,
@@ -66,7 +69,8 @@ export function MessageRow({
     : authorType === "ai-teammate"
       ? surfacePolicy.showAgentAvatar
       : true;
-  const resolvedAvatar = avatarAllowed ? avatar : undefined;
+  const resolvedAvatar = avatarAllowed ? identityContinuation
+    ? <span className="conversation-message-avatar-placeholder" aria-hidden="true" /> : avatar : undefined;
   const hasAvatar = resolvedAvatar !== null && resolvedAvatar !== undefined && resolvedAvatar !== false;
   const resolvedIdentityLabelMode = identityLabelMode ?? (authorType === "system" ? "visible" : "sr-only");
   const legacySideClass = authorType === "local-user" ? "message-bubble-own" : "message-bubble-peer";

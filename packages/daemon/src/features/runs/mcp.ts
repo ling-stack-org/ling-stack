@@ -22,6 +22,9 @@ import {
   captureMcpResultAuthority,
 } from "../mcp/result-authority.js";
 import { removeUndefined } from "../../shared/validation.js";
+import type { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
+import { assertMcpBrokerHostAdmission } from "../mcp/broker.js";
+import { reserveHostMcpOperation } from "../mcp/host-operation.js";
 import type { RunRequest } from "./schemas.js";
 
 export function resolveMcpToolAccessForRun(
@@ -123,6 +126,9 @@ export function createMcpToolCallHandler(
   tools: readonly PiRunnerMcpToolDefinition[],
   options: {
     readonly runId?: string;
+    readonly hostOperationTracker?: AttemptHostOperationTracker;
+    /** Trusted late Host composition only; capture once at actual callback entry. */
+    readonly getHostOperationTracker?: () => AttemptHostOperationTracker | undefined;
     readonly onStart?: (input: {
       readonly request: PiRunnerMcpToolCallRequest;
       readonly definition: PiRunnerMcpToolDefinition;
@@ -136,49 +142,61 @@ export function createMcpToolCallHandler(
 ): NonNullable<PiRunnerRunOptions["onMcpToolCall"]> {
   const byRegisteredName = new Map(tools.map((tool) => [tool.registeredName, tool]));
   return async (request) => {
-    request.signal?.throwIfAborted();
-    const tool = byRegisteredName.get(request.registeredName);
-    if (!tool) {
-      throw new Error(`MCP tool is not authorized for this run: ${request.registeredName}`);
-    }
-    const { server, authority } = captureMcpResultAuthority(store, tool.serverId, tool.rawName);
+    // Parent and connection producer are reserved before the first await.
+    const tracker = options.hostOperationTracker ?? options.getHostOperationTracker?.();
+    const hostOperation = tracker ? reserveHostMcpOperation(tracker, request.toolCallId) : undefined;
     try {
-      options.onStart?.({ request, definition: tool });
-    } catch {
-      // Projection observers are best-effort and must not alter the authoritative MCP call.
-    }
-    const result = await mcpBroker.callTool(server, {
-      secretResolver,
-      workspaceCwd: store.paths.cwd,
-      signal: request.signal,
-      runId: options.runId,
-      toolCallId: request.toolCallId,
-      assertResultCurrent: () => {
-        assertMcpResultAuthorityCurrent(store, authority);
-      },
-      ...(options.runId ? {
-        lockedControlExecution: {
-          runId: options.runId,
-          computerUseSessionId: `computer_use_${options.runId}`,
-          toolCallId: request.toolCallId,
-          defaultApproval: request.defaultApproval,
+      request.signal?.throwIfAborted();
+      const tool = byRegisteredName.get(request.registeredName);
+      if (!tool) {
+        throw new Error(`MCP tool is not authorized for this run: ${request.registeredName}`);
+      }
+      const { server, authority } = captureMcpResultAuthority(store, tool.serverId, tool.rawName);
+      if (hostOperation) assertMcpBrokerHostAdmission(mcpBroker, server);
+      try {
+        options.onStart?.({ request, definition: tool });
+      } catch {
+        // Projection observers are best-effort and must not alter the authoritative MCP call.
+      }
+      const result = await mcpBroker.callTool(server, {
+        secretResolver,
+        workspaceCwd: store.paths.cwd,
+        signal: request.signal,
+        runId: options.runId,
+        toolCallId: request.toolCallId,
+        hostOperation,
+        assertResultCurrent: () => {
+          assertMcpResultAuthorityCurrent(store, authority);
         },
-      } : {}),
-    }, tool.rawName, request.input);
-    request.signal?.throwIfAborted();
-    // The production brokers check at the transport boundary. Recheck here as
-    // the consumer boundary so an injected/custom broker cannot omit the fence.
-    assertMcpResultAuthorityCurrent(store, authority);
-    const redactedResult = redactSecrets(
-      result,
-      collectMcpSecretValuesForServer(server, secretResolver),
-    ) as PiRunnerMcpToolCallResult;
-    try {
-      options.onResult?.({ request, definition: tool, result: redactedResult });
-    } catch {
-      // Projection observers are best-effort and must not alter the authoritative MCP result.
+        ...(options.runId ? {
+          lockedControlExecution: {
+            runId: options.runId,
+            computerUseSessionId: `computer_use_${options.runId}`,
+            toolCallId: request.toolCallId,
+            defaultApproval: request.defaultApproval,
+          },
+        } : {}),
+      }, tool.rawName, request.input);
+      request.signal?.throwIfAborted();
+      hostOperation?.assertMayPrepare();
+      // The production brokers check at the transport boundary. Recheck here as
+      // the consumer boundary so an injected/custom broker cannot omit the fence.
+      assertMcpResultAuthorityCurrent(store, authority);
+      const redactedResult = redactSecrets(
+        result,
+        collectMcpSecretValuesForServer(server, secretResolver),
+      ) as PiRunnerMcpToolCallResult;
+      try {
+        options.onResult?.({ request, definition: tool, result: redactedResult });
+      } catch {
+        // Projection observers are best-effort and must not alter the authoritative MCP result.
+      }
+      return redactedResult;
+    } finally {
+      // Neither SDK result, callback return nor connection close is a remote
+      // whole-operation receipt. Entered operations remain durable unknown.
+      hostOperation?.finish();
     }
-    return redactedResult;
   };
 }
 

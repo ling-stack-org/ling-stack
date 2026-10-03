@@ -79,6 +79,69 @@ test("enforced approval resume adopts one Harness Attempt and closes its continu
   }
 });
 
+test("restart finalizes a manually denied suspended approval exactly once without executing", async () => {
+  const fixture = await createResumeFixture("manual-denied", "printf unsafe > must-not-run.txt", false, false, true, "pending");
+  try {
+    const now = "2026-08-16T02:01:00.000Z";
+    fixture.store.updateWorkUnitAttemptStatus({
+      workUnitId: fixture.priorAttempt.workUnitId,
+      attemptId: fixture.priorAttempt.id,
+      runtimeInstanceId: fixture.priorAttempt.runtimeInstanceId,
+      fencingToken: fixture.priorAttempt.fencingToken,
+      status: "lost",
+      now,
+      endedAt: now,
+      errorCode: "runtime_suspend",
+      errorMessage: "daemon restart before human decision",
+    });
+    const denied = fixture.store.denyApprovalRequest(fixture.approval.id, {
+      reason: "user rejected the command",
+      resolvedBy: "local-user",
+    }, now);
+    assert.equal(denied?.status, "denied");
+    const coordinator = createCoordinator(new ActiveRunRegistry(), fixture);
+    assert.equal(fixture.store.getWorkUnitAttempt(fixture.priorAttempt.id)?.status, "lost");
+    assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.status, "denied");
+    coordinator.registerStore(fixture.store);
+    assert.equal(fixture.store.getRun(fixture.run.id)?.status, "failed");
+    assert.equal(fixture.store.getWorkUnit(fixture.workUnit.id)?.status, "failed");
+    assert.equal(fixture.store.getTask(fixture.run.taskId)?.status, "failed");
+    assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.status, "denied");
+    assert.equal(fixture.store.listEvents(fixture.run.id, { limit: 1000 }).filter((event) =>
+      event.type === "approval_denied" && event.data?.approvalId === denied.id).length, 1);
+    coordinator.registerStore(fixture.store);
+    assert.equal(fixture.store.listEvents(fixture.run.id, { limit: 1000 }).filter((event) =>
+      event.type === "approval_denied" && event.data?.approvalId === denied.id).length, 1);
+    assert.equal(fixture.store.listWorkUnitAttempts(fixture.workUnit.id).length, 1);
+    await assert.rejects(readFile(resolve(fixture.cwd, "must-not-run.txt")), /ENOENT/);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("restart recovery scans denied checkpoints past the first 500 with tied timestamps", () => {
+  const checkpoints = Array.from({ length: 501 }, (_, index) => ({
+    id: `checkpoint_${String(index).padStart(4, "0")}`,
+    approvalId: `approval_${String(index).padStart(4, "0")}`,
+    createdAt: "2026-08-16T02:00:00.000Z",
+  })).reverse();
+  const recovered = [];
+  const coordinator = createCoordinator(new ActiveRunRegistry());
+  coordinator.finalizeSuspendedApprovalDenial = ({ approval }) => {
+    recovered.push(approval.id);
+    return { status: "finalized", runId: "run_test" };
+  };
+  coordinator.registerStore({
+    listApprovalCheckpoints({ status, limit, before }) {
+      if (status !== "denied") return [];
+      return checkpoints.filter((checkpoint) => !before || checkpoint.id < before.id).slice(0, limit);
+    },
+    getApprovalRequest(id) { return { id, status: "denied" }; },
+  });
+  assert.equal(recovered.length, 501);
+  assert.deepEqual(new Set(recovered), new Set(checkpoints.map((checkpoint) => checkpoint.approvalId)));
+});
+
 test("enforced approval preparation failure atomically closes checkpoint, task, run, attempt, and continuation", async () => {
   const fixture = await createResumeFixture(
     "harness-prepare-failure",
@@ -148,6 +211,33 @@ test("resume_pending before tool_start replaces the lost attempt and executes ex
     assert.equal(fixture.store.listRuntimeSemaphoreSlots({ workUnitId: fixture.workUnit.id, status: "active" }).length, 0);
     assert.equal(fixture.store.listResourceLeases({ workUnitId: fixture.workUnit.id, status: "active" }).length, 0);
   } finally {
+    await fixture.close();
+  }
+});
+
+test("startup recovery waits for a missing durable approval event before executing", async () => {
+  const fixture = await createResumeFixture("missing-decision-event", "printf x >> recovered-after-event.txt");
+  const appendEvent = fixture.store.appendEvent.bind(fixture.store);
+  try {
+    fixture.store.appendEvent = (runId, type, data, now) => {
+      if (type === "approval_approved") throw new Error("injected_event_storage_failure");
+      return appendEvent(runId, type, data, now);
+    };
+    const activeRuns = new ActiveRunRegistry();
+    const coordinator = createCoordinator(activeRuns);
+    coordinator.registerStore(fixture.store);
+    await activeRuns.waitForIdle();
+    assert.equal(fixture.store.getRun(fixture.run.id)?.status, "waiting_for_approval");
+    await assert.rejects(readFile(resolve(fixture.cwd, "recovered-after-event.txt")), /ENOENT/u);
+
+    fixture.store.appendEvent = appendEvent;
+    coordinator.registerStore(fixture.store);
+    await waitForCondition(() => fixture.store.getRun(fixture.run.id)?.status === "succeeded", "recovered approval should resume");
+    assert.equal(await readFile(resolve(fixture.cwd, "recovered-after-event.txt"), "utf8"), "x");
+    assert.equal(fixture.store.listEvents(fixture.run.id, { limit: 1_000 }).filter((event) =>
+      event.type === "approval_approved" && event.data?.approvalId === fixture.approval.id).length, 1);
+  } finally {
+    fixture.store.appendEvent = appendEvent;
     await fixture.close();
   }
 });
@@ -480,7 +570,7 @@ function matchingToolEvents(fixture) {
   });
 }
 
-async function createResumeFixture(suffix, command, typed = false, harness = false, trackedTask = false) {
+async function createResumeFixture(suffix, command, typed = false, harness = false, trackedTask = false, resolution = "approve") {
   const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-approval-resume-recovery-${suffix}-`));
   const storeRegistry = new RunStoreRegistry(createSqliteRunStore);
   const store = storeRegistry.getStore(cwd);
@@ -654,8 +744,10 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     expectedRevision: initialCheckpoint.revision,
     resumeBasis,
   }, now));
-  const approved = store.approveApprovalRequest(approval.id, { reason: "resume recovery" }, "2026-08-16T02:01:00.000Z");
-  assert.equal(approved?.status, "approved");
+  const resolved = resolution === "pending"
+    ? approval
+    : store.approveApprovalRequest(approval.id, { reason: "resume recovery" }, "2026-08-16T02:01:00.000Z");
+  assert.equal(resolved?.status, resolution === "pending" ? "pending" : "approved");
   const checkpoint = store.getApprovalCheckpointForApproval(approval.id);
   const runnerCalls = [];
   const dispatchErrors = [];
@@ -689,7 +781,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     run: store.getRun(run.id),
     workUnit: store.getWorkUnit(workUnit.id),
     priorAttempt: store.getWorkUnitAttempt(priorAttempt.id),
-    approval: approved,
+    approval: resolved,
     checkpoint,
     async close() {
       runtimeSupervisor?.releaseAll();

@@ -201,6 +201,36 @@ test("conversation approval ownership follows approval run to its thread", () =>
   })).toEqual({});
 });
 
+test("sidebar pending counts use distinct approval identities across all conversation owners", () => {
+  const channelApproval = { ...approval("approval_channel", "task_channel"), channelId: "channel_1", risk: "critical" as const };
+  const directApproval = { ...approval("approval_direct", "task_missing"), runId: "run_direct" };
+  const conversationApproval = { ...approval("approval_conversation", "task_missing"), runId: "run_conversation" };
+  const runs = [
+    { ...run("run_direct", "task_missing", "waiting_for_approval", "2026-07-19T00:02:00.000Z"), teammateId: "teammate_1", threadId: "thread_direct" },
+    { ...run("run_conversation", "task_missing", "waiting_for_approval", "2026-07-19T00:03:00.000Z"), threadId: "thread_conversation" },
+  ];
+  const approvals = [channelApproval, channelApproval, directApproval, directApproval, conversationApproval, conversationApproval];
+
+  expect(buildSidebarChannelNotifications({
+    approvals,
+    channels: [channel("channel_1")],
+    channelUnreadById: {},
+    notificationLevels: { channel_1: "all" },
+    runs,
+    selectedChannelId: "",
+    tasks: [],
+    workUnits: [],
+  })).toEqual({ channel_1: { count: 1, primaryStatus: "waiting" } });
+  expect(buildSidebarTeammateNotifications({
+    approvals,
+    runs,
+    tasks: [],
+    teammates: [teammate("teammate_1")],
+    workUnits: [],
+  })).toEqual({ teammate_1: { count: 1, primaryStatus: "waiting" } });
+  expect([...buildSidebarConversationApprovalCounts(approvals, runs, [])]).toEqual([["thread_conversation", 1]]);
+});
+
 test("runtime approval ownership follows explicit, run, task, workflow, and payload lineage", () => {
   const ownershipRuns = [
     { ...run("run_channel", "task_1", "running", "2026-07-19T00:01:00.000Z"), channelId: "channel_run", threadId: "thread_channel" },

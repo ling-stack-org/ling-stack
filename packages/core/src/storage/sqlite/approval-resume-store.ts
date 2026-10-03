@@ -427,8 +427,8 @@ export class SqliteApprovalResumeStore {
     if (input.kind === "checkpoint_quarantine") {
       return this.commitApprovalResumeCheckpointQuarantine(input);
     }
-    if (input.kind === "system_review_denied") {
-      return this.commitApprovalReviewDeniedTerminal(input);
+    if (input.kind === "suspended_approval_denied") {
+      return this.commitSuspendedApprovalDeniedTerminal(input);
     }
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
@@ -613,8 +613,8 @@ export class SqliteApprovalResumeStore {
     }
   }
 
-  private commitApprovalReviewDeniedTerminal(
-    input: Extract<CommitApprovalResumeTerminalInput, { readonly kind: "system_review_denied" }>,
+  private commitSuspendedApprovalDeniedTerminal(
+    input: Extract<CommitApprovalResumeTerminalInput, { readonly kind: "suspended_approval_denied" }>,
   ): CommitApprovalResumeTerminalResult {
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
@@ -625,7 +625,7 @@ export class SqliteApprovalResumeStore {
       const attempt = this.ports.getWorkUnitAttempt(input.attemptId);
       if (!approval
         || approval.status !== "denied"
-        || approval.resolvedBy !== "system-reviewer"
+        || (approval.resolvedBy !== "system-reviewer" && approval.resolvedBy !== "local-user")
         || !checkpoint
         || checkpoint.status !== "denied"
         || checkpoint.revision !== input.expectedCheckpointRevision
@@ -649,13 +649,16 @@ export class SqliteApprovalResumeStore {
         throw new ApprovalResumeTransitionAbort("approval_resume_lineage_mismatch");
       }
 
+      // The user owns the approval decision, but only the Host may reconcile
+      // a lost Attempt. The approval row retains who made the decision.
+      const decisionActor = "system" as const;
       const runTransition = this.ports.transitionRunStatus({
         runId: run.id,
         expectedStatus: "waiting_for_approval",
         event: "approval_denied",
-        actor: "system",
+        actor: decisionActor,
         reason: input.reason,
-        idempotencyKey: systemReviewDeniedIdempotencyKey(input, "run-transition"),
+        idempotencyKey: suspendedApprovalDeniedIdempotencyKey(input, "run-transition"),
         now: input.now,
         endedAt: input.now,
         errorMessage: input.reason,
@@ -665,9 +668,9 @@ export class SqliteApprovalResumeStore {
         terminalAttemptOwnership: { kind: "lost_attempt_reconciliation" as const },
         expectedStatus: "waiting_for_approval",
         event: "runner_failed",
-        actor: "system",
+        actor: decisionActor,
         reason: input.reason,
-        idempotencyKey: systemReviewDeniedIdempotencyKey(input, "work-unit-transition"),
+        idempotencyKey: suspendedApprovalDeniedIdempotencyKey(input, "work-unit-transition"),
         now: input.now,
         endedAt: input.now,
         errorCode: "approval_denied",
@@ -682,9 +685,9 @@ export class SqliteApprovalResumeStore {
           taskId: task.id,
           expectedStatus: "running",
           event: "run_failed",
-          actor: "system",
+          actor: decisionActor,
           reason: input.reason,
-          idempotencyKey: systemReviewDeniedIdempotencyKey(input, "task-transition"),
+          idempotencyKey: suspendedApprovalDeniedIdempotencyKey(input, "task-transition"),
           now: input.now,
           currentRunId: run.id,
         });
@@ -706,7 +709,7 @@ export class SqliteApprovalResumeStore {
         now: input.now,
       });
       this.context.database.exec("COMMIT;");
-      return reloadSystemReviewDeniedResult(
+      return reloadSuspendedApprovalDeniedResult(
         this.ports,
         checkpoint.id,
         run.id,
@@ -895,22 +898,22 @@ function reloadTerminalResult(
   };
 }
 
-function reloadSystemReviewDeniedResult(
+function reloadSuspendedApprovalDeniedResult(
   ports: ApprovalResumeStorePorts,
   checkpointId: string,
   runId: string,
   workUnitId: string,
   attemptId: string,
   controlPlaneEvents: readonly ControlPlaneEvent[],
-): Extract<CommitApprovalResumeTerminalResult, { ok: true; kind: "system_review_denied" }> {
+): Extract<CommitApprovalResumeTerminalResult, { ok: true; kind: "suspended_approval_denied" }> {
   const checkpoint = ports.getApprovalCheckpoint(checkpointId);
   const run = ports.getRun(runId);
   const workUnit = ports.getWorkUnit(workUnitId);
   const attempt = ports.getWorkUnitAttempt(attemptId);
   if (!checkpoint || !run || !workUnit || !attempt) {
-    throw new Error("System review denial committed but could not be reloaded.");
+    throw new Error("Suspended approval denial committed but could not be reloaded.");
   }
-  return { ok: true, kind: "system_review_denied", checkpoint, run, workUnit, attempt, controlPlaneEvents };
+  return { ok: true, kind: "suspended_approval_denied", checkpoint, run, workUnit, attempt, controlPlaneEvents };
 }
 
 function claimIdempotencyKey(input: CommitApprovalResumeClaimInput, suffix: string): string {
@@ -922,8 +925,8 @@ function terminalIdempotencyKey(input: CommitApprovalResumeVerifiedTerminalInput
   return `approval-resume-terminal:${input.checkpointId}:${input.expectedCheckpointRevision}:${input.attemptId}:${input.status}:${suffix}`;
 }
 
-function systemReviewDeniedIdempotencyKey(
-  input: Extract<CommitApprovalResumeTerminalInput, { readonly kind: "system_review_denied" }>,
+function suspendedApprovalDeniedIdempotencyKey(
+  input: Extract<CommitApprovalResumeTerminalInput, { readonly kind: "suspended_approval_denied" }>,
   suffix: string,
 ): string {
   return `approval-review-denied:${input.checkpointId}:${input.expectedCheckpointRevision}:${input.attemptId}:${suffix}`;

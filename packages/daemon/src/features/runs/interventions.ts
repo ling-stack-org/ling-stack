@@ -21,6 +21,7 @@ import {
 } from "@ling-stack/core";
 import type { McpBroker } from "../../context.js";
 import { RunControlService } from "../../run-control.js";
+import { HttpError } from "../../errors.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -37,6 +38,7 @@ import {
   executeRunRequest,
 } from "./orchestrator.js";
 import { buildRunInterventionContinuationRequest } from "./run-intervention-continuation-request.js";
+import { assertNoUnsafeRequiredPause } from "./user-input-cancellation-guard.js";
 
 const runControlService = new RunControlService();
 
@@ -95,6 +97,16 @@ export async function handleRunInterventions(
   if (input.mode === "interrupt_redirect" && isTerminalRunStatus(sourceRun.status)) {
     writeJson(response, 409, { error: "run_not_cancellable", message: `Run ${sourceRun.id} is already ${sourceRun.status}.`, run: sourceRun });
     return;
+  }
+
+  if (input.mode === "interrupt_redirect" && sourceRun.status !== "yielded") {
+    try {
+      assertNoUnsafeRequiredPause(store, sourceRun);
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      writeJson(response, error.statusCode, { error: error.code, message: error.message });
+      return;
+    }
   }
 
   const now = new Date().toISOString();
@@ -161,11 +173,18 @@ export async function handleRunInterventions(
     instruction: updated.instruction,
   });
 
-  const cancellation = runControlService.cancelRunForRedirect({
-    store,
-    run: sourceRun,
-    activeRun: activeRuns.get(sourceRunId),
-  });
+  let cancellation;
+  try {
+    cancellation = runControlService.cancelRunForRedirect({
+      store,
+      run: sourceRun,
+      activeRun: activeRuns.get(sourceRunId),
+    });
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    writeJson(response, error.statusCode, { error: error.code, message: error.message });
+    return;
+  }
 
   writeJson(response, 201, {
     cwd: store.paths.cwd,
@@ -274,6 +293,16 @@ export function handleRunInterventionPromote(
     return;
   }
 
+  if (currentRun.status !== "yielded") {
+    try {
+      assertNoUnsafeRequiredPause(resolved.store, currentRun);
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      writeJson(response, error.statusCode, { error: error.code, message: error.message });
+      return;
+    }
+  }
+
   const now = new Date().toISOString();
   const promoted = resolved.store.updateRunInterventionStatus({
     interventionId: intervention.id,
@@ -294,11 +323,18 @@ export function handleRunInterventionPromote(
     instruction: promoted.instruction,
   });
 
-  const cancellation = runControlService.cancelRunForRedirect({
-    store: resolved.store,
-    run: currentRun,
-    activeRun: activeRuns.get(currentRun.id),
-  });
+  let cancellation;
+  try {
+    cancellation = runControlService.cancelRunForRedirect({
+      store: resolved.store,
+      run: currentRun,
+      activeRun: activeRuns.get(currentRun.id),
+    });
+  } catch (error) {
+    if (!(error instanceof HttpError)) throw error;
+    writeJson(response, error.statusCode, { error: error.code, message: error.message });
+    return;
+  }
   void maybeStartNextRunInterventionContinuation({
     sourceRunId: intervention.sourceRunId,
     store: resolved.store,

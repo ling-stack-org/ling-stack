@@ -66,7 +66,7 @@ export class ApprovalAutoReviewRecoveryCoordinator {
 
     for (const approval of store.listApprovalRequests({ status: "denied", limit: 500 })) {
       if (approval.resolvedBy !== "system-reviewer") continue;
-      const finalized = this.options.approvalResumeCoordinator.finalizeRecoveredSystemReviewDenial({ store, approval });
+      const finalized = this.options.approvalResumeCoordinator.finalizeSuspendedApprovalDenial({ store, approval });
       if (finalized.status === "finalized") denied += 1;
     }
 
@@ -136,7 +136,7 @@ export class ApprovalAutoReviewRecoveryCoordinator {
         else manual += 1;
         continue;
       }
-      const finalized = this.options.approvalResumeCoordinator.finalizeRecoveredSystemReviewDenial({
+      const finalized = this.options.approvalResumeCoordinator.finalizeSuspendedApprovalDenial({
         store,
         approval: outcome.approval,
       });

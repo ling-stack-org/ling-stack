@@ -19,6 +19,47 @@ async function fixture(t, surface = "normal") {
   return f;
 }
 
+test("normal conversation waiting for approval does not publish a failure placeholder", async t => {
+  const f = await fixture(t);
+  const transition = f.store.transitionRunStatus({
+    runId: f.run.id, expectedStatus: "running", event: "approval_requested", actor: "system", now,
+  });
+  assert.equal(transition.ok, true);
+  const detail = buildConversationDetail(f.store, f.cwd, f.store.getLingThread(f.thread.id));
+  const user = detail.messages.find(message => message.role === "user");
+  const assistant = detail.messages.find(message => message.role === "assistant");
+  assert.equal(user.status, "running");
+  assert.equal(assistant.status, "running");
+  assert.equal(assistant.content, "");
+  assert.equal(assistant.contentSource, "host_status");
+});
+
+test("interrupted normal detail marks a Host placeholder, never model narration, without writing history", async t => {
+  const f = await fixture(t);
+  f.store.appendEvent(f.run.id, "run_error", { message: "runtime_interrupted_no_checkpoint" });
+  f.store.markRunFailed(f.run.id, now, "runtime_interrupted_no_checkpoint");
+  const before = f.store.countEvents(f.run.id);
+  const assistant = buildConversationDetail(f.store, f.cwd, f.thread).messages.find(row => row.role === "assistant");
+  assert.equal(assistant.contentSource, "host_status");
+  assert.ok(assistant.content.trim());
+  assert.equal(assistant.errorMessage, "runtime_interrupted_no_checkpoint");
+  assert.deepEqual(assistant.narrationSegments, []);
+  assert.equal(f.store.countEvents(f.run.id), before);
+  assert.equal(f.store.getConversationItem("narration:" + f.run.id), undefined);
+});
+
+test("real failure commentary keeps model provenance even when it uses the same words as the Host fallback", async t => {
+  const f = await fixture(t);
+  const text = "Ling 助手暂时无法完成这次请求。";
+  f.append(text);
+  f.store.appendEvent(f.run.id, "run_error", { message: "runtime_interrupted_no_checkpoint" });
+  f.store.markRunFailed(f.run.id, now, "runtime_interrupted_no_checkpoint");
+  const assistant = buildConversationDetail(f.store, f.cwd, f.thread).messages.find(row => row.role === "assistant");
+  assert.equal(assistant.content, text);
+  assert.equal(assistant.contentSource, "run_narration");
+  assert.equal(assistant.narrationSegments.length, 1);
+});
+
 for (const surface of ["normal", "private"]) {
   test(surface + " history exposes fixed attempt ownership without writing facts", async t => {
     const f = await fixture(t, surface);

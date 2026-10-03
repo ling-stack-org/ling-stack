@@ -8,6 +8,7 @@ import {
 } from "@ling-stack/contracts";
 import {
   HostCapabilityDaemonClient,
+  HostCapabilityDaemonClientError,
   type HostCapabilityDaemonTransport,
 } from "./daemon-client.js";
 import {
@@ -62,6 +63,21 @@ export class HostCapabilityRuntime {
   }
 
   async stop(): Promise<void> {
+    await this.stopInternal(true);
+  }
+
+  /**
+   * Rebind the host bridge after the daemon authority is recreated. The
+   * desktop-owned preview manager remains reusable across a daemon restart;
+   * closing it here would permanently disable subsequent previews.
+   */
+  async restart(): Promise<void> {
+    if (!this.runPromise && !this.abortController) return;
+    await this.stopInternal(false);
+    await this.start();
+  }
+
+  private async stopInternal(closePreviewManager: boolean): Promise<void> {
     if (this.heartbeat) clearInterval(this.heartbeat);
     this.heartbeat = undefined;
     this.abortController?.abort();
@@ -69,7 +85,9 @@ export class HostCapabilityRuntime {
     await this.runPromise?.catch(() => undefined);
     this.runPromise = undefined;
     this.client = undefined;
-    await this.previewManager.close();
+    if (closePreviewManager) {
+      await (this.previewManagerValue ?? this.options.previewManager)?.close();
+    }
   }
 
   private async runClaimLoop(signal: AbortSignal): Promise<void> {
@@ -81,6 +99,12 @@ export class HostCapabilityRuntime {
       } catch (error) {
         if (signal.aborted) return;
         this.diagnostic("host_capability.claim_failed", error);
+        if (error instanceof HostCapabilityDaemonClientError
+          && error.daemonCode === "host_capability_authority_invalid") {
+          await this.publishAvailability(signal).catch((recoveryError) => {
+            if (!signal.aborted) this.diagnostic("host_capability.availability_failed", recoveryError);
+          });
+        }
         await delay(this.options.errorBackoffMs ?? ERROR_BACKOFF_MS, signal);
       }
     }

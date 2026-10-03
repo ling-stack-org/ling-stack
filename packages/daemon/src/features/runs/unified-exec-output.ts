@@ -22,12 +22,14 @@ export function createStreamCapture(
   let rawByteCount = 0;
   let sequence = 0;
   let carry = "";
+  const lineFlushAllowed = !extraSecrets.some(secret => secret?.includes("\n") || secret?.includes("\r"));
   const capture = createMutableStreamCapture();
   return {
     ingest(chunk) {
       rawByteCount += chunk.byteLength;
       const text = carry + decoder.write(chunk);
-      let emitLength = Math.max(0, text.length - REDACTION_CARRY_CHARS);
+      let emitLength = Math.max(0, text.length - REDACTION_CARRY_CHARS,
+        lineFlushAllowed ? safeLineFlushLength(text) : 0);
       // The carry is measured in UTF-16 units, but events must contain whole scalars.
       if (emitLength > 0 && isHighSurrogate(text.charCodeAt(emitLength - 1))
         && isLowSurrogate(text.charCodeAt(emitLength))) emitLength -= 1;
@@ -74,6 +76,17 @@ export function createStreamCapture(
       });
     }
   }
+}
+
+/** A completed line is safe to publish unless an authorization value continues across it. */
+function safeLineFlushLength(text: string): number {
+  const boundary = text.lastIndexOf("\n") + 1;
+  if (boundary === 0) return 0;
+  const authPrefix = /\b(?:Bearer|Basic)\s+[A-Za-z0-9._~+/=-]*/gi;
+  for (const match of text.matchAll(authPrefix)) {
+    if (match.index < boundary && match.index + match[0].length >= boundary) return match.index;
+  }
+  return boundary;
 }
 
 export function createSyntheticStreamCapture(text: string, extraSecrets: readonly (string | undefined)[]): StreamCaptureSnapshot {

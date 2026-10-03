@@ -30,6 +30,7 @@ import { TERMINAL_REPORT_PROMPT_VERSION } from "./terminal-report-prompt.js";
 import { synthesizeTerminalReportContent } from "./terminal-report-synthesis.js";
 import { evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
 import { reconcileWorkflowFromCanonicalState } from "./workflow-reconciliation.js";
+import { createTerminalReportRecoverySweep } from "./terminal-report-recovery-sweep.js";
 
 export interface TerminalReportCoordinatorSettings {
   readonly enabled: boolean;
@@ -270,7 +271,7 @@ function captureNormalBasis(store: RunStore, snapshot: TerminalReportEvidenceSna
   if (snapshot.source.kind === "workflow" || !snapshot.threadId || store.getLingThread(snapshot.threadId)?.kind !== "conversation") return undefined;
   const basis = captureNormalTerminalReportBasis(store, { kind: snapshot.source.kind, id: snapshot.source.id });
   if (!basis) throw new TerminalReportPublicationError("source_turn_conflict", `Normal report source is not canonical: ${snapshot.source.id}`);
-  if (!basis.settled) throw new TerminalReportPublicationError("stale_completion_basis", `Normal report evidence barrier is not settled: ${snapshot.source.id}`);
+  if (!basis.settled && !basis.failurePublicationAllowed) throw new TerminalReportPublicationError("stale_completion_basis", `Normal report evidence barrier is not publishable: ${snapshot.source.id}`);
   return basis;
 }
 
@@ -515,6 +516,7 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
   }
   const latestPublishedBySource = new Map<string, LingTerminalReportRecord>();
   const recoveredTurnIds = new Set<string>();
+  const sweep = createTerminalReportRecoverySweep(store);
   for (const record of store.listTerminalReports({ limit: 500 })) {
     if (!terminalReportIsEligibleForDisplay(store, record)
       || (record.status !== "committed" && record.status !== "fallback")
@@ -528,21 +530,24 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
     }
   }
   for (const record of latestPublishedBySource.values()) {
-    if (record.sourceKind !== "workflow" && !record.channelId && record.turnId && record.threadId
-      && store.getLingThread(record.threadId)?.kind === "conversation") {
-      recoveredTurnIds.add(record.turnId);
-      const source = { kind: record.sourceKind, id: record.sourceId };
-      const basis = store.readSnapshot(() => captureNormalTerminalReportBasis(store, source));
-      // Recovery recollects evidence before publication. A stale pre-atomic
-      // orphan stays audit-only; a new generation owns the current result.
-      // Preserve a legacy Run source instead of creating a second Turn result.
-      if (basis?.settled && (source.kind === "turn" || source.id === basis.effectiveRunId)) {
-        if (source.kind === "turn") await processTurnTerminalReport(store, source.id);
-        else await processRunTerminalReport(store, source.id);
+    await sweep.attempt({ kind: record.sourceKind, id: record.sourceId,
+      reportId: record.id, threadId: record.threadId, turnId: record.turnId }, async () => {
+      if (record.sourceKind !== "workflow" && !record.channelId && record.turnId && record.threadId
+        && store.getLingThread(record.threadId)?.kind === "conversation") {
+        recoveredTurnIds.add(record.turnId);
+        const source = { kind: record.sourceKind, id: record.sourceId };
+        const basis = store.readSnapshot(() => captureNormalTerminalReportBasis(store, source));
+        // Recovery recollects evidence before publication. A stale pre-atomic
+        // orphan stays audit-only; a new generation owns the current result.
+        // Preserve a legacy Run source instead of creating a second Turn result.
+        if ((basis?.settled || basis?.failurePublicationAllowed) && (source.kind === "turn" || source.id === basis.effectiveRunId)) {
+          if (source.kind === "turn") await processTurnTerminalReport(store, source.id);
+          else await processRunTerminalReport(store, source.id);
+        }
+        return;
       }
-      continue;
-    }
-    publishTerminalReportWithInvalidation(store, record.report!, undefined, new Date().toISOString());
+      publishTerminalReportWithInvalidation(store, record.report!, undefined, new Date().toISOString());
+    });
   }
   for (const channel of store.listChannels({ limit: 500 })) {
     for (const workflow of store.listChannelWorkflows({ channelId: channel.id, limit: 500 })) {
@@ -550,13 +555,15 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
         continue;
       }
       if (isTerminalWorkflowStatus(workflow.status)) {
-        const committed = latestCommittedReport(store, "workflow", workflow.id);
-        const current = collectWorkflowTerminalReportEvidence(store, workflow.id, {
-          generatedAt: new Date().toISOString(),
+        await sweep.attempt({ kind: "workflow", id: workflow.id }, async () => {
+          const committed = latestCommittedReport(store, "workflow", workflow.id);
+          const current = collectWorkflowTerminalReportEvidence(store, workflow.id, {
+            generatedAt: new Date().toISOString(),
+          });
+          if (!committed || committed.evidenceFingerprint !== current.evidenceFingerprint) {
+            await processWorkflowTerminalReport(store, workflow.id);
+          }
         });
-        if (!committed || committed.evidenceFingerprint !== current.evidenceFingerprint) {
-          await processWorkflowTerminalReport(store, workflow.id);
-        }
       }
     }
   }
@@ -573,25 +580,30 @@ export async function recoverTerminalReports(store: RunStore): Promise<void> {
       if (turn && thread && (thread.kind === "conversation" || thread.kind === "teammate_direct")) {
         if (!recoveredTurnIds.has(turn.id) && isTerminalTurnStatus(turn.status)) {
           recoveredTurnIds.add(turn.id);
-          const committed = latestCommittedReport(store, "turn", turn.id);
-          const current = collectTurnTerminalReportEvidence(store, turn.id, {
-            generatedAt: new Date().toISOString(),
+          await sweep.attempt({ kind: "turn", id: turn.id, threadId: thread.id, turnId: turn.id }, async () => {
+            const committed = latestCommittedReport(store, "turn", turn.id);
+            const current = collectTurnTerminalReportEvidence(store, turn.id, {
+              generatedAt: new Date().toISOString(),
+            });
+            if (!committed || committed.evidenceFingerprint !== current.evidenceFingerprint) {
+              await processTurnTerminalReport(store, turn.id);
+            }
           });
-          if (!committed || committed.evidenceFingerprint !== current.evidenceFingerprint) {
-            await processTurnTerminalReport(store, turn.id);
-          }
         }
         continue;
       }
-      const committed = latestCommittedReport(store, "run", run.id);
-      const current = collectRunTerminalReportEvidence(store, run.id, {
-        generatedAt: new Date().toISOString(),
+      await sweep.attempt({ kind: "run", id: run.id, threadId: run.threadId, turnId: turn?.id }, async () => {
+        const committed = latestCommittedReport(store, "run", run.id);
+        const current = collectRunTerminalReportEvidence(store, run.id, {
+          generatedAt: new Date().toISOString(),
+        });
+        if (!committed || committed.evidenceFingerprint !== current.evidenceFingerprint) {
+          await processRunTerminalReport(store, run.id);
+        }
       });
-      if (!committed || committed.evidenceFingerprint !== current.evidenceFingerprint) {
-        await processRunTerminalReport(store, run.id);
-      }
     }
   }
+  sweep.finish();
 }
 
 export const recoverWorkflowTerminalReports = recoverTerminalReports;

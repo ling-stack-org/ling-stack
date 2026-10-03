@@ -157,7 +157,7 @@ async function mountStandaloneProfile(page: Page): Promise<void> {
 
 async function assertProfileThemeAndGeometry(page: Page): Promise<void> {
   const profile = page.locator(".profile-page");
-  const input = profile.getByLabel("昵称");
+  const input = profile.getByLabel("Display name");
   const inputOwner = input.locator("xpath=..");
   const beforeFocus = await input.evaluate((element) => element.getBoundingClientRect().toJSON());
   await input.focus();

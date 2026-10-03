@@ -19,6 +19,7 @@ export interface ConversationTimelineMessageInput {
   readonly status?: ConversationTimelineItemStatus;
   readonly turnId?: string;
   readonly itemId?: string;
+  readonly participantId?: string;
   readonly sourceRefs?: readonly ConversationOperationSourceRef[];
   /**
    * Persisted message file references are display-only until the Host has
@@ -62,6 +63,7 @@ export function createConversationTimelineMessageItem(
     status: input.status,
     ...(input.turnId ? { turnId: input.turnId } : {}),
     ...(input.itemId ? { itemId: input.itemId } : {}),
+    ...(input.participantId ? { participantId: input.participantId } : {}),
     sourceRefs,
   };
 }

@@ -72,10 +72,12 @@ await runPool(locales, concurrency, async (locale) => {
         output[key] = restored;
       }
     }
-    writeCatalog(locale, revision, output, source.messages);
     process.stdout.write(`${locale}: ${Math.min(offset + batch.length, pending.length)}/${pending.length}\r`);
     if (delayMs > 0) await new Promise((resolve) => setTimeout(resolve, delayMs));
   }
+  // Publish the locale only after every pending translation is validated.
+  // A failed later batch must retain the complete previous catalog; the final
+  // write already uses a temporary file and atomic rename in writeCatalog.
   writeCatalog(locale, revision, output, source.messages);
   process.stdout.write(`${locale}: ${entries.length} keys written\n`);
 });

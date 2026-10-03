@@ -46,6 +46,7 @@ export type ConversationTimelineItemStatus =
   | "blocked"
   | "failed"
   | "cancelled"
+  | "partially_succeeded"
   | "succeeded";
 
 /** Host-validated affordances owned by a protocol/approval fact row. */
@@ -291,6 +292,7 @@ export interface ConversationTimelineTerminalReportVerification {
   readonly id: string;
   readonly title: string;
   readonly status: "passed" | "failed" | "blocked" | "cancelled" | "skipped" | "not_run" | "unknown";
+  readonly expectation?: "evidence_backed" | "informational" | "unknown";
   readonly summary?: string;
   readonly command?: string;
   readonly durationMs?: number;

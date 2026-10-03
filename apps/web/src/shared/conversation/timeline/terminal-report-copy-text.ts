@@ -3,6 +3,16 @@ import {
   projectVisibleTerminalReportContent,
   type ConversationTimelineTerminalReportItem,
 } from "@ling-stack/conversation-ui-core";
+import type { ConversationTimelineResponse } from "./timeline-response-presentation.js";
+
+/** Copy the final fallback as well as commentary when no final model reply exists. */
+export function timelineResponseCopyText(response: ConversationTimelineResponse, hasFinalNarration: boolean): string {
+  if (!response.settled) return "";
+  if (response.report && !hasFinalNarration) {
+    return joinBlocks([response.copyText, terminalReportCopyText(response.report)]);
+  }
+  return response.copyText || (response.report ? terminalReportCopyText(response.report) : "");
+}
 
 /**
  * Serialize this report's visible final result, never the surrounding response.
@@ -12,7 +22,7 @@ import {
  * Markdown prose rather than flattening it.
  */
 export function terminalReportCopyText(input: ConversationTimelineTerminalReportItem): string {
-  if (input.status !== "succeeded" && input.status !== "failed" &&
+  if (input.status !== "succeeded" && input.status !== "partially_succeeded" && input.status !== "failed" &&
     input.status !== "cancelled" && input.status !== "blocked") return "";
 
   const content = projectVisibleTerminalReportContent({

@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { Client as McpClient } from "@modelcontextprotocol/sdk/client/index.js";
 import type { Tool as SdkMcpTool } from "@modelcontextprotocol/sdk/types.js";
+import { CHROME_BROWSER_MCP_SERVER_ID, OFFICE_DOCUMENTS_MCP_SERVER_ID } from "@ling-stack/contracts";
 import type { McpRuntimeStatusSnapshot, McpServer, McpStreamableHttpTransport, ReplaceMcpServerToolInput, SecretStatus } from "@ling-stack/core";
 import type { PiRunnerMcpToolCallResult } from "@ling-stack/runner-pi";
 import type { McpBroker, McpBrokerOptions } from "../../context.js";
@@ -9,11 +10,83 @@ import { isRecord, readOptionalString, readString } from "../../shared/validatio
 import { createMcpAuthStatus, createMcpStatusSnapshot } from "./status.js";
 import { createDefaultMcpProcessLauncher, type McpProcessLauncher } from "./stdio-launcher.js";
 import { buildMcpHttpHeaders, createMcpTransport, McpSecretResolutionError } from "./transport-factory.js";
+import { assertHostMcpOperation, McpHostAdmissionError } from "./host-operation.js";
+import { CUA_DRIVER_MCP_SERVER_ID } from "../plugins/presets.js";
+
+// Host-owned capability. A copied/custom/generation broker or a replaced method
+// cannot assert its own support through McpBrokerOptions or public booleans.
+type GenerationRoute = { readonly kind: "chrome" | "office" } | { readonly kind: "cua"; readonly bundledEnabled: boolean };
+type BrokerAdmission = { readonly callTool: McpBroker["callTool"] } & (
+  | { readonly kind: "default_transport" }
+  | { readonly kind: "generation_facade"; readonly baseBroker: McpBroker; readonly route: GenerationRoute }
+);
+const hostAdmissionBrokers = new WeakMap<McpBroker, BrokerAdmission>();
+
+export function assertMcpBrokerHostAdmission(broker: McpBroker, server: McpServer): void {
+  let current = broker;
+  for (let depth = 0; depth < 16; depth++) {
+    const registered = hostAdmissionBrokers.get(current);
+    if (!registered || registered.callTool !== current.callTool) break;
+    if (registered.kind === "default_transport") {
+      if (server.transport.type === "streamable-http" || server.transport.type === "stdio") return;
+      break;
+    }
+    if (ownsGenerationServer(registered.route, server.id)) break;
+    current = registered.baseBroker;
+  }
+  throw new McpHostAdmissionError("mcp_host_admission_unsupported",
+    "Captured Host admission requires a registered native transport delegation chain; custom/owned generation dispatch is unsupported.");
+}
+
+/**
+ * Construct the tracked dispatch seam, not a registration API for caller claims.
+ * A generation's untracked behavior is preserved. A tracked generic route calls
+ * only the registered base; arbitrary generation callbacks cannot run or mint
+ * permission by claiming that they consume a guard. Fixed selectors match the
+ * three existing Host factories and never grant their owned execution support.
+ */
+export function createHostMcpGenerationFacade(input: {
+  readonly baseBroker: McpBroker;
+  readonly route: GenerationRoute;
+  readonly facade: McpBroker;
+}): McpBroker {
+  const baseBroker = input.baseBroker;
+  const route = Object.freeze({ ...input.route });
+  const facade = input.facade;
+  const broker: McpBroker = {
+    ...facade,
+    async checkServer(server, options) {
+      assertUntrackedMetadataCall(options);
+      return facade.checkServer(server, options);
+    },
+    async listTools(server, options) {
+      assertUntrackedMetadataCall(options);
+      return facade.listTools(server, options);
+    },
+    async callTool(server, options, toolName, toolInput) {
+      if (!options.hostOperation) return facade.callTool(server, options, toolName, toolInput);
+      assertHostMcpOperation(options.hostOperation);
+      assertMcpBrokerHostAdmission(broker, server);
+      // Each current generic branch delegates directly to its base as well.
+      // Owned routes reject above, before leases, artifact/desktop effects.
+      return baseBroker.callTool(server, options, toolName, toolInput);
+    },
+  };
+  hostAdmissionBrokers.set(broker, Object.freeze({ kind: "generation_facade", callTool: broker.callTool, baseBroker, route }));
+  return broker;
+}
+
+function ownsGenerationServer(route: GenerationRoute, serverId: string): boolean {
+  if (route.kind === "chrome") return serverId === CHROME_BROWSER_MCP_SERVER_ID;
+  if (route.kind === "office") return serverId === OFFICE_DOCUMENTS_MCP_SERVER_ID;
+  return route.kind === "cua" && route.bundledEnabled && serverId === CUA_DRIVER_MCP_SERVER_ID;
+}
 
 export function createDefaultMcpBroker(): McpBroker {
   const processLauncher = createDefaultMcpProcessLauncher();
-  return {
+  const broker: McpBroker = {
     async checkServer(server: McpServer, options: McpBrokerOptions): Promise<{ readonly statusSnapshot: McpRuntimeStatusSnapshot }> {
+      assertUntrackedMetadataCall(options);
       const now = currentMcpNow(options);
       if (!server.enabled) {
         return {
@@ -55,6 +128,7 @@ export function createDefaultMcpBroker(): McpBroker {
       readonly statusSnapshot: McpRuntimeStatusSnapshot;
       readonly tools: readonly ReplaceMcpServerToolInput[];
     }> {
+      assertUntrackedMetadataCall(options);
       const now = currentMcpNow(options);
       if (!server.enabled) {
         return {
@@ -129,16 +203,36 @@ export function createDefaultMcpBroker(): McpBroker {
       toolName: string,
       input: unknown,
     ): Promise<PiRunnerMcpToolCallResult> {
+      if (options.hostOperation) {
+        assertHostMcpOperation(options.hostOperation);
+        assertMcpBrokerHostAdmission(broker, server);
+      }
       const timeoutMs = (server.toolTimeoutSec ?? server.startupTimeoutSec ?? 30) * 1000;
       const { result } = await withMcpClient(server, options, processLauncher, async (client) => {
-        const result = await client.callTool(
-          {
-            name: toolName,
-            arguments: isRecord(input) ? input : {},
-          },
-          undefined,
-          { timeout: timeoutMs, signal: options.signal },
-        );
+        let pending: ReturnType<McpClient["callTool"]> | undefined;
+        const dispatch = (): void => {
+          pending = client.callTool(
+            { name: toolName, arguments: isRecord(input) ? input : {} },
+            undefined,
+            { timeout: timeoutMs, signal: options.signal },
+          );
+        };
+        // Recheck after connect. The transport then independently gates every
+        // actual HTTP fetch after SDK awaits, retries and reconnect timers.
+        try {
+          if (options.hostOperation) options.hostOperation.launchToolDispatch(dispatch);
+          else dispatch();
+        } catch (error) {
+          // A launch/COMMIT failure may occur after SDK request creation. The
+          // public close immediately seals the transport's queued native sends,
+          // before an async callback rejection reaches withMcpClient's finally.
+          // Otherwise the send microtask could perform I/O after parent COMMIT
+          // failed. Finally still awaits this same original bounded close.
+          if (pending) void pending.catch(() => {});
+          void client.close().catch(() => {});
+          throw error;
+        }
+        const result = await pending!;
         return mcpSdkCallToolResultToRunnerResult(result);
       });
       options.signal?.throwIfAborted();
@@ -146,6 +240,8 @@ export function createDefaultMcpBroker(): McpBroker {
       return result;
     },
   };
+  hostAdmissionBrokers.set(broker, Object.freeze({ kind: "default_transport", callTool: broker.callTool }));
+  return broker;
 }
 
 async function withMcpClient<T>(
@@ -154,13 +250,20 @@ async function withMcpClient<T>(
   processLauncher: McpProcessLauncher,
   callback: (client: McpClient) => Promise<T>,
 ): Promise<{ readonly result: T; readonly secretStatuses: readonly SecretStatus[] }> {
+  if (options.hostOperation) {
+    assertHostMcpOperation(options.hostOperation);
+    options.hostOperation.assertMayPrepare();
+  }
   const client = new McpClient({ name: "ling-stack-daemon", version: "0.1.0" });
   const resolved = createMcpTransport({
     server,
     secretResolver: options.secretResolver,
     processLauncher,
+    hostOperation: options.hostOperation,
+    signal: options.signal,
   });
   try {
+    options.hostOperation?.assertMayPrepare();
     await client.connect(resolved.transport, {
       timeout: (server.startupTimeoutSec ?? 30) * 1000,
       signal: options.signal,
@@ -171,10 +274,19 @@ async function withMcpClient<T>(
     };
   } finally {
     try {
+      // HTTP cancels only local I/O. The native stdio adapter independently
+      // fences each original-process cleanup and awaits bounded local closure.
+      // Neither close path proves remote/descendant whole-operation safety.
       await client.close();
     } catch {
-      // Closing a failed MCP connection is best-effort cleanup.
+      // Entered Host scopes still finish as unknown even when local cleanup fails.
     }
+  }
+}
+
+function assertUntrackedMetadataCall(options: McpBrokerOptions): void {
+  if (options.hostOperation) {
+    throw new McpHostAdmissionError("mcp_host_admission_unsupported", "A tool-call capability cannot authorize an unrelated MCP metadata operation.");
   }
 }
 

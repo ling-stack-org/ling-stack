@@ -1,10 +1,12 @@
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
 import type { PiRunnerRunOptions, PiRunnerUserInputYieldDirective } from "./types.js";
 import { readUserInputYieldDirective } from "./task-yield.js";
+import { readUserInputRequestReceipt, readUserInputWaitMode } from "./user-input-request.js";
 import { throwIfAborted } from "./utils.js";
-import { assertPreparedPiModelContext } from "./prepared-input.js";
+import { assertPiModelContextCapacity, assertPreparedPiModelContext } from "./prepared-input.js";
 import { assertApprovedToolContinuationModelContext } from "./approved-tool-continuation.js";
 import { applyReasoningSummaryModeToPayload } from "./reasoning-summary.js";
+import { assertAcceptedTaskAnchor, hasCompactionSummary } from "./compaction-task-anchor.js";
 
 /** Internal latch only. The public yielded outcome requires an idle SDK first. */
 class PendingUserInputYield extends Error {
@@ -41,7 +43,11 @@ export function createPiSessionStopper(session: Pick<AgentSession, "abortCompact
  * exceptions as diagnostics and continues. This per-run latch closes model
  * admission even when that happens; it is not a durable pause/checkpoint.
  */
-export function createPiTaskBoundary(options: PiRunnerRunOptions) {
+export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContext?: () => {
+  readonly systemPrompt: string;
+  readonly messages: readonly unknown[];
+  readonly acceptedTaskPrompt: string;
+} | undefined) {
   const stop = new AbortController();
   const signal = options.signal ? AbortSignal.any([options.signal, stop.signal]) : stop.signal;
   let failure: Error | undefined;
@@ -67,11 +73,34 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions) {
     ...(options.onMcpToolCall ? { onMcpToolCall: guard(options.onMcpToolCall) } : {}),
     ...(options.onHostCapabilityCall ? { onHostCapabilityCall: guard(options.onHostCapabilityCall) } : {}),
     ...(options.onMediaGenerationToolCall ? { onMediaGenerationToolCall: guard(options.onMediaGenerationToolCall) } : {}),
-    ...(options.onTaskContinuationBoundary ? {
-      onTaskContinuationBoundary: async (boundary) => {
+    ...(options.onUserInputRequest ? {
+      onUserInputRequest: async (request) => {
         try {
           assertOpen();
-          const directive = await options.onTaskContinuationBoundary?.(boundary);
+          const mode = readUserInputWaitMode(request.input);
+          const receipt = await options.onUserInputRequest!(request);
+          // Cancellation/current latch wins over a callback arriving late.
+          assertOpen();
+          const accepted = readUserInputRequestReceipt(receipt, mode);
+          if (accepted.kind === "user_input_required") {
+            yieldRequest = accepted;
+            stop.abort(pendingYield);
+          }
+          return accepted;
+        } catch (error) {
+          if (!options.signal?.aborted && error !== pendingYield) {
+            failure ??= error instanceof Error ? error : new Error("User input Host request failed.");
+            stop.abort(failure);
+          }
+          throw error;
+        }
+      },
+    } : {}),
+    ...(options.onTaskContinuationBoundary ? {
+      onTaskContinuationBoundary: async (boundary, modelView) => {
+        try {
+          assertOpen();
+          const directive = await options.onTaskContinuationBoundary?.(boundary, modelView);
           assertOpen();
           if (directive !== undefined) {
             yieldRequest = readUserInputYieldDirective(directive);
@@ -113,7 +142,9 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions) {
                 context,
               );
             } else {
-              assertPreparedPiModelContext(options.preparedInput!, model, context);
+              assertPreparedPiModelContext(options.preparedInput!, model, context, {
+                allowRestoredMessages: Boolean(options.compactionRecovery),
+              });
             }
           }
           catch (error) {
@@ -123,8 +154,23 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions) {
           }
         } : undefined;
         verifyInitialInput?.();
+        let modelContext: typeof context;
+        try {
+          const taskContext = readTaskContext?.();
+          if (taskContext && (context.systemPrompt ?? "") === taskContext.systemPrompt && hasCompactionSummary(taskContext.messages)) {
+            assertAcceptedTaskAnchor(context.messages, taskContext.acceptedTaskPrompt);
+          }
+          modelContext = assertPiModelContextCapacity(model, context);
+        } catch (error) {
+          failure ??= error instanceof Error ? error : new Error("Pi model context capacity check failed");
+          stop.abort(failure);
+          throw failure;
+        }
+        // The provider receives a projected copy. A late payload hook must
+        // not be able to mutate that copy after prepared-input validation.
+        const dispatchedContext = JSON.stringify(modelContext);
         firstRequest = false;
-        return streamSimple(model, context, {
+        return streamSimple(model, modelContext, {
           ...streamOptions,
           signal: streamOptions?.signal ? AbortSignal.any([signal, streamOptions.signal]) : signal,
           onPayload: async (payload, requestModel) => {
@@ -134,6 +180,11 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions) {
             // let the provider send a prepared payload after that rejection.
             assertOpen();
             verifyInitialInput?.();
+            if (JSON.stringify(modelContext) !== dispatchedContext) {
+              failure ??= new Error("Pi prepared input changed after model context projection");
+              stop.abort(failure);
+              throw failure;
+            }
             const candidate = next ?? payload;
             const summaryPayload = applyReasoningSummaryModeToPayload(candidate, requestModel.api, options.reasoningSummary);
             return summaryPayload ?? next;

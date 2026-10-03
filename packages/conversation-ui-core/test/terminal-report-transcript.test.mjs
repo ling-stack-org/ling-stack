@@ -223,6 +223,51 @@ test("execute turn keeps the agent final and appends one terminal fact result", 
   assert.deepEqual(fingerprintConversationTimeline(projection.items).rendererKeys, ["message.document", "message.document", "result.terminal"]);
 });
 
+test("partial terminal outcome remains partial rather than becoming blocked or successful", () => {
+  const partial = report("report-partial", 1, "result-partial", "Created files; two reads failed.");
+  partial.report.outcome.status = "partially_succeeded";
+  partial.report.outcome.title = "Task partially completed";
+  const projection = projectCanonicalConversationTimeline({
+    scope, sourceSequence: 1, sourceRevision: "partial-result",
+    items: [item("result-partial", 1, "terminal_report", {
+      reportId: "report-partial", generation: 1, sourceKind: "run", sourceId: "run-1",
+      evidenceFingerprint: "fp-1", outcomeStatus: "partially_succeeded",
+    })],
+    actions: [], turnRuns: [], terminalReports: [partial],
+  });
+  assert.equal(projection.items.length, 1);
+  assert.equal(projection.items[0].kind, "terminalReport");
+  assert.equal(projection.items[0].status, "partially_succeeded");
+  assert.equal(projection.items[0].outcomeStatus, "partially_succeeded");
+  assert.equal(projection.items[0].sourceRefs.some((ref) => ref.kind === "terminal_report" && ref.id === "report-partial"), true);
+});
+
+test("normal deterministic fallback uses one compact outcome instead of repeating the user request", () => {
+  const fallback = report("report-fallback", 1, "result-fallback", "任务已完成。");
+  fallback.report.status = "fallback";
+  fallback.report.language = "zh-CN";
+  fallback.report.source = { kind: "turn", id: "turn-1" };
+  fallback.report.synthesis = { mode: "deterministic_fallback" };
+  fallback.report.outcome.title = "请运行测试并报告结果";
+  const projection = projectCanonicalConversationTimeline({
+    scope, sourceSequence: 3, sourceRevision: "fallback-result",
+    items: [
+      item("user-1", 1, "user_message", { body: "请运行测试并报告结果", format: "markdown" }),
+      item("result-fallback", 2, "terminal_report", {
+        reportId: "report-fallback", generation: 1, sourceKind: "turn", sourceId: "turn-1",
+        evidenceFingerprint: "fp-1", outcomeStatus: "succeeded",
+      }),
+    ],
+    actions: [], turnRuns: [], terminalReports: [fallback],
+  });
+  const result = projection.items[1];
+  assert.equal(result.kind, "terminalReport");
+  assert.equal(result.title, "任务已完成。");
+  assert.equal(result.summary, "");
+  assert.equal(result.reportId, "report-fallback");
+  assert.equal(result.sourceRefs.some((reference) => reference.kind === "turn" && reference.id === "turn-1"), true);
+});
+
 test("only highest committed generation is visible", () => {
   const projection = projectCanonicalConversationTimeline({
     scope, sourceSequence: 3, sourceRevision: "r2",

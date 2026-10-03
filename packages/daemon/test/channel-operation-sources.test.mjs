@@ -31,6 +31,9 @@ async function fixture(t) {
     contentSource: { kind: "literal", text: content, sourceQuote: content, sourceItemId: draft.id } }] };
   const select = async (execution = candidate) => {
     let calls = 0;
+    const initialBinding = bindChannelOperationPlan({ candidate: execution, sourceItemId: source.id, sourceText: source.body,
+      workspaceCwd: channel.boundPath, visibleSources: channelOperationVisibleSources({ store, sourceItemId: source.id }),
+      participants: [store.getAiTeammate("teammate_builtin_engineer")], defaultOwnerParticipantId: "teammate_builtin_engineer" });
     const result = await selectChannelWorkflowIntent({ store, channel, sourceMessage: source,
       secretResolver: createCompositeSecretResolver({ env: {} }), config: { channels: { intentSelector: true } },
       runnerRegistry: { resolve: () => ({ runner: { adapter: { runTask: async (input) => {
@@ -38,7 +41,8 @@ async function fixture(t) {
         input.onEvent({ type: "assistant_text_delta", text: JSON.stringify({ action: "execute", reason: "Current user authorizes saving the prior source-bound page", execution }) });
         return { messages: [] };
       } } } }) } });
-    assert.equal(calls, 1);
+    assert.equal(calls, initialBinding.status === "clarify" ? 2 : 1,
+      "graph and source-binding failures receive at most one bounded repair attempt");
     return { result, decision: store.listChannelIntentDecisions({ sourceItemId: source.id, limit: 10 })[0] };
   };
   return { store, channel, source, previous, draft, content, candidate, select, now };

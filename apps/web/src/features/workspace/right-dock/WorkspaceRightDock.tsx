@@ -11,7 +11,8 @@ import {
 import { getWorkspaceChanges, previewArtifactContent } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
 import type { ProposedPlanArtifact, WorkspaceChangesResponse } from "../../../types.js";
-import type { WorkspaceFileCapabilityScope, WorkspaceFileCapabilityTarget } from "@ling-stack/contracts";
+import type { WorkspaceChangeReview, WorkspaceFileCapabilityScope, WorkspaceFileCapabilityTarget } from "@ling-stack/contracts";
+import { useWorkspaceRecovery } from "../../../shared/conversation/blocks/workspace-recovery-resource.js";
 import {
   createDockPageEntry,
   EvidencePage,
@@ -76,6 +77,8 @@ export interface WorkspaceRightDockReviewTarget {
   readonly cwd: string;
   readonly runId?: string;
   readonly path?: string;
+  readonly scope?: WorkspaceChangeReview["scope"];
+  readonly review?: WorkspaceChangeReview;
 }
 
 export interface WorkspaceRightDockProps {
@@ -206,7 +209,7 @@ export function WorkspaceRightDock({
   );
   const codeChangeActionCount = codeChangeReviewItems.filter(reviewNeedsAction).length;
   const effectiveReviewCwd = requestedWorkspaceReview?.cwd ?? cwd;
-  const reviewFileCount = workspaceChanges?.files.length ?? codeChangeReviewItems.length;
+  const reviewFileCount = requestedWorkspaceReview?.review?.files.length ?? workspaceChanges?.files.length ?? codeChangeReviewItems.length;
   const detailNodeById = useMemo(() => {
     const map = new Map<string, ReactNode>();
     for (const item of enrichedReviewItems) {
@@ -297,6 +300,20 @@ export function WorkspaceRightDock({
     })]
     : stack;
   const reviewPageActive = open && effectiveStack.at(-1)?.page === "review";
+  const scopedResource = useWorkspaceRecovery(effectiveReviewCwd, reviewPageActive ? requestedWorkspaceReview?.scope : undefined, requestedWorkspaceReview?.review?.revision);
+  const scopedReview = useMemo(() => {
+    const initial = requestedWorkspaceReview?.review;
+    const updated = scopedResource.recovery?.review;
+    if (!initial || !updated) return initial ?? updated;
+    // Keep the card's disclosure boundary when refreshing Host evidence.
+    const paths = new Set([...initial.coveredPaths, ...initial.files.map((file) => file.path)]);
+    const files = updated.files.filter((file) => paths.has(file.path));
+    const coveredPaths = updated.coveredPaths.filter((path) => paths.has(path));
+    for (const file of initial.files) if (!coveredPaths.includes(file.path)) files.push({ ...file, state: "unavailable", additions: undefined, deletions: undefined, diff: undefined });
+    const exact = updated.state === "exact" && files.every((file) => file.state === "exact");
+    return { ...updated, files, coveredPaths, additions: exact ? files.reduce((sum, file) => sum + file.additions!, 0) : undefined,
+      deletions: exact ? files.reduce((sum, file) => sum + file.deletions!, 0) : undefined, state: exact ? "exact" as const : "partial" as const };
+  }, [requestedWorkspaceReview?.review, scopedResource.recovery?.review]);
 
   useEffect(() => {
     setStack(resetDockStack());
@@ -315,7 +332,7 @@ export function WorkspaceRightDock({
   }, [cwd]);
 
   useEffect(() => {
-    if (!reviewPageActive || !effectiveReviewCwd) {
+    if (!reviewPageActive || !effectiveReviewCwd || requestedWorkspaceReview?.scope) {
       setWorkspaceChangesLoading(false);
       if (!effectiveReviewCwd) {
         setWorkspaceChanges(undefined);
@@ -344,7 +361,7 @@ export function WorkspaceRightDock({
     return () => {
       cancelled = true;
     };
-  }, [effectiveReviewCwd, reviewPageActive, workspaceChangesRefreshKey]);
+  }, [effectiveReviewCwd, reviewPageActive, workspaceChangesRefreshKey, requestedWorkspaceReview?.scope?.kind, requestedWorkspaceReview?.scope?.id]);
 
   useEffect(() => {
     if (!cwd) {
@@ -435,10 +452,12 @@ export function WorkspaceRightDock({
           <WorkspaceChangeReviewPage
             cwd={effectiveReviewCwd}
             changes={workspaceChanges}
-            loading={workspaceChangesLoading}
-            error={workspaceChangesError || externalError}
+            review={scopedReview}
+            scoped={Boolean(requestedWorkspaceReview?.scope)}
+            loading={requestedWorkspaceReview?.scope ? scopedResource.status === "loading" : workspaceChangesLoading}
+            error={requestedWorkspaceReview?.scope ? scopedResource.status === "unavailable" && !scopedReview ? t("Historical diff unavailable") : "" : workspaceChangesError || externalError}
             requestedPath={requestedWorkspaceReview?.path}
-            onRefresh={() => setWorkspaceChangesRefreshKey((current) => current + 1)}
+            onRefresh={requestedWorkspaceReview?.scope ? scopedResource.refresh : () => setWorkspaceChangesRefreshKey((current) => current + 1)}
           />
         ),
       },
@@ -646,6 +665,10 @@ export function WorkspaceRightDock({
     cwd,
     visiblePlanCount,
     requestedWorkspaceReview?.path,
+    requestedWorkspaceReview?.scope,
+    scopedReview,
+    scopedResource.status,
+    scopedResource.refresh,
     reviewFileCount,
     workspaceChanges,
     workspaceChangesError,

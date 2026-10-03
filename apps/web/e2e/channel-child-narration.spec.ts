@@ -65,4 +65,22 @@ test("channel child keeps live narration around its read, including a no-SSE ref
   await expect(diagnostic.locator('.conversation-timeline-activity-main strong')).toHaveText('Repeated execution stopped');
   await expect(diagnostic.locator('.conversation-timeline-activity-main')).toContainText('No new evidence');
   await expect(diagnostic.locator('.conversation-timeline-diagnostic-detail')).toContainText('Action budget exhausted');
+  // The root-owned virtualizer renders the child group beside its header,
+  // rather than nesting a second Timeline underneath the header element.
+  const childDetail = page.locator('[data-conversation-timeline-scope="channel_root"] [data-conversation-timeline-scope="child"]');
+  await expect(childDetail).toHaveCount(1);
+  await expect(childDetail.locator('[data-conversation-response-footer]')).toHaveCount(0);
+  // Exercise the production Host-step adapter, not a demo item with a manually
+  // supplied final phase. Completed narration alone cannot settle a live Run.
+  step.status = 'failed';
+  state.runs[0]!.status = 'failed';
+  // Narrow narration polling deliberately cannot mutate lifecycle. Reconnect
+  // through a full protocol read to consume the Host's terminal step status.
+  await page.reload();
+  await openEngineeringChannel(page);
+  if (await toggle.getAttribute('aria-expanded') === 'false') await toggle.click();
+  await expect(childDetail.locator('[data-conversation-response-footer]')).toHaveCount(1, { timeout: 10000 });
+  await expect(childDetail.locator('[data-conversation-response-footer] button[aria-label="Copy message"]')).toHaveCount(1);
+  await expect(childDetail.locator('[data-conversation-response-files]')).toHaveCount(0);
+  await expect(childDetail.locator('[data-conversation-timeline]')).toHaveCount(0);
 });

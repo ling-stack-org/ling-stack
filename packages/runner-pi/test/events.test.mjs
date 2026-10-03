@@ -82,6 +82,7 @@ test("message_end exposes only bounded terminal metadata and never reasoning tex
     role: "assistant",
     stopReason: "length",
     errorMessage: "Provider message ended with an error.",
+    errorDiagnostic: { schemaVersion: 1, category: "unknown", basis: "unclassified" },
     contentKinds: ["reasoning"],
   });
 });
@@ -94,4 +95,18 @@ test("message_end does not project user or tool content as assistant output", ()
     type: "message_end",
     role: "user",
   });
+});
+
+test("compaction abort and malformed usage stay bounded and cannot become installed evidence", () => {
+  assert.deepEqual(translatePiEvent({
+    type: "compaction_end", reason: "overflow", result: undefined, aborted: true,
+    willRetry: false, errorMessage: "PRIVATE_PROVIDER_DETAIL",
+  }), {
+    type: "context_compaction_end", reason: "overflow", policyVersion: "pi_sdk_lifecycle_v1",
+    outcome: "aborted", willRetry: false,
+  });
+  assert.deepEqual(translatePiEvent({
+    type: "message_end",
+    message: { role: "assistant", content: [], usage: { input: Infinity, output: 1, cacheRead: 0, cacheWrite: 0, totalTokens: 1 } },
+  }), { type: "message_end", role: "assistant" });
 });

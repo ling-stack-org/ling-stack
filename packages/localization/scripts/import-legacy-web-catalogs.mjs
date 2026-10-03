@@ -1,7 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 
-import { catalogRoot, readCatalog, repoRoot, sourceRevision, writeCatalog } from "./catalog-utils.mjs";
+import { assertCatalogImportRetainsMessages, catalogRoot, readCatalog, repoRoot, sourceRevision, writeCatalog } from "./catalog-utils.mjs";
 import { ts, withTypeScriptSourceFiles } from "../../../apps/web/scripts/typescript-ast.mjs";
 
 const localeRoot = path.join(repoRoot, "apps/web/src/i18n/locales");
@@ -27,6 +27,10 @@ const chineseMessages = {
   ...additionalChinese,
 };
 const revision = sourceRevision(englishMessages);
+
+if (fs.existsSync(path.join(catalogRoot, "en-US.json"))) {
+  assertCatalogImportRetainsMessages(readCatalog("en-US").messages, englishMessages);
+}
 
 migrateExistingCatalogSourceHashes();
 writeCatalog("en-US", revision, englishMessages, englishMessages);

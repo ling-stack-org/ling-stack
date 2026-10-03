@@ -66,6 +66,7 @@ export interface RunRequest extends Omit<
   | "tools"
   | "mcpTools"
   | "onMcpToolCall"
+  | "hostCompactionEnabled"
   | "mediaGenerationTools"
   | "onMediaGenerationToolCall"
 > {
@@ -121,6 +122,8 @@ export interface RunRequest extends Omit<
   /** Internal immutable request preparation, never accepted by external parsing. */
   readonly normalConversationPreparedRequestRef?: { readonly id: string; readonly fingerprint: string };
   readonly normalConversationPreparedExecutionRef?: { readonly id: string; readonly fingerprint: string };
+  /** Internal frozen private input evidence; external parsing never accepts this field. */
+  readonly teammateDirectInputRef?: { readonly id: string; readonly fingerprint: string };
   /** Host-produced source SDK input. External parsing never accepts or restores it as authority. */
   readonly runnerExecutionInput?: import("./prepared-runner-input.js").PreparedRunnerInput;
   /** Internal-only immutable Harness rollout snapshot. External parsing never accepts this field. */

@@ -52,13 +52,19 @@ export function projectVisibleTerminalReportContent<T extends ReportContent>(rep
     ...report.verification, ...report.participants, ...report.artifacts, ...report.risks];
   const refs = [...report.references, ...sections.flatMap((section) => section.sourceRefs ?? [])];
   const key = (ref: ConversationOperationSourceRef): string => JSON.stringify([ref.kind, ref.id]);
-  const hidden = new Set(refs.filter(restricted).map(key));
+  const internalArtifactIds = new Set(report.artifacts.filter((artifact) => !isUserVisibleTerminalReportArtifact(artifact)).map((artifact) => artifact.id));
+  const internalArtifactRef = (ref: ConversationOperationSourceRef): boolean => ref.kind === "artifact" && internalArtifactIds.has(ref.id);
+  const hidden = new Set(refs.filter((ref) => !internalArtifactRef(ref) && restricted(ref)).map(key));
   const normalizePath = (path: string): string => path.replace(/\\/gu, "/").replace(/^\.\//u, "");
   const hiddenPaths = new Set(refs.filter((ref) => hidden.has(key(ref)) && (ref.kind === "file" || ref.kind === "path"))
     .flatMap((ref) => [ref.id, ...(ref.path ? [ref.path] : [])]).map(normalizePath));
-  const visibleRef = (ref: ConversationOperationSourceRef): boolean => !hidden.has(key(ref)) && !restricted(ref);
+  const visibleRef = (ref: ConversationOperationSourceRef): boolean => internalArtifactRef(ref) || (!hidden.has(key(ref)) && !restricted(ref));
   const visibleSection = (section: Section): boolean => (section.sourceRefs ?? []).every(visibleRef) &&
     [...(section.paths ?? []), ...(section.path ? [section.path] : [])].every((path) => !hiddenPaths.has(normalizePath(path)));
+  const withoutInternalArtifactRefs = <T extends Section>(section: T): T => ({
+    ...section,
+    ...(section.sourceRefs ? { sourceRefs: section.sourceRefs.filter((ref) => !internalArtifactRef(ref)) } : {}),
+  });
   const outcome = visibleSection(report.outcome) ? report.outcome : {
     ...report.outcome,
     title: formatSynchronousCatalogMessage(report.language ?? "en-US", `terminal_report.outcome.${report.outcome.status}`),
@@ -68,13 +74,13 @@ export function projectVisibleTerminalReportContent<T extends ReportContent>(rep
   };
   return {
     ...report,
-    outcome: { ...outcome, corrections: outcome.corrections.filter(visibleSection) },
-    changes: userVisibleTerminalReportChanges(report.changes.filter(visibleSection), refs),
-    verification: report.verification.filter(visibleSection),
-    participants: report.participants.filter(visibleSection),
-    artifacts: report.artifacts.filter(visibleSection).filter(isUserVisibleTerminalReportArtifact),
-    risks: report.risks.filter(visibleSection),
-    references: report.references.filter(visibleRef).filter(isUserVisibleTerminalReportSourceRef),
+    outcome: { ...withoutInternalArtifactRefs(outcome), corrections: outcome.corrections.filter(visibleSection).map(withoutInternalArtifactRefs) },
+    changes: userVisibleTerminalReportChanges(report.changes.filter(visibleSection), refs).map(withoutInternalArtifactRefs),
+    verification: report.verification.filter(visibleSection).map(withoutInternalArtifactRefs),
+    participants: report.participants.filter(visibleSection).map(withoutInternalArtifactRefs),
+    artifacts: report.artifacts.filter(visibleSection).filter(isUserVisibleTerminalReportArtifact).map(withoutInternalArtifactRefs),
+    risks: report.risks.filter(visibleSection).map(withoutInternalArtifactRefs),
+    references: report.references.filter((ref) => !internalArtifactRef(ref) && visibleRef(ref)).filter(isUserVisibleTerminalReportSourceRef),
   };
 }
 

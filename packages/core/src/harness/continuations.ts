@@ -151,6 +151,21 @@ export type CommitExistingRunContinuationPreparationFailureResult =
         | "continuation.preparation_failure_transition_failed";
     };
 
+/** A lost Attempt is never rewritten when preflight blocks daemon recovery. */
+export interface CommitStaleRunRecoveryFailureInput {
+  readonly runId: string;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  readonly expectedRunStatus: "queued" | "running";
+  readonly errorCode: string;
+  readonly errorMessage: string;
+  readonly summaryPath: string;
+  readonly now: string;
+}
+
+export type CommitStaleRunRecoveryFailureResult =
+  | { readonly ok: true; readonly run: RunSession; readonly workUnit: import("../runtime-supervisor-types.js").WorkUnit }
+  | { readonly ok: false; readonly code: "recovery_failure_lineage_stale" | "recovery_failure_state_stale" | "recovery_failure_transition_failed" };
+
 export interface ReprepareContinuationInput {
   readonly continuationId: string;
   /** Revision of the recovery-pending native-resume generation. */

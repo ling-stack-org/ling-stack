@@ -12,6 +12,14 @@ export interface ActiveRunSnapshot {
   readonly sourceRefs: readonly ConversationOperationSourceRef[];
 }
 
+/** Read-only Host lifecycle, never inferred from mounted rows or model text. */
+export interface TimelineRunLifecycle {
+  readonly id: string;
+  readonly status: string;
+  readonly startedAt?: string;
+  readonly endedAt?: string;
+}
+
 /**
  * Immutable renderer input. The adapter owns I/O and replay; Timeline only
  * renders these already-scoped items and never infers state from prose.
@@ -23,6 +31,7 @@ export interface TimelineSnapshot {
   readonly canonicalRevision: number;
   readonly sseCursor: string | null;
   readonly contextSegmentIdByItemId: ReadonlyMap<string, string>;
+  readonly runLifecycles?: ReadonlyMap<string, TimelineRunLifecycle>;
 }
 
 export function createTimelineSnapshot(input: TimelineSnapshot): TimelineSnapshot {
@@ -30,5 +39,6 @@ export function createTimelineSnapshot(input: TimelineSnapshot): TimelineSnapsho
     ...input,
     items: [...input.items],
     contextSegmentIdByItemId: new Map(input.contextSegmentIdByItemId),
+    ...(input.runLifecycles ? { runLifecycles: new Map(input.runLifecycles) } : {}),
   };
 }

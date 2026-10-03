@@ -36,6 +36,171 @@ test("sqlite store creates the default approval policy", async () => {
   }
 });
 
+test("approval decision and per-owner post-commit work survive reopening the store", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-postcommit-"));
+  const now = "2026-09-25T01:00:00.000Z";
+  let store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_postcommit",
+      cwd,
+      taskId: "task_postcommit",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_postcommit", title: "Post-commit recovery" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const approval = store.createApprovalRequest({
+      runId: "run_postcommit",
+      taskId: "task_postcommit",
+      actionType: "bash",
+      risk: "medium",
+      title: "Approve shell command",
+      description: "echo once",
+      payload: { type: "bash", cwd, command: "echo once", riskFlags: [] },
+    }, now);
+    store.approveApprovalRequest(approval.id, { decisionKind: "approve_once" }, "2026-09-25T01:01:00.000Z");
+    store.close();
+    store = createSqliteRunStore(cwd);
+    assert.equal(store.getApprovalRequest(approval.id)?.status, "approved");
+    assert.deepEqual(store.listApprovalPostCommitEffects({ approvalId: approval.id }).map(({ effectKind, status }) => [effectKind, status]), [
+      ["decision_event", "pending"],
+      ["owner", "pending"],
+      ["control_plane_event", "pending"],
+    ]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("post-commit ledger repairs a colliding legacy migration version", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-postcommit-collision-"));
+  let store = createSqliteRunStore(cwd);
+  try {
+    const databasePath = store.paths.databasePath;
+    store.close();
+    const database = new DatabaseSync(databasePath);
+    try {
+      database.exec("DROP TABLE approval_postcommit_effects;");
+      database.exec("DELETE FROM schema_migrations WHERE version = 144;");
+      database.exec(`
+        INSERT INTO schema_migrations (version, name, applied_at)
+        VALUES (139, 'create_delegation_tree', '2026-09-25T00:00:00.000Z');
+      `);
+    } finally {
+      database.close();
+    }
+
+    store = createSqliteRunStore(cwd);
+    const repaired = new DatabaseSync(databasePath, { readOnly: true });
+    try {
+      assert.ok(repaired.prepare(`
+        SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'approval_postcommit_effects'
+      `).get());
+      assert.equal(repaired.prepare("SELECT name FROM schema_migrations WHERE version = 144").get()?.name,
+        "create_approval_postcommit_effects");
+    } finally {
+      repaired.close();
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("post-commit ledger failure rolls back the approval decision and retry creates one effect per kind", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-ledger-rollback-"));
+  const now = "2026-09-25T02:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({ id: "run_ledger_fault", cwd, taskId: "task_ledger_fault", providerName: "test-provider",
+      providerModel: "test-model", taskSnapshot: { id: "task_ledger_fault", title: "Fault" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" }, requestSnapshot: { cwd }, createdAt: now });
+    const approval = store.createApprovalRequest({ runId: "run_ledger_fault", taskId: "task_ledger_fault",
+      actionType: "bash", risk: "medium", title: "Approve", description: "echo",
+      payload: { type: "bash", cwd, command: "echo", riskFlags: [] } }, now);
+    const database = new DatabaseSync(store.paths.databasePath);
+    try {
+      database.exec(`CREATE TRIGGER fail_approval_postcommit BEFORE INSERT ON approval_postcommit_effects
+        BEGIN SELECT RAISE(ABORT, 'injected postcommit ledger failure'); END`);
+      assert.throws(() => store.approveApprovalRequest(approval.id, { decisionKind: "approve_once" }, now), /injected postcommit ledger failure/);
+      assert.equal(store.getApprovalRequest(approval.id)?.status, "pending");
+      assert.deepEqual(store.listApprovalPostCommitEffects({ approvalId: approval.id }), []);
+      database.exec("DROP TRIGGER fail_approval_postcommit");
+    } finally {
+      database.close();
+    }
+    store.approveApprovalRequest(approval.id, { decisionKind: "approve_once" }, now);
+    const effects = store.listApprovalPostCommitEffects({ approvalId: approval.id });
+    assert.equal(effects.length, 3);
+    const first = store.claimApprovalPostCommitEffect(approval.id, "owner", {
+      token: "owner-claim-1", claimExpiresAt: "2026-09-25T02:01:00.000Z",
+    }, now);
+    assert.equal(first?.status, "claimed");
+    assert.equal(store.claimApprovalPostCommitEffect(approval.id, "owner", {
+      token: "owner-claim-2", claimExpiresAt: "2026-09-25T02:01:00.000Z",
+    }, now), undefined);
+    assert.equal(store.settleApprovalPostCommitEffect(approval.id, "owner", {
+      token: "owner-claim-2", status: "completed",
+    }, now), undefined);
+    assert.equal(store.settleApprovalPostCommitEffect(approval.id, "owner", {
+      token: "owner-claim-1", status: "completed",
+    }, now)?.status, "completed");
+    const eventClaim = store.claimApprovalPostCommitEffect(approval.id, "decision_event", {
+      token: "event-claim", claimExpiresAt: "2026-09-25T02:01:00.000Z",
+    }, now);
+    assert.ok(eventClaim);
+    assert.equal(store.recoverExpiredApprovalPostCommitClaim(approval.id, "decision_event", {
+      expectedRevision: eventClaim.revision,
+      status: "pending",
+      errorCode: "event_evidence_missing",
+    }, "2026-09-25T02:01:00.000Z"), undefined, "the lease is still held at its deadline");
+    assert.equal(store.recoverExpiredApprovalPostCommitClaim(approval.id, "decision_event", {
+      expectedRevision: eventClaim.revision,
+      status: "pending",
+      errorCode: "event_evidence_missing",
+    }, "2026-09-25T02:01:01.000Z")?.status, "pending");
+    assert.equal(store.recoverExpiredApprovalPostCommitClaim(approval.id, "decision_event", {
+      expectedRevision: eventClaim.revision,
+      status: "pending",
+      errorCode: "event_evidence_missing",
+    }, "2026-09-25T02:01:02.000Z"), undefined, "a stale revision cannot overwrite recovery");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("post-commit recovery scans past 500 effects with equal timestamps", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-effects-page-"));
+  const now = "2026-09-25T04:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({ id: "run_effect_page", cwd, taskId: "task_effect_page", providerName: "test-provider",
+      providerModel: "test-model", taskSnapshot: { id: "task_effect_page", title: "Effects page" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" }, requestSnapshot: { cwd }, createdAt: now });
+    for (let index = 0; index < 167; index += 1) {
+      const approval = store.createApprovalRequest({ runId: "run_effect_page", taskId: "task_effect_page",
+        actionType: "bash", risk: "medium", title: `Approval ${index}`, description: "echo",
+        payload: { type: "bash", cwd, command: "echo", riskFlags: [] } }, now);
+      store.approveApprovalRequest(approval.id, { decisionKind: "approve_once" }, now);
+    }
+    const first = store.listApprovalPostCommitEffects({ status: "pending", limit: 500 });
+    assert.equal(first.length, 500);
+    const last = first.at(-1);
+    const second = store.listApprovalPostCommitEffects({ status: "pending", limit: 500,
+      after: { createdAt: last.createdAt, approvalId: last.approvalId, effectKind: last.effectKind } });
+    assert.equal(second.length, 1);
+    assert.equal(new Set([...first, ...second].map((effect) => `${effect.approvalId}:${effect.effectKind}`)).size, 501);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite approval requests persist command-rule proposals without saving a rule for allow once", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-command-rule-once-"));
   const now = "2026-08-28T01:00:00.000Z";
@@ -994,6 +1159,37 @@ test("sqlite store expires pending approval requests", async () => {
   }
 });
 
+test("terminal Run cannot approve a stale pending request or persist its command rule", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-stale-run-approval-"));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-09-28T12:00:00.000Z";
+  try {
+    store.createRun({ id: "run_stale_approval", cwd, taskId: "task_stale_approval",
+      providerName: "test", providerModel: "test",
+      taskSnapshot: { id: "task_stale_approval", title: "Stale approval" },
+      providerSnapshot: {}, requestSnapshot: {}, createdAt: now });
+    store.markRunStarted("run_stale_approval", now);
+    const proposal = { prefix: ["python3", "-m", "unittest"], display: "python3 -m unittest",
+      fingerprint: "command_rule_v1_stale_test", version: 1 };
+    const input = { runId: "run_stale_approval", taskId: "task_stale_approval",
+      actionType: "bash", risk: "medium", title: "Run tests", description: "Run unit tests",
+      payload: { type: "bash", cwd, command: "python3 -m unittest", riskFlags: [] },
+      availableDecisions: ["approve_once", "approve_command_rule", "deny"], proposedCommandRule: proposal };
+    const once = store.createApprovalRequest(input, now);
+    const rule = store.createApprovalRequest(input, now);
+    store.markRunFailed("run_stale_approval", "2026-09-28T12:01:00.000Z", "Prior approval expired.");
+    assert.throws(() => store.approveApprovalRequest(once.id, { decisionKind: "approve_once" }, now), /execution no longer active/);
+    assert.throws(() => store.approveApprovalRequest(rule.id, { decisionKind: "approve_command_rule",
+      proposedRuleFingerprint: proposal.fingerprint }, now), /execution no longer active/);
+    assert.equal(store.getApprovalRequest(once.id)?.status, "pending");
+    assert.equal(store.getApprovalRequest(rule.id)?.status, "pending");
+    assert.deepEqual(store.listApprovalCommandRules(), []);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite store creates approval checkpoints and syncs approval lifecycle", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-checkpoints-"));
   const now = "2026-06-19T00:00:00.000Z";
@@ -1072,6 +1268,9 @@ test("sqlite store creates approval checkpoints and syncs approval lifecycle", a
       const resolved = store[entry.method](approval.id, { reason: entry.reason }, entry.resolvedAt);
       assert.ok(resolved);
       assert.equal(resolved.status, entry.expectedStatus);
+      if (entry.expectedStatus === "expired" || entry.expectedStatus === "cancelled") {
+        assert.equal(resolved.resolvedBy, undefined, "system lifecycle resolution must not impersonate a user");
+      }
 
       const synced = store.getApprovalCheckpointForApproval(approval.id);
       assert.ok(synced);
@@ -1080,6 +1279,150 @@ test("sqlite store creates approval checkpoints and syncs approval lifecycle", a
       assert.equal(synced.updatedAt, entry.resolvedAt);
       assert.deepEqual(store.listApprovalCheckpoints({ status: entry.expectedStatus }).map((item) => item.approvalId), [approval.id]);
     }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval resolution rolls back the decision when checkpoint persistence fails", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-atomic-resolution-"));
+  const now = "2026-06-19T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_approval_atomic_resolution",
+      cwd,
+      taskId: "task_approval_atomic_resolution",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_approval_atomic_resolution", title: "Atomic approval resolution" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const cases = ["approveApprovalRequest", "denyApprovalRequest", "expireApprovalRequest", "cancelApprovalRequest"];
+    for (const [index, method] of cases.entries()) {
+      const approval = store.createApprovalRequest({
+        runId: "run_approval_atomic_resolution",
+        taskId: "task_approval_atomic_resolution",
+        toolCallId: `tool_atomic_${index}`,
+        actionType: "bash",
+        risk: "medium",
+        title: "Atomic decision",
+        description: "echo safe",
+        payload: { type: "bash", cwd, command: "echo safe", riskFlags: [] },
+      }, now);
+      const database = new DatabaseSync(store.paths.databasePath);
+      try {
+        database.exec(`CREATE TRIGGER fail_checkpoint_resolution BEFORE UPDATE ON approval_checkpoints
+          BEGIN SELECT RAISE(ABORT, 'injected_checkpoint_failure'); END`);
+      } finally {
+        database.close();
+      }
+      assert.throws(() => store[method](approval.id, { reason: "testing rollback" }, now), /injected_checkpoint_failure/);
+      assert.equal(store.getApprovalRequest(approval.id)?.status, "pending", `${method} must not leave a half-committed decision`);
+      assert.equal(store.getApprovalCheckpointForApproval(approval.id)?.status, "pending");
+      const cleanup = new DatabaseSync(store.paths.databasePath);
+      try {
+        cleanup.exec("DROP TRIGGER fail_checkpoint_resolution");
+      } finally {
+        cleanup.close();
+      }
+      assert.ok(store[method](approval.id, { reason: "retry after recovery" }, now));
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval creation rolls back the request when checkpoint persistence fails", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-atomic-creation-"));
+  const now = "2026-06-19T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_approval_atomic_creation",
+      cwd,
+      taskId: "task_approval_atomic_creation",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_approval_atomic_creation", title: "Atomic approval creation" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const input = {
+      runId: "run_approval_atomic_creation",
+      taskId: "task_approval_atomic_creation",
+      toolCallId: "tool_atomic_creation",
+      actionType: "bash",
+      risk: "medium",
+      title: "Atomic creation",
+      description: "echo safe",
+      payload: { type: "bash", cwd, command: "echo safe", riskFlags: [] },
+    };
+    const database = new DatabaseSync(store.paths.databasePath);
+    try {
+      database.exec(`CREATE TRIGGER fail_checkpoint_creation BEFORE INSERT ON approval_checkpoints
+        BEGIN SELECT RAISE(ABORT, 'injected_checkpoint_creation_failure'); END`);
+    } finally {
+      database.close();
+    }
+    assert.throws(() => store.createApprovalRequest(input, now), /injected_checkpoint_creation_failure/);
+    assert.equal(store.listApprovalRequests({ runId: input.runId, complete: true }).length, 0,
+      "an uncheckpointed approval must not become visible or block a run");
+    const cleanup = new DatabaseSync(store.paths.databasePath);
+    try {
+      cleanup.exec("DROP TRIGGER fail_checkpoint_creation");
+    } finally {
+      cleanup.close();
+    }
+    const approval = store.createApprovalRequest(input, now);
+    assert.equal(store.getApprovalCheckpointForApproval(approval.id)?.status, "pending");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("approval checkpoint recovery scans stable pages even when creation timestamps tie", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-core-approval-checkpoint-pages-"));
+  const now = "2026-06-19T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.createRun({
+      id: "run_approval_checkpoint_pages",
+      cwd,
+      taskId: "task_approval_checkpoint_pages",
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: "task_approval_checkpoint_pages", title: "Checkpoint pages" },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: { cwd },
+      createdAt: now,
+    });
+    const approvalIds = [];
+    for (let index = 0; index < 3; index += 1) {
+      approvalIds.push(store.createApprovalRequest({
+        runId: "run_approval_checkpoint_pages",
+        taskId: "task_approval_checkpoint_pages",
+        toolCallId: `tool_page_${index}`,
+        actionType: "bash",
+        risk: "medium",
+        title: `Page ${index}`,
+        description: "echo safe",
+        payload: { type: "bash", cwd, command: "echo safe", riskFlags: [] },
+      }, now).id);
+    }
+    const first = store.listApprovalCheckpoints({ status: "pending", limit: 2 });
+    const last = first.at(-1);
+    const second = store.listApprovalCheckpoints({ status: "pending", limit: 2,
+      before: { createdAt: last.createdAt, id: last.id } });
+    assert.equal(first.length, 2);
+    assert.equal(second.length, 1);
+    assert.deepEqual(new Set([...first, ...second].map((checkpoint) => checkpoint.approvalId)), new Set(approvalIds));
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -2448,7 +2791,7 @@ test("recovered system reviewer denial atomically closes the waiting run, work u
     assert.equal(store.getTask(task.id)?.status, "running");
 
     const terminal = store.commitApprovalResumeTerminal({
-      kind: "system_review_denied",
+      kind: "suspended_approval_denied",
       checkpointId: checkpoint.id,
       expectedCheckpointRevision: deniedCheckpoint.revision,
       approvalId: approval.id,
@@ -2459,7 +2802,7 @@ test("recovered system reviewer denial atomically closes the waiting run, work u
       now: "2026-08-16T01:00:30.000Z",
     });
     assert.equal(terminal.ok, true);
-    assert.equal(terminal.kind, "system_review_denied");
+    assert.equal(terminal.kind, "suspended_approval_denied");
     assert.equal(store.getRun(run.id)?.status, "failed");
     assert.equal(store.getWorkUnit(workUnit.id)?.status, "failed");
     assert.equal(store.getWorkUnitAttempt(priorAttempt.id)?.status, "lost");

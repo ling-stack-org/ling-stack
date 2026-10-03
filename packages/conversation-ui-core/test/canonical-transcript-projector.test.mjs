@@ -99,6 +99,30 @@ test("canonical projector keeps messages and action evidence on one source-order
   assert.equal(projection.diagnostics.length, 0);
 });
 
+test("canonical file changes expose only their own durable diff preview", () => {
+  const projection = projectCanonicalConversationTimeline({
+    scope,
+    sourceSequence: 1,
+    sourceRevision: "edit-diff-evidence",
+    items: [item("tool-edit", 1, "tool_call", { toolCallId: "call-edit", toolName: "edit" })],
+    actions: [action("action-edit", 7, {
+      actionType: "edit",
+      toolCallId: "call-edit",
+      sourceRefs: [conversationRef("tool-edit"), { kind: "file", id: "todo.py", path: "todo.py" }],
+      resultArtifactIds: ["diff-edit", "diff-other"],
+    })],
+    artifacts: [
+      { id: "diff-edit", revision: 1, workspaceId: "workspace-1", threadId: "thread-1", runId: "run-1", actionId: "action-edit", type: "diff", path: "run-1/todo.py.diff", sourceRefs: [] },
+      { id: "diff-other", revision: 1, workspaceId: "workspace-1", threadId: "thread-1", runId: "run-1", actionId: "action-other", type: "diff", path: "run-1/other.py.diff", sourceRefs: [] },
+    ],
+    turnRuns: [{ runId: "run-1", turnId: "turn-1", attemptNumber: 1, role: "primary" }],
+  });
+  const fileChange = projection.items.find((entry) => entry.kind === "fileChange");
+  assert.equal(fileChange?.changePreview?.artifactId, "diff-edit");
+  assert.equal(fileChange?.sourceRefs.find((ref) => ref.id === "diff-edit")?.hostTarget, "open_diff");
+  assert.equal(fileChange?.sourceRefs.some((ref) => ref.id === "diff-other"), false);
+});
+
 test("canonical command projection preserves Host output totals and artifact identities", () => {
   const projection = projectCanonicalConversationTimeline({
     scope,

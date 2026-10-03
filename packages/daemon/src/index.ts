@@ -6,6 +6,7 @@ import {
   listBuiltinToolExtensions,
   createCompositeSecretResolver,
   resolveStoragePaths,
+  type RunStore,
 } from "@ling-stack/core";
 import { createPiRunner, getPiRunnerExtension } from "@ling-stack/runner-pi";
 import {
@@ -47,6 +48,9 @@ import { ProviderImportPreflightService } from "./features/providers/import-pref
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
 import { ApprovalAutoReviewRecoveryCoordinator } from "./features/runs/approval-auto-review-recovery.js";
+import { recoverApprovalPostCommitStore } from "./features/runs/approval-postcommit-recovery.js";
+import { runApprovalPostCommitEffects } from "./features/runs/approval-postcommit-effects.js";
+import { syncWorkflowApprovalDecision } from "./features/channels/orchestrator.js";
 import { DaemonRunnerRecoveryCoordinator } from "./features/harness/continuations/daemon-recovery-coordinator.js";
 import { reconcileHarnessToolExecutionsAtStartup } from "./features/harness/tool-execution/recovery.js";
 import { RunEvaluationSchedulerRegistry } from "./features/harness/evaluations/scheduler.js";
@@ -54,7 +58,7 @@ import {
   createDetachedRunExecutionSink,
   executeExistingRunContinuation,
 } from "./features/runs/orchestrator.js";
-import { resumePendingMediaJobExecutions } from "./features/media/executor.js";
+import { resumePendingMediaJobExecutions, syncMediaJobForApprovalDecision } from "./features/media/executor.js";
 import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
@@ -85,6 +89,7 @@ import { createOfficeDocumentsGenerationBroker } from "./features/plugins/office
 import { writeJson } from "./shared/response.js";
 import { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
 import { StartupStateRegistry } from "./startup/state.js";
+import { initializeDaemonWithCleanup } from "./startup/initialization.js";
 import { warmDefaultWorkspaceStartup } from "./startup/warmup.js";
 import { ComputerUseProjectionRegistry } from "./features/computer-use/registry.js";
 import { CuaDriverDesktopBridgeAuthority } from "./features/computer-use/desktop-bridge-authority.js";
@@ -258,12 +263,15 @@ export function createDaemonServer(
   let channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
   let channelTurnDispatchReady = false;
   let approvalResumeCoordinator: ApprovalResumeCoordinator | undefined;
+  const approvalRecoveryStores = new Set<RunStore>();
+  let approvalRecoveryTimer: ReturnType<typeof setInterval> | undefined;
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
   let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
   let runEvaluationScheduler: RunEvaluationSchedulerRegistry | undefined;
   const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
+      approvalRecoveryStores.add(store);
       // A process may have crossed the shell side-effect boundary before the
       // daemon disappeared. Expired executing claims are never retried; they
       // become explicit unknown outcomes before any recovery dispatch runs.
@@ -286,7 +294,9 @@ export function createDaemonServer(
       startupOptionalWarmups?.start(cwd, store);
       reconcileAllContinuityWorkflows(store, { cause: "startup" });
       if (resolvedConfig.channels.terminalReports === true) {
-        void recoverTerminalReports(store).catch(() => undefined);
+        void recoverTerminalReports(store).catch(() => {
+          console.warn("terminal_report_recovery_failed: conflicting sources remain recoverable");
+        });
       }
       if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     },
@@ -671,7 +681,7 @@ export function createDaemonServer(
       })
     : undefined;
 
-  return {
+  const daemon: DaemonServer = {
     server,
     config: resolvedConfig,
     extensionRegistry,
@@ -690,38 +700,35 @@ export function createDaemonServer(
           resolve();
         });
       });
-      await chromeBrowserNativeBroker?.start().catch(() => {
-        chromeBrowserSessions.observeNativeState({
-          cwd: resolvedConfig.defaultWorkspaceCwd,
-          hostState: "missing",
+      await initializeDaemonWithCleanup(async () => {
+        await chromeBrowserNativeBroker?.start().catch(() => {
+          chromeBrowserSessions.observeNativeState({
+            cwd: resolvedConfig.defaultWorkspaceCwd,
+            hostState: "missing",
+          });
         });
-      });
-      await warmDefaultWorkspaceStartup({
-        cwd: resolvedConfig.defaultWorkspaceCwd,
-        startupState,
-        storeRegistry,
-        runnerRegistry,
-        secretResolver,
-      });
-      await approvalAutoReviewRecoveryCoordinator.recoverStore(
-        storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
-      );
-      runEvaluationScheduler.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
-      daemonRunnerRecoveryCoordinator.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
-      daemonRunnerRecoveryCoordinator.start();
-      // Ephemeral control-plane servers are used by tests and embedded fixtures.
-      // They must never claim the installation-global Remote Gateway listener.
-      if (resolvedConfig.port !== 0) {
-        await remoteAccess.startIfEnabled();
-      }
-      startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
-      channelTurnDispatchReady = true;
-      channelTurnDispatchWorker.start(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
-      resumePendingMediaJobExecutions({
-        cwd: resolvedConfig.defaultWorkspaceCwd,
-        storeRegistry,
-        secretResolver,
-        hooks: {
+        await warmDefaultWorkspaceStartup({
+          cwd: resolvedConfig.defaultWorkspaceCwd,
+          startupState,
+          storeRegistry,
+          runnerRegistry,
+          secretResolver,
+        });
+        await approvalAutoReviewRecoveryCoordinator.recoverStore(
+          storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
+        );
+        runEvaluationScheduler.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+        daemonRunnerRecoveryCoordinator.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+        daemonRunnerRecoveryCoordinator.start();
+        // Ephemeral control-plane servers are used by tests and embedded fixtures.
+        // They must never claim the installation-global Remote Gateway listener.
+        if (resolvedConfig.port !== 0) {
+          await remoteAccess.startIfEnabled();
+        }
+        startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+        channelTurnDispatchReady = true;
+        channelTurnDispatchWorker.start(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+        const mediaRecoveryHooks: Parameters<typeof resumePendingMediaJobExecutions>[0]["hooks"] = {
           startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
           recoverRuntimeWorkUnit: (input) => retryRuntimeWorkUnit({ ...input, runtimeSupervisor }),
           transitionRuntimeWorkUnitTerminal: (input) => {
@@ -753,10 +760,60 @@ export function createDaemonServer(
               createdArtifactIds: input.createdArtifactIds,
             });
           },
-        },
-      });
+        };
+        const recoverApprovals = () => {
+          for (const store of approvalRecoveryStores) {
+            if (typeof store.listApprovalPostCommitEffects !== "function") continue;
+            try {
+              recoverApprovalPostCommitStore({
+                store, cwd: store.paths.cwd, controlPlaneEvents,
+                onOwnerResolved: (approval) => runApprovalPostCommitEffects({
+                  resumeRun: () => {
+                    if (!approval.runId) return;
+                    if (approval.status !== "approved" && approval.status !== "denied") {
+                      const run = store.getRun(approval.runId);
+                      if (run?.status === "waiting_for_approval") throw new Error("approval_terminal_owner_pending");
+                      return;
+                    }
+                    const result = approval.status === "denied"
+                      ? approvalResumeCoordinator!.finalizeSuspendedApprovalDenial({ store, approval })
+                      : approvalResumeCoordinator!.resumeAfterApproval({ store, approval });
+                    if (result.status === "blocked") throw new Error(result.reason);
+                    if (result.status === "not_applicable"
+                      && store.getRun(approval.runId)?.status === "waiting_for_approval") {
+                      throw new Error("approval_run_owner_unreconciled");
+                    }
+                  },
+                  syncWorkflow: () => {
+                    const result = syncWorkflowApprovalDecision(store, approval);
+                    if (result.status === "missing_owner") throw new Error("approval_workflow_owner_missing");
+                  },
+                  syncMedia: () => syncMediaJobForApprovalDecision({
+                    cwd: store.paths.cwd, store, storeRegistry, secretResolver, approval,
+                    now: new Date().toISOString(), hooks: mediaRecoveryHooks,
+                  }),
+                }),
+              });
+            } catch {
+              console.warn("approval_postcommit_recovery_failed: durable effects remain pending");
+            }
+          }
+        };
+        recoverApprovals();
+        approvalRecoveryTimer = setInterval(recoverApprovals, 10_000);
+        approvalRecoveryTimer.unref();
+        resumePendingMediaJobExecutions({
+          cwd: resolvedConfig.defaultWorkspaceCwd,
+          storeRegistry,
+          secretResolver,
+          hooks: mediaRecoveryHooks,
+        });
+      }, () => daemon.stop());
     },
     stop: async () => {
+      storeRegistry.mediaLocalExecutions.beginShutdown();
+      if (approvalRecoveryTimer) clearInterval(approvalRecoveryTimer);
+      approvalRecoveryTimer = undefined;
       daemonRunnerRecoveryCoordinator.beginShutdown();
       runEvaluationScheduler.beginShutdown();
       channelTurnDispatchReady = false;
@@ -780,6 +837,10 @@ export function createDaemonServer(
         officeDriverController.close();
         chromeBrowserWebSocketServer.close();
         rpcWebSocketServer.close();
+        if (!server.listening) {
+          resolve();
+          return;
+        }
         server.close((error) => {
           if (error) {
             reject(error);
@@ -795,10 +856,12 @@ export function createDaemonServer(
       await providerImportShutdown;
       await cuaDriverActivationCoordinator.shutdown();
       await activeRuns.waitForIdle();
+      await storeRegistry.mediaLocalExecutions.waitForIdle();
       runtimeSupervisor.releaseAll();
       storeRegistry.closeAll();
     },
   };
+  return daemon;
 }
 
 function readChromeBrowserExtensionIds(value: string | undefined): readonly string[] {

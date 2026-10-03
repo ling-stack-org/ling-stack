@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { publishNormalRunNarration } from "./sqlite/normal-run-narration-publication.js";
 import { isCurrentRunExecutionOwner } from "./sqlite/run-execution-admission.js";
+import { assertConversationMediaExecutionAdmission, assertReusableConversationMediaExecutionAdmission } from "./sqlite/conversation-media-execution-admission.js";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import {
@@ -323,6 +324,10 @@ import {
 } from "../run-types.js";
 import type {
   CompactionCheckpoint,
+  CreateRunCompactionCheckpointInput,
+  ListRunCompactionCheckpointsOptions,
+  RunCompactionCheckpointV1,
+  TransitionRunCompactionCheckpointInput,
   CreateCompactionCheckpointInput,
   CreateWorkspaceMutationRecordInput,
   ListCompactionCheckpointsOptions,
@@ -567,6 +572,7 @@ import {
   nullableUpdate,
   omitUndefined,
   parseJson,
+  rollbackOwnedSqliteTransaction,
   readBoolean,
   readNullableNumber,
   readNullableString,
@@ -582,6 +588,7 @@ import { SqliteChromeBrowserCredentialStore } from "./sqlite/chrome-browser-cred
 import { SqliteConversationItemStore } from "./sqlite/conversation-item-store.js";
 import { SqliteConversationTurnIngestStore } from "./sqlite/conversation-turn-ingest-store.js";
 import { SqliteConversationAcceptedInputStore } from "./sqlite/conversation-accepted-input-store.js";
+import { SqliteTeammateDirectInputStore } from "./sqlite/teammate-direct-input-store.js";
 import { SqliteNormalConversationForkStore } from "./sqlite/normal-conversation-fork-store.js";
 import { SqliteConversationPreparedInputStore } from "./sqlite/conversation-prepared-input-store.js";
 import { applyConversationAcceptedInputMigration } from "./sqlite/conversation-accepted-input-migration.js";
@@ -601,12 +608,16 @@ import { SqliteMediaStore } from "./sqlite/media-store.js";
 import { SqliteMediaWorkflowStore } from "./sqlite/media-workflow-store.js";
 import { SqliteApprovalPolicyStore } from "./sqlite/approval-policy-store.js";
 import { SqliteApprovalRequestStore } from "./sqlite/approval-request-store.js";
+import { SqliteApprovalPostCommitStore } from "./sqlite/approval-postcommit-store.js";
 import { SqliteApprovalCheckpointStore } from "./sqlite/approval-checkpoint-store.js";
 import { SqliteApprovalResumeStore } from "./sqlite/approval-resume-store.js";
 import { SqliteArtifactStore } from "./sqlite/artifact-store.js";
 import { SqliteControlPlaneStore } from "./sqlite/control-plane-store.js";
 import { SqliteRunEventStore } from "./sqlite/run-event-store.js";
 import { SqliteHostCommandJournalStore } from "./sqlite/host-command-journal-store.js";
+import { SqliteHostOperationJournalStore } from "./sqlite/host-operation-journal-store.js";
+import { SqliteHostMediaOperationStore } from "./sqlite/host-media-operation-store.js";
+import { SqliteHostOfficeLocalStore } from "./sqlite/host-office-local-store.js";
 import { SqliteRunInterventionStore } from "./sqlite/run-intervention-store.js";
 import { SqliteRunSessionStore } from "./sqlite/run-session-store.js";
 import { SqliteLingThreadMetadataCoordinator } from "./sqlite/ling-thread-metadata-coordinator.js";
@@ -626,6 +637,7 @@ import { SqliteHarnessToolExecutionStore } from "./sqlite/harness-tool-execution
 import { SqliteRunEvaluationStore } from "./sqlite/run-evaluation-store.js";
 import { SqliteHarnessCommitCoordinator } from "./sqlite/harness-commit-coordinator.js";
 import { applyRunnerContinuationMigration } from "./sqlite/runner-continuation-migration.js";
+import { applyRunCompactionCheckpointMigration } from "./sqlite/run-compaction-checkpoint-migration.js";
 import { applyHarnessToolExecutionMigration } from "./sqlite/harness-tool-execution-migration.js";
 import { applyRunEvaluationMigration } from "./sqlite/run-evaluation-migration.js";
 import { SqliteUserProfileStore } from "./sqlite/user-profile-store.js";
@@ -675,6 +687,7 @@ import { SqliteWorkItemStore } from "./sqlite/work-item-store.js";
 import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-store.js";
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
+import { SqliteRunCompactionCheckpointStore } from "./sqlite/run-compaction-checkpoint-store.js";
 
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
@@ -701,10 +714,14 @@ export class SqliteRunStore implements RunStore {
   private readonly approvalCheckpoints: SqliteApprovalCheckpointStore;
   private readonly approvalResumes: SqliteApprovalResumeStore;
   private readonly approvalRequests: SqliteApprovalRequestStore;
+  private readonly approvalPostCommit: SqliteApprovalPostCommitStore;
   private readonly artifacts: SqliteArtifactStore;
   private readonly controlPlane: SqliteControlPlaneStore;
   private readonly runEvents: SqliteRunEventStore;
   private readonly hostCommandJournal: SqliteHostCommandJournalStore;
+  private readonly hostOperationJournal: SqliteHostOperationJournalStore;
+  private readonly hostMediaOperations: SqliteHostMediaOperationStore;
+  private readonly hostOfficeLocal: SqliteHostOfficeLocalStore;
   private readonly runInterventions: SqliteRunInterventionStore;
   private readonly runSessions: SqliteRunSessionStore;
   private readonly lingThreadMetadata: SqliteLingThreadMetadataCoordinator;
@@ -748,6 +765,7 @@ export class SqliteRunStore implements RunStore {
   private readonly conversationItems: SqliteConversationItemStore;
   private readonly conversationTurnIngest: SqliteConversationTurnIngestStore;
   private readonly conversationAcceptedInput: SqliteConversationAcceptedInputStore;
+  private readonly teammateDirectInput: SqliteTeammateDirectInputStore;
   private readonly conversationPreparedInput: SqliteConversationPreparedInputStore;
   private readonly userInput: SqliteUserInputStore;
   private readonly userInputTranscript: SqliteUserInputTranscriptStore;
@@ -782,6 +800,7 @@ export class SqliteRunStore implements RunStore {
   private readonly workspaceProvenance: SqliteWorkspaceProvenanceStore;
   private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
   private readonly workspaceSnapshots: SqliteWorkspaceSnapshotStore;
+  private readonly runCompactionCheckpoints: SqliteRunCompactionCheckpointStore;
 
   constructor(options: SqliteRunStoreOptions) {
     this.paths = options.paths ?? resolveRuntimePaths(options.cwd);
@@ -793,12 +812,14 @@ export class SqliteRunStore implements RunStore {
     this.workspaceProvenance = new SqliteWorkspaceProvenanceStore({ database: this.database });
     this.postCompactionUndo = new SqlitePostCompactionUndoStore({ database: this.database });
     this.workspaceSnapshots = new SqliteWorkspaceSnapshotStore({ database: this.database });
+    this.runCompactionCheckpoints = new SqliteRunCompactionCheckpointStore({ database: this.database });
     this.conversationTurnIngest = new SqliteConversationTurnIngestStore(
       { database: this.database },
       this.conversationItems,
     );
     this.conversationContext = new SqliteConversationContextStore({ database: this.database });
     this.conversationAcceptedInput = new SqliteConversationAcceptedInputStore({ database: this.database }, this.conversationTurnIngest);
+    this.teammateDirectInput = new SqliteTeammateDirectInputStore({ database: this.database }, this.conversationTurnIngest);
     this.conversationPreparedInput = new SqliteConversationPreparedInputStore({ database: this.database }, this.conversationAcceptedInput);
     this.automations = new SqliteAutomationStore({ database: this.database });
     this.providers = new SqliteProviderStore({ database: this.database });
@@ -817,6 +838,7 @@ export class SqliteRunStore implements RunStore {
     this.mediaWorkflows = new SqliteMediaWorkflowStore({ database: this.database });
     this.approvalPolicies = new SqliteApprovalPolicyStore({ database: this.database });
     this.approvalCheckpoints = new SqliteApprovalCheckpointStore({ database: this.database });
+    this.approvalPostCommit = new SqliteApprovalPostCommitStore(this.database);
     this.approvalRequests = new SqliteApprovalRequestStore(
       { database: this.database },
       {
@@ -998,6 +1020,9 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.hostCommandJournal = new SqliteHostCommandJournalStore({ database: this.database }, id => this.getRun(id));
+    this.hostOperationJournal = new SqliteHostOperationJournalStore({ database: this.database });
+    this.hostMediaOperations = new SqliteHostMediaOperationStore({ database: this.database }, this.hostOperationJournal);
+    this.hostOfficeLocal = new SqliteHostOfficeLocalStore({ database: this.database }, this.hostOperationJournal);
     this.runInterventions = new SqliteRunInterventionStore(
       { database: this.database },
       {
@@ -1430,6 +1455,11 @@ export class SqliteRunStore implements RunStore {
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
+          applyRunCompactionCheckpointMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
           applyHarnessToolExecutionMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
@@ -1839,8 +1869,105 @@ export class SqliteRunStore implements RunStore {
     return this.hostCommandJournal.launchHostCommandExecution(ticket, launch);
   }
 
+  launchTrackedHostCommandExecution<T>(operation: Parameters<RunStore["launchTrackedHostCommandExecution"]>[0],
+    command: Parameters<RunStore["launchTrackedHostCommandExecution"]>[1], launch: () => T): T {
+    // Check the real callback before wrapping it: an async wrapper must never
+    // start an OS effect outside the synchronous Host transaction.
+    if (typeof launch !== "function" || Object.prototype.toString.call(launch) === "[object AsyncFunction]") {
+      throw Object.assign(new TypeError("command_launcher_must_be_synchronous"), { code: "command_launcher_must_be_synchronous" });
+    }
+    return this.hostOperationJournal.launchHostOperation(operation, () =>
+      this.hostCommandJournal.launchWithinHostOperation(command, operation.operationId, launch));
+  }
+
   listHostCommandWriteBlockers(cwd: string): ReturnType<RunStore["listHostCommandWriteBlockers"]> {
     return this.hostCommandJournal.listHostCommandWriteBlockers(cwd);
+  }
+
+  admitHostOperation(input: Parameters<RunStore["admitHostOperation"]>[0]): ReturnType<RunStore["admitHostOperation"]> {
+    return this.hostOperationJournal.admitHostOperation(input);
+  }
+
+  bindHostOperationEvidence(...args: Parameters<RunStore["bindHostOperationEvidence"]>): ReturnType<RunStore["bindHostOperationEvidence"]> {
+    return this.hostOperationJournal.bindHostOperationEvidence(...args);
+  }
+
+  launchHostOperation<T>(ticket: Parameters<RunStore["launchHostOperation"]>[0], launch: () => T): T {
+    return this.hostOperationJournal.launchHostOperation(ticket, launch);
+  }
+
+  continueHostOperationEffect<T>(ticket: Parameters<RunStore["continueHostOperationEffect"]>[0], effect: () => T, mode: "forward" | "cleanup" = "forward"): T {
+    return this.hostOperationJournal.continueHostOperationEffect(ticket, effect, mode);
+  }
+
+  settleHostOperation(...args: Parameters<RunStore["settleHostOperation"]>): ReturnType<RunStore["settleHostOperation"]> {
+    return this.hostOperationJournal.settleHostOperation(...args);
+  }
+
+  getHostOperation(...args: Parameters<RunStore["getHostOperation"]>): ReturnType<RunStore["getHostOperation"]> {
+    return this.hostOperationJournal.getHostOperation(...args);
+  }
+
+  listHostOperationBlockers(...args: Parameters<RunStore["listHostOperationBlockers"]>): ReturnType<RunStore["listHostOperationBlockers"]> {
+    return this.hostOperationJournal.listHostOperationBlockers(...args);
+  }
+
+  prepareHostMediaExecution(...args: Parameters<RunStore["prepareHostMediaExecution"]>): ReturnType<RunStore["prepareHostMediaExecution"]> {
+    return this.hostMediaOperations.prepareHostMediaExecution(...args);
+  }
+  prepareHostOfficeLocalExecution(...args: Parameters<RunStore["prepareHostOfficeLocalExecution"]>): ReturnType<RunStore["prepareHostOfficeLocalExecution"]> {
+    return this.hostOfficeLocal.prepareHostOfficeLocalExecution(...args);
+  }
+  prepareHostOfficeLocalEffect(...args: Parameters<RunStore["prepareHostOfficeLocalEffect"]>): ReturnType<RunStore["prepareHostOfficeLocalEffect"]> {
+    return this.hostOfficeLocal.prepareHostOfficeLocalEffect(...args);
+  }
+  launchHostOfficeLocalEffect<T>(ticket: Parameters<RunStore["launchHostOfficeLocalEffect"]>[0], effectId: string, effect: () => T): T {
+    return this.hostOfficeLocal.launchHostOfficeLocalEffect(ticket, effectId, effect);
+  }
+  recordHostOfficeLocalObservation(...args: Parameters<RunStore["recordHostOfficeLocalObservation"]>): ReturnType<RunStore["recordHostOfficeLocalObservation"]> {
+    return this.hostOfficeLocal.recordHostOfficeLocalObservation(...args);
+  }
+  getHostOfficeLocalExecution(...args: Parameters<RunStore["getHostOfficeLocalExecution"]>): ReturnType<RunStore["getHostOfficeLocalExecution"]> {
+    return this.hostOfficeLocal.getHostOfficeLocalExecution(...args);
+  }
+  listHostOfficeLocalEffects(...args: Parameters<RunStore["listHostOfficeLocalEffects"]>): ReturnType<RunStore["listHostOfficeLocalEffects"]> {
+    return this.hostOfficeLocal.listHostOfficeLocalEffects(...args);
+  }
+  bindHostMediaChildExecution(...args: Parameters<RunStore["bindHostMediaChildExecution"]>): ReturnType<RunStore["bindHostMediaChildExecution"]> {
+    return this.hostMediaOperations.bindHostMediaChildExecution(...args);
+  }
+  prepareHostMediaEffect(...args: Parameters<RunStore["prepareHostMediaEffect"]>): ReturnType<RunStore["prepareHostMediaEffect"]> {
+    return this.hostMediaOperations.prepareHostMediaEffect(...args);
+  }
+  launchHostMediaEffect<T>(ticket: Parameters<RunStore["launchHostMediaEffect"]>[0], effectId: string, send: () => T): T {
+    return this.hostMediaOperations.launchHostMediaEffect(ticket, effectId, send);
+  }
+  getHostMediaExecution(...args: Parameters<RunStore["getHostMediaExecution"]>): ReturnType<RunStore["getHostMediaExecution"]> {
+    return this.hostMediaOperations.getHostMediaExecution(...args);
+  }
+  listHostMediaEffects(...args: Parameters<RunStore["listHostMediaEffects"]>): ReturnType<RunStore["listHostMediaEffects"]> {
+    return this.hostMediaOperations.listHostMediaEffects(...args);
+  }
+  recordHostMediaResponse(...args: Parameters<RunStore["recordHostMediaResponse"]>): ReturnType<RunStore["recordHostMediaResponse"]> {
+    return this.hostMediaOperations.recordHostMediaResponse(...args);
+  }
+  recordHostMediaSubmission(...args: Parameters<RunStore["recordHostMediaSubmission"]>): ReturnType<RunStore["recordHostMediaSubmission"]> {
+    return this.hostMediaOperations.recordHostMediaSubmission(...args);
+  }
+  recordHostMediaSubmissionAndExecutionHandle(...args: Parameters<RunStore["recordHostMediaSubmissionAndExecutionHandle"]>): ReturnType<RunStore["recordHostMediaSubmissionAndExecutionHandle"]> {
+    return this.hostMediaOperations.recordHostMediaSubmissionAndExecutionHandle(...args);
+  }
+  recordHostMediaTerminal(...args: Parameters<RunStore["recordHostMediaTerminal"]>): ReturnType<RunStore["recordHostMediaTerminal"]> {
+    return this.hostMediaOperations.recordHostMediaTerminal(...args);
+  }
+  recordHostMediaArtifactManifest(...args: Parameters<RunStore["recordHostMediaArtifactManifest"]>): ReturnType<RunStore["recordHostMediaArtifactManifest"]> {
+    return this.hostMediaOperations.recordHostMediaArtifactManifest(...args);
+  }
+  finalizeHostMediaExecution(...args: Parameters<RunStore["finalizeHostMediaExecution"]>): ReturnType<RunStore["finalizeHostMediaExecution"]> {
+    return this.hostMediaOperations.finalizeHostMediaExecution(...args);
+  }
+  recordHostMediaEffectNoStart(...args: Parameters<RunStore["recordHostMediaEffectNoStart"]>): ReturnType<RunStore["recordHostMediaEffectNoStart"]> {
+    return this.hostMediaOperations.recordHostMediaEffectNoStart(...args);
   }
 
   appendExecutionEvent<K extends RunEventType>(runId: string, sourceFence: RuntimeAttemptFenceV1, type: K, data: RunEventDataByType[K])
@@ -1903,6 +2030,10 @@ export class SqliteRunStore implements RunStore {
     return this.runEvents.listEvents(runId, options);
   }
 
+  getLatestRunCompactionStart(runId: string): Extract<RunEventEnvelope, { readonly type: "context_compaction_start" }> | undefined {
+    return this.runEvents.getLatestRunCompactionStart(runId);
+  }
+
   readSnapshot<T>(read: () => T): T {
     return readSqliteSnapshot(this.database, read);
   }
@@ -1941,6 +2072,26 @@ export class SqliteRunStore implements RunStore {
 
   listCompactionCheckpoints(options: ListCompactionCheckpointsOptions = {}): CompactionCheckpoint[] {
     return this.workspaceProvenance.listCompactionCheckpoints(options);
+  }
+
+  createRunCompactionCheckpoint(input: CreateRunCompactionCheckpointInput): RunCompactionCheckpointV1 {
+    return this.runCompactionCheckpoints.create(input);
+  }
+
+  getRunCompactionCheckpoint(id: string): RunCompactionCheckpointV1 | undefined {
+    return this.runCompactionCheckpoints.get(id);
+  }
+
+  getLatestRunCompactionCheckpoint(runId: string): RunCompactionCheckpointV1 | undefined {
+    return this.runCompactionCheckpoints.getLatestForRun(runId);
+  }
+
+  listRunCompactionCheckpoints(options: ListRunCompactionCheckpointsOptions = {}): RunCompactionCheckpointV1[] {
+    return this.runCompactionCheckpoints.list(options);
+  }
+
+  transitionRunCompactionCheckpoint(input: TransitionRunCompactionCheckpointInput): RunCompactionCheckpointV1 | undefined {
+    return this.runCompactionCheckpoints.transition(input);
   }
 
   createPostCompactionUndoRecord(input: CreatePostCompactionUndoRecordInput): PostCompactionUndoRecord {
@@ -2185,6 +2336,12 @@ export class SqliteRunStore implements RunStore {
     input: import("../harness/continuations.js").CommitExistingRunContinuationPreparationFailureInput,
   ): import("../harness/continuations.js").CommitExistingRunContinuationPreparationFailureResult {
     return this.harnessCommits.commitExistingRunContinuationPreparationFailure(input);
+  }
+
+  commitStaleRunRecoveryFailure(
+    input: import("../harness/continuations.js").CommitStaleRunRecoveryFailureInput,
+  ): import("../harness/continuations.js").CommitStaleRunRecoveryFailureResult {
+    return this.harnessCommits.commitStaleRunRecoveryFailure(input);
   }
 
   reprepareContinuationAndAttempt(
@@ -3311,6 +3468,14 @@ export class SqliteRunStore implements RunStore {
 
   getConversationAcceptedInputSnapshot(sourceItemId: string): import("../conversation-accepted-input-types.js").ConversationAcceptedInputSnapshot | undefined {
     return this.conversationAcceptedInput.get(sourceItemId);
+  }
+
+  appendTeammateDirectUserTurnWithInputSnapshot(input: Parameters<RunStore["appendTeammateDirectUserTurnWithInputSnapshot"]>[0], now: string) {
+    return this.teammateDirectInput.append(input, now);
+  }
+
+  getTeammateDirectInputSnapshot(sourceItemId: string, teammateId: string) {
+    return this.teammateDirectInput.get(sourceItemId, teammateId);
   }
 
   createNormalConversationFork(input: import("../normal-conversation-fork-types.js").CreateNormalConversationFork,
@@ -4457,6 +4622,7 @@ export class SqliteRunStore implements RunStore {
   ): CreateOrReuseConversationMediaJobResult {
     this.database.exec("BEGIN IMMEDIATE");
     try {
+      const executionAdmission = assertConversationMediaExecutionAdmission(this.database, input);
       const existingWorkUnit = this.runtimeWorkUnits.findWorkUnitByIdempotency({
         kind: "media_job",
         ownerType: "conversation_run",
@@ -4464,6 +4630,7 @@ export class SqliteRunStore implements RunStore {
         idempotencyKey: input.idempotencyKey,
       });
       if (existingWorkUnit) {
+        assertReusableConversationMediaExecutionAdmission(existingWorkUnit, input, executionAdmission);
         const existingJob = existingWorkUnit.linkedMediaJobId
           ? this.mediaJobs.getMediaJob(existingWorkUnit.linkedMediaJobId)
           : undefined;
@@ -4491,16 +4658,17 @@ export class SqliteRunStore implements RunStore {
           target: input.target,
           mediaJobId: mediaJob.id,
           operation: mediaJob.operation,
+          ...(executionAdmission ? { executionAdmission } : {}),
         },
         linkedRunId: input.runId,
         linkedMessageId: input.linkedMessageId,
         linkedMediaJobId: mediaJob.id,
         now,
-      });
+      }, executionAdmission);
       this.database.exec("COMMIT");
       return { mediaJob, workUnit, reused: false };
     } catch (error) {
-      this.database.exec("ROLLBACK");
+      rollbackOwnedSqliteTransaction(this.database);
       throw error;
     }
   }
@@ -4679,6 +4847,41 @@ export class SqliteRunStore implements RunStore {
 
   getApprovalRequest(id: string): ApprovalRequest | undefined {
     return this.approvalRequests.getApprovalRequest(id);
+  }
+
+  listApprovalPostCommitEffects(options: Parameters<RunStore["listApprovalPostCommitEffects"]>[0] = {}) {
+    return this.approvalPostCommit.list(options);
+  }
+
+  claimApprovalPostCommitEffect(
+    approvalId: string,
+    effectKind: Parameters<RunStore["claimApprovalPostCommitEffect"]>[1],
+    input: Parameters<RunStore["claimApprovalPostCommitEffect"]>[2],
+    now: string,
+  ) {
+    return this.approvalPostCommit.claim(approvalId, effectKind, input, now);
+  }
+
+  settleApprovalPostCommitEffect(
+    approvalId: string,
+    effectKind: Parameters<RunStore["settleApprovalPostCommitEffect"]>[1],
+    input: Parameters<RunStore["settleApprovalPostCommitEffect"]>[2],
+    now: string,
+  ) {
+    return this.approvalPostCommit.settle(approvalId, effectKind, input, now);
+  }
+
+  recoverExpiredApprovalPostCommitClaim(
+    approvalId: string,
+    effectKind: Parameters<RunStore["recoverExpiredApprovalPostCommitClaim"]>[1],
+    input: Parameters<RunStore["recoverExpiredApprovalPostCommitClaim"]>[2],
+    now: string,
+  ) {
+    return this.approvalPostCommit.recoverExpiredClaim(approvalId, effectKind, input, now);
+  }
+
+  quarantineMediaApprovalSubmission(approvalId: string, mediaJobId: string, now: string) {
+    return this.approvalPostCommit.quarantineMediaSubmission(approvalId, mediaJobId, now);
   }
 
   listApprovalRequests(options: ListApprovalRequestsOptions = {}): ApprovalRequest[] {

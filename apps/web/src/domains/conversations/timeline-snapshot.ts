@@ -6,6 +6,7 @@ import {
   type ConversationInteractionSurfaceKind,
   type ConversationTimelineItem,
   type TimelineSnapshot,
+  type TimelineRunLifecycle,
 } from "@ling-stack/conversation-ui-core";
 import {
   placeConversationTimelineDiagnostics,
@@ -28,6 +29,7 @@ export function buildSurfaceTimelineSnapshot(input: {
   readonly canonicalRevision?: number;
   readonly sseCursor?: string | null;
   readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
+  readonly runLifecycles?: ReadonlyMap<string, TimelineRunLifecycle>;
 }): TimelineSnapshot {
   const threadId = input.threadId?.trim() ?? "";
   const positionedItems = placeConversationTimelineDiagnostics(input.items, input.diagnosticPlacements);
@@ -68,6 +70,7 @@ export function buildSurfaceTimelineSnapshot(input: {
     canonicalRevision: input.canonicalRevision ?? maxRevision(items),
     sseCursor: input.sseCursor ?? null,
     contextSegmentIdByItemId: input.contextSegmentIdByItemId ?? new Map(),
+    runLifecycles: input.runLifecycles,
   });
 }
 

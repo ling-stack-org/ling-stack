@@ -91,7 +91,7 @@ test("product language preference toggles Chinese and English UI labels", async 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "Appearance" })).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Interface preferences" })).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "Interface preferences" })).toHaveCount(1);
   await page.getByLabel("Product language").selectOption("zh-CN");
   await expect(page.locator("html")).toHaveAttribute("lang", "zh-CN");
   await expect(page.locator(".interface-settings-panel").getByRole("heading", { name: "外观" })).toBeVisible();
@@ -112,8 +112,8 @@ test("product language preference toggles Chinese and English UI labels", async 
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "频道工作区面板");
-  await expect(page.locator(".channel-progress-popover")).toBeVisible();
-  await expect(page.locator(".task-toolbar-progress")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".task-toolbar-progress")).toHaveAttribute("aria-expanded", "false");
 
   await page.reload();
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
@@ -140,8 +140,8 @@ test("product language preference toggles Chinese and English UI labels", async 
   await expect(page.locator(".channel-side-panel")).toHaveCount(0);
   await page.locator(".task-toolbar-panel").click();
   await expect(page.locator(".channel-side-panel")).toHaveAttribute("aria-label", "Channel workspace dock");
-  await expect(page.locator(".channel-progress-popover")).toBeVisible();
-  await expect(page.locator(".task-toolbar-progress")).toHaveAttribute("aria-pressed", "true");
+  await expect(page.locator(".channel-progress-popover")).toHaveCount(0);
+  await expect(page.locator(".task-toolbar-progress")).toHaveAttribute("aria-expanded", "false");
 });
 
 test("Chinese mode localizes workspace settings, runtime policy, and teammate setup labels", async ({ page }) => {
@@ -175,7 +175,7 @@ test("Chinese mode localizes workspace settings, runtime policy, and teammate se
   await page.getByLabel("设置分组").getByRole("button", { name: "队友管理" }).click();
   await expect(page.getByLabel("设置分组").getByRole("button", { name: "队友管理" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "AI 队友", level: 1 })).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "AI 队友", level: 1 })).toHaveCount(1);
   await expect(page.getByLabel("AI 队友上下文")).toHaveCount(0);
   await expect(page.locator(".teammate-detail-panel")).toHaveCount(0);
   await page.getByLabel("队友模板").getByRole("button", { name: /产品策略/ }).click();
@@ -608,7 +608,7 @@ test("settings configuration entries open nested tools directly", async ({ page 
   await expect(settingsSections).toBeVisible();
   await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(1);
   await expect(settingsSections.getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
   await expect(page.locator(".settings-workspace-tools")).toHaveCount(0);
@@ -691,7 +691,7 @@ test("shared select controls preserve native sizing and segmented authorization 
   await page.getByLabel("Settings sections").getByRole("button", { name: /Default authorization/ }).click();
   const authorizationPanel = page.locator("[data-ui2-default-authorization]");
   const authorizationGroup = authorizationPanel.getByRole("radiogroup", { name: "Authorization mode" });
-  const smartAuthorization = authorizationGroup.getByRole("radio", { name: "Smart authorization" });
+  const smartAuthorization = authorizationGroup.getByRole("radio", { name: "Help me approve" });
   await smartAuthorization.focus();
   await page.keyboard.press("ArrowRight");
   const alwaysAuthorization = authorizationGroup.getByRole("radio", { name: "Always authorize" });
@@ -850,7 +850,7 @@ test("settings skill governance saves policy from a separate section", async ({ 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Personalization/ }).click();
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /Personalization/ })).toHaveClass(/active/);
-  const tonePanel = page.locator(".personalization-settings-panel");
+  const tonePanel = page.locator("[data-personalization-tone='true']");
   await expect(tonePanel.getByRole("heading", { name: "Ling conversation tone" })).toBeVisible();
   await expect(tonePanel).not.toContainText("Choose how Ling replies by default in this workspace.");
   await expect(tonePanel.getByRole("radio", { name: /Pragmatic/ })).toHaveAttribute("aria-checked", "true");

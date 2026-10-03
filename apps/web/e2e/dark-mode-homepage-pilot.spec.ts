@@ -68,7 +68,8 @@ async function assertSurfaceHierarchy(page: Page): Promise<void> {
     panel: expected.panel,
     composer: expected.composer,
   });
-  expect(new Set(Object.values(actual)).size).toBe(4);
+  expect(actual.app).toBe(actual.panel);
+  expect(new Set(Object.values(actual)).size).toBe(3);
   for (const color of Object.values(actual)) {
     expect(isOpaquePureBlack(color)).toBe(false);
   }

@@ -1,5 +1,6 @@
 import type { RunEventDataByType, RunEventType } from "./runtime.js";
 import { isHostCommandPreparedV1, isHostCommandSettledV1 } from "./host-command-journal.js";
+import { isRunProviderErrorDiagnostic, isRunProviderRetryEvidence } from "./provider-diagnostics.js";
 
 const RUN_EVENT_TYPES = new Set<RunEventType>([
   "host_command_prepared",
@@ -8,6 +9,9 @@ const RUN_EVENT_TYPES = new Set<RunEventType>([
   "run_start",
   "turn_start",
   "turn_end",
+  "provider_retry",
+  "context_compaction_start",
+  "context_compaction_end",
   "assistant_text_delta",
   "assistant_thinking_delta",
   "assistant_reasoning_summary",
@@ -53,6 +57,7 @@ export function isRunEventData<K extends RunEventType>(
   switch (type) {
     case "host_command_prepared": return isHostCommandPreparedV1(value);
     case "host_command_settled": return isHostCommandSettledV1(value);
+    case "provider_retry": return isRunProviderRetryEvidence(value);
     case "assistant_text_delta":
     case "assistant_thinking_delta":
       return typeof value.text === "string";
@@ -70,6 +75,19 @@ export function isRunEventData<K extends RunEventType>(
         && value.text === value.parts.join("\n\n")
         && (value.attemptId === undefined
           || (typeof value.attemptId === "string" && value.attemptId.trim().length > 0));
+    case "context_compaction_start":
+      return isCompactionReason(value.reason)
+        && value.policyVersion === "pi_sdk_lifecycle_v1"
+        && optionalNonEmptyString(value.attemptId);
+    case "context_compaction_end":
+      return isCompactionReason(value.reason)
+        && value.policyVersion === "pi_sdk_lifecycle_v1"
+        && ["sdk_installed", "aborted", "failed"].includes(String(value.outcome))
+        && typeof value.willRetry === "boolean"
+        && optionalNonNegativeSafeInteger(value.tokensBefore)
+        && optionalNonNegativeSafeInteger(value.estimatedTokensAfter)
+        && (value.usage === undefined || isRunTokenUsage(value.usage))
+        && optionalNonEmptyString(value.attemptId);
     case "tool_start":
       return typeof value.toolName === "string"
         && optionalString(value.toolCallId);
@@ -95,7 +113,8 @@ export function isRunEventData<K extends RunEventType>(
         && value.message.length > 0
         && value.retryable === false;
     case "run_error":
-      return typeof value.message === "string";
+      return typeof value.message === "string"
+        && (value.errorDiagnostic === undefined || isRunProviderErrorDiagnostic(value.errorDiagnostic));
     case "approval_requested":
       return typeof value.approvalId === "string"
         && optionalString(value.toolCallId)
@@ -116,8 +135,10 @@ export function isRunEventData<K extends RunEventType>(
         && optionalString(value.text)
         && optionalString(value.stopReason)
         && optionalString(value.errorMessage)
+        && (value.errorDiagnostic === undefined || isRunProviderErrorDiagnostic(value.errorDiagnostic))
         && (value.contentKinds === undefined
-          || (Array.isArray(value.contentKinds) && value.contentKinds.every((item) => typeof item === "string")));
+          || (Array.isArray(value.contentKinds) && value.contentKinds.every((item) => typeof item === "string")))
+        && (value.usage === undefined || isRunTokenUsage(value.usage));
     case "progress":
       return optionalString(value.message);
     default:
@@ -127,6 +148,27 @@ export function isRunEventData<K extends RunEventType>(
 
 function optionalString(value: unknown): boolean {
   return value === undefined || typeof value === "string";
+}
+
+function optionalNonEmptyString(value: unknown): boolean {
+  return value === undefined || (typeof value === "string" && value.trim().length > 0);
+}
+
+function optionalNonNegativeSafeInteger(value: unknown): boolean {
+  return value === undefined || nonNegativeSafeInteger(value);
+}
+
+function isCompactionReason(value: unknown): boolean {
+  return value === "manual" || value === "threshold" || value === "overflow";
+}
+
+function isRunTokenUsage(value: unknown): boolean {
+  return isRecord(value)
+    && nonNegativeSafeInteger(value.input)
+    && nonNegativeSafeInteger(value.output)
+    && nonNegativeSafeInteger(value.cacheRead)
+    && nonNegativeSafeInteger(value.cacheWrite)
+    && nonNegativeSafeInteger(value.totalTokens);
 }
 
 function positiveSafeInteger(value: unknown): boolean {

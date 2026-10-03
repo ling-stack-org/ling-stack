@@ -10,6 +10,7 @@ import { validateWorkflowOperationRunContext } from "./workflow-operation-snapsh
 import { workflowOperationAuthorityRejection } from "./workflow-operation-effect-gate.js";
 import { findMatchingApprovalCommandRulesForCommand } from "./approval-command-rules.js";
 import { classifyBashRiskFlags } from "./action-classifier.js";
+import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
 
 function requireAuthority(value: unknown, code: string): asserts value {
   if (!value) throw new Error(code);
@@ -27,6 +28,7 @@ export function createRestrictedCommandDispatch(input: {
   readonly restrictedCommandRuntime?: NativeRestrictedCommandRuntime;
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
+  readonly hostOperation?: HostCommandOperation;
 }) {
   const source = structuredClone(input.run), request = structuredClone(input.request);
   const fence = Object.freeze({ ...input.sourceFence });
@@ -110,10 +112,18 @@ export function createRestrictedCommandDispatch(input: {
   check();
   return {
     prepare: async () => {
-      const prepared = await runtime.prepare({ command, cwd: source.cwd, inputRefs: operation.binding!.inputRefs, policy,
-      source: { ...fence, workspaceId: workspacePolicy.workspaceId, runId: source.id, toolCallId: request.toolCallId },
-      assertCurrentAuthority: check, signal: input.signal });
-      return prepared;
+      // Reserve the native copy/helper producer synchronously before runtime
+      // preparation can create a directory, spawn a helper or cross an await.
+      const preparation = input.hostOperation?.registerPreparation("restricted-command-prepare");
+      try {
+        const prepared = await runtime.prepare({ command, cwd: source.cwd, inputRefs: operation.binding!.inputRefs, policy,
+          source: { ...fence, workspaceId: workspacePolicy.workspaceId, runId: source.id, toolCallId: request.toolCallId },
+          assertCurrentAuthority: check, signal: input.signal, hostOperation: preparation });
+        return { ...prepared, finishHostPreparation: () => preparation?.finish() };
+      } catch (error) {
+        preparation?.finish();
+        throw error;
+      }
     },
   };
 }

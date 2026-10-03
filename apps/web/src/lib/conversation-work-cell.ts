@@ -42,6 +42,7 @@ import { truncatePreview } from "./data.js";
 import { artifactLooksLikeDiff } from "./diff-summary.js";
 import { executionActionSourceRefs } from "./execution-action-lineage.js";
 import { projectConversationLatestAttemptEvidence } from "./conversation-work-cell-attempts.js";
+import { formatCommandOutputTail } from "./command-output-tail.js";
 
 export {
   batchCanonicalTranscriptItems,
@@ -1752,7 +1753,7 @@ function executionActionOutputTail(action: ExecutionAction): string | undefined 
   if (chunks.length === 0) {
     return undefined;
   }
-  const text = chunks.map((chunk) => chunk.text).join("");
+  const text = formatCommandOutputTail(chunks);
   if (!text.trim()) {
     return undefined;
   }

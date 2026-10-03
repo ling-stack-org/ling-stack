@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { test } from "node:test";
 import { createStreamCapture, createSyntheticStreamCapture, toStreamSummary } from "../dist/features/runs/unified-exec-output.js";
 import { executeUnifiedBashTool } from "../dist/features/runs/unified-exec.js";
+import { renderUnifiedExecModelOutput } from "../dist/features/runs/unified-exec-model-output.js";
 import { createUnifiedExecFixture } from "./support/unified-exec-fixture.mjs";
 
 function capture(chunks, { stream = "stdout", toolCallId = "fixture_tool", secrets = [] } = {}) {
@@ -26,6 +27,25 @@ function assertWholeEventText(chunks, expected) {
   }
 }
 
+test("model-visible command output keeps results but not internal artifact identifiers", () => {
+  const result = {
+    status: "succeeded",
+    durationMs: 12,
+    exitCode: 0,
+    stdout: { byteCount: 13, lineCount: 1, preview: "E6-CHANNEL-OK", truncated: false },
+    stderr: { byteCount: 0, lineCount: 0, preview: "", truncated: false },
+    artifacts: [
+      { role: "result", artifactId: "artifact_run_internal_result", truncated: false },
+      { role: "stdout", artifactId: "artifact_internal_stdout", truncated: false },
+    ],
+  };
+  const output = renderUnifiedExecModelOutput(result);
+  assert.match(output, /Command exited 0/);
+  assert.match(output, /E6-CHANNEL-OK/);
+  assert.doesNotMatch(output, /artifact_run_internal_result|artifact_internal_stdout|Evidence artifacts/);
+  assert.equal(result.artifacts.length, 2, "Host-side evidence remains available independently of the model text");
+});
+
 test("output capture decodes every possible split of UTF-8 text without corrupting evidence", () => {
   const text = "中文😀é\nSecond 行";
   const bytes = Buffer.from(text);
@@ -45,6 +65,41 @@ test("output capture does not split surrogate pairs at the redaction carry bound
   const f = capture([Buffer.from(text)]);
   assert.equal(f.snapshot.artifactContent, text);
   assertWholeEventText(f.chunks, text);
+});
+
+test("complete safe output lines stream before the command exits", () => {
+  const events = [];
+  const output = createStreamCapture("stdout", "live_lines", (type, data) => events.push({ type, data }), []);
+  output.ingest(Buffer.from("E6-N02-START\n"));
+  assert.deepEqual(events.map(event => event.data.partialResult.text), ["E6-N02-START\n"]);
+  output.ingest(Buffer.from("E6-N02-MIDDLE\n"));
+  assert.deepEqual(events.map(event => event.data.partialResult.text), ["E6-N02-START\n", "E6-N02-MIDDLE\n"]);
+  output.ingest(Buffer.from("E6-N02-END\n"));
+  output.flush();
+  assertWholeEventText(events.map(event => event.data.partialResult), "E6-N02-START\nE6-N02-MIDDLE\nE6-N02-END\n");
+});
+
+test("streaming a line never exposes an authorization value continued on the next line", () => {
+  const events = [];
+  const output = createStreamCapture("stdout", "split_auth", (type, data) => events.push({ type, data }), []);
+  output.ingest(Buffer.from("Bearer\n"));
+  assert.equal(events.length, 0);
+  output.ingest(Buffer.from("fixture-token\n"));
+  output.flush();
+  assert.equal(events.map(event => event.data.partialResult.text).join("").includes("fixture-token"), false);
+  assert.equal(output.snapshot().artifactContent.includes("fixture-token"), false);
+});
+
+test("streaming a line never exposes an explicit multiline secret", () => {
+  const secret = "fixture\nsecret";
+  const events = [];
+  const output = createStreamCapture("stdout", "split_secret", (type, data) => events.push({ type, data }), [secret]);
+  output.ingest(Buffer.from("prefix fixture\n"));
+  assert.equal(events.length, 0);
+  output.ingest(Buffer.from("secret suffix\n"));
+  output.flush();
+  assert.equal(events.map(event => event.data.partialResult.text).join("").includes(secret), false);
+  assert.equal(output.snapshot().artifactContent.includes(secret), false);
 });
 
 test("output event chunking preserves emoji at the 4 KiB boundary", () => {
@@ -176,7 +231,7 @@ test("real command output and persisted artifact survive separated UTF-8 OS writ
   assert.equal(await f.text("stdout"), "中😀");
 });
 
-test("real failed command preserves exit and artifact refs while bounding Unicode output", async t => {
+test("real failed command preserves Host artifact refs without publishing them in model text", async t => {
   const prefix = "a".repeat(8189);
   const f = await runCommand(t, 'process.stdout.write("a".repeat(8189) + "😀" + "z".repeat(1000)); process.stderr.write("失败😀"); process.exitCode = 9;', 9);
   assert.equal(f.result.stdout.preview, prefix);
@@ -184,7 +239,10 @@ test("real failed command preserves exit and artifact refs while bounding Unicod
   assert.equal(await f.text("stdout"), prefix + "😀" + "z".repeat(1000));
   assert.equal(await f.text("stderr"), "失败😀");
   assert.ok(f.handled.content[0].text.includes("Command exited 9"));
-  assert.ok(f.handled.content[0].text.includes(f.result.stdout.artifactId));
-  assert.ok(f.handled.content[0].text.includes(f.result.stderr.artifactId));
+  assert.equal(f.handled.content[0].text.includes(f.result.stdout.artifactId), false);
+  assert.equal(f.handled.content[0].text.includes(f.result.stderr.artifactId), false);
+  assert.ok(f.result.artifacts.some(artifact => artifact.artifactId === f.result.stdout.artifactId));
+  assert.ok(f.result.artifacts.some(artifact => artifact.artifactId === f.result.stderr.artifactId));
+  assert.ok(f.events.some(event => event.type === "artifact_created" && event.data.artifactId === f.result.stdout.artifactId));
   assert.ok(f.events.filter(event => event.type === "tool_update").every(event => event.data.partialResult.text.isWellFormed()));
 });

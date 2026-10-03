@@ -231,10 +231,7 @@ function channelMessage(id: string, body: string): Record<string, unknown> {
 }
 
 async function verifyProposalSurface(page: Page, testInfo: TestInfo, evidencePrefix: string): Promise<void> {
-  const dialog = page.getByRole("dialog", { name: "Task confirmation" });
-  if (await dialog.isVisible().catch(() => false)) {
-    await dialog.getByRole("button", { name: "Close" }).click();
-  }
+  await expect(page.getByRole("dialog", { name: "Task confirmation" })).toHaveCount(0);
   const editableSummary = page.getByLabel("Task proposal summary").filter({ hasText: "Editable workflow proposal" });
   const editableSummaryRow = editableSummary.locator("..");
   await expect(editableSummaryRow).toHaveClass(/channel-execution-proposal-summary-row/u);
@@ -245,37 +242,31 @@ async function verifyProposalSurface(page: Page, testInfo: TestInfo, evidencePre
   await expect(editableSummary).toContainText("Engineer · Pending confirmation");
   await capture(page, testInfo, `${evidencePrefix}-task-summary.png`);
   await editableSummary.getByRole("button", { name: "View task" }).click();
-  const editable = dialog.locator(".channel-execution-proposal-decision");
+  const editable = page.getByRole("region", { name: "Allow this task?" });
   await expect(editable).toBeVisible();
-  await expect(editable).toContainText("Task");
-  await expect(editable).toContainText("Agent");
+  await expect(editable).toHaveAttribute("data-conversation-decision-kind", "task_proposal");
   await expect(editable).toContainText("Engineer");
-  await expect(editable).toContainText("Required permissions");
   await expect(editable).toContainText("Read files");
   await expect(editable).toContainText("Run commands");
   await expect(editable).not.toContainText("Permission-sensitive actions still require confirmation");
   await expect(editable.locator(".channel-proposal-details, .channel-proposal-collaboration")).toHaveCount(0);
-  await expect(editable.getByRole("button", { name: "Authorize and start task" })).toBeVisible();
-  await expect(editable.getByRole("button", { name: "Edit", exact: true })).toBeVisible();
-  await capture(page, testInfo, `${evidencePrefix}-task-confirmation.png`);
-  await editable.getByRole("button", { name: "Edit", exact: true }).click();
-  await expect(editable.getByLabel("Scope")).toBeVisible();
-  await editable.getByRole("button", { name: "Cancel", exact: true }).click();
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(editable.getByRole("button", { name: "Allow", exact: true })).toBeVisible();
+  await expect(editable.getByRole("button", { name: "Deny", exact: true })).toBeVisible();
+  await expect(editable.getByRole("button", { name: "Edit", exact: true })).toHaveCount(0);
+  await capture(page, testInfo, `${evidencePrefix}-task-composer-gate.png`);
 
   const linkedSummary = page.getByLabel("Task proposal summary").filter({ hasText: "Linked status proposal" });
   await expect(linkedSummary).toContainText("Ling Agent · Execution failed");
   await linkedSummary.getByRole("button", { name: "View task" }).click();
-  const linked = dialog.locator(".channel-execution-proposal-decision");
-  await expect(linked).toBeVisible();
+  const linked = page.getByRole("region", { name: "Allow this task?" });
+  await expect(linked).toHaveAttribute("data-channel-execution-proposal-id", "proposal_status_linked");
   await expect(linked).toContainText("Linked status proposal");
   await expect(linked).toContainText("Ling Agent");
   await expect(linked).toContainText("Read files");
   await expect(linked).toContainText("The linked run stopped after a provider validation error");
   await expect(linked.locator(".channel-workflow-linked-statuses")).toHaveCount(0);
-  await expect(linked.getByRole("button", { name: "Open run" })).toBeVisible();
   await expect(linked).not.toContainText("waiting_for_approval");
-  await dialog.getByRole("button", { name: "Close" }).click();
+  await expect(linked.getByRole("button", { name: "Allow", exact: true })).toBeVisible();
 }
 
 async function openRuntimePanel(page: Page): Promise<Locator> {
@@ -313,7 +304,10 @@ async function verifyWorkflowQueue(panel: Locator): Promise<void> {
   await expect(queued.getByRole("button", { name: "Start + run" })).toBeEnabled();
   await expect(queued.getByRole("button", { name: "Skip" })).toBeEnabled();
   const blocked = queue.locator(".workflow-step-card").filter({ hasText: "Status case Blocked" });
-  await expect(blocked.getByRole("button", { name: "Retry" })).toBeEnabled();
+  await expect(blocked).toContainText("Provider permission remains blocked");
+  await expect(blocked.getByRole("button", { name: "Start step" })).toBeEnabled();
+  await expect(blocked.getByRole("button", { name: "Start + run" })).toBeEnabled();
+  await expect(blocked.getByRole("button", { name: "Skip" })).toBeDisabled();
   await expect(blocked.getByRole("button", { name: "Cancel" })).toBeEnabled();
 }
 

@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import { PiRunnerAdapter } from "../dist/adapter.js";
+import { assertPiModelContextCapacity } from "../dist/prepared-input.js";
 import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.mjs";
 
 async function fixture(t, overrides = {}) {
@@ -127,6 +128,27 @@ test("approved tool continuation resumes from the durable Host result without ex
   assert.equal(f.wireRequests.length, 1);
 });
 
+test("approved continuation sends a bounded large result without changing Host evidence", async (t) => {
+  const f = await fixture(t);
+  const provider = { ...f.options.provider, contextWindow: 5_000, maxTokens: 512 };
+  const options = { ...f.options, provider };
+  const preparedInput = await f.runner.prepareTaskInput(options);
+  const fullResult = "tool evidence ".repeat(3_000);
+  await f.runner.runTask({ ...options, preparedInput,
+    approvedToolContinuation: {
+      schemaVersion: 1, kind: "approved_tool_result", approvalId: "large-result-approval",
+      sideEffectFingerprint: "large-result-fingerprint", toolCallId: "large-result-call",
+      toolName: "bash", args: { command: "fixture" },
+      result: { content: [{ type: "text", text: fullResult }], isError: false },
+    },
+  });
+  assert.equal(f.contexts.length, 1);
+  assert.match(f.contexts[0].messages.at(-1).content[0].text, /truncated/);
+  assert.ok(f.contexts[0].messages.at(-1).content[0].text.length < fullResult.length);
+  assert.equal(f.wireRequests.length, 1);
+  assert.equal(f.hostCalls(), 0);
+});
+
 for (const change of ["prompt", "system", "tool-schema", "tool-set", "model", "fingerprint"]) {
   test(`prepared ${change} drift fails before any model transport`, async (t) => {
     const f = await fixture(t);
@@ -208,6 +230,68 @@ test("preparation never emits a prepared receipt even when a callback is present
   await f.runner.prepareTaskInput({ ...f.options, onPreparedInputAccepted: () => { received += 1; } });
   assert.equal(received, 0);
   assert.equal(f.contexts.length, 0);
+});
+
+test("final prepared-input gate rejects oversized prompt before transport, with or without a snapshot", async t => {
+  const f = await fixture(t);
+  const options = { ...f.options,
+    task: { ...f.options.task, prompt: "oversized ".repeat(20_000) },
+    provider: { ...f.options.provider, contextWindow: 4_096, maxTokens: 512 } };
+  const prepared = await f.runner.prepareTaskInput(options);
+  assert.ok(prepared.fingerprint);
+  await assert.rejects(f.runner.runTask(options), /model context exceeds selected model budget/);
+  assert.equal(f.contexts.length, 0);
+  assert.equal(f.wireRequests.length, 0);
+  assert.equal(f.hostCalls(), 0);
+});
+
+test("final prepared-input gate includes tool schemas and reserved output", async t => {
+  const f = await fixture(t);
+  const options = { ...f.options,
+    provider: { ...f.options.provider, contextWindow: 4_096, maxTokens: 512 },
+    mcpTools: [{ ...f.options.mcpTools[0], inputSchema: { type: "object", description: "schema ".repeat(20_000) } }] };
+  const prepared = await f.runner.prepareTaskInput(options);
+  assert.ok(prepared.fingerprint);
+  await assert.rejects(f.runner.runTask({ ...options, preparedInput: prepared }), /model context exceeds selected model budget/);
+  assert.equal(f.contexts.length, 0);
+  assert.equal(f.wireRequests.length, 0);
+});
+
+test("post-tool model context gate counts cumulative projected results", () => {
+  const model = { contextWindow: 6_000, maxTokens: 512 };
+  const context = { systemPrompt: "system", tools: [], messages: [
+    { role: "user", content: "request" },
+    { role: "toolResult", content: [{ type: "text", text: "x".repeat(8_000) }] },
+    { role: "toolResult", content: [{ type: "text", text: "y".repeat(8_000) }] },
+  ] };
+  assert.doesNotThrow(() => assertPiModelContextCapacity(model, context));
+  context.messages.push({ role: "toolResult", content: [{ type: "text", text: "z".repeat(8_000) }] });
+  const projected = assertPiModelContextCapacity(model, context);
+  assert.ok(projected.messages[1].content[0].text.length < 8_000);
+  assert.match(projected.messages[1].content[0].text, /truncated/);
+  assert.equal(context.messages[1].content[0].text.length, 8_000, "Host/SDK evidence remains complete");
+});
+
+test("provider capacity gate uses remaining model space instead of a fixed tool-result allowance", () => {
+  const model = { contextWindow: 1_800, maxTokens: 256 };
+  const context = { systemPrompt: "system", tools: [], messages: [
+    { role: "user", content: "request" },
+    { role: "toolResult", content: [{ type: "text", text: "x".repeat(10_000) }] },
+  ] };
+  const projected = assertPiModelContextCapacity(model, context);
+  assert.match(projected.messages[1].content[0].text, /truncated/);
+  assert.ok(projected.messages[1].content[0].text.length < 10_000);
+  assert.equal(context.messages[1].content[0].text.length, 10_000);
+  assert.doesNotThrow(() => assertPiModelContextCapacity(model, projected));
+});
+
+test("provider boundary refuses a tool history whose required omission markers exceed the model-view budget", () => {
+  const model = { contextWindow: 1_000_000, maxTokens: 512 };
+  const context = { systemPrompt: "system", tools: [], messages: [
+    { role: "user", content: "request" },
+    ...Array.from({ length: 9_000 }, () => ({ role: "toolResult", content: [{ type: "text", text: "x".repeat(20) }] })),
+  ] };
+  assert.throws(() => assertPiModelContextCapacity(model, context), /tool result markers exceed/);
 });
 
 test("Host schemas are prepared without handlers and frozen through the real SDK", async t => {

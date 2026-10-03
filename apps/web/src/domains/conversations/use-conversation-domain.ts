@@ -100,6 +100,7 @@ export function useConversationDomain(input: {
   const currentCwdRef = useRef(input.cwd.trim());
   const conversationOwnerCwdRef = useRef(input.cwd.trim());
   const selectionSequenceRef = useRef(0);
+  const selectionInFlightRef = useRef<number | undefined>(undefined);
   const threadListLoadingOperationsRef = useRef(0);
   currentCwdRef.current = input.cwd.trim();
   const conversationErrors = useConversationErrorOwner();
@@ -132,6 +133,7 @@ export function useConversationDomain(input: {
     conversationOwnerCwdRef.current = workspaceCwd;
     detailReadEpochRef.current.invalidate();
     selectionSequenceRef.current += 1;
+    selectionInFlightRef.current = undefined;
     const draftGeneration = conversationDraftGenerationRef.current + 1;
     conversationDraftGenerationRef.current = draftGeneration;
     commitSelectedConversationThreadId("");
@@ -169,6 +171,7 @@ export function useConversationDomain(input: {
   const openNewConversation = useCallback((): void => {
     detailReadEpochRef.current.invalidate();
     selectionSequenceRef.current += 1;
+    selectionInFlightRef.current = undefined;
     const draftGeneration = conversationDraftGenerationRef.current + 1;
     conversationDraftGenerationRef.current = draftGeneration;
     commitSelectedConversationThreadId("");
@@ -192,6 +195,7 @@ export function useConversationDomain(input: {
       return false;
     }
     const selectionSequence = ++selectionSequenceRef.current;
+    selectionInFlightRef.current = selectionSequence;
     const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, threadId]));
     commitConversationSurfaceIdentity(threadId);
     const operation = conversationErrors.begin({
@@ -227,10 +231,16 @@ export function useConversationDomain(input: {
         return false;
       }
       return false;
+    } finally {
+      if (selectionInFlightRef.current === selectionSequence) {
+        selectionInFlightRef.current = undefined;
+      }
     }
   }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, input.cwd, openNewConversation]);
 
   const refreshSelectedConversation = useCallback(async (cwd = input.cwd): Promise<void> => {
+    // A background refresh must not supersede a navigation selection read.
+    if (selectionInFlightRef.current !== undefined) return;
     const workspaceCwd = cwd.trim();
     const requestedThreadId = selectedConversationThreadIdRef.current;
     if (!workspaceCwd || !requestedThreadId || conversationSurfaceIdentityRef.current !== requestedThreadId) {

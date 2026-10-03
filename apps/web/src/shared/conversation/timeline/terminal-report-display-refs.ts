@@ -2,6 +2,22 @@ import type { ConversationOperationSourceRef } from "@ling-stack/conversation-ui
 
 type DisplayFallback = Pick<ConversationOperationSourceRef, "kind" | "id" | "path" | "label">;
 
+/** Partition already-visible refs for disclosure, without changing identity or authority. */
+export function terminalReportSourceRefGroups(refs: readonly ConversationOperationSourceRef[]): {
+  readonly resources: readonly ConversationOperationSourceRef[];
+  readonly lineage: readonly ConversationOperationSourceRef[];
+} {
+  const resources = new Map<string, ConversationOperationSourceRef>();
+  const lineage = new Map<string, ConversationOperationSourceRef>();
+  for (const ref of refs) {
+    if (!ref.path && !ref.label) continue;
+    const group = ref.kind === "file" || ref.kind === "path" || ref.kind === "diff" || ref.kind === "artifact"
+      ? resources : lineage;
+    group.set(JSON.stringify([ref.kind, ref.id, ref.path ?? ""]), ref);
+  }
+  return { resources: [...resources.values()], lineage: [...lineage.values()] };
+}
+
 /**
  * Prefer evidence refs over redundant section-path fallbacks after privacy filtering.
  * Full paths are display joins only: original ref identity and authority are preserved.

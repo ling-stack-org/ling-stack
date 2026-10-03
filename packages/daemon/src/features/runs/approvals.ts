@@ -34,6 +34,7 @@ import {
 import type { ChannelIntentExecutionOperationV1 } from "@ling-stack/contracts";
 import type { PiRunnerApprovalRequest, PiRunnerRunOptions } from "@ling-stack/runner-pi";
 import { isRecord } from "../../shared/validation.js";
+import { formatEditPreview } from "./edit-diff-preview.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import {
@@ -75,6 +76,9 @@ import { evaluatePlanModeApprovalDenial } from "./plan-mode-policy.js";
 import { commandMatchesPolicy } from "../channels/command-operation-match.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
 import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
+import type { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
+import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
+import { reserveFileMutationAdmission, type FileMutationAdmission } from "./file-mutation-admission.js";
 import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
 import {
   createApprovalCommandRuleProposal,
@@ -172,6 +176,8 @@ export function createRunApprovalHandler(options: {
   readonly attemptId: string;
   /** Captured at Runner dispatch; required for Host calls, never inferred from the latest Attempt. */
   readonly sourceFence?: RuntimeAttemptFenceV1;
+  /** Captured Host operation authority, never inferred from a later Attempt. */
+  readonly hostOperationTracker?: AttemptHostOperationTracker;
   readonly delegatedRequirementFingerprint?: string;
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
   readonly approvalPolicy: ApprovalPolicy;
@@ -214,8 +220,21 @@ export function createRunApprovalHandler(options: {
   const sourceFence = options.sourceFence ? Object.freeze({ ...options.sourceFence }) : undefined;
   const hostAuthority = createHostCapabilityAuthority({ ...options, sourceFence });
   const toolBrokerMode = harnessToolBrokerModeForRun(options.run);
-  return async (request: PiRunnerApprovalRequest) => {
+  const handleRequest = async (
+    request: PiRunnerApprovalRequest,
+    fileAdmission?: FileMutationAdmission,
+    commandAdmission?: { readonly operation: HostCommandOperation; dispatched: boolean },
+  ) => {
+    // A Run has one durable approval-wait state. Parallel tool calls must not
+    // each create a pending approval against the same running -> waiting edge.
+    if (options.signal?.aborted) throwIfAborted(options.signal);
+    if (options.store.getRun(options.run.id)?.status !== "running") {
+      return { approved: false, reason: "stale_run_execution: Run is no longer active for this approval request." } as const;
+    }
     const isHost = request.toolName.startsWith("host_");
+    const unifiedExecBash = options.unifiedExecEnabled === true && request.toolName === "bash";
+    const fileMutation = request.toolName === "write" || request.toolName === "edit";
+    const hostExecution = isHost || unifiedExecBash || (fileMutation && toolBrokerMode !== "off");
     const rejectHost = (approvalId?: string) => {
       const rejection = isHost ? hostAuthority.check(request, approvalId) : undefined;
       return rejection ? { approved: false, approvalId, reason: `${rejection.code}: ${rejection.reason}` } : undefined;
@@ -223,21 +242,19 @@ export function createRunApprovalHandler(options: {
     const hostRejection = rejectHost();
     if (hostRejection) return hostRejection;
     const transitionRunStatus = (input: Parameters<RunStore["transitionRunStatus"]>[0]) =>
-      isHost && sourceFence ? options.store.transitionRunExecutionStatus({ ...input, sourceFence }) : options.store.transitionRunStatus(input);
+      hostExecution && sourceFence ? options.store.transitionRunExecutionStatus({ ...input, sourceFence }) : options.store.transitionRunStatus(input);
     const createScopedApproval = (input: CreateApprovalRequestInput, now: string) => {
       try {
-        return isHost && sourceFence
+        return hostExecution && sourceFence
           ? options.store.createExecutionApprovalRequest({ ...input, runId: options.run.id }, sourceFence, now)
           : options.store.createApprovalRequest(input, now);
       } catch (error) {
-        if (isHost && error instanceof Error && "code" in error && error.code === "stale_run_execution") {
+        if (hostExecution && error instanceof Error && "code" in error && error.code === "stale_run_execution") {
           return { approved: false, reason: "host_capability_owner_invalid: Host approval lost its source execution before insertion." } as const;
         }
         throw error;
       }
     };
-    const unifiedExecBash = options.unifiedExecEnabled === true && request.toolName === "bash";
-    const fileMutation = request.toolName === "write" || request.toolName === "edit";
     if (request.toolName === "bash" && !unifiedExecBash) {
       const reason = "host_command_executor_disabled: Bash requires the journaled Host executor; SDK fallback is disabled.";
       return { approved: false, reason, handledResult: createUnifiedExecDeniedResult({ toolCallId: request.toolCallId, reason }) };
@@ -380,6 +397,7 @@ export function createRunApprovalHandler(options: {
       const executionRejection = rejectUnboundEffect();
       if (executionRejection) return executionRejection;
       if (unifiedExecBash) {
+        if (commandAdmission) commandAdmission.dispatched = true;
         return {
           approved: true,
           reason: policyDecision.reason,
@@ -395,6 +413,7 @@ export function createRunApprovalHandler(options: {
             signal: options.signal,
             extraSecrets: options.extraSecrets,
             shellSnapshotEnabled: options.shellSnapshotEnabled,
+            hostOperation: commandAdmission?.operation,
           }),
         };
       }
@@ -414,6 +433,7 @@ export function createRunApprovalHandler(options: {
             appendAndMaybeStream: options.appendAndMaybeStream,
             signal: options.signal,
             requireExistingParentsForAdds: typedExclusiveCreate,
+            hostOperation: fileAdmission?.operation,
           }),
         };
       }
@@ -587,8 +607,22 @@ export function createRunApprovalHandler(options: {
       actor: "system",
       now: waitingAt,
     });
-    if (isHost && !waitingTransition.ok) return { approved: false, approvalId: approval.id,
-      reason: "host_capability_owner_invalid: Host approval could not enter the captured execution's wait." };
+    if (hostExecution && !waitingTransition.ok) {
+      const reason = "host_capability_owner_invalid: Host approval could not enter the captured execution's wait.";
+      const cancelled = options.store.cancelApprovalRequest(approval.id, { reason }, new Date().toISOString());
+      if (cancelled) {
+        options.appendAndMaybeStream("approval_cancelled", {
+          approvalId: cancelled.id,
+          status: cancelled.status,
+          resolvedBy: cancelled.resolvedBy,
+          decisionReason: cancelled.decisionReason,
+        });
+        appendApprovalResolvedControlPlaneEvent(options.store, options.controlPlaneEvents,
+          options.workspaceCwd ?? options.run.cwd, cancelled, "pending", "cancelled", cancelled.resolvedAt ?? new Date().toISOString());
+        options.onApprovalResolved?.(cancelled);
+      }
+      return { approved: false, approvalId: approval.id, reason };
+    }
     const requestEvent = options.appendAndMaybeStream("approval_requested", approvalRequestEventPayload(approval, previewArtifacts));
     appendExecutionActionArtifactEvents({
       artifacts: previewArtifacts,
@@ -816,6 +850,7 @@ export function createRunApprovalHandler(options: {
       // Host execution has its own executor and receipt; never run file/Bash effects here.
       if (isHost) return { approved: true, approvalId: resolvedApproval.id, reason: resolvedApproval.decisionReason };
       if (unifiedExecBash) {
+        if (commandAdmission) commandAdmission.dispatched = true;
         handledResult = await executeHarnessedBashTool({
           mode: toolBrokerMode,
           restrictedCommandRuntime: options.restrictedCommandRuntime,
@@ -829,6 +864,7 @@ export function createRunApprovalHandler(options: {
           signal: options.signal,
           extraSecrets: options.extraSecrets,
           shellSnapshotEnabled: options.shellSnapshotEnabled,
+          hostOperation: commandAdmission?.operation,
         });
       } else if (fileMutationDraft) {
         handledResult = await executeHarnessedFileMutationTool({
@@ -845,6 +881,7 @@ export function createRunApprovalHandler(options: {
           appendAndMaybeStream: options.appendAndMaybeStream,
           signal: options.signal,
           requireExistingParentsForAdds: typedExclusiveCreate,
+          hostOperation: fileAdmission?.operation,
         });
       }
       return {
@@ -880,6 +917,41 @@ export function createRunApprovalHandler(options: {
             }
           : {}),
     };
+  };
+  let previousRequest: Promise<void> = Promise.resolve();
+  return (request) => {
+    // Enrollment must precede this queue's first microtask/await, including
+    // requests which later wait for human approval or are refused by policy.
+    const tracker = options.hostOperationTracker;
+    const fileAdmission = tracker && (request.toolName === "write" || request.toolName === "edit")
+      ? reserveFileMutationAdmission(tracker, request.toolCallId) : undefined;
+    const commandAdmission = tracker && request.toolName === "bash"
+      ? { operation: tracker.commandOperation(tracker.beginHostCall("command", request.toolCallId)), dispatched: false }
+      : undefined;
+    const settleAdmissions = (): void => {
+      fileAdmission?.settle();
+      // Once handed to the Broker/Unified executor it alone decides whether
+      // spawn was entered; an SDK return is never a command no-start receipt.
+      if (commandAdmission && !commandAdmission.dispatched) {
+        try { commandAdmission.operation.settleNoStart(); }
+        catch (error) {
+          try { commandAdmission.operation.markUnknown("command_execution_unconfirmed"); } catch { /* fail closed */ }
+          throw error;
+        }
+      }
+    };
+    const decision = previousRequest.then(async () => {
+      let result;
+      try { result = await handleRequest(request, fileAdmission, commandAdmission); }
+      catch (error) {
+        try { settleAdmissions(); } catch { /* preserve the request's original failure */ }
+        throw error;
+      }
+      settleAdmissions();
+      return result;
+    });
+    previousRequest = decision.then(() => undefined, () => undefined);
+    return decision;
   };
 }
 
@@ -1050,7 +1122,7 @@ export function appendApprovalResolvedControlPlaneEvent(
   cwd: string,
   approval: ApprovalRequest,
   previousStatus: ApprovalRequest["status"],
-  decision: "approved" | "denied",
+  decision: "approved" | "denied" | "cancelled",
   now: string,
 ): void {
   if (!hub) {
@@ -1064,13 +1136,14 @@ export function appendApprovalResolvedControlPlaneEvent(
     entityType: "approval",
     entityId: approval.id,
     action: "approval.resolved",
+    idempotencyKey: `approval-resolved:${approval.id}`,
     data: {
       ownerType: owner.type,
       ownerId: owner.id,
       previousStatus,
       status: approval.status,
       decision,
-      resolvedBy: approval.resolvedBy ?? "local-user",
+      resolvedBy: approval.resolvedBy ?? (decision === "cancelled" ? "system" : "local-user"),
     },
   }, now);
 }
@@ -1094,6 +1167,7 @@ export function appendApprovalExpiredControlPlaneEvent(
     entityType: "approval",
     entityId: approval.id,
     action: "approval.expired",
+    idempotencyKey: `approval-expired:${approval.id}`,
     data: {
       ownerType: owner.type,
       ownerId: owner.id,
@@ -1147,12 +1221,15 @@ function resolveApprovalOwner(approval: ApprovalRequest): { readonly type: strin
   return { type: "unknown", id: null };
 }
 
-function approvalDecisionEventType(approval: ApprovalRequest): Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired"> {
+function approvalDecisionEventType(approval: ApprovalRequest): Extract<RunEventType, "approval_approved" | "approval_denied" | "approval_expired" | "approval_cancelled"> {
   if (approval.status === "approved") {
     return "approval_approved";
   }
   if (approval.status === "expired") {
     return "approval_expired";
+  }
+  if (approval.status === "cancelled") {
+    return "approval_cancelled";
   }
   return "approval_denied";
 }
@@ -1359,7 +1436,7 @@ function toApprovalPayload(request: PiRunnerApprovalRequest): ApprovalPayload {
   return {
     type: "file_edit",
     path,
-    diffPreview: truncatePreview(formatEditPreview(readInputArray(request.input, "edits"))),
+    diffPreview: truncatePreview(formatEditPreview(readInputArray(request.input, "edits"), { maxTextCharacters: 320 })),
   };
 }
 
@@ -1523,22 +1600,6 @@ function isPathWithinAllowedWritePaths(inputPath: string, cwd: string, allowedWr
 
 function getPayloadWritePaths(payload: Extract<ApprovalPayload, { readonly type: "file_write" | "file_edit" }>): readonly string[] {
   return payload.touchedPaths && payload.touchedPaths.length > 0 ? payload.touchedPaths : [payload.path];
-}
-
-function formatEditPreview(edits: readonly unknown[]): string {
-  if (edits.length === 0) {
-    return "No edit preview was provided.";
-  }
-  return edits
-    .map((edit, index) => {
-      if (!isRecord(edit)) {
-        return `#${index + 1}\n<invalid edit entry>`;
-      }
-      const oldText = readInputString(edit, "oldText", "");
-      const newText = readInputString(edit, "newText", "");
-      return `#${index + 1}\n- ${truncatePreview(oldText, 320)}\n+ ${truncatePreview(newText, 320)}`;
-    })
-    .join("\n\n");
 }
 
 function readInputString(input: unknown, key: string, fallback: string): string {

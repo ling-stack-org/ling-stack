@@ -9,12 +9,11 @@ import {
 } from "@ling-stack/core";
 import { formatServerCatalogMessage } from "@ling-stack/localization";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
-import { isRunTool } from "../runs/approvals.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
 import type { RunRequest } from "../runs/schemas.js";
-import { extractChannelExecutionProposal } from "./ai-proposals.js";
 import { compactChannelDiscussionForNoToolsRetry, isContextLengthError } from "./context-compaction.js";
 import { buildChannelReplyContextPack, renderContextPack, type ContextPack } from "./context-packs.js";
+import { assessChannelReplyBudget } from "./channel-reply-budget-admission.js";
 import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
 import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-target.js";
 import {
@@ -270,7 +269,7 @@ async function completeAiChannelReply(input: {
       ? input.store.getLingThreadConversationMode(input.sourceMessage.threadId)
       : undefined;
     const planModeActive = conversationMode?.mode === "plan";
-    const proposalBlocksAllowed = input.proposalMode !== "disabled" && !planModeActive;
+    const proposalSuggestionsAllowed = input.proposalMode !== "disabled" && !planModeActive;
     const systemPrompt = [
       "You are an AI teammate inside a Ling Stack channel.",
       "Reply concisely and only to the current channel discussion.",
@@ -280,18 +279,18 @@ async function completeAiChannelReply(input: {
       "If Ling web context is included, you may use only those web_search/open_url results and must keep cited source URLs visible in the reply.",
       "If Ling web context is blocked, degraded, or has no usable source URLs, explain the limitation briefly in user-facing language and do not repeat provider, relay, or protocol diagnostics verbatim.",
       "Do not use workspace tools, MCP tools, or other side effects. If Ling exposes image_generate or video_generate for this run, you may use only those first-party media tools when the user asks to generate media.",
-      ...(!proposalBlocksAllowed
+      ...(!proposalSuggestionsAllowed
         ? [
             "Do not include hidden proposal blocks. Do not create or suggest tasks, runs, workflows, branches, approvals, or other side effects; the explicitly exposed first-party media generation tools are the only exception.",
           ]
         : [
-            "When the work is clear enough to start, include one hidden proposal block after your visible reply:",
-            `Use exact teammate ids in proposal JSON. Default assigneeTeammateId and collaboration teammateId to "${input.canonicalTeammateId}" unless the user explicitly selected another teammate id.`,
-            `<ling_task_proposal>{"title":"...","prompt":"...","assigneeTeammateId":"${input.canonicalTeammateId}","acceptanceCriteria":["..."],"collaborationSteps":[{"teammateId":"${input.canonicalTeammateId}","action":"coordinated","summary":"..."}],"requiredTools":["read"],"riskSummary":"..."}</ling_task_proposal>`,
-            "Do not include a proposal block for ordinary notes, unclear work, or pure discussion.",
+            "Do not include hidden proposal blocks or claim a workflow has started. Only a Host-approved channel intent can create a confirmable execution proposal; explain any suggested next steps in ordinary prose.",
           ]),
       memoryPrompt,
     ].filter((line): line is string => Boolean(line)).join("\n");
+
+    const initialBudgetBlock = blockChannelReplyIfOverBudget(input, discussionContextPack, discussionPrompt, systemPrompt);
+    if (initialBudgetBlock) return initialBudgetBlock;
 
     let execution = await startProjectedChannelReplyRun({
       input,
@@ -339,6 +338,8 @@ async function completeAiChannelReply(input: {
         minimal: true,
       });
       discussionPrompt = prependChannelWebContext(renderContextPack(discussionContextPack), webContext);
+      const retryBudgetBlock = blockChannelReplyIfOverBudget(input, discussionContextPack, discussionPrompt, systemPrompt);
+      if (retryBudgetBlock) return retryBudgetBlock;
       const reset = updatePendingAssistantMessage({
         store: input.store,
         itemId: input.pending.id,
@@ -382,7 +383,8 @@ async function completeAiChannelReply(input: {
       throw new Error(CHANNEL_PROMPT_LEAK_ERROR_MESSAGE);
     }
     const hasGeneratedMedia = runHasConversationGeneratedMedia(input.store, execution.run.id);
-    if (!rawReplyText && !hasGeneratedMedia) {
+    const replyText = visibleChannelReplyText(rawReplyText);
+    if (!replyText && !hasGeneratedMedia) {
       const message = formatServerCatalogMessage(responseLanguage, "daemon.conversation.empty_result");
       const failed = finishChannelMessage(input.store, input.pending.id, {
         body: message,
@@ -392,11 +394,6 @@ async function completeAiChannelReply(input: {
       input.stream?.onBlocked(failed);
       return failed;
     }
-    const extractedProposal = !proposalBlocksAllowed
-      ? undefined
-      : extractChannelExecutionProposal(rawReplyText, input.canonicalTeammateId, isRunTool);
-    const fallbackReplyText = input.stream ? visibleChannelReplyText(rawReplyText) : rawReplyText;
-    const replyText = extractedProposal?.visibleBody ?? (fallbackReplyText || rawReplyText);
     const replyReference = {
       ...(getChannelMessageView(input.store, input.pending.id) ?? input.pending),
       body: replyText,
@@ -411,24 +408,6 @@ async function completeAiChannelReply(input: {
           channelId: input.channel.id,
           responseId: replyReference.id,
           policyVersion: renderedMemory.policyVersion,
-        },
-        new Date().toISOString(),
-      );
-    }
-    if (extractedProposal) {
-      input.store.createChannelExecutionProposal(
-        {
-          channelId: input.channel.id,
-          sourceMessageId: replyReference.id,
-          proposedByTeammateId: input.canonicalTeammateId,
-          title: extractedProposal.title,
-          prompt: extractedProposal.prompt,
-          assigneeTeammateId: extractedProposal.assigneeTeammateId,
-          acceptanceCriteria: extractedProposal.acceptanceCriteria,
-          collaborationSteps: extractedProposal.collaborationSteps,
-          requiredTools: extractedProposal.requiredTools,
-          riskSummary: extractedProposal.riskSummary,
-          responseLanguage,
         },
         new Date().toISOString(),
       );
@@ -586,6 +565,31 @@ function requireContextProjection(pack: ContextPack): NonNullable<ContextPack["c
     throw new Error("Channel reply context pack is missing its conversation projection metadata.");
   }
   return pack.contextProjection;
+}
+
+function blockChannelReplyIfOverBudget(
+  input: Parameters<typeof completeAiChannelReply>[0],
+  pack: ContextPack,
+  prompt: string,
+  systemPrompt: string,
+): ChannelMessage | undefined {
+  const admission = assessChannelReplyBudget({
+    budget: pack.budget,
+    contextPackOverBudget: pack.overBudget,
+    prompt,
+    systemPrompt,
+  });
+  if (admission.status === "admitted") return undefined;
+  const message = admission.reason === "capacity_unknown"
+    ? "The selected model's context capacity is unknown; choose a provider with a known context window."
+    : "The prepared reply exceeds the selected model's context budget. Shorten the request or use a larger-context model.";
+  const blocked = finishChannelMessage(input.store, input.pending.id, {
+    body: message,
+    status: "blocked",
+    errorMessage: message,
+  });
+  input.stream?.onBlocked(blocked);
+  return blocked;
 }
 
 function notifyRunLinked(callback: ((runId: string) => void) | undefined, runId: string): void {

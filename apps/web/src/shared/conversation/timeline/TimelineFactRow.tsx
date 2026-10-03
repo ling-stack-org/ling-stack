@@ -17,6 +17,7 @@ export interface TimelineFactRowProps {
   readonly titleTooltip?: string;
   readonly statusLabel?: string;
   readonly compact?: boolean;
+  readonly defaultExpanded?: boolean;
   readonly meta?: ReactNode;
   readonly icon: ReactNode;
   readonly detail?: ReactNode;
@@ -36,6 +37,7 @@ export function TimelineFactRow({
   titleTooltip,
   statusLabel,
   compact = false,
+  defaultExpanded,
   meta,
   icon,
   detail,
@@ -46,8 +48,8 @@ export function TimelineFactRow({
   const disclosure = useConversationBlockView({
     blockId: `timeline-item:${item.id}`,
     revisionKey: String(item.revision),
-    defaultExpanded: item.status === "running" || item.status === "waiting" ||
-      item.status === "blocked" || item.status === "failed" || item.status === "cancelled",
+    defaultExpanded: defaultExpanded ?? (item.status === "running" || item.status === "waiting" ||
+      item.status === "blocked" || item.status === "failed" || item.status === "cancelled" || item.status === "partially_succeeded"),
     preserveTouchedStateOnRevision: true,
   });
   const expanded = hasDetail && disclosure.expanded;
@@ -117,7 +119,7 @@ export function TimelineFactRow({
 }
 
 function StatusAwareIcon({ item, icon }: { readonly item: ConversationTimelineRowItem; readonly icon: ReactNode }): React.JSX.Element {
-  if (item.status === "failed" || item.status === "blocked") return <CircleAlert size={14} aria-hidden="true" />;
+  if (item.status === "failed" || item.status === "blocked" || item.status === "partially_succeeded") return <CircleAlert size={14} aria-hidden="true" />;
   return <>{icon}</>;
 }
 
@@ -127,7 +129,7 @@ export function timelineStatusLabel(
 ): string | undefined {
   if (!status) return undefined;
   const labels: Record<NonNullable<ConversationTimelineRowItem["status"]>, string> = {
-    pending: t("Pending"), running: t("Working"), waiting: t("Waiting"), blocked: t("Blocked"), failed: t("Failed"), cancelled: t("Cancelled"), succeeded: t("Succeeded"),
+    pending: t("Pending"), running: t("Working"), waiting: t("Waiting"), blocked: t("Blocked"), failed: t("Failed"), cancelled: t("Cancelled"), partially_succeeded: t("Partially completed"), succeeded: t("Succeeded"),
   };
   return labels[status];
 }

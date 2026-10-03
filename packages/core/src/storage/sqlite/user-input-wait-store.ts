@@ -90,7 +90,7 @@ export class SqliteUserInputWaitStore {
       }
       if (database.prepare(`SELECT 1 FROM user_input_requests WHERE workspace_id=? AND source_attempt_id=?
         AND wait_status IN ('waiting','resuming') LIMIT 1`).get(DEFAULT_WORKSPACE_ID, source.fence.attemptId)) throw new UserInputStoreError("wait_conflict");
-      assertUserInputQuiescence(database, run.id, input.quiescence, now);
+      assertUserInputQuiescence(database, run.id, input.quiescence, now, source.fence);
       const checkpoint: UserInputYieldCheckpoint = {
         schemaVersion: 1, requestId: request.requestId, requestVersion: request.requestVersion, source,
         taskId: run.taskId, quiescence: { kind: "runner_quiesced", runnerId: input.quiescence.runnerId,

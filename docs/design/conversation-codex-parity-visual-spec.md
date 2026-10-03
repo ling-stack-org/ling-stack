@@ -187,6 +187,10 @@ Codex 风格的重点是阅读顺序，不是把所有内容都做成气泡：
 
 ### 2.5 Result row
 
+Turn-level identity, final actions and edited-file summary now follow
+[Conversation Turn Response Ownership](conversation-turn-response-ownership.md).
+The result Item remains an authoritative fact, not a second reply or copy owner.
+
 `terminalReport` 是 execute turn 的结果文档，不是命令列表的另一种包装：
 
 ```text

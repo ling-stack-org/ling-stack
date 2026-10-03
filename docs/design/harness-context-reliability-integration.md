@@ -67,6 +67,10 @@ no eligible prefix 都有可区分结果；没有可压前缀不能被当作不�
 
 ## 4. H2：单次长 Run 的 Pi 压缩与恢复
 
+逐字冻结任务的 projection、provider 准入和 Host seal 规则，见
+[Run 压缩后的冻结任务约束](run-compaction-task-constraints.md)。摘要可以保留字段名但仍损失原始结构；
+不能仅凭摘要出现关键词就认为原始任务已完整保留，也不能把产物错误一概归因为失忆。
+
 先用安装的 Pi SDK 做带真实生命周期的测试，确认自动压缩的触发、安全边界、错误传播及
 tool call/result 配对；通过后才开启适配。活跃工具、审批或必答暂停时不并发手动 compact。
 前后 usage 和 SDK lifecycle 进入 Host typed evidence；SDK 标 completed 不作为任务成功。
@@ -78,6 +82,69 @@ usage 及必要的 continuation lineage；不得把完整 Pi Session 复制为 c
 daemon restart 从 Host 已提交 checkpoint 恢复；无安全 checkpoint 或外部副作用不确定则
 明确 blocked，不从任意 assistant 文本重造成功，不重跑已完成命令。续接重验权限和 fence，
 与 U2/U3/N03 共用唯一 successor 及冻结输入，不新建第二套恢复器。
+
+### 4.1 压缩后继续执行的进度水位（2026-09-28 补充）
+
+SDK 在一次 `compaction_end` 后仍可继续模型请求和工具调用。单凭“最新压缩 checkpoint”
+恢复不安全：若后续工具已完成而 daemon 崩溃，旧 SDK 视图会重新生成并执行该工具。
+当前恢复链路先按 RunEvent sequence 分页检查 checkpoint 之后的事实；除同一次安装事件、
+内部快照引用和无新模型内容的 `turn_end` 外，任何后续进度均返回
+`checkpoint.effect_unknown`，不重放。这是**安全门禁**，不是 H2 完整恢复。
+
+2026-09-28 接续实现：下一次 provider 请求前，Runner 把已安装的 SDK 模型视图交给 Host；
+Host 核对新 `tool_start/tool_end` 配对、未决审批/问题/命令写入、Run/Attempt fence、
+前驱视图前缀、权限指纹与来源水位后，把新视图作为 sealed progress artifact 提交到
+现有 `run_compaction_checkpoints`，`sourceEventSeq` 为本轮最后的 RunEvent 水位。
+恢复只读取最新 committed checkpoint，逐个校验 predecessor、摘要 digest 与工具事件；
+已有后续操作而缺少匹配视图、取消/失败或证据不确定时仍 fail closed。经 Host 核验的
+daemon recovery 可由新 Attempt 接续旧 Attempt 的检查点，任意 Attempt 不可自行接管。
+真实 Pi SDK 的恢复后读取、第二次模型请求前提交 SQLite 进度，以及随后重启不重放已完成
+工具已有定向测试；**这仍不是整个 H2/H-02/H-05 的验收完成**，自动压缩触发后的完整
+长任务、多工具失败/取消和 packaged GUI 仍需联合验证。
+内置只读 `read` 的失败可作为已收束的错误结果进入 progress checkpoint，让模型纠正；
+失败的 consequential tool 在不能证明无部分副作用时仍返回 `checkpoint.effect_unknown`。
+
+H2 的长期目标是在每次压缩之后的工具轮次末保存新的 Host-owned progress
+checkpoint：使用 SDK 已安装的精确模型视图、最近已完成 tool call/result 配对、Run/Attempt
+fence、source event sequence、策略/模型/上下文身份、workspace provenance 水位，以及前一
+checkpoint 引用。只在所有工具结果、审批和问题状态可证明已收束时 CAS 提交；晚到/重复
+事件不得前移水位。恢复只安装**最新安全 progress 视图**，绝不从较旧的 compaction
+summary 重放后续动作。现有表以每轮最后的 RunEvent seq 表达后续进度，保留
+`(runId, attemptId, sourceEventSeq)` 唯一性、predecessor 与 sealed source refs，无需新增表。
+真实 SDK 长工具循环、取消、失败、断电重启和无重复副作用的同场景联合测试通过前，
+不将 H2 标记完成。
+
+### 4.2 2026-09-27 SDK 边界复核后的实施约束
+
+安装的 Pi 0.84.4 在工具轮次之间调用 `_compactBeforeNextAssistantResponse`，
+并在 `agent_end` 后另做 threshold 检查。是否能中途压缩还取决于 SDK 能否在
+`keepRecentTokens` 内找到安全 cut point：最近工具结果过大时会推迟到结束，
+有切点时则会在下一次任务模型请求前压缩。真实 SDK 回归已覆盖两种情况；
+不能依据单一“结束后压缩”样例推断整个生命周期。该次复核时 Ling 仍关闭自动压缩；
+2026-09-28 起仅在 Host 明确具备 enforce continuation、Run/Attempt 身份和 provider
+admission fence 时 opt-in，其余执行继续关闭。
+活跃工具上调用 `session.compact()` 会先中断执行，完成后也不会自动续接；
+`context` hook 虽能替换下一次模型请求的 messages，却不会自动形成可恢复的
+Host 历史或 checkpoint。不得将这三种机制等同。
+
+已接入的 `context_compaction_start/end` 和 assistant usage 只是带 Attempt 归属的
+RunEvent 观察事实。`sdk_installed` 仅表示 SDK 内存 Session 已安装摘要，不表示
+Daemon 重启后可恢复；事件不包含摘要正文或 provider 错误。现有
+`CompactionCheckpoint` 对应 Thread/Item 摘要与 workspace provenance，不能直接
+冒充单次 Run 的工具循环 checkpoint。
+
+当时确定的实现约束是在**下一次模型请求之前**确定安全边界：前一工具调用和结果均已
+落为 Host 原子事件，未决审批/必答/取消均已让出，当前 Attempt fence 与权限仍有效。
+Host checkpoint 要绑定 run/attempt、上一个已提交 RunEvent 序号、模型/策略版本、
+摘要的受限 artifact 引用与摘要内容摘要、仍需保留的当前目标/约束/未完成关联；
+先提交 checkpoint 再允许模型使用压缩视图。不能在 SDK 内存摘要已安装后才把
+无可恢复的 `compaction_end` 当 checkpoint 补写。
+
+恢复时只接受可核验的 Host checkpoint，通过现有 RunnerContinuation 的唯一 successor
+和 prepared-input/fence 校验重建模型视图；不能从 `agentMessage` 或 SDK Session
+文本猜测已执行副作用。checkpoint 不完整、工具 effect-unknown、来源水位变化或
+权限漂移必须结构化 blocked。H4 的完整原子 tool evidence 与有界模型视图也须
+分离，否则压缩来源可能只剩裁剪后的结果，无法安全重建。
 
 ## 5. H3：Memory 候选资格、中文召回和新鲜度
 
@@ -285,6 +352,108 @@ toolCallId、toolName、details 身份消费一次 Host 结果。无全局调用
 通过。测试使用真实 SDK Session/parser 与隔离固定传输，不调用外部模型/MCP 服务，也不构成
 macOS packaged GUI 或完整恢复验收。证据见 output/internal-chain-results-lineage-handoff-20260908.md。
 
+### 7.8 H4-C：最终模型视图容量与产物读取边界（2026-09-27）
+
+Runner 现在在实际 SDK 组装阶段计算 system prompt、用户输入、工具 schema 和消息视图的
+估算输入容量，并扣除模型 `maxTokens` 与 Host runtime overhead；首轮准备和每次后续模型
+请求都在超限前失败，不能把超大的工具结果送到 provider。模型投影仍是副本，完整 Host
+`tool_end` 证据不被改写。UTF-8 artifact 截断按字节边界回退到合法 UTF-8，保留明确的
+truncation marker。
+
+artifact metadata/content/preview 路由现在拒绝非本地 Origin；带 Origin 的请求还必须绑定
+daemon 已知 workspace。content 单次 range 读取上限为 1 MiB，真实路径再次 realpath 校验，
+符号链接不能越过 artifact 根目录。读取授权仍需复用 action/capability lineage；本轮没有把
+artifact ID 本身当作 participant 授权，也没有宣称 H4 完成。
+
+补充：Pi `context_compaction_start` 现在在 SDK 改写上下文前捕获有界消息快照；Daemon 将
+脱敏快照写入 run-owned sealed artifact，并在 compaction event 中保留
+`checkpointArtifactId`，而不是把完整快照重复写进 RunEvent。该 artifact 已进入后续
+continuation replay 的 artifact refs，但 recovery 读取/重建模型视图尚未接通，不能将其
+误报为 H2 完成。
+
+证据：Runner 专项 192/192、artifact UTF-8/分段读取专项、Daemon 全量回归和 artifact API
+cross-origin 回归通过。H2 的 checkpoint 状态提交、daemon restart 恢复和 packaged macOS
+验收仍未完成。
+
+### 7.9 H2-B：Run/Attempt checkpoint 持久化与重启防误重放（2026-09-27）
+
+新增独立的 `run_compaction_checkpoints` 表（迁移 140），不复用 Thread/Item 的
+`compaction_checkpoints`。每条记录绑定 Run、Attempt、`context_compaction_start` 的
+RunEvent seq、pre-compaction snapshot artifact、受限 summary artifact/摘要、模型、策略指纹、
+workspace provenance 水位、当前目标/约束以及未完成 tool/approval/question ID。
+`(runId, attemptId, sourceEventSeq)` 去重，`(runId, predecessorId)` 与最新已提交前驱校验
+限制唯一后继；`prepared → committed|blocked` 使用 revision CAS。提交必须仍由活跃
+Run/Attempt 持有，旧 Attempt 不能迟到提交。
+
+Daemon restart 在分派 Runner 之前读取最新 compaction event 和 checkpoint：缺记录、
+归属不符、artifact/digest 缺失、权限指纹或 workspace 水位漂移、未决副作用均输出结构化
+`checkpoint.*` 错误并终结旧 stale Run，不重新执行原始 prompt。即使测试注入了合法的
+`committed` checkpoint，当前仍以 `checkpoint.reconstruction_unavailable` 拦下；这是有意
+fail-closed，因为 SDK 压缩模型视图尚不能从 Host checkpoint 恢复。旧 Run 最终状态是
+`failed`，不是可自动继续的成功/blocked 工作流步骤；UI 需要显示具体错误码。
+
+本阶段是持久化与防误重放，**不是 H2 可恢复压缩**。接下来必须补上 SDK 下一次模型请求前的
+安全边界、真实摘要的 Host 原子提交、从 checkpoint 重建模型视图和 fenced continuation，
+然后才能开启 `session-factory.ts` 的自动 compaction。当前 `context_compaction_start/end`
+只作 SDK 观察事实；不得把已有快照 artifact 当作已提交恢复点。专项验证：Core checkpoint
+3/3、Daemon continuation integration 16/16、Core/Daemon build/typecheck 通过；这不替代
+全量回归或 packaged macOS GUI 验收。
+
+### 7.10 H2/H4 接续核验（2026-09-27）
+
+H2 checkpoint 的幂等键仍是 `(runId, attemptId, sourceEventSeq)`，但重复创建时现在会比较
+完整恢复身份，包括前驱、模型、策略、目标、约束及未决关联；不同内容不能静默复用旧行。
+重启评估也重新核算 sealed snapshot/summary 的 SHA-256，并核验 payload 的 Run/Attempt、
+模型、事件序号及内容类型。权限指纹漂移、workspace 水位变化、未知副作用和摘要篡改
+均有反例测试；这些门禁不代表模型视图已经可恢复。
+
+真实 Pi 0.84.4 SDK 测试确认：`agent_end` 后自动压缩的模型视图最后仍可能是 assistant，
+新 Session 对该视图直接 `agent.continue()` 会以 `Cannot continue from message role: assistant`
+拒绝，且不会发模型请求。恢复设计须区分已完成回答的 Host 收尾与工具循环中断续接；
+不能把所有 committed checkpoint 简单塞进新 Session 后盲目 continue 或重发原 prompt。
+Pi 的 `context` extension hook 虽是下一次请求前的异步模型视图边界，但 SDK 会捕获 hook
+异常后继续遍历其他 handler；Host 提交失败不能只靠该 handler 抛错阻止 provider 请求。
+接入 H2 时必须增加独立的 provider-dispatch fence，并把 checkpoint summary artifact 保存为可
+验证的精确模型视图（含保留的工具对），再开放请求。此为下一实现单元，不是本节已交付功能。
+
+H4 不带 `offset/limit` 的 artifact 内容请求已从同步整文件读取改为流式传输，保持完整
+图片、视频和下载响应；显式范围请求仍受 1 MiB 限制。大于 2 MiB 的完整下载和分段读取
+已有路由回归。Run artifact 列表、单项元数据、RunEvent 历史与 live SSE 均在公开出口
+排除 Host-only `sealedPayload` 和其内容摘要；回归证明 SQLite 内部证据仍可读，公开出口
+不携带密封正文或其指纹。
+流式只解决 Daemon
+的整文件内存占用，元数据过滤只解决这一条泄露路径，不等于已经完成每请求总传输预算或
+participant/action 级授权。上述两项及 H2 的下一次模型请求前安全提交、真实摘要安装、
+fenced continuation 仍未完成；不得开启 SDK 自动 compaction 或结算 packaged GUI。
+
+验证：Core 专项 4/4、Core 全量 1001/1001、Runner 全量 193/193、Daemon 压缩恢复专项 3/3、artifact API
+专项通过，Core/Daemon typecheck/build 通过。Daemon 全量在单文件并发（`--test-concurrency=1`）
+下 2048/2048 通过；默认/四文件并发在此机器出现测试环境争用，不能用作代码回归结论。
+仍没有最新 packaged macOS GUI 验收结论。
+
+### 7.11 H2 SDK 工具轮次切点修正（2026-09-28）
+
+真实 SDK fixture 复现：`keepRecentTokens=200` 且工具结果允许安全切点时，
+`compaction_start` 出现在最后一个 `tool_execution_end` 之前，摘要请求后仍有任务模型请求；
+相同高 usage 但最近工具结果挤占保留窗口时，SDK 虽在每轮尝试 threshold，却要到
+`agent_end` 后才能安装摘要。两种情况都保留工具调用与结果配对；`enabled=false`
+则两种时点都不压缩。另一个真实反例确认：中途摘要请求失败后，SDK 仍可能发送
+下一次任务模型请求，`session.prompt()` 本身不报错。Host 不能只记录失败事件，
+必须在 provider dispatch 上 fail closed。Runner 专项 21/21 通过。
+
+因此 H2 的 provider-dispatch fence 必须覆盖**同一 Run 的每个后续模型请求**，
+不能只在 `session.prompt()` 开始或 `agent_end` 之后检查。Host 提交失败时必须阻止
+SDK 中途摘要后的下一次请求；即便 SDK 尚未找到 cut point，也不能把观察到的
+`compaction_start` 当成已提交恢复点。H2 完整提交和 fenced recovery 仍未实现，
+自动压缩继续关闭。
+
+Daemon 已在 `before_provider_request` 回调增加保守准入：只要本次执行收到
+`context_compaction_end` 且尚无可恢复的 Host checkpoint，后续任务请求以
+`checkpoint.missing` 或 `checkpoint.compaction_failed` 拒绝。SDK extension 的异常
+可能被吞，Runner 的独立 task boundary 会锁存 Host 回调失败并在实际传输前再校验。
+这只是**防误续跑**，不生成摘要、不开启压缩，也不代表已可恢复；下一步才是
+真实摘要和精确模型视图的原子提交，以及对应 checkpoint 成功后的门禁释放。
+
 ### 7.7 Attempt 内执行循环检测与共享诊断投影（2026-09-10）
 
 根因不是普通 idle timeout 太长，而是 Runner 每产生一个事件都会刷新 idle 水位；重复的
@@ -331,3 +500,35 @@ restart、SSE reconnect 和历史恢复验证，fixture/E2E 截图不能替代 p
 
 **VERDICT:** 四项纳入本批，自动提炼与语义检索按最新选择后置；不是 CLEARED 或完成证明。
 **UNRESOLVED DECISIONS:** T2-B、Relay、AR 策略仍需独立决定；内部链路范围已确认。
+
+### 2026-09-28 E5/H2/H4 实现状态更正：恢复模型视图与 artifact 访问边界
+
+本日切片已把上一阶段列出的 H2 Host checkpoint 安装链路接通：Daemon 在验证
+Run/Attempt、摘要 artifact、模型/策略指纹、workspace provenance 和副作用状态后，
+把精确 sealed model view 传给 Pi Runner。Runner 在新建的空 Session 中只安装该视图，
+不重放原始 prompt；assistant 末尾视图只做 Host 收尾，不调用 `agent.continue()`，
+toolResult 末尾视图才继续一次模型工具循环。恢复视图的 toolCall/toolResult 配对、
+末尾状态和容量均在 Runner 边界再次校验。Daemon continuation integration 17/17、
+Runner adapter compaction recovery 专项通过；右侧私聊 UI 仍保持冻结。
+
+H4 artifact 边界也已补齐一层：metadata/content/preview 路由必须携带显式 `cwd`，
+带 workspace 的 artifact 查找优先使用该 workspace，不能从已打开的 sibling store 借用
+同名 artifact；`runId`、`participantId`、`workflowStepId`、`actionId` 查询若存在，必须
+与 artifact 的 Run/ExecutionAction refs 一致，否则返回 404。无范围完整下载超过 8 MiB
+时返回结构化 `artifact_transfer_budget_exceeded`，范围读取仍最多 1 MiB；路径 realpath
+和 symlink 根目录校验不变。
+
+因此 H2 的 checkpoint/restart 防误重放与 H4 的 artifact 访问/下载边界已实现并有自动化
+证据，但 H4 的完整模型上下文预算、所有工具入口的统一剩余容量门禁，以及 E6 最新 packaged
+macOS、SSE reconnect、daemon restart GUI 矩阵仍未结算。不得把本节自动化通过写成整体 E6 完成。
+
+### 2026-09-28 H4 模型视图耗尽边界
+
+真实代码复现表明，原 `boundModelToolResults` 在累计 96 KiB 用完后会把较早的非空
+`toolResult.content` 投影为 `[]`，没有截断标记。现在对每个结果预留“完整小结果或最短
+截断标记”所需的最小字节；无法保留任何明确标记时 fail closed。实际 Provider dispatch
+边界再次校验同一投影预算，避免 SDK context hook 报错后继续发送原始消息。完整 Host
+`tool_end` 内容、状态与 details 仍不变。测试先红后绿，覆盖累计耗尽、标记预算不足、
+小结果不被误拒、多段文本及图片上限；Runner build:ci 与全量 **203/203** 通过。
+这只是 H4 模型视图的局部闭环，Host 侧跨工具的动态剩余容量、权限内 artifact 按需读取
+联合案例和 E6 packaged GUI 仍未结算。

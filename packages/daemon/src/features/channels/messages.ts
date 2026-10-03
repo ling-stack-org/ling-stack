@@ -20,6 +20,8 @@ import {
   type ChannelWorkflowStep,
   type RunSession,
   type RunStore,
+  type RuntimeAttemptFenceV1,
+  toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import { formatServerCatalogMessage } from "@ling-stack/localization";
 import type { ResolvedDaemonConfig } from "../../config.js";
@@ -70,10 +72,14 @@ import { resolveChannelReplyExecutionTarget } from "./channel-reply-execution-ta
 import { resolveProviderContextBudget } from "./context-packs.js";
 import { createModelConversationSummaryGenerator } from "./context-processing/conversation-summary-model.js";
 import {
-  planConversationContextSummary,
-  type ConversationSummaryPlan,
+  assessConversationContextSummary,
+  type ConversationSummaryAssessment,
+  type ConversationSummaryUnavailablePrefix,
 } from "./context-processing/conversation-summary-coordinator.js";
-import { ConversationSummaryExecutionRegistry } from "./context-processing/conversation-summary-execution.js";
+import {
+  ConversationSummaryExecutionRegistry,
+  type ConversationSummaryExecutionResult,
+} from "./context-processing/conversation-summary-execution.js";
 import type { ChannelTurnDispatchWorkerRegistry } from "./channel-turn-dispatch-worker.js";
 import { materializeCanonicalChannelMentions } from "./channel-mention-materializer.js";
 
@@ -432,6 +438,7 @@ export async function handleChannelTurnsCollection(
 }
 
 export async function handleLingAgentChannelMessage(input: LingAgentChannelMessageInput): Promise<LingAgentChannelMessageResult> {
+  const summaryAttemptFence = resolveChannelTurnDispatchAttemptFence(input);
   const modelProposer = createModelContextSegmentProposer({
     store: input.store,
     channel: input.channel,
@@ -457,7 +464,11 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     requestedTeammateId: targetTeammateId,
     requestedProviderPresetId: input.requestedProviderPresetId,
   }).providerPresetId;
-  let summaryPlan = prepareConversationSummaryPlan(input, summaryProviderPresetId);
+  let summaryAssessment = prepareConversationSummaryAssessment(input, summaryProviderPresetId);
+  if (summaryAssessment.status === "no_eligible_prefix" && summaryAssessment.trigger === "hard") {
+    recordHardSummaryOutcome(input, summaryAttemptFence, summaryAssessment);
+  }
+  let summaryPlan = summaryAssessment.status === "ready" ? summaryAssessment.plan : undefined;
   const summaryGenerator = createModelConversationSummaryGenerator({
     store: input.store,
     channel: input.channel,
@@ -466,10 +477,16 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
     requestedProviderPresetId: summaryProviderPresetId,
   });
   if (summaryPlan?.trigger === "hard") {
-    await conversationSummaryExecutions.get(input.store, summaryPlan);
-    summaryPlan = prepareConversationSummaryPlan(input, summaryProviderPresetId);
+    const activeResult = await conversationSummaryExecutions.get(input.store, summaryPlan);
+    if (activeResult) recordHardSummaryOutcome(input, summaryAttemptFence, activeResult);
+    summaryAssessment = prepareConversationSummaryAssessment(input, summaryProviderPresetId);
+    if (summaryAssessment.status === "no_eligible_prefix" && summaryAssessment.trigger === "hard") {
+      recordHardSummaryOutcome(input, summaryAttemptFence, summaryAssessment);
+    }
+    summaryPlan = summaryAssessment.status === "ready" ? summaryAssessment.plan : undefined;
     if (summaryPlan?.trigger === "hard") {
-      await conversationSummaryExecutions.executeOnce(input.store, summaryPlan, summaryGenerator);
+      const result = await conversationSummaryExecutions.executeOnce(input.store, summaryPlan, summaryGenerator);
+      recordHardSummaryOutcome(input, summaryAttemptFence, result);
     }
   }
   const lane = await acquireChannelReplyLane({
@@ -507,21 +524,67 @@ export async function handleLingAgentChannelMessage(input: LingAgentChannelMessa
   }
 }
 
-function prepareConversationSummaryPlan(
+function prepareConversationSummaryAssessment(
   input: LingAgentChannelMessageInput,
   providerPresetId: string | undefined,
-): ConversationSummaryPlan | undefined {
-  try {
-    const providerPreset = providerPresetId ? input.store.getProviderPreset(providerPresetId) : undefined;
-    const budget = resolveProviderContextBudget(providerPreset, "channel_reply");
-    return planConversationContextSummary({
-      store: input.store,
+): ConversationSummaryAssessment {
+  const providerPreset = providerPresetId ? input.store.getProviderPreset(providerPresetId) : undefined;
+  const budget = resolveProviderContextBudget(providerPreset, "channel_reply");
+  return assessConversationContextSummary({
+    store: input.store,
+    sourceItemId: input.sourceMessage.id,
+    inputBudgetTokens: budget.inputBudgetTokens,
+  });
+}
+
+function resolveChannelTurnDispatchAttemptFence(
+  input: LingAgentChannelMessageInput,
+): RuntimeAttemptFenceV1 | undefined {
+  const sourceItem = input.store.getConversationItem(input.sourceMessage.id);
+  if (!sourceItem?.turnId) return undefined;
+  const workUnit = input.store.findWorkUnitByIdempotency({
+    kind: "channel_turn_dispatch",
+    ownerType: "ling_turn",
+    ownerId: sourceItem.turnId,
+    idempotencyKey: `channel-turn-dispatch:${sourceItem.turnId}`,
+  });
+  const attempt = workUnit?.activeAttemptId
+    ? input.store.getWorkUnitAttempt(workUnit.activeAttemptId)
+    : undefined;
+  // Edited-message dispatches can run without a claimed WorkUnit. A claimed
+  // dispatch captures its fence before asynchronous summary generation.
+  if (!attempt || attempt.workUnitId !== workUnit?.id) return undefined;
+  return toRuntimeAttemptFence(attempt);
+}
+
+function recordHardSummaryOutcome(
+  input: LingAgentChannelMessageInput,
+  attemptFence: RuntimeAttemptFenceV1 | undefined,
+  result: ConversationSummaryExecutionResult | ConversationSummaryUnavailablePrefix,
+): void {
+  if (!attemptFence || result.status === "not_needed") return;
+  input.store.appendRuntimeEvent({
+    ...attemptFence,
+    type: "work_unit_progress",
+    actor: "system",
+    ts: new Date().toISOString(),
+    data: {
+      stage: "conversation_hard_summary",
+      status: result.status,
       sourceItemId: input.sourceMessage.id,
-      inputBudgetTokens: budget.inputBudgetTokens,
-    });
-  } catch {
-    return undefined;
-  }
+      segmentId: result.status === "no_eligible_prefix"
+        ? result.segmentId : result.plan.projection.metadata.segmentId,
+      coveredThroughSequence: result.status === "no_eligible_prefix"
+        ? null : result.plan.coveredThroughSequence,
+      estimatedProjectionTokens: result.status === "no_eligible_prefix"
+        ? result.estimatedProjectionTokens : result.plan.estimatedProjectionTokens,
+      inputBudgetTokens: result.status === "no_eligible_prefix"
+        ? result.inputBudgetTokens : result.plan.inputBudgetTokens,
+      // The prepared reply is assessed separately after system, Web and Memory
+      // input is rendered. A summary failure never authorizes dropping facts.
+      fallback: result.status === "completed" ? null : "prepared_input_budget_gate",
+    },
+  });
 }
 
 async function dispatchLingAgentChannelMessage(

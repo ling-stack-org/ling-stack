@@ -10,6 +10,7 @@ import {
   type WorkflowStepPolicy,
 } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
+import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-guard.js";
 import { isRecord } from "../../shared/validation.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
 import {
@@ -447,8 +448,18 @@ export function cancelChannelWorkflow(input: CancelWorkflowInput): CancelWorkflo
   const reason = input.reason ?? "workflow_cancelled";
   const cancelledRunIds: string[] = [];
   const cancelledApprovalIds: string[] = [];
+  const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
 
-  for (const step of input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true })) {
+  // Admission belongs to the whole cancellation request. Check every linked
+  // participant before cancelling even the first approval, Run, or step.
+  for (const step of steps) {
+    const linkedRun = step.runId ? input.store.getRun(step.runId) : undefined;
+    if (linkedRun && linkedRun.status !== "yielded" && !isTerminalRunStatus(linkedRun.status)) {
+      assertNoUnsafeRequiredPause(input.store, linkedRun);
+    }
+  }
+
+  for (const step of steps) {
     for (const approval of input.store.listApprovalRequests({ workflowStepId: step.id, status: "pending", limit: 500 })) {
       const cancelled = input.store.cancelApprovalRequest(
         approval.id,

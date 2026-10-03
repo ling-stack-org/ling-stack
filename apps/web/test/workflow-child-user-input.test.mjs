@@ -14,6 +14,7 @@ const { projectWorkflowChildTimeline } = await import("../src/lib/workflow-child
 const { mergeWorkflowNarration, liveNarrationWorkflowIds } = await import("../src/lib/workflow-narration-refresh.ts");
 const { buildWorkflowProgressModel, workflowProgressToConversationWorkCell } = await import("../src/lib/workflow-progress.ts");
 const { conversationTimelineItemsForModel } = await import("../src/lib/conversation-work-cell.ts");
+const { projectTimelineResponsePresentation } = await import("../src/shared/conversation/timeline/timeline-response-presentation.ts");
 
 function fixture({ boundary = 3, messages = true } = {}) {
   const source = { workspaceId: "workspace", threadId: "child-thread", turnId: "child-turn", runId: "run", attemptId: "attempt",
@@ -40,6 +41,25 @@ function fixture({ boundary = 3, messages = true } = {}) {
         lastEventId: "event-" + seq, startEventSequence: seq, endEventSequence: seq, completed: true })) : [] } };
   return { step, history, input: { steps: [step], rows: [], actions: [], participantId: "engineer", parentItemId: "parent" } };
 }
+
+test("Host-settled child steps expose one final response footer while live steps remain commentary", () => {
+  for (const status of ["succeeded", "failed", "cancelled", "blocked", "skipped"]) {
+    const { input, step } = fixture(); step.status = status;
+    const items = projectWorkflowChildTimeline(input);
+    const messages = items.filter((item) => item.kind === "agentMessage");
+    assert.equal(messages[0].phase, "commentary");
+    assert.equal(messages.at(-1).phase, "final", status);
+    const footers = projectTimelineResponsePresentation(items).footerByItemId;
+    assert.equal(footers.size, 1, status);
+    assert.equal([...footers.values()][0].copyText, "Before\n\nAfter");
+  }
+  for (const status of ["running", "waiting_for_input", "waiting_for_approval"]) {
+    const { input, step } = fixture(); step.status = status;
+    const items = projectWorkflowChildTimeline(input);
+    assert(items.filter((item) => item.kind === "agentMessage").every((item) => item.phase === "commentary"));
+    assert.equal(projectTimelineResponsePresentation(items).footerByItemId.size, 0, status);
+  }
+});
 
 test("production child projection interleaves its own Q/A between narrative events, not canonical seq 100", () => {
   const { input } = fixture();

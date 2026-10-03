@@ -139,7 +139,7 @@ export class SqliteUserInputDeliveryStore {
     if (userInputTimestamp(now) < userInputTimestamp(wait.checkpoint.committedAt)) return "not_ready";
     if (wait.status !== "waiting") throw new UserInputStoreError("delivery_conflict");
     assertUserInputWaitingSource(this.ports, request, wait);
-    assertUserInputQuiescence(this.context.database, source.runId, wait.checkpoint.quiescence, now);
+    assertUserInputQuiescence(this.context.database, source.runId, wait.checkpoint.quiescence, now, request.source.fence);
     return "ready";
   }
 

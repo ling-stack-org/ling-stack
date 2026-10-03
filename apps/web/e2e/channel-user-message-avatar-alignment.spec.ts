@@ -13,11 +13,16 @@ const peerBody = "Confirmed: Starting now.\n\nThe peer avatar must remain beside
 const avatarSelector = ":scope > :is(.avatar-initial, .user-profile-avatar, img)";
 const timestamp = "2026-09-05T12:00:00.000Z";
 
-for (const viewport of [{ width: 1440, height: 960 }, { width: 960, height: 800 }]) {
-  test.describe(`${viewport.width}px document message identity`, () => {
+for (const variant of ["light", "dark"].flatMap((theme) =>
+  [{ width: 1440, height: 960 }, { width: 960, height: 800 }].map((viewport) => ({ theme, viewport })))) {
+  const { theme, viewport } = variant;
+  test.describe(`${theme} ${viewport.width}px document message identity`, () => {
     test.use({ viewport });
     test.beforeEach(async ({ page }) => {
-      await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
+      await page.addInitScript((preference) => {
+        localStorage.setItem("ling-stack.locale", "en-US");
+        localStorage.setItem("ling-stack.themePreference", preference);
+      }, theme);
     });
 
     test("Channel user avatar stays right and peer avatar stays left of the document body", async ({ page }, testInfo) => {
@@ -35,6 +40,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 960, height: 800 
       ];
       await mockDaemon(page, state);
       await page.goto("/");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
       await openEngineeringChannel(page);
       const rows = page.getByLabel("Channel message feed").locator("[data-conversation-message-row].channel-message-row");
       await expectMessageGeometry(rows.filter({ hasText: "C01 avatar alignment" }), testInfo, "channel-user", true, true);
@@ -58,6 +64,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 960, height: 800 
       ];
       await mockDaemon(page, state);
       await page.goto("/");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
       await showSidebar(page);
       await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
         .getByRole("button", { name: displayName, exact: true }).click();
@@ -78,6 +85,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 960, height: 800 
       }];
       await mockDaemon(page, state);
       await page.goto("/");
+      await expect(page.locator("html")).toHaveAttribute("data-theme", theme);
       await showSidebar(page);
       await page.getByRole("button", { name: /Open recent conversation \d+/u })
         .filter({ hasText: normalConversationFixtureTitle }).click();
@@ -102,7 +110,7 @@ for (const viewport of [{ width: 1440, height: 960 }, { width: 960, height: 800 
       // changing a production route or constructing a substitute message DOM.
       await page.route("**/__message-row-avatar-fixture", (route) => route.fulfill({
         contentType: "text/html",
-        body: `<!doctype html><html lang="en"><head><link rel="stylesheet" href="/src/styles.css"></head><body>${markup}</body></html>`,
+        body: `<!doctype html><html lang="en" data-theme="${theme}" data-ui-theme="ling-${theme}"><head><link rel="stylesheet" href="/src/styles.css"></head><body>${markup}</body></html>`,
       }));
       await page.goto("/__message-row-avatar-fixture");
       for (const surface of surfaces) {
@@ -140,7 +148,8 @@ async function expectMessageGeometry(
   await expect(row.locator(".message-body-paragraph")).toHaveCount(ownMessage ? 3 : 2);
   await row.scrollIntoViewIfNeeded();
   await row.hover();
-  await expect(row.getByRole("button", { name: "Copy message", exact: true })).toBeVisible();
+  // Agent copy is owned by the settled response footer, not each narration row.
+  if (ownMessage) await expect(row.getByRole("button", { name: "Copy message", exact: true })).toBeVisible();
   const geometry = await row.evaluate((element, selector) => {
     const content = element.querySelector<HTMLElement>(":scope > .message-content");
     if (!content) throw new Error("Message chrome must contain its body");
@@ -168,6 +177,8 @@ async function expectMessageGeometry(
       contentTextAlign: contentStyle.textAlign,
       contentBorderWidth: contentStyle.borderTopWidth,
       contentBackground: contentStyle.backgroundColor,
+      contentRadius: Number.parseFloat(contentStyle.borderTopLeftRadius),
+      contentPadding: Number.parseFloat(contentStyle.paddingInlineStart),
       contentShadow: contentStyle.boxShadow,
       avatarGridRow: avatar ? getComputedStyle(avatar).gridRow : null,
       actionsGridRow: actions ? getComputedStyle(actions).gridRow : null,
@@ -183,7 +194,16 @@ async function expectMessageGeometry(
   expect(geometry.contentRight).toBeLessThanOrEqual(geometry.rowRight + 2);
   expect.soft(["left", "start"]).toContain(geometry.contentTextAlign);
   expect.soft(geometry.contentBorderWidth).toBe("0px");
-  expect.soft(geometry.contentBackground).toBe("rgba(0, 0, 0, 0)");
+  if (ownMessage) {
+    expect.soft(geometry.contentBackground).not.toBe("rgba(0, 0, 0, 0)");
+    expect.soft(geometry.contentRadius).toBeGreaterThan(0);
+    expect.soft(geometry.contentPadding).toBeGreaterThan(0);
+    expect.soft(geometry.contentWidth).toBeLessThan(geometry.rowWidth);
+  } else {
+    expect.soft(geometry.contentBackground).toBe("rgba(0, 0, 0, 0)");
+    expect.soft(geometry.contentRadius).toBe(0);
+    expect.soft(geometry.contentPadding).toBe(0);
+  }
   expect.soft(geometry.contentShadow).toBe("none");
   const evidence = JSON.stringify(geometry);
   if (hasAvatar) {

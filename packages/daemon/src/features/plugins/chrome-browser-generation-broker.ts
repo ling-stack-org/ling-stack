@@ -13,6 +13,7 @@ import type { PiRunnerMcpToolCallResult } from "@ling-stack/runner-pi";
 import type { McpBroker, McpBrokerOptions } from "../../context.js";
 import type { ChromeBrowserSessionController } from "../browser-extension/session-controller.js";
 import { createMcpAuthStatus, createMcpStatusSnapshot } from "../mcp/status.js";
+import { createHostMcpGenerationFacade } from "../mcp/broker.js";
 
 const MAX_TAB_COUNT = 100;
 const MAX_SNAPSHOT_ELEMENTS = 300;
@@ -73,7 +74,7 @@ export function createChromeBrowserGenerationBroker(input: {
   readonly controller: ChromeBrowserSessionController;
 }): McpBroker {
   const owned = (server: McpServer): boolean => server.id === CHROME_BROWSER_MCP_SERVER_ID;
-  return {
+  const facade: McpBroker = {
     cuaDriverRuntimeAuthority: input.baseBroker.cuaDriverRuntimeAuthority,
     async checkServer(server, options) {
       if (!owned(server)) return input.baseBroker.checkServer(server, options);
@@ -96,6 +97,7 @@ export function createChromeBrowserGenerationBroker(input: {
       return toToolResult(toolName, result);
     },
   };
+  return createHostMcpGenerationFacade({ baseBroker: input.baseBroker, route: { kind: "chrome" }, facade });
 }
 
 function chromeStatus(

@@ -97,12 +97,12 @@ test.describe("T13-O.21 Teammates legacy writer release", () => {
     await toolbar.getByRole("button", { name: "Summary" }).click();
     const summary = page.locator(".teammate-chat-summary-popover");
     await expect(summary).toBeVisible();
+    await expectReducedMotion(summary);
     await toolbar.getByRole("button", { name: "Show details" }).click();
     const dock = page.getByRole("complementary", { name: "Private chat workspace dock" });
     const dockFrame = page.locator(".teammate-private-right-dock-frame");
     await expect(dock).toBeVisible();
-    await expect(summary).toBeVisible();
-    await expectReducedMotion(summary);
+    await expect(summary).toHaveCount(0);
     await expectReducedMotion(dockFrame);
     await expect.poll(() => page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
     await expect.poll(() => feed.evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");

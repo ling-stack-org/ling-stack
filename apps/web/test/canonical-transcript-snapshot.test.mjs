@@ -1,5 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { createSqliteRunStore } from "@ling-stack/core";
 import { batchCanonicalTranscriptItems } from "@ling-stack/conversation-ui-core";
 import { projectConversationDetailTimeline, resolveConversationContextSnapshots } from "../src/domains/conversations/canonical-transcript-snapshot.ts";
 import { mergeConversationDetailSnapshots } from "../src/domains/conversations/conversation-detail-merge.ts";
@@ -41,6 +45,43 @@ test("detail adapter feeds the canonical projector from full Continuity history"
   assert.equal(projection.items[1].attemptNumber, 1);
   assert.equal(projection.items[1].turnRunRole, "primary");
   assert.equal(projection.items[1].sourceRefs.some((ref) => ref.kind === "conversation_item" && ref.id === "tool-1"), true);
+});
+
+test("all conversation detail surfaces exclude internal provenance but diagnose visible unanchored artifacts", () => {
+  for (const kind of ["conversation", "teammate_direct", "channel_discussion"]) {
+    const detail = detailFixture({ kind });
+    detail.artifacts = [
+      { id: "internal-patch", runId: "run-1", type: "json", path: ".ling-stack/provenance/run-1/forward-plan.json", title: "Workspace forward patch plan", createdAt: detail.thread.createdAt },
+      { id: "internal-automation", runId: "run-1", type: "markdown", path: "automation-context/run-1-automation-1.md", title: "Automation context", createdAt: detail.thread.createdAt },
+      { id: "internal-import", runId: "run-1", type: "markdown", path: "external-work/work-1/rendered-prompt.md", title: "Rendered workflow prompt", createdAt: detail.thread.createdAt },
+      { id: "visible-unanchored", runId: "run-1", type: "file", path: "reports/result.txt", title: "Result", createdAt: detail.thread.createdAt },
+    ];
+    const projection = projectConversationDetailTimeline(detail);
+    for (const id of ["internal-patch", "internal-automation", "internal-import"]) {
+      assert.equal(projection.diagnostics.some((diagnostic) => diagnostic.sourceRefs.some((ref) => ref.id === id)), false, `${kind}:${id}`);
+    }
+    assert.equal(projection.diagnostics.some((diagnostic) => diagnostic.code === "missing_anchor" && diagnostic.sourceRefs.some((ref) => ref.id === "visible-unanchored")), true, kind);
+  }
+});
+
+test("run-scoped edit diff remains available only through its owning file action", () => {
+  for (const kind of ["conversation", "teammate_direct", "channel_discussion"]) {
+    const detail = detailFixture({ kind });
+    detail.executionActions = [actionFixture("edit-1", "tool-1", {
+      actionType: "file_edit", title: "Edit todo.py", commandEvidence: undefined,
+      targetRefs: [{ type: "file", path: "todo.py", label: "todo.py" }],
+      resultArtifactIds: ["owned-diff"],
+    })];
+    detail.artifacts = [
+      { id: "owned-diff", runId: "run-1", type: "diff", path: "run-1/008-generated-edit-diff-todo.py.diff", title: "Generated edit diff: todo.py", contentType: "text/x-diff", createdAt: detail.thread.createdAt },
+      { id: "unowned-diff", runId: "run-1", type: "diff", path: "run-1/009-unowned.diff", title: "Unowned diff", contentType: "text/x-diff", createdAt: detail.thread.createdAt },
+    ];
+    const projection = projectConversationDetailTimeline(detail);
+    const file = projection.items.find((entry) => entry.kind === "fileChange");
+    assert.equal(file?.changePreview?.artifactId, "owned-diff", kind);
+    assert.equal(file?.sourceRefs.some((ref) => ref.kind === "artifact" && ref.id === "owned-diff" && ref.hostTarget === "open_diff"), true, kind);
+    assert.equal(JSON.stringify(projection).includes("unowned-diff"), false, kind);
+  }
 });
 
 test("detail adapter assigns the local Ling participant when a normal action omits ownership", () => {
@@ -106,6 +147,66 @@ test("detail adapter supplies immutable context segments to display batching", (
   });
   assert.deepEqual(display.filter((entry) => entry.kind === "explorationBatch").map((entry) => entry.childActionIds), [["read-2", "read-3", "read-4"]]);
   assert.deepEqual(display.filter((entry) => entry.kind === "exploration").map((entry) => entry.actionId), ["read-5", "read-6"]);
+});
+
+test("normal Run reads anchored to the accepted user item batch without inventing tool items", () => {
+  const detail = detailFixture();
+  detail.conversationItems = [{ ...item("user-1", 1, "user_message", { body: "Inspect", format: "plain_text" }), turnId: "turn-1" }];
+  detail.executionActions = [6, 13, 20].map((seq, index) => actionFixture(`read-${index}`, "user-1", {
+    actionType: "read", toolCallId: `read-call-${index}`, sourceEventSequence: seq,
+    targetRefs: [{ type: "file", id: `file-${index}.md`, path: `file-${index}.md` }],
+  }));
+  detail.contextSnapshots = [{
+    id: "prepared_input:execution:user-1", threadId: detail.thread.id, segmentId: "accepted-segment",
+    projectionVersion: "v1", throughItemSequence: 1, summaryIds: [],
+    sourceRefs: [{ type: "thread", id: detail.thread.id }, { type: "turn", id: "turn-1" }, { type: "conversation_item", id: "user-1" }],
+    policyVersion: "v1", createdAt: detail.thread.createdAt,
+  }];
+  const projection = projectConversationDetailTimeline(detail);
+  const display = batchCanonicalTranscriptItems(projection.items, { contextSegmentIdByItemId: projection.contextSegmentIdByItemId });
+  assert.deepEqual(display.find(row => row.kind === "explorationBatch")?.childActionIds, ["read-0", "read-1", "read-2"]);
+  assert.equal(projection.items.filter(row => row.kind === "exploration").length, 3, "atomic facts remain intact");
+  detail.contextSnapshots = [];
+  const missing = projectConversationDetailTimeline(detail);
+  assert.equal(batchCanonicalTranscriptItems(missing.items, { contextSegmentIdByItemId: missing.contextSegmentIdByItemId })
+    .some(row => row.kind === "explorationBatch"), false, "missing metadata is not inferred from Run identity");
+});
+
+test("real frozen private input anchors read action DTOs in the shared reversible batch projection", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-private-batch-test-"));
+  const store = createSqliteRunStore(cwd);
+  t.after(async () => { store.close(); await rm(cwd, { recursive: true, force: true }); });
+  const now = "2026-09-30T07:00:00.000Z";
+  const teammateId = "teammate_builtin_engineer";
+  const thread = store.createLingThread({ kind: "teammate_direct", teammateId, title: "Private", objective: "Read" }, now);
+  const accepted = store.appendTeammateDirectUserTurnWithInputSnapshot({ threadId: thread.id, teammateId,
+    itemId: "private-source", title: "Read", userInstruction: "Read three files", idempotencyKey: "private-read",
+    payload: { body: "Read three files", format: "markdown", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
+    executionInput: { prompt: "Frozen private history", systemPrompt: "Private owner only" } }, now);
+  const run = store.createRun({ id: "private-run", cwd, taskId: accepted.item.id, threadId: thread.id,
+    turnId: accepted.turnId, teammateId, providerName: "test", providerModel: "test", taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now });
+  const { projection: p } = accepted.inputSnapshot;
+  const detail = { ...detailFixture(), cwd, thread, turns: [store.getLingTurn(accepted.turnId)], runs: [run],
+    runLinks: store.listLingTurnRuns(accepted.turnId), conversationItems: [accepted.item],
+    executionActions: [1, 3, 5].map((seq, index) => actionFixture(`private-read-${index}`, accepted.item.id, {
+      workspaceId: thread.workspaceId, threadId: thread.id, runId: run.id, participantId: teammateId,
+      actionType: "read", toolCallId: `private-call-${index}`, sourceEventSequence: seq,
+      targetRefs: [{ type: "file", id: `file-${index}.md`, path: `file-${index}.md` }],
+    })),
+    contextSnapshots: [{ id: accepted.inputSnapshot.id, threadId: thread.id, segmentId: p.segmentId,
+      projectionVersion: p.projectionVersion, throughItemSequence: p.throughItemSequence, summaryIds: p.summaryIds,
+      sourceRefs: p.sourceRefs, policyVersion: p.policyVersion, createdAt: now }],
+  };
+  const projection = projectConversationDetailTimeline(detail);
+  const display = batchCanonicalTranscriptItems(projection.items, { contextSegmentIdByItemId: projection.contextSegmentIdByItemId });
+  const batch = display.find(row => row.kind === "explorationBatch");
+  assert.deepEqual(batch?.childActionIds, ["private-read-0", "private-read-1", "private-read-2"]);
+  assert.deepEqual(projection.items.filter(row => row.kind === "exploration").map(row => row.actionId), batch.childActionIds,
+    "batch leaves ordered atomic child facts intact for disclosure");
+  detail.contextSnapshots = [];
+  const missing = projectConversationDetailTimeline(detail);
+  assert.equal(batchCanonicalTranscriptItems(missing.items, { contextSegmentIdByItemId: missing.contextSegmentIdByItemId })
+    .some(row => row.kind === "explorationBatch"), false);
 });
 
 test("context snapshot resolver derives only explicit committed source items", () => {
@@ -222,6 +323,50 @@ test("detail adapter projects approvals from checkpoint lineage without assignin
   assert.equal(projection.diagnostics.some((entry) => entry.code === "missing_anchor" || entry.code === "owner_conflict"), false);
 });
 
+test("normal, private, and channel approvals reuse only their correlated durable action anchor", () => {
+  for (const kind of ["conversation", "teammate_direct", "channel_discussion"]) {
+    const detail = detailFixture({ kind });
+    const participantId = kind === "teammate_direct" ? "engineer" : "ling";
+    if (kind === "teammate_direct") detail.runs[0].teammateId = participantId;
+    detail.conversationItems = [{ ...detail.conversationItems[0], turnId: "turn-1" }];
+    detail.executionActions = [actionFixture("approval:approval-1", "user-1", {
+      approvalId: "approval-1", toolCallId: "call-approved", participantId,
+      sourceRefs: [{ kind: "approval", id: "approval-1" }, { kind: "conversation_item", id: "user-1" }],
+    })];
+    detail.approvals = [{
+      id: "approval-1", runId: "run-1", toolCallId: "call-approved", actionType: "bash", risk: "medium",
+      title: "Allow command", description: "Run the command", payload: {}, status: "approved",
+      createdAt: detail.thread.createdAt, resolvedAt: detail.thread.updatedAt,
+    }];
+    detail.approvalCheckpoints = [{
+      id: "checkpoint-1", approvalId: "approval-1", runId: "run-1", toolCallId: "call-approved",
+      revision: 2, resumeBasis: { priorAttemptId: "attempt-1" },
+    }];
+
+    const projection = projectConversationDetailTimeline(detail);
+    const command = projection.items.find((entry) => entry.kind === "commandExecution");
+    assert.equal(command?.approvalId, "approval-1", kind);
+    assert.equal(command?.runId, "run-1", kind);
+    assert.equal(command?.participantId, participantId, kind);
+    assert.equal(command?.sourceRefs.some((ref) => ref.kind === "conversation_item" && ref.id === "user-1"), true, kind);
+    assert.equal(projection.items.some((entry) => entry.kind === "approval"), false, kind);
+    assert.equal(projection.diagnostics.some((entry) => entry.code === "missing_anchor"), false, kind);
+
+    detail.executionActions[0].status = "waiting_for_approval";
+    detail.approvals[0].status = "pending";
+    const waiting = projectConversationDetailTimeline(detail);
+    assert.equal(waiting.items.find((entry) => entry.kind === "commandExecution")?.status, "waiting", kind);
+    assert.equal(waiting.items.some((entry) => entry.kind === "approval"), false, kind);
+    assert.equal(waiting.diagnostics.some((entry) => entry.code === "missing_anchor"), false, kind);
+
+    // A different approval identity must not borrow this action's anchor.
+    detail.executionActions[0].sourceRefs = [{ kind: "approval", id: "approval-other" }, { kind: "conversation_item", id: "user-1" }];
+    const rejected = projectConversationDetailTimeline(detail);
+    assert.equal(rejected.items.some((entry) => entry.kind === "approval"), false, kind);
+    assert.equal(rejected.diagnostics.some((entry) => entry.code === "missing_anchor"), true, kind);
+  }
+});
+
 test("detail adapter projects durable plan, compaction lineage, and a child Agent into the shared timeline", () => {
   const detail = detailFixture({ kind: "channel_discussion" });
   detail.conversationItems = [
@@ -307,6 +452,39 @@ test("detail reconnect merge keeps newer actions and durable records from both s
   assert.deepEqual(merged.plans?.map((plan) => plan.id), ["plan-current", "plan-reconnect"]);
   const projection = projectConversationDetailTimeline(merged);
   assert.equal(projection.items.find((entry) => entry.actionId === "action-1")?.revision, 8);
+});
+
+test("detail refresh replaces a provisional tool action with its approval-correlated action", () => {
+  const beforeApproval = detailFixture({ kind: "conversation" });
+  beforeApproval.conversationItems.push(item("tool-2", 4, "tool_call", { toolCallId: "call-2", toolName: "bash" }));
+  beforeApproval.executionActions = [
+    actionFixture("tool:run-1:call-2", "tool-2", {
+      revision: 4, toolCallId: "call-2", status: "running", summary: "Processing",
+    }),
+    actionFixture("tool:run-other:call-2", "tool-2", {
+      runId: "run-other", toolCallId: "call-2", status: "running",
+    }),
+    actionFixture("tool:run-1:call-other", "tool-2", {
+      toolCallId: "call-other", status: "running",
+    }),
+  ];
+  const afterApproval = detailFixture({ kind: "conversation", updatedAt: "2026-08-29T00:00:01.000Z" });
+  afterApproval.conversationItems = [...beforeApproval.conversationItems];
+  afterApproval.executionActions = [actionFixture("approval:approval-2", "tool-2", {
+    approvalId: "approval-2", toolCallId: "call-2", revision: 12,
+    status: "succeeded", summary: "Completed",
+  })];
+
+  for (const merged of [
+    mergeConversationDetailSnapshots(beforeApproval, afterApproval),
+    mergeConversationDetailSnapshots(afterApproval, beforeApproval),
+  ]) {
+    assert.equal(merged.executionActions.some((action) => action.id === "tool:run-1:call-2"), false);
+    assert.equal(merged.executionActions.filter((action) => action.runId === "run-1" && action.toolCallId === "call-2").length, 1);
+    assert.equal(merged.executionActions.some((action) => action.id === "tool:run-other:call-2"), true);
+    assert.equal(merged.executionActions.some((action) => action.id === "tool:run-1:call-other"), true);
+    assert.equal(projectConversationDetailTimeline(merged).items.filter((entry) => entry.actionId === "tool:run-1:call-2").length, 0);
+  }
 });
 
 test("detail reconnect merge is deterministic when snapshots arrive in either order", () => {

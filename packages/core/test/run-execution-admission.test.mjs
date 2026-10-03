@@ -74,6 +74,50 @@ test("current execution can append and complete with its captured identity", asy
   assert.equal(f.store.getRun(f.run.id).status, "succeeded");
 });
 
+test("provider retry evidence cannot outlive its captured Attempt or reopen a terminal Run", async t => {
+  const data = { policyVersion: "pi_sdk_retry_v1", scope: "assistant", phase: "scheduled", retryAttempt: 1,
+    maxRetryAttempts: 1, delayMs: 1, errorDiagnostic: { schemaVersion: 1, category: "unknown", basis: "unclassified" } };
+  for (const boundary of ["replacement", "terminal", "cancelling"]) {
+    const f = await fixture(t);
+    assert.equal(f.store.appendExecutionEvent(f.run.id, f.fence, "provider_retry", data).type, "provider_retry");
+    if (boundary === "replacement") f.replace();
+    else if (boundary === "terminal") assert.equal(f.complete("runner_succeeded").ok, true);
+    else {
+      f.store.database.prepare("UPDATE work_units SET status='cancelling' WHERE id=?").run(f.unit.id);
+      f.store.database.prepare("UPDATE work_unit_attempts SET status='cancelling', abort_requested_at=? WHERE id=?")
+        .run(now, f.attempt.id);
+    }
+    const count = f.store.listEvents(f.run.id).length;
+    assert.throws(() => f.store.appendExecutionEvent(f.run.id, f.fence, "provider_retry", data),
+      error => error.code === "stale_run_execution");
+    assert.equal(f.store.listEvents(f.run.id).length, count);
+  }
+});
+
+test("compaction lifecycle remains ordered durable evidence and rejects a replaced attempt", async t => {
+  const f = await fixture(t);
+  const start = f.store.appendExecutionEvent(f.run.id, f.fence, "context_compaction_start", {
+    reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1", attemptId: f.attempt.id,
+  });
+  const end = f.store.appendExecutionEvent(f.run.id, f.fence, "context_compaction_end", {
+    reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1", outcome: "sdk_installed",
+    willRetry: false, tokensBefore: 1800, estimatedTokensAfter: 400, attemptId: f.attempt.id,
+  });
+  assert.equal(end.seq, start.seq + 1);
+  const reader = createSqliteRunStore(f.cwd);
+  try {
+    assert.deepEqual(reader.listEvents(f.run.id).slice(-2).map(event => [event.type, event.data.attemptId]), [
+      ["context_compaction_start", f.attempt.id], ["context_compaction_end", f.attempt.id],
+    ]);
+  } finally { reader.close(); }
+  f.replace();
+  assert.throws(() => f.store.appendExecutionEvent(f.run.id, f.fence, "context_compaction_end", {
+    reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1", outcome: "failed", willRetry: false,
+    attemptId: f.attempt.id,
+  }), error => error.code === "stale_run_execution");
+  assert.equal(f.store.countEvents(f.run.id), end.seq);
+});
+
 for (const scenario of ["replaced", "yielded", "succeeded", "cancelled", "failed"]) test(`closed or stale owner cannot append or settle: ${scenario}`, async t => {
   const f = await fixture(t);
   if (scenario === "replaced") f.replace();

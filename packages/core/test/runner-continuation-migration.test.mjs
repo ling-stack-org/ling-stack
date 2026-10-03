@@ -21,6 +21,10 @@ test("schema 134 upgrades to runner continuation schema 135 and reruns idempoten
   const path = resolveRuntimePaths(cwd).databasePath;
   let database = new DatabaseSync(path);
   database.exec(`
+    DROP TABLE run_compaction_checkpoints;
+    DELETE FROM schema_migrations WHERE version = 140;
+    DROP TABLE approval_postcommit_effects;
+    DELETE FROM schema_migrations WHERE version = 139;
     DROP TABLE run_evaluation_grades;
     DROP TABLE run_evaluations;
     DELETE FROM schema_migrations WHERE version IN (137, 138);
@@ -30,7 +34,8 @@ test("schema 134 upgrades to runner continuation schema 135 and reruns idempoten
     DROP TABLE runner_continuations;
     DELETE FROM schema_migrations WHERE version = 135;
   `);
-  assert.equal(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 134);
+  assert.ok(database.prepare("SELECT 1 FROM schema_migrations WHERE version = 134").get());
+  assert.equal(database.prepare("SELECT 1 FROM schema_migrations WHERE version = 135").get(), undefined);
   database.close();
 
   store = createSqliteRunStore(cwd);

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { projectTimelineResponsePresentation } from "../src/shared/conversation/timeline/timeline-response-presentation.ts";
 import test from "node:test";
 import { projectTeammatePrivateTimelineItems } from "../src/features/teammates/teammate-private-timeline-items.ts";
 import * as privateTimeline from "../src/features/teammates/teammate-private-timeline-items.ts";
@@ -51,6 +52,47 @@ test("private canonical atomic facts interleave narration before shared batching
   const batched = batchCanonicalTranscriptItems(atomic, { contextSegmentIdByItemId: input.canonical.contextSegmentIdByItemId });
   assert.equal(batched.some((item) => item.kind === "explorationBatch"), false, "Narration is a causal boundary, so the three reads must not be combined");
   assert.ok(atomic.filter((item) => item.kind === "agentMessage").every((item) => item.sourceRefs.some((ref) => ref.kind === "conversation_item" && ref.id === "private-user")));
+});
+
+test("private segmented narration has explicit admitted speaker identity and one response footer", () => {
+  const { input } = fixture();
+  input.messages[1].message.narrationSegments = input.messages[1].message.narrationSegments.map((segment) => ({
+    ...segment,
+    source: {
+      workspaceId: "workspace-private", threadId: "canonical-private", turnId: "turn-private",
+      runId: "run-private", attemptId: "attempt-private", workUnitId: "unit-private", participantId: input.teammateId,
+    },
+  }));
+  const items = projectTeammatePrivateTimelineItems(input);
+  const messages = items.filter((item) => item.kind === "agentMessage");
+  assert.ok(messages.every((item) => item.participantId === input.teammateId));
+  const presentation = projectTimelineResponsePresentation(items);
+  assert.deepEqual([...presentation.identityOwnerIds], [messages[0].id]);
+  assert.equal(presentation.footerByItemId.size, 1);
+  assert.equal([...presentation.footerByItemId.values()][0].logicalMessageCount, 1);
+});
+
+test("private narration without admitted source never inherits execution lineage from its author", () => {
+  for (const patch of [undefined, { runId: "other-run" }, { turnId: "other-turn" },
+    { participantId: "other-agent" }, { attemptId: "" }]) {
+    const { input } = fixture();
+    if (patch) input.messages[1].message.narrationSegments = input.messages[1].message.narrationSegments.map((segment) => ({
+      ...segment,
+      source: {
+        workspaceId: "workspace-private", threadId: "canonical-private", turnId: "turn-private",
+        runId: "run-private", attemptId: "attempt-private", workUnitId: "unit-private", participantId: input.teammateId,
+        ...patch,
+      },
+    }));
+    const items = projectTeammatePrivateTimelineItems(input);
+    const messages = items.filter((item) => item.kind === "agentMessage");
+    assert.equal(messages.length, 3);
+    assert.ok(messages.every((item) => item.participantId === undefined && item.attemptId === undefined && item.workUnitId === undefined));
+    assert.ok(messages.every((item) => item.sourceRefs.every((ref) => !["participant", "attempt", "work_unit"].includes(ref.kind))));
+    const presentation = projectTimelineResponsePresentation(items);
+    assert.deepEqual([...presentation.identityOwnerIds], [messages[0].id], "Only the same logical narration may continue its display identity");
+    assert.equal(presentation.footerByItemId.size, 1);
+  }
 });
 
 test("private canonical aggregate assistant is replaced by event segments, not duplicated", () => {

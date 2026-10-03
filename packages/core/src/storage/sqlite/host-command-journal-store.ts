@@ -12,6 +12,7 @@ import { appendEventLogLine } from "../event-log.js";
 import { isCurrentRunExecutionOwner } from "./run-execution-admission.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
+import { hostOperationDomainIdentity, readHostOperation, sameHostOperationSource } from "./host-operation-journal-evidence.js";
 
 type PreparedEvent = Extract<RunEventEnvelope, { type: "host_command_prepared" }>;
 type SettledEvent = Extract<RunEventEnvelope, { type: "host_command_settled" }>;
@@ -115,6 +116,33 @@ export class SqliteHostCommandJournalStore {
       }
       return result;
     });
+  }
+
+  /**
+   * Internal half of the tracked launch. The operation journal already owns the
+   * writer transaction and read-only effect window; do not open a nested one.
+   * Recheck both opaque ticket and exact durable binding under that same lock.
+   * Claim survives throw/thenable/outer COMMIT failure so it cannot respawn.
+   */
+  launchWithinHostOperation<T>(ticket: HostCommandExecutionTicket, operationId: string, launch: () => T): T {
+    const state = this.tickets.get(ticket);
+    if (!state) throw failure("invalid_command_ticket");
+    if (state.launchClaimed || state.settlement) throw failure("command_launch_already_claimed");
+    if (!this.context.database.isTransaction || this.context.database.prepare("PRAGMA query_only").get()?.query_only !== 1
+      || typeof launch !== "function" || Object.prototype.toString.call(launch) === "[object AsyncFunction]") {
+      throw failure("command_tracked_launch_window_invalid");
+    }
+    const operation = readHostOperation(this.context.database, operationId);
+    if (!operation || operation.phase !== "launched" || operation.kind !== "command"
+      || operation.evidenceRef?.kind !== "host_command" || operation.evidenceRef.id !== ticket.executionId
+      || !sameHostOperationSource(operation.source, { runId: state.run.id, ...state.fence })
+      || hostOperationDomainIdentity(this.context.database, operation, operation.evidenceRef, false) !== operation.domainIdentityDigest) {
+      throw failure("command_tracked_identity_invalid");
+    }
+    if (!isCurrentRunExecutionOwner(this.context, state.run.id, state.fence, false)
+      || this.getRun(state.run.id)?.cwd !== state.run.cwd) throw failure("stale_run_execution");
+    state.launchClaimed = true;
+    return readSqliteWithinTransaction(this.context.database, launch);
   }
 
   listHostCommandWriteBlockers(cwd: string): HostCommandWriteBlockerV1[] {

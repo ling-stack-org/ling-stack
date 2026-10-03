@@ -28,8 +28,15 @@ export type NormalContextEntry = NormalContextEntryBase & (
   | { readonly origin: "canonical_item"; readonly turnId: string }
   | { readonly origin: "legacy_turn_user"; readonly turnId: string }
   | { readonly origin: "run_narration"; readonly turnId: string; readonly runId: string; readonly completed: boolean }
+  | { readonly origin: "terminal_report"; readonly turnId: string; readonly reportId: string }
   | { readonly origin: "context_summary"; readonly summaryId: string }
 );
+
+export interface NormalContextTerminalReportFact {
+  readonly reportId: string;
+  readonly outcomeStatus: "succeeded" | "partially_succeeded" | "blocked" | "failed" | "cancelled";
+  readonly unresolvedRisks: readonly string[];
+}
 
 export interface NormalContextHydrationDiagnostic {
   readonly code: "invalid_history_owner" | "ambiguous_history" | "unverified_run_owner" | "invalid_event_boundary" | "invalid_summary" | "budget_exceeded";
@@ -45,6 +52,8 @@ export interface HydrateNormalConversationContextInput {
    * have no assignment. Never pass an unfiltered thread-wide scan or UI text.
    */
   readonly canonicalItems: readonly ConversationItemV1[];
+  /** Host-verified facts for admitted, published report anchors only. */
+  readonly terminalReportFactsByItemId?: ReadonlyMap<string, NormalContextTerminalReportFact>;
   /**
    * Shared-projector admitted, source-visibility-checked summaries. Sources absent
    * from the captured tail must already be verified upstream; no lookups occur here.
@@ -206,6 +215,21 @@ export function hydrateNormalConversationContext(input: HydrateNormalConversatio
           usedWatermarks.set(selection.id, frozen.watermark);
         }
       }
+    }
+    const reports = items.filter((item): item is Extract<ConversationItemV1, { kind: "terminal_report" }> =>
+      item.kind === "terminal_report");
+    const latestBySource = new Map<string, typeof reports[number]>();
+    for (const item of reports) {
+      const key = `${item.payload.sourceKind}:${item.payload.sourceId}`;
+      const previous = latestBySource.get(key);
+      if (!previous || previous.payload.generation < item.payload.generation) latestBySource.set(key, item);
+    }
+    for (const item of latestBySource.values()) {
+      const fact = input.terminalReportFactsByItemId?.get(item.id);
+      if (!fact || summaries.some((summary) => summaryCoversItem(summary, item))) continue;
+      entries.push({ origin: "terminal_report", role: "context", turnId: turn.id, reportId: fact.reportId,
+        text: JSON.stringify({ hostTerminalOutcome: fact.outcomeStatus, unresolvedRisksAtCompletion: fact.unresolvedRisks }),
+        sourceRefs: [{ kind: "conversation_item", id: item.id, sequence: item.sequence, revision: item.revision }] });
     }
     if (entries.length > 0) groups.push({ turnId: turn.id, entries });
   }

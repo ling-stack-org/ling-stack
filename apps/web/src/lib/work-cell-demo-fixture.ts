@@ -1,4 +1,4 @@
-import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent, WorkflowWorkspaceChangesResponse } from "../types.js";
+import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ConversationItemV1, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent, WorkflowWorkspaceChangesResponse } from "../types.js";
 import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import type { PreviewRequest } from "./previews.js";
 
@@ -6,6 +6,7 @@ export const channelWorkCellDemoStorageKey = "ling-stack.workCellDemo";
 
 export interface ChannelWorkCellDemoFixture {
   readonly channelMessages: readonly ChannelMessage[];
+  readonly conversationItems: readonly ConversationItemV1[];
   readonly workflows: readonly ChannelWorkflow[];
   readonly workflowSteps: readonly ChannelWorkflowStep[];
   readonly runs: readonly RunSession[];
@@ -108,6 +109,7 @@ export function createChannelWorkCellDemoFixture(input: {
   const idPrefix = `${channelWorkCellDemoArtifactPrefix}${safeId(channelId)}`;
   const discussionMessageId = `${idPrefix}_message_discussion`;
   const sourceMessageId = `${idPrefix}_message_request`;
+  const sourceTurnId = `conversation-turn:${sourceMessageId}`;
   const terminalReportId = `${idPrefix}_terminal_report`;
   const terminalMessageId = `message_${terminalReportId}`;
   const workflowId = `${idPrefix}_workflow`;
@@ -195,6 +197,9 @@ export function createChannelWorkCellDemoFixture(input: {
       id: sourceMessageId,
       workspaceId,
       channelId,
+      threadId: sourceMessageId,
+      turnId: sourceTurnId,
+      threadSurfaceKind: "channel_root",
       kind: "message",
       intent: "discuss",
       authorType: "local-user",
@@ -213,6 +218,8 @@ export function createChannelWorkCellDemoFixture(input: {
       workspaceId,
       channelId,
       threadId: sourceMessageId,
+      turnId: sourceTurnId,
+      threadSurfaceKind: "channel_root",
       kind: "ai_reply",
       intent: "discuss",
       authorType: "ai-teammate",
@@ -426,6 +433,7 @@ export function createChannelWorkCellDemoFixture(input: {
     workspaceId,
     channelId,
     threadId: sourceMessageId,
+    turnId: sourceTurnId,
     sourceMessageId,
     source: { kind: "workflow", id: workflowId },
     status: "committed",
@@ -512,6 +520,36 @@ export function createChannelWorkCellDemoFixture(input: {
 
   return {
     channelMessages,
+    conversationItems: [{
+      schemaVersion: 1,
+      id: `result_terminal_report:${terminalReportId}`,
+      workspaceId,
+      channelId,
+      threadId: sourceMessageId,
+      turnId: sourceTurnId,
+      sequence: 1,
+      kind: "terminal_report",
+      status: "committed",
+      actorType: "system",
+      visibility: "channel",
+      payload: {
+        reportId: terminalReportId,
+        generation: 1,
+        sourceKind: "workflow",
+        sourceId: workflowId,
+        evidenceFingerprint: terminalReport.evidenceFingerprint,
+        outcomeStatus: terminalReport.outcome.status,
+      },
+      domainRefs: [
+        { type: "terminal_report", id: terminalReportId },
+        { type: "workflow", id: workflowId },
+        { type: "message", id: sourceMessageId },
+      ],
+      revision: 1,
+      createdAt: completedAt,
+      updatedAt: terminalReport.committedAt,
+      committedAt: terminalReport.committedAt,
+    }],
     memoryObjects,
     usedMemoryEvents,
     terminalReports: [terminalReport],

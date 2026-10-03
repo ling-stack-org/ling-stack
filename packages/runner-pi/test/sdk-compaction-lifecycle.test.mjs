@@ -3,6 +3,7 @@ import { setImmediate as nextTick } from "node:timers/promises";
 import test from "node:test";
 import { compactionFixture, response } from "./support/pi-compaction-fixture.mjs";
 import { createPiTaskBoundary, createPiSessionStopper } from "../dist/task-boundary.js";
+import { translatePiEvent } from "../dist/events.js";
 
 const testOptions = { timeout: 15_000 };
 const prompt = "Finish the fixture and preserve all recorded effects. " + "goal ".repeat(100);
@@ -12,7 +13,7 @@ const providerError = (message, status = 400) => new Response(JSON.stringify({ e
   type: status === 503 ? "server_error" : "invalid_request_error" } }),
   { status, headers: { "content-type": "application/json" } });
 
-test("SDK threshold compaction is post-agent-run, not between high-usage tool turns", testOptions, async t => {
+test("SDK defers threshold compaction when the newest tool result leaves no safe cut point", testOptions, async t => {
   const f = await compactionFixture(t, { task: ({ index }) => response({
     ...(index < 3 ? { toolCallId: "effect-" + index } : {}), inputTokens: index < 4 ? 1_850 : 100,
   }) });
@@ -39,6 +40,128 @@ test("SDK threshold compaction is post-agent-run, not between high-usage tool tu
     assert.ok(callIds.has(result.toolCallId), "kept tool results must retain their calls");
   }
   assert.equal(compactions(f).length, 1, "stale usage must not trigger compaction again on followup");
+});
+
+test("SDK can compact between tool turns when a safe cut point exists", testOptions, async t => {
+  const installedViews = [];
+  const f = await compactionFixture(t, {
+    compaction: { keepRecentTokens: 200 },
+    task: ({ index }) => response(index < 4
+      ? { toolCallId: `effect-${index}`, inputTokens: 1_850 }
+      : { text: "All effects complete.", inputTokens: 1_850 }),
+    event: event => {
+      if (event.type === "compaction_end" && event.result) {
+        installedViews.push({ summary: event.result.summary,
+          messages: structuredClone(f.session.state.messages) });
+      }
+    },
+  });
+  await f.session.prompt(prompt);
+  await f.session.waitForIdle();
+  assert.deepEqual(await f.effects(), ["effect-0", "effect-1", "effect-2", "effect-3"]);
+  const firstCompaction = f.events.findIndex(event => event.type === "compaction_start");
+  const lastToolEnd = f.events.findLastIndex(event => event.type === "tool_execution_end");
+  assert.ok(firstCompaction > 0 && firstCompaction < lastToolEnd,
+    "the first SDK compaction must occur while the tool loop is still active");
+  assert.ok(f.requests.some((request, index) => request.phase === "summary"
+    && f.requests.slice(index + 1).some(next => next.phase === "task")),
+  "a task model request must follow a mid-run summary request");
+  assert.ok(installedViews.length > 0);
+  for (const installed of installedViews) {
+    assert.equal(installed.messages[0].role, "compactionSummary");
+    assert.equal(installed.messages[0].summary, installed.summary,
+      "compaction_end observes the exact model view already installed by the SDK");
+  }
+  for (const request of f.requests.filter(item => item.phase === "task")) {
+    const callIds = new Set(request.messages.flatMap(message => message.role === "assistant"
+      ? message.content.filter(block => block.type === "toolCall").map(block => block.id) : []));
+    for (const result of request.messages.filter(message => message.role === "toolResult")) {
+      assert.ok(callIds.has(result.toolCallId), "a compacted model view must keep tool call/result pairs");
+    }
+  }
+});
+
+test("Ling's disabled auto-compaction setting prevents SDK mid-run and post-run compaction", testOptions, async t => {
+  const f = await compactionFixture(t, {
+    compaction: { enabled: false, keepRecentTokens: 200 },
+    task: ({ index }) => response(index < 4
+      ? { toolCallId: `effect-${index}`, inputTokens: 1_850 }
+      : { text: "All effects complete.", inputTokens: 1_850 }),
+  });
+  await f.session.prompt(prompt);
+  await f.session.waitForIdle();
+  assert.deepEqual(await f.effects(), ["effect-0", "effect-1", "effect-2", "effect-3"]);
+  assert.equal(ends(f).length, 0);
+  assert.equal(compactions(f).length, 0);
+  assert.equal(f.requests.filter(request => request.phase === "summary").length, 0);
+});
+
+test("SDK may send another task request after a failed mid-run summary", testOptions, async t => {
+  const f = await compactionFixture(t, {
+    compaction: { keepRecentTokens: 200 },
+    task: ({ index }) => response(index < 3
+      ? { toolCallId: `effect-${index}`, inputTokens: 1_850 }
+      : { text: "All effects complete.", inputTokens: 1_850 }),
+    summary: () => providerError("PRIVATE_MID_RUN_SUMMARY_FAILURE"),
+  });
+  await f.session.prompt(prompt);
+  await f.session.waitForIdle();
+  const failedSummary = f.requests.findIndex(request => request.phase === "summary");
+  assert.ok(failedSummary >= 0);
+  assert.equal(ends(f)[0].result, undefined);
+  assert.ok(f.requests.slice(failedSummary + 1).some(request => request.phase === "task"),
+    "Host must independently close provider admission when a required checkpoint fails");
+  assert.deepEqual(await f.effects(), ["effect-0", "effect-1", "effect-2"]);
+  assert.equal(compactions(f).length, 0);
+});
+
+test("a completed compacted SDK view cannot be blindly continued after restart", testOptions, async t => {
+  const source = await compactionFixture(t, {
+    task: ({ index }) => response(index === 0
+      ? { toolCallId: "effect-before-checkpoint", inputTokens: 1_850 }
+      : { text: "Completed before compaction. " + "history ".repeat(400), inputTokens: 1_850 }),
+  });
+  await source.session.prompt(prompt);
+  await source.session.waitForIdle();
+  assert.equal(compactions(source).length, 1);
+  const compactedView = structuredClone(source.session.state.messages);
+  assert.ok(compactedView.some(message => message.role === "compactionSummary"));
+  const restored = await compactionFixture(t, { compaction: { enabled: false },
+    task: () => response({ text: "Continued from committed summary." }) });
+  restored.session.state.messages = compactedView;
+  assert.equal(compactedView.at(-1).role, "assistant");
+  await assert.rejects(restored.session.agent.continue(), /Cannot continue from message role: assistant/u);
+  assert.equal(restored.requests.filter(request => request.phase === "task").length, 0);
+  assert.deepEqual(await restored.effects(), [], "recovery must not re-execute the prior tool call");
+});
+
+test("SDK lifecycle becomes bounded Runner evidence without publishing summary or provider error", testOptions, async t => {
+  const successful = await compactionFixture(t, {
+    task: () => response({ inputTokens: 1_850, text: "Completed task. " + "text ".repeat(400) }),
+    summary: () => response({ text: "PRIVATE_SUMMARY_CONTENT" }),
+  });
+  await successful.session.prompt(prompt);
+  await successful.session.waitForIdle();
+  const translated = successful.events.map(translatePiEvent).filter(Boolean);
+  const start = translated.find(event => event.type === "context_compaction_start");
+  const end = translated.find(event => event.type === "context_compaction_end");
+  assert.deepEqual(start, { type: "context_compaction_start", reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1" });
+  assert.equal(end.outcome, "sdk_installed");
+  assert.equal(end.reason, "threshold");
+  assert.equal(end.willRetry, false);
+  assert.ok(end.tokensBefore > 0);
+  assert.ok(translated.some(event => event.type === "message_end" && event.usage?.input === 1_850));
+  assert.equal(JSON.stringify([start, end]).includes("PRIVATE_SUMMARY_CONTENT"), false);
+
+  const failed = await compactionFixture(t, {
+    task: () => response({ inputTokens: 1_850, text: "Completed task. " + "text ".repeat(400) }),
+    summary: () => providerError("PRIVATE_PROVIDER_DETAIL"),
+  });
+  await failed.session.prompt(prompt);
+  await failed.session.waitForIdle();
+  const failedEnd = failed.events.map(translatePiEvent).find(event => event?.type === "context_compaction_end");
+  assert.equal(failedEnd.outcome, "failed");
+  assert.equal(JSON.stringify(failedEnd).includes("PRIVATE_PROVIDER_DETAIL"), false);
 });
 
 test("SDK auto-compaction failure is an event, not a rejected prompt or an installed summary", testOptions, async t => {

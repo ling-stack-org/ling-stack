@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { Api, Context, Model, Tool } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { PiRunnerRunOptions, PiRunnerTask } from "./types.js";
+import { boundModelToolResults, MODEL_TOOL_CONTEXT_BYTES } from "./model-context-budget.js";
 import { formatTaskPrompt, isRecord } from "./utils.js";
 
 type PreparedModel = Pick<Model<Api>, "id" | "provider" | "api" | "baseUrl" | "reasoning" | "input" | "contextWindow" | "maxTokens" | "compat" | "thinkingLevelMap">;
@@ -26,6 +27,78 @@ export function capturePreparedPiInput(session: AgentSession, options: PiRunnerR
     systemPrompt: session.systemPrompt, userPrompt: formatTaskPrompt(options.task), model: modelDescriptor(session.model),
     thinkingLevel: session.thinkingLevel, tools: toolDescriptors(session.state.tools) });
   return readPreparedPiInput({ ...body, fingerprint: hash(body) });
+}
+
+/** Fit the transport-only tool view to the remaining model capacity on every request. */
+export function assertPiModelContextCapacity(model: Model<Api>, context: Context): Context {
+  // The SDK can report a context-hook failure and continue. Enforce the
+  // projection's fail-closed marker budget again at the provider boundary.
+  const budget = modelInputBudget(model);
+  const fixedTokens = estimatePreparedTokens(context.systemPrompt ?? "")
+    + estimatePreparedTokens(JSON.stringify(context.tools ?? []));
+  const projected = boundModelToolResults(context.messages);
+  const inputTokens = (messages: readonly unknown[]): number => fixedTokens + estimatePreparedTokens(JSON.stringify(messages));
+  if (inputTokens(projected.messages) <= budget) {
+    return { ...context, messages: projected.messages as Context["messages"] };
+  }
+  if (projected.originalBytes === 0) {
+    throw modelCapacityError(inputTokens(projected.messages), budget);
+  }
+
+  // A fixed tool cap may still exceed a small model's available context. Find
+  // the largest transport-only result view that fits, reserving explicit
+  // omission markers for every result. Invalid marker budgets never pass.
+  let low = 0;
+  let high = Math.min(MODEL_TOOL_CONTEXT_BYTES, projected.modelBytes);
+  let fitting: Context["messages"] | undefined;
+  let minimumInput = inputTokens(projected.messages);
+  while (low <= high) {
+    const middle = Math.floor((low + high) / 2);
+    let candidate;
+    try {
+      candidate = boundModelToolResults(context.messages, { totalBytes: middle });
+    } catch (error) {
+      if (!(error instanceof Error) || !/marker.*budget/u.test(error.message)) throw error;
+      low = middle + 1;
+      continue;
+    }
+    const estimated = inputTokens(candidate.messages);
+    minimumInput = Math.min(minimumInput, estimated);
+    if (estimated <= budget) {
+      fitting = candidate.messages as Context["messages"];
+      low = middle + 1;
+    } else {
+      high = middle - 1;
+    }
+  }
+  if (!fitting) throw modelCapacityError(minimumInput, budget);
+  return { ...context, messages: fitting };
+}
+
+function modelInputBudget(model: Pick<Model<Api>, "contextWindow" | "maxTokens">): number {
+  const window = model.contextWindow;
+  const output = model.maxTokens;
+  if (!Number.isSafeInteger(window) || window < 1 || !Number.isSafeInteger(output) || output < 1) {
+    throw new Error("Pi prepared input model context capacity is unknown");
+  }
+  const runtimeOverhead = 512;
+  const inputBudget = window - output - runtimeOverhead;
+  if (inputBudget < 1) throw modelCapacityError(0, inputBudget);
+  return inputBudget;
+}
+
+function modelCapacityError(estimatedInput: number, budget: number): Error {
+  return new Error(`Pi model context exceeds selected model budget (${estimatedInput}/${Math.max(0, budget)} estimated input tokens)`);
+}
+
+function estimatePreparedTokens(text: string): number {
+  let ascii = 0;
+  let nonAscii = 0;
+  for (const character of text) {
+    if (character.charCodeAt(0) <= 0x7f) ascii += 1;
+    else nonAscii += 1;
+  }
+  return Math.ceil(ascii / 4 + nonAscii / 1.6);
 }
 
 /** Validate serialized evidence before using it as a comparison baseline. */
@@ -54,18 +127,27 @@ export function assertPreparedPiTaskInput(prepared: PiRunnerPreparedInput, task:
 
 /** Fail before prompting if initialization cannot reproduce the persisted input. */
 export function assertPreparedPiSession(session: AgentSession, options: PiRunnerRunOptions): void {
+  const actual = capturePreparedPiInput(session, options);
   if (!options.preparedInput) return;
   const expected = readPreparedPiInput(options.preparedInput);
-  if (capturePreparedPiInput(session, options).fingerprint !== expected.fingerprint) throw new Error("Pi prepared input changed during session initialization");
+  if (actual.fingerprint !== expected.fingerprint) throw new Error("Pi prepared input changed during session initialization");
 }
 
 /** The first converted model Context must still match after SDK/extension assembly. */
-export function assertPreparedPiModelContext(prepared: PiRunnerPreparedInput, model: Model<Api>, context: Context): void {
+export function assertPreparedPiModelContext(
+  prepared: PiRunnerPreparedInput,
+  model: Model<Api>,
+  context: Context,
+  options: { readonly allowRestoredMessages?: boolean } = {},
+): void {
   const expected = readPreparedPiInput(prepared);
   const first = context.messages[0];
   const text = first?.role === "user" ? (typeof first.content === "string" ? first.content :
     first.content.every((block) => block.type === "text") ? first.content.map((block) => block.type === "text" ? block.text : "").join("") : undefined) : undefined;
-  if (context.messages.length !== 1 || text !== expected.userPrompt || (context.systemPrompt ?? "") !== expected.systemPrompt ||
+  const messagesMatch = options.allowRestoredMessages
+    ? context.messages.length > 0
+    : context.messages.length === 1 && text === expected.userPrompt;
+  if (!messagesMatch || (!options.allowRestoredMessages && text !== expected.userPrompt) || (context.systemPrompt ?? "") !== expected.systemPrompt ||
     hash(modelDescriptor(model)) !== hash(expected.model) || hash(toolDescriptors(context.tools ?? [])) !== hash(expected.tools)) {
     throw new Error("Pi prepared input changed before the first model request");
   }

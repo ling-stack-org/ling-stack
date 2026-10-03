@@ -37,12 +37,18 @@ export function projectWorkflowChildTimeline(input: {
       && attempts.size <= 1 && (!narration.attemptId || attempts.size === 0 || attempts.has(narration.attemptId));
     if (!ownsNarration) return positionAndBatch(atomic, stepIndex, input.contextSegmentIdByItemId);
     const attemptId = narration.attemptId ?? [...attempts][0];
+    const messageStatus = step.status === "succeeded" || step.status === "skipped" ? "succeeded"
+      : step.status === "failed" ? "failed" : step.status === "cancelled" ? "cancelled"
+      : step.status === "blocked" ? "blocked" : "running";
     const message: ConversationTimelineMessageItem = {
       id: `workflow-narration:${step.id}:${narration.runId}`, kind: "agentMessage",
       revision: narration.segments.at(-1)?.endEventSequence ?? 0,
       threadSequence: stepIndex, partIndex: 0,
-      status: step.status === "succeeded" || step.status === "skipped" ? "succeeded" : step.status === "failed" ? "failed" : step.status === "cancelled" ? "cancelled" : "running",
-      phase: "commentary", markdown: "", itemId: narration.sourceItemId,
+      // Completion comes from the validated Host step, never narrative text.
+      // The narration projector leaves earlier segments as commentary and
+      // assigns this phase only to the final segment of the settled child.
+      status: messageStatus,
+      phase: messageStatus === "running" ? "commentary" : "final", markdown: "", itemId: narration.sourceItemId,
       turnId: narration.turnId, runId: narration.runId, participantId: narration.participantId, attemptId, workflowStepId: step.id,
       sourceRefs: [
         { kind: "conversation_item", id: narration.sourceItemId },
@@ -60,8 +66,10 @@ export function projectWorkflowChildTimeline(input: {
           { kind: "participant", id: narration.participantId }, ...(attemptId ? [{ kind: "attempt", id: attemptId }] : []),
         ],
       }));
+    const scopedAtomic = atomic.map(item => item.runId === narration.runId && item.attemptId === attemptId
+      && item.participantId === narration.participantId ? { ...item, turnId: narration.turnId } : item);
     const merged = interleaveWorkflowChildUserInputs({ step, participantId: input.participantId,
-      parentItemId: input.parentItemId, items: mergeConversationRunNarration(atomic, messages) });
+      parentItemId: input.parentItemId, items: mergeConversationRunNarration(scopedAtomic, messages) });
     // Event sequences are local to a run. Dense positions preserve step order
     // without comparing sequence 1 in a retry/teammate with another run's 100.
     return positionAndBatch(merged, stepIndex, input.contextSegmentIdByItemId);

@@ -18,6 +18,7 @@ import type {
 } from "@ling-stack/contracts";
 import type { PiRunnerApprovalRequest, PiRunnerToolHandledResult } from "@ling-stack/runner-pi";
 import type { NativeRestrictedCommandRuntime } from "../../../runtime/sandbox/restricted-command-runtime.js";
+import type { HostCommandOperation, HostFileMutationOperation } from "../../../runtime/host-operation-effects.js";
 import { isRecord } from "../../../shared/validation.js";
 import {
   appendExecutionActionArtifactEvents,
@@ -58,6 +59,7 @@ export interface HarnessFileMutationToolContext {
   readonly appendAndMaybeStream: RunEventEmitter;
   readonly signal?: AbortSignal;
   readonly requireExistingParentsForAdds?: boolean;
+  readonly hostOperation?: HostFileMutationOperation;
 }
 
 export interface HarnessToolContext extends HarnessBashToolContext {
@@ -65,14 +67,47 @@ export interface HarnessToolContext extends HarnessBashToolContext {
   readonly recoveryBasis?: FileMutationRecoveryBasis;
 }
 
-export async function executeHarnessedBashTool(input: HarnessBashToolContext & {
+interface HarnessBashExecutionInput extends HarnessBashToolContext {
   readonly restrictedCommandRuntime?: NativeRestrictedCommandRuntime;
   readonly appendAndMaybeStream: RunEventEmitter;
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly shellSnapshotEnabled?: boolean;
-}): Promise<PiRunnerToolHandledResult> {
-  if (input.mode === "off") return executeUnifiedBashTool(input);
+  readonly hostOperation?: HostCommandOperation;
+}
+
+export async function executeHarnessedBashTool(input: HarnessBashExecutionInput): Promise<PiRunnerToolHandledResult> {
+  let dispatched = false;
+  let settlementAttempted = false;
+  const execute = (executionInput: Parameters<typeof executeUnifiedBashTool>[0]) => {
+    dispatched = true;
+    return executeUnifiedBashTool(executionInput);
+  };
+  const settleBeforeDispatch = (): void => {
+    if (dispatched || settlementAttempted || !input.hostOperation) return;
+    settlementAttempted = true;
+    try { input.hostOperation.settleNoStart(); }
+    catch (error) {
+      try { input.hostOperation.markUnknown("command_execution_unconfirmed"); } catch { /* fail closed */ }
+      throw error;
+    }
+  };
+  try {
+    input.hostOperation?.assertMayPrepare();
+    const result = await executeHarnessedBashToolInternal(input, execute);
+    settleBeforeDispatch();
+    return result;
+  } catch (error) {
+    try { settleBeforeDispatch(); } catch { /* preserve the original broker failure */ }
+    throw error;
+  }
+}
+
+async function executeHarnessedBashToolInternal(
+  input: HarnessBashExecutionInput,
+  execute: typeof executeUnifiedBashTool,
+): Promise<PiRunnerToolHandledResult> {
+  if (input.mode === "off") return execute(input);
   let execution: HarnessToolExecutionV1 | undefined;
   const context: HarnessToolContext = { ...input, executorKind: "bash" };
   try {
@@ -109,7 +144,7 @@ export async function executeHarnessedBashTool(input: HarnessBashToolContext & {
     }
     if (input.mode === "shadow" && execution === undefined
       && !input.store.findHarnessToolExecution(input.sourceFence.attemptId, input.request.toolCallId)) {
-      return executeUnifiedBashTool(input);
+      return execute(input);
     }
     return createUnifiedExecDeniedResult({
       toolCallId: input.request.toolCallId,
@@ -131,7 +166,7 @@ export async function executeHarnessedBashTool(input: HarnessBashToolContext & {
     finishFromHandledResult(input, execution, handled);
   };
   try {
-    const handled = await executeUnifiedBashTool({
+    const handled = await execute({
       ...input,
       onDurableResult: commitDurableResult,
     });
@@ -149,7 +184,12 @@ export async function executeHarnessedBashTool(input: HarnessBashToolContext & {
 export async function executeHarnessedFileMutationTool(
   input: HarnessFileMutationToolContext,
 ): Promise<PiRunnerToolHandledResult> {
-  if (input.mode === "off") return executeFileMutationDirectly(input);
+  input.hostOperation?.assertMayPrepare();
+  if (input.mode === "off") {
+    return input.hostOperation
+      ? createFileMutationDeniedResult(input, "host_file_broker_evidence_required: Tracked file mutation requires an exact durable Broker receipt.")
+      : executeFileMutationDirectly(input);
+  }
   if (!input.sourceFence) {
     return createFileMutationDeniedResult(input, "stale_run_execution: File mutation requires the captured source Attempt.");
   }
@@ -167,16 +207,18 @@ export async function executeHarnessedFileMutationTool(
   let execution: HarnessToolExecutionV1 | undefined;
   try {
     execution = prepareApprovedExecution(context);
+    input.hostOperation?.bindHarnessExecution(execution.id);
     const blocked = executionStartRejection(input, execution);
     if (blocked) return blocked;
     assertPolicySnapshotCurrent(context);
+    input.hostOperation?.assertMayPrepare();
     execution = claimExecution(context, execution);
     execution = startExecution(context, execution);
   } catch (error) {
     if (execution?.state === "approved") {
       failExecutionBeforeStart(context, execution, "tool.policy_denied", { reason: formatError(error) });
     }
-    if (input.mode === "shadow" && execution === undefined
+    if (!input.hostOperation && input.mode === "shadow" && execution === undefined
       && !input.store.findHarnessToolExecution(input.sourceFence.attemptId, input.request.toolCallId)) {
       return executeFileMutationDirectly(input);
     }
@@ -198,6 +240,7 @@ export async function executeHarnessedFileMutationTool(
       },
       signal: input.signal,
       requireExistingParentsForAdds: input.requireExistingParentsForAdds,
+      effectGuard: input.hostOperation?.effectGuard,
     });
     const resultArtifact = createFileMutationResultEvidence(input, execution, applied.resultArtifactContent);
     if (!resultArtifact) throw new Error("tool_evidence_result_artifact_missing");
@@ -543,6 +586,7 @@ function failExecutionBeforeStart(
 }
 
 async function executeFileMutationDirectly(input: HarnessFileMutationToolContext): Promise<PiRunnerToolHandledResult> {
+  input.hostOperation?.assertMayPrepare();
   const applied = await applyPatchActionDraft({
     draft: input.draft,
     cwd: input.request.cwd,
@@ -556,6 +600,7 @@ async function executeFileMutationDirectly(input: HarnessFileMutationToolContext
     },
     signal: input.signal,
     requireExistingParentsForAdds: input.requireExistingParentsForAdds,
+    effectGuard: input.hostOperation?.effectGuard,
   });
   if (input.approvalId) createFileMutationResultEvidence(input, undefined, applied.resultArtifactContent);
   return applied.handledResult;
@@ -578,6 +623,7 @@ function createFileMutationResultEvidence(
       contentType: "application/json",
       content,
       now: new Date().toISOString(),
+      sealedPayload: JSON.parse(content) as unknown,
     });
     appendExecutionActionArtifactEvents({
       artifacts: [artifact],

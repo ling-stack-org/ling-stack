@@ -50,6 +50,7 @@ import type { OfficeDriverController } from "./features/office-documents/driver-
 import type { OfficeDocumentsPluginService } from "./features/plugins/office-documents.js";
 import type { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
 import type { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
+import type { HostMcpOperation } from "./features/mcp/host-operation.js";
 
 export interface RunnerAdapter {
   /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
@@ -118,6 +119,8 @@ export interface McpBrokerOptions {
   readonly signal?: AbortSignal;
   readonly runId?: string;
   readonly toolCallId?: string;
+  /** Opaque Host-issued source-bound transport capability; not a result/stop proof. */
+  readonly hostOperation?: HostMcpOperation;
   /** Synchronous authorization fence run after transport completion. */
   readonly assertResultCurrent?: () => void;
   readonly lockedControlExecution?: {

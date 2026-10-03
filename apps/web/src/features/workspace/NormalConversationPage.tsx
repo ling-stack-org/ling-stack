@@ -16,7 +16,7 @@ export interface NormalConversationPageProps {
   readonly onCloseSummary: () => void;
   readonly summaryDockMotion?: string;
   readonly summaryRows: ComponentProps<typeof ConversationSummaryPopover>["rows"];
-  readonly headerProps: Omit<ComponentProps<typeof NormalConversationHeader>, "summaryNode" | "summaryExpanded">;
+  readonly headerProps: Omit<ComponentProps<typeof NormalConversationHeader>, "summaryNode" | "summaryActive" | "summaryExpanded">;
   readonly feedProps: ComponentProps<typeof NormalConversationFeed>;
   readonly composerNode: ReactNode;
   readonly panelsProps: ComponentProps<typeof NormalConversationWorkspacePanels>;
@@ -68,6 +68,7 @@ export function NormalConversationPage({
         <DesktopTitlebarSurface>
           <NormalConversationHeader
             {...headerProps}
+            summaryActive={summaryLayout.visible}
             summaryExpanded={summaryLayout.visible}
             summaryNode={(
               <ConversationSummaryPopover

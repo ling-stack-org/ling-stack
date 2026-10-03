@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useRef, type MutableRefObject, type ReactNode, type RefObject } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState, type MutableRefObject, type ReactNode, type RefObject } from "react";
 import { useVirtualizer, type VirtualItem } from "@tanstack/react-virtual";
 import {
   conversationTimelineRendererKey,
@@ -22,6 +22,11 @@ import {
 import { useConversationTimelineDisplayModel } from "./use-conversation-timeline-display-model.js";
 import { useI18n } from "../../../i18n.js";
 import { conversationDeferredContentReadyEvent } from "../blocks/deferred-rendering.js";
+import { hasFinalTimelineResponseNarration, placeTimelineResponseReports, projectTimelineResponseFooterRows, projectTimelineResponsePresentation, type ConversationTimelineMessagePresentation, type ConversationTimelineResponse, type TimelineResponsePresentation } from "./timeline-response-presentation.js";
+import { ConversationTimelineResponseFooter, type ConversationTimelineResponseActionsRenderer } from "./ConversationTimelineResponseFooter.js";
+import { ConversationTimelineResponseFiles } from "./ConversationTimelineResponseFiles.js";
+import { ConversationTimelineProcessHeader } from "./ConversationTimelineProcessHeader.js";
+import type { WorkspaceRightDockReviewTarget } from "../../../features/workspace/right-dock/WorkspaceRightDock.js";
 
 export interface ConversationTimelineProps {
   /** Immutable, already-scoped canonical/display projection. */
@@ -31,6 +36,7 @@ export interface ConversationTimelineProps {
   readonly ariaLabel?: string;
   readonly cwd?: string;
   readonly onOpenSourceRef?: ConversationTimelineSourceRefHandler;
+  readonly onOpenReview?: (target: WorkspaceRightDockReviewTarget) => void;
   readonly onInvokeProtocolAction?: (
     item: Extract<ConversationTimelineItem, { kind: "protocolEvent" | "approval" }>,
     action: ConversationProtocolAction,
@@ -38,7 +44,8 @@ export interface ConversationTimelineProps {
   readonly onDisclosureIntent?: (intent: ConversationTimelineDisclosureIntent) => void;
   readonly renderSubAgentAvatar?: (item: ConversationTimelineSubAgentItem) => ReactNode;
   readonly renderUserInputAvatar?: (item: ConversationTimelineUserInputItem) => ReactNode;
-  readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode) => ReactNode;
+  readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode, presentation: ConversationTimelineMessagePresentation) => ReactNode;
+  readonly renderResponseActions?: ConversationTimelineResponseActionsRenderer;
   readonly emptyLabel?: ReactNode;
   /**
    * Optional surface scroll owner used to window long top-level timelines.
@@ -67,19 +74,22 @@ export interface ConversationTimelineItemLocator {
 
 /**
  * The only production transcript renderer. It dispatches typed items and owns
- * the single visible nesting composition; it never sorts, groups, fetches, or
- * infers completion from narration.
+ * the single visible nesting composition. Settled reports are placed at their
+ * own response footer without changing canonical sequence or evidence identity.
+ * Completion is never inferred from narration.
  */
 export function ConversationTimeline({
   snapshot,
   depth,
   cwd,
   onOpenSourceRef,
+  onOpenReview,
   onInvokeProtocolAction,
   onDisclosureIntent,
   renderSubAgentAvatar,
   renderUserInputAvatar,
   renderMessageChrome,
+  renderResponseActions,
   emptyLabel,
   virtualScrollRef,
   itemLocatorRef,
@@ -87,11 +97,29 @@ export function ConversationTimeline({
   ariaLabel,
 }: ConversationTimelineProps): React.JSX.Element {
   const timelineRootRef = useRef<HTMLDivElement | null>(null);
-  const timelineItems = snapshot.items;
-  const { model: displayModel, setSubAgentExpanded, setBlockExpanded, revealDisclosurePath } = useConversationTimelineDisplayModel(timelineItems);
+  const timelineItems = useMemo(() => placeTimelineResponseReports(snapshot.items), [snapshot.items]);
+  const responsePresentation = useMemo(() => projectTimelineResponsePresentation(timelineItems), [timelineItems]);
+  const [hoveredResponseId, setHoveredResponseId] = useState<string>();
+  const [focusedResponseId, setFocusedResponseId] = useState<string>();
+  const responseIdForTarget = (target: EventTarget | null): string | undefined => target instanceof Element
+    ? target.closest<HTMLElement>(".conversation-timeline-focus-block[data-conversation-response-id]")?.dataset.conversationResponseId
+    : undefined;
+  const { model: displayModel, setSubAgentExpanded, setBlockExpanded, revealDisclosurePath } = useConversationTimelineDisplayModel(timelineItems, snapshot.runLifecycles);
   const displayModelRef = useRef(displayModel);
   displayModelRef.current = displayModel;
   const displayRows = displayModel.rows;
+  const visibleIdentityOwners = useMemo(() => {
+    const owners = new Set<string>();
+    const seen = new Set<string>();
+    for (const row of displayRows) {
+      if (row.kind === "processHeader" || row.item.kind !== "agentMessage") continue;
+      const response = responsePresentation.responseByItemId.get(row.item.id);
+      const key = JSON.stringify([response?.id ?? row.item.id, row.item.participantId ?? row.item.logicalMessageId ?? row.item.id]);
+      if (!seen.has(key)) { owners.add(row.item.id); seen.add(key); }
+    }
+    return owners;
+  }, [displayRows, responsePresentation]);
+  const responseFooterRows = useMemo(() => projectTimelineResponseFooterRows(responsePresentation, displayRows.filter(row => row.kind !== "processHeader")), [responsePresentation, displayRows]);
   const virtualized = depth === 0 && Boolean(virtualScrollRef) &&
     displayModel.potentialRowCount >= timelineVirtualizationThreshold;
   const virtualizer = useVirtualizer({
@@ -126,6 +154,10 @@ export function ConversationTimeline({
     "data-conversation-timeline-potential-row-count": displayModel.potentialRowCount,
     "data-activity-density": effectiveDensity,
     "aria-label": ariaLabel,
+    onPointerOver: (event: React.PointerEvent<HTMLDivElement>) => setHoveredResponseId(responseIdForTarget(event.target)),
+    onPointerLeave: () => setHoveredResponseId(undefined),
+    onFocusCapture: (event: React.FocusEvent<HTMLDivElement>) => setFocusedResponseId(responseIdForTarget(event.target)),
+    onBlurCapture: (event: React.FocusEvent<HTMLDivElement>) => setFocusedResponseId(responseIdForTarget(event.relatedTarget)),
   } as const;
 
   useEffect(() => {
@@ -194,9 +226,16 @@ export function ConversationTimeline({
             renderUserInputAvatar,
             cwd,
             onOpenSourceRef,
+            onOpenReview,
             onInvokeProtocolAction,
             onDisclosureIntent,
             renderMessageChrome,
+            renderResponseActions,
+            responsePresentation,
+            visibleIdentityOwners,
+            responseFooterRows,
+            hoveredResponseId,
+            focusedResponseId,
             renderSubAgentAvatar,
             setSubAgentExpanded,
             setBlockExpanded,
@@ -216,9 +255,16 @@ export function ConversationTimeline({
         renderUserInputAvatar,
         cwd,
         onOpenSourceRef,
+        onOpenReview,
         onInvokeProtocolAction,
         onDisclosureIntent,
         renderMessageChrome,
+        renderResponseActions,
+        responsePresentation,
+        visibleIdentityOwners,
+        responseFooterRows,
+        hoveredResponseId,
+        focusedResponseId,
         renderSubAgentAvatar,
         setSubAgentExpanded,
         setBlockExpanded,
@@ -282,7 +328,7 @@ function nextAnimationFrame(): Promise<void> {
 
 function estimateTimelineDisplayRowSize(row: ConversationTimelineDisplayRow | undefined): number {
   if (!row) return 96;
-  if (row.kind === "subAgentHeader") return 44;
+  if (row.kind === "subAgentHeader" || row.kind === "processHeader") return 44;
   if (row.item.kind === "terminalReport") return 220;
   if (row.item.kind === "commandBatch" || row.item.kind === "explorationBatch") return 88;
   if (row.item.kind === "userMessage" || row.item.kind === "agentMessage") return 104;
@@ -298,12 +344,18 @@ function countAtomicItems(items: readonly ConversationTimelineItem[]): number {
   }, 0);
 }
 
-type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "onOpenSourceRef" | "onInvokeProtocolAction" | "onDisclosureIntent" | "renderMessageChrome" | "renderSubAgentAvatar" | "renderUserInputAvatar"> & {
+type TimelineRenderContext = Pick<ConversationTimelineProps, "cwd" | "onOpenSourceRef" | "onOpenReview" | "onInvokeProtocolAction" | "onDisclosureIntent" | "renderMessageChrome" | "renderSubAgentAvatar" | "renderUserInputAvatar"> & {
   readonly scopeKind?: ConversationTimelineScopeKind;
   readonly depth: 0 | 1;
 };
 
 interface TimelineSegmentRenderContext extends Omit<TimelineRenderContext, "depth"> {
+  readonly visibleIdentityOwners: ReadonlySet<string>;
+  readonly responsePresentation: TimelineResponsePresentation;
+  readonly responseFooterRows: ReadonlyMap<string, ConversationTimelineResponse>;
+  readonly hoveredResponseId?: string;
+  readonly focusedResponseId?: string;
+  readonly renderResponseActions?: ConversationTimelineResponseActionsRenderer;
   readonly setSubAgentExpanded: (item: ConversationTimelineSubAgentItem, expanded: boolean) => void;
   readonly setBlockExpanded: (id: string, expanded: boolean) => void;
   readonly virtualized: boolean;
@@ -318,6 +370,13 @@ function renderTimelineSegment(
   if (segment.kind === "row") {
     return renderTimelineDisplayRow(segment.row, context);
   }
+  if (segment.kind === "processGroup") return <Fragment key={segment.headerRow.rowKey}>
+    {renderTimelineDisplayRow(segment.headerRow, context)}
+    {segment.expanded ? <div id={segment.groupId} role="group" aria-label="Execution process"
+      className="conversation-process-group" data-conversation-process-group={segment.headerRow.process.id}>
+      {segment.childSegments.map(child => renderTimelineSegment(child, context))}
+    </div> : null}
+  </Fragment>;
   if (segment.kind === "batchGroup") {
     return (
       <Fragment key={segment.headerRow.rowKey}>
@@ -363,10 +422,12 @@ function renderTimelineDisplayRow(
   const virtualItem = context.virtualized ? context.virtualItemByRowKey.get(row.rowKey) : undefined;
   if (context.virtualized && !virtualItem) return null;
   const childRow = row.kind === "subAgentChild" ? row : undefined;
+  const response = context.responsePresentation.responseByItemId.get(row.item.id);
+  const footer = row.kind === "processHeader" ? undefined : context.responseFooterRows.get(row.item.id);
   const className = [
     "conversation-timeline-focus-block",
     context.virtualized ? "conversation-timeline-virtual-row" : "",
-    childRow ? "conversation-timeline-sub-agent-child-row" : "",
+    row.depth === 1 ? "conversation-timeline-sub-agent-child-row" : "",
     row.parentBatchId ? "conversation-timeline-batch-child-row" : "",
   ].filter(Boolean).join(" ");
   return (
@@ -378,10 +439,12 @@ function renderTimelineDisplayRow(
       data-index={virtualItem?.index}
       data-conversation-focus-block="true"
       data-conversation-row-key={row.rowKey}
-      data-feed-item-id={row.item.id}
-      data-feed-item-kind={row.item.kind}
+      data-conversation-response-id={response?.id}
+      data-conversation-response-active={response && (response.id === context.hoveredResponseId || response.id === context.focusedResponseId) ? "true" : undefined}
+      data-feed-item-id={row.kind === "processHeader" ? row.process.id : row.item.id}
+      data-feed-item-kind={row.kind === "processHeader" ? "processHeader" : row.item.kind}
       data-conversation-timeline-depth={row.depth}
-      data-conversation-parent-sub-agent-id={childRow?.parentSubAgentId}
+      data-conversation-parent-sub-agent-id={row.kind === "processHeader" ? row.parentSubAgentId : childRow?.parentSubAgentId}
       data-conversation-parent-batch-id={row.parentBatchId}
       data-conversation-sub-agent-child-index={childRow ? childRow.childIndex + 1 : undefined}
       data-conversation-sub-agent-child-count={childRow?.childCount}
@@ -389,7 +452,10 @@ function renderTimelineDisplayRow(
       data-conversation-sub-agent-child-last={childRow && childRow.childIndex === childRow.childCount - 1 ? "true" : undefined}
       style={virtualItem ? { transform: `translateY(${virtualItem.start}px)` } : undefined}
     >
-      {renderTimelineItem(row, {
+      {row.kind === "processHeader" ? <ConversationTimelineProcessHeader row={row} onExpandedChange={expanded => {
+        context.onDisclosureIntent?.({ rowKey: row.rowKey, itemId: row.process.id, nextExpanded: expanded });
+        context.setBlockExpanded(row.process.id, expanded);
+      }} /> : renderTimelineItem(row, {
         scopeKind: context.scopeKind,
         renderUserInputAvatar: context.renderUserInputAvatar,
         cwd: context.cwd,
@@ -397,16 +463,24 @@ function renderTimelineDisplayRow(
         onInvokeProtocolAction: context.onInvokeProtocolAction,
         onDisclosureIntent: context.onDisclosureIntent,
         renderMessageChrome: context.renderMessageChrome,
+        messagePresentation: { ownsIdentity: row.item.kind === "userMessage" || context.visibleIdentityOwners.has(row.item.id) },
+        hasResponseNarration: Boolean(response && hasFinalTimelineResponseNarration(response)),
         renderSubAgentAvatar: context.renderSubAgentAvatar,
         depth: row.depth,
       }, context.setSubAgentExpanded, context.setBlockExpanded)}
+      {footer ? <>
+        <ConversationTimelineResponseFiles response={footer} depth={row.depth} cwd={context.cwd} onOpenReview={context.onOpenReview} />
+        <ConversationTimelineResponseFooter response={footer}
+          scopeKind={row.depth === 1 ? "child" : context.scopeKind}
+          renderActions={row.depth === 0 ? context.renderResponseActions : undefined} />
+      </> : null}
     </div>
   );
 }
 
 function renderTimelineItem(
   row: ConversationTimelineDisplayRow,
-  context: TimelineRenderContext,
+  context: TimelineRenderContext & { readonly messagePresentation: ConversationTimelineMessagePresentation; readonly hasResponseNarration: boolean },
   setSubAgentExpanded: (item: ConversationTimelineSubAgentItem, expanded: boolean) => void,
   setBlockExpanded: (id: string, expanded: boolean) => void,
 ): ReactNode {
@@ -417,6 +491,8 @@ function renderTimelineItem(
     onOpenSourceRef: context.onOpenSourceRef,
     onInvokeProtocolAction: context.onInvokeProtocolAction,
     renderMessageChrome: context.renderMessageChrome,
+    messagePresentation: context.messagePresentation,
+    hasResponseNarration: context.hasResponseNarration,
     depth: context.depth,
     batchDisclosure: row.batchDisclosure,
     onBatchExpandedChange: row.batchDisclosure ? (expanded) => {

@@ -59,6 +59,7 @@ export function resolveTeammateDirectExecutionContext(input: {
     directThread: input.directThread,
     message: input.sourceMessage,
     title: `Private chat with ${input.teammate.displayName}`,
+    executionInput: { prompt: input.prompt, systemPrompt: input.systemPrompt },
     continuationReason: input.continuationReason,
   }, now);
   const permissionMode = input.permissionPreset ? permissionModeForPreset(input.permissionPreset) : undefined;
@@ -72,6 +73,7 @@ export function resolveTeammateDirectExecutionContext(input: {
       runnerId: input.teammate.runnerId,
       threadId: thread.id,
       turnId: accepted.turnId,
+      teammateDirectInputRef: { id: accepted.inputSnapshot.id, fingerprint: accepted.inputSnapshot.fingerprint },
       sourceMessageId: input.sourceMessage.id,
       linkedMessageId: input.replyMessage.id,
       createdByActor: input.sourceMessage.authorType === "system" ? "system" : "local-user",
@@ -86,7 +88,7 @@ export function resolveTeammateDirectExecutionContext(input: {
       permissionConfirmation: input.permissionConfirmation,
       responseLanguage: input.responseLanguage,
       thinkingLevel: "medium",
-      systemPrompt: input.systemPrompt,
+      systemPrompt: accepted.inputSnapshot.payload.systemPrompt,
       skipMemoryRecall: true,
       directWorkspaceBinding: input.workspace.binding,
       directWorkspaceSnapshot: input.workspace.snapshot,
@@ -95,7 +97,7 @@ export function resolveTeammateDirectExecutionContext(input: {
       task: {
         id: input.sourceMessage.id,
         title: `Private chat with ${input.teammate.displayName}`,
-        prompt: input.prompt,
+        prompt: accepted.inputSnapshot.payload.prompt,
       },
     },
   };

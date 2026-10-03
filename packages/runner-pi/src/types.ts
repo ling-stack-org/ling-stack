@@ -1,6 +1,8 @@
 import type { Api, ImageContent, Model, ModelThinkingLevel, OpenAICompletionsCompat, TextContent, ThinkingLevelMap, Transport } from "@earendil-works/pi-ai";
 import type { PiRunnerPreparedInput } from "./prepared-input.js";
 import type { PiRunnerHostCapabilityToolDefinition, PiRunnerHostCapabilityCallRequest } from "./host-capability-types.js";
+import type { PiProviderErrorDiagnostic } from "./provider-error-diagnostic.js";
+export type { PiProviderErrorDiagnostic } from "./provider-error-diagnostic.js";
 export type * from "./host-capability-types.js";
 import type { ToolDefaultApproval, ToolSideEffectLevel } from "@ling-stack/plugin-sdk";
 
@@ -294,6 +296,14 @@ export interface PiRunnerUserInputYieldDirective {
   readonly requestVersion: number;
 }
 
+/** Host persistence receipt only; optional questions do not stop execution. */
+export interface PiRunnerUserInputOptionalReceipt {
+  readonly kind: "user_input_optional";
+  readonly requestId: string;
+  readonly requestVersion: number;
+}
+export type PiRunnerUserInputRequestReceipt = PiRunnerUserInputYieldDirective | PiRunnerUserInputOptionalReceipt;
+
 /** Receiver evidence only: no model transport, completion, permission or durable ACK is implied. */
 export interface PiRunnerPreparedInputReceipt {
   readonly schemaVersion: 1;
@@ -304,13 +314,34 @@ export interface PiRunnerPreparedInputReceipt {
   readonly preparedInputFingerprint: string;
 }
 
+export type PiRunnerCompactionRecoveryMode = "complete" | "continue";
+
+/** Host-verified SDK model view restored after a daemon restart. */
+export interface PiRunnerCompactionRecovery {
+  readonly schemaVersion: 1;
+  readonly modelView: readonly unknown[];
+}
+
 export interface PiRunnerRunOptions {
   /** Initial schema capabilities; not execution handlers or authorization grants. */
-  readonly initialToolSurface?: { readonly mediaGeneration: boolean; readonly toolHydration: boolean };
+  readonly initialToolSurface?: {
+    readonly mediaGeneration: boolean;
+    readonly toolHydration: boolean;
+    /** Schema-only preparation is permitted; execution still requires the live Host handler. */
+    readonly userInput?: boolean;
+  };
   /** Host-owned preparation evidence; never a permission grant or a session history. */
   readonly preparedInput?: PiRunnerPreparedInput;
   /** Resume after a Host-executed approved tool result without replaying the tool call. */
   readonly approvedToolContinuation?: PiRunnerApprovedToolContinuation;
+  /**
+   * Restores a sealed Pi model view after daemon restart. The Runner decides
+   * from the final message whether to finalize or continue a tool loop; it
+   * never replays the original task prompt for this path.
+   */
+  readonly compactionRecovery?: PiRunnerCompactionRecovery;
+  /** Host has durable compaction evidence, provider admission fence, and restart recovery for this Run. */
+  readonly hostCompactionEnabled?: boolean;
   /**
    * Called once per runTask after SDK input validation, before prompting. Requires
    * preparedInput, runId and runnerAttemptId. Host must atomically verify its full
@@ -361,7 +392,15 @@ export interface PiRunnerRunOptions {
   ) => PiRunnerToolHydrationResponse | Promise<PiRunnerToolHydrationResponse>;
   readonly onTaskContinuationBoundary?: (
     boundary: "before_agent_start" | "before_provider_request" | "tool_call",
+    /** Host-only SDK view at provider admission; never serialized as a RunEvent. */
+    modelView?: readonly unknown[],
   ) => Promise<void | PiRunnerUserInputYieldDirective>;
+  /** Internal opt-in. Production must install the complete Host pause/answer chain first. */
+  readonly onUserInputRequest?: (request: {
+    readonly toolCallId: string;
+    /** Untrusted questions only. Scope, identity, fence and stop proof belong to Host. */
+    readonly input: unknown;
+  }) => PiRunnerUserInputRequestReceipt | Promise<PiRunnerUserInputRequestReceipt>;
   readonly onMcpToolCall?: (request: PiRunnerMcpToolCallRequest) => PiRunnerMcpToolCallResult | Promise<PiRunnerMcpToolCallResult>;
   readonly onMediaGenerationToolCall?: (
     request: PiRunnerMediaGenerationToolCallRequest,
@@ -436,10 +475,49 @@ export interface PiRunnerMcpToolCallResult {
   readonly isError?: boolean;
 }
 
+export interface PiRunnerTokenUsage {
+  readonly input: number;
+  readonly output: number;
+  readonly cacheRead: number;
+  readonly cacheWrite: number;
+  readonly totalTokens: number;
+}
+
 export type PiRunnerEvent =
   | { readonly type: "run_start"; readonly taskId: string; readonly cwd: string; readonly provider: string; readonly model: string }
   | { readonly type: "turn_start" }
   | { readonly type: "turn_end" }
+  | ({ readonly type: "provider_retry"; readonly policyVersion: "pi_sdk_retry_v1" } & (
+      | { readonly scope: "assistant" | "summarization"; readonly phase: "scheduled";
+          readonly retryAttempt: number; readonly maxRetryAttempts: number; readonly delayMs: number;
+          readonly errorDiagnostic: PiProviderErrorDiagnostic }
+      | { readonly scope: "assistant"; readonly phase: "settled"; readonly retryAttempt: number;
+          readonly outcome: "succeeded" | "failed" | "cancelled"; readonly errorDiagnostic?: PiProviderErrorDiagnostic }
+      | { readonly scope: "summarization"; readonly phase: "attempt_start";
+          readonly source: "compaction" | "branch_summary"; readonly reason?: "manual" | "threshold" | "overflow" }
+      | { readonly scope: "summarization"; readonly phase: "settled" }
+    ))
+  | {
+      readonly type: "context_compaction_start";
+      readonly reason: "manual" | "threshold" | "overflow";
+      readonly policyVersion: "pi_sdk_lifecycle_v1";
+      /** Bounded pre-compaction SDK context, captured before the SDK mutates its session. */
+      readonly contextSnapshot?: readonly unknown[];
+    }
+  | {
+      readonly type: "context_compaction_end";
+      readonly reason: "manual" | "threshold" | "overflow";
+      readonly policyVersion: "pi_sdk_lifecycle_v1";
+      readonly outcome: "sdk_installed" | "aborted" | "failed";
+      readonly willRetry: boolean;
+      readonly tokensBefore?: number;
+      readonly estimatedTokensAfter?: number;
+      readonly usage?: PiRunnerTokenUsage;
+      /** Host-only SDK view captured after installation; never serialize in a RunEvent. */
+      readonly compactedModelView?: readonly unknown[];
+      /** Host-only exact SDK summary, paired with compactedModelView. */
+      readonly compactedSummary?: string;
+    }
   | { readonly type: "assistant_text_delta"; readonly text: string }
   | { readonly type: "assistant_thinking_delta"; readonly text: string }
   | {
@@ -481,10 +559,12 @@ export type PiRunnerEvent =
       readonly text?: string;
       readonly stopReason?: string;
       readonly errorMessage?: string;
+      readonly errorDiagnostic?: PiProviderErrorDiagnostic;
       readonly contentKinds?: readonly string[];
+      readonly usage?: PiRunnerTokenUsage;
     }
   | { readonly type: "run_end"; readonly taskId: string; readonly messageCount: number }
-  | { readonly type: "run_error"; readonly taskId: string; readonly message: string };
+  | { readonly type: "run_error"; readonly taskId: string; readonly message: string; readonly errorDiagnostic?: PiProviderErrorDiagnostic };
 
 export interface PiRunnerResult {
   readonly taskId: string;

@@ -242,6 +242,9 @@ test("large MCP result remains intact in atomic tool evidence", { timeout: 10000
   assert.equal(end.isError, true);
   assert.deepEqual(end.result.details.result, evidence);
   // This checks atomic evidence only. Model projection budgeting has a separate contract.
+  const modelResult = f.requests[1].find(message => message.role === "toolResult");
+  assert.ok(Buffer.byteLength(modelResult.content[0].text, "utf8") < Buffer.byteLength(text, "utf8"));
+  assert.match(modelResult.content[0].text, /full Host evidence retained/);
 });
 
 for (const outcome of ["success", "failed", "denied", "throw"]) {

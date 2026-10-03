@@ -1,10 +1,11 @@
-import { spawn } from "node:child_process";
+import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash, randomBytes, randomUUID } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import { isChannelOperationRelativePathV1 } from "@ling-stack/contracts";
 import { NativeInputCaptureDecoder, NativeInputCaptureError, requireNativeInput,
   type NativeInputOwner, type NativeCapturedInput } from "./native-input-capture-protocol.js";
+import type { HostFileMutationEffectGuard } from "../host-operation-effects.js";
 
 export interface NativeInputCaptureOptions {
   /** Host-selected distribution/build identity. Never load this from model input or the project. */
@@ -16,6 +17,7 @@ export interface NativeInputCaptureOptions {
   readonly assertCurrentAuthority: () => void;
   readonly signal?: AbortSignal;
   readonly timeoutMs?: number;
+  readonly effectGuard?: HostFileMutationEffectGuard;
 }
 
 /**
@@ -65,34 +67,81 @@ export async function captureNativeCommandInput(options: NativeInputCaptureOptio
   return new Promise((resolve, reject) => {
     let failure: Error | undefined;
     let settled = false;
+    let cleanupStarted = false;
     let deadline: ReturnType<typeof setTimeout> | undefined;
     let cleanupDeadline: ReturnType<typeof setTimeout> | undefined;
     check();
-    const child = spawn(options.helper.path, ["--read-input"], { env: {}, stdio: "pipe", windowsHide: true });
+    let child: ChildProcessWithoutNullStreams | undefined;
+    let launchFailure: Error | undefined;
+    const spawnHelper = () => { child = spawn(options.helper.path, ["--read-input"], { env: {}, stdio: "pipe", windowsHide: true }); };
+    try {
+      if (options.effectGuard) options.effectGuard.launch(spawnHelper); else spawnHelper();
+    } catch (error) {
+      // Retain the actual handle after a post-spawn COMMIT failure. Attach the
+      // same observer as the ordinary path before attempting bounded cleanup;
+      // rejection, kill(true), or destroyed pipes are not a close receipt.
+      if (!child) throw error;
+      launchFailure = error instanceof Error ? error : new NativeInputCaptureError("native_input_launch_failed");
+    }
+    if (!child) throw new NativeInputCaptureError("native_input_helper_unavailable");
+    const helper = child;
     const complete = (error?: Error, value?: NativeCapturedInput) => {
       if (settled) return;
       settled = true; clearTimeout(deadline); clearTimeout(cleanupDeadline); options.signal?.removeEventListener("abort", abort);
+      helper.stdin.removeListener("error", onStdinError);
+      helper.stdout.removeListener("data", onData);
+      helper.stdout.removeListener("error", onTransportError);
+      helper.stderr.removeListener("data", onStderrData);
+      helper.stderr.removeListener("error", onTransportError);
+      // A bounded observer may finish without process closure. Keep passive
+      // child error/close observers (which cannot write to the Store), detach
+      // all active data/authority callbacks and retain the durable unknown.
+      if (error) {
+        helper.stdin.once("error", () => undefined);
+        helper.stdout.once("error", () => undefined);
+        helper.stderr.once("error", () => undefined);
+        helper.stdin.destroy(); helper.stdout.destroy(); helper.stderr.destroy();
+        helper.unref();
+      }
       if (error) reject(error); else resolve(value!);
     };
     const fail = (error: Error) => {
       failure ??= error;
       // This helper never forks. Kill only our ChildProcess handle, not a guessed PID/group.
-      if (!settled) {
-        try { child.kill("SIGKILL"); } catch { /* Keep the original diagnostic and bounded cleanup. */ }
-        cleanupDeadline ??= setTimeout(() => { child.stdin.destroy(); child.stdout.destroy(); child.stderr.destroy(); complete(failure); }, 1000);
+      if (!settled && !cleanupStarted) {
+        // ChildProcess.kill may synchronously emit error (e.g. EPERM). Latch
+        // cleanup and install its deadline before signalling, so a reentrant
+        // observer cannot start another kill or nest the Store writer gate.
+        cleanupStarted = true;
+        cleanupDeadline = setTimeout(() => complete(failure), 1000);
+        try {
+          const kill = () => helper.kill("SIGKILL");
+          if (options.effectGuard) options.effectGuard.cleanup(kill); else kill();
+        } catch { /* Original source lost: preserve unknown and bound local observer cleanup. */ }
       }
     };
     const abort = () => fail(new NativeInputCaptureError("native_input_cancelled"));
-    child.once("error", () => complete(new NativeInputCaptureError("native_input_helper_unavailable")));
-    child.stdin.on("error", error => { if ((error as NodeJS.ErrnoException).code !== "EPIPE") fail(new NativeInputCaptureError("native_input_transport_failed")); });
-    child.stdout.on("data", (bytes: Buffer) => {
+    const onStdinError = (error: Error) => { if ((error as NodeJS.ErrnoException).code !== "EPIPE") fail(new NativeInputCaptureError("native_input_transport_failed")); };
+    const onData = (bytes: Buffer) => {
       if (failure || settled) return;
       try { decoder.push(bytes); } catch (error) { fail(error instanceof Error ? error : new NativeInputCaptureError("native_input_protocol_invalid")); }
+    };
+    const onTransportError = () => fail(new NativeInputCaptureError("native_input_transport_failed"));
+    const onStderrData = () => fail(new NativeInputCaptureError("native_input_helper_failed"));
+    child.on("error", () => {
+      if (settled) return;
+      // Spawn errors have no process. Errors from an existing handle must use
+      // the close/deadline observer, not bypass it as a fictitious no-start.
+      const error = new NativeInputCaptureError("native_input_helper_unavailable");
+      if (helper.pid) fail(error); else complete(failure ?? error);
     });
-    child.stdout.on("error", () => fail(new NativeInputCaptureError("native_input_transport_failed")));
-    child.stderr.on("data", () => fail(new NativeInputCaptureError("native_input_helper_failed")));
-    child.stderr.on("error", () => fail(new NativeInputCaptureError("native_input_transport_failed")));
+    child.stdin.on("error", onStdinError);
+    child.stdout.on("data", onData);
+    child.stdout.on("error", onTransportError);
+    child.stderr.on("data", onStderrData);
+    child.stderr.on("error", onTransportError);
     child.once("close", (code, signal) => {
+      if (settled) return;
       if (failure) return complete(failure);
       try {
         requireNativeInput(code === 0 && signal === null, "native_input_helper_failed");
@@ -101,7 +150,13 @@ export async function captureNativeCommandInput(options: NativeInputCaptureOptio
     });
     deadline = setTimeout(() => fail(new NativeInputCaptureError("native_input_timeout")), timeoutMs);
     options.signal?.addEventListener("abort", abort, { once: true });
-    if (options.signal?.aborted) abort();
-    else child.stdin.end(Buffer.concat([header, body]));
+    if (launchFailure) fail(launchFailure);
+    else if (options.signal?.aborted) abort();
+    else {
+      try {
+        const send = () => { helper.stdin.end(Buffer.concat([header, body])); };
+        if (options.effectGuard) options.effectGuard.launch(send); else send();
+      } catch (error) { fail(error instanceof Error ? error : new NativeInputCaptureError("native_input_authority_lost")); }
+    }
   });
 }

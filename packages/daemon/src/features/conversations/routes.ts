@@ -38,7 +38,7 @@ import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js"
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
-import { responseLanguageInstruction } from "../channels/response-language.js";
+import { inferUserLanguage, responseLanguageInstruction } from "../channels/response-language.js";
 import { parseChannelAttachmentRequest, readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
@@ -47,6 +47,7 @@ import type { RunRequest } from "../runs/schemas.js";
 import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
 import { lingConversationToneInstruction } from "./conversation-tone.js";
 import { projectConversationActiveReplyTarget } from "./active-reply-target.js";
+import { projectNormalExecutionContextSnapshots } from "./normal-execution-context-snapshots.js";
 import { ConversationNarrationAccumulator } from "./narration-segments.js";
 import { createOwnedRunNarrationAccumulator } from "./narration-owner.js";
 import { prepareNormalConversationInput } from "./normal-conversation-input.js";
@@ -71,6 +72,7 @@ import {
   projectUnboundConversationInterventionMessages,
 } from "./runtime-projection.js";
 import { projectConversationReasoningSummaries } from "./reasoning-summary-projection.js";
+import { projectConversationArtifacts } from "../runs/public-artifacts.js";
 
 type StartConversationRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -250,13 +252,18 @@ export async function handleConversationStream(
         if (!runId || envelope.runId !== runId) return;
         const sourceRevision = narration.sourceRevision;
         narration.append(envelope);
-        if (sourceRevision !== narration.sourceRevision) assistantMessage = { ...assistantMessage, ...narration.snapshot() };
+        const narrativeSnapshot = narration.snapshot();
+        if (sourceRevision !== narration.sourceRevision) assistantMessage = {
+          ...assistantMessage, ...narrativeSnapshot,
+          contentSource: narrativeSnapshot.content.trim() ? "run_narration" : "host_status",
+        };
         if (envelope.type === "assistant_text_delta" || (
           envelope.type === "message_end" && readEventRole(envelope) === "assistant"
         )) {
           assistantMessage = {
             ...assistantMessage,
-            ...narration.snapshot(),
+            ...narrativeSnapshot,
+            contentSource: narrativeSnapshot.content.trim() ? "run_narration" : "host_status",
             status: "running",
             updatedAt: envelope.ts,
           };
@@ -546,6 +553,7 @@ export function buildConversationDetail(
       || (item.turnId && !projection.supersededTurnIds.has(item.turnId)
         && store.getLingTurn(item.turnId)?.status !== "superseded"));
   const { conversationItems, userInputs } = projectConversationUserInputs(store, thread.id, sourceItems);
+  const executionActions = listExecutionActions(store, { threadId: thread.id, limit: 500 });
   return {
     cwd,
     thread,
@@ -562,7 +570,7 @@ export function buildConversationDetail(
       runs,
       items: conversationItems,
     }),
-    executionActions: listExecutionActions(store, { threadId: thread.id, limit: 500 }),
+    executionActions,
     approvals: runtimeProjection.approvals,
     approvalCheckpoints: runtimeProjection.approvalCheckpoints,
     interventions: runtimeProjection.interventions,
@@ -572,15 +580,18 @@ export function buildConversationDetail(
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
       .flatMap((record) => record.resultItemId
         ? [{
-            ...projectTerminalReportDto(record.report!),
+            ...projectTerminalReportDto(record.report!, record.evidenceSnapshot),
             generation: record.generation,
             resultItemId: record.resultItemId,
           }]
         : []),
-    artifacts: runs.flatMap((run) => store.listArtifacts(run.id)),
+    artifacts: projectConversationArtifacts(runs.flatMap((run) => store.listArtifacts(run.id)), executionActions),
     plans: store.listProposedPlanArtifacts({ threadId: thread.id, limit: 200 }),
     compactionCheckpoints: store.listCompactionCheckpoints({ threadId: thread.id, limit: 100 }),
-    contextSnapshots: store.listConversationContextSnapshots({ threadId: thread.id, limit: 100 }),
+    contextSnapshots: [
+      ...store.listConversationContextSnapshots({ threadId: thread.id, limit: 100 }),
+      ...projectNormalExecutionContextSnapshots({ store, thread, turns, runs, items: conversationItems }),
+    ],
     contextSummaries: store.listConversationContextSummaries({
       threadId: thread.id,
       statuses: ["active", "superseded", "invalidated"],
@@ -789,6 +800,7 @@ function createAssistantTranscriptMessage(
   status: ConversationTranscriptStatus,
   now: string,
   errorMessage?: string,
+  contentSource: ConversationTranscriptMessage["contentSource"] = "host_status",
 ): ConversationTranscriptMessage {
   return {
     id: conversationAssistantMessageId(turn.id),
@@ -796,6 +808,7 @@ function createAssistantTranscriptMessage(
     authorId: LING_AGENT_ID,
     authorLabel: "Ling Agent",
     content,
+    contentSource,
     ...(errorMessage ? { errorMessage } : {}),
     status,
     threadId: thread.id,
@@ -846,6 +859,7 @@ function assistantMessageFromRunSnapshot(store: RunStore, thread: LingThread, tu
     projectedStatus,
     run.updatedAt,
     error,
+    content.trim() ? "run_narration" : "host_status",
   ), narrationSegments };
 }
 
@@ -853,13 +867,13 @@ function statusFromTurn(turn: LingTurn): ConversationTranscriptStatus {
   if (turn.status === "failed") {
     return "failed";
   }
-  if (turn.status === "blocked" || turn.status === "waiting_for_approval") {
+  if (turn.status === "blocked") {
     return "blocked";
   }
   if (turn.status === "cancelled" || turn.status === "superseded") {
     return "cancelled";
   }
-  if (turn.status === "running") {
+  if (turn.status === "running" || turn.status === "waiting_for_approval") {
     return "running";
   }
   return "succeeded";
@@ -872,13 +886,10 @@ function statusFromRun(run: RunSession | undefined): ConversationTranscriptStatu
   if (run.status === "failed") {
     return "failed";
   }
-  if (run.status === "waiting_for_approval") {
-    return "blocked";
-  }
   if (run.status === "cancelled") {
     return "cancelled";
   }
-  if (run.status === "queued" || run.status === "running") {
+  if (run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval") {
     return "running";
   }
   return "succeeded";
@@ -994,11 +1005,11 @@ function readResponseLanguagePreference(value: string | undefined): ResponseLang
   return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
-function resolveConversationResponseLanguage(
+export function resolveConversationResponseLanguage(
   responseLanguage: ResponseLanguagePreference | undefined,
-  _message: string,
+  message: string,
 ): Exclude<ResponseLanguagePreference, "follow_user"> {
-  return responseLanguage && responseLanguage !== "follow_user" ? responseLanguage : "en-US";
+  return responseLanguage && responseLanguage !== "follow_user" ? responseLanguage : inferUserLanguage(message);
 }
 
 function buildConversationRunPrompt(

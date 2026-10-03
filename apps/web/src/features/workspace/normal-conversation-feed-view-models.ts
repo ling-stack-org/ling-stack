@@ -65,6 +65,13 @@ export function projectNormalConversationFeedItems(input: {
       contextSegmentIdByItemId: input.detailContext?.timelineProjection?.contextSegmentIdByItemId,
       ...(typedTimelineItems.length > 0 ? { typedTimelineItems } : {}),
     }) : undefined;
+    // Only an accepted, published canonical fact can supersede a Host-generated
+    // status placeholder. Unknown provenance and real model segments stay visible.
+    const reportOwnsHostStatus = message.role === "assistant" && message.contentSource === "host_status" &&
+      !message.narrationSegments?.length && (message.status === "failed" || message.status === "cancelled" || message.status === "blocked") &&
+      typedTimelineItems.some((item) => item.kind === "terminalReport" && Boolean(item.reportId && item.resultItemId) &&
+        item.generation > 0 && item.turnId === message.turnId && (!item.runId || item.runId === message.runId) &&
+        (item.status === "failed" || item.status === "cancelled" || item.status === "blocked" || item.status === "partially_succeeded"));
     const bodyStreaming = message.status === "running" || message.status === "pending";
     const messagePresentation = projectConversationMessagePresentation({
       content: message.content,
@@ -94,7 +101,7 @@ export function projectNormalConversationFeedItems(input: {
       : legacyFactsAdapter
         ? conversationTimelineItemsForModel(legacyFactsAdapter)
         : [];
-    const timelineItems = [messageItem, ...facts];
+    const timelineItems = reportOwnsHostStatus ? facts : [messageItem, ...facts];
 
     return {
       message,
@@ -102,11 +109,11 @@ export function projectNormalConversationFeedItems(input: {
       authorName: conversationMessageAuthorName(message, input.t),
       createdAtLabel: formatConversationTimeLabel(message.createdAt),
       className: normalConversationMessageClassName(message),
-      // The model message is the narrative owner. TerminalReport/work-cell
-      // evidence remains a separate fact surface and never replaces prose.
-      body: messagePresentation.body,
+      // Real model prose owns narration. A Host fallback is only a status view
+      // until the same owner's canonical final report has arrived.
+      body: reportOwnsHostStatus ? "" : messagePresentation.body,
       bodyStreaming,
-      errorText: messagePresentation.errorText,
+      errorText: reportOwnsHostStatus ? "" : messagePresentation.errorText,
       timelineItems,
       workspaceMayHaveChanged: runMayHaveWorkspaceChanges(relatedRun),
     };

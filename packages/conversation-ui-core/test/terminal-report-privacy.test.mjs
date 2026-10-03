@@ -75,3 +75,33 @@ test("typed channel and child rows filter content and refresh visible counts", (
   assert.equal(projected.artifactCount, 0);
   assert.deepEqual([projected.reportId, projected.resultItemId, projected.generation, projected.status], ["report", "result", 2, "succeeded"]);
 });
+
+test("legacy run-storage artifacts do not appear as deliverables or duplicate sources", () => {
+  const input = report();
+  const runRef = { kind: "run", id: "run_legacy", visibility: "conversation" };
+  const toolRef = { kind: "artifact", id: "tool-content", label: "find content", visibility: "conversation" };
+  const patchRef = { kind: "artifact", id: "patch-plan", label: "Workspace forward patch plan", visibility: "conversation" };
+  const fileRef = { kind: "file", id: "docs/output.md", visibility: "conversation" };
+  input.changes = [{ title: "docs/output.md", paths: ["docs/output.md"], sourceRefs: [fileRef, toolRef] }];
+  input.artifacts = [
+    { id: "tool-content", title: "find content", path: "run_legacy/002-find-content.md", sourceRefs: [runRef, toolRef] },
+    { id: "patch-plan", title: "Workspace forward patch plan", path: ".ling-stack/provenance/run_legacy/forward-plan.json", sourceRefs: [runRef, patchRef] },
+  ];
+  input.references = [toolRef, patchRef, fileRef];
+  const projected = projectVisibleTerminalReportContent(input);
+  assert.deepEqual(projected.artifacts, []);
+  assert.equal(projected.changes.length, 1);
+  assert.deepEqual(projected.changes[0].sourceRefs, [fileRef]);
+  assert.deepEqual(projected.references, [fileRef]);
+});
+
+test("automation and external-work inputs stay private while generated media remains visible", () => {
+  const input = report();
+  input.artifacts = [
+    { id: "automation-input", title: "Automation context", path: "automation-context/run-1-automation-1.md", sourceRefs: [] },
+    { id: "external-input", title: "Rendered workflow prompt", path: "external-work/work-1/rendered-prompt.md", sourceRefs: [] },
+    { id: "image-output", title: "Generated image", path: "media_jobs/job-1/output.png", sourceRefs: [] },
+  ];
+  const projected = projectVisibleTerminalReportContent(input);
+  assert.deepEqual(projected.artifacts.map((artifact) => artifact.id), ["image-output"]);
+});

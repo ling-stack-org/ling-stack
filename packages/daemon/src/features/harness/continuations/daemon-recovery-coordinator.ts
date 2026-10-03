@@ -21,9 +21,10 @@ export interface DaemonRunnerRecoveryResult {
 }
 
 /**
- * Re-dispatches only fenced, daemon-owned task continuations after startup.
+ * Re-dispatches only fenced, daemon-owned Run continuations after startup.
  * SQLite remains the authority for activation; this class only discovers
- * eligible stale WorkUnits and prevents duplicate in-process dispatch.
+ * eligible stale WorkUnits and prevents duplicate in-process dispatch. Channel
+ * reply children belong to the channel dispatch recovery path instead.
  */
 export class DaemonRunnerRecoveryCoordinator {
   private readonly stores = new Set<RunStore>();
@@ -111,28 +112,30 @@ export class DaemonRunnerRecoveryCoordinator {
       }
     }
 
-    for (const workUnit of store.listWorkUnits({ kind: "task_run", status: "stale", limit: 500 })) {
-      scanned += 1;
-      const run = this.recoverableRun(store, workUnit, dispatches);
-      if (!run) {
-        skipped += 1;
-        continue;
-      }
-      dispatches.add(run.id);
-      try {
-        const completion = this.options.executeExistingRunContinuation({
-          cwd: store.paths.cwd,
-          runId: run.id,
-          origin: "daemon_recovery",
-          idempotencyDiscriminator: "runtime-startup",
-        });
-        dispatched += 1;
-        void completion.catch(() => undefined).finally(() => {
+    for (const kind of ["task_run", "conversation_run", "teammate_direct_reply"] as const) {
+      for (const workUnit of store.listWorkUnits({ kind, status: "stale", limit: 500 })) {
+        scanned += 1;
+        const run = this.recoverableRun(store, workUnit, dispatches);
+        if (!run) {
+          skipped += 1;
+          continue;
+        }
+        dispatches.add(run.id);
+        try {
+          const completion = this.options.executeExistingRunContinuation({
+            cwd: store.paths.cwd,
+            runId: run.id,
+            origin: "daemon_recovery",
+            idempotencyDiscriminator: "runtime-startup",
+          });
+          dispatched += 1;
+          void completion.catch(() => undefined).finally(() => {
+            dispatches.delete(run.id);
+          });
+        } catch {
           dispatches.delete(run.id);
-        });
-      } catch {
-        dispatches.delete(run.id);
-        skipped += 1;
+          skipped += 1;
+        }
       }
     }
     return { scanned, dispatched, skipped };
@@ -181,12 +184,18 @@ export class DaemonRunnerRecoveryCoordinator {
     const run = store.getRun(workUnit.linkedRunId);
     const attempt = store.getWorkUnitAttempt(workUnit.activeAttemptId);
     const task = run ? store.getTask(run.taskId) : undefined;
+    const thread = run?.threadId ? store.getLingThread(run.threadId) : undefined;
     if (!run
       || run.workUnitId !== workUnit.id
       || (run.status !== "running" && run.status !== "queued")
       || attempt?.workUnitId !== workUnit.id
       || attempt.status !== "lost"
-      || (task?.status !== "claimed" && task?.status !== "running")
+      || (workUnit.kind === "task_run" && !task)
+      || (task && task.status !== "claimed" && task.status !== "running")
+      || (workUnit.kind === "conversation_run" && thread?.kind !== "conversation")
+      || (workUnit.kind === "teammate_direct_reply"
+        && (thread?.kind !== "teammate_direct" || !run.teammateId
+          || thread.teammateId !== run.teammateId || workUnit.teammateId !== run.teammateId))
       || dispatches.has(run.id)
       || this.options.activeRuns.get(run.id)
       || hasUnresolvedApproval(store, run.id)) {

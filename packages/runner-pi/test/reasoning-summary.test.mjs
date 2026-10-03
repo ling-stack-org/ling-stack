@@ -91,7 +91,7 @@ async function transformPayload({ mode, api = "openai-responses", payload, upstr
     reasoningSummary: mode,
   });
   boundary.bindModelRuntime(runtime);
-  runtime.streamSimple({ api }, {}, upstream ? { onPayload: upstream } : undefined);
+  runtime.streamSimple({ api, contextWindow: 128_000, maxTokens: 16_384 }, { messages: [] }, upstream ? { onPayload: upstream } : undefined);
   return requestOptions.onPayload(payload, { api });
 }
 

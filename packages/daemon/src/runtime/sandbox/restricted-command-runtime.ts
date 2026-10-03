@@ -11,6 +11,7 @@ import { macosSandboxCommandFingerprint, prepareMacosSandboxCommand, readMacosSa
 import { MACOS_SYSTEM_READ_ROOTS } from "./macos-seatbelt-profile.js";
 import { verifyElectronNodeResources, type ElectronNodeRuntimePin } from "./electron-node-resources.js";
 import type { MacosCommandRuntimeProfile } from "./macos-native-command.js";
+import type { HostCommandPreparationOperation } from "../host-operation-effects.js";
 
 export interface RestrictedCommandBinaryPin { readonly path: string; readonly sha256: string }
 export interface RestrictedCommandExecutablePin extends RestrictedCommandBinaryPin {
@@ -84,6 +85,7 @@ export class NativeRestrictedCommandRuntime {
     readonly source: RuntimeAttemptFenceV1 & { readonly workspaceId: string; readonly runId: string; readonly toolCallId: string };
     readonly assertCurrentAuthority: () => void;
     readonly signal?: AbortSignal;
+    readonly hostOperation?: HostCommandPreparationOperation;
   }) {
     const check = () => {
       input.signal?.throwIfAborted();
@@ -98,7 +100,9 @@ export class NativeRestrictedCommandRuntime {
       "restricted_command_input_budget_exceeded");
     requireRuntime(resolved.readRoots.every(path => outside(origin, path)) && outside(origin, this.#config.inputHelper.path),
       "restricted_command_runtime_inside_workspace");
-    const root = realpathSync(mkdtempSync("/private/tmp/ling-command-"));
+    const forward = <T>(effect: () => T): T => input.hostOperation ? input.hostOperation.effectGuard.launch(effect) : effect();
+    const cleanup = <T>(effect: () => T): T => input.hostOperation ? input.hostOperation.effectGuard.cleanup(effect) : effect();
+    const root = forward(() => realpathSync(mkdtempSync("/private/tmp/ling-command-")));
     const rootFact = lstatSync(root, { bigint: true });
     const copy = join(root, "workspace"), scratch = join(root, "scratch");
     let disposed = false;
@@ -107,10 +111,10 @@ export class NativeRestrictedCommandRuntime {
       const current = lstatSync(root, { bigint: true });
       requireRuntime(current.isDirectory() && !current.isSymbolicLink() && current.dev === rootFact.dev && current.ino === rootFact.ino,
         "restricted_command_cleanup_identity_changed");
-      rmSync(root, { recursive: true }); disposed = true;
+      cleanup(() => { rmSync(root, { recursive: true }); disposed = true; });
     };
     try {
-      mkdirSync(copy, { mode: 0o700 }); mkdirSync(scratch, { mode: 0o700 });
+      forward(() => { mkdirSync(copy, { mode: 0o700 }); mkdirSync(scratch, { mode: 0o700 }); });
       const { workspaceId, runId, workUnitId, attemptId, runtimeInstanceId, fencingToken } = input.source;
       const identity = { workspaceId, runId, workUnitId, attemptId, runtimeInstanceId, fencingToken };
       const files: UnifiedExecIsolationEvidence["inputs"][number][] = [];
@@ -119,12 +123,14 @@ export class NativeRestrictedCommandRuntime {
         requireRuntime(isChannelOperationRelativePathV1(ref.path) && !ref.path.split("/").includes(".ling"), "restricted_command_protected_input");
         const captured = await captureNativeCommandInput({ helper: this.#config.inputHelper, root: origin, path: ref.path,
           maxBytes: Math.min(16 * 1024 * 1024, 64 * 1024 * 1024 - bytes), identity,
-          assertCurrentAuthority: check, signal: input.signal });
+          assertCurrentAuthority: check, signal: input.signal, effectGuard: input.hostOperation?.effectGuard });
         bytes += captured.bytes.length;
         requireRuntime(bytes <= 64 * 1024 * 1024, "restricted_command_input_budget_exceeded");
         const target = join(copy, ref.path);
-        mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
-        writeFileSync(target, captured.bytes, { flag: "wx", mode: 0o400 });
+        forward(() => {
+          mkdirSync(dirname(target), { recursive: true, mode: 0o700 });
+          writeFileSync(target, captured.bytes, { flag: "wx", mode: 0o400 });
+        });
         files.push({ path: ref.path, sha256: captured.sha256, sizeBytes: captured.bytes.length,
           sourceItemIds: [...new Set(ref.sourceRefs.map(source => source.itemId))] });
       }

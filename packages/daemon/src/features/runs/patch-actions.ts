@@ -33,6 +33,8 @@ import {
 } from "@ling-stack/core";
 import type { PiRunnerApprovalRequest, PiRunnerToolHandledResult } from "@ling-stack/runner-pi";
 import { isRecord } from "../../shared/validation.js";
+import { captureWorkspaceReviewSnapshot, type WorkspaceReviewSnapshot } from "./workspace-review-snapshot.js";
+import type { HostFileMutationEffectGuard } from "../../runtime/host-operation-effects.js";
 
 export interface PatchApprovalMetadata {
   readonly patchText: string;
@@ -122,10 +124,11 @@ export async function applyPatchActionDraft(input: {
   readonly provenance?: PatchProvenanceInput;
   readonly signal?: AbortSignal;
   readonly requireExistingParentsForAdds?: boolean;
+  readonly effectGuard?: HostFileMutationEffectGuard;
 }): Promise<PatchActionApplyOutput> {
   const before = new Map(input.draft.plan.touchedPaths.map((path) => [path, readWorkspaceTextFile(input.cwd, path)] as const));
   const provenanceArtifacts = input.provenance
-    ? createPatchProvenanceArtifacts(input.provenance, input.draft.plan, new Date().toISOString())
+    ? createPatchProvenanceArtifacts(input.provenance, input.draft.plan, new Date().toISOString(), await captureWorkspaceReviewSnapshot(input.draft.plan, before))
     : undefined;
   const evidenceArtifactIds = [
     ...input.previewArtifactIds ?? [],
@@ -146,20 +149,29 @@ export async function applyPatchActionDraft(input: {
       writeFile: (path, content) => {
         throwIfAborted(input.signal);
         assertMutationPathCurrent(path, input.cwd, input.allowedWritePaths);
-        const operation = operations.get(path);
-        if (operation?.kind === "add") {
-          atomicCreateWorkspaceTextFile(input.cwd, path, content, input.requireExistingParentsForAdds === true);
-        } else {
-          atomicWriteWorkspaceTextFile(input.cwd, path, content);
-        }
-        appliedPaths.push(path);
+        const effect = (): void => {
+          const operation = operations.get(path);
+          if (operation?.kind === "add") {
+            atomicCreateWorkspaceTextFile(input.cwd, path, content, input.requireExistingParentsForAdds === true);
+          } else {
+            atomicWriteWorkspaceTextFile(input.cwd, path, content);
+          }
+          // Retain the physical write even if the journal COMMIT then throws.
+          appliedPaths.push(path);
+        };
+        if (input.effectGuard) input.effectGuard.launch(effect);
+        else effect();
         throwIfAborted(input.signal);
       },
       deleteFile: (path) => {
         throwIfAborted(input.signal);
         assertMutationPathCurrent(path, input.cwd, input.allowedWritePaths);
-        deleteWorkspaceFile(input.cwd, path);
-        appliedPaths.push(path);
+        const effect = (): void => {
+          deleteWorkspaceFile(input.cwd, path);
+          appliedPaths.push(path);
+        };
+        if (input.effectGuard) input.effectGuard.launch(effect);
+        else effect();
         throwIfAborted(input.signal);
       },
     });
@@ -215,6 +227,7 @@ export async function applyPatchActionDraft(input: {
           plan: input.draft.plan,
           before,
           appliedPaths,
+          effectGuard: input.effectGuard,
         });
       } catch (caught) {
         rollbackError = caught;
@@ -266,6 +279,7 @@ function createPatchProvenanceArtifacts(
   input: PatchProvenanceInput,
   plan: PatchPlan,
   now: string,
+  workspaceReviewSnapshot: WorkspaceReviewSnapshot,
 ): { readonly forwardPatchArtifactId: string; readonly inversePatchArtifactId: string } {
   const identity = input.executionId ?? plan.rawPatchSha256;
   const basePath = `.ling-stack/provenance/${input.run.id}/${identity}`;
@@ -275,7 +289,7 @@ function createPatchProvenanceArtifacts(
     path: `${basePath}/forward-plan.json`,
     title: "Workspace forward patch plan",
     contentType: "application/json",
-    sealedPayload: plan,
+    sealedPayload: { ...plan, workspaceReviewSnapshot },
     createdAt: now,
   });
   const inverse = input.store.createArtifact({
@@ -591,6 +605,7 @@ function rollbackAppliedPaths(input: {
   readonly plan: PatchPlan;
   readonly before: ReadonlyMap<string, string | undefined>;
   readonly appliedPaths: readonly string[];
+  readonly effectGuard?: HostFileMutationEffectGuard;
 }): void {
   const operations = new Map(input.plan.operations.map((operation) => [operation.path, operation] as const));
   const paths = [...new Set(input.appliedPaths)].reverse();
@@ -603,12 +618,20 @@ function rollbackAppliedPaths(input: {
     if (currentSha256 !== operation.newSha256) {
       throw new ApplyPatchError(`Rollback refused because ${path} changed after the patch effect.`, { path });
     }
-    const previous = input.before.get(path);
-    if (previous === undefined) {
-      if (current !== undefined) deleteWorkspaceFile(input.cwd, path);
-    } else {
-      atomicWriteWorkspaceTextFile(input.cwd, path, previous);
-    }
+    const effect = (): void => {
+      const previous = input.before.get(path);
+      if (previous === undefined) {
+        if (current !== undefined) deleteWorkspaceFile(input.cwd, path);
+      } else {
+        // Delete operations leave no target for atomicWriteWorkspaceTextFile's
+        // mode-preserving lstat. Recreate the original file atomically first;
+        // existing targets still use the mode-preserving replacement path.
+        if (current === undefined) atomicCreateWorkspaceTextFile(input.cwd, path, previous, true);
+        else atomicWriteWorkspaceTextFile(input.cwd, path, previous);
+      }
+    };
+    if (input.effectGuard) input.effectGuard.cleanup(effect);
+    else effect();
   }
 }
 

@@ -30,6 +30,8 @@ import {
   type WorkUnitTransitionEvent,
 } from "../../state-machines.js";
 import { redactSecrets } from "../../redaction.js";
+import type { CreateOrReuseConversationMediaJobInput } from "../../media-generation-routing-types.js";
+import { redactConversationMediaWorkUnitRequest } from "./conversation-media-execution-admission.js";
 import { readNumber, readString, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import {
   mapRuntimeEvent,
@@ -71,7 +73,10 @@ export class SqliteRuntimeWorkUnitStore {
     private readonly ports: SqliteRuntimeWorkUnitStorePorts,
   ) {}
 
-  createWorkUnit(input: CreateWorkUnitInput): WorkUnit {
+  createWorkUnit(
+    input: CreateWorkUnitInput,
+    mediaAdmission?: NonNullable<CreateOrReuseConversationMediaJobInput["executionAdmission"]>,
+  ): WorkUnit {
     const id = input.id ?? createWorkUnitId();
     const timeoutPolicy = input.timeoutPolicy ?? defaultRuntimeTimeoutPolicy;
     const status = input.status ?? "queued";
@@ -135,7 +140,9 @@ export class SqliteRuntimeWorkUnitStore {
         null,
         input.createdByClientId ?? null,
         input.createdByActor,
-        stringifyJson(redactSecrets(input.request)),
+        stringifyJson(mediaAdmission
+          ? redactConversationMediaWorkUnitRequest(this.context.database, input, mediaAdmission)
+          : redactSecrets(input.request)),
         stringifyJson(timeoutPolicy),
         input.linkedRunId ?? null,
         input.linkedMessageId ?? null,

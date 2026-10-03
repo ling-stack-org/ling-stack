@@ -16,6 +16,7 @@ const parent = mkdtempSync(join(tmpdir(), "ling-restricted-package-"));
 const build = join(parent, "build"), staged = join(desktopRoot, "dist", ".restricted-command-next");
 const destination = join(desktopRoot, "dist", "restricted-command");
 try {
+  ensureGeneratedDistDirectory();
   const manifest = buildNativeEvidence({ target: "aarch64-apple-darwin", output: build });
   requireBuild(manifest.target === "aarch64-apple-darwin" && manifest.verification.releaseBuild === "passed"
     && manifest.verification.inputCapture === "passed");
@@ -46,6 +47,16 @@ try {
 }
 function requireBuild(value) {
   if (!value) throw new Error("restricted_command_package_build_invalid");
+}
+function ensureGeneratedDistDirectory() {
+  const dist = join(desktopRoot, "dist");
+  try {
+    const stat = lstatSync(dist);
+    requireBuild(stat.isDirectory() && !stat.isSymbolicLink());
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    mkdirSync(dist, { mode: 0o700 });
+  }
 }
 function normalizeDarwinCodeSignature(path) {
   const result = spawnSync("/usr/bin/codesign", ["--remove-signature", path], {

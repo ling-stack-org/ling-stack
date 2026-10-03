@@ -326,17 +326,22 @@ test("workspace full access task run requires confirmation and sends confirmatio
   const taskDetail = page.locator("article.task-detail");
   await taskDetail.getByText("Permissions", { exact: true }).click();
   await taskDetail.getByRole("radio", { name: "Full access" }).click();
-  await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
-
-  const confirmSheet = page.getByRole("dialog", { name: "Confirm full access" });
-  await expect(confirmSheet).toBeVisible();
-  await expect(confirmSheet).toHaveClass(/ling-ui-dialog-content/u);
-  await confirmSheet.getByRole("button", { name: "Cancel" }).last().click();
-  await expect(confirmSheet).toHaveCount(0);
+  const selectionSheet = page.getByRole("dialog", { name: "Confirm full access" });
+  await expect(selectionSheet).toBeVisible();
+  await selectionSheet.getByRole("button", { name: "Cancel" }).last().click();
+  await expect(selectionSheet).toHaveCount(0);
+  const previousAccess = taskDetail.getByRole("radio", { name: "Workspace write" });
+  await expect(previousAccess).toHaveAttribute("aria-checked", "true");
+  await expect(previousAccess).toBeFocused();
   expect(state.runs).toHaveLength(0);
 
+  await taskDetail.getByRole("radio", { name: "Full access" }).click();
+  await expect(selectionSheet).toBeVisible();
+  await expect(selectionSheet).toHaveClass(/ling-ui-dialog-content/u);
+  await selectionSheet.getByRole("button", { name: "Start with full access" }).click();
+  await expect(taskDetail.getByRole("radio", { name: "Full access" })).toHaveAttribute("aria-checked", "true");
   await taskDetail.getByRole("button", { name: "Run", exact: true }).click();
-  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Start with full access" }).click();
+  await expect(selectionSheet).toHaveCount(0);
 
   await expect.poll(() => {
     const snapshot = state.runs[0]?.requestSnapshot;

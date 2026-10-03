@@ -145,7 +145,7 @@ function fallbackOutcomeSummary(snapshot: TerminalReportEvidenceSnapshot): strin
 
 function fallbackChanges(snapshot: TerminalReportEvidenceSnapshot): TerminalReportChange[] {
   const artifactsByPath = new Map<string, typeof snapshot.artifacts[number]>();
-  for (const artifact of snapshot.artifacts) {
+  for (const artifact of snapshot.artifacts.filter(isConversationVisibleArtifact)) {
     for (const path of artifact.changedPaths) {
       artifactsByPath.set(path, artifact);
     }

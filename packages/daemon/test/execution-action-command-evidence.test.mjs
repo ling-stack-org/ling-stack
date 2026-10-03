@@ -7,6 +7,64 @@ import {
 import { appendExecutionActionInvalidation } from "../dist/features/runs/execution-action-invalidation.js";
 import { listExecutionActions } from "../dist/features/runs/execution-actions.js";
 
+for (const [label, chunks, expected] of [
+  ["nine newline-terminated updates", Array.from({ length: 9 }, (_, i) => [`line-${i}\n`, "stdout"]), 9],
+  ["one line split over updates", [["hel", "stdout"], ["lo\n", "stdout"]], 1],
+  ["blank lines and an unfinished final line", [["\n\n", "stdout"], ["tail", "stdout"]], 3],
+  ["CRLF split over updates", [["first\r", "stdout"], ["\nsecond\r", "stdout"], ["\n", "stdout"]], 2],
+  ["independent interleaved stream tails", [["out", "stdout"], ["err", "stderr"], ["put\n", "stdout"], ["or\n", "stderr"]], 2],
+  ["empty updates do not add a line", [["", "stdout"], ["", "stderr"]], 0],
+]) {
+  test(`streamed command line count respects ${label}`, () => {
+    const evidence = streamedEvidence(chunks);
+    assert.equal(evidence.outputLineCount, expected);
+    assert.equal(evidence.outputByteCount, chunks.reduce((n, [text]) => n + Buffer.byteLength(text, "utf8"), 0));
+    assert.equal(evidence.completedAt, undefined);
+    assert.equal(evidence.exitCode, undefined);
+  });
+}
+
+for (const separator of ["\n", "\r\n"]) {
+  test(`command tail retains exactly forty complete lines with ${JSON.stringify(separator)} endings`, () => {
+    const lines = Array.from({ length: 60 }, (_, i) => `line-${i}${separator}`);
+    const evidence = streamedEvidence([[lines.join(""), "stdout"]]);
+    assert.equal(evidence.outputLineCount, 60, "the count describes all output, not just its bounded preview");
+    assert.equal(evidence.outputTail.map(chunk => chunk.text).join(""), lines.slice(-40).join(""));
+    assert.equal(evidence.outputTruncated, true);
+  });
+}
+
+test("tail line budget does not count a continued first-chunk line twice", () => {
+  const lines = Array.from({ length: 60 }, (_, i) => `line-${i}\n`);
+  const evidence = streamedEvidence([[lines.slice(0, -1).join("") + "line-", "stdout"], ["59\n", "stdout"]]);
+  assert.equal(evidence.outputLineCount, 60);
+  assert.equal(evidence.outputTail.map(chunk => chunk.text).join(""), lines.slice(-40).join(""));
+});
+
+test("accepted Host completion counts stay authoritative over preview line counts", () => {
+  const start = event(1, "tool_start", { toolCallId: "counts", toolName: "bash", args: { command: "node test" } });
+  const end = event(2, "tool_end", { toolCallId: "counts", toolName: "bash", result: { details: { unifiedExec: {
+    status: "succeeded", cwd: "/repo", command: { command: "node test" }, startedAt: start.ts, endedAt: "2026-07-13T00:00:02.000Z",
+    durationMs: 1000, exitCode: 0, timedOut: false, cancelled: false,
+    stdout: { byteCount: 2000, lineCount: 250, preview: "last line\n", truncated: true },
+    stderr: { byteCount: 100, lineCount: 3, preview: "last warning\n", truncated: true }, artifacts: [],
+  } } } });
+  const evidence = deriveExecutionActionCommandEvidence({ events: [start, end], toolCallId: "counts", start, end });
+  assert.equal(evidence.outputLineCount, 253);
+  assert.equal(evidence.outputByteCount, 2100);
+});
+
+function streamedEvidence(chunks) {
+  const start = event(1, "tool_start", { toolCallId: "line-count", toolName: "bash", args: { command: "node test", cwd: "/repo" } });
+  const updates = chunks.map(([text, stream], i) => event(i + 2, "tool_update", {
+    toolCallId: "line-count", toolName: "bash", partialResult: {
+      toolCallId: "line-count", stream, sequence: i + 1, text, byteCount: Buffer.byteLength(text, "utf8"),
+      redacted: false, truncated: false, ts: start.ts,
+    },
+  }));
+  return deriveExecutionActionCommandEvidence({ events: [start, ...updates], toolCallId: "line-count", start });
+}
+
 test("active command evidence folds tool updates into a bounded redacted tail", () => {
   const start = event(1, "tool_start", {
     toolCallId: "tool-live",
@@ -948,6 +1006,101 @@ test("same-sequence lifecycle events choose a stable id and retain the loser as 
     [["source_conflict", "event-start-b"]],
   );
 });
+
+for (const status of ["failed", "cancelled"]) {
+  for (const approved of [false, true]) {
+    test(`interrupted run advances ${approved ? "approved" : "bare"} action revision on ${status} without inventing tool completion`, () => {
+      const fixture = interruptedActionFixture(approved);
+      const before = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+      fixture.run.status = status;
+      const stop = event(5, status === "failed" ? "run_error" : "run_cancelled", { message: "runtime_interrupted_no_checkpoint" }, fixture.run.id);
+      fixture.events.push(stop);
+      fixture.run.updatedAt = fixture.run.endedAt = stop.ts;
+      const after = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+      assert.equal(before.status, "executing");
+      assert.equal(after.status, status);
+      assert.equal(after.id, before.id);
+      assert.equal(after.attemptId, before.attemptId);
+      assert.equal(after.sourceEventSequence, before.sourceEventSequence);
+      assert.ok(after.revision > before.revision, "terminal Run state must not conflict with the live action at equal revision");
+      assert.ok(after.sourceRefs.some(ref => ref.kind === "run_event" && ref.id === stop.id));
+      assert.equal(after.updatedAt, stop.ts);
+      assert.equal(after.completedAt, undefined, "a terminal Run is not proof the command/process stopped");
+      assert.equal(after.commandEvidence.exitCode, undefined);
+      assert.equal(after.commandEvidence.completedAt, undefined);
+      assert.equal(after.commandEvidence.outputTail.map(chunk => chunk.text).join(""), "line-1\n");
+      assert.equal(fixture.events.some(entry => entry.type === "tool_end"), false);
+      assert.deepEqual(listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0], after);
+    });
+  }
+}
+
+test("interrupted run terminal fence rejects later output and tool_end without rewriting persisted events", () => {
+  const fixture = interruptedActionFixture(true);
+  fixture.run.status = "failed";
+  fixture.events.push(event(5, "run_error", { message: "runtime_interrupted_no_checkpoint" }, fixture.run.id));
+  fixture.run.updatedAt = fixture.run.endedAt = fixture.events.at(-1).ts;
+  const before = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  fixture.events.push(event(6, "tool_update", { toolCallId: "tool-interrupted", toolName: "bash", partialResult: {
+    toolCallId: "tool-interrupted", stream: "stdout", sequence: 2, text: "LATE_OUTPUT\n", byteCount: 12,
+    redacted: false, truncated: false, ts: "2026-07-13T00:00:06.000Z",
+  } }, fixture.run.id), event(7, "tool_end", { toolCallId: "tool-interrupted", toolName: "bash", isError: false,
+    result: { content: [{ type: "text", text: "LATE_SUCCESS" }] },
+  }, fixture.run.id));
+  const after = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  assert.equal(after.status, "failed");
+  assert.ok(after.revision > before.revision, "new audit diagnostics change the DTO and must invalidate a retained snapshot");
+  assert.deepEqual(after.commandEvidence, before.commandEvidence);
+  assert.deepEqual(after.sourceRefs, before.sourceRefs);
+  assert.deepEqual(after.diagnostics.map(diagnostic => [diagnostic.code, diagnostic.sourceRefs[0].id]),
+    [["late_event", "event-6"], ["late_event", "event-7"]]);
+  assert.equal(fixture.events.length, 6, "late evidence stays in the audit log");
+});
+
+test("interrupted run projection revisions a terminal Run row even if its terminal event is unavailable", () => {
+  const fixture = interruptedActionFixture(false);
+  const before = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  fixture.run.status = "failed";
+  fixture.run.updatedAt = fixture.run.endedAt = "2026-07-13T00:00:05.000Z";
+  const after = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  assert.equal(after.status, "failed");
+  assert.ok(after.revision > before.revision);
+  assert.equal(after.completedAt, undefined);
+  assert.deepEqual(after.commandEvidence, before.commandEvidence);
+});
+
+test("interrupted run does not revise a tool already settled before the unrelated Run failure", () => {
+  const fixture = interruptedActionFixture(false);
+  fixture.events.push(event(4, "tool_end", { toolCallId: "tool-interrupted", toolName: "bash", isError: false,
+    result: { content: [{ type: "text", text: "finished" }] },
+  }, fixture.run.id));
+  const before = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  fixture.run.status = "failed";
+  fixture.events.push(event(5, "run_error", { message: "later model failure" }, fixture.run.id));
+  fixture.run.updatedAt = fixture.run.endedAt = fixture.events.at(-1).ts;
+  const after = listExecutionActions(fixture.store, { runId: fixture.run.id, complete: true })[0];
+  assert.deepEqual(after, before);
+  assert.equal(after.status, "succeeded");
+});
+
+function interruptedActionFixture(approved) {
+  const run = { id: "run-interrupted", taskId: "task-interrupted", threadId: "thread-interrupted", cwd: "/repo",
+    status: "running", createdAt: "2026-07-13T00:00:01.000Z", updatedAt: "2026-07-13T00:00:03.000Z" };
+  const events = [
+    event(1, "run_created", { attemptId: "attempt-interrupted" }, run.id),
+    event(2, "tool_start", { toolCallId: "tool-interrupted", toolName: "bash", args: { command: "node long-task", cwd: "/repo" } }, run.id),
+    event(3, "tool_update", { toolCallId: "tool-interrupted", toolName: "bash", partialResult: {
+      toolCallId: "tool-interrupted", stream: "stdout", sequence: 1, text: "line-1\n", byteCount: 7,
+      redacted: false, truncated: false, ts: "2026-07-13T00:00:03.000Z",
+    } }, run.id),
+  ];
+  const approvals = approved ? [{ id: "approval-interrupted", runId: run.id, taskId: run.taskId,
+    toolCallId: "tool-interrupted", actionType: "bash", risk: "medium", title: "Approve command", description: "node long-task",
+    payload: { type: "bash", cwd: "/repo", command: "node long-task", riskFlags: [] }, status: "approved",
+    createdAt: run.createdAt, resolvedAt: "2026-07-13T00:00:02.000Z" }] : [];
+  return { run, events, store: { getRun: id => id === run.id ? run : undefined, listRuns: () => [run],
+    listApprovalRequests: () => approvals, listArtifacts: () => [], listEvents: () => events } };
+}
 
 function event(seq, type, data, runId = "run-live") {
   return {

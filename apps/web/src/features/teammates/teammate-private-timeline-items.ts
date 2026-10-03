@@ -247,6 +247,7 @@ export function projectTeammatePrivateTimelineItems(input: TeammatePrivateTimeli
       partIndex: existing?.partIndex ?? (lastRelated ? lastRelated.partIndex + 1 : messageIndex),
       status: privateMessageTimelineStatus(message.status),
       itemId: message.id,
+      participantId: message.authorType === "ai-teammate" ? message.authorId ?? input.teammateId : undefined,
       turnId: existing?.turnId ?? turnId,
       // A private message is durable in its own store, but its identifier is
       // not automatically an owning ConversationItem reference.

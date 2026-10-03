@@ -1654,7 +1654,6 @@ export function TeammateWorkspace({
           searchOpen={chatHeaderController.searchOpen}
           searchQuery={messageSearchQuery}
           searchTriggerRef={chatHeaderController.searchTriggerRef}
-          summaryOpen={chatSummaryOpen}
           summaryVisible={chatSummaryLayout.visible}
           summaryDockOffset={chatSummaryDockOffset}
           summaryDockResizing={chatDockController.resizing}

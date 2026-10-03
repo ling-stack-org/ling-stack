@@ -5,7 +5,8 @@ import { join } from "node:path";
 import { registerHooks } from "node:module";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { createSqliteRunStore, resolveRuntimePaths, redactSecrets } from "../../core/dist/index.js";
+import { buildDeterministicTerminalReport, createSqliteRunStore, resolveRuntimePaths, redactSecrets } from "../../core/dist/index.js";
+import { buildTerminalReportSnapshot } from "../../core/test/terminal-report-fixture.mjs";
 
 const sourceRoot = new URL("../src/", import.meta.url);
 const hook = registerHooks({ resolve(specifier, context, nextResolve) {
@@ -69,6 +70,38 @@ test("capture preserves twelve rounds of canonical and verified legacy narration
   assert.equal(captured.renderedHistory.includes("ROUND_13_USER"), false);
   for (let index = 1; index <= 12; index += 1) assert.ok(captured.renderedHistory.includes(`turn-${index}_ASSISTANT`));
   assert.deepEqual(restore(JSON.parse(JSON.stringify(redactSecrets(captured)))), captured);
+});
+
+test("normal follow-up includes scoped Host report outcome and unresolved risk", async (t) => {
+  const f = await fixture(t);
+  const old = user(f, 1);
+  reply(f, old, true, "Created todo.py and README.md.");
+  const risk = { id: "invalid-find", severity: "warning", status: "unresolved", summary: "find requires a pattern",
+    sourceRefs: [{ kind: "operation", id: "find-1", visibility: "conversation", sensitivity: "normal" }] };
+  const snapshot = buildTerminalReportSnapshot({ sourceKind: "turn", sourceId: old.id, workspaceId: f.thread.workspaceId,
+    threadId: f.thread.id, turnId: old.id, terminalState: "partially_succeeded", operations: [], checks: [],
+    participants: [], artifacts: [], risks: [risk], references: [] });
+  const draft = f.store.createTerminalReportDraft({ evidenceSnapshot: snapshot }, at(1));
+  f.store.updateTerminalReportDraft({ reportId: draft.id, expectedStatus: "draft", expectedEvidenceFingerprint: snapshot.evidenceFingerprint,
+    status: "validating", now: at(1) });
+  const report = buildDeterministicTerminalReport(snapshot, { id: draft.id, createdAt: at(1), committedAt: at(1) });
+  f.store.commitTerminalReport({ reportId: draft.id, expectedStatus: "validating", expectedEvidenceFingerprint: snapshot.evidenceFingerprint,
+    report, synthesisMode: report.synthesis.mode, promptVersion: report.synthesis.promptVersion, attemptCount: 0, now: at(1) });
+  const itemId = `result_terminal_report:${draft.id}`;
+  f.store.appendConversationItem({ id: itemId, threadId: f.thread.id, turnId: old.id, kind: "terminal_report",
+    actorType: "system", visibility: "thread_participants", payload: { reportId: draft.id, generation: draft.generation,
+      sourceKind: "turn", sourceId: old.id, evidenceFingerprint: snapshot.evidenceFingerprint, outcomeStatus: "partially_succeeded" },
+    domainRefs: [{ type: "turn", id: old.id }] }, at(1));
+  f.store.markTerminalReportPublished({ reportId: draft.id, messageId: itemId, now: at(1) });
+  const source = user(f, 2);
+  const captured = capture({ store: f.store, threadId: f.thread.id, sourceItemId: source.sourceItemId });
+  assert.ok(captured.renderedHistory.includes("partially_succeeded"));
+  assert.ok(captured.renderedHistory.includes("find requires a pattern"));
+  assert.equal(captured.hydration.entries.filter((entry) => entry.origin === "terminal_report").length, 1);
+
+  f.database.prepare("UPDATE conversation_items SET visibility='operator' WHERE id=?").run(itemId);
+  const hidden = capture({ store: f.store, threadId: f.thread.id, sourceItemId: source.sourceItemId });
+  assert.equal(hidden.renderedHistory.includes("find requires a pattern"), false);
 });
 
 test("existing canonical assistant omitted by budget or visibility cannot be resurrected from events", async (t) => {

@@ -35,6 +35,8 @@ export interface TerminalReportVerificationDto {
   readonly id: string;
   readonly title: string;
   readonly status: TerminalReportCheckStatus;
+  /** Host-derived classification, never accepted from report-model output. */
+  readonly expectation?: "evidence_backed" | "informational" | "unknown";
   readonly summary?: string;
   readonly command?: string;
   readonly durationMs?: number;

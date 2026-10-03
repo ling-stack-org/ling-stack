@@ -62,6 +62,9 @@ test("private execution ingests a real owned canonical anchor before starting a 
 
   const replay = resolveTeammateDirectExecutionContext({ ...input, prompt: "New rendered context" });
   assert.equal(replay.runRequest.turnId, turn.id);
+  assert.equal(replay.runRequest.task.prompt, input.prompt, "replay must consume the original frozen private input");
+  assert.deepEqual(replay.runRequest.teammateDirectInputRef, execution.runRequest.teammateDirectInputRef);
+  assert.ok(execution.runRequest.teammateDirectInputRef?.fingerprint, "private Run must bind immutable context evidence");
   assert.deepEqual(input.store.listConversationItemsForTurn({ turnId: turn.id }), [item]);
   assert.throws(() => resolveTeammateDirectExecutionContext({
     ...input, sourceMessage: { ...input.sourceMessage, body: "Conflicting message with the same id" },

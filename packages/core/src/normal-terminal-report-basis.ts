@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { RunStore } from "./run-types.js";
+import { readNormalTerminalToolBarrier, type UnsettledNormalTool } from "./normal-terminal-tool-barrier.js";
 
 export type NormalTerminalReportReadStore = Pick<RunStore,
   | "getLingTurn" | "getLingTurnForRun" | "getLingThread" | "listLingTurnRuns"
@@ -18,6 +19,9 @@ export interface NormalTerminalReportBasis {
   readonly successAllowed: boolean;
   readonly runIds: readonly string[];
   readonly settled: boolean;
+  /** Non-success publication only; never proof of tool/process settlement. */
+  readonly failurePublicationAllowed: boolean;
+  readonly unsettledTools: readonly UnsettledNormalTool[];
   readonly fingerprint: string;
 }
 
@@ -53,41 +57,29 @@ export function captureNormalTerminalReportBasis(
   const successAllowed = effectiveRun.status === "succeeded"
     && runs.filter((run) => run && currentValidationIds.has(run.id)).every((run) => run?.status === "succeeded");
   let settled = terminal(turn.status) && !turn.activeRunId;
+  let failurePublicationAllowed = ["failed", "cancelled", "blocked"].includes(turn.status)
+    && !turn.activeRunId && !successAllowed;
+  const unsettledTools: UnsettledNormalTool[] = [];
   const evidence = runs.map((run) => {
     if (!run) throw new Error("Normal report Run disappeared inside a read snapshot");
-    const events = [];
-    let afterSeq = 0;
-    while (true) {
-      const page = store.listEvents(run.id, { afterSeq, limit: 1000 });
-      if (!page.length) break;
-      const next = page.at(-1)!.seq;
-      if (next <= afterSeq) throw new Error(`Normal report event cursor did not advance: ${run.id}`);
-      events.push(...page);
-      afterSeq = next;
-      if (page.length < 1000) break;
-    }
-    const started = new Set<string>();
-    const ended = new Set<string>();
-    for (const event of events) {
-      const id = typeof event.data.toolCallId === "string" ? event.data.toolCallId : undefined;
-      if ((event.type === "tool_start" || event.type === "tool_end") && !id) settled = false;
-      if (id && event.type === "tool_start" && !ended.has(id)) started.add(id);
-      if (id && event.type === "tool_end" && started.has(id)) { ended.add(id); started.delete(id); }
-    }
+    const barrier = readNormalTerminalToolBarrier(store, run);
+    unsettledTools.push(...barrier.unsettledTools);
     const approvals = store.listApprovalRequests({ runId: run.id, complete: true }).sort(byId);
     const artifacts = store.listArtifacts(run.id).sort(byId);
-    settled &&= terminal(run.status) && started.size === 0 && !approvals.some((approval) => approval.status === "pending");
+    const stoppedAuthority = terminal(run.status) && !barrier.malformed && !approvals.some(approval => approval.status === "pending");
+    settled &&= stoppedAuthority && barrier.unsettledTools.length === 0;
+    failurePublicationAllowed &&= stoppedAuthority && barrier.unsettledTools.every(tool => Boolean(tool.terminalEventId));
     return {
       run: { id: run.id, threadId: run.threadId, taskId: run.taskId,
         teammateId: run.teammateId, status: run.status, updatedAt: run.updatedAt, endedAt: run.endedAt,
         errorMessage: run.errorMessage },
-      events: fingerprint(events), approvals: fingerprint(approvals), artifacts: fingerprint(artifacts),
+      events: fingerprint(barrier.events), approvals: fingerprint(approvals), artifacts: fingerprint(artifacts),
     };
   });
   return {
     source, workspaceId: turn.workspaceId, threadId: thread.id, turnId: turn.id, sourceItemId: item.id,
     turnStatus: turn.status, effectiveRunId: effectiveRun.id, effectiveRunStatus: effectiveRun.status, successAllowed,
-    runIds: links.map((link) => link.runId), settled,
+    runIds: links.map((link) => link.runId), settled, failurePublicationAllowed, unsettledTools,
     // Publication changes the thread sequence; unrelated later turns must not
     // invalidate this Turn's result. Only stable thread scope belongs here.
     fingerprint: fingerprint({ source, thread: { id: thread.id, kind: thread.kind, workspaceId: thread.workspaceId,

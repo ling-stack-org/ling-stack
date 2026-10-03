@@ -8,6 +8,7 @@ function transcript(overrides = {}) {
   return {
     id: "assistant-1", threadId: "thread-1", turnId: "turn-1", runId: "run-1",
     role: "assistant", authorLabel: "Ling", content: "Before tool.\n\nAfter tool.",
+    contentSource: "run_narration",
     status: "succeeded", revision: 9, editedAt: "2026-09-05T00:00:08Z",
     errorMessage: "Separate runtime error", attachments: [{ id: "attachment-1", workspaceId: "workspace-1", kind: "image", fileName: "preview.png", contentType: "image/png", sizeBytes: 3, path: "attachments/preview.png", createdAt: "2026-09-05T00:00:00Z" }],
     fileRefs: [{ path: "morning-todo/todo.mjs", label: "todo.mjs" }],
@@ -32,6 +33,13 @@ test("normal transcript mapper retains narration boundaries and existing UI fiel
   assert.equal(home.attachments, dto.attachments);
   assert.deepEqual(dto, original);
   assert.notEqual(home, dto);
+});
+
+test("detail and SSE mapping never drop Host status provenance or infer it from words", () => {
+  for (const contentSource of ["host_status", "run_narration", undefined]) {
+    const dto = transcript({ contentSource, content: "Ling 助手暂时无法完成这次请求。", narrationSegments: [], status: "failed" });
+    assert.equal(homeMessageFromTranscript(dto).contentSource, contentSource);
+  }
 });
 
 test("normal transcript mapper keeps optional fields absent and file references on user messages", () => {

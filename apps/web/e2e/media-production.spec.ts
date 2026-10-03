@@ -2,6 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 import type { MockState } from "./support/mock-daemon";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createDefaultProviderTemplates } from "./support/mock-state";
+import { isViteClientTransportError } from "./support/vite-client-console-error";
 
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
@@ -483,6 +484,7 @@ test("media production keeps the current video when regeneration fails and previ
   const consoleErrors: string[] = [];
   page.on("console", (message) => {
     if (message.type() !== "error") return;
+    if (isViteClientTransportError(message)) return;
     const url = message.location().url;
     if (url.includes("/control-plane/snapshot") || url.includes("/control-plane/stream")) return;
     consoleErrors.push(`${message.text()} ${url}`.trim());

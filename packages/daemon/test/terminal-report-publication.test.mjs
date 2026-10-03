@@ -210,6 +210,49 @@ test("atomic publication commits blocked, failed, and cancelled outcomes with on
   }
 });
 
+test("a verified workflow publishes its conservative partial report after a recovered read failure", async () => {
+  const fixture = await createManifestPublicationFixture("recovered-read-partial", "succeeded", { recoveredReadFailure: true });
+  try {
+    const snapshot = fixture.store.getTerminalReport(fixture.report.id).evidenceSnapshot;
+    assert.equal(fixture.workflow.status, "succeeded");
+    assert.equal(fixture.workflow.metadata.completionGate.status, "verified");
+    assert.equal(snapshot.terminalState, "partially_succeeded");
+    assert.equal(fixture.report.outcome.status, "partially_succeeded");
+    assert.ok(snapshot.operations.some((operation) => operation.kind === "read" && operation.status === "failed"));
+    assert.ok(snapshot.operations.some((operation) => operation.kind === "read" && operation.status === "succeeded"));
+
+    const message = publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report, now: fixture.publishAt });
+    assert.equal(message?.id, terminalReportResultItemId(fixture.report.id));
+    assert.equal(fixture.store.getLingTurn(fixture.sourceTurn.id).status, "succeeded");
+    assert.equal(fixture.store.getTerminalReport(fixture.report.id).resultItemId, message.id);
+    const result = fixture.store.getConversationItem(message.id);
+    assert.equal(result.payload.outcomeStatus, "partially_succeeded");
+    assert.equal(result.payload.evidenceFingerprint, snapshot.evidenceFingerprint);
+    assert.equal(publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report, now: "2026-08-12T20:00:12.000Z" })?.id, message.id);
+    assert.equal(fixture.store.listControlPlaneEvents({
+      workspaceId: "workspace_default", entityType: "terminal_report", entityId: fixture.report.id,
+      action: "terminal_report.published", limit: 10,
+    }).length, 1);
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("a partial report never bypasses an unsettled required-participant gate", async () => {
+  const fixture = await createManifestPublicationFixture("partial-pending-gate", "succeeded", { recoveredReadFailure: true });
+  try {
+    const step = fixture.store.listChannelWorkflowSteps({ workflowId: fixture.workflow.id, complete: true })[0];
+    fixture.store.updateChannelWorkflowStep(step.id, { status: "running" }, "2026-08-12T20:00:09.700Z");
+    assert.throws(
+      () => publishWorkflowTerminalReport({ store: fixture.store, report: fixture.report, now: fixture.publishAt }),
+      (error) => error instanceof TerminalReportPublicationError && error.code === "stale_completion_basis",
+    );
+    assertNoPublication(fixture);
+  } finally {
+    await fixture.close();
+  }
+});
+
 test("publication rejects stale completion, incompatible outcome, source Turn, and partial lineage", async (t) => {
   await t.test("stale completion", async () => {
     const fixture = await createManifestPublicationFixture("stale-completion", "succeeded");
@@ -303,7 +346,7 @@ test("restart reuses the complete atomic publication lineage", async () => {
   }
 });
 
-async function createManifestPublicationFixture(suffix, outcome) {
+async function createManifestPublicationFixture(suffix, outcome, options = {}) {
   const cwd = await mkdtemp(resolve(tmpdir(), `ling-terminal-publication-${suffix}-`));
   const store = createSqliteRunStore(cwd);
   const now = "2026-08-12T20:00:00.000Z";
@@ -394,6 +437,18 @@ async function createManifestPublicationFixture(suffix, outcome) {
     workUnitId: `work_unit_publication_${suffix}`,
   });
   store.appendEvent(run.id, "assistant_text_delta", { text: "Synthesis complete." });
+  if (options.recoveredReadFailure) {
+    for (const [callId, path, isError] of [
+      ["read_absolute_path", resolve(cwd, "README.md"), true],
+      ["read_relative_path", "README.md", false],
+    ]) {
+      store.appendEvent(run.id, "tool_start", { toolCallId: callId, toolName: "read", input: { path } });
+      store.appendEvent(run.id, "tool_end", { toolCallId: callId, toolName: "read", input: { path }, isError,
+        result: { content: [{ type: "text", text: isError
+          ? "operation_binding_input_invalid: File path must be canonical and workspace-relative."
+          : "# Actual README content" }] } });
+    }
+  }
   store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, "2026-08-12T20:00:05.000Z");
   if (outcome === "succeeded") {
     store.markRunSucceeded(run.id, "2026-08-12T20:00:06.000Z");

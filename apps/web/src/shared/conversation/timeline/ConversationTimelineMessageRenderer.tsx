@@ -4,6 +4,7 @@ import type {
 import { conversationTimelineRendererKey } from "@ling-stack/conversation-ui-core";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import { LocalFileLink } from "../blocks/LocalFileLink.js";
+import type { ConversationTimelineMessagePresentation } from "./timeline-response-presentation.js";
 
 export interface ConversationTimelineMessageRendererProps {
   readonly item: ConversationTimelineMessageItem;
@@ -15,7 +16,8 @@ export interface ConversationTimelineMessageRendererProps {
    * and its position.  This keeps one Timeline owner without forcing the
    * registry to know about surface-specific shell controls.
    */
-  readonly renderChrome?: (item: ConversationTimelineMessageItem, body: React.ReactNode) => React.ReactNode;
+  readonly renderChrome?: (item: ConversationTimelineMessageItem, body: React.ReactNode, presentation: ConversationTimelineMessagePresentation) => React.ReactNode;
+  readonly presentation?: ConversationTimelineMessagePresentation;
 }
 
 export function ConversationTimelineMessageRenderer({
@@ -23,6 +25,7 @@ export function ConversationTimelineMessageRenderer({
   depth,
   cwd,
   renderChrome,
+  presentation = { ownsIdentity: true },
 }: ConversationTimelineMessageRendererProps): React.JSX.Element {
   const body = (
     <MessageBodyRenderer
@@ -35,7 +38,7 @@ export function ConversationTimelineMessageRenderer({
       }}
     />
   );
-  const renderedBody = renderChrome?.(item, body) ?? body;
+  const renderedBody = renderChrome?.(item, body, presentation) ?? body;
   return (
     <div
       className={`conversation-timeline-message ${item.kind}`}

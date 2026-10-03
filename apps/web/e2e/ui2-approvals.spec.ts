@@ -294,6 +294,36 @@ test("A pending external approval becomes executable without executing implicitl
   await runtime.assertClean();
 });
 
+test("a committed approval with deferred reconciliation warns without claiming the decision failed", async ({ page }) => {
+  await prepareSurface(page, "en-US", "light", 1440, 960);
+  const state = createBaseState({ approvalStatus: "expired" });
+  const pending = addExternalActionApproval(state, {
+    actionId: "action_deferred",
+    approvalId: "approval_deferred",
+    status: "waiting_for_approval",
+    approvalStatus: "pending",
+  });
+  const approval = pending.approval;
+  approval.title = "Deferred command";
+  await mockDaemon(page, state);
+  await page.route(/\/approvals\/approval_deferred\/approve(?:\?.*)?$/u, async (route) => {
+    approval.status = "approved";
+    approval.resolvedAt = "2026-07-22T01:30:00.000Z";
+    approval.resolvedBy = "local-user";
+    await route.fulfill({ json: {
+      approval,
+      postCommit: { status: "deferred", code: "approval_postcommit_reconciliation_required" },
+    } });
+  });
+  const surface = await openInbox(page);
+  await selectApproval(surface, approval.title);
+  await selectedDetail(surface).getByRole("button", { name: "Approve" }).click();
+  await expect.poll(() => approval.status).toBe("approved");
+  await expect(page.locator('[data-ling-overlay="toast"][data-scope="approval:approval_deferred:postcommit"]'))
+    .toContainText("Approval was recorded, but execution recovery is pending");
+  await expect(selectedDetail(surface)).not.toContainText("Approval failed");
+});
+
 test("Runtime approval belongs to its channel composer and leaves other conversations usable", async ({ page }) => {
   await prepareSurface(page, "en-US", "light", 1440, 960);
   const state = createBaseState({ approvalStatus: "pending" });
@@ -332,7 +362,7 @@ test("Runtime approval belongs to its channel composer and leaves other conversa
   const engineeringButton = navigation.getByRole("button", { name: "Engineering" }).first();
   const engineeringRow = navigation.locator(".sidebar-row-shell").filter({ hasText: "Engineering" }).first();
   await expect(engineeringRow).toHaveAttribute("data-sidebar-row-status", "waiting");
-  await expect(engineeringRow).toContainText("Waiting for approval");
+  await expect(engineeringRow).toContainText("3 pending approvals");
 
   await navigation.getByRole("button", { name: "General" }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();

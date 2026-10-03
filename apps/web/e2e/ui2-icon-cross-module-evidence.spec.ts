@@ -1,6 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Locator, type Page } from "@playwright/test";
+import { isViteClientTransportError } from "./support/vite-client-console-error";
 import { mockDaemon, type MockState } from "./support/mock-daemon";
 import {
   createBaseState,
@@ -338,7 +339,7 @@ function collectBrowserSignals(page: Page): {
   const consoleErrors: string[] = [];
   const pageErrors: string[] = [];
   page.on("console", (message) => {
-    if (message.type() === "error") consoleErrors.push(message.text());
+    if (message.type() === "error" && !isViteClientTransportError(message)) consoleErrors.push(message.text());
   });
   page.on("pageerror", (error) => pageErrors.push(error.message));
   return { consoleErrors, pageErrors };

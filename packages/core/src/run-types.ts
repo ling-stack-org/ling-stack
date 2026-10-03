@@ -40,6 +40,10 @@ import type {
   HarnessToolExecutionV1,
   RunEvaluationGradeV1,
   RunEvaluationV1,
+  CreateRunCompactionCheckpointInput,
+  ListRunCompactionCheckpointsOptions,
+  RunCompactionCheckpointV1,
+  TransitionRunCompactionCheckpointInput,
 } from "@ling-stack/contracts";
 import type {
   ClaimRunnerContinuationInput,
@@ -1503,10 +1507,69 @@ export interface ControlPlaneReplayWindowResult {
 }
 
 export interface RunStore {
+  listApprovalPostCommitEffects(options?: {
+    readonly approvalId?: string;
+    readonly status?: import("./approval-postcommit-types.js").ApprovalPostCommitEffectStatus;
+    readonly after?: { readonly createdAt: string; readonly approvalId: string; readonly effectKind: import("./approval-postcommit-types.js").ApprovalPostCommitEffectKind };
+    readonly limit?: number;
+  }): import("./approval-postcommit-types.js").ApprovalPostCommitEffect[];
+  claimApprovalPostCommitEffect(approvalId: string, effectKind: import("./approval-postcommit-types.js").ApprovalPostCommitEffectKind, input: {
+    readonly token: string; readonly claimExpiresAt: string;
+  }, now: string): import("./approval-postcommit-types.js").ApprovalPostCommitEffect | undefined;
+  settleApprovalPostCommitEffect(approvalId: string, effectKind: import("./approval-postcommit-types.js").ApprovalPostCommitEffectKind, input: {
+    readonly token: string;
+    readonly status: "completed" | "pending" | "blocked" | "effect_unknown";
+    readonly errorCode?: string;
+  }, now: string): import("./approval-postcommit-types.js").ApprovalPostCommitEffect | undefined;
+  recoverExpiredApprovalPostCommitClaim(approvalId: string, effectKind: import("./approval-postcommit-types.js").ApprovalPostCommitEffectKind, input: {
+    readonly expectedRevision: number;
+    readonly status: "pending" | "completed" | "blocked" | "effect_unknown";
+    readonly errorCode: string;
+  }, now: string): import("./approval-postcommit-types.js").ApprovalPostCommitEffect | undefined;
+  quarantineMediaApprovalSubmission(approvalId: string, mediaJobId: string, now: string): import("./approval-postcommit-types.js").ApprovalPostCommitEffect | undefined;
   prepareHostCommandExecution(input: import("./host-command-journal-types.js").PrepareHostCommandExecutionInput): import("./host-command-journal-types.js").HostCommandExecutionTicket;
   launchHostCommandExecution<T>(ticket: import("./host-command-journal-types.js").HostCommandExecutionTicket, launch: () => T): T;
+  /** Exact command + attempt operation launch, under one writer transaction. Neither ID is replay authority. */
+  launchTrackedHostCommandExecution<T>(operation: import("./host-operation-journal-types.js").HostOperationTicket,
+    command: import("./host-command-journal-types.js").HostCommandExecutionTicket, launch: () => T): T;
   settleHostCommandExecution(ticket: import("./host-command-journal-types.js").HostCommandExecutionTicket, input: import("./host-command-journal-types.js").HostCommandSettlementInput): Extract<RunEventEnvelope, { readonly type: "host_command_settled" }>;
   listHostCommandWriteBlockers(cwd: string): import("@ling-stack/contracts").HostCommandWriteBlockerV1[];
+  admitHostOperation(input: import("./host-operation-journal-types.js").AdmitHostOperationInput): import("./host-operation-journal-types.js").HostOperationTicket;
+  bindHostOperationEvidence(ticket: import("./host-operation-journal-types.js").HostOperationTicket, evidence: import("./host-operation-journal-types.js").HostOperationEvidenceRef): import("./host-operation-journal-types.js").HostOperationRecord;
+  launchHostOperation<T>(ticket: import("./host-operation-journal-types.js").HostOperationTicket, launch: () => T): T;
+  continueHostOperationEffect<T>(ticket: import("./host-operation-journal-types.js").HostOperationTicket, effect: () => T, mode?: "forward" | "cleanup"): T;
+  settleHostOperation(ticket: import("./host-operation-journal-types.js").HostOperationTicket, input: import("./host-operation-journal-types.js").HostOperationSettlementInput): import("./host-operation-journal-types.js").HostOperationRecord;
+  /** Safe rows are independently reverified against their exact domain evidence on every read. */
+  getHostOperation(operationId: string): import("./host-operation-journal-types.js").HostOperationRecord | undefined;
+  listHostOperationBlockers(source: import("./host-operation-journal-types.js").HostOperationSource, stoppedAt?: string): import("./host-operation-journal-types.js").HostOperationRecord[];
+  prepareHostOfficeLocalExecution(parent: import("./host-operation-journal-types.js").HostOperationTicket,
+    producer: import("./host-operation-journal-types.js").HostOperationTicket,
+    input: import("./host-office-local-types.js").PrepareHostOfficeLocalInput): import("./host-office-local-types.js").HostOfficeLocalTicket;
+  prepareHostOfficeLocalEffect(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    input: import("./host-office-local-types.js").PrepareHostOfficeLocalEffect): import("./host-office-local-types.js").HostOfficeLocalEffectRecord;
+  launchHostOfficeLocalEffect<T>(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket, effectId: string, effect: () => T): T;
+  recordHostOfficeLocalObservation(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    effectId: string, artifactId: string): import("./host-office-local-types.js").HostOfficeLocalEffectRecord;
+  getHostOfficeLocalExecution(executionId: string): import("./host-office-local-types.js").HostOfficeLocalExecutionRecord | undefined;
+  listHostOfficeLocalEffects(executionId: string): import("./host-office-local-types.js").HostOfficeLocalEffectRecord[];
+  prepareHostMediaExecution(parent: import("./host-operation-journal-types.js").HostOperationTicket,
+    transport: import("./host-operation-journal-types.js").HostOperationTicket,
+    input: import("./host-media-operation-types.js").PrepareHostMediaExecutionInput): import("./host-media-operation-types.js").HostMediaExecutionTicket;
+  bindHostMediaChildExecution(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket,
+    child: RuntimeAttemptFenceV1): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  prepareHostMediaEffect(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket,
+    input: import("./host-media-operation-types.js").PrepareHostMediaEffectInput): import("./host-media-operation-types.js").HostMediaEffectRecord;
+  launchHostMediaEffect<T>(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, effectId: string, send: () => T): T;
+  getHostMediaExecution(executionId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord | undefined;
+  listHostMediaEffects(executionId: string): import("./host-media-operation-types.js").HostMediaEffectRecord[];
+  recordHostMediaResponse(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, effectId: string, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  recordHostMediaSubmission(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  recordHostMediaSubmissionAndExecutionHandle(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket,
+    submissionArtifactId: string, projection: import("./host-media-receipt-types.js").HostMediaSubmissionExecutionProjection): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  recordHostMediaTerminal(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  recordHostMediaArtifactManifest(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  finalizeHostMediaExecution(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
+  recordHostMediaEffectNoStart(ticket: import("./host-media-operation-types.js").HostMediaExecutionTicket, effectId: string, artifactId: string): import("./host-media-operation-types.js").HostMediaExecutionRecord;
   readonly paths: LingStackRuntimePaths;
   commitRemoteConversationSend(input: CommitRemoteConversationSendInput, now: string): CommitRemoteConversationSendResult;
   getRemoteCommandReceipt(commandId: string): RemoteCommandReceipt | undefined;
@@ -1640,6 +1703,7 @@ export interface RunStore {
   getRun(runId: string): RunSession | undefined;
   listRuns(options?: ListRunsOptions): RunSession[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
+  getLatestRunCompactionStart(runId: string): Extract<RunEventEnvelope, { readonly type: "context_compaction_start" }> | undefined;
   countEvents(runId: string): number;
   /** Synchronous, read-only database snapshot. Callbacks must not perform I/O or return a Promise. */
   readSnapshot<T>(read: () => T): T;
@@ -1651,6 +1715,11 @@ export interface RunStore {
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint;
   getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined;
   listCompactionCheckpoints(options?: ListCompactionCheckpointsOptions): CompactionCheckpoint[];
+  createRunCompactionCheckpoint(input: CreateRunCompactionCheckpointInput): RunCompactionCheckpointV1;
+  getRunCompactionCheckpoint(id: string): RunCompactionCheckpointV1 | undefined;
+  getLatestRunCompactionCheckpoint(runId: string): RunCompactionCheckpointV1 | undefined;
+  listRunCompactionCheckpoints(options?: ListRunCompactionCheckpointsOptions): RunCompactionCheckpointV1[];
+  transitionRunCompactionCheckpoint(input: TransitionRunCompactionCheckpointInput): RunCompactionCheckpointV1 | undefined;
   createPostCompactionUndoRecord(input: CreatePostCompactionUndoRecordInput): PostCompactionUndoRecord;
   getPostCompactionUndoRecord(id: string): PostCompactionUndoRecord | undefined;
   listPostCompactionUndoRecords(options?: ListPostCompactionUndoRecordsOptions): PostCompactionUndoRecord[];
@@ -1741,6 +1810,9 @@ export interface RunStore {
   commitExistingRunContinuationPreparationFailure(
     input: import("./harness/continuations.js").CommitExistingRunContinuationPreparationFailureInput,
   ): import("./harness/continuations.js").CommitExistingRunContinuationPreparationFailureResult;
+  commitStaleRunRecoveryFailure(
+    input: import("./harness/continuations.js").CommitStaleRunRecoveryFailureInput,
+  ): import("./harness/continuations.js").CommitStaleRunRecoveryFailureResult;
   reprepareContinuationAndAttempt(input: ReprepareContinuationInput): PreparedContinuation;
   deferRunnerContinuation(input: DeferRunnerContinuationInput): RunnerContinuationMutationResult;
   claimRunnerContinuation(input: ClaimRunnerContinuationInput): RunnerContinuationMutationResult;
@@ -2005,6 +2077,8 @@ export interface RunStore {
     now: string,
   ): import("./conversation-accepted-input-types.js").AppendConversationAcceptedInputResult;
   getConversationAcceptedInputSnapshot(sourceItemId: string): import("./conversation-accepted-input-types.js").ConversationAcceptedInputSnapshot | undefined;
+  appendTeammateDirectUserTurnWithInputSnapshot(input: import("./teammate-direct-input-types.js").AppendTeammateDirectInput, now: string): import("./teammate-direct-input-types.js").AppendTeammateDirectInputResult;
+  getTeammateDirectInputSnapshot(sourceItemId: string, teammateId: string): import("./teammate-direct-input-types.js").TeammateDirectInputSnapshot | undefined;
   saveConversationPreparedInput(input: import("./conversation-prepared-input-types.js").SaveConversationPreparedInput, now: string): import("./conversation-prepared-input-types.js").SaveConversationPreparedInputResult;
   getConversationPreparedInput(sourceItemId: string, stage: import("./conversation-prepared-input-types.js").ConversationPreparedInputStage): import("./conversation-prepared-input-types.js").ConversationPreparedInputSnapshot | undefined;
   getConversationItem(id: string): ConversationItemV1 | undefined;

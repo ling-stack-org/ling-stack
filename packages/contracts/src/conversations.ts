@@ -77,6 +77,8 @@ export interface ConversationTranscriptMessage {
   readonly authorId?: string;
   readonly authorLabel?: string;
   readonly content: string;
+  /** Read/stream projection provenance; a Host status placeholder is not model prose. */
+  readonly contentSource?: "run_narration" | "host_status";
   /** Distinct assistant messages in persisted event order; content is the readable aggregate. */
   readonly narrationSegments?: readonly ConversationNarrationSegment[];
   /** Runtime/provider failure kept separate from assistant narrative content. */

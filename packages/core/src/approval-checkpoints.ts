@@ -98,6 +98,7 @@ export interface UpdateApprovalCheckpointStatusInput {
 
 export interface ListApprovalCheckpointsOptions {
   readonly status?: LingApprovalCheckpointStatus;
+  readonly before?: { readonly createdAt: string; readonly id: string };
   readonly approvalId?: string;
   readonly runId?: string;
   readonly mediaJobId?: string;
@@ -198,8 +199,8 @@ export interface CommitApprovalResumeCheckpointQuarantineInput {
   readonly now: string;
 }
 
-export interface CommitApprovalReviewDeniedTerminalInput {
-  readonly kind: "system_review_denied";
+export interface CommitSuspendedApprovalDeniedTerminalInput {
+  readonly kind: "suspended_approval_denied";
   readonly checkpointId: string;
   readonly expectedCheckpointRevision: number;
   readonly approvalId: string;
@@ -213,7 +214,7 @@ export interface CommitApprovalReviewDeniedTerminalInput {
 export type CommitApprovalResumeTerminalInput =
   | CommitApprovalResumeVerifiedTerminalInput
   | CommitApprovalResumeCheckpointQuarantineInput
-  | CommitApprovalReviewDeniedTerminalInput;
+  | CommitSuspendedApprovalDeniedTerminalInput;
 
 export type CommitApprovalResumeTerminalResult =
   | {
@@ -234,7 +235,7 @@ export type CommitApprovalResumeTerminalResult =
     }
   | {
       readonly ok: true;
-      readonly kind: "system_review_denied";
+      readonly kind: "suspended_approval_denied";
       readonly checkpoint: LingApprovalCheckpoint;
       readonly run: RunSession;
       readonly workUnit: WorkUnit;

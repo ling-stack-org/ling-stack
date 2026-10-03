@@ -1,4 +1,5 @@
 import type { MockExecutionAction } from "./mock-daemon";
+import type { ConversationTerminalReportProjectionDto } from "@ling-stack/contracts";
 import {
   createChatProvider,
   createMockTeammate,
@@ -438,7 +439,38 @@ function commandAction(
   };
 }
 
-function completedTerminalReport(input: {
+/** A report DTO alone is not a published channel result; include its Host-owned item. */
+export function attachCommittedChannelReportItem(state: MockState, report: ConversationTerminalReportProjectionDto): void {
+  if (!report.channelId || !report.threadId || !report.turnId) throw new Error("Channel report needs complete scope");
+  state.channelConversationItemExtras = [{
+    schemaVersion: 1,
+    id: report.resultItemId ?? `result_terminal_report:${report.id}`,
+    workspaceId: report.workspaceId,
+    channelId: report.channelId,
+    threadId: report.threadId,
+    turnId: report.turnId,
+    sequence: 2,
+    kind: "terminal_report",
+    status: "committed",
+    actorType: "system",
+    visibility: "channel",
+    payload: {
+      reportId: report.id,
+      generation: report.generation,
+      sourceKind: report.source.kind,
+      sourceId: report.source.id,
+      evidenceFingerprint: report.evidenceFingerprint,
+      outcomeStatus: report.outcome.status,
+    },
+    domainRefs: [{ type: "terminal_report", id: report.id }, { type: report.source.kind, id: report.source.id }],
+    revision: 1,
+    createdAt: report.createdAt,
+    updatedAt: report.committedAt,
+    committedAt: report.committedAt,
+  }];
+}
+
+export function completedTerminalReport(input: {
   readonly id: string;
   readonly threadId: string;
   readonly turnId?: string;

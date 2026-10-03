@@ -1,69 +1,33 @@
-import { useEffect, useRef, useState } from "react";
+import { useRef, useState } from "react";
 import { Loader2, Redo2, Undo2 } from "lucide-react";
 import type { ConversationWorkspaceRecoveryTarget } from "@ling-stack/conversation-ui-core";
-import {
-  getRunWorkspaceChanges,
-  getTurnWorkspaceChanges,
-  getWorkflowWorkspaceChanges,
-} from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
-import type {
-  RunWorkspaceChangesResponse,
-  TurnWorkspaceChangesResponse,
-  WorkflowWorkspaceChangesResponse,
-} from "../../../types.js";
+import { useWorkspaceRecovery, type WorkspaceRecoveryResource } from "./workspace-recovery-resource.js";
 import {
   ConversationArtifactRecoveryDialog,
   type ConversationArtifactRecoveryAction,
 } from "./ConversationArtifactRecoveryDialog.js";
-
-type ConversationWorkspaceRecoveryResponse =
-  | RunWorkspaceChangesResponse
-  | TurnWorkspaceChangesResponse
-  | WorkflowWorkspaceChangesResponse;
 
 export function ConversationWorkspaceRecoveryControls({
   className,
   cwd,
   fileCountFallback,
   target,
+  resource,
 }: {
   readonly className?: string;
   readonly cwd?: string;
   readonly fileCountFallback: number;
   readonly target?: ConversationWorkspaceRecoveryTarget;
+  readonly resource?: WorkspaceRecoveryResource;
 }): React.JSX.Element | null {
   const { t } = useI18n();
-  const [recovery, setRecovery] = useState<ConversationWorkspaceRecoveryResponse>();
-  const [status, setStatus] = useState<"idle" | "loading" | "loaded" | "unavailable">("idle");
   const [action, setAction] = useState<ConversationArtifactRecoveryAction>();
   const actionRef = useRef<HTMLButtonElement | null>(null);
   const normalizedCwd = cwd?.trim();
-
-  useEffect(() => {
-    if (!normalizedCwd || !target) {
-      setRecovery(undefined);
-      setStatus("idle");
-      return;
-    }
-    let cancelled = false;
-    setRecovery(undefined);
-    setStatus("loading");
-    void getWorkspaceRecovery(normalizedCwd, target).then((response) => {
-      if (!cancelled) {
-        setRecovery(response);
-        setStatus("loaded");
-      }
-    }, () => {
-      if (!cancelled) {
-        setRecovery(undefined);
-        setStatus("unavailable");
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [normalizedCwd, target?.id, target?.kind]);
+  const ownResource = useWorkspaceRecovery(normalizedCwd, resource ? undefined : target);
+  const activeResource = resource ?? ownResource;
+  const { recovery, status } = activeResource;
 
   if (!normalizedCwd || !target) return null;
 
@@ -104,21 +68,9 @@ export function ConversationWorkspaceRecoveryControls({
         target={target}
         onClose={() => setAction(undefined)}
         onRecovered={(response) => {
-          setRecovery(response);
-          setStatus("loaded");
+          activeResource.update(response);
         }}
       />
     </span>
   );
-}
-
-function getWorkspaceRecovery(
-  cwd: string,
-  target: ConversationWorkspaceRecoveryTarget,
-): Promise<ConversationWorkspaceRecoveryResponse> {
-  return target.kind === "workflow"
-    ? getWorkflowWorkspaceChanges(cwd, target.id)
-    : target.kind === "turn"
-      ? getTurnWorkspaceChanges(cwd, target.id)
-      : getRunWorkspaceChanges(cwd, target.id);
 }

@@ -1,8 +1,10 @@
 import type { UnifiedExecResult, UnifiedExecStreamSummary } from "@ling-stack/core";
 
 /**
- * Providers serialize tool content, not Host-only details. Expose the existing
- * bounded, redacted previews without reading or duplicating the raw streams.
+ * Providers serialize tool content, not Host-only details. Expose bounded,
+ * redacted previews without copying raw streams or internal artifact IDs into
+ * user-facing narration. The artifact references remain in result.details and
+ * the durable Host events for evidence and later inspection.
  */
 export function renderUnifiedExecModelOutput(result: UnifiedExecResult): string {
   return [
@@ -12,9 +14,6 @@ export function renderUnifiedExecModelOutput(result: UnifiedExecResult): string 
     ] : []),
     renderStream("stdout", result.stdout),
     renderStream("stderr", result.stderr),
-    "Evidence artifacts:\n" + result.artifacts.map((artifact) =>
-      `- ${artifact.role}: ${artifact.artifactId} (truncated: ${artifact.truncated ? "yes" : "no"})`,
-    ).join("\n"),
   ].join("\n\n");
 }
 

@@ -14,7 +14,7 @@ test("profile avatar crop exports a transparent circular image", async ({ page }
 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /^User profile$/ }).click();
-  await expect(page.getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "User profile", level: 1 })).toHaveCount(1);
   await expect(page.locator('[data-profile-section="identity"]')).toBeVisible();
   await expect(page.getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await expect(page.getByRole("button", { name: "Save profile" })).toHaveCount(0);
@@ -214,7 +214,7 @@ test("private teammate chat messages use the saved user profile identity", async
   await expect(message.locator(".message-row-own-identity")).toHaveCount(0);
 
   const messageLayout = await message.evaluate((element) => {
-    const bodyElement = element.querySelector(".message-body-shell");
+    const bodyElement = element.querySelector(".message-body-renderer");
     const avatarElement = element.querySelector(".user-profile-avatar");
     if (!(bodyElement instanceof HTMLElement) || !(avatarElement instanceof HTMLElement)) {
       throw new Error("local user message did not render a body and avatar");

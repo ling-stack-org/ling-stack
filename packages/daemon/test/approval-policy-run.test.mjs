@@ -74,6 +74,33 @@ test("health includes the configured default workspace cwd", async () => {
   }
 });
 
+test("approval API rejects a pending request whose Run has already failed", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-stale-approval-api-"));
+  const daemon = await startDaemonForTest(new ThreadResumeRunner());
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = new Date().toISOString();
+    store.createRun({ id: "run_stale_api", cwd, taskId: "task_stale_api",
+      providerName: "test", providerModel: "test",
+      taskSnapshot: { id: "task_stale_api", title: "Stale API" },
+      providerSnapshot: {}, requestSnapshot: {}, createdAt: now });
+    store.markRunStarted("run_stale_api", now);
+    const approval = store.createApprovalRequest({ runId: "run_stale_api", taskId: "task_stale_api",
+      actionType: "bash", risk: "medium", title: "Run tests", description: "Run tests",
+      payload: { type: "bash", cwd, command: "python3 -m unittest", riskFlags: [] } }, now);
+    store.markRunFailed("run_stale_api", new Date().toISOString(), "Previous approval expired.");
+    const result = await postJsonExpectError(`${daemon.url}/approvals/${approval.id}/approve?cwd=${encodeURIComponent(cwd)}`,
+      { decisionKind: "approve_once" });
+    assert.equal(result.status, 409);
+    assert.equal(result.body.error, "approval_execution_stale");
+    assert.equal(store.getApprovalRequest(approval.id)?.status, "pending");
+  } finally {
+    store.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("runtime runner settings api seeds Pi defaults and explicit runner requests fail closed", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-settings-"));
   const runner = new ThreadResumeRunner();
@@ -262,8 +289,8 @@ test("unified exec bash=allow runs through daemon and records redacted artifacts
       assert.equal(typeof output, "string");
       assert.match(output, /hello \[REDACTED\]/);
       assert.doesNotMatch(output, new RegExp(secretValue));
-      assert.ok(output.includes(result.artifacts.find((artifact) => artifact.role === "result").artifactId));
-      assert.ok(output.includes(result.stdout.artifactId));
+      assert.equal(output.includes(result.artifacts.find((artifact) => artifact.role === "result").artifactId), false);
+      assert.equal(output.includes(result.stdout.artifactId), false);
       assert.match(output, /stderr \(0 bytes; 0 lines; preview truncated: no\):\n\(empty\)/);
     }
     assert.doesNotMatch(JSON.stringify({ events, result }), new RegExp(secretValue));
@@ -448,6 +475,112 @@ test("unified exec bash=ask waits for approval before running", async () => {
   }
 });
 
+test("parallel Host commands enter approval waits one at a time", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-parallel-host-approvals-"));
+  const runner = new ConcurrentApprovalProbeRunner([
+    { toolCallId: "tool_parallel_first", toolName: "bash", input: { command: "printf 'first\\n'" } },
+    { toolCallId: "tool_parallel_second", toolName: "bash", input: { command: "printf 'second\\n'" } },
+  ]);
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_parallel_host_approvals"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const first = await waitForSseEvent(sse, "approval_requested");
+    const firstId = first.data.data.approvalId;
+    assert.equal((await listApprovals(daemon.url, cwd, runId)).length, 1);
+
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(firstId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      decisionKind: "approve_once",
+    });
+    let secondId;
+    await waitForCondition(async () => {
+      const approvals = await listApprovals(daemon.url, cwd, runId);
+      secondId = approvals.find((approval) => approval.id !== firstId && approval.status === "pending")?.id;
+      return Boolean(secondId);
+    }, "second Host approval did not wait after the first completed");
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(secondId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      decisionKind: "approve_once",
+    });
+    await sse.collectRemaining();
+
+    assert.equal(runner.decisions.length, 2);
+    assert.equal(runner.decisions.every((decision) => decision.approved), true);
+    assert.deepEqual(runner.decisions.map((decision) => decision.approvalId), [firstId, secondId]);
+    assert.equal((await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`)).status, "succeeded");
+    assert.equal((await listApprovals(daemon.url, cwd, runId)).some((approval) => approval.status === "cancelled"), false);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("denying the first parallel Host command does not create a successor approval", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-parallel-host-denial-"));
+  const runner = new ConcurrentApprovalProbeRunner([
+    { toolCallId: "tool_denied_first", toolName: "bash", input: { command: "printf 'first\\n'" } },
+    { toolCallId: "tool_denied_second", toolName: "bash", input: { command: "printf 'second\\n'" } },
+  ]);
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_parallel_host_denial"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(requested.data.data.approvalId)}/deny?cwd=${encodeURIComponent(cwd)}`, {});
+    await sse.collectRemaining();
+
+    const approvals = await listApprovals(daemon.url, cwd, runId);
+    assert.deepEqual(approvals.map((approval) => approval.status), ["denied"]);
+    assert.equal(runner.decisions.length, 2);
+    assert.equal(runner.decisions[0].approved, false);
+    assert.match(runner.decisions[1].reason, /stale_run_execution/);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("cancelling a Run during the first parallel Host approval does not admit the queued command", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-parallel-host-cancel-"));
+  const runner = new ConcurrentApprovalProbeRunner([
+    { toolCallId: "tool_cancel_parallel_first", toolName: "bash", input: { command: "printf 'first\\n'" } },
+    { toolCallId: "tool_cancel_parallel_second", toolName: "bash", input: { command: "printf 'second\\n'" } },
+  ]);
+  const daemon = await startDaemonForTest(runner, {}, { runtimeTools: { unifiedExec: true } });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_parallel_host_cancel"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const runId = ready.data.runId;
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    const firstId = requested.data.data.approvalId;
+    assert.equal((await listApprovals(daemon.url, cwd, runId)).length, 1);
+
+    const cancelled = await postJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/cancel?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(cancelled.cancelled, true);
+    assert.equal(cancelled.run.status, "cancelled");
+    await sse.collectRemaining();
+    await waitForCondition(async () => (await listApprovals(daemon.url, cwd, runId))[0]?.status === "cancelled",
+      "the first approval was not cancelled");
+    const approvals = await listApprovals(daemon.url, cwd, runId);
+    assert.deepEqual(approvals.map((approval) => [approval.id, approval.status]), [[firstId, "cancelled"]]);
+    assert.equal((await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`)).status,
+      "cancelled");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("approval wait does not consume runtime idle or hard timeout budgets", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-wait-"));
   const runner = new ApprovalProbeRunner({
@@ -499,7 +632,7 @@ test("approval wait does not consume runtime idle or hard timeout budgets", asyn
     });
     await sse.collectRemaining();
     const completed = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(completed.status, "succeeded");
+    assert.equal(completed.status, "succeeded", `approval wait resumed with ${completed.errorMessage ?? "no error"}`);
     assert.equal(runner.decisions.length, 1);
     assert.equal(runner.decisions[0].approved, true);
   } finally {
@@ -551,6 +684,59 @@ test("approval resume restores the hard timeout budget after an externally persi
     const completed = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(completed.status, "failed");
     assert.match(completed.errorMessage ?? "", /hard_timeout/u);
+    assert.equal(runner.decisions.length, 1);
+    assert.equal(runner.decisions[0].approved, true);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("slow replay of an external approval decision resets idle time when execution resumes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-slow-replay-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_approval_slow_replay", toolName: "bash",
+    input: { command: "printf 'approval-slow-replay\\n'" },
+  }, false, 140);
+  let replayStalled = false;
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory(workspaceCwd) {
+      const store = createSqliteRunStore(workspaceCwd);
+      const createWorkUnit = store.createWorkUnit.bind(store);
+      store.createWorkUnit = (input) => createWorkUnit({ ...input, timeoutPolicy: {
+        heartbeatIntervalMs: 10, heartbeatTimeoutMs: 2_000,
+        idleTimeoutMs: 200, hardTimeoutMs: 60, cancelGraceMs: 20,
+      } });
+      const appendRuntimeEvent = store.appendRuntimeEvent.bind(store);
+      store.appendRuntimeEvent = (input) => {
+        const event = appendRuntimeEvent(input);
+        if (!replayStalled && input.type === "work_unit_progress"
+          && input.data?.runEventType === "approval_approved") {
+          replayStalled = true;
+          // Deterministic synchronous storage delay while the approval wait
+          // is still held. It must not consume either execution budget.
+          Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 300);
+        }
+        return event;
+      };
+      return store;
+    },
+  });
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const response = await postRunStream(daemon.url, runBody(cwd, "task_approval_slow_replay"));
+    const sse = createSseReader(response);
+    const ready = await sse.nextEvent();
+    assert.equal(ready.event, "ready");
+    const requested = await waitForSseEvent(sse, "approval_requested");
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(requested.data.data.approvalId)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      reason: "external approval replay budget regression",
+    });
+    await sse.collectRemaining();
+    const completed = await getJson(`${daemon.url}/runs/${encodeURIComponent(ready.data.runId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(replayStalled, true, "the external decision replay boundary was exercised");
+    assert.equal(completed.status, "failed");
+    assert.equal(completed.errorMessage, "hard_timeout");
     assert.equal(runner.decisions.length, 1);
     assert.equal(runner.decisions[0].approved, true);
   } finally {
@@ -673,8 +859,8 @@ test("unified exec bounds long output chunks and stream previews", async () => {
       assert.equal(output.includes("x".repeat(8193)), false);
       assert.match(output, /stdout \(9000 bytes; 1 lines; preview truncated: yes\)/);
       assert.match(output, /stderr \(5000 bytes; 1 lines; preview truncated: no\)/);
-      assert.ok(output.includes(result.stdout.artifactId));
-      assert.ok(output.includes(result.stderr.artifactId));
+      assert.equal(output.includes(result.stdout.artifactId), false);
+      assert.equal(output.includes(result.stderr.artifactId), false);
       assert.ok(Buffer.byteLength(output, "utf8") < 20 * 1024);
     }
 
@@ -1204,6 +1390,64 @@ test("workspace command rule approves the current Bash request and suppresses ma
     await thirdSse.collectRemaining();
   } finally {
     await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("workspace command rule survives daemon restart without approving an unrelated command", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-command-rule-restart-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_rule_before_restart",
+    toolName: "bash",
+    input: { command: "printf before-restart", prefix_rule: ["printf"] },
+  });
+  let daemon = await startDaemonForTest(runner);
+  let daemonOpen = true;
+  try {
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
+    const firstResponse = await postRunStream(daemon.url, runBody(cwd, "task_rule_before_restart"));
+    const firstSse = createSseReader(firstResponse);
+    const firstRunId = (await firstSse.nextEvent()).data.runId;
+    await waitForSseEvent(firstSse, "approval_requested");
+    const [pending] = await listApprovals(daemon.url, cwd, firstRunId);
+    assert.ok(pending.proposedCommandRule);
+    const resolved = await postJson(`${daemon.url}/approvals/${encodeURIComponent(pending.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+      decisionKind: "approve_command_rule",
+      proposedRuleFingerprint: pending.proposedCommandRule.fingerprint,
+    });
+    assert.equal(resolved.approval.decisionKind, "approve_command_rule");
+    await firstSse.collectRemaining();
+    const persistedRuleId = resolved.approval.decisionRuleId;
+
+    await daemon.close();
+    daemonOpen = false;
+    runner.request = {
+      toolCallId: "tool_rule_after_restart",
+      toolName: "bash",
+      input: { command: "printf after-restart" },
+    };
+    daemon = await startDaemonForTest(runner, {}, { defaultWorkspaceCwd: cwd });
+    daemonOpen = true;
+    const rules = await getJson(`${daemon.url}/approval-command-rules?cwd=${encodeURIComponent(cwd)}`);
+    assert.deepEqual(rules.rules.map((rule) => rule.id), [persistedRuleId]);
+    const matching = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_rule_after_restart"));
+    assert.equal(matching.events.some((event) => event.event === "approval_requested"), false);
+    assert.match(runner.decisions.at(-1).reason, /workspace command rule/u);
+
+    runner.request = {
+      toolCallId: "tool_unrelated_after_restart",
+      toolName: "bash",
+      input: { command: "echo unrelated" },
+    };
+    const unrelatedResponse = await postRunStream(daemon.url, runBody(cwd, "task_unrelated_after_restart"));
+    const unrelatedSse = createSseReader(unrelatedResponse);
+    await unrelatedSse.nextEvent();
+    const requested = await waitForSseEvent(unrelatedSse, "approval_requested");
+    await postJson(`${daemon.url}/approvals/${encodeURIComponent(requested.data.data.approvalId)}/deny?cwd=${encodeURIComponent(cwd)}`, {});
+    await unrelatedSse.collectRemaining();
+    assert.equal((await getJson(`${daemon.url}/approval-command-rules?cwd=${encodeURIComponent(cwd)}`)).rules.length, 1);
+  } finally {
+    if (daemonOpen) await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }
 });
@@ -3921,7 +4165,7 @@ test("media job live transport calls Seedream image_generate directly and links 
     const executed = firstRun;
     const executedArtifacts = await getJson(`${daemon.url}/media-jobs/${encodeURIComponent(createdJob.mediaJob.id)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(executed.mediaJob.status, "succeeded");
-    assert.equal(executedArtifacts.artifacts.length, 3);
+    assert.deepEqual(executedArtifacts.artifacts.map(artifact => artifact.type).sort(), ["image", "json"]);
     assert.equal(seedream.requests.length, 2);
     assert.equal(seedream.requests[0].path, "/images/generations");
     assert.equal(seedream.requests[0].authorization, "Bearer test-key");
@@ -3938,7 +4182,7 @@ test("media job live transport calls Seedream image_generate directly and links 
     const markdownArtifact = executedArtifacts.artifacts.find((artifact) => artifact.type === "markdown");
     const jsonArtifact = executedArtifacts.artifacts.find((artifact) => artifact.type === "json");
     const imageArtifactRecord = executedArtifacts.artifacts.find((artifact) => artifact.type === "image");
-    assert.ok(markdownArtifact);
+    assert.equal(markdownArtifact, undefined, "live generation must not attach a static plan claiming no API was called");
     assert.ok(jsonArtifact);
     assert.ok(imageArtifactRecord);
     assert.equal(imageArtifactRecord.contentType, "image/png");
@@ -4991,6 +5235,7 @@ test("cancelled runs are not overwritten when a late runner reports success", as
 
 test("artifact APIs list metadata and serve content from the artifacts root", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-artifacts-"));
+  const largeContent = Buffer.alloc(2 * 1024 * 1024 + 17, 0x61);
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_artifact_read",
     toolName: "read",
@@ -5014,7 +5259,22 @@ test("artifact APIs list metadata and serve content from the artifacts root", as
         title: "Evidence Markdown",
         contentType: "text/markdown; charset=utf-8",
         sizeBytes: 33,
+        sealedPayload: { hostOnlySecret: "SEALED_METADATA_SENTINEL" },
         createdAt: "2026-05-22T00:00:00.000Z",
+      });
+      const sealedArtifact = store.getArtifact("artifact_api_markdown");
+      assert.equal(sealedArtifact?.sealedPayload?.hostOnlySecret, "SEALED_METADATA_SENTINEL");
+      store.appendEvent(runId, "artifact_created", { artifact: sealedArtifact });
+      await writeFile(resolve(artifactDir, "large.bin"), largeContent);
+      store.createArtifact({
+        id: "artifact_api_large",
+        runId,
+        type: "file",
+        path: `${runId}/large.bin`,
+        title: "Large download",
+        contentType: "application/octet-stream",
+        sizeBytes: largeContent.byteLength,
+        createdAt: "2026-05-22T00:00:00.500Z",
       });
       store.createArtifact({
         id: "artifact_api_outside",
@@ -5024,28 +5284,132 @@ test("artifact APIs list metadata and serve content from the artifacts root", as
         title: "Outside log",
         createdAt: "2026-05-22T00:00:01.000Z",
       });
+      await writeFile(resolve(cwd, "outside-secret.txt"), "must not be served", "utf8");
+      await symlink(resolve(cwd, "outside-secret.txt"), resolve(artifactDir, "escape.txt"));
+      store.createArtifact({
+        id: "artifact_api_symlink_escape",
+        runId,
+        type: "log",
+        path: `${runId}/escape.txt`,
+        title: "Symlink escape",
+        createdAt: "2026-05-22T00:00:02.000Z",
+      });
     } finally {
       store.close();
     }
 
     const listed = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/artifacts?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(listed.runId, runId);
-    assert.equal(listed.artifacts.length, 2);
+    assert.equal(listed.artifacts.length, 4);
     assert.equal(listed.artifacts[0].id, "artifact_api_markdown");
     assert.equal(listed.artifacts[0].title, "Evidence Markdown");
+    assert.equal(JSON.stringify(listed).includes("SEALED_METADATA_SENTINEL"), false);
+    assert.equal("sealedPayload" in listed.artifacts[0], false);
+    assert.equal("contentSha256" in listed.artifacts[0], false);
 
     const metadata = await getJson(`${daemon.url}/artifacts/artifact_api_markdown?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(metadata.artifact.runId, runId);
     assert.equal(metadata.artifact.type, "markdown");
+    assert.equal("sealedPayload" in metadata.artifact, false);
+    assert.equal("contentSha256" in metadata.artifact, false);
+    const history = await getJson(`${daemon.url}/runs/${encodeURIComponent(runId)}/events?cwd=${encodeURIComponent(cwd)}`);
+    const artifactEvent = history.events.find((event) => event.type === "artifact_created" && event.data.artifact?.id === "artifact_api_markdown");
+    assert.ok(artifactEvent);
+    assert.equal("sealedPayload" in artifactEvent.data.artifact, false);
+    assert.equal("contentSha256" in artifactEvent.data.artifact, false);
+    assert.equal(JSON.stringify(history).includes("SEALED_METADATA_SENTINEL"), false);
+
+    const crossOrigin = await fetch(`${daemon.url}/artifacts/artifact_api_markdown/content?cwd=${encodeURIComponent(cwd)}`, {
+      headers: { origin: "https://evil.example" },
+    });
+    assert.equal(crossOrigin.status, 403);
+    assert.equal((await crossOrigin.json()).error, "forbidden_origin");
 
     const content = await fetch(`${daemon.url}/artifacts/artifact_api_markdown/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(content.status, 200);
     assert.equal(content.headers.get("content-type"), "text/markdown; charset=utf-8");
     assert.equal(await content.text(), "# Evidence\n\nRun artifact content.\n");
 
+    const large = await fetch(`${daemon.url}/artifacts/artifact_api_large/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(large.status, 200);
+    assert.equal(Number(large.headers.get("content-length")), largeContent.byteLength);
+    assert.deepEqual(Buffer.from(await large.arrayBuffer()), largeContent);
+    const largeRange = await fetch(`${daemon.url}/artifacts/artifact_api_large/content?cwd=${encodeURIComponent(cwd)}&offset=1048576&limit=1024`);
+    assert.equal(largeRange.status, 206);
+    assert.deepEqual(Buffer.from(await largeRange.arrayBuffer()), largeContent.subarray(1048576, 1049600));
+
+    const ranged = await fetch(`${daemon.url}/artifacts/artifact_api_markdown/content?cwd=${encodeURIComponent(cwd)}&offset=2&limit=9`);
+    assert.equal(ranged.status, 206);
+    assert.equal(ranged.headers.get("accept-ranges"), "bytes");
+    assert.equal(ranged.headers.get("content-range"), "bytes 2-10/34");
+    assert.equal(await ranged.text(), "Evidence\n");
+
+    const overLimit = await fetch(`${daemon.url}/artifacts/artifact_api_markdown/content?cwd=${encodeURIComponent(cwd)}&limit=1048577`);
+    assert.equal(overLimit.status, 416);
+    assert.equal((await overLimit.json()).error, "artifact_range_invalid");
+    const atEnd = await fetch(`${daemon.url}/artifacts/artifact_api_markdown/content?cwd=${encodeURIComponent(cwd)}&offset=34&limit=1`);
+    assert.equal(atEnd.status, 416);
+    assert.equal((await atEnd.json()).error, "artifact_range_invalid");
+
     const outside = await fetch(`${daemon.url}/artifacts/artifact_api_outside/content?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(outside.status, 403);
     assert.equal((await outside.json()).error, "artifact_outside_root");
+    const symlinkEscape = await fetch(`${daemon.url}/artifacts/artifact_api_symlink_escape/content?cwd=${encodeURIComponent(cwd)}&offset=0&limit=32`);
+    assert.equal(symlinkEscape.status, 403);
+    assert.equal((await symlinkEscape.json()).error, "artifact_outside_root");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("artifact access is workspace-bound, lineage-bound, and range-bounded", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-artifact-boundary-"));
+  const runner = new ApprovalProbeRunner({
+    toolCallId: "tool_artifact_boundary",
+    toolName: "read",
+    input: { path: "README.md" },
+  });
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const { runId } = await postRunAndCollectEvents(daemon.url, runBody(cwd, "task_artifact_boundary"));
+    const store = createSqliteRunStore(cwd);
+    try {
+      const artifactDir = resolve(store.paths.artifactsDir, runId);
+      await mkdir(artifactDir, { recursive: true });
+      const oversized = Buffer.alloc(8 * 1024 * 1024 + 1, 0x62);
+      await writeFile(resolve(artifactDir, "oversized.bin"), oversized);
+      store.createArtifact({
+        id: "artifact_api_boundary",
+        runId,
+        type: "file",
+        path: `${runId}/oversized.bin`,
+        title: "Oversized boundary artifact",
+        contentType: "application/octet-stream",
+        sizeBytes: oversized.byteLength,
+        createdAt: "2026-09-28T00:00:00.000Z",
+      });
+    } finally {
+      store.close();
+    }
+
+    const missingWorkspace = await fetch(`${daemon.url}/artifacts/artifact_api_boundary/content`);
+    assert.equal(missingWorkspace.status, 400);
+    assert.equal((await missingWorkspace.json()).error, "bad_request");
+
+    const wrongRun = await fetch(`${daemon.url}/artifacts/artifact_api_boundary/content?cwd=${encodeURIComponent(cwd)}&runId=run_other_workspace`);
+    assert.equal(wrongRun.status, 404);
+
+    const wrongAction = await fetch(`${daemon.url}/artifacts/artifact_api_boundary/content?cwd=${encodeURIComponent(cwd)}&actionId=action_not_in_lineage`);
+    assert.equal(wrongAction.status, 404);
+
+    const full = await fetch(`${daemon.url}/artifacts/artifact_api_boundary/content?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(full.status, 413);
+    assert.equal((await full.json()).error, "artifact_transfer_budget_exceeded");
+
+    const range = await fetch(`${daemon.url}/artifacts/artifact_api_boundary/content?cwd=${encodeURIComponent(cwd)}&offset=0&limit=1024`);
+    assert.equal(range.status, 206);
+    assert.equal((await range.arrayBuffer()).byteLength, 1024);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5463,6 +5827,42 @@ class UnifiedExecProbeRunner {
   }
 }
 
+class ConcurrentApprovalProbeRunner {
+  constructor(requests) {
+    this.requests = requests;
+    this.decisions = [];
+  }
+
+  async runTask(options) {
+    options.onEvent?.({
+      type: "run_start",
+      taskId: options.task.id,
+      cwd: options.cwd,
+      provider: options.provider.provider,
+      model: options.provider.model,
+    });
+    this.decisions = await Promise.all(this.requests.map(async (request) => {
+      options.onEvent?.({
+        type: "tool_start",
+        toolCallId: request.toolCallId,
+        toolName: request.toolName,
+        args: request.input,
+      });
+      const decision = await options.onApprovalRequired?.({ ...request, task: options.task, cwd: options.cwd });
+      options.onEvent?.({
+        type: "tool_end",
+        toolCallId: request.toolCallId,
+        toolName: request.toolName,
+        result: decision?.handledResult ?? { approved: decision?.approved, reason: decision?.reason },
+        isError: decision?.handledResult?.isError ?? !decision?.approved,
+      });
+      return decision;
+    }));
+    options.onEvent?.({ type: "run_end", taskId: options.task.id, messageCount: 1 });
+    return { taskId: options.task.id, events: [], messages: [{ role: "assistant", content: "done" }] };
+  }
+}
+
 class SecretEchoRunner {
   constructor(secretValue) {
     this.secretValue = secretValue;
@@ -5868,7 +6268,7 @@ async function startMockComfyUiServer(options = {}) {
       }
       response.end(JSON.stringify({
         [operationId]: {
-          status: { status_str: "success" },
+          status: { status_str: "success", completed: true },
           outputs: { "9": { videos: [{ filename: `${operationId}.mp4`, type: "output" }] } },
         },
       }));

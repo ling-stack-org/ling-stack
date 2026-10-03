@@ -71,7 +71,7 @@ test("Model loaded state stays dense, searchable, and contained", async ({ page 
   await expect(surface.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
   await expect(surface.locator(".provider-table-shell")).toHaveCSS("overflow", "auto");
   const [toolbarBox, tableShellBox] = await Promise.all([
-    surface.locator(".provider-header-tools").boundingBox(),
+    page.locator(".provider-header-tools").boundingBox(),
     surface.locator(".provider-table-shell").boundingBox(),
   ]);
   expect(toolbarBox).not.toBeNull();
@@ -100,7 +100,7 @@ test("Model editor uses the shared overlay and restores focus in dark mode", asy
   await page.goto("/");
 
   const surface = await openWorkspaceTool(page, "Model Workbench", "providers");
-  const trigger = surface.getByRole("button", { name: "Add model" });
+  const trigger = page.getByRole("button", { name: "Add model" });
   await trigger.click();
   const dialog = page.getByRole("dialog", { name: "New preset" });
   await expect(dialog).toBeVisible();

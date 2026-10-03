@@ -22,7 +22,7 @@ import type {
   RequiredParticipantRequestedByV1,
 } from "@ling-stack/contracts";
 import { channelOperationPlanFingerprintV1, createRequiredParticipantManifestV1 } from "@ling-stack/contracts";
-import { bindChannelOperationPlan } from "./channel-operation-bindings.js";
+import { bindChannelOperationPlan, isChannelOperationCandidatePlanV2 } from "./channel-operation-bindings.js";
 import { ChannelOperationBlockerPublicationError, publishChannelOperationBlocker, recoverChannelOperationBlocker,
   type ChannelOperationBlockedResult } from "./channel-operation-blocker.js";
 import { channelOperationVisibleSources } from "./channel-operation-sources.js";
@@ -426,22 +426,12 @@ function applyModelIntentOutput(input: ChannelIntentSelectorInput, output: Chann
 
 function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, output: ChannelIntentModelOutput): ChannelIntentSelectorResult {
   const reasonCode = detectWorkflowIntentReason(input.sourceMessage) ?? "ordered_work_request";
-  const candidates = selectTypedProposalParticipants(input, reasonCode);
-  const binding = bindChannelOperationPlan({
-    candidate: output.execution,
-    sourceItemId: input.sourceMessage.id,
-    sourceText: input.sourceMessage.body,
-    workspaceCwd: input.channel.boundPath ?? input.store.paths.cwd,
-    participants: candidates.map((participant) => participant.teammate),
-    ...(candidates.length === 1 ? { defaultOwnerParticipantId: candidates[0]!.teammate.id } : {}),
-    visibleSources: channelOperationVisibleSources({ store: input.store, sourceItemId: input.sourceMessage.id }),
-    hostCapabilityAvailable: input.hostCapabilityAvailable,
-  });
+  const { candidates, binding } = bindModelIntentOperations(input, output.execution);
   if (binding.status === "blocked") {
     return publishChannelOperationBlocker(input);
   }
   if (binding.status === "clarify") {
-    const question = `请确认每项操作的负责队友、读取文件、输出文件及内容要求（${binding.missingFields.join(", ")}）；当前操作计划缺少可靠绑定，尚未开始执行。`;
+    const question = "本次操作计划未通过队友归属、步骤依赖与来源校验，尚未开始执行。请分别列出每位队友负责的操作、输入和输出文件、命令及内容要求。";
     return createClarifyReply(input, "ambiguous_target", "model_policy", binding.reason,
       question, { missingFields: binding.missingFields, question });
   }
@@ -450,7 +440,10 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
   const participants = candidates.filter((participant) => ownerIds.has(participant.teammate.id)
     || explicitlyRequiredIds.has(participant.teammate.id));
   const decisionAction = output.action === "execute" ? "execute" : "workflow_proposal";
-  const participantManifest = createParticipantManifest(input, participants, decisionAction, binding.execution);
+  const participantManifest = createParticipantManifest(input, participants.map((participant) => ({
+    teammate: participant.teammate,
+    stepAction: participant.role.action,
+  })), decisionAction, binding.execution);
   const participantsMissingRequiredOperations = participantManifest.participants.filter((participant) =>
     !ownerIds.has(participant.participantId) && participant.expectedOutcome !== "synthesis");
   if (participantsMissingRequiredOperations.length > 0) {
@@ -470,6 +463,23 @@ function createModelAssistedExecuteResult(input: ChannelIntentSelectorInput, out
       message: capabilityBlocker,
       code: binding.capabilityBlockers.length > 0 ? "participant_required_tools_unavailable" : "operation_binding_channel_tools_unavailable",
     } : undefined);
+}
+
+/** The same read-only admission check governs repair and final publication. */
+function bindModelIntentOperations(input: ChannelIntentSelectorInput, candidate: unknown) {
+  const reasonCode = detectWorkflowIntentReason(input.sourceMessage) ?? "ordered_work_request";
+  const candidates = selectTypedProposalParticipants(input, reasonCode);
+  const binding = bindChannelOperationPlan({
+    candidate,
+    sourceItemId: input.sourceMessage.id,
+    sourceText: input.sourceMessage.body,
+    workspaceCwd: input.channel.boundPath ?? input.store.paths.cwd,
+    participants: candidates.map((participant) => participant.teammate),
+    ...(candidates.length === 1 ? { defaultOwnerParticipantId: candidates[0]!.teammate.id } : {}),
+    visibleSources: channelOperationVisibleSources({ store: input.store, sourceItemId: input.sourceMessage.id }),
+    hostCapabilityAvailable: input.hostCapabilityAvailable,
+  });
+  return { candidates, binding };
 }
 
 /** Host routing selects the default; a candidate can request it but cannot name a replacement. */
@@ -580,7 +590,25 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     result = await runIntentTask(prompt);
   }
   const text = textDeltas.join("").trim() || extractAssistantText(result.messages) || "";
-  return parseModelIntentOutput(text);
+  const output = parseModelIntentOutput(text);
+  if (output.action !== "execute" && output.action !== "workflow_proposal") return output;
+  const initialBinding = bindModelIntentOperations(input, output.execution).binding;
+  if (initialBinding.status !== "clarify") return output;
+
+  // A valid JSON shape is not a valid source binding. Give both graph-shape and
+  // provenance failures one repair attempt; capability blockers never trigger
+  // a model retry. No task, proposal, Run or effect is admitted by this check.
+  try {
+    textDeltas.length = 0;
+    const repairedResult = await runIntentTask(`${prompt}\n\nYour previous JSON selected ${output.action} but Host binding rejected it. Invalid fields: ${initialBinding.missingFields.join(", ")}. Host validation: ${initialBinding.reason}\nPrevious candidate (not execution authority): ${JSON.stringify(output.execution)}\nReturn one corrected strict JSON object with execution.schemaVersion=2 and a nonempty operations array. Each operation needs id, kind, targetKind, required, dependsOn, sourceQuote and owner, plus its quoted target, command or content as applicable. Use only the provided current user turn and canonical source registry; do not invent paths, commands, owners or source quotes. Each explicit owner.sourceQuote must occur inside that operation's verbatim sourceQuote. For a named owner's multi-operation block, quote that owner's complete instruction span when a shorter clause omits the owner. Keep separate owners and every required operation; do not borrow another owner's instruction span. Do not change the action to reply/no_reply to evade validation.`);
+    const repairedText = textDeltas.join("").trim() || extractAssistantText(repairedResult.messages) || "";
+    const repaired = parseModelIntentOutput(repairedText);
+    if ((repaired.action === "execute" || repaired.action === "workflow_proposal")
+      && isChannelOperationCandidatePlanV2(repaired.execution)) return repaired;
+  } catch {
+    // Retain the original invalid graph for the binder's structured clarify.
+  }
+  return output;
 }
 
 function resolveRunnableIntentProviderPresetId(input: ChannelIntentSelectorInput): string | undefined {
@@ -2144,6 +2172,17 @@ function validateClarificationShape(clarification: ChannelIntentClarificationV2)
 }
 
 function clarificationQuestionPattern(field: string): RegExp {
+  // Host binding paths remain exact structured audit fields. Their user-facing
+  // question names the missing product concept, never the internal JSON path.
+  const bindingRoot = field.split(".")[0];
+  if (bindingRoot === "owner") return /(owner|participant|队友|负责|归属)/iu;
+  if (bindingRoot === "sourceQuote") return /(source|quote|来源|引用)/iu;
+  if (bindingRoot === "execution") return /(operation|step|graph|操作|步骤|计划)/iu;
+  if (bindingRoot === "contentSource") return /(content|source|内容|来源)/iu;
+  if (bindingRoot === "inputs") return /(input|dependency|输入|依赖)/iu;
+  if (bindingRoot === "outputRefs") return /(output|file|输出|文件)/iu;
+  if (bindingRoot === "commandGoal") return /(command|invocation|module|命令|调用|文件)/iu;
+  if (bindingRoot === "target" && field !== "target") return /(target|file|path|目标|文件|路径)/iu;
   if (field === "target") return /(target|file|path|directory|branch|pr|对象|目标|文件|路径|目录|分支)/iu;
   if (field === "content") return /(content|body|text|page|feature|内容|正文|文本|页面|功能)/iu;
   if (field === "acceptance_criteria") return /(acceptance|criteria|check|done|verify|验收|检查|完成|通过|验证)/iu;

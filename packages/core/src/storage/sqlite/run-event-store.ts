@@ -110,6 +110,16 @@ export class SqliteRunEventStore {
       .map((row) => mapRunEvent(row as Record<string, SQLOutputValue>));
   }
 
+  getLatestRunCompactionStart(runId: string): Extract<RunEventEnvelope, { readonly type: "context_compaction_start" }> | undefined {
+    const row = this.context.database.prepare(`
+      SELECT id, run_id, seq, ts, type, data_json
+      FROM run_events
+      WHERE run_id = ? AND type = 'context_compaction_start'
+      ORDER BY seq DESC LIMIT 1
+    `).get(runId);
+    return row ? mapRunEvent(row as Record<string, SQLOutputValue>) as Extract<RunEventEnvelope, { readonly type: "context_compaction_start" }> : undefined;
+  }
+
   countEvents(runId: string): number {
     const row = this.context.database.prepare("SELECT COUNT(*) AS count FROM run_events WHERE run_id = ?").get(runId);
     return readNumber(row as Record<string, SQLOutputValue>, "count");

@@ -27,7 +27,7 @@ test("Default Authorization uses shared rows and segmented choices at 1440x960 l
   const access = surface.getByRole("radiogroup", { name: "Sandbox settings" });
   await expect(authorization.getByRole("radio")).toHaveCount(3);
   await expect(access.getByRole("radio")).toHaveCount(3);
-  await expect(authorization.getByRole("radio", { name: "Smart authorization" })).toHaveAttribute("aria-checked", "true");
+  await expect(authorization.getByRole("radio", { name: "Help me approve" })).toHaveAttribute("aria-checked", "true");
   await expect(access.getByRole("radio", { name: "Workspace write" })).toHaveAttribute("aria-checked", "true");
 
   await authorization.getByRole("radio", { name: "Ask first" }).click();
@@ -61,7 +61,7 @@ test("Default Authorization preserves keyboard selection and dark compact geomet
 
   const surface = page.locator("[data-ui2-default-authorization]");
   const authorization = surface.getByRole("radiogroup", { name: "Authorization mode" });
-  const smart = authorization.getByRole("radio", { name: "Smart authorization" });
+  const smart = authorization.getByRole("radio", { name: "Help me approve" });
   await smart.focus();
   await page.keyboard.press("ArrowRight");
   const always = authorization.getByRole("radio", { name: "Always authorize" });
@@ -158,7 +158,7 @@ test("Personalization distinguishes initial loading from tone save failure at 12
   await openSettingsSection(page, /Personalization/);
   const surface = page.locator("[data-ui2-personalization]");
   await expect(surface).toHaveAttribute("data-personalization-state", "loading");
-  await expect(surface.locator(".ling-ui-skeleton")).toHaveCount(4);
+  await expect(surface.locator(".ling-ui-skeleton")).toHaveCount(5);
   await expect(surface.getByRole("radiogroup", { name: "Ling conversation tone" })).toHaveCount(0);
   await captureEvidence(page, "1280x800-ling-dark-personalization-loading.png");
 

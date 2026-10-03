@@ -115,12 +115,12 @@ test("late teammate workspace success cannot replace the selected teammate or sh
   await startTransientLoadingRecorder(page);
   await openTeammate(page, "Ling Engineer", false);
   await engineerStarted.promise;
-  expect(await readTransientLoadingSightings(page)).toEqual([]);
+  expect(await readTransientLoadingSightings(page)).toContain("Loading teammate workspace...");
 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Ling Designer" }).click();
   await expect(page.getByRole("heading", { name: "Ling Designer", level: 1 })).toBeVisible();
   await designerStarted.promise;
-  await expect(page.getByText("Loading teammate workspace...", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Loading teammate workspace...", { exact: true })).toBeVisible();
   await expect(page.getByText("No private messages yet", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Late Engineer response", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Designer remains authoritative", { exact: true })).toHaveCount(0);
@@ -128,7 +128,7 @@ test("late teammate workspace success cannot replace the selected teammate or sh
   const engineerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("/teammate_engineer/direct-messages"));
   releaseEngineer.resolve();
   await engineerResponse;
-  await expect(page.getByText("Loading teammate workspace...", { exact: true })).toHaveCount(0);
+  await expect(page.getByText("Loading teammate workspace...", { exact: true })).toBeVisible();
   await expect(page.getByText("No private messages yet", { exact: true })).toHaveCount(0);
   await expect(page.getByText("Late Engineer response", { exact: true })).toHaveCount(0);
 

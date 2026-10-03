@@ -6,6 +6,7 @@ import type {
   WorkUnitAttempt,
 } from "@ling-stack/core";
 import { markWorkUnitStale } from "../../runtime/work-units.js";
+import { hasCapturedMediaExecutionAdmission } from "./local-execution-binding.js";
 
 const activeStatuses = new Set<WorkUnit["status"]>([
   "claimed",
@@ -21,6 +22,8 @@ export function recoverPendingConversationMediaWorkUnits(store: RunStore, now: s
 
   for (const workUnit of store.listWorkUnits({ kind: "media_job", limit: 500 })) {
     if (!isConversationMediaChild(workUnit) || !pendingMediaJobIds.has(workUnit.linkedMediaJobId!)) continue;
+    // Restart cannot recreate the original source's local capability or receipt.
+    if (hasCapturedMediaExecutionAdmission(workUnit)) continue;
     const next = requeueConversationMediaChild(store, workUnit, now, false);
     if (next?.status !== "queued") continue;
     clearExecutionHandleRuntimeBinding(store, workUnit.linkedMediaJobId!, now);

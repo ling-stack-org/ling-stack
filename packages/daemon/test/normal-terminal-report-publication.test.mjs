@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { buildDeterministicTerminalReport, captureNormalTerminalReportBasis, createSqliteRunStore, resolveRuntimePaths } from "../../core/dist/index.js";
-import { collectTurnTerminalReportEvidence } from "../dist/features/channels/terminal-report-evidence.js";
+import { collectRunTerminalReportEvidence, collectTurnTerminalReportEvidence } from "../dist/features/channels/terminal-report-evidence.js";
 import {
   configureTerminalReportStore,
   processRunTerminalReport,
@@ -156,6 +156,97 @@ test("normal independent failed primary and successful validation publish a part
   assert.equal(result.record.report.outcome.status, "partially_succeeded");
 });
 
+for (const status of ["failed", "cancelled"]) {
+  test(`normal interrupted ${status} report publishes once without claiming tool settlement`, async (t) => {
+    const f = await interruptedFixture(t, status);
+    const basis = captureNormalTerminalReportBasis(f.store, { kind: "turn", id: f.turn.id });
+    assert.equal(basis.settled, false);
+    assert.equal(basis.failurePublicationAllowed, true);
+    assert.equal(basis.unsettledTools.length, 1);
+    const result = await processTurnTerminalReport(f.store, f.turn.id, { now: later });
+    const report = result.record.report;
+    assert.notEqual(report.outcome.status, "succeeded");
+    const risk = report.risks.find(risk => risk.id === `execution-unconfirmed:${f.run.id}:unfinished`);
+    assert.equal(risk?.severity, "critical");
+    assert.equal(risk?.status, "unverified");
+    assert.match(risk?.summary, /未确认/);
+    const unfinishedCheck = report.verification.find(check => check.sourceRefs.some(ref => ref.kind === "operation"
+      && ref.id === `tool:${f.run.id}:unfinished`));
+    assert.ok(unfinishedCheck, "an interrupted verification command remains inspectable");
+    assert.equal(unfinishedCheck.status, "unknown", "Run failure is not a command exit receipt");
+    assert.match(unfinishedCheck.summary, /未确认/);
+    const runCheck = collectRunTerminalReportEvidence(f.store, f.run.id).checks.find(check => check.id === `tool:${f.run.id}:unfinished`);
+    assert.equal(runCheck?.status, "unknown");
+    assert.match(runCheck?.summary, /未确认/);
+    assert.ok(result.record.resultItemId);
+    assert.equal(f.store.listEvents(f.run.id).filter(event => event.type === "tool_start").length, 2);
+    assert.equal(f.store.listEvents(f.run.id).filter(event => event.type === "tool_end").length, 1);
+    f.store.close(); f.store = createSqliteRunStore(f.cwd);
+    configureTerminalReportStore(f.store, { enabled: true });
+    await recoverTerminalReports(f.store);
+    assert.equal(f.store.getTerminalReport(result.record.id).resultItemId, result.record.resultItemId);
+    assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM conversation_items WHERE kind='terminal_report'").get().n, 1);
+    assert.equal(captureNormalTerminalReportBasis(f.store, { kind: "turn", id: f.turn.id }).settled, false);
+  });
+}
+
+for (const change of ["missing fence", "pending approval", "live successor", "malformed identity"]) {
+  test(`normal interrupted publication refuses ${change}`, async (t) => {
+    const f = await interruptedFixture(t, "failed", change !== "missing fence");
+    const input = candidate(f);
+    if (change === "pending approval") approval(f);
+    if (change === "live successor") addRun(f, "retry");
+    if (change === "malformed identity") f.store.appendEvent(f.run.id, "tool_start", { toolName: "bash", args: { command: "unknown" } });
+    const basis = captureNormalTerminalReportBasis(f.store, { kind: "turn", id: f.turn.id });
+    assert.equal(basis.failurePublicationAllowed, false);
+    assert.equal(f.store.commitTerminalReportPublication(input).ok, false);
+    assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM conversation_items WHERE kind='terminal_report'").get().n, 0);
+  });
+}
+
+for (const change of ["omit warning", "mitigate warning", "confirm stop", "claim success", "invent failed check", "invent passed check"]) {
+  test(`normal interrupted publication refuses synthesized ${change}`, async (t) => {
+    const f = await interruptedFixture(t, "failed");
+    const input = candidate(f);
+    const risk = input.report.risks.find(risk => risk.id === `execution-unconfirmed:${f.run.id}:unfinished`);
+    assert.ok(risk);
+    if (change === "omit warning") input.report.risks = input.report.risks.filter(entry => entry !== risk);
+    if (change === "mitigate warning") risk.status = "mitigated";
+    if (change === "confirm stop") risk.summary = "All command processes have definitely stopped.";
+    if (change === "claim success") input.report.outcome.status = "succeeded";
+    if (change === "invent failed check" || change === "invent passed check") {
+      const check = input.report.verification.find(entry => entry.sourceRefs.some(ref => ref.kind === "operation"
+        && ref.id === `tool:${f.run.id}:unfinished`));
+      assert.ok(check);
+      check.status = change === "invent failed check" ? "failed" : "passed";
+    }
+    assert.equal(f.store.commitTerminalReportPublication(input).ok, false);
+    assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM conversation_items WHERE kind='terminal_report'").get().n, 0);
+  });
+}
+
+test("normal late tool_end after interruption neither settles execution nor removes its warning", async (t) => {
+  const f = await interruptedFixture(t, "failed");
+  const input = candidate(f);
+  f.store.appendEvent(f.run.id, "tool_end", { toolCallId: "unfinished", toolName: "bash", isError: false });
+  assert.deepEqual(f.store.commitTerminalReportPublication(input), { ok: false, code: "stale_completion_basis" });
+  const basis = captureNormalTerminalReportBasis(f.store, { kind: "turn", id: f.turn.id });
+  assert.equal(basis.settled, false);
+  assert.equal(basis.failurePublicationAllowed, true);
+  const result = await processTurnTerminalReport(f.store, f.turn.id, { now: later });
+  assert.notEqual(result.record.report.outcome.status, "succeeded");
+  assert.ok(result.record.report.risks.some(risk => risk.id === `execution-unconfirmed:${f.run.id}:unfinished`));
+});
+
+async function interruptedFixture(t, status, withFence = true) {
+  const f = await fixture(t);
+  f.store.appendEvent(f.run.id, "tool_start", { toolCallId: "unfinished", toolName: "bash", args: { command: "node -e 'require(\"node:assert\").ok(true); setInterval(() => {}, 1000)'" } });
+  if (withFence) f.store.appendEvent(f.run.id, status === "failed" ? "run_error" : "run_cancelled", { message: "runtime_interrupted_no_checkpoint" });
+  if (status === "failed") f.store.markRunFailed(f.run.id, later, "runtime_interrupted_no_checkpoint");
+  else f.store.markRunCancelled(f.run.id, later);
+  return f;
+}
+
 test("normal source/item scope and partial publication lineage fail closed", async (t) => {
   const f = await fixture(t);
   const input = candidate(f);
@@ -299,6 +390,52 @@ test("normal recovery refuses inconsistent report outcome markers instead of ret
   f.database.prepare("UPDATE ling_terminal_reports SET outcome_status = 'failed' WHERE id = ?").run(input.reportId);
   assert.deepEqual(f.store.commitTerminalReportPublication(input), { ok: false, code: "report_conflict" });
 });
+
+test("one conflicting old report cannot strand an independent interrupted turn during startup recovery", async (t) => {
+  const f = await fixture(t);
+  const input = candidate(f);
+  commitOrphan(f, input);
+  f.store.appendConversationItem({ ...input.publicationItem,
+    payload: { ...input.publicationItem.payload, generation: 999 },
+  }, later);
+  const oldReport = f.store.getTerminalReport(input.reportId);
+  const oldItem = f.store.getConversationItem(input.publicationItem.id);
+  const interrupted = addIndependentInterruptedTurn(f);
+
+  await assert.rejects(recoverTerminalReports(f.store), error => error.code === "item_conflict");
+  const reports = f.store.listTerminalReports({ sourceKind: "turn", sourceId: interrupted.turn.id });
+  assert.equal(reports.length, 1);
+  assert.ok(reports[0].resultItemId, "the independent turn must be atomically recovered despite the earlier conflict");
+  assert.equal(reports[0].report.outcome.status, "failed");
+  assert.ok(reports[0].report.risks.some(risk => risk.id === `execution-unconfirmed:${interrupted.run.id}:unfinished`));
+  assert.deepEqual(f.store.getTerminalReport(input.reportId), oldReport, "a conflicting old report stays audit-only");
+  assert.deepEqual(f.store.getConversationItem(input.publicationItem.id), oldItem, "recovery must not repair a collision by overwriting it");
+  const diagnostics = f.database.prepare("SELECT data_json FROM control_plane_events WHERE action='terminal_report.recovery_failed'").all();
+  assert.equal(diagnostics.length, 1, "a failed source is attempted only once per sweep");
+  assert.equal(JSON.parse(diagnostics[0].data_json).code, "item_conflict");
+  assert.equal(JSON.parse(diagnostics[0].data_json).sourceId, f.turn.id);
+
+  await assert.rejects(recoverTerminalReports(f.store), error => error.code === "item_conflict");
+  assert.equal(f.store.listTerminalReports({ sourceKind: "turn", sourceId: interrupted.turn.id }).length, 1);
+  assert.equal(f.database.prepare("SELECT COUNT(*) AS n FROM conversation_items WHERE turn_id=? AND kind='terminal_report'").get(interrupted.turn.id).n, 1);
+});
+
+function addIndependentInterruptedTurn(f) {
+  const accepted = f.store.appendConversationUserTurn({ threadId: f.thread.id,
+    itemId: "independent-source", turnId: "independent-turn", title: "Interrupted command", userInstruction: "Run command",
+    actorType: "local_user", actorId: "local-user", idempotencyKey: "independent-input",
+    payload: { body: "Run command", format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
+  }, later);
+  const turn = f.store.getLingTurn(accepted.turnId);
+  const run = f.store.createRun({ id: "independent-run", cwd: f.cwd, taskId: f.run.taskId, threadId: f.thread.id, turnId: turn.id,
+    providerName: "test-provider", providerModel: "test-model", taskSnapshot: { id: f.run.taskId, title: "Interrupted command" },
+    providerSnapshot: { provider: "test-provider", model: "test-model" }, requestSnapshot: { cwd: f.cwd, responseLanguage: "zh-CN" }, createdAt: later,
+  });
+  f.store.appendEvent(run.id, "tool_start", { toolCallId: "unfinished", toolName: "bash", args: { command: "node long-task" } });
+  f.store.appendEvent(run.id, "run_error", { message: "runtime_interrupted_no_checkpoint" });
+  f.store.markRunFailed(run.id, later, "runtime_interrupted_no_checkpoint");
+  return { turn, run };
+}
 
 test("normal stale synthesis failure does not fail the newer evidence owner", async (t) => {
   const f = await fixture(t);

@@ -25,6 +25,7 @@ import {
 } from "../../lib/channel-conversation-items.js";
 import { projectChannelUserInputTimeline } from "../../lib/channel-user-input-timeline.js";
 import { formatDateTime } from "../../lib/formatting.js";
+import { terminalReportGeneration } from "../../lib/terminal-report-generation.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import { attachmentCanPreview, type PreviewRequest } from "../../lib/previews.js";
 import {
@@ -113,6 +114,7 @@ function channelMessageTimelineItem(
     threadSequence: 0,
     status: streaming ? "running" : message.status === "blocked" ? "blocked" : message.status === "failed" ? "failed" : "succeeded",
     turnId: message.turnId,
+    participantId: role === "agent" ? message.authorId ?? message.authorType : undefined,
     itemId: message.id,
     fileRefs: message.fileRefs,
   });
@@ -368,7 +370,9 @@ function channelTurnTimelineItems(
         actionBusy: orchestratingWorkflowId === workflow.id,
         actionFeedback: workflowErrors[workflow.id],
       })];
-  const terminalReport = channelTurnTerminalReportTimelineItem(turn, terminalReportById.get(turn.operationCell?.terminalReportId ?? ""));
+  const terminalReport = channelTurnTerminalReportTimelineItem(
+    turn, terminalReportById.get(turn.operationCell?.terminalReportId ?? ""), conversationItems,
+  );
   const ordered = [...startNarration, ...uncoveredConversationItems, ...facts, ...reasoning, ...terminalNarration, ...(terminalReport ? [terminalReport] : [])]
     .filter((item, index, all) => all.findIndex((candidate) => candidate.id === item.id) === index);
   // The feed assigns a large base sequence per turn. Normalize the already
@@ -383,6 +387,7 @@ function channelTurnTimelineItems(
 function channelTurnTerminalReportTimelineItem(
   turn: ConversationTurnViewModel,
   report: TerminalReportDto | undefined,
+  conversationItems: readonly ConversationItemV1[],
 ): ConversationTimelineTerminalReportItem | undefined {
   const block = turn.blocks.find((candidate): candidate is Extract<ConversationTurnViewModel["blocks"][number], { kind: "final_result" }> => candidate.kind === "final_result");
   if (!block || !turn.operationCell) {
@@ -390,15 +395,17 @@ function channelTurnTerminalReportTimelineItem(
   }
   const countRows = (section: string): number => block.rows.filter((row) => row.reportSection === section).length;
   const outcome = block.rows.find((row) => row.reportSection === "outcome");
-  const timelineStatus = terminalReportTimelineStatus(turn.operationCell.status);
-  const outcomeStatus = timelineStatus === "failed"
-    ? "failed"
-    : timelineStatus === "blocked"
-      ? "blocked"
-      : timelineStatus === "cancelled"
-        ? "cancelled"
-        : "succeeded";
-  const generation = parseTerminalReportGeneration(block.terminalReportRevisionKey);
+  const generation = terminalReportGeneration(report, block.terminalReportId, conversationItems, {
+    workspaceId: turn.sourceMessage.workspaceId,
+    channelId: turn.sourceMessage.channelId,
+    threadId: turn.sourceMessage.threadId ?? "",
+    turnId: turn.operationCell.turnId ?? turn.sourceMessage.turnId ?? "",
+  });
+  if (generation === undefined) return undefined;
+  const fallbackStatus = terminalReportTimelineStatus(turn.operationCell.status);
+  const outcomeStatus = report?.outcome.status ?? (fallbackStatus === "failed" || fallbackStatus === "blocked" || fallbackStatus === "cancelled"
+    ? fallbackStatus : "succeeded");
+  const timelineStatus = report?.outcome.status ?? fallbackStatus;
   return visibleTerminalReportTimelineItem({
     id: `terminal-report:${block.terminalReportId}`,
     kind: "terminalReport",
@@ -484,11 +491,6 @@ function terminalReportResultItemId(report: TerminalReportDto | undefined, repor
   return `result_terminal_report:${reportId}`;
 }
 
-function parseTerminalReportGeneration(revisionKey: string): number {
-  const value = Number.parseInt(revisionKey.split(":").at(-1) ?? "1", 10);
-  return Number.isSafeInteger(value) && value > 0 ? value : 1;
-}
-
 function terminalReportTimelineStatus(status: ConversationWorkCellViewModel["status"]): Exclude<ConversationTimelineTerminalReportItem["status"], undefined> {
   if (status === "failed") return "failed";
   if (status === "blocked") return "blocked";
@@ -500,6 +502,7 @@ function terminalReportTimelineStatus(status: ConversationWorkCellViewModel["sta
 type FeedbackValue = "up" | "down";
 
 export interface ChannelMessageRenderersInput {
+  readonly runLifecycles?: import("@ling-stack/conversation-ui-core").TimelineSnapshot["runLifecycles"];
   readonly allLocalTeammateById: ReadonlyMap<string, LocalTeammateDraft>;
   readonly allLocalTeammateByName: ReadonlyMap<string, LocalTeammateDraft>;
   readonly attachmentContentUrl: (attachment: ChannelAttachment) => string;
@@ -550,6 +553,7 @@ export interface ChannelMessageRenderersInput {
   readonly onOpenExecutionProposal: (proposal: ChannelExecutionProposal) => void;
   readonly onOpenFileReference: () => void;
   readonly onOpenTerminalReportFile: (target: TerminalReportFileTarget) => void;
+  readonly onOpenReview: (target: import("./right-dock/WorkspaceRightDock.js").WorkspaceRightDockReviewTarget) => void;
   readonly onOpenThreadForMessage: (message: ChannelMessage) => void;
   readonly onInvokeProtocolAction: (
     item: ConversationTimelineProtocolEventItem | ConversationTimelineApprovalItem,
@@ -719,6 +723,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
   function renderMessageActivityItem(
     item: Extract<ChannelActivityItem, { readonly kind: "message" }>,
     bodyOverride?: ReactNode,
+    ownsIdentity = true,
   ): ReactNode {
     const message = item.record;
     const plainChatMessage = message.kind === "message" || message.kind === "ai_reply" || message.kind === "system" || message.kind === "task_link";
@@ -761,6 +766,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
               ? "chat-blocked"
               : message.authorType === "system" ? "system" : "document"}
             avatar={renderChannelMessageAvatar(message)}
+            identityContinuation={message.authorType === "ai-teammate" && !ownsIdentity}
             authorName={messageAuthorLabel(message, input.teammateOptions, input.t("Deleted teammate"), input.localUserDisplayName, input.allLocalTeammateById)}
             createdAtLabel={formatDateTime(message.createdAt)}
             statusNode={message.editedAt ? <span className="conversation-message-edited-label">{input.t("Edited")}</span> : undefined}
@@ -834,10 +840,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
                 ) : null}
               </>
             ) : null}
-            actionsNode={!editing && message.status !== "blocked" && message.status !== "pending"
-              && message.authorType === "ai-teammate" && !narrationItemIds.has(message.id)
-              ? renderChannelAiMessageActions(message, message.body)
-              : !editing && message.status !== "blocked" && message.authorType === "local-user"
+            actionsNode={!editing && message.status !== "blocked" && message.authorType === "local-user"
                 ? (
                     <MessageActionBar
                       surface={channelSurface}
@@ -1051,6 +1054,7 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
       surface: channelSurface,
       threadId: input.selectedChannelThreadId,
       items: projectedTimelineItems,
+      runLifecycles: input.runLifecycles,
       canonicalRevision: projectedTimelineItems.reduce((max, item) => Math.max(max, item.revision), 0),
     });
     if (snapshot.items.length === 0) return null;
@@ -1065,12 +1069,17 @@ export function createChannelMessageRenderers(input: ChannelMessageRenderersInpu
         return teammate ? <TeammateAvatarView teammate={teammate} cwd={input.cwd} compact /> : <AvatarInitial label="A" tone="teal" />;
       },
       onOpenSourceRef: handleOpenTimelineSourceRef,
+      onOpenReview: input.onOpenReview,
       onInvokeProtocolAction: input.onInvokeProtocolAction,
       onDisclosureIntent: input.onTimelineDisclosureIntent,
-      renderMessageChrome: (messageItem, body) => {
+      renderResponseActions: (response, copyText) => {
+        const message = response.message?.itemId ? messageByTimelineItemId.get(`message:agent:${response.message.itemId}`) : undefined;
+        return message ? renderChannelAiMessageActions(message, copyText) : undefined;
+      },
+      renderMessageChrome: (messageItem, body, presentation) => {
         const message = messageItem.itemId ? messageByTimelineItemId.get(`message:${messageItem.kind === "userMessage" ? "user" : "agent"}:${messageItem.itemId}`) : undefined;
         if (!message) return body;
-        return renderMessageActivityItem(channelMessageToActivityItem(message), body);
+        return renderMessageActivityItem(channelMessageToActivityItem(message), body, presentation.ownsIdentity);
       },
       itemLocatorRef: input.timelineItemLocatorRef,
       virtualScrollRef: input.timelineScrollRef,

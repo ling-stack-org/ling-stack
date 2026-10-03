@@ -10,6 +10,8 @@ import {
   type CommitExistingRunContinuationPreparationFailureResult,
   type CommitExistingRunContinuationInput,
   type CommitExistingRunContinuationResult,
+  type CommitStaleRunRecoveryFailureInput,
+  type CommitStaleRunRecoveryFailureResult,
   type PrepareContinuationInput,
   type PreparedContinuation,
   type ReprepareContinuationInput,
@@ -310,6 +312,57 @@ export class SqliteHarnessCommitCoordinator {
       if (error instanceof ExistingRunContinuationPreparationFailureAbort) {
         return { ok: false, code: error.code };
       }
+      throw error;
+    }
+  }
+
+  /** Settles a pre-activation recovery failure without modifying the lost source Attempt. */
+  commitStaleRunRecoveryFailure(input: CommitStaleRunRecoveryFailureInput): CommitStaleRunRecoveryFailureResult {
+    this.context.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const run = this.ports.getRun(input.runId);
+      const workUnit = this.runtimeWorkUnits.getWorkUnit(input.sourceFence.workUnitId);
+      const attempt = this.runtimeWorkUnits.getWorkUnitAttempt(input.sourceFence.attemptId);
+      const task = run ? this.ports.getTask(run.taskId) : undefined;
+      if (!run || !workUnit || !attempt || !task
+        || run.workUnitId !== workUnit.id || workUnit.linkedRunId !== run.id
+        || workUnit.activeAttemptId !== attempt.id || attempt.workUnitId !== workUnit.id
+        || !sameFence(toRuntimeAttemptFence(attempt), input.sourceFence)) {
+        throw new StaleRunRecoveryFailureAbort("recovery_failure_lineage_stale");
+      }
+      if (run.status !== input.expectedRunStatus || workUnit.status !== "stale" || attempt.status !== "lost"
+        || (task.status !== "claimed" && task.status !== "running")) {
+        throw new StaleRunRecoveryFailureAbort("recovery_failure_state_stale");
+      }
+      const runTransition = this.ports.transitionRunStatus({
+        runId: run.id, expectedStatus: run.status, event: "runner_failed", actor: "system",
+        reason: input.errorCode, now: input.now, endedAt: input.now,
+        summaryPath: input.summaryPath, errorMessage: input.errorMessage,
+      });
+      const workUnitTransition = this.ports.transitionWorkUnitStatus({
+        workUnitId: workUnit.id, expectedStatus: "stale", event: "reconcile_failed", actor: "system",
+        reason: input.errorCode, now: input.now, endedAt: input.now,
+        errorCode: input.errorCode, errorMessage: input.errorMessage,
+      });
+      const taskTransition = this.ports.transitionTaskStatus({
+        taskId: task.id, expectedStatus: task.status, event: "run_failed", actor: "system",
+        reason: input.errorCode, now: input.now, currentRunId: run.id,
+      });
+      if (!runTransition.ok || !workUnitTransition.ok || !taskTransition.ok) {
+        throw new StaleRunRecoveryFailureAbort("recovery_failure_transition_failed");
+      }
+      this.ports.appendRuntimeEvent({
+        workUnitId: workUnit.id, type: "work_unit_failed", actor: "system", ts: input.now,
+        data: { reason: "daemon_recovery_preflight", sourceAttemptId: attempt.id,
+          errorCode: input.errorCode, errorMessage: input.errorMessage },
+      });
+      this.ports.releaseResourceLeasesForAttempt(input.sourceFence, input.now, "recovery-preflight-failed");
+      this.ports.releaseRuntimeSemaphoreSlotsForAttempt(input.sourceFence, input.now, "recovery-preflight-failed");
+      this.context.database.exec("COMMIT;");
+      return { ok: true, run: this.ports.getRun(run.id)!, workUnit: this.runtimeWorkUnits.getWorkUnit(workUnit.id)! };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.context.database);
+      if (error instanceof StaleRunRecoveryFailureAbort) return { ok: false, code: error.code };
       throw error;
     }
   }
@@ -638,5 +691,12 @@ class ExistingRunContinuationPreparationFailureAbort extends Error {
   ) {
     super(code);
     this.name = "ExistingRunContinuationPreparationFailureAbort";
+  }
+}
+
+class StaleRunRecoveryFailureAbort extends Error {
+  constructor(readonly code: Extract<CommitStaleRunRecoveryFailureResult, { readonly ok: false }>["code"]) {
+    super(code);
+    this.name = "StaleRunRecoveryFailureAbort";
   }
 }

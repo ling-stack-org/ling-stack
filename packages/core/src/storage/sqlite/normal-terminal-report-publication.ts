@@ -1,6 +1,7 @@
 import type { ConversationItemV1 } from "@ling-stack/contracts";
 import { captureNormalTerminalReportBasis } from "../../normal-terminal-report-basis.js";
-import { computeTerminalReportEvidenceFingerprint, validateTerminalReport } from "../../terminal-report-validation.js";
+import { unconfirmedToolRiskId } from "../../normal-terminal-tool-barrier.js";
+import { computeTerminalReportEvidenceFingerprint, terminalReportRiskMatchesHost, validateTerminalReport } from "../../terminal-report-validation.js";
 import type { AppendControlPlaneEventInput } from "../../run-types.js";
 import type {
   CommitNormalTerminalReportPublicationInput,
@@ -36,7 +37,7 @@ export function commitNormalTerminalReportWithinTransaction(
   if (!basis || basis.workspaceId !== record.workspaceId || basis.threadId !== record.threadId
     || basis.turnId !== record.turnId || basis.sourceItemId !== record.sourceMessageId
     || basis.source.kind !== record.sourceKind || basis.source.id !== record.sourceId) return conflict("source_turn_conflict");
-  if (!basis.settled || JSON.stringify(basis) !== JSON.stringify(input.expectedNormalBasis)) return conflict("stale_completion_basis");
+  if ((!basis.settled && !basis.failurePublicationAllowed) || JSON.stringify(basis) !== JSON.stringify(input.expectedNormalBasis)) return conflict("stale_completion_basis");
   if (basis.source.kind === "run" && basis.source.id !== basis.effectiveRunId) return conflict("stale_completion_basis");
 
   const latest = context.database.prepare(`SELECT MAX(generation) AS generation FROM ling_terminal_reports
@@ -59,8 +60,16 @@ export function commitNormalTerminalReportWithinTransaction(
     || computeTerminalReportEvidenceFingerprint(evidence) !== record.evidenceFingerprint
     || evidence.evidenceFingerprint !== record.evidenceFingerprint) return conflict("stale_completion_basis");
   if (candidate.outcome.status !== evidence.terminalState
-    || (candidate.outcome.status === "succeeded" && (basis.turnStatus !== "succeeded" || !basis.successAllowed))) {
+    || (candidate.outcome.status === "succeeded" && (!basis.settled || basis.turnStatus !== "succeeded" || !basis.successAllowed))) {
     return conflict("outcome_conflict");
+  }
+  // Failure publication may explain unknown effects, never erase them. The
+  // captured unfinished-tool set and full fresh collector are both authority.
+  for (const tool of basis.unsettledTools) {
+    const id = unconfirmedToolRiskId(tool);
+    const risk = evidence.risks.find(entry => entry.id === id);
+    if (!risk || risk.severity !== "critical" || risk.status !== "unverified"
+      || !candidate.risks.some(entry => terminalReportRiskMatchesHost(entry, risk))) return conflict("report_conflict");
   }
 
   const previous = context.database.prepare(`SELECT id, result_item_id FROM ling_terminal_reports

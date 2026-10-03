@@ -21,6 +21,10 @@ test("schema 135 upgrades to ToolExecution schema 136 while preserving later mig
   const path = resolveRuntimePaths(cwd).databasePath;
   let database = new DatabaseSync(path);
   database.exec(`
+    DROP TABLE run_compaction_checkpoints;
+    DELETE FROM schema_migrations WHERE version = 140;
+    DROP TABLE approval_postcommit_effects;
+    DELETE FROM schema_migrations WHERE version = 139;
     DROP TABLE run_evaluation_grades;
     DROP TABLE run_evaluations;
     DELETE FROM schema_migrations WHERE version = 137;
@@ -28,7 +32,8 @@ test("schema 135 upgrades to ToolExecution schema 136 while preserving later mig
     DROP TABLE harness_tool_executions;
     DELETE FROM schema_migrations WHERE version = 136;
   `);
-  assert.equal(database.prepare("SELECT MAX(version) AS version FROM schema_migrations").get().version, 138);
+  assert.ok(database.prepare("SELECT 1 FROM schema_migrations WHERE version = 135").get());
+  assert.equal(database.prepare("SELECT 1 FROM schema_migrations WHERE version = 136").get(), undefined);
   database.close();
 
   store = createSqliteRunStore(cwd);

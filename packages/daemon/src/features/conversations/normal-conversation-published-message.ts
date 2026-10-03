@@ -20,7 +20,7 @@ export function publishedNormalConversationMessage(
     || (run.status === "failed" && item.payload.deliveryStatus !== "failed")
     || (run.status === "cancelled" && item.payload.deliveryStatus !== "blocked")) return undefined;
   return { id: saved.messageId, canonicalItemId: item.id, role: "assistant", authorId: "ling_agent",
-    threadId: thread.id, turnId: turn.id, runId: run.id, content: item.payload.body,
+    threadId: thread.id, turnId: turn.id, runId: run.id, content: item.payload.body, contentSource: "run_narration",
     narrationSegments: saved.segments.map(segment => ({ ...segment, source })),
     status: run.status as "succeeded" | "failed" | "cancelled", errorMessage: run.errorMessage,
     createdAt: run.createdAt, updatedAt: item.updatedAt };

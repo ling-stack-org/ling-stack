@@ -1121,7 +1121,8 @@ test("fork and run starts an explicit child branch run from work history", async
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.locator(".channel-work-thread-tree")).toHaveCount(0);
   await expect(page.locator(".channel-left-drawer .sidebar-branch-list")).toHaveCount(0);
-  const workCell = page.getByRole("article", { name: "Task in progress" });
+  const workCell = page.locator('[data-conversation-timeline-activity][data-conversation-timeline-status="running"]')
+    .filter({ hasText: "Implement child branch immediately." });
   await expect(workCell).toBeVisible();
   await expect(workCell).toContainText("Implement child branch immediately.");
 });

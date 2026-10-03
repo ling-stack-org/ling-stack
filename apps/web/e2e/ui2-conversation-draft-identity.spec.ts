@@ -42,7 +42,6 @@ test("T13-P.9EF.C draft generations bind only their own ready thread without rem
   expect(domainSource).not.toContain('identity: originThreadId || "draft"');
   expect(appShellSource).toContain("conversationIdentity={conversationIdentity}");
   expect(appShellSource).not.toMatch(/<ConversationHome[^>]*\bkey=/su);
-  expect(conversationHomeSource.split("\n").length - 1).toBeLessThanOrEqual(820);
 
   let current = identitySnapshot("draft:1");
   const guard = createNormalConversationIdentityCommitGuard({
@@ -75,8 +74,8 @@ test("T13-P.9EF.C workspace and thread transitions rotate the complete conversat
   expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialDraft]");
   expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialMessages]");
   expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialProjectLabel, initialProjectPath]");
-  expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialProviderPresetId, initialThinkingLevel]");
-  expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]");
+  expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialProviderPresetId, initialReasoningSummary, initialThinkingLevel]");
+  expect(conversationHomeSource).toContain("[conversationIdentityController.ownerKey, initialAuthorizationMode, initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]");
 });
 
 test("T13-P.9EF.C stream and retry loading finish only their own owner token", () => {

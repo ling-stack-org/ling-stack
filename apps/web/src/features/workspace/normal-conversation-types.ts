@@ -9,6 +9,7 @@ import type {
   ConversationGeneratedMedia,
   ConversationItemV1,
   ConversationNarrationSegment,
+  ConversationTranscriptMessage,
   RunArtifact,
   ConversationTranscriptStatus,
   ExecutionAction,
@@ -59,6 +60,7 @@ export interface ConversationHomeMessage {
   readonly role: "user" | "assistant" | "system";
   readonly authorLabel?: string;
   readonly content: string;
+  readonly contentSource?: ConversationTranscriptMessage["contentSource"];
   readonly narrationSegments?: readonly ConversationNarrationSegment[];
   readonly errorMessage?: string;
   readonly attachments?: readonly ConversationAttachment[];

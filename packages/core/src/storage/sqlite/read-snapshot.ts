@@ -17,6 +17,12 @@ export function readSqliteWithinTransaction<T>(database: DatabaseSync, read: () 
     const result = read();
     if (result && (typeof result === "object" || typeof result === "function") &&
       typeof Reflect.get(result, "then") === "function") {
+      // The callback is required to be synchronous. Attach a rejection handler
+      // before throwing so a returned Promise.reject cannot escape as an
+      // unhandled rejection after the transaction has already rolled back.
+      if (typeof Reflect.get(result, "catch") === "function") {
+        void Promise.resolve(result as unknown as PromiseLike<unknown>).catch(() => undefined);
+      }
       throw new TypeError("SQLite snapshot callback must be synchronous");
     }
     return result;
@@ -42,6 +48,9 @@ export function readSqliteSnapshot<T>(database: DatabaseSync, read: () => T): T 
     const result = read();
     if (result && (typeof result === "object" || typeof result === "function") &&
       typeof Reflect.get(result, "then") === "function") {
+      if (typeof Reflect.get(result, "catch") === "function") {
+        void Promise.resolve(result as unknown as PromiseLike<unknown>).catch(() => undefined);
+      }
       throw new TypeError("SQLite snapshot callback must be synchronous");
     }
     database.exec("COMMIT");

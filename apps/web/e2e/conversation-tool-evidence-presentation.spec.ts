@@ -25,7 +25,11 @@ for (const surface of ["normal", "private", "channel"] as const) {
       {
         ...original, id: "compact-command", toolCallId: "compact-command-call",
         summary: commandText,
-        commandEvidence: { ...original.commandEvidence, command: commandText, durationMs: 1245, outputTail: [{ ...original.commandEvidence.outputTail[0]!, text: "1 test passed\n" }] },
+        commandEvidence: { ...original.commandEvidence, command: commandText, durationMs: 1245, outputTail: [
+          { ...original.commandEvidence.outputTail[0]!, stream: "stdout", text: "1 test " },
+          { ...original.commandEvidence.outputTail[0]!, eventSeq: 51, stream: "stdout", text: "passed" },
+          { ...original.commandEvidence.outputTail[0]!, eventSeq: 52, stream: "stderr", text: "codesign warning\n" },
+        ] },
       },
       {
         ...base, id: "compact-read", toolCallId: "compact-read-call", actionType: "read", title: "read",
@@ -70,7 +74,7 @@ for (const surface of ["normal", "private", "channel"] as const) {
     await expect(commandHead).not.toContainText(/exit 0|1\.2s|Succeeded/u);
     await expect(commandHead.locator("strong")).toHaveAttribute("title", commandText);
     await commandHead.click();
-    await expect(command.locator(".conversation-timeline-output")).toHaveText("1 test passed\n");
+    await expect(command.locator(".conversation-timeline-output")).toHaveText("stdout:\n1 test passed\nstderr:\ncodesign warning\n");
     await expect(command.locator(".conversation-timeline-activity-detail")).not.toContainText(commandText);
     await expect(command.getByText("1.2s", { exact: true })).toHaveCount(1);
     await expect(command.locator(".conversation-timeline-activity-detail")).not.toContainText("exit 0");

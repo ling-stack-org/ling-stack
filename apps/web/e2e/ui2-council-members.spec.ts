@@ -281,9 +281,14 @@ test("a delayed old Council GET never leaks rows after selection changes", async
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createSelectionRaceState();
   const control = createMemberRouteControl();
-  control.getDelayByCouncil.set("council_custom_alpha", 450);
   await mockDaemon(page, state);
   await installMemberRouteOverlay(page, control);
+  let releaseAlpha!: () => void;
+  const alphaGate = new Promise<void>((resolve) => { releaseAlpha = resolve; });
+  await page.route("http://127.0.0.1:17891/ai-councils/council_custom_alpha/members*", async (route) => {
+    if (route.request().method() === "GET") await alphaGate;
+    await route.fallback();
+  });
   await page.goto("/");
 
   const surface = await openCouncilWorkspace(page);
@@ -291,7 +296,9 @@ test("a delayed old Council GET never leaks rows after selection changes", async
   await expect(panel.locator(".council-members-skeleton-row")).toHaveCount(4);
   await surface.locator(".council-list-health-row").filter({ hasText: "Beta Council" }).click();
   await expect(memberRow(panel, "Beta Specialist")).toBeVisible();
-  await page.waitForTimeout(550);
+  const oldAlphaResponse = page.waitForResponse((response) => response.url().includes("/ai-councils/council_custom_alpha/members") && response.request().method() === "GET");
+  releaseAlpha();
+  await oldAlphaResponse;
   await expect(memberRow(panel, "Alpha Specialist")).toHaveCount(0);
   await expect(memberRow(panel, "Beta Specialist")).toBeVisible();
   expect(runtimeErrors).toEqual([]);

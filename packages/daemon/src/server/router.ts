@@ -3,6 +3,8 @@ import { defaultProviderTemplates, executeExternalWorkAction, toRuntimeAttemptFe
 import type { AiTeammate, RunSession, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
+import { createHarnessFeatureSnapshot } from "../features/harness/index.js";
+import { runApprovalPostCommitEffects } from "../features/runs/approval-postcommit-effects.js";
 import {
   handleAutomationItem,
   handleAutomationDraftItem,
@@ -580,6 +582,7 @@ export async function routeRequest(
       defaultWorkspaceCwd: config.defaultWorkspaceCwd,
       readiness: startupState.snapshot(config.defaultWorkspaceCwd)?.state ?? "starting",
       features: {
+        harness: createHarnessFeatureSnapshot(config),
         channels: {
           autoRoute: config.channels.autoRoute === true,
           intentSelector: config.channels.intentSelector === true,
@@ -1617,14 +1620,20 @@ export async function routeRequest(
 
   const artifactRoute = parseArtifactRoute(url.pathname);
   if (request.method === "GET" && artifactRoute?.kind === "artifact") {
+    const cwd = request.headers.origin ? url.searchParams.get("cwd") ?? undefined : undefined;
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
     handleGetArtifact(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
   if (request.method === "GET" && artifactRoute?.kind === "content") {
+    const cwd = request.headers.origin ? url.searchParams.get("cwd") ?? undefined : undefined;
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
     handleGetArtifactContent(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
   if (request.method === "GET" && artifactRoute?.kind === "preview") {
+    const cwd = request.headers.origin ? url.searchParams.get("cwd") ?? undefined : undefined;
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
     handleGetArtifactPreview(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
@@ -2682,16 +2691,28 @@ export async function routeRequest(
   const approvalRoute = parseApprovalRoute(url.pathname);
   if (approvalRoute) {
     await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, controlPlaneEvents, ({ cwd, store, approval, now }) => {
-      context.approvalResumeCoordinator.resumeAfterApproval({ store, approval });
-      syncWorkflowApprovalDecision(store, approval, now);
-      return syncMediaJobForApprovalDecision({
-        cwd,
-        store,
-        storeRegistry,
-        secretResolver,
-        approval,
-        now,
-        hooks: mediaJobHooks,
+      return runApprovalPostCommitEffects({
+        resumeRun: () => {
+          const result = context.approvalResumeCoordinator.resumeAfterApproval({ store, approval });
+          if (result.status === "blocked") throw new Error(result.reason);
+          if (result.status === "not_applicable" && approval.runId
+            && store.getRun(approval.runId)?.status === "waiting_for_approval") {
+            throw new Error("approval_run_owner_unreconciled");
+          }
+        },
+        syncWorkflow: () => {
+          const result = syncWorkflowApprovalDecision(store, approval, now);
+          if (result.status === "missing_owner") throw new Error("approval_workflow_owner_missing");
+        },
+        syncMedia: () => syncMediaJobForApprovalDecision({
+          cwd,
+          store,
+          storeRegistry,
+          secretResolver,
+          approval,
+          now,
+          hooks: mediaJobHooks,
+        }),
       });
     });
     return;

@@ -20,7 +20,7 @@ import {
   isUserVisibleTerminalReportSourceRef,
   userVisibleTerminalReportChanges,
 } from "./terminal-report-visibility.js";
-import type { ConversationOperationSourceRef, ConversationToolEvidence } from "./work-cell-view-model.js";
+import type { ConversationOperationSourceRef, ConversationToolEvidence, ConversationWorkCellChangePreview } from "./work-cell-view-model.js";
 import { createCanonicalChildMessageResolver } from "./canonical-child-message-scope.js";
 import { projectVisibleTerminalReportContent } from "./terminal-report-presentation.js";
 import type { CanonicalUserInput } from "./user-input-transcript-snapshot.js";
@@ -28,6 +28,7 @@ import { projectCanonicalUserInputTimeline } from "./user-input-timeline.js";
 import { hasCommittedRunNarration, projectCommittedRunNarration } from "./canonical-run-narration.js";
 import { mergeConversationRunNarration } from "./run-narration.js";
 import type { ConversationTimelineMessageItem } from "./transcript-item.js";
+import { formatSynchronousCatalogMessage } from "@ling-stack/localization";
 
 export type CanonicalProjectionSourceRef = ConversationOperationSourceRef;
 
@@ -116,6 +117,7 @@ export interface CanonicalExecutionAction {
   }[];
   readonly previewArtifactIds?: readonly string[];
   readonly resultArtifactIds?: readonly string[];
+  readonly changePreview?: ConversationWorkCellChangePreview;
   readonly commandEvidence?: CanonicalCommandEvidence;
   readonly toolEvidence?: ConversationToolEvidence;
   readonly runtimeDiagnostic?: {
@@ -257,6 +259,7 @@ export interface CanonicalTerminalReportProjection {
       readonly id: string;
       readonly title: string;
       readonly status: "passed" | "failed" | "blocked" | "cancelled" | "skipped" | "not_run" | "unknown";
+      readonly expectation?: "evidence_backed" | "informational" | "unknown";
       readonly summary?: string;
       readonly command?: string;
       readonly durationMs?: number;
@@ -657,7 +660,10 @@ function attachArtifactRefs(
         artifact.runId === action.runId &&
         (action.previewArtifactIds?.includes(artifact.id) || action.resultArtifactIds?.includes(artifact.id)),
       ),
-    ];
+    ].filter((artifact) => artifact.workspaceId === action.workspaceId &&
+      (!artifact.threadId || artifact.threadId === action.threadId) &&
+      (!artifact.runId || artifact.runId === action.runId) &&
+      (!artifact.actionId || artifact.actionId === action.id));
     if (attached.length === 0) return action;
     const sourceRefs = toSourceRefs([
       ...action.sourceRefs,
@@ -670,7 +676,18 @@ function attachArtifactRefs(
         workspaceId: artifact.workspaceId,
       }, ...artifact.sourceRefs]),
     ]);
-    return { ...action, sourceRefs };
+    // A file row may link only to a diff explicitly returned by this action.
+    // Multiple diffs cannot be represented by the single-preview contract.
+    const diffArtifacts = [...new Set(action.resultArtifactIds ?? [])]
+      .map((id) => latestArtifacts.get(id))
+      .filter((artifact): artifact is CanonicalArtifactRecord => Boolean(artifact &&
+        artifact.type === "diff" && artifact.workspaceId === action.workspaceId &&
+        artifact.runId === action.runId && (!artifact.threadId || artifact.threadId === action.threadId) &&
+        (!artifact.actionId || artifact.actionId === action.id)));
+    const diff = diffArtifacts.length === 1 ? diffArtifacts[0] : undefined;
+    return { ...action, sourceRefs, ...(diff ? { changePreview: {
+      artifactId: diff.id, path: diff.path, contentType: diff.contentType,
+    } } : {}) };
   });
 }
 
@@ -749,6 +766,15 @@ function projectTerminalReports(
       const visibleReportRefs = (refs: readonly CanonicalSourceRef[]): CanonicalProjectionSourceRef[] => toSourceRefs(
         refs.filter((ref) => !hiddenArtifactIds.has(ref.id) && isUserVisibleTerminalReportSourceRef(ref)),
       );
+      // A deterministic turn fallback is an evidence/status row, not a second
+      // copy of the user's request or a replacement for the agent's narration.
+      const compactTurnFallback = entry.report.source.kind === "turn" && entry.report.status === "fallback";
+      const statusLabel = compactTurnFallback
+        ? formatSynchronousCatalogMessage(entry.report.language ?? "en-US", `terminal_report.outcome.${entry.report.outcome.status}`)
+        : "";
+      const summary = compactTurnFallback && entry.report.outcome.summary.startsWith(statusLabel)
+        ? entry.report.outcome.summary.slice(statusLabel.length).trim()
+        : entry.report.outcome.summary;
       output.set(anchor.id, {
         id: `terminal-report:${entry.report.id}`,
         kind: "terminalReport",
@@ -762,14 +788,14 @@ function projectTerminalReports(
         itemId: anchor.id,
         runId: entry.report.source.kind === "run" ? entry.report.source.id : undefined,
         sourceRefs,
-        title: entry.report.outcome.title,
-        description: entry.report.outcome.summary,
+        title: compactTurnFallback ? statusLabel : entry.report.outcome.title,
+        description: summary,
         meta: `generation ${entry.generation}`,
         reportId: entry.report.id,
         generation: entry.generation,
         resultItemId: entry.resultItemId,
         outcomeStatus: entry.report.outcome.status,
-        summary: entry.report.outcome.summary,
+        summary,
         changeCount: visibleChanges.length,
         verificationCount: entry.report.verification.length,
         participantCount: entry.report.participants.length,
@@ -809,7 +835,7 @@ function projectTerminalReports(
 function terminalReportTimelineStatus(
   status: CanonicalTerminalReportProjection["report"]["outcome"]["status"],
 ): ConversationTimelineItemStatus {
-  return status === "partially_succeeded" ? "blocked" : status;
+  return status;
 }
 
 function mergeTerminalReportProjections(
@@ -949,7 +975,7 @@ function projectSupplementalEvidence(
       continue;
     }
     const ownedByAction = [...(actionsByItem.get(anchor.id) ?? [])].some(({ action }) =>
-      action.id === approval.actionId && actionKind(action.actionType) === "approval",
+      action.id === approval.actionId && action.approvalId === approval.id,
     );
     if (ownedByAction) continue;
     const status = approvalStatus(approval.status);
@@ -1619,7 +1645,9 @@ function projectCanonicalAction(
   if (kind === "fileChange") {
     const files = sourceRefs.filter((ref) => ref.kind === "file" || ref.kind === "path").map((fileRef) => ({ fileRef, displayName: basename(fileRef.path ?? fileRef.label ?? fileRef.id), change: action.actionType.toLowerCase().includes("write") ? "created" as const : "edited" as const }));
     if (files.length === 0) return blockedAction(base, "File evidence has no trusted file reference.", diagnostics, sourceRefs);
-    return { ...base, kind, status, title: action.title, description: action.summary, meta: action.summary, files } satisfies ConversationTimelineFileChangeItem;
+    return { ...base, kind, status, title: action.title, description: action.summary, meta: action.summary, files,
+      ...(action.changePreview ? { changePreview: action.changePreview } : {}),
+    } satisfies ConversationTimelineFileChangeItem;
   }
   if (kind === "exploration") {
     return {

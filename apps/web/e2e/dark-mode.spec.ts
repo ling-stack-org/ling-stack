@@ -230,7 +230,9 @@ test("main pages and workspace tools follow dark theme tokens", async ({ page },
   await captureDarkEvidence(page, testInfo, "13-settings-mcp");
 
   await page.getByLabel("设置分组").getByRole("button", { name: /个性化|Personalization/ }).click();
-  await expect(page.locator(".personalization-settings-panel")).toBeVisible();
+  await expect(page.locator(".personalization-settings-panel")).toHaveCount(2);
+  await expect(page.locator(".personalization-settings-panel").first()).toBeVisible();
+  await expect(page.locator(".personalization-settings-panel").last()).toBeVisible();
   await expect(page.locator(".skill-governance-settings-panel")).toBeVisible();
   await assertDarkPage(page, "personalization settings", [
     ".settings-layout",
@@ -537,10 +539,10 @@ async function assertDarkPage(page: Page, label: string, selectors: readonly str
     expect(surface.maxChannel, `${label}: ${surface.selector} must not collapse to pure or legacy near-black`).toBeGreaterThanOrEqual(16);
     expect(surface.maxChannel, `${label}: ${surface.selector} should use dark background tokens`).toBeLessThanOrEqual(70);
   }
-  const textSamples = await readTextSamples(page);
+  const textSamples = await readTextSamples(page, selectors);
   expect(textSamples.length, `${label}: should expose readable text samples`).toBeGreaterThan(0);
   for (const sample of textSamples) {
-    expect(sample.maxChannel, `${label}: ${sample.selector} text should not stay black in dark mode`).toBeGreaterThanOrEqual(88);
+    expect(sample.maxChannel, `${label}: ${sample.selector} ${sample.element} "${sample.text}" should not stay black in dark mode`).toBeGreaterThanOrEqual(88);
   }
   await assertNoUnexpectedLargeSurfaceColors(page, label);
   await assertNoDocumentHorizontalOverflow(page, label);
@@ -745,28 +747,45 @@ async function assertNoUnexpectedLargeSurfaceColors(page: Page, label: string): 
   expect(findings, `${label}: large product surfaces should stay inside the dark Theme Pack hierarchy`).toEqual([]);
 }
 
-async function readTextSamples(page: Page): Promise<Array<{
+async function readTextSamples(page: Page, surfaceSelectors: readonly string[]): Promise<Array<{
   readonly selector: string;
   readonly maxChannel: number;
+  readonly element: string;
+  readonly text: string;
 }>> {
-  return await page.evaluate(() => {
-    const selectors = [".workspace h1", ".workspace h2", ".workspace h3", ".workspace strong", ".workspace label"];
-    return selectors.flatMap((selector) =>
-      Array.from(document.querySelectorAll(selector))
+  return await page.evaluate((selectors) => {
+    const effectiveBackground = (element: Element): number[] => {
+      const channels = getComputedStyle(element).backgroundColor.match(/\d+(?:\.\d+)?/g)?.map(Number) ?? [];
+      const parent = element.parentElement ? effectiveBackground(element.parentElement) : [0, 0, 0];
+      if (channels.length < 3) return parent;
+      const alpha = channels[3] ?? 1;
+      if (alpha <= 0) return parent;
+      return channels.slice(0, 3).map((channel, index) => Math.round(channel * alpha + parent[index] * (1 - alpha)));
+    };
+    return selectors.flatMap((surfaceSelector) =>
+      Array.from(document.querySelectorAll(surfaceSelector))
+        .flatMap((surface) => Array.from(surface.querySelectorAll("h1, h2, h3, strong, label, button, span")))
         .filter((element) => {
           const rect = element.getBoundingClientRect();
-          return rect.width > 0 && rect.height > 0 && (element.textContent ?? "").trim().length > 0;
+          const hasDirectText = Array.from(element.childNodes).some((node) =>
+            node.nodeType === Node.TEXT_NODE && (node.textContent ?? "").trim().length > 0
+          );
+          return rect.width > 0 && rect.height > 0
+            && hasDirectText
+            && Math.max(...effectiveBackground(element)) <= 70;
         })
         .slice(0, 4)
         .map((element) => {
           const channels = getComputedStyle(element).color.match(/\d+(?:\.\d+)?/g)?.slice(0, 3).map(Number) ?? [0, 0, 0];
           return {
-            selector,
+            selector: surfaceSelector,
             maxChannel: Math.max(...channels),
+            element: `${element.tagName.toLowerCase()}.${String(element.className).replace(/\s+/gu, ".")}`,
+            text: (element.textContent ?? "").trim().slice(0, 80),
           };
         }),
     );
-  });
+  }, surfaceSelectors);
 }
 
 async function assertNoDocumentHorizontalOverflow(page: Page, label: string): Promise<void> {

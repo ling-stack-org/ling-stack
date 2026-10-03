@@ -69,7 +69,21 @@ export function mergeConversationDetailSnapshots(
     messages: mergeMessages(current.messages, incoming.messages),
     generatedMedia: mergeVersioned(current.generatedMedia, incoming.generatedMedia, (media) => media.mediaJobId, (media) => media.updatedAt, true),
   };
-  return removeSupersededConversationLineage(merged);
+  return removeSupersededConversationLineage(removeReplacedToolActions(merged));
+}
+
+function removeReplacedToolActions(detail: ConversationDetailResponse): ConversationDetailResponse {
+  const replacedIds = new Set(detail.executionActions.flatMap((action) =>
+    action.approvalId && action.id === `approval:${action.approvalId}` && action.runId && action.toolCallId
+      ? [`tool:${action.runId}:${action.toolCallId}`]
+      : []));
+  if (replacedIds.size === 0) return detail;
+  return {
+    ...detail,
+    // Host replaces the provisional tool row with one approval-correlated
+    // action. An append-only client union must not resurrect the old row.
+    executionActions: detail.executionActions.filter((action) => !replacedIds.has(action.id)),
+  };
 }
 
 function mergeSupersessionTombstones(

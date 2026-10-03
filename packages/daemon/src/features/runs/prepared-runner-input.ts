@@ -52,6 +52,7 @@ export function restorePreparedRunnerOptions(
     return { ...frozen, defaultApproval: live.defaultApproval, sideEffectLevel: live.sideEffectLevel };
   });
   if (payload.toolHydrationEnabled && !(current.initialToolSurface?.toolHydration ?? Boolean(current.onToolHydrationRequest)) ||
+    payload.input.initialToolSurface?.userInput === true && current.initialToolSurface?.userInput !== true ||
     !requiredRuntimeToolFeaturesRemainAvailable(payload.input.runtimeToolFeatures, current.runtimeToolFeatures)) {
     throw new HttpError(409, "prepared_tool_capability_changed", "Prepared runtime tool capabilities changed.");
   }
@@ -87,6 +88,14 @@ export function readPreparedRunnerInput(value: unknown, request: Pick<PiRunnerRu
     !isRecord(value.input.provider) || "apiKey" in value.input.provider || "headers" in value.input.provider ||
     !isDeepStrictEqual(redactSecrets(value), value)) throw new Error("Invalid prepared execution payload");
   const prepared = readPreparedPiInput(value.preparedInput);
+  if (value.input.initialToolSurface !== undefined) {
+    const surface = value.input.initialToolSurface;
+    if (!isRecord(surface) || Object.keys(surface).some(key => !["mediaGeneration", "toolHydration", "userInput"].includes(key)) ||
+      Object.values(surface).some(selected => typeof selected !== "boolean") ||
+      surface.userInput !== undefined && prepared.tools.some(tool => tool.name === "request_user_input") !== surface.userInput) {
+      throw new Error("Invalid prepared user-input tool surface");
+    }
+  }
   if (value.input.hostCapabilityTools !== undefined && (!Array.isArray(value.input.hostCapabilityTools) ||
     !value.input.hostCapabilityTools.every(isHostCapabilityToolDefinitionV1) ||
     new Set(value.input.hostCapabilityTools.map(tool => tool.name)).size !== value.input.hostCapabilityTools.length)) {

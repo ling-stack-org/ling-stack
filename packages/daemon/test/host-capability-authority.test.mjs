@@ -96,8 +96,11 @@ for (const when of ["before", "during"]) {
     if (when === "before") controller.abort();
     else f.duringApproval = () => controller.abort();
     const decision = f.handler({ signal: controller.signal })(f.request);
-    if (when === "during") await assert.rejects(decision, { name: "AbortError" });
-    else assert.equal((await decision).approved, false);
+    await assert.rejects(decision, { name: "AbortError" });
+    if (when === "before") {
+      assert.equal(f.store.listApprovalRequests({ runId: f.run.id }).length, 0,
+        "a pre-aborted request must not create an approval");
+    }
   });
 }
 

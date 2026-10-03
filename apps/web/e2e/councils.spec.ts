@@ -123,8 +123,9 @@ test("Council Workspace shows council health, members, and channel entry points"
   const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await openCouncilWorkspace(page);
   await expect(page.locator(".council-workspace-page[aria-label='Council Workspace']")).toBeVisible();
-  await expect(page.getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(0);
-  await expect(page.getByText("Manage councils, members, health, and channel usage from one workspace.")).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "Council Workspace", level: 1 })).toHaveCount(1);
+  await expect(page.locator(".council-workspace-page > .council-workspace-header")).toHaveCount(0);
+  await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByText("Manage councils, members, health, and channel usage from one workspace.")).toHaveCount(1);
   await expect(page.getByLabel("Settings sections")).toBeVisible();
   await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" })).toHaveClass(/active/);

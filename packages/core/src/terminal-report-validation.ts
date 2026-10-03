@@ -5,6 +5,7 @@ import type {
   TerminalReportEvidenceSnapshot,
   TerminalReportOutcomeStatus,
   TerminalReportSourceRef,
+  TerminalReportRisk,
 } from "./terminal-report-types.js";
 
 export type TerminalReportValidationCode =
@@ -92,6 +93,13 @@ export function validateTerminalReportContent(
   validateUniqueIds(issues, "risks", content.risks.map((item) => item.id));
   validateUniqueIds(issues, "corrections", content.outcome.corrections.map((item) => item.id));
 
+  // Unknown-effect warnings are Host facts, not optional model narration.
+  for (const risk of snapshot.risks.filter(risk => risk.id.startsWith("execution-unconfirmed:"))) {
+    if (!content.risks.some(candidate => terminalReportRiskMatchesHost(candidate, risk))) {
+      issues.push(issue("terminal_report_unverified_success_claim", "risks", `An unconfirmed execution warning must remain unchanged: ${risk.id}.`));
+    }
+  }
+
   const allRefGroups: readonly (readonly [string, readonly TerminalReportSourceRef[]])[] = [
     ["outcome.sourceRefs", content.outcome.sourceRefs],
     ...content.outcome.corrections.map((item, index) => [`outcome.corrections.${index}.sourceRefs`, item.sourceRefs] as const),
@@ -111,22 +119,30 @@ export function validateTerminalReportContent(
   // A model cannot report checks withheld from its evidence projection. Use the
   // strongest Host policy, including aliases elsewhere in the snapshot, solely
   // for this presence requirement; status/ref validation still uses all facts.
-  const hasVisibleChecks = snapshot.checks.some((check) => check.sourceRefs.every((ref) =>
+  const visibleChecks = snapshot.checks.filter((check) => check.sourceRefs.every((ref) =>
     availableRefs.get(terminalReportSourceRefKey(ref))?.every((evidence) =>
       evidence.visibility !== "developer_only" && evidence.sensitivity !== "secret_adjacent"
     )
   ));
-  if (snapshot.terminalState === "succeeded" && hasVisibleChecks && content.verification.length === 0) {
-    issues.push(issue(
-      "terminal_report_unverified_success_claim",
-      "verification",
-      "A successful evidence snapshot with model-visible checks must include verification rows.",
-    ));
+  for (const check of visibleChecks) {
+    if (!content.verification.some((verification) => verification.sourceRefs.some((ref) => ref.kind === "check" && ref.id === check.id))) {
+      issues.push(issue(
+        "terminal_report_unverified_success_claim",
+        "verification",
+        `A model-visible Host check requires a verification row: ${check.id}.`,
+      ));
+    }
   }
   for (const [index, verification] of content.verification.entries()) {
-    const matched = verification.sourceRefs.some((ref) => ref.kind === "check" && checksById.has(ref.id));
-    if ((verification.status === "passed" || verification.status === "failed") && !matched) {
+    const matchedChecks = verification.sourceRefs
+      .filter((ref) => ref.kind === "check")
+      .map((ref) => checksById.get(ref.id))
+      .filter((check): check is NonNullable<typeof check> => Boolean(check));
+    if ((verification.status === "passed" || verification.status === "failed") && matchedChecks.length === 0) {
       issues.push(issue("terminal_report_unverified_success_claim", `verification.${index}`, "Passed or failed verification requires matching check evidence."));
+    }
+    if (matchedChecks.some((check) => check.status !== verification.status)) {
+      issues.push(issue("terminal_report_unverified_success_claim", `verification.${index}`, "Verification status must match its Host check evidence."));
     }
   }
 
@@ -172,6 +188,11 @@ export function validateTerminalReportContent(
   }
 
   return { ok: issues.length === 0, issues };
+}
+
+/** JSON property order is not evidence; Host warning values and refs are. */
+export function terminalReportRiskMatchesHost(candidate: TerminalReportRisk, evidence: TerminalReportRisk): boolean {
+  return stableStringify(candidate) === stableStringify(evidence);
 }
 
 export function validateTerminalReport(

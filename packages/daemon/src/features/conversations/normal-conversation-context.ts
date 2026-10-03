@@ -1,10 +1,10 @@
 import { createHash } from "node:crypto";
 import { isConversationContextProjectionMetadata, type ConversationContextProjectionMetadata, type ConversationItemV1 } from "@ling-stack/contracts";
-import { redactSecrets, type LingTurn, type RunEventEnvelope, type RunSession, type RunStore } from "@ling-stack/core";
+import { computeTerminalReportEvidenceFingerprint, redactSecrets, type LingTurn, type RunEventEnvelope, type RunSession, type RunStore } from "@ling-stack/core";
 import type { RunRequest } from "../runs/schemas.js";
 import { buildConversationContextProjection, isConversationContextItemVisible } from "../channels/context-processing/conversation-context-projector.js";
 import { buildConversationSupersessionProjection } from "./supersession-projection.js";
-import { hydrateNormalConversationContext, type NormalConversationContextHydration, type NormalContextRunEventWatermark } from "./normal-conversation-context-hydrator.js";
+import { hydrateNormalConversationContext, type NormalConversationContextHydration, type NormalContextRunEventWatermark, type NormalContextTerminalReportFact } from "./normal-conversation-context-hydrator.js";
 import { inheritNormalForkHistory, isNormalConversationForkHistory, type NormalConversationForkHistory } from "./normal-conversation-fork-history.js";
 
 const POLICY_VERSION = "normal-conversation-context-v1";
@@ -114,7 +114,34 @@ export function collectNormalConversationContextWithinSnapshot(input: CaptureNor
       }
     }
     const supersession = buildConversationSupersessionProjection(store, { surfaces: ["normal_conversation"], ownerId: thread.id });
+    const terminalReportFactsByItemId = new Map<string, NormalContextTerminalReportFact>();
+    for (const item of projection.items) {
+      if (item.kind !== "terminal_report" || item.sequence >= sourceItem.sequence ||
+        !isConversationContextItemVisible(item, "reply", undefined)) continue;
+      const report = store.getTerminalReport(item.payload.reportId);
+      const effective = store.listTerminalReports({ workspaceId: thread.workspaceId,
+        sourceKind: item.payload.sourceKind, sourceId: item.payload.sourceId,
+        effectiveOnly: true, limit: 1 })[0];
+      if (!report || (report.status !== "committed" && report.status !== "fallback") ||
+        effective?.id !== report.id || !report.report || report.report.outcome.status !== item.payload.outcomeStatus ||
+        report.resultItemId !== item.id || report.workspaceId !== thread.workspaceId || report.threadId !== thread.id ||
+        report.turnId !== item.turnId || report.channelId || report.sourceKind !== item.payload.sourceKind ||
+        report.sourceId !== item.payload.sourceId || report.generation !== item.payload.generation ||
+        report.outcomeStatus !== item.payload.outcomeStatus || report.evidenceFingerprint !== item.payload.evidenceFingerprint ||
+        report.evidenceSnapshot.surface !== "normal_conversation" || report.evidenceSnapshot.threadId !== thread.id ||
+        report.evidenceSnapshot.turnId !== item.turnId || report.evidenceSnapshot.evidenceFingerprint !== report.evidenceFingerprint ||
+        computeTerminalReportEvidenceFingerprint(report.evidenceSnapshot) !== report.evidenceFingerprint) continue;
+      terminalReportFactsByItemId.set(item.id, {
+        reportId: report.id,
+        outcomeStatus: report.outcomeStatus,
+        unresolvedRisks: report.evidenceSnapshot.risks.filter((risk) => risk.status === "unresolved" &&
+          risk.sourceRefs.some((ref) => ref.visibility === "conversation" && ref.sensitivity !== "secret_adjacent") &&
+          risk.sourceRefs.every((ref) => ref.visibility !== "developer_only" && ref.sensitivity !== "secret_adjacent"))
+          .slice(0, 8).map((risk) => risk.summary.slice(0, 512)),
+      });
+    }
     const rawHydration = hydrateNormalConversationContext({ thread, sourceTurn, sourceItem, canonicalItems: [...canonicalItems.values()],
+      terminalReportFactsByItemId,
       contextSummaries: projection.summaries, contextSegmentId: projection.segment.id, turnContextAssignments: assignments,
       turns, runLinks, runs, eventsByRunId, runEventWatermarks: watermarks, excludedRunNarrationIds,
       supersededTurnIds: [...supersession.supersededTurnIds], maxHistoryTextChars: input.maxHistoryTextChars });

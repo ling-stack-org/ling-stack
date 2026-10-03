@@ -19,6 +19,7 @@ import { approvalCommandRuleSelectSql, approvalRequestSelectSql } from "./select
 import type { SqliteStoreContext } from "./store-context.js";
 import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { runExecutionOwnerParameters, runExecutionOwnerSql } from "./run-execution-admission.js";
+import { SqliteApprovalPostCommitStore } from "./approval-postcommit-store.js";
 
 export interface SqliteApprovalRequestStorePorts {
   readonly hasRun: (id: string) => boolean;
@@ -109,74 +110,82 @@ export class SqliteApprovalRequestStore {
       proposedCommandRule: input.proposedCommandRule,
     };
 
-    const inserted = this.context.database
-      .prepare(`
-        INSERT INTO approval_requests (
-          id,
-          run_id,
-          task_id,
-          media_job_id,
-          external_work_action_id,
-          workflow_step_id,
-          channel_id,
-          tool_call_id,
-          action_type,
-          risk,
-          title,
-          description,
-          payload_json,
-          status,
-          created_at,
-          expires_at,
-          resolved_at,
-          resolved_by,
-          decision_reason,
-          available_decisions_json,
-          proposed_command_rule_json,
-          decision_kind,
-          decision_rule_id
-        ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
-        ${sourceFence ? `WHERE ${runExecutionOwnerSql} AND EXISTS (
-          SELECT 1 FROM run_sessions WHERE id = ? AND task_id = ? AND channel_id IS ?
-        )` : ""}
-      `)
-      .run(
-        approval.id,
-        approval.runId ?? null,
-        approval.taskId ?? null,
-        approval.mediaJobId ?? null,
-        approval.externalWorkActionId ?? null,
-        approval.workflowStepId ?? null,
-        approval.channelId ?? null,
-        approval.toolCallId ?? null,
-        approval.actionType,
-        approval.risk,
-        approval.title,
-        approval.description,
-        stringifyJson(approval.payload),
-        approval.status,
-        approval.createdAt,
-        approval.expiresAt ?? null,
-        null,
-        null,
-        null,
-        stringifyJson(approval.availableDecisions),
-        approval.proposedCommandRule ? stringifyJson(approval.proposedCommandRule) : null,
-        null,
-        null,
-        ...(sourceFence ? [...runExecutionOwnerParameters(runId!, sourceFence, false), runId!, taskId!, approval.channelId ?? null] : []),
-      );
-    if (Number(inserted.changes) !== 1) {
-      throw Object.assign(new Error("Execution approval source is no longer current."), { code: "stale_run_execution" });
-    }
+    this.context.database.exec("SAVEPOINT approval_request_creation");
+    try {
+      const inserted = this.context.database
+        .prepare(`
+          INSERT INTO approval_requests (
+            id,
+            run_id,
+            task_id,
+            media_job_id,
+            external_work_action_id,
+            workflow_step_id,
+            channel_id,
+            tool_call_id,
+            action_type,
+            risk,
+            title,
+            description,
+            payload_json,
+            status,
+            created_at,
+            expires_at,
+            resolved_at,
+            resolved_by,
+            decision_reason,
+            available_decisions_json,
+            proposed_command_rule_json,
+            decision_kind,
+            decision_rule_id
+          ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          ${sourceFence ? `WHERE ${runExecutionOwnerSql} AND EXISTS (
+            SELECT 1 FROM run_sessions WHERE id = ? AND task_id = ? AND channel_id IS ?
+          )` : ""}
+        `)
+        .run(
+          approval.id,
+          approval.runId ?? null,
+          approval.taskId ?? null,
+          approval.mediaJobId ?? null,
+          approval.externalWorkActionId ?? null,
+          approval.workflowStepId ?? null,
+          approval.channelId ?? null,
+          approval.toolCallId ?? null,
+          approval.actionType,
+          approval.risk,
+          approval.title,
+          approval.description,
+          stringifyJson(approval.payload),
+          approval.status,
+          approval.createdAt,
+          approval.expiresAt ?? null,
+          null,
+          null,
+          null,
+          stringifyJson(approval.availableDecisions),
+          approval.proposedCommandRule ? stringifyJson(approval.proposedCommandRule) : null,
+          null,
+          null,
+          ...(sourceFence ? [...runExecutionOwnerParameters(runId!, sourceFence, false), runId!, taskId!, approval.channelId ?? null] : []),
+        );
+      if (Number(inserted.changes) !== 1) {
+        throw Object.assign(new Error("Execution approval source is no longer current."), { code: "stale_run_execution" });
+      }
 
-    const created = this.getApprovalRequest(approval.id);
-    if (!created) {
-      throw new Error(`Failed to create approval request: ${approval.id}`);
+      const created = this.getApprovalRequest(approval.id);
+      if (!created) {
+        throw new Error(`Failed to create approval request: ${approval.id}`);
+      }
+      this.ports.createApprovalCheckpoint(created, now);
+      this.ports.rebuildLingThreadMetadataForApproval(created, now);
+      this.context.database.exec("RELEASE approval_request_creation");
+      return created;
+    } catch (error) {
+      this.context.database.exec("ROLLBACK TO approval_request_creation");
+      this.context.database.exec("RELEASE approval_request_creation");
+      throw error;
     }
-    this.ports.createApprovalCheckpoint(created, now);
-    this.ports.rebuildLingThreadMetadataForApproval(created, now);
-    return created;
   }
 
   getApprovalRequest(id: string): ApprovalRequest | undefined {
@@ -461,9 +470,10 @@ export class SqliteApprovalRequestStore {
           decision_kind = 'approve_command_rule',
           decision_rule_id = ?
         WHERE id = ? AND status = 'pending'
+          AND ${activeRunApprovalOwnerSql}
       `).run(now, input.resolvedBy ?? "local-user", input.reason ?? null, rule.id, id);
       if (update.changes !== 1) {
-        throw new Error(`Approval request is not pending: ${id}`);
+        throw new Error(`Approval execution no longer active: ${id}`);
       }
       const resolved = this.getApprovalRequest(id);
       if (!resolved) {
@@ -493,43 +503,61 @@ export class SqliteApprovalRequestStore {
       throw new Error(`Approval request is not pending: ${id}`);
     }
 
-    const decisionKind = status === "approved"
-      ? (input.decisionKind ?? "approve_once")
-      : status === "denied" ? "deny" : undefined;
-    const update = this.context.database
-      .prepare(`
-        UPDATE approval_requests
-        SET
-          status = ?,
-          resolved_at = ?,
-          resolved_by = ?,
-          decision_reason = ?,
-          decision_kind = ?,
-          decision_rule_id = NULL
-        WHERE id = ? AND status = 'pending'
-      `)
-      .run(
-        status,
-        now,
-        status === "expired" ? (input.resolvedBy ?? null) : (input.resolvedBy ?? "local-user"),
-        input.reason ?? null,
-        decisionKind ?? null,
-        id,
-      );
-    if (update.changes !== 1) {
-      throw new Error(`Approval request is not pending: ${id}`);
-    }
+    this.context.database.exec("SAVEPOINT approval_request_resolution");
+    try {
+      const decisionKind = status === "approved"
+        ? (input.decisionKind ?? "approve_once")
+        : status === "denied" ? "deny" : undefined;
+      const update = this.context.database
+        .prepare(`
+          UPDATE approval_requests
+          SET
+            status = ?,
+            resolved_at = ?,
+            resolved_by = ?,
+            decision_reason = ?,
+            decision_kind = ?,
+            decision_rule_id = NULL
+          WHERE id = ? AND status = 'pending'
+            ${status === "approved" ? `AND ${activeRunApprovalOwnerSql}` : ""}
+        `)
+        .run(
+          status,
+          now,
+          status === "expired" || status === "cancelled" ? (input.resolvedBy ?? null) : (input.resolvedBy ?? "local-user"),
+          input.reason ?? null,
+          decisionKind ?? null,
+          id,
+        );
+      if (update.changes !== 1) {
+        throw new Error(`Approval execution no longer active: ${id}`);
+      }
 
-    const resolved = this.getApprovalRequest(id);
-    if (resolved) this.syncResolvedApproval(resolved, now);
-    return resolved;
+      const resolved = this.getApprovalRequest(id);
+      if (resolved) this.syncResolvedApproval(resolved, now);
+      this.context.database.exec("RELEASE approval_request_resolution");
+      return resolved;
+    } catch (error) {
+      this.context.database.exec("ROLLBACK TO approval_request_resolution");
+      this.context.database.exec("RELEASE approval_request_resolution");
+      throw error;
+    }
   }
 
   private syncResolvedApproval(resolved: ApprovalRequest, now: string): void {
     this.ports.syncApprovalCheckpointForApproval(resolved, now);
     this.ports.rebuildLingThreadMetadataForApproval(resolved, now);
+    new SqliteApprovalPostCommitStore(this.context.database).recordDecision(resolved, now);
   }
 }
+
+/** Human approval cannot revive a terminal Run; the UPDATE itself owns this race check. */
+const activeRunApprovalOwnerSql = `(run_id IS NULL OR EXISTS (
+  SELECT 1 FROM run_sessions AS approval_run
+  WHERE approval_run.id = approval_requests.run_id
+    AND approval_run.status IN ('queued', 'running', 'waiting_for_approval')
+    AND approval_run.ended_at IS NULL
+))`;
 
 const recoverableApprovalReviewOwnerSql = `EXISTS (
   SELECT 1

@@ -19,6 +19,7 @@ test("Sidebar channel and teammate rows expose one truthful primary state", asyn
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", 1440, 960);
   const state = createBaseState({ approvalStatus: "expired" });
+  state.workspaceSettings.channelNotifications = { channel_running: "all" };
   state.tasks = [
     task("task_channel_running", "channel_running", "running"),
     task("task_channel_failed", "channel_failed", "failed"),

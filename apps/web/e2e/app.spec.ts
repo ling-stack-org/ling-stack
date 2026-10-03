@@ -990,6 +990,14 @@ test("teammate private chat resolves its runtime approval through its composer g
 
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Private Approver" }).click();
   const gate = page.getByRole("region", { name: "Allow this action?" });
+  const composerOwner = page.locator(".teammate-private-chat > .teammate-private-composer-owner");
+  await expect(composerOwner).toContainText("Allow this action?");
+  const gateBounds = await gate.boundingBox();
+  const feedBounds = await page.locator(".teammate-private-feed-owner").boundingBox();
+  expect(gateBounds).not.toBeNull();
+  expect(feedBounds).not.toBeNull();
+  expect(gateBounds!.x).toBeGreaterThanOrEqual(feedBounds!.x);
+  expect(gateBounds!.x + gateBounds!.width).toBeLessThanOrEqual(feedBounds!.x + feedBounds!.width + 1);
   await expect(page.locator(".teammate-direct-composer")).toHaveCount(0);
   await expect(gate).toContainText("Run command: whois private.example");
   await expect(gate).not.toContainText("Approve private command");
@@ -1039,7 +1047,7 @@ test("normal conversation full access confirms before creating the run", async (
   await expect(home.getByRole("textbox", { name: "Conversation message" })).toHaveAttribute("data-value", "Inspect trusted files");
 
   await home.getByRole("button", { name: "Send" }).click();
-  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Enable full access" }).click();
+  await page.getByRole("dialog", { name: "Confirm full access" }).getByRole("button", { name: "Start with full access" }).click();
   await expect.poll(() => state.runs.length).toBe(1);
   await expect.poll(() => {
     const snapshot = state.runs[0]?.requestSnapshot;

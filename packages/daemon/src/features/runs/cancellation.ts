@@ -11,6 +11,7 @@ import { HttpError } from "../../errors.js";
 import { transitionWorkUnitCancelled } from "../../runtime/work-units.js";
 import { writeTerminalSummary } from "./terminal.js";
 import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./threads.js";
+import { assertNoUnsafeRequiredPause } from "./user-input-cancellation-guard.js";
 
 export function ensureRunCancelled(input: {
   readonly store: RunStore;
@@ -42,6 +43,11 @@ export function ensureRunCancelled(input: {
   if (isTerminalRunStatus(current.status)) {
     return {};
   }
+
+  // A pending required pause has not yet established physical safety. A
+  // generic cancellation would otherwise release its retained attempt leases
+  // and publish a terminal summary while the Host still has unknown effects.
+  assertNoUnsafeRequiredPause(input.store, current);
 
   const endedAt = new Date().toISOString();
   for (const approval of input.store.listApprovalRequests({ runId: input.runId, status: "pending", limit: 500 })) {

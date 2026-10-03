@@ -5,6 +5,7 @@ import type {
   PiRunnerProviderConfig,
 } from "./types.js";
 import { readPreparedPiInput, type PiRunnerPreparedInput } from "./prepared-input.js";
+import { boundModelToolResults } from "./model-context-budget.js";
 import { isRecord } from "./utils.js";
 
 const EMPTY_USAGE = Object.freeze({
@@ -61,7 +62,9 @@ export function assertApprovedToolContinuationModelContext(
   model: Model<any>,
   context: Context,
 ): void {
-  const expected = createApprovedToolContinuationMessages(prepared, provider, continuation) as Message[];
+  const expected = boundModelToolResults(
+    createApprovedToolContinuationMessages(prepared, provider, continuation),
+  ).messages as Message[];
   if (context.systemPrompt !== readPreparedPiInput(prepared).systemPrompt
     || model.id !== prepared.model.id
     || model.provider !== prepared.model.provider

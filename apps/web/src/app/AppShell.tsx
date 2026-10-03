@@ -2192,6 +2192,14 @@ export function AppShell(): React.JSX.Element {
         return;
 
       case "approval.resolved":
+        if (event.reconciliationPending) {
+          showToast({
+            message: t("Approval was recorded, but execution recovery is pending. Check run status before trying again."),
+            scope: `approval:${event.approvalId}:postcommit`,
+            tone: "warning",
+            durationMs: 15_000,
+          });
+        }
         await refreshApprovals(workspaceCwd, event.runId);
         await refreshConversationThreads(workspaceCwd);
         window.setTimeout(() => {

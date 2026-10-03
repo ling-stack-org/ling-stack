@@ -1,5 +1,5 @@
 import { useCallback, useLayoutEffect, useMemo, useRef, useState, type ReactNode, type UIEvent } from "react";
-import { ArrowDown, Copy, FileText, Pencil, ThumbsDown, ThumbsUp } from "lucide-react";
+import { ArrowDown, Copy, FileText, Pencil } from "lucide-react";
 import { attachmentContentUrl } from "../../api.js";
 import { useI18n } from "../../i18n.js";
 import { attachmentCanPreview, loadPreviewContent } from "../../lib/previews.js";
@@ -43,6 +43,7 @@ import {
 } from "./normal-conversation-timeline-items.js";
 import { requestTimelineWorkspaceFileOpen } from "../../shared/conversation/timeline/workspace-file-capability.js";
 import { timelineMessageChromeOwnerIds } from "../../shared/conversation/timeline/timeline-message-chrome-owners.js";
+import { NormalConversationResponseActions } from "./NormalConversationResponseActions.js";
 
 const latestThresholdPx = 56;
 
@@ -138,10 +139,11 @@ export function NormalConversationFeed({
       threadId: detailContext?.threadId ?? feedItems.find((item) => item.message.threadId)?.message.threadId,
       items,
       activeRun,
+      runLifecycles: runById,
       contextSegmentIdByItemId: detailContext?.timelineProjection?.contextSegmentIdByItemId,
       canonicalRevision: maxTimelineRevision(items),
     });
-  }, [detailContext, feedItems, projectPath, workspaceCwd]);
+  }, [detailContext, feedItems, projectPath, runById, workspaceCwd]);
   const messageChromeOwnerIds = useMemo(
     () => timelineMessageChromeOwnerIds(timelineSnapshot.items),
     [timelineSnapshot.items],
@@ -277,6 +279,16 @@ export function NormalConversationFeed({
             itemLocatorRef: timelineItemLocatorRef,
             onDisclosureIntent: pauseTimelineAutoFollow,
             onOpenSourceRef: handleOpenTimelineSourceRef,
+            onOpenReview,
+            renderResponseActions: (response, copyText) => {
+              const messageId = response.message?.logicalMessageId ?? response.message?.itemId;
+              const item = messageId ? feedItemByMessageId.get(messageId) : undefined;
+              if (!item || item.message.role !== "assistant" || !item.message.content) return undefined;
+              return <NormalConversationResponseActions
+                copyText={copyText}
+                feedback={feedbackById[item.message.id]}
+                onToggleFeedback={(value) => toggleFeedback(item.message.id, value)} />;
+            },
             renderMessageChrome: (messageItem, body) => {
               const messageId = messageItem.logicalMessageId ?? messageItem.itemId;
               const item = messageId ? feedItemByMessageId.get(messageId) : undefined;
@@ -288,7 +300,6 @@ export function NormalConversationFeed({
                   ownsMessageChrome={messageChromeOwnerIds.has(messageItem.id)}
                   composerGateApproval={composerGateApprovalPresentationForRunId(item.message.runId, composerGateApprovalByRunId)}
                   generatedMedia={item.message.runId ? generatedMediaByRunId.get(item.message.runId) ?? [] : []}
-                  feedback={feedbackById[item.message.id]}
                   editing={editingMessageId === item.message.id}
                   editSaving={editSaving}
                   editable={item.message.id === latestEditableUserMessageId}
@@ -300,7 +311,6 @@ export function NormalConversationFeed({
                   onEdit={() => onEditMessage(item.message.id)}
                   onSave={(nextBody) => onSaveMessage(item.message, nextBody)}
                   onRetryReplacement={() => onRetryReplacement(item.message)}
-                  onToggleFeedback={(nextFeedback) => toggleFeedback(item.message.id, nextFeedback)}
                   onOpenFiles={onOpenFiles}
                   onOpenReview={onOpenReview}
                   onOpenRun={onOpenRun}
@@ -330,7 +340,6 @@ function NormalConversationMessageRow({
   editSaving,
   editable,
   editing,
-  feedback,
   item,
   generatedMedia,
   onCancelEdit,
@@ -340,7 +349,6 @@ function NormalConversationMessageRow({
   onOpenRun,
   onRetryReplacement,
   onSave,
-  onToggleFeedback,
   projectPath,
   replacementRetryError,
   replacementRetrying,
@@ -353,7 +361,6 @@ function NormalConversationMessageRow({
   readonly ownsMessageChrome: boolean;
   readonly composerGateApproval?: ComposerGateApprovalPresentation;
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
-  readonly feedback?: "up" | "down";
   readonly editing: boolean;
   readonly editSaving: boolean;
   readonly editable: boolean;
@@ -365,7 +372,6 @@ function NormalConversationMessageRow({
   readonly onEdit: () => void;
   readonly onSave: (body: string) => void | Promise<void>;
   readonly onRetryReplacement: () => void | Promise<void>;
-  readonly onToggleFeedback: (feedback: "up" | "down") => void;
   readonly onOpenFiles: () => void;
   readonly onOpenReview: (target: WorkspaceRightDockReviewTarget) => void;
   readonly onOpenRun?: (runId: string) => void;
@@ -466,11 +472,11 @@ function NormalConversationMessageRow({
           ) : null}
         </>
       ) : null}
-      actionsNode={ownsMessageChrome && actionsReady && message.content && !editing && !blockedAgentMessage ? (
+      actionsNode={message.role === "user" && ownsMessageChrome && actionsReady && message.content && !editing && !blockedAgentMessage ? (
         <MessageActionBar
           surface="normal_conversation"
           className="normal-conversation-message-actions"
-          actions={message.role === "user" ? [
+          actions={[
             {
               id: "copy",
               kind: "copy",
@@ -485,30 +491,6 @@ function NormalConversationMessageRow({
               icon: <Pencil size={14} />,
               onClick: onEdit,
             }] : []),
-          ] : [
-            {
-              id: "copy",
-              kind: "copy",
-              label: t("Copy message"),
-              icon: <Copy size={14} />,
-              copyText: message.content,
-            },
-            {
-              id: "like",
-              kind: "like",
-              label: t("Like response"),
-              icon: <ThumbsUp size={14} />,
-              selected: feedback === "up",
-              onClick: () => onToggleFeedback("up"),
-            },
-            {
-              id: "dislike",
-              kind: "dislike",
-              label: t("Dislike response"),
-              icon: <ThumbsDown size={14} />,
-              selected: feedback === "down",
-              onClick: () => onToggleFeedback("down"),
-            },
           ]}
         />
       ) : null}

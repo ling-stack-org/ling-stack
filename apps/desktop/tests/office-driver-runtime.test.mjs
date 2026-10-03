@@ -189,6 +189,95 @@ test("Office runtime restarts the native helper after a process failure", async 
   assert.equal(stops >= 2, true);
 });
 
+test("Office runtime re-registers authority after a daemon restart before the heartbeat", async () => {
+  let availabilityCount = 0;
+  let lostAuthority = false;
+  let delivered = false;
+  const completed = [];
+  const helper = {
+    async start() {},
+    async stop() {},
+    async call(command) {
+      assert.equal(command.method, "driver_status");
+      return success(command.id, {
+        helperVersion: "test-helper", state: "limited", capabilities: ["excel:sessions"],
+        officeInstalled: true, applicationRunning: true, permissionGranted: true,
+      });
+    },
+  };
+  const runtime = new OfficeDriverRuntime({
+    daemonBaseUrl: "http://127.0.0.1:1",
+    bridgeToken: "test",
+    desktopInstanceId: "desktop-recovery-test",
+    executablePath: "/unused",
+    recoveryRoot: "/tmp",
+    platform: "darwin",
+    helper,
+    daemonClientFactory: () => ({
+      async publishAvailability() { availabilityCount += 1; },
+      async claim(signal) {
+        if (!lostAuthority) {
+          lostAuthority = true;
+          throw new Error("office_driver_authority_invalid");
+        }
+        if (availabilityCount < 2) throw new Error("office_driver_authority_invalid");
+        if (!delivered) { delivered = true; return request("status", "driver_status", {}); }
+        return await new Promise((resolve) => signal?.addEventListener("abort", () => resolve(undefined), { once: true }));
+      },
+      async complete(value) { completed.push(value); },
+    }),
+    now: () => 321_000,
+  });
+  try {
+    await runtime.start();
+    await waitFor(() => completed.length === 1);
+    assert.equal(availabilityCount, 2);
+    assert.equal(completed[0].ok, true);
+  } finally {
+    await runtime.stop();
+  }
+});
+
+test("Office runtime restart creates a fresh generation lease and helper session", async () => {
+  let availabilityCount = 0;
+  let starts = 0;
+  let stops = 0;
+  const helper = {
+    async start() { starts += 1; },
+    async stop() { stops += 1; },
+    async call(command) {
+      assert.equal(command.method, "driver_status");
+      return success(command.id, {
+        helperVersion: "test-helper", state: "limited", capabilities: ["excel:sessions"],
+        officeInstalled: true, applicationRunning: true, permissionGranted: true,
+      });
+    },
+  };
+  const runtime = new OfficeDriverRuntime({
+    daemonBaseUrl: "http://127.0.0.1:1",
+    bridgeToken: "test",
+    desktopInstanceId: "desktop-restart-test",
+    executablePath: "/unused",
+    recoveryRoot: "/tmp",
+    platform: "darwin",
+    helper,
+    daemonClientFactory: () => ({
+      async publishAvailability() { availabilityCount += 1; },
+      async claim(signal) { return await new Promise((resolve) => signal?.addEventListener("abort", () => resolve(undefined), { once: true })); },
+      async complete() {},
+    }),
+    now: () => 654_000,
+  });
+
+  await runtime.start();
+  await runtime.restart();
+  assert.equal(starts, 2);
+  assert.equal(stops, 1);
+  assert.equal(availabilityCount, 2);
+  await runtime.stop();
+  assert.equal(stops, 2);
+});
+
 test("Office driver package paths are fixed to supported platform resources", () => {
   assert.equal(
     resolveOfficeDriverExecutablePath({ appPath: "/app", resourcesRoot: "/resources", packaged: true, platform: "darwin", architecture: "arm64" }),

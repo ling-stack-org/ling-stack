@@ -59,6 +59,9 @@ const report = {
   schemaVersion: 2,
   kind: "ling-desktop-macos-packaged-continuity",
   status: "running",
+  simulation: true,
+  evidenceScope: "packaged-host-with-local-mock-provider",
+  nativeGuiVerified: false,
   appExecutable,
   artifact,
   runRoot,
@@ -752,6 +755,16 @@ try {
   report.environment.macos = readMacOsMetadata();
   const artifactSha256 = await hashFile(artifact);
   report.artifactSha256 = artifactSha256;
+  // The supplied archive may predate an explicitly selected app. Identify the
+  // actual executable and separate Web payload without asserting archive parity.
+  const appAsarPath = join(packagedContentsPath, "Resources", "app.asar");
+  const webIndexPath = join(packagedContentsPath, "Resources", "web", "index.html");
+  report.packageIdentity = {
+    executable: { path: appExecutable, sha256: await hashFile(appExecutable) },
+    appAsar: { path: appAsarPath, sha256: await hashFile(appAsarPath) },
+    webIndex: { path: webIndexPath, sha256: await hashFile(webIndexPath) },
+    artifactToBundleParityVerified: false,
+  };
   const browserHostMetadata = await readJson(browserHostMetadataPath);
   const browserHostExecutable = join(dirname(browserHostMetadataPath), browserHostMetadata.executable ?? browserHostDefaultExecutable);
   const browserHostSourceExecutable = join(repositoryRoot, "packages/browser-host/dist/native", browserHostMetadata.executable ?? browserHostDefaultExecutable);
@@ -772,6 +785,7 @@ try {
   check("artifact", "passed", {
     sha256: artifactSha256,
     app: appExecutable,
+    packageIdentity: report.packageIdentity,
   });
   check("browser_host_build", "passed", {
     sourceSha256: browserHostSourceSha256,

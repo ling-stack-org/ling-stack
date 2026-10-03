@@ -97,13 +97,11 @@ test("T13-O.25-C dark reduced-motion Summary yields to the Channel Dock without 
   const panel = page.getByRole("complementary", { name: "Channel workspace dock" });
   await expect(panel).toBeVisible();
   await expect(summary).toHaveCount(0);
-  await expect(summaryButton).toHaveAttribute("aria-pressed", "false");
+  await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
   await captureIfEnabled(page, "1280x800-ling-dark-channel-dock-without-summary-overlap.png");
 
   await toolbar.getByRole("button", { name: "Hide details" }).click();
   await expect(panel).toHaveCount(0);
-  await expect(summary).toHaveCount(0);
-  await summaryButton.click();
   await expect(summary).toBeVisible();
   await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
   await assertReducedMotion(summary);

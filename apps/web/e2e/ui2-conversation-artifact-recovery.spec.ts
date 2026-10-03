@@ -220,6 +220,32 @@ function installRecoveryFixture(state: MockState, suffix: string): {
     createdAt,
     committedAt: "2026-07-26T02:01:00.000Z",
   }];
+  state.channelConversationItemExtras = [...(state.channelConversationItemExtras ?? []), {
+    schemaVersion: 1,
+    id: `result_terminal_report:artifact_recovery_${suffix}`,
+    workspaceId: "workspace_default",
+    channelId: "channel_engineering",
+    threadId,
+    turnId,
+    sequence: 2,
+    kind: "terminal_report",
+    status: "committed",
+    actorType: "host",
+    visibility: "channel",
+    payload: {
+      reportId: `terminal_report_artifact_recovery_${suffix}`,
+      generation: 1,
+      sourceKind: "turn",
+      sourceId: turnId,
+      evidenceFingerprint: `fingerprint_artifact_recovery_${suffix}`,
+      outcomeStatus: "succeeded",
+    },
+    domainRefs: [{ type: "terminal_report", id: `terminal_report_artifact_recovery_${suffix}` }, { type: "turn", id: turnId }],
+    revision: 1,
+    createdAt,
+    updatedAt: "2026-07-26T02:01:00.000Z",
+    committedAt: "2026-07-26T02:01:00.000Z",
+  }];
   return { runId, state, threadId, turnId };
 }
 

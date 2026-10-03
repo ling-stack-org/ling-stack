@@ -205,6 +205,8 @@ test("MP-11 source contract has no hand overlay and guards request identity", as
 
 test("MP-11 delayed old cwd responses cannot overwrite the current workflow state", async ({ page }) => {
   const requestedCwds: string[] = [];
+  const pageErrors: string[] = [];
+  page.on("pageerror", (error) => pageErrors.push(error.message));
   await mockDaemon(page, createLoadedMediaProductionFixture({ projectCount: 1, scenesPerProject: 1 }));
   await page.route("http://127.0.0.1:17891/**", async (route) => {
     const url = new URL(route.request().url());
@@ -224,25 +226,15 @@ test("MP-11 delayed old cwd responses cannot overwrite the current workflow stat
   await page.goto("/");
   await page.evaluate(async () => {
     const dynamicImport = new Function("specifier", "return import(specifier)") as (specifier: string) => Promise<Record<string, unknown>>;
-    const reactModule = await dynamicImport("/@id/react") as { readonly default: typeof import("react") };
-    const reactDomModule = await dynamicImport("/@id/react-dom/client") as { readonly default: { readonly createRoot: typeof import("react-dom/client")["createRoot"] } };
-    const controllerModule = await dynamicImport("/src/features/media-production/workflows/use-media-workflow-controller.ts") as {
-      readonly useMediaWorkflowController: typeof import("../src/features/media-production/workflows/use-media-workflow-controller")["useMediaWorkflowController"];
+    const probeModule = await dynamicImport("/e2e/support/workflow-controller-probe.tsx") as {
+      readonly mountWorkflowControllerProbe: () => void;
     };
-    const React = reactModule.default;
-    const host = document.createElement("div");
-    host.id = "workflow-controller-probe";
-    document.body.append(host);
-    function Probe(): React.JSX.Element {
-      const [cwdValue, setCwdValue] = React.useState("/cwd-a");
-      const controller = controllerModule.useMediaWorkflowController({ cwd: cwdValue, onJobsChanged: () => undefined });
-      return React.createElement("section", {},
-        React.createElement("button", { id: "workflow-probe-switch", onClick: () => setCwdValue("/cwd-b") }, "Switch cwd"),
-        React.createElement("pre", { id: "workflow-probe-state" }, JSON.stringify({ cwd: cwdValue, phase: controller.state.phase, connections: controller.state.connections.map((item) => item.name) })),
-      );
-    }
-    reactDomModule.default.createRoot(host).render(React.createElement(Probe));
+    probeModule.mountWorkflowControllerProbe();
   });
+  await expect.poll(async () => ({
+    probeVisible: await page.locator("#workflow-probe-state").isVisible(),
+    pageErrors,
+  })).toEqual({ probeVisible: true, pageErrors: [] });
   await expect.poll(() => requestedCwds.filter((value) => value === "/cwd-a").length).toBeGreaterThanOrEqual(2);
   await page.locator("#workflow-probe-switch").click();
   await expect(page.locator("#workflow-probe-state")).toContainText('"cwd":"/cwd-b"');

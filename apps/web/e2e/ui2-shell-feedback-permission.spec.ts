@@ -109,7 +109,7 @@ test("new conversation metadata controls stay quiet and compact without a config
   await page.goto("/");
 
   const home = page.getByLabel("对话首页");
-  const permission = home.locator(".conversation-authorization-trigger");
+  const permission = home.getByRole("button", { name: /Selected permission preset/u });
   const model = home.locator(".conversation-model-trigger");
   const shortcut = home.getByRole("button", { name: "创建 Team" });
   await expect(permission).toBeVisible();
@@ -134,7 +134,12 @@ test("new conversation metadata controls stay quiet and compact without a config
 
 function createFullAccessState(): MockState {
   const state = createBaseState({ approvalStatus: "expired" });
-  state.providers = [createChatProvider({ id: "provider_full_access_ui2", displayName: "Local Relay", model: "gpt-5.5" })];
+  state.providers = [createChatProvider({
+    id: "provider_full_access_ui2",
+    displayName: "Local Relay",
+    model: "gpt-5.5",
+    lastCheck: { ok: true, code: "ready", message: "ready", checkedAt: "2026-09-27T00:00:00.000Z" },
+  })];
   state.workspaceSettings = {
     ...state.workspaceSettings,
     defaultAuthorizationMode: "always",

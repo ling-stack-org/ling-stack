@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   DEFAULT_WORKSPACE_ID,
   resolveMediaGenerationTarget,
@@ -25,9 +26,20 @@ import {
 } from "../../runtime/work-units.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import type { AttemptLocalWriterGroup } from "../../runtime/attempt-local-writers.js";
+import type { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
+import { MediaLocalExecutionAdmissionError, type MediaLocalExecutionHandle, type MediaLocalExecutionReservation } from "../../runtime/media-local-executions.js";
+import { bindHostMediaOperation, reserveHostMediaOperation, type HostMediaOperation } from "./host-operation.js";
 import { dispatchMediaJobExecution, type RunMediaJobHooks } from "./executor.js";
 import { listConversationMediaGenerationTargets } from "./conversation-targets.js";
 import { publishConversationMediaProjectionChange } from "./conversation-events.js";
+
+const trackedMediaHandlers = new WeakSet<Function>();
+
+/** Only the production handler can enroll its real background execution chain. */
+export function isTrackedConversationMediaGenerationToolHandler(handler: Function): boolean {
+  return trackedMediaHandlers.has(handler);
+}
 
 export function createConversationMediaGenerationToolDefinitions(
   targets: readonly MediaGenerationTargetSummary[],
@@ -72,9 +84,20 @@ export function createConversationMediaGenerationToolHandler(input: {
   readonly linkedMessageId?: string;
   readonly controlPlaneEvents?: ControlPlaneEventHub;
   readonly launchMediaJob?: (mediaJobId: string) => void;
+  /** Resolved once at actual callback entry, never during Run preparation. */
+  readonly getExecutionContext?: () => {
+    readonly localWriters: AttemptLocalWriterGroup;
+    readonly hostOperationTracker: AttemptHostOperationTracker;
+  } | undefined;
 }): (request: PiRunnerMediaGenerationToolCallRequest) => PiRunnerMediaGenerationToolCallResult {
   const nextCreatedAt = createMonotonicTimestamp();
-  return (request) => {
+  const capturedOperations = new Map<string, { readonly digest: string; readonly host: HostMediaOperation }>();
+  const retiredToolCalls = new Set<string>();
+  const handler = (request: PiRunnerMediaGenerationToolCallRequest): PiRunnerMediaGenerationToolCallResult => {
+    const captured = input.getExecutionContext?.();
+    if (input.getExecutionContext && !captured) {
+      return toolFailure("media_host_context_unavailable", "The captured Media execution context is not available; no job was created.");
+    }
     request.signal?.throwIfAborted();
     if (request.runId !== input.run.id) {
       return toolFailure("invalid_media_tool_run", "The generation tool call does not belong to the active run.");
@@ -95,8 +118,60 @@ export function createConversationMediaGenerationToolHandler(input: {
         resolution.candidates,
       );
     }
+    let reservation: MediaLocalExecutionReservation | undefined;
+    let localExecution: MediaLocalExecutionHandle | undefined;
+    let newlyReservedHost: HostMediaOperation | undefined;
+    let capturedOperation: { readonly digest: string; readonly host: HostMediaOperation } | undefined;
     try {
       const mediaJobInput = buildMediaJobInput(input.store, resolution.target, request, operation);
+      if (captured) {
+        if (retiredToolCalls.has(request.toolCallId)) throw new Error("media_tool_identity_retired: use a new tool call identity for an explicit retry.");
+        if (input.launchMediaJob) throw new Error("media_host_launch_unsupported: a void launcher cannot prove its background lifetime.");
+        const digest = createHash("sha256").update(JSON.stringify({
+          source: captured.hostOperationTracker.source,
+          cwd: input.store.paths.cwd,
+          toolCallId: request.toolCallId,
+          target: resolution.target.ref,
+          mediaJobInput,
+        })).digest("hex");
+        const previous = capturedOperations.get(request.toolCallId);
+        if (previous && previous.digest !== digest) throw new Error("media_reuse_identity_conflict");
+        const host = previous?.host ?? (newlyReservedHost = reserveHostMediaOperation(captured.hostOperationTracker, request.toolCallId));
+        const source = captured.hostOperationTracker.source;
+        const assertParentLineage = (): void => {
+          const run = input.store.getRun(source.runId);
+          const unit = input.store.getWorkUnit(source.workUnitId);
+          const attempt = input.store.getWorkUnitAttempt(source.attemptId);
+          if (run?.workUnitId !== source.workUnitId || unit?.linkedRunId !== source.runId
+            || unit.activeAttemptId !== source.attemptId || attempt?.workUnitId !== source.workUnitId
+            || attempt.runtimeInstanceId !== source.runtimeInstanceId || attempt.fencingToken !== source.fencingToken) {
+            throw new MediaLocalExecutionAdmissionError("parent_source_obsolete", "Media parent execution identity was replaced.");
+          }
+        };
+        reservation = input.storeRegistry.mediaLocalExecutions.reserve({
+          source: captured.hostOperationTracker.source,
+          requestDigest: digest,
+          toolCallId: request.toolCallId,
+          localWriters: captured.localWriters,
+          effectGate: mode => {
+            assertParentLineage();
+            if (mode === "forward") {
+              if (previous) captured.hostOperationTracker.executorGroup.assertAdmissionOpen();
+              else host.assertMayPrepare();
+            }
+          },
+          launchEffect: (mode, effect) => {
+            try { host.launchEffect(mode, effect); }
+            catch (error) {
+              if (error instanceof MediaLocalExecutionAdmissionError) throw error;
+              throw new MediaLocalExecutionAdmissionError("host_effect_unconfirmed", error instanceof Error ? error.message : String(error));
+            }
+          },
+          completionGate: assertParentLineage,
+          ...(previous ? {} : { onLocalCompleted: () => host.finish() }),
+        });
+        capturedOperation = { digest, host };
+      }
       const created = input.store.createOrReuseConversationMediaJob({
         runId: input.run.id,
         linkedMessageId: input.linkedMessageId,
@@ -104,6 +179,11 @@ export function createConversationMediaGenerationToolHandler(input: {
         teammateId: input.run.teammateId,
         idempotencyKey: `media_tool:${input.run.id}:${request.toolCallId}`,
         toolCallId: request.toolCallId,
+        ...(captured && capturedOperation ? { executionAdmission: {
+          schemaVersion: 1 as const,
+          source: captured.hostOperationTracker.source,
+          requestDigest: capturedOperation.digest,
+        } } : {}),
         target: {
           id: resolution.target.id,
           ref: resolution.target.ref,
@@ -112,6 +192,16 @@ export function createConversationMediaGenerationToolHandler(input: {
         },
         mediaJob: mediaJobInput,
       }, nextCreatedAt());
+      if (reservation) {
+        const binding = { cwd: input.store.paths.cwd, mediaJobId: created.mediaJob.id, workUnitId: created.workUnit.id };
+        localExecution = created.reused
+          ? input.storeRegistry.mediaLocalExecutions.attachReused(reservation, binding)
+          : input.storeRegistry.mediaLocalExecutions.bindNew(reservation, binding);
+        if (capturedOperation) {
+          bindHostMediaOperation(capturedOperation.host, localExecution);
+          capturedOperations.set(request.toolCallId, capturedOperation);
+        }
+      }
       if (!created.reused) {
         input.store.appendRuntimeEvent({
           workUnitId: created.workUnit.id,
@@ -134,6 +224,7 @@ export function createConversationMediaGenerationToolHandler(input: {
             storeRegistry: input.storeRegistry,
             secretResolver: input.secretResolver,
             mediaJobId: created.mediaJob.id,
+            localExecution,
             hooks: createMediaJobHooks(
               input.runtimeSupervisor,
               input.storeRegistry,
@@ -158,12 +249,24 @@ export function createConversationMediaGenerationToolHandler(input: {
         },
       };
     } catch (error) {
+      if (newlyReservedHost && !localExecution) retiredToolCalls.add(request.toolCallId);
+      if (localExecution) {
+        // Binding already happened. Finish this exact error tail through the
+        // same capability, never abandon a bound background writer.
+        try { void input.storeRegistry.mediaLocalExecutions.track(localExecution, () => { throw error; }).catch(() => {}); }
+        catch { /* A stopped/prepared generation is already completing under its registry owner. */ }
+      } else if (reservation) input.storeRegistry.mediaLocalExecutions.abandon(reservation);
+      else if (newlyReservedHost) {
+        try { newlyReservedHost.finish(); } catch { /* The tracker retains the unconfirmed durable blocker. */ }
+      }
       return toolFailure(
         "generation_input_invalid",
         error instanceof Error ? error.message : String(error),
       );
     }
   };
+  if (input.getExecutionContext) trackedMediaHandlers.add(handler);
+  return handler;
 }
 
 function createMonotonicTimestamp(): () => string {

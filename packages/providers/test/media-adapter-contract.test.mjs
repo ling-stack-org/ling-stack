@@ -377,15 +377,15 @@ test("live media vendor transport calls Seedream image generation through the Op
 
   assert.equal(result.status, "succeeded");
   assert.equal(result.errorCode, undefined);
-  assert.equal(result.artifacts.length, 3);
-  assert.match(result.artifacts[0].content ?? "", /Transport: live/);
-  assert.equal(result.artifacts[1].type, "json");
-  assert.match(result.artifacts[1].content ?? "", /live_seedream_image_generate/);
-  assert.match(result.artifacts[1].content ?? "", /image-1\.png/);
-  assert.doesNotMatch(result.artifacts[1].content ?? "", /test-key/);
-  assert.equal(result.artifacts[2].type, "image");
-  assert.equal(result.artifacts[2].contentType, "image/png");
-  assert.deepEqual(result.artifacts[2].contentBytes, imageBytes);
+  assert.equal(result.artifacts.length, 2);
+  assert.ok(result.artifacts.every(artifact => artifact.type !== "markdown"), "live generation must not claim that no vendor API was called");
+  assert.equal(result.artifacts[0].type, "json");
+  assert.match(result.artifacts[0].content ?? "", /live_seedream_image_generate/);
+  assert.match(result.artifacts[0].content ?? "", /image-1\.png/);
+  assert.doesNotMatch(result.artifacts[0].content ?? "", /test-key/);
+  assert.equal(result.artifacts[1].type, "image");
+  assert.equal(result.artifacts[1].contentType, "image/png");
+  assert.deepEqual(result.artifacts[1].contentBytes, imageBytes);
   assert.equal(capturedRequests.length, 2);
   assert.equal(capturedRequests[0].url, "https://media.example.invalid/images/generations");
   assert.equal(capturedRequests[0].init.headers.authorization, "Bearer test-key");
@@ -448,11 +448,12 @@ test("live media vendor transport calls Seedream image edit with source image UR
 
   assert.equal(result.status, "succeeded");
   assert.equal(result.errorCode, undefined);
-  assert.equal(result.artifacts.length, 3);
-  assert.match(result.artifacts[1].content ?? "", /live_seedream_image_edit/);
-  assert.doesNotMatch(result.artifacts[1].content ?? "", /test-key/);
-  assert.equal(result.artifacts[2].type, "image");
-  assert.deepEqual(result.artifacts[2].contentBytes, imageBytes);
+  assert.equal(result.artifacts.length, 2);
+  assert.match(result.artifacts[0].content ?? "", /live_seedream_image_edit/);
+  assert.doesNotMatch(result.artifacts[0].content ?? "", /test-key/);
+  assert.ok(result.artifacts.every(artifact => artifact.type !== "markdown"));
+  assert.equal(result.artifacts[1].type, "image");
+  assert.deepEqual(result.artifacts[1].contentBytes, imageBytes);
   assert.equal(capturedRequests.length, 2);
   assert.equal(capturedRequests[0].url, "https://media.example.invalid/images/generations");
   assert.deepEqual(JSON.parse(capturedRequests[0].init.body ?? "{}"), {
@@ -545,14 +546,14 @@ test("live media vendor transport calls OpenAI Images and stores b64 artifacts",
 
   assert.equal(result.status, "succeeded");
   assert.equal(result.errorCode, undefined);
-  assert.equal(result.artifacts.length, 3);
-  assert.match(result.artifacts[0].content ?? "", /Transport: live/);
-  assert.equal(result.artifacts[1].type, "json");
-  assert.match(result.artifacts[1].content ?? "", /live_openai_image_generate/);
-  assert.doesNotMatch(result.artifacts[1].content ?? "", /test-key/);
-  assert.equal(result.artifacts[2].type, "image");
-  assert.equal(result.artifacts[2].contentType, "image/png");
-  assert.deepEqual(result.artifacts[2].contentBytes, imageBytes);
+  assert.equal(result.artifacts.length, 2);
+  assert.ok(result.artifacts.every(artifact => artifact.type !== "markdown"));
+  assert.equal(result.artifacts[0].type, "json");
+  assert.match(result.artifacts[0].content ?? "", /live_openai_image_generate/);
+  assert.doesNotMatch(result.artifacts[0].content ?? "", /test-key/);
+  assert.equal(result.artifacts[1].type, "image");
+  assert.equal(result.artifacts[1].contentType, "image/png");
+  assert.deepEqual(result.artifacts[1].contentBytes, imageBytes);
   assert.equal(capturedRequests.length, 1);
   assert.equal(capturedRequests[0].url, "https://api.openai.test/v1/images/generations");
   assert.equal(capturedRequests[0].init.headers.authorization, "Bearer test-key");
@@ -711,14 +712,15 @@ test("live media vendor transport polls Seedance task status and downloads final
 
   assert.equal(result.status, "succeeded");
   assert.equal(result.errorCode, undefined);
-  assert.equal(result.artifacts.length, 3);
-  assert.match(result.artifacts[0].content ?? "", /Transport: live/);
-  assert.equal(result.artifacts[1].type, "json");
-  assert.match(result.artifacts[1].content ?? "", /live_seedance_video_generate_final/);
-  assert.doesNotMatch(result.artifacts[1].content ?? "", /test-key/);
-  assert.equal(result.artifacts[2].type, "video");
-  assert.equal(result.artifacts[2].contentType, "video/mp4");
-  assert.deepEqual(result.artifacts[2].contentBytes, videoBytes);
+  assert.equal(result.artifacts.length, 2);
+  assert.ok(result.artifacts.every(artifact => artifact.type !== "markdown"));
+  assert.equal(result.artifacts[0].type, "json");
+  assert.match(result.artifacts[0].content ?? "", /live_seedance_video_generate_final/);
+  assert.doesNotMatch(result.artifacts[0].content ?? "", /test-key/);
+  assert.equal(JSON.parse(result.artifacts[0].content).response.id, "task_123");
+  assert.equal(result.artifacts[1].type, "video");
+  assert.equal(result.artifacts[1].contentType, "video/mp4");
+  assert.deepEqual(result.artifacts[1].contentBytes, videoBytes);
   assert.equal(statusPollCount, 2);
   assert.equal(capturedRequests[0].url, "https://media.example.invalid/contents/generations/tasks");
   assert.equal(capturedRequests[0].init.headers.authorization, "Bearer test-key");
@@ -890,8 +892,8 @@ test("live media vendor transport rejects Seedance success without final video",
   });
 
   assert.equal(result.status, "failed");
-  assert.equal(result.errorCode, "invalid_request");
-  assert.match(result.errorMessage ?? "", /final video URL|recognizable status/);
+  assert.equal(result.errorCode, "media_result_unavailable");
+  assert.match(result.errorMessage ?? "", /final video URL/);
   assert.deepEqual(result.artifacts, []);
 });
 

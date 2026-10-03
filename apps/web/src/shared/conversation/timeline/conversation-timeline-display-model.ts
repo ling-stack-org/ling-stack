@@ -2,10 +2,12 @@ import type {
   ConversationTimelineDiagnosticItem,
   ConversationTimelineItem,
   ConversationTimelineSubAgentItem,
+  TimelineRunLifecycle,
 } from "@ling-stack/conversation-ui-core";
 import type { ConversationDisclosureState } from "../view-store/conversation-view-store.js";
 import { shouldDefaultExpandConversationTimelineSubAgent } from "./conversation-timeline-sub-agent-disclosure.js";
 import { conversationTimelineSubAgentDisclosureKey } from "./conversation-timeline-view-retain-keys.js";
+import { projectTimelineProcessSections, timelineItemNeedsVisibleAttention, type TimelineProcessGroup, type TimelineProcessSection } from "./timeline-process-presentation.js";
 
 interface ConversationTimelineDisplayRowBase {
   readonly rowKey: string;
@@ -44,12 +46,29 @@ export interface ConversationTimelineSubAgentChildDisplayRow extends Conversatio
   readonly childCount: number;
 }
 
+export interface ConversationTimelineProcessHeaderDisplayRow extends ConversationTimelineDisplayRowBase {
+  readonly kind: "processHeader";
+  readonly depth: 0 | 1;
+  readonly process: TimelineProcessGroup;
+  readonly groupId: string;
+  readonly expanded: boolean;
+  readonly parentSubAgentId?: string;
+}
+
 export type ConversationTimelineDisplayRow =
   | ConversationTimelineItemDisplayRow
   | ConversationTimelineSubAgentHeaderDisplayRow
-  | ConversationTimelineSubAgentChildDisplayRow;
+  | ConversationTimelineSubAgentChildDisplayRow
+  | ConversationTimelineProcessHeaderDisplayRow;
 
 export type ConversationTimelineDisplaySegment =
+  | {
+      readonly kind: "processGroup";
+      readonly headerRow: ConversationTimelineProcessHeaderDisplayRow;
+      readonly childSegments: readonly ConversationTimelineDisplaySegment[];
+      readonly groupId: string;
+      readonly expanded: boolean;
+    }
   | {
       readonly kind: "row";
       readonly row: ConversationTimelineItemDisplayRow | ConversationTimelineSubAgentChildDisplayRow;
@@ -92,6 +111,7 @@ export interface ConversationTimelineDisplayModel {
 export function projectConversationTimelineDisplayModel(
   items: readonly ConversationTimelineItem[],
   disclosureById: ReadonlyMap<string, ConversationDisclosureState>,
+  runLifecycles?: ReadonlyMap<string, TimelineRunLifecycle>,
 ): ConversationTimelineDisplayModel {
   const rows: ConversationTimelineDisplayRow[] = [];
   const segments: ConversationTimelineDisplaySegment[] = [];
@@ -147,7 +167,28 @@ export function projectConversationTimelineDisplayModel(
       groupId: batchDisclosure.groupId, expanded: batchDisclosure.expanded };
   };
 
-  for (const item of items) {
+  const projectScope = (sections: readonly TimelineProcessSection[], visible: boolean, path: readonly string[], parent?: ParentAgent): ConversationTimelineDisplaySegment[] =>
+    sections.map(section => {
+      if (section.kind === "item") return projectItem(section.item, visible, path, parent);
+      const process = section.group;
+      const expanded = process.mustExpand || resolveDisclosureExpanded(process.id, process.revisionKey, process.defaultExpanded, disclosureById);
+      const groupId = `conversation-process-detail-${encodeURIComponent(process.id)}`;
+      const headerRow: ConversationTimelineProcessHeaderDisplayRow = {
+        kind: "processHeader", item: process.items[0]!, process, expanded, groupId,
+        rowKey: process.id, depth: parent ? 1 : 0, parentSubAgentId: parent?.item.id,
+      };
+      if (visible) rows.push(headerRow);
+      potentialRowCount += 1;
+      const childSegments = process.items.map(item => projectItem(item, visible && expanded, [...path, process.id], parent));
+      return { kind: "processGroup", headerRow, groupId, expanded, childSegments };
+    });
+
+  for (const section of projectTimelineProcessSections(items, "root", runLifecycles)) {
+    if (section.kind === "process") {
+      segments.push(...projectScope([section], true, []));
+      continue;
+    }
+    const item = section.item;
     if (item.kind !== "subAgentActivity") {
       segments.push(projectItem(item, true, []));
       continue;
@@ -164,11 +205,13 @@ export function projectConversationTimelineDisplayModel(
       expanded,
     };
     rows.push(headerRow);
+    const childSections = projectTimelineProcessSections(item.childItems, item.id, runLifecycles);
     const parent: ParentAgent = { item, groupId, childIndex: 0,
-      childCount: item.childItems.reduce((count, child) => count + visibleItemCount(child, disclosureById), 0) };
-    const childSegments = item.childItems.map((child) => projectItem(
-      child, expanded, [conversationTimelineSubAgentDisclosureKey(item.id)], parent,
-    ));
+      childCount: childSections.reduce((count, section) => count + (section.kind === "item"
+        ? visibleItemCount(section.item, disclosureById)
+        : section.group.mustExpand || resolveDisclosureExpanded(section.group.id, section.group.revisionKey, section.group.defaultExpanded, disclosureById)
+          ? section.group.items.reduce((sum, child) => sum + visibleItemCount(child, disclosureById), 0) : 0), 0) };
+    const childSegments = projectScope(childSections, expanded, [conversationTimelineSubAgentDisclosureKey(item.id)], parent);
     segments.push({ kind: "subAgentGroup", item, headerRow, childSegments, groupId, expanded });
     potentialRowCount += 1;
     registerLocation(locationByItemId, item.id, headerRow.rowKey, true);
@@ -186,7 +229,8 @@ function resolveSubAgentExpanded(
   disclosureById: ReadonlyMap<string, ConversationDisclosureState>,
 ): boolean {
   return resolveDisclosureExpanded(conversationTimelineSubAgentDisclosureKey(item.id),
-    String(item.revision), shouldDefaultExpandConversationTimelineSubAgent(item), disclosureById);
+    String(item.revision), shouldDefaultExpandConversationTimelineSubAgent(item), disclosureById) ||
+    item.childItems.some(timelineItemNeedsVisibleAttention);
 }
 
 function resolveDisclosureExpanded(

@@ -43,7 +43,8 @@ test("Quick Theme Studio generates and installs a token-only theme without gener
   await page.screenshot({ animations: "disabled", path: `${evidenceDirectory}1440x960-ling-light-quick-theme.png` });
 
   await studio.getByRole("button", { name: "Install and use" }).click();
-  await expect(page.getByText("Theme installed and applied")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Notifications" })
+    .getByText("Theme installed and applied", { exact: true })).toBeVisible();
   const stored = await page.evaluate(async () => {
     return await new Promise<{ artwork: unknown; assetCount: number; generationMode: unknown; profileId: unknown }>((resolve, reject) => {
       const request = indexedDB.open("ling-stack-ui2");

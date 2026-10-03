@@ -68,6 +68,7 @@ export interface MediaRouteControl {
   failNextList: boolean;
   failNextCreate: boolean;
   listDelayMs: number;
+  listGate?: Promise<void>;
   createDelayMs: number;
   listCalls: number;
   runCalls: Record<string, number>;
@@ -83,6 +84,7 @@ export async function installMediaScenarioRoutes(page: Page, control: MediaRoute
     const path = new URL(request.url()).pathname;
     if (request.method() === "GET" && path.endsWith("/media-jobs")) {
       control.listCalls += 1;
+      if (control.listGate) await control.listGate;
       if (control.listDelayMs) await new Promise((resolve) => setTimeout(resolve, control.listDelayMs));
       if (control.failNextList) {
         control.failNextList = false;

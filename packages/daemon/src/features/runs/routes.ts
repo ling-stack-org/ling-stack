@@ -1,10 +1,9 @@
-import { readFileSync, statSync } from "node:fs";
+import { closeSync, constants, createReadStream, fstatSync, openSync, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   approvalStatuses,
   approvalToolDecisions,
   defaultApprovalToolDecisions,
-  syncExternalWorkActionForApproval,
   type ApprovalPolicyUpdateInput,
   type ApprovalRequest,
   type ApprovalStatus,
@@ -23,17 +22,15 @@ import { HttpError } from "../../errors.js";
 import { readJsonBody, readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
 import { setCorsHeaders, writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray } from "../../shared/validation.js";
-import {
-  appendApprovalDecisionEvent,
-  appendApprovalResolvedControlPlaneEvent,
-  expireStaleApproval,
-  expireStalePendingApprovals,
-} from "./approvals.js";
+import { expireStaleApproval, expireStalePendingApprovals } from "./approvals.js";
+import { reconcileApprovalPostCommitEffects } from "./approval-postcommit-effects.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { buildArtifactPreview } from "../previews/content-preview.js";
-import { inferArtifactContentType, resolveArtifactContentPath } from "./artifacts.js";
+import { inferArtifactContentType, MAX_ARTIFACT_RANGE_BYTES, MAX_ARTIFACT_TRANSFER_BYTES, readArtifactContentRange, resolveArtifactContentPath } from "./artifacts.js";
+import { listExecutionActions } from "./execution-actions.js";
 import { parseRunRequest, type RunRequest } from "./schemas.js";
 import { isApprovalCommandRuleProposalCurrent } from "./approval-command-rules.js";
+import { projectPublicRunEventEnvelope, toPublicArtifactMetadata } from "./public-artifacts.js";
 
 export async function handleRun(
   request: IncomingMessage,
@@ -135,7 +132,7 @@ export function handleGetRunEvents(
     return;
   }
 
-  const events = store.listEvents(runId, { afterSeq, limit });
+  const events = store.listEvents(runId, { afterSeq, limit }).map(projectPublicRunEventEnvelope);
   const lastEvent = events.at(-1);
   writeJson(response, 200, {
     runId,
@@ -161,7 +158,7 @@ export function handleListRunArtifacts(
 
   writeJson(response, 200, {
     runId,
-    artifacts: store.listArtifacts(runId),
+    artifacts: store.listArtifacts(runId).map(toPublicArtifactMetadata),
   });
 }
 
@@ -171,7 +168,9 @@ export function handleGetArtifact(
   storeRegistry: RunStoreRegistry,
   artifactId: string,
 ): void {
-  const lookup = storeRegistry.findStoreForArtifact(artifactId, url.searchParams.get("cwd") ?? undefined);
+  const cwd = requireArtifactWorkspaceCwd(response, url);
+  if (!cwd) return;
+  const lookup = storeRegistry.findStoreForArtifact(artifactId, cwd);
   if (!lookup) {
     writeJson(response, 404, {
       error: "artifact_not_found",
@@ -179,9 +178,13 @@ export function handleGetArtifact(
     });
     return;
   }
+  if (!authorizeArtifactLineage(lookup.store, lookup.artifact, url, cwd)) {
+    writeJson(response, 404, { error: "artifact_not_found", message: "Artifact was not found in the requested workspace lineage." });
+    return;
+  }
 
   writeJson(response, 200, {
-    artifact: lookup.artifact,
+    artifact: toPublicArtifactMetadata(lookup.artifact),
   });
 }
 
@@ -191,12 +194,33 @@ export function handleGetArtifactContent(
   storeRegistry: RunStoreRegistry,
   artifactId: string,
 ): void {
-  const lookup = storeRegistry.findStoreForArtifact(artifactId, url.searchParams.get("cwd") ?? undefined);
+  const cwd = requireArtifactWorkspaceCwd(response, url);
+  if (!cwd) return;
+  let offset: number | undefined;
+  let requestedLimit: number | undefined;
+  try {
+    offset = readOptionalIntegerQuery(url, "offset", 0);
+    requestedLimit = readOptionalIntegerQuery(url, "limit", 1);
+    if ((offset !== undefined || requestedLimit !== undefined) && (requestedLimit ?? MAX_ARTIFACT_RANGE_BYTES) > MAX_ARTIFACT_RANGE_BYTES) {
+      throw new Error(`limit must be less than or equal to ${MAX_ARTIFACT_RANGE_BYTES}`);
+    }
+  } catch (error) {
+    writeJson(response, 416, {
+      error: "artifact_range_invalid",
+      message: error instanceof Error ? error.message : String(error),
+    });
+    return;
+  }
+  const lookup = storeRegistry.findStoreForArtifact(artifactId, cwd);
   if (!lookup) {
     writeJson(response, 404, {
       error: "artifact_not_found",
       message: "Artifact was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
     });
+    return;
+  }
+  if (!authorizeArtifactLineage(lookup.store, lookup.artifact, url, cwd)) {
+    writeJson(response, 404, { error: "artifact_not_found", message: "Artifact was not found in the requested workspace lineage." });
     return;
   }
 
@@ -221,18 +245,70 @@ export function handleGetArtifactContent(
       return;
     }
 
-    const content = readFileSync(artifactPath);
+    const ranged = offset !== undefined || requestedLimit !== undefined
+      ? readArtifactContentRange(artifactPath, offset ?? 0, requestedLimit ?? MAX_ARTIFACT_RANGE_BYTES)
+      : undefined;
+    if (!ranged) {
+      if (stats.size > MAX_ARTIFACT_TRANSFER_BYTES) {
+        writeJson(response, 413, {
+          error: "artifact_transfer_budget_exceeded",
+          message: `Artifact is ${stats.size} bytes; request a range of at most ${MAX_ARTIFACT_RANGE_BYTES} bytes.`,
+        });
+        return;
+      }
+      // Full-size media and downloads retain their existing HTTP contract, but
+      // must not allocate the entire artifact in the daemon's event loop.
+      const fd = openSync(artifactPath, constants.O_RDONLY | constants.O_NOFOLLOW);
+      let sizeBytes: number;
+      try {
+        const opened = fstatSync(fd);
+        if (!opened.isFile()) throw new Error(`Artifact content is not a file: ${lookup.artifact.id}`);
+        sizeBytes = opened.size;
+        if (sizeBytes === 0) {
+          closeSync(fd);
+          setCorsHeaders(response);
+          response.writeHead(200, {
+            "Content-Type": lookup.artifact.contentType ?? inferArtifactContentType(lookup.artifact),
+            "Content-Length": "0",
+            "X-Content-Type-Options": "nosniff",
+          });
+          response.end();
+          return;
+        }
+        const stream = createReadStream(artifactPath, { fd, autoClose: true, end: sizeBytes - 1, highWaterMark: 64 * 1024 });
+        stream.once("error", () => response.destroy());
+        response.once("close", () => stream.destroy());
+        setCorsHeaders(response);
+        response.writeHead(200, {
+          "Content-Type": lookup.artifact.contentType ?? inferArtifactContentType(lookup.artifact),
+          "Content-Length": String(sizeBytes),
+          "X-Content-Type-Options": "nosniff",
+        });
+        stream.pipe(response);
+        return;
+      } catch (error) {
+        closeSync(fd);
+        throw error;
+      }
+    }
+    const content = ranged.content;
     setCorsHeaders(response);
-    response.writeHead(200, {
+    response.writeHead(ranged.partial ? 206 : 200, {
       "Content-Type": lookup.artifact.contentType ?? inferArtifactContentType(lookup.artifact),
       "Content-Length": String(content.byteLength),
+      ...(ranged.content.byteLength > 0 ? {
+        "Accept-Ranges": "bytes",
+        "Content-Range": `bytes ${ranged.offset}-${ranged.endExclusive - 1}/${ranged.sizeBytes}`,
+      } : {}),
       "X-Content-Type-Options": "nosniff",
     });
     response.end(content);
   } catch (error) {
-    writeJson(response, 404, {
-      error: "artifact_content_not_found",
-      message: error instanceof Error ? error.message : String(error),
+    const message = error instanceof Error ? error.message : String(error);
+    const invalidRange = message === "Artifact range offset exceeds content size.";
+    writeJson(response, invalidRange ? 416 : 404, {
+      error: invalidRange ? "artifact_range_invalid" : "artifact_content_not_found",
+      message,
     });
   }
 }
@@ -243,12 +319,18 @@ export function handleGetArtifactPreview(
   storeRegistry: RunStoreRegistry,
   artifactId: string,
 ): void {
-  const lookup = storeRegistry.findStoreForArtifact(artifactId, url.searchParams.get("cwd") ?? undefined);
+  const cwd = requireArtifactWorkspaceCwd(response, url);
+  if (!cwd) return;
+  const lookup = storeRegistry.findStoreForArtifact(artifactId, cwd);
   if (!lookup) {
     writeJson(response, 404, {
       error: "artifact_not_found",
       message: "Artifact was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
     });
+    return;
+  }
+  if (!authorizeArtifactLineage(lookup.store, lookup.artifact, url, cwd)) {
+    writeJson(response, 404, { error: "artifact_not_found", message: "Artifact was not found in the requested workspace lineage." });
     return;
   }
 
@@ -286,6 +368,58 @@ function artifactContentUrl(url: URL, artifactId: string): string {
     query.set("cwd", previewCwd);
   }
   return `${url.origin}/artifacts/${encodeURIComponent(artifactId)}/content${query.size > 0 ? `?${query.toString()}` : ""}`;
+}
+
+function requireArtifactWorkspaceCwd(response: ServerResponse, url: URL): string | undefined {
+  const cwd = url.searchParams.get("cwd")?.trim();
+  if (!cwd) {
+    writeJson(response, 400, { error: "bad_request", message: "cwd query parameter is required for artifact access" });
+    return undefined;
+  }
+  return cwd;
+}
+
+/**
+ * Artifact ids are opaque references, not workspace capabilities. Requiring
+ * the explicit workspace and checking every requested lineage prevents a
+ * guessed id from resolving through another open workspace store.
+ */
+function authorizeArtifactLineage(store: RunStore, artifact: ReturnType<RunStore["getArtifact"]>, url: URL, cwd: string): boolean {
+  if (!artifact || !workspaceContains(store.paths.cwd, cwd)) return false;
+  const requestedRunId = url.searchParams.get("runId")?.trim();
+  const requestedParticipantId = url.searchParams.get("participantId")?.trim();
+  const requestedWorkflowStepId = url.searchParams.get("workflowStepId")?.trim();
+  const requestedActionId = url.searchParams.get("actionId")?.trim();
+  if (requestedRunId && artifact.runId !== requestedRunId) return false;
+  if (!artifact.runId) return !requestedParticipantId && !requestedWorkflowStepId && !requestedActionId;
+  const run = store.getRun(artifact.runId);
+  if (!run || !workspaceContains(store.paths.cwd, run.cwd) || !workspaceContains(store.paths.cwd, cwd)) return false;
+  if (requestedParticipantId && run.teammateId !== requestedParticipantId) {
+    const action = listExecutionActions(store, { runId: run.id, complete: true }).find((candidate) =>
+      candidate.participantId === requestedParticipantId && [...candidate.previewArtifactIds, ...candidate.resultArtifactIds].includes(artifact.id));
+    if (!action) return false;
+  }
+  if (requestedWorkflowStepId && run.workflowStepId !== requestedWorkflowStepId) {
+    const action = listExecutionActions(store, { runId: run.id, complete: true }).find((candidate) =>
+      candidate.workflowStepId === requestedWorkflowStepId && [...candidate.previewArtifactIds, ...candidate.resultArtifactIds].includes(artifact.id));
+    if (!action) return false;
+  }
+  if (requestedActionId) {
+    const action = listExecutionActions(store, { runId: run.id, complete: true }).find((candidate) =>
+      candidate.id === requestedActionId && [...candidate.previewArtifactIds, ...candidate.resultArtifactIds].includes(artifact.id));
+    if (!action) return false;
+  }
+  return true;
+}
+
+function resolveWorkspacePath(value: string): string {
+  return value.replace(/\\/gu, "/").replace(/\/+$/u, "");
+}
+
+function workspaceContains(root: string, candidate: string): boolean {
+  const normalizedRoot = resolveWorkspacePath(root);
+  const normalizedCandidate = resolveWorkspacePath(candidate);
+  return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
 }
 
 export function handleCancelRun(
@@ -456,7 +590,22 @@ export async function handleApprovalItem(
   }
 
   if (!route.action && request.method === "GET") {
-    writeJson(response, 200, { approval });
+    writeJson(response, 200, {
+      approval,
+      ...(typeof store.listApprovalPostCommitEffects === "function"
+        ? { postCommitEffects: store.listApprovalPostCommitEffects({ approvalId: approval.id }).map((effect) => ({
+            approvalId: effect.approvalId,
+            effectKind: effect.effectKind,
+            ownerKind: effect.ownerKind,
+            ownerId: effect.ownerId,
+            status: effect.status,
+            revision: effect.revision,
+            attempts: effect.attempts,
+            lastErrorCode: effect.lastErrorCode,
+            updatedAt: effect.updatedAt,
+          })) }
+        : {}),
+    });
     return;
   }
 
@@ -508,25 +657,47 @@ export async function handleApprovalItem(
       writeJson(response, 404, { error: "approval_not_found", message: `Approval request not found: ${route.approvalId}` });
       return;
     }
-    appendApprovalDecisionEvent(store, updated);
-    const mediaJob = onApprovalResolved?.({ cwd, store, approval: updated, now });
-    appendApprovalResolvedControlPlaneEvent(
-      store,
-      controlPlaneEvents,
-      cwd,
-      updated,
-      approval.status,
-      updated.status === "approved" ? "approved" : "denied",
-      now,
-    );
-    syncExternalWorkActionForApproval(store, updated, now);
-    writeJson(response, 200, { approval: updated, ...(mediaJob ? { mediaJob } : {}) });
+    let postCommit: ReturnType<typeof reconcileApprovalPostCommitEffects> = { deferred: true };
+    try {
+      postCommit = reconcileApprovalPostCommitEffects({
+        store, approval: updated, cwd, now, controlPlaneEvents,
+        onOwnerResolved: () => onApprovalResolved?.({ cwd, store, approval: updated, now }),
+      });
+    } catch {
+      // The approval decision has already committed. A read/claim failure in
+      // the reconciliation ledger must never turn it into a false HTTP 400.
+    }
+    let outstandingEffects: readonly { approvalId: string; effectKind: string; ownerKind?: string; ownerId?: string; status: string; revision: number }[] = [];
+    try {
+      if (typeof store.listApprovalPostCommitEffects === "function") {
+        outstandingEffects = store.listApprovalPostCommitEffects({ approvalId: updated.id })
+          .filter((effect) => effect.status !== "completed")
+          .map((effect) => ({
+            approvalId: effect.approvalId,
+            effectKind: effect.effectKind,
+            ownerKind: effect.ownerKind,
+            ownerId: effect.ownerId,
+            status: effect.status,
+            revision: effect.revision,
+          }));
+      }
+    } catch { /* The durable ledger remains available to startup recovery. */ }
+    writeJson(response, 200, {
+      approval: updated,
+      ...(postCommit.mediaJob ? { mediaJob: postCommit.mediaJob } : {}),
+      ...(postCommit.deferred ? { postCommit: {
+        status: "deferred", code: "approval_postcommit_reconciliation_required",
+        ...(outstandingEffects.length ? { effects: outstandingEffects } : {}),
+      } } : {}),
+    });
   } catch (error) {
     const commandRuleConflict = error instanceof Error && error.message.includes("command rule");
-    writeJson(response, commandRuleConflict ? 409 : 400, {
+    const staleExecution = error instanceof Error && error.message.includes("Approval execution no longer active");
+    writeJson(response, commandRuleConflict || staleExecution ? 409 : 400, {
       error: error instanceof Error && error.message.includes("not pending")
         ? "approval_not_pending"
-        : commandRuleConflict ? "approval_command_rule_conflict" : "bad_request",
+        : staleExecution ? "approval_execution_stale"
+          : commandRuleConflict ? "approval_command_rule_conflict" : "bad_request",
       message: error instanceof Error ? error.message : String(error),
     });
   }

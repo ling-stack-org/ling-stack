@@ -213,6 +213,7 @@ export function TeammatePrivateChatFeed({
     surface: "teammate_direct",
     threadId: canonical.threadId ?? threadId,
     items: timelineItems,
+    runLifecycles: new Map((canonical.runs ?? []).map(run => [run.id, run])),
     diagnosticPlacements: resolveTeammatePrivateDiagnosticPlacements({
       items: timelineItems, scope: privateScope, messages: visibleMessages,
       canonical: canonical.projection, canonicalMessageIds: canonical.messageIds,
@@ -228,7 +229,7 @@ export function TeammatePrivateChatFeed({
       sourceRefs: [],
     } : null,
     canonicalRevision: timelineItems.reduce((max, item) => Math.max(max, item.revision), 0),
-  }), [activeMessage?.linkedRunId, canonical.messageIds, canonical.projection, canonical.threadId, cwd, privateScope, threadId, timelineItems, visibleMessages]);
+  }), [activeMessage?.linkedRunId, canonical.messageIds, canonical.projection, canonical.runs, canonical.threadId, cwd, privateScope, threadId, timelineItems, visibleMessages]);
   const messageChromeOwnerIds = useMemo(
     () => timelineMessageChromeOwnerIds(timelineSnapshot.items),
     [timelineSnapshot.items],
@@ -249,7 +250,29 @@ export function TeammatePrivateChatFeed({
     }, onOpenFiles);
   }
 
-  function renderPrivateMessageRow(message: TeammateDirectMessage, body: React.ReactNode, ownsMessageChrome: boolean): React.JSX.Element {
+  function renderPrivateMessageActions(message: TeammateDirectMessage, copyText: string): React.ReactNode {
+    const projection = projectionByMessageId.get(message.id);
+    const messageFeedback = messageController.feedbackById[message.id];
+    const taskCreateBusy = taskCreateBusyKeys.has(`message:${message.id}`);
+    const actionMessage = projection?.userGuidance ? { ...message, body: projection.body } : message;
+    return <MessageActionBar surface="teammate_direct" className="teammate-message-actions" copiedLabel={t("Copied")} actions={[
+      { id: "copy", kind: "copy", label: t("Copy message"), icon: <Copy size={14} />, onClick: () => onCopyMessageText(copyText) },
+      ...(message.authorType === "local-user" && message.id === messageController.latestEditableMessageId ? [{
+        id: "edit", kind: "edit_latest" as const, label: t("Edit message"), icon: <Pencil size={14} />,
+        onClick: () => messageController.beginEdit(message.id),
+      }] : []),
+      ...(message.authorType === "ai-teammate" ? [
+        { id: "like", kind: "like" as const, label: t("Like response"), icon: <ThumbsUp size={14} />, selected: messageFeedback === "up", onClick: () => messageController.toggleFeedback(message.id, "up") },
+        { id: "dislike", kind: "dislike" as const, label: t("Dislike response"), icon: <ThumbsDown size={14} />, selected: messageFeedback === "down", onClick: () => messageController.toggleFeedback(message.id, "down") },
+      ] : []),
+      { id: "create-task", kind: "create_task", label: t("Create task"),
+        icon: taskCreateBusy ? <Loader2 className="spin" size={14} /> : <Plus size={14} />,
+        disabled: taskCreateBusy || taskChannelOptions.length === 0, loading: taskCreateBusy,
+        onClick: () => void onCreateTaskFromMessage(actionMessage) },
+    ]} />;
+  }
+
+  function renderPrivateMessageRow(message: TeammateDirectMessage, body: React.ReactNode, ownsMessageChrome: boolean, ownsIdentity: boolean): React.JSX.Element {
     const executionMessage = executionMessageById.get(message.id);
     const messageGeneratedMedia = executionMessage ? privateGeneratedMediaForMessage(generatedMedia, executionMessage) : [];
     const projection = projectionByMessageId.get(message.id) ?? projectTeammatePrivateMessage({
@@ -260,42 +283,20 @@ export function TeammatePrivateChatFeed({
       t,
     });
     const messageUsedMemoryEvents = filterUsedMemoryEventsByResponse(usedMemoryEvents, message.id);
-    const messageFeedback = messageController.feedbackById[message.id];
-    const taskCreateKey = `message:${message.id}`;
-    const taskCreateBusy = taskCreateBusyKeys.has(taskCreateKey);
     const taskCreateError = taskCreateErrors[message.id];
     const editing = ownsMessageChrome && messageController.editingMessageId === message.id;
-    const actionMessage = projection.userGuidance ? { ...message, body: projection.body } : message;
     const messageFileRefs = message.fileRefs ?? [];
     const messageLinkPreviews = (message.linkPreviewIds ?? [])
       .map((id) => directLinkPreviewById.get(id))
       .filter((preview): preview is TeammateDirectLinkPreview => preview?.status === "ready" &&
         preview.teammateId === teammate.id && preview.threadId === message.threadId &&
         (!preview.messageId || preview.messageId === message.id));
-    const feedbackActions = message.authorType === "ai-teammate" ? [
-      {
-        id: "like",
-        kind: "like" as const,
-        label: t("Like response"),
-        icon: <ThumbsUp size={14} />,
-        selected: messageFeedback === "up",
-        onClick: () => messageController.toggleFeedback(message.id, "up"),
-      },
-      {
-        id: "dislike",
-        kind: "dislike" as const,
-        label: t("Dislike response"),
-        icon: <ThumbsDown size={14} />,
-        selected: messageFeedback === "down",
-        onClick: () => messageController.toggleFeedback(message.id, "down"),
-      },
-    ] : [];
-
     return (
       <MessageRow
         surface="teammate_direct"
         className={`teammate-message-row ${projection.authorType}${projection.blocked ? " blocked" : ""}`}
         authorType={projection.authorType}
+        identityContinuation={projection.authorType === "ai-teammate" && !ownsIdentity}
         tone={projection.blocked ? "chat-blocked" : projection.authorType === "system" ? "system" : "document"}
         avatar={projection.authorType === "ai-teammate"
           ? <TeammateAvatarView teammate={teammate} cwd={cwd} compact />
@@ -422,39 +423,8 @@ export function TeammatePrivateChatFeed({
             ) : null}
           </>
         ) : null}
-        actionsNode={ownsMessageChrome && !editing && !projection.pendingAiReply && !projection.blocked ? (
-          <MessageActionBar
-            surface="teammate_direct"
-            className="teammate-message-actions"
-            copiedLabel={t("Copied")}
-            actions={[
-              {
-                id: "copy",
-                kind: "copy",
-                label: t("Copy message"),
-                icon: <Copy size={14} />,
-                onClick: () => onCopyMessageText(projection.copyBody),
-              },
-              ...(message.authorType === "local-user" && message.id === messageController.latestEditableMessageId ? [{
-                id: "edit",
-                kind: "edit_latest" as const,
-                label: t("Edit message"),
-                icon: <Pencil size={14} />,
-                onClick: () => messageController.beginEdit(message.id),
-              }] : []),
-              ...feedbackActions,
-              {
-                id: "create-task",
-                kind: "create_task" as const,
-                label: t("Create task"),
-                icon: taskCreateBusy ? <Loader2 className="spin" size={14} /> : <Plus size={14} />,
-                disabled: taskCreateBusy || taskChannelOptions.length === 0,
-                loading: taskCreateBusy,
-                onClick: () => void onCreateTaskFromMessage(actionMessage),
-              },
-            ]}
-          />
-        ) : null}
+        actionsNode={message.authorType === "local-user" && ownsMessageChrome && !editing && !projection.pendingAiReply && !projection.blocked
+          ? renderPrivateMessageActions(message, projection.copyBody) : null}
       />
     );
   }
@@ -487,10 +457,18 @@ export function TeammatePrivateChatFeed({
             itemLocatorRef: timelineItemLocatorRef,
             onDisclosureIntent: onCancelPrivateFeedAutoFollow,
             onOpenSourceRef: handleOpenTimelineSourceRef,
-            renderMessageChrome: (messageItem, body) => {
+            onOpenReview,
+            renderResponseActions: (response, copyText) => {
+              const itemId = response.message?.itemId;
+              const messageId = itemId ? canonical.messageIds?.get(itemId) ?? itemId : undefined;
+              const message = visibleMessages.find((candidate) => candidate.id === messageId);
+              if (!message) return undefined;
+              return renderPrivateMessageActions(message, copyText);
+            },
+            renderMessageChrome: (messageItem, body, presentation) => {
               const messageId = messageItem.itemId ? canonical.messageIds?.get(messageItem.itemId) ?? messageItem.itemId : undefined;
               const message = visibleMessages.find((candidate) => candidate.id === messageId);
-              return message ? renderPrivateMessageRow(message, body, messageChromeOwnerIds.has(messageItem.id)) : body;
+              return message ? renderPrivateMessageRow(message, body, messageChromeOwnerIds.has(messageItem.id), presentation.ownsIdentity) : body;
             },
             ariaLabel: t("Private conversation transcript"),
           }).node}

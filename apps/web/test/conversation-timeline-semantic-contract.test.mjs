@@ -29,6 +29,26 @@ test("terminal report renders detailed result sections and Dock keeps viewer sem
   assert.match(dockWorkspaceFile, /data-workspace-viewer-kind="artifact"/u);
 });
 
+test("terminal report formats participant narration and separates mixed metadata from file links", async () => {
+  const source = await readFile(terminalReportSourceUrl, "utf8");
+  assert.match(source, /<MessageBodyRenderer\s+className="conversation-timeline-terminal-entry-summary"\s+text=\{summary\}/u);
+  assert.match(source, /<details className="conversation-timeline-terminal-entry-sources"/u);
+  assert.match(source, /<summary>\{t\("Sources"\)\} · \{lineage\.length\}<\/summary>/u);
+  assert.match(source, /terminalReportSourceRefGroups\(refs\)/u);
+  assert.match(source, /className="conversation-timeline-terminal-lineage-ref"/u);
+  assert.match(source, /text=\{summary\}\s+cwd=\{cwd\}/u);
+});
+
+test("status-only terminal reports have no empty disclosure or duplicate success chrome", async () => {
+  const source = await readFile(terminalReportSourceUrl, "utf8");
+  assert.match(source, /const compactStatusOnly = !hasDetail && !item\.summary\.trim\(\);/u);
+  assert.match(source, /compact=\{compactStatusOnly\}/u);
+  assert.match(source, /meta=""/u);
+  assert.doesNotMatch(source, /MessageActionBar/u, "TerminalReport must not own a second response action bar");
+  assert.match(source, /detail=\{hasDetail \|\| hasNarration && Boolean\(item\.summary\) \? <TerminalReportDetail/u);
+  assert.match(source, /item\.references\.some\(\(ref\) => Boolean\(ref\.path \|\| ref\.label\)\)/u);
+});
+
 test("every typed row exposes the stable renderer key semantic attribute", async () => {
   const [timeline, factRow, message] = await Promise.all([
     readFile(timelineSourceUrl, "utf8"),

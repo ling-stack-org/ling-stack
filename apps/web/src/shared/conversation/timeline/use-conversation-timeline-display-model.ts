@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useMemo, useSyncExternalStore } from "react";
-import type { ConversationTimelineItem, ConversationTimelineSubAgentItem } from "@ling-stack/conversation-ui-core";
+import type { ConversationTimelineItem, ConversationTimelineSubAgentItem, TimelineRunLifecycle } from "@ling-stack/conversation-ui-core";
 import type { ConversationDisclosureState } from "../view-store/conversation-view-store.js";
 import { useConversationViewStore } from "../view-store/conversation-view-provider.js";
 import { shouldDefaultExpandConversationTimelineSubAgent } from "./conversation-timeline-sub-agent-disclosure.js";
 import { conversationTimelineSubAgentDisclosureKey } from "./conversation-timeline-view-retain-keys.js";
+import { projectTimelineProcessSections } from "./timeline-process-presentation.js";
 import {
   projectConversationTimelineDisplayModel,
   type ConversationTimelineDisplayModel,
@@ -25,6 +26,7 @@ export interface ConversationTimelineDisplayController {
  */
 export function useConversationTimelineDisplayModel(
   items: readonly ConversationTimelineItem[],
+  runLifecycles?: ReadonlyMap<string, TimelineRunLifecycle>,
 ): ConversationTimelineDisplayController {
   const store = useConversationViewStore();
   const subscribe = useCallback((listener: () => void) => store.subscribe(listener), [store]);
@@ -47,12 +49,20 @@ export function useConversationTimelineDisplayModel(
       });
       item.childItems.forEach((child) => { if (child.kind !== "subAgentActivity") ensure(child); });
     };
+    const ensureScope = (scoped: readonly ConversationTimelineItem[], parentId?: string): void => {
+      for (const section of projectTimelineProcessSections(scoped, parentId, runLifecycles)) {
+        if (section.kind === "process") store.ensureDisclosure({ id: section.group.id, kind: "block",
+          revisionKey: section.group.revisionKey, defaultExpanded: section.group.defaultExpanded, preserveTouchedStateOnRevision: true });
+      }
+      for (const item of scoped) if (item.kind === "subAgentActivity") ensureScope(item.childItems, item.id);
+    };
     items.forEach(ensure);
-  }, [store, items]);
+    ensureScope(items);
+  }, [store, items, runLifecycles]);
 
   const model = useMemo(
-    () => projectConversationTimelineDisplayModel(items, disclosureById),
-    [disclosureById, items],
+    () => projectConversationTimelineDisplayModel(items, disclosureById, runLifecycles),
+    [disclosureById, items, runLifecycles],
   );
   const setSubAgentExpanded = useCallback((item: ConversationTimelineSubAgentItem, expanded: boolean) => {
     store.setDisclosureExpanded(

@@ -111,7 +111,11 @@ test("automatic review coordinator retries only a transient transport failure", 
   assert.equal(permanentCalls, 1);
 });
 
-test("automatic review coordinator applies one deadline across queueing and retries", async () => {
+test("automatic review coordinator applies one deadline across queueing and retries", { timeout: 2_000 }, async t => {
+  // Production has an active Host/Runner. This Promise-only fixture needs its
+  // own bounded live handle; the coordinator deadline deliberately stays unref'ed.
+  const liveHandle = setTimeout(() => {}, 1_000);
+  t.after(() => clearTimeout(liveHandle));
   const coordinator = createApprovalAutoReviewCoordinator({
     maxConcurrent: 1,
     maxQueued: 2,

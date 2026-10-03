@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { FileVideo, Image as ImageIcon, RefreshCw } from "lucide-react";
 import { artifactContentUrl } from "../../api.js";
 import { artifactDownloadName, isImageArtifact } from "../../lib/artifacts.js";
@@ -32,10 +32,25 @@ export function MediaArtifactPreview({
   const identity = `${cwd}\u001f${artifact?.id ?? ""}\u001f${canonicalUrl}`;
   const [contentPhase, setContentPhase] = useState<"loading" | "ready" | "error">("loading");
   const [retryNonce, setRetryNonce] = useState(0);
+  const videoRef = useRef<HTMLVideoElement | null>(null);
   useEffect(() => {
     setContentPhase("loading");
     setRetryNonce(0);
   }, [identity]);
+  useEffect(() => {
+    if (loading || artifact?.type !== "video" || contentPhase !== "loading") return;
+    const video = videoRef.current;
+    if (!video) return;
+    const reconcileNoSource = () => {
+      if (video.networkState === video.NETWORK_NO_SOURCE && video.readyState === video.HAVE_NOTHING && video.currentSrc) {
+        setContentPhase("error");
+      }
+    };
+    // Cached invalid sources can reach NETWORK_NO_SOURCE without a new error event.
+    const interval = globalThis.setInterval(reconcileNoSource, 500);
+    reconcileNoSource();
+    return () => globalThis.clearInterval(interval);
+  }, [artifact?.type, contentPhase, identity, loading, retryNonce]);
   const classes = ["media-artifact-preview", resolvedMode, className].filter(Boolean).join(" ");
   if (!artifact || loading) {
     return <span className={`${classes} empty`} aria-label={t("Result loading")} data-media-preview-artifact={artifact?.id} data-media-preview-mode={resolvedMode}><Skeleton shape="block" width="100%" height="100%" /></span>;
@@ -68,6 +83,7 @@ export function MediaArtifactPreview({
     return (
       <span className={classes} data-media-preview-artifact={artifact.id} data-media-preview-mode={resolvedMode} data-media-preview-state={contentPhase}>
         <video
+          ref={videoRef}
           key={src}
           autoPlay={autoPlay && resolvedMode !== "hero"}
           controls={resolvedMode !== "tile"}
@@ -77,7 +93,7 @@ export function MediaArtifactPreview({
           aria-label={title}
           onLoadedMetadata={() => setContentPhase("ready")}
           onError={() => setContentPhase("error")}
-        ><source src={src} type={artifact.contentType ?? "video/mp4"} />{t("This browser cannot play this video.")}</video>
+        ><source src={src} type={artifact.contentType ?? "video/mp4"} onError={() => setContentPhase("error")} />{t("This browser cannot play this video.")}</video>
         {resolvedMode === "tile" ? <FileVideo className="media-artifact-preview-icon" size={16} aria-hidden="true" /> : null}
       </span>
     );

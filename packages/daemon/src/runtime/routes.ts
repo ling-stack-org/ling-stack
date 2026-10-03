@@ -17,6 +17,7 @@ import { DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
 import type { LingExtensionMetadata, LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "../config.js";
 import { HttpError } from "../errors.js";
+import { assertNoUnsafeRequiredPause } from "../features/runs/user-input-cancellation-guard.js";
 import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import type { ControlPlaneEventHub } from "../features/control-plane/events.js";
 import type { WorkUnitRoute } from "../server/routes.js";
@@ -372,12 +373,28 @@ export async function handleWorkUnitRoute(
   if (!resolved) {
     return;
   }
-  runtimeSupervisor.getRuntime(resolved.cwd, resolved.store);
   const workUnit = resolved.store.getWorkUnit(route.workUnitId);
   if (!workUnit) {
     writeJson(response, 404, { error: "work_unit_not_found", message: `Work unit not found: ${route.workUnitId}` });
     return;
   }
+
+  // Reconciliation itself may mark an Attempt lost and release resources.
+  // Check manual mutations before even invoking startup reconciliation.
+  if (request.method === "POST" && (route.kind === "cancel" || route.kind === "reconcile") && workUnit.linkedRunId) {
+    const run = resolved.store.getRun(workUnit.linkedRunId);
+    if (run && !["succeeded", "failed", "cancelled"].includes(run.status)
+      && (route.kind === "reconcile" || run.status !== "yielded")) {
+      try {
+        assertNoUnsafeRequiredPause(resolved.store, run);
+      } catch (error) {
+        if (!(error instanceof HttpError)) throw error;
+        writeJson(response, error.statusCode, { error: error.code, message: error.message });
+        return;
+      }
+    }
+  }
+  runtimeSupervisor.getRuntime(resolved.cwd, resolved.store);
 
   if (route.kind === "detail") {
     if (request.method !== "GET") {
@@ -417,15 +434,21 @@ export async function handleWorkUnitRoute(
     if (runId) {
       const run = resolved.store.getRun(runId);
       if (run) {
-        cancelRun({
-          store: resolved.store,
-          runId,
-          taskId: run.taskId,
-          startedAt: run.startedAt,
-          reason: "work_unit_cancel_requested",
-          active: Boolean(activeRun),
-          streamEnvelope: activeRun?.streamEnvelope,
-        });
+        try {
+          cancelRun({
+            store: resolved.store,
+            runId,
+            taskId: run.taskId,
+            startedAt: run.startedAt,
+            reason: "work_unit_cancel_requested",
+            active: Boolean(activeRun),
+            streamEnvelope: activeRun?.streamEnvelope,
+          });
+        } catch (error) {
+          if (!(error instanceof HttpError)) throw error;
+          writeJson(response, error.statusCode, { error: error.code, message: error.message });
+          return;
+        }
       } else {
         cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
       }

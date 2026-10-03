@@ -9,6 +9,15 @@ test("typed run event validation accepts required payload fields", () => {
   assert.equal(isRunEventData("approval_requested", { approvalId: "approval-1", title: "Confirm" }), true);
   assert.equal(isRunEventData("run_end", { messageCount: 1 }), true);
   assert.equal(isRunEventType("assistant_reasoning_summary"), true);
+  assert.equal(isRunEventType("context_compaction_end"), true);
+  assert.equal(isRunEventData("context_compaction_start", {
+    reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1", attemptId: "attempt-1",
+  }), true);
+  assert.equal(isRunEventData("context_compaction_end", {
+    reason: "overflow", policyVersion: "pi_sdk_lifecycle_v1", outcome: "sdk_installed",
+    willRetry: true, tokensBefore: 1800, estimatedTokensAfter: 400,
+    usage: { input: 300, output: 20, cacheRead: 0, cacheWrite: 0, totalTokens: 320 },
+  }), true);
   assert.equal(isRunEventData("assistant_reasoning_summary", {
     text: "Checked the request.\n\nSelected the safe path.",
     parts: ["Checked the request.", "Selected the safe path."],
@@ -31,6 +40,13 @@ test("typed run event validation rejects malformed or unknown rows", () => {
   assert.equal(isRunEventData("tool_end", { toolName: "bash", isError: "false" }), false);
   assert.equal(isRunEventData("approval_requested", { title: "missing id" }), false);
   assert.equal(isRunEventData("run_error", "not an object"), false);
+  for (const value of [
+    { reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1", outcome: "sdk_installed", willRetry: "true" },
+    { reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1", outcome: "completed", willRetry: false },
+    { reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1", outcome: "failed", willRetry: false, tokensBefore: -1 },
+    { reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1", outcome: "failed", willRetry: false,
+      usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: Infinity } },
+  ]) assert.equal(isRunEventData("context_compaction_end", value), false);
   for (const value of [
     { text: "raw", parts: ["raw"], semantic: "raw_thinking", source: "openai_responses", truncated: false },
     { text: "mismatch", parts: ["other"], semantic: "safe_summary", source: "openai_responses", truncated: false },

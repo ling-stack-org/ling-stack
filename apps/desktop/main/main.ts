@@ -770,7 +770,8 @@ function requestDesktopDaemonRecovery(details: {
     signal: details.signal,
   });
   void runtime.ensureStarted().then(
-    (status) => {
+    async (status) => {
+      await restartDesktopCapabilityRuntimes();
       logStartup("daemon.unexpected_exit_recovered", {
         baseUrl: details.baseUrl,
         ownedByDesktop: status.ownedByDesktop,
@@ -783,6 +784,19 @@ function requestDesktopDaemonRecovery(details: {
       });
     },
   );
+}
+
+async function restartDesktopCapabilityRuntimes(): Promise<void> {
+  const host = hostCapabilityRuntime;
+  const office = officeDriverRuntime;
+  await Promise.all([
+    host?.restart(),
+    office?.restart(),
+  ]);
+  logStartup("desktop_capabilities.rebound", {
+    hostCapability: Boolean(host),
+    officeDriver: Boolean(office),
+  });
 }
 
 function isLoopbackDaemonUrl(value: string): boolean {

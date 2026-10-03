@@ -9,6 +9,7 @@ import {
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
 import type { RunnerAdapter } from "../../context.js";
+import type { AttemptLocalWriterGroup } from "../../runtime/attempt-local-writers.js";
 import { DEFAULT_RUNNER_ID } from "../../runtime/runners.js";
 import type { RuntimeSupervisor } from "../../runtime/supervisor.js";
 import {
@@ -55,6 +56,8 @@ export interface ReviewPendingApprovalAutomaticallyInput {
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly coordinator?: ApprovalAutoReviewCoordinator;
   readonly sourceAuthority?: "active_execution" | "recoverable_suspension";
+  /** Host-only captured source group; outer approval callbacks own Store writes. */
+  readonly localWriters?: AttemptLocalWriterGroup;
 }
 
 const MAX_APPROVAL_REVIEW_WORK_UNIT_ATTEMPTS = 2;
@@ -116,6 +119,7 @@ export async function reviewPendingApprovalAutomatically(
       evidenceFingerprint: evidence.fingerprint,
       serializedEvidence: evidence.serialized,
       signal,
+      localWriters: input.localWriters,
     }),
   });
 

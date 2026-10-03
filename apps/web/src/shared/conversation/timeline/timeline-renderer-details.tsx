@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import type { ConversationTimelineRowItem } from "@ling-stack/conversation-ui-core";
 import { useI18n } from "../../../i18n.js";
+import { formatCommandOutputTail } from "../../../lib/command-output-tail.js";
 import { MessageBodyRenderer } from "../blocks/MessageBodyRenderer.js";
 import {
   ConversationTimelineFileChangeDetail,
@@ -14,7 +15,7 @@ export function CommandDetail({ item }: { readonly item: Extract<ConversationTim
   return (
     <>
       {item.cwd ? <small className="conversation-timeline-detail-meta">cwd: {item.cwd}</small> : null}
-      {item.outputTail.length > 0 ? <pre className="conversation-timeline-output">{item.outputTail.map((chunk) => chunk.text).join("")}</pre> : null}
+      {item.outputTail.length > 0 ? <pre className="conversation-timeline-output">{formatCommandOutputTail(item.outputTail)}</pre> : null}
       {commandOutputMeta(item, t) ? <small className="conversation-timeline-detail-meta" data-conversation-command-output-stats>{commandOutputMeta(item, t)}</small> : null}
       {item.outputTruncated ? <small className="conversation-timeline-detail-meta">Output truncated; open the full log from evidence.</small> : null}
       <CommandResult item={item} />

@@ -55,7 +55,7 @@ interface MarkdownNode {
   readonly checked?: boolean | null;
   readonly align?: readonly ("left" | "center" | "right" | null)[];
   readonly children?: readonly MarkdownNode[];
-  readonly position?: { readonly end?: { readonly offset?: number } };
+  readonly position?: { readonly start?: { readonly offset?: number }; readonly end?: { readonly offset?: number } };
 }
 
 interface LocalPathMatch {
@@ -134,7 +134,7 @@ export function splitInlineTokens(
         continue;
       }
     }
-    const webLink = readWebLink(remaining);
+    const webLink = readWebLink(remaining, true);
     if (webLink) {
       tokens.push({ kind: "web_link", href: webLink.href, label: webLink.href });
       index += webLink.href.length;
@@ -305,6 +305,16 @@ function convertInlineNodes(nodes: readonly MarkdownNode[], cwd?: string): Messa
       case "link": {
         const label = inlineTextContent(node.children ?? []) || node.url || "";
         const destination = node.url ?? "";
+        if (isBareGfmLink(node, label, destination)) {
+          const bareLink = readWebLink(destination, true);
+          if (bareLink) {
+            tokens.push({ kind: "web_link", href: bareLink.href, label: bareLink.href });
+            tokens.push(...splitInlineTokens(destination.slice(bareLink.href.length), cwd, { allowMarkdown: false }));
+          } else {
+            tokens.push({ kind: "text", text: label });
+          }
+          break;
+        }
         const webLink = readWebLink(destination);
         if (webLink?.href === destination) {
           tokens.push({ kind: "web_link", href: destination, label });
@@ -334,6 +344,12 @@ function convertInlineNodes(nodes: readonly MarkdownNode[], cwd?: string): Messa
 
 function inlineTextContent(nodes: readonly MarkdownNode[]): string {
   return nodes.map((node) => node.value ?? inlineTextContent(node.children ?? [])).join("");
+}
+
+function isBareGfmLink(node: MarkdownNode, label: string, destination: string): boolean {
+  const start = node.position?.start?.offset;
+  const end = node.position?.end?.offset;
+  return label === destination && typeof start === "number" && typeof end === "number" && end - start === destination.length;
 }
 
 function clampHeadingDepth(value: number | undefined): 1 | 2 | 3 | 4 | 5 | 6 {
@@ -383,7 +399,8 @@ export function parseLocalFileReference(raw: string, cwd?: string): LocalFileRef
         displayPath = normalizedPath;
       }
     } else if (!pathOnly.startsWith("~/")) {
-      insideWorkspace = true;
+      const relativePath = normalizePath(pathOnly);
+      insideWorkspace = relativePath !== ".." && !relativePath.startsWith("../");
       displayPath = pathOnly.replace(/^\.\//, "");
     }
   }
@@ -431,18 +448,23 @@ function readMarkdownLink(text: string, cwd?: string): { readonly token: Message
   return { token: { kind: "text", text: label }, length: match[0].length };
 }
 
-function readWebLink(text: string): { readonly href: string } | undefined {
+function readWebLink(text: string, bare = false): { readonly href: string } | undefined {
   const match = webUrlPattern.exec(text);
   if (!match) {
     return undefined;
   }
-  const href = trimTrailingUrlPunctuation(match[0]);
+  const href = trimTrailingUrlPunctuation(bare ? trimBareUrlProse(match[0]) : match[0]);
   try {
     const url = new URL(href);
     return url.protocol === "http:" || url.protocol === "https:" ? { href } : undefined;
   } catch {
     return undefined;
   }
+}
+
+function trimBareUrlProse(value: string): string {
+  const boundary = /[，。！？；：、\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Hangul}]/u.exec(value);
+  return boundary && boundary.index > 0 ? value.slice(0, boundary.index) : value;
 }
 
 function readLocalPath(text: string, cwd?: string): LocalPathMatch | undefined {

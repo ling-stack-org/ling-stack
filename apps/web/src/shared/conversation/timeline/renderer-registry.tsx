@@ -24,6 +24,7 @@ import { ConversationTimelineTerminalReportRenderer } from "./ConversationTimeli
 import type { ConversationTimelineSourceRefHandler } from "./source-ref.js";
 import { ConversationTimelineUserInputRenderer } from "./ConversationTimelineUserInputRenderer.js";
 import type { ConversationTimelineBatchDisclosure } from "./conversation-timeline-display-model.js";
+import type { ConversationTimelineMessagePresentation } from "./timeline-response-presentation.js";
 
 export interface ConversationTimelineRenderContext {
   readonly scopeKind?: ConversationTimelineScopeKind;
@@ -34,7 +35,9 @@ export interface ConversationTimelineRenderContext {
     item: Extract<ConversationTimelineItem, { kind: "protocolEvent" | "approval" }>,
     action: ConversationProtocolAction,
   ) => void | Promise<void>;
-  readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode) => ReactNode;
+  readonly renderMessageChrome?: (item: Extract<ConversationTimelineItem, { kind: "userMessage" | "agentMessage" }>, body: ReactNode, presentation: ConversationTimelineMessagePresentation) => ReactNode;
+  readonly messagePresentation?: ConversationTimelineMessagePresentation;
+  readonly hasResponseNarration?: boolean;
   readonly renderSubAgent: (item: ConversationTimelineSubAgentItem) => ReactNode;
   readonly depth: 0 | 1;
   readonly batchDisclosure?: ConversationTimelineBatchDisclosure;
@@ -86,7 +89,7 @@ function renderMessageItem(
   context: ConversationTimelineRenderContext,
 ): ReactNode {
   if (item.kind !== "agentMessage" && item.kind !== "userMessage") return null;
-  return <ConversationTimelineMessageRenderer key={item.id} item={item} cwd={context.cwd} renderChrome={context.renderMessageChrome} depth={context.depth} />;
+  return <ConversationTimelineMessageRenderer key={item.id} item={item} cwd={context.cwd} renderChrome={context.renderMessageChrome} presentation={context.messagePresentation} depth={context.depth} />;
 }
 
 function renderReasoningItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
@@ -140,7 +143,7 @@ function renderContextCompactionItem(item: ConversationTimelineItem, context: Co
 }
 
 function renderTerminalReportItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {
-  return item.kind === "terminalReport" ? <ConversationTimelineTerminalReportRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} scopeKind={context.scopeKind} /> : null;
+  return item.kind === "terminalReport" ? <ConversationTimelineTerminalReportRenderer key={item.id} item={item} cwd={context.cwd} onOpenSourceRef={context.onOpenSourceRef} depth={context.depth} hasNarration={context.hasResponseNarration} /> : null;
 }
 
 function renderDiagnosticItem(item: ConversationTimelineItem, context: ConversationTimelineRenderContext): ReactNode {

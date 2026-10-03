@@ -12,6 +12,7 @@ export function homeMessageFromTranscript(message: ConversationTranscriptMessage
     role: message.role,
     authorLabel: message.authorLabel,
     content: message.content,
+    contentSource: message.contentSource,
     narrationSegments: message.narrationSegments,
     errorMessage: message.errorMessage,
     attachments: message.attachments,

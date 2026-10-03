@@ -101,7 +101,7 @@ test("terminal report coordinator stores executed conversation turns and skips p
       createdAt: "2026-07-11T06:04:00.000Z",
     });
     store.appendEvent(plainRun.id, "assistant_text_delta", { text: "这是一个普通回答。" });
-    store.markRunSucceeded(plainRun.id, "2026-07-11T06:05:00.000Z");
+    store.markRunStarted(plainRun.id, "2026-07-11T06:04:30.000Z");
     const approval = store.createApprovalRequest({
       runId: plainRun.id,
       taskId: plainTask.id,
@@ -112,6 +112,7 @@ test("terminal report coordinator stores executed conversation turns and skips p
       payload: { type: "bash", cwd, command: "git status", riskFlags: [] },
     }, "2026-07-11T06:05:10.000Z");
     store.approveApprovalRequest(approval.id, { reason: "Fixture approval only" }, "2026-07-11T06:05:20.000Z");
+    store.markRunSucceeded(plainRun.id, "2026-07-11T06:05:30.000Z");
     assert.equal(await processRunTerminalReport(store, plainRun.id, { now: "2026-07-11T06:06:00.000Z" }), undefined);
     assert.equal(store.listTerminalReports({ sourceKind: "run", sourceId: plainRun.id }).length, 0);
   } finally {

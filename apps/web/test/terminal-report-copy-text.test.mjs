@@ -53,7 +53,7 @@ test("only terminal reports can produce copy text, including partial and failed 
     const item = forbidReads(report({ status }), ["title", "summary", "changes"]);
     assert.equal(terminalReportCopyText(item), "");
   }
-  for (const status of ["succeeded", "failed", "cancelled", "blocked"]) {
+  for (const status of ["succeeded", "partially_succeeded", "failed", "cancelled", "blocked"]) {
     assert.match(terminalReportCopyText(report({ status })), /The final result\./u);
   }
   assert.match(terminalReportCopyText(report({ status: "blocked", outcomeStatus: "partially_succeeded" })), /The final result\./u);

@@ -116,6 +116,43 @@ test("explicitly disabling Host execution cannot approve an unjournaled SDK bash
   await assert.rejects(readFile(join(f.cwd, "no-write.txt")), /ENOENT/);
 });
 
+test("a terminal Run cannot create another Host bash approval", { timeout: 3000 }, async t => {
+  const f = await fixture(t);
+  f.store.markRunFailed(f.run.id, new Date().toISOString(), "Prior approval expired.");
+  const handler = createRunApprovalHandler({ ...f,
+    workUnitId: f.sourceFence.workUnitId, attemptId: f.sourceFence.attemptId,
+    unifiedExecEnabled: true,
+    approvalPolicy: { toolDecisions: { bash: "ask" }, allowedWritePaths: [f.cwd] },
+    signal: AbortSignal.timeout(300),
+    appendAndMaybeStream(type, data) { return f.store.appendEvent(f.run.id, type, data); },
+    streamEnvelope() {},
+  });
+  await handler({ toolCallId: "ghost_approval", toolName: "bash", task: f.task, cwd: f.cwd,
+    input: { command: "python3 -m unittest discover -s tests -v" } }).catch(() => {});
+  assert.equal(f.store.listApprovalRequests({ runId: f.run.id }).length, 0);
+});
+
+test("failed fenced wait transition closes an already inserted Host approval", async t => {
+  const f = await fixture(t);
+  f.store.transitionRunExecutionStatus = () => ({ ok: false, reason: "simulated terminal race" });
+  const handler = createRunApprovalHandler({ ...f,
+    workUnitId: f.sourceFence.workUnitId, attemptId: f.sourceFence.attemptId,
+    unifiedExecEnabled: true,
+    approvalPolicy: { toolDecisions: { bash: "ask" }, allowedWritePaths: [f.cwd] },
+    appendAndMaybeStream(type, data) { return f.store.appendEvent(f.run.id, type, data); },
+    streamEnvelope() {},
+  });
+  const decision = await handler({ toolCallId: "lost_wait", toolName: "bash", task: f.task, cwd: f.cwd,
+    input: { command: "python3 -m unittest discover -s tests -v" } });
+  assert.equal(decision.approved, false);
+  const [approval] = f.store.listApprovalRequests({ runId: f.run.id });
+  assert.equal(approval?.status, "cancelled");
+  assert.equal(approval?.resolvedBy, undefined, "a lost execution is not a user cancellation");
+  assert.equal(f.store.listApprovalRequests({ runId: f.run.id, status: "pending" }).length, 0);
+  assert.deepEqual(f.store.listEvents(f.run.id).filter(event => event.type === "approval_cancelled")
+    .map(event => event.data.approvalId), [approval.id]);
+});
+
 test("a post-spawn Host failure cleans up the actual process and never records not_started", { timeout: 7000 }, async t => {
   const f = await fixture(t), launch = f.store.launchHostCommandExecution.bind(f.store);
   f.store.launchHostCommandExecution = (...args) => { launch(...args); throw new Error("fixture post-spawn commit failure"); };

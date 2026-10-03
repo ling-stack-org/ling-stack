@@ -81,7 +81,7 @@ export function bindChannelOperationPlan(input: {
   readonly defaultOwnerParticipantId?: string;
 }): ChannelOperationBindingResult {
   try {
-    if (!isCandidatePlan(input.candidate)) fail("execution.operations", "A versioned operation graph with per-operation owner, target and content bindings is required.");
+    if (!isChannelOperationCandidatePlanV2(input.candidate)) fail("execution.operations", "A versioned operation graph with per-operation owner, target and content bindings is required.");
     const candidate = input.candidate;
     const capabilityBlockers: { operationId: string; participantId: string; tool: RunTool }[] = [];
     const byId = new Map(candidate.operations.map((operation) => [operation.id, operation]));
@@ -287,7 +287,7 @@ function assertWorkspacePath(path: string, workspaceCwd: string): void {
   }
 }
 
-function isCandidatePlan(value: unknown): value is ChannelOperationCandidatePlanV2 {
+export function isChannelOperationCandidatePlanV2(value: unknown): value is ChannelOperationCandidatePlanV2 {
   return record(value, ["schemaVersion", "operations"]) && value.schemaVersion === 2
     && Array.isArray(value.operations) && value.operations.length > 0 && value.operations.length <= 64
     && value.operations.every(candidateOperation);

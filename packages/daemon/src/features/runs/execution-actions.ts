@@ -34,6 +34,7 @@ import {
   executionActionStatusFromCommandEvidence,
 } from "./execution-action-command-evidence.js";
 import { deriveExecutionActionToolEvidence } from "./execution-action-tool-evidence.js";
+import { executionActionRunTerminalEvent } from "./execution-action-run-terminal.js";
 import {
   deriveHarnessToolExecutionActionProjection,
   listHarnessToolExecutionsForProjection,
@@ -271,11 +272,15 @@ function deriveToolActionsForRun(
     const endCandidate = ends.get(toolCallId);
     // A terminal event that precedes the accepted start is stale evidence. It
     // remains available to diagnostics, but cannot close the logical action.
-    const end = start
+    const toolEnd = start
       ? firstToolEndAfterStart(events, toolCallId, start.seq)
       : endCandidate;
+    const runTerminal = executionActionRunTerminalEvent(run, events, start?.seq ?? 0);
+    const end = toolEnd && (!runTerminal || toolEnd.seq < runTerminal.seq) ? toolEnd : undefined;
+    const interrupted = !end && (run.status === "failed" || run.status === "cancelled");
+    const acceptedEvents = interrupted && runTerminal ? events.filter(event => event.seq <= runTerminal.seq) : events;
     const source = start ?? end;
-    const eventAttemptId = readToolAttemptId(events, toolCallId) ?? runAttemptId;
+    const eventAttemptId = readToolAttemptId(acceptedEvents, toolCallId) ?? runAttemptId;
     const harnessProjection = deriveHarnessToolExecutionActionProjection({
       store,
       runId: run.id,
@@ -295,22 +300,33 @@ function deriveToolActionsForRun(
       isError: readToolEndIsError(end),
     });
     const commandEvidence = toolName === "bash"
-      ? deriveExecutionActionCommandEvidence({ events, toolCallId, start, end })
+      ? deriveExecutionActionCommandEvidence({ events: acceptedEvents, toolCallId, start, end })
       : undefined;
-    const toolEvidence = deriveExecutionActionToolEvidence({ events, toolName, toolCallId, cwd: run.cwd, start, end });
+    const toolEvidence = deriveExecutionActionToolEvidence({ events: acceptedEvents, toolName, toolCallId, cwd: run.cwd, start, end });
     const hostOpenReceipt = toolName === "host_open_local_target" ? deriveHostOpenReceipt({ store, run, start, end }) : undefined;
     // A queued request or "opened" text is not a completed Host launch.
     const hostOpenStatus = toolName === "host_open_local_target" && end ? (hostOpenReceipt ? "succeeded" : "failed") : undefined;
-    const lifecycleSourceRefs = sourceRefsForToolLifecycle(events, toolCallId, start, end);
-    const lifecycleDiagnostics = diagnosticsForToolLifecycle(events, toolCallId, start, end);
+    const lifecycleSourceRefs = sourceRefsForToolLifecycle(acceptedEvents, toolCallId, start, end);
+    if (interrupted && runTerminal) lifecycleSourceRefs.push({ kind: "run_event", id: runTerminal.id, label: runTerminal.type });
+    const lifecycleDiagnostics = diagnosticsForToolLifecycle(events, toolCallId, start, end ?? (interrupted ? runTerminal : undefined));
     const commandStatus = executionActionStatusFromCommandEvidence(commandEvidence);
-    const latestToolEvent = findLatestAcceptedToolEvent(events, toolCallId, start, end);
+    const latestToolEvent = findLatestAcceptedToolEvent(acceptedEvents, toolCallId, start, end);
+    // Audit diagnostics are part of the versioned DTO, but never execution
+    // facts. Rejected events invalidate snapshots without reopening the action.
+    const diagnosticEventIds = new Set(lifecycleDiagnostics.flatMap(diagnostic => diagnostic.sourceRefs.map(ref => ref.id)));
+    const latestDiagnosticSequence = events.reduce((sequence, event) =>
+      diagnosticEventIds.has(event.id) ? Math.max(sequence, event.seq) : sequence, 0);
     // A terminal Host receipt is pinned to the accepted start/end identity.
     // Diagnostic updates after that fence cannot reassign its historical owner.
     const attemptId = harnessProjection?.execution.attemptId ?? hostOpenReceipt?.attemptId ?? eventAttemptId;
     actions.push(withExecutionActionLineage(store, {
       id: `tool:${run.id}:${toolCallId}`,
-      revision: (latestToolEvent?.seq ?? 0) + (harnessProjection?.execution.revision ?? 0),
+      // Run terminal state is a separate revision input when tool_end is absent.
+      // Otherwise executing/failed snapshots conflict at the same revision and
+      // the canonical union correctly hides the action. A row-only terminal
+      // transition still advances once; it never pretends to be a tool receipt.
+      revision: Math.max(latestToolEvent?.seq ?? 0, latestDiagnosticSequence) + (harnessProjection?.execution.revision ?? 0)
+        + (interrupted ? runTerminal?.seq ?? 1 : 0),
       ...(source ? { sourceEventSequence: source.seq } : {}),
       workspaceId: DEFAULT_WORKSPACE_ID,
       threadId: run.threadId,
@@ -329,7 +345,7 @@ function deriveToolActionsForRun(
       targetRefs: classified.targetRefs,
       previewArtifactIds: [],
       resultArtifactIds: uniqueIds([
-        ...artifactIdsForToolCall(events, toolCallId),
+        ...artifactIdsForToolCall(acceptedEvents, toolCallId),
         ...(harnessProjection?.resultArtifactIds ?? []),
       ]),
       scopes: classified.scopes,
@@ -340,12 +356,14 @@ function deriveToolActionsForRun(
       ...(hostOpenReceipt ? { hostOpenReceipt } : {}),
       createdAt: [start?.ts, end?.ts, harnessProjection?.execution.createdAt, run.createdAt]
         .filter((value): value is string => Boolean(value)).sort()[0]!,
+      // Unrelated Run progress cannot change a settled action at the same
+      // revision: snapshot unions must retain real conflicts, not invent them.
       updatedAt: latestTimestamp(
         latestToolEvent?.ts,
         start?.ts,
         end?.ts,
         harnessProjection?.execution.updatedAt,
-        run.updatedAt,
+        interrupted ? runTerminal?.ts ?? run.endedAt ?? run.updatedAt : undefined,
       ),
       executedAt: harnessProjection?.execution.executionStartedAt ?? start?.ts,
       completedAt: harnessProjection?.execution.executionFinishedAt ?? end?.ts,
@@ -731,7 +749,7 @@ function diagnosticsForToolLifecycle(
       if (event.seq < firstStartSeq) {
         diagnostics.push({ code: "stale_event", message: "tool_update arrived before the accepted tool_start.", sourceRefs: [eventRef] });
       } else if (event.seq > firstTerminalSeq || terminalSeen) {
-        diagnostics.push({ code: "late_event", message: "tool_update arrived after the terminal tool_end.", sourceRefs: [eventRef] });
+        diagnostics.push({ code: "late_event", message: "tool_update arrived after the terminal execution boundary.", sourceRefs: [eventRef] });
       }
       continue;
     }

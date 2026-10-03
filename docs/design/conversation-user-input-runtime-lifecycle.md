@@ -1,6 +1,6 @@
 # 结构化提问：运行等待、让出与恢复的消费者设计
 
-Status: U0-S/U2 的既有切片、U3 seed/请求/Host-SDK 接收及三 surface Pi 源输入捕获已验证；完整 U2/U3 与真实客户端未完成。当前结果见 §4.5 与各切片证据，不以本行代替验收。
+Status: 既有U0-S/U2/U3切片与三surface源输入捕获已验证；2026-10-03内部question/Host admission/drain/Core veto/pause coordinator增量见§9。完整生产U2/U3与真实客户端仍未完成，不以本行代替验收。
 Date: 2026-09-07
 Baseline: 284f8c3c05f468a256adb4cee64c4455da834a4b + 当前恢复分支 WIP。
 
@@ -563,3 +563,70 @@ summary 不作为 SQLite authority，也不是新的 completion evidence。数�
 **UNRESOLVED DECISIONS（2026-09-08 更新）:** N03/batch 与普通/私聊归属、MCP/SDK 内部链路
 已获连续实施授权，不再按文件数量逐次确认。外部 Relay、T2-B 和 AR 策略仍独立待决；
 不改同事 WIP、不提交代码。前文各历史切片的范围待答记录由本条更新覆盖，不表示实现已完成。
+
+## 9. U2 内部暂停屏障增量（2026-10-03，生产路由尚未开启）
+
+按既定合同实现独立模块，不重写Pi session或把SQL/执行器逻辑塞进Orchestrator：
+
+- Runner内部opt-in的sequential `request_user_input`真实接入SDK active tool list。Host收到的只有toolCallId与untrusted question payload；问题source/fence/idempotency仍由Host选择。严格receipt只保留kind/requestId/requestVersion，禁止accessor/额外字段，冻结副本。required回调返回前关闭共享Runner latch；SDK清理收束后才给typed yield。
+- `AttemptExecutorGroup`同步保留captured Run/四元fence，私有ticket身份验证、同次准入关闭和effect launch复验。producer必须在派生启动前登记；关闭后禁止晚登记。Host独立校验whole-operation durable proof，unknown/timeout/callback返回/leader退出不能成为安全settlement或释放许可。
+- `UserInputPauseCoordinator`同步Core创建后同回调关闭Host准入，required优先于其他boundary；typed SDKyield→本attempt drain→最终真实event watermark→Core原子checkpoint。无ActiveRuns取消或全局idle、无隐藏terminal finalizer/资源释放。早答先保存outbox，安全yield前claim拒绝；blocked保留原执行权且无safe wait。
+- Core同事务共享durable veto覆盖Broker活动/unknown、Host command journal、source media与未知工具协议，并被yield/claim复用。全fence和immutable历史source不借successor身份；不改已有记录或将terminal等同已知停止。
+
+当前已执行command journal `completed`仍明确descendants=unverified；media/MCP/plugin/remote缺完整ownership/confirmed-stop协议时，required yield保持blocked。不能改字符串、清blocker或以SDKidle掩盖能力缺口。
+
+实际自动验证：Core1071/1071、Runner244/244、首次Daemon2225/2225。独立审查的cancelled create replay/pending expiry均已隔离SQLite RED确认，修复后group/coordinator/probe50/50：Core create幂等receipt不等于request仍活跃，create与boundary共享active guard，expiry仅否决pending，已接受answer仍有效；required再匹配当前identity才close。独立窄审查已收口，最终稳定Daemon全套2229/2229、exit0、0fail/cancel/skip；中止日志不计通过。三surfacecoordinator测试是真实PiSDK+临时SQLite+确定性provider transport，不是executeRunRequest/真实模型/GUI。完整日志和未完成项见`output/e6-20260928/U-PAUSE-SLICE-20261003.md`。
+
+生产还需具体executor协议/wrappers、Orchestrator typed-yield与blocked保全、physical-close记账/Goal/频道调度、唯一answer continuation与当前权限/资源复验、delivery/recovery/API/共享UI及packaged矩阵。完成前不向生产模型/公开创建路由开启工具。
+**UNRESOLVED DECISIONS：无新增用户产品决策。以上为工程门禁，不因内部切片通过宣布完整U完成。**
+
+## 10. U2 Host operation 的持久成员与文件副作用边界（2026-10-03，实施中）
+
+内存group与domain执行记录必须一对一连接；模型toolCallId、成功文本、成对tool_end都不是这个连接。
+由group创建operationId，在任何异步准备或派生启动前持久化完整Run/四元fence、kind、toolCallId、parent/producer。
+新Host operation journal只记录执行成员和安全事实，不新增UI batch，不重写旧历史，不赋予数据库行重放能力；live ticket仍由原Host store私有对象持有。
+
+状态为`admitted → launched → safe | unknown_outcome`：
+
+- domain evidence绑定不可替换且一对一，使用Broker实际返回的executionId或Host command实际返回的executionId，不按工具名猜记录。
+- 第一次物理副作用与captured owner复验、journal launched写入共享同步SQLite writer边界；同operation后续effect仍同步复验，不能仅在异步callback入口检查。
+- 文件snapshot/evidence准备留在事务之外；每个真正write/delete callback进入guard。rollback只处理原operation已发生的effect，允许关闭准入后的bounded cleanup，但必须保持原owner，不能借successor写入。
+- 副作用发生后COMMIT失败、callback抛出、thenable误入同步launch，都不得回滚内存launch事实后宣称known-no-start。durable admitted/unknown仍阻断yield/claim/restart；一次观察超时也不改变它。
+- 首片safe闭集仅含真实未launch且domain无effect的no-start，以及完整file Broker事实：原source、bind-before-start、terminal已知outcome、真实result digest、sealed policy/result artifact及时间/lineage全部独立核验。safe行在yield/claim同事务再次读取并重验，不信任先前缓存。
+- approved file result也封存在SQLite；artifact-created公开metadata排除sealedPayload/contentSha256。不从当前磁盘读旧结果来替代封存证据。
+- launched command的preparation helper/OS后代，以及MCP/media/plugin/远端job，本片无whole-operation停止合同时保持unknown。不能用主命令not_started掩盖已派生helper，也不能凭通用callback完成升级safe。
+
+本片门禁要求：真实临时SQLite、精确domain绑定、双连接换owner、父子成员、reopen保全、无副作用拒绝、真实File Broker多文件写入/删除/回滚、off/shadow/enforce不绕过，以及新guard引出的删除回滚恢复缺口。日志与状态见`output/e6-20260928/U-HOST-OPERATIONS-20261003.md`。
+本节是接续既有工程合同，不表示工具已对模型开启；Orchestrator非terminal保全、physical-close、答案续接和packaged Computer Use仍按§9门禁继续。
+**UNRESOLVED DECISIONS：无新增产品决策；上述生产接线与验证未完成前不得宣布完整U可用。**
+
+## 11. U2 本地 writer 与 retained authority 分层（2026-10-03，增量在建）
+
+`enableUserInputPause`只允许可信Host内部验证opt-in，默认关闭，不读公开Run input。
+准备、封存、恢复、extension和真实SDK以同一`initialToolSurface.userInput`选择工具；显式false优先于callback presence。
+封存true不能在gate撤销后恢复，封存false也不能因gate后来打开而临时加工具。fingerprint校验不放宽。
+required检查在lock await前后复验，不能靠await之前的一次检查允许之后provider继续。
+
+暂停有三种不同事实，不能相互替代：
+
+1. SDK已退出且取消订阅/dispose完成（typed yield）。
+2. captured source最外层Host callback与派生**本地writer**实际完成；包括Broker后置写入和cleanup。
+3. Core独立验证的whole-operation physical/effect证据已提交；只有它能允许safe checkpoint、lease释放及answer successor。
+
+`AttemptLocalWriterGroup`负责第2项：同步登记、私有completion closure、关闭后禁止新callback，独立background producer预登记。
+有限观察窗口只返回blocked，不释放成员或生成安全证据。SDK/Host operation观察和本地writer观察都不能无限阻塞执行函数。
+`ActiveRunRegistry.retainBlockedAttempt`在函数返回前接管剩余callback；本地writer真正完成后只清理live timer/entry/completion，保留SQLite Run/Attempt/resources与unknown blocker。
+原source cleanup只可移除同一live对象，不触碰successor。pending required尚无safe wait时generic cancel不得将retained source终态化并释放权限；已yielded的等待取消继续走既有原子入口。
+
+文件/command admission在最外层审批排队前捕获；file使用真实Broker receipt，command/native preparation各自持久化成员并在真正spawn/send前复验。
+native helper实际spawn后COMMIT失败不能立刻丢handle；统一close/deadline observer和原source bounded cleanup必须仍存在。kill返回true/pipe destroy/deadline都不是stop证明，当前command/remote未证实scope仍unknown。
+
+Reviewer在实际`runTask`的第一同步步骤登记私有local producer，每个retry独立ticket，底层Runner及输出校验真正resolve/reject后才释放。
+manual/deadline可以及时返回，但coordinator的physical slot等待underlying promise真正settle；已settled的路径不额外占用microtask，retry重置settled状态。外层approval callback负责Host后置Store/CAS写入。
+这一local completion不生成Core safe/remote stop，不能解除unknown。Media background整链已使用共享`MediaLocalExecutionRegistry`替代丢失finish closure的占位producer：首写前reserve，捕获一次原source，绑定后覆盖dispatch/catch尾写、timer→tick、collector和completion；202或父callback返回不算drain。shutdown先禁新effect/清futuretimer，等待已进入本地writer后才关闭Store，不伪造远端停止。
+Core在同一Media创建/复用事务中验证并保存现有child request的`executionAdmission`；只有同Store已验证、冻结、一次性内部snapshot可保留真实fencingToken，普通秘密及伪造request仍脱敏。serializer在脱敏遍历后复验实际SQLite事务及原owner。复用核验source/digest/toolCall/child-job链接，重启、审批或手动缺原opaque capability时不重新submit；旧父/child换代的迟到写入显式拒绝。
+控制入口在任何intervention/step/approval/resource写入前校验；频道先校验全部linked nonterminal/non-yielded Runs，避免部分取消。普通terminal-linked reconciliation不被required wait误伤，安全yielded等待走Core原子取消事务。
+Reviewer37/37、真实Orchestrator shutdown1/1、最新合并窄矩阵136/136及Daemon全套2383/2383均已通过（0fail/cancel/skip）；证据与后续状态见`output/e6-20260928/CONTINUE-HERE.md`。
+Media本地切片Core37/37、Daemon74/74窄矩阵及最终Core1172/1172、Daemon2432/2432 full通过，两个独立窄复核0新增finding；冻结源码与全部原RED保留于`U-MEDIA-LOCAL-ACCEPTANCE-20261003.md`。Media独立typed remote receipt/physical proof、其余executor完整证据、retained restart、answer continuation/delivery/recovery与新packaged Computer Use仍待同总计划继续。本地full不冒充整体U或GUI验收。
+
+UNRESOLVED DECISIONS：无新增产品决策；这是既定执行安全合同的实现分层，整体U尚未完成。

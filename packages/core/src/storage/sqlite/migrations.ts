@@ -11,6 +11,11 @@ import { applyPostCompactionUndoMigration } from "./post-compaction-undo-migrati
 import { applyWorkspaceSnapshotMigration } from "./workspace-snapshot-migration.js";
 
 import { ensureHostCommandJournalIndex } from "./host-command-journal-migration.js";
+import { applyApprovalPostCommitMigration } from "./approval-postcommit-migration.js";
+import { applyHostOperationJournalMigration } from "./host-operation-journal-migration.js";
+import { applyHostMediaOperationMigration } from "./host-media-operation-migration.js";
+import { applyHostMediaReceiptMigration } from "./host-media-receipt-migration.js";
+import { applyHostOfficeLocalMigration } from "./host-office-local-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -5913,5 +5918,35 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     hasTable: context.hasTable.bind(context),
     recordMigration: context.recordMigration.bind(context),
   });
+  applyApprovalPostCommitMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
   ensureHostCommandJournalIndex(database);
+  applyHostOperationJournalMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostMediaOperationMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostMediaReceiptMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostOfficeLocalMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
 }

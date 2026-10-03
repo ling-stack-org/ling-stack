@@ -33,9 +33,11 @@ export function ChannelExecutionProposalSummary({
           <strong>{proposal.title}</strong>
           <small>{assigneeLabel} · {t(executionProposalStatusLabel(proposal))}</small>
         </span>
-        <button className="secondary-button compact-button" type="button" onClick={onOpen}>
-          {t("View task")}
-        </button>
+        {(proposal.status === "draft" || proposal.status === "blocked" || proposal.status === "run_failed") && (
+          <button className="secondary-button compact-button" type="button" onClick={onOpen}>
+            {t("View task")}
+          </button>
+        )}
       </div>
     </div>
   );
