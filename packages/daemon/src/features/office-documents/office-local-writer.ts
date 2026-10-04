@@ -46,7 +46,15 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
   readonly path: string; readonly recoveryPath?: string; readonly observationArtifactId: string; readonly observation: OfficeLocalWriteObservation;
 } {
   const state = officeLocalWriteState(plan);
+  if (state.lifecycle.closed) throw new Error("office_local_write_closed");
   if (state.used) throw new Error("office_local_write_already_entered");
+  state.tracker.assertOfficeLocalPlanOpen(state.ticket);
+  // A persisted no-start receipt is a stop, never replay authority. Read before
+  // traversing members or retaining any native resource, even for an unused plan.
+  if (state.store.getHostOfficeLocalNoStartReceipt(plan.executionId)) {
+    state.lifecycle.closed = true;
+    throw new Error("office_local_write_closed");
+  }
   state.used = true; // Never reset after syscall or SQLite COMMIT failures.
   const resources = new OfficeLocalResourceOwner(plan.executionId, state.execution.source), effects: string[] = [];
   let publicationEntered = false, published = false, failed = false, failure: unknown;

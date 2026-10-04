@@ -60,6 +60,7 @@ export class AttemptHostOperationTracker {
   readonly #mediaExecutions = new WeakMap<HostMediaExecutionTicket, TrackedMediaExecution>();
   readonly #officeExecutions = new WeakMap<HostOfficeLocalTicket, TrackedMediaExecution>();
   readonly #officeEffects = new WeakMap<HostOfficeLocalTicket, Map<string, HostOfficeLocalEffectRecord>>();
+  readonly #officeClosed = new WeakSet<HostOfficeLocalTicket>();
 
   constructor(options: { readonly store: TrackerStore; readonly source: AttemptExecutionSource; readonly now?: () => string }) {
     const keys = Reflect.ownKeys(options);
@@ -294,6 +295,7 @@ export class AttemptHostOperationTracker {
   }
 
   prepareOfficeLocalEffect(ticket: HostOfficeLocalTicket, input: PrepareHostOfficeLocalEffect): HostOfficeLocalEffectRecord {
+    this.assertOfficeLocalPlanOpen(ticket);
     const pair = this.#officeExecution(ticket);
     const captured: PrepareHostOfficeLocalEffect = JSON.parse(JSON.stringify(input));
     this.#assertMediaUnsettled(pair);
@@ -306,6 +308,7 @@ export class AttemptHostOperationTracker {
   /** Binary syscalls enter both original local barriers inside Core's atomic pair gate. */
   launchOfficeLocalEffect<T>(ticket: HostOfficeLocalTicket, effectId: string, effect: () => T,
     mode: "forward" | "cleanup"): T {
+    this.assertOfficeLocalPlanOpen(ticket);
     const pair = this.#officeExecution(ticket);
     const descriptor = this.#officeEffects.get(ticket)!.get(effectId);
     if (!descriptor || descriptor.mode !== mode) fail("invalid_office_effect", "Office launch mode must match its exact prepared effect.");
@@ -341,6 +344,9 @@ export class AttemptHostOperationTracker {
       || this.#group.getSnapshot().operations.some(row => row.ticket === operation.groupTicket && row.state === "blocked"))) {
       fail("already_settled", "Unknown Office execution cannot be upgraded to a safe receipt.");
     }
+    // Local closure precedes Core's independent proof. Pending required children
+    // keep their barriers, but can never reopen this original writer plan.
+    if (!pair.parent.launched && !pair.transport.launched) this.#officeClosed.add(ticket);
     try { this.#store.settleHostOfficeLocalExecution(ticket); }
     catch {
       // Core retains the first write intent only after all children are ready.
@@ -350,6 +356,12 @@ export class AttemptHostOperationTracker {
     const producer = this.settleFromStore(pair.transport.handle);
     const parent = this.settleFromStore(pair.parent.handle);
     return { parent, producer };
+  }
+
+  /** Original tracker capability only; local closure is a stop, not a no-start receipt. */
+  assertOfficeLocalPlanOpen(ticket: HostOfficeLocalTicket): void {
+    this.#assertMediaUnsettled(this.#officeExecution(ticket));
+    if (this.#officeClosed.has(ticket)) fail("office_local_execution_closed", "Office writer is permanently closed.");
   }
 
   #officeExecution(ticket: HostOfficeLocalTicket): TrackedMediaExecution {

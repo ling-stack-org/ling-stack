@@ -1555,6 +1555,8 @@ export interface RunStore {
   sealHostOfficeLocalTerminal(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
     input: import("./host-office-local-terminal-types.js").SealHostOfficeLocalTerminalInput): import("./host-office-local-terminal-types.js").HostOfficeLocalTerminalRecord;
   getHostOfficeLocalTerminal(executionId: string): import("./host-office-local-terminal-types.js").HostOfficeLocalTerminalRecord | undefined;
+  /** Original live-ticket no-start history; this read never issues an execution capability. */
+  getHostOfficeLocalNoStartReceipt(executionId: string): import("./host-office-local-no-start-types.js").HostOfficeLocalNoStartReceipt | undefined;
   settleHostOfficeLocalExecution(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
     input?: import("./host-office-local-types.js").SettleHostOfficeLocalInput): import("./host-office-local-types.js").HostOfficeLocalSettlement;
   prepareHostMediaExecution(parent: import("./host-operation-journal-types.js").HostOperationTicket,

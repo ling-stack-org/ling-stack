@@ -20,6 +20,8 @@ interface ReservationState {
   readonly producer: AttemptHostOperationHandle;
   readonly toolCallId: string;
   readonly workspacePath: string;
+  /** Shared by the original reservation and plan; never copy the closure bit. */
+  readonly lifecycle: { closed: boolean; preparationClaimed: boolean };
   prepared: boolean;
 }
 export interface OfficeLocalWriteState extends ReservationState {
@@ -48,16 +50,25 @@ export function reserveOfficeLocalWriter(tracker: AttemptHostOperationTracker, s
   try { producer = tracker.registerProducer(parent, "file_mutation", "office-local-binary"); }
   catch (error) { try { tracker.settleNoStart(parent); } catch { /* Reserved blockers remain. */ } throw error; }
   const reservation = Object.freeze({}) as OfficeLocalReservation;
-  reservations.set(reservation, { tracker, store, parent, producer, toolCallId, workspacePath, prepared: false });
+  reservations.set(reservation, { tracker, store, parent, producer, toolCallId, workspacePath,
+    lifecycle: { closed: false, preparationClaimed: false }, prepared: false });
   return reservation;
 }
 
 /** Recheck captured source before reading input, not merely before the subsequent write. */
 export function assertOfficeLocalReservation(reservation: OfficeLocalReservation): void {
   const state = reservations.get(reservation);
-  if (!state || state.prepared) throw new Error("office_local_reservation_invalid");
+  if (!state || state.lifecycle.closed) throw new Error("office_local_reservation_closed");
+  if (state.prepared || state.lifecycle.preparationClaimed) throw new Error("office_local_reservation_invalid");
   state.tracker.executorGroup.assertAdmissionOpen();
   if (!state.store.isCurrentRunExecutionOwner(state.tracker.source.runId, state.tracker.source)) throw new Error("office_local_source_obsolete");
+}
+
+/** Irreversible local closure before settling a reservation or accepting a late serializer result. */
+export function closeOfficeLocalReservation(reservation: OfficeLocalReservation): void {
+  const state = reservations.get(reservation);
+  if (!state) throw new Error("office_local_reservation_invalid");
+  state.lifecycle.closed = true;
 }
 
 /** Own all bytes/member identities before issuance. The serializer result is data, not a receipt. */
@@ -86,6 +97,9 @@ export function prepareOfficeLocalWrite(reservation: OfficeLocalReservation, sna
     workspaceIdentity: snapshot.workspaceIdentity,
     targetPath: snapshot.targetPath, overwrite: artifact.overwrite, requestDigest, policyDigest, input: snapshot.input,
     output: { bytesSha256: officeBytesDigest(bytes), sizeBytes: bytes.length }, members, preparedAt: new Date().toISOString() };
+  // Lost INSERT/COMMIT acknowledgements cannot permit a second preparation under
+  // this original reservation. This claim is not proof of a prepared execution.
+  state.lifecycle.preparationClaimed = true;
   const seal = state.store.createArtifact({ runId: state.tracker.source.runId, type: "json", path: `office/${executionId}/prepared.json`,
     createdAt: new Date().toISOString(), sealedPayload: execution });
   const ticket = state.tracker.prepareOfficeLocalExecution(state.parent, state.producer,

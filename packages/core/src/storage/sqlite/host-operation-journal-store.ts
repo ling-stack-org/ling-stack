@@ -18,6 +18,8 @@ interface TicketState {
   launchClaimed: boolean;
   /** Callback/COMMIT failure cannot be reclassified as an operation that never launched. */
   uncertainLaunch: boolean;
+  noStartClosed: boolean;
+  noStartReceiptDigest?: string;
   settlementSignature?: string;
 }
 const kinds = new Set(["command", "file_mutation", "mcp", "plugin", "media", "host_capability",
@@ -30,6 +32,8 @@ const kinds = new Set(["command", "file_mutation", "mcp", "plugin", "media", "ho
  */
 export class SqliteHostOperationJournalStore {
   private readonly tickets = new WeakMap<HostOperationTicket, TicketState>();
+  /** Memory-only lifecycle closure of original Office roles, independent of persisted settlement intent. */
+  private readonly closedOfficeOperations = new Set<string>();
   private readonly closeDatabase: () => void;
   private readonly rollbackDatabase: () => void;
   readonly officeLocal: HostOfficeLocalJournalGate;
@@ -45,6 +49,7 @@ export class SqliteHostOperationJournalStore {
       owner: (source, cleanup) => this.assertOwner(source, cleanup),
       forward: source => this.assertForwardAdmission(source),
       parents: operation => this.assertParentsActive(operation),
+      closeOffice: (parent, producer) => { this.closedOfficeOperations.add(parent); this.closedOfficeOperations.add(producer); },
       synchronous: callback => this.assertSyncCallback(callback),
       synchronousResult: result => this.assertSyncResult(result),
       transaction: callback => this.transaction(callback),
@@ -77,6 +82,7 @@ export class SqliteHostOperationJournalStore {
           || !["admitted","launched"].includes(parent.phase) || hostOperationTimestamp(parent.admittedAt) > hostOperationTimestamp(admittedAt)) {
           return hostOperationFailure("host_operation_invalid_parent");
         }
+        this.assertOfficeForwardOpen(parent);
       }
       this.context.database.prepare(`INSERT INTO host_operations(operation_id,schema_version,run_id,work_unit_id,
         attempt_id,runtime_instance_id,fencing_token,kind,tool_call_id,parent_operation_id,producer_id,phase,admitted_at)
@@ -84,7 +90,7 @@ export class SqliteHostOperationJournalStore {
           source.runtimeInstanceId, source.fencingToken, kind, toolCallId, parentOperationId ?? null, producerId ?? null, admittedAt);
     });
     const ticket = Object.freeze({ operationId }) as HostOperationTicket;
-    this.tickets.set(ticket, { source, launchClaimed: false, uncertainLaunch: false });
+    this.tickets.set(ticket, { source, launchClaimed: false, uncertainLaunch: false, noStartClosed: false });
     return ticket;
   }
 
@@ -164,7 +170,7 @@ export class SqliteHostOperationJournalStore {
           return hostOperationFailure("host_operation_not_launched");
         }
         if (mode === "forward" && state.uncertainLaunch) return hostOperationFailure("host_operation_launch_unknown");
-        this.assertParentsActive(operation);
+        this.assertParentsActive(operation, mode === "cleanup");
         entered = true;
         return readSqliteWithinTransaction(this.context.database, effect);
       });
@@ -352,9 +358,25 @@ export class SqliteHostOperationJournalStore {
       return hostOperationFailure("host_office_local_pair_effect_required");
     }
   }
-  private assertParentsActive(operation: HostOperationRecord): void {
+  /** No new work below a locally closed Office role; independent settlement of already reserved children remains valid. */
+  private assertOfficeForwardOpen(operation: HostOperationRecord): void {
+    if (this.closedOfficeOperations.size === 0) return;
     let current = operation, depth = 0;
+    for (;;) {
+      if (this.closedOfficeOperations.has(current.operationId)) return hostOperationFailure("host_office_local_execution_closed");
+      if (!current.parentOperationId) return;
+      const parent = readHostOperation(this.context.database, current.parentOperationId);
+      if (++depth > 128 || !parent || !sameHostOperationSource(parent.source, operation.source)) {
+        return hostOperationFailure("host_operation_invalid_parent");
+      }
+      current = parent;
+    }
+  }
+  private assertParentsActive(operation: HostOperationRecord, cleanup = false): void {
+    let current = operation, depth = 0;
+    if (this.closedOfficeOperations.has(current.operationId)) return hostOperationFailure("host_office_local_execution_closed");
     while (current.parentOperationId) {
+      if (!cleanup && this.closedOfficeOperations.has(current.parentOperationId)) return hostOperationFailure("host_office_local_execution_closed");
       const parent = readHostOperation(this.context.database, current.parentOperationId);
       if (++depth > 128 || !parent || !sameHostOperationSource(parent.source, operation.source)
         || !["admitted","launched"].includes(parent.phase)) return hostOperationFailure("host_operation_invalid_parent");

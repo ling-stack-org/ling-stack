@@ -7,6 +7,7 @@ import { hostOperationTimestamp, readHostOperation, sameHostOperationSource,
 import { readOfficeLocalEffects, readOfficeLocalExecution, validateOfficeLocalObservation } from "./host-office-local-records.js";
 import { verifyOfficeLocalReplay } from "./host-office-local-replay.js";
 import { readOfficeLocalTerminal } from "./host-office-local-terminal-records.js";
+import { readOfficeLocalNoStartReceipt } from "./host-office-local-no-start-records.js";
 
 function invalid(): never { throw new HostOperationJournalError("host_office_local_evidence_invalid"); }
 export type OfficeLocalJournalVerificationMode = "committed" | "settlement_candidate";
@@ -37,8 +38,9 @@ export function hostOfficeOperationDomainIdentity(database: DatabaseSync, operat
 }
 
 /**
- * Consume only sealed SQLite history. Failed/unknown/unconfirmed and no-start
- * claims are not published receipts, and verification never opens a current FD.
+ * Consume only sealed SQLite history. Published and independently issued
+ * no-start receipts stay separate; neither a failed manifest nor absent native
+ * facts can certify no-start, and verification never opens a current FD.
  * This is a scoped domain digest, not an independent public-safe authority.
  * The generic public verifier separately checks both canonical journal receipts
  * and fans in every reserved nested/extra producer without recursing upward here.
@@ -46,6 +48,7 @@ export function hostOfficeOperationDomainIdentity(database: DatabaseSync, operat
 export function verifyHostOfficeReceipt(database: DatabaseSync, operation: StoredHostOperation,
   mode: OfficeLocalJournalVerificationMode = "committed"): string {
   const execution = scopedExecution(database, operation);
+  if (operation.settlementKind === "known_no_start") return verifyOfficeNoStartReceipt(database, operation, execution, mode);
   const expectedSettlement = operation.evidenceRef!.kind === "office_local_chain_execution"
     ? "office_local_chain_completed" : "office_local_binary_completed";
   if (operation.phase !== "safe" || operation.settlementKind !== expectedSettlement || !operation.launchedAt || !operation.settledAt
@@ -90,4 +93,33 @@ export function verifyHostOfficeReceipt(database: DatabaseSync, operation: Store
     producerOperationId: execution.producerOperationId, terminalArtifactId: terminal.terminalArtifactId,
     terminalDigest: terminal.terminalDigest, effectSetDigest: terminal.effectSetDigest,
     effectCount: terminal.effectCount, sealedAt: terminal.sealedAt, replay });
+}
+
+/** Scoped historical no-start digest. Generic public verification still requires the canonical whole pair and every child. */
+function verifyOfficeNoStartReceipt(database: DatabaseSync, operation: StoredHostOperation,
+  execution: HostOfficeLocalExecutionRecord, mode: OfficeLocalJournalVerificationMode): string {
+  if (operation.phase !== "safe" || operation.launchedAt || !operation.settledAt
+    || operation.settlementSignature !== JSON.stringify({ kind: "known_no_start", settledAt: operation.settledAt })
+    || (mode !== "committed" && mode !== "settlement_candidate")) return invalid();
+  const receipt = readOfficeLocalNoStartReceipt(database, execution);
+  if (!receipt || hostOperationTimestamp(receipt.closedAt) > hostOperationTimestamp(operation.settledAt)) return invalid();
+  const pair = [
+    { operation: readHostOperation(database, execution.parentOperationId), kind: "office_local_chain_execution" },
+    { operation: readHostOperation(database, execution.producerOperationId), kind: "office_local_binary_execution" },
+  ] as const;
+  for (const member of pair) {
+    const original = member.operation;
+    if (!original || original.launchedAt || original.evidenceRef?.kind !== member.kind
+      || original.evidenceRef.id !== execution.executionId
+      || hostOfficeOperationDomainIdentity(database, original, false) !== original.domainIdentityDigest) return invalid();
+    if (original.phase === "safe") {
+      if (original.settlementKind !== "known_no_start" || original.settledAt !== operation.settledAt
+        || original.settlementSignature !== JSON.stringify({ kind: "known_no_start", settledAt: operation.settledAt })) return invalid();
+    } else if (mode !== "settlement_candidate" || original.phase !== "admitted") return invalid();
+    if (mode === "committed" && original.operationId === operation.operationId
+      && digestHarnessToolValue(original) !== digestHarnessToolValue(operation)) return invalid();
+  }
+  return digestHarnessToolValue({ scope: operation.evidenceRef!.kind, executionIdentityDigest: execution.identityDigest,
+    source: execution.source, toolCallId: execution.toolCallId, parentOperationId: execution.parentOperationId,
+    producerOperationId: execution.producerOperationId, noStartReceipt: receipt });
 }

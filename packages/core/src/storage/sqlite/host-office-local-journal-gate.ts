@@ -2,6 +2,7 @@ import type { HostOperationSource, HostOperationTicket } from "../../host-operat
 import { hostOperationDomainIdentity, hostOperationFailure, sameHostOperationSource, type StoredHostOperation } from "./host-operation-journal-evidence.js";
 import type { HostOfficeLocalExecutionRecord, HostOfficeLocalSettlement } from "../../host-office-local-types.js";
 import { settleOfficeLocalJournalPair } from "./host-office-local-journal-settlement.js";
+import { settleOfficeLocalNoStartPair } from "./host-office-local-no-start-settlement.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
@@ -10,7 +11,16 @@ export interface OfficeJournalTicketState {
   readonly source: HostOperationSource;
   launchClaimed: boolean;
   uncertainLaunch: boolean;
+  noStartClosed: boolean;
+  /** Retained before receipt INSERT; a rollback cannot substitute different exclusion facts at the same clock. */
+  noStartReceiptDigest?: string;
   settlementSignature?: string;
+}
+/** The Store passes its actual private state reference, never a caller's settlement input or proof. */
+interface OfficeSettlementLiveState {
+  readonly entered: ReadonlyMap<string, string>;
+  readonly uncertainLaunch: boolean;
+  noStartClosed: boolean;
 }
 interface JournalAuthority {
   ticket(ticket: HostOperationTicket): OfficeJournalTicketState;
@@ -18,6 +28,7 @@ interface JournalAuthority {
   owner(source: HostOperationSource, cleanup: boolean): void;
   forward(source: HostOperationSource): void;
   parents(operation: StoredHostOperation): void;
+  closeOffice(parentOperationId: string, producerOperationId: string): void;
   synchronous(callback: unknown): void;
   synchronousResult<T>(result: T): T;
   transaction<T>(callback: () => T): T;
@@ -49,12 +60,31 @@ export class HostOfficeLocalJournalGate {
   }
 
   /** A receipt may release both roles only through this original live pair and owner. */
-  settle(parent: HostOperationTicket, producer: HostOperationTicket, settledAt?: string): HostOfficeLocalSettlement {
+  settle(parent: HostOperationTicket, producer: HostOperationTicket, live: OfficeSettlementLiveState,
+    settledAt?: string): HostOfficeLocalSettlement {
     const retained = this.authority.ticket(parent).settlementSignature;
     const at = settledAt ?? (retained ? JSON.parse(retained).settledAt as string : new Date().toISOString());
     return this.authority.transaction(() => {
       const pair = this.pair(parent, producer, true);
       this.authority.owner(pair.parent.source, true);
+      const officeEntered = live.entered.size !== 0, journalEntered = pair.states.every(state => state.launchClaimed);
+      if (live.uncertainLaunch || pair.states.some(state => state.uncertainLaunch)
+        || officeEntered !== journalEntered || pair.states.some(state => state.launchClaimed) !== journalEntered) {
+        return hostOperationFailure("host_office_local_launch_unknown");
+      }
+      if (!officeEntered) {
+        if (pair.parent.evidenceRef?.kind !== "office_local_chain_execution"
+          || pair.producer.evidenceRef?.kind !== "office_local_binary_execution"
+          || pair.parent.evidenceRef.id !== pair.producer.evidenceRef.id
+          || pair.parent.launchedAt || pair.producer.launchedAt) return hostOperationFailure("host_office_local_invalid_journal_pair");
+        // Closing is not a receipt claim. It deliberately survives failed child
+        // validation without pinning an obsolete receipt/settlement timestamp.
+        live.noStartClosed = true;
+        for (const state of pair.states) state.noStartClosed = true;
+        this.authority.closeOffice(pair.parent.operationId, pair.producer.operationId);
+        return settleOfficeLocalNoStartPair(this.context, pair, at);
+      }
+      if (live.noStartClosed || pair.states.some(state => state.noStartClosed)) return hostOperationFailure("host_office_local_execution_closed");
       return settleOfficeLocalJournalPair(this.context, pair, at);
     });
   }
@@ -116,6 +146,7 @@ export class HostOfficeLocalJournalGate {
   private pair(parentTicket: HostOperationTicket, producerTicket: HostOperationTicket, allowSettled = false) {
     const states = [this.authority.ticket(parentTicket), this.authority.ticket(producerTicket)] as const;
     const parent = this.authority.operation(parentTicket, states[0]), producer = this.authority.operation(producerTicket, states[1]);
+    if (!allowSettled && states.some(state => state.noStartClosed)) return hostOperationFailure("host_office_local_execution_closed");
     if (parent.kind !== "mcp" || parent.parentOperationId || producer.kind !== "file_mutation"
       || producer.parentOperationId !== parent.operationId || producer.producerId !== "office-local-binary"
       || parent.toolCallId !== producer.toolCallId || !sameHostOperationSource(parent.source, producer.source)
