@@ -2,7 +2,23 @@
 
 此提交是用户要求的**代码防丢保存点**，不是可发布版本，不代表整个目标通过。
 
-## 最新增量保存（2026-10-04；native writer/resource WIP）
+## 最新增量保存（2026-10-04；writer clock 与资源回归）
+
+用户要求再次推送现有 Draft PR #507 保存。只追加代码防丢检查点，不合并 main、不改版本、不重写历史；上一保存点 `759e1cc2ccb338715d470612a0e45b3bb4ec46a0` 完整保留。
+
+- 本增量仅包含 writer、writer 回归、新 resource owner 回归及本记录。没有新增全文件删除，也没有新增兼容 fallback；旧 fixtures 直接改为 `resources`、同一 `resourceLifetimeId` 和 native/Host 分轴合同。
+- 已复现 seal 时间顺序缺陷：递增 Date 的真实 SQLite/SDK 回归在原代码 **0/1、exit 1**。writer 改为一次采样 `completedAt`，同时用于 effect artifact `createdAt`；不放宽 Core 校验，不改 native 实际返回时间。
+- 当前 writer/snapshot/Tracker 联合矩阵实际 **51/51 GREEN、exit 0**，fail/cancel/skip/todo 均 0；运行前后 writer source/test/dist SHA 相同，保存前再次读回相同。
+- 新 resource owner 真实 FD 回归实际 **11/11 GREEN、exit 0**，fail/cancel/skip/todo 均 0；覆盖同 inode 同数字 FD 复用、unknown close 禁重试/fstat/cleanup、首次 fstat 失败保留持有、clone/跨 owner 借权拒绝和三终态 lifetime 不复用。运行前后 source/test/dist SHA 相同，保存前再次读回相同。
+- Daemon TypeScript 构建、两测试文件 Node 22.22.1 语法检查与 diff check exit 0。只读窄审查未发现阻止 Draft 保存的 P1/P2；这不是全仓正式 pre-landing review。
+- 早期七项矩阵 **7/8** 和首个联合矩阵 **50/51** 的失败日志仍保留；失败项是错误 message/code 断言未对齐，已使用实际 `attempt_host_operation_launched_no_start` code。首个联合命令的尾部 shasum exit 不作为 suite 成功，最终矩阵独立保存真实 suite exit。
+- **真实 writer close-return 后 COMMIT rollback/post-COMMIT 故障联测、相关完整 Daemon suite、restart/drain、完整 terminal verifier、safe 封口和固定 production route 尚未完成。** resource owner 的 Host callback 单测不冒称 COMMIT 集成。
+- 本次没有 fresh packaged macOS/GUI 验收。公开 U gate 仍关闭，整个 D0/E1–E6、U/T、Harness 目标仍 active。密钥、真实数据库、安装包、截图和忽略的 output 不上传。
+- 推送前正常执行凭据扫描及既有 pre-push，推送后独立读回 branch/PR HEAD；未读回前不声称远端保存成功。
+
+下一实际入口：补真实 writer close-return/Host COMMIT 故障回归 → 相关完整 Daemon suite 及窄审查 → complete terminal manifest/纯 Core whole-file verifier → 原 parent+producer pair 原子封口/fan-in → 固定 route → 原总计划后续真实验收。不重复已验收切片。
+
+## 前一次增量保存（2026-10-04；759e1cc2 native writer/resource WIP）
 
 用户再次授权将当前新增代码推送到现有 Draft PR #507。仅追加防丢检查点，不合并 main、不改版本、不重写历史，不把保存成功当作实现完成。
 

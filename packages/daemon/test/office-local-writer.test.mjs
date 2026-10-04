@@ -46,6 +46,27 @@ function effectPayloads(f) {
     payload: f.store.getArtifact(effect.observationArtifactId)?.sealedPayload }));
 }
 
+test("Office effect seal timestamp cannot precede its completed observation", async t => {
+  const f = await fixture(t), OriginalDate = globalThis.Date;
+  let tick = OriginalDate.now() + 1000;
+  globalThis.Date = class extends OriginalDate {
+    constructor(...args) { super(...(args.length ? args : [tick++])); }
+  };
+  t.after(() => { globalThis.Date = OriginalDate; });
+  let result;
+  assert.doesNotThrow(() => { result = executeOfficeLocalWrite(f.plan); },
+    "distinct clock ticks must not cause valid native effects to lose their observations");
+  assert.deepEqual(readFileSync(result.path), f.artifact.bytes);
+  const effects = f.store.listHostOfficeLocalEffects(f.plan.executionId);
+  assert.ok(effects.length > 0);
+  for (const effect of effects) {
+    const seal = f.store.getArtifact(effect.observationArtifactId);
+    assert.ok(seal, "each entered effect must retain a validated immutable observation");
+    assert.equal(seal.sealedPayload.host.state, "returned");
+    assert.ok(seal.sealedPayload.completedAt <= seal.createdAt);
+  }
+});
+
 test("Office native contract preserves short write return before readback failure", async t => {
   const f = await fixture(t), ledger = officeLocalWriteState(f.plan).ledger;
   let writes = 0;
@@ -118,8 +139,8 @@ test("Office native contract separates callback admission from native syscall en
   assert.ok(effect.enteredAt, "the Core callback entry is preserved even without native entry");
   assert.deepEqual(payload?.native, { state: "not_entered" });
   assert.equal(payload.host.state, "unconfirmed");
-  assert.throws(() => f.tracker.settleNoStart(state.parent), /launched_no_start/);
-  assert.throws(() => f.tracker.settleNoStart(state.producer), /launched_no_start/);
+  assert.throws(() => f.tracker.settleNoStart(state.parent), { code: "attempt_host_operation_launched_no_start" });
+  assert.throws(() => f.tracker.settleNoStart(state.producer), { code: "attempt_host_operation_launched_no_start" });
 });
 
 for (const afterCommit of [false, true]) {
@@ -173,7 +194,7 @@ test("Office real SDK bytes publish through exact SQLite effects without safe se
   assert.deepEqual(readFileSync(result.path), f.artifact.bytes);
   assert.equal(existsSync(f.temporary), false);
   assert.equal(result.observation.outcome, "published");
-  assert.equal(result.observation.descriptors.every(row => row.state === "closed"), true);
+  assert.equal(result.observation.resources.every(row => row.state === "closed"), true);
   assert.equal(result.observation.members.length, f.prepared.members.length);
   const effects = f.store.listHostOfficeLocalEffects(f.plan.executionId);
   assert.deepEqual(effects.map(row => row.kind), ["mkdir", "mkdir", "open", "write", "fsync", "close", "link", "unlink"]);
@@ -269,14 +290,26 @@ test("Office member reads bind one FD, handle short reads and cannot extend allo
 
 test("Office Tracker cannot relabel a forward row cleanup after local admission closes", async t => {
   const f = await fixture(t), state = officeLocalWriteState(f.plan), tracker = f.tracker;
-  const open = tracker.prepareOfficeLocalEffect(state.ticket, { effectId: "open", ordinal: 0, kind: "open", mode: "forward", memberId: "temporary", preparedAt: now() });
-  tracker.launchOfficeLocalEffect(state.ticket, open.effectId, () => { const fd = fs.openSync(f.temporary, "wx"); fs.closeSync(fd); }, "forward");
-  const seal = f.store.createArtifact({ runId: "run", type: "json", path: "office/open.json", createdAt: now(), sealedPayload: {
+  const resourceLifetimeId = "tracker-open-lifetime";
+  const open = tracker.prepareOfficeLocalEffect(state.ticket, { effectId: "open", ordinal: 0, kind: "open", mode: "forward",
+    memberId: "temporary", resourceLifetimeId, preparedAt: now() });
+  let calledAt, returnedAt;
+  tracker.launchOfficeLocalEffect(state.ticket, open.effectId, () => {
+    calledAt = now();
+    const fd = fs.openSync(f.temporary, "wx");
+    returnedAt = now();
+    fs.closeSync(fd);
+  }, "forward");
+  const completedAt = now();
+  const seal = f.store.createArtifact({ runId: "run", type: "json", path: "office/open.json", createdAt: completedAt, sealedPayload: {
     schemaVersion: 1, protocol: "ling-office-local-binary-v1", kind: "office_local_effect_v1", executionId: f.plan.executionId,
-    executionIdentityDigest: state.identityDigest, source: f.source, effectId: open.effectId, effectDigest: open.effectDigest, outcome: "returned", completedAt: now(),
+    executionIdentityDigest: state.identityDigest, source: f.source, effectId: open.effectId, effectDigest: open.effectDigest,
+    native: { state: "returned", calledAt, returnedAt, result: { kind: "open", resourceLifetimeId } },
+    host: { state: "returned" }, completedAt,
   } });
   tracker.recordOfficeLocalObservation(state.ticket, open.effectId, seal.id);
-  const write = tracker.prepareOfficeLocalEffect(state.ticket, { effectId: "write", ordinal: 1, kind: "write", mode: "forward", memberId: "temporary", offset: 0, sizeBytes: 1, preparedAt: now() });
+  const write = tracker.prepareOfficeLocalEffect(state.ticket, { effectId: "write", ordinal: 1, kind: "write", mode: "forward",
+    memberId: "temporary", resourceLifetimeId, offset: 0, sizeBytes: 1, preparedAt: now() });
   tracker.executorGroup.closeAdmission({ kind: "user_input_required", requestId: "required", requestVersion: 1 });
   let mutations = 0;
   assert.throws(() => tracker.launchOfficeLocalEffect(state.ticket, write.effectId, () => { mutations++; writeFileSync(f.temporary, "bad"); }, "cleanup"));
@@ -324,7 +357,7 @@ test("Office unknown close is not replayed against an FD number reused by the sa
   assert.throws(() => { try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; throw error; } }, OfficeLocalWriterError);
   assert.equal(attempts, 1, "an unknown close cannot be retried");
   assert.doesNotThrow(() => fs.fstatSync(borrowedFd));
-  assert.equal(failure.observation.descriptors[0].state, "retained");
+  assert.equal(failure.observation.resources[0].state, "unknown");
   assert.equal(existsSync(f.prepared.targetPath), false);
 });
 

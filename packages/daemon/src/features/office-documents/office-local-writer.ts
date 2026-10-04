@@ -78,13 +78,14 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     try {
       // Core restores only this live ticket's callback-entry fact after rollback.
       // Native not_entered never rewrites the original operation as no-start.
+      const completedAt = new Date().toISOString();
       const seal = state.store.createArtifact({ runId: state.execution.source.runId, type: "json",
-        path: `office/${plan.executionId}/effect-${descriptor.ordinal}.json`, createdAt: new Date().toISOString(), sealedPayload: {
+        path: `office/${plan.executionId}/effect-${descriptor.ordinal}.json`, createdAt: completedAt, sealedPayload: {
           schemaVersion: 1, protocol: HOST_OFFICE_LOCAL_PROTOCOL, kind: "office_local_effect_v1", executionId: plan.executionId,
           executionIdentityDigest: state.identityDigest, source: state.execution.source, effectId: descriptor.effectId,
           effectDigest: descriptor.effectDigest, native,
           host: hostFailed ? { state: "unconfirmed", errorCode: officeErrorCode(actualError) } : { state: "returned" },
-          completedAt: new Date().toISOString(),
+          completedAt,
         } });
       state.tracker.recordOfficeLocalObservation(state.ticket, descriptor.effectId, seal.id);
     } catch (error) {
