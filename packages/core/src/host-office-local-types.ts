@@ -61,6 +61,8 @@ export interface PrepareHostOfficeLocalEffect {
   readonly mode: "forward" | "cleanup";
   readonly memberId: string;
   readonly fromMemberId?: string;
+  /** Host-created lifetime; required for open/write/fsync/close, never a raw numeric FD. */
+  readonly resourceLifetimeId?: string;
   readonly offset?: number;
   readonly sizeBytes?: number;
   readonly preparedAt: string;
@@ -72,7 +74,19 @@ export interface HostOfficeLocalEffectRecord extends PrepareHostOfficeLocalEffec
   readonly observationArtifactId?: string;
   readonly revision: number;
 }
-/** Actual fixed-writer observation; success text from an Office tool is not accepted. */
+export type HostOfficeLocalNativeResult =
+  | { readonly kind: "open" | "fsync" | "close"; readonly resourceLifetimeId: string }
+  | { readonly kind: "write"; readonly resourceLifetimeId: string; readonly bytesWritten: number }
+  | { readonly kind: "mkdir" | "link" | "rename" | "unlink" | "rmdir" };
+/** Latched at the actual native call, before readback, resource observation or Host COMMIT. */
+export type HostOfficeLocalNativeObservation =
+  | { readonly state: "not_entered" }
+  | { readonly state: "returned"; readonly calledAt: string; readonly returnedAt: string; readonly result: HostOfficeLocalNativeResult }
+  | { readonly state: "threw"; readonly calledAt: string; readonly completedAt: string; readonly errorCode: string };
+export type HostOfficeLocalHostObservation = { readonly state: "returned" }
+  | { readonly state: "unconfirmed"; readonly errorCode: string };
+
+/** Native facts and Host transaction outcome are separate; neither is a safe receipt. */
 export interface HostOfficeLocalEffectObservation {
   readonly schemaVersion: 1;
   readonly protocol: typeof HOST_OFFICE_LOCAL_PROTOCOL;
@@ -82,7 +96,7 @@ export interface HostOfficeLocalEffectObservation {
   readonly source: HostOperationSource;
   readonly effectId: string;
   readonly effectDigest: string;
-  readonly outcome: "returned" | "failed" | "not_entered";
-  readonly errorCode?: string;
+  readonly native: HostOfficeLocalNativeObservation;
+  readonly host: HostOfficeLocalHostObservation;
   readonly completedAt: string;
 }
