@@ -2,7 +2,18 @@
 
 此提交是用户要求的**代码防丢保存点**，不是可发布版本，不代表整个目标通过。
 
-## 本次 checkpoint 增量（2026-10-05；terminal 时间夹具修复）
+## 本次 checkpoint 增量（2026-10-05；Office journal pair 未验证 WIP）
+
+用户要求再向既有 Draft PR #507 保存一次。上一远端保存点 `50a61fbe491bc1bc9f213618f84a3136cf9c073b` 及全部历史保留；本次仅追加 Office journal pair 源码、测试和本记录，不合并、不升版本、不改根 checkout 或真实数据库。
+
+- migration150、两种 Office evidence/settlement、原票 pair gate、同事务 producer/parent settlement、RunStore/SQLite facade 和 Tracker 接线已写入；新 consumer/迁移/真实 SDK pair 故障回归源码一并保存。
+- 所有并行作者已冻结。当前源码与测试尚未统一构建或运行，不能称为 GREEN、safe receipt 验收完成或可合并候选。五个新增 `.mjs` 文件仅 Node 22.22.1 语法检查通过；本次 `git diff --check` 通过。旧测试结果不证明本增量。
+- 待修：generic `launchHostOperation` / `continueHostOperationEffect` 仍可绕过 Office effect roster/封口；consumer 的公开整 pair 状态/settlement 验真未补齐；通用事务 ROLLBACK 失败后隔离连接待处理。保留这些已知风险，不为备份隐藏或宣称解决。
+- Office `known_no_start` 的独立零效果证明仍待实现，缺证明时 consumer 拒绝安全完成；creator-bound directory receipt、固定 production route、live/restart/answer recovery、fresh packaged macOS 和最终联合门禁仍待完成。
+
+仅保存防丢 WIP，公开 U gate 继续关闭，完整 D0/E1–E6、U/T、Harness 目标保持 active。不上传忽略的 output、日志、截图、安装包、QA 数据库或密钥。
+
+## 前次 checkpoint 增量（2026-10-05；terminal 时间夹具修复）
 
 用户再次要求向现有 Draft PR #507 推送保存。上一保存点 `46b3f458157728ce71a89fe61a1c118bafa7c108` 及全部先前历史保留；仅追加测试修复和本记录，不合并 main、不升版本、不改根 checkout、真实数据库或同事 WIP。
 

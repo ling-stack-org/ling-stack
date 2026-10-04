@@ -169,13 +169,20 @@ export class SqliteHostOperationJournalStore {
     const state = this.requireTicket(ticket);
     const kind = input.kind, settledAt = input.settledAt ?? new Date().toISOString();
     const code = kind === "unknown_outcome" ? input.code : undefined;
-    if (!["known_no_start","file_completed","unknown_outcome", "media_response_completed", "media_remote_terminal", "media_chain_completed"].includes(kind)
+    if (!["known_no_start","file_completed","unknown_outcome", "media_response_completed", "media_remote_terminal", "media_chain_completed",
+      "office_local_chain_completed", "office_local_binary_completed"].includes(kind)
       || (kind === "unknown_outcome" && !hostOperationText(code))) return hostOperationFailure("host_operation_invalid_settlement");
     hostOperationTimestamp(settledAt);
     const signature = JSON.stringify({ kind, settledAt, code });
     if (state.settlementSignature && state.settlementSignature !== signature) return hostOperationFailure("host_operation_settlement_conflict");
     return this.transaction(() => {
       const operation = this.requireOperation(ticket, state);
+      // Office success/no-start must never be split across independent journal
+      // transactions or borrowed from the old patch verifier. Unknown is still a blocker.
+      if (kind !== "unknown_outcome" && (kind === "office_local_chain_completed" || kind === "office_local_binary_completed"
+        || operation.evidenceRef?.kind === "office_local_chain_execution" || operation.evidenceRef?.kind === "office_local_binary_execution")) {
+        return hostOperationFailure("host_office_local_pair_settlement_required");
+      }
       if (operation.settlementSignature) {
         if (operation.settlementSignature !== signature) return hostOperationFailure("host_operation_settlement_conflict");
         return this.verifiedRecord(operation);

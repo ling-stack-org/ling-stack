@@ -1939,6 +1939,9 @@ export class SqliteRunStore implements RunStore {
   getHostOfficeLocalTerminal(...args: Parameters<RunStore["getHostOfficeLocalTerminal"]>): ReturnType<RunStore["getHostOfficeLocalTerminal"]> {
     return this.hostOfficeLocal.getHostOfficeLocalTerminal(...args);
   }
+  settleHostOfficeLocalExecution(...args: Parameters<RunStore["settleHostOfficeLocalExecution"]>): ReturnType<RunStore["settleHostOfficeLocalExecution"]> {
+    return this.hostOfficeLocal.settleHostOfficeLocalExecution(...args);
+  }
   bindHostMediaChildExecution(...args: Parameters<RunStore["bindHostMediaChildExecution"]>): ReturnType<RunStore["bindHostMediaChildExecution"]> {
     return this.hostMediaOperations.bindHostMediaChildExecution(...args);
   }

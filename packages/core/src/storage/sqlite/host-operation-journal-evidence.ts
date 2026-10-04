@@ -6,6 +6,7 @@ import {
   HostOperationJournalError, type HostOperationEvidenceRef, type HostOperationRecord, type HostOperationSource,
 } from "../../host-operation-journal-types.js";
 import { hostMediaOperationDomainIdentity, verifyHostMediaReceipt } from "./host-media-receipt-evidence.js";
+import { hostOfficeOperationDomainIdentity, verifyHostOfficeReceipt } from "./host-office-local-journal-evidence.js";
 
 export interface StoredHostOperation extends HostOperationRecord {
   readonly domainIdentityDigest?: string;
@@ -66,14 +67,16 @@ function mapHostOperation(row: Record<string, SQLOutputValue>): StoredHostOperat
   if (row.phase === "launched" && row.launched_at === null) return invalid();
   if (row.evidence_id === null) {
     if (row.evidence_kind !== null || row.domain_identity_digest !== null) return invalid();
-  } else if (!hostOperationText(row.evidence_id) || !["harness_tool_execution","host_command", "media_chain_execution", "media_transport_execution"].includes(String(row.evidence_kind))
+  } else if (!hostOperationText(row.evidence_id) || !["harness_tool_execution","host_command", "media_chain_execution", "media_transport_execution",
+    "office_local_chain_execution", "office_local_binary_execution"].includes(String(row.evidence_kind))
     || !digest(row.domain_identity_digest)) return invalid();
   if (["safe","unknown_outcome"].includes(String(row.phase))) {
     const settledAt = hostOperationTimestamp(row.settled_at);
     if (settledAt < admittedAt || (row.launched_at !== null && settledAt < hostOperationTimestamp(row.launched_at))
       || !hostOperationText(row.settlement_signature)) return invalid();
     if (row.phase === "safe" && (!digest(row.evidence_digest) || row.code !== null
-      || !["known_no_start", "file_completed", "media_response_completed", "media_remote_terminal", "media_chain_completed"].includes(String(row.settlement_kind))
+      || !["known_no_start", "file_completed", "media_response_completed", "media_remote_terminal", "media_chain_completed",
+        "office_local_chain_completed", "office_local_binary_completed"].includes(String(row.settlement_kind))
       || (row.settlement_kind === "known_no_start" && row.launched_at !== null)
       || (row.settlement_kind !== "known_no_start" && row.launched_at === null))) return invalid();
     if (row.phase === "unknown_outcome" && (row.settlement_kind !== "unknown_outcome" || !hostOperationText(row.code))) return invalid();
@@ -100,6 +103,9 @@ export function hostOperationDomainIdentity(database: DatabaseSync, operation: H
   if (!evidence || !hostOperationText(evidence.id)) return hostOperationFailure("host_operation_evidence_invalid");
   if (evidence.kind === "media_chain_execution" || evidence.kind === "media_transport_execution") {
     return hostMediaOperationDomainIdentity(database, { ...operation, evidenceRef: evidence }, binding);
+  }
+  if (evidence.kind === "office_local_chain_execution" || evidence.kind === "office_local_binary_execution") {
+    return hostOfficeOperationDomainIdentity(database, { ...operation, evidenceRef: evidence }, binding);
   }
   if (evidence.kind === "host_command" && operation.kind === "command") {
     const rows = database.prepare(`SELECT run_id,ts,data_json FROM run_events WHERE type='host_command_prepared'
@@ -156,6 +162,8 @@ export function verifyHostOperationSafe(database: DatabaseSync, operation: Store
     }
     domainDigest = operation.evidenceRef.kind === "media_chain_execution" || operation.evidenceRef.kind === "media_transport_execution"
       ? verifyHostMediaReceipt(database, operation)
+      : operation.evidenceRef.kind === "office_local_chain_execution" || operation.evidenceRef.kind === "office_local_binary_execution"
+      ? verifyHostOfficeReceipt(database, operation)
       : operation.evidenceRef.kind === "harness_tool_execution"
       ? verifyFileTerminal(database, operation, operation.settlementKind === "known_no_start")
       : verifyCommandNoStart(database, operation);
@@ -165,6 +173,10 @@ export function verifyHostOperationSafe(database: DatabaseSync, operation: Store
   if (operation.settlementKind === "known_no_start" && operation.launchedAt) return hostOperationFailure("host_operation_evidence_invalid");
   if (operation.settlementKind?.startsWith("media_") && (operation.kind !== "media" || !operation.evidenceRef
     || !["media_chain_execution", "media_transport_execution"].includes(operation.evidenceRef.kind))) return hostOperationFailure("host_operation_evidence_invalid");
+  if (operation.settlementKind?.startsWith("office_local_") && (!operation.launchedAt || !operation.evidenceRef
+    || !["office_local_chain_execution", "office_local_binary_execution"].includes(operation.evidenceRef.kind))) {
+    return hostOperationFailure("host_operation_evidence_invalid");
+  }
   return digestHarnessToolValue({ source: operation.source, operationId: operation.operationId, kind: operation.settlementKind,
     admittedAt: operation.admittedAt, launchedAt: operation.launchedAt, settledAt: operation.settledAt,
     domainDigest, childDigests });

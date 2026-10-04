@@ -1,6 +1,6 @@
 import type { HostOperationTicket } from "../../host-operation-journal-types.js";
 import type { HostOfficeLocalExecutionRecord, HostOfficeLocalEffectRecord, HostOfficeLocalTicket,
-  PrepareHostOfficeLocalInput, PrepareHostOfficeLocalEffect } from "../../host-office-local-types.js";
+  PrepareHostOfficeLocalInput, PrepareHostOfficeLocalEffect, SettleHostOfficeLocalInput, HostOfficeLocalSettlement } from "../../host-office-local-types.js";
 import type { HostOfficeLocalTerminalRecord, SealHostOfficeLocalTerminalInput } from "../../host-office-local-terminal-types.js";
 import { digestHarnessToolValue } from "../../harness/tool-executions.js";
 import { hostOperationFailure, hostOperationTimestamp, sameHostOperationSource } from "./host-operation-journal-evidence.js";
@@ -48,7 +48,7 @@ export class SqliteHostOfficeLocalStore {
         .run(prepared.executionId, prepared.protocol, prepared.source.runId, prepared.source.workUnitId, prepared.source.attemptId,
           prepared.source.runtimeInstanceId, prepared.source.fencingToken, parent.operationId, producer.operationId, prepared.toolCallId,
           prepared.toolName, captured.preparedArtifactId, seal.hash, identityDigest, prepared.preparedAt);
-      this.requireExecution(prepared.executionId);
+      return this.requireExecution(prepared.executionId);
     });
     const ticket = Object.freeze({ executionId: captured.executionId }) as HostOfficeLocalTicket;
     this.tickets.set(ticket, { parent, producer, entered: new Map(), uncertainLaunch: false });
@@ -172,6 +172,13 @@ export class SqliteHostOfficeLocalStore {
       const execution = readOfficeLocalExecution(this.context.database, id);
       return execution ? readOfficeLocalTerminal(this.context.database, execution) : undefined;
     });
+  }
+  /** Seal alone is insufficient: replay and all required journal children must verify atomically. */
+  settleHostOfficeLocalExecution(ticket: HostOfficeLocalTicket, input: SettleHostOfficeLocalInput = {}): HostOfficeLocalSettlement {
+    const state = this.requireTicket(ticket), settledAt = input.settledAt;
+    if (!state.sealClaim) return hostOperationFailure("host_office_local_terminal_missing");
+    if (state.uncertainLaunch) return hostOperationFailure("host_office_local_launch_unknown");
+    return this.journal.officeLocal.settle(state.parent, state.producer, settledAt);
   }
   private requireExecution(id: string): HostOfficeLocalExecutionRecord {
     return readOfficeLocalExecution(this.context.database, id) ?? officeLocalFailure();

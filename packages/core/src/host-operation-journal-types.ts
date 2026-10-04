@@ -24,13 +24,17 @@ export type HostOperationEvidenceRef =
   | { readonly kind: "harness_tool_execution"; readonly id: string }
   | { readonly kind: "host_command"; readonly id: string }
   | { readonly kind: "media_chain_execution"; readonly id: string }
-  | { readonly kind: "media_transport_execution"; readonly id: string };
+  | { readonly kind: "media_transport_execution"; readonly id: string }
+  | { readonly kind: "office_local_chain_execution"; readonly id: string }
+  | { readonly kind: "office_local_binary_execution"; readonly id: string };
 export type HostOperationSettlementInput =
   | { readonly kind: "known_no_start"; readonly settledAt?: string }
   | { readonly kind: "file_completed"; readonly settledAt?: string }
   | { readonly kind: "media_response_completed"; readonly settledAt?: string }
   | { readonly kind: "media_remote_terminal"; readonly settledAt?: string }
   | { readonly kind: "media_chain_completed"; readonly settledAt?: string }
+  | { readonly kind: "office_local_chain_completed"; readonly settledAt?: string }
+  | { readonly kind: "office_local_binary_completed"; readonly settledAt?: string }
   | { readonly kind: "unknown_outcome"; readonly code: string; readonly settledAt?: string };
 export interface HostOperationRecord {
   readonly schemaVersion: 1;

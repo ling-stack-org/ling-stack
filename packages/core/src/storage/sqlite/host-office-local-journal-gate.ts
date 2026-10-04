@@ -1,5 +1,7 @@
 import type { HostOperationSource, HostOperationTicket } from "../../host-operation-journal-types.js";
-import { hostOperationFailure, sameHostOperationSource, type StoredHostOperation } from "./host-operation-journal-evidence.js";
+import { hostOperationDomainIdentity, hostOperationFailure, sameHostOperationSource, type StoredHostOperation } from "./host-operation-journal-evidence.js";
+import type { HostOfficeLocalExecutionRecord, HostOfficeLocalSettlement } from "../../host-office-local-types.js";
+import { settleOfficeLocalJournalPair } from "./host-office-local-journal-settlement.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
@@ -25,15 +27,35 @@ interface JournalAuthority {
 export class HostOfficeLocalJournalGate {
   constructor(private readonly context: SqliteStoreContext, private readonly authority: JournalAuthority) {}
 
-  prepare<T>(parent: HostOperationTicket, producer: HostOperationTicket,
-    callback: (parent: StoredHostOperation, producer: StoredHostOperation) => T): T {
+  prepare(parent: HostOperationTicket, producer: HostOperationTicket,
+    callback: (parent: StoredHostOperation, producer: StoredHostOperation) => HostOfficeLocalExecutionRecord): HostOfficeLocalExecutionRecord {
     this.authority.synchronous(callback);
     return this.authority.transaction(() => {
       const pair = this.pair(parent, producer);
       this.authority.owner(pair.parent.source, false); this.authority.forward(pair.parent.source);
-      if (pair.parent.phase !== "admitted" || pair.producer.phase !== "admitted"
+      if (pair.parent.phase !== "admitted" || pair.producer.phase !== "admitted" || pair.parent.evidenceRef || pair.producer.evidenceRef
         || pair.states.some(state => state.launchClaimed || state.uncertainLaunch)) return hostOperationFailure("host_office_local_preparation_too_late");
-      return callback(pair.parent, pair.producer);
+      const execution = this.authority.synchronousResult(callback(pair.parent, pair.producer));
+      for (const [row, kind] of [[pair.parent, "office_local_chain_execution"], [pair.producer, "office_local_binary_execution"]] as const) {
+        const evidence = { kind, id: execution.executionId } as const;
+        const identity = hostOperationDomainIdentity(this.context.database, row, evidence, true);
+        const changed = this.context.database.prepare(`UPDATE host_operations SET evidence_kind=?,evidence_id=?,
+          domain_identity_digest=?,revision=revision+1 WHERE operation_id=? AND revision=? AND phase='admitted' AND evidence_id IS NULL`)
+          .run(kind, evidence.id, identity, row.operationId, row.revision);
+        if (changed.changes !== 1) return hostOperationFailure("host_operation_cas_conflict");
+      }
+      return execution;
+    });
+  }
+
+  /** A receipt may release both roles only through this original live pair and owner. */
+  settle(parent: HostOperationTicket, producer: HostOperationTicket, settledAt?: string): HostOfficeLocalSettlement {
+    const retained = this.authority.ticket(parent).settlementSignature;
+    const at = settledAt ?? (retained ? JSON.parse(retained).settledAt as string : new Date().toISOString());
+    return this.authority.transaction(() => {
+      const pair = this.pair(parent, producer, true);
+      this.authority.owner(pair.parent.source, true);
+      return settleOfficeLocalJournalPair(this.context, pair, at);
     });
   }
 
@@ -91,14 +113,15 @@ export class HostOfficeLocalJournalGate {
     }
   }
 
-  private pair(parentTicket: HostOperationTicket, producerTicket: HostOperationTicket) {
+  private pair(parentTicket: HostOperationTicket, producerTicket: HostOperationTicket, allowSettled = false) {
     const states = [this.authority.ticket(parentTicket), this.authority.ticket(producerTicket)] as const;
     const parent = this.authority.operation(parentTicket, states[0]), producer = this.authority.operation(producerTicket, states[1]);
     if (parent.kind !== "mcp" || parent.parentOperationId || producer.kind !== "file_mutation"
       || producer.parentOperationId !== parent.operationId || producer.producerId !== "office-local-binary"
       || parent.toolCallId !== producer.toolCallId || !sameHostOperationSource(parent.source, producer.source)
-      || states.some(state => !!state.settlementSignature)
-      || !["admitted", "launched"].includes(parent.phase) || !["admitted", "launched"].includes(producer.phase)) {
+      || !allowSettled && states.some(state => !!state.settlementSignature)
+      || !(allowSettled ? ["admitted", "launched", "safe"] : ["admitted", "launched"]).includes(parent.phase)
+      || !(allowSettled ? ["admitted", "launched", "safe"] : ["admitted", "launched"]).includes(producer.phase)) {
       return hostOperationFailure("host_office_local_invalid_journal_pair");
     }
     return { parent, producer, states };

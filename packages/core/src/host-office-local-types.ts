@@ -1,4 +1,4 @@
-import type { HostOperationSource } from "./host-operation-journal-types.js";
+import type { HostOperationRecord, HostOperationSource } from "./host-operation-journal-types.js";
 
 /** Fixed local OOXML protocol. Live Office/GUI results cannot satisfy this contract. */
 export const HOST_OFFICE_LOCAL_PROTOCOL = "ling-office-local-binary-v1" as const;
@@ -49,6 +49,12 @@ export interface PrepareHostOfficeLocalInput {
   readonly executionId: string;
   readonly preparedArtifactId: string;
   readonly preparedDigest: string;
+}
+/** Original live Office capability only; both role settlements share one write transaction. */
+export interface SettleHostOfficeLocalInput { readonly settledAt?: string }
+export interface HostOfficeLocalSettlement {
+  readonly parent: HostOperationRecord;
+  readonly producer: HostOperationRecord;
 }
 export interface HostOfficeLocalExecutionRecord extends HostOfficeLocalPrepared {
   readonly preparedArtifactId: string;

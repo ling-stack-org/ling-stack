@@ -3,7 +3,7 @@ import type { HostCommandExecutionTicket, HostMediaEffectRecord, HostMediaExecut
   HostOfficeLocalEffectRecord, HostOfficeLocalTicket, PrepareHostOfficeLocalInput, PrepareHostOfficeLocalEffect,
   HostOperationEvidenceRef, HostOperationRecord, HostOperationTicket, PrepareHostMediaEffectInput,
   PrepareHostMediaExecutionInput, RunStore, RuntimeAttemptFenceV1, SealHostOfficeLocalTerminalInput,
-  HostOfficeLocalTerminalRecord } from "@ling-stack/core";
+  HostOfficeLocalTerminalRecord, HostOfficeLocalSettlement } from "@ling-stack/core";
 import { AttemptExecutorGroup, type AttemptExecutionSource, type HostCallTicket, type HostExecutorBlocker,
   type HostExecutorKind, type HostExecutorSettlement } from "./attempt-execution-quiescence.js";
 import type { HostCommandOperation, HostCommandPreparationOperation, HostFileMutationOperation } from "./host-operation-effects.js";
@@ -14,7 +14,7 @@ type TrackerStore = Pick<RunStore, "isCurrentRunExecutionOwner" | "admitHostOper
   | "getHostMediaExecution" | "recordHostMediaResponse" | "recordHostMediaSubmission" | "recordHostMediaSubmissionAndExecutionHandle" | "recordHostMediaTerminal"
   | "recordHostMediaArtifactManifest" | "finalizeHostMediaExecution" | "recordHostMediaEffectNoStart"
   | "prepareHostOfficeLocalExecution" | "prepareHostOfficeLocalEffect" | "launchHostOfficeLocalEffect" | "recordHostOfficeLocalObservation"
-  | "sealHostOfficeLocalTerminal">;
+  | "sealHostOfficeLocalTerminal" | "settleHostOfficeLocalExecution">;
 const operationHandleBrand: unique symbol = Symbol("AttemptHostOperationHandle");
 /** Neither persisted IDs nor a structural clone grants launch/settlement authority. */
 export interface AttemptHostOperationHandle {
@@ -289,6 +289,7 @@ export class AttemptHostOperationTracker {
       this.#requireDurableTicket(pair.transport), input);
     this.#officeExecutions.set(ticket, pair);
     this.#officeEffects.set(ticket, new Map());
+    this.#read(pair.parent); this.#read(pair.transport);
     return ticket;
   }
 
@@ -331,6 +332,24 @@ export class AttemptHostOperationTracker {
   sealOfficeLocalTerminal(ticket: HostOfficeLocalTicket, input: SealHostOfficeLocalTerminalInput): HostOfficeLocalTerminalRecord {
     this.#assertMediaUnsettled(this.#officeExecution(ticket));
     return this.#store.sealHostOfficeLocalTerminal(ticket, input);
+  }
+
+  /** Core settles the original pair atomically; only then may either local barrier close. */
+  settleOfficeLocalFromStore(ticket: HostOfficeLocalTicket): HostOfficeLocalSettlement {
+    const pair = this.#officeExecution(ticket);
+    if ([pair.parent, pair.transport].some(operation => operation.groupSettlement?.kind === "unknown_outcome"
+      || this.#group.getSnapshot().operations.some(row => row.ticket === operation.groupTicket && row.state === "blocked"))) {
+      fail("already_settled", "Unknown Office execution cannot be upgraded to a safe receipt.");
+    }
+    try { this.#store.settleHostOfficeLocalExecution(ticket); }
+    catch {
+      // Core retains the first write intent only after all children are ready.
+      // An exact original-ticket retry reconciles rollback or a lost COMMIT return.
+      this.#store.settleHostOfficeLocalExecution(ticket);
+    }
+    const producer = this.settleFromStore(pair.transport.handle);
+    const parent = this.settleFromStore(pair.parent.handle);
+    return { parent, producer };
   }
 
   #officeExecution(ticket: HostOfficeLocalTicket): TrackedMediaExecution {
@@ -512,6 +531,12 @@ export class AttemptHostOperationTracker {
     }
     if (record.settlementKind === "file_completed" && record.kind === "file_mutation"
       && record.evidenceRef?.kind === "harness_tool_execution") {
+      return Object.freeze({ ...base, kind: "completed_persisted", physicalScope: "entire_operation", effects: "persisted" });
+    }
+    if (record.kind === "mcp" && record.settlementKind === "office_local_chain_completed"
+      && record.evidenceRef?.kind === "office_local_chain_execution"
+      || record.kind === "file_mutation" && record.settlementKind === "office_local_binary_completed"
+        && record.evidenceRef?.kind === "office_local_binary_execution") {
       return Object.freeze({ ...base, kind: "completed_persisted", physicalScope: "entire_operation", effects: "persisted" });
     }
     if (record.kind === "media" && (record.settlementKind === "media_chain_completed" && record.evidenceRef?.kind === "media_chain_execution"
