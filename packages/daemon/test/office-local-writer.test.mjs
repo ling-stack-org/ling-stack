@@ -168,6 +168,82 @@ for (const afterCommit of [false, true]) {
   });
 }
 
+for (const afterCommit of [false, true]) {
+  test(`Office close-return Host COMMIT ${afterCommit ? "post-COMMIT throw" : "rollback"} preserves closed resource and borrowed same-inode FD`, async t => {
+    const f = await fixture(t), state = officeLocalWriteState(f.plan), exec = f.store.database.exec.bind(f.store.database);
+    const nativeClose = fs.closeSync, nativeFstat = fs.fstatSync;
+    let writerFd, borrowedFd, originalIdentity, closes = 0, inject = true, injected = false, closeReturnedAt;
+    patchFs(t, "openSync", original => (...args) => {
+      const fd = original(...args);
+      if (args[0] === f.temporary && (args[1] & fs.constants.O_WRONLY)) writerFd = fd;
+      return fd;
+    });
+    patchFs(t, "closeSync", original => fd => {
+      if (fd !== writerFd) return original(fd);
+      closes++;
+      originalIdentity = nativeFstat(fd, { bigint: true });
+      const result = original(fd);
+      closeReturnedAt = now();
+      borrowedFd = fs.openSync(f.temporary, "r");
+      assert.equal(borrowedFd, writerFd, "the OS must actually reuse the original number, without a mocked FD");
+      return result;
+    });
+    f.store.database.exec = sql => {
+      if (sql === "COMMIT" && inject && closes > 0) {
+        inject = false; injected = true;
+        if (afterCommit) exec(sql);
+        throw Object.assign(new Error("Host COMMIT failed after actual native close return"), { code: "EIO" });
+      }
+      return exec(sql);
+    };
+    t.after(() => { f.store.database.exec = exec; });
+    t.after(() => {
+      if (borrowedFd !== undefined) {
+        try { nativeClose(borrowedFd); } catch (error) { if (error.code !== "EBADF") throw error; }
+      }
+    });
+    let failure;
+    assert.throws(() => {
+      try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; throw error; }
+    }, OfficeLocalWriterError);
+    assert.equal(injected, true, "fault must occur on the real SQLite COMMIT after the close returned");
+    assert.equal(closes, 1, "a confirmed native close cannot be retried during cleanup after Host failure");
+    const closeRows = effectPayloads(f).filter(row => row.effect.kind === "close");
+    assert.equal(closeRows.length, 1);
+    const { effect, payload } = closeRows[0], resource = failure.observation.resources[0];
+    assert.ok(effect.enteredAt, "COMMIT rollback is repaired only by the original live callback latch");
+    assert.equal(payload.native.state, "returned");
+    assert.deepEqual(payload.native.result, { kind: "close", resourceLifetimeId: effect.resourceLifetimeId });
+    assert.deepEqual(payload.host, { state: "unconfirmed", errorCode: "EIO" });
+    assert.deepEqual(payload.source, f.source);
+    assert.ok(payload.native.calledAt >= effect.enteredAt);
+    assert.ok(payload.native.returnedAt >= closeReturnedAt);
+    assert.ok(payload.native.returnedAt <= payload.completedAt);
+    assert.equal(resource.state, "closed", "Host rollback cannot roll back a real native close");
+    assert.equal(resource.resourceLifetimeId, effect.resourceLifetimeId);
+    assert.equal(resource.closeEffectId, effect.effectId);
+    assert.equal("fd" in resource, false);
+    assert.equal(failure.observation.outcome, "failed");
+    assert.equal(failure.observation.publicationEntered, false);
+    assert.equal(existsSync(f.prepared.targetPath), false);
+    const borrowedIdentity = nativeFstat(borrowedFd, { bigint: true });
+    assert.equal(borrowedIdentity.dev, originalIdentity.dev); assert.equal(borrowedIdentity.ino, originalIdentity.ino);
+    assert.deepEqual(fs.readFileSync(borrowedFd), f.artifact.bytes, "same-inode borrowed descriptor remains usable after failed Host COMMIT");
+    for (const operation of [state.parent, state.producer]) {
+      assert.throws(() => f.tracker.settleNoStart(operation), { code: "attempt_host_operation_launched_no_start" });
+      assert.throws(() => f.tracker.settleFromStore(operation), "no terminal verifier receipt exists to grant safe");
+    }
+    for (const operationId of [f.prepared.parentOperationId, f.prepared.producerOperationId]) {
+      const original = f.store.getHostOperation(operationId);
+      assert.equal(original.phase, "launched"); assert.equal(original.settledAt, undefined);
+    }
+    assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
+    assert.throws(() => executeOfficeLocalWrite(f.plan), /already_entered/);
+    assert.equal(closes, 1);
+    assert.doesNotThrow(() => nativeFstat(borrowedFd));
+  });
+}
+
 test("Office native contract retains open return before first fstat throws", async t => {
   const f = await fixture(t); let fd, injected = false, failure;
   patchFs(t, "openSync", original => (...args) => {

@@ -2,7 +2,35 @@
 
 此提交是用户要求的**代码防丢保存点**，不是可发布版本，不代表整个目标通过。
 
-## 最新增量保存（2026-10-04；writer clock 与资源回归）
+## 最新增量保存（2026-10-04；close-return / Host COMMIT 回归）
+
+用户要求继续向现有 Draft PR #507 推送一次防丢保存。上一保存点 `586707fa4cb6482e463a9a12f27cdcd8925c105b` 保留；只追加测试及本记录，不改生产源码、不合并 main、不改版本、不重写历史。
+
+- `office-local-writer.test.mjs` 新增两例：真实 native close 返回后，SQLite COMMIT rollback，以及 COMMIT 实际完成后抛错。测试增量为 76 新增、0 删除。
+- 原生 FD 真正 close 后，由 OS 重新打开同一 inode 并复用同一数字 FD；断言失败清理不重复 close、借用 FD 仍可读完整 SDK 字节。close 实际调用和 effect row 均为 1。
+- native returned 与 Host unconfirmed/EIO 分轴保留，resource 保持 closed；原 parent/producer 仍 launched、无 settledAt、保留两个 blocker，不获得 no-start/safe，不发布 target，不允许原 plan 重跑。
+- Node 22.22.1 命令：`node --test --test-concurrency=1 --test-name-pattern='Office close-return Host COMMIT' packages/daemon/test/office-local-writer.test.mjs`。实际 **2/2 GREEN、exit 0**，fail/cancel/skip/todo 均为 0。作者测试已结束，无待收取 handle；Root 与独立只读审计核对 TAP 和当前六项指纹一致，复用本次冻结证据，不重跑旧矩阵。
+- 本次没有产品 RED，因此没有为备份修改生产实现。未新增 null/undefined throw 回归，不称该故障输入已验收。
+- 两份详细本地证据 `U-OFFICE-CLOSE-RETURN-HOST-FAULT-20261004.md` / `U-office-close-return-host-fault-20261004.log` 位于忽略的 `output/e6-20260928/`；这里只保存摘要，不上传真实数据库、安装包、日志或密钥。
+
+已核对的输入 SHA-256：
+
+```text
+94779fb8cddfee4545fdcffa2d8e3057d8ced1f7d4f6a6dfba5c656b3ddd95f0  packages/daemon/test/office-local-writer.test.mjs
+042bbd08ee83b8c01b2e8c36da806f4e942972ccba008dbcab2926e5393ca40b  packages/daemon/src/features/office-documents/office-local-writer.ts
+46dde34295d2c63872b184b51c0af17bb1b942a805eb576c6822030ad3a7df97  packages/daemon/src/features/office-documents/office-local-resources.ts
+2d75136a24e27235fd84529e82c058d95e1badbe3a685035c89c7d20f0c0145d  packages/daemon/dist/features/office-documents/office-local-writer.js
+66bfecc49be0298329c29bd97913de37c9fa4f52b1f2fefdf6a4abad3318ab5b  packages/daemon/dist/features/office-documents/office-local-resources.js
+05a91951083ae3bebb800b29552d3ef41200b2b7e27a4b2d2ed9d004ca6183a8  packages/core/dist/storage/sqlite/host-office-local-store.js
+```
+
+**未完成边界：** 相关完整 Daemon suite、完整 terminal verifier、原 pair 原子 safe 封口/fan-in、固定 production route、restart/drain 和 fresh packaged macOS GUI 仍未完成。公开 U gate 关闭，总目标 active，备份不等于发布验收。
+
+本轮只读 terminal 接点审查指出，实施前须补原 open FD identity 的不可变事实、受 owner 管理的 final readback lifetime/close-returned、prepared workspace root identity；最终 hash 或 writer `published` 文本不能代替这些事实。terminal 应独立不可变存储，封口后拒绝追加 effect，原 parent/producer 必须同事务完成。旧 patch verifier 不放宽。不存在 creator-bound receipt 的 absent directory safe 策略及 readback owner 具体接法仍是实现决策，不把审查建议冒称已落代码。
+
+下一实际入口：补齐上述事实链与 terminal 合同 → 纯 Core whole-file replay verifier → 原 pair 原子封口/fan-in → 固定 route与相关完整测试 → 原总计划后续真实验收。不重做已验收切片。
+
+## 前一次增量保存（2026-10-04；586707fa writer clock 与资源回归）
 
 用户要求再次推送现有 Draft PR #507 保存。只追加代码防丢检查点，不合并 main、不改版本、不重写历史；上一保存点 `759e1cc2ccb338715d470612a0e45b3bb4ec46a0` 完整保留。
 
