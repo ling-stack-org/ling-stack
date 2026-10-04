@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { constants, closeSync, fstatSync, fsyncSync, linkSync, mkdirSync, renameSync, rmdirSync, unlinkSync, writeSync, openSync } from "node:fs";
+import { constants, closeSync, fstatSync, fsyncSync, linkSync, lstatSync, mkdirSync, renameSync, unlinkSync, writeSync, openSync } from "node:fs";
 import { HOST_OFFICE_LOCAL_PROTOCOL, type HostOfficeFileIdentity, type PrepareHostOfficeLocalEffect } from "@ling-stack/core";
 import { officeLocalWriteState, type OfficeLocalWritePlan, type OfficeLocalWriteState } from "./office-local-authority.js";
 import { officeBytesDigest, officeErrorCode, officeFileIdentity, sameOfficeNode, type OfficeLocalMemberFinal } from "./office-local-members.js";
@@ -14,11 +14,12 @@ export interface OfficeLocalWriteObservation {
   readonly outcome: "published" | "failed";
   readonly publicationEntered: boolean;
   readonly members: readonly OfficeLocalMemberFinal[];
-  readonly descriptors: readonly { readonly memberId: string; readonly identity: HostOfficeFileIdentity; readonly state: "closed" | "retained" }[];
+  readonly descriptors: readonly { readonly memberId: string; readonly identity?: HostOfficeFileIdentity;
+    readonly state: "closed" | "retained"; readonly closeEntered: boolean }[];
   readonly effectIds: readonly string[];
   readonly completedAt: string;
 }
-interface Descriptor { readonly memberId: string; readonly fd: number; readonly identity: HostOfficeFileIdentity; closed: boolean }
+interface Descriptor { readonly memberId: string; readonly fd: number; identity?: HostOfficeFileIdentity; closed: boolean; closeEntered: boolean }
 export class OfficeLocalWriterError extends Error {
   constructor(readonly cause: unknown, readonly observationArtifactId: string | undefined,
     readonly observation: OfficeLocalWriteObservation) { super("office_local_write_failed"); this.name = "OfficeLocalWriterError"; }
@@ -46,7 +47,9 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     try {
       state.tracker.launchOfficeLocalEffect(state.ticket, descriptor.effectId, () => {
         entered = true;
-        state.ledger.assertCurrent();
+        // Closing the exact still-owned descriptor does not traverse a path.
+        // A displaced member must not prevent release of that original FD.
+        if (kind !== "close") state.ledger.assertCurrent();
         returned = syscall();
         return returned;
       }, mode);
@@ -70,15 +73,24 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     return returned!;
   };
   const close = (descriptor: Descriptor, mode: "forward" | "cleanup"): void => {
-    runEffect(descriptor.memberId, "close", () => { assertDescriptor(descriptor); closeSync(descriptor.fd); descriptor.closed = true; }, {}, mode);
+    runEffect(descriptor.memberId, "close", () => {
+      assertDescriptor(descriptor);
+      // An EINTR/throw may have already released this number. Never replay it,
+      // even if a new descriptor now points to the same inode.
+      descriptor.closeEntered = true;
+      closeSync(descriptor.fd);
+      descriptor.closed = true;
+    }, {}, mode);
   };
   const writeMember = (memberId: string, bytes: Buffer): void => {
     let owned: Descriptor | undefined;
     runEffect(memberId, "open", () => {
       const fd = openSync(state.ledger.member(memberId).path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), 0o600);
       // Retain the actual fd before any following observation/COMMIT can throw.
-      owned = { memberId, fd, identity: officeFileIdentity(fstatSync(fd, { bigint: true })), closed: false };
-      descriptors.push(owned); state.ledger.refresh(memberId);
+      owned = { memberId, fd, closed: false, closeEntered: false };
+      descriptors.push(owned);
+      owned.identity = officeFileIdentity(fstatSync(fd, { bigint: true }));
+      state.ledger.refresh(memberId, { state: "file", identity: owned.identity });
     });
     const descriptor = owned!;
     let offset = 0;
@@ -107,7 +119,10 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
         && (!state.inputBytes || officeBytesDigest(state.inputBytes) !== record.input.bytesSha256))) throw new Error("office_local_bytes_changed");
     state.ledger.assertCurrent();
     for (const member of state.execution.members.filter(item => item.role === "directory" && item.initial.state === "absent")) {
-      runEffect(member.memberId, "mkdir", () => { mkdirSync(member.path, { mode: 0o700 }); state.ledger.refresh(member.memberId); });
+      runEffect(member.memberId, "mkdir", () => {
+        mkdirSync(member.path, { mode: 0o700 });
+        state.ledger.refresh(member.memberId, { state: "directory", identity: officeFileIdentity(lstatSync(member.path, { bigint: true })) });
+      });
     }
     if (state.inputBytes) writeMember("recovery", state.inputBytes);
     writeMember("temporary", state.bytes);
@@ -115,36 +130,37 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     runEffect("target", kind, () => {
       publicationEntered = true;
       const temporary = state.ledger.member("temporary").path;
+      const owned = state.ledger.expected("temporary");
+      if (owned.state !== "file") throw new Error("office_local_snapshot_changed");
       if (kind === "link") linkSync(temporary, state.execution.targetPath);
       else renameSync(temporary, state.execution.targetPath);
       published = true;
-      state.ledger.refresh("target"); state.ledger.refresh("temporary");
+      state.ledger.refresh("target", { state: "file", identity: owned.identity });
+      state.ledger.refresh("temporary", kind === "rename" ? { state: "absent" } : undefined);
     }, { fromMemberId: "temporary" });
-    if (kind === "link") runEffect("temporary", "unlink", () => { unlinkSync(state.ledger.member("temporary").path); state.ledger.refresh("temporary"); });
+    if (kind === "link") runEffect("temporary", "unlink", () => { unlinkSync(state.ledger.member("temporary").path); state.ledger.refresh("temporary", { state: "absent" }); });
   } catch (error) { failure = error; }
   if (failure) {
     // Exact original descriptors only; no reopening, successor source, or retry
     // of failed close. Unknown close outcome stays retained, never FD-number replay.
-    for (const descriptor of descriptors.filter(item => !item.closed)) {
+    for (const descriptor of descriptors.filter(item => !item.closed && !item.closeEntered)) {
       try { close(descriptor, "cleanup"); } catch (error) { failure = new AggregateError([failure, error], "office_local_cleanup_unconfirmed"); }
     }
     if (state.ledger.expected("temporary").state === "file") {
-      try { runEffect("temporary", "unlink", () => { unlinkSync(state.ledger.member("temporary").path); state.ledger.refresh("temporary"); }, {}, "cleanup"); }
+      try { runEffect("temporary", "unlink", () => { unlinkSync(state.ledger.member("temporary").path); state.ledger.refresh("temporary", { state: "absent" }); }, {}, "cleanup"); }
       catch (error) { failure = new AggregateError([failure, error], "office_local_cleanup_unconfirmed"); }
     }
-    // Recovery/target bytes are preserved. Remove only this writer's empty new
-    // directories, deepest first; nonempty or replaced ancestors remain residue.
-    if (!published && !state.inputBytes) for (const member of [...state.execution.members].reverse().filter(item => item.role === "directory" && item.initial.state === "absent")) {
-      if (state.ledger.expected(member.memberId).state !== "directory") continue;
-      try { runEffect(member.memberId, "rmdir", () => { rmdirSync(member.path); state.ledger.refresh(member.memberId); }, {}, "cleanup"); }
-      catch (error) { failure = new AggregateError([failure, error], "office_local_cleanup_unconfirmed"); }
-    }
+    // Recovery/target bytes are preserved. mkdirSync does not return the created
+    // node's identity, so its subsequent path observation cannot authorize rmdir.
+    // Preserve directory residue in the final manifest until a native creator
+    // receipt can prove cleanup authority; this layer never grants safe settlement.
   }
   const observation: OfficeLocalWriteObservation = { schemaVersion: 1, protocol: HOST_OFFICE_LOCAL_PROTOCOL,
     kind: "office_local_writer_observation_v1", executionId: plan.executionId, executionIdentityDigest: state.identityDigest,
     source: state.execution.source, outcome: !failure && published ? "published" : "failed", publicationEntered,
-    members: state.ledger.observeFinal(), descriptors: descriptors.map(item => ({ memberId: item.memberId, identity: item.identity,
-      state: item.closed ? "closed" : "retained" })), effectIds: effects, completedAt: new Date().toISOString() };
+    members: state.ledger.observeFinal(), descriptors: descriptors.map(item => ({ memberId: item.memberId,
+      ...(item.identity ? { identity: item.identity } : {}), state: item.closed ? "closed" : "retained", closeEntered: item.closeEntered })),
+    effectIds: effects, completedAt: new Date().toISOString() };
   let observationArtifactId: string | undefined;
   try {
     observationArtifactId = state.store.createArtifact({ runId: state.execution.source.runId, type: "json",
@@ -156,7 +172,13 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
 }
 
 function assertDescriptor(descriptor: Descriptor): void {
-  if (descriptor.closed || !sameOfficeNode(descriptor.identity, officeFileIdentity(fstatSync(descriptor.fd, { bigint: true })))) {
+  if (descriptor.closed || descriptor.closeEntered) throw new Error("office_local_descriptor_changed");
+  const current = officeFileIdentity(fstatSync(descriptor.fd, { bigint: true }));
+  if (descriptor.identity && !sameOfficeNode(descriptor.identity, current)) {
     throw new Error("office_local_descriptor_changed");
   }
+  // A first fstat failure did not close the FD returned by open. It remains in
+  // this synchronous writer's owned set; its first successful observation can
+  // identify it for the one permitted close, not reopen or borrow a path.
+  descriptor.identity ??= current;
 }

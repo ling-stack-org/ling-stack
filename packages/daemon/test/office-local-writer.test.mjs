@@ -11,7 +11,7 @@ import { prepareOfficeArtifact } from "../dist/features/office-documents/office-
 import { captureOfficeLocalSnapshot, copyOfficeLocalSnapshotBytes } from "../dist/features/office-documents/office-local-snapshot.js";
 import { assertOfficeLocalReservation, officeLocalWriteState, prepareOfficeLocalWrite, reserveOfficeLocalWriter } from "../dist/features/office-documents/office-local-authority.js";
 import { executeOfficeLocalWrite, OfficeLocalWriterError } from "../dist/features/office-documents/office-local-writer.js";
-import { OfficeLocalMemberLedger } from "../dist/features/office-documents/office-local-members.js";
+import { OfficeLocalMemberLedger, officeBytesDigest, officeFileIdentity } from "../dist/features/office-documents/office-local-members.js";
 
 const now = () => new Date().toISOString();
 async function fixture(t, path = "result.docx") {
@@ -64,7 +64,9 @@ test("Office cloned reservation cannot acquire a plan or read permission", async
 
 test("Office externally replaced temporary file is never adopted then deleted by cleanup", async t => {
   const f = await fixture(t);
+  let writerFd;
   patchFs(t, "writeSync", original => (...args) => {
+    writerFd = args[0];
     const count = original(...args);
     renameSync(f.temporary, join(f.cwd, "owned-displaced.tmp"));
     writeFileSync(f.temporary, "external-owned-file");
@@ -74,6 +76,7 @@ test("Office externally replaced temporary file is never adopted then deleted by
   assert.equal(existsSync(f.temporary), true, "external inode must survive cleanup");
   assert.equal(readFileSync(f.temporary, "utf8"), "external-owned-file");
   assert.equal(existsSync(f.prepared.targetPath), false);
+  assert.throws(() => fs.fstatSync(writerFd), { code: "EBADF" }, "the displaced original descriptor must still be closed");
 });
 
 test("Office member observation does not use unbounded path readFileSync", async t => {
@@ -85,8 +88,56 @@ test("Office member observation does not use unbounded path readFileSync", async
     if (args[0] === f.temporary) throw new Error("unbounded_path_read_forbidden");
     return original(...args);
   });
-  assert.doesNotThrow(() => ledger.refresh("temporary"));
+  const identity = officeFileIdentity(fs.lstatSync(f.temporary, { bigint: true }));
+  assert.doesNotThrow(() => ledger.refresh("temporary", { state: "file", identity }));
   assert.equal(ledger.expected("temporary").sizeBytes, 7);
+});
+
+test("Office final residue observation cannot grant cleanup authority for an external member", async t => {
+  const f = await fixture(t), ledger = officeLocalWriteState(f.plan).ledger;
+  writeFileSync(f.temporary, "external-owned-file");
+  const final = ledger.observeFinal().find(row => row.memberId === "temporary");
+  assert.equal(final.final.state, "file");
+  assert.deepEqual(ledger.expected("temporary"), { state: "absent" });
+  assert.throws(() => ledger.refresh("temporary"), /snapshot_changed/);
+  assert.deepEqual(ledger.expected("temporary"), { state: "absent" });
+});
+
+test("Office refresh binds the existing owned inode even when a replacement has identical bytes", async t => {
+  const f = await fixture(t), ledger = officeLocalWriteState(f.plan).ledger;
+  writeFileSync(f.temporary, "same bytes");
+  const identity = officeFileIdentity(fs.lstatSync(f.temporary, { bigint: true }));
+  ledger.refresh("temporary", { state: "file", identity });
+  const expected = ledger.expected("temporary");
+  renameSync(f.temporary, join(f.cwd, "original-owned.tmp"));
+  writeFileSync(f.temporary, "same bytes");
+  assert.throws(() => ledger.refresh("temporary"), /snapshot_changed/);
+  assert.deepEqual(ledger.expected("temporary"), expected);
+  assert.equal(ledger.observeFinal().find(row => row.memberId === "temporary").final.state, "file");
+  assert.deepEqual(ledger.expected("temporary"), expected);
+});
+
+test("Office member reads bind one FD, handle short reads and cannot extend allocation when the file grows", async t => {
+  const f = await fixture(t), ledger = officeLocalWriteState(f.plan).ledger;
+  writeFileSync(f.temporary, "bounded");
+  const identity = officeFileIdentity(fs.lstatSync(f.temporary, { bigint: true }));
+  let reads = 0, grow = false;
+  patchFs(t, "readSync", original => (fd, buffer, offset, length, position) => {
+    assert.equal(typeof fd, "number");
+    assert.equal(buffer.length, 7);
+    assert.equal(length <= 7 - offset, true);
+    reads++;
+    const count = original(fd, buffer, offset, Math.min(length, 2), position);
+    if (grow) { grow = false; fs.appendFileSync(f.temporary, "extra bytes"); }
+    return count;
+  });
+  ledger.refresh("temporary", { state: "file", identity });
+  assert.equal(reads, 4);
+  assert.equal(ledger.expected("temporary").bytesSha256, officeBytesDigest(Buffer.from("bounded")));
+  const expected = ledger.expected("temporary");
+  grow = true;
+  assert.throws(() => ledger.refresh("temporary"), /snapshot_changed/);
+  assert.deepEqual(ledger.expected("temporary"), expected);
 });
 
 test("Office Tracker cannot relabel a forward row cleanup after local admission closes", async t => {
@@ -103,4 +154,77 @@ test("Office Tracker cannot relabel a forward row cleanup after local admission 
   let mutations = 0;
   assert.throws(() => tracker.launchOfficeLocalEffect(state.ticket, write.effectId, () => { mutations++; writeFileSync(f.temporary, "bad"); }, "cleanup"));
   assert.equal(mutations, 0);
+});
+
+test("Office open retains its original descriptor before a first fstat failure", async t => {
+  const f = await fixture(t); let writerFd, rejected = false;
+  patchFs(t, "openSync", original => (...args) => {
+    const fd = original(...args);
+    if (args[0] === f.temporary && (args[1] & fs.constants.O_WRONLY)) writerFd = fd;
+    return fd;
+  });
+  patchFs(t, "fstatSync", original => (...args) => {
+    if (args[0] === writerFd && !rejected) { rejected = true; throw Object.assign(new Error("injected_fstat_failure"), { code: "EIO" }); }
+    return original(...args);
+  });
+  assert.throws(() => executeOfficeLocalWrite(f.plan), OfficeLocalWriterError);
+  assert.equal(rejected, true);
+  assert.throws(() => fs.fstatSync(writerFd), { code: "EBADF" });
+  assert.equal(existsSync(f.prepared.targetPath), false);
+});
+
+test("Office unknown close is not replayed against an FD number reused by the same inode", async t => {
+  const f = await fixture(t); let writerFd, borrowedFd, attempts = 0;
+  patchFs(t, "openSync", original => (...args) => {
+    const fd = original(...args);
+    if (args[0] === f.temporary && (args[1] & fs.constants.O_WRONLY)) writerFd = fd;
+    return fd;
+  });
+  patchFs(t, "closeSync", original => fd => {
+    if (fd === writerFd) {
+      attempts++;
+      if (attempts === 1) {
+        original(fd);
+        borrowedFd = fs.openSync(f.temporary, "r");
+        assert.equal(borrowedFd, writerFd, "fault injection must reuse the actual descriptor number");
+        throw Object.assign(new Error("injected_unknown_close"), { code: "EINTR" });
+      }
+    }
+    return original(fd);
+  });
+  t.after(() => { if (borrowedFd !== undefined) try { fs.closeSync(borrowedFd); } catch (error) { if (error.code !== "EBADF") throw error; } });
+  let failure;
+  assert.throws(() => { try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; throw error; } }, OfficeLocalWriterError);
+  assert.equal(attempts, 1, "an unknown close cannot be retried");
+  assert.doesNotThrow(() => fs.fstatSync(borrowedFd));
+  assert.equal(failure.observation.descriptors[0].state, "retained");
+  assert.equal(existsSync(f.prepared.targetPath), false);
+});
+
+test("Office post-mkdir path identity cannot authorize deletion of an externally replaced directory", async t => {
+  const f = await fixture(t, "nested/result.docx"), nested = join(f.cwd, "nested"), displaced = join(f.cwd, "owned-displaced");
+  patchFs(t, "mkdirSync", original => (...args) => {
+    const result = original(...args);
+    if (args[0] === nested) { renameSync(nested, displaced); original(nested); }
+    return result;
+  });
+  patchFs(t, "writeSync", () => () => { throw Object.assign(new Error("injected_write_failure"), { code: "EIO" }); });
+  let failure;
+  assert.throws(() => { try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; throw error; } }, OfficeLocalWriterError);
+  assert.equal(existsSync(nested), true, "an external directory cannot be removed on a post-mkdir path observation");
+  assert.equal(existsSync(displaced), true);
+  assert.equal(existsSync(f.prepared.targetPath), false);
+  assert.equal(failure.observation.members.find(row => row.role === "directory").final.state, "directory");
+  assert.equal(f.store.listHostOfficeLocalEffects(f.plan.executionId).some(row => row.kind === "rmdir"), false);
+});
+
+test("Office oversized final residue is not read or adopted", async t => {
+  const f = await fixture(t), ledger = officeLocalWriteState(f.plan).ledger;
+  writeFileSync(f.temporary, "small"); fs.truncateSync(f.temporary, 50 * 1024 * 1024 + 1);
+  let reads = 0;
+  patchFs(t, "readSync", original => (...args) => { reads++; return original(...args); });
+  const final = ledger.observeFinal().find(row => row.memberId === "temporary");
+  assert.deepEqual(final.final, { state: "unobserved", errorCode: "office_document_too_large" });
+  assert.equal(reads, 0);
+  assert.deepEqual(ledger.expected("temporary"), { state: "absent" });
 });
