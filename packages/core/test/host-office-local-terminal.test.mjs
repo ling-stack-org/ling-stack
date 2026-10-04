@@ -144,8 +144,10 @@ test("Office missing native observation remains null terminal fact rather than f
 
 test("Office final member content observation precedes close; readRef completion need not equal member observation", async t => {
   const f = await officeTerminalFixture(t), manifest = f.published(), read = manifest.resources[1], member = manifest.members[0];
-  const contentAt = member.observedAt, closeAt = later(contentAt);
+  const contentAt = member.observedAt, closeAt = later(manifest.completedAt);
   read.closeEnteredAt = closeAt; read.closeReturnedAt = closeAt; member.readRef.completedAt = closeAt;
+  // Delaying the target's close also moves all later fixed-writer member observations.
+  for (const subsequent of manifest.members.slice(1)) subsequent.observedAt = closeAt;
   manifest.workspace.observedAt = closeAt; manifest.completedAt = closeAt;
   // Pure validation proves the semantic timing boundary without pretending a future artifact already exists.
   assert.deepEqual(validateOfficeLocalTerminalPayload(f.execution(), manifest, closeAt), manifest);

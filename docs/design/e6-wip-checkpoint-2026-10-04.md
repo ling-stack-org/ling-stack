@@ -2,7 +2,19 @@
 
 此提交是用户要求的**代码防丢保存点**，不是可发布版本，不代表整个目标通过。
 
-## 本次 checkpoint 增量（2026-10-05；Office terminal manifest 与历史 replay WIP）
+## 本次 checkpoint 增量（2026-10-05；terminal 时间夹具修复）
+
+用户再次要求向现有 Draft PR #507 推送保存。上一保存点 `46b3f458157728ce71a89fe61a1c118bafa7c108` 及全部先前历史保留；仅追加测试修复和本记录，不合并 main、不升版本、不改根 checkout、真实数据库或同事 WIP。
+
+- 上一 Core 329/330 的唯一失败已定位为测试夹具时间顺序错误：延迟 target read 的 close 后，后续 temporary 观察仍可能晚于人为设置的 terminal completedAt。严格 `boundedTime` 拒绝是正确行为，不是生产 parser 漏洞。
+- 仅将 closeAt 改为原 manifest 完成时间之后，并同步后续固定 writer 成员观察的时间；生产校验与两条原断言保留，没有删除、跳过或放宽测试。
+- 同一递增 Date preload 下，修复前定向 **0/1、exit 1**；修复后定向 **1/1、exit 0**，整个 terminal 文件 **77/77、exit 0**，fail/cancel/skip/todo 均为 0。原 RED/GREEN 日志分别为 `U-office-terminal-timing-incrementing-red-20261005.log`、`U-office-terminal-timing-incrementing-green-20261005.log`、`U-office-terminal-timing-full-green-20261005.log`，保留在忽略的 `output/e6-20260928/`，不上传。
+- 这是测试夹具修复及本地 Core 验证，不代表当前 Core 全套、safe settlement、迁移 150、daemon restart 或 packaged GUI 已验收。原 32 项输入清单中的 terminal 测试已改变，不再宣称原整份清单全匹配。
+- 下一实施片为 role-specific evidence/settlement、闭合 schema 与原 parent/producer 原子 safe/fan-in。迁移 150 在本保存前尚未落盘，不包含在此提交内；creator-bound directory receipt、固定 production route、live/restart/answer recovery 及 fresh packaged macOS 联验仍待完成。
+
+公开 U gate 仍关闭，D0/E1–E6、U/T、Harness 完整目标仍 active。远端保存完成以正常 push 终态及 branch/PR HEAD 独立读回为准；保存不等于合并或正式交付。
+
+## 前次 checkpoint 增量（2026-10-05；Office terminal manifest 与历史 replay WIP）
 
 用户要求将当前进展追加保存到既有 Draft PR #507。上一远端保存点 `47b0c332baf70416bef54f6b9cea4308c2f49ba6` 保留；本次仅保存源码、测试和本记录，不合并 main、不改版本、不重写历史。**这是包含已知失败的 WIP 备份，不是发布或可合并候选。**
 
