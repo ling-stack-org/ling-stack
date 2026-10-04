@@ -30,8 +30,15 @@ const kinds = new Set(["command", "file_mutation", "mcp", "plugin", "media", "ho
  */
 export class SqliteHostOperationJournalStore {
   private readonly tickets = new WeakMap<HostOperationTicket, TicketState>();
+  private readonly closeDatabase: () => void;
+  private readonly rollbackDatabase: () => void;
   readonly officeLocal: HostOfficeLocalJournalGate;
   constructor(private readonly context: SqliteStoreContext) {
+    // Retain the original native close before an executor can wrap the public
+    // method. A failed rollback must invalidate every shared SQL reference.
+    this.closeDatabase = context.database.close.bind(context.database);
+    const exec = context.database.exec.bind(context.database);
+    this.rollbackDatabase = () => { exec("ROLLBACK"); };
     this.officeLocal = new HostOfficeLocalJournalGate(context, {
       ticket: ticket => this.requireTicket(ticket),
       operation: (ticket, state) => this.requireOperation(ticket, state),
@@ -118,6 +125,7 @@ export class SqliteHostOperationJournalStore {
         this.assertOwner(state.source, false);
         this.assertForwardAdmission(state.source);
         const operation = this.requireOperation(ticket, state);
+        this.assertGenericEffectScope(operation);
         if (operation.phase !== "admitted") return hostOperationFailure("host_operation_already_launched");
         this.assertParentsActive(operation);
         const launchedAt = new Date().toISOString();
@@ -149,6 +157,7 @@ export class SqliteHostOperationJournalStore {
         this.assertOwner(state.source, mode === "cleanup");
         if (mode === "forward") this.assertForwardAdmission(state.source);
         const operation = this.requireOperation(ticket, state);
+        this.assertGenericEffectScope(operation);
         // A failed launch COMMIT may have rolled the durable marker back to admitted.
         // Only its original live ticket can perform cleanup; forward launch remains forbidden.
         if (operation.phase !== "launched" && !(mode === "cleanup" && state.uncertainLaunch && operation.phase === "admitted")) {
@@ -336,6 +345,13 @@ export class SqliteHostOperationJournalStore {
     }
     return operation;
   }
+  /** Office physical effects must enter the original pair's typed effect roster, including cleanup. */
+  private assertGenericEffectScope(operation: HostOperationRecord): void {
+    if (operation.evidenceRef?.kind === "office_local_chain_execution"
+      || operation.evidenceRef?.kind === "office_local_binary_execution") {
+      return hostOperationFailure("host_office_local_pair_effect_required");
+    }
+  }
   private assertParentsActive(operation: HostOperationRecord): void {
     let current = operation, depth = 0;
     while (current.parentOperationId) {
@@ -383,13 +399,43 @@ export class SqliteHostOperationJournalStore {
     return result;
   }
   private transaction<T>(operation: () => T): T {
+    // BEGIN outside the catch: failure here never gives us ownership of a
+    // caller's existing transaction, so we must not roll it back or close it.
     this.context.database.exec("BEGIN IMMEDIATE");
     try { const result = this.assertSyncResult(operation()); this.context.database.exec("COMMIT"); return result; }
     catch (error) {
-      try { this.context.database.exec("ROLLBACK"); } catch { /* Never mask the original uncertain effect/commit error. */ }
+      try { this.context.database.exec("ROLLBACK"); }
+      catch (rollbackError) {
+        const failures: unknown[] = [error, rollbackError];
+        if (isNativeNoActiveRollback(rollbackError)) {
+          // A wrapped exec can reproduce the exact native error shape without
+          // ending the transaction. Confirm using the original connection
+          // executor; only its no-active result permits COMMIT-return-loss retry.
+          let completed = false;
+          try { this.rollbackDatabase(); }
+          catch (confirmationError) {
+            completed = isNativeNoActiveRollback(confirmationError);
+            if (!completed) failures.push(confirmationError);
+          }
+          if (completed) throw error;
+        }
+        try { this.context.database.close(); } catch (closeError) { failures.push(closeError); }
+        if (this.context.database.isOpen) {
+          try { this.closeDatabase(); } catch (closeError) { failures.push(closeError); }
+        }
+        throw new AggregateError(failures, "host_operation_transaction_quarantined", { cause: error });
+      }
       throw error;
     }
   }
+}
+
+/** Match the actual Node SQLite ROLLBACK error, never arbitrary matching prose. */
+function isNativeNoActiveRollback(error: unknown): boolean {
+  if (!(error instanceof Error)) return false;
+  const detail = error as Error & { code?: unknown; errcode?: unknown; errstr?: unknown };
+  return detail.code === "ERR_SQLITE_ERROR" && detail.errcode === 1 && detail.errstr === "SQL logic error"
+    && detail.message === "cannot rollback - no transaction is active";
 }
 
 /** Caller-owned write transaction, used by both yield and answer-delivery claim. */

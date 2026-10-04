@@ -52,8 +52,9 @@ async function fixture(t, options = {}) {
         VALUES('a',1,'ling-office-local-binary-v1','${digest}','office-terminal-a','${digest}','${digest}',1,'${at}');
       UPDATE host_media_executions SET terminal_artifact_id='receipt-a';
       UPDATE host_media_effects SET response_artifact_id='receipt-b';
-      CREATE VIEW office_operation_view AS SELECT execution_id,parent_operation_id,producer_operation_id
-        FROM host_office_local_executions JOIN host_operations ON operation_id=parent_operation_id;`);
+      CREATE VIEW office_operation_view AS SELECT execution.execution_id,execution.parent_operation_id,execution.producer_operation_id
+        FROM host_office_local_executions execution JOIN host_operations operation
+          ON operation.operation_id=execution.parent_operation_id;`);
   }
   return { path: base.path, get database() { return base.database; }, reopen: () => base.reopen(),
     apply: override => applyHostOfficeLocalJournalMigration(migrationInput(base.database, override)) };
@@ -91,7 +92,10 @@ test("150 fresh registered store follows 149 without inventing Office binding or
 });
 
 test("150 preserves populated 145→147→148→149 rows, self/external FKs, views and every index/trigger", async t => {
-  const f = await fixture(t), before = snapshot(f.database), objects = schema(f.database); f.apply();
+  const f = await fixture(t), before = snapshot(f.database), objects = schema(f.database);
+  assert.equal(f.database.prepare("SELECT count(*) n FROM office_operation_view").get().n, 2,
+    "the original fixture view must be valid before migration, not only after rebuild");
+  f.apply();
   const after = snapshot(f.database);
   for (const [table, rows] of Object.entries(before)) {
     if (table !== "schema_migrations") assert.deepEqual(after[table], rows);

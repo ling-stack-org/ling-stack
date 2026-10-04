@@ -6,7 +6,8 @@ import {
   HostOperationJournalError, type HostOperationEvidenceRef, type HostOperationRecord, type HostOperationSource,
 } from "../../host-operation-journal-types.js";
 import { hostMediaOperationDomainIdentity, verifyHostMediaReceipt } from "./host-media-receipt-evidence.js";
-import { hostOfficeOperationDomainIdentity, verifyHostOfficeReceipt } from "./host-office-local-journal-evidence.js";
+import { hostOfficeOperationDomainIdentity, verifyHostOfficeReceipt,
+  type OfficeLocalJournalVerificationMode } from "./host-office-local-journal-evidence.js";
 
 export interface StoredHostOperation extends HostOperationRecord {
   readonly domainIdentityDigest?: string;
@@ -138,9 +139,33 @@ export function hostOperationDomainIdentity(database: DatabaseSync, operation: H
     policySnapshotArtifactId: row.policy_snapshot_artifact_id, policyDigest: policy.hash, createdAt: row.created_at });
 }
 
-/** Rechecks immutable lineage, evidence and all reserved producers, including after restart. */
+/** Public safe reads require the committed whole Office pair, including every parent child. */
 export function verifyHostOperationSafe(database: DatabaseSync, operation: StoredHostOperation,
   stoppedAt = operation.settledAt, depth = 0): string {
+  if (operation.evidenceRef?.kind === "office_local_binary_execution") {
+    const parent = operation.parentOperationId && readHostOperation(database, operation.parentOperationId);
+    // Enter the parent only at the public boundary. Its downward traversal uses
+    // the inner verifier, so binary -> parent -> binary cannot recurse upward.
+    if (!parent || verifyHostOperationSafeInner(database, parent, stoppedAt, depth, "committed") !== parent.evidenceDigest) {
+      return hostOperationFailure("host_operation_evidence_invalid");
+    }
+  }
+  return verifyHostOperationSafeInner(database, operation, stoppedAt, depth, "committed");
+}
+
+/**
+ * Internal digest calculation before the caller's atomic settlement writes.
+ * This creates no safe record, execution ticket or public read authority. The
+ * Office pair transaction alone may persist both candidates under one lock.
+ */
+export function verifyHostOperationSettlementCandidate(database: DatabaseSync, operation: StoredHostOperation,
+  stoppedAt = operation.settledAt): string {
+  return verifyHostOperationSafeInner(database, operation, stoppedAt, 0, "settlement_candidate");
+}
+
+/** One downward fan-in traversal. Office's peer check never calls this recursively upward. */
+function verifyHostOperationSafeInner(database: DatabaseSync, operation: StoredHostOperation,
+  stoppedAt: string | undefined, depth: number, mode: OfficeLocalJournalVerificationMode): string {
   if (depth > 128 || !stoppedAt || !operation.settledAt || operation.phase !== "safe"
     || hostOperationTimestamp(operation.settledAt) > hostOperationTimestamp(stoppedAt)) return hostOperationFailure("host_operation_evidence_invalid");
   assertHostOperationLineage(database, operation.source);
@@ -151,7 +176,7 @@ export function verifyHostOperationSafe(database: DatabaseSync, operation: Store
       || (operation.settlementKind === "known_no_start" && child.settlementKind !== "known_no_start")) {
       return hostOperationFailure("host_operation_evidence_invalid");
     }
-    const value = verifyHostOperationSafe(database, child, operation.settledAt, depth + 1);
+    const value = verifyHostOperationSafeInner(database, child, operation.settledAt, depth + 1, mode);
     if (value !== child.evidenceDigest) return hostOperationFailure("host_operation_evidence_invalid");
     return { operationId: child.operationId, digest: value };
   });
@@ -163,7 +188,7 @@ export function verifyHostOperationSafe(database: DatabaseSync, operation: Store
     domainDigest = operation.evidenceRef.kind === "media_chain_execution" || operation.evidenceRef.kind === "media_transport_execution"
       ? verifyHostMediaReceipt(database, operation)
       : operation.evidenceRef.kind === "office_local_chain_execution" || operation.evidenceRef.kind === "office_local_binary_execution"
-      ? verifyHostOfficeReceipt(database, operation)
+      ? verifyHostOfficeReceipt(database, operation, mode)
       : operation.evidenceRef.kind === "harness_tool_execution"
       ? verifyFileTerminal(database, operation, operation.settlementKind === "known_no_start")
       : verifyCommandNoStart(database, operation);

@@ -2,12 +2,14 @@ import type { DatabaseSync } from "node:sqlite";
 import { digestHarnessToolValue } from "../../harness/tool-executions.js";
 import type { HostOfficeLocalExecutionRecord } from "../../host-office-local-types.js";
 import { HostOperationJournalError, type HostOperationRecord } from "../../host-operation-journal-types.js";
-import { hostOperationTimestamp, readHostOperation, sameHostOperationSource } from "./host-operation-journal-evidence.js";
+import { hostOperationTimestamp, readHostOperation, sameHostOperationSource,
+  type StoredHostOperation } from "./host-operation-journal-evidence.js";
 import { readOfficeLocalEffects, readOfficeLocalExecution, validateOfficeLocalObservation } from "./host-office-local-records.js";
 import { verifyOfficeLocalReplay } from "./host-office-local-replay.js";
 import { readOfficeLocalTerminal } from "./host-office-local-terminal-records.js";
 
 function invalid(): never { throw new HostOperationJournalError("host_office_local_evidence_invalid"); }
+export type OfficeLocalJournalVerificationMode = "committed" | "settlement_candidate";
 
 /** The two original journal roles share an execution, never the same evidence scope. */
 function scopedExecution(database: DatabaseSync, operation: HostOperationRecord): HostOfficeLocalExecutionRecord {
@@ -37,16 +39,21 @@ export function hostOfficeOperationDomainIdentity(database: DatabaseSync, operat
 /**
  * Consume only sealed SQLite history. Failed/unknown/unconfirmed and no-start
  * claims are not published receipts, and verification never opens a current FD.
- * Generic journal recursion separately fans in every reserved nested producer.
+ * This is a scoped domain digest, not an independent public-safe authority.
+ * The generic public verifier separately checks both canonical journal receipts
+ * and fans in every reserved nested/extra producer without recursing upward here.
  */
-export function verifyHostOfficeReceipt(database: DatabaseSync, operation: HostOperationRecord): string {
+export function verifyHostOfficeReceipt(database: DatabaseSync, operation: StoredHostOperation,
+  mode: OfficeLocalJournalVerificationMode = "committed"): string {
   const execution = scopedExecution(database, operation);
   const expectedSettlement = operation.evidenceRef!.kind === "office_local_chain_execution"
     ? "office_local_chain_completed" : "office_local_binary_completed";
-  if (operation.settlementKind !== expectedSettlement || !operation.launchedAt || !operation.settledAt) return invalid();
+  if (operation.phase !== "safe" || operation.settlementKind !== expectedSettlement || !operation.launchedAt || !operation.settledAt
+    || operation.settlementSignature !== JSON.stringify({ kind: expectedSettlement, settledAt: operation.settledAt })
+    || (mode !== "committed" && mode !== "settlement_candidate")) return invalid();
   const pair = [
-    { operation: readHostOperation(database, execution.parentOperationId), kind: "office_local_chain_execution" },
-    { operation: readHostOperation(database, execution.producerOperationId), kind: "office_local_binary_execution" },
+    { operation: readHostOperation(database, execution.parentOperationId), kind: "office_local_chain_execution", settlement: "office_local_chain_completed" },
+    { operation: readHostOperation(database, execution.producerOperationId), kind: "office_local_binary_execution", settlement: "office_local_binary_completed" },
   ] as const;
   const launchTimes: number[] = [hostOperationTimestamp(operation.launchedAt)];
   for (const member of pair) {
@@ -54,6 +61,15 @@ export function verifyHostOfficeReceipt(database: DatabaseSync, operation: HostO
     if (!original || !original.launchedAt || original.evidenceRef?.kind !== member.kind
       || original.evidenceRef.id !== execution.executionId
       || hostOfficeOperationDomainIdentity(database, original, false) !== original.domainIdentityDigest) return invalid();
+    if (original.phase === "safe") {
+      if (original.settlementKind !== member.settlement || original.settledAt !== operation.settledAt
+        || original.settlementSignature !== JSON.stringify({ kind: member.settlement, settledAt: operation.settledAt })) return invalid();
+    } else if (mode !== "settlement_candidate" || original.phase !== "launched") return invalid();
+    // A detached candidate or changed clock is never public committed history.
+    // Candidate calculation is allowed only before the atomic pair write; it
+    // still consumes the original pair's immutable scope and native launch marks.
+    if (mode === "committed" && original.operationId === operation.operationId
+      && digestHarnessToolValue(original) !== digestHarnessToolValue(operation)) return invalid();
     launchTimes.push(hostOperationTimestamp(original.launchedAt));
   }
   const terminal = readOfficeLocalTerminal(database, execution);

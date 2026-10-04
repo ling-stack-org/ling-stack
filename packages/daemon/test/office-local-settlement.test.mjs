@@ -140,6 +140,69 @@ test("Office generic safe and no-start paths reject each bound role without part
   assertOfficePairSafe(f, f.tracker.settleOfficeLocalFromStore(f.state.ticket));
 });
 
+for (const role of ["parent", "producer"]) {
+  test(`Office bound original tickets reject generic launch bypass: ${role} after preparation`, async t => {
+    const f = await createOfficeSettlementFixture(t), before = readOfficePairRows(f);
+    const sentinel = join(f.cwd, `generic-launch-${role}-bypass.txt`);
+    let callbacks = 0, failure;
+    try {
+      f.store.launchHostOperation(f.durableTickets.get(f.state[role].operationId), () => {
+        callbacks++; writeFileSync(sentinel, "unauthorized generic Office launch");
+      });
+    } catch (error) { failure = error; }
+    assert.equal(callbacks, 0, "a prepared Office original ticket must not enter a generic physical callback");
+    assert.equal(failure?.code, "host_office_local_pair_effect_required");
+    assert.equal(existsSync(sentinel), false);
+    assert.deepEqual(readOfficePairRows(f), before, "generic rejection cannot launch or revise either Office role");
+    assertPairStillBlocks(f, "admitted");
+  });
+}
+
+for (const phase of ["unsealed", "sealed"]) {
+  for (const role of ["parent", "producer"]) {
+    for (const mode of ["forward", "cleanup"]) {
+      test(`Office bound original tickets reject generic continue bypass: ${role} ${mode} after writer ${phase}`, async t => {
+        const f = await createOfficeSettlementFixture(t);
+        if (phase === "unsealed") {
+          // Enter the actual SDK/native writer and every physical effect, but hold
+          // the last Host seal gate. This is not a fabricated journal launch row.
+          const seal = f.tracker.sealOfficeLocalTerminal.bind(f.tracker);
+          f.tracker.sealOfficeLocalTerminal = () => { throw new Error("office_test_hold_before_terminal_seal"); };
+          let writerFailure;
+          try {
+            assert.throws(() => {
+              try { executeOfficeLocalWrite(f.plan); } catch (error) { writerFailure = error; throw error; }
+            }, OfficeLocalWriterError);
+          } finally { f.tracker.sealOfficeLocalTerminal = seal; }
+          assert.equal(writerFailure.observation.outcome, "published");
+          assert.equal(writerFailure.terminalSealConfirmed, false);
+          assert.equal(f.store.getHostOfficeLocalTerminal(f.plan.executionId), undefined);
+        } else {
+          const result = executeOfficeLocalWrite(f.plan);
+          assert.equal(result.observation.outcome, "published");
+          assert.ok(f.store.getHostOfficeLocalTerminal(f.plan.executionId));
+        }
+        assert.deepEqual(readFileSync(f.prepared.targetPath), f.artifact.bytes);
+        assertPairStillBlocks(f);
+        const before = readOfficePairRows(f), effects = f.store.listHostOfficeLocalEffects(f.plan.executionId);
+        const sentinel = join(f.cwd, `generic-continue-${role}-${mode}-bypass.txt`);
+        let callbacks = 0, failure;
+        try {
+          f.store.continueHostOperationEffect(f.durableTickets.get(f.state[role].operationId), () => {
+            callbacks++; writeFileSync(sentinel, "unauthorized generic Office continuation");
+          }, mode);
+        } catch (error) { failure = error; }
+        assert.equal(callbacks, 0, "an entered Office original ticket cannot bypass its exact effect graph even through cleanup");
+        assert.equal(failure?.code, "host_office_local_pair_effect_required");
+        assert.equal(existsSync(sentinel), false);
+        assert.deepEqual(readOfficePairRows(f), before, "generic rejection cannot change either original Office journal row");
+        assert.deepEqual(f.store.listHostOfficeLocalEffects(f.plan.executionId), effects);
+        assertPairStillBlocks(f);
+      });
+    }
+  }
+}
+
 test("Office prepared-but-unsealed execution remains an admitted blocker", async t => {
   const f = await createOfficeSettlementFixture(t);
   assert.throws(() => f.store.settleHostOfficeLocalExecution(f.state.ticket), code("host_office_local_terminal_missing"));

@@ -2,7 +2,20 @@
 
 此提交是用户要求的**代码防丢保存点**，不是可发布版本，不代表整个目标通过。
 
-## 本次 checkpoint 增量（2026-10-05；Office journal pair 未验证 WIP）
+## 本次 checkpoint 增量（2026-10-05；Office pair 验真与 rollback 隔离）
+
+用户重新要求向既有 Draft PR #507 保存一次。上一保存点 `970f8de8c03ad8da2f401463968e272fba860bbf` 及历史完整保留；仅追加本轮 10 个源码/测试文件和本记录，不合并、不升版本、不改根 checkout、真实数据库或其他工作区。
+
+- generic launch/continue 对 Office 两种证据显式拒绝，物理效果只能进入原 pair 的 typed roster；有效反例 RED 0/10 → GREEN 10/10。
+- public consumer 验证完整 committed pair、对端精确持久行、相同 settledAt、kind/signature、parent digest 与 required children/grandchildren。settlement 使用独立 candidate 入口，在同一事务写完 producer/parent 后才验两边；不提前公开单边 safe，不新增递归回环。consumer 完整文件 67/67。
+- owned transaction 的 ROLLBACK 失败关闭共享 DatabaseSync，令旧 Statement/其他引用一并失效。BEGIN 失败不接管 caller 事务；精确 no-active 错误必须经捕获的原 native executor 确认，不能仅相信 wrapped error。close 抛错时保留原 close 后备和所有错误。最终 isolation 22/22，含精确伪 no-active 反例。
+- migration150/147/149 矩阵 195/195；只修 JOIN view 夹具，不改迁移产品源码。Core/Daemon 构建实际 exit 0。最终 Daemon full 2872/2872、exit 0；保存前重新核验其 1292 项 consumed source 和 1585 项 dist 指纹全部一致，唯一后改的 facts 测试不被 Daemon 引用。
+- Core 首次 full 1890/1896、exit 1：6 项旧错误码断言被更早的 pair gate 拒绝。测试已按精确新边界更新，保留零副作用与旧 hash 校验，并新增 fresh unbound pair 反例；最终 facts 文件 160/160、exit 0。**修改后的 Core full 尚未复跑，不称完整 Core 全绿。**
+- 真实 Office no-start 反例仍为 0/1、exit 1：callback/native/effect/resource 全零且 pair 原行未变，但现有 settlement 抛 `host_office_local_launch_unknown`，留下 blocker。必须补原票 closed/noStart、独立 receipt 与原子 known_no_start，不把 failed terminal 改 safe。creator-bound directory receipt、固定 production route、live/restart/answer recovery 和 fresh packaged macOS 联验仍待完成。
+
+本次仅防丢 WIP；公开 U gate 继续关闭，完整 D0/E1–E6、U/T、Harness 目标 active。忽略的 output、日志、截图、安装包、QA 数据库或密钥不上传；branch/PR HEAD 读回后才确认远端保存。
+
+## 前次 checkpoint 增量（2026-10-05；Office journal pair 未验证 WIP）
 
 用户要求再向既有 Draft PR #507 保存一次。上一远端保存点 `50a61fbe491bc1bc9f213618f84a3136cf9c073b` 及全部历史保留；本次仅追加 Office journal pair 源码、测试和本记录，不合并、不升版本、不改根 checkout 或真实数据库。
 

@@ -1,13 +1,15 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { hostOperationDomainIdentity, verifyHostOperationSafe } from "../dist/storage/sqlite/host-operation-journal-evidence.js";
+import { hostOperationDomainIdentity, verifyHostOperationSafe,
+  verifyHostOperationSettlementCandidate } from "../dist/storage/sqlite/host-operation-journal-evidence.js";
 import { verifyHostOfficeReceipt } from "../dist/storage/sqlite/host-office-local-journal-evidence.js";
 import { officeJournalClone, officeJournalFixture } from "./support/host-office-local-journal-fixture.mjs";
 
 const rejected = error => typeof error.code === "string" && /^host_(office_local_(replay|evidence)_invalid|operation_(evidence_invalid|invalid_source|invalid_timestamp|journal_corrupt))$/.test(error.code);
 const candidate = (f, id = "producer", change = {}) => ({ ...f.read(id), phase: "safe", settledAt: f.settledAt,
-  settlementKind: id === "parent" ? "office_local_chain_completed" : "office_local_binary_completed", ...change });
-const receipt = (f, change = {}) => verifyHostOfficeReceipt(f.database, candidate(f, "producer", change));
+  settlementKind: id === "parent" ? "office_local_chain_completed" : "office_local_binary_completed",
+  settlementSignature: JSON.stringify({ kind: id === "parent" ? "office_local_chain_completed" : "office_local_binary_completed", settledAt: f.settledAt }), ...change });
+const receipt = (f, change = {}) => verifyHostOfficeReceipt(f.database, candidate(f, "producer", change), "settlement_candidate");
 
 for (const options of [{}, { overwrite: true }, { shortWrite: true }, { overwrite: true, shortWrite: true }]) {
   test(`Office role consumers verify complete sealed SQLite history ${JSON.stringify(options)}`, async t => {
@@ -18,9 +20,10 @@ for (const options of [{}, { overwrite: true }, { shortWrite: true }, { overwrit
     assert.notEqual(parent.domainIdentityDigest, producer.domainIdentityDigest, "role binding cannot alias one generic receipt");
     assert.throws(() => verifyHostOperationSafe(f.database, candidate(f, "parent")), rejected, "reserved binary must fan in first");
     const binary = f.settleRecord("producer");
-    assert.equal(f.store.getHostOperation("producer").evidenceDigest, binary.evidenceDigest);
-    assert.deepEqual(f.store.listHostOperationBlockers(f.source).map(operation => operation.operationId), ["parent"]);
+    assert.throws(() => f.store.getHostOperation("producer"), rejected, "an intermediate internal row is not a public whole-pair safe receipt");
+    assert.throws(() => f.store.listHostOperationBlockers(f.source), rejected);
     const chain = f.settleRecord("parent");
+    assert.equal(f.store.getHostOperation("producer").evidenceDigest, binary.evidenceDigest);
     assert.notEqual(verifyHostOfficeReceipt(f.database, chain), verifyHostOfficeReceipt(f.database, binary));
     assert.deepEqual(f.store.listHostOperationBlockers(f.source), []);
     const restarted = f.reopen();
@@ -176,4 +179,82 @@ test("Office terminal seal cannot omit or alias exact original effect refs", asy
   changed.effects[1].observation.artifactId = changed.effects[0].observation.artifactId;
   f.seal("terminal-artifact", changed, changed.completedAt);
   assert.throws(() => f.reopen().getHostOperation("parent"), rejected);
+});
+
+test("Office public safe verification rejects an uncommitted internal binary candidate", async t => {
+  const f = await officeJournalFixture(t);
+  assert.match(verifyHostOperationSettlementCandidate(f.database, candidate(f)), /^[a-f0-9]{64}$/,
+    "the explicitly internal calculator can prove facts without issuing a public safe row");
+  assert.throws(() => verifyHostOperationSafe(f.database, candidate(f)), rejected,
+    "a synthetic safe candidate is not an already committed whole pair");
+  assert.throws(() => verifyHostOfficeReceipt(f.database, candidate(f)), rejected,
+    "the domain consumer also defaults to committed history, not a detached candidate");
+  f.settleRecord("producer"); f.settleRecord("parent");
+  const detached = { ...f.read("producer"), admittedAt: new Date(Date.parse(f.admittedAt) - 10).toISOString() };
+  assert.throws(() => verifyHostOperationSafe(f.database, detached), rejected,
+    "a changed candidate must not borrow an already committed pair's safe receipt");
+  assert.throws(() => verifyHostOfficeReceipt(f.database, detached), rejected);
+});
+
+test("Office internal settlement candidate still rejects an unknown original counterpart", async t => {
+  const f = await officeJournalFixture(t);
+  f.database.prepare(`UPDATE host_operations SET phase='unknown_outcome',settled_at=?,settlement_kind='unknown_outcome',
+    settlement_signature=?,code='commit_return_lost' WHERE operation_id='parent'`)
+    .run(f.settledAt, JSON.stringify({ kind: "unknown_outcome", settledAt: f.settledAt, code: "commit_return_lost" }));
+  assert.throws(() => receipt(f), rejected);
+  assert.throws(() => verifyHostOperationSettlementCandidate(f.database, candidate(f)), rejected,
+    "internal digest calculation cannot relabel the original unknown pair as a successful candidate");
+});
+
+for (const [label, change] of [
+  ["retained launched counterpart", f => f.database.prepare(`UPDATE host_operations SET phase='launched',settled_at=NULL,
+    settlement_kind=NULL,evidence_digest=NULL,settlement_signature=NULL,code=NULL WHERE operation_id='parent'`).run()],
+  ["unknown counterpart", f => f.database.prepare(`UPDATE host_operations SET phase='unknown_outcome',settlement_kind='unknown_outcome',
+    evidence_digest=NULL,settlement_signature=?,code='commit_return_lost' WHERE operation_id='parent'`)
+    .run(JSON.stringify({ kind: "unknown_outcome", settledAt: f.settledAt, code: "commit_return_lost" }))],
+  ["malformed safe counterpart digest", f => f.database.prepare("UPDATE host_operations SET evidence_digest=? WHERE operation_id='parent'")
+    .run("e".repeat(64))],
+  ["wrong safe counterpart settlement", f => f.database.prepare("UPDATE host_operations SET settlement_kind='file_completed' WHERE operation_id='parent'").run()],
+  ["malformed safe counterpart signature", f => f.database.prepare("UPDATE host_operations SET settlement_signature='not-a-settlement-intent' WHERE operation_id='parent'").run()],
+  ["different safe counterpart settlement clock", f => {
+    const settledAt = new Date(Date.parse(f.settledAt) + 10).toISOString();
+    f.database.prepare("UPDATE host_operations SET settled_at=?,settlement_signature=? WHERE operation_id='parent'")
+      .run(settledAt, JSON.stringify({ kind: "office_local_chain_completed", settledAt }));
+  }],
+]) {
+  test(`Office public binary safe receipt rejects ${label}`, async t => {
+    const f = await officeJournalFixture(t); f.settleRecord("producer"); f.settleRecord("parent");
+    change(f);
+    for (const store of [f.store, f.reopen()]) {
+      assert.throws(() => store.getHostOperation("producer"), rejected,
+        "the original binary role must not remain independently safe");
+    }
+  });
+}
+
+test("Office public binary safe receipt retains complete parent extra-child fan-in", async t => {
+  const f = await officeJournalFixture(t); f.settleRecord("producer"); f.settleRecord("parent");
+  // The narrow fixture permits an adversarial historical row. Production
+  // admission guards forbid adding a child after settlement; public reads must
+  // still refuse a supposedly safe pair whose reserved roster is incomplete.
+  f.insertOperation("reserved-parent-extra", "hydration", "parent", "resolver-extra");
+  for (const store of [f.store, f.reopen()]) {
+    assert.throws(() => store.getHostOperation("parent"), rejected);
+    assert.throws(() => store.getHostOperation("producer"), rejected,
+      "binary's public read must include the chain's additional reserved child");
+  }
+});
+
+test("Office public binary safe receipt detects a corrupt parent extra-child recursive digest", async t => {
+  const f = await officeJournalFixture(t);
+  f.insertOperation("reserved-parent-extra", "hydration", "parent", "resolver-extra");
+  f.insertOperation("reserved-parent-grandchild", "cleanup", "reserved-parent-extra", "cleanup-extra");
+  f.settleRecord("reserved-parent-grandchild", "known_no_start");
+  f.settleRecord("reserved-parent-extra", "known_no_start");
+  f.settleRecord("producer"); f.settleRecord("parent");
+  f.database.prepare("UPDATE host_operations SET evidence_digest=? WHERE operation_id='reserved-parent-grandchild'").run("e".repeat(64));
+  for (const store of [f.store, f.reopen()]) {
+    assert.throws(() => store.getHostOperation("producer"), rejected,
+      "public binary cannot bypass a corrupt grandchild under the chain's other producer");
+  }
 });

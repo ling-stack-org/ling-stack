@@ -2,7 +2,8 @@ import type { HostOperationSettlementInput } from "../../host-operation-journal-
 import type { HostOfficeLocalSettlement } from "../../host-office-local-types.js";
 import {
   hostOperationDomainIdentity, hostOperationFailure, hostOperationTimestamp, readHostOperation,
-  readSourceHostOperations, sameHostOperationSource, verifyHostOperationSafe, type StoredHostOperation,
+  readSourceHostOperations, sameHostOperationSource, verifyHostOperationSafe,
+  verifyHostOperationSettlementCandidate, type StoredHostOperation,
 } from "./host-operation-journal-evidence.js";
 import type { OfficeJournalTicketState } from "./host-office-local-journal-gate.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -48,7 +49,7 @@ export function settleOfficeLocalJournalPair(context: SqliteStoreContext, pair: 
     if (!sameHostOperationSource(child.source, parent.source) || child.toolCallId !== parent.toolCallId
       || verifyHostOperationSafe(database, child, settledAt) !== child.evidenceDigest) return hostOperationFailure("host_operation_evidence_invalid");
   }
-  const producerDigest = verifyHostOperationSafe(database, producerCandidate);
+  const producerDigest = verifyHostOperationSettlementCandidate(database, producerCandidate);
   if (hostOperationDomainIdentity(database, parent, parent.evidenceRef, false) !== parent.domainIdentityDigest) {
     return hostOperationFailure("host_operation_evidence_invalid");
   }
@@ -60,13 +61,15 @@ export function settleOfficeLocalJournalPair(context: SqliteStoreContext, pair: 
       evidence_digest=?,settlement_signature=?,code=NULL,revision=revision+1
       WHERE operation_id=? AND revision=? AND phase='launched'`).run(settledAt, kind, digest, intent, row.operationId, row.revision);
     if (changed.changes !== 1) return hostOperationFailure("host_operation_cas_conflict");
-    return verified(readHostOperation(database, row.operationId) ?? hostOperationFailure("host_operation_journal_corrupt"));
+    return readHostOperation(database, row.operationId) ?? hostOperationFailure("host_operation_journal_corrupt");
   };
   const producerResult = write(producer, "office_local_binary_completed", producerSignature, producerDigest);
   const parentCandidate = candidate(parent, "office_local_chain_completed", parentSignature);
   // The generic verifier rereads every required child and its immutable receipt while
   // the producer's safe update is still invisible outside this same write transaction.
-  const parentDigest = verifyHostOperationSafe(database, parentCandidate);
+  const parentDigest = verifyHostOperationSettlementCandidate(database, parentCandidate);
   const parentResult = write(parent, "office_local_chain_completed", parentSignature, parentDigest);
-  return { parent: parentResult, producer: producerResult };
+  // No role is a public-safe receipt until both writes exist under this same
+  // transaction. Reverify the committed-shape whole pair before COMMIT.
+  return { parent: verified(parentResult), producer: verified(producerResult) };
 }

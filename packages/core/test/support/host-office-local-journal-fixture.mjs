@@ -4,7 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import { digestHarnessToolValue } from "../../dist/harness/tool-executions.js";
-import { hostOperationDomainIdentity, readHostOperation, verifyHostOperationSafe } from "../../dist/storage/sqlite/host-operation-journal-evidence.js";
+import { hostOperationDomainIdentity, readHostOperation,
+  verifyHostOperationSettlementCandidate } from "../../dist/storage/sqlite/host-operation-journal-evidence.js";
 import { SqliteHostOperationJournalStore } from "../../dist/storage/sqlite/host-operation-journal-store.js";
 
 export const officeJournalClone = value => JSON.parse(JSON.stringify(value));
@@ -112,7 +113,9 @@ export async function officeJournalFixture(t, { overwrite = false, shortWrite = 
     current.set("target", { ...current.get("temporary"), changedNs: "99" }); current.set("temporary", current.get("target"));
     read("target", "refresh", current.get("target")); if (!overwrite) read("temporary", "refresh", current.get("temporary"));
   });
-  if (!overwrite) append("unlink", "temporary", {}, () => current.set("target", { ...current.get("target"), changedNs: "100" }));
+  if (!overwrite) append("unlink", "temporary", {}, () => {
+    current.set("target", { ...current.get("target"), changedNs: "100" });
+  });
   const members = prepared.members.map(member => {
     const expected = member.memberId === "target" ? prepared.output : prepared.input;
     const final = member.memberId === "target" || member.memberId === "recovery"
@@ -183,7 +186,7 @@ export async function officeJournalFixture(t, { overwrite = false, shortWrite = 
   const settleRecord = (id, kind = id === "parent" ? "office_local_chain_completed" : "office_local_binary_completed") => {
     const candidate = { ...readHostOperation(database, id), phase: "safe", settlementKind: kind, settledAt,
       settlementSignature: JSON.stringify({ kind, settledAt }) };
-    const digest = verifyHostOperationSafe(database, candidate);
+    const digest = verifyHostOperationSettlementCandidate(database, candidate);
     database.prepare("UPDATE host_operations SET phase='safe',settled_at=?,settlement_kind=?,evidence_digest=?,settlement_signature=? WHERE operation_id=?")
       .run(settledAt, kind, digest, candidate.settlementSignature, id);
     return readHostOperation(database, id);

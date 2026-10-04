@@ -14,6 +14,11 @@ const code = expected => error => error.code === expected;
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const fileIdentity = stats => ({ device: String(stats.dev), inode: String(stats.ino), sizeBytes: Number(stats.size),
   modifiedNs: String(stats.mtimeNs), changedNs: String(stats.ctimeNs) });
+const officePairSnapshot = f => ({
+  rows: f.other.database.prepare("SELECT * FROM host_operations WHERE operation_id IN (?,?) ORDER BY operation_id")
+    .all(f.parent.operationId, f.producer.operationId),
+  blockers: f.other.listHostOperationBlockers(f.source),
+});
 
 /** Real isolated SQLite and binary filesystem calls; not packaged Office/GUI evidence. */
 async function fixture(t, override = {}) {
@@ -138,10 +143,30 @@ test("Office immutable identity contract preserves captured root and includes it
   const sealed = JSON.parse(f.other.database.prepare("SELECT sealed_payload_json FROM artifacts WHERE id=?").get(f.artifact.id).sealed_payload_json);
   assert.deepEqual(sealed.workspaceIdentity, captured);
   const changedArtifact = f.seal(altered);
+  const before = officePairSnapshot(f);
+  assert.throws(() => f.store.prepareHostOfficeLocalExecution(f.parent, f.producer, {
+    executionId: altered.executionId, preparedArtifactId: changedArtifact.id, preparedDigest: f.artifact.contentSha256,
+  }), code("host_office_local_preparation_too_late"));
+  assert.deepEqual(officePairSnapshot(f), before);
+  assert.equal(f.other.database.prepare("SELECT count(*) AS n FROM host_office_local_executions").get().n, 1);
+  assert.equal(f.other.getHostOfficeLocalExecution(ticket.executionId).identityDigest, row.identityDigest);
+});
+
+test("Office immutable identity contract rejects altered captured root seal with original digest on a fresh unbound pair", async t => {
+  const f = await fixture(t), captured = { ...f.prepared.workspaceIdentity };
+  const altered = { ...f.prepared, workspaceIdentity: { ...captured, inode: String(BigInt(captured.inode) + 1n) } };
+  const changedArtifact = f.seal(altered), before = officePairSnapshot(f);
+  assert.equal(f.other.getHostOperation(f.parent.operationId).evidenceRef, undefined);
+  assert.equal(f.other.getHostOperation(f.producer.operationId).evidenceRef, undefined);
+  assert.notEqual(changedArtifact.contentSha256, f.artifact.contentSha256);
+  assert.notEqual(digestHarnessToolValue({ prepared: altered, preparedArtifactId: f.artifact.id,
+    preparedDigest: f.artifact.contentSha256 }), digestHarnessToolValue({ prepared: f.prepared,
+    preparedArtifactId: f.artifact.id, preparedDigest: f.artifact.contentSha256 }));
   assert.throws(() => f.store.prepareHostOfficeLocalExecution(f.parent, f.producer, {
     executionId: altered.executionId, preparedArtifactId: changedArtifact.id, preparedDigest: f.artifact.contentSha256,
   }), code("host_office_local_evidence_invalid"));
-  assert.equal(f.other.getHostOfficeLocalExecution(ticket.executionId).identityDigest, row.identityDigest);
+  assert.equal(f.other.database.prepare("SELECT count(*) AS n FROM host_office_local_executions").get().n, 0);
+  assert.deepEqual(officePairSnapshot(f), before);
 });
 
 for (const change of [
@@ -188,9 +213,12 @@ test("Office actual binary write enters both original scopes, immutable observat
   assert.equal(row.observationArtifactId, observation.receipt.id);
   assert.deepEqual(observation.record(), row);
   assert.throws(() => f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => {}), code("host_office_local_effect_already_entered"));
+  const before = officePairSnapshot(f);
   for (const operation of [f.parent, f.producer]) {
-    assert.throws(() => f.store.settleHostOperation(operation, { kind: "known_no_start" }), code("host_operation_launched_no_start"));
+    assert.throws(() => f.store.settleHostOperation(operation, { kind: "known_no_start" }), code("host_office_local_pair_settlement_required"));
+    assert.deepEqual(officePairSnapshot(f), before);
     assert.throws(() => f.store.settleHostOperation(operation, { kind: "file_completed" }));
+    assert.deepEqual(officePairSnapshot(f), before);
   }
   assert.equal(f.other.listHostOperationBlockers(f.source).length, 2);
 });
@@ -221,7 +249,11 @@ for (const afterCommit of [false, true]) {
     const observation = f.observe(ticket, effect, "host_unconfirmed"); assert.ok(observation.record().enteredAt, "original live latch repairs observation, never invokes the syscall again");
     assert.equal(writes, 1);
     assert.throws(() => f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => { writes++; }), code("host_office_local_effect_already_entered"));
-    for (const operation of [f.parent, f.producer]) assert.throws(() => f.store.settleHostOperation(operation, { kind: "known_no_start" }), code("host_operation_launched_no_start"));
+    const before = officePairSnapshot(f);
+    for (const operation of [f.parent, f.producer]) {
+      assert.throws(() => f.store.settleHostOperation(operation, { kind: "known_no_start" }), code("host_office_local_pair_settlement_required"));
+      assert.deepEqual(officePairSnapshot(f), before);
+    }
     const cleanup = f.effect(ticket, { effectId: "cleanup-temp", ordinal: 1, kind: "unlink", mode: "cleanup" });
     f.store.launchHostOfficeLocalEffect(ticket, cleanup.effectId, () => unlinkSync(f.tempPath));
     f.observe(ticket, cleanup).record(); assert.equal(existsSync(f.tempPath), false);
@@ -269,7 +301,9 @@ test("Office asynchronous callback is rejected before physical start; plain then
   assert.equal(writes, 0);
   assert.throws(() => f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => Promise.reject(new Error("async result"))), /synchronous/);
   await new Promise(resolve => setImmediate(resolve));
-  assert.throws(() => f.store.settleHostOperation(f.producer, { kind: "known_no_start" }), code("host_operation_launched_no_start"));
+  const before = officePairSnapshot(f);
+  assert.throws(() => f.store.settleHostOperation(f.producer, { kind: "known_no_start" }), code("host_office_local_pair_settlement_required"));
+  assert.deepEqual(officePairSnapshot(f), before);
 });
 
 test("Office cleanup label cannot admit a new scope before any original effect entered", async t => {
@@ -569,8 +603,10 @@ test("Office callback entered but ledger guard blocked native call remains not e
   const observation = f.observe(ticket, effect, "not_entered", { host: { state: "unconfirmed", errorCode: "ledger.guard" } });
   const row = observation.record(); assert.ok(row.enteredAt); assert.equal(existsSync(f.tempPath), false);
   assert.equal(row.observationArtifactId, observation.receipt.id);
+  const before = officePairSnapshot(f);
   for (const operation of [f.parent, f.producer]) {
-    assert.throws(() => f.store.settleHostOperation(operation, { kind: "known_no_start" }), code("host_operation_launched_no_start"));
+    assert.throws(() => f.store.settleHostOperation(operation, { kind: "known_no_start" }), code("host_office_local_pair_settlement_required"));
+    assert.deepEqual(officePairSnapshot(f), before);
   }
   assert.equal(f.other.listHostOperationBlockers(f.source).length, 2);
 });
