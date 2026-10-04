@@ -1921,6 +1921,9 @@ export class SqliteRunStore implements RunStore {
   prepareHostOfficeLocalEffect(...args: Parameters<RunStore["prepareHostOfficeLocalEffect"]>): ReturnType<RunStore["prepareHostOfficeLocalEffect"]> {
     return this.hostOfficeLocal.prepareHostOfficeLocalEffect(...args);
   }
+  beginHostOfficeLocalWriterObservation(...args: Parameters<RunStore["beginHostOfficeLocalWriterObservation"]>): void {
+    return this.hostOfficeLocal.beginHostOfficeLocalWriterObservation(...args);
+  }
   launchHostOfficeLocalEffect<T>(ticket: Parameters<RunStore["launchHostOfficeLocalEffect"]>[0], effectId: string, effect: () => T): T {
     return this.hostOfficeLocal.launchHostOfficeLocalEffect(ticket, effectId, effect);
   }

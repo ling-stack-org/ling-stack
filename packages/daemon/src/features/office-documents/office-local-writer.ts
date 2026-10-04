@@ -56,6 +56,9 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     throw new Error("office_local_write_closed");
   }
   state.used = true; // Never reset after syscall or SQLite COMMIT failures.
+  // Fail outside the observation/finally path when admission is already closed:
+  // even read-only opens need the original owner and an irreversible Core latch.
+  state.tracker.beginOfficeLocalWriterObservation(state.ticket);
   const resources = new OfficeLocalResourceOwner(plan.executionId, state.execution.source), effects: string[] = [];
   let publicationEntered = false, published = false, failed = false, failure: unknown;
   let lastEffectObservedAt: string | undefined;

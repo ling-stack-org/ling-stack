@@ -745,7 +745,7 @@ test("Office real SDK bytes publish through exact SQLite effects without safe se
 
 test("Office cloned reservation cannot acquire a plan or read permission", async t => {
   const f = await fixture(t);
-  assert.throws(() => assertOfficeLocalReservation({ ...f.reservation }), /reservation_invalid/);
+  assert.throws(() => assertOfficeLocalReservation({ ...f.reservation }), /office_local_reservation_closed/);
   assert.throws(() => prepareOfficeLocalWrite(f.reservation, f.snapshot, f.artifact, "a".repeat(64), "b".repeat(64)), /reservation_invalid/);
 });
 

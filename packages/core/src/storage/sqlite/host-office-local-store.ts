@@ -18,6 +18,8 @@ interface OfficeTicketState {
   readonly producer: HostOperationTicket;
   readonly entered: Map<string, string>;
   uncertainLaunch: boolean;
+  /** Irreversible before the fixed writer can retain even a read-only native resource. */
+  writerObservationStarted: boolean;
   /** Lifecycle closure survives rejected fan-in, SQL rollback and lost returns; it is not a settlement intent. */
   noStartClosed: boolean;
   /** Irreversible local claim even when terminal INSERT/COMMIT fails or its return is lost. */
@@ -55,8 +57,19 @@ export class SqliteHostOfficeLocalStore {
       return this.requireExecution(prepared.executionId);
     });
     const ticket = Object.freeze({ executionId: captured.executionId }) as HostOfficeLocalTicket;
-    this.tickets.set(ticket, { parent, producer, entered: new Map(), uncertainLaunch: false, noStartClosed: false });
+    this.tickets.set(ticket, { parent, producer, entered: new Map(), uncertainLaunch: false,
+      writerObservationStarted: false, noStartClosed: false });
     return ticket;
+  }
+
+  /** Original-owner forward admission before any writer observation; rollback cannot erase this latch. */
+  beginHostOfficeLocalWriterObservation(ticket: HostOfficeLocalTicket): void {
+    const state = this.requireMutableTicket(ticket);
+    this.journal.officeLocal.mutate(state.parent, state.producer, () => {
+      this.requireMutableTicket(ticket);
+      if (state.writerObservationStarted) return hostOperationFailure("host_office_local_observation_already_started");
+      state.writerObservationStarted = true;
+    }, false);
   }
 
   prepareHostOfficeLocalEffect(ticket: HostOfficeLocalTicket, input: PrepareHostOfficeLocalEffect): HostOfficeLocalEffectRecord {
@@ -145,15 +158,19 @@ export class SqliteHostOfficeLocalStore {
   /** Seal complete captured facts under the original live pair; a terminal is not a journal settlement. */
   sealHostOfficeLocalTerminal(ticket: HostOfficeLocalTicket, input: SealHostOfficeLocalTerminalInput): HostOfficeLocalTerminalRecord {
     const state = this.requireTicket(ticket);
-    if (state.noStartClosed) return hostOperationFailure("host_office_local_execution_closed");
     const captured: unknown = JSON.parse(JSON.stringify(input));
     if (!captured || typeof captured !== "object" || Array.isArray(captured)
       || Object.keys(captured).length !== 2 || !Object.hasOwn(captured, "terminalArtifactId") || !Object.hasOwn(captured, "terminalDigest")) return officeLocalFailure();
     const claim = captured as SealHostOfficeLocalTerminalInput;
     if (typeof claim.terminalArtifactId !== "string" || claim.terminalArtifactId.length === 0 || claim.terminalArtifactId.length > 4096
       || claim.terminalArtifactId.includes("\0") || typeof claim.terminalDigest !== "string" || !/^[a-f0-9]{64}$/.test(claim.terminalDigest)) return officeLocalFailure();
+    // Closed execution admits only reconciliation of the exact pre-existing
+    // seal claim, never new resource observations, artifacts or writer effects.
+    if (state.noStartClosed && (!state.sealClaim
+      || state.sealClaim.terminalArtifactId !== claim.terminalArtifactId
+      || state.sealClaim.terminalDigest !== claim.terminalDigest)) return hostOperationFailure("host_office_local_execution_closed");
     // No persisted-row fast path: even an identical retry must pass original live tickets, current owner and pair checks.
-    return this.journal.officeLocal.mutate(state.parent, state.producer, () => {
+    return this.journal.officeLocal.sealTerminal(state.parent, state.producer, () => {
       if (state.sealClaim && (state.sealClaim.terminalArtifactId !== claim.terminalArtifactId
         || state.sealClaim.terminalDigest !== claim.terminalDigest)) return hostOperationFailure("host_office_local_terminal_claim_conflict");
       const execution = this.requireExecution(ticket.executionId);
@@ -170,7 +187,7 @@ export class SqliteHostOfficeLocalStore {
         VALUES(?,1,?,?,?,?,?,?,?)`).run(execution.executionId, terminal.protocol, execution.identityDigest,
           terminal.terminalArtifactId, terminal.terminalDigest, terminal.effectSetDigest, terminal.effectCount, terminal.sealedAt);
       return readOfficeLocalTerminal(this.context.database, execution) ?? officeLocalFailure();
-    }, true);
+    });
   }
   getHostOfficeLocalTerminal(id: string): HostOfficeLocalTerminalRecord | undefined {
     return readSqliteSnapshot(this.context.database, () => {
@@ -182,7 +199,16 @@ export class SqliteHostOfficeLocalStore {
   getHostOfficeLocalNoStartReceipt(id: string): HostOfficeLocalNoStartReceipt | undefined {
     return readSqliteSnapshot(this.context.database, () => {
       const execution = readOfficeLocalExecution(this.context.database, id);
-      return execution ? readOfficeLocalNoStartReceipt(this.context.database, execution) : undefined;
+      if (!execution) return undefined;
+      const receipt = readOfficeLocalNoStartReceipt(this.context.database, execution);
+      if (!receipt) return undefined;
+      // The internal reader also serves settlement candidates. Public history
+      // requires both committed canonical roles and their complete safe verifier.
+      for (const operationId of [execution.parentOperationId, execution.producerOperationId]) {
+        const operation = this.journal.getHostOperation(operationId);
+        if (!operation || operation.phase !== "safe" || operation.settlementKind !== "known_no_start") return officeLocalFailure();
+      }
+      return receipt;
     });
   }
   /** Original live entry facts select the branch; caller booleans or a failed manifest never issue no-start authority. */

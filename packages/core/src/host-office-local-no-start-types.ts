@@ -17,6 +17,8 @@ export interface HostOfficeLocalNoStartReceipt {
   readonly toolCallId: string;
   readonly preparedArtifactId: string;
   readonly preparedDigest: string;
+  /** Bind a completed read-only failed writer, or prove that no terminal existed at closure. */
+  readonly terminal: { readonly terminalArtifactId: string; readonly terminalDigest: string } | null;
   readonly effects: readonly { readonly ordinal: number; readonly effectId: string; readonly effectDigest: string }[];
   /** Entire descendant tree, excluding only the designated binary producer itself. */
   readonly requiredDescendants: readonly { readonly operationId: string; readonly evidenceDigest: string }[];

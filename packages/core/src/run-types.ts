@@ -1545,6 +1545,8 @@ export interface RunStore {
   prepareHostOfficeLocalExecution(parent: import("./host-operation-journal-types.js").HostOperationTicket,
     producer: import("./host-operation-journal-types.js").HostOperationTicket,
     input: import("./host-office-local-types.js").PrepareHostOfficeLocalInput): import("./host-office-local-types.js").HostOfficeLocalTicket;
+  /** Original-owner admission before retaining any fixed writer read-only native resources. */
+  beginHostOfficeLocalWriterObservation(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket): void;
   prepareHostOfficeLocalEffect(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
     input: import("./host-office-local-types.js").PrepareHostOfficeLocalEffect): import("./host-office-local-types.js").HostOfficeLocalEffectRecord;
   launchHostOfficeLocalEffect<T>(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket, effectId: string, effect: () => T): T;

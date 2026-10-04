@@ -14,7 +14,7 @@ type TrackerStore = Pick<RunStore, "isCurrentRunExecutionOwner" | "admitHostOper
   | "getHostMediaExecution" | "recordHostMediaResponse" | "recordHostMediaSubmission" | "recordHostMediaSubmissionAndExecutionHandle" | "recordHostMediaTerminal"
   | "recordHostMediaArtifactManifest" | "finalizeHostMediaExecution" | "recordHostMediaEffectNoStart"
   | "prepareHostOfficeLocalExecution" | "prepareHostOfficeLocalEffect" | "launchHostOfficeLocalEffect" | "recordHostOfficeLocalObservation"
-  | "sealHostOfficeLocalTerminal" | "settleHostOfficeLocalExecution">;
+  | "beginHostOfficeLocalWriterObservation" | "sealHostOfficeLocalTerminal" | "settleHostOfficeLocalExecution">;
 const operationHandleBrand: unique symbol = Symbol("AttemptHostOperationHandle");
 /** Neither persisted IDs nor a structural clone grants launch/settlement authority. */
 export interface AttemptHostOperationHandle {
@@ -292,6 +292,13 @@ export class AttemptHostOperationTracker {
     this.#officeEffects.set(ticket, new Map());
     this.#read(pair.parent); this.#read(pair.transport);
     return ticket;
+  }
+
+  /** Writer observations retain native resources even before the first mutating effect. */
+  beginOfficeLocalWriterObservation(ticket: HostOfficeLocalTicket): void {
+    this.assertOfficeLocalPlanOpen(ticket);
+    this.#assertMediaMayLaunch(this.#officeExecution(ticket));
+    this.#store.beginHostOfficeLocalWriterObservation(ticket);
   }
 
   prepareOfficeLocalEffect(ticket: HostOfficeLocalTicket, input: PrepareHostOfficeLocalEffect): HostOfficeLocalEffectRecord {

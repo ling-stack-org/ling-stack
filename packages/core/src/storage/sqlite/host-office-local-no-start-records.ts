@@ -83,6 +83,7 @@ function historicalPayload(database: DatabaseSync, execution: HostOfficeLocalExe
     executionId: original.executionId, executionIdentityDigest: original.identityDigest, source: { ...original.source },
     parentOperationId: original.parentOperationId, producerOperationId: original.producerOperationId, toolCallId: original.toolCallId,
     preparedArtifactId: original.preparedArtifactId, preparedDigest: original.preparedDigest,
+    terminal: terminal ? { terminalArtifactId: terminal.terminalArtifactId, terminalDigest: terminal.terminalDigest } : null,
     effects, requiredDescendants: requiredDescendants(database, original, closedAt), closedAt,
   };
 }
@@ -90,7 +91,7 @@ function historicalPayload(database: DatabaseSync, execution: HostOfficeLocalExe
 function validateReceipt(value: unknown): HostOfficeLocalNoStartReceipt {
   if (!exact(value, ["schemaVersion", "protocol", "kind", "executionId", "executionIdentityDigest", "source",
     "parentOperationId", "producerOperationId", "toolCallId", "preparedArtifactId", "preparedDigest", "effects",
-    "requiredDescendants", "closedAt", "receiptDigest"])
+    "requiredDescendants", "closedAt", "receiptDigest", "terminal"])
     || value.schemaVersion !== 1 || value.protocol !== HOST_OFFICE_LOCAL_PROTOCOL || value.kind !== "office_local_no_start_v1"
     || ![value.executionId, value.parentOperationId, value.producerOperationId, value.toolCallId, value.preparedArtifactId].every(text)
     || value.parentOperationId === value.producerOperationId
@@ -98,6 +99,8 @@ function validateReceipt(value: unknown): HostOfficeLocalNoStartReceipt {
     || !exact(value.source, ["runId", "workUnitId", "attemptId", "runtimeInstanceId", "fencingToken"])
     || !Object.values(value.source).every(text) || !Array.isArray(value.effects) || value.effects.length > 1024
     || !Array.isArray(value.requiredDescendants)) return officeLocalFailure();
+  if (value.terminal !== null && (!exact(value.terminal, ["terminalArtifactId", "terminalDigest"])
+    || !text(value.terminal.terminalArtifactId) || !digest(value.terminal.terminalDigest))) return officeLocalFailure();
   const effectIds = new Set<string>();
   for (const [index, effect] of value.effects.entries()) {
     if (!exact(effect, ["ordinal", "effectId", "effectDigest"]) || effect.ordinal !== index

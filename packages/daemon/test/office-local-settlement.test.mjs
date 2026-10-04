@@ -33,16 +33,21 @@ test("Office prepare binds the two distinct evidence scopes atomically with its 
     "binary binding failure must roll back the execution and parent binding together");
   assert.deepEqual([...f.durableTickets.keys()].map(id => f.store.getHostOperation(id)), admitted);
   f.store.database.exec("DROP TRIGGER office_test_reject_binary_binding");
-  f.prepare();
+  // A lost preparation return is an irreversible original-reservation claim,
+  // not permission to create a second artifact/ticket after rollback.
+  assert.throws(() => f.prepare(), /office_local_reservation_invalid/);
+  assert.equal(f.store.database.prepare("SELECT count(*) n FROM host_office_local_executions").get().n, 0);
+  assert.deepEqual([...f.durableTickets.keys()].map(id => f.store.getHostOperation(id)), admitted);
+  const bound = await createOfficeSettlementFixture(t);
   for (const [role, kind] of [["parent", "office_local_chain_execution"], ["producer", "office_local_binary_execution"]]) {
-    const row = f.store.getHostOperation(f.state[role].operationId);
+    const row = bound.store.getHostOperation(bound.state[role].operationId);
     assert.equal(row.phase, "admitted");
-    assert.deepEqual(row.evidenceRef, { kind, id: f.plan.executionId });
+    assert.deepEqual(row.evidenceRef, { kind, id: bound.plan.executionId });
     assert.match(row.domainIdentityDigest, /^[a-f0-9]{64}$/);
-    assert.throws(() => f.store.database.prepare("UPDATE host_operations SET evidence_id=? WHERE operation_id=?")
+    assert.throws(() => bound.store.database.prepare("UPDATE host_operations SET evidence_id=? WHERE operation_id=?")
       .run("borrowed-execution", row.operationId), /host_operation_binding_immutable/);
   }
-  assertPairStillBlocks(f, "admitted");
+  assertPairStillBlocks(bound, "admitted");
 });
 
 for (const variant of ["create", "overwrite", "short-write", "existing-directory"]) {
@@ -203,8 +208,9 @@ for (const phase of ["unsealed", "sealed"]) {
   }
 }
 
-test("Office prepared-but-unsealed execution remains an admitted blocker", async t => {
+test("Office observed-but-unsealed execution remains an admitted blocker", async t => {
   const f = await createOfficeSettlementFixture(t);
+  f.tracker.beginOfficeLocalWriterObservation(f.state.ticket);
   assert.throws(() => f.store.settleHostOfficeLocalExecution(f.state.ticket), code("host_office_local_terminal_missing"));
   assert.throws(() => f.tracker.settleOfficeLocalFromStore(f.state.ticket), code("host_office_local_terminal_missing"));
   assertPairStillBlocks(f, "admitted");

@@ -1,6 +1,9 @@
 import type { HostOperationSource, HostOperationTicket } from "../../host-operation-journal-types.js";
 import { hostOperationDomainIdentity, hostOperationFailure, sameHostOperationSource, type StoredHostOperation } from "./host-operation-journal-evidence.js";
 import type { HostOfficeLocalExecutionRecord, HostOfficeLocalSettlement } from "../../host-office-local-types.js";
+import type { SealHostOfficeLocalTerminalInput } from "../../host-office-local-terminal-types.js";
+import { readOfficeLocalExecution } from "./host-office-local-records.js";
+import { readOfficeLocalTerminal } from "./host-office-local-terminal-records.js";
 import { settleOfficeLocalJournalPair } from "./host-office-local-journal-settlement.js";
 import { settleOfficeLocalNoStartPair } from "./host-office-local-no-start-settlement.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
@@ -20,6 +23,8 @@ export interface OfficeJournalTicketState {
 interface OfficeSettlementLiveState {
   readonly entered: ReadonlyMap<string, string>;
   readonly uncertainLaunch: boolean;
+  readonly writerObservationStarted: boolean;
+  readonly sealClaim?: SealHostOfficeLocalTerminalInput;
   noStartClosed: boolean;
 }
 interface JournalAuthority {
@@ -82,10 +87,31 @@ export class HostOfficeLocalJournalGate {
         live.noStartClosed = true;
         for (const state of pair.states) state.noStartClosed = true;
         this.authority.closeOffice(pair.parent.operationId, pair.producer.operationId);
+        if (live.writerObservationStarted || live.sealClaim) {
+          const execution = readOfficeLocalExecution(this.context.database, pair.parent.evidenceRef.id);
+          const terminal = execution && readOfficeLocalTerminal(this.context.database, execution);
+          if (!terminal || !live.sealClaim) return hostOperationFailure("host_office_local_terminal_missing");
+          if (terminal.terminalArtifactId !== live.sealClaim.terminalArtifactId
+            || terminal.terminalDigest !== live.sealClaim.terminalDigest) return hostOperationFailure("host_office_local_terminal_claim_conflict");
+        }
         return settleOfficeLocalNoStartPair(this.context, pair, at);
       }
       if (live.noStartClosed || pair.states.some(state => state.noStartClosed)) return hostOperationFailure("host_office_local_execution_closed");
       return settleOfficeLocalJournalPair(this.context, pair, at);
+    });
+  }
+
+  /** Dedicated original-claim persistence reconciliation, not a general closed-lifecycle write gate. */
+  sealTerminal<T>(parent: HostOperationTicket, producer: HostOperationTicket, callback: () => T): T {
+    this.authority.synchronous(callback);
+    return this.authority.transaction(() => {
+      const pair = this.pair(parent, producer, true);
+      this.authority.owner(pair.parent.source, true);
+      if ([pair.parent, pair.producer].some(row => !["admitted", "launched"].includes(row.phase))
+        || pair.states.some(state => state.settlementSignature || state.noStartReceiptDigest)) {
+        return hostOperationFailure("host_operation_settlement_conflict");
+      }
+      return this.authority.synchronousResult(callback());
     });
   }
 

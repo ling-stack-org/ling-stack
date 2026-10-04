@@ -117,16 +117,16 @@ test("Office no-start required-close refuses the real writer then commits the or
   f.tracker.executorGroup.closeAdmission(required);
   assert.throws(() => {
     try { executeOfficeLocalWrite(f.plan); } catch (error) { writerFailure = error; throw error; }
-  }, OfficeLocalWriterError);
-  assert.equal(writerFailure.cause?.code, "attempt_execution_admission_closed");
-  assert.equal(writerFailure.observation.outcome, "failed"); assert.equal(writerFailure.observation.publicationEntered, false);
-  assert.deepEqual(writerFailure.observation.effectIds, []); assert.deepEqual(writerFailure.observation.resources, []);
-  assert.equal(writerFailure.terminalSealConfirmed, true, "a failed terminal seal is not itself a no-start receipt");
+  }, code("attempt_execution_admission_closed"));
+  assert.equal(writerFailure.code, "attempt_execution_admission_closed");
+  assert.equal(f.store.getHostOfficeLocalTerminal(f.plan.executionId), undefined,
+    "early admission rejection must not enter final resource observation or seal a fictitious terminal");
   assert.equal(callbackEntries, 0); assert.equal(launchApiCalls, 0); assertZeroNative(native);
   assert.equal(existsSync(f.prepared.targetPath), false); assert.equal(existsSync(f.temporary), false);
   for (const directory of f.prepared.members.filter(member => member.role === "directory")) assert.equal(existsSync(directory.path), false);
   assertAdmittedPair(f, before); assert.deepEqual(released, []);
   const pair = f.tracker.settleOfficeLocalFromStore(f.state.ticket), receipt = assertNoStartPair(f, pair);
+  assert.equal(receipt.terminal, null);
   assert.deepEqual(receipt.requiredDescendants, []); assert.deepEqual(receipt.effects, []);
   assertNoStartPair(f, pair, observer);
   assert.deepEqual(released, [f.state.producer.operationId, f.state.parent.operationId]);
@@ -304,7 +304,8 @@ test("Office no-start committed closure forbids original plan effect launch prep
   const f = await createOfficeSettlementFixture(t), effect = unenteredEffect(f), pair = f.tracker.settleOfficeLocalFromStore(f.state.ticket);
   const receipt = assertNoStartPair(f, pair), before = readOfficePairRows(f), roster = f.store.listHostOfficeLocalEffects(f.plan.executionId);
   const native = countNative(t); let callbacks = 0;
-  assert.equal(f.state.used, false); assert.throws(() => executeOfficeLocalWrite(f.plan), /closed|sealed|settled/u);
+  assert.equal(f.state.used, false);
+  assert.throws(() => executeOfficeLocalWrite(f.plan), code("attempt_host_operation_already_settled"));
   assert.throws(() => f.prepare(), /closed|invalid/u);
   assert.throws(() => f.store.launchHostOfficeLocalEffect(f.state.ticket, effect.effectId, () => { callbacks++; }));
   assert.throws(() => f.tracker.launchOfficeLocalEffect(f.state.ticket, effect.effectId, () => { callbacks++; }));
@@ -338,8 +339,12 @@ test("Office no-start retained real readonly resource prevents safety despite ze
     return original(fd);
   });
   t.after(() => { if (retainedFd !== undefined) nativeClose(retainedFd); });
-  f.tracker.executorGroup.closeAdmission(required);
+  // Enter the real observation owner, then fail the first descriptor INSERT.
+  // The final readonly path still retains an actual FD; early admission veto
+  // must not accidentally eliminate this resource-safety regression coverage.
+  f.store.database.exec("CREATE TRIGGER no_start_test_prepare_abort BEFORE INSERT ON host_office_local_effects BEGIN SELECT RAISE(ABORT,'original effect prepare failed'); END");
   assert.throws(() => { try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; throw error; } }, OfficeLocalWriterError);
+  f.tracker.executorGroup.closeAdmission(required);
   assert.equal(callbackEntries, 0); assert.deepEqual(f.store.listHostOfficeLocalEffects(f.plan.executionId), []);
   assert.ok(Number.isSafeInteger(retainedFd)); assert.doesNotThrow(() => nativeFstat(retainedFd));
   assert.ok(failure.observation.resources.some(resource => resource.origin === "member_read" && resource.state !== "closed"));
@@ -351,8 +356,12 @@ test("Office no-start retained real readonly resource prevents safety despite ze
 test("Office no-start public and reopened getters reject a corrupted original settlement signature", async t => {
   const f = await createOfficeSettlementFixture(t), pair = f.tracker.settleOfficeLocalFromStore(f.state.ticket);
   assertNoStartPair(f, pair);
-  f.store.database.prepare("UPDATE host_operations SET settlement_signature=? WHERE operation_id=?")
+  const corruptSignature = () => f.store.database.prepare("UPDATE host_operations SET settlement_signature=? WHERE operation_id=?")
     .run("invented-no-start-intent", f.state.producer.operationId);
+  assert.throws(corruptSignature, /host_operation_settlement_immutable/u);
+  // Isolated historical-corruption fixture only: production rejects this write.
+  f.store.database.exec("DROP TRIGGER host_operations_immutable_settlement");
+  corruptSignature();
   const reopened = createSqliteRunStore(f.cwd); t.after(() => reopened.close());
   for (const store of [f.store, reopened]) {
     assert.throws(() => store.getHostOfficeLocalNoStartReceipt(f.plan.executionId));
