@@ -2,11 +2,13 @@ import { randomUUID } from "node:crypto";
 import { realpathSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
-import type { HostOfficeLocalMember, HostOfficeLocalPrepared, HostOfficeLocalTicket, RunStore } from "@ling-stack/core";
+import type { HostOfficeLocalFormat, HostOfficeLocalMember, HostOfficeLocalPrepared, HostOfficeLocalSettlement,
+  HostOfficeLocalTicket, RunStore } from "@ling-stack/core";
 import { HOST_OFFICE_LOCAL_PROTOCOL } from "@ling-stack/core";
 import type { AttemptHostOperationHandle, AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
 import type { PreparedOfficeArtifact } from "./office-artifact-preparation.js";
-import { copyOfficeLocalSnapshotBytes, revalidateOfficeLocalSnapshot, type OfficeLocalReadSnapshot } from "./office-local-snapshot.js";
+import { captureOfficeLocalSnapshot, copyOfficeLocalSnapshotBytes, revalidateOfficeLocalSnapshot,
+  type OfficeLocalReadSnapshot } from "./office-local-snapshot.js";
 import { officeBytesDigest, OfficeLocalMemberLedger } from "./office-local-members.js";
 
 declare const reservationBrand: unique symbol;
@@ -21,7 +23,9 @@ interface ReservationState {
   readonly toolCallId: string;
   readonly workspacePath: string;
   /** Shared by the original reservation and plan; never copy the closure bit. */
-  readonly lifecycle: { closed: boolean; preparationClaimed: boolean };
+  readonly lifecycle: { closed: boolean; preparationClaimed: boolean; readStarted: boolean };
+  /** Only a successful return from this reservation's original reader proves its closes returned. */
+  completedSnapshot?: OfficeLocalReadSnapshot;
   prepared: boolean;
 }
 export interface OfficeLocalWriteState extends ReservationState {
@@ -51,7 +55,7 @@ export function reserveOfficeLocalWriter(tracker: AttemptHostOperationTracker, s
   catch (error) { try { tracker.settleNoStart(parent); } catch { /* Reserved blockers remain. */ } throw error; }
   const reservation = Object.freeze({}) as OfficeLocalReservation;
   reservations.set(reservation, { tracker, store, parent, producer, toolCallId, workspacePath,
-    lifecycle: { closed: false, preparationClaimed: false }, prepared: false });
+    lifecycle: { closed: false, preparationClaimed: false, readStarted: false }, prepared: false });
   return reservation;
 }
 
@@ -71,11 +75,62 @@ export function closeOfficeLocalReservation(reservation: OfficeLocalReservation)
   state.lifecycle.closed = true;
 }
 
+/**
+ * Latch the original read before any native callback can reenter settlement.
+ * A thrown capture cannot prove readonly resource closure, even with zero writes.
+ * The exact successful snapshot is retained privately, not supplied as a boolean.
+ */
+export function captureOfficeLocalReservationSnapshot(reservation: OfficeLocalReservation,
+  requestedPath: string, format: HostOfficeLocalFormat): OfficeLocalReadSnapshot {
+  assertOfficeLocalReservation(reservation);
+  const state = reservations.get(reservation)!;
+  if (state.lifecycle.readStarted) throw new Error("office_local_snapshot_already_entered");
+  state.lifecycle.readStarted = true;
+  const snapshot = captureOfficeLocalSnapshot(state.workspacePath, requestedPath, format, state.tracker.source);
+  state.completedSnapshot = snapshot;
+  assertOfficeLocalReservation(reservation);
+  return snapshot;
+}
+
+/**
+ * Close an unbound reservation using original tracker capabilities only. Before
+ * a completed read, no-start is forbidden; a claimed preparation must use its
+ * exact Office ticket instead. Required-input closure does not reopen admission.
+ */
+export function settleOfficeLocalReservationNoStart(reservation: OfficeLocalReservation): HostOfficeLocalSettlement {
+  const state = reservations.get(reservation);
+  if (!state || state.prepared || state.lifecycle.preparationClaimed) throw new Error("office_local_reservation_invalid");
+  state.lifecycle.closed = true;
+  if (state.lifecycle.readStarted && !state.completedSnapshot) throw new Error("office_local_snapshot_unconfirmed");
+  if (!state.store.isCurrentRunExecutionOwner(state.tracker.source.runId, state.tracker.source)) {
+    throw new Error("office_local_source_obsolete");
+  }
+  // The unprepared roles are not an Office execution pair yet. Core verifies
+  // the complete child roster before this original MCP parent may close.
+  const producer = state.tracker.settleNoStart(state.producer);
+  const parent = state.tracker.settleNoStart(state.parent);
+  return { parent, producer };
+}
+
+/** A closed unknown reservation never grants retry, resource cleanup or a safe receipt. */
+export function blockOfficeLocalReservation(reservation: OfficeLocalReservation): void {
+  const state = reservations.get(reservation);
+  if (!state) throw new Error("office_local_reservation_invalid");
+  state.lifecycle.closed = true;
+  const errors: unknown[] = [];
+  for (const handle of [state.producer, state.parent]) {
+    try { state.tracker.markUnknown(handle, "office_local_reservation_unconfirmed"); }
+    catch (error) { errors.push(error); }
+  }
+  if (errors.length) throw new AggregateError(errors, "office_local_reservation_unconfirmed");
+}
+
 /** Own all bytes/member identities before issuance. The serializer result is data, not a receipt. */
 export function prepareOfficeLocalWrite(reservation: OfficeLocalReservation, snapshot: OfficeLocalReadSnapshot,
   artifact: PreparedOfficeArtifact, requestDigest: string, policyDigest: string): OfficeLocalWritePlan {
   assertOfficeLocalReservation(reservation);
   const state = reservations.get(reservation)!;
+  if (state.lifecycle.readStarted && snapshot !== state.completedSnapshot) throw new Error("office_local_preparation_invalid");
   const bytes = Buffer.from(artifact.bytes), inputBytes = copyOfficeLocalSnapshotBytes(snapshot);
   revalidateOfficeLocalSnapshot(snapshot);
   if (!isDeepStrictEqual(snapshot.source, state.tracker.source) || snapshot.workspacePath !== state.workspacePath

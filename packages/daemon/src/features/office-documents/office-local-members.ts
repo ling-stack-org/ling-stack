@@ -26,7 +26,7 @@ export interface OfficeLocalWorkspaceFinal {
   readonly observedAt: string;
 }
 type MemberErrorCode = "office_local_snapshot_changed" | "office_local_path_unsafe" | "office_document_too_large"
-  | "office_local_workspace_invalid" | "office_local_member_invalid";
+  | "office_local_workspace_invalid" | "office_local_member_invalid" | "office_local_directory_creator_unverified";
 const memberFailure = (code: MemberErrorCode): never => { throw Object.assign(new Error(code), { code }); };
 export const officeBytesDigest = (bytes: Uint8Array): string => createHash("sha256").update(bytes).digest("hex");
 export const officeErrorCode = (error: unknown): string => {
@@ -154,6 +154,16 @@ export class OfficeLocalMemberLedger {
   /** Advance only the existing owned node or a fixed syscall's explicit next identity. */
   refresh(id: string, owner: OfficeLocalResourceOwner, transition?: OfficeLocalMemberTransition): OfficeLocalMemberState {
     const member = this.member(id);
+    // mkdir returns no original descriptor/identity. A later path stat, even
+    // wrapped as an explicit transition, may describe a substituted directory.
+    // Keep the original absent expectation until a creator-bound native graph
+    // owns the complete directory lifetime; this is not that native capability.
+    if (member.role === "directory" && member.initial.state === "absent"
+      && transition?.state === "directory") memberFailure("office_local_directory_creator_unverified");
+    if (member.role === "directory" && member.initial.state === "directory" && transition
+      && (transition.state !== "directory" || !sameOfficeNode(member.initial.identity, transition.identity))) {
+      memberFailure("office_local_snapshot_changed");
+    }
     this.#assertAncestors(id);
     const { state } = observeMember(member, owner, "refresh", transition ?? this.#expected.get(id)!);
     this.#expected.set(id, state);
