@@ -2,7 +2,22 @@
 
 此提交是用户要求的**代码防丢保存点**，不是可发布版本，不代表整个目标通过。
 
-## 最新增量保存（2026-10-04）
+## 最新增量保存（2026-10-04；native writer/resource WIP）
+
+用户再次授权将当前新增代码推送到现有 Draft PR #507。仅追加防丢检查点，不合并 main、不改版本、不重写历史，不把保存成功当作实现完成。
+
+- 上一远端保存点：`a06e20138e76db0a96ac9c2d9657aa128ca926f3`，已有 ancestry 保留。
+- 本次仅保存 Core facts 测试语义修正、Daemon native writer、独立 resource owner 和本记录。原 Descriptor 逻辑迁入 resource owner，不是删除功能；没有新增全文件删除。
+- Core 新合同已经统一构建，原严格反例 **15/15 GREEN**、完整 facts **111/111 GREEN**，均 exit 0、无 fail/cancel/skip/todo；source/test/dist 指纹前后一致。Core 测试文件指纹本次再次读回一致，复用既有证据，不重复跑相同套件。
+- Daemon writer 已落原 native 返回点锁存、实际短写/零进展失败及 native/Host 分轴；resource owner 已落原对象能力、强持有、open/close effect lineage、unknown close 不重放。保存前 Daemon TypeScript 构建实际 exit 0；测试语法检查、diff check exit 0。
+- **Daemon 新合同故障联测和资源模块全集尚未执行**；Tracker/旧 fixtures、restart/drain 接线、完整 terminal verifier、safe 封口及固定 production route 未完成。旧 2780/2780 不用于证明本次实现。
+- 独立只读审查指出尚待处理的时间顺序风险：effect seal 先取 `createdAt`、payload 后取 `completedAt`，跨毫秒可能被严格 Core 拒绝。本次忠实保存 WIP，不隐藏该缺口，不为了备份改动生产逻辑。
+- 公开 U gate 仍关闭，无 safe receipt、新包或本次 packaged GUI 验收；整个 D0/E1–E6、U/T、Harness 目标仍 active。新密钥、真实数据库、安装包、截图及忽略的 output 不纳入本增量。
+- 推送前扫描当前增量，正常执行 pre-push；推送后读取远端 branch/PR HEAD 校验完整 SHA。实际终态写入本地接续入口，不提前声称远端保存成功。
+
+下一实际入口：修正 seal 时间顺序并运行 Daemon 七项故障合同与资源回归 → fixtures/Tracker/restart-drain → 相关完整套件及独立窄审查 → 完整终态/纯 Core verifier → 原 pair 原子封口/fan-in → 固定 route及总计划剩余真实验收。不重做已验收切片。
+
+## 前一次增量保存（2026-10-04；a06e2013）
 
 用户要求将当前进展再次推送到现有 Draft PR #507。本轮只追加 WIP 防丢保存，不合并 main、不发版、不重写历史；已有保存点不重复推送。
 

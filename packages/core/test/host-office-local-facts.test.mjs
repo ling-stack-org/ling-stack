@@ -183,7 +183,7 @@ test("Office failed callback cannot masquerade as no-start and old cleanup canno
   const f = await fixture(t), ticket = f.prepare(), effect = f.effect(ticket);
   assert.throws(() => f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => { writeFileSync(f.tempPath, f.bytes); throw new Error("partial failure"); }), /partial failure/);
   assert.throws(f.observe(ticket, effect, "not_entered").record);
-  f.observe(ticket, effect, "failed").record();
+  f.observe(ticket, effect, "host_unconfirmed").record();
   const cleanup = f.effect(ticket, { effectId: "cleanup", ordinal: 1, kind: "unlink", mode: "cleanup" });
   f.replace();
   const before = f.other.database.prepare("SELECT * FROM work_unit_attempts ORDER BY attempt_number").all();
@@ -375,6 +375,23 @@ for (const nativeState of ["returned", "threw"]) {
   });
 }
 
+test("Office actual native throw is retained separately from the Host callback failure", async t => {
+  const f = await fixture(t), ticket = f.prepare(), effect = f.effect(ticket);
+  let calledAt, completedAt, errorCode;
+  assert.throws(() => f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => {
+    calledAt = now();
+    try { openSync(f.tempPath, "r"); } catch (error) { completedAt = now(); errorCode = error.code; throw error; }
+  }), code("ENOENT"));
+  const observation = f.observe(ticket, effect, "failed", {
+    native: { state: "threw", calledAt, completedAt, errorCode },
+  });
+  assert.ok(observation.record().enteredAt);
+  const sealed = JSON.parse(f.other.database.prepare("SELECT sealed_payload_json FROM artifacts WHERE id=?").get(observation.receipt.id).sealed_payload_json);
+  assert.equal(sealed.native.state, "threw"); assert.equal(sealed.native.errorCode, "ENOENT");
+  assert.equal(sealed.host.state, "unconfirmed"); assert.equal(existsSync(f.tempPath), false);
+  assert.equal(f.other.listHostOperationBlockers(f.source).length, 2);
+});
+
 test("Office callback entered but ledger guard blocked native call remains not entered and keeps original scopes blocked", async t => {
   const f = await fixture(t), ticket = f.prepare(), effect = f.effect(ticket);
   assert.throws(() => f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => { throw new Error("ledger guard refused before native"); }), /ledger guard/);
@@ -401,11 +418,19 @@ for (const bytesWritten of [-1, 0.5, "1", 9, Number.MAX_SAFE_INTEGER + 1]) {
 for (const bytesWritten of [0, 3, 8]) {
   test(`Office native write fact preserves actual ${bytesWritten} bytes and is not completion`, async t => {
     const f = await fixture(t), ticket = f.prepare(), effect = f.effect(ticket, { kind: "write", offset: 0, sizeBytes: 8 });
+    let calledAt, returnedAt;
     const actualBytesWritten = f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => {
       const descriptor = openSync(f.tempPath, "wx");
-      try { return writeSync(descriptor, f.bytes.subarray(0, bytesWritten)); } finally { closeSync(descriptor); }
+      try {
+        calledAt = now();
+        const actual = writeSync(descriptor, f.bytes.subarray(0, bytesWritten));
+        returnedAt = now(); return actual;
+      } finally { closeSync(descriptor); }
     });
-    const at = now(), observation = f.observe(ticket, effect, "returned", { native: returned(effect, at, { bytesWritten: actualBytesWritten }) });
+    const observation = f.observe(ticket, effect, "returned", { native: {
+      state: "returned", calledAt, returnedAt,
+      result: { kind: "write", resourceLifetimeId: effect.resourceLifetimeId, bytesWritten: actualBytesWritten },
+    } });
     observation.record();
     const sealed = JSON.parse(f.other.database.prepare("SELECT sealed_payload_json FROM artifacts WHERE id=?").get(observation.receipt.id).sealed_payload_json);
     assert.equal(sealed.native.result.bytesWritten, bytesWritten); assert.equal(readFileSync(f.tempPath).length, bytesWritten);
