@@ -2,7 +2,8 @@ import { isDeepStrictEqual } from "node:util";
 import type { HostCommandExecutionTicket, HostMediaEffectRecord, HostMediaExecutionRecord, HostMediaExecutionTicket,
   HostOfficeLocalEffectRecord, HostOfficeLocalTicket, PrepareHostOfficeLocalInput, PrepareHostOfficeLocalEffect,
   HostOperationEvidenceRef, HostOperationRecord, HostOperationTicket, PrepareHostMediaEffectInput,
-  PrepareHostMediaExecutionInput, RunStore, RuntimeAttemptFenceV1 } from "@ling-stack/core";
+  PrepareHostMediaExecutionInput, RunStore, RuntimeAttemptFenceV1, SealHostOfficeLocalTerminalInput,
+  HostOfficeLocalTerminalRecord } from "@ling-stack/core";
 import { AttemptExecutorGroup, type AttemptExecutionSource, type HostCallTicket, type HostExecutorBlocker,
   type HostExecutorKind, type HostExecutorSettlement } from "./attempt-execution-quiescence.js";
 import type { HostCommandOperation, HostCommandPreparationOperation, HostFileMutationOperation } from "./host-operation-effects.js";
@@ -12,7 +13,8 @@ type TrackerStore = Pick<RunStore, "isCurrentRunExecutionOwner" | "admitHostOper
   | "prepareHostMediaExecution" | "bindHostMediaChildExecution" | "prepareHostMediaEffect" | "launchHostMediaEffect"
   | "getHostMediaExecution" | "recordHostMediaResponse" | "recordHostMediaSubmission" | "recordHostMediaSubmissionAndExecutionHandle" | "recordHostMediaTerminal"
   | "recordHostMediaArtifactManifest" | "finalizeHostMediaExecution" | "recordHostMediaEffectNoStart"
-  | "prepareHostOfficeLocalExecution" | "prepareHostOfficeLocalEffect" | "launchHostOfficeLocalEffect" | "recordHostOfficeLocalObservation">;
+  | "prepareHostOfficeLocalExecution" | "prepareHostOfficeLocalEffect" | "launchHostOfficeLocalEffect" | "recordHostOfficeLocalObservation"
+  | "sealHostOfficeLocalTerminal">;
 const operationHandleBrand: unique symbol = Symbol("AttemptHostOperationHandle");
 /** Neither persisted IDs nor a structural clone grants launch/settlement authority. */
 export interface AttemptHostOperationHandle {
@@ -323,6 +325,12 @@ export class AttemptHostOperationTracker {
   recordOfficeLocalObservation(ticket: HostOfficeLocalTicket, effectId: string, artifactId: string): HostOfficeLocalEffectRecord {
     this.#assertMediaUnsettled(this.#officeExecution(ticket));
     return this.#store.recordHostOfficeLocalObservation(ticket, effectId, artifactId);
+  }
+
+  /** Freeze original-owner facts only. A terminal seal is never a group settlement proof. */
+  sealOfficeLocalTerminal(ticket: HostOfficeLocalTicket, input: SealHostOfficeLocalTerminalInput): HostOfficeLocalTerminalRecord {
+    this.#assertMediaUnsettled(this.#officeExecution(ticket));
+    return this.#store.sealHostOfficeLocalTerminal(ticket, input);
   }
 
   #officeExecution(ticket: HostOfficeLocalTicket): TrackedMediaExecution {

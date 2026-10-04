@@ -1,6 +1,7 @@
 import type { HostOperationTicket } from "../../host-operation-journal-types.js";
 import type { HostOfficeLocalExecutionRecord, HostOfficeLocalEffectRecord, HostOfficeLocalTicket,
   PrepareHostOfficeLocalInput, PrepareHostOfficeLocalEffect } from "../../host-office-local-types.js";
+import type { HostOfficeLocalTerminalRecord, SealHostOfficeLocalTerminalInput } from "../../host-office-local-terminal-types.js";
 import { digestHarnessToolValue } from "../../harness/tool-executions.js";
 import { hostOperationFailure, hostOperationTimestamp, sameHostOperationSource } from "./host-operation-journal-evidence.js";
 import { officeLocalFailure, readOfficeLocalExecution, readOfficeLocalEffects, readOfficeLocalSeal,
@@ -8,12 +9,15 @@ import { officeLocalFailure, readOfficeLocalExecution, readOfficeLocalEffects, r
 import type { SqliteHostOperationJournalStore } from "./host-operation-journal-store.js";
 import { readSqliteSnapshot } from "./read-snapshot.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { readOfficeLocalTerminal, validateOfficeLocalTerminalSeal } from "./host-office-local-terminal-records.js";
 
 interface OfficeTicketState {
   readonly parent: HostOperationTicket;
   readonly producer: HostOperationTicket;
   readonly entered: Map<string, string>;
   uncertainLaunch: boolean;
+  /** Irreversible local claim even when terminal INSERT/COMMIT fails or its return is lost. */
+  sealClaim?: SealHostOfficeLocalTerminalInput;
 }
 
 /**
@@ -52,12 +56,13 @@ export class SqliteHostOfficeLocalStore {
   }
 
   prepareHostOfficeLocalEffect(ticket: HostOfficeLocalTicket, input: PrepareHostOfficeLocalEffect): HostOfficeLocalEffectRecord {
-    const state = this.requireTicket(ticket);
+    const state = this.requireMutableTicket(ticket);
     // Getters/deep copies execute before the owner lock, never between admission and syscall.
     const captured: unknown = JSON.parse(JSON.stringify(input));
     const observation = (captured as { mode?: unknown } | null)?.mode === "cleanup";
     if (state.uncertainLaunch && !observation) return hostOperationFailure("host_office_local_launch_unknown");
     return this.journal.officeLocal.mutate(state.parent, state.producer, () => {
+      this.requireMutableTicket(ticket);
       const execution = this.requireExecution(ticket.executionId), effect = validateOfficeLocalEffect(execution, captured);
       const previous = readOfficeLocalEffects(this.context.database, execution);
       if (effect.ordinal !== previous.length || (!observation && previous.some(row => !row.observationArtifactId))) return officeLocalFailure();
@@ -76,7 +81,7 @@ export class SqliteHostOfficeLocalStore {
   }
 
   launchHostOfficeLocalEffect<T>(ticket: HostOfficeLocalTicket, effectId: string, effect: () => T): T {
-    const state = this.requireTicket(ticket);
+    const state = this.requireMutableTicket(ticket);
     if (typeof effect !== "function" || Object.prototype.toString.call(effect) === "[object AsyncFunction]") {
       return hostOperationFailure("host_operation_effect_must_be_synchronous");
     }
@@ -88,13 +93,14 @@ export class SqliteHostOfficeLocalStore {
     const enteredAt = new Date().toISOString();
     try {
       return this.journal.officeLocal.effect(state.parent, state.producer, () => {
+        this.requireMutableTicket(ticket);
         const current = readOfficeLocalEffects(this.context.database, this.requireExecution(ticket.executionId)).find(item => item.effectId === effectId);
         if (!current || current.effectDigest !== row.effectDigest || current.enteredAt || current.observationArtifactId) return officeLocalFailure();
         if (hostOperationTimestamp(enteredAt) < hostOperationTimestamp(row.preparedAt)) return officeLocalFailure();
         const changed = this.context.database.prepare(`UPDATE host_office_local_effects SET entered_at=?,revision=revision+1
           WHERE effect_id=? AND entered_at IS NULL AND observation_artifact_id IS NULL`).run(enteredAt, effectId);
         if (changed.changes !== 1) return officeLocalFailure();
-      }, () => { entered = true; state.entered.set(effectId, enteredAt); return effect(); }, row.mode);
+      }, () => { this.requireMutableTicket(ticket); entered = true; state.entered.set(effectId, enteredAt); return effect(); }, row.mode);
     } catch (error) {
       if (entered) state.uncertainLaunch = true;
       throw error;
@@ -102,8 +108,9 @@ export class SqliteHostOfficeLocalStore {
   }
 
   recordHostOfficeLocalObservation(ticket: HostOfficeLocalTicket, effectId: string, artifactId: string): HostOfficeLocalEffectRecord {
-    const state = this.requireTicket(ticket);
+    const state = this.requireMutableTicket(ticket);
     return this.journal.officeLocal.mutate(state.parent, state.producer, () => {
+      this.requireMutableTicket(ticket);
       const execution = this.requireExecution(ticket.executionId);
       let effect = readOfficeLocalEffects(this.context.database, execution).find(item => item.effectId === effectId);
       if (!effect) return officeLocalFailure();
@@ -131,10 +138,50 @@ export class SqliteHostOfficeLocalStore {
   listHostOfficeLocalEffects(id: string): HostOfficeLocalEffectRecord[] {
     return readSqliteSnapshot(this.context.database, () => readOfficeLocalEffects(this.context.database, this.requireExecution(id)));
   }
+  /** Seal complete captured facts under the original live pair; a terminal is not a journal settlement. */
+  sealHostOfficeLocalTerminal(ticket: HostOfficeLocalTicket, input: SealHostOfficeLocalTerminalInput): HostOfficeLocalTerminalRecord {
+    const state = this.requireTicket(ticket);
+    const captured: unknown = JSON.parse(JSON.stringify(input));
+    if (!captured || typeof captured !== "object" || Array.isArray(captured)
+      || Object.keys(captured).length !== 2 || !Object.hasOwn(captured, "terminalArtifactId") || !Object.hasOwn(captured, "terminalDigest")) return officeLocalFailure();
+    const claim = captured as SealHostOfficeLocalTerminalInput;
+    if (typeof claim.terminalArtifactId !== "string" || claim.terminalArtifactId.length === 0 || claim.terminalArtifactId.length > 4096
+      || claim.terminalArtifactId.includes("\0") || typeof claim.terminalDigest !== "string" || !/^[a-f0-9]{64}$/.test(claim.terminalDigest)) return officeLocalFailure();
+    // No persisted-row fast path: even an identical retry must pass original live tickets, current owner and pair checks.
+    return this.journal.officeLocal.mutate(state.parent, state.producer, () => {
+      if (state.sealClaim && (state.sealClaim.terminalArtifactId !== claim.terminalArtifactId
+        || state.sealClaim.terminalDigest !== claim.terminalDigest)) return hostOperationFailure("host_office_local_terminal_claim_conflict");
+      const execution = this.requireExecution(ticket.executionId);
+      const terminal = validateOfficeLocalTerminalSeal(this.context.database, execution, claim);
+      const existing = readOfficeLocalTerminal(this.context.database, execution);
+      if (existing && (existing.terminalArtifactId !== claim.terminalArtifactId || existing.terminalDigest !== claim.terminalDigest)) {
+        return hostOperationFailure("host_office_local_terminal_claim_conflict");
+      }
+      // Lock before INSERT/COMMIT, never release on rollback, and never manufacture a new claim after an uncertain return.
+      state.sealClaim ??= Object.freeze({ terminalArtifactId: claim.terminalArtifactId, terminalDigest: claim.terminalDigest });
+      if (existing) return existing;
+      this.context.database.prepare(`INSERT INTO host_office_local_terminals(execution_id,schema_version,protocol,
+        execution_identity_digest,terminal_artifact_id,terminal_digest,effect_set_digest,effect_count,sealed_at)
+        VALUES(?,1,?,?,?,?,?,?,?)`).run(execution.executionId, terminal.protocol, execution.identityDigest,
+          terminal.terminalArtifactId, terminal.terminalDigest, terminal.effectSetDigest, terminal.effectCount, terminal.sealedAt);
+      return readOfficeLocalTerminal(this.context.database, execution) ?? officeLocalFailure();
+    }, true);
+  }
+  getHostOfficeLocalTerminal(id: string): HostOfficeLocalTerminalRecord | undefined {
+    return readSqliteSnapshot(this.context.database, () => {
+      const execution = readOfficeLocalExecution(this.context.database, id);
+      return execution ? readOfficeLocalTerminal(this.context.database, execution) : undefined;
+    });
+  }
   private requireExecution(id: string): HostOfficeLocalExecutionRecord {
     return readOfficeLocalExecution(this.context.database, id) ?? officeLocalFailure();
   }
   private requireTicket(ticket: HostOfficeLocalTicket): OfficeTicketState {
     return this.tickets.get(ticket) ?? hostOperationFailure("host_office_local_invalid_ticket");
+  }
+  private requireMutableTicket(ticket: HostOfficeLocalTicket): OfficeTicketState {
+    const state = this.requireTicket(ticket);
+    if (state.sealClaim) return hostOperationFailure("host_office_local_execution_sealed");
+    return state;
   }
 }

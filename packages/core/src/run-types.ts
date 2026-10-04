@@ -1552,6 +1552,9 @@ export interface RunStore {
     effectId: string, artifactId: string): import("./host-office-local-types.js").HostOfficeLocalEffectRecord;
   getHostOfficeLocalExecution(executionId: string): import("./host-office-local-types.js").HostOfficeLocalExecutionRecord | undefined;
   listHostOfficeLocalEffects(executionId: string): import("./host-office-local-types.js").HostOfficeLocalEffectRecord[];
+  sealHostOfficeLocalTerminal(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    input: import("./host-office-local-terminal-types.js").SealHostOfficeLocalTerminalInput): import("./host-office-local-terminal-types.js").HostOfficeLocalTerminalRecord;
+  getHostOfficeLocalTerminal(executionId: string): import("./host-office-local-terminal-types.js").HostOfficeLocalTerminalRecord | undefined;
   prepareHostMediaExecution(parent: import("./host-operation-journal-types.js").HostOperationTicket,
     transport: import("./host-operation-journal-types.js").HostOperationTicket,
     input: import("./host-media-operation-types.js").PrepareHostMediaExecutionInput): import("./host-media-operation-types.js").HostMediaExecutionTicket;

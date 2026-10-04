@@ -20,6 +20,11 @@ export interface OfficeLocalMemberFinal {
   readonly observedAt: string;
   readonly readRef?: { readonly readId: string; readonly resourceLifetimeId: string; readonly completedAt: string };
 }
+export interface OfficeLocalWorkspaceFinal {
+  readonly final: { readonly state: "directory"; readonly identity: HostOfficeFileIdentity }
+    | { readonly state: "unobserved"; readonly errorCode: string };
+  readonly observedAt: string;
+}
 type MemberErrorCode = "office_local_snapshot_changed" | "office_local_path_unsafe" | "office_document_too_large"
   | "office_local_workspace_invalid" | "office_local_member_invalid";
 const memberFailure = (code: MemberErrorCode): never => { throw Object.assign(new Error(code), { code }); };
@@ -155,6 +160,29 @@ export class OfficeLocalMemberLedger {
     return state;
   }
   expected(id: string): OfficeLocalMemberState { return this.#expected.get(this.member(id).memberId)!; }
+  /** Compare observed residue with existing ownership, without adopting it or granting Core safe. */
+  matchesOwnedFinal(member: OfficeLocalMemberFinal): boolean {
+    const original = this.member(member.memberId), expected = this.#expected.get(member.memberId)!, final = member.final;
+    if (member.path !== original.path || member.role !== original.role || final.state === "unobserved") return false;
+    if (expected.state === "absent") return final.state === "absent";
+    if (expected.state === "directory") return final.state === "directory" && sameOfficeNode(expected.identity, final.identity);
+    // link/unlink change ctime, and child writes change directory metadata. Node
+    // ownership and actual final bytes are the relevant cross-effect invariants.
+    return final.state === "file" && sameOfficeNode(expected.identity, final.identity)
+      && expected.sizeBytes === final.sizeBytes && expected.bytesSha256 === final.bytesSha256;
+  }
+  /** Last independent root fence. Child writes may change metadata, but never root ownership. */
+  observeWorkspaceFinal(notBefore?: string): OfficeLocalWorkspaceFinal {
+    try {
+      const root = stat(this.workspacePath);
+      if (!root?.isDirectory() || root.isSymbolicLink()) return memberFailure("office_local_snapshot_changed");
+      const identity = officeFileIdentity(root);
+      if (!sameOfficeNode(this.#root, identity)) memberFailure("office_local_snapshot_changed");
+      return { final: { state: "directory", identity }, observedAt: officeObservationTime(notBefore) };
+    } catch (error) {
+      return { final: { state: "unobserved", errorCode: officeErrorCode(error) }, observedAt: officeObservationTime(notBefore) };
+    }
+  }
   /** Observation of residue does not adopt external bytes or mint cleanup authority. */
   observeFinal(owner: OfficeLocalResourceOwner): readonly OfficeLocalMemberFinal[] {
     return this.members.map(member => {

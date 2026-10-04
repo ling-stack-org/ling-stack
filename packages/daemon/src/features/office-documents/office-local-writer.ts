@@ -4,9 +4,11 @@ import { HOST_OFFICE_LOCAL_PROTOCOL, type HostOfficeLocalEffectRecord, type Host
   type HostOfficeLocalNativeResult, type PrepareHostOfficeLocalEffect } from "@ling-stack/core";
 import type { HostOfficeLocalEffectObservation } from "@ling-stack/core";
 import { officeLocalWriteState, type OfficeLocalWritePlan, type OfficeLocalWriteState } from "./office-local-authority.js";
-import { officeBytesDigest, officeErrorCode, type OfficeLocalMemberFinal } from "./office-local-members.js";
+import { officeBytesDigest, officeErrorCode, type OfficeLocalMemberFinal, type OfficeLocalWorkspaceFinal } from "./office-local-members.js";
 import { officeFileIdentity } from "./office-local-identity.js";
 import { OfficeLocalResourceOwner, type OfficeLocalEffectResource, type OfficeLocalResourceFinal } from "./office-local-resources.js";
+import { officeObservationTime } from "./office-local-clock.js";
+import { createOfficeLocalTerminalArtifact } from "./office-local-terminal.js";
 
 export interface OfficeLocalWriteObservation {
   readonly schemaVersion: 1;
@@ -19,6 +21,7 @@ export interface OfficeLocalWriteObservation {
   readonly publicationEntered: boolean;
   readonly members: readonly OfficeLocalMemberFinal[];
   readonly resources: readonly OfficeLocalResourceFinal[];
+  readonly workspace: OfficeLocalWorkspaceFinal;
   readonly effectIds: readonly string[];
   readonly completedAt: string;
 }
@@ -29,7 +32,9 @@ interface EffectHooks<T> {
 }
 export class OfficeLocalWriterError extends Error {
   constructor(readonly cause: unknown, readonly observationArtifactId: string | undefined,
-    readonly observation: OfficeLocalWriteObservation) { super("office_local_write_failed"); this.name = "OfficeLocalWriterError"; }
+    readonly observation: OfficeLocalWriteObservation,
+    /** Host seal-return acknowledgement, separate from the physical publication facts. */
+    readonly terminalSealConfirmed: boolean) { super("office_local_write_failed"); this.name = "OfficeLocalWriterError"; }
 }
 
 /**
@@ -45,6 +50,7 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
   state.used = true; // Never reset after syscall or SQLite COMMIT failures.
   const resources = new OfficeLocalResourceOwner(plan.executionId, state.execution.source), effects: string[] = [];
   let publicationEntered = false, published = false, failed = false, failure: unknown;
+  let lastEffectObservedAt: string | undefined;
   const captureFailure = (error: unknown, message: string): void => {
     failure = failed ? new AggregateError([failure, error], message) : error;
     failed = true;
@@ -81,6 +87,7 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
       // Core restores only this live ticket's callback-entry fact after rollback.
       // Native not_entered never rewrites the original operation as no-start.
       const completedAt = new Date().toISOString();
+      if (!lastEffectObservedAt || completedAt > lastEffectObservedAt) lastEffectObservedAt = completedAt;
       const seal = state.store.createArtifact({ runId: state.execution.source.runId, type: "json",
         path: `office/${plan.executionId}/effect-${descriptor.ordinal}.json`, createdAt: completedAt, sealedPayload: {
           schemaVersion: 1, protocol: HOST_OFFICE_LOCAL_PROTOCOL, kind: "office_local_effect_v1", executionId: plan.executionId,
@@ -186,20 +193,38 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     // receipt can prove cleanup authority; this layer never grants safe settlement.
   }
   const members = state.ledger.observeFinal(resources), resourceFinals = resources.snapshots();
-  if (members.some(member => member.final.state === "unobserved") || resourceFinals.some(resource => resource.state !== "closed")) {
+  // This observation must follow every original read/close and cannot be inferred
+  // from a member's earlier ancestor check or reconstructed from today's path.
+  const priorObservations = [lastEffectObservedAt,
+    ...members.flatMap(member => [member.observedAt, member.readRef?.completedAt]),
+    ...resourceFinals.flatMap(resource => [resource.identityObservedAt,
+      ...(resource.origin === "member_read" ? [resource.openReturnedAt,
+        ...(resource.state !== "retained" ? [resource.closeEnteredAt] : []),
+        ...(resource.state === "closed" ? [resource.closeReturnedAt] : [])] : [])])];
+  const notBefore = priorObservations.reduce<string | undefined>((latest, at) => at && (!latest || at > latest) ? at : latest, undefined);
+  const workspace = state.ledger.observeWorkspaceFinal(notBefore);
+  if (members.some(member => !state.ledger.matchesOwnedFinal(member)) || resourceFinals.some(resource => resource.state !== "closed")
+    || workspace.final.state === "unobserved") {
     captureFailure(new Error("office_local_final_observation_incomplete"), "office_local_final_observation_unconfirmed");
   }
   const observation: OfficeLocalWriteObservation = { schemaVersion: 1, protocol: HOST_OFFICE_LOCAL_PROTOCOL,
     kind: "office_local_writer_observation_v1", executionId: plan.executionId, executionIdentityDigest: state.identityDigest,
     source: state.execution.source, outcome: !failed && published ? "published" : "failed", publicationEntered,
-    members, resources: resourceFinals,
-    effectIds: effects, completedAt: new Date().toISOString() };
+    members, resources: resourceFinals, workspace,
+    effectIds: effects, completedAt: officeObservationTime(workspace.observedAt) };
   let observationArtifactId: string | undefined;
+  let terminalSealConfirmed = false;
   try {
-    observationArtifactId = state.store.createArtifact({ runId: state.execution.source.runId, type: "json",
-      path: `office/${plan.executionId}/writer.json`, createdAt: new Date().toISOString(), sealedPayload: observation }).id;
+    const artifact = createOfficeLocalTerminalArtifact(state, { outcome: observation.outcome, publicationEntered,
+      members, resources: resourceFinals, workspace, completedAt: observation.completedAt });
+    observationArtifactId = artifact.artifactId;
+    state.tracker.sealOfficeLocalTerminal(state.ticket, { terminalArtifactId: artifact.artifactId, terminalDigest: artifact.digest });
+    terminalSealConfirmed = true;
   } catch (error) { captureFailure(error, "office_local_final_observation_unconfirmed"); }
-  if (failed) throw new OfficeLocalWriterError(failure, observationArtifactId, observation);
+  // Never rewrite an immutable published fact into failed merely because its
+  // COMMIT acknowledgement was lost. The caller must treat this exception as
+  // unconfirmed and use Core replay/settlement, not observation.outcome as proof.
+  if (failed) throw new OfficeLocalWriterError(failure, observationArtifactId, observation, terminalSealConfirmed);
   return { path: state.execution.targetPath, ...(state.inputBytes ? { recoveryPath: state.ledger.member("recovery").path } : {}),
     observationArtifactId: observationArtifactId!, observation };
 }

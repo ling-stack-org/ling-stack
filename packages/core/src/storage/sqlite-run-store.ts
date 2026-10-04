@@ -1933,6 +1933,12 @@ export class SqliteRunStore implements RunStore {
   listHostOfficeLocalEffects(...args: Parameters<RunStore["listHostOfficeLocalEffects"]>): ReturnType<RunStore["listHostOfficeLocalEffects"]> {
     return this.hostOfficeLocal.listHostOfficeLocalEffects(...args);
   }
+  sealHostOfficeLocalTerminal(...args: Parameters<RunStore["sealHostOfficeLocalTerminal"]>): ReturnType<RunStore["sealHostOfficeLocalTerminal"]> {
+    return this.hostOfficeLocal.sealHostOfficeLocalTerminal(...args);
+  }
+  getHostOfficeLocalTerminal(...args: Parameters<RunStore["getHostOfficeLocalTerminal"]>): ReturnType<RunStore["getHostOfficeLocalTerminal"]> {
+    return this.hostOfficeLocal.getHostOfficeLocalTerminal(...args);
+  }
   bindHostMediaChildExecution(...args: Parameters<RunStore["bindHostMediaChildExecution"]>): ReturnType<RunStore["bindHostMediaChildExecution"]> {
     return this.hostMediaOperations.bindHostMediaChildExecution(...args);
   }

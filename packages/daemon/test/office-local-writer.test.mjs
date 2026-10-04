@@ -13,6 +13,7 @@ import { assertOfficeLocalReservation, officeLocalWriteState, prepareOfficeLocal
 import { executeOfficeLocalWrite, OfficeLocalWriterError } from "../dist/features/office-documents/office-local-writer.js";
 import { OfficeLocalMemberLedger, officeBytesDigest, officeFileIdentity } from "../dist/features/office-documents/office-local-members.js";
 import { OfficeLocalResourceOwner } from "../dist/features/office-documents/office-local-resources.js";
+import { verifyOfficeLocalReplay } from "../../core/dist/storage/sqlite/host-office-local-replay.js";
 
 const now = () => new Date().toISOString();
 async function fixture(t, path = "result.docx") {
@@ -92,6 +93,267 @@ test("Office persisted provenance rejects a replacement workspace root at ledger
   const member = { memberId: "target", role: "target", path: join(root, "result.docx"), initial: { state: "absent" } };
   assert.throws(() => new OfficeLocalMemberLedger(root, [member], captured), /office_local_snapshot_changed/);
 });
+
+test("Office final workspace observation seals the original root without freezing directory timestamps", async t => {
+  const f = await fixture(t), state = officeLocalWriteState(f.plan);
+  const observeFinal = state.ledger.observeFinal.bind(state.ledger);
+  state.ledger.observeFinal = (...args) => {
+    const members = observeFinal(...args);
+    writeFileSync(join(f.cwd, "unrelated-after-final.txt"), "directory metadata may legitimately change");
+    return members;
+  };
+  t.after(() => { state.ledger.observeFinal = observeFinal; });
+  const result = executeOfficeLocalWrite(f.plan), workspace = result.observation.workspace;
+  assert.ok(workspace, "final member reads do not replace an independent terminal root fact");
+  assert.equal(workspace.final.state, "directory");
+  assert.equal(workspace.final.identity.device, f.prepared.workspaceIdentity.device);
+  assert.equal(workspace.final.identity.inode, f.prepared.workspaceIdentity.inode);
+  assert.deepEqual(workspace.final.identity, officeFileIdentity(fs.lstatSync(f.cwd, { bigint: true })));
+  assert.ok(workspace.observedAt <= result.observation.completedAt);
+  for (const member of result.observation.members) {
+    assert.ok(member.observedAt <= workspace.observedAt);
+    if (member.readRef) assert.ok(member.readRef.completedAt <= workspace.observedAt);
+  }
+  for (const resource of result.observation.resources) {
+    if (resource.origin === "member_read") assert.ok(resource.closeReturnedAt <= workspace.observedAt);
+  }
+  assert.equal(f.store.getArtifact(result.observationArtifactId).createdAt, result.observation.completedAt);
+  assert.deepEqual(f.store.getArtifact(result.observationArtifactId).sealedPayload.workspace, workspace);
+  assert.deepEqual(f.store.getHostOfficeLocalExecution(f.plan.executionId).workspaceIdentity, f.prepared.workspaceIdentity);
+});
+
+test("Office final workspace replacement after every member observation cannot return published", async t => {
+  const f = await fixture(t), state = officeLocalWriteState(f.plan), displaced = f.cwd + "-displaced";
+  const observeFinal = state.ledger.observeFinal.bind(state.ledger);
+  let injected = false;
+  state.ledger.observeFinal = (...args) => {
+    const members = observeFinal(...args);
+    assert.ok(members.every(member => member.final.state !== "unobserved"));
+    renameSync(f.cwd, displaced); fs.mkdirSync(f.cwd); injected = true;
+    return members;
+  };
+  t.after(async () => { state.ledger.observeFinal = observeFinal; await rm(displaced, { recursive: true, force: true }); });
+  let failure, result;
+  try { result = executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; }
+  assert.equal(injected, true, "replacement must happen after all real final member reads");
+  assert.ok(failure instanceof OfficeLocalWriterError, "a missing final root fence previously returned published");
+  assert.equal(result, undefined);
+  assert.equal(failure.observation.outcome, "failed");
+  assert.deepEqual(failure.observation.workspace.final, { state: "unobserved", errorCode: "office_local_snapshot_changed" });
+  assert.ok(failure.observation.members.every(member => member.final.state !== "unobserved"));
+  assert.deepEqual(readFileSync(join(displaced, "result.docx")), f.artifact.bytes);
+  assert.equal(existsSync(join(f.cwd, "result.docx")), false);
+  for (const operation of [state.parent, state.producer]) {
+    assert.equal(f.store.getHostOperation(operation.operationId).phase, "launched");
+  }
+});
+
+test("Office final workspace read failure stays explicit even with complete member and resource observations", async t => {
+  const f = await fixture(t), state = officeLocalWriteState(f.plan);
+  const observeFinal = state.ledger.observeFinal.bind(state.ledger);
+  let afterMembers = false, faults = 0;
+  state.ledger.observeFinal = (...args) => {
+    const members = observeFinal(...args); afterMembers = true; return members;
+  };
+  t.after(() => { state.ledger.observeFinal = observeFinal; });
+  patchFs(t, "lstatSync", original => (...args) => {
+    if (afterMembers && args[0] === f.cwd) { faults++; throw Object.assign(new Error("final root lstat failed"), { code: "EIO" }); }
+    return original(...args);
+  });
+  let failure;
+  try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; }
+  assert.equal(faults, 1, "the writer must actually inspect the original root after final members");
+  assert.ok(failure instanceof OfficeLocalWriterError);
+  assert.deepEqual(failure.observation.workspace.final, { state: "unobserved", errorCode: "EIO" });
+  assert.equal(failure.observation.outcome, "failed");
+  assert.ok(failure.observation.members.every(member => member.final.state !== "unobserved"));
+  assert.ok(failure.observation.resources.every(resource => resource.state === "closed"));
+});
+
+test("Office final published member replacement with identical bytes remains a failed observed residue", async t => {
+  const f = await fixture(t), state = officeLocalWriteState(f.plan), displaced = join(f.cwd, "original-output.docx");
+  const observeFinal = state.ledger.observeFinal.bind(state.ledger);
+  let originalIdentity;
+  state.ledger.observeFinal = (...args) => {
+    originalIdentity = state.ledger.expected("target").identity;
+    renameSync(f.prepared.targetPath, displaced); writeFileSync(f.prepared.targetPath, f.artifact.bytes);
+    return observeFinal(...args);
+  };
+  t.after(() => { state.ledger.observeFinal = observeFinal; });
+  let result, failure;
+  try { result = executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; }
+  assert.ok(failure instanceof OfficeLocalWriterError, "identical final hash must not adopt an external replacement as the writer's node");
+  assert.equal(result, undefined);
+  const target = failure.observation.members.find(member => member.memberId === "target");
+  assert.equal(target.final.state, "file", "external residue is still a real observed fact, not erased by the safety decision");
+  assert.equal(target.final.bytesSha256, f.prepared.output.bytesSha256);
+  assert.notEqual(target.final.identity.inode, originalIdentity.inode);
+  assert.equal(state.ledger.expected("target").identity.inode, originalIdentity.inode);
+  assert.equal(failure.observation.outcome, "failed"); assert.equal(failure.observation.publicationEntered, true);
+  assert.deepEqual(readFileSync(displaced), f.artifact.bytes);
+  assert.deepEqual(readFileSync(f.prepared.targetPath), f.artifact.bytes);
+  assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
+});
+
+test("Office terminal owner seals the whole original effect and resource roster without granting safe", async t => {
+  const f = await fixture(t), state = officeLocalWriteState(f.plan), result = executeOfficeLocalWrite(f.plan);
+  const row = f.store.database.prepare("SELECT * FROM host_office_local_terminals WHERE execution_id=?").get(f.plan.executionId);
+  assert.ok(row, "a writer.json summary alone never freezes the original effect set");
+  const terminal = f.store.getHostOfficeLocalTerminal(f.plan.executionId), seal = f.store.getArtifact(row.terminal_artifact_id);
+  assert.equal(seal.sealedPayload.kind, "office_local_terminal_v1");
+  assert.equal(result.observationArtifactId, seal.id);
+  assert.equal(terminal.terminalDigest, seal.contentSha256);
+  assert.equal(terminal.preparedArtifactId, f.prepared.preparedArtifactId);
+  assert.equal(terminal.preparedDigest, f.prepared.preparedDigest);
+  assert.deepEqual(terminal.resources, result.observation.resources);
+  assert.deepEqual(terminal.members, result.observation.members);
+  assert.deepEqual(terminal.workspace, result.observation.workspace);
+  assert.deepEqual(terminal.effects, f.store.listHostOfficeLocalEffects(f.plan.executionId).map(effect => ({
+    ordinal: effect.ordinal, effectId: effect.effectId, effectDigest: effect.effectDigest, enteredAt: effect.enteredAt ?? null,
+    observation: effect.observationArtifactId ? { artifactId: effect.observationArtifactId,
+      digest: f.store.getArtifact(effect.observationArtifactId).contentSha256 } : null,
+  })));
+  assert.equal(terminal.effectCount, terminal.effects.length);
+  for (const operation of [state.parent, state.producer]) {
+    assert.equal(f.store.getHostOperation(operation.operationId).phase, "launched");
+  }
+  assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
+});
+
+test("Office terminal owner keeps final root failure as sealed failed facts, not a safe receipt", async t => {
+  const f = await fixture(t), state = officeLocalWriteState(f.plan);
+  const observeFinal = state.ledger.observeFinal.bind(state.ledger);
+  let afterMembers = false;
+  state.ledger.observeFinal = (...args) => { const members = observeFinal(...args); afterMembers = true; return members; };
+  t.after(() => { state.ledger.observeFinal = observeFinal; });
+  patchFs(t, "lstatSync", original => (...args) => {
+    if (afterMembers && args[0] === f.cwd) throw Object.assign(new Error("terminal root read failed"), { code: "EIO" });
+    return original(...args);
+  });
+  let failure;
+  try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; }
+  assert.ok(failure instanceof OfficeLocalWriterError);
+  const row = f.store.database.prepare("SELECT * FROM host_office_local_terminals WHERE execution_id=?").get(f.plan.executionId);
+  assert.ok(row, "incomplete facts must remain explicit in the sealed terminal, not disappear with the exception");
+  const terminal = f.store.getHostOfficeLocalTerminal(f.plan.executionId);
+  assert.equal(terminal.outcome, "failed");
+  assert.equal(terminal.publicationEntered, true);
+  assert.deepEqual(terminal.workspace.final, { state: "unobserved", errorCode: "EIO" });
+  assert.deepEqual(terminal.resources, failure.observation.resources);
+  assert.equal(terminal.terminalArtifactId, failure.observationArtifactId);
+  assert.equal(failure.terminalSealConfirmed, true, "failed physical facts and confirmed persistence are separate axes");
+  assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
+});
+
+test("Office terminal owner distinguishes callback entry from publication refused before native entry", async t => {
+  const f = await fixture(t), state = officeLocalWriteState(f.plan);
+  const assertCurrent = state.ledger.assertCurrent.bind(state.ledger);
+  let refused = false, linkCalls = 0;
+  state.ledger.assertCurrent = () => {
+    const row = f.store.database.prepare("SELECT descriptor_json FROM host_office_local_effects ORDER BY ordinal DESC LIMIT 1").get();
+    if (row && JSON.parse(row.descriptor_json).kind === "link" && !refused) {
+      refused = true; throw Object.assign(new Error("guard refused publication before native call"), { code: "EIO" });
+    }
+    return assertCurrent();
+  };
+  t.after(() => { state.ledger.assertCurrent = assertCurrent; });
+  patchFs(t, "linkSync", original => (...args) => { linkCalls++; return original(...args); });
+  let failure;
+  try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; }
+  assert.equal(refused, true); assert.equal(linkCalls, 0);
+  assert.ok(failure instanceof OfficeLocalWriterError);
+  const publication = effectPayloads(f).find(row => row.effect.kind === "link");
+  assert.ok(publication.effect.enteredAt, "the Core callback really entered before its guard rejected");
+  assert.deepEqual(publication.payload.native, { state: "not_entered" });
+  assert.equal(failure.observation.publicationEntered, false);
+  const terminal = f.store.getHostOfficeLocalTerminal(f.plan.executionId);
+  assert.ok(terminal, "callback-entry facts must not erase a valid failed terminal with no native publication");
+  assert.equal(terminal.publicationEntered, false); assert.equal(terminal.outcome, "failed");
+  assert.equal(existsSync(f.prepared.targetPath), false); assert.equal(existsSync(f.temporary), false);
+  assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
+});
+
+for (const afterCommit of [false, true]) {
+  test(`Office terminal owner COMMIT ${afterCommit ? "post-COMMIT throw" : "rollback"} freezes live claims without repeating effects`, async t => {
+    const f = await fixture(t), state = officeLocalWriteState(f.plan), exec = f.store.database.exec.bind(f.store.database);
+    let injected = false, writes = 0;
+    patchFs(t, "writeSync", original => (...args) => { writes++; return original(...args); });
+    f.store.database.exec = sql => {
+      if (sql === "COMMIT" && !injected && f.store.database.prepare(
+        "SELECT count(*) n FROM host_office_local_terminals WHERE execution_id=?").get(f.plan.executionId).n === 1) {
+        injected = true;
+        if (afterCommit) exec(sql);
+        throw Object.assign(new Error("terminal COMMIT return uncertain"), { code: "EIO" });
+      }
+      return exec(sql);
+    };
+    t.after(() => { f.store.database.exec = exec; });
+    let failure;
+    try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; }
+    assert.equal(injected, true, "the actual terminal INSERT must reach its real SQLite COMMIT");
+    assert.ok(failure instanceof OfficeLocalWriterError);
+    assert.ok(failure.observationArtifactId, "a COMMIT error must preserve the exact immutable terminal artifact identity");
+    assert.equal(failure.terminalSealConfirmed, false, "a lost seal return cannot masquerade as a confirmed Host acknowledgement");
+    assert.equal(failure.observation.outcome, "published", "physical publication already happened and must not be rewritten by COMMIT failure");
+    assert.deepEqual(readFileSync(f.prepared.targetPath), f.artifact.bytes);
+    assert.equal(writes, 1);
+    assert.equal(f.store.database.prepare("SELECT count(*) n FROM host_office_local_terminals").get().n, afterCommit ? 1 : 0);
+    assert.throws(() => f.tracker.prepareOfficeLocalEffect(state.ticket, { effectId: "late-cleanup", ordinal: 6,
+      kind: "unlink", mode: "cleanup", memberId: "temporary", preparedAt: now() }), { code: "host_office_local_execution_sealed" });
+    const first = f.store.listHostOfficeLocalEffects(f.plan.executionId)[0];
+    assert.throws(() => f.tracker.recordOfficeLocalObservation(state.ticket, first.effectId, first.observationArtifactId),
+      { code: "host_office_local_execution_sealed" });
+    const artifact = f.store.getArtifact(failure.observationArtifactId);
+    f.store.database.exec = exec;
+    const terminal = f.tracker.sealOfficeLocalTerminal(state.ticket, {
+      terminalArtifactId: artifact.id, terminalDigest: artifact.contentSha256,
+    });
+    assert.equal(terminal.terminalArtifactId, artifact.id);
+    assert.equal(f.store.database.prepare("SELECT count(*) n FROM host_office_local_terminals").get().n, 1);
+    assert.equal(writes, 1, "same-claim retry only persists facts, never re-enters the native writer");
+    assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
+    assert.throws(() => executeOfficeLocalWrite(f.plan), /already_entered/);
+  });
+}
+
+for (const variant of ["create", "short-write", "overwrite"]) {
+  test(`Office terminal native ${variant} replay uses sealed historical facts after target changes and SQLite reopens`, async t => {
+    const f = await fixture(t);
+    let plan = f.plan;
+    if (variant === "overwrite") {
+      executeOfficeLocalWrite(plan);
+      const reservation = reserveOfficeLocalWriter(f.tracker, f.store, "office-overwrite-call", f.cwd);
+      const snapshot = captureOfficeLocalSnapshot(f.cwd, "result.docx", "docx", f.source);
+      const artifact = await prepareOfficeArtifact("office_create_document", { path: "result.docx", overwrite: true,
+        blocks: [{ type: "paragraph", text: "Replacement real Office SDK output" }] });
+      plan = prepareOfficeLocalWrite(reservation, snapshot, artifact, "c".repeat(64), "d".repeat(64));
+    }
+    let writes = 0;
+    if (variant === "short-write") patchFs(t, "writeSync", original => (fd, bytes, offset, length, position) => {
+      writes++; return original(fd, bytes, offset, Math.min(length, 1024), position);
+    });
+    const result = executeOfficeLocalWrite(plan), execution = f.store.getHostOfficeLocalExecution(plan.executionId);
+    if (variant === "short-write") assert.ok(writes > 1, "the OS must really return multiple short writes");
+    assert.equal(result.observation.outcome, "published");
+    // The verifier must not consult today's bytes or recover a serialized FD.
+    writeFileSync(execution.targetPath, "unrelated later content");
+    fs.unlinkSync(execution.targetPath);
+    const reopened = createSqliteRunStore(f.cwd);
+    try {
+      const terminal = reopened.getHostOfficeLocalTerminal(plan.executionId);
+      const effects = reopened.listHostOfficeLocalEffects(plan.executionId).map(effect => ({ effect,
+        observation: reopened.getArtifact(effect.observationArtifactId).sealedPayload }));
+      const verified = verifyOfficeLocalReplay({ execution: reopened.getHostOfficeLocalExecution(plan.executionId), terminal, effects });
+      assert.equal(verified.kind, "office_local_published_verified");
+      assert.equal(verified.executionIdentityDigest, execution.identityDigest);
+      assert.equal(verified.effectCount, effects.length);
+      assert.equal(existsSync(execution.targetPath), false);
+      assert.equal(verified.recoveryMemberId, variant === "overwrite" ? "recovery" : undefined);
+      assert.equal(reopened.getHostOperation(execution.parentOperationId).phase, "launched",
+        "a pure replay data result still cannot settle the original journal roles");
+    } finally { reopened.close(); }
+  });
+}
 
 test("Office read-only final close must retain unknown resource and cannot report published", async t => {
   const f = await fixture(t), state = officeLocalWriteState(f.plan);

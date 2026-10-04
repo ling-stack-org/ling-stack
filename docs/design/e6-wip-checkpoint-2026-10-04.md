@@ -1,8 +1,24 @@
-# E6 本地 WIP 保存点（2026-10-04）
+# E6 本地 WIP 保存点（更新至 2026-10-05）
 
 此提交是用户要求的**代码防丢保存点**，不是可发布版本，不代表整个目标通过。
 
-## 本次 checkpoint 增量（2026-10-04；原始身份、资源与 terminal migration149）
+## 本次 checkpoint 增量（2026-10-05；Office terminal manifest 与历史 replay WIP）
+
+用户要求将当前进展追加保存到既有 Draft PR #507。上一远端保存点 `47b0c332baf70416bef54f6b9cea4308c2f49ba6` 保留；本次仅保存源码、测试和本记录，不合并 main、不改版本、不重写历史。**这是包含已知失败的 WIP 备份，不是发布或可合并候选。**
+
+- 新增严格 terminal manifest 类型、完整 effects/member/resource/readRef/workspace 事实校验，以及 `sealHostOfficeLocalTerminal` / `getHostOfficeLocalTerminal` 接口。原 ticket 与原 parent/producer pair 才能封口；有效 claim 在写入前锁存，rollback 或 COMMIT 返回丢失后不重新开放 effects，只允许原票相同 claim 重试。
+- Daemon 从原 execution owner 与 SQLite effects 全集生成独立 terminal artifact，不用 writer 文本作为安全证据。最终 root 独立检查原 dev/inode、目录与非 symlink；同 hash 外部文件节点替换不能返回成功。物理 `published` 与 `terminalSealConfirmed` 分轴保留，不篡改真实发布事实。
+- 新增纯 Core `verifyOfficeLocalReplay`，只消费 sealed 历史、不读取当前磁盘、不重新打开 FD。覆盖实际短写、offset、fsync/close、recovery/temporary/publication、原节点身份、完整只读资源及最终成员顺序。它返回验证数据，不颁发 capability 或 journal safe settlement；失败、unknown、Host unconfirmed 仍拒绝安全完成。
+- 真实 SDK/create/short-write/overwrite 测试在最终 target 被改写并删除、SQLite 重新打开后验证历史；这不是 daemon restart recovery 或 packaged GUI 验收。initial-absent directory 的 creator-bound receipt 尚未实现，不能永久删去该功能或凭 post-mkdir lstat 授权 cleanup/safe。
+- 已收取冻结输入的两个最终测试进程：Core terminal/replay/facts **329/330、exit 1**；Daemon writer/resources/snapshot/open-resource-clock/Tracker **104/104、exit 0**。32 项 source/test/dist 输入再次 `shasum -c` 全部一致，结果不能标成全绿。
+- 唯一已知 Core 失败为 `host-office-local-terminal.test.mjs` 的 “Office final member content observation precedes close; readRef completion need not equal member observation”，抛出 `host_office_local_evidence_invalid`。原因尚未确认；原失败测试和日志保留，本次不删除、跳过或放宽断言来制造通过。
+- 本次保存前 Core、Daemon TypeScript `--noEmit` 均实际 exit 0；迁移 149 的既有实现不在本增量内。详细本地日志为 `U-office-terminal-replay-core-final-20261005.log`、`U-office-terminal-replay-daemon-final-20261005.log`，输入清单为 `U-office-terminal-replay-inputs-20261005.sha256`，均在忽略的 `output/e6-20260928/` 内，不上传。
+
+**下一实际入口：** 先解决并验证上述 Core 失败 → role-specific Office evidence/settlement、新闭合 schema 与 typed journal consumer → 原 parent/producer 同 `BEGIN IMMEDIATE` safe/fan-in → creator-bound directory receipt → 固定 production Office route → live executor、retained restart、answer continuation/ACK/delivery/recovery/API/UI → fresh packaged macOS Computer Use 联验、最终全套源码门禁与正式 combined review/CI/merge。
+
+公开 U gate 仍关闭；D0/E1–E6、U/T、Harness 完整目标仍 active。本次不修改根 checkout、同事 WIP、真实数据库或历史，不上传密钥、安装包、截图或忽略的 output；保留本分支所有先前保存点。远端保存成功需推送后的 branch 与 PR HEAD 独立读回，不能仅凭本地提交声称完成。
+
+## 前次 checkpoint 增量（2026-10-04；原始身份、资源与 terminal migration149）
 
 提交推送前的远端保存点为 `c46084ef6f6884f6b37746c2ca705e35db4a0ec3`；用户授权将本节增量追加保存到现有 Draft PR #507。仅正常快进，不合并 main、不改版本、不重写历史，保留所有已有保存点。
 
