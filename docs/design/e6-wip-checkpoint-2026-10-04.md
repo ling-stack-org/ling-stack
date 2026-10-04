@@ -4,6 +4,21 @@
 
 ## 最新增量保存（2026-10-04）
 
+用户要求将当前进展再次推送到现有 Draft PR #507。本轮只追加 WIP 防丢保存，不合并 main、不发版、不重写历史；已有保存点不重复推送。
+
+- 上一远端保存点：`90d9af8969fd131d85610fa54065d1d0b56414b7`。
+- 新增范围为四个源码/测试路径及本记录：Core `host-office-local-records.ts`、新纯校验模块 `host-office-local-observations.ts`、`host-office-local-facts.test.mjs`，以及 Daemon `office-local-writer.test.mjs`。
+- Core 严格校验已落源码：resource lifetime、native/Host 分轴、实际 bytesWritten、immutable seal 的 lineage/时间/精确字段边界；直接拒绝旧单轴格式，不新增兼容回退。新模块只验证事实，不赋予 safe/settlement 权威。
+- 本轮保存前两个测试文件的 Node 22.22.1 语法检查及 `git diff --check` 实际 exit 0；**没有统一构建新 Core/Daemon，也没有新源码 GREEN 或 packaged GUI 验收**。
+- 已收取旧构建反例终态：Core 的 15 项严格合同反例 **0/15、exit 1**（均是应拒绝而未拒绝）；Daemon 的 7 项 native-return/短写/COMMIT/首次 fstat 反例 **0/7、exit 1**（目标断言失败）。这些 RED 留作后续修复证据，不改成通过。
+- Daemon writer/Tracker/resource consumer 尚未适配。本轮增加的 Daemon 测试描述目标行为，不表示实现已完成；旧 2780/2780 仍只覆盖 `1d19a401`，不覆盖本保存点。
+- 未纳入真实数据库、密钥、安装包、截图或忽略的 output 产物；没有删 WIP、没有改根 checkout。PR 保持 Draft，公开 U gate 保持关闭，无 safe receipt、固定 production route 或整体 E6 完成声明。
+- 推送后由远端 branch 和 PR HEAD 双读回确认，再把完整 commit hash 记录到本地 `output/e6-20260928/CONTINUE-HERE.md`；未读回前不声称远端保存成功。
+
+接续不变：统一构建并核验 Core 严格 parser/fixtures → Daemon native 返回点锁存、短写和强持有 resource lifetime → 完整终态及纯 Core verifier → 原 parent+producer pair 原子封口/fan-in → 固定 route。总目标仍 active，不重做已验收切片。
+
+## 前一次增量保存（2026-10-04；90d9af89）
+
 用户再次要求推送到现有远端 Draft PR 保存一次；继续使用 `codex/e6-safe-continuation` 和 PR #507，不合并 main、不改版本、不重写历史。
 
 - 上一远端保存点：`76600b95676552b98614955f022b3bc02f2265dc`。

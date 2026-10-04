@@ -7,6 +7,7 @@ import { HOST_OFFICE_LOCAL_PROTOCOL, type HostOfficeFileIdentity, type HostOffic
   type PrepareHostOfficeLocalEffect } from "../../host-office-local-types.js";
 import { assertHostOperationLineage, hostOperationFailure, hostOperationTimestamp, sameHostOperationSource,
   readHostOperation } from "./host-operation-journal-evidence.js";
+import { validateOfficeLocalObservationPayload } from "./host-office-local-observations.js";
 
 export const officeLocalFailure = (): never => hostOperationFailure("host_office_local_evidence_invalid");
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -119,7 +120,8 @@ export function readOfficeLocalExecution(database: DatabaseSync, id: string): Ho
 }
 
 export function validateOfficeLocalEffect(execution: HostOfficeLocalExecutionRecord, value: unknown): PrepareHostOfficeLocalEffect {
-  if (!object(value) || !text(value.effectId) || !size(value.ordinal) || value.ordinal >= 1024
+  const keys = new Set(["effectId", "ordinal", "kind", "mode", "memberId", "fromMemberId", "resourceLifetimeId", "offset", "sizeBytes", "preparedAt"]);
+  if (!object(value) || Object.keys(value).some(key => !keys.has(key)) || !text(value.effectId) || !size(value.ordinal) || value.ordinal >= 1024
     || !text(value.kind) || !["mkdir","open","write","fsync","close","link","rename","unlink","rmdir"].includes(value.kind)
     || !text(value.mode) || !["forward","cleanup"].includes(value.mode)) return officeLocalFailure();
   const member = execution.members.find(item => item.memberId === value.memberId), from = execution.members.find(item => item.memberId === value.fromMemberId);
@@ -129,8 +131,10 @@ export function validateOfficeLocalEffect(execution: HostOfficeLocalExecutionRec
       || (value.kind === "rename" && !execution.overwrite) || (value.kind === "link" && execution.input.state !== "absent")) return officeLocalFailure();
   } else if (value.fromMemberId !== undefined) return officeLocalFailure();
   if (value.kind === "mkdir" && (member.role !== "directory" || member.initial.state !== "absent" || value.mode !== "forward")) return officeLocalFailure();
-  if (["open","write","fsync","close"].includes(String(value.kind))
-    && (!["temporary","recovery"].includes(member.role) || (value.mode === "cleanup" && value.kind !== "close"))) return officeLocalFailure();
+  if (["open","write","fsync","close"].includes(value.kind)) {
+    if (!text(value.resourceLifetimeId) || !["temporary","recovery"].includes(member.role)
+      || (value.mode === "cleanup" && value.kind !== "close")) return officeLocalFailure();
+  } else if (Object.hasOwn(value, "resourceLifetimeId")) return officeLocalFailure();
   if (value.kind === "unlink" && (member.role === "directory" || (value.mode === "forward" && member.role !== "temporary"))) return officeLocalFailure();
   if (value.kind === "rmdir" && (member.role !== "directory" || member.initial.state !== "absent" || value.mode !== "cleanup")) return officeLocalFailure();
   if (value.kind === "write") {
@@ -160,14 +164,6 @@ export function readOfficeLocalEffects(database: DatabaseSync, execution: HostOf
 
 export function validateOfficeLocalObservation(database: DatabaseSync, execution: HostOfficeLocalExecutionRecord,
   effect: HostOfficeLocalEffectRecord, artifactId: string): HostOfficeLocalEffectObservation {
-  const seal = readOfficeLocalSeal(database, artifactId, execution.source.runId), value = seal.payload;
-  if (value.schemaVersion !== 1 || value.protocol !== HOST_OFFICE_LOCAL_PROTOCOL || value.kind !== "office_local_effect_v1"
-    || value.executionId !== execution.executionId || value.executionIdentityDigest !== execution.identityDigest
-    || !same(value.source, execution.source) || value.effectId !== effect.effectId || value.effectDigest !== effect.effectDigest
-    || !text(value.outcome) || !["returned","failed","not_entered"].includes(value.outcome)
-    || ((value.outcome === "not_entered") !== (effect.enteredAt === undefined))
-    || (value.outcome === "failed" ? !text(value.errorCode) : value.errorCode !== undefined)
-    || hostOperationTimestamp(value.completedAt) < hostOperationTimestamp(effect.enteredAt ?? effect.preparedAt)
-    || hostOperationTimestamp(seal.createdAt) < hostOperationTimestamp(value.completedAt)) return officeLocalFailure();
-  return value as unknown as HostOfficeLocalEffectObservation;
+  const seal = readOfficeLocalSeal(database, artifactId, execution.source.runId);
+  return validateOfficeLocalObservationPayload(execution, effect, seal.payload, seal.createdAt);
 }

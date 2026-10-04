@@ -41,6 +41,133 @@ function patchFs(t, name, replacement) {
   t.after(() => { fs[name] = original; syncBuiltinESMExports(); });
 }
 
+function effectPayloads(f) {
+  return f.store.listHostOfficeLocalEffects(f.plan.executionId).map(effect => ({ effect,
+    payload: f.store.getArtifact(effect.observationArtifactId)?.sealedPayload }));
+}
+
+test("Office native contract preserves short write return before readback failure", async t => {
+  const f = await fixture(t), ledger = officeLocalWriteState(f.plan).ledger;
+  let writes = 0;
+  patchFs(t, "writeSync", original => (fd, bytes, offset, length, position) => {
+    writes++;
+    return original(fd, bytes, offset, Math.min(length, 64), position);
+  });
+  const refresh = ledger.refresh.bind(ledger);
+  ledger.refresh = (...args) => {
+    if (writes > 0 && args[0] === "temporary") throw Object.assign(new Error("readback failed"), { code: "EIO" });
+    return refresh(...args);
+  };
+  assert.throws(() => executeOfficeLocalWrite(f.plan), OfficeLocalWriterError);
+  const { effect, payload } = effectPayloads(f).find(row => row.effect.kind === "write");
+  assert.equal(writes, 1);
+  assert.equal(payload?.native?.state, "returned", "post-write readback failure cannot erase a real write return");
+  assert.deepEqual(payload.native.result, { kind: "write", resourceLifetimeId: effect.resourceLifetimeId, bytesWritten: 64 });
+  assert.deepEqual(payload.host, { state: "unconfirmed", errorCode: "EIO" });
+  assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
+});
+
+test("Office native contract records each actual short write and advances exact offsets", async t => {
+  const f = await fixture(t);
+  patchFs(t, "writeSync", original => (fd, bytes, offset, length, position) => original(fd, bytes, offset, Math.min(length, 1024), position));
+  const result = executeOfficeLocalWrite(f.plan), writes = effectPayloads(f).filter(row => row.effect.kind === "write");
+  assert.ok(writes.length > 1);
+  let offset = 0;
+  for (const { effect, payload } of writes) {
+    assert.equal(effect.offset, offset);
+    assert.equal(payload?.native?.state, "returned");
+    assert.equal(payload.native.result.bytesWritten, Math.min(effect.sizeBytes, 1024));
+    assert.equal(payload.native.result.resourceLifetimeId, effect.resourceLifetimeId);
+    assert.deepEqual(payload.host, { state: "returned" });
+    offset += payload.native.result.bytesWritten;
+  }
+  assert.equal(offset, f.artifact.bytes.length);
+  assert.deepEqual(readFileSync(result.path), f.artifact.bytes);
+  const resource = result.observation.resources?.[0];
+  assert.equal(resource?.state, "closed");
+  assert.equal(typeof resource.resourceLifetimeId, "string");
+  assert.ok(resource.openEffectId && resource.closeEffectId);
+  assert.equal("fd" in resource, false, "numeric FD must not become durable resource identity");
+  const fdEffects = effectPayloads(f).filter(row => ["open", "write", "fsync", "close"].includes(row.effect.kind));
+  assert.equal(fdEffects.every(row => row.effect.resourceLifetimeId === resource.resourceLifetimeId), true);
+});
+
+test("Office native contract keeps zero return distinct from syscall throw and does not spin", async t => {
+  const f = await fixture(t); let calls = 0;
+  patchFs(t, "writeSync", () => () => { calls++; return 0; });
+  assert.throws(() => executeOfficeLocalWrite(f.plan), OfficeLocalWriterError);
+  const { payload } = effectPayloads(f).find(row => row.effect.kind === "write");
+  assert.equal(calls, 1);
+  assert.equal(payload?.native?.state, "returned");
+  assert.equal(payload.native.result.bytesWritten, 0);
+  assert.equal(payload.host.state, "unconfirmed");
+  assert.equal(existsSync(f.prepared.targetPath), false);
+});
+
+test("Office native contract separates callback admission from native syscall entry", async t => {
+  const f = await fixture(t), state = officeLocalWriteState(f.plan);
+  const current = state.ledger.assertCurrent.bind(state.ledger); let guards = 0, opens = 0;
+  state.ledger.assertCurrent = () => {
+    if (++guards === 2) throw Object.assign(new Error("pre syscall guard failed"), { code: "EIO" });
+    current();
+  };
+  patchFs(t, "openSync", original => (...args) => { if (args[0] === f.temporary) opens++; return original(...args); });
+  assert.throws(() => executeOfficeLocalWrite(f.plan), OfficeLocalWriterError);
+  const { effect, payload } = effectPayloads(f)[0];
+  assert.equal(opens, 0);
+  assert.ok(effect.enteredAt, "the Core callback entry is preserved even without native entry");
+  assert.deepEqual(payload?.native, { state: "not_entered" });
+  assert.equal(payload.host.state, "unconfirmed");
+  assert.throws(() => f.tracker.settleNoStart(state.parent), /launched_no_start/);
+  assert.throws(() => f.tracker.settleNoStart(state.producer), /launched_no_start/);
+});
+
+for (const afterCommit of [false, true]) {
+  test(`Office native contract retains actual write on ${afterCommit ? "post-COMMIT throw" : "COMMIT rollback"}`, async t => {
+    const f = await fixture(t), exec = f.store.database.exec.bind(f.store.database);
+    let writes = 0, inject = true;
+    patchFs(t, "writeSync", original => (...args) => { const result = original(...args); writes++; return result; });
+    f.store.database.exec = sql => {
+      if (sql === "COMMIT" && inject && writes > 0) {
+        inject = false;
+        if (afterCommit) exec(sql);
+        throw Object.assign(new Error("commit failed after native write"), { code: "EIO" });
+      }
+      return exec(sql);
+    };
+    t.after(() => { f.store.database.exec = exec; });
+    assert.throws(() => executeOfficeLocalWrite(f.plan), OfficeLocalWriterError);
+    const { effect, payload } = effectPayloads(f).find(row => row.effect.kind === "write");
+    assert.equal(writes, 1);
+    assert.equal(payload?.native?.state, "returned");
+    assert.equal(payload.native.result.bytesWritten, f.artifact.bytes.length);
+    assert.ok(effect.enteredAt);
+    assert.deepEqual(payload.host, { state: "unconfirmed", errorCode: "EIO" });
+    assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
+  });
+}
+
+test("Office native contract retains open return before first fstat throws", async t => {
+  const f = await fixture(t); let fd, injected = false, failure;
+  patchFs(t, "openSync", original => (...args) => {
+    const result = original(...args);
+    if (args[0] === f.temporary && (args[1] & fs.constants.O_WRONLY)) fd = result;
+    return result;
+  });
+  patchFs(t, "fstatSync", original => (...args) => {
+    if (args[0] === fd && !injected) { injected = true; throw Object.assign(new Error("fstat failed"), { code: "EIO" }); }
+    return original(...args);
+  });
+  assert.throws(() => { try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; throw error; } }, OfficeLocalWriterError);
+  const { effect, payload } = effectPayloads(f).find(row => row.effect.kind === "open");
+  assert.equal(payload?.native?.state, "returned");
+  assert.deepEqual(payload.native.result, { kind: "open", resourceLifetimeId: effect.resourceLifetimeId });
+  assert.deepEqual(payload.host, { state: "unconfirmed", errorCode: "EIO" });
+  assert.equal(failure.observation.resources?.[0]?.openEffectId, effect.effectId);
+  assert.equal(failure.observation.resources[0].state, "closed");
+  assert.throws(() => fs.fstatSync(fd), { code: "EBADF" });
+});
+
 test("Office real SDK bytes publish through exact SQLite effects without safe settlement", async t => {
   const f = await fixture(t, "nested/one/result.docx"), result = executeOfficeLocalWrite(f.plan);
   assert.deepEqual(readFileSync(result.path), f.artifact.bytes);
