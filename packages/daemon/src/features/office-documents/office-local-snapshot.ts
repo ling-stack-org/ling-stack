@@ -9,6 +9,7 @@ export interface OfficeLocalReadSnapshot {
   readonly [officeSnapshotBrand]: true;
   readonly source: HostOperationSource;
   readonly workspacePath: string;
+  readonly workspaceIdentity: HostOfficeFileIdentity;
   readonly targetPath: string;
   readonly format: HostOfficeLocalFormat;
   readonly input: HostOfficeFileSnapshot;
@@ -76,9 +77,10 @@ export function captureOfficeLocalSnapshot(workspaceCwd: string, requestedPath: 
       input = Object.freeze({ state: "file", identity: capturedIdentity, bytesSha256: createHash("sha256").update(bytes).digest("hex"), sizeBytes: bytes.length });
     } finally { if (fd !== undefined) closeSync(fd); }
   }
-  const snapshot = Object.freeze({ source: Object.freeze({ ...source }), workspacePath, targetPath, format,
+  const workspaceIdentity = identity(root);
+  const snapshot = Object.freeze({ source: Object.freeze({ ...source }), workspacePath, workspaceIdentity, targetPath, format,
     input, directories: Object.freeze(directories) }) as OfficeLocalReadSnapshot;
-  snapshots.set(snapshot, { bytes, rootIdentity: identity(root) });
+  snapshots.set(snapshot, { bytes, rootIdentity: workspaceIdentity });
   revalidateOfficeLocalSnapshot(snapshot);
   return snapshot;
 }

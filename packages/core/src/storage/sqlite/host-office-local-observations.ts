@@ -1,6 +1,7 @@
 import { HOST_OFFICE_LOCAL_PROTOCOL, type HostOfficeLocalExecutionRecord,
   type HostOfficeLocalEffectRecord, type HostOfficeLocalEffectObservation } from "../../host-office-local-types.js";
 import { hostOperationFailure, hostOperationTimestamp } from "./host-operation-journal-evidence.js";
+import { isHostOfficeFileIdentity } from "./host-office-local-identity.js";
 
 const invalid = (): never => hostOperationFailure("host_office_local_evidence_invalid");
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -16,7 +17,7 @@ function exact(value: Record<string, unknown>, keys: readonly string[]): boolean
 export function validateOfficeLocalObservationPayload(execution: HostOfficeLocalExecutionRecord,
   effect: HostOfficeLocalEffectRecord, value: unknown, sealedAt: string): HostOfficeLocalEffectObservation {
   if (!object(value) || !exact(value, ["schemaVersion", "protocol", "kind", "executionId", "executionIdentityDigest",
-    "source", "effectId", "effectDigest", "native", "host", "completedAt"])
+    "source", "effectId", "effectDigest", "native", "host", "completedAt", ...(Object.hasOwn(value, "openResource") ? ["openResource"] : [])])
     || value.schemaVersion !== 1 || value.protocol !== HOST_OFFICE_LOCAL_PROTOCOL || value.kind !== "office_local_effect_v1"
     || value.executionId !== execution.executionId || value.executionIdentityDigest !== execution.identityDigest
     || value.effectId !== effect.effectId || value.effectDigest !== effect.effectDigest || !object(value.source)
@@ -29,6 +30,8 @@ export function validateOfficeLocalObservationPayload(execution: HostOfficeLocal
     || completedAt > hostOperationTimestamp(sealedAt)) return invalid();
 
   const native = value.native, host = value.host;
+  const hasOpenResource = Object.hasOwn(value, "openResource");
+  if (hasOpenResource && (effect.kind !== "open" || native.state !== "returned")) return invalid();
   if (host.state === "returned") {
     if (!exact(host, ["state"]) || native.state !== "returned") return invalid();
   } else if (host.state !== "unconfirmed" || !exact(host, ["state", "errorCode"]) || !text(host.errorCode)) return invalid();
@@ -57,6 +60,14 @@ export function validateOfficeLocalObservationPayload(execution: HostOfficeLocal
       if (effect.kind === "write" && (!Number.isSafeInteger(result.bytesWritten) || Number(result.bytesWritten) < 0
         || effect.sizeBytes === undefined || Number(result.bytesWritten) > effect.sizeBytes)) return invalid();
     } else if (!exact(result, ["kind"])) return invalid();
+    if (hasOpenResource) {
+      const resource = value.openResource;
+      if (!object(resource) || !exact(resource, ["resourceLifetimeId", "identity", "observedAt"])
+        || !text(resource.resourceLifetimeId) || resource.resourceLifetimeId !== effect.resourceLifetimeId
+        || !isHostOfficeFileIdentity(resource.identity)) return invalid();
+      const observedAt = hostOperationTimestamp(resource.observedAt);
+      if (observedAt < returnedAt || observedAt > completedAt) return invalid();
+    }
   } else return invalid();
   return value as unknown as HostOfficeLocalEffectObservation;
 }

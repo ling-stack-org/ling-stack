@@ -2,9 +2,11 @@ import { randomUUID } from "node:crypto";
 import { constants, closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, renameSync, unlinkSync, writeSync, openSync } from "node:fs";
 import { HOST_OFFICE_LOCAL_PROTOCOL, type HostOfficeLocalEffectRecord, type HostOfficeLocalNativeObservation,
   type HostOfficeLocalNativeResult, type PrepareHostOfficeLocalEffect } from "@ling-stack/core";
+import type { HostOfficeLocalEffectObservation } from "@ling-stack/core";
 import { officeLocalWriteState, type OfficeLocalWritePlan, type OfficeLocalWriteState } from "./office-local-authority.js";
-import { officeBytesDigest, officeErrorCode, officeFileIdentity, type OfficeLocalMemberFinal } from "./office-local-members.js";
-import { OfficeLocalResourceOwner, type OfficeLocalResource, type OfficeLocalResourceFinal } from "./office-local-resources.js";
+import { officeBytesDigest, officeErrorCode, type OfficeLocalMemberFinal } from "./office-local-members.js";
+import { officeFileIdentity } from "./office-local-identity.js";
+import { OfficeLocalResourceOwner, type OfficeLocalEffectResource, type OfficeLocalResourceFinal } from "./office-local-resources.js";
 
 export interface OfficeLocalWriteObservation {
   readonly schemaVersion: 1;
@@ -23,7 +25,7 @@ export interface OfficeLocalWriteObservation {
 interface EffectHooks<T> {
   readonly guard?: () => void;
   readonly beforeNative?: (effect: HostOfficeLocalEffectRecord) => void;
-  readonly afterNative?: (value: T, effect: HostOfficeLocalEffectRecord) => void;
+  readonly afterNative?: (value: T, effect: HostOfficeLocalEffectRecord, returnedAt: string) => void;
 }
 export class OfficeLocalWriterError extends Error {
   constructor(readonly cause: unknown, readonly observationArtifactId: string | undefined,
@@ -71,7 +73,7 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
         // Latch the native API's actual return BEFORE fstat/readback/Host COMMIT.
         native = { state: "returned", calledAt, returnedAt: new Date().toISOString(),
           result: nativeResult(descriptor, returned) };
-        hooks.afterNative?.(returned, descriptor);
+        hooks.afterNative?.(returned, descriptor, native.returnedAt);
         return returned;
       }, mode);
     } catch (error) { actualError = error; hostFailed = true; }
@@ -84,6 +86,7 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
           schemaVersion: 1, protocol: HOST_OFFICE_LOCAL_PROTOCOL, kind: "office_local_effect_v1", executionId: plan.executionId,
           executionIdentityDigest: state.identityDigest, source: state.execution.source, effectId: descriptor.effectId,
           effectDigest: descriptor.effectDigest, native,
+          ...originalOpenResourceFact(descriptor, native, resources),
           host: hostFailed ? { state: "unconfirmed", errorCode: officeErrorCode(actualError) } : { state: "returned" },
           completedAt,
         } });
@@ -95,7 +98,7 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     if (hostFailed) throw actualError;
     return returned!;
   };
-  const close = (resource: OfficeLocalResource, mode: "forward" | "cleanup"): void => {
+  const close = (resource: OfficeLocalEffectResource, mode: "forward" | "cleanup"): void => {
     runEffect(resource.memberId, "close", () => closeSync(resource.fd), { resourceLifetimeId: resource.resourceLifetimeId }, mode, {
       guard: () => { resources.assertUsable(resource); },
       beforeNative: effect => resources.beginClose(resource, effect.effectId),
@@ -104,11 +107,11 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
   };
   const writeMember = (memberId: string, bytes: Buffer): void => {
     const resourceLifetimeId = randomUUID(), path = state.ledger.member(memberId).path;
-    let resource: OfficeLocalResource | undefined;
+    let resource: OfficeLocalEffectResource | undefined;
     runEffect(memberId, "open", () => openSync(path, constants.O_CREAT | constants.O_EXCL | constants.O_WRONLY | (constants.O_NOFOLLOW ?? 0), 0o600),
-      { resourceLifetimeId }, "forward", { afterNative: (fd, effect) => {
+      { resourceLifetimeId }, "forward", { afterNative: (fd, effect, returnedAt) => {
         resource = resources.retainOpened({ resourceLifetimeId, memberId, openEffectId: effect.effectId, fd });
-        state.ledger.refresh(memberId, { state: "file", identity: resources.assertUsable(resource) });
+        state.ledger.refresh(memberId, resources, { state: "file", identity: resources.assertUsable(resource, returnedAt) });
       } });
     const owned = resource!;
     let offset = 0;
@@ -121,7 +124,7 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
             if (!Number.isSafeInteger(written) || written <= 0 || written > bytes.length - at) {
               throw Object.assign(new Error("office_local_write_no_progress"), { code: "office_local_write_no_progress" });
             }
-            state.ledger.refresh(memberId);
+            state.ledger.refresh(memberId, resources);
           },
         });
       offset += count;
@@ -143,7 +146,7 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     state.ledger.assertCurrent();
     for (const member of state.execution.members.filter(item => item.role === "directory" && item.initial.state === "absent")) {
       runEffect(member.memberId, "mkdir", () => mkdirSync(member.path, { mode: 0o700 }), {}, "forward", { afterNative: () => {
-        state.ledger.refresh(member.memberId, { state: "directory", identity: officeFileIdentity(lstatSync(member.path, { bigint: true })) });
+        state.ledger.refresh(member.memberId, resources, { state: "directory", identity: officeFileIdentity(lstatSync(member.path, { bigint: true })) });
       } });
     }
     if (state.inputBytes) writeMember("recovery", state.inputBytes);
@@ -156,12 +159,12 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
         beforeNative: () => { publicationEntered = true; },
         afterNative: () => {
           published = true;
-          state.ledger.refresh("target", { state: "file", identity: owned.identity });
-          state.ledger.refresh("temporary", kind === "rename" ? { state: "absent" } : undefined);
+          state.ledger.refresh("target", resources, { state: "file", identity: owned.identity });
+          state.ledger.refresh("temporary", resources, kind === "rename" ? { state: "absent" } : undefined);
         },
       });
     if (kind === "link") runEffect("temporary", "unlink", () => unlinkSync(temporary), {}, "forward", {
-      afterNative: () => { state.ledger.refresh("temporary", { state: "absent" }); },
+      afterNative: () => { state.ledger.refresh("temporary", resources, { state: "absent" }); },
     });
   } catch (error) { captureFailure(error, "office_local_write_unconfirmed"); }
   if (failed) {
@@ -173,7 +176,7 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     if (state.ledger.expected("temporary").state === "file") {
       const temporary = state.ledger.member("temporary").path;
       try { runEffect("temporary", "unlink", () => unlinkSync(temporary), {}, "cleanup", {
-        afterNative: () => { state.ledger.refresh("temporary", { state: "absent" }); },
+        afterNative: () => { state.ledger.refresh("temporary", resources, { state: "absent" }); },
       }); }
       catch (error) { captureFailure(error, "office_local_cleanup_unconfirmed"); }
     }
@@ -182,10 +185,14 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     // Preserve directory residue in the final manifest until a native creator
     // receipt can prove cleanup authority; this layer never grants safe settlement.
   }
+  const members = state.ledger.observeFinal(resources), resourceFinals = resources.snapshots();
+  if (members.some(member => member.final.state === "unobserved") || resourceFinals.some(resource => resource.state !== "closed")) {
+    captureFailure(new Error("office_local_final_observation_incomplete"), "office_local_final_observation_unconfirmed");
+  }
   const observation: OfficeLocalWriteObservation = { schemaVersion: 1, protocol: HOST_OFFICE_LOCAL_PROTOCOL,
     kind: "office_local_writer_observation_v1", executionId: plan.executionId, executionIdentityDigest: state.identityDigest,
     source: state.execution.source, outcome: !failed && published ? "published" : "failed", publicationEntered,
-    members: state.ledger.observeFinal(), resources: resources.snapshots(),
+    members, resources: resourceFinals,
     effectIds: effects, completedAt: new Date().toISOString() };
   let observationArtifactId: string | undefined;
   try {
@@ -195,6 +202,16 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
   if (failed) throw new OfficeLocalWriterError(failure, observationArtifactId, observation);
   return { path: state.execution.targetPath, ...(state.inputBytes ? { recoveryPath: state.ledger.member("recovery").path } : {}),
     observationArtifactId: observationArtifactId!, observation };
+}
+
+/** First fstat of the actual retained open, not a final path observation or a fresh FD. */
+function originalOpenResourceFact(effect: HostOfficeLocalEffectRecord, native: HostOfficeLocalNativeObservation,
+  owner: OfficeLocalResourceOwner): Pick<HostOfficeLocalEffectObservation, "openResource"> {
+  if (effect.kind !== "open" || native.state !== "returned") return {};
+  const resource = owner.snapshots().find(item => item.origin === "effect" && item.openEffectId === effect.effectId);
+  if (!resource || resource.origin !== "effect" || !resource.identity || !resource.identityObservedAt) return {};
+  return { openResource: { resourceLifetimeId: resource.resourceLifetimeId,
+    identity: resource.identity, observedAt: resource.identityObservedAt } };
 }
 
 function nativeResult(effect: HostOfficeLocalEffectRecord, value: unknown): HostOfficeLocalNativeResult {

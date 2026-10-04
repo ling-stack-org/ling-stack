@@ -12,6 +12,7 @@ import { captureOfficeLocalSnapshot, copyOfficeLocalSnapshotBytes } from "../dis
 import { assertOfficeLocalReservation, officeLocalWriteState, prepareOfficeLocalWrite, reserveOfficeLocalWriter } from "../dist/features/office-documents/office-local-authority.js";
 import { executeOfficeLocalWrite, OfficeLocalWriterError } from "../dist/features/office-documents/office-local-writer.js";
 import { OfficeLocalMemberLedger, officeBytesDigest, officeFileIdentity } from "../dist/features/office-documents/office-local-members.js";
+import { OfficeLocalResourceOwner } from "../dist/features/office-documents/office-local-resources.js";
 
 const now = () => new Date().toISOString();
 async function fixture(t, path = "result.docx") {
@@ -45,6 +46,206 @@ function effectPayloads(f) {
   return f.store.listHostOfficeLocalEffects(f.plan.executionId).map(effect => ({ effect,
     payload: f.store.getArtifact(effect.observationArtifactId)?.sealedPayload }));
 }
+
+test("Office persisted provenance seals the captured workspace root without adopting a later root", async t => {
+  const f = await fixture(t), root = officeFileIdentity(fs.lstatSync(f.cwd, { bigint: true }));
+  assert.ok(f.prepared.workspaceIdentity, "prepared evidence must persist the original workspace root identity");
+  assert.deepEqual(f.prepared.workspaceIdentity, f.snapshot.workspaceIdentity);
+  assert.equal(f.prepared.workspaceIdentity.device, root.device);
+  assert.equal(f.prepared.workspaceIdentity.inode, root.inode);
+  const captured = structuredClone(f.prepared.workspaceIdentity);
+  writeFileSync(join(f.cwd, "unrelated.txt"), "directory timestamps may change");
+  executeOfficeLocalWrite(f.plan);
+  assert.deepEqual(f.store.getHostOfficeLocalExecution(f.plan.executionId).workspaceIdentity, captured);
+});
+
+test("Office persisted provenance records the first original writer FD identity in its open seal", async t => {
+  const f = await fixture(t), opened = new Set(), first = new Map();
+  patchFs(t, "openSync", original => (...args) => {
+    const fd = original(...args);
+    if (args[0] === f.temporary && (args[1] & fs.constants.O_WRONLY) !== 0) opened.add(fd);
+    return fd;
+  });
+  patchFs(t, "fstatSync", original => (...args) => {
+    const stats = original(...args);
+    if (opened.has(args[0]) && !first.has(args[0])) first.set(args[0], officeFileIdentity(stats));
+    return stats;
+  });
+  executeOfficeLocalWrite(f.plan);
+  const { effect, payload } = effectPayloads(f).find(row => row.effect.kind === "open");
+  assert.equal(first.size, 1);
+  assert.ok(payload.openResource, "an open lifetime cannot be reconstructed from final path identity");
+  assert.deepEqual(payload.openResource.identity, [...first.values()][0]);
+  assert.equal(payload.openResource.identity.sizeBytes, 0, "the first fstat precedes all writes");
+  assert.equal(payload.openResource.resourceLifetimeId, effect.resourceLifetimeId);
+  assert.ok(payload.native.returnedAt <= payload.openResource.observedAt);
+  assert.ok(payload.openResource.observedAt <= payload.completedAt);
+  assert.equal("fd" in payload.openResource, false);
+});
+
+test("Office persisted provenance rejects a replacement workspace root at ledger issuance", async t => {
+  const f = await fixture(t), root = join(f.cwd, "captured-root");
+  fs.mkdirSync(root);
+  const captured = officeFileIdentity(fs.lstatSync(root, { bigint: true }));
+  renameSync(root, join(f.cwd, "displaced-root"));
+  fs.mkdirSync(root);
+  const member = { memberId: "target", role: "target", path: join(root, "result.docx"), initial: { state: "absent" } };
+  assert.throws(() => new OfficeLocalMemberLedger(root, [member], captured), /office_local_snapshot_changed/);
+});
+
+test("Office read-only final close must retain unknown resource and cannot report published", async t => {
+  const f = await fixture(t), state = officeLocalWriteState(f.plan);
+  const nativeOpen = fs.openSync, nativeClose = fs.closeSync, nativeFstat = fs.fstatSync;
+  const paths = new Map(f.prepared.members.map(member => [member.path, member.memberId]));
+  const observeFinal = state.ledger.observeFinal.bind(state.ledger), readOpens = [];
+  let finalPhase = false, finalFd, borrowedFd, originalIdentity, closes = 0, statsAfterUnknown = 0, injected = false, writeOpens = 0;
+  state.ledger.observeFinal = (...args) => {
+    finalPhase = true;
+    try { return observeFinal(...args); } finally { finalPhase = false; }
+  };
+  t.after(() => { state.ledger.observeFinal = observeFinal; });
+  patchFs(t, "openSync", original => (...args) => {
+    const fd = original(...args), memberId = paths.get(args[0]), flags = args[1];
+    if (memberId && typeof flags === "number") {
+      if ((flags & fs.constants.O_WRONLY) !== 0) writeOpens++;
+      else {
+        readOpens.push({ memberId, fd, final: finalPhase });
+        if (finalPhase && args[0] === f.prepared.targetPath) finalFd = fd;
+      }
+    }
+    return fd;
+  });
+  patchFs(t, "fstatSync", original => (...args) => {
+    if (injected && args[0] === borrowedFd) statsAfterUnknown++;
+    return original(...args);
+  });
+  patchFs(t, "closeSync", original => fd => {
+    if (fd !== finalFd) return original(fd);
+    closes++;
+    if (!injected) {
+      originalIdentity = nativeFstat(fd, { bigint: true });
+      original(fd);
+      borrowedFd = nativeOpen(f.prepared.targetPath, "r");
+      assert.equal(borrowedFd, finalFd, "the actual OS must reuse this number for the same inode");
+      injected = true;
+      throw Object.assign(new Error("final read close outcome is unknown"), { code: "EINTR" });
+    }
+    return original(fd);
+  });
+  t.after(() => {
+    if (borrowedFd !== undefined) {
+      try { nativeClose(borrowedFd); } catch (error) { if (error.code !== "EBADF") throw error; }
+    }
+  });
+  let result, failure;
+  try { result = executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; }
+  assert.equal(injected, true, "fault must reach the final target read, not SDK preparation or a writer FD");
+  assert.equal(readOpens.some(row => row.final && row.memberId === "target" && row.fd === finalFd), true);
+  assert.equal(closes, 1, "unknown read close cannot be retried against the borrowed descriptor");
+  assert.equal(statsAfterUnknown, 0, "unknown read resource cannot fstat the OS-reused number");
+  const borrowedIdentity = nativeFstat(borrowedFd, { bigint: true });
+  assert.equal(borrowedIdentity.dev, originalIdentity.dev); assert.equal(borrowedIdentity.ino, originalIdentity.ino);
+  assert.deepEqual(fs.readFileSync(borrowedFd), f.artifact.bytes);
+  if (failure) assert.ok(failure instanceof OfficeLocalWriterError, "failure must retain the actual writer observation");
+  const observation = failure?.observation ?? result.observation;
+  const target = observation.members.find(member => member.memberId === "target");
+  assert.deepEqual(target.final, { state: "unobserved", errorCode: "EINTR" });
+  const unknownReads = observation.resources.filter(resource => resource.memberId === "target" && resource.state === "unknown");
+  t.diagnostic(JSON.stringify({ injected, readOpens: readOpens.length, writeOpens,
+    resourceCount: observation.resources.length, unknownTargetReads: unknownReads.length,
+    outcome: observation.outcome, writerError: failure instanceof OfficeLocalWriterError,
+    finalTarget: target.final, closeAttempts: closes, fstatsAfterUnknown: statsAfterUnknown }));
+  assert.equal(unknownReads.length, 1, "the original final read FD must be in the resource roster even when close throws");
+  assert.equal(unknownReads[0].origin, "member_read");
+  assert.equal(unknownReads[0].purpose, "final");
+  assert.ok(unknownReads[0].resourceLifetimeId && unknownReads[0].readId);
+  assert.ok(unknownReads[0].openCalledAt <= unknownReads[0].openReturnedAt);
+  assert.ok(unknownReads[0].openReturnedAt <= unknownReads[0].closeEnteredAt);
+  assert.equal(unknownReads[0].closeReturnedAt, undefined);
+  assert.equal("openEffectId" in unknownReads[0], false, "member read must not forge a Core open effect");
+  assert.equal("closeEffectId" in unknownReads[0], false, "member read must not forge a Core close effect");
+  assert.equal("fd" in unknownReads[0], false);
+  assert.equal(observation.resources.length, readOpens.length + writeOpens, "every successful member read open needs its own resource lifetime");
+  assert.equal(observation.resources.filter(resource => resource.state !== "closed").length, 1);
+  assert.equal(observation.outcome, "failed", "a missing final read/close fact must not masquerade as fully published");
+  assert.ok(failure instanceof OfficeLocalWriterError);
+  assert.equal(observation.publicationEntered, true, "already entered publication is not no-start");
+  assert.equal(existsSync(f.prepared.targetPath), true, "failed final observation does not undo the actual prior publication");
+  for (const operation of [state.parent, state.producer]) {
+    assert.throws(() => f.tracker.settleNoStart(operation), { code: "attempt_host_operation_launched_no_start" });
+    assert.throws(() => f.tracker.settleFromStore(operation));
+  }
+  assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
+});
+
+test("Office read-only first fstat failure retains the original read lifetime before one finally close", async t => {
+  const f = await fixture(t), state = officeLocalWriteState(f.plan), nativeFstat = fs.fstatSync;
+  const observeFinal = state.ledger.observeFinal.bind(state.ledger);
+  let finalPhase = false, finalOwner, finalFd, retainedBeforeFailure, injected = false, stats = 0, closes = 0, reads = 0;
+  state.ledger.observeFinal = (owner, ...args) => {
+    finalPhase = true; finalOwner = owner;
+    try { return observeFinal(owner, ...args); } finally { finalPhase = false; }
+  };
+  t.after(() => { state.ledger.observeFinal = observeFinal; });
+  patchFs(t, "openSync", original => (...args) => {
+    const fd = original(...args);
+    if (finalPhase && args[0] === f.prepared.targetPath) finalFd = fd;
+    return fd;
+  });
+  patchFs(t, "fstatSync", original => (...args) => {
+    if (args[0] === finalFd) {
+      stats++;
+      if (!injected) {
+        assert.ok(finalOwner instanceof OfficeLocalResourceOwner, "real writer must pass the same live owner to final reads");
+        retainedBeforeFailure = finalOwner.snapshots().find(resource => resource.origin === "member_read"
+          && resource.memberId === "target" && resource.purpose === "final" && resource.state === "retained");
+        assert.ok(retainedBeforeFailure, "retain the actual open return before its first fstat");
+        assert.equal(retainedBeforeFailure.identity, undefined);
+        assert.equal(retainedBeforeFailure.closeEnteredAt, undefined);
+        injected = true;
+        throw Object.assign(new Error("first final read fstat failed"), { code: "EIO" });
+      }
+    }
+    return original(...args);
+  });
+  patchFs(t, "readSync", original => (...args) => {
+    if (args[0] === finalFd) reads++;
+    return original(...args);
+  });
+  patchFs(t, "closeSync", original => fd => {
+    if (fd === finalFd) closes++;
+    return original(fd);
+  });
+  let failure;
+  assert.throws(() => {
+    try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; throw error; }
+  }, OfficeLocalWriterError);
+  assert.equal(injected, true, "fault must be the first fstat after the real final target read open");
+  assert.equal(stats, 1); assert.equal(reads, 0); assert.equal(closes, 1, "the original finally must close once without retrying fstat");
+  assert.throws(() => nativeFstat(finalFd), { code: "EBADF" });
+  const observation = failure.observation;
+  const target = observation.members.find(member => member.memberId === "target");
+  assert.deepEqual(target.final, { state: "unobserved", errorCode: "EIO" });
+  const readResource = observation.resources.find(resource => resource.resourceLifetimeId === retainedBeforeFailure.resourceLifetimeId);
+  assert.ok(readResource, "the failed read lifetime must survive into the complete writer resource roster");
+  assert.equal(readResource.origin, "member_read"); assert.equal(readResource.purpose, "final");
+  assert.equal(readResource.state, "closed"); assert.equal(readResource.readId, retainedBeforeFailure.readId);
+  assert.equal(readResource.identity, undefined); assert.equal(readResource.identityObservedAt, undefined);
+  assert.ok(readResource.openCalledAt <= readResource.openReturnedAt);
+  assert.ok(readResource.openReturnedAt <= readResource.closeEnteredAt);
+  assert.ok(readResource.closeEnteredAt <= readResource.closeReturnedAt);
+  assert.equal("fd" in readResource, false);
+  assert.equal("openEffectId" in readResource, false); assert.equal("closeEffectId" in readResource, false);
+  const effectResource = observation.resources.find(resource => resource.origin === "effect");
+  assert.ok(effectResource && effectResource.state === "closed");
+  assert.notEqual(readResource.resourceLifetimeId, effectResource.resourceLifetimeId);
+  assert.equal(observation.outcome, "failed"); assert.equal(observation.publicationEntered, true);
+  for (const operation of [state.parent, state.producer]) {
+    assert.throws(() => f.tracker.settleNoStart(operation), { code: "attempt_host_operation_launched_no_start" });
+    assert.throws(() => f.tracker.settleFromStore(operation));
+  }
+  assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
+});
 
 test("Office effect seal timestamp cannot precede its completed observation", async t => {
   const f = await fixture(t), OriginalDate = globalThis.Date;
@@ -306,43 +507,46 @@ test("Office externally replaced temporary file is never adopted then deleted by
 test("Office member observation does not use unbounded path readFileSync", async t => {
   const f = await fixture(t);
   const member = { memberId: "temporary", role: "temporary", path: f.temporary, initial: { state: "absent" } };
-  const ledger = new OfficeLocalMemberLedger(f.cwd, [member]);
+  const ledger = new OfficeLocalMemberLedger(f.cwd, [member], f.prepared.workspaceIdentity), owner = new OfficeLocalResourceOwner("member-test", f.source);
   writeFileSync(f.temporary, "bounded");
   patchFs(t, "readFileSync", original => (...args) => {
     if (args[0] === f.temporary) throw new Error("unbounded_path_read_forbidden");
     return original(...args);
   });
   const identity = officeFileIdentity(fs.lstatSync(f.temporary, { bigint: true }));
-  assert.doesNotThrow(() => ledger.refresh("temporary", { state: "file", identity }));
+  assert.doesNotThrow(() => ledger.refresh("temporary", owner, { state: "file", identity }));
   assert.equal(ledger.expected("temporary").sizeBytes, 7);
 });
 
 test("Office final residue observation cannot grant cleanup authority for an external member", async t => {
   const f = await fixture(t), ledger = officeLocalWriteState(f.plan).ledger;
+  const owner = new OfficeLocalResourceOwner("member-test", f.source);
   writeFileSync(f.temporary, "external-owned-file");
-  const final = ledger.observeFinal().find(row => row.memberId === "temporary");
+  const final = ledger.observeFinal(owner).find(row => row.memberId === "temporary");
   assert.equal(final.final.state, "file");
   assert.deepEqual(ledger.expected("temporary"), { state: "absent" });
-  assert.throws(() => ledger.refresh("temporary"), /snapshot_changed/);
+  assert.throws(() => ledger.refresh("temporary", owner), /snapshot_changed/);
   assert.deepEqual(ledger.expected("temporary"), { state: "absent" });
 });
 
 test("Office refresh binds the existing owned inode even when a replacement has identical bytes", async t => {
   const f = await fixture(t), ledger = officeLocalWriteState(f.plan).ledger;
+  const owner = new OfficeLocalResourceOwner("member-test", f.source);
   writeFileSync(f.temporary, "same bytes");
   const identity = officeFileIdentity(fs.lstatSync(f.temporary, { bigint: true }));
-  ledger.refresh("temporary", { state: "file", identity });
+  ledger.refresh("temporary", owner, { state: "file", identity });
   const expected = ledger.expected("temporary");
   renameSync(f.temporary, join(f.cwd, "original-owned.tmp"));
   writeFileSync(f.temporary, "same bytes");
-  assert.throws(() => ledger.refresh("temporary"), /snapshot_changed/);
+  assert.throws(() => ledger.refresh("temporary", owner), /snapshot_changed/);
   assert.deepEqual(ledger.expected("temporary"), expected);
-  assert.equal(ledger.observeFinal().find(row => row.memberId === "temporary").final.state, "file");
+  assert.equal(ledger.observeFinal(owner).find(row => row.memberId === "temporary").final.state, "file");
   assert.deepEqual(ledger.expected("temporary"), expected);
 });
 
 test("Office member reads bind one FD, handle short reads and cannot extend allocation when the file grows", async t => {
   const f = await fixture(t), ledger = officeLocalWriteState(f.plan).ledger;
+  const owner = new OfficeLocalResourceOwner("member-test", f.source);
   writeFileSync(f.temporary, "bounded");
   const identity = officeFileIdentity(fs.lstatSync(f.temporary, { bigint: true }));
   let reads = 0, grow = false;
@@ -355,12 +559,12 @@ test("Office member reads bind one FD, handle short reads and cannot extend allo
     if (grow) { grow = false; fs.appendFileSync(f.temporary, "extra bytes"); }
     return count;
   });
-  ledger.refresh("temporary", { state: "file", identity });
+  ledger.refresh("temporary", owner, { state: "file", identity });
   assert.equal(reads, 4);
   assert.equal(ledger.expected("temporary").bytesSha256, officeBytesDigest(Buffer.from("bounded")));
   const expected = ledger.expected("temporary");
   grow = true;
-  assert.throws(() => ledger.refresh("temporary"), /snapshot_changed/);
+  assert.throws(() => ledger.refresh("temporary", owner), /snapshot_changed/);
   assert.deepEqual(ledger.expected("temporary"), expected);
 });
 
@@ -407,6 +611,10 @@ test("Office open retains its original descriptor before a first fstat failure",
   assert.equal(rejected, true);
   assert.throws(() => fs.fstatSync(writerFd), { code: "EBADF" });
   assert.equal(existsSync(f.prepared.targetPath), false);
+  const { payload } = effectPayloads(f).find(row => row.effect.kind === "open");
+  assert.equal(payload.native.state, "returned", "fstat failure cannot rewrite the real native open return");
+  assert.equal(payload.host.state, "unconfirmed");
+  assert.equal("openResource" in payload, false, "cleanup's later fstat cannot backfill the first open seal");
 });
 
 test("Office unknown close is not replayed against an FD number reused by the same inode", async t => {
@@ -456,11 +664,96 @@ test("Office post-mkdir path identity cannot authorize deletion of an externally
 
 test("Office oversized final residue is not read or adopted", async t => {
   const f = await fixture(t), ledger = officeLocalWriteState(f.plan).ledger;
+  const owner = new OfficeLocalResourceOwner("member-test", f.source);
   writeFileSync(f.temporary, "small"); fs.truncateSync(f.temporary, 50 * 1024 * 1024 + 1);
   let reads = 0;
   patchFs(t, "readSync", original => (...args) => { reads++; return original(...args); });
-  const final = ledger.observeFinal().find(row => row.memberId === "temporary");
+  const final = ledger.observeFinal(owner).find(row => row.memberId === "temporary");
   assert.deepEqual(final.final, { state: "unobserved", errorCode: "office_document_too_large" });
   assert.equal(reads, 0);
   assert.deepEqual(ledger.expected("temporary"), { state: "absent" });
 });
+
+for (const rollbackAfter of ["open return", "second fstat"]) {
+  test(`Office read-only clock rollback after ${rollbackAfter} retains and closes the actual final read once`, async t => {
+    const f = await fixture(t), state = officeLocalWriteState(f.plan), OriginalDate = globalThis.Date;
+    const nativeFstat = fs.fstatSync, nativeClose = fs.closeSync;
+    const observeFinal = state.ledger.observeFinal.bind(state.ledger);
+    const members = new Map(f.prepared.members.map(member => [member.path, member.memberId]));
+    let tick, finalPhase = false, finalOwner, targetFd, rolledBack = false, stats = 0, closes = 0;
+    let targetReadOpen = false, retainedBeforeInspection;
+    const readOpens = [], effectOpens = [];
+    state.ledger.observeFinal = (owner, ...args) => {
+      finalPhase = true; finalOwner = owner; tick = OriginalDate.now();
+      globalThis.Date = class extends OriginalDate {
+        constructor(...values) { super(...(values.length ? values : [tick])); }
+        static now() { return tick; }
+      };
+      try { return observeFinal(owner, ...args); }
+      finally { finalPhase = false; globalThis.Date = OriginalDate; }
+    };
+    t.after(() => { state.ledger.observeFinal = observeFinal; globalThis.Date = OriginalDate; });
+    patchFs(t, "openSync", original => (...args) => {
+      const fd = original(...args), memberId = members.get(args[0]);
+      if (memberId && typeof args[1] === "number") {
+        if ((args[1] & fs.constants.O_WRONLY) !== 0) effectOpens.push(fd);
+        else readOpens.push(fd);
+      }
+      if (finalPhase && args[0] === f.prepared.targetPath) {
+        targetFd = fd; targetReadOpen = true;
+        if (rollbackAfter === "open return") { tick--; rolledBack = true; }
+      }
+      return fd;
+    });
+    patchFs(t, "fstatSync", original => (...args) => {
+      const targetRead = finalPhase && targetReadOpen && args[0] === targetFd;
+      if (targetRead) {
+        stats++;
+        if (stats === 1) retainedBeforeInspection = finalOwner.snapshots().find(resource => resource.origin === "member_read"
+          && resource.memberId === "target" && resource.purpose === "final" && resource.state === "retained");
+      }
+      const result = original(...args);
+      if (targetRead && stats === 2 && rollbackAfter === "second fstat") { tick--; rolledBack = true; }
+      return result;
+    });
+    patchFs(t, "closeSync", original => fd => {
+      if (finalPhase && targetReadOpen && fd === targetFd) {
+        closes++; const result = original(fd); targetReadOpen = false; return result;
+      }
+      return original(fd);
+    });
+    t.after(() => {
+      if (targetReadOpen && targetFd !== undefined) {
+        try { nativeClose(targetFd); } catch (error) { if (error.code !== "EBADF") throw error; }
+      }
+    });
+    let result, failure;
+    try { result = executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; }
+    assert.equal(rolledBack, true, "the fault must reach a real final target open/read, not fixture preparation or a Host write");
+    assert.ok(finalOwner instanceof OfficeLocalResourceOwner);
+    assert.equal(existsSync(f.prepared.targetPath), true, "publication must already have entered before this final-read clock fault");
+    if (failure) assert.ok(failure instanceof OfficeLocalWriterError);
+    const observation = failure?.observation ?? result.observation;
+    const targetReads = observation.resources.filter(resource => resource.origin === "member_read" && resource.memberId === "target"
+      && resource.purpose === "final");
+    t.diagnostic(JSON.stringify({ rollbackAfter, rolledBack, stats, closes, finalTargetReads: targetReads.length,
+      resourceCount: observation.resources.length, nativeOpens: readOpens.length + effectOpens.length,
+      targetState: observation.members.find(member => member.memberId === "target").final.state,
+      outcome: observation.outcome, writerError: failure instanceof OfficeLocalWriterError }));
+    assert.equal(targetReads.length, 1, "every actual returned final read FD must remain in the original owner's roster after clock rollback");
+    assert.ok(retainedBeforeInspection, "the actual final read must be retained before its first fstat despite wall-clock rollback");
+    const read = targetReads[0];
+    assert.equal(read.resourceLifetimeId, retainedBeforeInspection.resourceLifetimeId);
+    assert.equal(read.readId, retainedBeforeInspection.readId);
+    assert.equal(observation.resources.length, readOpens.length + effectOpens.length, "the complete roster must include every actual owned open");
+    assert.equal(stats, 2); assert.equal(closes, 1, "wall-clock validation must not skip the original finally close");
+    assert.equal(read.state, "closed"); assert.throws(() => nativeFstat(targetFd), { code: "EBADF" });
+    assert.ok(read.openCalledAt <= read.openReturnedAt && read.openReturnedAt <= read.identityObservedAt);
+    assert.ok(read.identityObservedAt <= read.closeEnteredAt && read.closeEnteredAt <= read.closeReturnedAt);
+    assert.equal("fd" in read, false); assert.equal("openEffectId" in read, false); assert.equal("closeEffectId" in read, false);
+    const target = observation.members.find(member => member.memberId === "target");
+    assert.equal(target.final.state, "file");
+    assert.deepEqual(target.readRef, { readId: read.readId, resourceLifetimeId: read.resourceLifetimeId, completedAt: read.closeReturnedAt });
+    assert.equal(observation.outcome, "published"); assert.equal(failure, undefined);
+  });
+}

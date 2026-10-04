@@ -2,7 +2,24 @@
 
 此提交是用户要求的**代码防丢保存点**，不是可发布版本，不代表整个目标通过。
 
-## 最新增量保存（2026-10-04；close-return / Host COMMIT 回归）
+## 本次 checkpoint 增量（2026-10-04；原始身份、资源与 terminal migration149）
+
+提交推送前的远端保存点为 `c46084ef6f6884f6b37746c2ca705e35db4a0ec3`；用户授权将本节增量追加保存到现有 Draft PR #507。仅正常快进，不合并 main、不改版本、不重写历史，保留所有已有保存点。
+
+- 所有 refresh/final read FD 在首次 fstat 前进入原 execution owner；read 有独立 lifetime/readId 与 close 返回事实，不伪造 Host effect，也不进入 effect cleanup。未知 close 不重试、不 fstat，最终观察失败不得返回 `published`。
+- Prepared seal 必填捕获的 `workspaceIdentity`，ledger 不采纳后来替换的 root。原 write open 的首次 FD identity/time 通过 `openResource` 进入不可变 effect observation；首次 fstat 失败只保留实际 native 返回，后续 cleanup 不回填原 seal。
+- 三个真实墙钟回拨反例已经修复：读 open 后、读 finally close 前，以及原 write FD 首次身份采样。只让 Host 观察时间不倒退，不改 primitive native 返回时间，不放宽 Core 的严格校验。
+- 新合同定向 **48/48**、完整 Office facts **159/159**、完整 Core **1473/1473**，实际 exit 0，1171 个 Core 输入指纹前后一致；这些是 migration149 接线之前的输入，不冒称新 migration 的完整 Core 门禁。
+- Daemon 全套 **2828/2828**、实际 exit 0，输入指纹已核对；它在最后一项 write-open clock 修复之前完成，不能冒称证明最终增量。最终该反例 **1/1**、Office/Tracker 完整相关矩阵 **92/92**，实际 exit 0，20 个消费输入指纹一致。最终整体 Daemon 门禁仍留到下一联合候选收口，不重复旧测试冒充进展。
+- 独立审查所发现的 clock 缺口均已真实 RED→GREEN；最后 changed-lines 复核无新增确认 finding。这不是 whole-file safe verifier 或整个 E6 验收。
+- migration149 已完成源码、统一 Core 构建及新测试 **51/51**，实际 exit 0、fail/cancel/skip/todo 均为 0，12 项 source/support/dist 输入指纹前后一致。独立 append-only terminal 表及封口后 effect INSERT/UPDATE 屏障覆盖 replacement、跨 execution 冲突、recursive_triggers off/on、rollback 和原 147/148 保留；不重建旧表、不合成 terminal 或授予 safe。这是隔离 schema/真实 fresh-store 注册测试，不是 live Office terminal 验收。
+- 本次保存前 Core、Daemon TypeScript `--noEmit` 检查均实际 exit 0。只读增量审查未确认误删、无关 WIP 或凭据混入；只审查 checkpoint 保存风险，不冒称全仓正式 pre-landing review。
+
+**直接下一项：** typed complete terminal manifest、原 ticket/pair 持久封口 API、纯 Core whole-file replay verifier、role-specific evidence/settlement、原 parent/producer 同事务 safe/fan-in、固定 route。migration149 不重复实现或重跑；最终联合 full suite 仍须绑定后续最终源码。
+
+公开 U gate 继续关闭。created directory 的 creator-bound receipt、live executor/restart、answer continuation/ACK/recovery 及 fresh packaged macOS Computer Use 联验仍须完成；不靠 writer 最终 hash/成功文字洗成 safe，不改真实数据库，不改根 checkout。这次只追加本次授权的新增保存点，不上传密钥、真实数据库、安装包、截图或忽略的 output。完整本地证据索引：`output/e6-20260928/U-OFFICE-IMMUTABLE-IDENTITY-READ-CLOSE-GREEN-20261004.md`、`output/e6-20260928/U-OFFICE-TERMINAL-MIGRATION-149-20261004.md`。
+
+## 前次增量保存（2026-10-04；close-return / Host COMMIT 回归）
 
 用户要求继续向现有 Draft PR #507 推送一次防丢保存。上一保存点 `586707fa4cb6482e463a9a12f27cdcd8925c105b` 保留；只追加测试及本记录，不改生产源码、不合并 main、不改版本、不重写历史。
 

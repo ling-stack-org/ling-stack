@@ -31,6 +31,8 @@ export interface HostOfficeLocalPrepared {
   readonly toolName: HostOfficeLocalTool;
   readonly format: HostOfficeLocalFormat;
   readonly workspacePath: string;
+  /** Captured source root identity. Historical verification must never substitute today's disk identity. */
+  readonly workspaceIdentity: HostOfficeFileIdentity;
   readonly targetPath: string;
   readonly overwrite: boolean;
   readonly requestDigest: string;
@@ -86,6 +88,13 @@ export type HostOfficeLocalNativeObservation =
 export type HostOfficeLocalHostObservation = { readonly state: "returned" }
   | { readonly state: "unconfirmed"; readonly errorCode: string };
 
+/** First fstat of the original returned open FD, separate from the native primitive result. */
+export interface HostOfficeLocalOpenResourceObservation {
+  readonly resourceLifetimeId: string;
+  readonly identity: HostOfficeFileIdentity;
+  readonly observedAt: string;
+}
+
 /** Native facts and Host transaction outcome are separate; neither is a safe receipt. */
 export interface HostOfficeLocalEffectObservation {
   readonly schemaVersion: 1;
@@ -98,5 +107,7 @@ export interface HostOfficeLocalEffectObservation {
   readonly effectDigest: string;
   readonly native: HostOfficeLocalNativeObservation;
   readonly host: HostOfficeLocalHostObservation;
+  /** Optional fact only for native open returned; absence cannot prove a safe resource lifetime. */
+  readonly openResource?: HostOfficeLocalOpenResourceObservation;
   readonly completedAt: string;
 }

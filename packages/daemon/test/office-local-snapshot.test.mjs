@@ -26,6 +26,8 @@ test("Office fixed reader captures owned source bytes once and returns independe
   assert.throws(() => copyOfficeLocalSnapshotBytes({ ...snapshot }), /office_local_snapshot_invalid/);
   assert.throws(() => revalidateOfficeLocalSnapshot({ ...snapshot }), /office_local_snapshot_invalid/);
   assert.equal(Object.isFrozen(snapshot), true); assert.equal(Object.isFrozen(snapshot.input.identity), true);
+  assert.equal(Object.isFrozen(snapshot.workspaceIdentity), true);
+  assert.throws(() => { snapshot.workspaceIdentity.inode = "foreign"; }, TypeError);
 });
 
 test("Office preparation of a nonexistent nested path creates no directory or file", async t => {

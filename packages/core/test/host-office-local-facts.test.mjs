@@ -1,16 +1,19 @@
 import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
-import { readFileSync, writeFileSync, unlinkSync, existsSync, openSync, writeSync, closeSync } from "node:fs";
+import { readFileSync, writeFileSync, unlinkSync, existsSync, openSync, writeSync, closeSync, lstatSync, fstatSync } from "node:fs";
 import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence, HOST_OFFICE_LOCAL_PROTOCOL } from "../dist/index.js";
 import { SqliteHostOperationJournalStore } from "../dist/storage/sqlite/host-operation-journal-store.js";
+import { digestHarnessToolValue } from "../dist/harness/tool-executions.js";
 
 const now = () => new Date().toISOString();
 const code = expected => error => error.code === expected;
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
+const fileIdentity = stats => ({ device: String(stats.dev), inode: String(stats.ino), sizeBytes: Number(stats.size),
+  modifiedNs: String(stats.mtimeNs), changedNs: String(stats.ctimeNs) });
 
 /** Real isolated SQLite and binary filesystem calls; not packaged Office/GUI evidence. */
 async function fixture(t, override = {}) {
@@ -36,7 +39,8 @@ async function fixture(t, override = {}) {
   const bytes = Buffer.from([0x50, 0x4b, 3, 4, 0, 0, 0xff, 0x80]), targetPath = join(cwd, "result.docx"), tempPath = join(cwd, ".result.office.tmp");
   const prepared = { schemaVersion: 1, protocol: HOST_OFFICE_LOCAL_PROTOCOL, executionId: "office-execution", source,
     parentOperationId: "parent", producerOperationId: "writer", toolCallId, toolName: "office_create_document", format: "docx",
-    workspacePath: cwd, targetPath, overwrite: false, requestDigest: "a".repeat(64), policyDigest: "b".repeat(64),
+    workspacePath: cwd, workspaceIdentity: fileIdentity(lstatSync(cwd, { bigint: true })), targetPath,
+    overwrite: false, requestDigest: "a".repeat(64), policyDigest: "b".repeat(64),
     input: { state: "absent" }, output: { bytesSha256: hash(bytes), sizeBytes: bytes.length }, members: [
       { memberId: "target", role: "target", path: targetPath, initial: { state: "absent" } },
       { memberId: "temp", role: "temporary", path: tempPath, initial: { state: "absent" } },
@@ -85,6 +89,59 @@ test("Office 148 immutable preparation preserves full original lineage and never
   assert.throws(() => f.store.database.prepare("UPDATE host_office_local_executions SET tool_name='office_edit_document'").run(), /identity_immutable/);
   assert.throws(() => f.store.database.prepare("DELETE FROM host_office_local_executions").run(), /append_only/);
   assert.deepEqual(f.store.database.prepare("PRAGMA foreign_key_check").all(), []);
+});
+
+test("Office immutable identity contract rejects missing captured workspace identity before any execution fact", async t => {
+  const f = await fixture(t, { workspaceIdentity: undefined });
+  assert.throws(f.prepare, code("host_office_local_evidence_invalid"));
+  assert.equal(f.other.database.prepare("SELECT count(*) AS n FROM host_office_local_executions").get().n, 0);
+  assert.equal(f.other.getHostOperation("parent").phase, "admitted");
+  assert.equal(f.other.getHostOperation("writer").phase, "admitted");
+});
+
+for (const [label, identity] of [
+  ["null", () => null], ["array", () => []], ["string", () => "root"],
+  ...["device", "inode", "sizeBytes", "modifiedNs", "changedNs"].map(key => [
+    `missing ${key}`, original => { const result = { ...original }; delete result[key]; return result; },
+  ]),
+  ["numeric inode", original => ({ ...original, inode: 7 })],
+  ["negative device", original => ({ ...original, device: "-1" })],
+  ["oversized timestamp", original => ({ ...original, changedNs: "1".repeat(41) })],
+  ["fractional size", original => ({ ...original, sizeBytes: 0.5 })],
+  ["unsafe size", original => ({ ...original, sizeBytes: Number.MAX_SAFE_INTEGER + 1 })],
+  ["string size", original => ({ ...original, sizeBytes: "1" })],
+  ["negative size", original => ({ ...original, sizeBytes: -1 })],
+  ["extra safe authority", original => ({ ...original, safe: true })],
+  ["extra path", original => ({ ...original, path: "/today/root" })],
+]) {
+  test(`Office immutable identity contract rejects workspace identity ${label}`, async t => {
+    const f = await fixture(t), artifact = f.seal({ ...f.prepared, workspaceIdentity: identity(f.prepared.workspaceIdentity) });
+    assert.throws(() => f.store.prepareHostOfficeLocalExecution(f.parent, f.producer, {
+      executionId: f.prepared.executionId, preparedArtifactId: artifact.id, preparedDigest: artifact.contentSha256,
+    }), code("host_office_local_evidence_invalid"));
+    assert.equal(f.other.database.prepare("SELECT count(*) AS n FROM host_office_local_executions").get().n, 0);
+  });
+}
+
+test("Office immutable identity contract preserves captured root and includes it in both sealed and execution digests", async t => {
+  const f = await fixture(t), captured = { ...f.prepared.workspaceIdentity }, ticket = f.prepare();
+  // Today's directory metadata changes must not rewrite an immutable historical root.
+  writeFileSync(join(f.cwd, "later-file"), "later");
+  const row = f.other.getHostOfficeLocalExecution(ticket.executionId);
+  assert.deepEqual(row.workspaceIdentity, captured);
+  const altered = { ...f.prepared, workspaceIdentity: { ...captured, inode: String(BigInt(captured.inode) + 1n) } };
+  assert.notEqual(hash(Buffer.from(JSON.stringify(altered))), f.artifact.contentSha256);
+  assert.equal(row.identityDigest, digestHarnessToolValue({ prepared: f.prepared,
+    preparedArtifactId: f.artifact.id, preparedDigest: f.artifact.contentSha256 }));
+  assert.notEqual(row.identityDigest, digestHarnessToolValue({ prepared: altered,
+    preparedArtifactId: f.artifact.id, preparedDigest: f.artifact.contentSha256 }));
+  const sealed = JSON.parse(f.other.database.prepare("SELECT sealed_payload_json FROM artifacts WHERE id=?").get(f.artifact.id).sealed_payload_json);
+  assert.deepEqual(sealed.workspaceIdentity, captured);
+  const changedArtifact = f.seal(altered);
+  assert.throws(() => f.store.prepareHostOfficeLocalExecution(f.parent, f.producer, {
+    executionId: altered.executionId, preparedArtifactId: changedArtifact.id, preparedDigest: f.artifact.contentSha256,
+  }), code("host_office_local_evidence_invalid"));
+  assert.equal(f.other.getHostOfficeLocalExecution(ticket.executionId).identityDigest, row.identityDigest);
 });
 
 for (const change of [
@@ -316,6 +373,120 @@ test("Office native contract RED rejects legacy single-axis observation rather t
 const instant = (at, offset = 0) => new Date(Date.parse(at) + offset).toISOString();
 const returned = (effect, at, result = {}) => ({ state: "returned", calledAt: at, returnedAt: at,
   result: { kind: effect.kind, resourceLifetimeId: effect.resourceLifetimeId, ...result } });
+
+for (const hostState of ["returned", "unconfirmed"]) {
+  test(`Office immutable identity contract preserves original open FD identity with Host ${hostState}`, async t => {
+    const f = await fixture(t), ticket = f.prepare(), effect = f.effect(ticket);
+    let descriptor, calledAt, returnedAt, identity, observedAt;
+    try {
+      f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => {
+        calledAt = now(); descriptor = openSync(f.tempPath, "wx"); returnedAt = now();
+        identity = fileIdentity(fstatSync(descriptor, { bigint: true })); observedAt = now();
+      });
+      const openResource = { resourceLifetimeId: effect.resourceLifetimeId, identity, observedAt };
+      const observation = f.observe(ticket, effect, hostState === "unconfirmed" ? "host_unconfirmed" : "returned", {
+        native: { state: "returned", calledAt, returnedAt, result: { kind: "open", resourceLifetimeId: effect.resourceLifetimeId } },
+        openResource,
+      });
+      const row = observation.record();
+      assert.equal(row.observationArtifactId, observation.receipt.id);
+      const payload = JSON.parse(f.other.database.prepare("SELECT sealed_payload_json FROM artifacts WHERE id=?").get(observation.receipt.id).sealed_payload_json);
+      assert.deepEqual(payload.openResource, openResource);
+      assert.deepEqual(payload.native.result, { kind: "open", resourceLifetimeId: effect.resourceLifetimeId });
+      assert.equal(payload.host.state, hostState);
+      assert.equal(f.other.listHostOperationBlockers(f.source).length, 2);
+      assert.throws(() => f.store.settleHostOperation(f.producer, { kind: "file_completed" }));
+      assert.deepEqual(f.other.listHostOfficeLocalEffects(ticket.executionId), [row]);
+    } finally { if (descriptor !== undefined) closeSync(descriptor); }
+  });
+}
+
+test("Office immutable identity contract retains native open returned when original fstat fails without inventing identity", async t => {
+  const f = await fixture(t), ticket = f.prepare(), effect = f.effect(ticket);
+  let descriptor, calledAt, returnedAt, errorCode, fstats = 0;
+  f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => {
+    calledAt = now(); descriptor = openSync(f.tempPath, "wx"); returnedAt = now();
+  });
+  closeSync(descriptor);
+  assert.throws(() => { fstats++; try { fstatSync(descriptor, { bigint: true }); } catch (error) { errorCode = error.code; throw error; } }, code("EBADF"));
+  const observation = f.observe(ticket, effect, "host_unconfirmed", {
+    native: { state: "returned", calledAt, returnedAt, result: { kind: "open", resourceLifetimeId: effect.resourceLifetimeId } },
+    host: { state: "unconfirmed", errorCode },
+  });
+  observation.record();
+  const payload = JSON.parse(f.other.database.prepare("SELECT sealed_payload_json FROM artifacts WHERE id=?").get(observation.receipt.id).sealed_payload_json);
+  assert.equal(payload.native.state, "returned"); assert.equal(payload.host.errorCode, "EBADF");
+  assert.equal(Object.hasOwn(payload, "openResource"), false); assert.equal(fstats, 1);
+  assert.equal(f.other.listHostOperationBlockers(f.source).length, 2);
+});
+
+const openFact = (f, effect, at) => ({ resourceLifetimeId: effect.resourceLifetimeId,
+  identity: f.prepared.workspaceIdentity, observedAt: at });
+for (const boundary of ["native return", "completed observation"]) {
+  test(`Office immutable identity contract accepts openResource observed exactly at ${boundary}`, async t => {
+    const f = await fixture(t), ticket = f.prepare(), effect = f.effect(ticket);
+    f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => {});
+    const at = f.other.listHostOfficeLocalEffects(ticket.executionId)[0].enteredAt, completedAt = now();
+    const observation = f.observe(ticket, effect, "returned", { native: returned(effect, at), completedAt,
+      openResource: openFact(f, effect, boundary === "native return" ? at : completedAt) });
+    assert.equal(observation.record().observationArtifactId, observation.receipt.id);
+    assert.equal(f.other.listHostOperationBlockers(f.source).length, 2);
+  });
+}
+for (const [label, change] of [
+  ["null", () => null], ["array", () => []],
+  ["missing lifetime", (f, e, at) => ({ identity: f.prepared.workspaceIdentity, observedAt: at })],
+  ["foreign lifetime", (f, e, at) => ({ ...openFact(f, e, at), resourceLifetimeId: "foreign" })],
+  ["numeric lifetime", (f, e, at) => ({ ...openFact(f, e, at), resourceLifetimeId: 7 })],
+  ["missing identity", (f, e, at) => ({ resourceLifetimeId: e.resourceLifetimeId, observedAt: at })],
+  ["array identity", (f, e, at) => ({ ...openFact(f, e, at), identity: [] })],
+  ["missing inode", (f, e, at) => { const identity = { ...f.prepared.workspaceIdentity }; delete identity.inode; return { ...openFact(f, e, at), identity }; }],
+  ["numeric identity device", (f, e, at) => ({ ...openFact(f, e, at), identity: { ...f.prepared.workspaceIdentity, device: 7 } })],
+  ["negative identity size", (f, e, at) => ({ ...openFact(f, e, at), identity: { ...f.prepared.workspaceIdentity, sizeBytes: -1 } })],
+  ["extra identity safe", (f, e, at) => ({ ...openFact(f, e, at), identity: { ...f.prepared.workspaceIdentity, safe: true } })],
+  ["extra identity fd", (f, e, at) => ({ ...openFact(f, e, at), identity: { ...f.prepared.workspaceIdentity, fd: 7 } })],
+  ["missing observed time", (f, e) => ({ resourceLifetimeId: e.resourceLifetimeId, identity: f.prepared.workspaceIdentity })],
+  ["noncanonical observed time", (f, e, at) => ({ ...openFact(f, e, at), observedAt: "2026-10-04" })],
+  ["before native return", (f, e, at) => ({ ...openFact(f, e, at), observedAt: instant(at, -1) })],
+  ["after completed observation", (f, e, at) => ({ ...openFact(f, e, at), observedAt: instant(at, 1) })],
+  ["extra raw FD", (f, e, at) => ({ ...openFact(f, e, at), fd: 7 })],
+  ["extra safe authority", (f, e, at) => ({ ...openFact(f, e, at), safe: true })],
+]) {
+  test(`Office immutable identity contract rejects openResource ${label} without changing immutable facts`, async t => {
+    const f = await fixture(t), ticket = f.prepare(), effect = f.effect(ticket);
+    f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => {});
+    const before = f.other.listHostOfficeLocalEffects(ticket.executionId), at = before[0].enteredAt;
+    assert.throws(f.observe(ticket, effect, "returned", { native: returned(effect, at), completedAt: at,
+      openResource: change(f, effect, at) }).record,
+    code(label === "noncanonical observed time" ? "host_operation_invalid_timestamp" : "host_office_local_evidence_invalid"));
+    assert.deepEqual(f.other.listHostOfficeLocalEffects(ticket.executionId), before);
+  });
+}
+
+for (const kind of ["write", "fsync", "close", "unlink"]) {
+  test(`Office immutable identity contract refuses openResource on ${kind} effect`, async t => {
+    const f = await fixture(t), ticket = f.prepare(), effect = f.effect(ticket, { kind,
+      ...(kind === "write" ? { offset: 0, sizeBytes: 1 } : {}) });
+    f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => {});
+    const before = f.other.listHostOfficeLocalEffects(ticket.executionId), at = before[0].enteredAt;
+    assert.throws(f.observe(ticket, effect, "returned", { openResource: openFact(f, effect, at) }).record,
+      code("host_office_local_evidence_invalid"));
+    assert.deepEqual(f.other.listHostOfficeLocalEffects(ticket.executionId), before);
+  });
+}
+
+for (const state of ["threw", "not_entered"]) {
+  test(`Office immutable identity contract refuses openResource with native ${state}`, async t => {
+    const f = await fixture(t), ticket = f.prepare(), effect = f.effect(ticket);
+    assert.throws(() => f.store.launchHostOfficeLocalEffect(ticket, effect.effectId, () => { throw new Error("open failed"); }), /open failed/);
+    const before = f.other.listHostOfficeLocalEffects(ticket.executionId), at = before[0].enteredAt;
+    assert.throws(f.observe(ticket, effect, state === "threw" ? "failed" : "not_entered", {
+      host: { state: "unconfirmed", errorCode: "open.failed" }, openResource: openFact(f, effect, at),
+    }).record, code("host_office_local_evidence_invalid"));
+    assert.deepEqual(f.other.listHostOfficeLocalEffects(ticket.executionId), before);
+  });
+}
+
 for (const [label, change] of [
   ["missing native axis", () => ({ native: undefined })],
   ["missing host axis", () => ({ host: undefined })],

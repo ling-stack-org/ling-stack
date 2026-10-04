@@ -79,10 +79,11 @@ export function prepareOfficeLocalWrite(reservation: OfficeLocalReservation, sna
     ...snapshot.directories.map((directory, index) => ({ memberId: `directory-${index}`, role: "directory" as const,
       path: directory.path, initial: directory.identity ? { state: "directory" as const, identity: directory.identity } : { state: "absent" as const } })),
   ];
-  const ledger = new OfficeLocalMemberLedger(state.workspacePath, members);
+  const ledger = new OfficeLocalMemberLedger(state.workspacePath, members, snapshot.workspaceIdentity);
   const execution: HostOfficeLocalPrepared = { schemaVersion: 1, protocol: HOST_OFFICE_LOCAL_PROTOCOL, executionId,
     source: state.tracker.source, parentOperationId: state.parent.operationId, producerOperationId: state.producer.operationId,
     toolCallId: state.toolCallId, toolName: artifact.toolName, format: artifact.format, workspacePath: state.workspacePath,
+    workspaceIdentity: snapshot.workspaceIdentity,
     targetPath: snapshot.targetPath, overwrite: artifact.overwrite, requestDigest, policyDigest, input: snapshot.input,
     output: { bytesSha256: officeBytesDigest(bytes), sizeBytes: bytes.length }, members, preparedAt: new Date().toISOString() };
   const seal = state.store.createArtifact({ runId: state.tracker.source.runId, type: "json", path: `office/${executionId}/prepared.json`,

@@ -16,6 +16,7 @@ import { applyHostOperationJournalMigration } from "./host-operation-journal-mig
 import { applyHostMediaOperationMigration } from "./host-media-operation-migration.js";
 import { applyHostMediaReceiptMigration } from "./host-media-receipt-migration.js";
 import { applyHostOfficeLocalMigration } from "./host-office-local-migration.js";
+import { applyHostOfficeLocalTerminalMigration } from "./host-office-local-terminal-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -5944,6 +5945,12 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     recordMigration: context.recordMigration.bind(context),
   });
   applyHostOfficeLocalMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyHostOfficeLocalTerminalMigration({
     database,
     hasMigration: context.hasMigration.bind(context),
     hasTable: context.hasTable.bind(context),

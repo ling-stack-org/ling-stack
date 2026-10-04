@@ -2,12 +2,13 @@ import { createHash } from "node:crypto";
 import { isAbsolute, relative, resolve, sep } from "node:path";
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 import { digestHarnessToolValue } from "../../harness/tool-executions.js";
-import { HOST_OFFICE_LOCAL_PROTOCOL, type HostOfficeFileIdentity, type HostOfficeLocalPrepared,
+import { HOST_OFFICE_LOCAL_PROTOCOL, type HostOfficeLocalPrepared,
   type HostOfficeLocalExecutionRecord, type HostOfficeLocalEffectRecord, type HostOfficeLocalEffectObservation,
   type PrepareHostOfficeLocalEffect } from "../../host-office-local-types.js";
 import { assertHostOperationLineage, hostOperationFailure, hostOperationTimestamp, sameHostOperationSource,
   readHostOperation } from "./host-operation-journal-evidence.js";
 import { validateOfficeLocalObservationPayload } from "./host-office-local-observations.js";
+import { isHostOfficeFileIdentity } from "./host-office-local-identity.js";
 
 export const officeLocalFailure = (): never => hostOperationFailure("host_office_local_evidence_invalid");
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === "object" && !Array.isArray(value);
@@ -19,15 +20,11 @@ function canonical(value: unknown): value is string { return text(value) && isAb
 function inside(root: string, path: string): boolean {
   const rel = relative(root, path); return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
 }
-function identity(value: unknown): value is HostOfficeFileIdentity {
-  return object(value) && [value.device, value.inode, value.modifiedNs, value.changedNs]
-    .every(v => typeof v === "string" && /^\d{1,40}$/.test(v)) && size(value.sizeBytes);
-}
 function snapshot(value: unknown, directory: boolean): boolean {
   if (!object(value)) return false;
   if (value.state === "absent") return Object.keys(value).length === 1;
-  if (value.state === "directory") return directory && identity(value.identity);
-  return !directory && value.state === "file" && identity(value.identity) && digest(value.bytesSha256)
+  if (value.state === "directory") return directory && isHostOfficeFileIdentity(value.identity);
+  return !directory && value.state === "file" && isHostOfficeFileIdentity(value.identity) && digest(value.bytesSha256)
     && size(value.sizeBytes) && value.sizeBytes > 0 && value.sizeBytes <= 50 * 1024 * 1024
     && value.identity.sizeBytes === value.sizeBytes;
 }
@@ -51,7 +48,8 @@ export function validateOfficeLocalPrepared(value: unknown): HostOfficeLocalPrep
     || ![value.executionId, value.parentOperationId, value.producerOperationId, value.toolCallId].every(text)
     || value.parentOperationId === value.producerOperationId || !object(value.source)
     || ![value.source.runId,value.source.workUnitId,value.source.attemptId,value.source.runtimeInstanceId,value.source.fencingToken].every(text)
-    || !canonical(value.workspacePath) || !canonical(value.targetPath) || !inside(value.workspacePath, value.targetPath)
+    || !canonical(value.workspacePath) || !isHostOfficeFileIdentity(value.workspaceIdentity)
+    || !canonical(value.targetPath) || !inside(value.workspacePath, value.targetPath)
     || typeof value.overwrite !== "boolean" || !digest(value.requestDigest) || !digest(value.policyDigest)
     || !object(value.input) || !snapshot(value.input, false) || !object(value.output) || !digest(value.output.bytesSha256)
     || !size(value.output.sizeBytes) || value.output.sizeBytes === 0 || value.output.sizeBytes > 50 * 1024 * 1024
