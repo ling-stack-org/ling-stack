@@ -62,8 +62,8 @@
     "react-dom": "^19.2.8"
   },
   "devDependencies": {
-    "@electron/asar": "4.3.0",
-    "@electron/osx-sign": "2.7.0",
+    "@electron/asar": "4.3.1",
+    "@electron/osx-sign": "2.7.1",
     "@fontsource-variable/inter": "5.3.0",
     "@playwright/test": "^1.55.0",
     "@types/react": "^19.2.18",
