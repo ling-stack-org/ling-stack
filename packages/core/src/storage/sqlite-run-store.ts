@@ -618,6 +618,7 @@ import { SqliteHostCommandJournalStore } from "./sqlite/host-command-journal-sto
 import { SqliteHostOperationJournalStore } from "./sqlite/host-operation-journal-store.js";
 import { SqliteHostMediaOperationStore } from "./sqlite/host-media-operation-store.js";
 import { SqliteHostOfficeLocalStore } from "./sqlite/host-office-local-store.js";
+import { SqliteHostOfficeLocalDirectoryV2Store } from "./sqlite/host-office-local-directory-v2-store.js";
 import { SqliteRunInterventionStore } from "./sqlite/run-intervention-store.js";
 import { SqliteRunSessionStore } from "./sqlite/run-session-store.js";
 import { SqliteLingThreadMetadataCoordinator } from "./sqlite/ling-thread-metadata-coordinator.js";
@@ -722,6 +723,7 @@ export class SqliteRunStore implements RunStore {
   private readonly hostOperationJournal: SqliteHostOperationJournalStore;
   private readonly hostMediaOperations: SqliteHostMediaOperationStore;
   private readonly hostOfficeLocal: SqliteHostOfficeLocalStore;
+  private readonly hostOfficeLocalDirectoryV2: SqliteHostOfficeLocalDirectoryV2Store;
   private readonly runInterventions: SqliteRunInterventionStore;
   private readonly runSessions: SqliteRunSessionStore;
   private readonly lingThreadMetadata: SqliteLingThreadMetadataCoordinator;
@@ -1023,6 +1025,7 @@ export class SqliteRunStore implements RunStore {
     this.hostOperationJournal = new SqliteHostOperationJournalStore({ database: this.database });
     this.hostMediaOperations = new SqliteHostMediaOperationStore({ database: this.database }, this.hostOperationJournal);
     this.hostOfficeLocal = new SqliteHostOfficeLocalStore({ database: this.database }, this.hostOperationJournal);
+    this.hostOfficeLocalDirectoryV2 = new SqliteHostOfficeLocalDirectoryV2Store({ database: this.database }, this.hostOperationJournal);
     this.runInterventions = new SqliteRunInterventionStore(
       { database: this.database },
       {
@@ -1947,6 +1950,30 @@ export class SqliteRunStore implements RunStore {
   }
   settleHostOfficeLocalExecution(...args: Parameters<RunStore["settleHostOfficeLocalExecution"]>): ReturnType<RunStore["settleHostOfficeLocalExecution"]> {
     return this.hostOfficeLocal.settleHostOfficeLocalExecution(...args);
+  }
+  prepareHostOfficeLocalDirectoryExecutionV2(...args: Parameters<RunStore["prepareHostOfficeLocalDirectoryExecutionV2"]>): ReturnType<RunStore["prepareHostOfficeLocalDirectoryExecutionV2"]> {
+    return this.hostOfficeLocalDirectoryV2.prepare(...args);
+  }
+  prepareHostOfficeLocalDirectoryEffectV2(...args: Parameters<RunStore["prepareHostOfficeLocalDirectoryEffectV2"]>): ReturnType<RunStore["prepareHostOfficeLocalDirectoryEffectV2"]> {
+    return this.hostOfficeLocalDirectoryV2.prepareEffect(...args);
+  }
+  launchHostOfficeLocalDirectoryEffectV2<T>(ticket: Parameters<RunStore["launchHostOfficeLocalDirectoryEffectV2"]>[0], effectId: string, effect: () => T): T {
+    return this.hostOfficeLocalDirectoryV2.launchEffect(ticket, effectId, effect);
+  }
+  recordHostOfficeLocalDirectoryObservationV2(...args: Parameters<RunStore["recordHostOfficeLocalDirectoryObservationV2"]>): ReturnType<RunStore["recordHostOfficeLocalDirectoryObservationV2"]> {
+    return this.hostOfficeLocalDirectoryV2.recordObservation(...args);
+  }
+  getHostOfficeLocalDirectoryExecutionV2(...args: Parameters<RunStore["getHostOfficeLocalDirectoryExecutionV2"]>): ReturnType<RunStore["getHostOfficeLocalDirectoryExecutionV2"]> {
+    return this.hostOfficeLocalDirectoryV2.getExecution(...args);
+  }
+  listHostOfficeLocalDirectoryEffectsV2(...args: Parameters<RunStore["listHostOfficeLocalDirectoryEffectsV2"]>): ReturnType<RunStore["listHostOfficeLocalDirectoryEffectsV2"]> {
+    return this.hostOfficeLocalDirectoryV2.listEffects(...args);
+  }
+  sealHostOfficeLocalDirectoryTerminalV2(...args: Parameters<RunStore["sealHostOfficeLocalDirectoryTerminalV2"]>): ReturnType<RunStore["sealHostOfficeLocalDirectoryTerminalV2"]> {
+    return this.hostOfficeLocalDirectoryV2.sealTerminal(...args);
+  }
+  getHostOfficeLocalDirectoryTerminalV2(...args: Parameters<RunStore["getHostOfficeLocalDirectoryTerminalV2"]>): ReturnType<RunStore["getHostOfficeLocalDirectoryTerminalV2"]> {
+    return this.hostOfficeLocalDirectoryV2.getTerminal(...args);
   }
   bindHostMediaChildExecution(...args: Parameters<RunStore["bindHostMediaChildExecution"]>): ReturnType<RunStore["bindHostMediaChildExecution"]> {
     return this.hostMediaOperations.bindHostMediaChildExecution(...args);

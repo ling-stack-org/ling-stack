@@ -909,19 +909,35 @@ test("Office unknown close is not replayed against an FD number reused by the sa
 
 test("Office post-mkdir path identity cannot authorize deletion of an externally replaced directory", async t => {
   const f = await fixture(t, "nested/result.docx"), nested = join(f.cwd, "nested"), displaced = join(f.cwd, "owned-displaced");
+  const state = officeLocalWriteState(f.plan);
+  let replacements = 0, writes = 0;
   patchFs(t, "mkdirSync", original => (...args) => {
     const result = original(...args);
-    if (args[0] === nested) { renameSync(nested, displaced); original(nested); }
+    if (args[0] === nested) { renameSync(nested, displaced); original(nested); replacements++; }
     return result;
   });
-  patchFs(t, "writeSync", () => () => { throw Object.assign(new Error("injected_write_failure"), { code: "EIO" }); });
+  patchFs(t, "writeSync", () => () => { writes++; throw Object.assign(new Error("injected_write_failure"), { code: "EIO" }); });
   let failure;
   assert.throws(() => { try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; throw error; } }, OfficeLocalWriterError);
+  assert.equal(replacements, 1, "the fault must replace the real directory after native mkdir returns");
+  assert.equal(writes, 0, "unverified creator identity must stop the writer before any byte write");
   assert.equal(existsSync(nested), true, "an external directory cannot be removed on a post-mkdir path observation");
   assert.equal(existsSync(displaced), true);
   assert.equal(existsSync(f.prepared.targetPath), false);
-  assert.equal(failure.observation.members.find(row => row.role === "directory").final.state, "directory");
-  assert.equal(f.store.listHostOfficeLocalEffects(f.plan.executionId).some(row => row.kind === "rmdir"), false);
+  assert.deepEqual(fs.readdirSync(nested), []);
+  assert.deepEqual(fs.readdirSync(displaced), []);
+  const directory = failure.observation.members.find(row => row.role === "directory");
+  assert.deepEqual(directory.final, { state: "unobserved", errorCode: "office_local_snapshot_changed" });
+  assert.deepEqual(state.ledger.expected(directory.memberId), { state: "absent" }, "foreign residue is not adopted");
+  assert.equal(failure.observation.outcome, "failed");
+  assert.equal(failure.observation.publicationEntered, false);
+  assert.deepEqual(failure.observation.resources, []);
+  const effects = effectPayloads(f);
+  assert.deepEqual(effects.map(row => row.effect.kind), ["mkdir"], "no open, write, publish or cleanup effect is authorized");
+  assert.equal(effects[0].payload.native.state, "returned", "retain the real mkdir return despite unconfirmed ownership");
+  assert.equal(effects[0].payload.host.state, "unconfirmed");
+  assert.deepEqual(f.store.listHostOperationBlockers(f.source).map(row => row.operationId).sort(),
+    [state.parent.operationId, state.producer.operationId].sort());
 });
 
 test("Office oversized final residue is not read or adopted", async t => {

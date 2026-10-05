@@ -1561,6 +1561,20 @@ export interface RunStore {
   getHostOfficeLocalNoStartReceipt(executionId: string): import("./host-office-local-no-start-types.js").HostOfficeLocalNoStartReceipt | undefined;
   settleHostOfficeLocalExecution(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
     input?: import("./host-office-local-types.js").SettleHostOfficeLocalInput): import("./host-office-local-types.js").HostOfficeLocalSettlement;
+  /** Protocol-v2 facts use the same original live journal pair; no public-safe receipt is issued yet. */
+  prepareHostOfficeLocalDirectoryExecutionV2(parent: import("./host-operation-journal-types.js").HostOperationTicket,
+    producer: import("./host-operation-journal-types.js").HostOperationTicket,
+    input: import("./host-office-local-types.js").PrepareHostOfficeLocalInput): import("./host-office-local-types.js").HostOfficeLocalTicket;
+  prepareHostOfficeLocalDirectoryEffectV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    input: import("./host-office-local-directory-v2-types.js").PrepareHostOfficeLocalDirectoryEffectV2): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryEffectRecordV2;
+  launchHostOfficeLocalDirectoryEffectV2<T>(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket, effectId: string, effect: () => T): T;
+  recordHostOfficeLocalDirectoryObservationV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    effectId: string, artifactId: string): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryEffectRecordV2;
+  getHostOfficeLocalDirectoryExecutionV2(executionId: string): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryExecutionRecordV2 | undefined;
+  listHostOfficeLocalDirectoryEffectsV2(executionId: string): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryEffectRecordV2[];
+  sealHostOfficeLocalDirectoryTerminalV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
+    input: import("./host-office-local-terminal-types.js").SealHostOfficeLocalTerminalInput): import("./host-office-local-directory-v2-terminal-types.js").HostOfficeLocalDirectoryTerminalRecordV2;
+  getHostOfficeLocalDirectoryTerminalV2(executionId: string): import("./host-office-local-directory-v2-terminal-types.js").HostOfficeLocalDirectoryTerminalRecordV2 | undefined;
   prepareHostMediaExecution(parent: import("./host-operation-journal-types.js").HostOperationTicket,
     transport: import("./host-operation-journal-types.js").HostOperationTicket,
     input: import("./host-media-operation-types.js").PrepareHostMediaExecutionInput): import("./host-media-operation-types.js").HostMediaExecutionTicket;

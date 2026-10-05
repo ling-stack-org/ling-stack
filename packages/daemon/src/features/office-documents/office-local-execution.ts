@@ -2,9 +2,10 @@ import type { HostOfficeLocalSettlement, RunStore } from "@ling-stack/core";
 import type { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
 import { prepareOfficeArtifact, type OfficeArtifactResultDetails, type OfficeLocalArtifactToolName } from "./office-artifact-preparation.js";
 import { readRecord, readString } from "./office-artifact-content.js";
-import { assertOfficeLocalReservation, blockOfficeLocalReservation, captureOfficeLocalReservationSnapshot,
+import { assertOfficeLocalReservation, assertOfficeLocalReservationBinding, assertOfficeLocalWriteForwardAuthority,
+  blockOfficeLocalReservation, captureOfficeLocalReservationSnapshot,
   closeOfficeLocalReservation, officeLocalWriteState, prepareOfficeLocalWrite, reserveOfficeLocalWriter,
-  settleOfficeLocalReservationNoStart, type OfficeLocalWritePlan } from "./office-local-authority.js";
+  settleOfficeLocalReservationNoStart, type OfficeLocalReservation, type OfficeLocalWritePlan } from "./office-local-authority.js";
 import { copyOfficeLocalSnapshotBytes } from "./office-local-snapshot.js";
 import { executeOfficeLocalWrite } from "./office-local-writer.js";
 
@@ -47,19 +48,27 @@ const formats = {
  * generic effect callback, native retry, directory-proof shortcut or U gate.
  */
 export async function executeOfficeLocalArtifact(input: ExecuteOfficeLocalArtifactInput): Promise<OfficeLocalArtifactExecutionResult> {
+  const reservation = reserveOfficeLocalWriter(input.tracker, input.store, input.toolCallId, input.workspaceCwd);
+  return executeReservedOfficeLocalArtifact(reservation, input);
+}
+
+/** Reuse only the exact Host reservation acquired at the original MCP callback entry. */
+export async function executeReservedOfficeLocalArtifact(reservation: OfficeLocalReservation,
+  input: ExecuteOfficeLocalArtifactInput): Promise<OfficeLocalArtifactExecutionResult> {
   const { tracker, store, toolCallId, workspaceCwd, toolName, requestDigest, policyDigest, signal } = input;
-  const reservation = reserveOfficeLocalWriter(tracker, store, toolCallId, workspaceCwd);
   let stage: ExecutionStage = "capture", plan: OfficeLocalWritePlan | undefined;
   const assertForward = (): void => {
     signal?.throwIfAborted();
     if (!plan) assertOfficeLocalReservation(reservation);
     else {
+      assertOfficeLocalWriteForwardAuthority(plan);
       tracker.executorGroup.assertAdmissionOpen();
       if (!store.isCurrentRunExecutionOwner(tracker.source.runId, tracker.source)) throw new Error("office_local_source_obsolete");
       tracker.assertOfficeLocalPlanOpen(officeLocalWriteState(plan).ticket);
     }
   };
   try {
+    assertOfficeLocalReservationBinding(reservation, { tracker, store, toolCallId, workspaceCwd });
     assertForward();
     if (!Object.hasOwn(formats, toolName)) throw new Error("office_documents_tool_unavailable");
     const ownedInput = structuredClone(readRecord(input.input, "Office local input"));

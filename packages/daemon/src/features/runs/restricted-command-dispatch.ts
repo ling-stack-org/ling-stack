@@ -110,6 +110,8 @@ export function createRestrictedCommandDispatch(input: {
     input.store.readSnapshot(read);
   };
   check();
+  const protectedActorSource = runtime.captureProtectedActorSource({ store: input.store, run: source,
+    sourceFence: fence, command, toolCallId: request.toolCallId });
   return {
     prepare: async () => {
       // Reserve the native copy/helper producer synchronously before runtime
@@ -118,7 +120,7 @@ export function createRestrictedCommandDispatch(input: {
       try {
         const prepared = await runtime.prepare({ command, cwd: source.cwd, inputRefs: operation.binding!.inputRefs, policy,
           source: { ...fence, workspaceId: workspacePolicy.workspaceId, runId: source.id, toolCallId: request.toolCallId },
-          assertCurrentAuthority: check, signal: input.signal, hostOperation: preparation });
+          assertCurrentAuthority: check, signal: input.signal, hostOperation: preparation, protectedActorSource });
         return { ...prepared, finishHostPreparation: () => preparation?.finish() };
       } catch (error) {
         preparation?.finish();

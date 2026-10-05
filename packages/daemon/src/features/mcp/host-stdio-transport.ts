@@ -6,6 +6,15 @@ import type { Transport, TransportSendOptions } from "@modelcontextprotocol/sdk/
 import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
 import { assertHostMcpOperation, McpHostAdmissionError, type HostMcpOperation } from "./host-operation.js";
 import { MCP_STDIO_MAX_BUFFER_BYTES, type McpStdioLaunchInput } from "./stdio-launcher.js";
+import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
+
+/** The original physical connection producer, not a transported MCP/kernel certificate. */
+export const MCP_HOST_STDIO_ACTOR_ENTRY = defineProtectedHostActorEntry("mcp_host_stdio",
+  (launch: McpStdioLaunchInput): ChildProcessWithoutNullStreams => spawn(launch.command, [...launch.args], {
+    env: { ...getDefaultEnvironment(), ...launch.env },
+    cwd: launch.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false,
+    windowsHide: process.platform === "win32",
+  }));
 
 const EOF_GRACE_MS = 250;
 const TERMINATE_GRACE_MS = 500;
@@ -98,11 +107,7 @@ class OwnedStdioTransport implements HostMcpStdioTransport {
     try {
       this.#operation.launchConnectionEffect(() => {
         // Retain the original object/listeners before Core can throw at COMMIT.
-        this.#child = spawn(this.#launch.command, [...this.#launch.args], {
-          env: { ...getDefaultEnvironment(), ...this.#launch.env },
-          cwd: this.#launch.cwd, stdio: ["pipe", "pipe", "pipe"], shell: false,
-          windowsHide: process.platform === "win32",
-        });
+        this.#child = MCP_HOST_STDIO_ACTOR_ENTRY.invoke(undefined, this.#launch);
         this.#observe(this.#child);
       });
       if (this.#signal?.aborted) this.#onAbort();

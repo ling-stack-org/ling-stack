@@ -1972,6 +1972,7 @@ async function executeAdmittedRunRequest(
           }
         : undefined,
       onApprovalWaitStarted: beginApprovalHardTimeoutPause,
+      onApprovalWaitAbandoned: endApprovalHardTimeoutPause,
       onApprovalResolved: (approval) => {
         // The decision may already have a durable Run event (for example when
         // the HTTP approval route won the race). Always release the matching

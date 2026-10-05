@@ -8,6 +8,7 @@ import {
   type RuntimeSemaphoreSlot,
   type RunExecutionStoreFacet,
   type RunSession,
+  type RunStore,
   type RunStorePathsFacet,
   type RuntimeSupervisorStoreFacet,
   type WorkUnit,
@@ -15,6 +16,10 @@ import {
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../config.js";
 import { NativeRestrictedCommandRuntime } from "./sandbox/restricted-command-runtime.js";
+import { ProtectedHostStageRegistry } from "./sandbox/protected-host-staging.js";
+import type { ProtectedHostActorEntry } from "./sandbox/protected-host-actor-inventory.js";
+import type { OfficeLocalReviewedNativeArtifact } from "./sandbox/protected-host-office-native-identity.js";
+import { OfficeLocalNativeRuntime } from "../features/office-documents/office-local-native-runtime.js";
 import { HttpError } from "../errors.js";
 import { isRecord } from "../shared/validation.js";
 import {
@@ -30,8 +35,75 @@ import {
 } from "./locked-task-continuation.js";
 
 const RUNTIME_SCHEMA_VERSION = 23;
+const originalOfficeRuntimeBindings = new WeakMap<RuntimeSupervisor, {
+  readonly registry: ProtectedHostStageRegistry; readonly stores: WeakMap<RunStore, RuntimeInstance>;
+  readonly nativeRuntimes: WeakMap<RunStore, OfficeLocalNativeRuntime>;
+  readonly issuerId: string; readonly artifact?: OfficeLocalReviewedNativeArtifact; active: boolean;
+}>();
+export interface RuntimeSupervisorHostBootstrap {
+  /** Exact original producer-module exports. Missing entries close Office; never a verified flag. */
+  readonly actorEntries?: readonly ProtectedHostActorEntry[];
+  /** Build-time Host selection only, not workspace/HTTP/model configuration or a runtime compiler. */
+  readonly officeLocalNativeArtifact?: OfficeLocalReviewedNativeArtifact;
+}
 
 export type RuntimeSupervisorRuntimeStore = RunStorePathsFacet & RuntimeSupervisorStoreFacet & RunExecutionStoreFacet;
+
+/** Read only a binding issued by the original Supervisor for this exact store and shared registry. */
+export function readRuntimeSupervisorOfficeBinding(supervisor: RuntimeSupervisor, store: RunStore,
+  registry: ProtectedHostStageRegistry): RuntimeInstance {
+  const original = originalOfficeRuntimeBindings.get(supervisor), runtime = original?.stores.get(store);
+  if (!runtime || !original?.active || original.registry !== registry || runtime.schemaVersion !== RUNTIME_SCHEMA_VERSION
+    || runtime.pid !== process.pid || runtime.status !== "healthy") throw new Error("office_local_native_runtime_binding_invalid");
+  return runtime;
+}
+export function readRuntimeSupervisorOfficeIssuerId(supervisor: RuntimeSupervisor, store: RunStore,
+  registry: ProtectedHostStageRegistry): string {
+  readRuntimeSupervisorOfficeBinding(supervisor, store, registry);
+  return originalOfficeRuntimeBindings.get(supervisor)!.issuerId;
+}
+export function readRuntimeSupervisorOfficeArtifact(supervisor: RuntimeSupervisor, store: RunStore,
+  registry: ProtectedHostStageRegistry): OfficeLocalReviewedNativeArtifact {
+  readRuntimeSupervisorOfficeBinding(supervisor, store, registry);
+  const artifact = originalOfficeRuntimeBindings.get(supervisor)!.artifact;
+  if (!artifact) throw new Error("office_local_native_artifact_unconfigured");
+  return artifact;
+}
+/** Object ownership only: remains readable for cleanup after release, never reopens forward admission. */
+export function isRuntimeSupervisorOfficeCacheEntry(supervisor: RuntimeSupervisor, store: RunStore,
+  registry: ProtectedHostStageRegistry, runtime: OfficeLocalNativeRuntime): boolean {
+  const original = originalOfficeRuntimeBindings.get(supervisor);
+  return original?.registry === registry && original.nativeRuntimes.get(store) === runtime;
+}
+
+function captureHostBootstrap(input?: RuntimeSupervisorHostBootstrap): RuntimeSupervisorHostBootstrap | undefined {
+  if (!input) return undefined;
+  const descriptors = Object.getOwnPropertyDescriptors(input);
+  for (const key of Reflect.ownKeys(descriptors)) {
+    if (typeof key !== "string" || !["actorEntries", "officeLocalNativeArtifact"].includes(key)
+      || !Object.hasOwn(descriptors[key]!, "value")) throw new Error("office_local_native_host_bootstrap_invalid");
+  }
+  const actorEntries = descriptors.actorEntries?.value as readonly ProtectedHostActorEntry[] | undefined;
+  if (actorEntries && !Array.isArray(actorEntries)) throw new Error("office_local_native_host_bootstrap_invalid");
+  const artifact = descriptors.officeLocalNativeArtifact?.value as OfficeLocalReviewedNativeArtifact | undefined;
+  let originalArtifact: OfficeLocalReviewedNativeArtifact | undefined;
+  if (artifact) {
+    const fields = Object.getOwnPropertyDescriptors(artifact);
+    if (Reflect.ownKeys(fields).length !== 3 || !["binaryPath", "reviewedBinarySha256", "reviewedSourceSha256"].every(key =>
+      fields[key] && Object.hasOwn(fields[key]!, "value"))) throw new Error("office_local_native_host_bootstrap_invalid");
+    const sourceFields = Object.getOwnPropertyDescriptors(fields.reviewedSourceSha256!.value);
+    const sources: Record<string, string> = Object.create(null);
+    for (const key of Reflect.ownKeys(sourceFields)) {
+      if (typeof key !== "string" || !Object.hasOwn(sourceFields[key]!, "value") || typeof sourceFields[key]!.value !== "string")
+        throw new Error("office_local_native_host_bootstrap_invalid");
+      sources[key] = sourceFields[key]!.value as string;
+    }
+    originalArtifact = Object.freeze({ binaryPath: fields.binaryPath!.value as string,
+      reviewedBinarySha256: fields.reviewedBinarySha256!.value as string, reviewedSourceSha256: Object.freeze(sources) });
+  }
+  return Object.freeze({ ...(actorEntries ? { actorEntries: Object.freeze([...actorEntries]) } : {}),
+    ...(originalArtifact ? { officeLocalNativeArtifact: originalArtifact } : {}) });
+}
 
 export type RuntimeSupervisorWorkUnitTransitionObserver = (input: {
   readonly store: RuntimeSupervisorRuntimeStore;
@@ -44,7 +116,10 @@ export type RuntimeSupervisorWorkUnitTransitionObserver = (input: {
 }) => void;
 
 export class RuntimeSupervisor {
+  private readonly hostBootstrap?: RuntimeSupervisorHostBootstrap;
   private restrictedCommandRuntime: NativeRestrictedCommandRuntime | undefined;
+  private readonly protectedHostStages = new ProtectedHostStageRegistry();
+  private readonly officeNativeRuntimes = new Map<RunStore, OfficeLocalNativeRuntime>();
   private readonly runtimesByCwd = new Map<string, RuntimeInstance>();
   private readonly lockedCwds = new Set<string>();
   private readonly runtimeLockPathsByCwd = new Map<string, string>();
@@ -56,7 +131,13 @@ export class RuntimeSupervisor {
   constructor(
     private readonly config: ResolvedDaemonConfig,
     private readonly onWorkUnitTransition?: RuntimeSupervisorWorkUnitTransitionObserver,
-  ) {}
+    hostBootstrap?: RuntimeSupervisorHostBootstrap,
+  ) {
+    this.hostBootstrap = captureHostBootstrap(hostBootstrap);
+    originalOfficeRuntimeBindings.set(this, { registry: this.protectedHostStages, stores: new WeakMap(), nativeRuntimes: new WeakMap(),
+      issuerId: `protected_host_supervisor_${randomUUID()}`, artifact: this.hostBootstrap?.officeLocalNativeArtifact, active: true });
+    if (this.hostBootstrap?.actorEntries) this.protectedHostStages.bindOriginalActorEntries(this.hostBootstrap.actorEntries);
+  }
 
   getRuntimeToolFeatures(): ResolvedDaemonConfig["runtimeTools"] {
     return this.config.runtimeTools;
@@ -76,8 +157,27 @@ export class RuntimeSupervisor {
 
   getRestrictedCommandRuntime(): NativeRestrictedCommandRuntime | undefined {
     const config = this.config.sandbox.restrictedCommands;
-    if (config) this.restrictedCommandRuntime ??= new NativeRestrictedCommandRuntime(config);
+    if (config) this.restrictedCommandRuntime ??= new NativeRestrictedCommandRuntime(config, this.protectedHostStages);
     return this.restrictedCommandRuntime;
+  }
+
+  /** Shared original issuer for the future fixed Office adapter; never construct a second protection registry. */
+  getProtectedHostStageRegistry(): ProtectedHostStageRegistry { return this.protectedHostStages; }
+
+  getOfficeLocalNativeRuntime(cwd: string, store: RunStore): OfficeLocalNativeRuntime | undefined {
+    const artifact = this.hostBootstrap?.officeLocalNativeArtifact;
+    if (!artifact) return undefined;
+    if (!originalOfficeRuntimeBindings.get(this)!.active) throw new Error("office_local_native_runtime_closed");
+    if (cwd !== store.paths.cwd) throw new Error("office_local_native_runtime_workspace_invalid");
+    const runtime = this.getRuntime(cwd, store);
+    originalOfficeRuntimeBindings.get(this)!.stores.set(store, runtime);
+    let nativeRuntime = this.officeNativeRuntimes.get(store);
+    if (!nativeRuntime) {
+      nativeRuntime = new OfficeLocalNativeRuntime(this, this.protectedHostStages, store);
+      this.officeNativeRuntimes.set(store, nativeRuntime);
+      originalOfficeRuntimeBindings.get(this)!.nativeRuntimes.set(store, nativeRuntime);
+    }
+    return nativeRuntime;
   }
 
   getLockedTaskContinuationSnapshot(): LockedTaskContinuationSnapshot {
@@ -170,6 +270,11 @@ export class RuntimeSupervisor {
   }
 
   releaseAll(): void {
+    originalOfficeRuntimeBindings.get(this)!.active = false;
+    const nativeCloseErrors: unknown[] = [];
+    for (const runtime of this.officeNativeRuntimes.values()) {
+      try { runtime.releaseIdentity(); } catch (error) { nativeCloseErrors.push(error); }
+    }
     this.clearLockedTaskContinuationLease();
     this.lockedTaskContinuationOwnerId = undefined;
     this.lockedTaskContinuation.update({ continueWhileLocked: true, locked: false });
@@ -188,6 +293,7 @@ export class RuntimeSupervisor {
     this.lockedCwds.clear();
     this.runtimeLockPathsByCwd.clear();
     this.reconciledCwds.clear();
+    if (nativeCloseErrors.length) throw new AggregateError(nativeCloseErrors, "office_local_native_identity_close_unknown");
   }
 
   private clearLockedTaskContinuationLease(): void {

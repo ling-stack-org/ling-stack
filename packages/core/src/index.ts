@@ -17,6 +17,14 @@ export * from "./host-media-receipt-types.js";
 export * from "./host-office-local-types.js";
 export * from "./host-office-local-terminal-types.js";
 export * from "./host-office-local-no-start-types.js";
+export * from "./host-office-local-native-v2-types.js";
+export * from "./host-office-local-directory-v2-types.js";
+export * from "./host-office-local-directory-v2-terminal-types.js";
+export * from "./host-office-local-directory-v2-replay-types.js";
+export { verifyOfficeLocalDirectoryReplayV2 } from "./storage/sqlite/host-office-local-directory-v2-replay.js";
+export { validateOfficeNativeIdentityV2, validateOfficeNativeResultFactsV2,
+  validateOfficeNativeResultFactsV2 as validateOfficeLocalDirectoryNativeResultV2 } from "./storage/sqlite/host-office-local-native-v2-schema.js";
+export { validateOfficeLocalDirectoryPreparedV2 } from "./storage/sqlite/host-office-local-directory-v2-prepared.js";
 export * from "./media-workflow-types.js";
 export * from "./media-generation-routing-types.js";
 export * from "./media-generation-routing.js";

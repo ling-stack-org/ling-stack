@@ -1,7 +1,7 @@
 import { createReadStream, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import type {
   WorkspaceFileOpenOption,
@@ -24,6 +24,16 @@ import {
 } from "./workspace-file-open-targets.js";
 import { loadWorkspaceFileOpenIcon } from "./workspace-file-open-icons.js";
 import type { WorkspaceFileCapabilityRegistry } from "./workspace-file-capabilities.js";
+import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
+
+/** Original file-open UI launch; external/raw, not an attempt or isolated actor. */
+export const WORKSPACE_FILE_LAUNCH_ACTOR_ENTRY = defineProtectedHostActorEntry("workspace_file_launch",
+  (command: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
+    spawn(command, [...args], { detached: true, env, stdio: "ignore", windowsHide: true }));
+
+/** Availability probes remain uncertified; PATH/config resolution cannot issue a protected-stage proof. */
+export const WORKSPACE_FILE_PROBE_ACTOR_ENTRY = defineProtectedHostActorEntry("workspace_file_probe",
+  (command: string, args: readonly string[], options: SpawnSyncOptionsWithStringEncoding) => spawnSync(command, [...args], options));
 
 export function handleGetWorkspaceFileOpenOptions(response: ServerResponse, url: URL): void {
   const request = workspaceFileQuery(url);
@@ -209,7 +219,8 @@ function commandAvailable(command: string): boolean {
 }
 
 function macApplicationAvailable(application: string): boolean {
-  return process.platform === "darwin" && spawnSync("/usr/bin/open", ["-Ra", application], { stdio: "ignore" }).status === 0;
+  return process.platform === "darwin" && WORKSPACE_FILE_PROBE_ACTOR_ENTRY.invoke(undefined,
+    "/usr/bin/open", ["-Ra", application], { stdio: "ignore", encoding: "utf8" }).status === 0;
 }
 
 export async function launchWorkspaceFile(target: WorkspaceFileOpenTarget, path: string, line: number | undefined): Promise<void> {
@@ -255,7 +266,7 @@ function editorArgs(target: WorkspaceFileOpenTarget, path: string, line: number 
 
 function resolveCommandPath(command: string): string | undefined {
   const probe = process.platform === "win32" ? "where" : "which";
-  const result = spawnSync(probe, [command], { encoding: "utf8", windowsHide: true });
+  const result = WORKSPACE_FILE_PROBE_ACTOR_ENTRY.invoke(undefined, probe, [command], { encoding: "utf8", windowsHide: true });
   if (result.status !== 0) {
     return undefined;
   }
@@ -279,7 +290,7 @@ function spawnDetached(command: string, args: readonly string[]): Promise<void> 
 
 function spawnDetachedProcess(command: string, args: readonly string[], env = process.env): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, [...args], { detached: true, env, stdio: "ignore", windowsHide: true });
+    const child = WORKSPACE_FILE_LAUNCH_ACTOR_ENTRY.invoke(undefined, command, args, env);
     child.once("error", reject);
     child.once("spawn", () => {
       child.unref();

@@ -274,6 +274,13 @@ export interface ResolveApprovalRequestInput {
   readonly resolvedBy?: "local-user" | "system-reviewer";
   readonly decisionKind?: Extract<ApprovalDecisionKind, "approve_once" | "approve_command_rule">;
   readonly proposedRuleFingerprint?: string;
+  /** Captured pre-execution cleanup authority; rechecked inside the denied/cancelled UPDATE. */
+  readonly executionCleanup?: {
+    readonly runId: string;
+    readonly approvalCreatedAt: string;
+    readonly toolCallId: string;
+    readonly sourceFence: RuntimeAttemptFenceV1;
+  };
 }
 
 /**

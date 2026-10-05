@@ -5,10 +5,43 @@ import { dirname, isAbsolute, resolve } from "node:path";
 import { release } from "node:os";
 import type { ExecutionSandboxBackendIdentity, ExecutionSandboxPolicyV1, UnifiedExecCommand } from "@ling-stack/core";
 import { buildMacosSeatbeltProfile, MACOS_DYLD_PROFILE, MACOS_SANDBOX_EXECUTABLE, MACOS_SYSTEM_READ_ROOTS } from "./macos-seatbelt-profile.js";
+import { defineProtectedHostActorEntry } from "./protected-host-actor-inventory.js";
+import { assertProtectedHostActorPreparedBinding, type ProtectedHostActorPreparation } from "./protected-host-staging.js";
 
 const hash = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
 const backendVersion = "ling-seatbelt-v1";
 const ownedProcessGroups = new WeakMap<ChildProcessWithoutNullStreams, number>();
+const ownedPreparedChildren = new WeakMap<ChildProcessWithoutNullStreams, PreparedMacosSandboxCommand>();
+const ownedPreparedCommands = new WeakMap<PreparedMacosSandboxCommand, {
+  readonly authority: PreparedMacosSandboxAuthority;
+  readonly spawn: PreparedMacosSandboxCommand["spawn"];
+}>();
+interface MacosNativeLaunch {
+  readonly prepared: PreparedMacosSandboxCommand;
+  readonly actor?: ProtectedHostActorPreparation;
+  readonly command: typeof MACOS_SANDBOX_EXECUTABLE;
+  readonly args: readonly string[];
+  readonly options: {
+    readonly cwd: string;
+    readonly env: Readonly<NodeJS.ProcessEnv>;
+    readonly detached: true;
+    readonly stdio: "pipe";
+  };
+}
+const ownedNativeLaunches = new WeakSet<MacosNativeLaunch>();
+
+/** Only an original prepared one-shot record reaches the actual fixed native producer. */
+export const MACOS_NATIVE_COMMAND_ACTOR_ENTRY = defineProtectedHostActorEntry("macos_native_command",
+  (launch: MacosNativeLaunch): ChildProcessWithoutNullStreams => {
+    requireNative(ownedNativeLaunches.delete(launch), "macos_native_launch_record_invalid");
+    if (launch.actor) assertProtectedHostActorPreparedBinding(launch.actor, launch.prepared);
+    const child = spawn(launch.command, [...launch.args], launch.options);
+    ownedPreparedChildren.set(child, launch.prepared);
+    if (child.pid) ownedProcessGroups.set(child, child.pid);
+    child.once("exit", () => ownedProcessGroups.delete(child));
+    child.stdin.end();
+    return child;
+  });
 const sameBackend = (first: ExecutionSandboxBackendIdentity, second: ExecutionSandboxBackendIdentity): boolean =>
   first.kind === second.kind && first.helperVersion === second.helperVersion
   && first.protocolVersion === second.protocolVersion && first.executableSha256 === second.executableSha256;
@@ -95,7 +128,22 @@ export interface PreparedMacosSandboxCommand {
   /** Observed process group only. This API does not claim escaped-descendant quiescence. */
   readonly lifecycleScope: "process_group";
   readonly descendantStopProof: "not_available";
-  spawn(assertCurrentAuthority: () => void): ChildProcessWithoutNullStreams;
+  spawn(assertCurrentAuthority: () => void, actor?: ProtectedHostActorPreparation): ChildProcessWithoutNullStreams;
+}
+
+/** Original launcher facts for the Host registry, not a serialized policy/digest admission surface. */
+export interface PreparedMacosSandboxAuthority {
+  readonly policy: ExecutionSandboxPolicyV1;
+  readonly backend: ExecutionSandboxBackendIdentity;
+  readonly profile: string;
+}
+export function readPreparedMacosSandboxAuthority(prepared: PreparedMacosSandboxCommand): PreparedMacosSandboxAuthority {
+  const owned = ownedPreparedCommands.get(prepared), method = Object.getOwnPropertyDescriptor(prepared, "spawn");
+  requireNative(owned && method && Object.hasOwn(method, "value") && method.value === owned.spawn, "macos_prepared_capability_invalid");
+  return owned.authority;
+}
+export function isOwnedMacosSandboxChild(child: ChildProcessWithoutNullStreams, prepared: PreparedMacosSandboxCommand): boolean {
+  return ownedPreparedChildren.get(child) === prepared;
 }
 
 /**
@@ -130,9 +178,10 @@ export function prepareMacosSandboxCommand(input: {
     TMPDIR: filesystem.temporaryRoot + "/", PWD: policy.cwd, LING_STACK_SANDBOX: "native-macos-v1",
     ...(input.runtimeProfile ? { ELECTRON_RUN_AS_NODE: "1" } : {}) });
   let consumed = false;
-  return Object.freeze({ policyHash, profileHash: hash(profile), executable: MACOS_SANDBOX_EXECUTABLE,
+  const prepared: PreparedMacosSandboxCommand = Object.freeze({ policyHash, profileHash: hash(profile), executable: MACOS_SANDBOX_EXECUTABLE,
     environmentKeys: Object.freeze(Object.keys(env).sort()), lifecycleScope: "process_group", descendantStopProof: "not_available",
-    spawn(assertCurrentAuthority: () => void): ChildProcessWithoutNullStreams {
+    spawn(assertCurrentAuthority: () => void, actor?: ProtectedHostActorPreparation): ChildProcessWithoutNullStreams {
+      requireNative(this === prepared, "macos_prepared_capability_invalid");
       requireNative(!consumed && typeof assertCurrentAuthority === "function", "macos_launch_already_consumed");
       consumed = true;
       requireNative(sameBackend(readMacosSandboxBackendIdentity(), backend), "macos_backend_identity_changed");
@@ -140,15 +189,21 @@ export function prepareMacosSandboxCommand(input: {
       // Must be a synchronous, current Host fence/approval check immediately before spawning.
       const returned: unknown = assertCurrentAuthority();
       requireNative(returned === undefined, "macos_authority_check_must_be_synchronous");
-      const child = spawn(MACOS_SANDBOX_EXECUTABLE, ["-p", profile, ...argv], {
-        cwd: policy.cwd, env, detached: true, stdio: "pipe",
-      });
-      if (child.pid) ownedProcessGroups.set(child, child.pid);
-      child.once("exit", () => ownedProcessGroups.delete(child));
-      child.stdin.end();
-      return child;
+      const launch: MacosNativeLaunch = Object.freeze({ prepared, actor, command: MACOS_SANDBOX_EXECUTABLE,
+        args: Object.freeze(["-p", profile, ...argv]),
+        options: Object.freeze({ cwd: policy.cwd, env, detached: true, stdio: "pipe" }) });
+      ownedNativeLaunches.add(launch);
+      return MACOS_NATIVE_COMMAND_ACTOR_ENTRY.invoke(actor, launch);
     },
   });
+  const capturedPolicy = structuredClone(policy);
+  const freeze = (value: object): void => {
+    for (const child of Object.values(value)) if (child && typeof child === "object") freeze(child);
+    Object.freeze(value);
+  };
+  freeze(capturedPolicy);
+  ownedPreparedCommands.set(prepared, { authority: Object.freeze({ policy: capturedPolicy, backend, profile }), spawn: prepared.spawn });
+  return prepared;
 }
 
 /** Signal only a still-owned live leader's group. Never guess a reaped/reused PID or claim all descendants stopped. */

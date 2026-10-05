@@ -3,7 +3,8 @@ import { constants, closeSync, fsyncSync, linkSync, lstatSync, mkdirSync, rename
 import { HOST_OFFICE_LOCAL_PROTOCOL, type HostOfficeLocalEffectRecord, type HostOfficeLocalNativeObservation,
   type HostOfficeLocalNativeResult, type PrepareHostOfficeLocalEffect } from "@ling-stack/core";
 import type { HostOfficeLocalEffectObservation } from "@ling-stack/core";
-import { officeLocalWriteState, type OfficeLocalWritePlan, type OfficeLocalWriteState } from "./office-local-authority.js";
+import { assertOfficeLocalWriteForwardAuthority, officeLocalWriteState,
+  type OfficeLocalWritePlan, type OfficeLocalWriteState } from "./office-local-authority.js";
 import { officeBytesDigest, officeErrorCode, type OfficeLocalMemberFinal, type OfficeLocalWorkspaceFinal } from "./office-local-members.js";
 import { officeFileIdentity } from "./office-local-identity.js";
 import { OfficeLocalResourceOwner, type OfficeLocalEffectResource, type OfficeLocalResourceFinal } from "./office-local-resources.js";
@@ -69,6 +70,7 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
   const runEffect = <T>(memberId: string, kind: PrepareHostOfficeLocalEffect["kind"], syscall: () => T,
     details: Partial<Pick<PrepareHostOfficeLocalEffect, "fromMemberId" | "resourceLifetimeId" | "offset" | "sizeBytes">> = {},
     mode: "forward" | "cleanup" = "forward", hooks: EffectHooks<T> = {}): T => {
+    if (mode === "forward") assertOfficeLocalWriteForwardAuthority(plan);
     const descriptor = state.tracker.prepareOfficeLocalEffect(state.ticket, { effectId: randomUUID(), ordinal: effects.length,
       memberId, kind, mode, preparedAt: new Date().toISOString(), ...details });
     effects.push(descriptor.effectId);
@@ -76,6 +78,10 @@ export function executeOfficeLocalWrite(plan: OfficeLocalWritePlan): {
     let native: HostOfficeLocalNativeObservation = { state: "not_entered" };
     try {
       state.tracker.launchOfficeLocalEffect(state.ticket, descriptor.effectId, () => {
+        // Permission/identity/signal may change after descriptor preparation.
+        // This fixed private fence cannot grant execution, and new revocation
+        // never prevents closing the original retained resources in cleanup.
+        if (mode === "forward") assertOfficeLocalWriteForwardAuthority(plan);
         // Closing the exact still-owned descriptor does not traverse a path.
         // A displaced member must not prevent release of that original FD.
         if (kind !== "close") state.ledger.assertCurrent();

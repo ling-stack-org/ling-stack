@@ -6,6 +6,13 @@ import { isChannelOperationRelativePathV1 } from "@ling-stack/contracts";
 import { NativeInputCaptureDecoder, NativeInputCaptureError, requireNativeInput,
   type NativeInputOwner, type NativeCapturedInput } from "./native-input-capture-protocol.js";
 import type { HostFileMutationEffectGuard } from "../host-operation-effects.js";
+import { defineProtectedHostActorEntry } from "./protected-host-actor-inventory.js";
+
+/** Original helper spawn only; protocol/exit observations do not retire unknown descendants. */
+export const NATIVE_INPUT_CAPTURE_ACTOR_ENTRY = defineProtectedHostActorEntry("native_input_capture",
+  (helperPath: string): ChildProcessWithoutNullStreams => spawn(helperPath, ["--read-input"], {
+    env: {}, stdio: "pipe", windowsHide: true,
+  }));
 
 export interface NativeInputCaptureOptions {
   /** Host-selected distribution/build identity. Never load this from model input or the project. */
@@ -73,7 +80,7 @@ export async function captureNativeCommandInput(options: NativeInputCaptureOptio
     check();
     let child: ChildProcessWithoutNullStreams | undefined;
     let launchFailure: Error | undefined;
-    const spawnHelper = () => { child = spawn(options.helper.path, ["--read-input"], { env: {}, stdio: "pipe", windowsHide: true }); };
+    const spawnHelper = () => { child = NATIVE_INPUT_CAPTURE_ACTOR_ENTRY.invoke(undefined, options.helper.path); };
     try {
       if (options.effectGuard) options.effectGuard.launch(spawnHelper); else spawnHelper();
     } catch (error) {

@@ -17,7 +17,7 @@ import type { McpBroker, McpBrokerOptions } from "../../context.js";
 import { OfficeArtifactService } from "../office-documents/artifacts.js";
 import type { OfficeDriverController } from "../office-documents/driver-controller.js";
 import { createMcpAuthStatus, createMcpStatusSnapshot } from "../mcp/status.js";
-import { createHostMcpGenerationFacade } from "../mcp/broker.js";
+import { createHostOfficeLocalGenerationFacade } from "../mcp/broker.js";
 
 const FILE_TOOLS: readonly ReplaceMcpServerToolInput[] = [
   tool("office_inspect_document", "Inspect Office document", "Read bounded text and structural metadata from a local XLSX, DOCX, or PPTX file.", schema(["path"], { path: stringSchema(4096) }), "read"),
@@ -171,7 +171,7 @@ export function createOfficeDocumentsGenerationBroker(input: {
       return toToolResult(toolName, result);
     },
   };
-  return createHostMcpGenerationFacade({ baseBroker: input.baseBroker, route: { kind: "office" }, facade });
+  return createHostOfficeLocalGenerationFacade({ baseBroker: input.baseBroker, workspaceCwd: input.workspaceCwd, facade });
 }
 
 function liveToolsFor(controller: OfficeDriverController): readonly ReplaceMcpServerToolInput[] {

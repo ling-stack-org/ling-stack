@@ -6,6 +6,11 @@ import { writeJson } from "../../shared/response.js";
 import { inspectWorkspaceGitStatus } from "../channels/git-status.js";
 import { git } from "../workspaces/managed-worktrees.js";
 import { resolveWorkspaceFileTarget, WorkspaceFileTargetError } from "./workspace-file-preview.js";
+import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
+
+/** Original bounded diff producer. Git configuration and process exit do not certify a read-only protection profile. */
+export const WORKSPACE_CHANGES_GIT_ACTOR_ENTRY = defineProtectedHostActorEntry("workspace_changes_git",
+  (cwd: string, args: readonly string[]) => spawn("git", [...args], { cwd, stdio: ["ignore", "pipe", "pipe"] }));
 
 const maxChangedFiles = 160;
 const maxDiffBytesPerFile = 96 * 1024;
@@ -127,7 +132,7 @@ async function trackedDiffLayer(cwd: string, mode: readonly string[], paths: rea
 
 function boundedGitDiff(cwd: string, args: readonly string[]): Promise<{ readonly diff: string; readonly truncated: boolean }> {
   return new Promise((resolve, reject) => {
-    const child = spawn("git", [...args], { cwd, stdio: ["ignore", "pipe", "pipe"] });
+    const child = WORKSPACE_CHANGES_GIT_ACTOR_ENTRY.invoke(undefined, cwd, args);
     const chunks: Buffer[] = [];
     const stderrChunks: Buffer[] = [];
     let capturedBytes = 0;

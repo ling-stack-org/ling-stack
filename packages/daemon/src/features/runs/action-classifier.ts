@@ -12,6 +12,21 @@ import type {
 import { isRecord } from "../../shared/validation.js";
 import { readOnlyToolInput } from "./execution-action-tool-evidence.js";
 import { classifyHostCapabilityAction, classifyHostCapabilityToolAction } from "./host-capability-action.js";
+import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
+
+interface GitPreviewLaunch {
+  readonly cwd: string;
+  readonly args: readonly string[];
+  producerEntered: boolean;
+}
+const refusedGitPreviewLaunches = new WeakSet<object>();
+
+/** Original synchronous preview producer; this source hook grants no actor or read-only protection profile. */
+export const ACTION_CLASSIFIER_GIT_ACTOR_ENTRY = defineProtectedHostActorEntry("action_classifier_git",
+  (launch: GitPreviewLaunch): string => {
+    launch.producerEntered = true;
+    return execFileSync("git", launch.args, { cwd: launch.cwd, encoding: "utf8", timeout: 5_000, maxBuffer: 256 * 1024 });
+  });
 
 export interface ClassifiedAction {
   readonly actionType: ApprovalActionType;
@@ -218,6 +233,7 @@ export function buildGitCommandPreview(cwd: string, rawCommand: string): GitComm
       ? buildGitCommitPreview(cwd, rawCommand, tokens)
       : buildGitPushPreview(cwd, rawCommand, tokens);
   } catch (error) {
+    if (isRefusedGitPreviewLaunch(error)) throw error;
     return unavailableGitPreview(kind, rawCommand, error instanceof Error ? error.message : String(error));
   }
 }
@@ -416,13 +432,26 @@ function readAheadBehind(cwd: string, upstream: string): { readonly aheadCount?:
 function resolveUpstream(cwd: string): string | undefined {
   try {
     return git(cwd, ["rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}"]).trim();
-  } catch {
+  } catch (error) {
+    if (isRefusedGitPreviewLaunch(error)) throw error;
     return undefined;
   }
 }
 
 function git(cwd: string, args: readonly string[]): string {
-  return execFileSync("git", args, { cwd, encoding: "utf8", timeout: 5_000, maxBuffer: 256 * 1024 });
+  const launch: GitPreviewLaunch = { cwd, args: Object.freeze([...args]), producerEntered: false };
+  try {
+    return ACTION_CLASSIFIER_GIT_ACTOR_ENTRY.invoke(undefined, launch);
+  } catch (error) {
+    // Only the original pre-producer refusal is marked. Ordinary Git errors,
+    // including an absent upstream, retain their existing preview fallbacks.
+    if (!launch.producerEntered && typeof error === "object" && error !== null) refusedGitPreviewLaunches.add(error);
+    throw error;
+  }
+}
+
+function isRefusedGitPreviewLaunch(error: unknown): boolean {
+  return typeof error === "object" && error !== null && refusedGitPreviewLaunches.has(error);
 }
 
 function tokenizeSimpleCommand(command: string): string[] {

@@ -3,7 +3,8 @@ import type { HostCommandExecutionTicket, HostMediaEffectRecord, HostMediaExecut
   HostOfficeLocalEffectRecord, HostOfficeLocalTicket, PrepareHostOfficeLocalInput, PrepareHostOfficeLocalEffect,
   HostOperationEvidenceRef, HostOperationRecord, HostOperationTicket, PrepareHostMediaEffectInput,
   PrepareHostMediaExecutionInput, RunStore, RuntimeAttemptFenceV1, SealHostOfficeLocalTerminalInput,
-  HostOfficeLocalTerminalRecord, HostOfficeLocalSettlement } from "@ling-stack/core";
+  HostOfficeLocalTerminalRecord, HostOfficeLocalSettlement, HostOfficeLocalDirectoryEffectRecordV2,
+  PrepareHostOfficeLocalDirectoryEffectV2, HostOfficeLocalDirectoryTerminalRecordV2 } from "@ling-stack/core";
 import { AttemptExecutorGroup, type AttemptExecutionSource, type HostCallTicket, type HostExecutorBlocker,
   type HostExecutorKind, type HostExecutorSettlement } from "./attempt-execution-quiescence.js";
 import type { HostCommandOperation, HostCommandPreparationOperation, HostFileMutationOperation } from "./host-operation-effects.js";
@@ -14,7 +15,9 @@ type TrackerStore = Pick<RunStore, "isCurrentRunExecutionOwner" | "admitHostOper
   | "getHostMediaExecution" | "recordHostMediaResponse" | "recordHostMediaSubmission" | "recordHostMediaSubmissionAndExecutionHandle" | "recordHostMediaTerminal"
   | "recordHostMediaArtifactManifest" | "finalizeHostMediaExecution" | "recordHostMediaEffectNoStart"
   | "prepareHostOfficeLocalExecution" | "prepareHostOfficeLocalEffect" | "launchHostOfficeLocalEffect" | "recordHostOfficeLocalObservation"
-  | "beginHostOfficeLocalWriterObservation" | "sealHostOfficeLocalTerminal" | "settleHostOfficeLocalExecution">;
+  | "beginHostOfficeLocalWriterObservation" | "sealHostOfficeLocalTerminal" | "settleHostOfficeLocalExecution"
+  | "prepareHostOfficeLocalDirectoryExecutionV2" | "prepareHostOfficeLocalDirectoryEffectV2"
+  | "launchHostOfficeLocalDirectoryEffectV2" | "recordHostOfficeLocalDirectoryObservationV2" | "sealHostOfficeLocalDirectoryTerminalV2">;
 const operationHandleBrand: unique symbol = Symbol("AttemptHostOperationHandle");
 /** Neither persisted IDs nor a structural clone grants launch/settlement authority. */
 export interface AttemptHostOperationHandle {
@@ -60,6 +63,7 @@ export class AttemptHostOperationTracker {
   readonly #mediaExecutions = new WeakMap<HostMediaExecutionTicket, TrackedMediaExecution>();
   readonly #officeExecutions = new WeakMap<HostOfficeLocalTicket, TrackedMediaExecution>();
   readonly #officeEffects = new WeakMap<HostOfficeLocalTicket, Map<string, HostOfficeLocalEffectRecord>>();
+  readonly #officeDirectoryEffects = new WeakMap<HostOfficeLocalTicket, Map<string, HostOfficeLocalDirectoryEffectRecordV2>>();
   readonly #officeClosed = new WeakSet<HostOfficeLocalTicket>();
 
   constructor(options: { readonly store: TrackerStore; readonly source: AttemptExecutionSource; readonly now?: () => string }) {
@@ -336,6 +340,69 @@ export class AttemptHostOperationTracker {
   recordOfficeLocalObservation(ticket: HostOfficeLocalTicket, effectId: string, artifactId: string): HostOfficeLocalEffectRecord {
     this.#assertMediaUnsettled(this.#officeExecution(ticket));
     return this.#store.recordHostOfficeLocalObservation(ticket, effectId, artifactId);
+  }
+
+  /** Versioned directory facts retain the same original MCP/producer pair and both barriers. */
+  prepareOfficeLocalDirectoryExecutionV2(parent: AttemptHostOperationHandle, producer: AttemptHostOperationHandle,
+    input: PrepareHostOfficeLocalInput): HostOfficeLocalTicket {
+    const pair = { parent: this.#operation(parent), transport: this.#operation(producer) };
+    if (parent.kind !== "mcp" || producer.kind !== "file_mutation" || producer.parentOperationId !== parent.operationId
+      || producer.producerId !== "office-local-binary") fail("invalid_office_pair", "Office requires its original reserved binary writer.");
+    this.#assertMediaMayLaunch(pair);
+    const ticket = this.#store.prepareHostOfficeLocalDirectoryExecutionV2(this.#requireDurableTicket(pair.parent),
+      this.#requireDurableTicket(pair.transport), input);
+    this.#officeExecutions.set(ticket, pair);
+    this.#officeDirectoryEffects.set(ticket, new Map());
+    this.#read(pair.parent); this.#read(pair.transport);
+    return ticket;
+  }
+
+  prepareOfficeLocalDirectoryEffectV2(ticket: HostOfficeLocalTicket,
+    input: PrepareHostOfficeLocalDirectoryEffectV2): HostOfficeLocalDirectoryEffectRecordV2 {
+    this.assertOfficeLocalPlanOpen(ticket);
+    const pair = this.#officeExecution(ticket), effects = this.#officeDirectoryEffects.get(ticket);
+    if (!effects) fail("invalid_office_ticket", "The original directory-v2 ticket is required.");
+    const captured = structuredClone(input);
+    this.#assertMediaUnsettled(pair);
+    if (captured.mode !== "cleanup") this.#assertMediaMayLaunch(pair);
+    const record = this.#store.prepareHostOfficeLocalDirectoryEffectV2(ticket, captured);
+    effects.set(record.effectId, Object.freeze({ ...record }));
+    return record;
+  }
+
+  /** One original synchronous invocation is one gated batch, never fabricated per-syscall admission. */
+  launchOfficeLocalDirectoryEffectV2<T>(ticket: HostOfficeLocalTicket, effectId: string,
+    effect: () => T, mode: "forward" | "cleanup"): T {
+    this.assertOfficeLocalPlanOpen(ticket);
+    const pair = this.#officeExecution(ticket), descriptor = this.#officeDirectoryEffects.get(ticket)?.get(effectId);
+    if (!descriptor || descriptor.mode !== mode) fail("invalid_office_effect", "Office launch mode must match its exact prepared effect.");
+    this.#assertSynchronousEffect(effect); this.#assertMediaUnsettled(pair);
+    if (mode === "forward") this.#assertMediaMayLaunch(pair);
+    else if (mode !== "cleanup" || !pair.parent.launched || !pair.transport.launched)
+      fail("not_launched", "Unentered Office execution has no cleanup authority.");
+    return this.#store.launchHostOfficeLocalDirectoryEffectV2(ticket, effectId, () => {
+      this.#assertMediaUnsettled(pair);
+      if (mode === "forward") this.#assertMediaMayLaunch(pair);
+      const parentEntered = pair.parent.launched, producerEntered = pair.transport.launched;
+      pair.parent.launched = true; pair.transport.launched = true;
+      const launchProducer = (): T => producerEntered ? effect() : this.#group.launchHostEffect(pair.transport.groupTicket, effect);
+      return parentEntered ? launchProducer() : this.#group.launchHostEffect(pair.parent.groupTicket, launchProducer);
+    });
+  }
+
+  recordOfficeLocalDirectoryObservationV2(ticket: HostOfficeLocalTicket, effectId: string,
+    artifactId: string): HostOfficeLocalDirectoryEffectRecordV2 {
+    this.#assertMediaUnsettled(this.#officeExecution(ticket));
+    if (!this.#officeDirectoryEffects.has(ticket)) fail("invalid_office_ticket", "The original directory-v2 ticket is required.");
+    return this.#store.recordHostOfficeLocalDirectoryObservationV2(ticket, effectId, artifactId);
+  }
+
+  /** A v2 history seal is not canonical visibility, fan-in settlement or Core safe. */
+  sealOfficeLocalDirectoryTerminalV2(ticket: HostOfficeLocalTicket,
+    input: SealHostOfficeLocalTerminalInput): HostOfficeLocalDirectoryTerminalRecordV2 {
+    this.#assertMediaUnsettled(this.#officeExecution(ticket));
+    if (!this.#officeDirectoryEffects.has(ticket)) fail("invalid_office_ticket", "The original directory-v2 ticket is required.");
+    return this.#store.sealHostOfficeLocalDirectoryTerminalV2(ticket, input);
   }
 
   /** Freeze original-owner facts only. A terminal seal is never a group settlement proof. */

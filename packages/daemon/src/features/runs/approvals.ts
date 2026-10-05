@@ -37,10 +37,8 @@ import { isRecord } from "../../shared/validation.js";
 import { formatEditPreview } from "./edit-diff-preview.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
-import {
-  appendExecutionActionArtifactEvents,
-  createExecutionActionPreviewArtifacts,
-} from "./action-artifacts.js";
+import { appendExecutionActionArtifactEvents } from "./action-artifacts.js";
+import { createCallbackApprovalWait, createOwnedApprovalPreviewArtifacts } from "./approval-preview-failure.js";
 import {
   classifyApprovalActionType,
   classifyBashRiskFlags,
@@ -205,6 +203,8 @@ export function createRunApprovalHandler(options: {
    * from appendAndMaybeStream being invoked.
    */
   readonly onApprovalResolved?: (approval: ApprovalRequest) => void;
+  /** Release this callback's local pause when no durable decision can be asserted. */
+  readonly onApprovalWaitAbandoned?: () => void;
   /**
    * Replays the derived projections for a decision event that was persisted by
    * the approval HTTP route before this run loop observed it.
@@ -222,6 +222,7 @@ export function createRunApprovalHandler(options: {
   const toolBrokerMode = harnessToolBrokerModeForRun(options.run);
   const handleRequest = async (
     request: PiRunnerApprovalRequest,
+    approvalWait: ReturnType<typeof createCallbackApprovalWait>,
     fileAdmission?: FileMutationAdmission,
     commandAdmission?: { readonly operation: HostCommandOperation; dispatched: boolean },
   ) => {
@@ -458,14 +459,16 @@ export function createRunApprovalHandler(options: {
         denied,
         createdAt,
       );
-      const previewArtifacts = createExecutionActionPreviewArtifacts({
-        store: options.store,
-        run: options.run,
-        approval: denied,
-        toolName: request.toolName,
-        toolArgs: request.input,
-        now: createdAt,
-        extraSecrets: options.extraSecrets,
+      const previewArtifacts = createOwnedApprovalPreviewArtifacts({
+        ...options, sourceFence, request, approval: denied, mode: toolBrokerMode, unifiedExecBash, fileMutationDraft,
+        now: createdAt, decision: "deny", decisionReason: policyDecision.reason,
+        publishDecision: (resolved) => {
+          appendApprovalResolvedControlPlaneEvent(options.store, options.controlPlaneEvents,
+            options.workspaceCwd ?? options.run.cwd, resolved, "pending", "denied", resolved.resolvedAt ?? new Date().toISOString());
+          streamOrAppendApprovalDecisionEvent({ store: options.store, approval: resolved, afterSeq: 0,
+            appendAndMaybeStream: options.appendAndMaybeStream, streamEnvelope: options.streamEnvelope,
+            onExistingEvent: options.onExistingApprovalDecisionEvent });
+        },
       });
       const resolved = options.store.denyApprovalRequest(
         denied.id,
@@ -548,7 +551,7 @@ export function createRunApprovalHandler(options: {
     // Enter the durable approval wait before creating the request, preview
     // artifacts, or changing the Run status. Those writes can be slower than
     // the remaining runtime budget, especially in a busy SQLite process.
-    options.onApprovalWaitStarted?.();
+    approvalWait.start();
     const beforeWaitRejection = rejectHost();
     if (beforeWaitRejection) return beforeWaitRejection;
     const createdAt = new Date().toISOString();
@@ -590,14 +593,18 @@ export function createRunApprovalHandler(options: {
       approval,
       createdAt,
     );
-    const previewArtifacts = createExecutionActionPreviewArtifacts({
-      store: options.store,
-      run: options.run,
-      approval,
-      toolName: request.toolName,
-      toolArgs: request.input,
-      now: createdAt,
-      extraSecrets: options.extraSecrets,
+    const previewArtifacts = createOwnedApprovalPreviewArtifacts({
+      ...options, sourceFence, request, approval, mode: toolBrokerMode, unifiedExecBash, fileMutationDraft,
+      now: createdAt, decision: "ask",
+      onApprovalResolved: (resolved) => approvalWait.resolve(resolved),
+      onApprovalWaitAbandoned: () => approvalWait.abandon(),
+      publishDecision: (resolved) => {
+        appendApprovalResolvedControlPlaneEvent(options.store, options.controlPlaneEvents,
+          options.workspaceCwd ?? options.run.cwd, resolved, "pending", "cancelled", resolved.resolvedAt ?? new Date().toISOString());
+        streamOrAppendApprovalDecisionEvent({ store: options.store, approval: resolved, afterSeq: 0,
+          appendAndMaybeStream: options.appendAndMaybeStream, streamEnvelope: options.streamEnvelope,
+          onExistingEvent: options.onExistingApprovalDecisionEvent });
+      },
     });
     const waitingAt = new Date().toISOString();
     const waitingTransition = transitionRunStatus({
@@ -619,7 +626,7 @@ export function createRunApprovalHandler(options: {
         });
         appendApprovalResolvedControlPlaneEvent(options.store, options.controlPlaneEvents,
           options.workspaceCwd ?? options.run.cwd, cancelled, "pending", "cancelled", cancelled.resolvedAt ?? new Date().toISOString());
-        options.onApprovalResolved?.(cancelled);
+        approvalWait.resolve(cancelled);
       }
       return { approved: false, approvalId: approval.id, reason };
     }
@@ -648,7 +655,7 @@ export function createRunApprovalHandler(options: {
     const resolvedApproval = await waitForApprovalDecision(options.store, approval.id, options.signal);
     const afterWaitRejection = rejectHost(resolvedApproval.status === "approved" ? resolvedApproval.id : undefined);
     if (afterWaitRejection) {
-      options.onApprovalResolved?.(resolvedApproval);
+      approvalWait.resolve(resolvedApproval);
       return afterWaitRejection;
     }
     const resolvedAt = new Date().toISOString();
@@ -753,7 +760,7 @@ export function createRunApprovalHandler(options: {
       streamEnvelope: options.streamEnvelope,
       onExistingEvent: options.onExistingApprovalDecisionEvent,
     });
-    options.onApprovalResolved?.(resolvedApproval);
+    approvalWait.resolve(resolvedApproval);
 
     if (resolvedApproval.status === "approved") {
       const systemReviewRejection = systemReviewedApprovalExecutionRejection({
@@ -941,12 +948,18 @@ export function createRunApprovalHandler(options: {
       }
     };
     const decision = previousRequest.then(async () => {
+      const approvalWait = createCallbackApprovalWait(options);
       let result;
-      try { result = await handleRequest(request, fileAdmission, commandAdmission); }
+      try { result = await handleRequest(request, approvalWait, fileAdmission, commandAdmission); }
       catch (error) {
         try { settleAdmissions(); } catch { /* preserve the request's original failure */ }
+        try { approvalWait.abandon(); }
+        catch (releaseError) {
+          throw new AggregateError([error, releaseError], error instanceof Error ? error.message : String(error), { cause: error });
+        }
         throw error;
       }
+      approvalWait.abandon();
       settleAdmissions();
       return result;
     });

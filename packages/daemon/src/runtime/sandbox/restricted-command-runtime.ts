@@ -12,6 +12,8 @@ import { MACOS_SYSTEM_READ_ROOTS } from "./macos-seatbelt-profile.js";
 import { verifyElectronNodeResources, type ElectronNodeRuntimePin } from "./electron-node-resources.js";
 import type { MacosCommandRuntimeProfile } from "./macos-native-command.js";
 import type { HostCommandPreparationOperation } from "../host-operation-effects.js";
+import { isProtectedHostStageRegistry, type ProtectedHostStageRegistry, type ProtectedHostActorSource,
+  type ProtectedHostSourceInput } from "./protected-host-staging.js";
 
 export interface RestrictedCommandBinaryPin { readonly path: string; readonly sha256: string }
 export interface RestrictedCommandExecutablePin extends RestrictedCommandBinaryPin {
@@ -46,9 +48,17 @@ export function isNativeRestrictedCommandRuntime(value: unknown): value is Nativ
 
 export class NativeRestrictedCommandRuntime {
   readonly #config: RestrictedCommandRuntimeConfig;
-  constructor(config: RestrictedCommandRuntimeConfig) {
+  readonly #protectedStages?: ProtectedHostStageRegistry;
+  constructor(config: RestrictedCommandRuntimeConfig, protectedStages?: ProtectedHostStageRegistry) {
+    requireRuntime(protectedStages === undefined || isProtectedHostStageRegistry(protectedStages), "protected_host_registry_invalid");
     this.#config = structuredClone(config);
+    this.#protectedStages = protectedStages;
     ownedRuntimes.add(this);
+  }
+
+  /** DB source is captured at original dispatch; this is not the caller's replacement authority guard. */
+  captureProtectedActorSource(input: ProtectedHostSourceInput & { readonly command: string; readonly toolCallId: string }): ProtectedHostActorSource | undefined {
+    return this.#protectedStages?.captureActorSource(input);
   }
 
   /** Verify the concrete runtime and shell interpretation before admitting a typed operation. */
@@ -86,8 +96,13 @@ export class NativeRestrictedCommandRuntime {
     readonly assertCurrentAuthority: () => void;
     readonly signal?: AbortSignal;
     readonly hostOperation?: HostCommandPreparationOperation;
+    readonly protectedActorSource?: ProtectedHostActorSource;
   }) {
+    const protectedSource = input.protectedActorSource;
+    requireRuntime(!this.#protectedStages || protectedSource, "protected_host_actor_source_invalid");
+    requireRuntime(this.#protectedStages || !protectedSource, "protected_host_registry_invalid");
     const check = () => {
+      if (this.#protectedStages && protectedSource) this.#protectedStages.assertActorSource(protectedSource, input);
       input.signal?.throwIfAborted();
       const result: unknown = input.assertCurrentAuthority();
       if (result instanceof Promise) void result.catch(() => undefined);
@@ -136,24 +151,37 @@ export class NativeRestrictedCommandRuntime {
       }
       check();
       requireRuntime(realpathSync(input.cwd) === origin, "restricted_command_workspace_changed");
+      const protectedRoots = this.#protectedStages && protectedSource ? this.#protectedStages.protectedRoots(protectedSource) : [];
       const policy = compileExecutionSandboxPolicy({ now: new Date().toISOString(), platform: "darwin", tool: "bash",
         workspaceRoot: copy, cwd: copy, temporaryRoot: scratch, runtimeReadRoots: [...MACOS_SYSTEM_READ_ROOTS, ...resolved.readRoots],
-        deniedReadRoots: [origin], protectedWriteRoots: [], backend: readMacosSandboxBackendIdentity(), grants: [],
+        deniedReadRoots: [origin, ...protectedRoots], protectedWriteRoots: protectedRoots, backend: readMacosSandboxBackendIdentity(), grants: [],
         // A full-access session may still request a narrower typed operation. This
         // conversion only removes writes/network/environment, never adds access.
         policy: { ...input.policy, ...(input.policy.workspaceAccessMode === "full_access"
           ? { workspaceAccessMode: "workspace_write" as const, mode: "workspace_write" as const } : {}), allowedWritePaths: [] },
         binding: { ...input.source, operationHash: macosSandboxCommandFingerprint(command, copy, scratch, resolved.runtimeProfile) } });
       const prepared = prepareMacosSandboxCommand({ policy, command, runtimeProfile: resolved.runtimeProfile });
+      const actor = this.#protectedStages && protectedSource ? this.#protectedStages.bindPreparedActor(protectedSource, prepared) : undefined;
       const evidence: UnifiedExecIsolationEvidence = { backend: "macos_seatbelt", originalCwd: input.cwd, executionCwd: copy,
         actualCommand: command, policyHash: policy.policyHash, profileHash: prepared.profileHash, inputs: files };
       const environmentSummary: UnifiedExecEnvironmentSummary = { mode: "explicit", cwd: copy,
         keys: prepared.environmentKeys, redactedKeys: [], pathEntryCount: 4 };
       return { evidence, environmentSummary, dispose,
-        spawn: () => prepared.spawn(() => {
-          check(); this.assertAvailable(input.command);
-          requireRuntime(realpathSync(input.cwd) === origin, "restricted_command_workspace_changed");
-        }) };
+        spawn: () => {
+          if (actor) this.#protectedStages!.beginActorLaunch(actor);
+          try {
+            const child = prepared.spawn(() => {
+              check(); this.assertAvailable(input.command);
+              requireRuntime(realpathSync(input.cwd) === origin, "restricted_command_workspace_changed");
+              if (actor) this.#protectedStages!.assertActorLaunchCurrent(actor);
+            }, actor);
+            if (actor) this.#protectedStages!.recordActorLaunched(actor, child);
+            return child;
+          } catch (error) {
+            if (actor) this.#protectedStages!.markActorLaunchUnknown(actor);
+            throw error;
+          }
+        } };
     } catch (error) {
       try { dispose(); } catch { /* Retain an unverifiable temporary root; never delete a replacement. */ }
       throw error;

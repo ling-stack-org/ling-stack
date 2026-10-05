@@ -8,6 +8,8 @@ import { readOfficeLocalEffects, readOfficeLocalExecution, validateOfficeLocalOb
 import { verifyOfficeLocalReplay } from "./host-office-local-replay.js";
 import { readOfficeLocalTerminal } from "./host-office-local-terminal-records.js";
 import { readOfficeLocalNoStartReceipt } from "./host-office-local-no-start-records.js";
+import { hasOfficeDirectoryV2Execution } from "./host-office-local-directory-v2-records.js";
+import { hostOfficeDirectoryOperationDomainIdentityV2, verifyHostOfficeDirectoryReceiptV2 } from "./host-office-local-directory-v2-journal.js";
 
 function invalid(): never { throw new HostOperationJournalError("host_office_local_evidence_invalid"); }
 export type OfficeLocalJournalVerificationMode = "committed" | "settlement_candidate";
@@ -28,6 +30,7 @@ function scopedExecution(database: DatabaseSync, operation: HostOperationRecord)
 
 /** Bind the exact original source, pair and role before any effect descriptor or terminal exists. */
 export function hostOfficeOperationDomainIdentity(database: DatabaseSync, operation: HostOperationRecord, binding: boolean): string {
+  if (operation.evidenceRef && hasOfficeDirectoryV2Execution(database, operation.evidenceRef.id)) return hostOfficeDirectoryOperationDomainIdentityV2(database, operation, binding);
   const execution = scopedExecution(database, operation);
   if (binding && (operation.phase !== "admitted" || operation.launchedAt
     || database.prepare("SELECT 1 FROM host_office_local_effects WHERE execution_id=? LIMIT 1").get(execution.executionId)
@@ -47,6 +50,7 @@ export function hostOfficeOperationDomainIdentity(database: DatabaseSync, operat
  */
 export function verifyHostOfficeReceipt(database: DatabaseSync, operation: StoredHostOperation,
   mode: OfficeLocalJournalVerificationMode = "committed"): string {
+  if (operation.evidenceRef && hasOfficeDirectoryV2Execution(database, operation.evidenceRef.id)) return verifyHostOfficeDirectoryReceiptV2();
   const execution = scopedExecution(database, operation);
   if (operation.settlementKind === "known_no_start") return verifyOfficeNoStartReceipt(database, operation, execution, mode);
   const expectedSettlement = operation.evidenceRef!.kind === "office_local_chain_execution"

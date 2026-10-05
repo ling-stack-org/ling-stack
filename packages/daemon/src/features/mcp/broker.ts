@@ -12,6 +12,8 @@ import { createDefaultMcpProcessLauncher, type McpProcessLauncher } from "./stdi
 import { buildMcpHttpHeaders, createMcpTransport, McpSecretResolutionError } from "./transport-factory.js";
 import { assertHostMcpOperation, McpHostAdmissionError } from "./host-operation.js";
 import { CUA_DRIVER_MCP_SERVER_ID } from "../plugins/presets.js";
+import { assertHostOfficeLocalMcpAdmission, executeHostOfficeLocalMcpOperation,
+  isOfficeLocalArtifactToolName } from "./office-local-mcp-operation.js";
 
 // Host-owned capability. A copied/custom/generation broker or a replaced method
 // cannot assert its own support through McpBrokerOptions or public booleans.
@@ -19,23 +21,59 @@ type GenerationRoute = { readonly kind: "chrome" | "office" } | { readonly kind:
 type BrokerAdmission = { readonly callTool: McpBroker["callTool"] } & (
   | { readonly kind: "default_transport" }
   | { readonly kind: "generation_facade"; readonly baseBroker: McpBroker; readonly route: GenerationRoute }
+  | { readonly kind: "office_local_facade"; readonly baseBroker: McpBroker; readonly workspaceCwd: string }
 );
 const hostAdmissionBrokers = new WeakMap<McpBroker, BrokerAdmission>();
+
+/** Registry validation must not execute an accessor that can change between reads. */
+function ownCallToolMethod(broker: McpBroker): McpBroker["callTool"] | undefined {
+  const descriptor = Object.getOwnPropertyDescriptor(broker, "callTool");
+  return descriptor && Object.hasOwn(descriptor, "value") && typeof descriptor.value === "function"
+    ? descriptor.value as McpBroker["callTool"] : undefined;
+}
+
+/** Capture only the exact registered own data method, never a separately fetched caller callback. */
+export function captureRegisteredMcpBrokerCallTool(broker: McpBroker): McpBroker["callTool"] {
+  const registered = hostAdmissionBrokers.get(broker), method = ownCallToolMethod(broker);
+  if (!registered || !method || registered.callTool !== method) {
+    throw new McpHostAdmissionError("mcp_host_admission_unsupported", "The original registered Host broker method is required.");
+  }
+  return method;
+}
 
 export function assertMcpBrokerHostAdmission(broker: McpBroker, server: McpServer): void {
   let current = broker;
   for (let depth = 0; depth < 16; depth++) {
     const registered = hostAdmissionBrokers.get(current);
-    if (!registered || registered.callTool !== current.callTool) break;
+    if (!registered || registered.callTool !== ownCallToolMethod(current)) break;
     if (registered.kind === "default_transport") {
       if (server.transport.type === "streamable-http" || server.transport.type === "stdio") return;
       break;
     }
-    if (ownsGenerationServer(registered.route, server.id)) break;
+    if (registered.kind === "office_local_facade" ? server.id === OFFICE_DOCUMENTS_MCP_SERVER_ID
+      : ownsGenerationServer(registered.route, server.id)) break;
     current = registered.baseBroker;
   }
   throw new McpHostAdmissionError("mcp_host_admission_unsupported",
     "Captured Host admission requires a registered native transport delegation chain; custom/owned generation dispatch is unsupported.");
+}
+
+/** Original factory identity across a complete registered chain; names/clones cannot register support. */
+export function findHostOfficeLocalFactory(broker: McpBroker, serverId: string, toolName: string,
+  workspaceCwd?: string): McpBroker | undefined {
+  if (serverId !== OFFICE_DOCUMENTS_MCP_SERVER_ID || !isOfficeLocalArtifactToolName(toolName)) return undefined;
+  let current = broker, factory: McpBroker | undefined;
+  for (let depth = 0; depth < 16; depth++) {
+    const registered = hostAdmissionBrokers.get(current);
+    if (!registered || registered.callTool !== ownCallToolMethod(current)) return undefined;
+    if (registered.kind === "default_transport") return factory;
+    if (registered.kind === "office_local_facade") {
+      if (factory || (workspaceCwd !== undefined && workspaceCwd !== registered.workspaceCwd)) return undefined;
+      factory = current;
+    } else if (!factory && ownsGenerationServer(registered.route, serverId)) return undefined;
+    current = registered.baseBroker;
+  }
+  return undefined;
 }
 
 /**
@@ -50,6 +88,23 @@ export function createHostMcpGenerationFacade(input: {
   readonly route: GenerationRoute;
   readonly facade: McpBroker;
 }): McpBroker {
+  return createGenerationFacade(input, false);
+}
+
+/** Fixed Office factory: tracked owned execution never invokes the supplied facade callback. */
+export function createHostOfficeLocalGenerationFacade(input: {
+  readonly baseBroker: McpBroker;
+  readonly workspaceCwd: string;
+  readonly facade: McpBroker;
+}): McpBroker {
+  return createGenerationFacade({ ...input, route: { kind: "office" } }, true, input.workspaceCwd);
+}
+
+function createGenerationFacade(input: {
+  readonly baseBroker: McpBroker;
+  readonly route: GenerationRoute;
+  readonly facade: McpBroker;
+}, officeLocal: boolean, workspaceCwd?: string): McpBroker {
   const baseBroker = input.baseBroker;
   const route = Object.freeze({ ...input.route });
   const facade = input.facade;
@@ -64,15 +119,26 @@ export function createHostMcpGenerationFacade(input: {
       return facade.listTools(server, options);
     },
     async callTool(server, options, toolName, toolInput) {
+      assertExclusiveHostOperations(options);
+      if (options.officeLocalOperation) {
+        assertHostOfficeLocalMcpAdmission(options.officeLocalOperation, broker, server.id, toolName);
+        if (officeLocal && server.id === OFFICE_DOCUMENTS_MCP_SERVER_ID) {
+          if (workspaceCwd !== options.workspaceCwd) throw new McpHostAdmissionError("mcp_host_admission_unsupported", "Office factory workspace does not match its original scope.");
+          return executeHostOfficeLocalMcpOperation(options.officeLocalOperation, broker, options, toolName, toolInput);
+        }
+        return Reflect.apply(captureRegisteredMcpBrokerCallTool(baseBroker), baseBroker, [server, options, toolName, toolInput]);
+      }
       if (!options.hostOperation) return facade.callTool(server, options, toolName, toolInput);
       assertHostMcpOperation(options.hostOperation);
       assertMcpBrokerHostAdmission(broker, server);
       // Each current generic branch delegates directly to its base as well.
       // Owned routes reject above, before leases, artifact/desktop effects.
-      return baseBroker.callTool(server, options, toolName, toolInput);
+      return Reflect.apply(captureRegisteredMcpBrokerCallTool(baseBroker), baseBroker, [server, options, toolName, toolInput]);
     },
   };
-  hostAdmissionBrokers.set(broker, Object.freeze({ kind: "generation_facade", callTool: broker.callTool, baseBroker, route }));
+  hostAdmissionBrokers.set(broker, officeLocal
+    ? Object.freeze({ kind: "office_local_facade", callTool: broker.callTool, baseBroker, workspaceCwd: workspaceCwd! })
+    : Object.freeze({ kind: "generation_facade", callTool: broker.callTool, baseBroker, route }));
   return broker;
 }
 
@@ -203,6 +269,8 @@ export function createDefaultMcpBroker(): McpBroker {
       toolName: string,
       input: unknown,
     ): Promise<PiRunnerMcpToolCallResult> {
+      assertExclusiveHostOperations(options);
+      if (options.officeLocalOperation) throw new McpHostAdmissionError("mcp_host_admission_unsupported", "A fixed Office scope cannot authorize a generic MCP transport.");
       if (options.hostOperation) {
         assertHostMcpOperation(options.hostOperation);
         assertMcpBrokerHostAdmission(broker, server);
@@ -285,8 +353,14 @@ async function withMcpClient<T>(
 }
 
 function assertUntrackedMetadataCall(options: McpBrokerOptions): void {
-  if (options.hostOperation) {
+  if (options.hostOperation || options.officeLocalOperation) {
     throw new McpHostAdmissionError("mcp_host_admission_unsupported", "A tool-call capability cannot authorize an unrelated MCP metadata operation.");
+  }
+}
+
+function assertExclusiveHostOperations(options: McpBrokerOptions): void {
+  if (options.hostOperation && options.officeLocalOperation) {
+    throw new McpHostAdmissionError("mcp_host_admission_unsupported", "MCP transport and fixed Office capabilities are mutually exclusive.");
   }
 }
 

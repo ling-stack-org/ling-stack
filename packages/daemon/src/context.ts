@@ -51,6 +51,7 @@ import type { OfficeDocumentsPluginService } from "./features/plugins/office-doc
 import type { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
 import type { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
 import type { HostMcpOperation } from "./features/mcp/host-operation.js";
+import type { HostOfficeLocalMcpOperation } from "./features/mcp/office-local-mcp-operation.js";
 
 export interface RunnerAdapter {
   /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
@@ -111,7 +112,7 @@ export interface McpBroker {
   ): Promise<PiRunnerMcpToolCallResult>;
 }
 
-export interface McpBrokerOptions {
+interface McpBrokerCommonOptions {
   readonly secretResolver: SecretResolver;
   /** Workspace authority for generation-scoped bundled providers. */
   readonly workspaceCwd?: string;
@@ -119,8 +120,6 @@ export interface McpBrokerOptions {
   readonly signal?: AbortSignal;
   readonly runId?: string;
   readonly toolCallId?: string;
-  /** Opaque Host-issued source-bound transport capability; not a result/stop proof. */
-  readonly hostOperation?: HostMcpOperation;
   /** Synchronous authorization fence run after transport completion. */
   readonly assertResultCurrent?: () => void;
   readonly lockedControlExecution?: {
@@ -131,6 +130,12 @@ export interface McpBrokerOptions {
     readonly approvalId?: string;
   };
 }
+
+/** Transport and fixed local Office scopes are distinct, mutually exclusive capabilities. */
+export type McpBrokerOptions = McpBrokerCommonOptions & (
+  | { readonly hostOperation?: HostMcpOperation; readonly officeLocalOperation?: never }
+  | { readonly hostOperation?: never; readonly officeLocalOperation: HostOfficeLocalMcpOperation }
+);
 
 export interface ExternalSecretStore extends SecretResolver {
   setSecret(ref: string, value: string, purpose?: SecretPurpose): SecretStatus;

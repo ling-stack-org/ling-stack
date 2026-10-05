@@ -43,8 +43,8 @@ interface JournalAuthority {
 export class HostOfficeLocalJournalGate {
   constructor(private readonly context: SqliteStoreContext, private readonly authority: JournalAuthority) {}
 
-  prepare(parent: HostOperationTicket, producer: HostOperationTicket,
-    callback: (parent: StoredHostOperation, producer: StoredHostOperation) => HostOfficeLocalExecutionRecord): HostOfficeLocalExecutionRecord {
+  prepare<T extends { readonly executionId: string }>(parent: HostOperationTicket, producer: HostOperationTicket,
+    callback: (parent: StoredHostOperation, producer: StoredHostOperation) => T): T {
     this.authority.synchronous(callback);
     return this.authority.transaction(() => {
       const pair = this.pair(parent, producer);

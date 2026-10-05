@@ -235,6 +235,9 @@ export class SqliteApprovalRequestStore {
   }
 
   approveApprovalRequest(id: string, input: ResolveApprovalRequestInput, now: string): ApprovalRequest | undefined {
+    if (input.executionCleanup) {
+      throw new Error("Execution cleanup can only deny or cancel an approval.");
+    }
     if (input.decisionKind === "approve_command_rule") {
       return this.approveApprovalRequestWithCommandRule(id, input, now);
     }
@@ -495,6 +498,9 @@ export class SqliteApprovalRequestStore {
     input: ResolveApprovalRequestInput,
     now: string,
   ): ApprovalRequest | undefined {
+    if (input.executionCleanup && status !== "denied" && status !== "cancelled") {
+      throw new Error("Execution cleanup can only deny or cancel an approval.");
+    }
     const existing = this.getApprovalRequest(id);
     if (!existing) {
       return undefined;
@@ -520,6 +526,8 @@ export class SqliteApprovalRequestStore {
             decision_rule_id = NULL
           WHERE id = ? AND status = 'pending'
             ${status === "approved" ? `AND ${activeRunApprovalOwnerSql}` : ""}
+            ${input.executionCleanup ? `AND run_id = ? AND created_at = ? AND tool_call_id = ?
+              AND ${runExecutionOwnerSql}` : ""}
         `)
         .run(
           status,
@@ -528,6 +536,9 @@ export class SqliteApprovalRequestStore {
           input.reason ?? null,
           decisionKind ?? null,
           id,
+          ...(input.executionCleanup ? [input.executionCleanup.runId, input.executionCleanup.approvalCreatedAt,
+            input.executionCleanup.toolCallId,
+            ...runExecutionOwnerParameters(input.executionCleanup.runId, input.executionCleanup.sourceFence, false)] : []),
         );
       if (update.changes !== 1) {
         throw new Error(`Approval execution no longer active: ${id}`);
