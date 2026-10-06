@@ -581,12 +581,16 @@ test("cancelling a Run during the first parallel Host approval does not admit th
   }
 });
 
+// These three timer contracts use a non-executing read approval probe: real
+// journaled Bash preparation/spawn/receipts belong to execution budgets, not
+// approval wait. Keep their real Host coverage above, all budgets/assertions
+// below, and the actual SQLite decision/replay path unchanged.
 test("approval wait does not consume runtime idle or hard timeout budgets", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-wait-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_approval_timeout_wait",
-    toolName: "bash",
-    input: { command: "printf 'approval-wait-ok\\n'" },
+    toolName: "read",
+    input: { path: "unused-approval-budget-probe.txt" },
   });
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -608,8 +612,8 @@ test("approval wait does not consume runtime idle or hard timeout budgets", asyn
     },
   });
   try {
-    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
-    const response = await postRunStream(daemon.url, runBody(cwd, "task_approval_timeout_wait"));
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { read: "ask" } });
+    const response = await postRunStream(daemon.url, { ...runBody(cwd, "task_approval_timeout_wait"), tools: ["read"] });
     const sse = createSseReader(response);
     const ready = await sse.nextEvent();
     assert.equal(ready.event, "ready");
@@ -645,8 +649,8 @@ test("approval resume restores the hard timeout budget after an externally persi
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-approval-timeout-resume-"));
   const runner = new ApprovalProbeRunner({
     toolCallId: "tool_approval_timeout_resume",
-    toolName: "bash",
-    input: { command: "printf 'approval-resume-timeout\\n'" },
+    toolName: "read",
+    input: { path: "unused-approval-budget-probe.txt" },
   }, false, 140);
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
@@ -668,8 +672,8 @@ test("approval resume restores the hard timeout budget after an externally persi
     },
   });
   try {
-    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
-    const response = await postRunStream(daemon.url, runBody(cwd, "task_approval_timeout_resume"));
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { read: "ask" } });
+    const response = await postRunStream(daemon.url, { ...runBody(cwd, "task_approval_timeout_resume"), tools: ["read"] });
     const sse = createSseReader(response);
     const ready = await sse.nextEvent();
     assert.equal(ready.event, "ready");
@@ -695,8 +699,8 @@ test("approval resume restores the hard timeout budget after an externally persi
 test("slow replay of an external approval decision resets idle time when execution resumes", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-approval-slow-replay-"));
   const runner = new ApprovalProbeRunner({
-    toolCallId: "tool_approval_slow_replay", toolName: "bash",
-    input: { command: "printf 'approval-slow-replay\\n'" },
+    toolCallId: "tool_approval_slow_replay", toolName: "read",
+    input: { path: "unused-approval-budget-probe.txt" },
   }, false, 140);
   let replayStalled = false;
   const daemon = await startDaemonForTest(runner, {
@@ -723,8 +727,8 @@ test("slow replay of an external approval decision resets idle time when executi
     },
   });
   try {
-    await patchPolicy(daemon.url, cwd, { toolDecisions: { bash: "ask" } });
-    const response = await postRunStream(daemon.url, runBody(cwd, "task_approval_slow_replay"));
+    await patchPolicy(daemon.url, cwd, { toolDecisions: { read: "ask" } });
+    const response = await postRunStream(daemon.url, { ...runBody(cwd, "task_approval_slow_replay"), tools: ["read"] });
     const sse = createSseReader(response);
     const ready = await sse.nextEvent();
     assert.equal(ready.event, "ready");
