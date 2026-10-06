@@ -24,6 +24,7 @@ import {
 } from "./provider-model-labels.js";
 
 export { providerCompactModelLabel, providerDisplaySourceLabel } from "./provider-model-labels.js";
+export { providerFormWithSelectedModel } from "./provider-model-selection.js";
 
 type ProviderTranslate = (key: string, values?: Readonly<Record<string, string | number>>) => string;
 
@@ -291,29 +292,6 @@ function formatSecretHeaderRefsInput(value: string): Record<string, string> | un
       }),
   );
   return Object.keys(refs).length > 0 ? refs : undefined;
-}
-
-export function providerFormWithSelectedModel(
-  form: ProviderFormState,
-  model: ProviderModelOption,
-  sourceForm?: ProviderFormState,
-): { readonly form: ProviderFormState; readonly notice?: string } {
-  const baseForm = sourceForm ?? form;
-	  const nextForm = {
-	    ...baseForm,
-	    model: model.id,
-	    api: model.api ?? baseForm.api,
-	    capabilitiesText: model.capabilities?.length ? model.capabilities.join(", ") : baseForm.capabilitiesText,
-	    inputText: model.input?.length ? model.input.join(", ") : baseForm.inputText,
-	    reasoning: model.thinkingModes?.some((mode) => mode !== "off") ?? baseForm.reasoning,
-	    thinkingModes: model.thinkingModes ?? baseForm.thinkingModes,
-	    contextWindow: model.contextWindow ? String(model.contextWindow) : baseForm.contextWindow,
-	    maxTokens: model.maxTokens ? String(model.maxTokens) : baseForm.maxTokens,
-	  };
-  if (sourceForm) {
-    return { form: nextForm };
-  }
-  return { form: nextForm };
 }
 
 export function normalizeProviderModelForImport(

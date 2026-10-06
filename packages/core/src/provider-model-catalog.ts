@@ -164,22 +164,28 @@ export function enrichProviderModelOption(
   context: ProviderModelCatalogContext,
 ): ProviderModelOption {
   const upstreamThinkingSupport = normalizeProviderThinkingSupport(model.thinkingSupport);
-  const upstreamThinkingModes = normalizeProviderThinkingModes(model.thinkingModes ?? upstreamThinkingSupport?.levels);
+  const upstreamThinkingModes = normalizeProviderThinkingModes(model.thinkingModes ?? upstreamThinkingSupport?.levels)
+    ?? (model.thinkingModes?.length === 0 ? [] : undefined);
   const upstreamCapabilities = normalizeProviderCapabilities(model.capabilities);
   const hasExplicitCapabilities = model.capabilities !== undefined;
   const upstreamInput = normalizeProviderInput(model.input);
   const generationFamily = inferGenerationModelFamily(model.id, context);
+  const familyEntry = generationFamily ? undefined : findProviderModelFamilyEntry(model.id, context);
   const catalogEntry = generationFamily
     ? undefined
-    : findExactProviderModelCatalogEntry(model.id, context) ?? findProviderModelFamilyEntry(model.id, context);
-  const thinkingSupport = upstreamThinkingSupport ?? catalogEntry?.thinkingSupport;
+    : findExactProviderModelCatalogEntry(model.id, context) ?? familyEntry;
+  const thinkingFamilyEntry = catalogEntry?.capabilities.includes("reasoning") ? familyEntry : undefined;
+  const hasExplicitThinking = model.thinkingModes !== undefined || model.thinkingSupport !== undefined;
+  const thinkingSupport = upstreamThinkingSupport ?? (hasExplicitThinking
+    ? undefined
+    : catalogEntry?.thinkingSupport ?? thinkingFamilyEntry?.thinkingSupport);
   const thinkingModes = normalizeProviderThinkingModes(upstreamThinkingModes ?? thinkingSupport?.levels);
   const api = model.api ?? generationFamily?.api ?? catalogEntry?.api;
   const inferredCapabilities = normalizeProviderCapabilities([
     ...((generationFamily?.capabilities ?? catalogEntry?.capabilities) ?? []),
     ...(thinkingModes?.some((mode) => mode !== "off" && mode !== "auto") ? ["reasoning" as const] : []),
   ]);
-  const capabilities = hasExplicitCapabilities ? upstreamCapabilities ?? [] : inferredCapabilities;
+  const capabilities = hasExplicitCapabilities ? upstreamCapabilities ?? [] : inferredCapabilities ?? (catalogEntry ? [] : undefined);
 
   return omitUndefined({
     ...model,
@@ -192,7 +198,7 @@ export function enrichProviderModelOption(
     thinkingSupport,
     contextWindow: model.contextWindow ?? catalogEntry?.contextWindow,
     maxTokens: model.maxTokens ?? catalogEntry?.maxTokens,
-    supportedParameters: mergeStringArrays(model.supportedParameters, generationFamily?.supportedParameters, catalogEntry?.supportedParameters),
+    supportedParameters: mergeStringArrays(model.supportedParameters, generationFamily?.supportedParameters, catalogEntry?.supportedParameters, thinkingFamilyEntry?.supportedParameters),
     capabilitySource: model.capabilitySource ?? generationFamily?.capabilitySource ?? (catalogEntry ? catalogEntry.source ?? "model_catalog" : "conservative_default"),
     capabilityConfidence: model.capabilityConfidence ?? generationFamily?.capabilityConfidence ?? catalogEntry?.confidence ?? (catalogEntry ? "known" : "conservative"),
   });
@@ -241,8 +247,9 @@ export function normalizeProviderThinkingModes(value: readonly string[] | undefi
 }
 
 export function normalizeProviderThinkingSupport(value: ProviderThinkingSupport | undefined): ProviderThinkingSupport | undefined {
-  const levels = normalizeProviderThinkingModes(value?.levels);
-  if (!levels || levels.length === 0) {
+  const levels = normalizeProviderThinkingModes(value?.levels)
+    ?? (Array.isArray(value?.levels) && value.levels.length === 0 ? [] : undefined);
+  if (!levels) {
     return undefined;
   }
   return omitUndefined({

@@ -159,10 +159,14 @@ test("provider secret header refs are validated and materialized for model disco
 test("saved local provider secrets can fetch models only through their unchanged preset connection", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-providers-api-local-models-"));
   const stores = new Map();
-  const daemon = await startDaemonForTest(stores);
+  const keychain = createFakeKeychainStore();
+  const daemon = await startDaemonForTest(stores, { externalSecretStore: keychain });
   const modelServer = await startModelServerForSecretHeaderTest();
   const localSecret = "sk-saved-local-model-discovery";
+  const previousReplacementSecret = process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY;
   try {
+    process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY = "sk-replacement-env-model-discovery";
+    keychain.setSecret("keychain:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "sk-replacement-keychain-model-discovery");
     const created = await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
       kind: "openai-compatible",
       displayName: "Saved Relay",
@@ -201,7 +205,34 @@ test("saved local provider secrets can fetch models only through their unchanged
     assert.equal(changedConnection.body.error, "provider_model_connection_changed");
     assert.equal(modelServer.requests.length, 1);
     assert.doesNotMatch(JSON.stringify(changedConnection), new RegExp(localSecret));
+
+    for (const [apiKeyRef, secret] of [
+      ["env:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "sk-replacement-env-model-discovery"],
+      ["keychain:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "sk-replacement-keychain-model-discovery"],
+    ]) {
+      const replacementModels = await postJson(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: created.provider.id,
+        kind: created.provider.kind,
+        providerId: created.provider.providerId,
+        api: created.provider.api,
+        baseUrl: created.provider.baseUrl,
+        authHeader: created.provider.authHeader,
+        apiKeyRef,
+        headers: { "x-discovery-credential": "replacement" },
+      });
+      assert.deepEqual(replacementModels.models.map((model) => model.id), ["gpt-secret-header"]);
+      assert.equal(modelServer.requests.at(-1).headers.authorization, `Bearer ${secret}`);
+      assert.equal(modelServer.requests.at(-1).headers["x-discovery-credential"], "replacement");
+      assert.doesNotMatch(JSON.stringify(replacementModels), new RegExp(secret));
+      assert.doesNotMatch(JSON.stringify(replacementModels), new RegExp(localSecret));
+    }
+    assert.equal(stores.get(cwd).getProviderSecret(created.provider.id), localSecret);
   } finally {
+    if (previousReplacementSecret === undefined) {
+      delete process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY;
+    } else {
+      process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY = previousReplacementSecret;
+    }
     await modelServer.close();
     await daemon.close();
     for (const store of stores.values()) store.close();

@@ -2,6 +2,7 @@ import {
   normalizeProviderBaseUrlForAdapter,
   type ProviderPreset,
 } from "@ling-stack/core";
+import { HttpError } from "../../errors.js";
 
 export interface ProviderModelDiscoveryRequest {
   readonly source: string;
@@ -57,6 +58,17 @@ export function providerModelDiscoveryItems(
   }
   if (isRecord(body) && Array.isArray(body.data)) return body.data;
   return Array.isArray(body) ? body : [];
+}
+
+export function providerModelDiscoveryNextPageToken(
+  body: unknown,
+  preset: Pick<ProviderPreset, "api">,
+): string | undefined {
+  if (preset.api !== "google-generative-ai" || !isRecord(body) || body.nextPageToken === undefined) return undefined;
+  if (typeof body.nextPageToken !== "string") {
+    throw new HttpError(400, "provider_error", "Provider model discovery returned an invalid page token.");
+  }
+  return body.nextPageToken || undefined;
 }
 
 function isGeminiGenerationModel(value: unknown): value is Record<string, unknown> {

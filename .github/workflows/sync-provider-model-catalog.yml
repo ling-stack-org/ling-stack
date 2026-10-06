@@ -28,6 +28,9 @@ jobs:
         with:
           node-version: 22.15.0
 
+      - name: Check catalog PR synchronization safety
+        run: node --test scripts/ci/provider-model-catalog-pr.test.mjs
+
       - name: Refresh reviewed catalog data
         shell: bash
         env:
@@ -47,8 +50,10 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git commit -m "chore: refresh provider model catalog"
           git push --force-with-lease origin "HEAD:$branch"
-          if gh pr view "$branch" --json url >/dev/null 2>&1; then
-            gh pr edit "$branch" --title "chore: refresh provider model catalog" --body "Automated reviewed data refresh from the MIT-licensed models.dev catalog. This PR changes metadata only and does not enable provider adapters or runtime permissions."
+          pull_requests_json="$(gh pr list --state open --head "$branch" --base main --limit 2 --json number,state,headRefName,baseRefName,isCrossRepository)"
+          pull_request="$(printf '%s' "$pull_requests_json" | node scripts/ci/provider-model-catalog-pr.mjs "$branch")"
+          if [ -n "$pull_request" ]; then
+            gh pr edit "$pull_request" --title "chore: refresh provider model catalog" --body "Automated reviewed data refresh from the MIT-licensed models.dev catalog. This PR changes metadata only and does not enable provider adapters or runtime permissions."
           else
             gh pr create --base main --head "$branch" --title "chore: refresh provider model catalog" --body "Automated reviewed data refresh from the MIT-licensed models.dev catalog. This PR changes metadata only and does not enable provider adapters or runtime permissions."
           fi

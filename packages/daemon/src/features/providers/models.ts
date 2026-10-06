@@ -32,10 +32,13 @@ import {
   createProviderModelDiscoveryRequest,
   providerModelDiscoveryItems,
   providerModelDiscoveryNeedsApiKey,
+  providerModelDiscoveryNextPageToken,
   supportsProviderModelDiscovery,
 } from "./model-discovery-adapters.js";
 
 const PROVIDER_CHECK_TIMEOUT_MS = 10_000;
+const PROVIDER_MODEL_DISCOVERY_LIMIT = 200;
+const PROVIDER_MODEL_DISCOVERY_PAGE_LIMIT = 200;
 const providerModelInputTypes = ["text", "image"] as const;
 
 export async function listProviderModels(
@@ -60,20 +63,37 @@ export async function listProviderModels(
 
   const request = createProviderModelDiscoveryRequest(preset, materialized.headers, materialized.apiKeySecret.value);
   try {
-    const response = await fetch(request.source, {
-      method: "GET",
-      headers: request.headers,
-      signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),
-    });
-    if (!response.ok) {
-      throw new HttpError(
-        response.status === 401 || response.status === 403 ? 401 : 400,
-        response.status === 401 || response.status === 403 ? "auth_failed" : "provider_error",
-        await providerModelListFailureMessage(response, materialized.redactionValues),
-      );
+    const signal = AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS);
+    const models: ProviderModelOption[] = [];
+    const seenModelIds = new Set<string>();
+    const seenPageTokens = new Set<string>();
+    let pageSource = request.source;
+    for (;;) {
+      const response = await fetch(pageSource, {
+        method: "GET",
+        headers: request.headers,
+        signal,
+      });
+      if (!response.ok) {
+        throw new HttpError(
+          response.status === 401 || response.status === 403 ? 401 : 400,
+          response.status === 401 || response.status === 403 ? "auth_failed" : "provider_error",
+          await providerModelListFailureMessage(response, materialized.redactionValues),
+        );
+      }
+      const body = await response.json() as unknown;
+      models.push(...parseProviderModelsResponse(body, preset, PROVIDER_MODEL_DISCOVERY_LIMIT - models.length, seenModelIds));
+      const nextPageToken = providerModelDiscoveryNextPageToken(body, preset);
+      if (models.length >= PROVIDER_MODEL_DISCOVERY_LIMIT || !nextPageToken) break;
+      if (seenPageTokens.has(nextPageToken) || seenPageTokens.size >= PROVIDER_MODEL_DISCOVERY_PAGE_LIMIT - 1) {
+        throw new HttpError(400, "provider_error", "Provider model discovery returned repeated or too many page tokens.");
+      }
+      seenPageTokens.add(nextPageToken);
+      const nextPageUrl = new URL(request.source);
+      nextPageUrl.searchParams.set("pageToken", nextPageToken);
+      pageSource = nextPageUrl.toString();
     }
-    const body = await response.json() as unknown;
-    return providerModelListResponse(request.source, parseProviderModelsResponse(body, preset));
+    return providerModelListResponse(request.source, models);
   } catch (error) {
     if (error instanceof HttpError) {
       throw error;
@@ -156,7 +176,7 @@ function providerModelListInputToPreset(
   }
   const useSavedLocalSecret = !input.apiKey
     && Boolean(savedPreset?.apiKeyRef && isLocalProviderSecretRef(savedPreset.apiKeyRef))
-    && (!requestedLocalRef || requestedLocalRef === savedPreset?.apiKeyRef);
+    && (!input.apiKeyRef || input.apiKeyRef === savedPreset?.apiKeyRef);
   if (useSavedLocalSecret && savedPreset && !providerModelConnectionMatchesSavedPreset(input, savedPreset)) {
     throw new HttpError(
       409,
@@ -230,10 +250,14 @@ async function providerModelListFailureMessage(response: Response, redactionValu
   return `Provider returned HTTP ${response.status}${bodyText ? `: ${bodyText}` : "."}`;
 }
 
-function parseProviderModelsResponse(body: unknown, preset: ProviderPreset): readonly ProviderModelOption[] {
+function parseProviderModelsResponse(
+  body: unknown,
+  preset: ProviderPreset,
+  limit = PROVIDER_MODEL_DISCOVERY_LIMIT,
+  seen = new Set<string>(),
+): readonly ProviderModelOption[] {
   const data = providerModelDiscoveryItems(body, preset);
   const models: ProviderModelOption[] = [];
-  const seen = new Set<string>();
   for (const item of data) {
     const model = parseProviderModelOption(item, preset);
     if (!model || seen.has(model.id)) {
@@ -241,7 +265,7 @@ function parseProviderModelsResponse(body: unknown, preset: ProviderPreset): rea
     }
     seen.add(model.id);
     models.push(model);
-    if (models.length >= 200) {
+    if (models.length >= limit) {
       break;
     }
   }
@@ -338,6 +362,7 @@ function parseProviderModelInput(value: Record<string, unknown>): readonly ("tex
 }
 
 function parseProviderModelCapabilities(value: Record<string, unknown>): readonly ProviderCapability[] | undefined {
+  if (Array.isArray(value.capabilities) && value.capabilities.length === 0) return [];
   const architecture = isRecord(value.architecture) ? value.architecture : undefined;
   const metadata = isRecord(value.metadata) ? value.metadata : undefined;
   const result: ProviderCapability[] = [];
@@ -485,14 +510,16 @@ function parseProviderModelModalities(value: unknown): readonly ("text" | "image
 }
 
 function parseProviderModelThinkingModes(value: Record<string, unknown>): readonly ProviderThinkingMode[] | undefined {
+  const rawModes = value.thinkingModes ?? value.thinking_modes ?? value.reasoningLevels ?? value.reasoning_levels;
+  if (Array.isArray(rawModes) && rawModes.length === 0) return [];
   const explicit = normalizeProviderThinkingModes(
-    parseProviderModelLooseStringArray(value.thinkingModes ?? value.thinking_modes ?? value.reasoningLevels ?? value.reasoning_levels),
+    parseProviderModelLooseStringArray(rawModes),
   );
   if (explicit) {
     return explicit;
   }
   const support = parseProviderModelThinkingSupport(value);
-  if (support?.levels.length) {
+  if (support) {
     return support.levels;
   }
   if (value.reasoning === true || value.supports_reasoning === true || value.supportsThinking === true || value.supports_thinking === true) {
@@ -516,8 +543,10 @@ function parseProviderModelThinkingSupport(value: Record<string, unknown>): Prov
   if (!thinking) {
     return undefined;
   }
+  const levels = normalizeProviderThinkingModes(parseProviderModelLooseStringArray(thinking.levels));
+  if (!levels && !(Array.isArray(thinking.levels) && thinking.levels.length === 0)) return undefined;
   return normalizeProviderThinkingSupport({
-    levels: normalizeProviderThinkingModes(parseProviderModelLooseStringArray(thinking.levels) ?? []) ?? [],
+    levels: levels ?? [],
     minTokens: readPositiveInteger(thinking.min ?? thinking.min_tokens ?? thinking.minTokens),
     maxTokens: readPositiveInteger(thinking.max ?? thinking.max_tokens ?? thinking.maxTokens),
     zeroAllowed: readOptionalBooleanLike(thinking.zero_allowed ?? thinking.zeroAllowed),
