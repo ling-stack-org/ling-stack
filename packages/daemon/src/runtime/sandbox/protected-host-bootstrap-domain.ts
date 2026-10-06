@@ -11,7 +11,12 @@ import { MACOS_DYLD_PROFILE } from "./macos-seatbelt-profile.js";
 // The original profile metadata rule remains visible; only data/map and mutation are isolated.
 // This reviewed manifest is static support evidence, not a substitute for a kernel probe.
 // Unknown OS revisions close only Office protection until their source is reviewed.
-const reviewedBootstrapSha256 = "bdfc2354c683c8fb95a39e63fbc8610e9739b0256c89ab880564edefbe73a5ce";
+const reviewedBootstrapSha256s = Object.freeze([
+  "bdfc2354c683c8fb95a39e63fbc8610e9739b0256c89ab880564edefbe73a5ce",
+  // Actual CI macOS 26.6.2/25G83 source reviewed 2026-10-06. Its read domains
+  // are the same bounded System Cryptex/ancestors and literal /; no write/IPC grant.
+  "06215a5d32689aefe395c29710e182eb54ba22162f50df8b4842290f8a19bf1c",
+]);
 const reservedReadRoots = Object.freeze(["/dev", "/System"]);
 const maxBootstrapBytes = 8 * 1024 * 1024;
 const sameFile = (first: BigIntStats, second: BigIntStats): boolean => second.isFile() && !second.isSymbolicLink()
@@ -66,7 +71,7 @@ function readOriginalBootstrapReviewStatus(backend: ExecutionSandboxBackendIdent
     const sha = createHash("sha256").update(bytes.subarray(0, length)).digest("hex");
     requireBootstrap(backend.kind === "macos_seatbelt"
       && backend.helperVersion.endsWith(":" + sha));
-    return sha === reviewedBootstrapSha256;
+    return reviewedBootstrapSha256s.includes(sha);
   } finally {
     if (fd !== undefined) { const original = fd; fd = undefined; closeSync(original); }
   }
