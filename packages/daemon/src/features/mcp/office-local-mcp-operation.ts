@@ -1,4 +1,4 @@
-import { digestHarnessToolValue, type RunStore } from "@ling-stack/core";
+import { digestHarnessToolValue, HOST_OFFICE_LOCAL_DIRECTORY_V2_PROTOCOL, type RunStore } from "@ling-stack/core";
 import { OFFICE_DOCUMENTS_MCP_SERVER_ID } from "@ling-stack/contracts";
 import type { PiRunnerMcpToolCallResult } from "@ling-stack/runner-pi";
 import type { McpBroker, McpBrokerOptions } from "../../context.js";
@@ -111,6 +111,8 @@ export async function executeHostOfficeLocalMcpOperation(operation: HostOfficeLo
     toolCallId: state.toolCallId, workspaceCwd: state.workspaceCwd, toolName: state.toolName, input: state.ownedInput,
     requestDigest: digestHarnessToolValue({ toolName: state.toolName, input: state.ownedInput }),
     policyDigest: digestHarnessToolValue({ protocol: "ling-office-local-binary-v1", authority: state.authority, approval: state.approval }),
+    directoryPolicyDigest: digestHarnessToolValue({ protocol: HOST_OFFICE_LOCAL_DIRECTORY_V2_PROTOCOL,
+      authority: state.authority, approval: state.approval }),
     signal: state.signal };
   state.started = true;
   const result = await executeReservedOfficeLocalArtifact(state.reservation, executionInput);

@@ -19,6 +19,7 @@ import { officeBytesDigest, OfficeLocalMemberLedger } from "./office-local-membe
 import { projectOfficeLocalDirectoryGraph } from "./office-local-directory-graph.js";
 import { isOwnedOfficeLocalNativeRuntime, type OfficeLocalNativeRuntime, type OfficeLocalNativeBootstrapInput,
   type OfficeLocalNativeTypedScope } from "./office-local-native-runtime.js";
+import { bindOriginalOfficeLocalDirectoryWriteAuthority } from "./office-local-authority-state.js";
 
 declare const reservationBrand: unique symbol;
 declare const planBrand: unique symbol;
@@ -73,6 +74,7 @@ export interface OfficeLocalDirectoryWriteState extends ReservationState, Direct
   used: boolean;
 }
 const directoryBootstrapClaims = new WeakSet<ReservationState>();
+const directoryRouteClaims = new WeakSet<ReservationState>();
 const directoryBootstraps = new WeakMap<ReservationState, DirectoryBootstrap>();
 const directoryPlans = new WeakMap<OfficeLocalDirectoryWritePlan, OfficeLocalDirectoryWriteState>();
 /** Not exposed by officeLocalWriteState: an internal state holder cannot drop or replace this fence. */
@@ -159,6 +161,15 @@ export function closeOfficeLocalReservation(reservation: OfficeLocalReservation)
   state.lifecycle.closed = true;
 }
 
+/** Production V2 selection is sticky before lookup, preparation or any public read can reenter. */
+export function claimOfficeLocalDirectoryRoute(reservation: OfficeLocalReservation): void {
+  const state = reservations.get(reservation);
+  if (!state || state.lifecycle.closed || state.prepared || state.lifecycle.preparationClaimed
+    || directoryRouteClaims.has(state)) throw new Error("office_local_reservation_invalid");
+  directoryRouteClaims.add(state);
+  assertOfficeLocalReservation(reservation);
+}
+
 /**
  * Latch the original read before any native callback can reenter settlement.
  * A thrown capture cannot prove readonly resource closure, even with zero writes.
@@ -184,16 +195,10 @@ export function captureOfficeLocalReservationSnapshot(reservation: OfficeLocalRe
 export function settleOfficeLocalReservationNoStart(reservation: OfficeLocalReservation): HostOfficeLocalSettlement {
   const state = reservations.get(reservation);
   if (!state || state.prepared || state.lifecycle.preparationClaimed) throw new Error("office_local_reservation_invalid");
+  if (directoryRouteClaims.has(state)) throw new Error("office_local_protocol_mismatch");
   state.lifecycle.closed = true;
   if (state.lifecycle.readStarted && !state.completedSnapshot) throw new Error("office_local_snapshot_unconfirmed");
-  if (directoryBootstrapClaims.has(state)) {
-    const bootstrap = directoryBootstraps.get(state);
-    if (!bootstrap) throw new Error("office_local_directory_bootstrap_unconfirmed");
-    // Before a native capture, the original Host readonly stage FDs still need
-    // a real returned close. A failed bootstrap/close is never generic no-start.
-    bootstrap.runtime.revokeScope(bootstrap.scope);
-    bootstrap.runtime.closeStage(bootstrap.scope);
-  }
+  closeUnpreparedDirectoryBootstrap(state);
   if (!state.store.isCurrentRunExecutionOwner(state.tracker.source.runId, state.tracker.source)) {
     throw new Error("office_local_source_obsolete");
   }
@@ -202,6 +207,30 @@ export function settleOfficeLocalReservationNoStart(reservation: OfficeLocalRese
   const producer = state.tracker.settleNoStart(state.producer);
   const parent = state.tracker.settleNoStart(state.parent);
   return { parent, producer };
+}
+
+/**
+ * Close only a returned, still-unprepared bootstrap's original readonly FDs.
+ * This is not no-start, settlement or bound-lease release authority. A claimed
+ * preparation or missing bootstrap return must retain its unknown resources.
+ */
+export function closeOfficeLocalUnpreparedDirectoryBootstrap(reservation: OfficeLocalReservation): void {
+  const state = reservations.get(reservation);
+  if (!state || !state.lifecycle.closed) throw new Error("office_local_reservation_invalid");
+  if (state.prepared || state.lifecycle.preparationClaimed)
+    throw new Error("office_local_directory_preparation_cleanup_unavailable");
+  closeUnpreparedDirectoryBootstrap(state);
+}
+
+function closeUnpreparedDirectoryBootstrap(state: ReservationState): void {
+  if (!directoryBootstrapClaims.has(state)) return;
+  const bootstrap = directoryBootstraps.get(state);
+  if (!bootstrap) throw new Error("office_local_directory_bootstrap_unconfirmed");
+  // Private returned custody, not an exception or DTO, identifies the originals.
+  // Runtime's fixed close also refuses bound/entered/unknown native lifetimes;
+  // its tombstone precedes physical close so a missing return cannot retry FDs.
+  bootstrap.runtime.revokeScope(bootstrap.scope);
+  bootstrap.runtime.closeStage(bootstrap.scope);
 }
 
 /** A closed unknown reservation never grants retry, resource cleanup or a safe receipt. */
@@ -220,9 +249,11 @@ export function blockOfficeLocalReservation(reservation: OfficeLocalReservation)
 /** Own all bytes/member identities before issuance. The serializer result is data, not a receipt. */
 export function prepareOfficeLocalWrite(reservation: OfficeLocalReservation, snapshot: OfficeLocalReadSnapshot,
   artifact: PreparedOfficeArtifact, requestDigest: string, policyDigest: string): OfficeLocalWritePlan {
+  const original = reservations.get(reservation);
+  if (original && (directoryBootstrapClaims.has(original) || directoryRouteClaims.has(original)))
+    throw new Error("office_local_protocol_mismatch");
   assertOfficeLocalReservation(reservation);
   const state = reservations.get(reservation)!;
-  if (directoryBootstrapClaims.has(state)) throw new Error("office_local_protocol_mismatch");
   if (state.lifecycle.readStarted && snapshot !== state.completedSnapshot) throw new Error("office_local_preparation_invalid");
   const bytes = Buffer.from(artifact.bytes), inputBytes = copyOfficeLocalSnapshotBytes(snapshot);
   revalidateOfficeLocalSnapshot(snapshot);
@@ -331,6 +362,12 @@ export function prepareOfficeLocalDirectoryWrite(reservation: OfficeLocalReserva
   const frame = mcpForwardAuthorities.get(state)!;
   mcpForwardAuthorities.set(writeState, frame);
   directoryPlans.set(plan, writeState);
+  try { bindOriginalOfficeLocalDirectoryWriteAuthority(plan); }
+  catch (error) {
+    // An original binding failure never permits an unbound writer fallback.
+    writeState.lifecycle.closed = true;
+    throw error;
+  }
   return plan;
 }
 

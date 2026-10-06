@@ -114,6 +114,8 @@ const originalCoreScopeReaders = new WeakMap<OfficeLocalNativeRuntime, Readonly<
   assertClosedBoundWindow: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
   releaseLease: (custody: object, authority: OriginalOfficeDirectoryAuthorityV2,
     grant: HostOfficeLocalDirectoryCommittedPairV2, claim: HostOfficeLocalDirectoryCloseClaimV2) => void;
+  assertLeaseReleased: (custody: object, authority: OriginalOfficeDirectoryAuthorityV2,
+    grant: HostOfficeLocalDirectoryCommittedPairV2, claim: HostOfficeLocalDirectoryCloseClaimV2) => void;
   assertReleasePermit: (record: OfficeDirectoryReleasePermitStateV2) => void;
 }>>();
 function requireRuntime(value: unknown, code = "office_local_native_runtime_invalid"): asserts value {
@@ -154,6 +156,7 @@ export class OfficeLocalNativeRuntime {
       closeBoundWindow: (custody, expected) => this.#closeBoundCoreWindow(custody, expected),
       assertClosedBoundWindow: (custody, expected) => this.#assertClosedCoreWindow(custody, expected),
       releaseLease: (custody, authority, grant, claim) => this.#releaseCoreLease(custody, authority, grant, claim),
+      assertLeaseReleased: (custody, authority, grant, claim) => this.#assertCoreLeaseReleased(custody, authority, grant, claim),
       assertReleasePermit: record => this.#assertReleasePermit(record),
     }));
   }
@@ -483,6 +486,29 @@ export class OfficeLocalNativeRuntime {
     }
   }
 
+  /** Already-completed original deletion history only; never enters a first release or native/current-FD proof. */
+  #assertCoreLeaseReleased(custody: object, authority: OriginalOfficeDirectoryAuthorityV2,
+    grant: HostOfficeLocalDirectoryCommittedPairV2, claim: HostOfficeLocalDirectoryCloseClaimV2): void {
+    const state = this.#coreCustodies.get(custody), history = this.#leaseReleaseHistories.get(custody);
+    requireRuntime(state && state.coreBinding === "bound" && state.coreWindow && state.coreExecution
+      && history && history.authority === authority && history.grant === grant && history.claim === claim,
+      "office_local_native_lease_release_history_invalid");
+    requireRuntime(!this.#leaseReleaseGates.has(custody), "office_local_native_lease_release_already_entered");
+    const record = originalReleasePermits.get(history.permit);
+    requireRuntime(record && record.runtime === this && record.custody === custody && record.phase === "consumed"
+      && !record.active, "office_local_native_lease_release_history_invalid");
+    record.active = true; record.historyOnly = true; this.#leaseReleaseGates.set(custody, record);
+    try {
+      const execution = state.coreExecution;
+      assertOriginalOfficeDirectoryCommittedPairAuthorityV2(this.store, grant, claim, authority, {
+        executionId: execution.executionId, source: execution.source,
+        parentOperationId: execution.parentOperationId, producerOperationId: execution.producerOperationId,
+      });
+      this.#assertReleasePermit(record);
+      assertOriginalProtectedHostOfficeDirectoryLeaseReleasedV2(this.registry, history.permit);
+    } finally { record.active = false; this.#leaseReleaseGates.delete(custody); }
+  }
+
   /** Only original object/epoch reads after proof. No native, source, window-FD or caller code. */
   #assertReleasePermit(record: OfficeDirectoryReleasePermitStateV2): void {
     const state = this.#coreCustodies.get(record.custody), target = record.target;
@@ -576,6 +602,15 @@ export function releaseOriginalOfficeDirectoryRuntimeLeaseV2(runtime: OfficeLoca
   requireRuntime(reader,
     "office_local_native_lease_release_custody_invalid");
   reader.releaseLease(custody, authority, grant, claim);
+}
+
+/** Composition-only private custody readback; absence of prior release history is an unconditional refusal. */
+export function assertOriginalOfficeDirectoryRuntimeLeaseReleasedV2(runtime: OfficeLocalNativeRuntime, custody: object,
+  authority: OriginalOfficeDirectoryAuthorityV2, grant: HostOfficeLocalDirectoryCommittedPairV2,
+  claim: HostOfficeLocalDirectoryCloseClaimV2): void {
+  const reader = originalCoreScopeReaders.get(runtime);
+  requireRuntime(reader, "office_local_native_lease_release_custody_invalid");
+  reader.assertLeaseReleased(custody, authority, grant, claim);
 }
 
 /** Fixed Registry target lookup. Exported for the original consumer, not a permit registration seam. */

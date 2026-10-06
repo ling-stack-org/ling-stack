@@ -233,11 +233,11 @@ test("real handler preparation ACK loss preserves bound unknown roles and never 
   assert.equal(existsSync(join(f.cwd, "result.docx")), false);
 });
 
-test("production nested directory requirement remains blocked at creator proof rather than legacy success", async t => {
+test("production nested directory create refuses an injected Store without legacy mkdir or fallback", async t => {
   const f = await fixture(t);
   await assert.rejects(f.handler()(f.request(creates.docx, { ...inputs.docx, path: "new/nested/result.docx" })),
-    error => nestedMessage(error, "office_local_directory_creator_unverified"));
-  assert.equal(existsSync(join(f.cwd, "new")), true); assert.equal(existsSync(join(f.cwd, "new/nested/result.docx")), false);
+    error => nestedMessage(error, "office_local_directory_core_composition_invalid"));
+  assert.equal(existsSync(join(f.cwd, "new")), false); assert.equal(existsSync(join(f.cwd, "new/nested/result.docx")), false);
   assert.ok(f.rows().every(row => row.phase !== "safe")); assert.equal(f.projections, 0); assert.equal(f.oldEffects, 0);
 });
 

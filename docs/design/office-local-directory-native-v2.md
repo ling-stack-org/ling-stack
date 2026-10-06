@@ -2,7 +2,7 @@
 
 日期：2026-10-05。
 
-状态：**事实图和纯 replay 已实现并定向验证；生产接线、完整 canonical/settlement 与 packaged 验收未完成，不是安全凭证。** 本文基于当前 Core v1
+状态：**事实图、纯 replay、原 Core 原子 pair、固定 lease/Tracker 和 consumer 接线已分步定向验证；真实默认启动的 Keychain 受控域及 packaged 验收未完成，不是整体安全凭证。** 最新阶段边界见 [Tracker/consumer checkpoint](office-tracker-consumer-checkpoint-2026-10-07.md)。本文基于当前 Core v1
 binary facts / terminal / replay 与 frozen `native/office-local` protocol 2 的只读核对。
 独立 Core v2 types/parsers、migration152、历史存储、Daemon facts/graph、typed runtime、
 fixed adapter 和事实终态已落。native protocol 2不等于完整 Core binary protocol v2

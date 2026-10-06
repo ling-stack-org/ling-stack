@@ -36,6 +36,7 @@ import type { RunStoreFactory } from "./runtime/store-registry.js";
 import type { RunStoreRegistry } from "./runtime/store-registry.js";
 import type { RunnerRegistry } from "./runtime/runners.js";
 import type { RuntimeSupervisor } from "./runtime/supervisor.js";
+import type { OfficeLocalReviewedNativeArtifact } from "./runtime/sandbox/protected-host-office-native-identity.js";
 import type { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
 import type { StartupStateRegistry } from "./startup/state.js";
 import type { BundledCuaDriverActivationService } from "./features/plugins/cua-driver-bundled-activation.js";
@@ -146,6 +147,8 @@ export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
+  /** Host build selection only. Never supplied by workspace policy, HTTP or model input. */
+  readonly officeLocalNativeArtifact?: OfficeLocalReviewedNativeArtifact;
   readonly extensionRegistry?: LingExtensionRegistry;
   readonly secretResolver?: SecretResolver;
   readonly externalSecretStore?: ExternalSecretStore;

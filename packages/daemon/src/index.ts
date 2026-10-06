@@ -1,7 +1,6 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import {
-  createSqliteRunStore,
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
   createCompositeSecretResolver,
@@ -65,6 +64,7 @@ import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type Runn
 import { listExternalRunnerRegistrations } from "./runtime/external-runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
 import { RuntimeSupervisor } from "./runtime/supervisor.js";
+import { createOriginalOfficeDirectoryStoreFactory } from "./features/office-documents/office-local-directory-core-authority.js";
 import {
   retryRuntimeWorkUnit,
   startRuntimeWorkUnit,
@@ -268,7 +268,30 @@ export function createDaemonServer(
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
   let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
   let runEvaluationScheduler: RunEvaluationSchedulerRegistry | undefined;
-  const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
+  // Chrome/Office plugin synchronization opens the Store during construction.
+  // The same original Supervisor must exist before any default Store is opened;
+  // an injected factory remains untrusted and is never retrofitted with custody.
+  const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig, (event) => {
+    appendControlPlaneEvent(event.store, controlPlaneEvents, {
+      workspaceId: event.workUnit.workspaceId,
+      cwd: event.cwd,
+      domain: "work_units",
+      entityType: "work_unit",
+      entityId: event.workUnit.id,
+      action: "work_unit.transitioned",
+      data: {
+        previousStatus: event.previousStatus,
+        status: event.status,
+        reason: event.reason,
+        runId: event.workUnit.linkedRunId ?? null,
+        attemptId: event.workUnit.activeAttemptId ?? null,
+      },
+    }, event.now);
+  }, dependencies.officeLocalNativeArtifact
+    ? { officeLocalNativeArtifact: dependencies.officeLocalNativeArtifact }
+    : undefined);
+  const storeRegistry = new RunStoreRegistry(
+    dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
       approvalRecoveryStores.add(store);
@@ -418,23 +441,6 @@ export function createDaemonServer(
   });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
-  const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig, (event) => {
-    appendControlPlaneEvent(event.store, controlPlaneEvents, {
-      workspaceId: event.workUnit.workspaceId,
-      cwd: event.cwd,
-      domain: "work_units",
-      entityType: "work_unit",
-      entityId: event.workUnit.id,
-      action: "work_unit.transitioned",
-      data: {
-        previousStatus: event.previousStatus,
-        status: event.status,
-        reason: event.reason,
-        runId: event.workUnit.linkedRunId ?? null,
-        attemptId: event.workUnit.activeAttemptId ?? null,
-      },
-    }, event.now);
-  });
   automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,
@@ -867,10 +873,6 @@ export function createDaemonServer(
 function readChromeBrowserExtensionIds(value: string | undefined): readonly string[] {
   const configured = value?.split(",").map((item) => item.trim()).filter(Boolean) ?? [];
   return configured.length > 0 ? configured : CHROME_BROWSER_DEFAULT_EXTENSION_IDS;
-}
-
-function createDefaultRunStore(cwd: string) {
-  return createSqliteRunStore(cwd, resolveStoragePaths(cwd).workspace);
 }
 
 function createLazyCuaDriverLeaseClientFactory(

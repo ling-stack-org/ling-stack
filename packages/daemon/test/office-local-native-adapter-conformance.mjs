@@ -1,4 +1,4 @@
-/** Explicit reviewed local addon adapter only. NOT portable test:ci, kernel/fullscope, Core safe, six-route or packaged proof. */
+/** Original production adapter + Core pair. NOT portable test:ci, kernel/fullscope, six-route or packaged proof. */
 import assert from "node:assert/strict";
 import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -26,19 +26,26 @@ function assertOriginalPairBlocked(f) {
   assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
   assert.equal(f.tracker.executorGroup.getSnapshot().operations.length, 2);
 }
-function assertNoReentry(f, entries) {
+function assertNoReentry(f, entries, settled = false) {
   const before = f.effects(), count = entries.length;
   assert.throws(() => executeOfficeLocalDirectoryWrite(f.plan), /office_local_directory_write_already_entered/u);
   assert.throws(() => executeOfficeLocalDirectoryWrite({ ...f.plan }), /office_local_directory_plan_invalid/u);
   assert.throws(() => settleOfficeLocalReservationNoStart(f.reservation), /office_local_reservation_invalid/u);
   assert.deepEqual(f.effects(), before); assert.equal(entries.length, count);
-  assertOriginalPairBlocked(f);
+  if (settled) {
+    assert.ok(f.pairRows().every(row => row.phase === "safe"));
+    assert.deepEqual(f.store.listHostOperationBlockers(f.source), []);
+    assert.ok(f.tracker.executorGroup.getSnapshot().operations.every(row => row.state === "settled"));
+  } else assertOriginalPairBlocked(f);
 }
 
-for (const format of ["docx", "xlsx", "pptx"]) test(`fixed adapter creates genuine missing nested ${format}, real bytes, returned closes and graph-only facts`, async t => {
+for (const format of ["docx", "xlsx", "pptx"]) test(`fixed adapter creates genuine missing nested ${format} and settles its original pair without upgrading native facts`, async t => {
   const f = await createNativeDirectoryAdapterFixture(t, { format }), entries = observeNativeAdapterEntries(t, f);
   assert.equal(existsSync(join(f.cwd, "nested")), false, "do not precreate the requested parent to dodge the positive case");
-  const result = executeOfficeLocalDirectoryWrite(f.plan), terminal = f.terminal(), history = f.observations();
+  const written = executeOfficeLocalDirectoryWrite(f.plan), result = written.nativeFacts, terminal = f.terminal(), history = f.observations();
+  assert.equal(written.kind, "office_local_directory_write_result_v2");
+  assert.equal(written.settlement.parent.phase, "safe"); assert.equal(written.settlement.producer.phase, "safe");
+  assert.deepEqual(f.leaseRoots(), []);
   assert.equal(result.kind, "office_local_directory_native_facts_v2"); assert.equal(result.outcome, "published_native_only");
   assert.equal(result.graph.kind, "graph_verified_only"); assert.equal(result.coreSafe, false);
   assert.equal(result.canonicalVisibility, "unverified"); assert.equal(result.packaged, false);
@@ -51,7 +58,7 @@ for (const format of ["docx", "xlsx", "pptx"]) test(`fixed adapter creates genui
   assert.equal(entries.filter(item => item.kind === "install_tree").length, 1);
   assert.deepEqual(entries.filter(item => item.kind === "close_session").map(item => item.mode), ["forward"]);
   assert.ok(history.every(item => item.observation.native.state === "returned" && item.observation.host.state === "returned"));
-  assertNoReentry(f, entries);
+  assertNoReentry(f, entries, true);
 });
 
 test("normal returned false keeps genuine mkdirat EEXIST/errno and partial facts before stopping forward", async t => {

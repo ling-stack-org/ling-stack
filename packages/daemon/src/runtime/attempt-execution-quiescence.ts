@@ -96,6 +96,10 @@ const kinds = new Set<HostExecutorKind>(["command", "file_mutation", "mcp", "plu
   "approval", "permission", "approval_review", "hydration", "sdk_tool", "cleanup"]);
 const sourceKeys = ["runId", "workUnitId", "attemptId", "runtimeInstanceId", "fencingToken"] as const;
 const settlementKeys = ["schemaVersion", "source", "operationId", "kind", "evidenceRef", "settledAt"] as const;
+const originalGroupReaders = new WeakMap<AttemptExecutorGroup, Readonly<{
+  read: () => AttemptExecutorSnapshot;
+  settle: (ticket: HostCallTicket, proof: HostExecutorSettlement) => void;
+}>>();
 
 /**
  * One dispatch's Host-only admission and quiescence barrier. It does not cancel,
@@ -122,6 +126,10 @@ export class AttemptExecutorGroup {
     this.#isCurrentExecutionOwner = options.isCurrentExecutionOwner;
     this.#verifySettlement = options.verifySettlement;
     this.#persistBlockedOperation = options.persistBlockedOperation;
+    originalGroupReaders.set(this, Object.freeze({
+      read: () => this.#snapshot(),
+      settle: (ticket, proof) => this.#settleHostCall(ticket, proof),
+    }));
   }
 
   get source(): AttemptExecutionSource { return this.#source; }
@@ -199,6 +207,9 @@ export class AttemptExecutorGroup {
    * proof cannot upgrade them into a safe stop or release this barrier.
    */
   settleHostCall(ticket: HostCallTicket, proof: HostExecutorSettlement): void {
+    this.#settleHostCall(ticket, proof);
+  }
+  #settleHostCall(ticket: HostCallTicket, proof: HostExecutorSettlement): void {
     const operation = this.#operation(ticket);
     if (operation.verifyingSettlement) fail("settlement_in_progress", "Settlement verification is already in progress.");
     const captured = readSettlement(proof);
@@ -230,6 +241,9 @@ export class AttemptExecutorGroup {
   }
 
   getSnapshot(): AttemptExecutorSnapshot {
+    return this.#snapshot();
+  }
+  #snapshot(): AttemptExecutorSnapshot {
     return Object.freeze({ source: this.#source, admission: this.#requiredInput ? "closed" : "open",
       ...(this.#requiredInput ? { requiredInput: this.#requiredInput } : {}), operations: this.#operationSnapshots() });
   }
@@ -326,6 +340,20 @@ export class AttemptExecutorGroup {
     return undefined;
   }
   #notify(): void { for (const waiter of [...this.#waiters]) waiter(); }
+}
+
+/** Exact original group snapshot. No replacement public getter can fabricate barrier closure. */
+export function readOriginalAttemptExecutorGroupSnapshot(group: AttemptExecutorGroup): AttemptExecutorSnapshot {
+  const original = originalGroupReaders.get(group);
+  if (!original) fail("invalid_group", "The original attempt executor group is required.");
+  return original.read();
+}
+/** Fixed private settlement entry; retains the original constructor verifier and membership checks. */
+export function settleOriginalAttemptExecutorGroupHostCall(group: AttemptExecutorGroup,
+  ticket: HostCallTicket, proof: HostExecutorSettlement): void {
+  const original = originalGroupReaders.get(group);
+  if (!original) fail("invalid_group", "The original attempt executor group is required.");
+  original.settle(ticket, proof);
 }
 
 function fail(code: string, message: string): never { throw new AttemptExecutionQuiescenceError(`attempt_execution_${code}`, message); }

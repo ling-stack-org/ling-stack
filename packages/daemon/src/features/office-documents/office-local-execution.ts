@@ -3,9 +3,12 @@ import type { AttemptHostOperationTracker } from "../../runtime/attempt-host-ope
 import { prepareOfficeArtifact, type OfficeArtifactResultDetails, type OfficeLocalArtifactToolName } from "./office-artifact-preparation.js";
 import { readRecord, readString } from "./office-artifact-content.js";
 import { assertOfficeLocalReservation, assertOfficeLocalReservationBinding, assertOfficeLocalWriteForwardAuthority,
-  blockOfficeLocalReservation, captureOfficeLocalReservationSnapshot,
-  closeOfficeLocalReservation, officeLocalWriteState, prepareOfficeLocalWrite, reserveOfficeLocalWriter,
-  settleOfficeLocalReservationNoStart, type OfficeLocalReservation, type OfficeLocalWritePlan } from "./office-local-authority.js";
+  blockOfficeLocalReservation, bootstrapOfficeLocalDirectoryScope, captureOfficeLocalReservationSnapshot, claimOfficeLocalDirectoryRoute,
+  closeOfficeLocalReservation, closeOfficeLocalUnpreparedDirectoryBootstrap, officeLocalWriteState, prepareOfficeLocalWrite, reserveOfficeLocalWriter,
+  prepareOfficeLocalDirectoryWrite, settleOfficeLocalReservationNoStart, type OfficeLocalDirectoryWritePlan,
+  type OfficeLocalReservation, type OfficeLocalWritePlan } from "./office-local-authority.js";
+import { readOriginalOfficeDirectoryNativeRuntime } from "./office-local-directory-core-authority.js";
+import { executeOfficeLocalDirectoryWrite } from "./office-local-native-adapter.js";
 import { copyOfficeLocalSnapshotBytes } from "./office-local-snapshot.js";
 import { executeOfficeLocalWrite } from "./office-local-writer.js";
 
@@ -18,6 +21,8 @@ export interface ExecuteOfficeLocalArtifactInput {
   readonly input: unknown;
   readonly requestDigest: string;
   readonly policyDigest: string;
+  /** Original MCP policy frame's V2 digest; data only, never a protocol selector or grant. */
+  readonly directoryPolicyDigest?: string;
   readonly signal?: AbortSignal;
 }
 export type OfficeLocalArtifactExecutionResult = OfficeArtifactResultDetails & {
@@ -57,6 +62,7 @@ export async function executeReservedOfficeLocalArtifact(reservation: OfficeLoca
   input: ExecuteOfficeLocalArtifactInput): Promise<OfficeLocalArtifactExecutionResult> {
   const { tracker, store, toolCallId, workspaceCwd, toolName, requestDigest, policyDigest, signal } = input;
   let stage: ExecutionStage = "capture", plan: OfficeLocalWritePlan | undefined;
+  let directoryAttempted = false, directoryPlan: OfficeLocalDirectoryWritePlan | undefined;
   const assertForward = (): void => {
     signal?.throwIfAborted();
     if (!plan) assertOfficeLocalReservation(reservation);
@@ -80,6 +86,25 @@ export async function executeReservedOfficeLocalArtifact(reservation: OfficeLoca
     stage = "preparation";
     const artifact = await prepareOfficeArtifact(toolName, ownedInput, bytes ? { format, bytes } : undefined, signal);
     assertForward();
+    if (toolName.startsWith("office_create_") && snapshot.input.state === "absent" && !artifact.overwrite
+      && snapshot.directories.some(directory => !directory.identity)) {
+      // The original completed reader selects the protocol. Claim the V2 route
+      // before lookup/bootstrap/prepare; any lost return keeps its original pair
+      // blocked and never falls into V1 or generic reservation no-start.
+      directoryAttempted = true;
+      claimOfficeLocalDirectoryRoute(reservation);
+      const runtime = readOriginalOfficeDirectoryNativeRuntime(store);
+      if (!runtime) throw new Error("office_local_native_artifact_unconfigured");
+      if (!input.directoryPolicyDigest) throw new Error("office_local_directory_policy_unavailable");
+      bootstrapOfficeLocalDirectoryScope(reservation, runtime);
+      directoryPlan = prepareOfficeLocalDirectoryWrite(reservation, snapshot, artifact, requestDigest, input.directoryPolicyDigest);
+      stage = "write";
+      const written = executeOfficeLocalDirectoryWrite(directoryPlan);
+      // The fixed adapter alone owns Core commit, lease release and V2 barrier
+      // closure. Native-only facts remain diagnostic and are not promoted here.
+      signal?.throwIfAborted();
+      return { ...artifact.resultDetails, path: written.path, executionId: written.executionId, settlement: written.settlement };
+    }
     plan = prepareOfficeLocalWrite(reservation, snapshot, artifact, requestDigest, policyDigest);
     assertForward();
     stage = "write";
@@ -93,6 +118,22 @@ export async function executeReservedOfficeLocalArtifact(reservation: OfficeLoca
   } catch (cause) {
     closeOfficeLocalReservation(reservation); // Latch closure before a late serializer can return.
     let settlementError: unknown;
+    if (directoryAttempted) {
+      // A V2 writer error is diagnostic, not retry/settlement authority. Before
+      // a plan returns, retain unknown original roles; a bound pair is left to
+      // its owning adapter/Core reconciliation without a consumer downgrade.
+      if (!directoryPlan) {
+        // A returned bootstrap before the preparation claim owns only readonly
+        // FDs. Close those originals without settling either unknown role. A
+        // claimed/lost-ACK preparation cannot obtain this cleanup authority.
+        try { closeOfficeLocalUnpreparedDirectoryBootstrap(reservation); }
+        catch (error) { settlementError = error; }
+        try { blockOfficeLocalReservation(reservation); }
+        catch (error) { settlementError = settlementError
+          ? new AggregateError([settlementError, error], "office_local_directory_cleanup_unconfirmed") : error; }
+      }
+      throw new OfficeLocalExecutionError(cause, stage, directoryPlan?.executionId, settlementError);
+    }
     try {
       if (plan) tracker.settleOfficeLocalFromStore(officeLocalWriteState(plan).ticket);
       else settleOfficeLocalReservationNoStart(reservation);

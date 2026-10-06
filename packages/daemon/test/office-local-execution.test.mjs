@@ -209,17 +209,18 @@ test("Office coordinator actual native write failure seals residue without fabri
   assert.equal(f.store.database.prepare("SELECT count(*) n FROM host_office_local_no_start_receipts").get().n, 0);
 });
 
-test("Office coordinator missing native creator proof preserves created directory blockers without text success", async t => {
+test("Office coordinator missing-directory create refuses non-original composition without precreating destination residue", async t => {
   const f = await fixture(t);
   await assert.rejects(f.invoke(creates.docx, { ...inputs.docx, path: "new/nested/result.docx" }), error => {
-    assert.ok(error instanceof OfficeLocalExecutionError); assert.equal(error.stage, "write");
-    assert.equal(error.cause.name, "OfficeLocalWriterError");
-    assert.equal(hasErrorMessage(error.cause, "office_local_directory_creator_unverified"), true);
+    assert.ok(error instanceof OfficeLocalExecutionError); assert.equal(error.stage, "preparation");
+    assert.equal(hasErrorMessage(error.cause, "office_local_directory_core_composition_invalid"), true);
     return true;
   });
-  assert.equal(existsSync(join(f.cwd, "new")), true, "an unowned created node remains explicit residue");
+  assert.equal(existsSync(join(f.cwd, "new")), false, "a missing-directory V2 refusal cannot run legacy mkdir");
   assert.equal(existsSync(join(f.cwd, "new/nested/result.docx")), false);
   assertBlocked(f);
+  assert.equal(f.store.database.prepare("SELECT count(*) n FROM host_office_local_executions").get().n, 0);
+  assert.equal(f.store.database.prepare("SELECT count(*) n FROM host_office_local_directory_v2_executions").get().n, 0);
 });
 
 test("Office coordinator existing nested directories retain supported original settlement", async t => {

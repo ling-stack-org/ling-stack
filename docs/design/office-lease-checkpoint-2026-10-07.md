@@ -39,11 +39,11 @@ MCP adapter. JavaScript return-loss is not HTTP/MCP acknowledgement-loss evidenc
 
 ## Remaining work and landing
 
-Tracker V2 barriers are a separate in-progress slice. Production still needs the
-bound adapter order: native closure, terminal seal, original close claim,
-committed grant, lease release, Tracker local barriers, then consumer result.
-Original MCP request correspondence, production factory/route and packaged
-macOS acceptance remain required.
+The later [Tracker/consumer checkpoint](office-tracker-consumer-checkpoint-2026-10-07.md)
+implements the fixed bound adapter order, original local barriers and production
+MCP correspondence. Its actual default-startup native cases still encounter the
+uncertified Keychain source; that blocker and packaged macOS acceptance remain
+required. Results from this earlier lease-only slice do not certify those gates.
 
 PR #507 and #509 remain unmerged. At the verified snapshot, #507's required CI
 did not start because of GitHub account payment/spending-limit restrictions and

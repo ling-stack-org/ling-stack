@@ -21,6 +21,7 @@ import {
 import {
   captureOriginalOfficeDirectoryAuthorityV2,
   createOriginalOfficeDirectoryStoreFactory,
+  readOriginalOfficeDirectoryNativeRuntime,
 } from "../dist/features/office-documents/office-local-directory-core-authority.js";
 import {
   OfficeLocalNativeRuntime,
@@ -91,11 +92,29 @@ test("fixed composition constructs exact SQLite Stores without exposing its setu
   assert.ok(store instanceof SqliteRunStore);
   assert.equal(store.paths.cwd, join(f.root, "owned"));
   assert.equal(f.supervisor.getOfficeLocalNativeRuntime(store.paths.cwd, store), undefined);
+  assert.equal(readOriginalOfficeDirectoryNativeRuntime(store), undefined);
   for (const value of [store, f.factory]) {
     for (const key of ["setup", "reader", "endpoint", "custody", "originalOfficeHostBridge", "getSetup", "getOriginalOfficeHostBridgeSetup"]) {
       assert.equal(key in value, false, `fixed composition must not expose ${key}`);
     }
   }
+});
+
+test("fixed runtime lookup rejects injected/cloned Stores and replacement runtime facsimiles", t => {
+  const f = fixture(t), owned = f.open("owned"), injected = f.open("injected", createSqliteRunStore);
+  let reads = 0;
+  const getter = t.mock.method(f.supervisor, "getOfficeLocalNativeRuntime", () => {
+    reads++; return Object.freeze({ store: owned, supervisor: f.supervisor, coreSafe: true });
+  });
+  for (const store of [injected, ...copies(owned)]) {
+    assert.throws(() => readOriginalOfficeDirectoryNativeRuntime(store), compositionInvalid);
+  }
+  assert.equal(reads, 0, "the private original Store check must precede public runtime lookup");
+  assert.throws(() => readOriginalOfficeDirectoryNativeRuntime(owned), compositionInvalid);
+  assert.equal(reads, 1); getter.mock.restore();
+  assert.equal(readOriginalOfficeDirectoryNativeRuntime(owned), undefined);
+  f.supervisor.releaseAll();
+  assert.throws(() => readOriginalOfficeDirectoryNativeRuntime(owned), compositionInvalid);
 });
 
 test("fake, spread and Proxy roots cannot create a fixed composition or enroll a transport", t => {

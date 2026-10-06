@@ -203,7 +203,7 @@ test("directory-v2 sealed failed terminal cannot use v1 settlement to release ei
   assert.equal(terminal.outcome, "failed"); assert.equal(terminal.canonicalVisibility.state, "unverified");
   assert.deepEqual(f.other.getHostOfficeLocalDirectoryTerminalV2(f.ticket.executionId), terminal);
   assert.deepEqual(f.tracker.sealOfficeLocalDirectoryTerminalV2(f.ticket, claim), terminal);
-  assert.throws(() => f.tracker.settleOfficeLocalFromStore(f.ticket), coreCode("host_office_local_invalid_ticket"));
+  assert.throws(() => f.tracker.settleOfficeLocalFromStore(f.ticket), trackerCode("invalid_office_ticket"));
   assert.throws(() => f.store.settleHostOfficeLocalExecution(f.ticket), coreCode("host_office_local_invalid_ticket"));
   for (const handle of [f.parent, f.producer]) {
     assert.throws(() => f.tracker.settleFromStore(handle), trackerCode("settlement_unconfirmed"));

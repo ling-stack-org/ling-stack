@@ -4,10 +4,18 @@ import type { HostCommandExecutionTicket, HostMediaEffectRecord, HostMediaExecut
   HostOperationEvidenceRef, HostOperationRecord, HostOperationTicket, PrepareHostMediaEffectInput,
   PrepareHostMediaExecutionInput, RunStore, RuntimeAttemptFenceV1, SealHostOfficeLocalTerminalInput,
   HostOfficeLocalTerminalRecord, HostOfficeLocalSettlement, HostOfficeLocalDirectoryEffectRecordV2,
-  PrepareHostOfficeLocalDirectoryEffectV2, HostOfficeLocalDirectoryTerminalRecordV2 } from "@ling-stack/core";
+  PrepareHostOfficeLocalDirectoryEffectV2, HostOfficeLocalDirectoryTerminalRecordV2,
+  HostOfficeLocalDirectoryCloseClaimV2, HostOfficeLocalDirectoryCommittedPairV2,
+  HostOfficeLocalDirectoryCommittedPairExpectedV2 } from "@ling-stack/core";
 import { AttemptExecutorGroup, type AttemptExecutionSource, type HostCallTicket, type HostExecutorBlocker,
-  type HostExecutorKind, type HostExecutorSettlement } from "./attempt-execution-quiescence.js";
+  type HostExecutorKind, type HostExecutorSettlement,
+  readOriginalAttemptExecutorGroupSnapshot, settleOriginalAttemptExecutorGroupHostCall } from "./attempt-execution-quiescence.js";
 import type { HostCommandOperation, HostCommandPreparationOperation, HostFileMutationOperation } from "./host-operation-effects.js";
+import { readOriginalOfficeDirectoryTrackerPairProofV2, type OfficeDirectoryTrackerPairProofV2 }
+  from "./attempt-host-office-directory-v2-proof.js";
+import type { OriginalOfficeDirectoryAuthorityV2 } from "@ling-stack/core/original-office-host-bridge";
+import { assertOriginalOfficeDirectoryLeaseAuthorityV2, assertOriginalOfficeDirectoryLeaseReleasedV2 }
+  from "../features/office-documents/office-local-directory-core-authority.js";
 
 type TrackerStore = Pick<RunStore, "isCurrentRunExecutionOwner" | "admitHostOperation" | "bindHostOperationEvidence"
   | "launchHostOperation" | "launchTrackedHostCommandExecution" | "continueHostOperationEffect" | "settleHostOperation" | "getHostOperation"
@@ -17,7 +25,8 @@ type TrackerStore = Pick<RunStore, "isCurrentRunExecutionOwner" | "admitHostOper
   | "prepareHostOfficeLocalExecution" | "prepareHostOfficeLocalEffect" | "launchHostOfficeLocalEffect" | "recordHostOfficeLocalObservation"
   | "beginHostOfficeLocalWriterObservation" | "sealHostOfficeLocalTerminal" | "settleHostOfficeLocalExecution"
   | "prepareHostOfficeLocalDirectoryExecutionV2" | "prepareHostOfficeLocalDirectoryEffectV2"
-  | "launchHostOfficeLocalDirectoryEffectV2" | "recordHostOfficeLocalDirectoryObservationV2" | "sealHostOfficeLocalDirectoryTerminalV2">;
+  | "launchHostOfficeLocalDirectoryEffectV2" | "recordHostOfficeLocalDirectoryObservationV2" | "sealHostOfficeLocalDirectoryTerminalV2"
+  | "closeHostOfficeLocalDirectoryWindowV2" | "settleHostOfficeLocalDirectoryExecutionV2">;
 const operationHandleBrand: unique symbol = Symbol("AttemptHostOperationHandle");
 /** Neither persisted IDs nor a structural clone grants launch/settlement authority. */
 export interface AttemptHostOperationHandle {
@@ -41,6 +50,21 @@ interface TrackedMediaExecution {
   readonly parent: TrackedOperation;
   readonly transport: TrackedOperation;
 }
+interface TrackedOfficeDirectoryExecutionV2 {
+  readonly pair: TrackedMediaExecution;
+  readonly expected: HostOfficeLocalDirectoryCommittedPairExpectedV2;
+  closeClaim?: HostOfficeLocalDirectoryCloseClaimV2;
+  grant?: HostOfficeLocalDirectoryCommittedPairV2;
+  proof?: OfficeDirectoryTrackerPairProofV2;
+  inProgress: boolean;
+  verifyingMember?: TrackedOperation;
+  requiredLeaseAuthority?: OriginalOfficeDirectoryAuthorityV2;
+}
+const originalOfficeDirectoryTrackerEntries = new WeakMap<AttemptHostOperationTracker, Readonly<{
+  close(ticket: HostOfficeLocalTicket): HostOfficeLocalDirectoryCloseClaimV2;
+  settle(ticket: HostOfficeLocalTicket): HostOfficeLocalSettlement;
+  requireLease(ticket: HostOfficeLocalTicket, authority: OriginalOfficeDirectoryAuthorityV2): void;
+}>>();
 export class AttemptHostOperationTrackerError extends Error {
   constructor(readonly code: string, message: string) {
     super(message); this.name = "AttemptHostOperationTrackerError";
@@ -57,13 +81,19 @@ export class AttemptHostOperationTrackerError extends Error {
 export class AttemptHostOperationTracker {
   readonly #store: TrackerStore;
   readonly #group: AttemptExecutorGroup;
+  readonly #source: AttemptExecutionSource;
+  readonly #officeDirectoryGroupReaders: Readonly<Pick<AttemptExecutorGroup, "getSnapshot" | "settleHostCall">>;
   readonly #now: () => string;
   readonly #operations = new Map<AttemptHostOperationHandle, TrackedOperation>();
   readonly #byGroupTicket = new Map<HostCallTicket, TrackedOperation>();
   readonly #mediaExecutions = new WeakMap<HostMediaExecutionTicket, TrackedMediaExecution>();
   readonly #officeExecutions = new WeakMap<HostOfficeLocalTicket, TrackedMediaExecution>();
   readonly #officeEffects = new WeakMap<HostOfficeLocalTicket, Map<string, HostOfficeLocalEffectRecord>>();
+  readonly #officeV1GroupTickets = new Set<HostCallTicket>();
   readonly #officeDirectoryEffects = new WeakMap<HostOfficeLocalTicket, Map<string, HostOfficeLocalDirectoryEffectRecordV2>>();
+  readonly #officeDirectoryExecutions = new WeakMap<HostOfficeLocalTicket, TrackedOfficeDirectoryExecutionV2>();
+  readonly #officeDirectoryReservedGroupTickets = new Set<HostCallTicket>();
+  readonly #officeDirectoryGroupTickets = new Map<HostCallTicket, TrackedOfficeDirectoryExecutionV2>();
   readonly #officeClosed = new WeakSet<HostOfficeLocalTicket>();
 
   constructor(options: { readonly store: TrackerStore; readonly source: AttemptExecutionSource; readonly now?: () => string }) {
@@ -77,10 +107,20 @@ export class AttemptHostOperationTracker {
       isCurrentExecutionOwner: source => this.#store.isCurrentRunExecutionOwner(source.runId, source),
       verifySettlement: (ticket, proof) => this.#verifySafeSettlement(ticket, proof),
       persistBlockedOperation: blocker => this.#verifyPersistedUnknown(blocker) });
+    this.#source = readOriginalAttemptExecutorGroupSnapshot(this.#group).source;
+    this.#officeDirectoryGroupReaders = Object.freeze({
+      getSnapshot: () => readOriginalAttemptExecutorGroupSnapshot(this.#group),
+      settleHostCall: (ticket, proof) => settleOriginalAttemptExecutorGroupHostCall(this.#group, ticket, proof),
+    });
+    originalOfficeDirectoryTrackerEntries.set(this, Object.freeze({
+      close: ticket => this.#closeOfficeLocalDirectoryWindowV2(ticket),
+      settle: ticket => this.#settleOfficeLocalDirectoryFromStoreV2(ticket),
+      requireLease: (ticket, authority) => this.#requireOfficeLocalDirectoryLeaseV2(ticket, authority),
+    }));
   }
 
   get executorGroup(): AttemptExecutorGroup { return this.#group; }
-  get source(): AttemptExecutionSource { return this.#group.source; }
+  get source(): AttemptExecutionSource { return this.#source; }
 
   /** Reserve then persist before any await. Failed admission never drops the reserved barrier member. */
   beginHostCall(kind: HostExecutorKind, toolCallId: string): AttemptHostOperationHandle {
@@ -165,6 +205,9 @@ export class AttemptHostOperationTracker {
   /** Read an existing Core-verified safe/unknown fact; never create safety from return/throw/timeout. */
   settleFromStore(handle: AttemptHostOperationHandle): HostOperationRecord {
     const operation = this.#operation(handle);
+    if (this.#officeDirectoryReservedGroupTickets.has(operation.groupTicket)) {
+      fail("settlement_unconfirmed", "Directory V2 requires its original committed-pair settlement path.");
+    }
     const record = this.#read(operation);
     const proof = this.#proof(operation, record);
     this.#group.settleHostCall(operation.groupTicket, proof);
@@ -294,6 +337,8 @@ export class AttemptHostOperationTracker {
       this.#requireDurableTicket(pair.transport), input);
     this.#officeExecutions.set(ticket, pair);
     this.#officeEffects.set(ticket, new Map());
+    this.#officeV1GroupTickets.add(pair.parent.groupTicket);
+    this.#officeV1GroupTickets.add(pair.transport.groupTicket);
     this.#read(pair.parent); this.#read(pair.transport);
     return ticket;
   }
@@ -348,11 +393,24 @@ export class AttemptHostOperationTracker {
     const pair = { parent: this.#operation(parent), transport: this.#operation(producer) };
     if (parent.kind !== "mcp" || producer.kind !== "file_mutation" || producer.parentOperationId !== parent.operationId
       || producer.producerId !== "office-local-binary") fail("invalid_office_pair", "Office requires its original reserved binary writer.");
+    if (this.#officeV1GroupTickets.has(pair.parent.groupTicket) || this.#officeV1GroupTickets.has(pair.transport.groupTicket)) {
+      fail("invalid_office_pair", "An original V1 Office pair cannot become a Directory V2 pair.");
+    }
+    // Sticky before ownership preflight or the replaceable Store call: reentry or a lost preparation
+    // return must never let these original members fall back to V1 verification.
+    this.#officeDirectoryReservedGroupTickets.add(pair.parent.groupTicket);
+    this.#officeDirectoryReservedGroupTickets.add(pair.transport.groupTicket);
     this.#assertMediaMayLaunch(pair);
     const ticket = this.#store.prepareHostOfficeLocalDirectoryExecutionV2(this.#requireDurableTicket(pair.parent),
       this.#requireDurableTicket(pair.transport), input);
     this.#officeExecutions.set(ticket, pair);
     this.#officeDirectoryEffects.set(ticket, new Map());
+    const state: TrackedOfficeDirectoryExecutionV2 = { pair, inProgress: false,
+      expected: Object.freeze({ executionId: ticket.executionId, source: this.#source,
+        parentOperationId: parent.operationId, producerOperationId: producer.operationId }) };
+    this.#officeDirectoryExecutions.set(ticket, state);
+    this.#officeDirectoryGroupTickets.set(pair.parent.groupTicket, state);
+    this.#officeDirectoryGroupTickets.set(pair.transport.groupTicket, state);
     this.#read(pair.parent); this.#read(pair.transport);
     return ticket;
   }
@@ -405,6 +463,73 @@ export class AttemptHostOperationTracker {
     return this.#store.sealHostOfficeLocalDirectoryTerminalV2(ticket, input);
   }
 
+  /** Cache the same original Core close claim; retries never invent closure or reenter native close. */
+  closeOfficeLocalDirectoryWindowV2(ticket: HostOfficeLocalTicket): HostOfficeLocalDirectoryCloseClaimV2 {
+    return this.#closeOfficeLocalDirectoryWindowV2(ticket);
+  }
+
+  #closeOfficeLocalDirectoryWindowV2(ticket: HostOfficeLocalTicket): HostOfficeLocalDirectoryCloseClaimV2 {
+    const state = this.#officeDirectoryExecution(ticket);
+    if (state.inProgress) fail("settlement_in_progress", "Directory V2 close or settlement is already in progress.");
+    if (state.closeClaim) return state.closeClaim;
+    this.#assertOfficeDirectoryPairMaySettle(state);
+    state.inProgress = true;
+    try {
+      let claim: HostOfficeLocalDirectoryCloseClaimV2;
+      try { claim = this.#store.closeHostOfficeLocalDirectoryWindowV2(ticket); }
+      catch {
+        // Only Core's retained original close intent can reconcile a lost return.
+        // Its owning close-claim path never repeats an entered physical close.
+        claim = this.#store.closeHostOfficeLocalDirectoryWindowV2(ticket);
+      }
+      state.closeClaim = claim;
+      this.#officeClosed.add(ticket);
+      return claim;
+    } finally { state.inProgress = false; }
+  }
+
+  /** Fixed V2 committed readback precedes producer→parent local barrier closure. No V1 public getter participates. */
+  settleOfficeLocalDirectoryFromStoreV2(ticket: HostOfficeLocalTicket): HostOfficeLocalSettlement {
+    return this.#settleOfficeLocalDirectoryFromStoreV2(ticket);
+  }
+
+  #settleOfficeLocalDirectoryFromStoreV2(ticket: HostOfficeLocalTicket): HostOfficeLocalSettlement {
+    const state = this.#officeDirectoryExecution(ticket);
+    if (state.inProgress) fail("settlement_in_progress", "Directory V2 close or settlement is already in progress.");
+    if (!state.closeClaim) fail("office_directory_close_claim_missing", "The original Directory V2 close claim must be retained first.");
+    state.inProgress = true;
+    try {
+      this.#assertOfficeDirectoryPairMaySettle(state);
+      let grant: HostOfficeLocalDirectoryCommittedPairV2;
+      try { grant = this.#store.settleHostOfficeLocalDirectoryExecutionV2(ticket); }
+      catch { grant = this.#store.settleHostOfficeLocalDirectoryExecutionV2(ticket); }
+      if (state.grant && state.grant !== grant) fail("office_directory_grant_changed", "The original committed pair cannot be replaced.");
+      const proof = this.#readOfficeDirectoryProof(state, grant);
+      if (state.proof && !isDeepStrictEqual(state.proof, proof)) {
+        fail("different_settlement", "A different Directory V2 proof cannot replace its original committed pair.");
+      }
+      state.grant = grant; state.proof = proof;
+      if (state.requiredLeaseAuthority) {
+        try { assertOriginalOfficeDirectoryLeaseReleasedV2(state.requiredLeaseAuthority, grant, state.closeClaim); }
+        catch { fail("office_directory_lease_unreleased", "The original production Directory V2 protection lease has not completed release."); }
+      }
+      this.#assertOfficeDirectoryPairMaySettle(state);
+      this.#settleOfficeDirectoryMember(state, state.pair.transport, proof.producer);
+      this.#settleOfficeDirectoryMember(state, state.pair.parent, proof.parent);
+      return proof.pair;
+    } finally { state.inProgress = false; }
+  }
+
+  #requireOfficeLocalDirectoryLeaseV2(ticket: HostOfficeLocalTicket, authority: OriginalOfficeDirectoryAuthorityV2): void {
+    const state = this.#officeDirectoryExecution(ticket);
+    if (state.inProgress || state.requiredLeaseAuthority || state.closeClaim || state.grant
+      || state.pair.parent.launched || state.pair.transport.launched) {
+      fail("office_directory_lease_requirement_invalid", "The original production lease requirement must be bound once before launch.");
+    }
+    assertOriginalOfficeDirectoryLeaseAuthorityV2(authority, this.#store);
+    state.requiredLeaseAuthority = authority;
+  }
+
   /** Freeze original-owner facts only. A terminal seal is never a group settlement proof. */
   sealOfficeLocalTerminal(ticket: HostOfficeLocalTicket, input: SealHostOfficeLocalTerminalInput): HostOfficeLocalTerminalRecord {
     this.#assertMediaUnsettled(this.#officeExecution(ticket));
@@ -413,6 +538,7 @@ export class AttemptHostOperationTracker {
 
   /** Core settles the original pair atomically; only then may either local barrier close. */
   settleOfficeLocalFromStore(ticket: HostOfficeLocalTicket): HostOfficeLocalSettlement {
+    if (this.#officeDirectoryExecutions.has(ticket)) fail("invalid_office_ticket", "V1 settlement cannot consume a Directory V2 ticket.");
     const pair = this.#officeExecution(ticket);
     if ([pair.parent, pair.transport].some(operation => operation.groupSettlement?.kind === "unknown_outcome"
       || this.#group.getSnapshot().operations.some(row => row.ticket === operation.groupTicket && row.state === "blocked"))) {
@@ -434,12 +560,57 @@ export class AttemptHostOperationTracker {
 
   /** Original tracker capability only; local closure is a stop, not a no-start receipt. */
   assertOfficeLocalPlanOpen(ticket: HostOfficeLocalTicket): void {
+    if (this.#officeDirectoryExecutions.get(ticket)?.inProgress) fail("settlement_in_progress", "Directory V2 close or settlement is in progress.");
     this.#assertMediaUnsettled(this.#officeExecution(ticket));
     if (this.#officeClosed.has(ticket)) fail("office_local_execution_closed", "Office writer is permanently closed.");
   }
 
   #officeExecution(ticket: HostOfficeLocalTicket): TrackedMediaExecution {
     return this.#officeExecutions.get(ticket) ?? fail("invalid_office_ticket", "Office capability was not issued through this tracker.");
+  }
+  #officeDirectoryExecution(ticket: HostOfficeLocalTicket): TrackedOfficeDirectoryExecutionV2 {
+    const state = this.#officeDirectoryExecutions.get(ticket);
+    if (!state || this.#officeExecutions.get(ticket) !== state.pair || !this.#officeDirectoryEffects.has(ticket)) {
+      fail("invalid_office_ticket", "The original Directory V2 tracker ticket is required.");
+    }
+    return state;
+  }
+  #readOfficeDirectoryProof(state: TrackedOfficeDirectoryExecutionV2,
+    grant = state.grant): OfficeDirectoryTrackerPairProofV2 {
+    if (!grant || !state.closeClaim) fail("settlement_unconfirmed", "Directory V2 has no original committed grant and close claim.");
+    return readOriginalOfficeDirectoryTrackerPairProofV2(this.#store, grant, state.closeClaim, state.expected,
+      state.pair.parent.handle, state.pair.transport.handle);
+  }
+  #assertOfficeDirectoryPairMaySettle(state: TrackedOfficeDirectoryExecutionV2): void {
+    const rows = this.#officeDirectoryGroupReaders.getSnapshot().operations;
+    for (const [operation, proof] of [[state.pair.parent, state.proof?.parent],
+      [state.pair.transport, state.proof?.producer]] as const) {
+      const row = rows.find(value => value.ticket === operation.groupTicket);
+      if (!row || operation.unknownIntent || operation.groupSettlement?.kind === "unknown_outcome" || row.state === "blocked") {
+        fail("already_settled", "Unknown or blocked Directory V2 members cannot be upgraded to safe.");
+      }
+      if (row.state === "settled" && (!proof || !isDeepStrictEqual(row.settlement, proof))
+        || operation.groupSettlement && (!proof || !isDeepStrictEqual(operation.groupSettlement, proof))) {
+        fail("different_settlement", "Directory V2 local barriers must retain their exact original proof.");
+      }
+    }
+  }
+  #settleOfficeDirectoryMember(state: TrackedOfficeDirectoryExecutionV2,
+    operation: TrackedOperation, proof: HostExecutorSettlement): void {
+    this.#assertOfficeDirectoryPairMaySettle(state);
+    state.verifyingMember = operation;
+    try { this.#officeDirectoryGroupReaders.settleHostCall(operation.groupTicket, proof); }
+    finally {
+      state.verifyingMember = undefined;
+      // Notification may throw after the real group settled. Reconcile from its
+      // original private snapshot without relabeling a partial success unknown.
+      const row = this.#officeDirectoryGroupReaders.getSnapshot().operations.find(value => value.ticket === operation.groupTicket);
+      if (row?.state === "settled" && isDeepStrictEqual(row.settlement, proof)) operation.groupSettlement = proof;
+    }
+    const row = this.#officeDirectoryGroupReaders.getSnapshot().operations.find(value => value.ticket === operation.groupTicket);
+    if (row?.state !== "settled" || !isDeepStrictEqual(row.settlement, proof)) {
+      fail("settlement_unconfirmed", "Directory V2 local settlement did not close its original barrier.");
+    }
   }
 
   /** Bind the two original tracker members to Core's exact Media capability before dispatch. */
@@ -639,6 +810,15 @@ export class AttemptHostOperationTracker {
   #verifySafeSettlement(ticket: HostCallTicket, proof: HostExecutorSettlement): boolean {
     const operation = this.#byGroupTicket.get(ticket);
     if (!operation || proof.kind === "unknown_outcome") return false;
+    if (this.#officeDirectoryReservedGroupTickets.has(ticket)) {
+      const directory = this.#officeDirectoryGroupTickets.get(ticket);
+      if (!directory || !directory.inProgress || directory.verifyingMember !== operation || !directory.grant || !directory.closeClaim || !directory.proof) return false;
+      try {
+        const current = this.#readOfficeDirectoryProof(directory);
+        const expected = operation === directory.pair.parent ? current.parent : current.producer;
+        return !operation.unknownIntent && isDeepStrictEqual(current, directory.proof) && isDeepStrictEqual(expected, proof);
+      } catch { return false; }
+    }
     try { return isDeepStrictEqual(this.#proof(operation, this.#read(operation)), proof); }
     catch { return false; }
   }
@@ -650,6 +830,30 @@ export class AttemptHostOperationTracker {
       return record.phase === "unknown_outcome" && isDeepStrictEqual(this.#proof(operation, record), blocker.settlement);
     } catch { return false; }
   }
+}
+
+/** Fixed constructor-owned V2 close entry; public/prototype replacements cannot supply a claim. */
+export function closeOriginalAttemptHostOfficeLocalDirectoryWindowV2(tracker: AttemptHostOperationTracker,
+  ticket: HostOfficeLocalTicket): HostOfficeLocalDirectoryCloseClaimV2 {
+  const original = originalOfficeDirectoryTrackerEntries.get(tracker);
+  if (!original) fail("invalid_tracker", "The original constructor-owned Host tracker is required.");
+  return original.close(ticket);
+}
+
+/** Fixed constructor-owned V2 barrier entry; neither a callback nor a canonical DTO can replace it. */
+export function settleOriginalAttemptHostOfficeLocalDirectoryFromStoreV2(tracker: AttemptHostOperationTracker,
+  ticket: HostOfficeLocalTicket): HostOfficeLocalSettlement {
+  const original = originalOfficeDirectoryTrackerEntries.get(tracker);
+  if (!original) fail("invalid_tracker", "The original constructor-owned Host tracker is required.");
+  return original.settle(ticket);
+}
+
+/** Production preparation binds only its actual opaque authority; this never enrolls a verifier or a caller flag. */
+export function bindOriginalAttemptHostOfficeDirectoryLeaseRequirementV2(tracker: AttemptHostOperationTracker,
+  ticket: HostOfficeLocalTicket, authority: OriginalOfficeDirectoryAuthorityV2): void {
+  const original = originalOfficeDirectoryTrackerEntries.get(tracker);
+  if (!original) fail("invalid_tracker", "The original constructor-owned Host tracker is required.");
+  original.requireLease(ticket, authority);
 }
 
 function fail(code: string, message: string): never {

@@ -4,11 +4,12 @@ import { createOriginalOfficeHostBridgeForComposition, sealOriginalOfficeHostBri
   type OriginalOfficeDirectoryAuthorityV2 } from "@ling-stack/core/original-office-host-bridge";
 import type { RunStoreFactory } from "../../runtime/store-registry.js";
 import { isOriginalRuntimeSupervisorOfficeRoot, retainOriginalRuntimeSupervisorOfficeStoreBridge,
-  type RuntimeSupervisor } from "../../runtime/supervisor.js";
+  isRuntimeSupervisorOfficeCacheEntry, type RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { isOwnedOfficeLocalNativeRuntime, captureOriginalOfficeDirectoryRuntimeCustody,
   assertOriginalOfficeDirectoryRuntimeBinding, type OfficeLocalNativeRuntime,
   closeOriginalOfficeDirectoryRuntimeWindow, assertOriginalOfficeDirectoryRuntimeWindowClosed,
   releaseOriginalOfficeDirectoryRuntimeLeaseV2,
+  assertOriginalOfficeDirectoryRuntimeLeaseReleasedV2,
   type OfficeLocalNativeTypedScope } from "./office-local-native-runtime.js";
 import type { HostOfficeLocalDirectoryCloseClaimV2, HostOfficeLocalDirectoryCommittedPairV2 } from "@ling-stack/core";
 
@@ -66,6 +67,22 @@ export function createOriginalOfficeDirectoryStoreFactory(supervisor: RuntimeSup
   };
 }
 
+/**
+ * Resolve only the exact Store's startup-owned Supervisor runtime. No options,
+ * provider callback, copied Store or public runtime field can enroll custody.
+ * An unconfigured original Host returns undefined; it never enables V1 fallback.
+ */
+export function readOriginalOfficeDirectoryNativeRuntime(store: RunStore): OfficeLocalNativeRuntime | undefined {
+  const composition = stores.get(store);
+  requireOriginal(composition && isOriginalRuntimeSupervisorOfficeRoot(composition.supervisor));
+  const runtime = composition.supervisor.getOfficeLocalNativeRuntime(store.paths.cwd, store);
+  if (runtime === undefined) return undefined;
+  requireOriginal(isOwnedOfficeLocalNativeRuntime(runtime) && runtime.store === store
+    && runtime.supervisor === composition.supervisor
+    && isRuntimeSupervisorOfficeCacheEntry(composition.supervisor, store, runtime.registry, runtime));
+  return runtime;
+}
+
 /** Fixed readers validate the original cached runtime and private scope before minting the opaque Core handle. */
 export function captureOriginalOfficeDirectoryAuthorityV2(store: RunStore, runtime: OfficeLocalNativeRuntime,
   scope: OfficeLocalNativeTypedScope): OriginalOfficeDirectoryAuthorityV2 {
@@ -88,9 +105,22 @@ function readOriginalOfficeDirectoryAuthorityCustodyForReleaseV2(authority: Orig
   return original;
 }
 
+/** Validate an actual private composition authority before the original Tracker requires its lease history. */
+export function assertOriginalOfficeDirectoryLeaseAuthorityV2(authority: OriginalOfficeDirectoryAuthorityV2, store: object): void {
+  const original = readOriginalOfficeDirectoryAuthorityCustodyForReleaseV2(authority);
+  requireOriginal(original.store === store);
+}
+
 /** Release exactly the original lease after Core commit; no caller window, expected DTO or callback is admitted. */
 export function releaseOriginalOfficeDirectoryLeaseV2(authority: OriginalOfficeDirectoryAuthorityV2,
   grant: HostOfficeLocalDirectoryCommittedPairV2, claim: HostOfficeLocalDirectoryCloseClaimV2): void {
   const original = readOriginalOfficeDirectoryAuthorityCustodyForReleaseV2(authority);
   releaseOriginalOfficeDirectoryRuntimeLeaseV2(original.runtime, original.runtimeCustody, authority, grant, claim);
+}
+
+/** Pure completed-release history for the same original authority/grant/claim; never performs a first deletion. */
+export function assertOriginalOfficeDirectoryLeaseReleasedV2(authority: OriginalOfficeDirectoryAuthorityV2,
+  grant: HostOfficeLocalDirectoryCommittedPairV2, claim: HostOfficeLocalDirectoryCloseClaimV2): void {
+  const original = readOriginalOfficeDirectoryAuthorityCustodyForReleaseV2(authority);
+  assertOriginalOfficeDirectoryRuntimeLeaseReleasedV2(original.runtime, original.runtimeCustody, authority, grant, claim);
 }

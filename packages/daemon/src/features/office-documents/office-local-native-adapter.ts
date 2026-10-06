@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { HOST_OFFICE_LOCAL_DIRECTORY_V2_PROTOCOL, verifyOfficeLocalDirectoryReplayV2,
   type HostOfficeDirectoryNativeObservationV2, type OfficeLocalDirectoryReplayResultV2,
-  type PrepareHostOfficeLocalDirectoryEffectV2 } from "@ling-stack/core";
+  type PrepareHostOfficeLocalDirectoryEffectV2, type HostOfficeLocalSettlement } from "@ling-stack/core";
 import { assertOfficeLocalDirectoryWriteForwardAuthority, officeLocalDirectoryWriteState,
   type OfficeLocalDirectoryWritePlan } from "./office-local-authority.js";
 import { officeBytesDigest, officeErrorCode } from "./office-local-members.js";
@@ -10,6 +10,8 @@ import { projectOfficeLocalNativePacket, type OfficeLocalNativePacketProjection 
 import type { OfficeLocalNativePacket, OfficeLocalNativeResource } from "./office-local-native-runtime.js";
 import { OfficeLocalDirectoryResourceFacts } from "./office-local-directory-resource-facts.js";
 import { createOfficeLocalDirectoryTerminalArtifact, readOfficeLocalDirectoryHistory } from "./office-local-directory-terminal.js";
+import { closeOriginalOfficeLocalDirectoryWriteWindow,
+  settleOriginalOfficeLocalDirectoryWrite } from "./office-local-authority-state.js";
 
 type WithoutEnvelope<T> = T extends unknown ? Omit<T, "effectId" | "ordinal" | "preparedAt"> : never;
 type FixedEffect = WithoutEnvelope<PrepareHostOfficeLocalDirectoryEffectV2>;
@@ -26,6 +28,14 @@ export interface OfficeLocalDirectoryNativeFacts {
   readonly canonicalVisibility: "unverified";
   readonly packaged: false;
 }
+/** Consumer result keeps native-only facts separate from the committed Core pair. */
+export interface OfficeLocalDirectoryWriteResultV2 {
+  readonly kind: "office_local_directory_write_result_v2";
+  readonly executionId: string;
+  readonly path: string;
+  readonly nativeFacts: OfficeLocalDirectoryNativeFacts;
+  readonly settlement: HostOfficeLocalSettlement;
+}
 /** Diagnostic failure only. No field permits retry, permission release or safe settlement. */
 export class OfficeLocalDirectoryWriterError extends Error {
   constructor(readonly cause: unknown, readonly executionId: string, readonly terminalArtifactId: string | undefined,
@@ -38,9 +48,10 @@ export class OfficeLocalDirectoryWriterError extends Error {
 /**
  * One private fixed missing-subtree graph over the original Host plan. No caller
  * callbacks, arbitrary effect sequence, path write/rmdir, legacy fallback,
- * native retry or product success. Returned facts remain Core-safe unavailable.
+ * native retry or caller-supplied proof. Native facts remain Core-safe unavailable;
+ * a consumer result additionally requires the original committed pair and release.
  */
-export function executeOfficeLocalDirectoryWrite(plan: OfficeLocalDirectoryWritePlan): OfficeLocalDirectoryNativeFacts {
+export function executeOfficeLocalDirectoryWrite(plan: OfficeLocalDirectoryWritePlan): OfficeLocalDirectoryWriteResultV2 {
   const state = officeLocalDirectoryWriteState(plan);
   if (state.used) throw new Error("office_local_directory_write_already_entered");
   if (state.lifecycle.closed) throw new Error("office_local_directory_write_closed");
@@ -198,12 +209,32 @@ export function executeOfficeLocalDirectoryWrite(plan: OfficeLocalDirectoryWrite
       try { closeSession("cleanup"); } catch (error) { fail(error); }
     }
   }
-  try { state.runtime.closeStage(state.scope); stageClosed = true; } catch (error) { fail(error); }
   try {
     terminal = createOfficeLocalDirectoryTerminalArtifact(state, acknowledgmentUnconfirmed ? "unknown" : failed ? "failed" : "published_native_only");
     state.tracker.sealOfficeLocalDirectoryTerminalV2(state.ticket, { terminalArtifactId: terminal.artifactId, terminalDigest: terminal.digest });
     terminalSealConfirmed = true;
   } catch (error) { acknowledgmentUnconfirmed = true; fail(error); }
+  if (terminalSealConfirmed) {
+    try { closeOriginalOfficeLocalDirectoryWriteWindow(plan); stageClosed = true; }
+    catch (error) {
+      fail(error);
+      try {
+        // A revoked owning proof may still complete its one original cleanup
+        // before refusing to mint a claim. Historical facts affect only this
+        // failure diagnostic, never the grant/release/settlement admission.
+        const closed = state.runtime.readCoreWindowClosure(state.scope);
+        stageClosed = closed.phase === "closed_pending" && [...closed.stage, ...closed.destination]
+          .every(row => row.state === "closed" && row.close === "returned");
+      } catch { /* The original close remains unconfirmed; no facts are invented. */ }
+    }
+  }
+  if (failed && !stageClosed) {
+    // Failure cleanup closes only the original readonly window, retaining its
+    // protection lease and Core blockers. Runtime tombstones reject any retry
+    // of an entered/unknown close. This is never a settlement or release path.
+    try { state.runtime.closeCoreWindow(state.scope); stageClosed = true; }
+    catch (error) { fail(error); }
+  }
   let graph: OfficeLocalDirectoryReplayResultV2 | undefined;
   if (!failed && terminal) {
     try {
@@ -214,10 +245,17 @@ export function executeOfficeLocalDirectoryWrite(plan: OfficeLocalDirectoryWrite
       graph = verifyOfficeLocalDirectoryReplayV2({ execution: history.execution, terminal: stored, effects: history.entries });
     } catch (error) { fail(error); }
   }
-  if (failed || !terminal || !graph || !stageClosed) throw new OfficeLocalDirectoryWriterError(failure, plan.executionId,
+  let settlement: HostOfficeLocalSettlement | undefined;
+  if (!failed && terminal && graph && stageClosed) {
+    try { settlement = settleOriginalOfficeLocalDirectoryWrite(plan); }
+    catch (error) { acknowledgmentUnconfirmed = true; fail(error); }
+  }
+  if (failed || !terminal || !graph || !stageClosed || !settlement) throw new OfficeLocalDirectoryWriterError(failure, plan.executionId,
     terminal?.artifactId, terminal?.digest, terminalSealConfirmed, acknowledgmentUnconfirmed ? "unconfirmed" : "confirmed",
     stageClosed ? "closed" : "unconfirmed");
-  return Object.freeze({ kind: "office_local_directory_native_facts_v2", executionId: plan.executionId,
+  const nativeFacts: OfficeLocalDirectoryNativeFacts = Object.freeze({ kind: "office_local_directory_native_facts_v2", executionId: plan.executionId,
     targetPath: state.execution.targetPath, outcome: "published_native_only", terminalArtifactId: terminal.artifactId,
     terminalDigest: terminal.digest, hostStageClosure: "closed", graph, coreSafe: false, canonicalVisibility: "unverified", packaged: false });
+  return Object.freeze({ kind: "office_local_directory_write_result_v2", executionId: plan.executionId,
+    path: state.execution.targetPath, nativeFacts, settlement });
 }
