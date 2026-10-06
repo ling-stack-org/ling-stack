@@ -35,3 +35,17 @@ ee3cee21d7ef15f3c0cf6c70815d5e89907c6f7f:packages/providers/test/media-adapter-c
 942b94bd3794394033a78be7cf0bfaa064a35acf:apps/chrome-extension/manifest.json:generic-api-key:9
 0831039d1cd39d648099007284c40c3c725a8b9e:apps/chrome-extension/manifest.json:generic-api-key:9
 f6e30a7bcebac3617626e64c2a1a0c872b3ed5d2:apps/chrome-extension/manifest.json:generic-api-key:9
+
+# Exact historical E6 false positives reviewed on 2026-10-06 with Gitleaks v8.30.1.
+# Claim/settlement tokens and explicit fake redaction input; no provider credentials.
+c051c30ef0d747a8046eb98807cc4f9fad3b186a:packages/core/test/approval-policy.test.mjs:generic-api-key:140
+c051c30ef0d747a8046eb98807cc4f9fad3b186a:packages/core/test/approval-policy.test.mjs:generic-api-key:144
+c051c30ef0d747a8046eb98807cc4f9fad3b186a:packages/core/test/approval-policy.test.mjs:generic-api-key:147
+c051c30ef0d747a8046eb98807cc4f9fad3b186a:packages/core/test/approval-policy.test.mjs:generic-api-key:150
+c051c30ef0d747a8046eb98807cc4f9fad3b186a:packages/core/test/teammate-direct-input.test.mjs:generic-api-key:133
+
+# Host-capability idempotency keys in isolated fixtures, not authentication keys.
+8347df471cbf8b2175b216561d3e2a5568296f99:apps/desktop/tests/host-capability-runtime.test.mjs:generic-api-key:101
+8347df471cbf8b2175b216561d3e2a5568296f99:apps/desktop/tests/host-capability-daemon-client.test.mjs:generic-api-key:100
+8347df471cbf8b2175b216561d3e2a5568296f99:apps/desktop/tests/host-local-preview-manager.test.mjs:generic-api-key:119
+8347df471cbf8b2175b216561d3e2a5568296f99:packages/daemon/test/host-capability-bridge-controller.test.mjs:generic-api-key:63
