@@ -9,6 +9,7 @@ import { settleOfficeLocalNoStartPair } from "./host-office-local-no-start-settl
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { assertOfficeDirectoryCloseRosterReadyV2 } from "./host-office-local-directory-v2-close-roster.js";
+import type { OfficeDirectorySettlementPairV2 } from "./host-office-local-directory-v2-settlement.js";
 
 /** Internal journal state, never exported as an execution capability. */
 export interface OfficeJournalTicketState {
@@ -157,6 +158,35 @@ export class HostOfficeLocalJournalGate {
         this.authority.closeDirectoryOffice(pair.parent.operationId, pair.producer.operationId);
         return close();
       });
+    });
+  }
+
+  /** Dedicated V2 pair gate. Only original live state may issue the certificate; no generic settlement DTO is accepted. */
+  settleDirectory<T>(parent: HostOperationTicket, producer: HostOperationTicket,
+    assertReady: (pair: OfficeDirectorySettlementPairV2, settledAt: string) => void,
+    settle: (pair: OfficeDirectorySettlementPairV2, settledAt: string) => T): T {
+    this.authority.synchronous(assertReady); this.authority.synchronous(settle);
+    return this.authority.transaction(() => {
+      const pair = this.pair(parent, producer, true);
+      this.authority.owner(pair.parent.source, false);
+      const retained = pair.states[0].settlementSignature;
+      const settledAt = retained ? JSON.parse(retained).settledAt as string : new Date().toISOString();
+      if (pair.states.some(state => state.noStartClosed || state.noStartReceiptDigest || !state.launchClaimed || state.uncertainLaunch)
+        || pair.parent.evidenceRef?.kind !== "office_local_chain_execution"
+        || pair.producer.evidenceRef?.kind !== "office_local_binary_execution"
+        || pair.parent.evidenceRef.id !== pair.producer.evidenceRef.id) return hostOperationFailure("host_office_local_invalid_journal_pair");
+      readSqliteWithinTransaction(this.context.database, () => {
+        for (const row of [pair.parent, pair.producer]) {
+          if (hostOperationDomainIdentity(this.context.database, row, row.evidenceRef!, false) !== row.domainIdentityDigest) {
+            return hostOperationFailure("host_operation_evidence_invalid");
+          }
+        }
+        assertOfficeDirectoryCloseRosterReadyV2(this.context.database, pair.parent, pair.producer, settledAt);
+        this.authority.synchronousResult(assertReady(pair, settledAt));
+      });
+      // Revalidate the owner after the fixed read-only endpoint returns and before any SQL issuance.
+      this.authority.owner(pair.parent.source, false);
+      return this.authority.synchronousResult(settle(pair, settledAt));
     });
   }
 

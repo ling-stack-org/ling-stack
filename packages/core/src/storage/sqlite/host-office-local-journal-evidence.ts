@@ -50,7 +50,7 @@ export function hostOfficeOperationDomainIdentity(database: DatabaseSync, operat
  */
 export function verifyHostOfficeReceipt(database: DatabaseSync, operation: StoredHostOperation,
   mode: OfficeLocalJournalVerificationMode = "committed"): string {
-  if (operation.evidenceRef && hasOfficeDirectoryV2Execution(database, operation.evidenceRef.id)) return verifyHostOfficeDirectoryReceiptV2();
+  if (operation.evidenceRef && hasOfficeDirectoryV2Execution(database, operation.evidenceRef.id)) return verifyHostOfficeDirectoryReceiptV2(database, operation, mode);
   const execution = scopedExecution(database, operation);
   if (operation.settlementKind === "known_no_start") return verifyOfficeNoStartReceipt(database, operation, execution, mode);
   const expectedSettlement = operation.evidenceRef!.kind === "office_local_chain_execution"

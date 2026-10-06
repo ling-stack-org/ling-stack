@@ -1571,6 +1571,7 @@ export interface RunStore {
   bindHostOfficeLocalDirectoryScopeAuthorityV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
     authority: import("./original-office-host-bridge.js").OriginalOfficeDirectoryAuthorityV2): void;
   closeHostOfficeLocalDirectoryWindowV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryCloseClaimV2;
+  settleHostOfficeLocalDirectoryExecutionV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryCommittedPairV2;
   prepareHostOfficeLocalDirectoryEffectV2(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket,
     input: import("./host-office-local-directory-v2-types.js").PrepareHostOfficeLocalDirectoryEffectV2): import("./host-office-local-directory-v2-types.js").HostOfficeLocalDirectoryEffectRecordV2;
   launchHostOfficeLocalDirectoryEffectV2<T>(ticket: import("./host-office-local-types.js").HostOfficeLocalTicket, effectId: string, effect: () => T): T;

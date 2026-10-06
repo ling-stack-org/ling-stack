@@ -1,9 +1,10 @@
 # Office V2 原始 Host composition 与目录窗口
 
-本切片建立 Core bridge 到 Daemon 原始私有 custody 的固定接线，
-不发行 Core-safe receipt，不改变 native-only API 或生产 MCP 协议选择。
-固定 actor manifest 与默认 enrollment 已接线；Core close claim、独立 certificate、
-原子 pair 和 packaged 验收仍待完成。源入口注册不是完整执行隔离证书。
+本切片建立 Core bridge 到 Daemon 原始私有 custody 的固定接线。
+Host composition 本身不发行 Core-safe receipt，不改变 native-only API 或生产 MCP 协议选择。
+固定 actor manifest、默认 enrollment 与原始 Core close claim 已接线；独立 certificate / 原子
+pair 的 Core 接点见文末。保护 lease 释放、生产 MCP/Tracker 接线与 packaged 验收仍需完成。
+源入口注册不是完整执行隔离证书。
 
 ## 固定来源与退休
 
@@ -167,3 +168,51 @@ unknown domain 只在无保护成员时允许 ordinary execution，随后关闭�
 专属跨 Registry 回归在每个场景内部使用同一进程的多个默认 Supervisor 与真实
 Seatbelt launcher，覆盖两种构造顺序、后绑定、错误 prepared、两阶段重入及 sticky
 unknown。场景之间隔离 source lifetime，不重置产品内部历史，不替换安全 gate。
+
+## 独立 certificate 与原始 pair 的 Core 结算合同
+
+本段描述 Core 结算接点，不代表生产 MCP、真实 OOXML 或 packaged 验收通过。
+`settleHostOfficeLocalDirectoryExecutionV2(originalTicket)` 只消费原 Store 私藏的 V2
+ticket、绑定 authority 和原 close claim；V1 结算入口不得采用这个 ticket。
+prepared、terminal、完整 effect/observation 集、native replay 和 raw 全 descendant
+roster 都在同一个 `BEGIN IMMEDIATE` 写事务中重新验证，不沿用关闭时的 roster 缓存。
+
+独立 append-only certificate 表保留原 prepared request/policy digest、execution/source、
+原 parent/producer domain identity、terminal/effect 集、完整 roster digest、replay 与首个
+settledAt。这里保存的是原封存摘要，不宣称 Core 已独立还原或校验原 MCP 输入；真实请求
+与 prepared 的对应仍由后续固定生产 route 负责。首次结算的 live owner/source/policy
+当前性必须由原闭合窗口 reader 和 owning gate 验证。
+
+constructor-private SQLite issuance latch 只允许写入本次已验证的 exact certificate。
+裸 SQL INSERT、UPDATE、DELETE、OR REPLACE 不构成发行入口；另一个连接只能读历史，
+不能认领原始内存 ticket。它不是防御同 UID 不受限程序或恶意可信 Host JS 的隔离措施。
+
+certificate 插入、producer safe 和 parent safe 必须同事务提交。producer 先成为
+candidate，parent 再成为 candidate，最终两角色独立复验后才能提交；任一步失败均回滚，
+不能露出 half-safe 或把 callback 返回值当事实。泛用 safe 读取按 V2 协议分派到独立
+certificate verifier，并继续递归校验 required children；不能退回 V1 receipt 校验。
+
+原结算时间和 exact first certificate 意图跨 rollback/COMMIT 回包丢失保留。真正 rollback
+后只允许重试同一意图；COMMIT 已成功但回包丢失时，原 ticket 只通过私有 SQL 回读认领
+同一 certificate / 双 safe pair，不重新要求 Host 的当前资格、不关闭 FD、不执行 native。
+half-safe、损坏的证据或不同意图必须拒绝，不能吞错后采用 caller DTO。
+
+事务返回后，constructor-private reader 再以 committed snapshot 复验原 pair，才 mint 空冻结
+`HostOfficeLocalDirectoryCommittedPairV2` handle。内部固定 subpath 提供
+`readOriginalOfficeDirectoryCommittedPairV2` 与 `assertOriginalOfficeDirectoryCommittedPairV2`：
+它们核 exact Store、opaque handle、same original close claim 和 execution/source/pair 身份，
+直接读取私有数据库，不调用 public Store getter、不调用 Host 或原窗口 FD。
+返回的 deep-frozen `{parent, producer}` 是事实 DTO，不是另一个授权能力；clone、foreign
+Store/claim、相同字段或重开连接都不能重建原 grant。
+
+供 lease consumer 使用的固定 `assertOriginalOfficeDirectoryCommittedPairAuthorityV2` 额外
+比较原 Core authority 的对象 identity。grant 私藏的 authority 只能从原 ticket 的原 close
+history 导出，不能由 caller 登记；same bridge 新 authority 或同字段 window 不匹配。
+此 matcher 仍只读 Core committed 历史、不调用 Host/current/FD；Daemon 必须再从固定
+composition 私有 map 找到对应的 same runtimeCustody，不能省略这一步。
+
+后续 Daemon 必须沿原 Runtime custody 验证首次 release 的持续 closed proof，再只解除
+Registry 的 exact original lease。Core committed handle 本身不能直接删除 Registry member，
+也不能关闭 Tracker barriers。释放后的重试只核 same member/handle/claim 的私有历史和
+Core committed 事实；不得把已删除成员伪装成仍持有原窗口。Tracker 的 V2 proof 必须
+来自固定读回，不能由可替换 public getter、native-only flags 或工具文本制造。

@@ -36,6 +36,26 @@ export class OfficeDirectoryWindowCloseClaimV2 {
   assertNotReenter(): void {
     if (this.phase === "close_entered") return hostOperationFailure("host_office_local_window_close_reentry");
   }
+  /** Settlement consumes only the already-issued original history; it never enters physical close. */
+  assertClosed(execution: HostOfficeLocalDirectoryExecutionRecordV2,
+    authority: OriginalOfficeDirectoryAuthorityV2): HostOfficeLocalDirectoryCloseClaimV2 {
+    if (!this.bridge || this.phase !== "closed_pending" || !this.original || !this.claim
+      || this.original.authority !== authority || this.original.expected.identityDigest !== execution.identityDigest) {
+      return hostOperationFailure("host_office_local_close_claim_invalid");
+    }
+    this.bridge.assertAuthorityClosed(this.original.authority, this.original.expected);
+    return this.claim;
+  }
+  assertClaimOwned(claim: HostOfficeLocalDirectoryCloseClaimV2): void {
+    if (this.phase !== "closed_pending" || !this.claim || claim !== this.claim) {
+      return hostOperationFailure("host_office_local_close_claim_invalid");
+    }
+  }
+  /** Internal original-claim custody read only; cannot adopt a caller authority or revalidate current Host state. */
+  readOriginalAuthority(claim: HostOfficeLocalDirectoryCloseClaimV2): OriginalOfficeDirectoryAuthorityV2 {
+    this.assertClaimOwned(claim);
+    return this.original?.authority ?? hostOperationFailure("host_office_local_close_claim_invalid");
+  }
 
   close(execution: HostOfficeLocalDirectoryExecutionRecordV2, authority: OriginalOfficeDirectoryAuthorityV2): HostOfficeLocalDirectoryCloseClaimV2 {
     if (!this.bridge) return hostOperationFailure("host_office_local_bridge_unavailable");

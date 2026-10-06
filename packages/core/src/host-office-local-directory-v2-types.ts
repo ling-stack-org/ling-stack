@@ -63,6 +63,15 @@ export type HostOfficeLocalDirectoryTicketV2 = HostOfficeLocalTicket;
 declare const directoryCloseClaimBrand: unique symbol;
 /** Original Core close history only. No safe receipt, effect capability or Registry lease release. */
 export interface HostOfficeLocalDirectoryCloseClaimV2 { readonly [directoryCloseClaimBrand]: true }
+declare const directoryCommittedPairBrand: unique symbol;
+/** Original Store committed readback capability, never a serialized receipt or release proof. */
+export interface HostOfficeLocalDirectoryCommittedPairV2 { readonly [directoryCommittedPairBrand]: true }
+export interface HostOfficeLocalDirectoryCommittedPairExpectedV2 {
+  readonly executionId: string;
+  readonly source: HostOperationSource;
+  readonly parentOperationId: string;
+  readonly producerOperationId: string;
+}
 export interface HostOfficeDirectoryCallRefV2 { readonly effectId: string; readonly ordinal: number }
 export interface HostOfficeDirectoryResourceBindingV2 {
   readonly resourceSlotId: string;

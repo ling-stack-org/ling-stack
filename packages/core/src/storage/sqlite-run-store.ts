@@ -1031,7 +1031,7 @@ export class SqliteRunStore implements RunStore {
     this.hostOperationJournal = new SqliteHostOperationJournalStore({ database: this.database });
     this.hostMediaOperations = new SqliteHostMediaOperationStore({ database: this.database }, this.hostOperationJournal);
     this.hostOfficeLocal = new SqliteHostOfficeLocalStore({ database: this.database }, this.hostOperationJournal);
-    this.hostOfficeLocalDirectoryV2 = new SqliteHostOfficeLocalDirectoryV2Store({ database: this.database }, this.hostOperationJournal, originalOfficeHostBridge);
+    this.hostOfficeLocalDirectoryV2 = new SqliteHostOfficeLocalDirectoryV2Store({ database: this.database }, this.hostOperationJournal, originalOfficeHostBridge, this);
     this.runInterventions = new SqliteRunInterventionStore(
       { database: this.database },
       {
@@ -1971,6 +1971,9 @@ export class SqliteRunStore implements RunStore {
   }
   closeHostOfficeLocalDirectoryWindowV2(...args: Parameters<RunStore["closeHostOfficeLocalDirectoryWindowV2"]>): ReturnType<RunStore["closeHostOfficeLocalDirectoryWindowV2"]> {
     return this.hostOfficeLocalDirectoryV2.closeWindow(...args);
+  }
+  settleHostOfficeLocalDirectoryExecutionV2(...args: Parameters<RunStore["settleHostOfficeLocalDirectoryExecutionV2"]>): ReturnType<RunStore["settleHostOfficeLocalDirectoryExecutionV2"]> {
+    return this.hostOfficeLocalDirectoryV2.settle(...args);
   }
   prepareHostOfficeLocalDirectoryEffectV2(...args: Parameters<RunStore["prepareHostOfficeLocalDirectoryEffectV2"]>): ReturnType<RunStore["prepareHostOfficeLocalDirectoryEffectV2"]> {
     return this.hostOfficeLocalDirectoryV2.prepareEffect(...args);

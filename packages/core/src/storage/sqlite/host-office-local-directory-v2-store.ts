@@ -1,9 +1,9 @@
 import type { HostOperationTicket } from "../../host-operation-journal-types.js";
 import type { PrepareHostOfficeLocalInput, HostOfficeLocalTicket } from "../../host-office-local-types.js";
-import type { HostOfficeLocalDirectoryCloseClaimV2, HostOfficeLocalDirectoryExecutionRecordV2, HostOfficeLocalDirectoryEffectRecordV2, PrepareHostOfficeLocalDirectoryEffectV2 } from "../../host-office-local-directory-v2-types.js";
+import type { HostOfficeLocalDirectoryCloseClaimV2, HostOfficeLocalDirectoryCommittedPairV2, HostOfficeLocalDirectoryExecutionRecordV2, HostOfficeLocalDirectoryEffectRecordV2, PrepareHostOfficeLocalDirectoryEffectV2 } from "../../host-office-local-directory-v2-types.js";
 import type { HostOfficeLocalDirectoryTerminalRecordV2 } from "../../host-office-local-directory-v2-terminal-types.js";
 import type { SealHostOfficeLocalTerminalInput } from "../../host-office-local-terminal-types.js";
-import { hostOperationFailure, sameHostOperationSource } from "./host-operation-journal-evidence.js";
+import { hostOperationFailure, readHostOperation, sameHostOperationSource } from "./host-operation-journal-evidence.js";
 import { readOfficeLocalSeal } from "./host-office-local-records.js";
 import { validateOfficeLocalDirectoryPreparedV2 } from "./host-office-local-directory-v2-prepared.js";
 import { validateOfficeLocalDirectoryEffectV2 } from "./host-office-local-directory-v2-effects.js";
@@ -18,6 +18,9 @@ import type { SqliteStoreContext } from "./store-context.js";
 import type { CapturedOriginalOfficeHostBridge, OriginalOfficeDirectoryAuthorityV2 } from "../../original-office-host-bridge.js";
 import { OfficeDirectoryScopeBindingV2 } from "./host-office-local-directory-v2-authority.js";
 import { OfficeDirectoryWindowCloseClaimV2, assertOfficeDirectoryNativeCloseReadyV2 } from "./host-office-local-directory-v2-close-claim.js";
+import { OfficeDirectoryCertificateIssuerV2 } from "./host-office-local-directory-v2-certificate.js";
+import { settleOfficeDirectoryPairV2 } from "./host-office-local-directory-v2-settlement.js";
+import { OfficeDirectoryCommittedPairReaderV2, readOriginalOfficeDirectoryCommittedPairV2 } from "./host-office-local-directory-v2-committed-pair.js";
 
 interface DirectoryTicketStateV2 {
   readonly parent: HostOperationTicket;
@@ -28,12 +31,20 @@ interface DirectoryTicketStateV2 {
   uncertainLaunch: boolean;
   closeSessionEntered: boolean;
   sealClaim?: SealHostOfficeLocalTerminalInput;
+  committedHandle?: HostOfficeLocalDirectoryCommittedPairV2;
+  originalCloseClaim?: HostOfficeLocalDirectoryCloseClaimV2;
+  settledAt?: string;
 }
 /** Versioned facts store under the same original journal gate. No scope issuer or independent settlement authority. */
 export class SqliteHostOfficeLocalDirectoryV2Store {
   private readonly tickets = new WeakMap<HostOfficeLocalTicket, DirectoryTicketStateV2>();
+  #issuer: OfficeDirectoryCertificateIssuerV2;
+  #committedReader: OfficeDirectoryCommittedPairReaderV2;
   constructor(private readonly context: SqliteStoreContext, private readonly journal: SqliteHostOperationJournalStore,
-    private readonly originalHostBridge?: CapturedOriginalOfficeHostBridge) {}
+    private readonly originalHostBridge?: CapturedOriginalOfficeHostBridge, private readonly owner: object = journal) {
+    this.#issuer = new OfficeDirectoryCertificateIssuerV2(context.database);
+    this.#committedReader = new OfficeDirectoryCommittedPairReaderV2(context.database, owner);
+  }
 
   prepare(parent: HostOperationTicket, producer: HostOperationTicket, input: PrepareHostOfficeLocalInput): HostOfficeLocalTicket {
     const captured = JSON.parse(JSON.stringify(input)) as unknown;
@@ -88,6 +99,53 @@ export class SqliteHostOfficeLocalDirectoryV2Store {
       authority = state.scopeAuthority.requireBound(execution);
       assertOfficeDirectoryNativeCloseReadyV2(this.context.database, execution, state.entered, state.sealClaim);
     }, () => state.closeClaim.close(execution!, authority!));
+  }
+  /** Issue only from the original live ticket. COMMIT-return loss reconciles the retained pair intent, never native effects. */
+  settle(ticket: HostOfficeLocalTicket): HostOfficeLocalDirectoryCommittedPairV2 {
+    const state = this.ticket(ticket), execution = this.execution(ticket.executionId);
+    if (state.committedHandle && state.originalCloseClaim) {
+      state.closeClaim.assertClaimOwned(state.originalCloseClaim);
+      readOriginalOfficeDirectoryCommittedPairV2(this.owner, state.committedHandle, state.originalCloseClaim,
+        { executionId: execution.executionId, source: execution.source,
+          parentOperationId: execution.parentOperationId, producerOperationId: execution.producerOperationId });
+      return state.committedHandle;
+    }
+    if (state.originalCloseClaim && state.settledAt) {
+      const retainedAt = state.settledAt;
+      // An acknowledged SQL shape can survive COMMIT-return loss after Host proof retires.
+      // Only this original ticket's retained intent may reconcile it; no current/Host/FD call.
+      const committed = readSqliteSnapshot(this.context.database, () => {
+        const parent = readHostOperation(this.context.database, state.parent.operationId);
+        const producer = readHostOperation(this.context.database, state.producer.operationId);
+        if (!parent || !producer) return hostOperationFailure("host_operation_journal_corrupt");
+        if (parent.phase !== "safe" && producer.phase !== "safe") return false;
+        if (parent.phase !== "safe" || producer.phase !== "safe" || parent.settledAt !== retainedAt
+          || producer.settledAt !== retainedAt
+          || parent.settlementSignature !== JSON.stringify({ kind: "office_local_chain_completed", settledAt: retainedAt })
+          || producer.settlementSignature !== JSON.stringify({ kind: "office_local_binary_completed", settledAt: retainedAt })) {
+          return hostOperationFailure("host_operation_settlement_conflict");
+        }
+        this.#issuer.assertCommittedIntent(execution.executionId, retainedAt);
+        return true;
+      });
+      if (committed) {
+        state.closeClaim.assertClaimOwned(state.originalCloseClaim);
+        state.committedHandle = this.#committedReader.issue(ticket, execution, state.closeClaim, state.originalCloseClaim);
+        return state.committedHandle;
+      }
+    }
+    this.journal.officeLocal.settleDirectory(state.parent, state.producer, () => {
+      const current = this.execution(ticket.executionId);
+      if (state.uncertainLaunch || state.entered.size === 0) return hostOperationFailure("host_office_local_launch_unknown");
+      assertOfficeDirectoryNativeCloseReadyV2(this.context.database, current, state.entered, state.sealClaim);
+      const authority = state.scopeAuthority.requireBound(current);
+      // This only consumes the already-issued original closure. It cannot enter close or reconstruct an FD.
+      state.originalCloseClaim = state.closeClaim.assertClosed(current, authority);
+    }, (pair, settledAt) => settleOfficeDirectoryPairV2(this.context, pair, this.execution(ticket.executionId), this.#issuer, settledAt, state));
+    if (!state.originalCloseClaim) return hostOperationFailure("host_office_local_close_claim_invalid");
+    // Separate committed read window after transaction return; no in-transaction candidate can escape as a handle.
+    state.committedHandle = this.#committedReader.issue(ticket, this.execution(ticket.executionId), state.closeClaim, state.originalCloseClaim);
+    return state.committedHandle;
   }
   prepareEffect(ticket: HostOfficeLocalTicket, input: PrepareHostOfficeLocalDirectoryEffectV2): HostOfficeLocalDirectoryEffectRecordV2 {
     const state = this.mutable(ticket), captured: unknown = JSON.parse(JSON.stringify(input));
