@@ -16,6 +16,8 @@ import { readOriginalProtectedHostActorEntries } from "./protected-host-original
 import { readOriginalPackagedCodesignHostProof, type OriginalPackagedCodesignHostProof } from "./packaged-codesign-host-source.js";
 import { captureOriginalOfficeDirectoryWindowPaths, type OriginalOfficeDirectoryWindowPaths,
   type OriginalOfficeDirectoryWindowPathClosure } from "./protected-host-office-directory-window.js";
+import { readOriginalOfficeDirectoryRuntimeReleasePermitV2, consumeOriginalOfficeDirectoryRuntimeReleasePermitV2,
+  type OriginalOfficeDirectoryRuntimeReleasePermitV2 } from "../../features/office-documents/office-local-native-runtime.js";
 
 declare const stageBrand: unique symbol;
 declare const sourceBrand: unique symbol;
@@ -54,6 +56,10 @@ interface OfficeWindowState {
   readonly paths: OriginalOfficeDirectoryWindowPaths;
   readonly epoch: object;
 }
+interface OfficeLeaseReleaseHistory {
+  readonly window: ProtectedHostOfficeDirectoryWindowV2;
+  readonly state: OfficeWindowState;
+}
 interface ActorState {
   readonly source: ActorSourceState;
   readonly prepared: PreparedMacosSandboxCommand;
@@ -62,12 +68,15 @@ interface ActorState {
   phase: "prepared" | "launch_entered" | "launched" | "unknown";
 }
 const ownedRegistries = new WeakSet<ProtectedHostStageRegistry>();
+const officeLeaseReleasesInProgress = new WeakSet<OriginalOfficeDirectoryRuntimeReleasePermitV2>();
 const originalOfficeRegistryReaders = new WeakMap<ProtectedHostStageRegistry, Readonly<{
   assertStage: (stage: ProtectedHostStageRegistration) => void;
   begin: (stage: ProtectedHostStageRegistration, expected: HostOfficeLocalDirectoryExecutionRecordV2) => ProtectedHostOfficeDirectoryWindowV2;
   assertWindow: (window: ProtectedHostOfficeDirectoryWindowV2, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
   closeWindow: (window: ProtectedHostOfficeDirectoryWindowV2) => void;
   readClosure: (window: ProtectedHostOfficeDirectoryWindowV2) => OriginalOfficeDirectoryWindowPathClosure;
+  releaseLease: (permit: OriginalOfficeDirectoryRuntimeReleasePermitV2) => void;
+  assertLeaseReleased: (permit: OriginalOfficeDirectoryRuntimeReleasePermitV2) => void;
 }>>();
 const actorPreparedBindings = new WeakMap<ProtectedHostActorPreparation, {
   readonly registry: ProtectedHostStageRegistry; readonly prepared: PreparedMacosSandboxCommand;
@@ -159,6 +168,7 @@ export class ProtectedHostStageRegistry {
   readonly #actors = new WeakMap<ProtectedHostActorPreparation, ActorState>();
   readonly #inventory = new ProtectedHostActorInventory();
   readonly #officeWindows = new WeakMap<ProtectedHostOfficeDirectoryWindowV2, OfficeWindowState>();
+  readonly #officeLeaseReleaseHistory = new WeakMap<OriginalOfficeDirectoryRuntimeReleasePermitV2, OfficeLeaseReleaseHistory>();
   readonly #hostBindingEpoch = Object.freeze({});
   #hostBindings = new Map<OriginalPackagedCodesignHostProof, {
     readonly entry: ProtectedHostActorEntry; readonly epoch: object; readonly domain: ProtectedHostActorDomain;
@@ -193,6 +203,8 @@ export class ProtectedHostStageRegistry {
       assertWindow: (window, expected) => this.#assertOfficeWindow(window, expected),
       closeWindow: window => this.#closeOfficeWindow(window),
       readClosure: window => this.#officeWindow(window).paths.readClosureFacts(),
+      releaseLease: permit => this.#releaseOfficeLease(permit),
+      assertLeaseReleased: permit => this.#assertOfficeLeaseReleased(permit),
     }));
   }
   assertHostStageSourceCurrent(input: ProtectedHostSourceInput): void { captureSource(input); }
@@ -576,6 +588,66 @@ export class ProtectedHostStageRegistry {
     catch (error) { stage.lifetime = "unknown"; throw error; }
     // Keep #stages membership: neither closure nor caller DTO can release the lease.
   }
+  #assertOfficeLeaseReleaseHistory(permit: OriginalOfficeDirectoryRuntimeReleasePermitV2,
+    target: ReturnType<typeof readOriginalOfficeDirectoryRuntimeReleasePermitV2>): OfficeLeaseReleaseHistory {
+    const history = this.#officeLeaseReleaseHistory.get(permit), state = history?.state;
+    requireScope(history && state && target.registry === this && target.window === history.window
+      && target.registration === state.registration && isDeepStrictEqual(target.execution, state.execution)
+      && this.#officeWindows.get(history.window) === state && this.#stageLifetimes.get(state.registration) === state.stage
+      && state.epoch === this.#hostBindingEpoch && state.stage.officeWindow === state
+      && !this.#stages.has(state.registration), "protected_host_office_lease_release_history_invalid");
+    // Historical idempotence is exact identity only. Current source/coverage,
+    // native proof and already-closed original FD readers must not run here.
+    return history;
+  }
+  #assertOfficeLeaseReleaseTail(token: ProtectedHostOfficeDirectoryWindowV2, window: OfficeWindowState, epoch: object): void {
+    const stage = window.stage;
+    const closure = window.paths.readClosureFacts();
+    requireScope(closure.phase === "closed_pending"
+      && [...closure.stage, ...closure.destination].every(row => row.state === "closed" && row.close === "returned"),
+      "protected_host_office_window_close_unknown");
+    requireScope(this.#officeWindows.get(token) === window && this.#stageLifetimes.get(window.registration) === stage
+      && window.epoch === this.#hostBindingEpoch && stage.officeWindow === window
+      && this.#stages.get(window.registration) === stage && epoch === this.#domainEpoch
+      && !this.#coverageClosed && stage.lifetime === "closed_pending" && stage.officeAdmission === "bound",
+      "protected_host_office_lease_release_invalid");
+  }
+  #releaseOfficeLease(permit: OriginalOfficeDirectoryRuntimeReleasePermitV2): void {
+    requireScope(typeof permit === "object" && permit !== null, "office_local_native_lease_release_permit_invalid");
+    requireScope(!officeLeaseReleasesInProgress.has(permit), "protected_host_office_lease_release_reentrant");
+    officeLeaseReleasesInProgress.add(permit);
+    try {
+      const target = readOriginalOfficeDirectoryRuntimeReleasePermitV2(permit);
+      if (this.#officeLeaseReleaseHistory.has(permit)) {
+        const history = this.#assertOfficeLeaseReleaseHistory(permit, target);
+        consumeOriginalOfficeDirectoryRuntimeReleasePermitV2(permit, this, history.window,
+          history.state.registration, history.state.execution, true);
+        this.#assertOfficeLeaseReleaseHistory(permit, target);
+        return;
+      }
+      requireScope(target.registry === this && !target.historyOnly, "protected_host_office_lease_release_invalid");
+      const window = this.#officeWindows.get(target.window), epoch = this.#domainEpoch;
+      requireScope(window && window.registration === target.registration
+        && isDeepStrictEqual(window.execution, target.execution), "protected_host_office_lease_release_invalid");
+      this.#assertOfficeLeaseReleaseTail(target.window, window, epoch);
+      // Allocate the immutable historical record before consuming or deleting.
+      // Runtime has already performed the original current closed-proof gate.
+      const history = Object.freeze({ window: target.window, state: window });
+      consumeOriginalOfficeDirectoryRuntimeReleasePermitV2(permit, this, target.window, window.registration, window.execution, false);
+      this.#assertOfficeLeaseReleaseTail(target.window, window, epoch);
+      // No I/O, listeners, awaits or caller code between the final exact check,
+      // deletion of this member and publication of its original private history.
+      this.#stages.delete(window.registration);
+      this.#officeLeaseReleaseHistory.set(permit, history);
+    } finally { officeLeaseReleasesInProgress.delete(permit); }
+  }
+  #assertOfficeLeaseReleased(permit: OriginalOfficeDirectoryRuntimeReleasePermitV2): void {
+    requireScope(typeof permit === "object" && permit !== null, "office_local_native_lease_release_permit_invalid");
+    requireScope(!officeLeaseReleasesInProgress.has(permit), "protected_host_office_lease_release_reentrant");
+    officeLeaseReleasesInProgress.add(permit);
+    try { this.#assertOfficeLeaseReleaseHistory(permit, readOriginalOfficeDirectoryRuntimeReleasePermitV2(permit)); }
+    finally { officeLeaseReleasesInProgress.delete(permit); }
+  }
 }
 function officeReader(registry: ProtectedHostStageRegistry): NonNullable<ReturnType<typeof originalOfficeRegistryReaders.get>> {
   const reader = originalOfficeRegistryReaders.get(registry);
@@ -598,6 +670,12 @@ export function closeOriginalProtectedHostOfficeDirectoryWindow(registry: Protec
 export function readOriginalProtectedHostOfficeDirectoryClosure(registry: ProtectedHostStageRegistry, window: ProtectedHostOfficeDirectoryWindowV2): OriginalOfficeDirectoryWindowPathClosure {
   return officeReader(registry).readClosure(window);
 }
+/** Only an active original Runtime permit can remove its exact closed-pending protection member. */
+export function releaseOriginalProtectedHostOfficeDirectoryLeaseV2(registry: ProtectedHostStageRegistry,
+  permit: OriginalOfficeDirectoryRuntimeReleasePermitV2): void { officeReader(registry).releaseLease(permit); }
+/** Fixed historical readback for return-loss reconciliation; never uses the live window reader. */
+export function assertOriginalProtectedHostOfficeDirectoryLeaseReleasedV2(registry: ProtectedHostStageRegistry,
+  permit: OriginalOfficeDirectoryRuntimeReleasePermitV2): void { officeReader(registry).assertLeaseReleased(permit); }
 export function isProtectedHostStageRegistry(value: unknown): value is ProtectedHostStageRegistry {
   return typeof value === "object" && value !== null && ownedRegistries.has(value as ProtectedHostStageRegistry);
 }

@@ -1,4 +1,4 @@
-import { digestHarnessToolValue, officeDirectorySlotsV2, type HostOfficeDirectoryResourceBindingV2,
+import { officeDirectoryPreparedIdentityMatchesV2, officeDirectorySlotsV2, type HostOfficeDirectoryResourceBindingV2,
   type HostOfficeLocalDirectoryPreparedV2, type HostOfficeNativeResultFactsV2 } from "@ling-stack/core";
 
 const fail = (): never => { throw new Error("office_local_directory_resource_binding_invalid"); };
@@ -29,7 +29,7 @@ export class OfficeLocalDirectoryResourceFacts {
       const parent = slot.parentResourceSlotId ? next.get(slot.parentResourceSlotId) : undefined;
       if (resource.parentLifetimeId !== (parent?.nativeLifetimeId ?? "")) return fail();
       if (slot.initialIdentity && resource.identityObserved
-        && digestHarnessToolValue(slot.initialIdentity) !== digestHarnessToolValue(resource.initialIdentity)) return fail();
+        && (!resource.initialIdentity || !officeDirectoryPreparedIdentityMatchesV2(slot.initialIdentity, resource.initialIdentity))) return fail();
       let binding = next.get(slot.resourceSlotId);
       if (binding && binding.nativeLifetimeId !== resource.lifetimeId) return fail();
       if (!binding) {

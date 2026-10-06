@@ -3,7 +3,7 @@ import type { HostOfficeLocalDirectoryExecutionRecordV2, HostOfficeDirectoryReso
 import type { HostOfficeLocalDirectoryTerminalRecordV2 } from "../../host-office-local-directory-v2-terminal-types.js";
 import type { HostOfficeNativeIdentityV2, HostOfficeNativeResourceFactV2, HostOfficeNativeReadbackV2,
   HostOfficeNativeInstallationV2, HostOfficeNativePublicationV2 } from "../../host-office-local-native-v2-types.js";
-import { officeDirectorySlotsV2, type OfficeDirectorySlotV2 } from "./host-office-local-directory-v2-effects.js";
+import { officeDirectorySlotsV2, officeDirectoryPreparedIdentityMatchesV2, type OfficeDirectorySlotV2 } from "./host-office-local-directory-v2-effects.js";
 import type { CompleteOfficeDirectoryEntryV2 } from "./host-office-local-directory-v2-replay-integrity.js";
 import { OfficeDirectoryCallCursorV2, type ReturnedOfficeDirectoryCallV2 } from "./host-office-local-directory-v2-replay-calls.js";
 import { directoryV2Failure, v2Same } from "./host-office-local-directory-v2-validation.js";
@@ -64,7 +64,7 @@ export class OfficeDirectoryReplayResourcesV2 {
     if (open.returned !== "descriptor_acquired_redacted" || !initial || this.acquisitionRefs.has(refKey)
       || !v2Same(binding.acquisitionCallRef ?? null, { effectId: cursor.entry.effect.effectId, ordinal: openOrdinal })
       || !v2Same(binding.firstFstatCallRef ?? null, { effectId: cursor.entry.effect.effectId, ordinal: statOrdinal })
-      || slot.initialIdentity && !v2Same(slot.initialIdentity, initial)
+      || slot.initialIdentity && !officeDirectoryPreparedIdentityMatchesV2(slot.initialIdentity, initial)
       || initial.isFile !== ["created_file", "publication_file"].includes(slot.kind) || initial.isDirectory === initial.isFile
       || (observerOf ? open.entryName !== slot.basename : open.entryName !== undefined)
       || slot.kind === "created_file" && initial.sizeBytes !== "0") return directoryV2Failure();

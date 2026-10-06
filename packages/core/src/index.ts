@@ -25,7 +25,7 @@ export { verifyOfficeLocalDirectoryReplayV2 } from "./storage/sqlite/host-office
 export { validateOfficeNativeIdentityV2, validateOfficeNativeResultFactsV2,
   validateOfficeNativeResultFactsV2 as validateOfficeLocalDirectoryNativeResultV2 } from "./storage/sqlite/host-office-local-native-v2-schema.js";
 export { validateOfficeLocalDirectoryPreparedV2 } from "./storage/sqlite/host-office-local-directory-v2-prepared.js";
-export { officeDirectorySlotsV2, type OfficeDirectorySlotV2 } from "./storage/sqlite/host-office-local-directory-v2-effects.js";
+export { officeDirectorySlotsV2, officeDirectoryPreparedIdentityMatchesV2, type OfficeDirectorySlotV2 } from "./storage/sqlite/host-office-local-directory-v2-effects.js";
 export { validateOfficeDirectoryHistoryV2, type OfficeDirectoryHistoryEntryV2 } from "./storage/sqlite/host-office-local-directory-v2-history.js";
 export { validateOfficeLocalDirectoryObservationPayloadV2 } from "./storage/sqlite/host-office-local-directory-v2-observations.js";
 export * from "./media-workflow-types.js";

@@ -323,6 +323,8 @@ const firstImports = [
   "runtime/sandbox/macos-native-command.js",
   "runtime/sandbox/protected-host-staging.js",
   "runtime/sandbox/restricted-command-runtime.js",
+  "features/office-documents/office-local-native-runtime.js",
+  "features/office-documents/office-local-directory-core-authority.js",
   supervisorPath,
   manifestPath,
   "runtime/sandbox/core-original-process-bridge.js",

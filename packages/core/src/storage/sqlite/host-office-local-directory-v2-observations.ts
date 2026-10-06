@@ -1,6 +1,6 @@
 import { HOST_OFFICE_LOCAL_DIRECTORY_V2_PROTOCOL, type HostOfficeLocalDirectoryExecutionRecordV2,
   type HostOfficeLocalDirectoryEffectRecordV2, type HostOfficeLocalDirectoryObservationV2 } from "../../host-office-local-directory-v2-types.js";
-import { officeDirectorySlotsV2, validateOfficeDirectoryBindingV2 } from "./host-office-local-directory-v2-effects.js";
+import { officeDirectorySlotsV2, officeDirectoryPreparedIdentityMatchesV2, validateOfficeDirectoryBindingV2 } from "./host-office-local-directory-v2-effects.js";
 import { validateOfficeNativeResultFactsV2 } from "./host-office-local-native-v2-schema.js";
 import { validateOfficeDirectoryCloseSessionV2 } from "./host-office-local-directory-v2-cleanup.js";
 import { directoryV2Failure, v2Exact, v2Object, v2OptionalKeys, v2Same, v2Source, v2Text, v2Timestamp, v2Digest, v2Size } from "./host-office-local-directory-v2-validation.js";
@@ -49,7 +49,8 @@ export function validateOfficeLocalDirectoryObservationPayloadV2(execution: Host
     const binding = lifetimes.get(resource.lifetimeId), slot = binding && slots.get(binding.resourceSlotId);
     if (!binding || !slot || used.has(slot.resourceSlotId) || slot.kind !== resource.kind || slot.basename !== resource.basename
       || (slot.parentResourceSlotId ? lifetimes.get(resource.parentLifetimeId)?.resourceSlotId !== slot.parentResourceSlotId : resource.parentLifetimeId !== "")
-      || (slot.initialIdentity && resource.identityObserved && !v2Same(slot.initialIdentity, resource.initialIdentity))) return directoryV2Failure();
+      || (slot.initialIdentity && resource.identityObserved
+        && (!resource.initialIdentity || !officeDirectoryPreparedIdentityMatchesV2(slot.initialIdentity, resource.initialIdentity)))) return directoryV2Failure();
     used.add(slot.resourceSlotId);
     if (resource.identityObserved && !binding.firstFstatCallRef) return directoryV2Failure();
     if (resource.state !== "not_acquired" && !binding.acquisitionCallRef) return directoryV2Failure();

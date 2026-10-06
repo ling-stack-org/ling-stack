@@ -8,7 +8,9 @@ import { isOriginalRuntimeSupervisorOfficeRoot, retainOriginalRuntimeSupervisorO
 import { isOwnedOfficeLocalNativeRuntime, captureOriginalOfficeDirectoryRuntimeCustody,
   assertOriginalOfficeDirectoryRuntimeBinding, type OfficeLocalNativeRuntime,
   closeOriginalOfficeDirectoryRuntimeWindow, assertOriginalOfficeDirectoryRuntimeWindowClosed,
+  releaseOriginalOfficeDirectoryRuntimeLeaseV2,
   type OfficeLocalNativeTypedScope } from "./office-local-native-runtime.js";
+import type { HostOfficeLocalDirectoryCloseClaimV2, HostOfficeLocalDirectoryCommittedPairV2 } from "@ling-stack/core";
 
 interface CompositionStore {
   readonly supervisor: RuntimeSupervisor;
@@ -21,6 +23,7 @@ interface Custody {
 }
 const stores = new WeakMap<RunStore, CompositionStore>();
 const custodies = new WeakMap<object, Custody>();
+const authorityCustodies = new WeakMap<OriginalOfficeDirectoryAuthorityV2, Custody>();
 function requireOriginal(value: unknown): asserts value {
   if (!value) throw new Error("office_local_directory_core_composition_invalid");
 }
@@ -71,6 +74,23 @@ export function captureOriginalOfficeDirectoryAuthorityV2(store: RunStore, runti
     && isOriginalRuntimeSupervisorOfficeRoot(composition.supervisor) && isOwnedOfficeLocalNativeRuntime(runtime));
   const runtimeCustody = captureOriginalOfficeDirectoryRuntimeCustody(runtime, scope);
   const custodyRef = Object.freeze({});
-  custodies.set(custodyRef, Object.freeze({ store, runtime, runtimeCustody }));
-  return mintOriginalOfficeDirectoryAuthorityV2(composition.setup, custodyRef);
+  const original = Object.freeze({ store, runtime, runtimeCustody });
+  custodies.set(custodyRef, original);
+  const authority = mintOriginalOfficeDirectoryAuthorityV2(composition.setup, custodyRef);
+  authorityCustodies.set(authority, original);
+  return authority;
+}
+
+/** Keep raw custody private: exposing it would allow bypassing the Core close-claim gate. */
+function readOriginalOfficeDirectoryAuthorityCustodyForReleaseV2(authority: OriginalOfficeDirectoryAuthorityV2): Readonly<Custody> {
+  const original = authorityCustodies.get(authority);
+  requireOriginal(original);
+  return original;
+}
+
+/** Release exactly the original lease after Core commit; no caller window, expected DTO or callback is admitted. */
+export function releaseOriginalOfficeDirectoryLeaseV2(authority: OriginalOfficeDirectoryAuthorityV2,
+  grant: HostOfficeLocalDirectoryCommittedPairV2, claim: HostOfficeLocalDirectoryCloseClaimV2): void {
+  const original = readOriginalOfficeDirectoryAuthorityCustodyForReleaseV2(authority);
+  releaseOriginalOfficeDirectoryRuntimeLeaseV2(original.runtime, original.runtimeCustody, authority, grant, claim);
 }

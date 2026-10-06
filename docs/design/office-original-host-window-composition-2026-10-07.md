@@ -3,7 +3,7 @@
 本切片建立 Core bridge 到 Daemon 原始私有 custody 的固定接线。
 Host composition 本身不发行 Core-safe receipt，不改变 native-only API 或生产 MCP 协议选择。
 固定 actor manifest、默认 enrollment 与原始 Core close claim 已接线；独立 certificate / 原子
-pair 的 Core 接点见文末。保护 lease 释放、生产 MCP/Tracker 接线与 packaged 验收仍需完成。
+pair 的 Core 接点见文末。保护 lease 的固定释放接缝已实施；生产 MCP/Tracker 接线与 packaged 验收仍需完成。
 源入口注册不是完整执行隔离证书。
 
 ## 固定来源与退休
@@ -38,6 +38,11 @@ stage 与 destination 的完整祖先链分别对齐 owning Core row，各自持
 共享 pathname 不意味着共享 FD，关闭不可按路径去重。
 目录 publication 可改变 size/timestamps，不能替换原 dev/inode/mode，
 也不能用后来读到的 inode/mode 给最初 identity 补票。
+准备快照到第一次原始 native fstat 之间也可能有无关目录增删；三处准入
+（Daemon slot ledger、Core observation、Core replay）共享稳定目录身份比较，
+只允许 size/mtime/ctime 差异，仍固定原 device/inode/mode/type。
+第一次 fstat 的完整 identity 原样保留，后续历史副本必须精确一致；
+文件 readback 的完整 before/after 身份校验不变。不能以串行测试规避此并发边界。
 
 已有与新 actor 的保守 domain 都检查两组链。编译 deny roots 同时包含 stage 与
 destination；binding 期间、unknown 和 pending 状态拒绝新的 actor admission。
@@ -51,7 +56,8 @@ destination；binding 期间、unknown 和 pending 状态拒绝新的 actor admi
 
 资源关闭不释放 protection lease：Registry 的 stage map 保留 pending/unknown 成员，
 普通 `closeStage` 不得删除 window-bound stage。没有 caller DTO/boolean 的 release API。
-当前 Registry 原语尚未接入 Core settlement，不用于提前关闭生产窗口。
+Registry 的固定释放接缝仅消费原 Runtime 在 Core settlement 后同步发行的 opaque permit，
+不能凭 Core 返回 DTO 或 window 字段提前关闭生产窗口。
 
 失败 binding 的 destination 清理先进入 `cleanup_entered`，拒绝重入普通 stage close。
 清理完成或返回不明后都保留保护成员；即使原 stage FD 已知关闭，也只进入
@@ -211,8 +217,36 @@ history 导出，不能由 caller 登记；same bridge 新 authority 或同字�
 此 matcher 仍只读 Core committed 历史、不调用 Host/current/FD；Daemon 必须再从固定
 composition 私有 map 找到对应的 same runtimeCustody，不能省略这一步。
 
-后续 Daemon 必须沿原 Runtime custody 验证首次 release 的持续 closed proof，再只解除
-Registry 的 exact original lease。Core committed handle 本身不能直接删除 Registry member，
-也不能关闭 Tracker barriers。释放后的重试只核 same member/handle/claim 的私有历史和
-Core committed 事实；不得把已删除成员伪装成仍持有原窗口。Tracker 的 V2 proof 必须
-来自固定读回，不能由可替换 public getter、native-only flags 或工具文本制造。
+Daemon 沿原 Runtime custody 验证首次 release 的持续 closed proof，再只解除 Registry
+的 exact original lease。Core committed handle 本身不能直接删除 Registry member，也不能
+关闭 Tracker barriers。释放后的重试只核 same member/handle/claim 的私有历史和 Core
+committed 事实；不得把已删除成员伪装成仍持有原窗口。Tracker 的 V2 proof 仍待接线，
+必须来自固定读回，不能由可替换 public getter、native-only flags 或工具文本制造。
+
+## 原始 lease 的同步释放与历史幂等
+
+固定入口为 `releaseOriginalOfficeDirectoryLeaseV2(originalAuthority, committedGrant, closeClaim)`。
+composition 在原 authority mint 时私藏 authority → exact Store/runtime/runtimeCustody；
+该 lookup **不导出**。公开 raw runtimeCustody 会使 caller 绕过 Core ready/roster gate，
+提前调用原关闭接点，因而禁止用公开 reader 或 caller callback 暴露这个映射。
+
+Runtime 先进入 constructor-private release gate，拒同步重入；再以 Core 固定 matcher 核
+same original authority/grant/claim 和 private execution。首次释放继续核原 closed_pending /
+all-returned 事实、current source/Supervisor/cache/factory/identity 和 sticky proof。
+proof 失败保留保护成员，不能靠恢复来源把旧 proof 重新打开。
+
+通过后，只在同一同步调用栈发行空冻结 opaque permit。Registry fixed reader 自查原
+window/stage/registration/full execution，consumer 对照 Runtime 私有 permit，再做纯
+member/epoch/coverage/closed-returned 尾检，精确删除一个成员并保存同 permit 私有历史。
+尾部没有 native/current/FD I/O、listener、await、路径清理或 public no-op 方法。
+原 window 仍保留 closed_pending 历史，但旧 live membership 断言在删除后必然失败。
+
+permit 在 finally 失效，外部即使取得同对象也不能晚用或借给别的 Registry。实际删除和
+私有 history 已完成但返回丢失时，Runtime 从固定 Registry 历史认领，而非重做 live proof。
+同 authority/grant/claim 的历史重试仅 Core SQL readback + 双层私有历史；可以在 Host
+退休后完成，不重关、重开或检查原窗口 FD，不恢复前向资格，不释放其他 member。
+
+专属真实-addon fixture 使用默认 20-source startup、原 Store factory、真实 DOCX bytes、
+原同步 effect gates、原 native packets/resource facts 和 terminal seal；有限 writer helper
+只用于机制验收，不是生产 MCP route、SDK transport 或 packaged App 的替代证据。
+生产 adapter 的 bound close 顺序、Tracker local barriers 以及完整 packaged 验收仍须完成。

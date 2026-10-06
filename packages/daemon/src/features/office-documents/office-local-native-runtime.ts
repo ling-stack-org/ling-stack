@@ -2,7 +2,10 @@ import { mkdtempSync, realpathSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { OFFICE_DOCUMENTS_MCP_SERVER_ID } from "@ling-stack/contracts";
-import type { HostOfficeLocalDirectoryExecutionRecordV2, RunStore, RuntimeInstance } from "@ling-stack/core";
+import type { HostOfficeLocalDirectoryExecutionRecordV2, HostOfficeLocalDirectoryCloseClaimV2,
+  HostOfficeLocalDirectoryCommittedPairV2, RunStore, RuntimeInstance } from "@ling-stack/core";
+import type { OriginalOfficeDirectoryAuthorityV2 } from "@ling-stack/core/original-office-host-bridge";
+import { assertOriginalOfficeDirectoryCommittedPairAuthorityV2 } from "@ling-stack/core/original-office-committed-pair-v2";
 import type { McpBroker } from "../../context.js";
 import { findHostOfficeLocalFactory } from "../mcp/broker.js";
 import { isRuntimeSupervisorOfficeCacheEntry, readRuntimeSupervisorOfficeArtifact, readRuntimeSupervisorOfficeBinding, readRuntimeSupervisorOfficeIssuerId,
@@ -10,6 +13,7 @@ import { isRuntimeSupervisorOfficeCacheEntry, readRuntimeSupervisorOfficeArtifac
 import { isProtectedHostStageRegistry, assertOriginalProtectedHostOfficeStage,
   beginOriginalProtectedHostOfficeDirectoryWindow, assertOriginalProtectedHostOfficeDirectoryWindow,
   closeOriginalProtectedHostOfficeDirectoryWindow, readOriginalProtectedHostOfficeDirectoryClosure,
+  releaseOriginalProtectedHostOfficeDirectoryLeaseV2, assertOriginalProtectedHostOfficeDirectoryLeaseReleasedV2,
   type ProtectedHostOfficeDirectoryWindowV2, type ProtectedHostSourceInput,
   type ProtectedHostStageRegistration, type ProtectedHostStageRegistry } from "../../runtime/sandbox/protected-host-staging.js";
 import type { OriginalOfficeDirectoryWindowPathClosure } from "../../runtime/sandbox/protected-host-office-directory-window.js";
@@ -18,8 +22,36 @@ import { loadReviewedOfficeLocalNativeArtifact, type OfficeLocalNativeIdentityFa
 
 declare const scopeBrand: unique symbol;
 declare const resourceBrand: unique symbol;
+declare const releasePermitBrand: unique symbol;
 export interface OfficeLocalNativeTypedScope { readonly [scopeBrand]: true }
 export interface OfficeLocalNativeResource { readonly [resourceBrand]: true }
+/** One synchronous Registry deletion gate. A matching object or a committed-pair DTO is not a permit. */
+export interface OriginalOfficeDirectoryRuntimeReleasePermitV2 { readonly [releasePermitBrand]: true }
+interface OfficeDirectoryReleaseTargetV2 {
+  readonly registry: ProtectedHostStageRegistry;
+  readonly window: ProtectedHostOfficeDirectoryWindowV2;
+  readonly registration: ProtectedHostStageRegistration;
+  readonly execution: HostOfficeLocalDirectoryExecutionRecordV2;
+}
+interface OfficeDirectoryReleasePermitStateV2 {
+  readonly runtime: OfficeLocalNativeRuntime;
+  readonly custody: object;
+  readonly authority: OriginalOfficeDirectoryAuthorityV2;
+  readonly grant: HostOfficeLocalDirectoryCommittedPairV2;
+  readonly claim: HostOfficeLocalDirectoryCloseClaimV2;
+  readonly target: Readonly<OfficeDirectoryReleaseTargetV2>;
+  readonly permit: OriginalOfficeDirectoryRuntimeReleasePermitV2;
+  phase: "fresh" | "consumed";
+  active: boolean;
+  historyOnly: boolean;
+}
+interface OfficeDirectoryReleaseHistoryV2 {
+  readonly authority: OriginalOfficeDirectoryAuthorityV2;
+  readonly grant: HostOfficeLocalDirectoryCommittedPairV2;
+  readonly claim: HostOfficeLocalDirectoryCloseClaimV2;
+  readonly permit: OriginalOfficeDirectoryRuntimeReleasePermitV2;
+}
+const originalReleasePermits = new WeakMap<OriginalOfficeDirectoryRuntimeReleasePermitV2, OfficeDirectoryReleasePermitStateV2>();
 /** Native factual fields stay original; only live capabilities are opaque Host wrappers. No serialized FD or session. */
 export interface OfficeLocalNativePacket {
   readonly success: boolean;
@@ -80,6 +112,9 @@ const originalCoreScopeReaders = new WeakMap<OfficeLocalNativeRuntime, Readonly<
   assertBinding: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
   closeBoundWindow: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
   assertClosedBoundWindow: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
+  releaseLease: (custody: object, authority: OriginalOfficeDirectoryAuthorityV2,
+    grant: HostOfficeLocalDirectoryCommittedPairV2, claim: HostOfficeLocalDirectoryCloseClaimV2) => void;
+  assertReleasePermit: (record: OfficeDirectoryReleasePermitStateV2) => void;
 }>>();
 function requireRuntime(value: unknown, code = "office_local_native_runtime_invalid"): asserts value {
   if (!value) throw new Error(code);
@@ -95,6 +130,8 @@ export class OfficeLocalNativeRuntime {
   readonly #scopes = new WeakMap<OfficeLocalNativeTypedScope, ScopeState>();
   readonly #resources = new WeakMap<OfficeLocalNativeResource, ResourceState>();
   readonly #coreCustodies = new WeakMap<object, ScopeState>();
+  readonly #leaseReleaseGates = new WeakMap<object, OfficeDirectoryReleasePermitStateV2>();
+  readonly #leaseReleaseHistories = new WeakMap<object, OfficeDirectoryReleaseHistoryV2>();
   readonly #native: ReturnType<typeof loadReviewedOfficeLocalNativeArtifact>;
   readonly #factories = new WeakMap<McpBroker, string>();
   #identityClosure: "retained" | "closed" | "unknown" = "retained";
@@ -116,6 +153,8 @@ export class OfficeLocalNativeRuntime {
       assertBinding: (custody, expected) => this.#assertCoreBinding(custody, expected),
       closeBoundWindow: (custody, expected) => this.#closeBoundCoreWindow(custody, expected),
       assertClosedBoundWindow: (custody, expected) => this.#assertClosedCoreWindow(custody, expected),
+      releaseLease: (custody, authority, grant, claim) => this.#releaseCoreLease(custody, authority, grant, claim),
+      assertReleasePermit: record => this.#assertReleasePermit(record),
     }));
   }
 
@@ -392,6 +431,82 @@ export class OfficeLocalNativeRuntime {
       "office_local_native_core_window_close_unknown");
     this.#assertCoreWindowProof(state, expected);
   }
+
+  /** A constructor-private gate, never an exported mint accepting a window or proof callback. */
+  #releaseCoreLease(custody: object, authority: OriginalOfficeDirectoryAuthorityV2,
+    grant: HostOfficeLocalDirectoryCommittedPairV2, claim: HostOfficeLocalDirectoryCloseClaimV2): void {
+    const state = this.#coreCustodies.get(custody);
+    requireRuntime(state && state.coreBinding === "bound" && state.coreWindow && state.coreExecution,
+      "office_local_native_core_custody_invalid");
+    requireRuntime(!this.#leaseReleaseGates.has(custody), "office_local_native_lease_release_already_entered");
+    const history = this.#leaseReleaseHistories.get(custody);
+    if (history) requireRuntime(history.authority === authority && history.grant === grant && history.claim === claim,
+      "office_local_native_lease_release_history_invalid");
+    const permit = history?.permit ?? Object.freeze({}) as OriginalOfficeDirectoryRuntimeReleasePermitV2;
+    const record = history ? originalReleasePermits.get(permit) : {
+      runtime: this, custody, authority, grant, claim, permit,
+      target: Object.freeze({ registry: this.registry, window: state.coreWindow,
+        registration: state.stage, execution: state.coreExecution }),
+      phase: "fresh" as const, active: false, historyOnly: false,
+    };
+    requireRuntime(record && record.runtime === this && record.custody === custody,
+      "office_local_native_lease_release_history_invalid");
+    // Enter before SQL/current-proof reads: synchronous reentry cannot open a second gate.
+    record.active = true; record.historyOnly = !!history;
+    originalReleasePermits.set(permit, record); this.#leaseReleaseGates.set(custody, record);
+    let releaseFailure: unknown;
+    try {
+      const execution = state.coreExecution;
+      assertOriginalOfficeDirectoryCommittedPairAuthorityV2(this.store, grant, claim, authority, {
+        executionId: execution.executionId, source: execution.source,
+        parentOperationId: execution.parentOperationId, producerOperationId: execution.producerOperationId,
+      });
+      if (!history) this.#assertClosedCoreWindow(custody, execution);
+      this.#assertReleasePermit(record);
+      releaseOriginalProtectedHostOfficeDirectoryLeaseV2(this.registry, permit);
+    } catch (error) { releaseFailure = error; throw error; }
+    finally {
+      try {
+        if (!history && record.phase === "consumed") {
+          // Reconcile deletion even when its return is lost. This fixed reader
+          // checks Registry history, not current Host/FD proof or caller flags.
+          try {
+            assertOriginalProtectedHostOfficeDirectoryLeaseReleasedV2(this.registry, permit);
+            this.#leaseReleaseHistories.set(custody, Object.freeze({ authority, grant, claim, permit }));
+          } catch (historyFailure) {
+            if (!releaseFailure) throw historyFailure;
+          }
+        }
+      } finally {
+        record.active = false; this.#leaseReleaseGates.delete(custody);
+      }
+    }
+  }
+
+  /** Only original object/epoch reads after proof. No native, source, window-FD or caller code. */
+  #assertReleasePermit(record: OfficeDirectoryReleasePermitStateV2): void {
+    const state = this.#coreCustodies.get(record.custody), target = record.target;
+    requireRuntime(record.runtime === this && record.active && this.#leaseReleaseGates.get(record.custody) === record
+      && state && state.coreBinding === "bound" && state.coreWindow === target.window && state.stage === target.registration
+      && state.coreExecution === target.execution && target.registry === this.registry,
+      "office_local_native_lease_release_permit_invalid");
+    if (record.historyOnly) {
+      const history = this.#leaseReleaseHistories.get(record.custody);
+      requireRuntime(record.phase === "consumed" && history?.permit === record.permit
+        && history.authority === record.authority && history.grant === record.grant && history.claim === record.claim,
+        "office_local_native_lease_release_history_invalid");
+    } else if (record.phase === "fresh") {
+      requireRuntime(!state.proofAdmissionClosed && this.#identityClosure === "retained"
+        && state.stageClosure === "closed_pending" && state.phase === "closed"
+        && readRuntimeSupervisorOfficeBinding(this.supervisor, this.store, this.registry) === state.runtime
+        && isDeepStrictEqual(state.runtime, state.runtimeSnapshot)
+        && findHostOfficeLocalFactory(state.source.originalBroker, OFFICE_DOCUMENTS_MCP_SERVER_ID,
+          state.source.rawName, state.source.run.cwd) === state.source.factory,
+        "office_local_native_core_proof_closed");
+    }
+    // Consumed first-release gates are readable solely for Registry's private
+    // deletion acknowledgment. They cannot be consumed again or mint live proof.
+  }
   #resourceCall(scope: OfficeLocalNativeTypedScope, method: OfficeLocalNativeMethod, resource: OfficeLocalNativeResource,
     args: readonly unknown[]): OfficeLocalNativePacket {
     const state = this.#scope(scope); this.#forward(state); const held = this.#resource(state, resource);
@@ -451,4 +566,38 @@ export function assertOriginalOfficeDirectoryRuntimeWindowClosed(runtime: Office
   const reader = originalCoreScopeReaders.get(runtime);
   requireRuntime(reader && isOwnedOfficeLocalNativeRuntime(runtime), "office_local_native_runtime_unowned");
   reader.assertClosedBoundWindow(custody, expected);
+}
+
+/** Composition passes its unexposed original custody; historical retries do not reopen current admission. */
+export function releaseOriginalOfficeDirectoryRuntimeLeaseV2(runtime: OfficeLocalNativeRuntime, custody: object,
+  authority: OriginalOfficeDirectoryAuthorityV2, grant: HostOfficeLocalDirectoryCommittedPairV2,
+  claim: HostOfficeLocalDirectoryCloseClaimV2): void {
+  const reader = originalCoreScopeReaders.get(runtime);
+  requireRuntime(reader,
+    "office_local_native_lease_release_custody_invalid");
+  reader.releaseLease(custody, authority, grant, claim);
+}
+
+/** Fixed Registry target lookup. Exported for the original consumer, not a permit registration seam. */
+export function readOriginalOfficeDirectoryRuntimeReleasePermitV2(permit: OriginalOfficeDirectoryRuntimeReleasePermitV2):
+  Readonly<OfficeDirectoryReleaseTargetV2 & { historyOnly: boolean }> {
+  const record = originalReleasePermits.get(permit), reader = record && originalCoreScopeReaders.get(record.runtime);
+  requireRuntime(record && reader, "office_local_native_lease_release_permit_invalid");
+  reader.assertReleasePermit(record);
+  return Object.freeze({ ...record.target, historyOnly: record.historyOnly });
+}
+
+/** Pure synchronous consumption, comparing Registry's own originals rather than a caller window DTO. */
+export function consumeOriginalOfficeDirectoryRuntimeReleasePermitV2(permit: OriginalOfficeDirectoryRuntimeReleasePermitV2,
+  registry: ProtectedHostStageRegistry, window: ProtectedHostOfficeDirectoryWindowV2,
+  registration: ProtectedHostStageRegistration, execution: HostOfficeLocalDirectoryExecutionRecordV2, historyOnly: boolean): void {
+  const target = readOriginalOfficeDirectoryRuntimeReleasePermitV2(permit), record = originalReleasePermits.get(permit)!;
+  requireRuntime(target.registry === registry && target.window === window && target.registration === registration
+    && isDeepStrictEqual(target.execution, execution) && target.historyOnly === historyOnly,
+    "office_local_native_lease_release_permit_invalid");
+  if (historyOnly) requireRuntime(record.phase === "consumed", "office_local_native_lease_release_history_invalid");
+  else {
+    requireRuntime(record.phase === "fresh", "office_local_native_lease_release_permit_consumed");
+    record.phase = "consumed";
+  }
 }

@@ -11,6 +11,13 @@ export interface OfficeDirectorySlotV2 {
   readonly parentResourceSlotId?: string;
   readonly initialIdentity?: HostOfficeNativeIdentityV2;
 }
+/** Existing-directory preparation pins the original node, not volatile entry metadata.
+ * The complete first-fstat identity remains immutable in native facts and replay.
+ */
+export function officeDirectoryPreparedIdentityMatchesV2(prepared: HostOfficeNativeIdentityV2, observed: HostOfficeNativeIdentityV2): boolean {
+  return prepared.isDirectory && observed.isDirectory && !prepared.isFile && !observed.isFile
+    && prepared.device === observed.device && prepared.inode === observed.inode && prepared.mode === observed.mode;
+}
 /** Both original ancestor chains remain separate even when they legitimately alias an existing inode. */
 export function officeDirectorySlotsV2(execution: HostOfficeLocalDirectoryPreparedV2): OfficeDirectorySlotV2[] {
   return [...(["stage", "destination"] as const).flatMap(role => execution[role].ancestors.map((item, index, chain) => ({
