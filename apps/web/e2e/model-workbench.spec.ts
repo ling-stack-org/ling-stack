@@ -30,10 +30,10 @@ async function clickProviderRowMenuItem(row: Locator, name: string | RegExp): Pr
 }
 
 async function openModelWorkbench(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /^(Settings|设置)$/ }).click();
+  await page.getByLabel(/^(Ling Stack navigation|Sidebar display|侧栏显示)$/).getByRole("button", { name: /^(Settings|设置)$/ }).click();
   await page.getByLabel(/^(Settings sections|设置分组)$/).getByRole("button", { name: /^(Model Workbench|模型工作台)$/ }).click();
   await expect(page.getByLabel(/^(Settings sections|设置分组)$/)).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByLabel(/^(Ling Stack navigation|Sidebar display|侧栏显示)$/)).toHaveCount(0);
 }
 
 async function expectProviderModelDiscoveryLayout(page: Page): Promise<void> {
@@ -172,7 +172,7 @@ test("model workbench Chinese mode localizes setup copy and uses an add model sh
   await openModelWorkbench(page);
   await expect(page.getByLabel("设置分组").getByRole("button", { name: "模型工作台" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "模型工作台", level: 1 })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "模型工作台", level: 1 })).toBeVisible();
   await expect(page.getByRole("heading", { name: "模型预设" })).toHaveCount(0);
   await expect(page.locator(".provider-table")).toBeVisible();
   const tableOverflow = await page.locator(".provider-table-shell").evaluate((element) => ({
@@ -810,7 +810,7 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await openModelWorkbench(page);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" })).toHaveClass(/active/);
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
-  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toHaveCount(0);
+  await expect(page.getByRole("heading", { name: "Model Workbench", level: 1 })).toBeVisible();
   await expect(page.locator(".provider-page-meta")).toHaveCount(0);
   await expect(page.getByRole("dialog")).toHaveCount(0);
   const readyLocalRelayRow = page.locator(".provider-row").filter({ hasText: "Ready Local Relay" });
@@ -1024,6 +1024,48 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await page.getByRole("button", { name: "Save changes" }).click();
   await expect(page.getByRole("dialog", { name: "Edit preset" }).getByText("API key missing. Add an API key before running a live check.")).toBeVisible();
   await expect(customProviderRow.first()).toContainText("Ready");
+});
+
+test("model discovery keeps catalog provenance compact in the dark editor", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.themePreference", "dark");
+  });
+  const runtimeErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") runtimeErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => runtimeErrors.push(error.message));
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state, {
+    templates: createDefaultProviderTemplates(),
+    providerModelCatalogStale: true,
+    providerModels: [{
+      id: "gpt-5-nano",
+      displayName: "GPT-5 Nano",
+      capabilities: ["chat", "tool_call", "reasoning", "vision"],
+      capabilitySource: "model_catalog",
+      capabilityConfidence: "known",
+    }],
+  });
+  await page.goto("/");
+  await openModelWorkbench(page);
+  await page.getByRole("button", { name: "Add model" }).click();
+  const dialog = page.getByRole("dialog", { name: "New preset" });
+  await dialog.getByLabel("Model supplier").selectOption("custom-openai-compatible");
+  await dialog.getByLabel("API key", { exact: true }).fill("test-visible-key");
+  await dialog.getByRole("button", { name: "Fetch models" }).click();
+
+  const sourceDetails = dialog.locator(".provider-model-source-details");
+  await expect(sourceDetails).not.toHaveAttribute("open", "");
+  await expect(dialog.locator(".provider-model-card")).toHaveCount(1);
+  await sourceDetails.locator("summary").click();
+  await expect(sourceDetails).toContainText("models.dev:test1234");
+  await expect(sourceDetails).toContainText("Fetched");
+  await expect(sourceDetails).toContainText("2026-01-01");
+  await expect(sourceDetails).toContainText("The Ling model catalog is stale");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
+  expect(runtimeErrors).toEqual([]);
 });
 
 test("model workbench status counts align with saved chat and media presets", async ({ page }) => {

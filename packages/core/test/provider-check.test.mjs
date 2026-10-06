@@ -8,7 +8,9 @@ import {
   defaultProviderTemplates,
   enrichProviderModelOption,
   filterMediaModelOptions,
+  findProviderModelCatalogRecord,
   inferGenerationModelFamily,
+  isProviderModelCatalogStale,
   normalizeMediaProviderCompat,
   normalizeProviderPresetForMediaRuntime,
   resolveGenerationProviderRuntimeState,
@@ -168,6 +170,137 @@ test("provider model enrichment uses catalog fallback only when upstream is sile
   const unknownVision = enrichProviderModelOption({ id: "gpt-5" }, context);
   assert.notEqual(unknownVision.api, "media-job");
   assert.ok(!unknownVision.capabilities.includes("image_generate"));
+});
+
+test("versioned provider model catalog prefers exact metadata and preserves explicit upstream capabilities", () => {
+  const openAiContext = {
+    kind: "openai",
+    providerId: "openai",
+    api: "openai-responses",
+  };
+  const catalog = enrichProviderModelOption({ id: "gpt-5-nano" }, openAiContext);
+  assert.equal(catalog.capabilitySource, "model_catalog");
+  assert.equal(catalog.contextWindow, 400000);
+  assert.ok(catalog.capabilities.includes("reasoning"));
+  assert.ok(catalog.capabilities.includes("vision"));
+
+  const upstream = enrichProviderModelOption({
+    id: "gpt-5-nano",
+    capabilities: ["chat"],
+    capabilitySource: "upstream",
+    capabilityConfidence: "known",
+  }, openAiContext);
+  assert.deepEqual(upstream.capabilities, ["chat"]);
+  assert.equal(upstream.capabilitySource, "upstream");
+});
+
+test("exact catalog records without thinking modes retain known family thinking metadata", () => {
+  const cases = [
+    {
+      id: "claude-sonnet-4-5",
+      context: { kind: "anthropic", providerId: "anthropic", api: "anthropic-messages" },
+      contextWindow: 1000000,
+      maxTokens: 64000,
+      supportedParameters: ["thinking", "tools"],
+    },
+    {
+      id: "gemini-2.5-pro",
+      context: { kind: "google", providerId: "google", api: "google-generative-ai" },
+      contextWindow: 1048576,
+      maxTokens: 65536,
+      supportedParameters: ["thinkingConfig", "tools"],
+    },
+  ];
+
+  for (const expected of cases) {
+    const model = enrichProviderModelOption({ id: expected.id }, expected.context);
+    assert.deepEqual(model.thinkingModes, ["off", "auto", "low", "medium", "high"], expected.id);
+    assert.deepEqual(model.thinkingSupport, {
+      levels: ["off", "auto", "low", "medium", "high"],
+      dynamicAllowed: true,
+    }, expected.id);
+    assert.deepEqual(model.supportedParameters, expected.supportedParameters, expected.id);
+    assert.equal(model.contextWindow, expected.contextWindow, expected.id);
+    assert.equal(model.maxTokens, expected.maxTokens, expected.id);
+    assert.equal(model.capabilitySource, "model_catalog", expected.id);
+    assert.equal(model.capabilityConfidence, "known", expected.id);
+  }
+});
+
+test("family thinking fallback preserves explicit upstream disablement and support flags", () => {
+  const context = { kind: "anthropic", providerId: "anthropic", api: "anthropic-messages" };
+  for (const thinkingModes of [[], ["off"]]) {
+    const model = enrichProviderModelOption({ id: "claude-sonnet-4-5", thinkingModes }, context);
+    assert.deepEqual(model.thinkingModes, thinkingModes);
+    assert.equal(model.thinkingSupport, undefined);
+  }
+
+  const thinkingSupport = { levels: ["off"], zeroAllowed: false, dynamicAllowed: false };
+  const model = enrichProviderModelOption({ id: "claude-sonnet-4-5", thinkingSupport }, context);
+  assert.deepEqual(model.thinkingModes, ["off"]);
+  assert.deepEqual(model.thinkingSupport, thinkingSupport);
+
+  const emptySupport = { levels: [], zeroAllowed: false, dynamicAllowed: false };
+  const disabled = enrichProviderModelOption({ id: "claude-sonnet-4-5", thinkingSupport: emptySupport }, context);
+  assert.deepEqual(disabled.thinkingModes, []);
+  assert.deepEqual(disabled.thinkingSupport, emptySupport);
+
+  const explicitEmptyModes = enrichProviderModelOption({
+    id: "claude-sonnet-4-5", thinkingModes: [],
+    thinkingSupport: { levels: ["off", "high"], zeroAllowed: false, dynamicAllowed: false },
+  }, context);
+  assert.deepEqual(explicitEmptyModes.thinkingModes, []);
+});
+
+test("exact catalog thinking modes take priority over broader family modes", () => {
+  const model = enrichProviderModelOption({ id: "gpt-5-nano" }, {
+    kind: "openai",
+    providerId: "openai",
+    api: "openai-responses",
+  });
+
+  assert.deepEqual(model.thinkingModes, ["minimal", "low", "medium", "high"]);
+  assert.deepEqual(model.thinkingSupport, {
+    levels: ["minimal", "low", "medium", "high"],
+    dynamicAllowed: false,
+  });
+  assert.deepEqual(model.supportedParameters, ["reasoning_effort", "tools", "response_format"]);
+  assert.equal(model.contextWindow, 400000);
+  assert.equal(model.capabilitySource, "model_catalog");
+});
+
+test("exact audio catalog records retain empty capabilities and do not inherit family thinking metadata", () => {
+  const model = enrichProviderModelOption({ id: "gemini-2.5-flash-preview-tts" }, {
+    kind: "google",
+    providerId: "google",
+    api: "google-generative-ai",
+  });
+
+  assert.deepEqual(model.capabilities, []);
+  assert.deepEqual(model.thinkingModes, []);
+  assert.equal(model.thinkingSupport, undefined);
+  assert.equal(model.supportedParameters, undefined);
+});
+
+test("unknown compatible relays use only unique exact catalog ids and otherwise stay conservative", () => {
+  const relayContext = {
+    kind: "openai-compatible",
+    providerId: "private-relay",
+    api: "openai-completions",
+  };
+  const unique = findProviderModelCatalogRecord("claude-sonnet-4-6", relayContext);
+  assert.equal(unique?.providerId, "anthropic");
+
+  const unknown = enrichProviderModelOption({ id: "future-private-model" }, relayContext);
+  assert.deepEqual(unknown.capabilities, ["chat"]);
+  assert.equal(unknown.capabilitySource, "conservative_default");
+  assert.equal(unknown.capabilityConfidence, "conservative");
+});
+
+test("provider model catalog stale calculation uses the reviewed 45 day threshold", () => {
+  assert.equal(isProviderModelCatalogStale("2026-08-20", new Date("2026-09-22T00:00:00.000Z")), false);
+  assert.equal(isProviderModelCatalogStale("2026-07-01", new Date("2026-09-22T00:00:00.000Z")), true);
+  assert.equal(isProviderModelCatalogStale("invalid", new Date("2026-09-22T00:00:00.000Z")), true);
 });
 
 test("live media transport auto-enable is restricted to implemented image adapters", () => {

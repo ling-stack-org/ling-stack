@@ -1,6 +1,7 @@
 import { Info, RefreshCw, Search } from "lucide-react";
 import { useI18n } from "../../i18n.js";
 import { providerCapabilityChipLabels } from "../../lib/providers.js";
+import { formatDateTime } from "../../lib/formatting.js";
 import {
   Badge,
   Button,
@@ -12,7 +13,7 @@ import {
   Input,
   InspectorSection,
 } from "../../shared/ui/index.js";
-import type { ProviderModelOption } from "../../types.js";
+import type { ProviderModelCatalogInfo, ProviderModelOption } from "../../types.js";
 import {
   providerModelCapabilitySourceLabel,
   providerModelThinkingLabel,
@@ -21,6 +22,8 @@ import {
 export function ProviderModelImportPanel({
   modelOptions,
   visibleModelOptions,
+  modelOptionsCatalog,
+  modelOptionsFetchedAt,
   modelOptionsSource,
   modelSearch,
   selectedModelIds,
@@ -38,6 +41,8 @@ export function ProviderModelImportPanel({
 }: {
   readonly modelOptions: readonly ProviderModelOption[];
   readonly visibleModelOptions: readonly ProviderModelOption[];
+  readonly modelOptionsCatalog?: ProviderModelCatalogInfo;
+  readonly modelOptionsFetchedAt: string;
   readonly modelOptionsSource: string;
   readonly modelSearch: string;
   readonly selectedModelIds: readonly string[];
@@ -73,7 +78,23 @@ export function ProviderModelImportPanel({
       </div>
       {modelOptionsSource ? (
         <InspectorSection className="provider-model-source-details" title={t("Source")}>
-          <small>{t("Loaded from {source}", { source: modelOptionsSource })}</small>
+          <div className="provider-model-source-summary">
+            <small>{t("Loaded from {source}", { source: modelOptionsSource })}</small>
+            {modelOptionsFetchedAt ? (
+              <small>{t("Fetched {time}", { time: formatDateTime(modelOptionsFetchedAt) })}</small>
+            ) : null}
+            {modelOptionsCatalog ? (
+              <small>{t("Ling catalog {version} · updated {date}", {
+                version: modelOptionsCatalog.version,
+                date: modelOptionsCatalog.updatedAt,
+              })}</small>
+            ) : null}
+            {modelOptionsCatalog?.stale ? (
+              <InlineFeedback tone="warning">
+                {t("The Ling model catalog is stale. Unknown models use conservative capabilities.")}
+              </InlineFeedback>
+            ) : null}
+          </div>
         </InspectorSection>
       ) : null}
       {modelOptions.length > 0 ? (

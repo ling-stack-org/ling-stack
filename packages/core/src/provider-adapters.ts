@@ -162,5 +162,8 @@ function defaultProviderBaseUrl(input: Pick<ProviderAdapterInput, "api" | "kind"
   if (input.api === "google-generative-ai" || input.kind === "google") {
     return "https://generativelanguage.googleapis.com/v1beta";
   }
+  if (input.api === "mistral-conversations") {
+    return "https://api.mistral.ai/v1";
+  }
   return "https://api.openai.com/v1";
 }

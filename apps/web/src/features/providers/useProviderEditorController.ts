@@ -8,7 +8,13 @@ import {
   providerFormWithSelectedModel,
   providerModelDiscoveryErrorMessage,
 } from "../../lib/providers.js";
-import type { ProviderFormState, ProviderModelOption, ProviderPreset, ProviderTemplate } from "../../types.js";
+import type {
+  ProviderFormState,
+  ProviderModelCatalogInfo,
+  ProviderModelOption,
+  ProviderPreset,
+  ProviderTemplate,
+} from "../../types.js";
 import { providerModelSourceLabel } from "./provider-discovery-view-models.js";
 import type { ProviderImportResult, ProviderSaveResult } from "./types.js";
 import {
@@ -43,6 +49,8 @@ export function useProviderEditorController(input: {
   const [modelOptions, setModelOptions] = useState<readonly ProviderModelOption[]>([]);
   const [modelOptionsContext, setModelOptionsContext] = useState<ProviderFormState>();
   const [modelOptionsSource, setModelOptionsSource] = useState("");
+  const [modelOptionsFetchedAt, setModelOptionsFetchedAt] = useState("");
+  const [modelOptionsCatalog, setModelOptionsCatalog] = useState<ProviderModelCatalogInfo>();
   const [modelSearch, setModelSearch] = useState("");
   const [selectedModelIds, setSelectedModelIds] = useState<readonly string[]>([]);
   const [modelFetchError, setModelFetchError] = useState("");
@@ -100,6 +108,8 @@ export function useProviderEditorController(input: {
     setModelOptions([]);
     setModelOptionsContext(undefined);
     setModelOptionsSource("");
+    setModelOptionsFetchedAt("");
+    setModelOptionsCatalog(undefined);
     setModelSearch("");
     setSelectedModelIds([]);
     setModelFetchError("");
@@ -161,12 +171,14 @@ export function useProviderEditorController(input: {
     setIsFetchingModels(true);
     setModelFetchError("");
     try {
-      const response = await listProviderModels(input.cwd.trim(), input.form);
+      const response = await listProviderModels(input.cwd.trim(), input.form, input.editingProviderId || undefined);
       if (requestId !== requestIdRef.current) return;
       const nextModels = response.models.map((model) => normalizeProviderModelForImport(model, input.form));
       setModelOptions(nextModels);
       setModelOptionsContext({ ...input.form });
       setModelOptionsSource(providerModelSourceLabel(response.source, t));
+      setModelOptionsFetchedAt(response.fetchedAt);
+      setModelOptionsCatalog(response.catalog);
       setSelectedModelIds([]);
       setModelSelectionNotice(response.source === "builtin:generation-models" || response.source === "builtin:media-models"
         ? t("Could not read models from the provider. Built-in model candidates are shown.")
@@ -177,6 +189,8 @@ export function useProviderEditorController(input: {
       setModelOptions([]);
       setModelOptionsContext(undefined);
       setModelOptionsSource("");
+      setModelOptionsFetchedAt("");
+      setModelOptionsCatalog(undefined);
       setModelFetchError(providerModelDiscoveryErrorMessage(error, t));
     } finally {
       if (requestId === requestIdRef.current) setIsFetchingModels(false);
@@ -230,6 +244,8 @@ export function useProviderEditorController(input: {
     isOpen,
     modelFetchError,
     modelOptions,
+    modelOptionsCatalog,
+    modelOptionsFetchedAt,
     modelOptionsSource,
     modelSearch,
     modelSelectionNotice,

@@ -85,6 +85,8 @@ part of the current product acceptance scope.
 ## Models, Media, And Integrations
 
 - [Provider Presets](provider-presets.md)
+- [P15 Provider Model Catalog And Discovery](provider-model-catalog-and-discovery-p15.md)
+- [P15 Provider Model Catalog And Discovery Implementation Plan](provider-model-catalog-and-discovery-p15-implementation-plan.md)
 - [Provider Generation Runtime](provider-generation-runtime.md)
 - [Video Production Studio](model-workbench-video-production-studio.md)
 - [Media Production Experience](media-production-experience-refinement.md)
