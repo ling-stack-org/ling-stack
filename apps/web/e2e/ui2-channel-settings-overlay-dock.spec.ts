@@ -127,6 +127,17 @@ test("channel settings uses shared tabs and stable section boundaries", async ({
   expect(state.workspaceSettings.channelNotifications?.channel_preserved).toBe("all");
   await captureEvidence(page, "1440x960-ling-light-channel-notifications-all.png");
 
+  const capabilities = settings.getByRole("region", { name: "Channel capabilities" });
+  const bashCapability = capabilities.getByRole("switch", { name: "Use capability in channel: Run commands" });
+  await expect(bashCapability).toHaveAttribute("aria-checked", "false");
+  await bashCapability.click();
+  await expect(bashCapability).toHaveAttribute("aria-checked", "true");
+  await expect.poll(() => {
+    const channel = state.channels.find((candidate) => isRecord(candidate) && candidate.id === "channel_engineering");
+    return isRecord(channel) && Array.isArray(channel.allowedTools) ? channel.allowedTools : [];
+  }).toContain("bash");
+  await expect(capabilities).toContainText("The channel allowlist is a hard capability boundary; risky actions still require approval.");
+
   expect(await notificationOptions.evaluateAll((options) => options.every((option) => {
     const optionBox = option.getBoundingClientRect();
     const labelBox = option.querySelector("strong")?.getBoundingClientRect();
@@ -137,10 +148,10 @@ test("channel settings uses shared tabs and stable section boundaries", async ({
   }))).toBe(true);
   await expect(settings.locator(".channel-settings-tabs-scroll")).toHaveCSS("border-bottom-width", "1px");
   const generalSurfaces = settings.locator(".channel-settings-general-panel .channel-settings-surface");
-  await expect(generalSurfaces).toHaveCount(2);
+  await expect(generalSurfaces).toHaveCount(3);
   expect(await generalSurfaces.evaluateAll((surfaces) => surfaces.map((surface) => (
     getComputedStyle(surface).borderTopWidth
-  )))).toEqual(["0px", "0px"]);
+  )))).toEqual(["0px", "0px", "1px"]);
   await expectNoDocumentOverflow(page);
   await captureEvidence(page, "1440x960-ling-light-channel-settings-general.png");
   expect(runtimeErrors).toEqual([]);

@@ -12,6 +12,7 @@ import type { ChannelNotificationLevel } from "../../lib/channel-notifications.j
 import type { ChannelFormState, ProviderPreset } from "../../types.js";
 import { ChannelNameField } from "./ChannelNameField.js";
 import { ChannelExecutionModeSummary, ProviderPresetOptions } from "./WorkspaceControls.js";
+import { ChannelToolAllowlistPanel } from "./ChannelToolAllowlistPanel.js";
 
 export type { ChannelNotificationLevel } from "../../lib/channel-notifications.js";
 
@@ -139,6 +140,12 @@ export function ChannelSettingsGeneralPanel({
         </SegmentedControl>
         <p className="channel-notification-description">{t(channelNotificationLevelDescription(channelNotificationLevel))}</p>
       </section>
+
+      <ChannelToolAllowlistPanel
+        allowedTools={channelEditForm.allowedTools}
+        disabled={!selectedChannelId}
+        onChange={(allowedTools) => onChannelEditFormChange({ ...channelEditForm, allowedTools })}
+      />
     </div>
   );
 }

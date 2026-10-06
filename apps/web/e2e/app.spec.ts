@@ -140,7 +140,7 @@ test("sidebar selection is exclusive and conversation sections stay below primar
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByLabel(/Ling Stack navigation|Sidebar display|Ling Stack 导航|侧栏显示/);
   const primaryNav = navigation.locator(".primary-nav");
   const newConversationButton = navigation.getByRole("button", { name: "New conversation" });
   await expect(newConversationButton).toBeVisible();
@@ -622,7 +622,7 @@ test("normal conversation queues approvals in its composer gate", async ({ page 
   });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByLabel(/Ling Stack navigation|Sidebar display|Ling Stack 导航|侧栏显示/);
   const recentShell = navigation.locator(".sidebar-recent-row-shell").filter({ hasText: "Normal inline approvals" });
   const recentRow = recentShell.locator(".sidebar-recent-row");
   await expect(recentShell).toContainText("Waiting for approval");
@@ -827,7 +827,7 @@ test("teammate private chat resolves its runtime approval through its composer g
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Private Approver" }).click();
+  await page.getByLabel(/Ling Stack navigation|Sidebar display|Ling Stack 导航|侧栏显示/).getByRole("button", { name: "Private Approver" }).click();
   const gate = page.getByRole("region", { name: "Allow this action?" });
   await expect(page.locator(".teammate-direct-composer")).toHaveCount(0);
   await expect(gate).toContainText("Run command: whois private.example");

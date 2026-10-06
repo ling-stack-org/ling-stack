@@ -1149,7 +1149,11 @@ export async function openEngineeringChannel(page: Page): Promise<void> {
   if (await channelMessageFeed.isVisible().catch(() => false)) {
     return;
   }
-  const navigation = page.getByLabel("Ling Stack navigation");
+  // The shell's accessible label changed from the product name to the
+  // semantic sidebar label on current main. Keep this helper compatible with
+  // both labels so channel tests exercise the page instead of failing before
+  // the channel is opened.
+  const navigation = page.getByLabel(/Ling Stack navigation|Sidebar display|Ling Stack 导航|侧栏显示/).first();
   const showNavigation = page.getByRole("button", { name: /Show navigation|显示导航/ });
   await expect.poll(async () => (
     await navigation.isVisible().catch(() => false)
