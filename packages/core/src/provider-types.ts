@@ -156,6 +156,35 @@ export interface ProviderModelOption {
   readonly capabilityConfidence?: ProviderModelOptionCapabilityConfidence;
 }
 
+export interface ProviderModelCatalogManifest {
+  readonly schemaVersion: 1;
+  readonly version: string;
+  readonly source: "models.dev";
+  readonly sourceUrl: string;
+  readonly license: "MIT";
+  readonly generatedAt: string;
+  readonly updatedAt: string;
+}
+
+export interface ProviderModelCatalogRecord {
+  readonly providerId: string;
+  readonly id: string;
+  readonly displayName?: string;
+  readonly input?: readonly ("text" | "image")[];
+  readonly capabilities: readonly ProviderCapability[];
+  readonly thinkingModes?: readonly ProviderThinkingMode[];
+  readonly contextWindow?: number;
+  readonly maxTokens?: number;
+  readonly updatedAt?: string;
+}
+
+export interface ProviderModelCatalogInfo {
+  readonly source: "models.dev" | "ling-builtin";
+  readonly version: string;
+  readonly updatedAt: string;
+  readonly stale: boolean;
+}
+
 export interface ProviderModelImportRequest {
   readonly kind: ProviderKind;
   readonly displayName: string;
@@ -187,6 +216,7 @@ export interface ProviderModelImportResponse {
 }
 
 export interface ProviderModelListRequest {
+  readonly providerPresetId?: string;
   readonly kind: ProviderKind;
   readonly providerId: string;
   readonly api: ProviderApi;
@@ -201,6 +231,8 @@ export interface ProviderModelListRequest {
 
 export interface ProviderModelListResponse {
   readonly source: string;
+  readonly fetchedAt: string;
+  readonly catalog: ProviderModelCatalogInfo;
   readonly models: readonly ProviderModelOption[];
 }
 

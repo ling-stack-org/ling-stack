@@ -43,6 +43,10 @@
 - scoped busy 只影响发起行或 Dialog；迟到检查响应不能覆盖较新的编辑结果。
 - 添加/编辑模型 Dialog 使用明确的 header、可滚动 body、footer 三段式纵向布局；模型发现列表再长、选择项再多，
   header 和 footer 都不得进入滚动区或在 footer 下方留下空白轨道。
+- 模型发现来源详情使用现有 Inspector 展示供应商 endpoint、获取时间、Ling catalog 版本与更新时间；catalog
+  过期只显示一条紧凑 warning，不新增统计卡或常驻说明。模型行仍只显示一个能力来源。
+- 上游明确返回的能力优先于 Ling catalog；catalog 只补缺失字段。未知模型保持保守能力，但允许用户继续导入并
+  通过高级设置显式覆盖。远程 catalog 不得开启本地没有 adapter 的生成或工作区修改能力。
 
 ## Batch Import Checks
 

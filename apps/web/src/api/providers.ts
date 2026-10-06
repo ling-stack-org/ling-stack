@@ -64,8 +64,13 @@ export async function checkProviderDraft(cwd: string, form: ProviderFormState): 
   return daemonClient.checkProviderDraft(cwd, providerFormToPayload(form));
 }
 
-export async function listProviderModels(cwd: string, form: ProviderFormState): Promise<ProviderModelListResponse> {
+export async function listProviderModels(
+  cwd: string,
+  form: ProviderFormState,
+  providerPresetId?: string,
+): Promise<ProviderModelListResponse> {
   return daemonClient.listProviderModels(cwd, {
+    providerPresetId,
     kind: form.kind,
     providerId: form.providerId,
     api: form.api,

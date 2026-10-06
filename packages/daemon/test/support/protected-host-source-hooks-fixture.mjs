@@ -8,16 +8,18 @@ import { PassThrough } from "node:stream";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { compileExecutionSandboxPolicy, createSqliteRunStore, DEFAULT_WORKSPACE_ID,
   resolveSessionRunPolicy, toRuntimeAttemptFence } from "@ling-stack/core";
+import { observeSourceHookBootstrap } from "./protected-host-source-bootstrap-observer.mjs";
 
 const dist = process.env.LING_PROTECTED_HOST_SOURCE_TEST_DIST
   ?? resolve(dirname(fileURLToPath(import.meta.url)), "../../dist");
 export const loadSourceHookModule = path => import(pathToFileURL(join(dist, path)).href);
 
-/** Real source ownership/Store fixture. The spawn observer below is not a kernel/descendant proof. */
+/** Real source ownership/Store fixture; dyld and spawn observers are not OS/FD/descendant proof. */
 export async function createSourceHookFixture(t) {
   const macos = await loadSourceHookModule("runtime/sandbox/macos-native-command.js");
   const { ProtectedHostStageRegistry } = await loadSourceHookModule("runtime/sandbox/protected-host-staging.js");
   const { MACOS_SYSTEM_READ_ROOTS } = await loadSourceHookModule("runtime/sandbox/macos-seatbelt-profile.js");
+  observeSourceHookBootstrap(t);
   const root = realpathSync(mkdtempSync("/private/tmp/ling-source-hooks-")), cwd = join(root, "workspace");
   const stagePath = join(root, "stage");
   for (const path of [cwd, stagePath]) mkdirSync(path, { mode: 0o700 });

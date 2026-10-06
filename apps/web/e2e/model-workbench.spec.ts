@@ -1026,6 +1026,48 @@ test("model workbench creates custom OpenAI-compatible presets and surfaces read
   await expect(customProviderRow.first()).toContainText("Ready");
 });
 
+test("model discovery keeps catalog provenance compact in the dark editor", async ({ page }) => {
+  await page.addInitScript(() => {
+    localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.themePreference", "dark");
+  });
+  const runtimeErrors: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "error") runtimeErrors.push(message.text());
+  });
+  page.on("pageerror", (error) => runtimeErrors.push(error.message));
+  const state = createBaseState({ approvalStatus: "expired" });
+  await mockDaemon(page, state, {
+    templates: createDefaultProviderTemplates(),
+    providerModelCatalogStale: true,
+    providerModels: [{
+      id: "gpt-5-nano",
+      displayName: "GPT-5 Nano",
+      capabilities: ["chat", "tool_call", "reasoning", "vision"],
+      capabilitySource: "model_catalog",
+      capabilityConfidence: "known",
+    }],
+  });
+  await page.goto("/");
+  await openModelWorkbench(page);
+  await page.getByRole("button", { name: "Add model" }).click();
+  const dialog = page.getByRole("dialog", { name: "New preset" });
+  await dialog.getByLabel("Model supplier").selectOption("custom-openai-compatible");
+  await dialog.getByLabel("API key", { exact: true }).fill("test-visible-key");
+  await dialog.getByRole("button", { name: "Fetch models" }).click();
+
+  const sourceDetails = dialog.locator(".provider-model-source-details");
+  await expect(sourceDetails).not.toHaveAttribute("open", "");
+  await expect(dialog.locator(".provider-model-card")).toHaveCount(1);
+  await sourceDetails.locator("summary").click();
+  await expect(sourceDetails).toContainText("models.dev:test1234");
+  await expect(sourceDetails).toContainText("Fetched");
+  await expect(sourceDetails).toContainText("2026-01-01");
+  await expect(sourceDetails).toContainText("The Ling model catalog is stale");
+  await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
+  expect(runtimeErrors).toEqual([]);
+});
+
 test("model workbench status counts align with saved chat and media presets", async ({ page }) => {
   await useEnglishLocale(page);
   const readyCheck = {

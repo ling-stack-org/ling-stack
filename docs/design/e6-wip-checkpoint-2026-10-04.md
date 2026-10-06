@@ -1,6 +1,19 @@
-# E6 本地 WIP 保存点（更新至 2026-10-05）
+# E6 本地 WIP 保存点（更新至 2026-10-06）
 
 此提交是用户要求的**代码防丢保存点**，不是可发布版本，不代表整个目标通过。
+
+## 当前合并与验收边界（2026-10-06）
+
+用户已授权处理 PR、整合代码并继续原目标；以下旧 checkpoint 中的“不合并”仅描述当时的保存请求，不覆盖本次授权。所有旧提交、已有实现和历史 WIP 保留，不重写分支历史。
+
+- 已正常合入 main 的 PR：#501 (`c4ebdc90`)、#508 (`56d8d347`)、#510 (`753848ee`)、#505 (`474421c4`)。已核实际 merge commit 和远端 main；没有客户端发布或 packaged GUI 验收。
+- E6 从已保存的 `4e0c24bc` 整合 main `474421c4`。模型发现保留 E6 `fetchProvider`/dispatcher 和 main 的分页、共享 10 秒 deadline；55 个 catalog 保留双方文案，只有两个同名新标签沿用 main 的翻译措辞。保留 E6 sidebar/titlebar selectors、workspace capability mock 和 main 新增模型发现场景，不整文件覆盖。
+- 新合并输入的 14-package build:ci、Web TypeScript/Vite build 实际 exit 0；provider/HTTP 定向回归 44/44、Web selector/payload/workflow 11/11、55 语言 6608 个键审计均通过。公共扫描 4252 文件、Markdown 289 文件通过。Playwright 仅完成 27 个测试的 discovery，不是 UI 或 packaged GUI 通过。
+- macOS source-placement 测试夹具新增精确 dyld observer：仅固定路径、自己产生的负虚拟 FD 和 exact sentinel 摘要；其他 FS/hash 原样转发。生产 reviewed hash、OS/platform、native guard 未变。原两文件 12/12，强制宿主 profile 未审核场景由旧夹具 2 红 / 2 绿变为 12/12；边界 8/8。此模拟不提供物理 OS/profile/FD/kernel/descendant 证据。邻域 84/86 的 Git borrowed-actor 子测试及父级在关闭新 observer 的基线同栈失败，未隐藏。
+- 旧 E6 CI `37427829699` 对应 `e9a6389c`，不是本次候选：构建、类型、Web/unit、公共检查和真实 macOS helper/Seatbelt通过；Linux 合同、Daemon shards 1/2/3 失败。Linux HTTP 夹具 decision action 已在 `4e0c24bc` 修正，仍待实际新 Linux lane。其他 source/bootstrap 夹具、审批恢复和 Office 真实 SDK 写入失败须分别收口，不把定向通过拼成完整 CI 全绿。
+- #502 已请求同步最新 main，仍需 fresh CI 和另一维护者正常审批；#503 含旧行为回退/冲突，保留而不硬合；#509 的 EPL-2.0 许可、OfficeParserAST.toText 和大版本迁移仍阻塞。#507 仍 Draft，缺完整 fresh CI、组合 review 和正常维护者审批，不绕过保护规则。
+
+公开 U gate、受控进程保护边界和 D0/E1–E6/U/T/Harness 总目标不变。Full Access / 其他不受限同 UID 程序不承诺隔离，raw transport 不是授权。继续原 inventory/scope/canonical/Office route、live/restart/问答/ACK/recovery/API/UI 与 fresh packaged macOS 验收；已完成时长、R03 和旧切片不重复。
 
 ## 本次 checkpoint 增量（2026-10-05；Office pair 验真与 rollback 隔离）
 

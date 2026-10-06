@@ -143,6 +143,12 @@
   border-top: 1px solid var(--ling-border-default);
 }
 
+.provider-model-source-summary {
+  display: grid;
+  gap: var(--ling-space-2);
+  color: var(--ling-text-muted);
+}
+
 .provider-model-grid {
   display: grid;
   min-width: 0;
