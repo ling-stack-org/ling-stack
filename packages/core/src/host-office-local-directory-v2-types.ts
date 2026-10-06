@@ -60,6 +60,9 @@ export interface HostOfficeLocalDirectoryExecutionRecordV2 extends HostOfficeLoc
 }
 /** Same original Office ticket authority; protocol dispatch never reissues a journal pair. */
 export type HostOfficeLocalDirectoryTicketV2 = HostOfficeLocalTicket;
+declare const directoryCloseClaimBrand: unique symbol;
+/** Original Core close history only. No safe receipt, effect capability or Registry lease release. */
+export interface HostOfficeLocalDirectoryCloseClaimV2 { readonly [directoryCloseClaimBrand]: true }
 export interface HostOfficeDirectoryCallRefV2 { readonly effectId: string; readonly ordinal: number }
 export interface HostOfficeDirectoryResourceBindingV2 {
   readonly resourceSlotId: string;

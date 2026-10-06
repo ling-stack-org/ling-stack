@@ -1,6 +1,6 @@
 import type { HostOperationTicket } from "../../host-operation-journal-types.js";
 import type { PrepareHostOfficeLocalInput, HostOfficeLocalTicket } from "../../host-office-local-types.js";
-import type { HostOfficeLocalDirectoryExecutionRecordV2, HostOfficeLocalDirectoryEffectRecordV2, PrepareHostOfficeLocalDirectoryEffectV2 } from "../../host-office-local-directory-v2-types.js";
+import type { HostOfficeLocalDirectoryCloseClaimV2, HostOfficeLocalDirectoryExecutionRecordV2, HostOfficeLocalDirectoryEffectRecordV2, PrepareHostOfficeLocalDirectoryEffectV2 } from "../../host-office-local-directory-v2-types.js";
 import type { HostOfficeLocalDirectoryTerminalRecordV2 } from "../../host-office-local-directory-v2-terminal-types.js";
 import type { SealHostOfficeLocalTerminalInput } from "../../host-office-local-terminal-types.js";
 import { hostOperationFailure, sameHostOperationSource } from "./host-operation-journal-evidence.js";
@@ -17,12 +17,14 @@ import type { SqliteHostOperationJournalStore } from "./host-operation-journal-s
 import type { SqliteStoreContext } from "./store-context.js";
 import type { CapturedOriginalOfficeHostBridge, OriginalOfficeDirectoryAuthorityV2 } from "../../original-office-host-bridge.js";
 import { OfficeDirectoryScopeBindingV2 } from "./host-office-local-directory-v2-authority.js";
+import { OfficeDirectoryWindowCloseClaimV2, assertOfficeDirectoryNativeCloseReadyV2 } from "./host-office-local-directory-v2-close-claim.js";
 
 interface DirectoryTicketStateV2 {
   readonly parent: HostOperationTicket;
   readonly producer: HostOperationTicket;
   readonly entered: Map<string, string>;
   readonly scopeAuthority: OfficeDirectoryScopeBindingV2;
+  readonly closeClaim: OfficeDirectoryWindowCloseClaimV2;
   uncertainLaunch: boolean;
   closeSessionEntered: boolean;
   sealClaim?: SealHostOfficeLocalTerminalInput;
@@ -55,6 +57,7 @@ export class SqliteHostOfficeLocalDirectoryV2Store {
     });
     const ticket = Object.freeze({ executionId: String(captured.executionId) }) as HostOfficeLocalTicket;
     this.tickets.set(ticket, { parent, producer, entered: new Map(), scopeAuthority: new OfficeDirectoryScopeBindingV2(this.context, this.originalHostBridge),
+      closeClaim: new OfficeDirectoryWindowCloseClaimV2(this.originalHostBridge),
       uncertainLaunch: false, closeSessionEntered: false });
     return ticket;
   }
@@ -76,6 +79,16 @@ export class SqliteHostOfficeLocalDirectoryV2Store {
     } catch (error) { state.scopeAuthority.invalidateIfEntered(); throw error; }
   }
   retireBridge(): void { this.originalHostBridge?.retire(); }
+  closeWindow(ticket: HostOfficeLocalTicket): HostOfficeLocalDirectoryCloseClaimV2 {
+    const state = this.ticket(ticket);
+    state.closeClaim.assertNotReenter();
+    let execution: HostOfficeLocalDirectoryExecutionRecordV2, authority: OriginalOfficeDirectoryAuthorityV2;
+    return this.journal.officeLocal.closeDirectoryWindow(state.parent, state.producer, () => {
+      execution = this.execution(ticket.executionId);
+      authority = state.scopeAuthority.requireBound(execution);
+      assertOfficeDirectoryNativeCloseReadyV2(this.context.database, execution, state.entered, state.sealClaim);
+    }, () => state.closeClaim.close(execution!, authority!));
+  }
   prepareEffect(ticket: HostOfficeLocalTicket, input: PrepareHostOfficeLocalDirectoryEffectV2): HostOfficeLocalDirectoryEffectRecordV2 {
     const state = this.mutable(ticket), captured: unknown = JSON.parse(JSON.stringify(input));
     if (state.closeSessionEntered) return hostOperationFailure("host_office_local_execution_closed");
@@ -154,6 +167,7 @@ export class SqliteHostOfficeLocalDirectoryV2Store {
   }
   sealTerminal(ticket: HostOfficeLocalTicket, input: SealHostOfficeLocalTerminalInput): HostOfficeLocalDirectoryTerminalRecordV2 {
     const state = this.ticket(ticket), captured: unknown = JSON.parse(JSON.stringify(input));
+    if (state.closeClaim.entered) return hostOperationFailure("host_office_local_execution_closed");
     state.scopeAuthority.assertMutable();
     if (!v2Object(captured) || !v2Exact(captured, ["terminalArtifactId", "terminalDigest"]) || !v2Text(captured.terminalArtifactId) || !v2Digest(captured.terminalDigest)) return directoryV2Failure();
     const claim = captured as unknown as SealHostOfficeLocalTerminalInput;
@@ -175,6 +189,7 @@ export class SqliteHostOfficeLocalDirectoryV2Store {
   private ticket(ticket: HostOfficeLocalTicket): DirectoryTicketStateV2 { return this.tickets.get(ticket) ?? hostOperationFailure("host_office_local_invalid_ticket"); }
   private mutable(ticket: HostOfficeLocalTicket): DirectoryTicketStateV2 {
     const state = this.ticket(ticket); state.scopeAuthority.assertMutable();
+    if (state.closeClaim.entered) return hostOperationFailure("host_office_local_execution_closed");
     if (state.sealClaim) return hostOperationFailure("host_office_local_execution_sealed"); return state;
   }
 }

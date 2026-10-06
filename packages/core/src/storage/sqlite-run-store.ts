@@ -1969,6 +1969,9 @@ export class SqliteRunStore implements RunStore {
   bindHostOfficeLocalDirectoryScopeAuthorityV2(...args: Parameters<RunStore["bindHostOfficeLocalDirectoryScopeAuthorityV2"]>): void {
     this.hostOfficeLocalDirectoryV2.bindScopeAuthority(...args);
   }
+  closeHostOfficeLocalDirectoryWindowV2(...args: Parameters<RunStore["closeHostOfficeLocalDirectoryWindowV2"]>): ReturnType<RunStore["closeHostOfficeLocalDirectoryWindowV2"]> {
+    return this.hostOfficeLocalDirectoryV2.closeWindow(...args);
+  }
   prepareHostOfficeLocalDirectoryEffectV2(...args: Parameters<RunStore["prepareHostOfficeLocalDirectoryEffectV2"]>): ReturnType<RunStore["prepareHostOfficeLocalDirectoryEffectV2"]> {
     return this.hostOfficeLocalDirectoryV2.prepareEffect(...args);
   }

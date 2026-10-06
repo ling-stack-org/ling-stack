@@ -8,6 +8,7 @@ import { settleOfficeLocalJournalPair } from "./host-office-local-journal-settle
 import { settleOfficeLocalNoStartPair } from "./host-office-local-no-start-settlement.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { assertOfficeDirectoryCloseRosterReadyV2 } from "./host-office-local-directory-v2-close-roster.js";
 
 /** Internal journal state, never exported as an execution capability. */
 export interface OfficeJournalTicketState {
@@ -34,6 +35,7 @@ interface JournalAuthority {
   forward(source: HostOperationSource): void;
   parents(operation: StoredHostOperation): void;
   closeOffice(parentOperationId: string, producerOperationId: string): void;
+  closeDirectoryOffice(parentOperationId: string, producerOperationId: string): void;
   synchronous(callback: unknown): void;
   synchronousResult<T>(result: T): T;
   transaction<T>(callback: () => T): T;
@@ -125,6 +127,36 @@ export class HostOfficeLocalJournalGate {
         if (pair.states.some(state => state.uncertainLaunch)) return hostOperationFailure("host_office_local_launch_unknown");
       }
       return callback();
+    });
+  }
+
+  /** Original V2 close only. Child/native preflight precedes the irreversible admission latch. */
+  closeDirectoryWindow<T>(parent: HostOperationTicket, producer: HostOperationTicket,
+    assertReady: () => void, close: () => T): T {
+    this.authority.synchronous(assertReady); this.authority.synchronous(close);
+    return this.authority.transaction(() => {
+      const pair = this.pair(parent, producer, true);
+      this.authority.owner(pair.parent.source, true);
+      if ([pair.parent, pair.producer].some(row => !["admitted", "launched"].includes(row.phase))
+        || pair.states.some(state => state.noStartClosed || state.settlementSignature || state.noStartReceiptDigest)
+        || pair.parent.evidenceRef?.kind !== "office_local_chain_execution"
+        || pair.producer.evidenceRef?.kind !== "office_local_binary_execution"
+        || pair.parent.evidenceRef.id !== pair.producer.evidenceRef.id) return hostOperationFailure("host_office_local_invalid_journal_pair");
+      readSqliteWithinTransaction(this.context.database, () => {
+        for (const row of [pair.parent, pair.producer]) {
+          if (hostOperationDomainIdentity(this.context.database, row, row.evidenceRef!, false) !== row.domainIdentityDigest) {
+            return hostOperationFailure("host_operation_evidence_invalid");
+          }
+        }
+        assertOfficeDirectoryCloseRosterReadyV2(this.context.database, pair.parent, pair.producer, new Date().toISOString());
+        this.authority.synchronousResult(assertReady());
+      });
+      return readSqliteWithinTransaction(this.context.database, () => {
+        // A failed read-window setup has not entered physical closure. Once
+        // this callback starts, both original admissions close before Host JS.
+        this.authority.closeDirectoryOffice(pair.parent.operationId, pair.producer.operationId);
+        return close();
+      });
     });
   }
 

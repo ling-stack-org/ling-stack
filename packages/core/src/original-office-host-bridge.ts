@@ -11,22 +11,26 @@ export interface OriginalOfficeDirectoryAuthorityV2 { readonly [authorityBrand]:
 /** Internal startup transport. Only the fixed Host composition constructs the endpoint. */
 export interface FixedOriginalOfficeHostEndpoint {
   readonly assertBinding: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
+  readonly closeBoundWindow: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
+  readonly assertClosedBoundWindow: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
 }
 /** Captured by the actual owning Store constructor, never returned through RunStore. */
 export interface CapturedOriginalOfficeHostBridge {
   readonly assertAuthorityOwned: (authority: OriginalOfficeDirectoryAuthorityV2) => void;
   readonly bindAuthority: (authority: OriginalOfficeDirectoryAuthorityV2, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
+  readonly closeAuthority: (authority: OriginalOfficeDirectoryAuthorityV2, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
+  readonly assertAuthorityClosed: (authority: OriginalOfficeDirectoryAuthorityV2, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
   readonly retire: () => void;
 }
 interface BridgeState {
   owner?: object;
   phase: "unsealed" | "sealing" | "sealed" | "invalid";
-  endpoint?: { readonly receiver: FixedOriginalOfficeHostEndpoint; readonly assertBinding: FixedOriginalOfficeHostEndpoint["assertBinding"] };
+  endpoint?: { readonly receiver: FixedOriginalOfficeHostEndpoint } & FixedOriginalOfficeHostEndpoint;
 }
 const readers = new WeakMap<OriginalOfficeHostBridgeReader, BridgeState>();
 const setups = new WeakMap<OriginalOfficeHostBridgeSetup, BridgeState>();
 const authorities = new WeakMap<OriginalOfficeDirectoryAuthorityV2, {
-  readonly bridge: BridgeState; readonly custody: object; bindingEntered: boolean;
+  readonly bridge: BridgeState; readonly custody: object; bindingEntered: boolean; bindingReturned: boolean; closeEntered: boolean;
 }>();
 const fail = (code: string): never => { throw new HostOperationJournalError(code); };
 const object = (value: unknown): value is object => typeof value === "object" && value !== null;
@@ -64,12 +68,26 @@ export function captureOriginalOfficeHostBridgeReader(reader: OriginalOfficeHost
       if (original.bindingEntered) return fail("host_office_local_authority_already_entered");
       original.bindingEntered = true; // Channel-local capability also survives reentry/return loss.
       assertEndpointCurrent(endpoint);
-      const result: unknown = Reflect.apply(endpoint.assertBinding, endpoint.receiver, [original.custody, expected]);
-      if (object(result) || typeof result === "function") {
-        // Observe a native rejected Promise without executing an arbitrary thenable.
-        try { void Promise.prototype.then.call(result, undefined, () => undefined); } catch { /* not a native Promise */ }
-      }
-      if (result !== undefined) return fail("host_office_local_bridge_endpoint_result_invalid");
+      invokeVoid(endpoint, "assertBinding", original.custody, expected);
+      assertAuthorityOwned(authority); assertEndpointCurrent(endpoint);
+      original.bindingReturned = true;
+    },
+    closeAuthority(authority: OriginalOfficeDirectoryAuthorityV2, expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+      assertAuthorityOwned(authority);
+      const original = authorities.get(authority)!, endpoint = state.endpoint!;
+      if (!original.bindingReturned) return fail("host_office_local_authority_not_bound");
+      if (original.closeEntered) return fail("host_office_local_authority_close_already_entered");
+      original.closeEntered = true; // Never repeat a physical close after reentry, rollback or lost return.
+      assertEndpointCurrent(endpoint);
+      invokeVoid(endpoint, "closeBoundWindow", original.custody, expected);
+      assertAuthorityOwned(authority); assertEndpointCurrent(endpoint);
+    },
+    assertAuthorityClosed(authority: OriginalOfficeDirectoryAuthorityV2, expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+      assertAuthorityOwned(authority);
+      const original = authorities.get(authority)!, endpoint = state.endpoint!;
+      if (!original.bindingReturned || !original.closeEntered) return fail("host_office_local_authority_close_not_entered");
+      assertEndpointCurrent(endpoint);
+      invokeVoid(endpoint, "assertClosedBoundWindow", original.custody, expected);
       assertAuthorityOwned(authority); assertEndpointCurrent(endpoint);
     },
     retire(): void { state.phase = "invalid"; },
@@ -85,13 +103,17 @@ export function sealOriginalOfficeHostBridgeForComposition(setup: OriginalOffice
   state.phase = "sealing"; // Before any endpoint descriptor/Proxy trap can reenter.
   try {
     if (state.owner !== owner || !object(endpoint) || !Object.isFrozen(endpoint)) return fail("host_office_local_bridge_owner_invalid");
-    const keys = Reflect.ownKeys(endpoint), descriptor = Object.getOwnPropertyDescriptor(endpoint, "assertBinding");
-    if (keys.length !== 1 || keys[0] !== "assertBinding" || !descriptor || !Object.hasOwn(descriptor, "value")
-      || typeof descriptor.value !== "function" || Object.prototype.toString.call(descriptor.value) === "[object AsyncFunction]") {
-      return fail("host_office_local_bridge_endpoint_invalid");
+    const names = ["assertBinding", "closeBoundWindow", "assertClosedBoundWindow"] as const, keys = Reflect.ownKeys(endpoint);
+    if (keys.length !== names.length || keys.some(key => !names.includes(key as typeof names[number]))) return fail("host_office_local_bridge_endpoint_invalid");
+    const captured = {} as FixedOriginalOfficeHostEndpoint;
+    for (const name of names) {
+      const descriptor = Object.getOwnPropertyDescriptor(endpoint, name);
+      if (!descriptor || !Object.hasOwn(descriptor, "value") || typeof descriptor.value !== "function"
+        || Object.prototype.toString.call(descriptor.value) === "[object AsyncFunction]") return fail("host_office_local_bridge_endpoint_invalid");
+      Object.defineProperty(captured, name, { value: descriptor.value, enumerable: true });
     }
     if (state.phase !== "sealing") return fail("host_office_local_bridge_seal_closed");
-    state.endpoint = Object.freeze({ receiver: endpoint, assertBinding: descriptor.value as FixedOriginalOfficeHostEndpoint["assertBinding"] });
+    state.endpoint = Object.freeze({ receiver: endpoint, ...captured });
     state.phase = "sealed";
   } catch (error) { state.phase = "invalid"; throw error; }
 }
@@ -103,7 +125,7 @@ export function mintOriginalOfficeDirectoryAuthorityV2(setup: OriginalOfficeHost
   if (!state || !object(originalHostCustodyRef)) return fail("host_office_local_bridge_invalid");
   if (!state.owner || state.phase !== "sealed" || !state.endpoint) return fail("host_office_local_bridge_unavailable");
   const authority = Object.freeze({}) as OriginalOfficeDirectoryAuthorityV2;
-  authorities.set(authority, { bridge: state, custody: originalHostCustodyRef, bindingEntered: false });
+  authorities.set(authority, { bridge: state, custody: originalHostCustodyRef, bindingEntered: false, bindingReturned: false, closeEntered: false });
   return authority;
 }
 
@@ -125,7 +147,18 @@ export function retireOriginalOfficeHostBridgeForComposition(setup: OriginalOffi
 }
 
 function assertEndpointCurrent(endpoint: NonNullable<BridgeState["endpoint"]>): void {
-  const descriptor = Object.getOwnPropertyDescriptor(endpoint.receiver, "assertBinding");
-  if (!Object.isFrozen(endpoint.receiver) || !descriptor || !Object.hasOwn(descriptor, "value")
-    || descriptor.value !== endpoint.assertBinding) return fail("host_office_local_bridge_endpoint_invalid");
+  if (!Object.isFrozen(endpoint.receiver)) return fail("host_office_local_bridge_endpoint_invalid");
+  for (const name of ["assertBinding", "closeBoundWindow", "assertClosedBoundWindow"] as const) {
+    const descriptor = Object.getOwnPropertyDescriptor(endpoint.receiver, name);
+    if (!descriptor || !Object.hasOwn(descriptor, "value") || descriptor.value !== endpoint[name]) return fail("host_office_local_bridge_endpoint_invalid");
+  }
+}
+function invokeVoid(endpoint: NonNullable<BridgeState["endpoint"]>, name: keyof FixedOriginalOfficeHostEndpoint,
+  custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+  const result: unknown = Reflect.apply(endpoint[name], endpoint.receiver, [custody, expected]);
+  if (object(result) || typeof result === "function") {
+    // Observe a native rejected Promise without running arbitrary thenable accessors.
+    try { void Promise.prototype.then.call(result, undefined, () => undefined); } catch { /* not a native Promise */ }
+  }
+  if (result !== undefined) return fail("host_office_local_bridge_endpoint_result_invalid");
 }

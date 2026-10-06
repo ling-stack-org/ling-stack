@@ -35,6 +35,8 @@ export class SqliteHostOperationJournalStore {
   private readonly tickets = new WeakMap<HostOperationTicket, TicketState>();
   /** Memory-only lifecycle closure of original Office roles, independent of persisted settlement intent. */
   private readonly closedOfficeOperations = new Set<string>();
+  /** V2 original close forbids cleanup effects below either role without changing the V1 cleanup contract. */
+  private readonly closedDirectoryOfficeEffects = new Set<string>();
   private readonly closeDatabase: () => void;
   private readonly rollbackDatabase: () => void;
   readonly officeLocal: HostOfficeLocalJournalGate;
@@ -51,6 +53,10 @@ export class SqliteHostOperationJournalStore {
       forward: source => this.assertForwardAdmission(source),
       parents: operation => this.assertParentsActive(operation),
       closeOffice: (parent, producer) => { this.closedOfficeOperations.add(parent); this.closedOfficeOperations.add(producer); },
+      closeDirectoryOffice: (parent, producer) => {
+        this.closedOfficeOperations.add(parent); this.closedOfficeOperations.add(producer);
+        this.closedDirectoryOfficeEffects.add(parent); this.closedDirectoryOfficeEffects.add(producer);
+      },
       synchronous: callback => this.assertSyncCallback(callback),
       synchronousResult: result => this.assertSyncResult(result),
       transaction: callback => this.transaction(callback),
@@ -380,7 +386,8 @@ export class SqliteHostOperationJournalStore {
     let current = operation, depth = 0;
     if (this.closedOfficeOperations.has(current.operationId)) return hostOperationFailure("host_office_local_execution_closed");
     while (current.parentOperationId) {
-      if (!cleanup && this.closedOfficeOperations.has(current.parentOperationId)) return hostOperationFailure("host_office_local_execution_closed");
+      if (this.closedDirectoryOfficeEffects.has(current.parentOperationId)
+        || !cleanup && this.closedOfficeOperations.has(current.parentOperationId)) return hostOperationFailure("host_office_local_execution_closed");
       const parent = readHostOperation(this.context.database, current.parentOperationId);
       if (++depth > 128 || !parent || !sameHostOperationSource(parent.source, operation.source)
         || !["admitted","launched"].includes(parent.phase)) return hostOperationFailure("host_operation_invalid_parent");

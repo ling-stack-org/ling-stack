@@ -90,6 +90,39 @@ Core safe、生产 MCP/Tracker、同一次真实 OOXML 和 GUI 仍未验收。
 这些缺口必须在后续 close-claim、独立 certificate 和原子 pair 接通时验证，
 不能用只读 owning 测试替代。
 
+## Core close claim 的实施合同
+
+原始 Core ticket / bound authority 经原 owning journal 进入关闭 gate，先在同一
+SQLite 快照读取 raw 完整 descendant roster。producer 自身是待结算角色，不按 safe
+child 校验，但其 descendants 仍必须遍历；其它 required child 的独立 safe 证据缺失
+时不能封口或调用 Host。已进入 native 的执行还必须有完整原生关闭/terminal 事实。
+
+ready 后先关闭原 realm 中 parent/producer 与所有 descendant 的新增 admission/effect
+入口，再调用固定 Host 接点。该关闭不是 no-start、不改变既有 V1 cleanup 合同。
+当前 close claim 是原始 owning Store 的 opaque 内存能力，不宣称已实现跨 Store 的
+durable admission 封口；另一连接插入的 pending child 必须被后续原子 certificate /
+pair 的 raw roster 重读拒绝，不能以旧 roster 或只有本地 latch 的事实放行 safe。
+
+固定 composition 的三个同步 void 接点为 `assertBinding`、`closeBoundWindow`、
+`assertClosedBoundWindow`。它们只消费私有 custody 和 owning Core execution；没有
+caller closure DTO、FD integer、callback 注入或成功 boolean。
+runtime 的 constructor-private reader 核验 exact bound scope/window、保留的 protection
+lease、当前 source/policy/owner/backend/domain，以及原始 closed/returned 槽位。
+pending 检查不 fstat/reopen 原窗口；域检查与 epoch 尾检不依赖公开可替换方法。
+
+资源 phase 与证明资格分开：`proofAdmissionClosed` 在撤销/取消/原生结果不明/真正
+source 或保护校验失败后永久关闭。cleanup 可以令资源变为 closed_pending，却不能
+把已撤销的证明重新打开；关闭中 retirement 或失效也必须在端点返回后拒绝 claim。
+已原始 closed_pending 的窗口可以一次核验认领，不重新物理 close；真正 unknown
+close 不修复、不重试 FD。outer COMMIT 返回不明与 Host 已知关闭事实分别保留，
+reconciliation 只能核验原 claim，不能重新关闭窗口或执行 native graph。
+
+本合同已接通原始 Core/Daemon 链路，并有 owning-window 与故障回归；这不是
+Core-safe receipt、证书、lease release 或 packaged 产品验收。后续独立 certificate
+和原子 pair 仍必须完整实现，不能靠该 claim 替代。native/source 读取后的同步重入
+必须重新核验 Registry、原始 identity lifetime、runtime snapshot 和 factory；
+inspect 的原生调用异常也永久关闭证明资格，恢复来源不能复活旧证明。
+
 ## 原始来源清单的下一接点
 
 Docker 默认 backend 探测通过源模块唯一 `DOCKER_PROBE_ACTOR_ENTRY` 进入已捕获的

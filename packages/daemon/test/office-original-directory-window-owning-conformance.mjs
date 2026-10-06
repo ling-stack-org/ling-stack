@@ -23,7 +23,9 @@ import { reviewedNativeArtifact } from "./support/office-local-native-runtime-fi
 
 // Genuine Host ownership + original SQLite ticket binding and readonly FD
 // closure only. No substituted manifest, public no-op, invented issuer, native
-// write graph, Core cleanup claim, settlement, packaged or Core-safe evidence.
+// write graph, safe settlement, packaged or Core-safe evidence. A Core close
+// claim proves only the exact original readonly window's closure and leaves
+// the journal blockers/Registry protection lease pending.
 const nativeOnly = { skip: process.platform !== "darwin" };
 const digest = bytes => createHash("sha256").update(bytes).digest("hex");
 const allRows = closure => [...closure.stage, ...closure.destination];
@@ -41,7 +43,16 @@ function owningFixture(t, { bind = true } = {}) {
           if (error.message !== "office_local_native_core_window_unbound") throw error;
           runtime.closeStage(scope);
         }
-        if (closure?.phase === "active") runtime.closeCoreWindow(scope);
+        if (closure?.phase === "active") {
+          // Native-capture negative cases may fail before their body reaches
+          // explicit cleanup. A real still-owned session must close first.
+          try { runtime.closeCoreWindow(scope); }
+          catch (error) {
+            if (error.message !== "office_local_native_stage_lifetime_unknown") throw error;
+            const closed = runtime.closeSession(scope); assert.equal(closed.success, true);
+            runtime.closeCoreWindow(scope);
+          }
+        }
         // Unknown original closes are tombstoned and never retried in teardown.
       }
     } finally {
@@ -111,7 +122,7 @@ function owningFixture(t, { bind = true } = {}) {
     return authority;
   };
   if (bind) bindOriginal();
-  return { root, cwd, store, supervisor, registry, runtime, scope, facts, source, input, execution, ticket, parent, producer,
+  return { root, cwd, store, supervisor, registry, hostRuntime, runtime, scope, facts, source, input, execution, ticket, parent, producer,
     bind: bindOriginal,
     blockers: () => store.listHostOperationBlockers(source),
     actorSource: () => registry.captureActorSource({ ...input, command: "true", toolCallId: "owning-window-protected-source" }) };
@@ -152,6 +163,283 @@ test("default exact Host inventory and original Core row bind retain a genuine o
   assert.equal(f.facts.scopeBinding, "unbound"); assert.equal(f.facts.protectedStageVerified, false);
   assert.equal(f.facts.coreSafe, false); assert.equal(f.facts.packaged, false);
   assert.equal(f.facts.nativeArtifact.coreSafe, false);
+});
+
+function captureEffect(f, effectId = "owning-capture-" + randomUUID()) {
+  return { effectId, ordinal: f.store.listHostOfficeLocalDirectoryEffectsV2(f.ticket.executionId).length,
+    kind: "capture_parents", mode: "forward", preparedAt: new Date().toISOString() };
+}
+function observeOriginalClose(t, effect) {
+  const calls = [], original = fs.closeSync, originalStat = fs.fstatSync;
+  const patch = t.mock.method(fs, "closeSync", fd => {
+    if (originalStat(fd).isDirectory()) calls.push(fd);
+    return original(fd);
+  });
+  syncBuiltinESMExports();
+  try { return effect(calls); }
+  finally { patch.mock.restore(); syncBuiltinESMExports(); }
+}
+function assertClaimIsOpaque(claim) {
+  assert.ok(claim && typeof claim === "object");
+  assert.equal(Object.isFrozen(claim), true); assert.deepEqual(Reflect.ownKeys(claim), []);
+}
+function observeOriginalNativeSourceRead(t, afterRead, effect) {
+  const originalRead = fs.readFileSync;
+  const sourcePath = realpathSync(new URL("../../../native/office-local/src/runtime.h", import.meta.url));
+  let calls = 0;
+  const patch = t.mock.method(fs, "readFileSync", (...args) => {
+    const bytes = originalRead(...args);
+    // Observe the real private native assertSources I/O. Never replace its
+    // bytes, identity result, fixed Registry reader or authority endpoint.
+    if (args[0] === sourcePath) afterRead(++calls);
+    return bytes;
+  });
+  syncBuiltinESMExports();
+  try { return effect(() => calls); }
+  finally { patch.mock.restore(); syncBuiltinESMExports(); }
+}
+
+test("original Core close claims one genuine pending window and repeat ticket returns the same claim without reclose", nativeOnly, t => {
+  const f = owningFixture(t), before = f.runtime.readCoreWindowClosure(f.scope), blockers = f.blockers(), actor = f.actorSource();
+  assert.equal(typeof f.store.closeHostOfficeLocalDirectoryWindowV2, "function");
+  assert.deepEqual(f.registry.protectedRoots(actor), [f.facts.stagePath, f.execution.destination.parentPath]);
+  observeOriginalClose(t, calls => {
+    const claim = f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket);
+    assertClaimIsOpaque(claim);
+    assert.equal(calls.length, allRows(before).length);
+    assert.equal(new Set(calls).size, calls.length);
+    const count = calls.length, closure = f.runtime.readCoreWindowClosure(f.scope);
+    assert.equal(closure.phase, "closed_pending");
+    assert.ok(allRows(closure).every(row => row.state === "closed" && row.close === "returned"));
+    assert.equal(f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), claim);
+    assert.equal(calls.length, count, "same original claim must not close an original FD twice");
+    assert.throws(() => f.store.prepareHostOfficeLocalDirectoryEffectV2(f.ticket, captureEffect(f)), /host_office_local_execution_closed/u);
+    assert.throws(() => f.runtime.openSession(f.scope, f.cwd), /office_local_native_scope_closed/u);
+    assert.throws(() => f.registry.protectedRoots(actor), /protected_host_stage_closed/u);
+    assert.throws(() => f.runtime.closeCoreWindow(f.scope), /office_local_native_core_window_close_already_entered/u);
+    assert.equal(calls.length, count);
+    assert.deepEqual(f.blockers(), blockers);
+    assert.deepEqual(f.store.listHostOfficeLocalDirectoryEffectsV2(f.ticket.executionId), []);
+    assert.equal(existsSync(f.execution.targetPath), false);
+    assert.equal(f.facts.coreSafe, false); assert.equal(f.facts.packaged, false);
+  });
+});
+
+test("Core can claim a genuinely already pending window without reopening, fstat or reclosing its original descriptors", nativeOnly, t => {
+  const f = owningFixture(t), blockers = f.blockers();
+  f.runtime.closeCoreWindow(f.scope);
+  const pending = f.runtime.readCoreWindowClosure(f.scope), opens = [], stats = [], closes = [];
+  const windowPaths = new Set(allRows(pending).map(row => row.path)), windowDescriptors = new Set();
+  const patches = [
+    t.mock.method(fs, "openSync", (original => (...args) => {
+      const fd = original(...args);
+      if (windowPaths.has(args[0])) { opens.push(args[0]); windowDescriptors.add(fd); }
+      return fd;
+    })(fs.openSync)),
+    t.mock.method(fs, "fstatSync", (original => (...args) => {
+      // Observe real descriptor topology, not a gate substitute. Even if an
+      // old integer was unexpectedly reused, a directory-fstat is visible.
+      if (original(...args).isDirectory()) stats.push(args[0]);
+      return original(...args);
+    })(fs.fstatSync)),
+    t.mock.method(fs, "closeSync", (original => fd => {
+      // Bootstrap/profile/binary verification closes files, not window dirs.
+      // Any directory close would contradict the historical-only pending reader.
+      if (fs.fstatSync(fd).isDirectory()) closes.push(fd);
+      return original(fd);
+    })(fs.closeSync)),
+  ];
+  syncBuiltinESMExports();
+  try {
+    const claim = f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket);
+    assertClaimIsOpaque(claim);
+    assert.equal(f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), claim);
+    assert.deepEqual(f.runtime.readCoreWindowClosure(f.scope), pending);
+    assert.deepEqual(opens, []); assert.deepEqual(stats, []); assert.deepEqual(closes, []);
+    assert.deepEqual(f.blockers(), blockers);
+  } finally { for (const patch of patches.reverse()) patch.mock.restore(); syncBuiltinESMExports(); }
+});
+
+test("Core close rejects copied, Proxy and foreign Store tickets before any original close", nativeOnly, t => {
+  const f = owningFixture(t), other = owningFixture(t), before = f.runtime.readCoreWindowClosure(f.scope);
+  observeOriginalClose(t, calls => {
+    for (const copied of [{ ...f.ticket }, new Proxy(f.ticket, {}), other.ticket]) {
+      assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(copied), /host_office_local_invalid_ticket/u);
+    }
+    assert.throws(() => other.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), /host_office_local_invalid_ticket/u);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(f.runtime.readCoreWindowClosure(f.scope), before);
+    const first = f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), count = calls.length;
+    assertClaimIsOpaque(first);
+    const second = other.store.closeHostOfficeLocalDirectoryWindowV2(other.ticket);
+    assertClaimIsOpaque(second); assert.notEqual(first, second); assert.ok(calls.length > count);
+    assert.equal(f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), first);
+  });
+});
+
+test("revocation cleanup can close originals but cannot mint or restore a Core proof claim", nativeOnly, t => {
+  const f = owningFixture(t), blockers = f.blockers();
+  f.runtime.revokeScope(f.scope); f.runtime.closeCoreWindow(f.scope);
+  const pending = f.runtime.readCoreWindowClosure(f.scope);
+  observeOriginalClose(t, calls => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), /office_local_native_core_proof_closed/u);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(f.runtime.readCoreWindowClosure(f.scope), pending);
+    }
+  });
+  assert.deepEqual(f.blockers(), blockers);
+  assert.throws(() => f.runtime.openSession(f.scope, f.cwd), /office_local_native_scope_closed/u);
+});
+
+test("inspect invoke source-read return loss permanently closes proof even after the original source reader recovers", nativeOnly, t => {
+  const f = owningFixture(t), blockers = f.blockers();
+  // Genuine original native session for a runtime fault negative case, not a
+  // successful Core effect pipeline or terminal/settlement claim.
+  assert.equal(f.runtime.openSession(f.scope, f.execution.destination.parentPath).success, true);
+  observeOriginalNativeSourceRead(t, count => {
+    // #forward already completed its native.assertCurrent source read. The
+    // second original read occurs inside #native.invoke("inspectSession").
+    if (count === 2) throw new Error("original_inspect_source_read_return_lost");
+  }, calls => {
+    assert.throws(() => f.runtime.inspectSession(f.scope), /original_inspect_source_read_return_lost/u);
+    assert.equal(calls(), 2);
+  });
+  assert.throws(() => f.runtime.assertScopeCurrent(f.scope), /office_local_native_scope_closed/u);
+  const closedNative = f.runtime.closeSession(f.scope);
+  assert.equal(closedNative.success, true);
+  f.runtime.closeCoreWindow(f.scope);
+  const pending = f.runtime.readCoreWindowClosure(f.scope);
+  assert.equal(pending.phase, "closed_pending");
+  assert.ok(allRows(pending).every(row => row.state === "closed" && row.close === "returned"));
+  observeOriginalClose(t, calls => {
+    for (let attempt = 0; attempt < 2; attempt++) {
+      assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), /office_local_native_core_proof_closed/u);
+      assert.deepEqual(calls, []);
+      assert.deepEqual(f.runtime.readCoreWindowClosure(f.scope), pending);
+    }
+  });
+  assert.deepEqual(f.blockers(), blockers);
+  assert.deepEqual(f.store.listHostOfficeLocalDirectoryEffectsV2(f.ticket.executionId), []);
+  assert.equal(existsSync(f.execution.targetPath), false);
+});
+
+test("native assertSources synchronous identity release refuses an original pending-window claim without reclose", nativeOnly, t => {
+  const f = owningFixture(t), blockers = f.blockers();
+  f.runtime.closeCoreWindow(f.scope);
+  const pending = f.runtime.readCoreWindowClosure(f.scope);
+  observeOriginalClose(t, closes => {
+    observeOriginalNativeSourceRead(t, count => {
+      if (count === 1) f.runtime.releaseIdentity();
+    }, reads => {
+      assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), /office_local_native_core_proof_closed/u);
+      assert.equal(reads(), 1, "reentry happens after the real source read, within original native assertSources");
+    });
+    assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), /office_local_native_core_proof_closed/u);
+    f.runtime.releaseIdentity();
+    assert.deepEqual(closes, []);
+  });
+  assert.deepEqual(f.runtime.readCoreWindowClosure(f.scope), pending);
+  assert.deepEqual(f.blockers(), blockers);
+  assert.deepEqual(f.store.listHostOfficeLocalDirectoryEffectsV2(f.ticket.executionId), []);
+});
+
+test("native assertSources synchronous unknown actor coverage refuses an original pending-window claim without reclose", nativeOnly, t => {
+  const f = owningFixture(t), blockers = f.blockers();
+  f.runtime.closeCoreWindow(f.scope);
+  const pending = f.runtime.readCoreWindowClosure(f.scope);
+  observeOriginalClose(t, closes => {
+    observeOriginalNativeSourceRead(t, count => {
+      if (count === 1) f.registry.markActorEntryCoverageUnknown();
+    }, reads => {
+      assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), /protected_host_actor_coverage_unknown/u);
+      assert.equal(reads(), 1, "fixed Registry coverage must be checked after original native assertSources returns");
+    });
+    assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), /office_local_native_core_proof_closed/u);
+    assert.throws(() => f.registry.assertActorInventoryCurrent(), /protected_host_actor_coverage_unknown/u);
+    assert.deepEqual(closes, []);
+  });
+  assert.deepEqual(f.runtime.readCoreWindowClosure(f.scope), pending);
+  assert.deepEqual(f.blockers(), blockers);
+  assert.deepEqual(f.store.listHostOfficeLocalDirectoryEffectsV2(f.ticket.executionId), []);
+});
+
+for (const change of ["retire", "runtime_source"]) test("mid-close " + change + " refuses Core proof without blocking the originals' one cleanup", nativeOnly, t => {
+  const f = owningFixture(t), before = f.runtime.readCoreWindowClosure(f.scope), blockers = f.blockers();
+  const originalClose = fs.closeSync, originalStat = fs.fstatSync, calls = [];
+  let changed = false;
+  const patch = t.mock.method(fs, "closeSync", fd => {
+    const directory = originalStat(fd).isDirectory();
+    if (directory) calls.push(fd);
+    const result = originalClose(fd);
+    if (directory && !changed) {
+      changed = true;
+      if (change === "retire") f.supervisor.releaseAll();
+      else f.hostRuntime.runtimeInstanceId = "changed-during-original-window-close";
+    }
+    return result;
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket),
+      change === "retire" ? /office_local_directory_core_composition_invalid|host_office_local_bridge_unavailable|office_local_native_core_proof_closed/u
+        : /office_local_native_core_proof_obsolete/u);
+    assert.equal(changed, true); assert.equal(new Set(calls).size, calls.length);
+    assert.ok(calls.length >= allRows(before).length);
+    const pending = f.runtime.readCoreWindowClosure(f.scope), count = calls.length;
+    assert.equal(pending.phase, "closed_pending");
+    assert.ok(allRows(pending).every(row => row.state === "closed" && row.close === "returned"));
+    assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket),
+      change === "retire" ? /host_office_local_bridge_unavailable/u : /office_local_native_core_proof_closed/u);
+    assert.equal(calls.length, count);
+    assert.deepEqual(f.blockers(), blockers);
+    assert.throws(() => f.runtime.openSession(f.scope, f.cwd), /office_local_native_scope_closed/u);
+  } finally { patch.mock.restore(); syncBuiltinESMExports(); }
+});
+
+test("Core close return loss preserves unknown originals and refuses a claim without retrying their FDs", nativeOnly, t => {
+  const f = owningFixture(t), blockers = f.blockers(), originalClose = fs.closeSync, originalStat = fs.fstatSync, calls = [];
+  const patch = t.mock.method(fs, "closeSync", fd => {
+    const directory = originalStat(fd).isDirectory();
+    if (directory) calls.push(fd);
+    const result = originalClose(fd);
+    if (directory && calls.length === 1) throw new Error("original_Core_window_close_return_lost");
+    return result;
+  });
+  syncBuiltinESMExports();
+  try {
+    assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), /protected_host_office_window_close_unknown/u);
+    const unknown = f.runtime.readCoreWindowClosure(f.scope), count = calls.length;
+    assert.equal(unknown.phase, "unknown");
+    assert.equal(allRows(unknown).filter(row => row.state === "unknown" && row.close === "unknown").length, 1);
+    assert.equal(new Set(calls).size, calls.length);
+    assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), /office_local_native_core_window_close_unknown/u);
+    assert.equal(calls.length, count);
+    assert.deepEqual(f.runtime.readCoreWindowClosure(f.scope), unknown);
+    assert.deepEqual(f.blockers(), blockers);
+    assert.throws(() => f.runtime.openSession(f.scope, f.cwd), /office_local_native_scope_closed/u);
+  } finally { patch.mock.restore(); syncBuiltinESMExports(); }
+});
+
+test("actual native capture prevents early Core sealing and leaves readonly window active for original cleanup", nativeOnly, t => {
+  const f = owningFixture(t), effect = f.store.prepareHostOfficeLocalDirectoryEffectV2(f.ticket, captureEffect(f));
+  const packet = f.store.launchHostOfficeLocalDirectoryEffectV2(f.ticket, effect.effectId,
+    () => f.runtime.openSession(f.scope, f.execution.destination.parentPath));
+  assert.equal(packet.success, true); assert.equal(packet.nativeOutcome, "returned");
+  const blockers = f.blockers(), before = f.runtime.readCoreWindowClosure(f.scope);
+  observeOriginalClose(t, calls => {
+    assert.throws(() => f.store.closeHostOfficeLocalDirectoryWindowV2(f.ticket), /host_office_local_native_close_not_ready/u);
+    assert.deepEqual(calls, []);
+    assert.deepEqual(f.runtime.readCoreWindowClosure(f.scope), before);
+    assert.equal(before.phase, "active");
+    assert.equal(f.store.listHostOfficeLocalDirectoryEffectsV2(f.ticket.executionId)[0].enteredAt.length > 0, true);
+  });
+  const closedNative = f.runtime.closeSession(f.scope);
+  assert.equal(closedNative.success, true);
+  f.runtime.closeCoreWindow(f.scope);
+  assert.equal(f.runtime.readCoreWindowClosure(f.scope).phase, "closed_pending");
+  assert.deepEqual(f.blockers(), blockers);
+  assert.equal(existsSync(f.execution.targetPath), false);
 });
 
 test("window closure accepts only its original bound typed scope, never a clone or foreign scope", nativeOnly, t => {

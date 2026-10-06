@@ -71,7 +71,9 @@ function fixture(t, { actorEntries } = {}) {
 function transport(store) {
   const pair = createOriginalOfficeHostBridgeForComposition();
   const bridge = captureOriginalOfficeHostBridgeReader(pair.reader, store);
-  sealOriginalOfficeHostBridgeForComposition(pair.setup, store, Object.freeze({ assertBinding() {} }));
+  sealOriginalOfficeHostBridgeForComposition(pair.setup, store, Object.freeze({
+    assertBinding() {}, closeBoundWindow() {}, assertClosedBoundWindow() {},
+  }));
   const authority = mintOriginalOfficeDirectoryAuthorityV2(pair.setup, Object.freeze({}));
   bridge.assertAuthorityOwned(authority);
   return { ...pair, store, bridge, authority };

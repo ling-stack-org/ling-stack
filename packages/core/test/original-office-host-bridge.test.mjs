@@ -15,7 +15,9 @@ import { directoryV2StoreFixture } from "./support/host-office-local-directory-v
 
 // Mechanism fixtures only. No native syscall, genuine Host issuer or Core-safe certificate.
 const code = expected => error => error?.code === expected;
-const endpoint = callback => Object.freeze({ assertBinding: callback });
+const endpoint = (callback, closeBoundWindow = () => undefined, assertClosedBoundWindow = () => undefined) => Object.freeze({
+  assertBinding: callback, closeBoundWindow, assertClosedBoundWindow,
+});
 const copies = value => [JSON.parse(JSON.stringify(value)), { ...value }, new Proxy(value, {})];
 function channel(callback = () => undefined) {
   const pair = create(), owner = {}, bridge = capture(pair.reader, owner);
@@ -100,10 +102,13 @@ test("unsealed bridge cannot mint or bind and wrong owner permanently consumes s
 });
 
 for (const [label, make] of [
-  ["mutable endpoint", () => ({ assertBinding: () => undefined })],
-  ["accessor", () => Object.freeze({ get assertBinding() { throw Error("getter must not run"); } })],
-  ["extra method", () => Object.freeze({ assertBinding: () => undefined, replace: () => undefined })],
+  ["mutable endpoint", () => ({ ...endpoint(() => undefined) })],
+  ["accessor", () => Object.freeze({ ...endpoint(() => undefined), get assertBinding() { throw Error("getter must not run"); } })],
+  ["extra method", () => Object.freeze({ ...endpoint(() => undefined), replace: () => undefined })],
+  ["legacy single method", () => Object.freeze({ assertBinding: () => undefined })],
   ["async function", () => endpoint(async () => undefined)],
+  ["async close", () => endpoint(() => undefined, async () => undefined)],
+  ["async assertion", () => endpoint(() => undefined, () => undefined, async () => undefined)],
 ]) test(`sealing rejects ${label} and never permits replacement`, () => {
   const pair = create(), owner = {}; capture(pair.reader, owner);
   assert.throws(() => seal(pair.setup, owner, make()), /host_office_local_bridge/);

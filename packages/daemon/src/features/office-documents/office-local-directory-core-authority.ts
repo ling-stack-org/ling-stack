@@ -7,6 +7,7 @@ import { isOriginalRuntimeSupervisorOfficeRoot, retainOriginalRuntimeSupervisorO
   type RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { isOwnedOfficeLocalNativeRuntime, captureOriginalOfficeDirectoryRuntimeCustody,
   assertOriginalOfficeDirectoryRuntimeBinding, type OfficeLocalNativeRuntime,
+  closeOriginalOfficeDirectoryRuntimeWindow, assertOriginalOfficeDirectoryRuntimeWindowClosed,
   type OfficeLocalNativeTypedScope } from "./office-local-native-runtime.js";
 
 interface CompositionStore {
@@ -32,12 +33,23 @@ export function createOriginalOfficeDirectoryStoreFactory(supervisor: RuntimeSup
     const { reader, setup } = createOriginalOfficeHostBridgeForComposition();
     const store = new SqliteRunStore({ cwd, paths: resolveStoragePaths(cwd).workspace, originalOfficeHostBridge: reader });
     try {
-      const endpoint = Object.freeze({ assertBinding(custodyRef: object, expected: Parameters<typeof assertOriginalOfficeDirectoryRuntimeBinding>[2]): void {
+      const originalCustody = (custodyRef: object): Custody => {
         const original = custodies.get(custodyRef);
         requireOriginal(original && original.store === store && original.runtime.store === store
-          && original.runtime.supervisor === supervisor && isOriginalRuntimeSupervisorOfficeRoot(supervisor)
+          && original.runtime.supervisor === supervisor
           && isOwnedOfficeLocalNativeRuntime(original.runtime));
+        return original;
+      };
+      const endpoint = Object.freeze({ assertBinding(custodyRef: object, expected: Parameters<typeof assertOriginalOfficeDirectoryRuntimeBinding>[2]): void {
+        const original = originalCustody(custodyRef);
+        requireOriginal(isOriginalRuntimeSupervisorOfficeRoot(supervisor));
         assertOriginalOfficeDirectoryRuntimeBinding(original.runtime, original.runtimeCustody, expected);
+      }, closeBoundWindow(custodyRef: object, expected: Parameters<typeof assertOriginalOfficeDirectoryRuntimeBinding>[2]): void {
+        const original = originalCustody(custodyRef);
+        closeOriginalOfficeDirectoryRuntimeWindow(original.runtime, original.runtimeCustody, expected);
+      }, assertClosedBoundWindow(custodyRef: object, expected: Parameters<typeof assertOriginalOfficeDirectoryRuntimeBinding>[2]): void {
+        const original = originalCustody(custodyRef);
+        assertOriginalOfficeDirectoryRuntimeWindowClosed(original.runtime, original.runtimeCustody, expected);
       } });
       sealOriginalOfficeHostBridgeForComposition(setup, store, endpoint);
       retainOriginalRuntimeSupervisorOfficeStoreBridge(supervisor, store, setup);

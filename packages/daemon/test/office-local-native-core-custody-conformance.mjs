@@ -49,7 +49,9 @@ test("root revokes enrolled transport before real original binary-identity close
   // Separate Core transport mechanism, not a genuine issued scope or endpoint. Its
   // capability lifetime must still be revoked before genuine binary-FD cleanup.
   const pair = createOriginalOfficeHostBridgeForComposition(), bridge = captureOriginalOfficeHostBridgeReader(pair.reader, store);
-  sealOriginalOfficeHostBridgeForComposition(pair.setup, store, Object.freeze({ assertBinding() {} }));
+  sealOriginalOfficeHostBridgeForComposition(pair.setup, store, Object.freeze({
+    assertBinding() {}, closeBoundWindow() {}, assertClosedBoundWindow() {},
+  }));
   retainOriginalRuntimeSupervisorOfficeStoreBridge(supervisor, store, pair.setup);
   const authority = mintOriginalOfficeDirectoryAuthorityV2(pair.setup, {}), originalOpen = fs.openSync, originalClose = fs.closeSync;
   let identityFd, closeCalls = 0;

@@ -66,6 +66,8 @@ interface ScopeState {
   nativeClosed: boolean;
   captureEntered: boolean;
   sessionCloseEntered: boolean;
+  /** Cleanup may close resources after revocation; it can never restore proof admission. */
+  proofAdmissionClosed: boolean;
   stageClosure: "retained" | "closed_pending" | "closed" | "unknown";
   coreBinding?: "custody_entered" | "custody_captured" | "binding_entered" | "bound" | "invalid";
   coreWindow?: ProtectedHostOfficeDirectoryWindowV2;
@@ -76,6 +78,8 @@ const ownedRuntimes = new WeakSet<OfficeLocalNativeRuntime>();
 const originalCoreScopeReaders = new WeakMap<OfficeLocalNativeRuntime, Readonly<{
   capture: (scope: OfficeLocalNativeTypedScope) => object;
   assertBinding: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
+  closeBoundWindow: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
+  assertClosedBoundWindow: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
 }>>();
 function requireRuntime(value: unknown, code = "office_local_native_runtime_invalid"): asserts value {
   if (!value) throw new Error(code);
@@ -110,6 +114,8 @@ export class OfficeLocalNativeRuntime {
     originalCoreScopeReaders.set(this, Object.freeze({
       capture: scope => this.#captureCoreCustody(scope),
       assertBinding: (custody, expected) => this.#assertCoreBinding(custody, expected),
+      closeBoundWindow: (custody, expected) => this.#closeBoundCoreWindow(custody, expected),
+      assertClosedBoundWindow: (custody, expected) => this.#assertClosedCoreWindow(custody, expected),
     }));
   }
 
@@ -147,7 +153,8 @@ export class OfficeLocalNativeRuntime {
         coreSafe: false, packaged: false });
       const scope = Object.freeze({}) as OfficeLocalNativeTypedScope;
       this.#scopes.set(scope, { source, runtime, runtimeSnapshot: structuredClone(runtime), stage, stagePath, facts,
-        phase: "bootstrap", nativeClosed: false, captureEntered: false, sessionCloseEntered: false, stageClosure: "retained" });
+        phase: "bootstrap", nativeClosed: false, captureEntered: false, sessionCloseEntered: false,
+        proofAdmissionClosed: false, stageClosure: "retained" });
       return scope;
     } catch (error) {
       // No scope/session has escaped: release only this registration's original
@@ -184,7 +191,7 @@ export class OfficeLocalNativeRuntime {
       const session = dataValue(packet, "session"); requireRuntime(session && typeof session === "object");
       state.session = session; state.phase = "captured";
       return this.#packet(state, packet);
-    } catch (error) { state.phase = "unknown"; throw error; }
+    } catch (error) { state.phase = "unknown"; state.proofAdmissionClosed = true; throw error; }
   }
   createDirectory(scope: OfficeLocalNativeTypedScope, parent: OfficeLocalNativeResource, name: string, effectId: string): OfficeLocalNativePacket {
     return this.#resourceCall(scope, "createDirectory", parent, [name, effectId]);
@@ -211,16 +218,19 @@ export class OfficeLocalNativeRuntime {
     return this.#resourceCall(scope, "observePublication", tree, [budget, effectId]);
   }
   inspectSession(scope: OfficeLocalNativeTypedScope): unknown {
-    const state = this.#scope(scope); this.#forward(state); return this.#native.invoke("inspectSession", [this.#session(state)]);
+    const state = this.#scope(scope); this.#forward(state);
+    try { return this.#native.invoke("inspectSession", [this.#session(state)]); }
+    catch (error) { state.phase = "unknown"; state.proofAdmissionClosed = true; throw error; }
   }
   /** Cleanup can use only these original acquired caps after source/policy/admission revocation. */
   closeResource(scope: OfficeLocalNativeTypedScope, resource: OfficeLocalNativeResource, effectId: string): OfficeLocalNativePacket {
     const state = this.#scope(scope), held = this.#resource(state, resource);
     requireRuntime(!held.closeEntered, "office_local_native_resource_close_already_entered"); held.closeEntered = true;
-    return this.#packet(state, this.#native.invokeCleanup("closeResource", [this.#session(state), held.native, effectId]));
+    try { return this.#packet(state, this.#native.invokeCleanup("closeResource", [this.#session(state), held.native, effectId])); }
+    catch (error) { state.proofAdmissionClosed = true; throw error; }
   }
   cancelSession(scope: OfficeLocalNativeTypedScope): unknown {
-    const state = this.#scope(scope); state.phase = "revoked";
+    const state = this.#scope(scope); state.phase = "revoked"; state.proofAdmissionClosed = true;
     return this.#native.invokeCleanup("cancelSession", [this.#session(state)]);
   }
   closeSession(scope: OfficeLocalNativeTypedScope): OfficeLocalNativePacket {
@@ -231,15 +241,18 @@ export class OfficeLocalNativeRuntime {
       const raw = this.#native.invokeCleanup("closeSession", [this.#session(state)]), packet = this.#packet(state, raw);
       state.nativeClosed = packet.success === true; state.phase = state.nativeClosed ? "closed" : "unknown";
       return packet;
-    } catch (error) { state.phase = "unknown"; throw error; }
+    } catch (error) { state.phase = "unknown"; state.proofAdmissionClosed = true; throw error; }
   }
   revokeScope(scope: OfficeLocalNativeTypedScope): void {
     const state = this.#scope(scope);
+    state.proofAdmissionClosed = true;
     if (state.phase !== "closed") state.phase = "revoked";
   }
   /** Close only this bound scope's original readonly paths. Its protection lease and Core blockers remain. */
   closeCoreWindow(scope: OfficeLocalNativeTypedScope): void {
-    const state = this.#scope(scope);
+    this.#closeCoreWindow(this.#scope(scope));
+  }
+  #closeCoreWindow(state: ScopeState): void {
     requireRuntime(state.coreBinding === "bound" && state.coreWindow && state.coreExecution,
       "office_local_native_core_window_unbound");
     requireRuntime(state.stageClosure === "retained", "office_local_native_core_window_close_already_entered");
@@ -248,7 +261,7 @@ export class OfficeLocalNativeRuntime {
     try {
       closeOriginalProtectedHostOfficeDirectoryWindow(this.registry, state.coreWindow);
       state.stageClosure = "closed_pending"; state.phase = "closed";
-    } catch (error) { state.phase = "unknown"; throw error; }
+    } catch (error) { state.phase = "unknown"; state.proofAdmissionClosed = true; throw error; }
   }
   /** Historical original-FD facts only. No source refresh, native cleanup claim, lease release or Core-safe receipt. */
   readCoreWindowClosure(scope: OfficeLocalNativeTypedScope): OriginalOfficeDirectoryWindowPathClosure {
@@ -283,14 +296,18 @@ export class OfficeLocalNativeRuntime {
   }
   #forward(state: ScopeState): void {
     requireRuntime(isOwnedOfficeLocalNativeRuntime(this), "office_local_native_runtime_unowned");
-    requireRuntime(this.#identityClosure === "retained" && ["bootstrap", "captured"].includes(state.phase) && state.stageClosure === "retained"
-      && state.coreBinding !== "invalid", "office_local_native_scope_closed");
-    const runtime = readRuntimeSupervisorOfficeBinding(this.supervisor, this.store, this.registry);
-    requireRuntime(runtime === state.runtime && isDeepStrictEqual(runtime, state.runtimeSnapshot), "office_local_native_runtime_obsolete");
-    requireRuntime(findHostOfficeLocalFactory(state.source.originalBroker, OFFICE_DOCUMENTS_MCP_SERVER_ID,
-      state.source.rawName, state.source.run.cwd) === state.source.factory, "office_local_native_factory_obsolete");
-    this.registry.assertActorInventoryCurrent(); this.registry.assertStageCurrent(state.stage); this.#native.assertCurrent();
-    if (state.coreWindow) assertOriginalProtectedHostOfficeDirectoryWindow(this.registry, state.coreWindow, state.coreExecution!);
+    // A refused call after normal closure is not a new authority failure.
+    // Source/identity/lease failures below are permanently proof-closing.
+    requireRuntime(!state.proofAdmissionClosed && this.#identityClosure === "retained" && ["bootstrap", "captured"].includes(state.phase)
+      && state.stageClosure === "retained" && state.coreBinding !== "invalid", "office_local_native_scope_closed");
+    try {
+      const runtime = readRuntimeSupervisorOfficeBinding(this.supervisor, this.store, this.registry);
+      requireRuntime(runtime === state.runtime && isDeepStrictEqual(runtime, state.runtimeSnapshot), "office_local_native_runtime_obsolete");
+      requireRuntime(findHostOfficeLocalFactory(state.source.originalBroker, OFFICE_DOCUMENTS_MCP_SERVER_ID,
+        state.source.rawName, state.source.run.cwd) === state.source.factory, "office_local_native_factory_obsolete");
+      this.registry.assertActorInventoryCurrent(); this.registry.assertStageCurrent(state.stage); this.#native.assertCurrent();
+      if (state.coreWindow) assertOriginalProtectedHostOfficeDirectoryWindow(this.registry, state.coreWindow, state.coreExecution!);
+    } catch (error) { state.proofAdmissionClosed = true; throw error; }
   }
   #captureCoreCustody(scope: OfficeLocalNativeTypedScope): object {
     const state = this.#scope(scope);
@@ -321,12 +338,66 @@ export class OfficeLocalNativeRuntime {
       state.coreExecution = execution; state.coreBinding = "bound";
     } catch (error) { state.coreBinding = "invalid"; throw error; }
   }
+  #boundCoreScope(custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2): ScopeState {
+    const state = this.#coreCustodies.get(custody);
+    requireRuntime(state && state.coreBinding === "bound" && state.coreWindow && state.coreExecution
+      && isDeepStrictEqual(state.coreExecution, expected), "office_local_native_core_custody_invalid");
+    return state;
+  }
+  /** No window-FD I/O: pending custody retains source and protection, not an open descriptor. */
+  #assertCoreWindowProof(state: ScopeState, expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+    try {
+      requireRuntime(!state.proofAdmissionClosed && this.#identityClosure === "retained",
+        "office_local_native_core_proof_closed");
+      const runtime = readRuntimeSupervisorOfficeBinding(this.supervisor, this.store, this.registry);
+      requireRuntime(runtime === state.runtime && isDeepStrictEqual(runtime, state.runtimeSnapshot)
+        && findHostOfficeLocalFactory(state.source.originalBroker, OFFICE_DOCUMENTS_MCP_SERVER_ID,
+          state.source.rawName, state.source.run.cwd) === state.source.factory, "office_local_native_core_proof_obsolete");
+      assertOriginalProtectedHostOfficeDirectoryWindow(this.registry, state.coreWindow!, expected);
+      this.#native.assertCurrent();
+      // The native source reader can synchronously reenter Host shutdown or
+      // Registry admission. Recheck the fixed pending gate after that I/O;
+      // this never reopens or inspects the already-closed window descriptors.
+      assertOriginalProtectedHostOfficeDirectoryWindow(this.registry, state.coreWindow!, expected);
+      requireRuntime(!state.proofAdmissionClosed && this.#identityClosure === "retained" && state.coreBinding === "bound"
+        && readRuntimeSupervisorOfficeBinding(this.supervisor, this.store, this.registry) === runtime
+        && isDeepStrictEqual(runtime, state.runtimeSnapshot)
+        && findHostOfficeLocalFactory(state.source.originalBroker, OFFICE_DOCUMENTS_MCP_SERVER_ID,
+          state.source.rawName, state.source.run.cwd) === state.source.factory,
+        "office_local_native_core_proof_closed");
+    } catch (error) { state.proofAdmissionClosed = true; throw error; }
+  }
+  #closeBoundCoreWindow(custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+    const state = this.#boundCoreScope(custody, expected);
+    let proofFailure: unknown;
+    try { this.#assertCoreWindowProof(state, expected); } catch (error) { proofFailure = error; }
+    // Revocation never blocks the one original cleanup. A known prior close is
+    // only inspected, never physically repeated; unknown originals stay unknown.
+    if (state.stageClosure === "retained") {
+      try { this.#closeCoreWindow(state); }
+      catch (error) {
+        if (proofFailure) throw new AggregateError([proofFailure, error], "office_local_native_core_cleanup_unknown");
+        throw error;
+      }
+    }
+    if (proofFailure) throw proofFailure;
+    this.#assertClosedCoreWindow(custody, expected);
+  }
+  #assertClosedCoreWindow(custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+    const state = this.#boundCoreScope(custody, expected);
+    requireRuntime(state.stageClosure === "closed_pending", "office_local_native_core_window_close_unknown");
+    const closure = readOriginalProtectedHostOfficeDirectoryClosure(this.registry, state.coreWindow!);
+    requireRuntime(closure.phase === "closed_pending"
+      && [...closure.stage, ...closure.destination].every(row => row.state === "closed" && row.close === "returned"),
+      "office_local_native_core_window_close_unknown");
+    this.#assertCoreWindowProof(state, expected);
+  }
   #resourceCall(scope: OfficeLocalNativeTypedScope, method: OfficeLocalNativeMethod, resource: OfficeLocalNativeResource,
     args: readonly unknown[]): OfficeLocalNativePacket {
     const state = this.#scope(scope); this.#forward(state); const held = this.#resource(state, resource);
     requireRuntime(!held.closeEntered, "office_local_native_resource_closed");
     try { return this.#packet(state, this.#native.invoke(method, [this.#session(state), held.native, ...args])); }
-    catch (error) { state.phase = "unknown"; throw error; }
+    catch (error) { state.phase = "unknown"; state.proofAdmissionClosed = true; throw error; }
   }
   #packet(state: ScopeState, raw: unknown): OfficeLocalNativePacket {
     requireRuntime(raw && typeof raw === "object" && Object.getPrototypeOf(raw) === Object.prototype, "office_local_native_reply_invalid");
@@ -344,7 +415,7 @@ export class OfficeLocalNativeRuntime {
     }
     requireRuntime(output.nativeOutcome === "returned" && output.hostAcknowledgment === "not_provided" && typeof output.success === "boolean",
       "office_local_native_reply_invalid");
-    if (output.success === false) state.phase = "unknown";
+    if (output.success === false) { state.phase = "unknown"; state.proofAdmissionClosed = true; }
     return Object.freeze(output) as unknown as OfficeLocalNativePacket;
   }
 }
@@ -367,4 +438,17 @@ export function assertOriginalOfficeDirectoryRuntimeBinding(runtime: OfficeLocal
   const reader = originalCoreScopeReaders.get(runtime);
   requireRuntime(reader && isOwnedOfficeLocalNativeRuntime(runtime), "office_local_native_runtime_unowned");
   reader.assertBinding(custody, expected);
+}
+/** Only the fixed composition consumes the original private custody; no caller closure data is accepted. */
+export function closeOriginalOfficeDirectoryRuntimeWindow(runtime: OfficeLocalNativeRuntime, custody: object,
+  expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+  const reader = originalCoreScopeReaders.get(runtime);
+  requireRuntime(reader && isOwnedOfficeLocalNativeRuntime(runtime), "office_local_native_runtime_unowned");
+  reader.closeBoundWindow(custody, expected);
+}
+export function assertOriginalOfficeDirectoryRuntimeWindowClosed(runtime: OfficeLocalNativeRuntime, custody: object,
+  expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+  const reader = originalCoreScopeReaders.get(runtime);
+  requireRuntime(reader && isOwnedOfficeLocalNativeRuntime(runtime), "office_local_native_runtime_unowned");
+  reader.assertClosedBoundWindow(custody, expected);
 }

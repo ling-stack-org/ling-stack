@@ -547,16 +547,22 @@ export class ProtectedHostStageRegistry {
     return window;
   }
   #assertOfficeWindow(token: ProtectedHostOfficeDirectoryWindowV2, expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
-    const window = this.#officeWindow(token), stage = window.stage;
+    const window = this.#officeWindow(token), stage = window.stage, epoch = this.#domainEpoch;
     requireScope(isDeepStrictEqual(expected, window.execution) && stage.officeAdmission === "bound", "protected_host_office_window_binding_invalid");
     this.#assertActorInventoryCurrent(); this.#assertOriginalHostHistoryCurrent();
     requireScope(isDeepStrictEqual(readMacosSandboxBackendIdentity(), stage.backend), "protected_host_backend_changed");
-    readProtectedHostBootstrapReadRoots(stage.backend); assertSourceCurrent(stage.source);
-    if (stage.lifetime === "active") { this.#assertStage(stage); if (this.#domain) this.#assertStageExclusion(this.#domain, stage); return; }
-    const closure = window.paths.readClosureFacts();
-    requireScope(stage.lifetime === "closed_pending" && closure.phase === "closed_pending"
-      && [...closure.stage, ...closure.destination].every(row => row.state === "closed" && row.close === "returned"),
-      "protected_host_office_window_close_unknown");
+    const roots = readProtectedHostBootstrapReadRoots(stage.backend); assertSourceCurrent(stage.source);
+    if (stage.lifetime === "active") this.#assertStage(stage);
+    else {
+      const closure = window.paths.readClosureFacts();
+      requireScope(stage.lifetime === "closed_pending" && closure.phase === "closed_pending"
+        && [...closure.stage, ...closure.destination].every(row => row.state === "closed" && row.close === "returned"),
+        "protected_host_office_window_close_unknown");
+    }
+    this.#assertStageExclusion(this.#domain ?? { backend: stage.backend, staticReadRoots: roots }, stage);
+    requireScope(epoch === this.#domainEpoch && this.#officeWindow(token) === window,
+      "protected_host_actor_history_changed");
+    this.#assertActorInventoryCurrent(); this.#assertOriginalHostHistoryCurrent();
     // Pending custody is historical: never fstat/reopen the already closed originals.
   }
   #closeOfficeWindow(token: ProtectedHostOfficeDirectoryWindowV2): void {
