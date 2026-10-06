@@ -107,6 +107,23 @@ export function mintOriginalOfficeDirectoryAuthorityV2(setup: OriginalOfficeHost
   return authority;
 }
 
+/** Fixed Host lifecycle enrollment only. This reads private ownership, not caller flags. */
+export function assertOriginalOfficeHostBridgeForCompositionCurrent(setup: OriginalOfficeHostBridgeSetup, owner: object): void {
+  const state = setups.get(setup);
+  if (!state || state.owner !== owner) return fail("host_office_local_bridge_owner_invalid");
+  if (state.phase !== "sealed" || !state.endpoint) return fail("host_office_local_bridge_unavailable");
+  assertEndpointCurrent(state.endpoint);
+}
+
+/** Supervisor retirement closes every enrolled Store before native cleanup can fail. */
+export function retireOriginalOfficeHostBridgeForComposition(setup: OriginalOfficeHostBridgeSetup, owner: object): void {
+  const state = setups.get(setup);
+  if (!state || state.owner !== owner) return fail("host_office_local_bridge_owner_invalid");
+  if (state.phase === "invalid") return;
+  if (state.phase !== "sealed") return fail("host_office_local_bridge_unavailable");
+  state.phase = "invalid";
+}
+
 function assertEndpointCurrent(endpoint: NonNullable<BridgeState["endpoint"]>): void {
   const descriptor = Object.getOwnPropertyDescriptor(endpoint.receiver, "assertBinding");
   if (!Object.isFrozen(endpoint.receiver) || !descriptor || !Object.hasOwn(descriptor, "value")

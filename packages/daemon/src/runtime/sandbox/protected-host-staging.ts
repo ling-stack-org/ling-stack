@@ -1,7 +1,8 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { lstatSync } from "node:fs";
 import { isDeepStrictEqual } from "node:util";
-import type { EffectiveRunPolicySnapshot, ExecutionSandboxBackendIdentity, RunSession, RunStore, RuntimeAttemptFenceV1 } from "@ling-stack/core";
+import type { EffectiveRunPolicySnapshot, ExecutionSandboxBackendIdentity, HostOfficeLocalDirectoryExecutionRecordV2,
+  RunSession, RunStore, RuntimeAttemptFenceV1 } from "@ling-stack/core";
 import { captureProtectedHostStagePaths, type ProtectedHostStagePaths } from "./protected-host-stage-paths.js";
 import { readMacosSandboxBackendIdentity, readPreparedMacosSandboxAuthority, isOwnedMacosSandboxChild,
   type PreparedMacosSandboxAuthority, type PreparedMacosSandboxCommand } from "./macos-native-command.js";
@@ -11,13 +12,17 @@ import { readProtectedHostBootstrapReadRoots } from "./protected-host-bootstrap-
 import { ProtectedHostActorInventory, type ProtectedHostActorEntry } from "./protected-host-actor-inventory.js";
 import { readOriginalProtectedHostActorEntries } from "./protected-host-original-entry-manifest.js";
 import { readOriginalPackagedCodesignHostProof, type OriginalPackagedCodesignHostProof } from "./packaged-codesign-host-source.js";
+import { captureOriginalOfficeDirectoryWindowPaths, type OriginalOfficeDirectoryWindowPaths,
+  type OriginalOfficeDirectoryWindowPathClosure } from "./protected-host-office-directory-window.js";
 
 declare const stageBrand: unique symbol;
 declare const sourceBrand: unique symbol;
 declare const actorBrand: unique symbol;
+declare const officeWindowBrand: unique symbol;
 export interface ProtectedHostStageRegistration { readonly [stageBrand]: true }
 export interface ProtectedHostActorSource { readonly [sourceBrand]: true }
 export interface ProtectedHostActorPreparation { readonly [actorBrand]: true }
+export interface ProtectedHostOfficeDirectoryWindowV2 { readonly [officeWindowBrand]: true }
 export interface ProtectedHostSourceInput {
   readonly store: RunStore;
   readonly run: RunSession;
@@ -36,7 +41,16 @@ interface StageState {
   readonly source: SourceState;
   readonly paths: ProtectedHostStagePaths;
   readonly backend: ExecutionSandboxBackendIdentity;
-  lifetime: "active" | "closed" | "unknown";
+  lifetime: "active" | "close_entered" | "closed_pending" | "closed" | "unknown";
+  officeAdmission?: "binding_entered" | "bound" | "cleanup_entered" | "invalid";
+  officeWindow?: OfficeWindowState;
+}
+interface OfficeWindowState {
+  readonly registration: ProtectedHostStageRegistration;
+  readonly stage: StageState;
+  readonly execution: HostOfficeLocalDirectoryExecutionRecordV2;
+  readonly paths: OriginalOfficeDirectoryWindowPaths;
+  readonly epoch: object;
 }
 interface ActorState {
   readonly source: ActorSourceState;
@@ -46,6 +60,13 @@ interface ActorState {
   phase: "prepared" | "launch_entered" | "launched" | "unknown";
 }
 const ownedRegistries = new WeakSet<ProtectedHostStageRegistry>();
+const originalOfficeRegistryReaders = new WeakMap<ProtectedHostStageRegistry, Readonly<{
+  assertStage: (stage: ProtectedHostStageRegistration) => void;
+  begin: (stage: ProtectedHostStageRegistration, expected: HostOfficeLocalDirectoryExecutionRecordV2) => ProtectedHostOfficeDirectoryWindowV2;
+  assertWindow: (window: ProtectedHostOfficeDirectoryWindowV2, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
+  closeWindow: (window: ProtectedHostOfficeDirectoryWindowV2) => void;
+  readClosure: (window: ProtectedHostOfficeDirectoryWindowV2) => OriginalOfficeDirectoryWindowPathClosure;
+}>>();
 const actorPreparedBindings = new WeakMap<ProtectedHostActorPreparation, {
   readonly registry: ProtectedHostStageRegistry; readonly prepared: PreparedMacosSandboxCommand;
 }>();
@@ -96,13 +117,25 @@ export class ProtectedHostStageRegistry {
   readonly #sources = new WeakMap<ProtectedHostActorSource, ActorSourceState>();
   readonly #actors = new WeakMap<ProtectedHostActorPreparation, ActorState>();
   readonly #inventory = new ProtectedHostActorInventory();
+  readonly #officeWindows = new WeakMap<ProtectedHostOfficeDirectoryWindowV2, OfficeWindowState>();
   readonly #hostBindingEpoch = Object.freeze({});
   #hostBindings = new Map<OriginalPackagedCodesignHostProof, {
     readonly entry: ProtectedHostActorEntry; readonly epoch: object; readonly domain: ProtectedHostActorDomain;
   }>();
   #domain: ProtectedHostActorDomain | undefined;
   #coverageClosed = false;
-  constructor() { ownedRegistries.add(this); }
+  constructor() {
+    ownedRegistries.add(this);
+    // Capture private implementations, not replaceable instance methods. No caller
+    // can install an inventory reader or inject a destination-path/window object.
+    originalOfficeRegistryReaders.set(this, Object.freeze({
+      assertStage: stage => this.#assertOriginalOfficeStage(stage),
+      begin: (stage, expected) => this.#beginOfficeWindow(stage, expected),
+      assertWindow: (window, expected) => this.#assertOfficeWindow(window, expected),
+      closeWindow: window => this.#closeOfficeWindow(window),
+      readClosure: window => this.#officeWindow(window).paths.readClosureFacts(),
+    }));
+  }
   assertHostStageSourceCurrent(input: ProtectedHostSourceInput): void { captureSource(input); }
 
   /** Supervisor supplies exact original module exports, not installed/verified caller flags. */
@@ -111,6 +144,9 @@ export class ProtectedHostStageRegistry {
   }
   markActorEntryCoverageUnknown(): void { this.#coverageClosed = true; }
   assertActorInventoryCurrent(): void {
+    this.#assertActorInventoryCurrent();
+  }
+  #assertActorInventoryCurrent(): void {
     this.#inventory.assertOriginalSourceManifest(readOriginalProtectedHostActorEntries());
     requireScope(!this.#coverageClosed, "protected_host_actor_coverage_unknown");
   }
@@ -166,7 +202,7 @@ export class ProtectedHostStageRegistry {
       "protected_host_actor_coverage_unknown");
     const merged = backend ? Object.freeze({ backend, staticReadRoots: Object.freeze([...roots]) }) : undefined;
     if (merged) for (const stage of this.#stages.values()) {
-      this.#assertStage(stage); assertProtectedHostDomainExcludesStage(merged, stage.paths);
+      this.#assertStage(stage); this.#assertStageExclusion(merged, stage);
     }
     return merged;
   }
@@ -234,8 +270,9 @@ export class ProtectedHostStageRegistry {
   protectedRoots(source: ProtectedHostActorSource): readonly string[] {
     const state = this.#source(source);
     assertSourceCurrent(state);
-    const roots = Object.freeze([...this.#stages.values()].map(stage => {
-      this.#assertStage(stage); return stage.paths.stagePath;
+    const roots = Object.freeze([...this.#stages.values()].flatMap(stage => {
+      this.#assertStage(stage);
+      return stage.officeWindow ? [stage.paths.stagePath, stage.officeWindow.paths.destination.stagePath] : [stage.paths.stagePath];
     }));
     state.compiledProtectedRoots = roots;
     return roots;
@@ -260,7 +297,7 @@ export class ProtectedHostStageRegistry {
         "protected_host_actor_coverage_unknown");
       const merged = Object.freeze({ backend: domain.backend, staticReadRoots: Object.freeze(roots) });
       for (const stage of this.#stages.values()) {
-        this.#assertStage(stage); assertProtectedHostDomainExcludesStage(merged, stage.paths);
+        this.#assertStage(stage); this.#assertStageExclusion(merged, stage);
       }
       this.#domain = merged;
     } catch (error) {
@@ -296,7 +333,7 @@ export class ProtectedHostStageRegistry {
     for (const stage of this.#stages.values()) {
       this.#assertStage(stage);
       requireScope(actor.domain, "protected_host_actor_coverage_unknown");
-      assertProtectedHostDomainExcludesStage(actor.domain, stage.paths);
+      this.#assertStageExclusion(actor.domain, stage);
     }
   }
   beginActorLaunch(token: ProtectedHostActorPreparation): void {
@@ -319,7 +356,7 @@ export class ProtectedHostStageRegistry {
     const stage = this.#stageLifetimes.get(token);
     requireScope(stage, "protected_host_stage_registration_invalid");
     this.#assertStage(stage);
-    if (this.#domain) assertProtectedHostDomainExcludesStage(this.#domain, stage.paths);
+    if (this.#domain) this.#assertStageExclusion(this.#domain, stage);
   }
   readStageIdentityFacts(token: ProtectedHostStageRegistration): ReturnType<ProtectedHostStagePaths["identityFacts"]> {
     this.assertStageCurrent(token);
@@ -329,12 +366,19 @@ export class ProtectedHostStageRegistry {
   closeStage(token: ProtectedHostStageRegistration): void {
     const stage = this.#stageLifetimes.get(token);
     requireScope(stage, "protected_host_stage_registration_invalid");
-    if (stage.lifetime === "closed") return;
+    requireScope(!stage.officeWindow && (stage.officeAdmission === undefined || stage.officeAdmission === "invalid"),
+      "protected_host_office_window_close_required");
+    if (stage.lifetime === "closed" || (stage.officeAdmission === "invalid" && stage.lifetime === "closed_pending")) return;
     requireScope(stage.lifetime === "active", "protected_host_stage_close_unknown");
-    stage.lifetime = "unknown";
-    this.#stages.delete(token);
-    stage.paths.close();
-    stage.lifetime = "closed";
+    const officeFailure = stage.officeAdmission === "invalid";
+    stage.lifetime = "close_entered";
+    if (!officeFailure) this.#stages.delete(token); // Preserve the original native-only cleanup semantics.
+    try { stage.paths.close(); }
+    catch (error) { stage.lifetime = "unknown"; throw error; }
+    // Failed Office admission may also have unknown destination cleanup. No
+    // original invalid-cleanup claim exists yet, so even known stage closure
+    // must retain its protection member rather than implicitly releasing it.
+    stage.lifetime = officeFailure ? "closed_pending" : "closed";
   }
   #source(token: ProtectedHostActorSource): ActorSourceState {
     const source = this.#sources.get(token);
@@ -347,6 +391,11 @@ export class ProtectedHostStageRegistry {
     return actor;
   }
   #assertStage(stage: StageState): void {
+    requireScope(stage.officeAdmission === undefined || stage.officeAdmission === "bound", "protected_host_office_window_admission_closed");
+    this.#assertStageCustody(stage);
+    stage.officeWindow?.paths.assertCurrent();
+  }
+  #assertStageCustody(stage: StageState): void {
     requireScope(stage.lifetime === "active", "protected_host_stage_closed");
     requireScope(!this.#coverageClosed, "protected_host_actor_coverage_unknown");
     this.#assertOriginalHostHistoryCurrent();
@@ -354,6 +403,101 @@ export class ProtectedHostStageRegistry {
     readProtectedHostBootstrapReadRoots(stage.backend);
     assertSourceCurrent(stage.source); assertPrivateStage(stage.paths);
   }
+  #assertStageExclusion(domain: ProtectedHostActorDomain, stage: StageState): void {
+    assertProtectedHostDomainExcludesStage(domain, stage.paths);
+    if (stage.officeWindow) assertProtectedHostDomainExcludesStage(domain, stage.officeWindow.paths.destination);
+  }
+  #assertOriginalOfficeStage(token: ProtectedHostStageRegistration): void {
+    const stage = this.#stageLifetimes.get(token);
+    requireScope(stage && this.#stages.get(token) === stage, "protected_host_stage_registration_invalid");
+    this.#assertActorInventoryCurrent(); this.#assertStage(stage);
+    if (this.#domain) this.#assertStageExclusion(this.#domain, stage);
+  }
+  #beginOfficeWindow(token: ProtectedHostStageRegistration, expected: HostOfficeLocalDirectoryExecutionRecordV2): ProtectedHostOfficeDirectoryWindowV2 {
+    const stage = this.#stageLifetimes.get(token);
+    requireScope(stage && this.#stages.get(token) === stage && !stage.officeAdmission && !stage.officeWindow,
+      "protected_host_office_window_admission_closed");
+    stage.officeAdmission = "binding_entered";
+    let paths: OriginalOfficeDirectoryWindowPaths | undefined;
+    try {
+      this.#assertActorInventoryCurrent(); this.#assertStageCustody(stage);
+      requireScope(isDeepStrictEqual(expected.source, { runId: stage.source.run.id, ...stage.source.sourceFence })
+        && expected.workspacePath === stage.source.run.cwd, "protected_host_office_window_source_invalid");
+      const execution = structuredClone(expected);
+      paths = captureOriginalOfficeDirectoryWindowPaths(execution, stage.paths);
+      const domain = this.#domain ?? { backend: stage.backend, staticReadRoots: readProtectedHostBootstrapReadRoots(stage.backend) };
+      assertProtectedHostDomainExcludesStage(domain, stage.paths);
+      assertProtectedHostDomainExcludesStage(domain, paths.destination);
+      this.#assertActorInventoryCurrent(); this.#assertStageCustody(stage); paths.assertCurrent();
+      const state: OfficeWindowState = { registration: token, stage, execution, paths, epoch: this.#hostBindingEpoch };
+      const window = Object.freeze({}) as ProtectedHostOfficeDirectoryWindowV2;
+      this.#officeWindows.set(window, state); stage.officeWindow = state; stage.officeAdmission = "bound";
+      return window;
+    } catch (error) {
+      stage.officeAdmission = "cleanup_entered";
+      // Only the newly acquired destination originals belong to failed window capture;
+      // the already registered stage retains its separate cleanup/protection lifetime.
+      try { paths?.destination.close(); }
+      catch (closeError) {
+        stage.officeAdmission = "invalid"; stage.lifetime = "unknown";
+        throw new AggregateError([error, closeError], "protected_host_office_window_capture_unknown");
+      }
+      stage.officeAdmission = "invalid";
+      if (error instanceof AggregateError) stage.lifetime = "unknown";
+      throw error;
+    }
+  }
+  #officeWindow(token: ProtectedHostOfficeDirectoryWindowV2): OfficeWindowState {
+    const window = this.#officeWindows.get(token);
+    requireScope(window && window.epoch === this.#hostBindingEpoch && window.stage.officeWindow === window
+      && this.#stages.get(window.registration) === window.stage, "protected_host_office_window_invalid");
+    return window;
+  }
+  #assertOfficeWindow(token: ProtectedHostOfficeDirectoryWindowV2, expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+    const window = this.#officeWindow(token), stage = window.stage;
+    requireScope(isDeepStrictEqual(expected, window.execution) && stage.officeAdmission === "bound", "protected_host_office_window_binding_invalid");
+    this.#assertActorInventoryCurrent(); this.#assertOriginalHostHistoryCurrent();
+    requireScope(isDeepStrictEqual(readMacosSandboxBackendIdentity(), stage.backend), "protected_host_backend_changed");
+    readProtectedHostBootstrapReadRoots(stage.backend); assertSourceCurrent(stage.source);
+    if (stage.lifetime === "active") { this.#assertStage(stage); if (this.#domain) this.#assertStageExclusion(this.#domain, stage); return; }
+    const closure = window.paths.readClosureFacts();
+    requireScope(stage.lifetime === "closed_pending" && closure.phase === "closed_pending"
+      && [...closure.stage, ...closure.destination].every(row => row.state === "closed" && row.close === "returned"),
+      "protected_host_office_window_close_unknown");
+    // Pending custody is historical: never fstat/reopen the already closed originals.
+  }
+  #closeOfficeWindow(token: ProtectedHostOfficeDirectoryWindowV2): void {
+    const window = this.#officeWindow(token), stage = window.stage;
+    requireScope(stage.lifetime === "active" && stage.officeAdmission === "bound", "protected_host_office_window_close_already_entered");
+    // Cleanup owns only the exact captured originals. Source/policy/pathname
+    // revocation cannot block their one close; safe proof and lease release
+    // remain separately gated by the fixed pending reader and future Core claim.
+    stage.lifetime = "close_entered";
+    try { window.paths.closeOriginalPaths(); stage.lifetime = "closed_pending"; }
+    catch (error) { stage.lifetime = "unknown"; throw error; }
+    // Keep #stages membership: neither closure nor caller DTO can release the lease.
+  }
+}
+function officeReader(registry: ProtectedHostStageRegistry): NonNullable<ReturnType<typeof originalOfficeRegistryReaders.get>> {
+  const reader = originalOfficeRegistryReaders.get(registry);
+  requireScope(reader, "protected_host_registry_invalid"); return reader;
+}
+/** Fixed source readers. These helpers never call overridable public inventory/stage methods. */
+export function assertOriginalProtectedHostOfficeStage(registry: ProtectedHostStageRegistry, stage: ProtectedHostStageRegistration): void {
+  officeReader(registry).assertStage(stage);
+}
+export function beginOriginalProtectedHostOfficeDirectoryWindow(registry: ProtectedHostStageRegistry, stage: ProtectedHostStageRegistration,
+  expected: HostOfficeLocalDirectoryExecutionRecordV2): ProtectedHostOfficeDirectoryWindowV2 {
+  return officeReader(registry).begin(stage, expected);
+}
+export function assertOriginalProtectedHostOfficeDirectoryWindow(registry: ProtectedHostStageRegistry, window: ProtectedHostOfficeDirectoryWindowV2,
+  expected: HostOfficeLocalDirectoryExecutionRecordV2): void { officeReader(registry).assertWindow(window, expected); }
+/** Closing readonly originals is irreversible and cannot settle Core or release protection. */
+export function closeOriginalProtectedHostOfficeDirectoryWindow(registry: ProtectedHostStageRegistry, window: ProtectedHostOfficeDirectoryWindowV2): void {
+  officeReader(registry).closeWindow(window);
+}
+export function readOriginalProtectedHostOfficeDirectoryClosure(registry: ProtectedHostStageRegistry, window: ProtectedHostOfficeDirectoryWindowV2): OriginalOfficeDirectoryWindowPathClosure {
+  return officeReader(registry).readClosure(window);
 }
 export function isProtectedHostStageRegistry(value: unknown): value is ProtectedHostStageRegistry {
   return typeof value === "object" && value !== null && ownedRegistries.has(value as ProtectedHostStageRegistry);

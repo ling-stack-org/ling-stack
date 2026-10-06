@@ -2,12 +2,14 @@ import { mkdtempSync, realpathSync } from "node:fs";
 import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { OFFICE_DOCUMENTS_MCP_SERVER_ID } from "@ling-stack/contracts";
-import type { RunStore, RuntimeInstance } from "@ling-stack/core";
+import type { HostOfficeLocalDirectoryExecutionRecordV2, RunStore, RuntimeInstance } from "@ling-stack/core";
 import type { McpBroker } from "../../context.js";
 import { findHostOfficeLocalFactory } from "../mcp/broker.js";
 import { isRuntimeSupervisorOfficeCacheEntry, readRuntimeSupervisorOfficeArtifact, readRuntimeSupervisorOfficeBinding, readRuntimeSupervisorOfficeIssuerId,
   type RuntimeSupervisor } from "../../runtime/supervisor.js";
-import { isProtectedHostStageRegistry, type ProtectedHostSourceInput,
+import { isProtectedHostStageRegistry, assertOriginalProtectedHostOfficeStage,
+  beginOriginalProtectedHostOfficeDirectoryWindow, assertOriginalProtectedHostOfficeDirectoryWindow,
+  type ProtectedHostOfficeDirectoryWindowV2, type ProtectedHostSourceInput,
   type ProtectedHostStageRegistration, type ProtectedHostStageRegistry } from "../../runtime/sandbox/protected-host-staging.js";
 import { loadReviewedOfficeLocalNativeArtifact, type OfficeLocalNativeIdentityFacts,
   type OfficeLocalNativeMethod } from "../../runtime/sandbox/protected-host-office-native-identity.js";
@@ -63,9 +65,16 @@ interface ScopeState {
   captureEntered: boolean;
   sessionCloseEntered: boolean;
   stageClosure: "retained" | "closed" | "unknown";
+  coreBinding?: "custody_entered" | "custody_captured" | "binding_entered" | "bound" | "invalid";
+  coreWindow?: ProtectedHostOfficeDirectoryWindowV2;
+  coreExecution?: HostOfficeLocalDirectoryExecutionRecordV2;
 }
 interface ResourceState { readonly scope: ScopeState; readonly native: object; closeEntered: boolean }
 const ownedRuntimes = new WeakSet<OfficeLocalNativeRuntime>();
+const originalCoreScopeReaders = new WeakMap<OfficeLocalNativeRuntime, Readonly<{
+  capture: (scope: OfficeLocalNativeTypedScope) => object;
+  assertBinding: (custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2) => void;
+}>>();
 function requireRuntime(value: unknown, code = "office_local_native_runtime_invalid"): asserts value {
   if (!value) throw new Error(code);
 }
@@ -79,6 +88,7 @@ function dataValue(value: object, key: string): unknown {
 export class OfficeLocalNativeRuntime {
   readonly #scopes = new WeakMap<OfficeLocalNativeTypedScope, ScopeState>();
   readonly #resources = new WeakMap<OfficeLocalNativeResource, ResourceState>();
+  readonly #coreCustodies = new WeakMap<object, ScopeState>();
   readonly #native: ReturnType<typeof loadReviewedOfficeLocalNativeArtifact>;
   readonly #factories = new WeakMap<McpBroker, string>();
   #identityClosure: "retained" | "closed" | "unknown" = "retained";
@@ -95,6 +105,10 @@ export class OfficeLocalNativeRuntime {
     }
     Object.freeze(this);
     ownedRuntimes.add(this);
+    originalCoreScopeReaders.set(this, Object.freeze({
+      capture: scope => this.#captureCoreCustody(scope),
+      assertBinding: (custody, expected) => this.#assertCoreBinding(custody, expected),
+    }));
   }
 
   bootstrapStage(input: OfficeLocalNativeBootstrapInput): OfficeLocalNativeTypedScope {
@@ -159,6 +173,8 @@ export class OfficeLocalNativeRuntime {
   openSession(scope: OfficeLocalNativeTypedScope, destinationParent: string): OfficeLocalNativePacket {
     const state = this.#scope(scope); this.#forward(state);
     requireRuntime(state.phase === "bootstrap", "office_local_native_capture_already_entered");
+    requireRuntime(state.coreBinding === undefined || state.coreBinding === "bound", "office_local_native_core_binding_required");
+    if (state.coreExecution) requireRuntime(destinationParent === state.coreExecution.destination.parentPath, "office_local_native_core_destination_invalid");
     state.phase = "capture_entered"; state.captureEntered = true;
     try {
       const packet = this.#native.invoke("openSession", [state.stagePath, destinationParent]);
@@ -222,6 +238,8 @@ export class OfficeLocalNativeRuntime {
   /** Close original readonly stage FDs only. No pathname unlink, no cleanup permission resurrection. */
   closeStage(scope: OfficeLocalNativeTypedScope): void {
     const state = this.#scope(scope);
+    requireRuntime(!state.coreWindow && state.coreBinding !== "binding_entered" && state.coreBinding !== "custody_entered",
+      "office_local_native_core_window_close_required");
     if (state.stageClosure === "closed") return;
     requireRuntime(state.stageClosure === "retained", "office_local_native_stage_close_unknown");
     requireRuntime(!state.captureEntered || state.nativeClosed, "office_local_native_stage_lifetime_unknown");
@@ -243,12 +261,43 @@ export class OfficeLocalNativeRuntime {
   }
   #forward(state: ScopeState): void {
     requireRuntime(isOwnedOfficeLocalNativeRuntime(this), "office_local_native_runtime_unowned");
-    requireRuntime(this.#identityClosure === "retained" && ["bootstrap", "captured"].includes(state.phase) && state.stageClosure === "retained", "office_local_native_scope_closed");
+    requireRuntime(this.#identityClosure === "retained" && ["bootstrap", "captured"].includes(state.phase) && state.stageClosure === "retained"
+      && state.coreBinding !== "invalid", "office_local_native_scope_closed");
     const runtime = readRuntimeSupervisorOfficeBinding(this.supervisor, this.store, this.registry);
     requireRuntime(runtime === state.runtime && isDeepStrictEqual(runtime, state.runtimeSnapshot), "office_local_native_runtime_obsolete");
     requireRuntime(findHostOfficeLocalFactory(state.source.originalBroker, OFFICE_DOCUMENTS_MCP_SERVER_ID,
       state.source.rawName, state.source.run.cwd) === state.source.factory, "office_local_native_factory_obsolete");
     this.registry.assertActorInventoryCurrent(); this.registry.assertStageCurrent(state.stage); this.#native.assertCurrent();
+    if (state.coreWindow) assertOriginalProtectedHostOfficeDirectoryWindow(this.registry, state.coreWindow, state.coreExecution!);
+  }
+  #captureCoreCustody(scope: OfficeLocalNativeTypedScope): object {
+    const state = this.#scope(scope);
+    requireRuntime(state.phase === "bootstrap" && !state.captureEntered && !state.sessionCloseEntered
+      && state.stageClosure === "retained" && !state.coreBinding, "office_local_native_core_custody_closed");
+    state.coreBinding = "custody_entered";
+    try {
+      this.#forward(state); assertOriginalProtectedHostOfficeStage(this.registry, state.stage);
+      const custody = Object.freeze({}); this.#coreCustodies.set(custody, state);
+      state.coreBinding = "custody_captured"; return custody;
+    } catch (error) { state.coreBinding = "invalid"; throw error; }
+  }
+  #assertCoreBinding(custody: object, expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+    const state = this.#coreCustodies.get(custody);
+    requireRuntime(state && state.coreBinding === "custody_captured", "office_local_native_core_custody_invalid");
+    state.coreBinding = "binding_entered";
+    try {
+      requireRuntime(state.phase === "bootstrap" && !state.captureEntered && !state.sessionCloseEntered && state.stageClosure === "retained",
+        "office_local_native_core_custody_closed");
+      this.#forward(state); assertOriginalProtectedHostOfficeStage(this.registry, state.stage);
+      const source = state.source;
+      requireRuntime(isDeepStrictEqual(expected.source, { runId: source.run.id, ...source.sourceFence })
+        && expected.workspacePath === source.run.cwd && expected.toolCallId === source.toolCallId && expected.toolName === source.rawName
+        && expected.stage.parentPath === state.stagePath && isDeepStrictEqual(expected.scopeRef, state.facts.scopeRef),
+        "office_local_native_core_source_invalid");
+      const execution = structuredClone(expected);
+      state.coreWindow = beginOriginalProtectedHostOfficeDirectoryWindow(this.registry, state.stage, execution);
+      state.coreExecution = execution; state.coreBinding = "bound";
+    } catch (error) { state.coreBinding = "invalid"; throw error; }
   }
   #resourceCall(scope: OfficeLocalNativeTypedScope, method: OfficeLocalNativeMethod, resource: OfficeLocalNativeResource,
     args: readonly unknown[]): OfficeLocalNativePacket {
@@ -283,4 +332,17 @@ export function isOwnedOfficeLocalNativeRuntime(value: unknown): value is Office
   return typeof value === "object" && value !== null && ownedRuntimes.has(value as OfficeLocalNativeRuntime)
     && Object.isFrozen(value) && isRuntimeSupervisorOfficeCacheEntry((value as OfficeLocalNativeRuntime).supervisor,
       (value as OfficeLocalNativeRuntime).store, (value as OfficeLocalNativeRuntime).registry, value as OfficeLocalNativeRuntime);
+}
+
+/** Module-private constructor readers: replacing a public runtime/registry method cannot mint custody. */
+export function captureOriginalOfficeDirectoryRuntimeCustody(runtime: OfficeLocalNativeRuntime, scope: OfficeLocalNativeTypedScope): object {
+  const reader = originalCoreScopeReaders.get(runtime);
+  requireRuntime(reader && isOwnedOfficeLocalNativeRuntime(runtime), "office_local_native_runtime_unowned");
+  return reader.capture(scope);
+}
+export function assertOriginalOfficeDirectoryRuntimeBinding(runtime: OfficeLocalNativeRuntime, custody: object,
+  expected: HostOfficeLocalDirectoryExecutionRecordV2): void {
+  const reader = originalCoreScopeReaders.get(runtime);
+  requireRuntime(reader && isOwnedOfficeLocalNativeRuntime(runtime), "office_local_native_runtime_unowned");
+  reader.assertBinding(custody, expected);
 }

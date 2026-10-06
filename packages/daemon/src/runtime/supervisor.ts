@@ -15,6 +15,8 @@ import {
   type WorkUnit,
   toRuntimeAttemptFence,
 } from "@ling-stack/core";
+import { assertOriginalOfficeHostBridgeForCompositionCurrent, retireOriginalOfficeHostBridgeForComposition,
+  type OriginalOfficeHostBridgeSetup } from "@ling-stack/core/original-office-host-bridge";
 import type { ResolvedDaemonConfig } from "../config.js";
 import { NativeRestrictedCommandRuntime } from "./sandbox/restricted-command-runtime.js";
 import { ProtectedHostStageRegistry } from "./sandbox/protected-host-staging.js";
@@ -39,8 +41,22 @@ const RUNTIME_SCHEMA_VERSION = 23;
 const originalOfficeRuntimeBindings = new WeakMap<RuntimeSupervisor, {
   readonly registry: ProtectedHostStageRegistry; readonly stores: WeakMap<RunStore, RuntimeInstance>;
   readonly nativeRuntimes: WeakMap<RunStore, OfficeLocalNativeRuntime>;
+  readonly storeBridges: Set<{ readonly store: RunStore; readonly setup: OriginalOfficeHostBridgeSetup }>;
   readonly issuerId: string; readonly artifact?: OfficeLocalReviewedNativeArtifact; active: boolean;
 }>();
+
+/** Exact constructor root, not public runtime/cache flags; cache ownership survives retirement for cleanup only. */
+export function isOriginalRuntimeSupervisorOfficeRoot(value: unknown): value is RuntimeSupervisor {
+  return typeof value === "object" && value !== null && originalOfficeRuntimeBindings.get(value as RuntimeSupervisor)?.active === true;
+}
+/** Fixed composition enrolls only sealed exact-owner handles; no replaceable lifecycle callback. */
+export function retainOriginalRuntimeSupervisorOfficeStoreBridge(supervisor: RuntimeSupervisor, store: RunStore,
+  setup: OriginalOfficeHostBridgeSetup): void {
+  const original = originalOfficeRuntimeBindings.get(supervisor);
+  if (!original?.active) throw new Error("office_local_directory_core_composition_invalid");
+  assertOriginalOfficeHostBridgeForCompositionCurrent(setup, store);
+  original.storeBridges.add(Object.freeze({ store, setup }));
+}
 export interface RuntimeSupervisorHostBootstrap {
   /** Exact original producer-module exports. Missing entries close Office; never a verified flag. */
   readonly actorEntries?: readonly ProtectedHostActorEntry[];
@@ -135,7 +151,7 @@ export class RuntimeSupervisor {
     hostBootstrap?: RuntimeSupervisorHostBootstrap,
   ) {
     this.hostBootstrap = captureHostBootstrap(hostBootstrap);
-    originalOfficeRuntimeBindings.set(this, { registry: this.protectedHostStages, stores: new WeakMap(), nativeRuntimes: new WeakMap(),
+    originalOfficeRuntimeBindings.set(this, { registry: this.protectedHostStages, stores: new WeakMap(), nativeRuntimes: new WeakMap(), storeBridges: new Set(),
       issuerId: `protected_host_supervisor_${randomUUID()}`, artifact: this.hostBootstrap?.officeLocalNativeArtifact, active: true });
     if (this.hostBootstrap?.actorEntries) this.protectedHostStages.bindOriginalActorEntries(this.hostBootstrap.actorEntries);
   }
@@ -271,7 +287,10 @@ export class RuntimeSupervisor {
   }
 
   releaseAll(): void {
-    originalOfficeRuntimeBindings.get(this)!.active = false;
+    const original = originalOfficeRuntimeBindings.get(this)!;
+    original.active = false;
+    for (const bridge of original.storeBridges) retireOriginalOfficeHostBridgeForComposition(bridge.setup, bridge.store);
+    original.storeBridges.clear();
     const nativeCloseErrors: unknown[] = [];
     for (const runtime of this.officeNativeRuntimes.values()) {
       try { runtime.releaseIdentity(); } catch (error) { nativeCloseErrors.push(error); }

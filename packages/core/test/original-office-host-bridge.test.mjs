@@ -5,6 +5,8 @@ import {
   captureOriginalOfficeHostBridgeReader as capture,
   sealOriginalOfficeHostBridgeForComposition as seal,
   mintOriginalOfficeDirectoryAuthorityV2 as mint,
+  assertOriginalOfficeHostBridgeForCompositionCurrent as assertComposition,
+  retireOriginalOfficeHostBridgeForComposition as retireComposition,
 } from "../dist/original-office-host-bridge.js";
 import { SqliteRunStore } from "../dist/index.js";
 import { verifyHostOfficeReceipt } from "../dist/storage/sqlite/host-office-local-journal-evidence.js";
@@ -20,11 +22,44 @@ function channel(callback = () => undefined) {
   seal(pair.setup, owner, endpoint(callback));
   return { ...pair, owner, bridge, authority: mint(pair.setup, Object.freeze({})) };
 }
+
+test("composition lifecycle reader rejects wrong owner and cloned setup without retiring an original channel", () => {
+  const original = channel();
+  for (const setup of copies(original.setup)) {
+    assert.throws(() => assertComposition(setup, original.owner), code("host_office_local_bridge_owner_invalid"));
+    assert.throws(() => retireComposition(setup, original.owner), code("host_office_local_bridge_owner_invalid"));
+  }
+  assert.throws(() => assertComposition(original.setup, {}), code("host_office_local_bridge_owner_invalid"));
+  assert.throws(() => retireComposition(original.setup, {}), code("host_office_local_bridge_owner_invalid"));
+  assertComposition(original.setup, original.owner); original.bridge.assertAuthorityOwned(original.authority);
+  retireComposition(original.setup, original.owner); retireComposition(original.setup, original.owner);
+  assert.throws(() => assertComposition(original.setup, original.owner), code("host_office_local_bridge_unavailable"));
+  assert.throws(() => original.bridge.assertAuthorityOwned(original.authority), code("host_office_local_bridge_unavailable"));
+  assert.throws(() => mint(original.setup, {}), code("host_office_local_bridge_unavailable"));
+});
+
+test("composition cannot enroll or retire an unsealed channel and failed lifecycle checks never seal it", () => {
+  const pair = create(), owner = {}; capture(pair.reader, owner);
+  assert.throws(() => assertComposition(pair.setup, owner), code("host_office_local_bridge_unavailable"));
+  assert.throws(() => retireComposition(pair.setup, owner), code("host_office_local_bridge_unavailable"));
+  seal(pair.setup, owner, endpoint(() => undefined)); assertComposition(pair.setup, owner);
+});
 async function fixture(t, callback = () => undefined, { sealed = true } = {}) {
   const pair = create(), f = await directoryV2StoreFixture(t, { originalOfficeHostBridge: pair.reader });
   if (sealed) seal(pair.setup, f.store, endpoint((custody, expected) => callback(f, custody, expected)));
   return { ...f, ...pair, authority: () => mint(pair.setup, Object.freeze({})) };
 }
+
+test("Host composition retirement closes already-bound Core effect admission while SQLite remains open", async t => {
+  const f = await fixture(t), authority = f.authority();
+  f.store.bindHostOfficeLocalDirectoryScopeAuthorityV2(f.ticket, authority);
+  retireComposition(f.setup, f.store);
+  assert.throws(() => f.store.prepareHostOfficeLocalDirectoryEffectV2(f.ticket,
+    { effectId: "after-root-retirement", ordinal: 0, kind: "capture_parents", mode: "forward", preparedAt: f.now() }),
+    code("host_office_local_bridge_unavailable"));
+  assert.deepEqual(f.store.listHostOfficeLocalDirectoryEffectsV2(f.ticket.executionId), []);
+  assert.equal(f.store.getRun(f.source.runId).status, "running");
+});
 
 test("bridge tokens are frozen opaque handles and cloned/spread/proxy readers never capture", () => {
   const pair = create();
