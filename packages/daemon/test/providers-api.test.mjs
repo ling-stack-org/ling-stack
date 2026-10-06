@@ -165,8 +165,8 @@ test("saved local provider secrets can fetch models only through their unchanged
   const localSecret = "sk-saved-local-model-discovery";
   const previousReplacementSecret = process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY;
   try {
-    process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY = "sk-replacement-env-model-discovery";
-    keychain.setSecret("keychain:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "sk-replacement-keychain-model-discovery");
+    process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY = "replacement-env-model-discovery-test-value";
+    keychain.setSecret("keychain:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "replacement-keychain-model-discovery-test-value");
     const created = await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
       kind: "openai-compatible",
       displayName: "Saved Relay",
@@ -207,8 +207,8 @@ test("saved local provider secrets can fetch models only through their unchanged
     assert.doesNotMatch(JSON.stringify(changedConnection), new RegExp(localSecret));
 
     for (const [apiKeyRef, secret] of [
-      ["env:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "sk-replacement-env-model-discovery"],
-      ["keychain:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "sk-replacement-keychain-model-discovery"],
+      ["env:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "replacement-env-model-discovery-test-value"],
+      ["keychain:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "replacement-keychain-model-discovery-test-value"],
     ]) {
       const replacementModels = await postJson(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
         providerPresetId: created.provider.id,
