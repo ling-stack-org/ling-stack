@@ -82,6 +82,7 @@ export function parseProviderModelListRequest(value: unknown): ProviderModelList
     throw new Error("Provider model list request must be a JSON object");
   }
   const request: ProviderModelListRequest = {
+    providerPresetId: readOptionalString(value, "providerPresetId"),
     kind: readProviderKind(value, "kind"),
     providerId: readString(value, "providerId"),
     api: readProviderApi(value, "api"),
@@ -348,7 +349,7 @@ function providerModelDisplayName(
   model: Pick<ProviderModelOption, "displayName" | "id">,
 ): string {
   const modelName = model.displayName?.trim() || model.id;
-  if (providerId === "custom-openai-compatible") return modelName;
+  if (providerId === "custom-openai-compatible") return model.id;
   return `${providerDisplayName.trim()} · ${modelName}`;
 }
 

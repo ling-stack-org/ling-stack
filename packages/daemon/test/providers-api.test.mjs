@@ -156,6 +156,141 @@ test("provider secret header refs are validated and materialized for model disco
   }
 });
 
+test("saved local provider secrets can fetch models only through their unchanged preset connection", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-providers-api-local-models-"));
+  const stores = new Map();
+  const keychain = createFakeKeychainStore();
+  const daemon = await startDaemonForTest(stores, { externalSecretStore: keychain });
+  const modelServer = await startModelServerForSecretHeaderTest();
+  const localSecret = "sk-saved-local-model-discovery";
+  const previousReplacementSecret = process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY;
+  try {
+    process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY = "replacement-env-model-discovery-test-value";
+    keychain.setSecret("keychain:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "replacement-keychain-model-discovery-test-value");
+    const created = await postJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      displayName: "Saved Relay",
+      providerId: "custom-openai-compatible",
+      model: "gpt-secret-header",
+      api: "openai-completions",
+      baseUrl: modelServer.url,
+      apiKey: localSecret,
+      capabilities: ["chat"],
+      input: ["text"],
+      enabled: true,
+    });
+
+    const models = await postJson(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: created.provider.id,
+      kind: created.provider.kind,
+      providerId: created.provider.providerId,
+      api: created.provider.api,
+      baseUrl: created.provider.baseUrl,
+      authHeader: created.provider.authHeader,
+    });
+    assert.deepEqual(models.models.map((model) => model.id), ["gpt-secret-header"]);
+    assert.equal(modelServer.requests.length, 1);
+    assert.equal(modelServer.requests[0].headers.authorization, `Bearer ${localSecret}`);
+    assert.doesNotMatch(JSON.stringify(models), new RegExp(localSecret));
+
+    const changedConnection = await postJsonAllowFailure(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
+      providerPresetId: created.provider.id,
+      kind: created.provider.kind,
+      providerId: created.provider.providerId,
+      api: created.provider.api,
+      baseUrl: `${modelServer.url}/changed`,
+      authHeader: created.provider.authHeader,
+    });
+    assert.equal(changedConnection.status, 409);
+    assert.equal(changedConnection.body.error, "provider_model_connection_changed");
+    assert.equal(modelServer.requests.length, 1);
+    assert.doesNotMatch(JSON.stringify(changedConnection), new RegExp(localSecret));
+
+    for (const [apiKeyRef, secret] of [
+      ["env:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "replacement-env-model-discovery-test-value"],
+      ["keychain:LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY", "replacement-keychain-model-discovery-test-value"],
+    ]) {
+      const replacementModels = await postJson(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: created.provider.id,
+        kind: created.provider.kind,
+        providerId: created.provider.providerId,
+        api: created.provider.api,
+        baseUrl: created.provider.baseUrl,
+        authHeader: created.provider.authHeader,
+        apiKeyRef,
+        headers: { "x-discovery-credential": "replacement" },
+      });
+      assert.deepEqual(replacementModels.models.map((model) => model.id), ["gpt-secret-header"]);
+      assert.equal(modelServer.requests.at(-1).headers.authorization, `Bearer ${secret}`);
+      assert.equal(modelServer.requests.at(-1).headers["x-discovery-credential"], "replacement");
+      assert.doesNotMatch(JSON.stringify(replacementModels), new RegExp(secret));
+      assert.doesNotMatch(JSON.stringify(replacementModels), new RegExp(localSecret));
+    }
+    assert.equal(stores.get(cwd).getProviderSecret(created.provider.id), localSecret);
+  } finally {
+    if (previousReplacementSecret === undefined) {
+      delete process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY;
+    } else {
+      process.env.LING_STACK_TEST_REPLACEMENT_PROVIDER_KEY = previousReplacementSecret;
+    }
+    await modelServer.close();
+    await daemon.close();
+    for (const store of stores.values()) store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("native Gemini and Mistral model discovery use protocol-specific auth and response shapes", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-providers-native-models-"));
+  const stores = new Map();
+  const daemon = await startDaemonForTest(stores);
+  const modelServer = await startNativeModelDiscoveryServer();
+  try {
+    const geminiToken = "gemini-test-token";
+    const gemini = await postJson(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "google",
+      providerId: "google-gemini",
+      api: "google-generative-ai",
+      baseUrl: modelServer.url,
+      apiKey: geminiToken,
+      capabilities: ["chat"],
+    });
+
+    assert.deepEqual(gemini.models.map((model) => model.id), ["gemini-3.5-flash"]);
+    assert.equal(gemini.models[0].displayName, "Gemini 3.5 Flash");
+    assert.equal(gemini.models[0].contextWindow, 1000000);
+    assert.equal(gemini.models[0].maxTokens, 65536);
+    assert.equal(gemini.source, `${modelServer.url}/models`);
+    assert.ok(Date.parse(gemini.fetchedAt));
+    assert.equal(gemini.catalog.source, "models.dev");
+    assert.match(gemini.catalog.version, /^models\.dev:/);
+    assert.equal(modelServer.requests[0].url, "/models");
+    assert.equal(modelServer.requests[0].headers["x-goog-api-key"], geminiToken);
+    assert.equal(modelServer.requests[0].headers.authorization, undefined);
+    assert.doesNotMatch(JSON.stringify(gemini), new RegExp(geminiToken));
+
+    const mistralToken = "mistral-test-token";
+    const mistral = await postJson(`${daemon.url}/provider-models?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "openai-compatible",
+      providerId: "mistral",
+      api: "mistral-conversations",
+      baseUrl: modelServer.url,
+      apiKey: mistralToken,
+      capabilities: ["chat"],
+    });
+
+    assert.deepEqual(mistral.models.map((model) => model.id), ["mistral-large-latest"]);
+    assert.equal(modelServer.requests[1].headers.authorization, `Bearer ${mistralToken}`);
+    assert.equal(modelServer.requests[1].headers["x-goog-api-key"], undefined);
+    assert.doesNotMatch(JSON.stringify(mistral), new RegExp(mistralToken));
+  } finally {
+    await modelServer.close();
+    await daemon.close();
+    for (const store of stores.values()) store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("provider keychain setup saves refs without keeping local provider secret", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-providers-api-keychain-"));
   const stores = new Map();
@@ -457,6 +592,49 @@ async function startModelServerForSecretHeaderTest() {
     }
     response.writeHead(200, { "Content-Type": "application/json" });
     response.end(JSON.stringify({ data: [{ id: "gpt-secret-header" }] }));
+  });
+  await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
+  const address = server.address();
+  assert.ok(address && typeof address === "object");
+  return {
+    requests,
+    url: `http://127.0.0.1:${address.port}`,
+    close: () => new Promise((resolveClose, rejectClose) => {
+      server.close((error) => error ? rejectClose(error) : resolveClose());
+    }),
+  };
+}
+
+async function startNativeModelDiscoveryServer() {
+  const requests = [];
+  const server = createServer((request, response) => {
+    requests.push({ url: request.url, headers: request.headers });
+    if (request.url !== "/models") {
+      response.writeHead(404, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "not found" }));
+      return;
+    }
+    response.writeHead(200, { "Content-Type": "application/json" });
+    if (request.headers["x-goog-api-key"]) {
+      response.end(JSON.stringify({
+        models: [
+          {
+            name: "models/gemini-3.5-flash",
+            displayName: "Gemini 3.5 Flash",
+            inputTokenLimit: 1000000,
+            outputTokenLimit: 65536,
+            supportedGenerationMethods: ["generateContent", "countTokens"],
+          },
+          {
+            name: "models/text-embedding-004",
+            displayName: "Text Embedding 004",
+            supportedGenerationMethods: ["embedContent"],
+          },
+        ],
+      }));
+      return;
+    }
+    response.end(JSON.stringify({ data: [{ id: "mistral-large-latest", owned_by: "mistral" }] }));
   });
   await new Promise((resolveListen) => server.listen(0, "127.0.0.1", resolveListen));
   const address = server.address();

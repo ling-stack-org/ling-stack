@@ -1,0 +1,59 @@
+name: Sync provider model catalog
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "23 2 * * *"
+
+concurrency:
+  group: provider-model-catalog-sync
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.15.0
+
+      - name: Check catalog PR synchronization safety
+        run: node --test scripts/ci/provider-model-catalog-pr.test.mjs
+
+      - name: Refresh reviewed catalog data
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          branch="automation/provider-model-catalog"
+          git fetch origin main "$branch" || git fetch origin main
+          git checkout -B "$branch" origin/main
+          node scripts/sync-provider-model-catalog.mjs
+          git add packages/core/src/provider-model-catalog.generated.ts
+          if git diff --cached --quiet; then
+            echo "Catalog is already current."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git commit -m "chore: refresh provider model catalog"
+          git push --force-with-lease origin "HEAD:$branch"
+          pull_requests_json="$(gh pr list --state open --head "$branch" --base main --limit 2 --json number,state,headRefName,baseRefName,isCrossRepository)"
+          pull_request="$(printf '%s' "$pull_requests_json" | node scripts/ci/provider-model-catalog-pr.mjs "$branch")"
+          if [ -n "$pull_request" ]; then
+            gh pr edit "$pull_request" --title "chore: refresh provider model catalog" --body "Automated reviewed data refresh from the MIT-licensed models.dev catalog. This PR changes metadata only and does not enable provider adapters or runtime permissions."
+          else
+            gh pr create --base main --head "$branch" --title "chore: refresh provider model catalog" --body "Automated reviewed data refresh from the MIT-licensed models.dev catalog. This PR changes metadata only and does not enable provider adapters or runtime permissions."
+          fi

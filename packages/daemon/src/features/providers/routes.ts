@@ -762,7 +762,7 @@ function providerImportDisplayName(
   model: { readonly id: string; readonly displayName?: string },
 ): string {
   const modelName = model.displayName?.trim() || model.id;
-  if (providerId === "custom-openai-compatible") return modelName;
+  if (providerId === "custom-openai-compatible") return model.id;
   return `${providerDisplayName.trim()} · ${modelName}`;
 }
 
