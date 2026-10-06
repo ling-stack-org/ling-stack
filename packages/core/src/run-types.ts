@@ -1528,10 +1528,12 @@ export interface RunStore {
   }, now: string): import("./approval-postcommit-types.js").ApprovalPostCommitEffect | undefined;
   quarantineMediaApprovalSubmission(approvalId: string, mediaJobId: string, now: string): import("./approval-postcommit-types.js").ApprovalPostCommitEffect | undefined;
   prepareHostCommandExecution(input: import("./host-command-journal-types.js").PrepareHostCommandExecutionInput): import("./host-command-journal-types.js").HostCommandExecutionTicket;
-  launchHostCommandExecution<T>(ticket: import("./host-command-journal-types.js").HostCommandExecutionTicket, launch: () => T): T;
+  /** Optional synchronous read-only denial gate runs under the writer lock before claiming the launch. */
+  launchHostCommandExecution<T>(ticket: import("./host-command-journal-types.js").HostCommandExecutionTicket, launch: () => T,
+    assertMayLaunch?: () => void): T;
   /** Exact command + attempt operation launch, under one writer transaction. Neither ID is replay authority. */
   launchTrackedHostCommandExecution<T>(operation: import("./host-operation-journal-types.js").HostOperationTicket,
-    command: import("./host-command-journal-types.js").HostCommandExecutionTicket, launch: () => T): T;
+    command: import("./host-command-journal-types.js").HostCommandExecutionTicket, launch: () => T, assertMayLaunch?: () => void): T;
   settleHostCommandExecution(ticket: import("./host-command-journal-types.js").HostCommandExecutionTicket, input: import("./host-command-journal-types.js").HostCommandSettlementInput): Extract<RunEventEnvelope, { readonly type: "host_command_settled" }>;
   listHostCommandWriteBlockers(cwd: string): import("@ling-stack/contracts").HostCommandWriteBlockerV1[];
   admitHostOperation(input: import("./host-operation-journal-types.js").AdmitHostOperationInput): import("./host-operation-journal-types.js").HostOperationTicket;

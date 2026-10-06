@@ -267,7 +267,7 @@ export class AttemptHostOperationTracker {
           },
         });
       },
-      launch: <T>(ticket: HostCommandExecutionTicket, effect: () => T): T => {
+      launch: <T>(ticket: HostCommandExecutionTicket, effect: () => T, assertMayLaunch?: () => void): T => {
         this.#assertUnsettled(operation);
         this.#group.assertMayLaunch(operation.groupTicket);
         if (operation.launched) fail("already_launched", "Host command has already entered effect launch.");
@@ -276,7 +276,7 @@ export class AttemptHostOperationTracker {
           this.#group.launchHostEffect(operation.groupTicket, () => {
             operation.launched = true; // Never reset after effect/COMMIT failure.
             return effect();
-          }));
+          }), assertMayLaunch);
       },
       settleNoStart: () => { this.settleNoStart(handle); },
       markUnknown: (code: string) => { this.markUnknown(handle, code); },

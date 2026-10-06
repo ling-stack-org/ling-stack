@@ -20,8 +20,14 @@ function requireBootstrap(value: unknown): asserts value {
   if (!value) throw new Error("protected_host_bootstrap_domain_unverified");
 }
 
-/** Actual bounded, original OS-owned bytes bound to the backend; a caller digest is never authority. */
-export function readProtectedHostBootstrapReadRoots(backend: ExecutionSandboxBackendIdentity): readonly string[] {
+const originalUnsupportedReviews = new WeakSet<object>();
+/** Single-use provenance for only this original reader's unsupported review result. */
+export function consumeProtectedHostBootstrapReviewUnsupported(error: unknown): boolean {
+  return error !== null && (typeof error === "object" || typeof error === "function")
+    && originalUnsupportedReviews.delete(error);
+}
+/** All identity and original FD closes complete before an unsupported review can be tagged. */
+function readOriginalBootstrapReviewStatus(backend: ExecutionSandboxBackendIdentity): boolean {
   const initial = lstatSync(MACOS_DYLD_PROFILE, { bigint: true });
   requireBootstrap(initial.isFile() && !initial.isSymbolicLink() && initial.uid === 0n && (initial.mode & 0o022n) === 0n
     && initial.size > 0n && initial.size <= BigInt(maxBootstrapBytes) && realpathSync(MACOS_DYLD_PROFILE) === MACOS_DYLD_PROFILE);
@@ -58,10 +64,26 @@ export function readProtectedHostBootstrapReadRoots(backend: ExecutionSandboxBac
     requireBootstrap(sameFile(acquired, final) && sameFile(acquired, pathname) && final.uid === 0n
       && (final.mode & 0o022n) === 0n && final.size === acquired.size && realpathSync(MACOS_DYLD_PROFILE) === MACOS_DYLD_PROFILE);
     const sha = createHash("sha256").update(bytes.subarray(0, length)).digest("hex");
-    requireBootstrap(sha === reviewedBootstrapSha256 && backend.kind === "macos_seatbelt"
+    requireBootstrap(backend.kind === "macos_seatbelt"
       && backend.helperVersion.endsWith(":" + sha));
-    return reservedReadRoots;
+    return sha === reviewedBootstrapSha256;
   } finally {
     if (fd !== undefined) { const original = fd; fd = undefined; closeSync(original); }
+  }
+}
+
+/** Actual bounded OS bytes; unreviewed imports never acquire a complete read-domain claim. */
+export function readProtectedHostBootstrapReadRoots(backend: ExecutionSandboxBackendIdentity): readonly string[] {
+  let originalUnsupported: Error | undefined;
+  try {
+    if (readOriginalBootstrapReviewStatus(backend)) return reservedReadRoots;
+    originalUnsupported = new Error("protected_host_bootstrap_domain_unverified");
+    originalUnsupportedReviews.add(originalUnsupported);
+    throw originalUnsupported;
+  } catch (error) {
+    // A reused old Error from lstat/read/fstat/close is not this invocation's review result.
+    if (error !== originalUnsupported && error !== null
+      && (typeof error === "object" || typeof error === "function")) originalUnsupportedReviews.delete(error);
+    throw error;
   }
 }

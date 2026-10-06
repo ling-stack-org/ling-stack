@@ -2322,17 +2322,20 @@ async function createGenericDelegatedActionFixture(suffix) {
 }
 
 function createFixtureRun(store, cwd, channelId, workflowStepId, task, id, now) {
+  const step = store.getChannelWorkflowStep(workflowStepId);
+  const delegatedRequirement = step?.metadata?.delegatedRequirement;
   const run = store.createRun({
     id,
     cwd,
     taskId: task.id,
     channelId,
     workflowStepId,
+    teammateId: step?.toParticipantId,
     providerName: "test-provider",
     providerModel: "test-model",
     taskSnapshot: { id: task.id, title: task.title },
     providerSnapshot: { provider: "test-provider", model: "test-model" },
-    requestSnapshot: { cwd },
+    requestSnapshot: { cwd, ...(delegatedRequirement ? { delegatedRequirement } : {}) },
     createdAt: now,
   });
   store.markRunStarted(run.id, now);

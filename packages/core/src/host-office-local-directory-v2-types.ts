@@ -98,6 +98,7 @@ export type HostOfficeLocalDirectoryEffectRecordV2 = PrepareHostOfficeLocalDirec
 };
 export type HostOfficeDirectoryNativeObservationV2 = { readonly state: "not_entered" }
   | { readonly state: "threw"; readonly calledAt: string; readonly completedAt: string; readonly errorCode: string }
+  | { readonly state: "returned_unprojectable"; readonly calledAt: string; readonly returnedAt: string; readonly errorCode: string }
   | { readonly state: "returned"; readonly calledAt: string; readonly returnedAt: string;
       readonly result: HostOfficeNativeResultFactsV2 };
 export interface HostOfficeLocalDirectoryObservationV2 {

@@ -28,7 +28,7 @@ export interface HostCommandOperation {
   /** Enroll native input/copy preparation before its first await or filesystem effect. */
   registerPreparation(producerId: string): HostCommandPreparationOperation;
   /** Claims command and attempt operation atomically around a synchronous OS spawn. */
-  launch<T>(ticket: HostCommandExecutionTicket, effect: () => T): T;
+  launch<T>(ticket: HostCommandExecutionTicket, effect: () => T, assertMayLaunch?: () => void): T;
   /** Only a never-entered spawn can release this reservation. */
   settleNoStart(): void;
   /** Exit/stdio close is diagnostic, not proof of descendants or effect drain. */

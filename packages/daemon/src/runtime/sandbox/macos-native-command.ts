@@ -1,15 +1,15 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createHash } from "node:crypto";
-import { lstatSync, readFileSync, realpathSync } from "node:fs";
+import { lstatSync, realpathSync } from "node:fs";
 import { dirname, isAbsolute, resolve } from "node:path";
-import { release } from "node:os";
 import type { ExecutionSandboxBackendIdentity, ExecutionSandboxPolicyV1, UnifiedExecCommand } from "@ling-stack/core";
-import { buildMacosSeatbeltProfile, MACOS_DYLD_PROFILE, MACOS_SANDBOX_EXECUTABLE, MACOS_SYSTEM_READ_ROOTS } from "./macos-seatbelt-profile.js";
+import { buildMacosSeatbeltProfile, MACOS_SANDBOX_EXECUTABLE, MACOS_SYSTEM_READ_ROOTS } from "./macos-seatbelt-profile.js";
+import { MacosSandboxCommandError, readMacosSandboxBackendIdentity } from "./macos-sandbox-backend.js";
+export { MacosSandboxCommandError, readMacosSandboxBackendIdentity } from "./macos-sandbox-backend.js";
 import { defineProtectedHostActorEntry } from "./protected-host-actor-inventory.js";
 import { assertProtectedHostActorPreparedBinding, type ProtectedHostActorPreparation } from "./protected-host-staging.js";
 
 const hash = (value: string | Buffer): string => createHash("sha256").update(value).digest("hex");
-const backendVersion = "ling-seatbelt-v1";
 const ownedProcessGroups = new WeakMap<ChildProcessWithoutNullStreams, number>();
 const ownedPreparedChildren = new WeakMap<ChildProcessWithoutNullStreams, PreparedMacosSandboxCommand>();
 const ownedPreparedCommands = new WeakMap<PreparedMacosSandboxCommand, {
@@ -46,24 +46,8 @@ const sameBackend = (first: ExecutionSandboxBackendIdentity, second: ExecutionSa
   first.kind === second.kind && first.helperVersion === second.helperVersion
   && first.protocolVersion === second.protocolVersion && first.executableSha256 === second.executableSha256;
 
-export class MacosSandboxCommandError extends Error {
-  constructor(readonly code: string) { super(code); this.name = "MacosSandboxCommandError"; }
-}
 function requireNative(condition: unknown, code: string): asserts condition {
   if (!condition) throw new MacosSandboxCommandError(code);
-}
-
-/** Fixed system identity. A project path, PATH lookup or config verified flag is never used. */
-export function readMacosSandboxBackendIdentity(): ExecutionSandboxBackendIdentity {
-  requireNative(process.platform === "darwin", "macos_backend_unavailable");
-  for (const path of [MACOS_SANDBOX_EXECUTABLE, MACOS_DYLD_PROFILE]) {
-    const stat = lstatSync(path);
-    requireNative(stat.isFile() && !stat.isSymbolicLink() && stat.uid === 0 && (stat.mode & 0o022) === 0 && realpathSync(path) === path, "macos_system_identity_invalid");
-    requireNative(stat.size <= 8 * 1024 * 1024, "macos_system_identity_invalid");
-  }
-  return Object.freeze({ kind: "macos_seatbelt", protocolVersion: 1,
-    helperVersion: `${backendVersion}:${release()}:${hash(readFileSync(MACOS_DYLD_PROFILE))}`,
-    executableSha256: hash(readFileSync(MACOS_SANDBOX_EXECUTABLE)) });
 }
 
 function commandArgv(command: UnifiedExecCommand): readonly string[] {

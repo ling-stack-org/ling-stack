@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
@@ -33,6 +33,8 @@ import { workflowOperationEffectRejection } from "./workflow-operation-effect-ga
 import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
 import { createStreamCapture, createSyntheticStreamCapture, toStreamSummary, type StreamCaptureSnapshot } from "./unified-exec-output.js";
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
+import { createUnifiedExecRawDispatch } from "./unified-exec-raw-source.js";
+import { normalizeBashRequest } from "./unified-exec-request.js";
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -68,13 +70,25 @@ export async function executeUnifiedBashTool(input: {
     if (rejection) return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
       approvalId: input.approvalId, reason: rejection.code + ": " + rejection.reason });
     let restrictedDispatch: ReturnType<typeof createRestrictedCommandDispatch>;
+    let rawDispatch: ReturnType<typeof createUnifiedExecRawDispatch> | undefined;
     try { restrictedDispatch = createRestrictedCommandDispatch(input); }
     catch (error) { return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
       approvalId: input.approvalId, reason: formatError(error) }); }
+    if (restrictedDispatch === undefined) {
+      try { rawDispatch = createUnifiedExecRawDispatch({ ...input,
+        approvalRequest: input.request, request: normalized.request }); }
+      catch (error) {
+        // A cancellation is control flow, not a policy-denied handled result.
+        throwIfAborted(input.signal);
+        return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
+          approvalId: input.approvalId, reason: formatError(error) });
+      }
+    }
     delegated = true;
     return await executeUnifiedExec({
       ...input,
       restrictedDispatch,
+      rawDispatch,
       request: normalized.request,
     });
   } finally {
@@ -111,44 +125,9 @@ export function createUnifiedExecDeniedResult(input: {
   };
 }
 
-function normalizeBashRequest(
-  run: RunSession,
-  approvalRequest: PiRunnerApprovalRequest,
-  approvalId: string | undefined,
-): { readonly request: UnifiedExecRequest } | { readonly request: UnifiedExecRequest; readonly error: string } {
-  const command = readInputString(approvalRequest.input, "command", "");
-  const requestedCwd = readInputString(approvalRequest.input, "cwd", approvalRequest.cwd || run.cwd);
-  const cwd = isAbsolute(requestedCwd) ? resolvePath(requestedCwd) : resolvePath(run.cwd, requestedCwd);
-  const timeoutMs = readTimeoutMs(approvalRequest.input);
-  const idleTimeoutMs = readInputNumber(approvalRequest.input, "idleTimeoutMs");
-  const pty = readInputBoolean(approvalRequest.input, "pty") ?? false;
-  const request: UnifiedExecRequest = {
-    runId: run.id,
-    taskId: run.taskId,
-    toolCallId: approvalRequest.toolCallId,
-    approvalId,
-    cwd,
-    command: { kind: "shell", command, shell: "bash" },
-    timeoutMs,
-    idleTimeoutMs,
-    pty,
-    environment: { mode: "inherit_minimal" },
-    startedBy: "run_tool",
-  };
-  if (!command.trim()) {
-    return { request, error: "Ling Stack unified exec rejected an empty bash command." };
-  }
-  if (pty) {
-    return { request, error: "Ling Stack unified exec P1 does not support PTY shell commands." };
-  }
-  if (!isPathInsideRoot(run.cwd, cwd)) {
-    return { request, error: `Ling Stack unified exec rejected cwd outside the run workspace: ${cwd}` };
-  }
-  return { request };
-}
-
 async function executeUnifiedExec(input: {
   readonly restrictedDispatch?: ReturnType<typeof createRestrictedCommandDispatch>;
+  readonly rawDispatch?: ReturnType<typeof createUnifiedExecRawDispatch>;
   readonly store: RunStore;
   readonly sourceFence: RuntimeAttemptFenceV1;
   readonly run: RunSession;
@@ -212,20 +191,37 @@ async function executeUnifiedExec(input: {
     shellSnapshots.captureStart({ startedAt, startedMs });
     const launch = () => {
       throwIfAborted(input.signal);
-      spawnEntered = true;
-      child = prepared ? prepared.spawn() : spawnCommand(input.request.command, { cwd: input.request.cwd, env: environment.env });
+      if (prepared) {
+        // Native preparation has its own enrolled physical effects. Keep its
+        // existing conservative latch; it is not authority for a raw producer.
+        spawnEntered = true;
+        child = prepared.spawn();
+      } else {
+        if (!input.rawDispatch) throw new Error("unified_exec_raw_source_missing");
+        child = input.rawDispatch.spawn(environment.env, () => { spawnEntered = true; });
+      }
     };
-    if (input.hostOperation) input.hostOperation.launch(ticket, launch);
-    else input.store.launchHostCommandExecution(ticket, launch);
+    const preflight = () => { throwIfAborted(input.signal); input.rawDispatch?.assertMayLaunch(); };
+    if (input.hostOperation) input.hostOperation.launch(ticket, launch, preflight);
+    else input.store.launchHostCommandExecution(ticket, launch, preflight);
   } catch (error) {
     if (child) {
       // An OS process exists even if the database commit failed. Do not call it not_started.
       launchFailed = true;
       launchError = error;
     } else {
-      input.store.settleHostCommandExecution(ticket, { kind: "not_started" });
-      noStartSettled = true;
-      cleanupSafe = true;
+      // An entered native producer can throw before returning a child. No
+      // handle is not proof that no process/effect exists.
+      if (spawnEntered) {
+        input.store.settleHostCommandExecution(ticket, { kind: "observed", observation: {
+          scope: process.platform === "win32" ? "leader" : "process_group", settledBy: "cleanup_deadline",
+          leaderExited: false, stdioClosed: false, descendants: "unverified", stopReason: "observer_error", signalFailures: [],
+        } });
+      } else {
+        input.store.settleHostCommandExecution(ticket, { kind: "not_started" });
+        noStartSettled = true;
+        cleanupSafe = true;
+      }
       throwIfAborted(input.signal);
       const handled = writeSyntheticFailureResult({
         ...input,
@@ -615,30 +611,6 @@ function buildEnvironment(cwd: string, policy: UnifiedExecEnvironmentPolicy | un
   };
 }
 
-function spawnCommand(
-  command: UnifiedExecCommand,
-  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv },
-): ChildProcessWithoutNullStreams {
-  if (command.kind === "argv") {
-    const [file, ...args] = command.argv;
-    if (!file) {
-      throw new Error("argv command requires at least one argument.");
-    }
-    return spawn(file, args, {
-      cwd: options.cwd,
-      env: options.env,
-      detached: process.platform !== "win32",
-      stdio: "pipe",
-    });
-  }
-  return spawn(command.shell ?? "bash", ["-lc", command.command], {
-    cwd: options.cwd,
-    env: options.env,
-    detached: process.platform !== "win32",
-    stdio: "pipe",
-  });
-}
-
 function redactCommand(command: UnifiedExecCommand, extraSecrets: readonly (string | undefined)[]): UnifiedExecCommand {
   if (command.kind === "argv") {
     return {
@@ -654,44 +626,6 @@ function redactCommand(command: UnifiedExecCommand, extraSecrets: readonly (stri
 
 function wasCommandRedacted(command: UnifiedExecCommand, extraSecrets: readonly (string | undefined)[]): boolean {
   return JSON.stringify(command) !== JSON.stringify(redactCommand(command, extraSecrets));
-}
-
-function readInputString(input: unknown, key: string, fallback: string): string {
-  if (!isRecord(input)) {
-    return fallback;
-  }
-  const value = input[key];
-  return typeof value === "string" ? value : fallback;
-}
-
-function readInputNumber(input: unknown, key: string): number | undefined {
-  if (!isRecord(input)) {
-    return undefined;
-  }
-  const value = input[key];
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-function readInputBoolean(input: unknown, key: string): boolean | undefined {
-  if (!isRecord(input)) {
-    return undefined;
-  }
-  const value = input[key];
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function readTimeoutMs(input: unknown): number | undefined {
-  const timeoutMs = readInputNumber(input, "timeoutMs");
-  if (timeoutMs !== undefined) {
-    return timeoutMs;
-  }
-  const timeoutSeconds = readInputNumber(input, "timeout");
-  return timeoutSeconds === undefined ? undefined : Math.max(1, Math.floor(timeoutSeconds * 1000));
-}
-
-function isPathInsideRoot(root: string, path: string): boolean {
-  const relativePath = relative(resolvePath(root), resolvePath(path));
-  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 function artifactIdFor(runId: string, toolCallId: string, role: string): string {

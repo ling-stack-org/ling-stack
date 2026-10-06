@@ -1,5 +1,5 @@
 import { lstatSync, realpathSync } from "node:fs";
-import { basename, dirname, isAbsolute, join, relative } from "node:path";
+import { basename, dirname, join, relative } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 import type { EffectiveRunPolicySnapshot, ExecutionSandboxBackendIdentity } from "@ling-stack/core";
 import { captureProtectedHostStagePaths, type ProtectedHostStagePaths } from "./protected-host-stage-paths.js";
@@ -7,12 +7,9 @@ import { buildMacosSeatbeltProfile, MACOS_SYSTEM_READ_ROOTS } from "./macos-seat
 import type { PreparedMacosSandboxAuthority } from "./macos-native-command.js";
 import { readProtectedHostBootstrapReadRoots } from "./protected-host-bootstrap-domain.js";
 
-const arenaParent = "/private/tmp";
-const arenaName = /^ling-command-[A-Za-z0-9]{6}$/u;
-export const protectedHostPathInside = (path: string, root: string): boolean => {
-  const tail = relative(root, path);
-  return !isAbsolute(tail) && tail !== ".." && !tail.startsWith("../");
-};
+import { PROTECTED_HOST_COMMAND_ARENA_PARENT as arenaParent, PROTECTED_HOST_COMMAND_ARENA_NAME as arenaName,
+  protectedHostPathInside } from "./protected-host-domain-paths.js";
+export { protectedHostPathInside } from "./protected-host-domain-paths.js";
 const overlap = (first: string, second: string): boolean => protectedHostPathInside(first, second) || protectedHostPathInside(second, first);
 const sameRoots = (actual: readonly string[], expected: readonly string[]): boolean =>
   isDeepStrictEqual([...actual].sort(), [...new Set(expected)].sort());

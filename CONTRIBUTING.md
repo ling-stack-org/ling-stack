@@ -26,7 +26,7 @@ not need a new design document.
 
 Requirements:
 
-- Node.js 22.15 or newer
+- Node.js 22.22.1 or newer
 - Corepack with pnpm 10
 
 ```bash

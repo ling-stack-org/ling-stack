@@ -30,6 +30,13 @@ export function validateOfficeLocalDirectoryObservationPayloadV2(execution: Host
       || v2Timestamp(native.completedAt) < v2Timestamp(native.calledAt) || v2Timestamp(native.completedAt) > completedAt) return directoryV2Failure();
     return value as unknown as HostOfficeLocalDirectoryObservationV2;
   }
+  if (native.state === "returned_unprojectable") {
+    if (!v2Exact(native, ["state", "calledAt", "returnedAt", "errorCode"]) || !v2Text(native.errorCode) || host.state !== "unconfirmed"
+      || value.resourceBindings.length || Object.hasOwn(value, "readbackBytes") || Object.hasOwn(value, "publicationBytes")
+      || v2Timestamp(native.calledAt) < v2Timestamp(effect.enteredAt) || v2Timestamp(native.returnedAt) < v2Timestamp(native.calledAt)
+      || v2Timestamp(native.returnedAt) > completedAt) return directoryV2Failure();
+    return value as unknown as HostOfficeLocalDirectoryObservationV2;
+  }
   if (native.state !== "returned" || !v2Exact(native, ["state", "calledAt", "returnedAt", "result"])
     || v2Timestamp(native.calledAt) < v2Timestamp(effect.enteredAt) || v2Timestamp(native.returnedAt) < v2Timestamp(native.calledAt)
     || v2Timestamp(native.returnedAt) > completedAt) return directoryV2Failure();
@@ -58,10 +65,25 @@ export function validateOfficeLocalDirectoryObservationPayloadV2(execution: Host
     || result.calls.some(call => call.resourceLifetimeId !== effect.nativeLifetimeId))) return directoryV2Failure();
   if (effect.kind === "create_directory" || effect.kind === "create_file") {
     const binding = bindings.find(item => item.resourceSlotId === effect.resourceSlotId);
-    if (!binding || result.resourceFact?.lifetimeId !== binding.nativeLifetimeId
-      || result.resourceFact.parentLifetimeId !== effect.parentNativeLifetimeId
-      || bindings.find(item => item.resourceSlotId === effect.parentResourceSlotId)?.nativeLifetimeId !== effect.parentNativeLifetimeId
+    if (!binding || bindings.find(item => item.resourceSlotId === effect.parentResourceSlotId)?.nativeLifetimeId !== effect.parentNativeLifetimeId
       || result.calls.some(call => call.resourceLifetimeId !== binding.nativeLifetimeId)) return directoryV2Failure();
+    if (result.resourceFact) {
+      if (result.resourceFact.lifetimeId !== binding.nativeLifetimeId || result.resourceFact.parentLifetimeId !== effect.parentNativeLifetimeId) return directoryV2Failure();
+    } else {
+      // The original native creator returns before assigning result.resource
+      // when its one initial mkdir/open fails. No existing node is adopted.
+      const resource = result.snapshot.resources.find(item => item.lifetimeId === binding.nativeLifetimeId), call = result.calls[0],
+        directory = effect.kind === "create_directory";
+      if (result.success !== false || result.snapshot.phase !== "blocked" || !result.snapshot.everFailed
+        || result.snapshot.installationEntered || result.snapshot.publicationObservationClaimed
+        || !resource || resource.kind !== (directory ? "created_directory" : "created_file") || resource.basename !== effect.basename
+        || resource.parentLifetimeId !== effect.parentNativeLifetimeId || resource.state !== "not_acquired" || resource.identityObserved
+        || resource.device !== "0" || resource.inode !== "0" || resource.bytesWritten !== "0" || resource.fsyncReturned
+        || Object.hasOwn(binding, "acquisitionCallRef") || Object.hasOwn(binding, "firstFstatCallRef")
+        || result.calls.length !== 1 || !call || call.syscall !== (directory ? "mkdirat" : "openat_create_exclusive")
+        || call.parentLifetimeId !== effect.parentNativeLifetimeId || call.nativeReturnState !== "returned"
+        || call.returned !== -1 || call.success !== false || call.errno <= 0 || Object.hasOwn(call, "identity")) return directoryV2Failure();
+    }
   }
   if (["fsync_resource", "observe_resource", "close_resource", "install_tree"].includes(effect.kind) && result.calls.length !== 1) return directoryV2Failure();
   if (result.success && result.calls.some(call => call.nativeReturnState !== "returned" || !call.success)) {

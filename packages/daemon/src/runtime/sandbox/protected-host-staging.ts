@@ -10,6 +10,7 @@ import { assertProtectedHostDomainExcludesStage, captureProtectedHostActorDomain
 import { readProtectedHostBootstrapReadRoots } from "./protected-host-bootstrap-domain.js";
 import { ProtectedHostActorInventory, type ProtectedHostActorEntry } from "./protected-host-actor-inventory.js";
 import { readOriginalProtectedHostActorEntries } from "./protected-host-original-entry-manifest.js";
+import { readOriginalPackagedCodesignHostProof, type OriginalPackagedCodesignHostProof } from "./packaged-codesign-host-source.js";
 
 declare const stageBrand: unique symbol;
 declare const sourceBrand: unique symbol;
@@ -95,6 +96,10 @@ export class ProtectedHostStageRegistry {
   readonly #sources = new WeakMap<ProtectedHostActorSource, ActorSourceState>();
   readonly #actors = new WeakMap<ProtectedHostActorPreparation, ActorState>();
   readonly #inventory = new ProtectedHostActorInventory();
+  readonly #hostBindingEpoch = Object.freeze({});
+  #hostBindings = new Map<OriginalPackagedCodesignHostProof, {
+    readonly entry: ProtectedHostActorEntry; readonly epoch: object; readonly domain: ProtectedHostActorDomain;
+  }>();
   #domain: ProtectedHostActorDomain | undefined;
   #coverageClosed = false;
   constructor() { ownedRegistries.add(this); }
@@ -110,7 +115,7 @@ export class ProtectedHostStageRegistry {
     requireScope(!this.#coverageClosed, "protected_host_actor_coverage_unknown");
   }
   /** Gate runs in the source-owned wrapper immediately before its captured native producer. */
-  assertActorEntryLaunchCurrent(entry: ProtectedHostActorEntry, actor?: ProtectedHostActorPreparation): void {
+  assertActorEntryLaunchCurrent(entry: ProtectedHostActorEntry, actor?: ProtectedHostActorPreparation, launchEntered = true): void {
     const facts = this.#inventory.assertOriginal(entry);
     if (facts.kind !== "controlled") return;
     if (actor) {
@@ -120,7 +125,59 @@ export class ProtectedHostStageRegistry {
     // A refused launch has not created an unknown descendant. With no stage,
     // ordinary execution remains usable, regardless of lifetime command count.
     requireScope(this.#stages.size === 0, "protected_host_actor_unbound_with_active_stage");
-    this.#coverageClosed = true;
+    if (launchEntered) this.#coverageClosed = true;
+  }
+
+  /** Read-only aggregate preflight. Canonical proof identity substitutes no Run/DB authority. */
+  assertOriginalHostProofBatch(histories: readonly {
+    readonly entry: ProtectedHostActorEntry; readonly proof: OriginalPackagedCodesignHostProof;
+  }[]): void { this.#previewOriginalHostProofBatch(histories); }
+
+  /** Commit only retained source custody. Compute every value before either field mutates. */
+  commitOriginalHostProofBatch(histories: readonly {
+    readonly entry: ProtectedHostActorEntry; readonly proof: OriginalPackagedCodesignHostProof;
+  }[]): void {
+    const merged = this.#previewOriginalHostProofBatch(histories), next = new Map(this.#hostBindings);
+    for (const { entry, proof } of histories) {
+      this.#inventory.assertOriginal(entry);
+      const facts = readOriginalPackagedCodesignHostProof(entry, proof);
+      requireScope(facts.phase === "retained", "protected_host_actor_prepared_binding_invalid");
+      next.set(proof, Object.freeze({ entry, epoch: this.#hostBindingEpoch, domain: facts.domain }));
+    }
+    this.#hostBindings = next;
+    this.#domain = merged;
+  }
+  #previewOriginalHostProofBatch(histories: readonly {
+    readonly entry: ProtectedHostActorEntry; readonly proof: OriginalPackagedCodesignHostProof;
+  }[]): ProtectedHostActorDomain | undefined {
+    this.#assertOriginalHostHistoryCurrent();
+    requireScope(new Set(histories.map(row => row.proof)).size === histories.length,
+      "protected_host_actor_prepared_binding_invalid");
+    const roots = new Set(this.#domain?.staticReadRoots ?? []);
+    let backend = this.#domain?.backend;
+    for (const { entry, proof } of histories) {
+      const facts = readOriginalPackagedCodesignHostProof(entry, proof);
+      requireScope(facts.entryId === "packaged_codesign" && (!backend || isDeepStrictEqual(backend, facts.domain.backend)),
+        "protected_host_backend_changed");
+      backend ??= facts.domain.backend;
+      for (const root of facts.domain.staticReadRoots) roots.add(root);
+    }
+    requireScope(roots.size <= 128 && this.#hostBindings.size + histories.filter(row => !this.#hostBindings.has(row.proof)).length <= 16,
+      "protected_host_actor_coverage_unknown");
+    const merged = backend ? Object.freeze({ backend, staticReadRoots: Object.freeze([...roots]) }) : undefined;
+    if (merged) for (const stage of this.#stages.values()) {
+      this.#assertStage(stage); assertProtectedHostDomainExcludesStage(merged, stage.paths);
+    }
+    return merged;
+  }
+  #assertOriginalHostHistoryCurrent(): void {
+    try {
+      for (const [proof, binding] of this.#hostBindings) {
+        const facts = readOriginalPackagedCodesignHostProof(binding.entry, proof);
+        requireScope(binding.epoch === this.#hostBindingEpoch && facts.phase === "retained" && facts.domain === binding.domain,
+          "protected_host_actor_prepared_binding_invalid");
+      }
+    } catch (error) { this.#coverageClosed = true; throw error; }
   }
 
   /** Only register an existing Host stage: this slice neither creates it nor deletes any pathname. */
@@ -129,6 +186,7 @@ export class ProtectedHostStageRegistry {
     try {
       requireScope(this.#stages.size < 64, "protected_host_stage_budget_exceeded");
       requireScope(!this.#coverageClosed, "protected_host_actor_coverage_unknown");
+      this.#assertOriginalHostHistoryCurrent();
       assertSourceCurrent(source); assertPrivateStage(paths);
       const backend = readMacosSandboxBackendIdentity();
       const implicitRoots = readProtectedHostBootstrapReadRoots(backend);
@@ -291,6 +349,7 @@ export class ProtectedHostStageRegistry {
   #assertStage(stage: StageState): void {
     requireScope(stage.lifetime === "active", "protected_host_stage_closed");
     requireScope(!this.#coverageClosed, "protected_host_actor_coverage_unknown");
+    this.#assertOriginalHostHistoryCurrent();
     requireScope(isDeepStrictEqual(readMacosSandboxBackendIdentity(), stage.backend), "protected_host_backend_changed");
     readProtectedHostBootstrapReadRoots(stage.backend);
     assertSourceCurrent(stage.source); assertPrivateStage(stage.paths);

@@ -13,6 +13,7 @@ import { isCurrentRunExecutionOwner } from "./run-execution-admission.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { readSqliteWithinTransaction } from "./read-snapshot.js";
 import { hostOperationDomainIdentity, readHostOperation, sameHostOperationSource } from "./host-operation-journal-evidence.js";
+import { assertHostLaunchPreflight } from "./host-launch-preflight.js";
 
 type PreparedEvent = Extract<RunEventEnvelope, { type: "host_command_prepared" }>;
 type SettledEvent = Extract<RunEventEnvelope, { type: "host_command_settled" }>;
@@ -99,7 +100,7 @@ export class SqliteHostCommandJournalStore {
    * Preparation has already committed, so a crash/commit error after spawn stays blocking.
    * The caller must retain any created process even if this method throws on commit.
    */
-  launchHostCommandExecution<T>(ticket: HostCommandExecutionTicket, launch: () => T): T {
+  launchHostCommandExecution<T>(ticket: HostCommandExecutionTicket, launch: () => T, assertMayLaunch?: () => void): T {
     const state = this.tickets.get(ticket);
     if (!state) throw failure("invalid_command_ticket");
     if (state.launchClaimed || state.settlement) throw failure("command_launch_already_claimed");
@@ -107,6 +108,7 @@ export class SqliteHostCommandJournalStore {
     return this.transaction(() => {
       if (!isCurrentRunExecutionOwner(this.context, state.run.id, state.fence, false)
         || this.getRun(state.run.id)?.cwd !== state.run.cwd) throw failure("stale_run_execution");
+      assertHostLaunchPreflight(this.context.database, assertMayLaunch);
       state.launchClaimed = true;
       // The source check and OS spawn share this write lock. Nested evidence
       // projections may read it, but may not write or begin/commit another view.
@@ -118,22 +120,34 @@ export class SqliteHostCommandJournalStore {
     });
   }
 
+  /** Exact command identity check before the outer operation journal claims or changes phase. */
+  assertMayLaunchWithinHostOperation(ticket: HostCommandExecutionTicket, operationId: string): void {
+    this.requireTrackedLaunchState(ticket, operationId, "admitted");
+  }
+
   /**
-   * Internal half of the tracked launch. The operation journal already owns the
-   * writer transaction and read-only effect window; do not open a nested one.
-   * Recheck both opaque ticket and exact durable binding under that same lock.
+   * Internal half of the tracked launch, in the operation journal's read-only
+   * effect window. Recheck identity under the same writer lock as preflight.
    * Claim survives throw/thenable/outer COMMIT failure so it cannot respawn.
    */
   launchWithinHostOperation<T>(ticket: HostCommandExecutionTicket, operationId: string, launch: () => T): T {
+    if (typeof launch !== "function" || Object.prototype.toString.call(launch) === "[object AsyncFunction]") {
+      throw failure("command_tracked_launch_window_invalid");
+    }
+    const state = this.requireTrackedLaunchState(ticket, operationId, "launched");
+    state.launchClaimed = true;
+    return readSqliteWithinTransaction(this.context.database, launch);
+  }
+
+  private requireTrackedLaunchState(ticket: HostCommandExecutionTicket, operationId: string, phase: "admitted" | "launched"): TicketState {
     const state = this.tickets.get(ticket);
     if (!state) throw failure("invalid_command_ticket");
     if (state.launchClaimed || state.settlement) throw failure("command_launch_already_claimed");
-    if (!this.context.database.isTransaction || this.context.database.prepare("PRAGMA query_only").get()?.query_only !== 1
-      || typeof launch !== "function" || Object.prototype.toString.call(launch) === "[object AsyncFunction]") {
+    if (!this.context.database.isTransaction || this.context.database.prepare("PRAGMA query_only").get()?.query_only !== 1) {
       throw failure("command_tracked_launch_window_invalid");
     }
     const operation = readHostOperation(this.context.database, operationId);
-    if (!operation || operation.phase !== "launched" || operation.kind !== "command"
+    if (!operation || operation.phase !== phase || operation.kind !== "command"
       || operation.evidenceRef?.kind !== "host_command" || operation.evidenceRef.id !== ticket.executionId
       || !sameHostOperationSource(operation.source, { runId: state.run.id, ...state.fence })
       || hostOperationDomainIdentity(this.context.database, operation, operation.evidenceRef, false) !== operation.domainIdentityDigest) {
@@ -141,8 +155,7 @@ export class SqliteHostCommandJournalStore {
     }
     if (!isCurrentRunExecutionOwner(this.context, state.run.id, state.fence, false)
       || this.getRun(state.run.id)?.cwd !== state.run.cwd) throw failure("stale_run_execution");
-    state.launchClaimed = true;
-    return readSqliteWithinTransaction(this.context.database, launch);
+    return state;
   }
 
   listHostCommandWriteBlockers(cwd: string): HostCommandWriteBlockerV1[] {

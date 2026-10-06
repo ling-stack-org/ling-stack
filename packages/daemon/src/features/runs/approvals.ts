@@ -76,6 +76,7 @@ import { workflowOperationEffectRejection } from "./workflow-operation-effect-ga
 import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
 import type { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
+export { mergeRunTools, mergeApprovalProfiles } from "./run-approval-profile.js";
 import { reserveFileMutationAdmission, type FileMutationAdmission } from "./file-mutation-admission.js";
 import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
 import {
@@ -1067,32 +1068,6 @@ export function mergeApprovalPolicyWithProfile(policy: ApprovalPolicy, profile: 
   return { ...policy, toolDecisions };
 }
 
-export function mergeRunTools(base: readonly RunTool[], required: readonly RunTool[]): RunTool[] {
-  const tools = new Set<RunTool>(base);
-  for (const tool of required) {
-    tools.add(tool);
-  }
-  return [...tools];
-}
-
-export function mergeApprovalProfiles(
-  base: SkillApprovalProfile | undefined,
-  required: SkillApprovalProfile,
-): SkillApprovalProfile {
-  if (!base || approvalModeRank(required.mode) > approvalModeRank(base.mode)) {
-    return {
-      ...required,
-      requiredForTools: mergeRunTools(base?.requiredForTools ?? [], required.requiredForTools ?? []),
-      requiredForActions: mergeStringList(base?.requiredForActions ?? [], required.requiredForActions ?? []),
-    };
-  }
-  return {
-    ...base,
-    requiredForTools: mergeRunTools(base.requiredForTools ?? [], required.requiredForTools ?? []),
-    requiredForActions: mergeStringList(base.requiredForActions ?? [], required.requiredForActions ?? []),
-  };
-}
-
 export function usesSideEffectTools(tools: readonly RunTool[]): boolean {
   return tools.some((tool) => tool === "bash" || tool === "edit" || tool === "write");
 }
@@ -1319,20 +1294,6 @@ function evaluateApprovalPolicy(
     decision: "ask",
     reason: `Ling Stack policy requires approval for ${request.toolName}.`,
   };
-}
-
-function mergeStringList<T extends string>(base: readonly T[], required: readonly T[]): T[] {
-  return [...new Set([...base, ...required])];
-}
-
-function approvalModeRank(mode: SkillApprovalProfile["mode"]): number {
-  if (mode === "strict") {
-    return 2;
-  }
-  if (mode === "standard") {
-    return 1;
-  }
-  return 0;
 }
 
 function toCreateApprovalRequestInput(

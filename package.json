@@ -43,7 +43,7 @@
     "glm"
   ],
   "engines": {
-    "node": ">=22.15"
+    "node": ">=22.22.1"
   },
   "pnpm": {
     "onlyBuiltDependencies": [

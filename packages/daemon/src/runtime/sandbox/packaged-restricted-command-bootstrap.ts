@@ -1,4 +1,3 @@
-import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { basename, dirname, join } from "node:path";
@@ -7,6 +6,12 @@ import {
   ELECTRON_NODE_RESOURCE_PATHS,
 } from "./electron-node-resources.js";
 import type { RestrictedCommandRuntimeConfig } from "./restricted-command-runtime.js";
+import { prepareOriginalPackagedCodesignSource, readOriginalPackagedCodesignSource,
+  closeOriginalPackagedCodesignIdentity, createOriginalPackagedCodesignInvocation,
+  createUnverifiedPackagedCodesignInvocation, readOriginalPackagedCodesignActorEntry } from "./packaged-codesign-host-source.js";
+
+/** Exact singleton from the original source, not a generic same-name factory or caller resolver. */
+export const PACKAGED_CODESIGN_ACTOR_ENTRY = readOriginalPackagedCodesignActorEntry();
 
 interface NativeBuildManifest {
   readonly schemaVersion: number;
@@ -34,12 +39,27 @@ function fixedFile(path: string, executable: boolean): string {
   "restricted_command_packaged_resource_invalid");
   return path;
 }
-function verifyFinalMacosBundle(path: string): void {
-  const result = spawnSync("/usr/bin/codesign", ["--verify", "--deep", "--strict", path], {
-    encoding: "utf8", timeout: 30_000, windowsHide: true,
-  });
-  requireBootstrap(!result.error && !result.signal && result.status === 0,
-    "restricted_command_bundle_identity_invalid");
+function verifyFinalMacosBundle(path: string, originalDefaultHostSource = false): void {
+  const source = originalDefaultHostSource ? prepareOriginalPackagedCodesignSource() : undefined;
+  let failed = false, failure: unknown;
+  try {
+    if (source) requireBootstrap(readOriginalPackagedCodesignSource(source).appBundlePath === path,
+      "packaged_codesign_host_source_invalid");
+    const record = source ? createOriginalPackagedCodesignInvocation(source)
+      : createUnverifiedPackagedCodesignInvocation(["--verify", "--deep", "--strict", path]);
+    // Candidate profiles are not certified Host actors: no Run actor is borrowed,
+    // and both pre-Supervisor and no-stage entry history remain sticky unknown.
+    const result = PACKAGED_CODESIGN_ACTOR_ENTRY.invoke(undefined, record);
+    requireBootstrap(!result.error && !result.signal && result.status === 0,
+      "restricted_command_bundle_identity_invalid");
+  } catch (error) { failed = true; failure = error; throw error; }
+  finally {
+    if (source) try { closeOriginalPackagedCodesignIdentity(source); }
+    catch (closeError) {
+      if (failed) throw new AggregateError([failure, closeError], "packaged_codesign_identity_close_unknown");
+      throw closeError;
+    }
+  }
 }
 function parseManifest(path: string, target: string): NativeBuildManifest {
   const bytes = readFileSync(fixedFile(path, false));
@@ -71,7 +91,8 @@ export function readPackagedRestrictedCommandConfig(
   requireBootstrap(basename(dirname(executable)) === "MacOS" && basename(contents) === "Contents"
     && basename(appBundle).endsWith(".app") && realpathSync(appBundle) === appBundle,
   "restricted_command_packaged_layout_invalid");
-  (dependencies.verifyBundle ?? verifyFinalMacosBundle)(appBundle);
+  if (dependencies.verifyBundle) dependencies.verifyBundle(appBundle);
+  else verifyFinalMacosBundle(appBundle, Reflect.ownKeys(dependencies).length === 0);
   const architecture = dependencies.architecture ?? process.arch;
   const target = architecture === "arm64" ? "aarch64-apple-darwin"
     : architecture === "x64" ? "x86_64-apple-darwin" : "";

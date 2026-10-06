@@ -1,3 +1,9 @@
+#[cfg(target_os = "macos")]
+mod codesign;
+#[cfg(target_os = "macos")]
+mod codesign_darwin;
+#[cfg(target_os = "macos")]
+mod codesign_mach;
 #[cfg(unix)]
 mod input_read;
 mod protocol;
@@ -21,13 +27,26 @@ fn main() -> ExitCode {
 
 fn respond(output: &mut impl io::Write) -> Result<io::Result<()>, ProtocolError> {
     let args: Vec<_> = std::env::args_os().skip(1).collect();
-    if args.len() != 1 || (args[0] != "--stdio-handshake" && args[0] != "--read-input") {
+    if args.len() != 1
+        || (args[0] != "--stdio-handshake"
+            && args[0] != "--read-input"
+            && args[0] != "--verify-packaged-codesign")
+    {
+        return Err(ProtocolError::UnsupportedInvocation);
+    }
+    #[cfg(not(target_os = "macos"))]
+    if args[0] == "--verify-packaged-codesign" {
         return Err(ProtocolError::UnsupportedInvocation);
     }
     let parent = parent_pid()
         .filter(|pid| *pid != 0)
         .ok_or(ProtocolError::ParentUnavailable)?;
-    let body = protocol::read_frame(&mut io::stdin().lock())?;
+    let mut input = io::stdin().lock();
+    let body = protocol::read_frame(&mut input)?;
+    #[cfg(target_os = "macos")]
+    if args[0] == "--verify-packaged-codesign" {
+        return codesign::respond(&body, parent, &mut input, output);
+    }
     if args[0] == "--read-input" {
         #[cfg(unix)]
         return input_read::respond(&body, parent, output);

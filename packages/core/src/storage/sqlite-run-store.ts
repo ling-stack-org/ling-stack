@@ -616,6 +616,7 @@ import { SqliteControlPlaneStore } from "./sqlite/control-plane-store.js";
 import { SqliteRunEventStore } from "./sqlite/run-event-store.js";
 import { SqliteHostCommandJournalStore } from "./sqlite/host-command-journal-store.js";
 import { SqliteHostOperationJournalStore } from "./sqlite/host-operation-journal-store.js";
+import { assertHostLaunchPreflight } from "./sqlite/host-launch-preflight.js";
 import { SqliteHostMediaOperationStore } from "./sqlite/host-media-operation-store.js";
 import { SqliteHostOfficeLocalStore } from "./sqlite/host-office-local-store.js";
 import { SqliteHostOfficeLocalDirectoryV2Store } from "./sqlite/host-office-local-directory-v2-store.js";
@@ -1868,19 +1869,25 @@ export class SqliteRunStore implements RunStore {
     return this.hostCommandJournal.settleHostCommandExecution(...args);
   }
 
-  launchHostCommandExecution<T>(ticket: Parameters<RunStore["launchHostCommandExecution"]>[0], launch: () => T): T {
-    return this.hostCommandJournal.launchHostCommandExecution(ticket, launch);
+  launchHostCommandExecution<T>(ticket: Parameters<RunStore["launchHostCommandExecution"]>[0], launch: () => T,
+    assertMayLaunch?: () => void): T {
+    return this.hostCommandJournal.launchHostCommandExecution(ticket, launch, assertMayLaunch);
   }
 
   launchTrackedHostCommandExecution<T>(operation: Parameters<RunStore["launchTrackedHostCommandExecution"]>[0],
-    command: Parameters<RunStore["launchTrackedHostCommandExecution"]>[1], launch: () => T): T {
+    command: Parameters<RunStore["launchTrackedHostCommandExecution"]>[1], launch: () => T, assertMayLaunch?: () => void): T {
     // Check the real callback before wrapping it: an async wrapper must never
     // start an OS effect outside the synchronous Host transaction.
     if (typeof launch !== "function" || Object.prototype.toString.call(launch) === "[object AsyncFunction]") {
       throw Object.assign(new TypeError("command_launcher_must_be_synchronous"), { code: "command_launcher_must_be_synchronous" });
     }
     return this.hostOperationJournal.launchHostOperation(operation, () =>
-      this.hostCommandJournal.launchWithinHostOperation(command, operation.operationId, launch));
+      this.hostCommandJournal.launchWithinHostOperation(command, operation.operationId, launch), () => {
+      this.hostCommandJournal.assertMayLaunchWithinHostOperation(command, operation.operationId);
+      // Keep the original callback observable: a void wrapper must not hide an
+      // async assertion or convert a returned decision into launch authority.
+      assertHostLaunchPreflight(this.database, assertMayLaunch);
+    });
   }
 
   listHostCommandWriteBlockers(cwd: string): ReturnType<RunStore["listHostCommandWriteBlockers"]> {

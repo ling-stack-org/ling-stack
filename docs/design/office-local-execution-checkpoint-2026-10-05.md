@@ -1,5 +1,47 @@
 # Office local execution checkpoint — 2026-10-05
 
+## Latest narrow acceptance (2026-10-06)
+
+The user has reconfirmed the controlled-process boundary: Full Access and other
+unrestricted same-UID processes are outside the isolation guarantee; raw
+transport is not an authorization exemption. No privileged service/user/ACL
+change is planned. The implementation tree and current backup HEAD are unchanged.
+
+The new fixed directory adapter remains facts-only, not product-safe. Its first
+actual 9/10 run exposed a genuine initial mkdirat EEXIST return with no
+resourceFact: native had acquired no resource, but the Core create guard required
+the success fact. The narrow guard now accepts only the exact kind-specific
+initial mkdirat/exclusive-open failed return with original parent/slot/lifetime,
+not-acquired/no-identity/no-acquisition facts and retained errno. Success and
+generic validation remain unchanged. The original failure logs are preserved.
+
+Fresh Core/Daemon direct builds exit0. New failure positives reproduce **0/3 RED**
+against the old dist; the fixed Core suite passes **43/43** and the original actual
+mkdirat EEXIST passes **1/1**. Five adjacent Core suites pass **196/196**, four
+portable Daemon suites **29/29**, and complete actual adapter conformance
+**12/12**, all exit0 with no failed/cancelled/skipped/todo tests. The latter includes
+genuine nested DOCX/XLSX/PPTX bytes and two post-install projection-loss cases.
+The install may have physically happened even if installationEntered=false under
+unknown. No-start/retry/safe release is rejected; prior confirmed file closure is
+preserved. Host binding-boundary fault injection is not spontaneous native loss.
+
+The new source snapshot's full Core suite is now terminal **2310/2310, exit0**,
+with zero fail/cancel/skip/todo and all 1307 Core source/dist/test inputs unchanged
+before/after and on final revalidation. This does not prove latest Daemon or GUI
+acceptance. Do not rerun this completed snapshot.
+
+All 3315 scoped adjacent/native inputs match before/after. Evidence:
+`output/e6-20260928/OFFICE-CREATE-FAILURE-ACCEPTANCE-20261006.md`.
+These are local uncommitted WIP after HEAD cde9d8fb, not a new commit/push/merge,
+whole-tree GREEN, full inventory/scope/canonical proof or packaged GUI verdict.
+The same real exclusive-file-create EEXIST scenario now passes separately
+**1/1, exit0**; no production/native change was needed, and residual prior creation,
+foreign bytes/inode and unknown/safe boundaries stay intact. Its appended test
+has a new hash, not the preceding matrix's historical input manifest. Evidence:
+`output/e6-20260928/OFFICE-FILE-EEXIST-ACTUAL-20261006.md`.
+Next are the fixed Git-read family, original safe settlement/six routes and
+remaining E6 acceptance. No new product decision is open.
+
 ## Current user-requested remote WIP checkpoint
 
 This checkpoint preserves the new work after parent
@@ -16,17 +58,184 @@ ordinary conversations without typed workflow metadata also use raw unified
 exec after their existing policy/approval checks. Missing restricted dispatch,
 legacy workflow status and authorization mode alone must not issue an exemption.
 
-The first uncompleted implementation slice is the original unified-exec raw
-physical gate and its durable policy/source separation. This checkpoint does
-not implement that gate. Gate refusal must remain genuine no-start; producer
-entry, synchronous spawn failure and post-spawn commit failure must preserve
-their actual unknown effects. Prepared launches keep their original authority.
+### Current implementation update (2026-10-06, after the saved checkpoint)
 
-The latest icon slice's complete 3244-input manifest still matches at this
-checkpoint. Existing focused evidence below is retained without rerunning it;
-no new whole-tree build/test, packaged GUI or certified isolation claim is made.
+The first actual leaf invocation exposed an invalid DEBUG/RESOURCE empty-getter
+gate. Root applied the independent two-source correction: distinguish reviewed
+new-task non-inheritance from helper-local runtime observations, and retain all
+HOST/ACCESS identity checks. Fresh build02 passes Rust11/handshake19/input10/
+framing18, and all fourteen source inputs plus binary match its manifest.
+The one QA Electron actual03 passes all three cases: fixed codesign exit0,
+extra helper FD3 closed with unchanged original4096-byte readback, and exact
+wrong-App-inode refusal. Owned fixture cleanup succeeds. Earlier RED is kept.
+Evidence: `output/e6-20260928/CODESIGN-NATIVE-LEAF-ACTUAL-20261006.md`.
+This does not prove child FD3 EBADF, registered-port capability closure, original
+public-default wiring, Host certification, whole Daemon or packaged GUI. Continue
+those gates; the original Office v1 nested positive remains an independent gap.
+
+The fixed Darwin codesign leaf has now been applied: all eight target files
+match the frozen expected bytes. Fresh pinned Rust1.97.1/offline build01 exits0;
+Rust11/11, original handshake19/19, original input-read10/10, new framing18/18
+and separate build-evidence19/19 pass. Binary SHA256 is
+`c2efcf9e0d211687750bb925da7982978b1dd2add182f8c156efcd3cce342db6`.
+Evidence: `output/e6-20260928/codesign-native-leaf-20261006-build01/`.
+This is compilation/parser evidence, not actual capability containment. The
+original public Host source is not yet wired to this helper. Source-owned
+spawn-origin watchdog, OS/full-tuple binding, actual positive/negative controls
+and cleanup failures remain gates. The manifest still says not_verified,
+not_certified and enforcementReady=false; no certificate or safe receipt is
+issued. The earlier TASK_ACCESS origin review's overstrong line42 is qualified
+by its separate clarification, without rewriting the frozen review.
+
+The source-owned foundation has now been applied and built (fresh Daemon tsc,
+exit0). Original canonical singleton/private invocation/native tuple ownership
+is shared by the public bootstrap; the pure backend module reexports the same
+Error constructor. Unsupported dyld review only yields a candidate after all
+original identity/read/FD/close checks; identity or cleanup failures never
+downgrade. No Host certificate, fourth resolver or unknown-history retirement
+was added. Original 13 assertions are unchanged; fixing the fixture's precise
+bootstrap-to-source module resolution closes its captured-observer cache error.
+Original plus new mechanism tests pass **27/27**, and six adjacent files pass
+**118/118**, exit0, no fail/cancel/skip/todo. All 3282 input hashes match before,
+after and final check. Evidence: `packaged-codesign-host-foundation-20261006-02.*`.
+
+New actual Darwin diagnostics show why a naive all-special-ports-NULL launcher
+would not work: Host/TaskAccess setters return0 but actual spawn returns22;
+Bootstrap NULL and baseline spawn succeed. A usable constrained path is now
+verified: ordinary kernel host type3, plus fixed privileged-server lookup of
+`com.apple.taskgated` matching the retained TaskAccess send-right name. The
+privileged lookup checks a kernel MIG audit trailer's UID0, not caller JSON;
+the actual symbol/lookup/identity comparison and all acquired-right releases
+pass. These are fresh disposable diagnostics, not the original Host source,
+whole Mach containment, a certificate or GUI acceptance. The helper's fixed
+role is now applied/built as recorded above, but its actual containment and
+original Host producer integration are still unverified.
+
+Newest slice: the original default packaged verifier now executes a real
+source-owned sandbox-exec/codesign candidate. Host Electron facts and readonly
+App/file/ancestor FDs come from the original source, not caller configuration
+or an injected producer. First-acquisition mismatch closes its original FD;
+later foreign-reuse/EBADF and uncertain close remain tombstoned. Independent
+review of draft `86e351d8…` closed the two initial cleanup findings.
+Root fresh Daemon build01 exits 0. Actual installed QA Electron44.1.1/Node24.19.0
+loads the newest dist and calls public bootstrap with no dependency override:
+strict verification through the candidate sandbox exits 0. Adjacent suites pass
+**51/51** and **67/67**, no fail/cancel/skip/todo; five frozen inputs match.
+Evidence: `output/e6-20260928/packaged-codesign-host-profile-20261006-01.*`.
+This is not a fresh packaged GUI, whole-tree GREEN, Host certificate or safe
+receipt. No Desktop/Host service, real Keychain or database was used. Exact
+profile kernel02 exits 0: original public tuple/source match and actual verifier
+success; three layouts each produce five actual direct/fork/exec/detached
+processes. Original pipe's 40 and extra-FD3 pressure's 40 path/IPC/SIGCONT
+operations return EPERM. All five original-pipe Host descriptors are EBADF.
+Explicitly passed FD3 still allows real read/mmap RO/RW writes: never claim
+the profile revokes pre-existing descriptor rights. task_for_pid is inconclusive
+because the unrestricted control is also denied. Unsigned dummy verification
+exits 1 as recorded; cleanup has no errors and touches fresh fixtures only.
+Kernel01 was blocked before syscalls by Ruby Gem scanning /Library; only the
+probe gains --disable-gems, with production profile/options unchanged.
+Source mechanism simulation05 passes **13/13** after fixing exact compiled
+module loading, not relaxing assertions; it is not trust/kernel certification.
+Evidence: `packaged-codesign-host-profile-20261006-{01,02}.kernel.log` and
+`05.mechanism.log`, with candidate hashes unchanged.
+Fresh Daemon full65039 is terminal: **3208/3209**, exit 1; one failure and
+zero cancelled/skipped/todo. The retained real Office SDK/nested positive at
+`office-local-writer.test.mjs:731` still reports `office_local_write_failed`.
+All 3278 Core/Daemon source/dist/test inputs match before/after and final SHA
+check. Evidence: `packaged-codesign-host-profile-20261006-02.daemon-full.log`
+and `02.full-inputs-{before,after}.sha256`. Do not rerun this finished snapshot,
+remove the positive, or count a blocked result as success.
+Original Host issuer/domain lifetime integration is still next. Review fixed
+producer/OS/profile rules, not the old QA App tuple. Lock exact pipe layout;
+retain certified historical App/ancestor capability; do not clear unknown.
+Review unsupported-version vs identity failure: CLI bootstrap has no catch,
+so unavailable certification must not accidentally prevent all App startup,
+while genuine gate/identity failures must never silently downgrade.
+Undefined actor/prebinding unknown, empty manifest and closed U gate remain.
+
+HEAD/remote backup is `cde9d8fb3a128d431d0df4c71266c6f045be0db9`; the following
+implementation is local uncommitted WIP, not another push, release or merge.
+The original unified-exec raw physical gate and durable policy/source separation
+are now implemented. Ordinary raw remains controlled; a separate twentieth
+`unified_exec_full_access` entry requires persisted selection, effective policy,
+valid confirmation and current approval lineage. Source snapshots are cloned
+before the first await; normalized cwd/shell/approvalId and every request field,
+owner/fence, workspace policy, Plan, current Skill and delegated requirement
+are rechecked. Private one-shot dispatch cannot borrow prepared authority.
+
+Core preflight runs read-only and synchronously under the original writer lock,
+before operation/command claims. Gate refusal remains genuine no-start;
+entered producer throw without a returned child and post-spawn COMMIT failure
+retain unknown effects. The old untracked settlement compatibility behavior
+was not changed and is not a universal no-start safety guarantee.
+
+Root fresh Core build, focused **28/28**, adjacent **186/186**, and full suite
+**2251/2251** exit 0. Final Daemon build08, focused **61/61** and fourteen adjacent
+suites **215/215** exit 0, with no failures/cancellations/skips/todos. Original RED
+and first-run failure logs are preserved; the fixture path-source correction
+does not relax production equality checks. Final frozen-source review has no
+new confirmed finding; the exported factory binding gap is closed.
+
+Daemon full suite finished **3121/3123, exit1**. The genuine nested writer positive
+still fails. The other failure was approval-resume QA fan-in: isolated diagnostics
+proved `unified_exec_raw_requirement_invalid`, caused by a positive fixture that
+omitted production teammate/requirement lineage. Only canonical fixture inputs
+were corrected; product gate/fan-in/timeout were not relaxed. The original narrow
+case now passes **1/1** and its complete workflow evidence file **72/72, exit0**.
+All 3264 full-suite before/after hashes and final check match; the subsequent
+fixture change is a new input, not proof of latest whole-tree GREEN.
+Evidence: `output/e6-20260928/unified-raw-source-20261006-{02,03}.*`.
+The original icon evidence below is historical, not the input manifest for this
+new implementation. There is no packaged GUI or certified isolation claim.
 The genuine nested writer positive remains a failing functionality gate.
-Remaining Core-owned hooks, per-family profiles/closure, original native
+Core-owned official Git and external-work shell entries are now connected to
+the original immutable Core source/private single-use record/captured producer,
+with a one-time synchronous Daemon guard. Direct Core public calls share the
+same gate; Core does not depend on Daemon. Pre-binding/native-entry history is
+sticky; all attached registries preflight read-only before recording native entry.
+Genuine refusal stops background requeueing, while ordinary Git errors, custom
+Git injection and scheduler retry retain their existing behavior.
+
+Fresh Core and Daemon builds exit 0. New source suite **30/30**, Core full suite
+**2251/2251**, and eleven adjacent Daemon files **216/216** exit 0 with no
+failures/cancellations/skips/todos. The original pre-bridge 13/30 RED remains;
+fresh02's two child failures were diagnosed as inherited `NODE_TEST_CONTEXT`
+silently skipping child files. Only the child environment/explicit TAP startup
+was fixed, with actual execution statistics required; no safety assertion was
+relaxed. Both registry orders now verify that zero-start refusal leaves the
+same registries usable after closing their original stage. Independent scoped
+source/test review found no new confirmed finding.
+
+The fresh Daemon full suite finished **3152/3153, exit1**; its sole failure is
+the retained genuine nested Office writer positive (line 731), not a skipped
+or weakened assertion. All 3271-input before/after hashes and final check
+match. This is not whole-tree GREEN, and all those run handles are terminal.
+Evidence: `output/e6-20260928/core-original-hooks-20261006-03.*`.
+Keychain/codesign original sources are now connected in a separate input
+snapshot, using private single-use source records consumed before all-registry
+read-only gating. Their unverified system labels no longer grant an exemption;
+both remain controlled with sticky unknown. Only exact-entry actual gate
+refusal survives the four Keychain catches. Consumer, entered-notification and
+producer Error reuse revoke an old refusal label without clearing history.
+Default argv/options, ordinary secret/OS errors and custom adapters remain
+unchanged. Pre-Supervisor codesign entry remains unknown after later binding.
+
+The old-dist public suite is **3/27 RED**, with actual observer entry during an
+active stage. Fresh build02 exited 0; **49/51** then exposed the extra
+entered-notification Error-reuse regression. The notification was moved into
+the same entered exception boundary, with its original assertion retained.
+Final build03, combined focused **81/81** and eleven adjacent files **218/218**
+exit 0, no failed/cancelled/skipped/todo tests. All **3273** before/after inputs
+and final check match; final actual-delta review has no confirmed finding.
+Evidence: `output/e6-20260928/bootstrap-original-hooks-20261006-{01,02,03}.*`.
+
+These tests intercept the original security/codesign producers. No real
+keychain or signature tool was invoked; dummy signed-resource fixtures do not
+certify identity, OS profiles or descendant closure. The previous 3152/3153
+Daemon full predates this slice, not proof of whole-tree GREEN for these inputs.
+Next are actual per-family profiles/closure and fixed native adapter integration.
+Docker has no production caller and is not activated to fill a slot.
+Remaining per-family profiles/closure, original native
 production integration, recovery, packaged Computer Use, combined review and
 CI/integration remain open. Public `safe_unavailable` and the U gate stay closed;
 the overall D0/E1–E6 goal remains active.

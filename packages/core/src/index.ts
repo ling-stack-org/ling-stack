@@ -25,6 +25,9 @@ export { verifyOfficeLocalDirectoryReplayV2 } from "./storage/sqlite/host-office
 export { validateOfficeNativeIdentityV2, validateOfficeNativeResultFactsV2,
   validateOfficeNativeResultFactsV2 as validateOfficeLocalDirectoryNativeResultV2 } from "./storage/sqlite/host-office-local-native-v2-schema.js";
 export { validateOfficeLocalDirectoryPreparedV2 } from "./storage/sqlite/host-office-local-directory-v2-prepared.js";
+export { officeDirectorySlotsV2, type OfficeDirectorySlotV2 } from "./storage/sqlite/host-office-local-directory-v2-effects.js";
+export { validateOfficeDirectoryHistoryV2, type OfficeDirectoryHistoryEntryV2 } from "./storage/sqlite/host-office-local-directory-v2-history.js";
+export { validateOfficeLocalDirectoryObservationPayloadV2 } from "./storage/sqlite/host-office-local-directory-v2-observations.js";
 export * from "./media-workflow-types.js";
 export * from "./media-generation-routing-types.js";
 export * from "./media-generation-routing.js";
@@ -68,6 +71,8 @@ export * from "./skill-health.js";
 export * from "./skill-source-health.js";
 export * from "./managed-official-skill-source-types.js";
 export * from "./managed-official-skill-source.js";
+export { bindCoreOriginalProcessGuard, readCoreOriginalProcessEntry, isCoreOriginalLaunchRefusal } from "./original-host-process-entry.js";
+export type { CoreOriginalProcessSourceId, CoreOriginalProcessRecord, CoreOriginalProcessEntry, CoreOriginalProcessGuard } from "./original-host-process-entry.js";
 export * from "./skill-source-sync.js";
 export * from "./skill-optimization-preview.js";
 export * from "./skill-source-runtime.js";

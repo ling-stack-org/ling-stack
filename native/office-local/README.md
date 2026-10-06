@@ -159,18 +159,18 @@ workspace namespace，也不证明整个观察窗口原子、Host protected scop
 
 ## 显式构建与真实测试
 
-先选择全新的 ignored output 目录；父目录必须已存在。以下路径只是本机例子，
+先选择全新的 ignored output 目录；父目录必须已存在。以下路径是占位示例，
 不能复用已经存在的 output（即便为空也拒绝），也不会自动安装缺失工具/headers。
 
 ```sh
-/Users/tianxiao/.nvm/versions/node/v22.22.1/bin/node native/office-local/scripts/build.mjs \
-  --headers /Users/tianxiao/.nvm/versions/node/v22.22.1/include/node \
+/Users/example/.nvm/versions/node/v22.22.1/bin/node native/office-local/scripts/build.mjs \
+  --headers /Users/example/.nvm/versions/node/v22.22.1/include/node \
   --out /absolute/worktree/output/e6-20260928/office-native-build-fresh
-/Users/tianxiao/.nvm/versions/node/v22.22.1/bin/node native/office-local/tests/run-isolated.mjs \
+/Users/example/.nvm/versions/node/v22.22.1/bin/node native/office-local/tests/run-isolated.mjs \
   /absolute/worktree/output/e6-20260928/office-native-build-fresh/office-local.node \
   /absolute/worktree/output/e6-20260928/office-native-tests-fresh
 # Only the new publication slice, without re-running the historical 26 tests:
-/Users/tianxiao/.nvm/versions/node/v22.22.1/bin/node native/office-local/tests/run-isolated.mjs \
+/Users/example/.nvm/versions/node/v22.22.1/bin/node native/office-local/tests/run-isolated.mjs \
   /absolute/worktree/output/e6-20260928/office-native-build-fresh/office-local.node \
   /absolute/worktree/output/e6-20260928/office-native-publication-tests-fresh publication
 ```

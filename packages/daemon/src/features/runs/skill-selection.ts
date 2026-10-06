@@ -5,7 +5,8 @@ import { resolveAiTeammateReference } from "../teammates/identity.js";
 import type { RunRequest } from "./schemas.js";
 
 /** Current binding/executability only. Source text and compiled views are prepared separately. */
-export function resolveCurrentRunSkill(store: RunStore, request: RunRequest): ReturnType<typeof getEffectiveTeammateSkill> {
+export function resolveCurrentRunSkill(store: RunStore, request: Pick<RunRequest, "requestedSkillId" | "teammateId" | "providerPresetId">
+  & { readonly task: Pick<RunRequest["task"], "channelId"> }): ReturnType<typeof getEffectiveTeammateSkill> {
   if (!request.requestedSkillId) return undefined;
   const teammate = request.teammateId ? resolveAiTeammateReference(store, request.teammateId) : undefined;
   if (!teammate) throw new HttpError(400, "skill_teammate_required", "requestedSkillId requires a resolved teammateId.");

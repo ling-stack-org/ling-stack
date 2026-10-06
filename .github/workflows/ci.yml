@@ -37,7 +37,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 22.15.0
+          node-version: 22.22.1
 
       - name: Classify changed files
         id: classify
@@ -85,13 +85,16 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 22.15.0
+          node-version: 22.22.1
 
       - name: Check Markdown links
         run: node scripts/check-markdown-links.mjs
 
       - name: Check public repository safety
         run: node scripts/check-public-repo-safety.mjs
+
+      - name: Check scanner boundaries and runtime baseline
+        run: node --test scripts/check-public-repo-safety.test.mjs scripts/ci/runtime-baseline.test.mjs
 
       - name: Scan Git history for secrets
         if: needs.scope.outputs.mode != 'docs'
@@ -135,7 +138,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 22.15.0
+          node-version: 22.22.1
           cache: pnpm
 
       - name: Install locked dependencies
@@ -175,7 +178,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 22.15.0
+          node-version: 22.22.1
           cache: pnpm
 
       - name: Install locked dependencies
@@ -223,7 +226,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 22.15.0
+          node-version: 22.22.1
           cache: pnpm
 
       - name: Install locked dependencies
@@ -267,7 +270,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 22.15.0
+          node-version: 22.22.1
           cache: pnpm
 
       - name: Install locked dependencies
@@ -323,7 +326,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
-          node-version: 22.15.0
+          node-version: 22.22.1
           cache: pnpm
 
       - name: Install locked dependencies

@@ -1,15 +1,11 @@
 import { isDeepStrictEqual } from "node:util";
-import {
-  approvalSideEffectFingerprintV1, isApprovalResumeBasisV1, buildChannelTeamRiskReviewDecision, redactSecrets,
-  type EffectiveRunPolicySnapshot, type RunSession, type RunStore, type RuntimeAttemptFenceV1,
-} from "@ling-stack/core";
+import type { EffectiveRunPolicySnapshot, RunSession, RunStore, RuntimeAttemptFenceV1 } from "@ling-stack/core";
 import type { PiRunnerApprovalRequest } from "@ling-stack/runner-pi";
 import { isRecord } from "../../shared/validation.js";
 import { isNativeRestrictedCommandRuntime, type NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
 import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
 import { workflowOperationAuthorityRejection } from "./workflow-operation-effect-gate.js";
-import { findMatchingApprovalCommandRulesForCommand } from "./approval-command-rules.js";
-import { classifyBashRiskFlags } from "./action-classifier.js";
+import { assertCommandLaunchApproval } from "./command-launch-approval.js";
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
 
 function requireAuthority(value: unknown, code: string): asserts value {
@@ -66,46 +62,10 @@ export function createRestrictedCommandDispatch(input: {
         && currentPolicy.updatedAt === policy.workspacePolicyUpdatedAt
         && currentPolicy.toolDecisions.bash !== "deny" && policy.toolDecisions.bash !== "deny",
         "restricted_command_policy_changed");
-      const riskFlags = classifyBashRiskFlags(command);
-      const risk = riskFlags.includes("git_force_push") ? "critical" : riskFlags.length ? "high" : "medium";
-      const payload = { type: "bash" as const, cwd: request.cwd, command, riskFlags };
-      const publishedPayload = redactSecrets(payload, input.extraSecrets ?? []) as typeof payload;
-      const review = buildChannelTeamRiskReviewDecision({ actionType: "bash", risk, payload });
-      requireAuthority(review.status !== "blocked", "restricted_command_risk_denied");
-      if (input.approvalId === undefined) {
-        if (policy.toolDecisions.bash === "allow" && review.status === "not_required") return;
-        const profile = isRecord(snapshot.approvalProfile) ? snapshot.approvalProfile : undefined;
-        requireAuthority(review.status === "not_required" && profile?.mode !== "strict"
-          && !(Array.isArray(profile?.requiredForTools) && profile.requiredForTools.includes("bash"))
-          && !(Array.isArray(profile?.requiredForActions) && profile.requiredForActions.includes("bash"))
-          && findMatchingApprovalCommandRulesForCommand(input.store, command), "restricted_command_approval_required");
-        return;
-      }
-      const approval = input.store.getApprovalRequest(input.approvalId);
-      const checkpoint = input.store.getApprovalCheckpointForApproval(input.approvalId);
-      const basis = checkpoint?.resumeBasis;
-      requireAuthority(approval?.status === "approved" && checkpoint
-        && approval.runId === source.id && checkpoint.runId === source.id
-        && approval.taskId === source.taskId && checkpoint.taskId === source.taskId
-        && approval.channelId === source.channelId && checkpoint.channelId === source.channelId
-        && approval.workflowStepId === undefined && checkpoint.workflowStepId === undefined
-        && approval.toolCallId === request.toolCallId && checkpoint.toolCallId === request.toolCallId
-        && approval.actionType === "bash" && checkpoint.actionType === "bash"
-        && approval.payload.type === "bash" && approval.payload.cwd === publishedPayload.cwd && approval.payload.command === publishedPayload.command
-        && isDeepStrictEqual(checkpoint.sideEffect, approval.payload)
-        && isApprovalResumeBasisV1(basis) && basis.approvalId === approval.id && basis.runId === source.id
-        && basis.workUnitId === fence.workUnitId && basis.workflowStepId === source.workflowStepId
-        && basis.delegatedRequirementFingerprint === context.step.metadata?.delegatedRequirement?.fingerprint
-        && basis.toolCallId === request.toolCallId && basis.actionType === "bash"
-        && basis.sideEffectFingerprint === approvalSideEffectFingerprintV1({ actionType: "bash", toolCallId: request.toolCallId, sideEffect: approval.payload }),
-        "restricted_command_approval_invalid");
-      const direct = checkpoint.status === "approved" && basis.priorAttemptId === fence.attemptId;
-      const handle = checkpoint.runnerResumeHandle;
-      const resumed = checkpoint.status === "resume_pending" && handle?.kind === "ling_continuation"
-        && handle.runId === source.id && handle.attemptId === fence.attemptId
-        && isRecord(handle.payload) && handle.payload.approvalId === approval.id
-        && handle.payload.resumeBasisFingerprint === basis.fingerprint;
-      requireAuthority(direct || resumed, "restricted_command_approval_lineage_invalid");
+      assertCommandLaunchApproval({ store: input.store, source, fence, request, policy,
+        approvalId: input.approvalId, extraSecrets: input.extraSecrets,
+        delegatedRequirementFingerprint: context.step.metadata?.delegatedRequirement?.fingerprint,
+        codePrefix: "restricted_command" });
     };
     input.store.readSnapshot(read);
   };

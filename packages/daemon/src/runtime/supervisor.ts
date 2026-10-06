@@ -1,6 +1,7 @@
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import "./sandbox/core-original-process-bridge.js";
 import {
   DEFAULT_WORKSPACE_ID,
   type ResourceLease,

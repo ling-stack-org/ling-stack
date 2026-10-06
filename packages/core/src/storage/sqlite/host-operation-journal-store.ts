@@ -12,6 +12,7 @@ import { readSqliteSnapshot, readSqliteWithinTransaction } from "./read-snapshot
 import type { SqliteStoreContext } from "./store-context.js";
 import type { HostMediaExecutionRecord } from "../../host-media-operation-types.js";
 import { HostOfficeLocalJournalGate } from "./host-office-local-journal-gate.js";
+import { assertHostLaunchPreflight } from "./host-launch-preflight.js";
 
 interface TicketState {
   readonly source: HostOperationSource;
@@ -121,7 +122,7 @@ export class SqliteHostOperationJournalStore {
     });
   }
 
-  launchHostOperation<T>(ticket: HostOperationTicket, launch: () => T): T {
+  launchHostOperation<T>(ticket: HostOperationTicket, launch: () => T, assertMayLaunch?: () => void): T {
     const state = this.requireTicket(ticket);
     if (state.launchClaimed || state.settlementSignature) return hostOperationFailure("host_operation_already_launched");
     this.assertSyncCallback(launch);
@@ -134,6 +135,9 @@ export class SqliteHostOperationJournalStore {
         this.assertGenericEffectScope(operation);
         if (operation.phase !== "admitted") return hostOperationFailure("host_operation_already_launched");
         this.assertParentsActive(operation);
+        // Policy/source gates may refuse without creating a launch marker or
+        // consuming either live capability. Never reset a claimed launch.
+        assertHostLaunchPreflight(this.context.database, assertMayLaunch);
         const launchedAt = new Date().toISOString();
         if (hostOperationTimestamp(launchedAt) < hostOperationTimestamp(operation.admittedAt)) return hostOperationFailure("host_operation_invalid_timestamp");
         const updated = this.context.database.prepare(`UPDATE host_operations SET phase='launched',launched_at=?,

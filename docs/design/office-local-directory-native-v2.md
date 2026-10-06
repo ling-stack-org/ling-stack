@@ -2,14 +2,25 @@
 
 日期：2026-10-05。
 
-状态：**部分链路已实现并定向验证；生产接线、完整 replay/canonical/settlement 与 packaged 验收未完成，不是安全凭证。** 本文基于当前 Core v1
+状态：**事实图和纯 replay 已实现并定向验证；生产接线、完整 canonical/settlement 与 packaged 验收未完成，不是安全凭证。** 本文基于当前 Core v1
 binary facts / terminal / replay 与 frozen `native/office-local` protocol 2 的只读核对。
-独立 Core v2 types/parsers、migration152及历史存储已落，原事务门槛修复后实测53/53；Daemon facts/graph及typed runtime新focused26/26、真实addon/schema接缝2/2通过。fixed adapter、实际原launcher coverage、完整终态验证仍未接通；native protocol 2也不等于完整 Core binary protocol v2 能力。逐项证据见接续入口及本轮 checkpoint。
+独立 Core v2 types/parsers、migration152、历史存储、Daemon facts/graph、typed runtime、
+fixed adapter 和事实终态已落。native protocol 2不等于完整 Core binary protocol v2
+安全能力；逐项证据见接续入口及本轮 checkpoint。
+
+**2026-10-06 实际进度**：fixed adapter 和完整事实图 replay 已
+接通，但只返回 `published_native_only / graph_verified_only / coreSafe:false`。
+新增精确初始 mkdirat/exclusive-open 失败 guard 的 Core43/43、相邻 Core196/196 与
+Daemon29/29、真实 addon adapter12/12 均通过；真实 nested DOCX/XLSX/PPTX、原
+mkdirat EEXIST、cancel/COMMIT/ACK/安装后投影丢失已验。全 original launcher coverage、
+live scope、absolute canonical/window、原 pair safe settlement、six routes 与 packaged
+验收仍未闭环，不能由上述事实通过推导产品成功。证据见
+`output/e6-20260928/OFFICE-CREATE-FAILURE-ACCEPTANCE-20261006.md`。
 
 当前 native primitive 的 `scopeBinding=unbound`、`protectedStageVerified=false`、
 `coreSafe=false`；本机构建证据不等于 packaged binary / 最终 app identity。当前受控
 typed actor 的保护域仍未完成全 actor coverage，不能由某一条 denied actor 测试推断
-所有受控入口都已隔离。Full Access / legacy / raw external 同 UID actor 不在隔离承诺内。
+所有受控入口都已隔离。真实 Full Access / manual external / 其他不受限同 UID actor 不在隔离承诺内；legacy/raw 是 transport，不自动取得这个豁免。
 目前没有 native/Core 安全放行；本文的全 actor coverage 缺项是后续 bound issuer 接入
 所必需的 gate，不是将本次尚未接入产品的切片标成产品 RED。
 
@@ -203,8 +214,9 @@ coverage roster 与证据，逐项核对那些入口及其继承/子进程路径
 runner label与某个typed helper成功都不足以跳过这项gate。扩大实际接线前必须核对
 所有相关actor是否能写stage或可改名祖先，以及继承资源/子进程是否沿用同一保护。
 
-Full Access / legacy / raw external 同 UID actor 始终明确排除；不得在 UI、文档或
-receipt 中表述为隔离它们。scope 证据必须绑定实际 backend/policy、原发行对象、
+真实 Full Access / manual external / 其他不受限同 UID actor 始终明确排除；普通受控会话的
+legacy/raw transport 仍属于受控入口，不能用启动方式代替持久化 Full Access 授权。
+不得在 UI、文档或 receipt 中表述为隔离不受限进程。scope 证据必须绑定实际 backend/policy、原发行对象、
 作用窗口、stage namespace 与最终 native/app identity，不接受 caller `verified:true`。
 
 ## 6. Publication canonical 可见性是独立门槛
@@ -337,6 +349,7 @@ canonical final；lostACK不重发syscall；unknown不能safe；v1历史与genui
 最终完成条件是：受控actor范围与原Host authority → v2历史事实 → fixedgraph → canonical
 visibility → 全部原closure → 原pair settlement → packaged产品能力完整闭合。
 
-未决实现前提为：真实Host coverage/window、v2存储与clock/call绑定、publication canonical
-证明、packaged runtime。它们不是可省略的taste选择；任何一项延后，都必须保持该分支
+当前未完成实现前提为：真实Host coverage/window、publication absolute canonical
+证明、原 pair safe settlement、生产接线与 packaged runtime。v2存储与clock/call绑定已有
+独立定向证据，不再把它们重复列为未实现。剩余前提不是可省略的taste选择；任何一项延后，都必须保持该分支
 未达产品safe，不发行完成声明。本文无需新增用户决策gate，也不授予跨出既定边界的权限。

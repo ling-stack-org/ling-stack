@@ -112,7 +112,7 @@ test("create workbook owns nested input before SDK awaits", async () => {
   const pending = prepareOfficeArtifact(createTool.xlsx, input);
   input.sheets[0].rows[1][0] = "mutated while waiting";
   const result = await pending;
-  assert.match(await text(result.bytes, "xlsx"), /Users/u);
+  assert.match(await text(result.bytes, "xlsx"), /\bUsers\b/u);
   assert.doesNotMatch(await text(result.bytes, "xlsx"), /mutated/u);
 });
 

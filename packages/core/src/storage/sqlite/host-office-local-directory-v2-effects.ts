@@ -1,5 +1,5 @@
 import { basename } from "node:path";
-import type { HostOfficeLocalDirectoryExecutionRecordV2, PrepareHostOfficeLocalDirectoryEffectV2,
+import type { HostOfficeLocalDirectoryPreparedV2, HostOfficeLocalDirectoryExecutionRecordV2, PrepareHostOfficeLocalDirectoryEffectV2,
   HostOfficeDirectoryResourceBindingV2 } from "../../host-office-local-directory-v2-types.js";
 import type { HostOfficeNativeIdentityV2, HostOfficeNativeResourceFactV2 } from "../../host-office-local-native-v2-types.js";
 import { directoryV2Failure, v2Exact, v2Object, v2OptionalKeys, v2Size, v2Text, v2Timestamp } from "./host-office-local-directory-v2-validation.js";
@@ -12,7 +12,7 @@ export interface OfficeDirectorySlotV2 {
   readonly initialIdentity?: HostOfficeNativeIdentityV2;
 }
 /** Both original ancestor chains remain separate even when they legitimately alias an existing inode. */
-export function officeDirectorySlotsV2(execution: HostOfficeLocalDirectoryExecutionRecordV2): OfficeDirectorySlotV2[] {
+export function officeDirectorySlotsV2(execution: HostOfficeLocalDirectoryPreparedV2): OfficeDirectorySlotV2[] {
   return [...(["stage", "destination"] as const).flatMap(role => execution[role].ancestors.map((item, index, chain) => ({
     resourceSlotId: item.resourceSlotId, kind: index === chain.length - 1 ? role === "stage" ? "stage_parent" as const : "destination_parent" as const : "ancestor" as const,
     basename: item.path === "/" ? "/" : basename(item.path), ...(index === 0 ? {} : { parentResourceSlotId: chain[index - 1]!.resourceSlotId }),
