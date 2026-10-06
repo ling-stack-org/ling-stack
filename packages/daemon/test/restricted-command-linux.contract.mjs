@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createSqliteRunStore } from "../../core/dist/index.js";
-import { channelOperationPlanFingerprintV1, createRequiredParticipantManifestV1, isChannelIntentExecutionPlanV1 } from "../../contracts/dist/index.js";
+import { channelOperationPlanFingerprintV1, createRequiredParticipantManifestV1, isChannelIntentDecisionV2, isChannelIntentExecutionPlanV1 } from "../../contracts/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { NativeRestrictedCommandRuntime } from "../dist/runtime/sandbox/restricted-command-runtime.js";
 import { readPackagedRestrictedCommandConfig } from "../dist/runtime/sandbox/packaged-restricted-command-bootstrap.js";
@@ -67,15 +67,17 @@ test("HTTP proposal confirmation on Linux rejects before creating Task, Run, or 
     proposedByTeammateId: "ling_agent", title: "Linux platform refusal", prompt: command,
     assigneeTeammateId: gateOwner, requiredTools: ["bash"], status: "draft" }, now);
   const assignment = store.getEffectiveTurnContextAssignment(accepted.turnId);
-  store.createChannelIntentDecision({ channelId: channel.id, sourceItemId: accepted.item.id,
+  const decision = store.createChannelIntentDecision({ channelId: channel.id, sourceItemId: accepted.item.id,
     contextProjection: { projectionVersion: `projection:${accepted.item.id}:${assignment.revision}`,
       sourceStateFingerprint: `source-state:${accepted.item.id}:${assignment.revision}`,
       threadId: accepted.item.threadId, turnId: accepted.item.turnId, segmentId: assignment.segmentId,
       throughItemSequence: accepted.item.sequence, summaryIds: [],
       sourceRefs: [{ type: "conversation_item", id: accepted.item.id }],
       policyVersion: "linux-platform-contract-v1", visibilityFingerprint: "channel_shared" },
-    action: "workflow_proposal", selectedTeammateIds: [gateOwner], participantManifest, execution,
+    action: "execute", selectedTeammateIds: [gateOwner], participantManifest, execution,
     proposalId: proposal.id, reason: "Explicit typed command", status: "accepted", createdBy: "deterministic" }, now);
+  assert.ok(isChannelIntentDecisionV2(decision), "The complete executable decision must pass v2 schema validation before HTTP confirmation.");
+  assert.deepEqual(decision.execution, execution, "The persisted decision must retain the exact typed command plan.");
   const before = { tasks: store.listTasks(), runs: store.listRuns({ channelId: channel.id, limit: 100 }),
     workflows: store.listChannelWorkflows({ channelId: channel.id, limit: 100 }) };
   const response = await fetch(`http://127.0.0.1:${daemon.server.address().port}/channel-proposals/${proposal.id}/confirm-workflow?cwd=${encodeURIComponent(cwd)}`,
