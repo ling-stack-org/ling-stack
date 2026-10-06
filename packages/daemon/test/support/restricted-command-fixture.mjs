@@ -1,11 +1,12 @@
 import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteRunStore, resolveSessionRunPolicy, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence } from "@ling-stack/core";
 import { createTypedWorkflowBasis, typedOperation, gateOwner } from "./workflow-operation-gate-fixture.mjs";
 import { executeUnifiedBashTool } from "../../dist/features/runs/unified-exec.js";
 import { createRunApprovalHandler } from "../../dist/features/runs/approvals.js";
 export async function createRestrictedCommandFixture(t, command, inputRefs = []) {
-  const root = await mkdtemp("/private/tmp/ling-restricted-dispatch-");
+  const root = await mkdtemp(join(tmpdir(), "ling-restricted-dispatch-"));
   const cwd = join(root, "workspace"); await mkdir(cwd);
   const store = createSqliteRunStore(cwd);
   t.after(async () => { store.close(); await rm(root, { recursive: true, force: true }); });

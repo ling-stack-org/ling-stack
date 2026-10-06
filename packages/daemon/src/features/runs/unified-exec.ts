@@ -201,7 +201,11 @@ async function executeUnifiedExec(input: {
         child = input.rawDispatch.spawn(environment.env, () => { spawnEntered = true; });
       }
     };
-    const preflight = () => { throwIfAborted(input.signal); input.rawDispatch?.assertMayLaunch(); };
+    const preflight = () => {
+      throwIfAborted(input.signal);
+      input.restrictedDispatch?.assertMayLaunch();
+      input.rawDispatch?.assertMayLaunch();
+    };
     if (input.hostOperation) input.hostOperation.launch(ticket, launch, preflight);
     else input.store.launchHostCommandExecution(ticket, launch, preflight);
   } catch (error) {

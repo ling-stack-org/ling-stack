@@ -34,4 +34,3 @@ export function fetchProvider(
     dispatcher: requestInit.dispatcher ?? getProviderHttpAgent(),
   } as RequestInit & { readonly dispatcher: Agent });
 }
-

@@ -73,6 +73,9 @@ export function createRestrictedCommandDispatch(input: {
   const protectedActorSource = runtime.captureProtectedActorSource({ store: input.store, run: source,
     sourceFence: fence, command, toolCallId: request.toolCallId });
   return {
+    // The atomic Host preflight rejects stale authority before entering the
+    // native producer. Preparation and native spawn retain their own checks.
+    assertMayLaunch: check,
     prepare: async () => {
       // Reserve the native copy/helper producer synchronously before runtime
       // preparation can create a directory, spawn a helper or cross an await.

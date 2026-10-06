@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
 import { isAbsolute } from "node:path";
 import test from "node:test";
 import { nodeFunctionGoalCommand } from "../../../packages/contracts/dist/index.js";
-import { startRealPiChannelFixture, systemText } from "../../../packages/daemon/test/support/channel-operation-real-pi-fixture.mjs";
+import { messageText, startRealPiChannelFixture, systemText } from "../../../packages/daemon/test/support/channel-operation-real-pi-fixture.mjs";
 import { fileOperationCandidate } from "../../../packages/daemon/test/support/channel-operation-candidate-fixture.mjs";
 assert.equal(process.platform, "darwin"); assert.ok(process.argv[2] && isAbsolute(process.argv[2]));
 const pin = path => ({ path: realpathSync(path), sha256: createHash("sha256").update(readFileSync(path)).digest("hex") });
@@ -17,7 +17,6 @@ test("real Pi channel creates a module then performs the natural-language Node g
   const source = '创建 continuity-v2-proof.js，内容是导出 formatProof，然后运行 Node 调用 formatProof("7319") 验证。';
   const content = 'exports.formatProof = value => "proof:" + value;';
   const command = nodeFunctionGoalCommand({ modulePath: "continuity-v2-proof.js", invocation: 'formatProof("7319")' });
-  let executionTurns = 0;
   const execution = { schemaVersion: 2, operations: [
     fileOperationCandidate({ id: "create_file", path: "continuity-v2-proof.js",
       sourceQuote: "创建 continuity-v2-proof.js，内容是导出 formatProof",
@@ -29,11 +28,22 @@ test("real Pi channel creates a module then performs the natural-language Node g
   ] };
   const daemon = await startRealPiChannelFixture(cwd, request => {
     if (/channel intent selector/i.test(systemText(request))) return { text: JSON.stringify({ action: "execute", reason: "Explicit Node goal", execution }) };
-    executionTurns++;
-    if (executionTurns === 1) return { tool: "write", input: { path: "continuity-v2-proof.js", content } };
-    if (executionTurns === 2) return { tool: "bash", input: { command, timeoutMs: 5000 } };
-    assert.ok(JSON.stringify(request.messages).includes("proof:7319"), "Pi must receive actual Host command output");
-    return { text: "Created continuity-v2-proof.js and invoked formatProof with 7319; output proof:7319." };
+    // Participants receive only their owned operations. Drive each actual Pi
+    // session from its advertised tools and Host results, never a shared turn count.
+    const available = new Set((request.tools ?? []).map(tool => tool.function.name));
+    assert.ok(available.has("write") || available.has("bash"), "The execution participant must receive its bound tools.");
+    if (available.has("write")) {
+      const result = latestToolResult(request, "write");
+      if (!result) return { tool: "write", input: { path: "continuity-v2-proof.js", content } };
+      assert.ok(messageText(result).includes("Applied patch to 1 file."), "Pi must receive the actual successful Host write result");
+    }
+    if (available.has("bash")) {
+      const result = latestToolResult(request, "bash");
+      if (!result) return { tool: "bash", input: { command, timeoutMs: 5000 } };
+      assert.ok(messageText(result).includes("proof:7319"), "Pi must receive actual Host command output");
+      return { text: "Invoked formatProof with 7319; output proof:7319." };
+    }
+    return { text: "Created continuity-v2-proof.js with the requested formatProof export." };
   }, { sandbox: { restrictedCommands } });
   t.after(async () => { await daemon.close(); await rm(cwd, { recursive: true, force: true }); });
   const scope = "cwd=" + encodeURIComponent(cwd);
@@ -61,6 +71,16 @@ test("real Pi channel creates a module then performs the natural-language Node g
   assert.equal(result.report.outcomeStatus, "succeeded");
   assert.equal(daemon.store.listHostCommandWriteBlockers(cwd).length, 0);
 });
+
+function latestToolResult(request, name) {
+  const calls = new Map();
+  let result;
+  for (const message of request.messages) {
+    for (const call of message.tool_calls ?? []) calls.set(call.id, call.function.name);
+    if (message.role === "tool" && calls.get(message.tool_call_id) === name) result = message;
+  }
+  return result;
+}
 
 async function json(url, body) {
   const response = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
