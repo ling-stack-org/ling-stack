@@ -75,3 +75,16 @@ native conformance 的负例使用显式本机构建 manifest 和真实 cached r
 原始 actor source manifest 当前仍是空集合。因此固定 reader 的 genuine bind/window
 正例、Registry pending 分支的完整 owning 运行、Core safe、生产 MCP 和 GUI 均未验收。
 这些缺口必须在后续原始来源与 close-claim 接通时验证，不能用机制测试替代。
+
+## 原始来源清单的下一接点
+
+Docker 默认 backend 探测通过源模块唯一 `DOCKER_PROBE_ACTOR_ENTRY` 进入已捕获的
+`execFileAsync`，保持原 argv、超时、输出预算与结果格式。私有一次性记录在 gate 前
+消费，producer 再删除该记录；调用方 argv、clone 或 flags 不能发行原始记录。
+真实 gate refusal 保留原 Error，不降成普通 Docker readiness diagnostic；真正探测
+进程的普通失败仍使用原来的诊断。注入的 `commandRunner` 不获得默认源身份。
+
+这补齐来源对象，不等于完成 manifest：还需固定导入全部 exact exports、处理
+native/staging 初始化环，并在原始 Supervisor startup enroll 同一份清单。
+不能重建 Core bridge 单例，不能清除先前 unbound native entry 的 sticky history。
+这些接线与 owning window 正例完成前，不开放 Core-safe 或产品成功路径。
