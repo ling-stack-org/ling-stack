@@ -21,6 +21,7 @@ import type { ResolvedDaemonConfig } from "../config.js";
 import { NativeRestrictedCommandRuntime } from "./sandbox/restricted-command-runtime.js";
 import { ProtectedHostStageRegistry } from "./sandbox/protected-host-staging.js";
 import type { ProtectedHostActorEntry } from "./sandbox/protected-host-actor-inventory.js";
+import { readOriginalProtectedHostActorEntries } from "./sandbox/protected-host-original-entry-manifest.js";
 import type { OfficeLocalReviewedNativeArtifact } from "./sandbox/protected-host-office-native-identity.js";
 import { OfficeLocalNativeRuntime } from "../features/office-documents/office-local-native-runtime.js";
 import { HttpError } from "../errors.js";
@@ -58,7 +59,7 @@ export function retainOriginalRuntimeSupervisorOfficeStoreBridge(supervisor: Run
   original.storeBridges.add(Object.freeze({ store, setup }));
 }
 export interface RuntimeSupervisorHostBootstrap {
-  /** Exact original producer-module exports. Missing entries close Office; never a verified flag. */
+  /** Explicit Host/test selection. Omitted uses the fixed original source list; incomplete/custom lists still close Office. */
   readonly actorEntries?: readonly ProtectedHostActorEntry[];
   /** Build-time Host selection only, not workspace/HTTP/model configuration or a runtime compiler. */
   readonly officeLocalNativeArtifact?: OfficeLocalReviewedNativeArtifact;
@@ -153,7 +154,7 @@ export class RuntimeSupervisor {
     this.hostBootstrap = captureHostBootstrap(hostBootstrap);
     originalOfficeRuntimeBindings.set(this, { registry: this.protectedHostStages, stores: new WeakMap(), nativeRuntimes: new WeakMap(), storeBridges: new Set(),
       issuerId: `protected_host_supervisor_${randomUUID()}`, artifact: this.hostBootstrap?.officeLocalNativeArtifact, active: true });
-    if (this.hostBootstrap?.actorEntries) this.protectedHostStages.bindOriginalActorEntries(this.hostBootstrap.actorEntries);
+    this.protectedHostStages.bindOriginalActorEntries(this.hostBootstrap?.actorEntries ?? readOriginalProtectedHostActorEntries());
   }
 
   getRuntimeToolFeatures(): ResolvedDaemonConfig["runtimeTools"] {

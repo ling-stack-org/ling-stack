@@ -5,11 +5,13 @@ import type { EffectiveRunPolicySnapshot, ExecutionSandboxBackendIdentity, HostO
   RunSession, RunStore, RuntimeAttemptFenceV1 } from "@ling-stack/core";
 import { captureProtectedHostStagePaths, type ProtectedHostStagePaths } from "./protected-host-stage-paths.js";
 import { readMacosSandboxBackendIdentity, readPreparedMacosSandboxAuthority, isOwnedMacosSandboxChild,
+  MACOS_NATIVE_COMMAND_ACTOR_ENTRY,
   type PreparedMacosSandboxAuthority, type PreparedMacosSandboxCommand } from "./macos-native-command.js";
 import { assertProtectedHostDomainExcludesStage, captureProtectedHostActorDomain,
   type ProtectedHostActorDomain } from "./protected-host-actor-domain.js";
 import { readProtectedHostBootstrapReadRoots } from "./protected-host-bootstrap-domain.js";
-import { ProtectedHostActorInventory, type ProtectedHostActorEntry } from "./protected-host-actor-inventory.js";
+import { ProtectedHostActorInventory, readOriginalProtectedHostActorDomainHistory,
+  type ProtectedHostActorEntry, type OriginalProtectedHostActorDomainHistory } from "./protected-host-actor-inventory.js";
 import { readOriginalProtectedHostActorEntries } from "./protected-host-original-entry-manifest.js";
 import { readOriginalPackagedCodesignHostProof, type OriginalPackagedCodesignHostProof } from "./packaged-codesign-host-source.js";
 import { captureOriginalOfficeDirectoryWindowPaths, type OriginalOfficeDirectoryWindowPaths,
@@ -70,6 +72,13 @@ const originalOfficeRegistryReaders = new WeakMap<ProtectedHostStageRegistry, Re
 const actorPreparedBindings = new WeakMap<ProtectedHostActorPreparation, {
   readonly registry: ProtectedHostStageRegistry; readonly prepared: PreparedMacosSandboxCommand;
 }>();
+const originalActorRegistryReaders = new WeakMap<ProtectedHostStageRegistry, Readonly<{
+  readDomain: (actor: ProtectedHostActorPreparation, prepared: PreparedMacosSandboxCommand) => ProtectedHostActorDomain | undefined;
+  assertHistory: (entry: ProtectedHostActorEntry, history: OriginalProtectedHostActorDomainHistory) => void;
+  commitHistory: (entry: ProtectedHostActorEntry, history: OriginalProtectedHostActorDomainHistory) => void;
+  assertEnrollment: (hosts: readonly { entry: ProtectedHostActorEntry; proof: OriginalPackagedCodesignHostProof }[],
+    actors: readonly { entry: ProtectedHostActorEntry; history: OriginalProtectedHostActorDomainHistory }[]) => void;
+}>>();
 function requireScope(condition: unknown, code: string): asserts condition {
   if (!condition) throw new Error(code);
 }
@@ -80,7 +89,39 @@ export function assertProtectedHostActorPreparedBinding(actor: ProtectedHostActo
   const binding = actorPreparedBindings.get(actor);
   requireScope(binding && ownedRegistries.has(binding.registry) && binding.prepared === prepared,
     "protected_host_actor_prepared_binding_invalid");
-  binding.registry.assertActorLaunchCurrent(actor);
+  readOriginalProtectedHostActorLaunchDomain(actor);
+}
+
+/** Read original launcher facts without transferring the owning Run/source capability to another Registry. */
+export function readOriginalProtectedHostActorLaunchDomain(actor: ProtectedHostActorPreparation,
+  entry?: ProtectedHostActorEntry): ProtectedHostActorDomain | undefined {
+  const binding = actorPreparedBindings.get(actor);
+  requireScope(binding && ownedRegistries.has(binding.registry), "protected_host_actor_preparation_invalid");
+  if (entry) requireScope(entry === MACOS_NATIVE_COMMAND_ACTOR_ENTRY, "protected_host_actor_entry_proof_invalid");
+  const original = originalActorRegistryReaders.get(binding.registry);
+  requireScope(original, "protected_host_actor_preparation_invalid");
+  return original.readDomain(actor, binding.prepared);
+}
+
+/** Source-owned aggregate history uses constructor-private readers, never replacement public methods. */
+export function assertOriginalProtectedHostActorDomainHistoryCurrent(registry: ProtectedHostStageRegistry,
+  entry: ProtectedHostActorEntry, history: OriginalProtectedHostActorDomainHistory): void {
+  const original = originalActorRegistryReaders.get(registry);
+  requireScope(original, "protected_host_registry_invalid");
+  original.assertHistory(entry, history);
+}
+export function commitOriginalProtectedHostActorDomainHistory(registry: ProtectedHostStageRegistry,
+  entry: ProtectedHostActorEntry, history: OriginalProtectedHostActorDomainHistory): void {
+  const original = originalActorRegistryReaders.get(registry);
+  requireScope(original, "protected_host_registry_invalid");
+  original.commitHistory(entry, history);
+}
+export function assertOriginalProtectedHostActorHistoryEnrollment(registry: ProtectedHostStageRegistry,
+  hosts: readonly { entry: ProtectedHostActorEntry; proof: OriginalPackagedCodesignHostProof }[],
+  actors: readonly { entry: ProtectedHostActorEntry; history: OriginalProtectedHostActorDomainHistory }[]): void {
+  const original = originalActorRegistryReaders.get(registry);
+  requireScope(original, "protected_host_registry_invalid");
+  original.assertEnrollment(hosts, actors);
 }
 function assertPrivateStage(paths: ProtectedHostStagePaths): void {
   paths.assertCurrent();
@@ -123,9 +164,27 @@ export class ProtectedHostStageRegistry {
     readonly entry: ProtectedHostActorEntry; readonly epoch: object; readonly domain: ProtectedHostActorDomain;
   }>();
   #domain: ProtectedHostActorDomain | undefined;
+  #domainEpoch = Object.freeze({});
   #coverageClosed = false;
   constructor() {
     ownedRegistries.add(this);
+    originalActorRegistryReaders.set(this, Object.freeze({
+      readDomain: (actor, prepared) => {
+        requireScope(this.#actor(actor).prepared === prepared, "protected_host_actor_prepared_binding_invalid");
+        return this.#assertActorLaunchCurrent(actor);
+      },
+      assertHistory: (entry, history) => { this.#previewOriginalActorDomainHistory(entry, history); },
+      commitHistory: (entry, history) => {
+        const epoch = this.#domainEpoch;
+        const domain = this.#previewOriginalActorDomainHistory(entry, history);
+        if (domain) this.#commitDomain(domain, epoch);
+        else this.#coverageClosed = true;
+      },
+      assertEnrollment: (hosts, actors) => {
+        let domain = this.#previewOriginalHostProofBatch(hosts);
+        for (const row of actors) domain = this.#previewOriginalActorDomainHistory(row.entry, row.history, false, domain);
+      },
+    }));
     // Capture private implementations, not replaceable instance methods. No caller
     // can install an inventory reader or inject a destination-path/window object.
     originalOfficeRegistryReaders.set(this, Object.freeze({
@@ -156,12 +215,36 @@ export class ProtectedHostStageRegistry {
     if (facts.kind !== "controlled") return;
     if (actor) {
       requireScope(facts.entryId === "macos_native_command", "protected_host_actor_entry_proof_invalid");
-      this.assertActorLaunchCurrent(actor); return;
+      this.#assertActorLaunchCurrent(actor); return;
     }
     // A refused launch has not created an unknown descendant. With no stage,
     // ordinary execution remains usable, regardless of lifetime command count.
     requireScope(this.#stages.size === 0, "protected_host_actor_unbound_with_active_stage");
     if (launchEntered) this.#coverageClosed = true;
+  }
+
+  #previewOriginalActorDomainHistory(entry: ProtectedHostActorEntry,
+    history: OriginalProtectedHostActorDomainHistory, assertBound = true,
+    previousDomain: ProtectedHostActorDomain | undefined = this.#domain): ProtectedHostActorDomain | undefined {
+    if (assertBound) this.#inventory.assertOriginal(entry);
+    const domain = readOriginalProtectedHostActorDomainHistory(entry, history);
+    if (!domain) {
+      requireScope(this.#stages.size === 0, "protected_host_actor_coverage_unknown");
+      return undefined;
+    }
+    const roots = [...new Set([...(previousDomain?.staticReadRoots ?? []), ...domain.staticReadRoots])];
+    requireScope(roots.length <= 128 && (!previousDomain || isDeepStrictEqual(previousDomain.backend, domain.backend)),
+      "protected_host_actor_coverage_unknown");
+    const merged = Object.freeze({ backend: domain.backend, staticReadRoots: Object.freeze(roots) });
+    for (const stage of this.#stages.values()) {
+      this.#assertStage(stage); this.#assertStageExclusion(merged, stage);
+    }
+    return merged;
+  }
+  #commitDomain(domain: ProtectedHostActorDomain | undefined, epoch: object): void {
+    requireScope(epoch === this.#domainEpoch, "protected_host_actor_history_changed");
+    this.#domain = domain;
+    this.#domainEpoch = Object.freeze({});
   }
 
   /** Read-only aggregate preflight. Canonical proof identity substitutes no Run/DB authority. */
@@ -173,6 +256,7 @@ export class ProtectedHostStageRegistry {
   commitOriginalHostProofBatch(histories: readonly {
     readonly entry: ProtectedHostActorEntry; readonly proof: OriginalPackagedCodesignHostProof;
   }[]): void {
+    const epoch = this.#domainEpoch;
     const merged = this.#previewOriginalHostProofBatch(histories), next = new Map(this.#hostBindings);
     for (const { entry, proof } of histories) {
       this.#inventory.assertOriginal(entry);
@@ -180,8 +264,8 @@ export class ProtectedHostStageRegistry {
       requireScope(facts.phase === "retained", "protected_host_actor_prepared_binding_invalid");
       next.set(proof, Object.freeze({ entry, epoch: this.#hostBindingEpoch, domain: facts.domain }));
     }
+    this.#commitDomain(merged, epoch);
     this.#hostBindings = next;
-    this.#domain = merged;
   }
   #previewOriginalHostProofBatch(histories: readonly {
     readonly entry: ProtectedHostActorEntry; readonly proof: OriginalPackagedCodesignHostProof;
@@ -289,6 +373,7 @@ export class ProtectedHostStageRegistry {
     "protected_host_actor_binding_invalid");
     let domain: ProtectedHostActorDomain | undefined;
     try {
+      const epoch = this.#domainEpoch;
       requireScope(state.compiledProtectedRoots, "protected_host_actor_domain_unverified");
       domain = captureProtectedHostActorDomain(authority, { origin: state.run.cwd,
         effectivePolicy: state.policy, protectedRoots: state.compiledProtectedRoots });
@@ -299,7 +384,7 @@ export class ProtectedHostStageRegistry {
       for (const stage of this.#stages.values()) {
         this.#assertStage(stage); this.#assertStageExclusion(merged, stage);
       }
-      this.#domain = merged;
+      this.#commitDomain(merged, epoch);
     } catch (error) {
       // These facts can close Office protection, never grant execution or impose a no-stage command count limit.
       if (this.#stages.size) throw error;
@@ -315,6 +400,9 @@ export class ProtectedHostStageRegistry {
 
   /** Before both launcher entry and native spawn; prepared actors also constrain later stage registration. */
   assertActorLaunchCurrent(token: ProtectedHostActorPreparation): void {
+    this.#assertActorLaunchCurrent(token);
+  }
+  #readActorLaunchDomainCurrent(token: ProtectedHostActorPreparation): ProtectedHostActorDomain | undefined {
     const actor = this.#actor(token);
     requireScope(actor.phase === "prepared" || actor.phase === "launch_entered", "protected_host_actor_launch_closed");
     assertSourceCurrent(actor.source);
@@ -327,17 +415,22 @@ export class ProtectedHostStageRegistry {
         requireScope(isDeepStrictEqual(current, actor.domain), "protected_host_actor_domain_unverified");
       } catch (error) {
         if (this.#stages.size) throw error;
-        this.#coverageClosed = true;
+        return undefined;
       }
     }
+    return actor.domain;
+  }
+  #assertActorLaunchCurrent(token: ProtectedHostActorPreparation): ProtectedHostActorDomain | undefined {
+    const domain = this.#readActorLaunchDomainCurrent(token);
     for (const stage of this.#stages.values()) {
       this.#assertStage(stage);
-      requireScope(actor.domain, "protected_host_actor_coverage_unknown");
-      this.#assertStageExclusion(actor.domain, stage);
+      requireScope(domain, "protected_host_actor_coverage_unknown");
+      this.#assertStageExclusion(domain, stage);
     }
+    return domain;
   }
   beginActorLaunch(token: ProtectedHostActorPreparation): void {
-    this.assertActorLaunchCurrent(token);
+    this.#assertActorLaunchCurrent(token);
     const actor = this.#actor(token);
     requireScope(actor.phase === "prepared", "protected_host_actor_launch_closed");
     actor.phase = "launch_entered";

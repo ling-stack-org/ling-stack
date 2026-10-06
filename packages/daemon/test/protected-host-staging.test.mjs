@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import fs, { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
+import { fileURLToPath } from "node:url";
 import { NativeRestrictedCommandRuntime } from "../dist/runtime/sandbox/restricted-command-runtime.js";
 import { ProtectedHostStageRegistry } from "../dist/runtime/sandbox/protected-host-staging.js";
 import { captureProtectedHostStagePaths } from "../dist/runtime/sandbox/protected-host-stage-paths.js";
@@ -14,6 +16,26 @@ import { MACOS_DYLD_PROFILE } from "../dist/runtime/sandbox/macos-seatbelt-profi
 import { commandFor, createProtectedHostStageFixture, waitActor } from "./support/protected-host-stage-fixture.mjs";
 
 const native = { skip: process.platform !== "darwin" };
+// Production enrollment retains process-wide original launcher history. Each
+// independent native scenario therefore needs a fresh process; a new Supervisor
+// must not erase unknown entry history left by a previous scenario. Test bodies,
+// OS checks and failure assertions below remain unchanged.
+function test(name, options, effect) {
+  if (process.env.LING_PROTECTED_HOST_STAGE_CASE === name) return nodeTest(name, options, effect);
+  if (process.env.LING_PROTECTED_HOST_STAGE_CASE) return;
+  return nodeTest(name, options, () => {
+    const env = { ...process.env, LING_PROTECTED_HOST_STAGE_CASE: name };
+    delete env.NODE_TEST_CONTEXT;
+    const result = spawnSync(process.execPath, ["--test", "--test-reporter=tap", fileURLToPath(import.meta.url)],
+      { env, encoding: "utf8", timeout: 90_000, maxBuffer: 1024 * 1024 });
+    const diagnostics = `${name}\n${result.stdout ?? ""}\n${result.stderr ?? ""}`;
+    assert.equal(result.error, undefined, diagnostics); assert.equal(result.signal, null, diagnostics);
+    assert.equal(result.status, 0, diagnostics);
+    for (const statistic of ["tests 1", "pass 1", "fail 0", "cancelled 0", "skipped 0", "todo 0"]) {
+      assert.match(result.stdout, new RegExp(`^# ${statistic}$`, "mu"), diagnostics);
+    }
+  });
+}
 function patchFs(replacements, effect) {
   const originals = new Map(Object.keys(replacements).map(name => [name, fs[name]]));
   for (const [name, replacement] of Object.entries(replacements)) fs[name] = replacement(originals.get(name));

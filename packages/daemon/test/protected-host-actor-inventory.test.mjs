@@ -13,7 +13,7 @@ import { observeSourceHookBootstrap } from "./support/protected-host-source-boot
 // native/Seatbelt cases. This file starts no native actors and proves no OS trust.
 function createProtectedHostStageFixture(t) {
   observeSourceHookBootstrap(t);
-  return createSharedProtectedHostStageFixture(t);
+  return createSharedProtectedHostStageFixture(t, { registry: new ProtectedHostStageRegistry() });
 }
 
 test("incomplete original entry inventory closes Office admission", () => {

@@ -15,7 +15,7 @@ import { captureOriginalOfficeDirectoryAuthorityV2, createOriginalOfficeDirector
 import { createNativeBootstrapFixture } from "./support/office-local-native-bootstrap-fixture.mjs";
 import { reviewedNativeArtifact } from "./support/office-local-native-runtime-fixture.mjs";
 
-test("private Core custody rejects public inventory and stage noops against the real incomplete manifest", t => {
+test("private Core custody rejects public inventory and stage noops against an explicitly incomplete Registry", t => {
   const f = createNativeBootstrapFixture(t), scope = f.runtime.bootstrapStage(f.input);
   t.mock.method(f.registry, "assertStageCurrent", () => {});
   assert.throws(() => captureOriginalOfficeDirectoryRuntimeCustody(f.runtime, scope), /protected_host_actor_inventory_incomplete/u);

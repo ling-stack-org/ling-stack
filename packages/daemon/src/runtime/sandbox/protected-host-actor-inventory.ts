@@ -1,12 +1,16 @@
 import { CORE_OFFICIAL_SKILL_GIT_ENTRY, CORE_EXTERNAL_WORK_SCHEDULER_ENTRY,
   bindCoreOriginalProcessGuard, readCoreOriginalProcessEntry,
   type CoreOriginalProcessEntry, type CoreOriginalProcessRecord } from "@ling-stack/core";
-import type { ProtectedHostActorPreparation, ProtectedHostStageRegistry } from "./protected-host-staging.js";
+import { assertOriginalProtectedHostActorDomainHistoryCurrent, commitOriginalProtectedHostActorDomainHistory,
+  assertOriginalProtectedHostActorHistoryEnrollment, readOriginalProtectedHostActorLaunchDomain,
+  type ProtectedHostActorPreparation, type ProtectedHostStageRegistry } from "./protected-host-staging.js";
+import type { ProtectedHostActorDomain } from "./protected-host-actor-domain.js";
+import { isDeepStrictEqual } from "node:util";
 import { readConsumedOriginalPackagedCodesignHostProof, readOriginalPackagedCodesignHostProof,
   retainOriginalPackagedCodesignHostProof, type OriginalPackagedCodesignHostProof } from "./packaged-codesign-host-source.js";
 
 /** Audited native-entry inventory. These names describe source-owned producers, not runner labels. */
-export const PROTECTED_HOST_ACTOR_ENTRIES = Object.freeze({
+function createActorEntryKinds() { return Object.freeze({
   macos_native_command: "controlled",
   unified_exec_raw: "controlled",
   // A distinct DB-backed confirmed source, never the absence of a native dispatch.
@@ -31,7 +35,14 @@ export const PROTECTED_HOST_ACTOR_ENTRIES = Object.freeze({
   keychain_security: "controlled",
   packaged_codesign: "controlled",
   docker_probe: "controlled",
-} as const);
+} as const); }
+// Source modules can reach this factory during the staging/manifest import
+// cycle. Hoisted lazy state keeps the one exact list/ownership map intact.
+var actorEntryKinds: ReturnType<typeof createActorEntryKinds> | undefined;
+function readActorEntryKinds(): ReturnType<typeof createActorEntryKinds> {
+  return actorEntryKinds ??= createActorEntryKinds();
+}
+export const PROTECTED_HOST_ACTOR_ENTRIES = readActorEntryKinds();
 export type ProtectedHostActorEntryId = keyof typeof PROTECTED_HOST_ACTOR_ENTRIES;
 declare const entryBrand: unique symbol;
 export interface ProtectedHostActorEntry<Args extends unknown[] = unknown[], Result = unknown> {
@@ -52,10 +63,49 @@ interface EntryState {
   readonly launchRefusals: WeakSet<object>;
   readonly coreSource?: CoreOriginalProcessEntry;
   readonly certifiedHostHistory: Set<OriginalPackagedCodesignHostProof>;
+  actorDomainHistory?: OriginalProtectedHostActorDomainHistory;
+  historyEpoch: object;
   unboundLaunchEntered: boolean;
 }
-const originalEntries = new WeakMap<object, EntryState>();
-const requireEntry = (value: unknown): void => { if (!value) throw new Error("protected_host_actor_entry_invalid"); };
+var originalEntries: WeakMap<object, EntryState> | undefined;
+function originalEntryStates(): WeakMap<object, EntryState> { return originalEntries ??= new WeakMap(); }
+declare const actorDomainHistoryBrand: unique symbol;
+export interface OriginalProtectedHostActorDomainHistory { readonly [actorDomainHistoryBrand]: true }
+const originalActorDomainHistories = new WeakMap<OriginalProtectedHostActorDomainHistory, Readonly<{
+  entry: ProtectedHostActorEntry; domain: ProtectedHostActorDomain | undefined; epoch: object;
+}>>();
+function requireEntry(value: unknown): void { if (!value) throw new Error("protected_host_actor_entry_invalid"); }
+
+/** Only the canonical physical launcher can issue domain history; a same-name factory cannot. */
+function captureActorDomainHistory(entry: ProtectedHostActorEntry, state: EntryState,
+  actor: ProtectedHostActorPreparation): OriginalProtectedHostActorDomainHistory {
+  const current = readOriginalProtectedHostActorLaunchDomain(actor, entry);
+  const prior = state.actorDomainHistory && readOriginalProtectedHostActorDomainHistory(entry, state.actorDomainHistory);
+  let domain: ProtectedHostActorDomain | undefined;
+  if (current && !state.unboundLaunchEntered && (!prior || isDeepStrictEqual(prior.backend, current.backend))) {
+    const roots = [...new Set([...(prior?.staticReadRoots ?? []), ...current.staticReadRoots])];
+    if (roots.length <= 128) domain = Object.freeze({ backend: current.backend, staticReadRoots: Object.freeze(roots) });
+  }
+  const history = Object.freeze({}) as OriginalProtectedHostActorDomainHistory;
+  originalActorDomainHistories.set(history, Object.freeze({ entry, domain, epoch: state.historyEpoch }));
+  return history;
+}
+
+/** Immutable permission over-approximation only, never foreign Run, source or execution authority. */
+export function readOriginalProtectedHostActorDomainHistory(entry: ProtectedHostActorEntry,
+  history: OriginalProtectedHostActorDomainHistory): ProtectedHostActorDomain | undefined {
+  const original = originalActorDomainHistories.get(history);
+  requireEntry(original && original.entry === entry);
+  return original!.domain;
+}
+
+function forAttachedRegistries(state: EntryState, effect: (registry: ProtectedHostStageRegistry) => void): void {
+  for (const reference of state.registries) {
+    const registry = reference.deref();
+    if (registry) effect(registry);
+    else state.registries.delete(reference);
+  }
+}
 
 function assertAttachedRegistries(entry: ProtectedHostActorEntry, state: EntryState,
   actor: ProtectedHostActorPreparation | undefined, trackEntry = true): void {
@@ -76,13 +126,19 @@ export function defineProtectedHostActorEntry<Args extends unknown[], Result>(
   entryId: ProtectedHostActorEntryId, originalProducer: (...args: Args) => Result,
   consumeOriginalArgs?: (...args: Args) => void,
 ): ProtectedHostActorEntry<Args, Result> {
-  requireEntry(Object.hasOwn(PROTECTED_HOST_ACTOR_ENTRIES, entryId) && typeof originalProducer === "function");
+  requireEntry(Object.hasOwn(readActorEntryKinds(), entryId) && typeof originalProducer === "function");
   requireEntry(consumeOriginalArgs === undefined || typeof consumeOriginalArgs === "function"
     && Object.prototype.toString.call(consumeOriginalArgs) !== "[object AsyncFunction]");
   const registries = new Set<WeakRef<ProtectedHostStageRegistry>>();
   let state: EntryState;
   const entry = Object.freeze({ entryId,
     assertMayInvoke(actor: ProtectedHostActorPreparation | undefined): void {
+      if (actor && entryId === "macos_native_command") {
+        const history = captureActorDomainHistory(entry as ProtectedHostActorEntry, state, actor);
+        forAttachedRegistries(state, registry => assertOriginalProtectedHostActorDomainHistoryCurrent(registry,
+          entry as ProtectedHostActorEntry, history));
+        return;
+      }
       assertAttachedRegistries(entry as ProtectedHostActorEntry, state, actor, false);
     },
     invoke(actor: ProtectedHostActorPreparation | undefined, ...args: Args): Result {
@@ -101,6 +157,7 @@ export function defineProtectedHostActorEntry<Args extends unknown[], Result>(
         }
       }
       let hostProof: OriginalPackagedCodesignHostProof | undefined;
+      let actorHistory: OriginalProtectedHostActorDomainHistory | undefined;
       try {
         // This is a fixed direct reader. A generic same-name factory has neither
         // canonical entry identity nor the source's consumed private record.
@@ -112,13 +169,19 @@ export function defineProtectedHostActorEntry<Args extends unknown[], Result>(
       // Every attached original Supervisor must allow the same source proof
       // before any history/domain/custody commit occurs.
       try {
+        if (actor && entryId === "macos_native_command")
+          actorHistory = captureActorDomainHistory(entry as ProtectedHostActorEntry, state, actor);
         if (hostProof) {
           for (const reference of registries) {
             const registry = reference.deref();
             if (registry) registry.assertOriginalHostProofBatch([{ entry: entry as ProtectedHostActorEntry, proof: hostProof }]);
             else registries.delete(reference);
           }
-        } else assertAttachedRegistries(entry as ProtectedHostActorEntry, state, actor, false);
+        } else if (actorHistory) forAttachedRegistries(state, registry =>
+          assertOriginalProtectedHostActorDomainHistoryCurrent(registry, entry as ProtectedHostActorEntry, actorHistory!));
+        else assertAttachedRegistries(entry as ProtectedHostActorEntry, state, actor, false);
+        if (actorHistory && originalActorDomainHistories.get(actorHistory)!.epoch !== state.historyEpoch)
+          throw new Error("protected_host_actor_history_changed");
       }
       catch (error) {
         if (isWeakKey(error)) state.launchRefusals.add(error);
@@ -143,7 +206,21 @@ export function defineProtectedHostActorEntry<Args extends unknown[], Result>(
             for (const reference of registries) reference.deref()?.markActorEntryCoverageUnknown();
             throw error;
           }
-        } else if ((!registries.size || actor === undefined) && PROTECTED_HOST_ACTOR_ENTRIES[entryId] === "controlled") {
+        } else if (actorHistory) {
+          try {
+            state.historyEpoch = Object.freeze({});
+            state.actorDomainHistory = actorHistory;
+            if (!readOriginalProtectedHostActorDomainHistory(entry as ProtectedHostActorEntry, actorHistory))
+              state.unboundLaunchEntered = true;
+            forAttachedRegistries(state, registry => commitOriginalProtectedHostActorDomainHistory(registry,
+              entry as ProtectedHostActorEntry, actorHistory!));
+          } catch (error) {
+            state.unboundLaunchEntered = true;
+            for (const reference of registries) reference.deref()?.markActorEntryCoverageUnknown();
+            throw error;
+          }
+        } else if ((!registries.size || actor === undefined) && readActorEntryKinds()[entryId] === "controlled") {
+          state.historyEpoch = Object.freeze({});
           state.unboundLaunchEntered = true;
           for (const reference of registries) {
             const registry = reference.deref();
@@ -164,8 +241,8 @@ export function defineProtectedHostActorEntry<Args extends unknown[], Result>(
   }) as ProtectedHostActorEntry<Args, Result>;
   state = { entryId, originalProducer: originalProducer as (...args: never[]) => unknown,
     invoke: entry.invoke as (...args: never[]) => unknown, assertMayInvoke: entry.assertMayInvoke,
-    registries, launchRefusals: new WeakSet(), certifiedHostHistory: new Set(), unboundLaunchEntered: false };
-  originalEntries.set(entry, state);
+    registries, launchRefusals: new WeakSet(), certifiedHostHistory: new Set(), historyEpoch: Object.freeze({}), unboundLaunchEntered: false };
+  originalEntryStates().set(entry, state);
   return entry;
 }
 
@@ -193,8 +270,8 @@ export function defineCoreProtectedHostActorEntry<Result>(coreSource: CoreOrigin
   state = { entryId, originalProducer: coreSource.invoke as (...args: never[]) => unknown,
     invoke: entry.invoke as (...args: never[]) => unknown, assertMayInvoke: entry.assertMayInvoke,
     registries: new Set(), launchRefusals: new WeakSet(), coreSource, certifiedHostHistory: new Set(),
-    unboundLaunchEntered: source.nativeEntryEntered };
-  originalEntries.set(entry, state);
+    historyEpoch: Object.freeze({}), unboundLaunchEntered: source.nativeEntryEntered };
+  originalEntryStates().set(entry, state);
   bindCoreOriginalProcessGuard(coreSource, Object.freeze({
     // All registries must allow this invocation before any unknown history is
     // created. An earlier no-stage registry must not be poisoned by a later
@@ -202,6 +279,7 @@ export function defineCoreProtectedHostActorEntry<Result>(coreSource: CoreOrigin
     assertMayLaunch(): void { assertAttachedRegistries(entry as ProtectedHostActorEntry, state, undefined, false); },
     nativeEntryEntered(): void {
       state.unboundLaunchEntered = true;
+      state.historyEpoch = Object.freeze({});
       for (const reference of state.registries) {
         const registry = reference.deref();
         if (registry) registry.markActorEntryCoverageUnknown();
@@ -216,19 +294,19 @@ export function defineCoreProtectedHostActorEntry<Result>(coreSource: CoreOrigin
 export function readProtectedHostActorEntry(entry: ProtectedHostActorEntry): Readonly<{
   entryId: ProtectedHostActorEntryId; kind: "controlled" | "user_external" | "system_bootstrap";
 }> {
-  const state = originalEntries.get(entry);
+  const state = originalEntryStates().get(entry);
   const descriptors = Object.getOwnPropertyDescriptors(entry);
   requireEntry(state && Object.isFrozen(entry) && descriptors.entryId?.value === state.entryId
     && descriptors.invoke?.value === state.invoke && Object.hasOwn(descriptors.invoke, "value"));
   requireEntry(descriptors.assertMayInvoke?.value === state!.assertMayInvoke && Object.hasOwn(descriptors.assertMayInvoke, "value"));
   if (state!.coreSource) requireEntry(readCoreOriginalProcessEntry(state!.coreSource).sourceId === state!.entryId);
-  return Object.freeze({ entryId: state!.entryId, kind: PROTECTED_HOST_ACTOR_ENTRIES[state!.entryId] });
+  return Object.freeze({ entryId: state!.entryId, kind: readActorEntryKinds()[state!.entryId] });
 }
 
 /** Only a denial from this exact original entry's read-only gate may survive a business catch. */
 export function isProtectedHostActorEntryLaunchRefusal(entry: ProtectedHostActorEntry, error: unknown): boolean {
   readProtectedHostActorEntry(entry);
-  return isWeakKey(error) && originalEntries.get(entry)!.launchRefusals.has(error);
+  return isWeakKey(error) && originalEntryStates().get(entry)!.launchRefusals.has(error);
 }
 
 function isWeakKey(value: unknown): value is object {
@@ -256,7 +334,7 @@ export class ProtectedHostActorInventory {
       next.set(entryId, entry);
     }
     const histories: { entry: ProtectedHostActorEntry; proof: OriginalPackagedCodesignHostProof }[] = [];
-    for (const entry of next.values()) for (const proof of originalEntries.get(entry)!.certifiedHostHistory) {
+    for (const entry of next.values()) for (const proof of originalEntryStates().get(entry)!.certifiedHostHistory) {
       try {
         requireEntry(readOriginalPackagedCodesignHostProof(entry, proof).phase === "retained");
         histories.push({ entry, proof });
@@ -264,10 +342,15 @@ export class ProtectedHostActorInventory {
     }
     // Aggregate preflight includes every historical domain before mutation.
     // A newly bound registry gets its own private epoch; no old binding is reused.
-    registry.assertOriginalHostProofBatch(histories);
+    const actorHistories: { entry: ProtectedHostActorEntry; history: OriginalProtectedHostActorDomainHistory }[] = [];
+    for (const entry of next.values()) {
+      const history = originalEntryStates().get(entry)!.actorDomainHistory;
+      if (history) actorHistories.push({ entry, history });
+    }
+    assertOriginalProtectedHostActorHistoryEnrollment(registry, histories, actorHistories);
     for (const [id, entry] of next) {
       this.#entries.set(id, entry);
-      const state = originalEntries.get(entry)!;
+      const state = originalEntryStates().get(entry)!;
       state.registries.add(new WeakRef(registry));
       if (state.unboundLaunchEntered || (state.coreSource && readCoreOriginalProcessEntry(state.coreSource).nativeEntryEntered)) {
         registry.markActorEntryCoverageUnknown();
@@ -275,6 +358,12 @@ export class ProtectedHostActorInventory {
     }
     try { registry.commitOriginalHostProofBatch(histories); }
     catch (error) { registry.markActorEntryCoverageUnknown(); throw error; }
+    try {
+      for (const entry of next.values()) {
+        const history = originalEntryStates().get(entry)!.actorDomainHistory;
+        if (history) commitOriginalProtectedHostActorDomainHistory(registry, entry, history);
+      }
+    } catch (error) { registry.markActorEntryCoverageUnknown(); throw error; }
     this.#sealed = true;
   }
   assertCurrent(): void {

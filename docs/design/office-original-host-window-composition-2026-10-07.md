@@ -2,7 +2,8 @@
 
 本切片建立 Core bridge 到 Daemon 原始私有 custody 的固定接线，
 不发行 Core-safe receipt，不改变 native-only API 或生产 MCP 协议选择。
-完整 actor manifest、Core close claim、独立 certificate、原子 pair 和 packaged 验收仍待完成。
+固定 actor manifest 与默认 enrollment 已接线；Core close claim、独立 certificate、
+原子 pair 和 packaged 验收仍待完成。源入口注册不是完整执行隔离证书。
 
 ## 固定来源与退休
 
@@ -72,9 +73,22 @@ foreign FD reuse、public no-op、borrowed scope、root retirement 与 cleanup �
 native conformance 的负例使用显式本机构建 manifest 和真实 cached runtime，
 不把 bootstrap fixture 的 inventory bypass 当成 genuine 正例。
 
-原始 actor source manifest 当前仍是空集合。因此固定 reader 的 genuine bind/window
-正例、Registry pending 分支的完整 owning 运行、Core safe、生产 MCP 和 GUI 均未验收。
-这些缺口必须在后续原始来源与 close-claim 接通时验证，不能用机制测试替代。
+固定 reader 现在保留 20 个源模块 exact export，默认 Supervisor enroll 同一份名单。
+独立冷导入、counterfeit/clone、显式空/同名 fixture 与 sticky history 的测试只证明
+来源与注册合同，不证明原 native profile、kernel 或所有 descendants 隔离。
+
+`closeCoreWindow(scope)` / `readCoreWindowClosure(scope)` 是 constructor-bound 原始
+runtime 接点，只有该 runtime 的私有 bound scope 可读取其 opaque window。
+关闭前 latch，成功只到 `closed_pending`；读取已关闭 FD 的历史不重新 fstat/reopen，
+不跑前向授权，也不发行 closeclaim、释放 Registry lease 或结算 Core。
+native session 未结束时拒绝关闭窗口；撤销/root retirement 不阻止原始资源 cleanup。
+原始 Store factory → Core row/ticket → 私有 scope/authority → Registry window 的
+owning 正例已进入专属测试，连同 scope 伪造、关闭 reply-loss/reentry 和撤销路径。
+它没有运行 OOXML/native writer graph，因此不是缺目录产品任务的成功证据。
+
+Core safe、生产 MCP/Tracker、同一次真实 OOXML 和 GUI 仍未验收。
+这些缺口必须在后续 close-claim、独立 certificate 和原子 pair 接通时验证，
+不能用只读 owning 测试替代。
 
 ## 原始来源清单的下一接点
 
@@ -84,7 +98,39 @@ Docker 默认 backend 探测通过源模块唯一 `DOCKER_PROBE_ACTOR_ENTRY` 进
 真实 gate refusal 保留原 Error，不降成普通 Docker readiness diagnostic；真正探测
 进程的普通失败仍使用原来的诊断。注入的 `commandRunner` 不获得默认源身份。
 
-这补齐来源对象，不等于完成 manifest：还需固定导入全部 exact exports、处理
-native/staging 初始化环，并在原始 Supervisor startup enroll 同一份清单。
-不能重建 Core bridge 单例，不能清除先前 unbound native entry 的 sticky history。
-这些接线与 owning window 正例完成前，不开放 Core-safe 或产品成功路径。
+固定 import 的 20 个 exact exports 在 reader 首读时缓存冻结，避免 native/staging
+初始化环；原始 Supervisor startup 使用同一清单，显式 custom/empty 列表不自动升级。
+两个 Core bridge 复用已安装 guard 的单例，不能在每次读取或 Supervisor 构造时重建。
+先前 unbound native entry 的 sticky history 不因完整名单、重注册或 root retirement 清除。
+
+## 多 Registry 的来源域与历史合同
+
+默认全面 enrollment 会使同一个 source wrapper 附着于多个 Supervisor Registry。
+actor 仍只属于自己的私有 Registry；其他 Registry 不获得其 Run/source、launch 或
+安全结算权威，也不能直接把 foreign actor 当作自己 `#actors` 的成员来验证。
+
+原始 native entry 必须先从固定私有 reader 取得当前 actor 的原始 launcher domain，
+对所有 attached Registry 执行只读预检：identity/backend、有限 roots 预算、每个
+active stage/destination 的 exclusion 与 pending/unknown lifetime。
+所有预检允许后才传播进入事实；任一后置 Registry 拒绝不能污染前一 Registry。
+真实 source 的 one-shot launch record 在预检前消费并校验 exact actor/prepared binding；
+错误 prepared 不能先提交 owner domain 再由物理 producer 拒绝。
+
+全局 source history 与各 Registry domain 分别保留私有 epoch。Store/原始 FS 的同步
+重入若在预检期间提交了新域，外层旧快照在进入前拒绝；若发生在 commit preview，
+写入前的 Registry epoch 校验保留内层新域，部分 fan-out 失败永久关闭 coverage。
+不能只保护全局 aggregate 而允许某个 Registry 的旧域覆盖较新权限历史。
+
+source 保留有限 backend/staticReadRoots aggregate，而不是每个命令一个永久 token 集。
+后绑定 Registry 继承实际已进入的 aggregate domain 或 sticky unknown；不能通过
+新 Supervisor 或弱引用 GC 清空全进程 source history。
+unknown domain 只在无保护成员时允许 ordinary execution，随后关闭未来 Office admission；
+有 active/pending/unknown member 时必须拒绝，不能给 actor 额外启动权限。
+
+独立 native 场景使用独立进程避免有意 unknown-history 场景污染其他用例；
+但真实跨 Registry 的归属与历史测试必须在同一进程完成，不能靠进程隔离掩盖回归。
+本合同不扩大 Full Access/其他同 UID 程序的隔离承诺，也不提供 Core-safe。
+
+专属跨 Registry 回归在每个场景内部使用同一进程的多个默认 Supervisor 与真实
+Seatbelt launcher，覆盖两种构造顺序、后绑定、错误 prepared、两阶段重入及 sticky
+unknown。场景之间隔离 source lifetime，不重置产品内部历史，不替换安全 gate。

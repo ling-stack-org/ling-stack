@@ -43,10 +43,10 @@ const wrongOwner = error => error?.code === "host_office_local_bridge_owner_inva
 const copies = value => [Object.freeze({ ...value }), new Proxy(value, {})];
 
 /** Real ephemeral SQLite Stores and an original constructor root, without native bootstrap. */
-function fixture(t) {
+function fixture(t, { actorEntries } = {}) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-core-composition-")));
   const config = resolveConfig({ defaultWorkspaceCwd: root });
-  const supervisor = new RuntimeSupervisor(config), stores = [], beforeClose = [];
+  const supervisor = new RuntimeSupervisor(config, undefined, { actorEntries }), stores = [], beforeClose = [];
   const factory = createOriginalOfficeDirectoryStoreFactory(supervisor);
   function workspace(name) {
     const cwd = join(root, name); mkdirSync(cwd, { mode: 0o700 }); return cwd;
@@ -222,7 +222,10 @@ test("root retires all transports before an actual runtime-lock cleanup error an
 
 /** Original SQLite source and actual ephemeral readonly stage, never a native session. */
 function registeredStage(t) {
-  const f = fixture(t), store = f.open("workspace"), registry = f.supervisor.getProtectedHostStageRegistry();
+  // This refusal fixture deliberately omits every source entry. Production
+  // Supervisor defaults now enroll the fixed complete list; public no-op
+  // methods must still be unable to repair an explicitly incomplete Registry.
+  const f = fixture(t, { actorEntries: Object.freeze([]) }), store = f.open("workspace"), registry = f.supervisor.getProtectedHostStageRegistry();
   const runtime = f.supervisor.getRuntime(store.paths.cwd, store), now = new Date().toISOString(), id = "composition-stage-run";
   const unit = store.createWorkUnit({ workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "run", ownerId: id,
     idempotencyKey: id, status: "running", createdByActor: "system", request: {}, now });
@@ -286,7 +289,7 @@ test("constructor-private Registry readers reject copied registries without touc
 test("real stage cannot pass private Office inventory through public no-op checks and failed begin stays closed",
   { skip: process.platform !== "darwin" }, t => {
     const f = registeredStage(t);
-    assert.deepEqual(readOriginalProtectedHostActorEntries(), []);
+    assert.equal(readOriginalProtectedHostActorEntries().length, 20);
     f.registry.assertStageCurrent(f.stage); // Control: actual original stage/source is currently valid.
     assert.ok(Object.isFrozen(f.stage)); assert.deepEqual(Reflect.ownKeys(f.stage), []);
     let publicCalls = 0;

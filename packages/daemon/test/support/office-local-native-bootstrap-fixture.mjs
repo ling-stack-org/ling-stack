@@ -9,8 +9,9 @@ import { reviewedNativeArtifact } from "./office-local-native-runtime-fixture.mj
 
 /**
  * Explicit local reviewed-addon gate with genuine Supervisor/store/factory and
- * registry-owned readonly FD lifetimes. The empty production actor manifest is
- * bypassed ONLY in the test below to reach post-registration bootstrap faults.
+ * registry-owned readonly FD lifetimes. This fixture explicitly selects an empty
+ * actor inventory, unlike the complete production default; its public inventory
+ * check is bypassed ONLY below to reach post-registration bootstrap faults.
  * This is not actor coverage, native operation, Core safe or packaged proof.
  * No production DB or directory is used; teardown removes only created fixture
  * directories after tests have checked runtime preservation and closure.
@@ -19,7 +20,7 @@ export function createNativeBootstrapFixture(t, { bypassInventory = true } = {})
   const root = realpathSync(mkdtempSync("/private/tmp/ling-office-bootstrap-test-")), cwd = join(root, "workspace");
   mkdirSync(cwd, { mode: 0o700 });
   const store = createSqliteRunStore(cwd), supervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd }),
-    undefined, { officeLocalNativeArtifact: reviewedNativeArtifact() });
+    undefined, { actorEntries: Object.freeze([]), officeLocalNativeArtifact: reviewedNativeArtifact() });
   const hostRuntime = supervisor.getRuntime(cwd, store), runtime = supervisor.getOfficeLocalNativeRuntime(cwd, store);
   const registry = supervisor.getProtectedHostStageRegistry(), now = new Date().toISOString(), id = "bootstrap-test-run";
   const unit = store.createWorkUnit({ workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "run", ownerId: id,

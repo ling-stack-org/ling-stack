@@ -9,8 +9,10 @@ import { isRuntimeSupervisorOfficeCacheEntry, readRuntimeSupervisorOfficeArtifac
   type RuntimeSupervisor } from "../../runtime/supervisor.js";
 import { isProtectedHostStageRegistry, assertOriginalProtectedHostOfficeStage,
   beginOriginalProtectedHostOfficeDirectoryWindow, assertOriginalProtectedHostOfficeDirectoryWindow,
+  closeOriginalProtectedHostOfficeDirectoryWindow, readOriginalProtectedHostOfficeDirectoryClosure,
   type ProtectedHostOfficeDirectoryWindowV2, type ProtectedHostSourceInput,
   type ProtectedHostStageRegistration, type ProtectedHostStageRegistry } from "../../runtime/sandbox/protected-host-staging.js";
+import type { OriginalOfficeDirectoryWindowPathClosure } from "../../runtime/sandbox/protected-host-office-directory-window.js";
 import { loadReviewedOfficeLocalNativeArtifact, type OfficeLocalNativeIdentityFacts,
   type OfficeLocalNativeMethod } from "../../runtime/sandbox/protected-host-office-native-identity.js";
 
@@ -64,7 +66,7 @@ interface ScopeState {
   nativeClosed: boolean;
   captureEntered: boolean;
   sessionCloseEntered: boolean;
-  stageClosure: "retained" | "closed" | "unknown";
+  stageClosure: "retained" | "closed_pending" | "closed" | "unknown";
   coreBinding?: "custody_entered" | "custody_captured" | "binding_entered" | "bound" | "invalid";
   coreWindow?: ProtectedHostOfficeDirectoryWindowV2;
   coreExecution?: HostOfficeLocalDirectoryExecutionRecordV2;
@@ -99,7 +101,7 @@ export class OfficeLocalNativeRuntime {
     this.#native = loadReviewedOfficeLocalNativeArtifact(readRuntimeSupervisorOfficeArtifact(supervisor, store, registry));
     for (const name of ["bootstrapStage", "assertScopeCurrent", "assertScopeBinding", "scopeFacts", "openSession", "createDirectory", "createFile",
       "writeFile", "readFile", "fsyncResource", "observeResource", "installTree", "observePublication", "inspectSession",
-      "closeResource", "cancelSession", "closeSession", "revokeScope", "closeStage", "releaseIdentity"] as const) {
+      "closeResource", "cancelSession", "closeSession", "revokeScope", "closeCoreWindow", "readCoreWindowClosure", "closeStage", "releaseIdentity"] as const) {
       const method = OfficeLocalNativeRuntime.prototype[name].bind(this);
       Object.defineProperty(this, name, { value: method, writable: false, configurable: false });
     }
@@ -234,6 +236,26 @@ export class OfficeLocalNativeRuntime {
   revokeScope(scope: OfficeLocalNativeTypedScope): void {
     const state = this.#scope(scope);
     if (state.phase !== "closed") state.phase = "revoked";
+  }
+  /** Close only this bound scope's original readonly paths. Its protection lease and Core blockers remain. */
+  closeCoreWindow(scope: OfficeLocalNativeTypedScope): void {
+    const state = this.#scope(scope);
+    requireRuntime(state.coreBinding === "bound" && state.coreWindow && state.coreExecution,
+      "office_local_native_core_window_unbound");
+    requireRuntime(state.stageClosure === "retained", "office_local_native_core_window_close_already_entered");
+    requireRuntime(!state.captureEntered || state.nativeClosed, "office_local_native_stage_lifetime_unknown");
+    state.phase = "close_entered"; state.stageClosure = "unknown"; // Tombstone before any close or reentry; never retry an FD.
+    try {
+      closeOriginalProtectedHostOfficeDirectoryWindow(this.registry, state.coreWindow);
+      state.stageClosure = "closed_pending"; state.phase = "closed";
+    } catch (error) { state.phase = "unknown"; throw error; }
+  }
+  /** Historical original-FD facts only. No source refresh, native cleanup claim, lease release or Core-safe receipt. */
+  readCoreWindowClosure(scope: OfficeLocalNativeTypedScope): OriginalOfficeDirectoryWindowPathClosure {
+    const state = this.#scope(scope);
+    requireRuntime(state.coreBinding === "bound" && state.coreWindow && state.coreExecution,
+      "office_local_native_core_window_unbound");
+    return readOriginalProtectedHostOfficeDirectoryClosure(this.registry, state.coreWindow);
   }
   /** Close original readonly stage FDs only. No pathname unlink, no cleanup permission resurrection. */
   closeStage(scope: OfficeLocalNativeTypedScope): void {

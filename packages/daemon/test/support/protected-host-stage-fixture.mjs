@@ -6,6 +6,7 @@ import { compileExecutionSandboxPolicy, createSqliteRunStore, DEFAULT_WORKSPACE_
   toRuntimeAttemptFence } from "@ling-stack/core";
 import { resolveConfig } from "../../dist/config.js";
 import { RuntimeSupervisor } from "../../dist/runtime/supervisor.js";
+import { NativeRestrictedCommandRuntime } from "../../dist/runtime/sandbox/restricted-command-runtime.js";
 import { macosSandboxCommandFingerprint, prepareMacosSandboxCommand, readMacosSandboxBackendIdentity } from "../../dist/runtime/sandbox/macos-native-command.js";
 import { MACOS_SYSTEM_READ_ROOTS } from "../../dist/runtime/sandbox/macos-seatbelt-profile.js";
 
@@ -19,7 +20,7 @@ export async function waitActor(child) {
   assert.equal(status.code, 0, stderr); assert.equal(status.signal, null);
   return stdout;
 }
-export function createProtectedHostStageFixture(t) {
+export function createProtectedHostStageFixture(t, { registry: suppliedRegistry } = {}) {
   const root = realpathSync(mkdtempSync("/private/tmp/ling-protected-host-stage-")), cwd = join(root, "workspace");
   mkdirSync(cwd, { mode: 0o700 });
   const stagePath = join(root, "stage"); mkdirSync(stagePath, { mode: 0o700 });
@@ -27,7 +28,11 @@ export function createProtectedHostStageFixture(t) {
   const pin = path => ({ path: realpathSync(path), sha256: createHash("sha256").update(readFileSync(path)).digest("hex") });
   const config = { inputHelper: { ...pin("/usr/bin/true"), version: "stage-test-v1" }, executables: { node: pin(process.execPath) } };
   const supervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd, sandbox: { restrictedCommands: config } }));
-  const registry = supervisor.getProtectedHostStageRegistry(), runtime = supervisor.getRestrictedCommandRuntime();
+  // The real native cases use the production Supervisor's enrolled Registry.
+  // Generic wrapper tests may supply their separate, initially unbound Registry
+  // to exercise synthetic entries; that is never the original source manifest.
+  const registry = suppliedRegistry ?? supervisor.getProtectedHostStageRegistry();
+  const runtime = suppliedRegistry ? new NativeRestrictedCommandRuntime(config, registry) : supervisor.getRestrictedCommandRuntime();
   let runCount = 0;
   function createRun() {
     const now = new Date().toISOString(), id = "stage-run-" + ++runCount;

@@ -29,11 +29,12 @@ interface MacosNativeLaunch {
   };
 }
 const ownedNativeLaunches = new WeakSet<MacosNativeLaunch>();
+const consumedNativeLaunches = new WeakSet<MacosNativeLaunch>();
 
 /** Only an original prepared one-shot record reaches the actual fixed native producer. */
 export const MACOS_NATIVE_COMMAND_ACTOR_ENTRY = defineProtectedHostActorEntry("macos_native_command",
   (launch: MacosNativeLaunch): ChildProcessWithoutNullStreams => {
-    requireNative(ownedNativeLaunches.delete(launch), "macos_native_launch_record_invalid");
+    requireNative(consumedNativeLaunches.delete(launch), "macos_native_launch_record_invalid");
     if (launch.actor) assertProtectedHostActorPreparedBinding(launch.actor, launch.prepared);
     const child = spawn(launch.command, [...launch.args], launch.options);
     ownedPreparedChildren.set(child, launch.prepared);
@@ -41,6 +42,12 @@ export const MACOS_NATIVE_COMMAND_ACTOR_ENTRY = defineProtectedHostActorEntry("m
     child.once("exit", () => ownedProcessGroups.delete(child));
     child.stdin.end();
     return child;
+  }, (launch: MacosNativeLaunch): void => {
+    // Consume the actual one-shot source record before any fan-out/history.
+    // A different prepared command cannot borrow this actor's permission domain.
+    requireNative(ownedNativeLaunches.delete(launch), "macos_native_launch_record_invalid");
+    if (launch.actor) assertProtectedHostActorPreparedBinding(launch.actor, launch.prepared);
+    consumedNativeLaunches.add(launch);
   });
 const sameBackend = (first: ExecutionSandboxBackendIdentity, second: ExecutionSandboxBackendIdentity): boolean =>
   first.kind === second.kind && first.helperVersion === second.helperVersion

@@ -116,7 +116,10 @@ if (childCase) {
       const stage = f.register(); f.registry.closeStage(stage);
       assert.throws(() => f.registry.assertActorInventoryCurrent(), /inventory_incomplete/u);
       const manifest = await harness.loadSourceHookModule("runtime/sandbox/protected-host-original-entry-manifest.js");
-      assert.deepEqual(manifest.readOriginalProtectedHostActorEntries(), [], "this slice never manufactures a complete manifest");
+      const originalEntries = manifest.readOriginalProtectedHostActorEntries();
+      assert.equal(originalEntries.length, 20, "the fixed source list is complete, not this two-entry fixture inventory");
+      assert.ok(originalEntries.includes(harness.keychain.KEYCHAIN_SECURITY_ACTOR_ENTRY));
+      assert.ok(originalEntries.includes(harness.bootstrap.PACKAGED_CODESIGN_ACTOR_ENTRY));
     });
 
     await t.test("the Daemon's custom composite resolver path keeps custom semantics and does not enter default keychain", async t => {
