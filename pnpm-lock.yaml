@@ -214,7 +214,7 @@ importers:
         version: 12.11.6(@types/react-dom@19.2.7(@types/react@19.2.18))(@types/react@19.2.18)(react-dom@19.2.8(react@19.2.8))(react@19.2.8)
       katex:
         specifier: ^0.18.1
-        version: 0.18.5
+        version: 0.18.6
       lucide-react:
         specifier: ^1.29.0
         version: 1.40.0(react@19.2.8)
@@ -314,7 +314,7 @@ importers:
         version: link:../ui-react
       katex:
         specifier: ^0.18.1
-        version: 0.18.5
+        version: 0.18.6
       lucide-react:
         specifier: ^1.29.0
         version: 1.40.0(react@19.2.8)
@@ -4385,8 +4385,8 @@ packages:
     resolution: {integrity: sha512-Eeo8Ys1doU1z+x8AZsPpQu+p/QcZBI5PeOo7QGQdy2x2m0MU/hYagBbGOmXwr5KVbEfVuWv9LpnQWeehogurjg==}
     hasBin: true
 
-  katex@0.18.5:
-    resolution: {integrity: sha512-1FU5H3RjGJVj6GT9fMjf2uMIXmPQp232aXS3UEeQzf0dxefHg/CKMvNB3DuOC46LFG/E5PNxrE8dOwB782FDGg==}
+  katex@0.18.6:
+    resolution: {integrity: sha512-5B7yiIsr7gq9hlIH6uG7hTNglHSz7I+Csa9I66dK4Ljz/YEGQMoBcC1IwtFFp34I7byBcEPtCyYFNnzuxZnGlw==}
     hasBin: true
 
   keyv@4.5.4:
@@ -10817,7 +10817,7 @@ snapshots:
     dependencies:
       commander: 8.3.0
 
-  katex@0.18.5:
+  katex@0.18.6:
     dependencies:
       commander: 15.0.0
 
