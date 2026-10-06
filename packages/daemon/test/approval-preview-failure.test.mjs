@@ -5,6 +5,7 @@ import test from "node:test";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, resolveSessionRunPolicy, toRuntimeAttemptFence } from "@ling-stack/core";
 import { loadSourceHookModule } from "./support/protected-host-source-hooks-fixture.mjs";
 import { observeGitSourceProcesses } from "./support/protected-host-git-source-hooks-fixture.mjs";
+import { observeSourceHookBootstrap } from "./support/protected-host-source-bootstrap-observer.mjs";
 
 // These are real SQLite request/checkpoint/harness transitions. Only the Git
 // producer is observed; no command, OS protection profile or UI is exercised.
@@ -325,6 +326,9 @@ async function rejection(promise) {
 }
 
 async function fixture(t, decision, ProtectedHostStageRegistry, entry) {
+  // Approval/source placement only: this supplies no actual OS or native proof.
+  // Keep the real SQLite transitions and exact pre-producer refusal unchanged.
+  observeSourceHookBootstrap(t);
   const root = await realpath(await mkdtemp("/private/tmp/ling-approval-preview-failure-"));
   const cwd = join(root, "workspace"), stagePath = join(root, "stage");
   for (const path of [cwd, stagePath]) await mkdir(path, { mode: 0o700 });

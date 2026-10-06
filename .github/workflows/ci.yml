@@ -94,7 +94,7 @@ jobs:
         run: node scripts/check-public-repo-safety.mjs
 
       - name: Check scanner boundaries, runtime baseline, and platform CI gates
-        run: node --test scripts/check-public-repo-safety.test.mjs scripts/ci/runtime-baseline.test.mjs scripts/ci/platform-lanes.test.mjs
+        run: node --test scripts/check-public-repo-safety.test.mjs scripts/ci/runtime-baseline.test.mjs scripts/ci/platform-lanes.test.mjs scripts/ci/macos-bootstrap-diagnostic.test.mjs
 
       - name: Scan Git history for secrets
         if: needs.scope.outputs.mode != 'docs'
@@ -347,6 +347,19 @@ jobs:
       - name: Run isolated daemon shard
         run: node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=4
 
+      - name: Collect fixed OS bootstrap source for review only
+        if: always()
+        run: node scripts/ci/macos-bootstrap-diagnostic.mjs > "${{ runner.temp }}/macos-bootstrap-diagnostic.json"
+
+      - name: Preserve bootstrap observation without granting profile support
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ci-macos-bootstrap-shard-${{ matrix.shard }}
+          if-no-files-found: warn
+          retention-days: 1
+          path: ${{ runner.temp }}/macos-bootstrap-diagnostic.json
+
   daemon-linux-contracts:
     name: Linux restricted-command fail-closed contracts
     needs: [scope, build]
@@ -477,6 +490,19 @@ jobs:
           path: |
             ${{ runner.temp }}/ling-native-evidence/manifest.json
             ${{ runner.temp }}/ling-native-evidence/logs/**
+
+      - name: Collect fixed OS bootstrap source for review only
+        if: always()
+        run: node scripts/ci/macos-bootstrap-diagnostic.mjs > "${{ runner.temp }}/macos-bootstrap-diagnostic.json"
+
+      - name: Preserve bootstrap observation without granting profile support
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        with:
+          name: ci-macos-bootstrap-native
+          if-no-files-found: warn
+          retention-days: 1
+          path: ${{ runner.temp }}/macos-bootstrap-diagnostic.json
 
   quality:
     name: Typecheck, unit tests, and Web build

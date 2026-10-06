@@ -4,10 +4,18 @@ import * as actorInventoryContract from "../dist/runtime/sandbox/protected-host-
 import { defineProtectedHostActorEntry, PROTECTED_HOST_ACTOR_ENTRIES,
   readProtectedHostActorEntry } from "../dist/runtime/sandbox/protected-host-actor-inventory.js";
 import { ProtectedHostStageRegistry } from "../dist/runtime/sandbox/protected-host-staging.js";
-import { createProtectedHostStageFixture } from "./support/protected-host-stage-fixture.mjs";
+import { createProtectedHostStageFixture as createSharedProtectedHostStageFixture } from "./support/protected-host-stage-fixture.mjs";
+import { observeSourceHookBootstrap } from "./support/protected-host-source-bootstrap-observer.mjs";
 
 // These are wrapper/composition contract tests. Synthetic producers are not
 // installed product entries and never count as kernel actor-coverage evidence.
+// Keep counterfeit bootstrap input local: the shared fixture also serves real
+// native/Seatbelt cases. This file starts no native actors and proves no OS trust.
+function createProtectedHostStageFixture(t) {
+  observeSourceHookBootstrap(t);
+  return createSharedProtectedHostStageFixture(t);
+}
+
 test("incomplete original entry inventory closes Office admission", () => {
   const registry = new ProtectedHostStageRegistry();
   assert.throws(() => registry.assertActorInventoryCurrent(), /inventory_incomplete/u);

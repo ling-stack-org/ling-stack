@@ -10,6 +10,7 @@ import { createDelegatedStepRequirement } from "../../dist/features/channels/wor
 import { executeUnifiedBashTool } from "../../dist/features/runs/unified-exec.js";
 import { AttemptHostOperationTracker } from "../../dist/runtime/attempt-host-operation-tracker.js";
 import { ProtectedHostStageRegistry } from "../../dist/runtime/sandbox/protected-host-staging.js";
+import { observeSourceHookBootstrap } from "./protected-host-source-bootstrap-observer.mjs";
 
 /** Missing original entries remain an explicit regression, not a skipped test. */
 export async function loadRawSourceModule() {
@@ -62,7 +63,13 @@ export async function createRawSourceFixture(t, options = {}) {
   const source = { runId, ...sourceFence };
   const tracker = options.trackHost === false ? undefined : new AttemptHostOperationTracker({ store, source });
   const handle = tracker?.beginHostCall("command", "raw-source-call"), hostOperation = handle && tracker.commandOperation(handle);
-  if (options.activeStage) stage = registry.registerStage({ store, run, sourceFence, stagePath });
+  if (options.activeStage) {
+    // This is source/approval/journal placement, not native containment conformance.
+    // Isolate only the dyld registration input; real raw producers and all guards
+    // stay unchanged. The observer supplies no OS/profile/FD/descendant proof.
+    observeSourceHookBootstrap(t);
+    stage = registry.registerStage({ store, run, sourceFence, stagePath });
+  }
   const module = await loadRawSourceModule();
   if (module) {
     assert.ok(module.UNIFIED_EXEC_RAW_ACTOR_ENTRY, "the actual controlled raw entry must be exported");

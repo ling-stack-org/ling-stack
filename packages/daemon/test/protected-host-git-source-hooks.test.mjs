@@ -29,6 +29,20 @@ test("the three original Git sources gate physical launch without claiming certi
     }
   });
 
+  // Borrow-refusal coverage must precede any observed original producer: status
+  // reads and late attachment below intentionally leave permanent unknown history.
+  await t.test("a genuine macos prepared actor is not borrowed by any Git physical entry", nativeOnly, async t => {
+    const f = await createSourceHookFixture(t), before = observed.calls.length;
+    f.register();
+    const original = f.prepared(), actor = f.registry.bindPreparedActor(original.source, original.prepared);
+    f.registry.bindOriginalActorEntries(entries);
+    assert.throws(() => changes.WORKSPACE_CHANGES_GIT_ACTOR_ENTRY.invoke(actor, f.cwd, ["diff"]), /entry_proof_invalid/u);
+    assert.throws(() => managed.MANAGED_WORKTREES_GIT_ACTOR_ENTRY.invoke(actor, f.cwd, ["rev-parse", "HEAD"]), /entry_proof_invalid/u);
+    assert.throws(() => classifier.ACTION_CLASSIFIER_GIT_ACTOR_ENTRY.invoke(actor,
+      { cwd: f.cwd, args: ["rev-parse", "HEAD"], producerEntered: true, policyVerified: true }), /entry_proof_invalid/u);
+    assert.equal(observed.calls.length, before);
+  });
+
   await t.test("shared managed Git rejects both read and worktree mutation before execFile", nativeOnly, async t => {
     const f = await createSourceHookFixture(t), before = observed.calls.length;
     f.register(); f.registry.bindOriginalActorEntries([managed.MANAGED_WORKTREES_GIT_ACTOR_ENTRY]);
@@ -76,18 +90,6 @@ test("the three original Git sources gate physical launch without claiming certi
       assert.equal(observed.calls.length, before + 1);
       assert.deepEqual(observed.calls.at(-1).args, ["rev-parse", "--abbrev-ref", "HEAD"]);
     } finally { observed.setSyncHandler(); }
-  });
-
-  await t.test("a genuine macos prepared actor is not borrowed by any Git physical entry", nativeOnly, async t => {
-    const f = await createSourceHookFixture(t), before = observed.calls.length;
-    f.register();
-    const original = f.prepared(), actor = f.registry.bindPreparedActor(original.source, original.prepared);
-    f.registry.bindOriginalActorEntries(entries);
-    assert.throws(() => changes.WORKSPACE_CHANGES_GIT_ACTOR_ENTRY.invoke(actor, f.cwd, ["diff"]), /entry_proof_invalid/u);
-    assert.throws(() => managed.MANAGED_WORKTREES_GIT_ACTOR_ENTRY.invoke(actor, f.cwd, ["rev-parse", "HEAD"]), /entry_proof_invalid/u);
-    assert.throws(() => classifier.ACTION_CLASSIFIER_GIT_ACTOR_ENTRY.invoke(actor,
-      { cwd: f.cwd, args: ["rev-parse", "HEAD"], producerEntered: true, policyVerified: true }), /entry_proof_invalid/u);
-    assert.equal(observed.calls.length, before);
   });
 
   await t.test("ordinary Git producer failures keep the existing unavailable and absent-upstream fallbacks", () => {
