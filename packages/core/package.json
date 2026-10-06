@@ -13,6 +13,10 @@
       "types": "./dist/builtin-extensions.d.ts",
       "default": "./dist/builtin-extensions.js"
     },
+    "./original-office-host-bridge": {
+      "types": "./dist/original-office-host-bridge.d.ts",
+      "default": "./dist/original-office-host-bridge.js"
+    },
     "./ai-council-view": {
       "types": "./dist/ai-council-view.d.ts",
       "default": "./dist/ai-council-view.js"

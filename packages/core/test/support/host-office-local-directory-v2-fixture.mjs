@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, HOST_OFFICE_LOCAL_DIRECTORY_V2_PROTOCOL,
+import { createSqliteRunStore, SqliteRunStore, DEFAULT_WORKSPACE_ID, HOST_OFFICE_LOCAL_DIRECTORY_V2_PROTOCOL,
   HOST_OFFICE_LOCAL_DIRECTORY_V2_GRAPH, toRuntimeAttemptFence } from "../../dist/index.js";
 
 export const directoryV2Clone = value => JSON.parse(JSON.stringify(value));
@@ -64,8 +64,11 @@ export function directoryV2Capture(execution, effect, { success = true } = {}) {
     native: { state: "returned", calledAt: effect.enteredAt, returnedAt: effect.enteredAt, result }, host: { state: "returned" }, resourceBindings: bindings, completedAt: effect.enteredAt };
 }
 /** Real original pair and SQLite lifecycle; no fixed writer/native syscall is invoked by this fixture. */
-export async function directoryV2StoreFixture(t) {
-  const cwd = await mkdtemp(join(tmpdir(), "ling-core-directory-v2-")), store = createSqliteRunStore(cwd), other = createSqliteRunStore(cwd);
+export async function directoryV2StoreFixture(t, { originalOfficeHostBridge } = {}) {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-core-directory-v2-"));
+  const store = originalOfficeHostBridge === undefined ? createSqliteRunStore(cwd)
+    : new SqliteRunStore({ cwd, originalOfficeHostBridge });
+  const other = createSqliteRunStore(cwd);
   t.after(async () => { other.close(); store.close(); await rm(cwd, { recursive: true, force: true }); });
   const now = () => new Date().toISOString(), at = now();
   const unit = store.createWorkUnit({ workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "run", ownerId: "run", idempotencyKey: "unit", status: "running", createdByActor: "system", request: {}, now: at });

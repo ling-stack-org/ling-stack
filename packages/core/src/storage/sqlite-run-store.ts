@@ -690,10 +690,13 @@ import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-st
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
 import { SqliteRunCompactionCheckpointStore } from "./sqlite/run-compaction-checkpoint-store.js";
+import { captureOriginalOfficeHostBridgeReader, type OriginalOfficeHostBridgeReader } from "../original-office-host-bridge.js";
 
 export interface SqliteRunStoreOptions {
   readonly cwd: string;
   readonly paths?: LingStackRuntimePaths;
+  /** Fixed trusted startup only; not serialized config, a provider or a replaceable runtime callback. */
+  readonly originalOfficeHostBridge?: OriginalOfficeHostBridgeReader;
   /** Migration fixtures only. Production callers must never bypass the authority cutover. */
   readonly deferContinuityV2MigrationForTest?: boolean;
   /** Migration fixtures only. Creates a pre-119 database for packaged upgrade tests. */
@@ -806,6 +809,8 @@ export class SqliteRunStore implements RunStore {
   private readonly runCompactionCheckpoints: SqliteRunCompactionCheckpointStore;
 
   constructor(options: SqliteRunStoreOptions) {
+    const originalOfficeHostBridge = options.originalOfficeHostBridge === undefined ? undefined
+      : captureOriginalOfficeHostBridgeReader(options.originalOfficeHostBridge, this);
     this.paths = options.paths ?? resolveRuntimePaths(options.cwd);
     this.legacyContinuityFixtureMode = options.deferContinuityV2MigrationForTest === true;
     ensureRuntimePaths(this.paths);
@@ -1026,7 +1031,7 @@ export class SqliteRunStore implements RunStore {
     this.hostOperationJournal = new SqliteHostOperationJournalStore({ database: this.database });
     this.hostMediaOperations = new SqliteHostMediaOperationStore({ database: this.database }, this.hostOperationJournal);
     this.hostOfficeLocal = new SqliteHostOfficeLocalStore({ database: this.database }, this.hostOperationJournal);
-    this.hostOfficeLocalDirectoryV2 = new SqliteHostOfficeLocalDirectoryV2Store({ database: this.database }, this.hostOperationJournal);
+    this.hostOfficeLocalDirectoryV2 = new SqliteHostOfficeLocalDirectoryV2Store({ database: this.database }, this.hostOperationJournal, originalOfficeHostBridge);
     this.runInterventions = new SqliteRunInterventionStore(
       { database: this.database },
       {
@@ -1960,6 +1965,9 @@ export class SqliteRunStore implements RunStore {
   }
   prepareHostOfficeLocalDirectoryExecutionV2(...args: Parameters<RunStore["prepareHostOfficeLocalDirectoryExecutionV2"]>): ReturnType<RunStore["prepareHostOfficeLocalDirectoryExecutionV2"]> {
     return this.hostOfficeLocalDirectoryV2.prepare(...args);
+  }
+  bindHostOfficeLocalDirectoryScopeAuthorityV2(...args: Parameters<RunStore["bindHostOfficeLocalDirectoryScopeAuthorityV2"]>): void {
+    this.hostOfficeLocalDirectoryV2.bindScopeAuthority(...args);
   }
   prepareHostOfficeLocalDirectoryEffectV2(...args: Parameters<RunStore["prepareHostOfficeLocalDirectoryEffectV2"]>): ReturnType<RunStore["prepareHostOfficeLocalDirectoryEffectV2"]> {
     return this.hostOfficeLocalDirectoryV2.prepareEffect(...args);
@@ -5023,6 +5031,7 @@ export class SqliteRunStore implements RunStore {
   }
 
   close(): void {
+    this.hostOfficeLocalDirectoryV2.retireBridge();
     if (this.database.isOpen) {
       this.database.close();
     }
