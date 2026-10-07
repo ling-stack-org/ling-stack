@@ -62,6 +62,7 @@ const addedDependencyGroups = Object.freeze({
     "apps/desktop/scripts/cua-driver-binary-identity.mjs",
     "apps/desktop/scripts/cua-driver-package-host-authority.mjs",
     "apps/desktop/scripts/cua-driver-signing/fixture-signer.mjs",
+    "apps/desktop/scripts/cua-driver-signing/dmg-attachment-custody.mjs",
     "apps/desktop/scripts/cua-driver-signing/provider-layout.mjs",
     "apps/desktop/scripts/cua-driver-signing/provider-seal.mjs",
     "apps/desktop/scripts/cua-driver-signing/signing-trace.mjs",

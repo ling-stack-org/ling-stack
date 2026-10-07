@@ -45,7 +45,7 @@ review gate; this checkpoint must not be described as a usable final package.
 Windows packaging is unchanged.
 
 The independent packaging digest now uses a focused fixed-input data module:
-33 explicit roots, 1199 unique inputs, including the conservative authored
+34 explicit roots, 1200 unique inputs, including the conservative authored
 runtime graph, helper native-source inventory, license, and atomic publisher
 compiler input. The source-review frame is bounded at 256 KiB; the separate
 runtime fifteen-source literal remains bounded at 32 KiB. A graph change needs
@@ -116,8 +116,8 @@ hidden host directory. After detach, only the exact original empty host
 directory may be removed through the identity-bound native operation. A lost
 identity is not refreshed and does not fall back to path-only deletion.
 Retry, concurrent cleanup, detach/force fallback and both failure causes are
-preserved. Partial/force-attach OS behavior and original attachment ownership
-are still not proven by these guards.
+preserved. These host-inode guards alone do not establish attachment ownership;
+the subsequent attachment-custody increment below supplies that separate chain.
 
 A real one-normal-detach probe using an old local image observed the host
 inode restored and the image SHA256 unchanged. It also exposed a separate
@@ -148,10 +148,65 @@ artifact identity after awaited cleanup before reporting success.
 Snapshot leaf pins are checked in JS before bounded native tree removal;
 the current native wire carries parent/root pins and count/size, not a fixed
 leaf pin. This is not arbitrary Full Access or malicious same-UID race-free
-isolation. Force/partial attachment and original attachment ownership remain
-separate unverified gates.
+isolation. Input snapshot checks alone do not establish force/partial attachment
+behavior or original attachment ownership.
 The original probe ended RED, not whole-probe GREEN; its separately verified
 host-inode and unchanged-byte observations do not constitute package acceptance.
+
+## Original attachment custody
+
+The extractor now delegates attachment lineage to a focused filesystem-free
+module, separate from input FD custody and original host-directory cleanup.
+Before attach, bounded `hdiutil info -plist` must prove that neither the private
+image nor the requested mountpoint is already attached. Original host and
+input pins are rechecked after that awaited query. This matters because
+`hdiutil attach` can report an existing attachment as if the call created it.
+
+Attach uses `-plist`; fixed native `plutil` converts bounded text to a strictly
+checked inventory. The original complete device/entity receipt must be new
+relative to the before inventory and match the first after inventory, private
+image, requested mountpoint and actual owner UID. The binding freezes all
+devices/mountpoints, helper PID and owner UID. Duplicate normalized identities,
+missing fields, ambiguous whole devices and unsupported shapes fail closed.
+Native conversion is the XML parser; raw XML dictionary duplicate-key
+detection is not claimed.
+
+Normal detach, force fallback and a failed filesystem-cleanup retry each need
+fresh observation. Only the original whole device is passed to detach, never
+the current mountpoint. A changed/reused device, PID, UID or entity mapping
+does not authorize a new detach. Exit zero alone is insufficient: the image,
+all original devices and mountpoints must be absent before filesystem cleanup.
+Once absence is confirmed, a later retry only checks fresh absence; it cannot
+adopt or detach a newly appearing attachment.
+
+Complete bounded output from a finished nonzero attach may bind a partial
+recovery receipt while preserving the original failure. Timeout, signal,
+pipe/maxBuffer failure or missing/malformed output remains unknown. Unknown
+cleanup can prove absence, not create ownership from current inventory.
+Unconfirmed detach or failed original-host cleanup releases owned handles,
+retains backing data, and preserves every primary/secondary and falsy cause.
+Concurrent cleanup and terminal idempotence remain owned by the extractor.
+
+Fresh info followed by detach is not atomic; device/PID reuse by unrestricted
+same-user processes remains outside the controlled-process guarantee. Kernel
+attachments without supported helper lineage and multi-whole-device/APFS
+shapes are rejected, not guessed. No production approved review row, runtime
+grant, Core issuer, SQLite data or user credentials are created here.
+
+The final affected neighborhood passed 439 tests with zero failures,
+cancellations, skips or todo entries. Helper 124, extractor 85 and genuine
+child-process transport 8 are included, not additional. A stable original
+foreign-path RED showed one wrong detach; the fixed case issues zero detach
+calls. Synthetic attachment/partial/foreign fixtures are not OS acceptance.
+
+On actual macOS 27.0, the old image was used only as data, through the private
+snapshot. Current-source normal detach and an owned-child busy-directory
+probe both passed. The latter produced a real ordinary detach exit 16, then
+fresh checks and force detach of the original device. Both removed their own
+input/host paths; the busy child exited, and original full metadata and SHA256
+were unchanged. No contained App was run. These probes establish normal and
+controlled busy-force behavior, not actual partial-attach or foreign-mount
+adversarial OS behavior, final signature, Electron, MCP or GUI acceptance.
 
 Toolchain/vendor review, generated-output freshness and real final package
 acceptance remain separate gates. No production approved row exists, so this
