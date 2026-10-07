@@ -26,6 +26,7 @@ test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
   await mkdir(join(packagedResourcesPath, "web"), { recursive: true });
   await mkdir(join(packagedResourcesPath, "browser-host"), { recursive: true });
   await mkdir(join(packagedResourcesPath, "restricted-command"), { recursive: true });
+  await mkdir(join(packagedResourcesPath, "office-local", "source"), { recursive: true });
   await writeFile(join(packagedResourcesPath, "web", "index.html"), "fixture");
   await writeFile(
     join(packagedResourcesPath, "browser-host", process.platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host"),
@@ -33,6 +34,8 @@ test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
   );
   await writeFile(join(packagedResourcesPath, "restricted-command", "ling-sandbox-runner"), "fixture");
   await writeFile(join(packagedResourcesPath, "restricted-command", "manifest.json"), "{}");
+  await writeFile(join(packagedResourcesPath, "office-local", "office-local.node"), "test-only addon bytes");
+  await writeFile(join(packagedResourcesPath, "office-local", "build-manifest.json"), "test-only build data");
   const app = { isPackaged: true, getAppPath: () => fixture.appPath };
 
   assert.equal(resolveDesktopResourcesRoot(app, packagedResourcesPath), resolve(packagedResourcesPath));

@@ -46,7 +46,7 @@
     "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",
     "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
     "build:restricted-command-helper:mac": "node scripts/build-restricted-command-helper.mjs --platform darwin",
-    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && LING_PACKAGED_CODESIGN_REVIEW_REQUIRED=1 corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform darwin -- --mac dmg zip --arm64",
+    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/package-macos-with-office.mjs",
     "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64"
   },
   "dependencies": {
@@ -89,6 +89,8 @@
     "files": [
       "dist/**/*",
       "package.json",
+      "!dist/office-local{,/**/*}",
+      "!dist/.office-local-next-*{,/**/*}",
       "!**/node_modules/@ling-stack/browser-host/dist/native{,/**/*}",
       "!**/node_modules/@ling-stack/browser-host/native{,/**/*}",
       "!**/node_modules/@ling-stack/browser-host/scripts{,/**/*}",
@@ -149,6 +151,11 @@
       "icon": "build/icon.icns",
       "artifactName": "Ling-Stack-${version}-macos-${arch}.${ext}",
       "extraResources": [
+        {
+          "from": "dist/office-local",
+          "to": "office-local",
+          "filter": ["office-local.node", "build-manifest.json", "source/**/*"]
+        },
         {
           "from": "dist/restricted-command",
           "to": "restricted-command",

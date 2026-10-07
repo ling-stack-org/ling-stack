@@ -3,12 +3,11 @@ import { closeSync, constants, fstatSync, lstatSync, openSync, readFileSync, rea
 import { Module } from "node:module";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "./packaged-office-native-published-review.js";
+import { resolveOriginalPackagedOfficeResources } from "./packaged-office-native-resources.js";
 
-const sourceRoot = fileURLToPath(new URL("../../../../../native/office-local/", import.meta.url));
-const sourceInputs = Object.freeze(["src/runtime.h", "src/runtime-internal.h", "src/runtime.cc", "src/publication.cc",
-  "src/addon.cc", "scripts/build.mjs", "tests/primitive.test.mjs", "tests/readback.test.mjs", "tests/publication.test.mjs",
-  "tests/test-helpers.mjs", "tests/runtime-lifetime.test.cc", "tests/runtime-budget-injected.test.cc",
-  "tests/runtime-publication.test.cc", "tests/run-isolated.mjs", "README.md"]);
+const localSourceRoot = fileURLToPath(new URL("../../../../../native/office-local/", import.meta.url));
+const sourceInputs = OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS;
 export const OFFICE_LOCAL_NATIVE_METHODS = Object.freeze(["openSession", "createDirectory", "createFile", "writeFile",
   "readFile", "fsyncResource", "observeResource", "closeResource", "installTree", "observePublication",
   "inspectSession", "cancelSession", "closeSession"] as const);
@@ -55,7 +54,11 @@ function reviewedSources(input: Readonly<Record<string, string>>): Readonly<Reco
   }
   return Object.freeze(owned);
 }
-function assertSources(sources: Readonly<Record<string, string>>): void {
+function assertSources(path: string, digest: string, sources: Readonly<Record<string, string>>): void {
+  const packaged = resolveOriginalPackagedOfficeResources();
+  if (packaged) requireIdentity(path === packaged.binaryPath && digest === packaged.review.finalBinarySha256
+    && sourceInputs.every(name => sources[name] === packaged.review.sourceSha256[name]));
+  const sourceRoot = packaged ? packaged.sourceRoot : localSourceRoot;
   for (const name of sourceInputs) {
     const path = join(sourceRoot, name), stat = lstatSync(path);
     requireIdentity(realpathSync(path) === path && stat.isFile() && !stat.isSymbolicLink() && stat.size <= 8 * 1024 * 1024
@@ -100,7 +103,7 @@ export function loadReviewedOfficeLocalNativeArtifact(input: OfficeLocalReviewed
   try {
     fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     requireIdentity(sameFile(fstatSync(fd, { bigint: true }), original));
-    assertBinary(); assertSources(sources);
+    assertBinary(); assertSources(path, digest, sources);
     // The dynamic loader opens the retained original, not a pathname that can
     // be replaced between hash and load or an unrelated require-cache entry.
     const nativeModule = new Module(path);
@@ -121,7 +124,7 @@ export function loadReviewedOfficeLocalNativeArtifact(input: OfficeLocalReviewed
     const assertMethods = (): void => {
       for (const [name, method] of methods) requireIdentity(Object.getOwnPropertyDescriptor(addon, name)?.value === method);
     };
-    const assertCurrent = (): void => { assertBinary(); assertSources(sources); assertMethods(); };
+    const assertCurrent = (): void => { assertBinary(); assertSources(path, digest, sources); assertMethods(); };
     assertCurrent();
     const facts: OfficeLocalNativeIdentityFacts = Object.freeze({ classification: "local_verified", binaryPath: path,
       binarySha256: digest, sourceSha256: sources, protocolVersion: 2, napiVersion: 8, packaged: false,

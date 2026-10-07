@@ -49,6 +49,9 @@ export async function resolveDesktopResourcePaths(
         ? [
             access(resolve(paths.resourcesRoot, "restricted-command/ling-sandbox-runner")),
             access(resolve(paths.resourcesRoot, "restricted-command/manifest.json")),
+            access(resolve(paths.resourcesRoot, "office-local/office-local.node")),
+            access(resolve(paths.resourcesRoot, "office-local/build-manifest.json")),
+            access(resolve(paths.resourcesRoot, "office-local/source")),
           ]
         : []),
     ]);
