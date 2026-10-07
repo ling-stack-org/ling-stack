@@ -221,7 +221,7 @@ jobs:
   typecheck:
     name: Typecheck selected packages
     needs: [scope, build]
-    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success'
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -264,7 +264,7 @@ jobs:
   unit-tests:
     name: Unit tests and Web checks
     needs: [scope, build]
-    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success'
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -316,7 +316,7 @@ jobs:
   daemon-tests:
     name: Daemon tests (shard ${{ matrix.shard }})
     needs: [scope, build]
-    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success'
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     # Daemon tests start an isolated runtime for each integration fixture. As
     # the suite grows, the heaviest shard can legitimately exceed the generic
