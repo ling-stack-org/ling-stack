@@ -44,6 +44,15 @@ sentinel. `package:mac` uses the fixed lane and currently stops at the missing
 review gate; this checkpoint must not be described as a usable final package.
 Windows packaging is unchanged.
 
+The independent packaging digest now uses a focused fixed-input data module:
+32 explicit roots, 1198 unique inputs, including the conservative authored
+runtime graph, helper native-source inventory, license, and atomic publisher
+compiler input. The source-review frame is bounded at 256 KiB; the separate
+runtime fifteen-source literal remains bounded at 32 KiB. A graph change needs
+an explicit review of this fixed list. Builds do not discover, regenerate,
+approve, or refresh it. Authored coverage is not vendor/toolchain/OS approval
+or proof that generated `dist` matches the reviewed source.
+
 ## Resources and original CLI bootstrap
 
 Office resources live only in macOS `extraResources`; the stage and temporary
@@ -78,16 +87,34 @@ candidate detection is case-insensitive, while the expected product path is
 exact. Verification and cleanup failures preserve both original causes,
 including falsy JavaScript rejection reasons.
 
-The existing DMG extractor has bounded detach/force fallback and cleanup. It
-does not yet have the ZIP extractor's equivalent initial mountpoint inode
-guard. The emitted Daemon CLI has not yet been retained as original post-bundle
-byte pins, and the new Office checks do not parse the final `app.asar` to prove
-its CLI/literal closure or exclude unpacked/second Office copies. Independent
-review also identified missing authored codesign/bootstrap dependencies in
-the packaging digest set; the codesign native-source review is not a substitute
-for that packaging closure. Both are approval-before-build gaps to implement
-next. No production approved row exists, so this checkpoint does not enable
-the incomplete route. These are not guarantees supplied by synthetic fixtures.
+The Office lane bundles with esbuild `write: false` and immediately copies its
+unique returned output bytes before any later publication read or path capture.
+Only those private bytes can be staged to the fixed CLI, with bounded writes,
+exclusive temporary creation, fsync, hash and original-inode readback. Staging
+and cleanup failures retain both causes, including falsy rejection values;
+cleanup refuses a replaced temporary inode. Existing valid output directories
+remain supported. The bundle lock is acquired before
+native or codesign publication, so a rejected concurrent build cannot replace
+either publication. Private emitted pins are keyed by original publication
+identity; callers receive no bytes, receipt issuer or reconstructable token.
+
+All three Office hooks, including each final extracted App, now compare the
+actual `app.asar` CLI to those original hash/size pins. CLI links, unpacked CLI,
+Office-named entries or links to the Office stage, and same-size renamed copies
+of the original addon in packed or unpacked trees are rejected. Header bytes,
+entry count, nesting, duplicate candidates and candidate bytes have fixed
+budgets. Header caches are cleared and original archive/tree identities fenced
+before returning. Third-party ASAR APIs reopen paths: these checks are byte
+selection evidence, not retained-original-FD custody or malicious same-UID
+isolation. Exact CLI byte comparison includes the injected literals; it does
+not prove reviewed source/generated-output equivalence.
+
+The existing DMG extractor has bounded detach/force fallback and cleanup but
+still lacks the ZIP extractor's equivalent initial mountpoint inode guard.
+Toolchain/vendor review, generated-output freshness and real final package
+acceptance remain separate gates. No production approved row exists, so this
+checkpoint does not enable the incomplete route. Synthetic fixtures do not
+supply these guarantees.
 
 ## Evidence and remaining gates
 
@@ -105,6 +132,17 @@ Daemon and Desktop main TypeScript builds and ordinary development bundling
 passed. Earlier genuine native-loader conformance passed five tests, but was
 not Electron final-package acceptance. These are separate targeted runs, not
 a cumulative full-suite result or complete review of the PR.
+
+The later emitted/ASAR/authored-closure increment was independently verified
+with two distinct final targeted runs: 281 hook, emitted, ASAR and runtime
+neighbor tests, plus 96 publication tests. Both had zero failures or skips.
+The fixed-root authored audit was independently repeated with no missing,
+unresolved or absent paths; it reported 1198 unique inputs and retained the
+32 KiB runtime literal bound. Ordinary development bundling, Markdown links,
+public-repository safety and diff checks also passed. Earlier neighborhood
+counts are superseded for this increment, not added to these results. Real
+esbuild output and local ASAR fixtures are used where explicitly stated;
+native publication, signer and outer extractor substitutes remain synthetic.
 
 Before T6 can complete, the work still requires independent source/packaging
 and toolchain/runtime approval, a real final signed bundle, each actual ZIP/DMG

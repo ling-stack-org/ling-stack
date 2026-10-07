@@ -10,6 +10,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { createPackageWithOptions } from "@electron/asar";
 import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/dist/runtime/sandbox/packaged-office-native-published-review.js";
 
 const scriptPath = fileURLToPath(new URL("../scripts/packaged-office-native-package-checks.mjs", import.meta.url));
@@ -21,7 +22,7 @@ function newFile(path, bytes) {
   writeFileSync(path, bytes, { mode: 0o600 });
 }
 
-/** Synthetic original-reader, extractor and signer ONLY. No native build or signature is performed. */
+/** Real local ASAR; synthetic original readers/extractor/signer. No native build or signature. */
 async function fixture(t) {
   const number = ++fixtureNumber, root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-package-checks-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
@@ -40,11 +41,16 @@ async function fixture(t) {
     finalBinarySha256: hash(binary), finalBinarySizeBytes: binary.length,
     buildManifestSha256: hash(readFileSync(manifestPath)), sourceSha256: Object.freeze(sourceSha256),
   });
+  const cliBytes = Buffer.from("EXPLICIT TEST-ONLY ORIGINAL EMITTED CLI\n");
+  const cliPins = Object.freeze({ sizeBytes: cliBytes.length, sha256: hash(cliBytes) });
+  const asarSource = join(root, "asar-source"), asarPath = join(appPath, "Contents/Resources/app.asar");
+  newFile(join(asarSource, "dist/daemon/cli.mjs"), cliBytes);
+  await createPackageWithOptions(asarSource, asarPath, {});
   const context = { electronPlatformName: "darwin", appOutDir, packager: {
     platform: { nodeName: "darwin" }, appInfo: { productFilename }, platformSpecificBuildOptions: {},
   } };
   const signatureCalls = [], extractionCalls = [];
-  const state = { active: descriptor, activeReads: 0, cleanupCalls: 0,
+  const state = { active: descriptor, activeReads: 0, cleanupCalls: 0, cliPins,
     signature(command, args, options, callback) {
       signatureCalls.push({ command, args, options });
       callback(null, "", "");
@@ -59,14 +65,18 @@ async function fixture(t) {
   globalThis[symbol] = state;
   t.after(() => { delete globalThis[symbol]; });
   const apiUrl = pathToFileURL(scriptPath).href + "?synthetic=" + number;
+  const asarApiUrl = new URL("../scripts/packaged-office-native-asar-checks.mjs", import.meta.url).href + "?synthetic=" + number;
   const bridge = `const state = globalThis[Symbol.for(${JSON.stringify(symbolName)})];\n`;
   const sources = new Map([
     ["./build-packaged-office-native.mjs", bridge + "export function readActiveOriginalPackagedOfficeNativePublication() { state.activeReads++; return state.active; }"],
+    ["./build-packaged-daemon.mjs", bridge + "export function readActiveOriginalPackagedOfficeDaemonBundle() { return state.cliPins; }"],
     ["./cua-driver-signing/final-artifact-extractor.mjs", bridge + "export function extractCuaDriverFinalArtifact(...args) { return state.extractor(...args); }"],
     ["node:child_process", bridge + "export function execFile(...args) { return state.signature(...args); }"],
   ]);
   const loader = registerHooks({ resolve(specifier, context, nextResolve) {
-    if (context.parentURL === apiUrl && sources.has(specifier)) {
+    if (context.parentURL === apiUrl && specifier === "./packaged-office-native-asar-checks.mjs")
+      return { shortCircuit: true, url: asarApiUrl };
+    if ([apiUrl, asarApiUrl].includes(context.parentURL) && sources.has(specifier)) {
       return { shortCircuit: true, url: "data:text/javascript," + encodeURIComponent(sources.get(specifier)) };
     }
     return nextResolve(specifier, context);
@@ -82,11 +92,24 @@ async function fixture(t) {
     return { event: { file, target: { name: kind }, packager: context.packager }, extractionRoot,
       appPath: join(extractionRoot, productFilename + ".app") };
   }
-  return { root, api, state, descriptor, context, appPath, officeRoot, binaryPath, manifestPath,
+  return { root, api, state, descriptor, context, appPath, officeRoot, binaryPath, manifestPath, asarSource, asarPath, cliBytes,
     signatureCalls, extractionCalls, productFilename, artifact };
 }
 
 test("Office package checks: synthetic active reader/signer/extractor, NOT real packaged validation", async t => {
+  await t.test("actual local ASAR rejects stale packaged CLI instead of accepting only Office resources", async t => {
+    const f = await fixture(t), source = join(f.root, "asar-source");
+    newFile(join(source, "dist/daemon/cli.mjs"), "STALE CLI: NO_PACKAGED_OFFICE_NATIVE_REVIEW\n");
+    await createPackageWithOptions(source, join(f.appPath, "Contents/Resources/app.asar"), {});
+    assert.throws(() => f.api.verifyOriginalOfficeCopyInApp(f.appPath), /copy_invalid/u);
+  });
+  await t.test("actual local ASAR rejects an Office addon copied under another subtree", async t => {
+    const f = await fixture(t), source = join(f.root, "asar-source");
+    newFile(join(source, "dist/daemon/cli.mjs"), "EXPLICIT TEST-ONLY ORIGINAL EMITTED CLI\n");
+    newFile(join(source, "foreign/native/office-local.node"), readFileSync(f.binaryPath));
+    await createPackageWithOptions(source, join(f.appPath, "Contents/Resources/app.asar"), {});
+    assert.throws(() => f.api.verifyOriginalOfficeCopyInApp(f.appPath), /copy_invalid/u);
+  });
   await t.test("exact fixed stage and 15 sources yield frozen build-only pins", async t => {
     const f = await fixture(t), result = f.api.verifyOriginalOfficeCopyInApp(f.appPath);
     assert.equal(Object.isFrozen(result), true);
@@ -96,7 +119,7 @@ test("Office package checks: synthetic active reader/signer/extractor, NOT real 
     assert.equal(result.finalBinarySizeBytes, f.descriptor.finalBinarySizeBytes);
     assert.equal(result.buildManifestSha256, f.descriptor.buildManifestSha256);
     assert.equal("authority" in result, false); assert.equal("signed" in result, false);
-    assert.equal(f.state.activeReads, 2); assert.equal(f.signatureCalls.length, 0);
+    assert.equal(f.state.activeReads, 4); assert.equal(f.signatureCalls.length, 0);
   });
 
   const mutations = {
@@ -197,6 +220,12 @@ test("Office package checks: synthetic active reader/signer/extractor, NOT real 
     await assert.rejects(f.api.verifyOfficeAfterPack(f.context), /copy_invalid/u);
     assert.equal(f.context.packager.platformSpecificBuildOptions.signIgnore, undefined);
   });
+  await t.test("afterPack rejects stale actual ASAR CLI before modifying signIgnore", async t => {
+    const f = await fixture(t); newFile(join(f.asarSource, "dist/daemon/cli.mjs"), Buffer.alloc(f.cliBytes.length, 88));
+    await createPackageWithOptions(f.asarSource, f.asarPath, {});
+    await assert.rejects(f.api.verifyOfficeAfterPack(f.context), /copy_invalid/u);
+    assert.equal(f.context.packager.platformSpecificBuildOptions.signIgnore, undefined);
+  });
 
   await t.test("afterSign always performs the fixed bounded deep/strict command", async t => {
     const f = await fixture(t), result = await f.api.verifyOfficeAfterSign(f.context);
@@ -212,6 +241,14 @@ test("Office package checks: synthetic active reader/signer/extractor, NOT real 
     f.state.signature = (_command, _args, _options, callback) => callback(failure);
     await assert.rejects(f.api.verifyOfficeAfterSign(f.context), error =>
       error.message === "packaged_office_native_signature_verification_failed" && error.cause === failure);
+  });
+  await t.test("afterSign rechecks the actual ASAR CLI after the signature window", async t => {
+    const f = await fixture(t);
+    f.state.signature = (_command, _args, _options, callback) => {
+      newFile(join(f.asarSource, "dist/daemon/cli.mjs"), Buffer.alloc(f.cliBytes.length, 88));
+      createPackageWithOptions(f.asarSource, f.asarPath, {}).then(() => callback(null), callback);
+    };
+    await assert.rejects(f.api.verifyOfficeAfterSign(f.context), /copy_invalid/u);
   });
   for (const leaf of ["office-local.node", "build-manifest.json", "source/README.md"]) {
     await t.test("afterSign rejects signature-window mutation of " + leaf, async t => {
@@ -244,6 +281,27 @@ test("Office package checks: synthetic active reader/signer/extractor, NOT real 
       assert.equal(result.appPath, a.appPath); assert.equal(cleaned, true); assert.equal(f.state.cleanupCalls, 1);
       assert.deepEqual(f.extractionCalls, [{ file: a.event.file, context: { platform: "darwin", artifactRole: "outer-" + kind } }]);
       assert.equal(f.signatureCalls[0].args.at(-1), a.appPath);
+    });
+    for (const when of ["before verification", "during signature window"]) {
+      await t.test(kind + " rejects changed actual copied ASAR CLI " + when + " and cleans up", async t => {
+        const f = await fixture(t), a = f.artifact(kind), path = join(a.appPath, "Contents/Resources/app.asar");
+        async function mutate() {
+          newFile(join(f.asarSource, "dist/daemon/cli.mjs"), Buffer.alloc(f.cliBytes.length, 88));
+          await createPackageWithOptions(f.asarSource, path, {});
+        }
+        if (when === "before verification") await mutate();
+        else f.state.signature = (_command, _args, _options, callback) => { mutate().then(() => callback(null), callback); };
+        await assert.rejects(f.api.verifyOfficeFinalArtifact(a.event), /copy_invalid/u);
+        assert.equal(f.state.cleanupCalls, 1);
+        if (when === "before verification") assert.equal(f.signatureCalls.length, 0);
+      });
+    }
+    await t.test(kind + " rejects a renamed Office duplicate in the actual copied ASAR", async t => {
+      const f = await fixture(t), a = f.artifact(kind);
+      newFile(join(f.asarSource, "foreign/renamed-addon"), readFileSync(f.binaryPath));
+      await createPackageWithOptions(f.asarSource, join(a.appPath, "Contents/Resources/app.asar"), {});
+      await assert.rejects(f.api.verifyOfficeFinalArtifact(a.event), /copy_invalid/u);
+      assert.equal(f.state.cleanupCalls, 1); assert.equal(f.signatureCalls.length, 0);
     });
   }
 
@@ -333,5 +391,5 @@ test("Office package checks: synthetic active reader/signer/extractor, NOT real 
     assert.deepEqual(cleaned.sort(), [zip.event.file, dmg.event.file].sort());
     assert.deepEqual(f.signatureCalls.map(call => call.args.at(-1)).sort(), [zip.appPath, dmg.appPath].sort());
   });
-  t.diagnostic("Synthetic loader replaces only original active-reader, codesign and extractor imports. Green tests prove build-byte/sequence/failure contracts, not original token origin, real archive cleanup, signature, Electron or packaged acceptance.");
+  t.diagnostic("Real local ASAR and real parser; synthetic original native/emitted readers, codesign and outer extractor. Green proves copied-byte/sequence/failure contracts, not token origin, real ZIP/DMG cleanup, signature, Electron or packaged acceptance.");
 });

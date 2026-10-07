@@ -9,6 +9,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/dist/runtime/sandbox/packaged-office-native-published-review.js";
+import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "../scripts/packaged-office-native-review-inputs.mjs";
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const scriptRoot = join(repositoryRoot, "apps/desktop/scripts");
@@ -16,6 +17,65 @@ const compiledListUrl = pathToFileURL(join(repositoryRoot,
   "packages/daemon/dist/runtime/sandbox/packaged-office-native-published-review.js")).href;
 const hash = value => createHash("sha256").update(value).digest("hex");
 function newFile(path, value) { mkdirSync(dirname(path), { recursive: true }); writeFileSync(path, value); }
+const sourceReviewMaximumBytes = 256 * 1024;
+// Bounded representatives of each added execution edge, including every fixed
+// native helper source and the normal mac/provider=false packaging dependencies.
+const addedDependencyGroups = Object.freeze({
+  build: [
+    "apps/desktop/scripts/build-restricted-command-helper.mjs",
+    "apps/desktop/scripts/packaged-codesign-review-publication.mjs",
+    "apps/desktop/scripts/packaged-office-native-asar-checks.mjs",
+    "apps/desktop/scripts/packaged-office-native-review-inputs.mjs",
+  ],
+  helper: [
+    "native/sandbox/Cargo.toml", "native/sandbox/Cargo.lock", "native/sandbox/rust-toolchain.toml",
+    "native/sandbox/src/main.rs", "native/sandbox/src/protocol.rs", "native/sandbox/src/input_read.rs",
+    "native/sandbox/src/codesign.rs", "native/sandbox/src/codesign_darwin.rs", "native/sandbox/src/codesign_mach.rs",
+    "native/sandbox/scripts/build.mjs", "native/sandbox/tests/protocol-smoke.mjs",
+    "native/sandbox/tests/input-read-smoke.mjs", "native/sandbox/tests/codesign-leaf-smoke.mjs",
+    "native/sandbox/tests/build-evidence.test.mjs", "native/sandbox/src/codesign_faults.rs",
+    "native/sandbox/src/codesign_darwin_tests.rs", "native/sandbox/src/codesign_capability_tests.rs",
+    "native/sandbox/tests/support/codesign-capability-wire.rs", "native/sandbox/tests/support/codesign-capability-observer.rs",
+    "native/sandbox/reviewed-codesign-source-v1.json", "LICENSE",
+  ],
+  host: [
+    "packages/daemon/src/runtime/sandbox/packaged-restricted-command-bootstrap.ts",
+    "packages/daemon/src/runtime/sandbox/electron-node-resources.ts",
+    "packages/daemon/src/runtime/sandbox/packaged-codesign-host-source.ts",
+    "packages/daemon/src/runtime/sandbox/packaged-codesign-held-file.ts",
+    "packages/daemon/src/runtime/sandbox/packaged-codesign-native-protocol.ts",
+    "packages/daemon/src/runtime/sandbox/packaged-codesign-published-review.ts",
+    "packages/daemon/src/runtime/sandbox/protected-host-actor-inventory.ts",
+    "packages/daemon/src/runtime/sandbox/protected-host-bootstrap-domain.ts",
+    "packages/daemon/src/runtime/sandbox/protected-host-stage-paths.ts",
+    "packages/daemon/src/runtime/sandbox/protected-host-domain-paths.ts",
+    "packages/daemon/src/runtime/sandbox/macos-sandbox-backend.ts",
+    "packages/daemon/src/runtime/sandbox/macos-seatbelt-profile.ts",
+  ],
+  packaging: [
+    "apps/desktop/scripts/cua-driver-package-staging-contract.mjs",
+    "apps/desktop/scripts/cua-driver-package-staging-files.mjs",
+    "apps/desktop/scripts/cua-driver-package-staging-source.mjs",
+    "apps/desktop/scripts/cua-driver-package-staging-validation.mjs",
+    "apps/desktop/scripts/cua-driver-source-build-lib.mjs",
+    "apps/desktop/scripts/cua-driver-owned-process.mjs",
+    "apps/desktop/scripts/cua-driver-binary-identity.mjs",
+    "apps/desktop/scripts/cua-driver-package-host-authority.mjs",
+    "apps/desktop/scripts/cua-driver-signing/fixture-signer.mjs",
+    "apps/desktop/scripts/cua-driver-signing/provider-layout.mjs",
+    "apps/desktop/scripts/cua-driver-signing/provider-seal.mjs",
+    "apps/desktop/scripts/cua-driver-signing/signing-trace.mjs",
+    "apps/desktop/shared/cua-driver-artifact-layout.mjs",
+    "apps/desktop/shared/cua-driver-provider-lock-contract.mjs",
+    "apps/desktop/scripts/native/cua-driver-package-atomic-publish.cc",
+  ],
+  workspace: [
+    "packages/core/package.json", "packages/core/src/index.ts", "packages/core/src/original-office-host-bridge.ts",
+    "packages/core/src/original-office-committed-pair-v2.ts", "packages/contracts/src/index.ts",
+    "packages/localization/src/index.ts", "packages/runner-pi/src/index.ts", "packages/providers/src/index.ts",
+    "packages/browser-host/src/index.ts", "packages/remote-protocol/src/index.ts", "packages/plugin-sdk/src/index.ts",
+  ],
+});
 
 /** Disposable, explicitly synthetic compiler/signature fixture. It never approves product sources. */
 async function fixture(t) {
@@ -23,8 +83,7 @@ async function fixture(t) {
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const scripts = join(root, "apps/desktop/scripts"), nativeRoot = join(root, "native/office-local");
   const reviewSource = readFileSync(join(scriptRoot, "packaged-office-native-review.mjs"), "utf8");
-  const paths = JSON.parse(reviewSource.match(/const packagingPaths = Object\.freeze\((\[[\s\S]*?\])\);/u)[1]
-    .replace(/,\s*\]/gu, "]"));
+  const paths = PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS;
   for (const name of paths) {
     const original = join(repositoryRoot, name);
     newFile(join(root, name), existsSync(original) ? readFileSync(original) : "EXPLICIT TEST-ONLY PACKAGING INPUT\n");
@@ -128,6 +187,79 @@ test("Office publication private origin and final-byte contracts (synthetic comp
     assert.throws(() => f.api.readOriginalPackagedOfficeNativePublication(token), /source_review_invalid/u);
     assert.throws(() => f.api.buildFreshPackagedOfficeNativePublication(), /source_review_invalid/u);
     assert.equal(f.counts().signCalls, 1);
+  });
+  await t.test("new authored dependency changes reject the frozen review, publication read and next build", async t => {
+    const f = await fixture(t), frozenReviewBytes = readFileSync(f.reviewPath);
+    // Old incomplete lists can still create a token, making the stale-input
+    // regression visible without inventing a refreshed approval row.
+    for (const path of Object.values(addedDependencyGroups).flat()) {
+      if (!existsSync(join(f.root, path))) newFile(join(f.root, path), "EXPLICIT TEST-ONLY UNPINNED INPUT\n");
+    }
+    const token = f.api.buildFreshPackagedOfficeNativePublication();
+    for (const [group, paths] of Object.entries(addedDependencyGroups)) {
+      await t.test(group, async t => {
+        for (const path of paths) {
+          await t.test(path, () => {
+            const input = join(f.root, path), before = readFileSync(input);
+            try {
+              writeFileSync(input, Buffer.concat([before, Buffer.from("\nEXPLICIT TEST-ONLY STALE DEPENDENCY\n")]));
+              assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), /source_review_invalid/u);
+              assert.throws(() => f.api.readOriginalPackagedOfficeNativePublication(token), /source_review_invalid/u);
+              assert.throws(() => f.api.buildFreshPackagedOfficeNativePublication(), /source_review_invalid/u);
+              assert.deepEqual(readFileSync(f.reviewPath), frozenReviewBytes);
+              assert.equal(f.counts().signCalls, 1);
+            } finally { writeFileSync(input, before); }
+          });
+        }
+      });
+    }
+    assert.equal(f.api.readOriginalPackagedOfficeNativePublication(token).schemaVersion, 1);
+    assert.deepEqual(readFileSync(f.reviewPath), frozenReviewBytes);
+  });
+  await t.test("review exact keys reject extra or missing approval inputs", async t => {
+    const f = await fixture(t);
+    const mutations = {
+      "extra review field": value => { value.extra = true; },
+      "missing review field": value => { delete value.trust; },
+      "extra packaging digest": value => { value.packagingSha256["unreviewed.ts"] = "a".repeat(64); },
+      "missing packaging digest": value => { delete value.packagingSha256[f.paths[0]]; },
+      "extra native source digest": value => { value.sourceSha256["unreviewed.cc"] = "a".repeat(64); },
+      "missing native source digest": value => { delete value.sourceSha256[OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS[0]]; },
+      "extra compiler field": value => { value.compiler.extra = true; },
+      "extra runtime field": value => { value.runtime.extra = true; },
+      "extra header digest": value => { value.headers.sha256.extra = "a".repeat(64); },
+    };
+    for (const [name, mutate] of Object.entries(mutations)) {
+      await t.test(name, () => {
+        const value = structuredClone(f.review); mutate(value);
+        writeFileSync(f.reviewPath, JSON.stringify(value));
+        assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), /source_review_invalid/u);
+        assert.throws(() => f.api.buildFreshPackagedOfficeNativePublication(), /source_review_invalid/u);
+        assert.equal(f.counts().signCalls, 0);
+      });
+    }
+  });
+  await t.test("independent review accepts the full closure above the old 128 KiB frame", async t => {
+    const f = await fixture(t), bytes = Buffer.from(JSON.stringify(f.review));
+    assert.ok(bytes.length > 128 * 1024 && bytes.length < sourceReviewMaximumBytes);
+    assert.equal(f.reviewApi.readReviewedPackagedOfficeSource().review.reviewId, "packaged_office_native_v1");
+  });
+  await t.test("independent review 256 KiB frame is inclusive and rejects overflow, empty and truncated JSON", async t => {
+    const f = await fixture(t), bytes = Buffer.from(JSON.stringify(f.review));
+    const framed = Buffer.concat([bytes, Buffer.alloc(sourceReviewMaximumBytes - bytes.length, 0x20)]);
+    writeFileSync(f.reviewPath, framed);
+    assert.equal(f.reviewApi.readReviewedPackagedOfficeSource().review.reviewId, "packaged_office_native_v1");
+    for (const [name, rejected] of [
+      ["overflow", Buffer.concat([framed, Buffer.from(" ")])],
+      ["empty", Buffer.alloc(0)], ["truncated", bytes.subarray(0, bytes.length - 1)],
+    ]) {
+      await t.test(name, () => {
+        writeFileSync(f.reviewPath, rejected);
+        assert.throws(() => f.reviewApi.readReviewedPackagedOfficeSource(), /source_review_invalid/u);
+        assert.throws(() => f.api.buildFreshPackagedOfficeNativePublication(), /source_review_invalid/u);
+        assert.equal(f.counts().signCalls, 0);
+      });
+    }
   });
   await t.test("mutation during stage publication is rejected before minting a token", async t => {
     const f = await fixture(t), rename = fsModule.renameSync;

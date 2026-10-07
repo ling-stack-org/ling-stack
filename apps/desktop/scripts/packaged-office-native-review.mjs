@@ -3,41 +3,14 @@ import { lstatSync, readFileSync, realpathSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/dist/runtime/sandbox/packaged-office-native-published-review.js";
+import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "./packaged-office-native-review-inputs.mjs";
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const nativeRoot = join(repositoryRoot, "native/office-local");
 const reviewedSourcePath = join(nativeRoot, "reviewed-packaged-source-v1.json");
-const packagingPaths = Object.freeze([
-  "apps/desktop/scripts/packaged-office-native-review.mjs",
-  "apps/desktop/scripts/build-packaged-office-native.mjs",
-  "apps/desktop/scripts/build-packaged-daemon.mjs",
-  "apps/desktop/scripts/package-macos-with-office.mjs",
-  "apps/desktop/scripts/cua-driver-builder-environment.mjs",
-  "apps/desktop/scripts/packaged-office-native-package-checks.mjs",
-  "apps/desktop/scripts/cua-driver-electron-package.mjs",
-  "apps/desktop/scripts/cua-driver-electron-builder.config.mjs",
-  "apps/desktop/scripts/cua-driver-signing/after-pack.mjs",
-  "apps/desktop/scripts/cua-driver-signing/after-sign.mjs",
-  "apps/desktop/scripts/cua-driver-signing/artifact-build-completed.mjs",
-  "apps/desktop/scripts/cua-driver-signing/signing-contract.mjs",
-  "apps/desktop/scripts/cua-driver-signing/hooks.mjs",
-  "apps/desktop/scripts/cua-driver-signing/final-artifact-extractor.mjs",
-  "apps/desktop/scripts/cua-driver-signing/electron-builder-mac-sign.mjs",
-  "apps/desktop/scripts/cua-driver-signing/darwin-platform-signer.mjs",
-  "apps/desktop/scripts/macos-development-signing.mjs",
-  "apps/desktop/scripts/cua-driver-package-atomic-publish.mjs",
-  "apps/desktop/scripts/cua-driver-package-staging.mjs",
-  "apps/desktop/scripts/cua-driver-package-runtime-policy.mjs",
-  "apps/desktop/shared/cua-driver-package-authority-contract.mjs",
-  "apps/desktop/package.json",
-  "apps/desktop/main/resource-paths.ts",
-  "packages/daemon/src/cli.ts",
-  "packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts",
-  "packages/daemon/src/runtime/sandbox/packaged-office-native-resources.ts",
-  "packages/daemon/src/runtime/sandbox/packaged-office-native-bootstrap.ts",
-  "packages/daemon/src/runtime/sandbox/protected-host-office-native-identity.ts",
-  "pnpm-lock.yaml",
-]);
+const packagingPaths = PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS;
+// Independent review grows with the fixed authored closure, not the runtime literal.
+const sourceReviewMaximumBytes = 256 * 1024;
 const headerNames = Object.freeze(["node_api.h", "js_native_api.h", "js_native_api_types.h", "node_api_types.h"]);
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const validHash = value => typeof value === "string" && /^[a-f0-9]{64}$/u.test(value);
@@ -80,7 +53,7 @@ function equalRecord(actual, expected) {
 /** Fixed independent review input. No caller path, approval updater, or build-result approval. */
 export function readReviewedPackagedOfficeSource() {
   let bytes;
-  try { bytes = bytesAt(reviewedSourcePath, 32_768); }
+  try { bytes = bytesAt(reviewedSourcePath, sourceReviewMaximumBytes); }
   catch (cause) {
     if (cause?.code === "ENOENT") throw new Error("packaged_office_native_source_review_missing", { cause });
     throw cause;

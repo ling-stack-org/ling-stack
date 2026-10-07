@@ -7,6 +7,7 @@ import { basename, extname, isAbsolute, join, resolve } from "node:path";
 import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/dist/runtime/sandbox/packaged-office-native-published-review.js";
 import { readActiveOriginalPackagedOfficeNativePublication } from "./build-packaged-office-native.mjs";
 import { extractCuaDriverFinalArtifact } from "./cua-driver-signing/final-artifact-extractor.mjs";
+import { verifyOriginalOfficeDaemonInApp } from "./packaged-office-native-asar-checks.mjs";
 
 const maximumBinaryBytes = 64n * 1024n * 1024n;
 const maximumSourceBytes = 4n * 1024n * 1024n;
@@ -130,6 +131,7 @@ export function verifyOriginalOfficeCopyInApp(appPath) {
       requireCopy(totalSourceBytes <= maximumTotalSourceBytes);
       assertPinnedBytes(path, original, maximumSourceBytes, publication.sourceSha256[name]);
     }
+    verifyOriginalOfficeDaemonInApp(appPath);
     for (const { path, directory, original } of observations)
       requireCopy(sameNode(inspectNode(path, owner, directory), original));
     assertEntries(officeRoot, stageEntries);
