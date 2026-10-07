@@ -50,13 +50,13 @@
   },
   "dependencies": {
     "@ling-stack/browser-host": "workspace:*",
-    "@napi-rs/canvas": "1.0.8",
+    "@napi-rs/canvas": "1.0.10",
     "@ling-stack/api-client": "workspace:*",
     "@ling-stack/contracts": "workspace:*",
     "@ling-stack/localization": "workspace:*",
     "@ling-stack/ui-react": "workspace:*",
     "lucide-react": "^1.29.0",
-    "mammoth": "1.12.2",
+    "mammoth": "1.13.0",
     "pdf-parse": "2.4.5",
     "react": "^19.2.8",
     "react-dom": "^19.2.8"
