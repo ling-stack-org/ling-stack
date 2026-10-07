@@ -30,6 +30,8 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 
 Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，因此不会在 shard 中重复执行。`quality` 汇总任务保留检查名 `Typecheck, unit tests, and Web build`，统一判断适用任务的结果。
 
+整合 `main@328bb10a`（#515）后，类型检查、单元测试、Daemon 及 Linux 契约／macOS helper 任务条件使用 `!cancelled()`，使手动取消或新推送的自动取消能终止长任务。只使用 `always()` 时 GitHub 重新计算条件仍为真，任务可能继续运行；汇总门保留 `always()`，明确拒绝取消或未完成的验证。
+
 所有任务固定 Node `22.22.1`。构建只执行一次 `build:ci` 拓扑构建，短期 `dist` artifact 供类型检查、单元测试和 Daemon 分片复用；`test:ci` 不隐式重建依赖。本地通过不替代 GitHub 对当前待检提交的干净 runner 验证，完整 CI 成功也不替代 packaged 产品验收。
 
 ## 分层方案与范围

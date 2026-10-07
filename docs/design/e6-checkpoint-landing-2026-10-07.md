@@ -28,6 +28,10 @@ merge were removed. Local combined CI/scanner contracts pass 138/138 with zero
 failures, cancellations, skips or todos. Markdown and public-safety checks pass.
 This is local merge-integration evidence, not a remote complete CI result.
 
+The next main update `328bb10a` (#515) is also integrated. Long-running Linux
+and macOS jobs now honor cancellation; the quality gate still executes and
+rejects incomplete evidence. The combined CI/scanner contracts pass 139/139.
+
 PR #507 was moved from Draft to Ready to execute its complete CI tier.
 Run `37578906324` executed real runners: common checks, dependency policy,
 build, typecheck, unit/Web checks, Linux contracts, the real macOS helper and

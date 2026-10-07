@@ -221,7 +221,7 @@ jobs:
   typecheck:
     name: Typecheck selected packages
     needs: [scope, build]
-    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success'
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -264,7 +264,7 @@ jobs:
   unit-tests:
     name: Unit tests and Web checks
     needs: [scope, build]
-    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success'
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -316,7 +316,7 @@ jobs:
   daemon-tests:
     name: Daemon tests (shard ${{ matrix.shard }})
     needs: [scope, build]
-    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success'
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
     # Full discovery is unchanged: original Darwin-only positive cases must
     # execute on the real Host, not skip or weaken the production platform gate.
     runs-on: macos-26
@@ -379,7 +379,7 @@ jobs:
   daemon-linux-contracts:
     name: Linux restricted-command fail-closed contracts
     needs: [scope, build]
-    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success'
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -421,7 +421,7 @@ jobs:
   restricted-command-macos:
     name: Real macOS helper and Seatbelt smoke
     needs: [scope, build]
-    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success'
+    if: ${{ !cancelled() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success' }}
     # actions/runner-images documents macos-26 as arm64, not the Intel/large image.
     # This is standalone helper evidence, not reviewed packaged issuer certification.
     runs-on: macos-26

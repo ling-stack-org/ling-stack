@@ -63,6 +63,19 @@ test("unrelated labels cannot cancel validation or publish the required context"
   assert.match(ignored.stdout, /Unrelated label event/u);
 });
 
+test("long-running jobs respond to cancellation while quality still reports incomplete validation", () => {
+  for (const id of ["typecheck", "unit-tests", ...platformJobs]) {
+    const source = jobSource(id);
+    assert.match(source, /^    if: \$\{\{ !cancelled\(\) &&/mu, id);
+    assert.doesNotMatch(source, /^    if: .*always\(\)/mu, id);
+    assert.match(source, /needs\.build\.result == 'success'/u, id);
+  }
+  assert.match(jobSource("quality"), /^    if: always\(\)/mu);
+  const cancelled = runQuality({ UNIT_RESULT: "cancelled", DAEMON_RESULT: "cancelled" });
+  assert.equal(cancelled.status, 1, cancelled.stderr);
+  assert.match(cancelled.stdout, /UNIT=cancelled.*DAEMON=cancelled/u);
+});
+
 test("workflow gate requires all nine lanes and refuses incomplete Draft validation", () => {
   const quality = jobSource("quality");
   assert.match(quality, /^    if: always\(\)/mu);
