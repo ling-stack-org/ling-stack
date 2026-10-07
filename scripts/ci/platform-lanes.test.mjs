@@ -2,8 +2,10 @@ import assert from "node:assert/strict";
 import { readFileSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
+const repositoryRoot = fileURLToPath(new URL("../../", import.meta.url));
 
 /** Read one top-level job without treating similarly named steps as jobs. */
 function jobSource(id) {
@@ -15,11 +17,14 @@ function jobSource(id) {
 }
 
 function runQuality(overrides = {}) {
-  const script = jobSource("quality").split("        run: |\n")[1];
+  const run = /        run: (?:(\|)\n([\s\S]+)|([^\n]+))/u.exec(jobSource("quality"));
+  const script = run?.[1] ? run[2].replace(/^ {10}/gmu, "") : run?.[3];
   assert.ok(script, "quality must retain an executable aggregation gate");
-  return spawnSync("bash", ["-c", script.replace(/^ {10}/gmu, "")], {
+  return spawnSync("bash", ["-c", script], {
+    cwd: repositoryRoot,
     encoding: "utf8",
-    env: { ...process.env, SCOPE_RESULT: "success", COMMON_RESULT: "success",
+    env: { ...process.env, EXECUTION_TIER: "complete", SCOPE_MODE: "full",
+      SCOPE_RESULT: "success", COMMON_RESULT: "success",
       DEPENDENCY_RESULT: "success", BUILD_RESULT: "success", TYPECHECK_RESULT: "success",
       UNIT_RESULT: "success", DAEMON_RESULT: "success", LINUX_CONTRACT_RESULT: "success",
       MACOS_NATIVE_RESULT: "success", DAEMON_SELECTED: "true", ...overrides },
@@ -75,4 +80,40 @@ test("out-of-scope platform skips do not block documentation or Web-only changes
   const result = runQuality({ DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped",
     LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
   assert.equal(result.status, 0, result.stderr);
+});
+
+test("workflow quality gate keeps a Draft full scope deferred after common checks pass", () => {
+  const quality = jobSource("quality");
+  assert.match(quality, /EXECUTION_TIER: \$\{\{ needs\.scope\.outputs\.execution-tier \}\}/u);
+  assert.match(quality, /SCOPE_MODE: \$\{\{ needs\.scope\.outputs\.mode \}\}/u);
+  const check = runQuality({ EXECUTION_TIER: "preview", SCOPE_MODE: "full",
+    DEPENDENCY_RESULT: "skipped", BUILD_RESULT: "skipped", TYPECHECK_RESULT: "skipped",
+    UNIT_RESULT: "skipped", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped",
+    MACOS_NATIVE_RESULT: "skipped" });
+  assert.equal(check.status, 1, check.stderr);
+  assert.match(check.stdout, /deferred_by_draft_policy/u);
+});
+
+test("workflow documentation gate requires successful scope and common checks", () => {
+  const docs = { SCOPE_MODE: "docs", DAEMON_SELECTED: "false", DEPENDENCY_RESULT: "skipped",
+    BUILD_RESULT: "skipped", TYPECHECK_RESULT: "skipped", UNIT_RESULT: "skipped",
+    DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" };
+  assert.equal(runQuality(docs).status, 0);
+  for (const lane of ["SCOPE", "COMMON"]) {
+    for (const result of ["skipped", "failure"]) {
+      const check = runQuality({ ...docs, [`${lane}_RESULT`]: result });
+      assert.equal(check.status, 1, check.stderr);
+      assert.ok(check.stdout.includes(`${lane}=${result}`), check.stdout);
+    }
+  }
+});
+
+test("workflow non-daemon scope cannot pass with skipped build or unit tests", () => {
+  for (const lane of ["BUILD", "UNIT"]) {
+    const check = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false",
+      DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped",
+      [`${lane}_RESULT`]: "skipped" });
+    assert.equal(check.status, 1, check.stderr);
+    assert.ok(check.stdout.includes(`${lane}=skipped`), check.stdout);
+  }
 });

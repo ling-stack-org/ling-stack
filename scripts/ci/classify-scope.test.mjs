@@ -28,6 +28,65 @@ test("documentation-only changes use the fast lane", () => {
   assert.equal(classify(["README.md", "packages/core/README.md", "docs/assets/preview.png"]).mode, "docs");
 });
 
+test("Issue templates and allowlisted maintenance checks need no product packages", () => {
+  const maintenanceFiles = [
+    ".github/ISSUE_TEMPLATE/bug_report.yml",
+    ".github/ISSUE_TEMPLATE/nested/feature.md",
+    "scripts/check-markdown-links.mjs",
+    "scripts/check-public-repo-safety.mjs",
+    "scripts/check-public-repo-safety.test.mjs",
+  ];
+  for (const files of maintenanceFiles.map((file) => [file]).concat([["docs/ci.md", ...maintenanceFiles]])) {
+    const scope = classify(files);
+    assert.equal(scope.mode, "docs", files.join(", "));
+    assert.match(scope.reason, /maintenance/u);
+    assert.deepEqual(scope.packages, []);
+    assert.deepEqual(scope.testPackages, []);
+    assert.deepEqual(scope.typecheckPackages, []);
+    assert.equal(scope.daemon, false);
+    assert.equal(scope.web, false);
+  }
+});
+
+test("maintenance mixed with source retains affected consumers", () => {
+  const scope = classify([
+    ".github/ISSUE_TEMPLATE/bug_report.yml",
+    "scripts/check-public-repo-safety.test.mjs",
+    "packages/providers/src/index.ts",
+  ]);
+  assert.equal(scope.mode, "affected");
+  assert.deepEqual(scope.packages, ["@ling-stack/cli", "@ling-stack/daemon", "@ling-stack/providers"]);
+  assert.deepEqual(scope.testPackages, scope.packages);
+  assert.equal(scope.daemon, true);
+  assert.equal(scope.web, false);
+});
+
+test("maintenance exceptions do not weaken unknown paths or explicit full runs", () => {
+  const maintenance = "scripts/check-markdown-links.mjs";
+  for (const file of [
+    ".github/ISSUE_TEMPLATES/bug_report.yml",
+    ".github/workflows/ci.yml",
+    "scripts/check-markdown-links.test.mjs",
+    "scripts/check-public-repo-safety.mjs.backup",
+    "scripts/ci/check-markdown-links.mjs",
+    "scripts/ci/classify-scope.mjs",
+    "scripts/ci/run-packages.mjs",
+    "scripts/new-check.mjs",
+    "pnpm-lock.yaml",
+    "pnpm-workspace.yaml",
+    "package.json",
+    "packages/core/package.json",
+    "packages/core/tsconfig.json",
+    "patches/dependency.patch",
+    "native/unknown.rs",
+  ]) {
+    assert.equal(classify([maintenance, file]).mode, "full", file);
+  }
+  assert.equal(classify([maintenance], { forceFull: true }).mode, "full");
+  assert.equal(classify([maintenance], { eventName: "schedule" }).mode, "full");
+  assert.equal(classify([maintenance], { eventName: "workflow_dispatch" }).mode, "full");
+});
+
 test("documentation mixed with source changes uses affected packages", () => {
   const scope = classify(["docs/ci.md", "packages/providers/src/index.ts"]);
   assert.equal(scope.mode, "affected");
