@@ -27,6 +27,7 @@ import {
 } from "../cua-driver-package-atomic-publish.mjs";
 
 import { SigningContractError } from "./signing-contract.mjs";
+import { createDmgInputSnapshot } from "./dmg-input-snapshot.mjs";
 
 const require = createRequire(import.meta.url);
 const COMMAND_TIMEOUT_MS = 120_000;
@@ -83,11 +84,21 @@ async function extractZip(artifactPath, dependencies) {
 async function mountDmg(artifactPath, dependencies) {
   const createTemporaryRoot = dependencies.mkdtemp ?? mkdtemp;
   const runCommand = dependencies.runCommand ?? runBoundedCommand;
-  const temporaryRoot = await createTemporaryRoot(join(tmpdir(), "ling-cua-final-dmg-"));
-  const custody = await initializeDmgMountPointCustody(temporaryRoot, dependencies);
+  const createSnapshot = dependencies.createDmgInputSnapshot ?? createDmgInputSnapshot;
+  // hdiutil may write checksum-cache xattrs even when the volume is read-only.
+  // It must never receive the original immutable final artifact pathname.
+  const snapshot = await createSnapshot(artifactPath, dependencies);
+  let custody;
+  try {
+    const temporaryRoot = await createTemporaryRoot(join(tmpdir(), "ling-cua-final-dmg-"));
+    custody = await initializeDmgMountPointCustody(temporaryRoot, dependencies);
+  } catch (error) {
+    await cleanupAfterExtractionFailure(error, () => snapshot.cleanup());
+  }
   const mountPoint = custody.root;
   let attachAttempted = false;
   let detached = false;
+  let hostRemoved = false;
   const cleanup = retryableCleanup(async () => {
     if (!detached && attachAttempted) {
       try {
@@ -102,20 +113,44 @@ async function mountDmg(artifactPath, dependencies) {
           );
           detached = true;
         } catch (forceError) {
-          throw new AggregateError(
-            [ordinaryError, forceError],
+          // The backing image must remain while detach is unconfirmed. Release
+          // owned readonly handles without deleting or re-pinning that residue.
+          const causes = [ordinaryError, forceError];
+          try { await snapshot.releaseHandles(); }
+          catch (releaseError) { causes.push(releaseError); }
+          const error = new AggregateError(
+            causes,
             `final_artifact_dmg_detach_failed:${mountPoint}`,
           );
+          attachTemporaryRootCleanupReceipt(error, custody);
+          Object.defineProperty(error, "snapshotResiduePath", { value: snapshot.path });
+          throw error;
         }
       }
     }
     if (detached || !attachAttempted) {
       // A mounted path exposes the volume root, not these original host pins.
       // Only after detach may the exact original empty host directory be removed.
-      await removeUninitializedTemporaryRoot(custody, dependencies);
+      const causes = [];
+      if (!hostRemoved) {
+        try {
+          await removeUninitializedTemporaryRoot(custody, dependencies);
+          hostRemoved = true;
+        } catch (error) { causes.push(error); }
+      }
+      // Even a host-directory cleanup failure must not leak the original FD.
+      // Snapshot cleanup owns its immutable-byte readback and handle release.
+      try { await snapshot.cleanup(); }
+      catch (error) { causes.push(error); }
+      if (causes.length > 1) {
+        throw new AggregateError(causes, "final_artifact_dmg_host_and_input_cleanup_failed");
+      }
+      if (causes.length === 1) throw causes[0];
     }
   });
   try {
+    await snapshot.verifyOriginal();
+    await snapshot.verifySnapshot();
     attachAttempted = true;
     await runCommand("/usr/bin/hdiutil", [
       "attach",
@@ -123,8 +158,10 @@ async function mountDmg(artifactPath, dependencies) {
       "-readonly",
       "-mountpoint",
       mountPoint,
-      artifactPath,
+      snapshot.path,
     ]);
+    await snapshot.verifySnapshot();
+    await snapshot.verifyOriginal();
     await assertRealDirectory(mountPoint);
     return Object.freeze({ artifactRoot: mountPoint, cleanup });
   } catch (error) {

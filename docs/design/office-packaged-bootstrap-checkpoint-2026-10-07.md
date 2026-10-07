@@ -45,7 +45,7 @@ review gate; this checkpoint must not be described as a usable final package.
 Windows packaging is unchanged.
 
 The independent packaging digest now uses a focused fixed-input data module:
-32 explicit roots, 1198 unique inputs, including the conservative authored
+33 explicit roots, 1199 unique inputs, including the conservative authored
 runtime graph, helper native-source inventory, license, and atomic publisher
 compiler input. The source-review frame is bounded at 256 KiB; the separate
 runtime fifteen-source literal remains bounded at 32 KiB. A graph change needs
@@ -121,13 +121,35 @@ are still not proven by these guards.
 
 A real one-normal-detach probe using an old local image observed the host
 inode restored and the image SHA256 unchanged. It also exposed a separate
-remaining defect: `hdiutil attach` may update its checksum-cache attribute
+defect: `hdiutil attach` may update its checksum-cache attribute
 even with a read-only mounted volume, changing the host image ctime. Passing
 the original final DMG directly to it conflicts with the outer immutable
 artifact fence. The solution must consume a private, exclusive, original-FD
 byte snapshot and keep the original artifact's complete identity/ctime fence;
 removing ctime checks or disabling checksum verification is not the solution.
-This input-snapshot chain is not implemented by the mountpoint increment.
+The following input-snapshot increment implements this chain in a focused
+filesystem module. The original readonly `O_NOFOLLOW` FD, complete metadata
+including ctime, and streamed SHA256 remain fixed. An exclusive mode-0600
+private copy has a 4 GiB byte bound, 64 KiB buffers, explicit-position partial
+I/O and bounded attempts, fsync and exact hash readback. Only its pathname
+reaches hdiutil. Snapshot ctime alone may change; original inode/type/owner/
+mode/link-count/size/mtime and payload pins do not refresh.
+
+Public verification and cleanup serialize, concurrent cleanup coalesces,
+and the first terminal cleanup attempt closes each owned handle exactly once
+even on failure. After failed detach, release-only closes handles without
+deleting the potentially mounted backing image. Recovery retries retain
+fixed pins and sticky validation failures; they never reopen or manufacture
+fresh validation. Cleanup retains falsy causes and precise residue when an
+initial identity exists. A root allocated before first identity acquisition
+is reported, not removed by pathname alone. Office rechecks its original full
+artifact identity after awaited cleanup before reporting success.
+
+Snapshot leaf pins are checked in JS before bounded native tree removal;
+the current native wire carries parent/root pins and count/size, not a fixed
+leaf pin. This is not arbitrary Full Access or malicious same-UID race-free
+isolation. Force/partial attachment and original attachment ownership remain
+separate unverified gates.
 The original probe ended RED, not whole-probe GREEN; its separately verified
 host-inode and unchanged-byte observations do not constitute package acceptance.
 
@@ -170,6 +192,21 @@ local native cleanup neighbors. Its 32 synthetic DMG cases are included in
 46, not additional. Stable old deletion and native-wire RED runs are retained.
 The real old-image probe, its unchanged-byte readback and identity-bound
 empty-directory recovery are separate evidence with the limitations above.
+
+The input-snapshot increment passed 279 tests across the whole affected
+snapshot/extractor/Office hook/publication neighborhood, with zero failures,
+cancellations, skips or todo entries. Focused 35, extractor 58 and Office 64
+counts are included, not added. Stable cache and awaited-cleanup regressions
+were first RED and their full TAP is retained. This is not the full suite.
+An independent narrow static review found no confirmed P1/P2; it is not
+approval of the cumulative PR or third-party toolchain.
+
+A subsequent genuine macOS 27.0 normal hdiutil/native probe against an old
+image, treated only as data, observed actual private-copy cache ctime changes
+while every original metadata pin and SHA256 stayed unchanged. Normal detach
+restored the host inode; both private input and host mountpoint were removed.
+It ran no contained App and proves no signature, final package, Electron,
+MCP or GUI behavior. It does not retroactively turn the first probe GREEN.
 
 Before T6 can complete, the work still requires independent source/packaging
 and toolchain/runtime approval, a real final signed bundle, each actual ZIP/DMG

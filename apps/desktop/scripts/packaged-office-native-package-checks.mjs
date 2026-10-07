@@ -266,6 +266,12 @@ export async function verifyOfficeFinalArtifact(context) {
   let cleanupFailed = false, cleanupError;
   try { await extracted.cleanup(); }
   catch (error) { cleanupFailed = true; cleanupError = error; }
+  if (!verificationFailed && !cleanupFailed) {
+    // The final artifact remains pinned through awaited detach/input cleanup.
+    // This is verification, not a second cleanup failure for the same mutation.
+    try { requireCopy(sameNode(inspectNode(artifactPath, BigInt(uid), false), artifactIdentity)); }
+    catch (error) { verificationFailed = true; verificationError = error; }
+  }
   if (verificationFailed && cleanupFailed) {
     throw new AggregateError([verificationError, cleanupError], "packaged_office_native_artifact_and_cleanup_failed");
   }

@@ -333,6 +333,19 @@ test("Office package checks: synthetic active reader/signer/extractor, NOT real 
     await assert.rejects(f.api.verifyOfficeFinalArtifact(a.event), /copy_invalid/u);
     assert.equal(f.state.cleanupCalls, 1);
   });
+  for (const kind of ["zip", "dmg"]) {
+    await t.test(kind + " original artifact stays pinned through awaited cleanup", async t => {
+      const f = await fixture(t), a = f.artifact(kind);
+      f.state.extractor = async () => ({ artifactRoot: a.extractionRoot, async cleanup() {
+        await Promise.resolve();
+        f.state.cleanupCalls++;
+        writeFileSync(a.event.file, "MUTATED DURING AWAITED CLEANUP");
+      } });
+      await assert.rejects(f.api.verifyOfficeFinalArtifact(a.event), /copy_invalid/u);
+      assert.equal(f.state.cleanupCalls, 1);
+      assert.equal(f.signatureCalls.length, 1);
+    });
+  }
   await t.test("a second App added during verification is rejected with cleanup", async t => {
     const f = await fixture(t), a = f.artifact("zip");
     f.state.signature = (_command, _args, _options, callback) => { mkdirSync(join(a.extractionRoot, "Late.app")); callback(null); };

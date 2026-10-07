@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
+import { execFile } from "node:child_process";
 import {
+  copyFile,
   lstat,
   mkdir,
   mkdtemp,
@@ -9,11 +11,13 @@ import {
   rm,
   rmdir,
   symlink,
+  unlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
+import { promisify } from "node:util";
 
 import {
   extractCuaDriverFinalArtifact,
@@ -405,6 +409,7 @@ test("DMG cleanup falls back to force detach and stays idempotent", async () => 
       { platform: "darwin", artifactRole: "outer-dmg" },
       {
         ...atomicCleanupDependencies({}, darwinDirectoryIdentity),
+        async createDmgInputSnapshot(path) { return syntheticDmgInputSnapshot(path, root); },
         async runCommand(command, args) {
           calls.push([command, args]);
           if (args[0] === "detach" && args[1] !== "-force") {
@@ -659,12 +664,18 @@ test("DMG both detach failures keep falsy reasons, skip removal, and remain retr
   assert.match(error.message, /final_artifact_dmg_detach_failed/u);
   assert.equal(f.calls.emptyRemove, 0);
   assert.equal(f.calls.bareRemove, 0);
+  assert.equal(f.calls.snapshotCleanup, 0);
+  assert.equal(f.calls.snapshotRelease, 1);
+  assert.equal((await lstat(f.snapshot.path)).isFile(), true);
   assert.equal((await lstat(f.mountPoint)).isDirectory(), true);
   detachBlocked = false;
   await extracted.cleanup();
   await extracted.cleanup();
   assert.equal(f.calls.commands.filter(([, args]) => args[0] === "detach").length, 3);
   assert.equal(f.calls.emptyRemove, 1);
+  assert.equal(f.calls.snapshotCleanup, 1);
+  assert.equal(f.calls.snapshotRelease, 1);
+  await assert.rejects(lstat(f.snapshot.path), { code: "ENOENT" });
 });
 
 test("DMG partial attach failures preserve original and cleanup causes", async t => {
@@ -729,7 +740,7 @@ test("DMG post-detach missing, nonempty, symlink, and parent replacements fail c
       const extracted = await f.extract();
       if (kind === "missing") await assert.rejects(extracted.cleanup(), { code: "ENOENT" });
       else if (kind === "nonempty") await assert.rejects(extracted.cleanup(), { code: "ENOTEMPTY" });
-      else await assert.rejects(extracted.cleanup(), /final_artifact_cleanup_identity_mismatch/u);
+      else await assert.rejects(extracted.cleanup(), error => containsFailureMessage(error, /final_artifact_cleanup_identity_mismatch/u));
       assert.equal(f.calls.bareRemove, 0);
       assert.equal(f.calls.recursiveRemove, 0);
       assert.equal(f.calls.commands.filter(([, args]) => args[0] === "detach").length, 1);
@@ -790,14 +801,16 @@ test("DMG empty removal rechecks original pins after the JS identity check", asy
   assert.equal(f.calls.recursiveRemove, 0);
 });
 
-/** Only disposable directories and synthetic commands/native receipts, never a real mount. */
+/** Real disposable files/directories; synthetic snapshot origin, commands/native receipts, never a real mount. */
 async function dmgFixture(t, overrides = {}) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ling-cua-dmg-custody-test-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const artifactPath = join(root, "EXPLICIT-SYNTHETIC.dmg");
   await writeFile(artifactPath, "EXPLICIT SYNTHETIC DMG, NOT MOUNTABLE");
   let mountPoint;
-  const calls = { commands: [], secure: 0, emptyRemove: 0, bareRemove: 0, recursiveRemove: 0 };
+  let snapshot;
+  const calls = { commands: [], events: [], secure: 0, emptyRemove: 0, bareRemove: 0, recursiveRemove: 0,
+    snapshotCreate: 0, snapshotCleanup: 0, snapshotRelease: 0, originalVerify: 0, snapshotVerify: 0, hostCreate: 0 };
   const atomic = atomicCleanupDependencies({
     ...overrides.atomic,
     async secure(input, lease) {
@@ -808,6 +821,7 @@ async function dmgFixture(t, overrides = {}) {
     },
     async removeUnsecured(input, lease, invokeDefault) {
       calls.emptyRemove += 1;
+      calls.events.push("host-remove");
       if (overrides.atomic?.removeUnsecured) return overrides.atomic.removeUnsecured(input, lease, invokeDefault);
       return invokeDefault(input, lease);
     },
@@ -817,10 +831,21 @@ async function dmgFixture(t, overrides = {}) {
     calls,
     get root() { return root; },
     get mountPoint() { return mountPoint; },
+    get artifactPath() { return artifactPath; },
+    get snapshot() { return snapshot; },
     async extract() {
       return extractCuaDriverFinalArtifact(artifactPath, { platform: "darwin", artifactRole: "outer-dmg" }, {
         ...atomic,
+        async createDmgInputSnapshot(path, dependencies) {
+          calls.snapshotCreate += 1; calls.events.push("snapshot-create");
+          const createDefault = () => syntheticDmgInputSnapshot(path, root, calls, overrides.snapshot);
+          snapshot = overrides.createDmgInputSnapshot
+            ? await overrides.createDmgInputSnapshot(path, dependencies, createDefault) : await createDefault();
+          return snapshot;
+        },
         async mkdtemp() {
+          calls.hostCreate += 1; calls.events.push("host-create");
+          if (overrides.beforeHostCreate) await overrides.beforeHostCreate();
           mountPoint = await mkdtemp(join(root, "mountpoint-"));
           if (overrides.afterCreate) await overrides.afterCreate(mountPoint);
           return mountPoint;
@@ -829,6 +854,7 @@ async function dmgFixture(t, overrides = {}) {
         async runCommand(command, args, options) {
           assert.equal(command, "/usr/bin/hdiutil");
           calls.commands.push([command, args, options]);
+          calls.events.push(args[0]);
           if (args[0] === "detach") assert.equal(options.timeoutMs, 30_000);
           if (overrides.command) return overrides.command(command, args, options);
         },
@@ -836,6 +862,228 @@ async function dmgFixture(t, overrides = {}) {
     },
   };
 }
+
+/** Explicit orchestration substitute; these small copy/metadata checks are NOT the production FD snapshot helper. */
+async function syntheticDmgInputSnapshot(originalPath, root, calls, overrides = {}) {
+  const directory = await mkdtemp(join(root, "synthetic-input-"));
+  const path = join(directory, "EXPLICIT-SYNTHETIC-PRIVATE.dmg");
+  const original = await lstat(originalPath, { bigint: true }), bytes = await readFile(originalPath);
+  await copyFile(originalPath, path);
+  const copied = await lstat(path, { bigint: true });
+  let cleaned = false;
+  let released = false;
+  const record = (counter, event) => { if (calls) { calls[counter] += 1; calls.events.push(event); } };
+  const verify = async (target, expected, allowCacheCtime) => {
+    const current = await lstat(target, { bigint: true });
+    assert.equal(current.isFile(), true); assert.equal(current.isSymbolicLink(), false);
+    const keys = ["dev", "ino", "mode", "uid", "gid", "nlink", "size", "mtimeNs", ...(allowCacheCtime ? [] : ["ctimeNs"])];
+    assert.deepEqual(keys.map(key => current[key]), keys.map(key => expected[key]), "synthetic snapshot fixed identity changed");
+    assert.deepEqual(await readFile(target), bytes);
+  };
+  const snapshot = Object.freeze({ path,
+    async verifyOriginal() {
+      record("originalVerify", "verify-original");
+      const invokeDefault = () => verify(originalPath, original, false);
+      if (overrides.verifyOriginal) return overrides.verifyOriginal(invokeDefault);
+      return invokeDefault();
+    },
+    async verifySnapshot() {
+      record("snapshotVerify", "verify-snapshot");
+      const invokeDefault = () => verify(path, copied, true);
+      if (overrides.verifySnapshot) return overrides.verifySnapshot(invokeDefault);
+      return invokeDefault();
+    },
+    async cleanup() {
+      if (cleaned) return;
+      record("snapshotCleanup", "snapshot-cleanup");
+      const invokeDefault = async () => {
+        await snapshot.verifyOriginal(); await snapshot.verifySnapshot();
+        await unlink(path); await rmdir(directory);
+      };
+      try {
+        if (overrides.cleanup) await overrides.cleanup(invokeDefault);
+        else await invokeDefault();
+      } finally { await snapshot.releaseHandles(); }
+      cleaned = true;
+    },
+    async releaseHandles() {
+      if (released) return;
+      record("snapshotRelease", "snapshot-release");
+      if (overrides.releaseHandles) await overrides.releaseHandles();
+      released = true;
+    },
+  });
+  return snapshot;
+}
+
+function containsFailureMessage(error, pattern) {
+  return pattern.test(error?.message ?? "") || (error instanceof AggregateError
+    && error.errors.some(cause => containsFailureMessage(cause, pattern)));
+}
+
+test("DMG first checksum-cache xattr changes only the private attach input, never original artifact ctime", async t => {
+  await firstChecksumCacheFixture(t);
+});
+
+test("DMG real snapshot helper tolerates real checksum-cache xattr without original ctime adoption (simulated hdiutil)", async t => {
+  const { createDmgInputSnapshot } = await import("../scripts/cua-driver-signing/dmg-input-snapshot.mjs");
+  await firstChecksumCacheFixture(t, createDmgInputSnapshot);
+});
+
+async function firstChecksumCacheFixture(t, realSnapshotFactory) {
+  const f = await dmgFixture(t, {
+    ...(realSnapshotFactory ? { async createDmgInputSnapshot(path) { return realSnapshotFactory(path); } } : {}),
+    async command(_command, args) {
+      if (args[0] !== "attach") return;
+      const before = await lstat(args.at(-1), { bigint: true });
+      await promisify(execFile)("/usr/bin/xattr", ["-w", "com.apple.diskimages.recentcksum", "EXPLICIT-TEST-CACHE", args.at(-1)],
+        { timeout: 5_000, maxBuffer: 64 * 1024 });
+      const after = await lstat(args.at(-1), { bigint: true });
+      assert.notEqual(after.ctimeNs, before.ctimeNs, "real disposable xattr must change attached file ctime");
+    },
+  });
+  t.after(async () => {
+    if (!f.snapshot) return;
+    if (realSnapshotFactory) t.diagnostic(`Test-held production snapshot path=${f.snapshot.path}`);
+    try { await f.snapshot.cleanup(); }
+    catch (error) {
+      // Preserve the failed verification verdict while recovering only this
+      // production helper's identity-bound disposable filesystem residue.
+      if (error?.cleanup?.outcome !== "removed") throw error;
+      t.diagnostic(`Disposable snapshot recovery removed owned residue; validation=${error.cleanup.validation}`);
+    } finally { await f.snapshot.releaseHandles(); }
+  });
+  const before = await lstat(f.artifactPath, { bigint: true }), bytes = await readFile(f.artifactPath);
+  let extracted;
+  try { extracted = await f.extract(); }
+  catch (error) {
+    if (f.snapshot) t.diagnostic(`Snapshot extraction failure=${String(error?.message ?? error)}, owned path=${f.snapshot.path}`);
+    const cleanup = error instanceof AggregateError ? error.errors.at(-1)?.cleanup : error?.cleanup;
+    if (cleanup) t.diagnostic(`Original helper cleanup receipt=${JSON.stringify(cleanup)}`);
+    throw error;
+  }
+  try {
+    const after = await lstat(f.artifactPath, { bigint: true });
+    assert.equal(after.ctimeNs, before.ctimeNs, "hdiutil input-cache metadata must not mutate original artifact ctime");
+    assert.equal(f.calls.snapshotCreate, 1);
+    assert.equal(f.calls.commands[0][1].at(-1), f.snapshot.path);
+    assert.notEqual(f.snapshot.path, f.artifactPath);
+    assert.deepEqual(await readFile(f.artifactPath), bytes);
+  } finally { await extracted.cleanup(); }
+  await assert.rejects(lstat(f.snapshot.path), { code: "ENOENT" });
+  t.diagnostic(`Real tempfile + real checksum-cache xattr; ${realSnapshotFactory ? "real production snapshot helper" : "synthetic snapshot factory"}; hdiutil command and host cleanup substituted. No real mount, DMG validity, signature or same-UID isolation acceptance.`);
+}
+
+test("DMG snapshot orchestration checks around attach and removes host before the input snapshot", async t => {
+  const f = await dmgFixture(t), extracted = await f.extract();
+  const attach = f.calls.events.indexOf("attach");
+  assert.deepEqual(f.calls.events.slice(attach - 2, attach + 3),
+    ["verify-original", "verify-snapshot", "attach", "verify-snapshot", "verify-original"]);
+  assert.equal(f.calls.commands[0][1].at(-1), f.snapshot.path);
+  assert.notEqual(f.snapshot.path, f.artifactPath);
+  assert.equal(f.calls.snapshotCreate, 1); assert.equal(f.calls.hostCreate, 1);
+  await Promise.all([extracted.cleanup(), extracted.cleanup()]); await extracted.cleanup();
+  const detach = f.calls.events.indexOf("detach"), hostRemove = f.calls.events.indexOf("host-remove");
+  assert.ok(detach < hostRemove && hostRemove < f.calls.events.indexOf("snapshot-cleanup"));
+  assert.equal(f.calls.emptyRemove, 1); assert.equal(f.calls.snapshotCleanup, 1); assert.equal(f.calls.snapshotRelease, 1);
+  await assert.rejects(lstat(f.mountPoint), { code: "ENOENT" });
+  await assert.rejects(lstat(dirname(f.snapshot.path)), { code: "ENOENT" });
+});
+
+test("DMG snapshot/setup failures clean both independently owned directories without attaching", async t => {
+  for (const stage of ["snapshot", "host-create", "custody"]) {
+    await t.test(stage, async t => {
+      const reason = new Error(`EXPLICIT-SYNTHETIC-${stage}-failure`);
+      const f = await dmgFixture(t, {
+        ...(stage === "snapshot" ? { async createDmgInputSnapshot() { throw reason; } } : {}),
+        ...(stage === "host-create" ? { async beforeHostCreate() { throw reason; } } : {}),
+        ...(stage === "custody" ? { atomic: { async secure() { throw reason; } } } : {}),
+      });
+      assert.equal(await captureRejection(() => f.extract()), reason);
+      assert.equal(f.calls.commands.length, 0);
+      if (stage === "snapshot") { assert.equal(f.calls.hostCreate, 0); assert.equal(f.snapshot, undefined); }
+      else {
+        assert.equal(f.calls.snapshotCleanup, 1); assert.equal(f.calls.snapshotRelease, 1);
+        await assert.rejects(lstat(dirname(f.snapshot.path)), { code: "ENOENT" });
+        if (stage === "custody") await assert.rejects(lstat(f.mountPoint), { code: "ENOENT" });
+      }
+    });
+  }
+});
+
+test("DMG setup and snapshot cleanup retain falsy dual failures", async t => {
+  const f = await dmgFixture(t, {
+    atomic: { async secure() { throw undefined; } },
+    snapshot: { async cleanup() { throw 0; } },
+  });
+  const failure = await captureRejection(() => f.extract());
+  assert.ok(failure instanceof AggregateError); assert.deepEqual(failure.errors, [undefined, 0]);
+  assert.equal(f.calls.commands.length, 0); assert.equal(f.calls.snapshotRelease, 1);
+  await assert.rejects(lstat(f.mountPoint), { code: "ENOENT" });
+  assert.equal((await lstat(f.snapshot.path)).isFile(), true);
+});
+
+test("DMG post-attach snapshot rejection detaches before both cleanup owners", async t => {
+  let checks = 0;
+  const f = await dmgFixture(t, {
+    snapshot: { async verifySnapshot(invokeDefault) { if (++checks === 2) throw null; return invokeDefault(); } },
+  });
+  assert.equal(await captureRejection(() => f.extract()), null);
+  assert.equal(f.calls.commands.filter(([, args]) => args[0] === "detach").length, 1);
+  assert.equal(f.calls.emptyRemove, 1); assert.equal(f.calls.snapshotCleanup, 1);
+  await assert.rejects(lstat(f.mountPoint), { code: "ENOENT" });
+  await assert.rejects(lstat(f.snapshot.path), { code: "ENOENT" });
+});
+
+test("DMG failed post-attach verify and both cleanup failures preserve all falsy causes", async t => {
+  let checks = 0;
+  const f = await dmgFixture(t, {
+    snapshot: {
+      async verifySnapshot(invokeDefault) { if (++checks === 2) throw false; return invokeDefault(); },
+      async cleanup() { throw 0; },
+    },
+    atomic: { async removeUnsecured() { throw null; } },
+  });
+  const error = await captureRejection(() => f.extract());
+  assert.ok(error instanceof AggregateError); assert.equal(error.errors[0], false);
+  assert.ok(error.errors[1] instanceof AggregateError); assert.deepEqual(error.errors[1].errors, [null, 0]);
+  assert.equal(f.calls.emptyRemove, 1); assert.equal(f.calls.snapshotCleanup, 1); assert.equal(f.calls.snapshotRelease, 1);
+  assert.equal((await lstat(f.mountPoint)).isDirectory(), true); assert.equal((await lstat(f.snapshot.path)).isFile(), true);
+});
+
+test("DMG double detach failure releases handles without deleting either retained input or host root", async t => {
+  const f = await dmgFixture(t, {
+    async command(_command, args) { if (args[0] === "detach") throw args[1] === "-force" ? false : null; },
+    snapshot: { async releaseHandles() { throw undefined; } },
+  });
+  const extracted = await f.extract(), failure = await captureRejection(() => extracted.cleanup());
+  assert.ok(failure instanceof AggregateError); assert.deepEqual(failure.errors, [null, false, undefined]);
+  assert.equal(f.calls.snapshotRelease, 1); assert.equal(f.calls.snapshotCleanup, 0); assert.equal(f.calls.emptyRemove, 0);
+  assert.equal((await lstat(f.snapshot.path)).isFile(), true); assert.equal((await lstat(f.mountPoint)).isDirectory(), true);
+});
+
+test("DMG snapshot cleanup retry keeps hostRemoved latch and coalesces concurrent falsy retries", async t => {
+  let attempts = 0, entered, release;
+  const entry = new Promise(resolve => { entered = resolve; }), barrier = new Promise(resolve => { release = resolve; });
+  t.after(() => release());
+  const f = await dmgFixture(t, {
+    snapshot: { async cleanup(invokeDefault) {
+      if (++attempts === 1) throw false;
+      entered(); await barrier; return invokeDefault();
+    } },
+  });
+  const extracted = await f.extract();
+  assert.equal(await captureRejection(() => extracted.cleanup()), false);
+  await assert.rejects(lstat(f.mountPoint), { code: "ENOENT" });
+  assert.equal((await lstat(f.snapshot.path)).isFile(), true);
+  const first = extracted.cleanup(), second = extracted.cleanup();
+  const completion = Promise.all([first, second]);
+  await Promise.race([entry, completion]); release(); await completion; await extracted.cleanup();
+  assert.equal(attempts, 2); assert.equal(f.calls.snapshotCleanup, 2); assert.equal(f.calls.snapshotRelease, 1);
+  assert.equal(f.calls.emptyRemove, 1); assert.equal(f.calls.commands.filter(([, args]) => args[0] === "detach").length, 1);
+  await assert.rejects(lstat(f.snapshot.path), { code: "ENOENT" });
+  t.diagnostic("Explicit synthetic snapshot lifecycle substitute; retry/concurrency is the extractor contract, not production FD verification or OS detach authority.");
+});
 
 test("NSIS extraction uses pinned 7zip and exact nested app-64 archive", async () => {
   const root = await mkdtemp(join(tmpdir(), "ling-cua-extractor-nsis-"));
