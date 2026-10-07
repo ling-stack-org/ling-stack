@@ -4,7 +4,7 @@
 
 ## 当前行为
 
-以下说明 2026-10-07 的 `codex/e6-safe-continuation` 分支；优化前核对提交为 `337b030c`，不把该分支的修改视为已经合入 `main`。PR 工作流在推送修改后应用；定时配置只在合入默认分支后生效。
+以下说明 2026-10-07 的 `codex/e6-safe-continuation` 分支；优化前核对提交为 `337b030c`。当前已受控整合 `main@69ed481a`（#511）的节流策略与工作流契约，不把尚未合并的原生门禁视为已经进入 `main`。PR 工作流在推送修改后应用；定时配置只在合入默认分支后生效。
 
 CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 
@@ -16,13 +16,21 @@ CI 会先根据整个 Pull Request 的变更路径选择最小安全范围：
 - [执行策略](../../scripts/ci/execution-policy.mjs)独立选择 `preview`／`complete`：无 `full-ci` 的 Draft 推送只跑公共检查，延后依赖安装、构建、类型检查、产品测试、历史密钥扫描及所有 macOS 任务；转正式评审、正式 PR 更新、手动或定时运行使用完整执行档位。
 - Draft 的轻量成功不是完整验证成功。汇总门明确报 `deferred_by_draft_policy`，提醒需要转正式或请求完整运行；正式档位下所有必需任务均须实际成功。同一个 PR 的新运行会取消旧运行，但已执行的任务用量不会因此退回。
 
-构建阶段只执行一次 `build:ci` 拓扑构建，并把 `dist` 作为短期 artifact 供 typecheck、单元测试和 daemon 分片复用。各包的 `test:ci` 只运行测试，不再隐式重建依赖；本地 `build`、`typecheck` 和 `test` 命令保持原有行为。
+| 事件 | 执行方式 |
+| --- | --- |
+| 无 `full-ci` 标签的 Draft 新建、推送、重开或转回 Draft | `preview`：分类、文档链接、公开仓库安全、CI 规则测试及空白检查；不安装依赖、不构建、不运行产品测试或历史密钥扫描 |
+| 正式 PR 新建、推送、重开或转为正式评审 | `complete`：按整个 PR 的改动范围补齐必要检查 |
+| 新增或保留 `full-ci` 标签 | 完整执行档位及全仓范围；大小写匹配与 GitHub 表达式一致 |
+| 手动运行 | 目标分支上的完整验证 |
+| 定时运行 | 默认分支每周一 UTC 03:17（北京时间 11:17）的完整验证 |
 
 该分支的 Daemon 测试拆为四个 `macos-26` shard，使用稳定的文件分配和独立的 `LING_STACK_HOME`。每个 shard 以 `--test-concurrency=1` 运行，避免测试间共享状态；新增或删除测试文件会自动重新平衡。完整执行档位下选择 Daemon 时，还会运行 Linux restricted-command 拒绝契约和一个真实 macOS helper／Seatbelt smoke 任务。
 
 完整 Daemon 分片使用 macOS，是为了让 Darwin 专属正向用例实际执行。[平台契约测试](../../scripts/ci/platform-lanes.test.mjs)当前明确保护这一要求，不能只改 `runs-on`，让 Linux 上的跳过被当成原生验证成功。
 
 Daemon 专用的依赖安全测试由 `dependency-policy` 任务单独运行，因此不会在 shard 中重复执行。`quality` 汇总任务保留检查名 `Typecheck, unit tests, and Web build`，统一判断适用任务的结果。
+
+所有任务固定 Node `22.22.1`。构建只执行一次 `build:ci` 拓扑构建，短期 `dist` artifact 供类型检查、单元测试和 Daemon 分片复用；`test:ci` 不隐式重建依赖。本地通过不替代 GitHub 对当前待检提交的干净 runner 验证，完整 CI 成功也不替代 packaged 产品验收。
 
 ## 分层方案与范围
 
@@ -130,6 +138,7 @@ Linux 每日回归仅在同一提交、同一检查方案已有有效的完整�
 node --test scripts/ci/*.test.mjs
 node scripts/ci/classify-scope.mjs --files='["packages/core/src/index.ts"]'
 node scripts/check-markdown-links.mjs
+node scripts/check-public-repo-safety.mjs
 ```
 
 下面的命令会真实执行一个 Daemon 分片，不是只打印分配；需要构建产物和对应支持平台：

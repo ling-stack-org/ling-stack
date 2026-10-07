@@ -19,6 +19,15 @@ source-input checkpoint is not the size of the accumulated work.
 
 ## CI evidence and repair boundaries
 
+The branch subsequently integrated `main@69ed481a` (#511) through a normal merge.
+Conflict resolution retains Node 22.22.1, four real macOS daemon shards, Linux
+fail-closed contracts, the real macOS helper/Seatbelt lane and bootstrap evidence.
+The new workflow contract tests retain all nine aggregation lanes, scanner
+boundaries and unique step IDs; duplicated `policy` steps from the automatic
+merge were removed. Local combined CI/scanner contracts pass 138/138 with zero
+failures, cancellations, skips or todos. Markdown and public-safety checks pass.
+This is local merge-integration evidence, not a remote complete CI result.
+
 PR #507 was moved from Draft to Ready to execute its complete CI tier.
 Run `37578906324` executed real runners: common checks, dependency policy,
 build, typecheck, unit/Web checks, Linux contracts, the real macOS helper and

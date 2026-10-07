@@ -140,6 +140,16 @@ test("event-file CLI emits only the tier and rejects unreadable, invalid or ambi
   assert.equal(preview.status, 0, preview.stdout + preview.stderr);
   assert.equal(preview.stdout, "preview\n");
   assert.equal(run([`--event-file=${eventFile}`, "--event-name=workflow_dispatch"]).stdout, "complete\n");
+  for (const [event, expected] of [
+    [prEvent("ready_for_review"), "complete"],
+    [prEvent("labeled", { draft: true, labels: ["Full-CI"], label: "FULL-CI" }), "complete"],
+    [prEvent("labeled", { labels: ["bug"], label: "bug" }), "ignore"],
+  ]) {
+    writeFileSync(eventFile, JSON.stringify(event));
+    const check = run(["--event-file", eventFile]);
+    assert.equal(check.status, 0, check.stdout + check.stderr);
+    assert.equal(check.stdout, `${expected}\n`);
+  }
   for (const args of [[], ["--event-file"], ["--unknown"], ["--event-file", eventFile, "--event-file", eventFile], ["--check-quality", "--event-file", eventFile], ["--event-file", join(directory, "missing.json")]]) {
     assert.equal(run(args).status, 1, args.join(" "));
   }
@@ -152,9 +162,21 @@ test("quality CLI enforces environment types and reports failures in the workflo
     ...Object.fromEntries(lanes.map((lane) => [`${lane}_RESULT`, "success"])) };
   const run = (overrides = {}) => spawnSync(process.execPath, [script, "--check-quality"], { encoding: "utf8", env: { ...env, ...overrides } });
   assert.equal(run().status, 0);
-  const skipped = run({ TYPECHECK_RESULT: "skipped" });
-  assert.equal(skipped.status, 1);
-  assert.match(skipped.stdout, /TYPECHECK=skipped/u);
+  for (const lane of lanes) {
+    for (const result of ["failure", "cancelled", "skipped", "", undefined]) {
+      const check = run({ [`${lane}_RESULT`]: result });
+      assert.equal(check.status, 1, check.stdout + check.stderr);
+      assert.ok(check.stdout.includes(`${lane}=`), check.stdout);
+    }
+  }
+  const skippedProducts = Object.fromEntries(lanes.slice(2).map((lane) => [`${lane}_RESULT`, "skipped"]));
+  assert.equal(run({ SCOPE_MODE: "docs", DAEMON_SELECTED: "false", ...skippedProducts }).status, 0);
+  assert.equal(run({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" }).status, 0);
+  for (const mode of ["docs", "affected", "full"]) {
+    const preview = run({ EXECUTION_TIER: "preview", SCOPE_MODE: mode, ...skippedProducts });
+    assert.equal(preview.status, 1, preview.stdout + preview.stderr);
+    assert.match(preview.stdout, /deferred_by_draft_policy/u);
+  }
   assert.equal(run({ DAEMON_SELECTED: "" }).status, 1);
   assert.equal(run({ EXECUTION_TIER: "" }).status, 1);
   assert.equal(run({ SCOPE_MODE: "" }).status, 1);
