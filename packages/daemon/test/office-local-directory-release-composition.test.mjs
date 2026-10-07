@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import * as composition from "../dist/features/office-documents/office-local-directory-core-authority.js";
-import { releaseOriginalOfficeDirectoryRuntimeLeaseV2 } from "../dist/features/office-documents/office-local-native-runtime.js";
+import { assertOriginalOfficeDirectoryRuntimeLeaseReleasedV2,
+  releaseOriginalOfficeDirectoryRuntimeLeaseV2 } from "../dist/features/office-documents/office-local-native-runtime.js";
 
 test("original composition never exposes the authority's raw runtime custody", () => {
   assert.deepEqual(Object.keys(composition).sort(), [
+    "assertOriginalOfficeDirectoryLeaseAuthorityV2",
+    "assertOriginalOfficeDirectoryLeaseReleasedV2",
     "captureOriginalOfficeDirectoryAuthorityV2",
     "createOriginalOfficeDirectoryStoreFactory",
+    "readOriginalOfficeDirectoryNativeRuntime",
     "releaseOriginalOfficeDirectoryLeaseV2",
   ]);
   assert.equal(Object.hasOwn(composition, "readOriginalOfficeDirectoryAuthorityCustodyForReleaseV2"), false);
@@ -23,8 +27,14 @@ test("authority clones, getters and proxies cannot enter the private release com
     get() { reads++; throw new Error("caller_authority_read"); },
     getOwnPropertyDescriptor() { reads++; throw new Error("caller_authority_descriptor_read"); },
   })]) {
-    assert.throws(() => composition.releaseOriginalOfficeDirectoryLeaseV2(authority, opaque, opaque),
-      /office_local_directory_core_composition_invalid/u);
+    for (const reject of [
+      () => composition.assertOriginalOfficeDirectoryLeaseAuthorityV2(authority, opaque),
+      () => composition.assertOriginalOfficeDirectoryLeaseReleasedV2(authority, opaque, opaque),
+      () => composition.releaseOriginalOfficeDirectoryLeaseV2(authority, opaque, opaque),
+    ]) {
+      assert.throws(reject, { message: "office_local_directory_core_composition_invalid" });
+      assert.equal(reads, 0, "a fixed lease guard must reject before reading caller custody");
+    }
   }
   assert.equal(reads, 0);
 });
@@ -36,8 +46,11 @@ test("a public noop runtime or serialized custody cannot substitute a constructo
   for (const runtime of [opaque, counterfeit, new Proxy(counterfeit, {
     get() { calls++; throw new Error("caller_runtime_read"); },
   })]) {
-    assert.throws(() => releaseOriginalOfficeDirectoryRuntimeLeaseV2(runtime, opaque, opaque, opaque, opaque),
-      /office_local_native_lease_release_custody_invalid/u);
+    for (const read of [assertOriginalOfficeDirectoryRuntimeLeaseReleasedV2, releaseOriginalOfficeDirectoryRuntimeLeaseV2]) {
+      assert.throws(() => read(runtime, opaque, opaque, opaque, opaque),
+        { message: "office_local_native_lease_release_custody_invalid" });
+      assert.equal(calls, 0, "no replacement runtime reader or release callback may run");
+    }
   }
   assert.equal(calls, 0);
 });

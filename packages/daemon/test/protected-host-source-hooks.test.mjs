@@ -48,11 +48,34 @@ test("four original source wrappers enforce the captured stage gate at physical 
     await t.test("cloned prepared receivers, flags and manufactured launch records cannot grant native entry", () => {
       const before = observed.calls.length, original = f.prepared();
       const actor = f.registry.bindPreparedActor(original.source, original.prepared);
-      assert.throws(() => ({ ...original.prepared }).spawn(() => {}, actor), /prepared_capability_invalid/u);
+      let authorityChecks = 0, callerReads = 0;
+      const assertAuthority = () => { authorityChecks++; };
+      for (const receiver of [{ ...original.prepared }, Object.create(original.prepared), new Proxy(original.prepared, {
+        get() { callerReads++; throw new Error("caller_prepared_read"); },
+      })]) {
+        assert.throws(() => Reflect.apply(original.prepared.spawn, receiver, [assertAuthority, actor]),
+          { code: "macos_prepared_capability_invalid" });
+        assert.equal(authorityChecks, 0, "a copied receiver cannot enter the original authority callback");
+        assert.equal(callerReads, 0); assert.equal(observed.calls.length, before);
+      }
       assert.throws(() => macos.MACOS_NATIVE_COMMAND_ACTOR_ENTRY.invoke(actor,
-        { prepared: original.prepared, actor, command: "/usr/bin/sandbox-exec", policyVerified: true }), /launch_record_invalid/u);
-      assert.throws(() => original.prepared.spawn(() => {}, { policyVerified: true }), /preparation_invalid/u);
+        { prepared: original.prepared, actor, command: "/usr/bin/sandbox-exec", policyVerified: true }),
+        { code: "macos_native_launch_record_invalid" });
       assert.equal(observed.calls.length, before);
+      for (const copyActor of [() => ({ policyVerified: true }), value => ({ ...value }), value => new Proxy(value, {
+        get() { callerReads++; throw new Error("caller_actor_read"); },
+      })]) {
+        const owner = f.prepared(), owningActor = f.registry.bindPreparedActor(owner.source, owner.prepared);
+        const checkedBefore = authorityChecks;
+        assert.throws(() => owner.prepared.spawn(assertAuthority, copyActor(owningActor)),
+          { message: "protected_host_actor_prepared_binding_invalid" });
+        assert.equal(authorityChecks, checkedBefore + 1);
+        assert.equal(callerReads, 0); assert.equal(observed.calls.length, before);
+        // Source-owned preparation was consumed before the binding refusal; a
+        // later genuine actor cannot replay that rejected physical launch.
+        assert.throws(() => owner.prepared.spawn(assertAuthority, owningActor), { code: "macos_launch_already_consumed" });
+        assert.equal(authorityChecks, checkedBefore + 1); assert.equal(observed.calls.length, before);
+      }
     });
 
     await t.test("undefined macos actor is rejected at the source wrapper despite a caller authority callback", () => {

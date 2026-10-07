@@ -3,7 +3,7 @@ import fs, { existsSync, mkdtempSync, readFileSync, realpathSync, renameSync, wr
 import { rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence } from "@ling-stack/core";
 import { AttemptHostOperationTracker } from "../dist/runtime/attempt-host-operation-tracker.js";
@@ -16,7 +16,7 @@ import { OfficeLocalResourceOwner } from "../dist/features/office-documents/offi
 import { verifyOfficeLocalReplay } from "../../core/dist/storage/sqlite/host-office-local-replay.js";
 
 const now = () => new Date().toISOString();
-async function fixture(t, path = "result.docx") {
+async function fixture(t, path = "result.docx", options = {}) {
   const cwd = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-writer-"))), store = createSqliteRunStore(cwd);
   t.after(async () => { store.close(); await rm(cwd, { recursive: true, force: true }); });
   const unit = store.createWorkUnit({ workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "run", ownerId: "run",
@@ -30,6 +30,7 @@ async function fixture(t, path = "result.docx") {
     providerModel: "test", taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now() });
   store.linkRunToWorkUnit("run", unit.id, now()); store.markRunStarted("run", now());
   const source = { runId: "run", ...fence }, tracker = new AttemptHostOperationTracker({ store, source });
+  if (options.existingDirectories) fs.mkdirSync(dirname(join(cwd, path)), { recursive: true });
   const reservation = reserveOfficeLocalWriter(tracker, store, "office-call", cwd);
   const snapshot = captureOfficeLocalSnapshot(cwd, path, "docx", source);
   const artifact = await prepareOfficeArtifact("office_create_document", { path, blocks: [{ type: "paragraph", text: "Actual Office SDK bytes" }] });
@@ -728,19 +729,64 @@ test("Office native contract retains open return before first fstat throws", asy
   assert.throws(() => fs.fstatSync(fd), { code: "EBADF" });
 });
 
-test("Office real SDK bytes publish through exact SQLite effects without safe settlement", async t => {
-  const f = await fixture(t, "nested/one/result.docx"), result = executeOfficeLocalWrite(f.plan);
+test("Office real SDK bytes in existing nested directories publish through exact SQLite effects without safe settlement", async t => {
+  // V1 owns file effects in captured directories, not creator-bound missing-directory effects.
+  // This SDK/SQLite component positive is not missing-parent product closure; that still needs a real V2 positive.
+  const f = await fixture(t, "nested/one/result.docx", { existingDirectories: true });
+  const directories = f.prepared.members.filter(member => member.role === "directory");
+  assert.equal(directories.length, 2);
+  assert.equal(directories.every(member => member.initial.state === "directory"), true);
+  assert.equal(existsSync(f.prepared.targetPath), false, "only the writer publishes the real SDK bytes");
+  const result = executeOfficeLocalWrite(f.plan);
   assert.deepEqual(readFileSync(result.path), f.artifact.bytes);
+  assert.equal(officeBytesDigest(readFileSync(result.path)), f.prepared.output.bytesSha256);
   assert.equal(existsSync(f.temporary), false);
   assert.equal(result.observation.outcome, "published");
   assert.equal(result.observation.resources.every(row => row.state === "closed"), true);
   assert.equal(result.observation.members.length, f.prepared.members.length);
   const effects = f.store.listHostOfficeLocalEffects(f.plan.executionId);
-  assert.deepEqual(effects.map(row => row.kind), ["mkdir", "mkdir", "open", "write", "fsync", "close", "link", "unlink"]);
+  assert.deepEqual(effects.map(row => row.kind), ["open", "write", "fsync", "close", "link", "unlink"]);
   assert.equal(effects.every(row => row.enteredAt && row.observationArtifactId), true);
+  for (const { payload } of effectPayloads(f)) {
+    assert.equal(payload.native.state, "returned");
+    assert.equal(payload.host.state, "returned");
+    assert.deepEqual(payload.source, f.source);
+  }
   assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
   assert.throws(() => executeOfficeLocalWrite(f.plan), /already_entered/);
   assert.throws(() => executeOfficeLocalWrite({ ...f.plan }), /plan_invalid/);
+});
+
+test("Office V1 missing parents without creator proof cannot publish SDK bytes or mint safe", async t => {
+  const f = await fixture(t, "nested/one/result.docx"), state = officeLocalWriteState(f.plan);
+  assert.equal(f.prepared.members.filter(member => member.role === "directory")
+    .every(member => member.initial.state === "absent"), true);
+  let failure;
+  assert.throws(() => {
+    try { executeOfficeLocalWrite(f.plan); } catch (error) { failure = error; throw error; }
+  }, OfficeLocalWriterError);
+  assert.ok(failure.cause instanceof AggregateError);
+  assert.ok(failure.cause.errors.some(error => error.message === "office_local_directory_creator_unverified"));
+  assert.equal(failure.observation.outcome, "failed");
+  assert.equal(failure.observation.publicationEntered, false);
+  assert.deepEqual(failure.observation.resources, []);
+  assert.equal(existsSync(f.prepared.targetPath), false);
+  const effects = effectPayloads(f);
+  assert.deepEqual(effects.map(row => row.effect.kind), ["mkdir"], "unverified creator cannot authorize any file effect");
+  assert.equal(effects[0].payload.native.state, "returned", "the refused ownership follows a real mkdir return");
+  assert.equal(effects[0].payload.host.state, "unconfirmed");
+  assert.equal(f.store.getHostOfficeLocalTerminal(f.plan.executionId).outcome, "failed");
+  assert.equal(f.store.getHostOfficeLocalNoStartReceipt(f.plan.executionId), undefined);
+  assert.throws(() => f.tracker.settleOfficeLocalFromStore(state.ticket), { code: "host_office_local_launch_unknown" });
+  for (const operation of [state.parent, state.producer]) {
+    const row = f.store.getHostOperation(operation.operationId);
+    // The Host transaction rolled back, but the retained actual mkdir return is not no-start or safe.
+    assert.equal(row.phase, "admitted");
+    assert.equal(row.settledAt, undefined);
+    assert.equal(row.evidenceDigest, undefined);
+    assert.equal(row.settlementSignature, undefined);
+  }
+  assert.equal(f.store.listHostOperationBlockers(f.source).length, 2);
 });
 
 test("Office cloned reservation cannot acquire a plan or read permission", async t => {
