@@ -2,13 +2,16 @@ name: CI
 
 on:
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, converted_to_draft, labeled]
   workflow_dispatch:
   schedule:
-    - cron: "17 3 * * *"
+    # Full platform regression is weekly; normal PRs retain affected checks.
+    - cron: "17 3 * * 1"
 
 concurrency:
-  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  # Unrelated labels must neither cancel validation nor replace its check result.
+  group: ci-${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}-${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && github.run_id || 'validation' }}
+  cancel-in-progress: ${{ github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'full-ci' }}
 
 permissions:
   contents: read
@@ -19,8 +22,11 @@ env:
 jobs:
   scope:
     name: Determine CI scope
+    if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'full-ci'
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
+      execution-tier: ${{ steps.policy.outputs.execution-tier }}
       mode: ${{ steps.classify.outputs.mode }}
       packages: ${{ steps.classify.outputs.packages }}
       test-packages: ${{ steps.classify.outputs.test-packages }}
@@ -39,12 +45,21 @@ jobs:
         with:
           node-version: 22.15.0
 
+      - name: Select execution tier without narrowing the PR diff
+        id: policy
+        shell: bash
+        run: |
+          set -euo pipefail
+          execution_tier="$(node scripts/ci/execution-policy.mjs --event-file "$GITHUB_EVENT_PATH")"
+          printf 'execution-tier=%s\n' "$execution_tier" >> "$GITHUB_OUTPUT"
+          printf 'CI execution tier: **%s**\n' "$execution_tier" >> "$GITHUB_STEP_SUMMARY"
+
       - name: Classify changed files
         id: classify
         shell: bash
         env:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
-          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') }}
+          FORCE_FULL: ${{ contains(github.event.pull_request.labels.*.name, 'full-ci') || (github.event.action == 'labeled' && github.event.label.name == 'full-ci') }}
         run: |
           set -euo pipefail
           if [[ "$GITHUB_EVENT_NAME" == "pull_request" ]]; then
@@ -57,6 +72,7 @@ jobs:
             scope_json="$(node scripts/ci/classify-scope.mjs --event="$GITHUB_EVENT_NAME")"
           fi
           echo "Scope: $scope_json"
+          printf 'Changed-file scope: `%s`\n' "$scope_json" >> "$GITHUB_STEP_SUMMARY"
           SCOPE_JSON="$scope_json" node --input-type=module <<'NODE' >> "$GITHUB_OUTPUT"
           const scope = JSON.parse(process.env.SCOPE_JSON);
           const outputs = {
@@ -93,8 +109,11 @@ jobs:
       - name: Check public repository safety
         run: node scripts/check-public-repo-safety.mjs
 
+      - name: Check CI classification, execution policy, and workflow contracts
+        run: node --test scripts/ci/*.test.mjs
+
       - name: Scan Git history for secrets
-        if: needs.scope.outputs.mode != 'docs'
+        if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
         run: >-
           docker run --rm
           -v "$GITHUB_WORKSPACE:/repo:ro"
@@ -116,7 +135,7 @@ jobs:
   dependency-policy:
     name: Dependency policy and security checks
     needs: scope
-    if: needs.scope.outputs.mode != 'docs'
+    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -154,7 +173,7 @@ jobs:
   build:
     name: Build selected package graph once
     needs: scope
-    if: needs.scope.outputs.mode != 'docs'
+    if: needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -202,7 +221,7 @@ jobs:
   typecheck:
     name: Typecheck selected packages
     needs: [scope, build]
-    if: always() && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success'
+    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     env:
@@ -245,7 +264,7 @@ jobs:
   unit-tests:
     name: Unit tests and Web checks
     needs: [scope, build]
-    if: always() && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success'
+    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.mode != 'docs' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 25
     env:
@@ -297,7 +316,7 @@ jobs:
   daemon-tests:
     name: Daemon tests (shard ${{ matrix.shard }})
     needs: [scope, build]
-    if: always() && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success'
+    if: always() && needs.scope.outputs.execution-tier == 'complete' && needs.scope.outputs.daemon == 'true' && needs.build.result == 'success'
     runs-on: ubuntu-latest
     # Daemon tests start an isolated runtime for each integration fixture. As
     # the suite grows, the heaviest shard can legitimately exceed the generic
@@ -343,13 +362,30 @@ jobs:
         run: node scripts/ci/daemon-test-shard.mjs --shard=${{ matrix.shard }} --shard-count=4
 
   quality:
-    name: Typecheck, unit tests, and Web build
+    name: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' && 'CI label event (no validation)' || 'Typecheck, unit tests, and Web build' }}
     needs: [scope, common-fast, dependency-policy, build, typecheck, unit-tests, daemon-tests]
     if: always()
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
+      - name: Check out quality policy without retained credentials
+        if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'full-ci'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Set up Node.js
+        if: github.event_name != 'pull_request' || github.event.action != 'labeled' || github.event.label.name == 'full-ci'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 22.15.0
+
       - name: Require every applicable CI lane to pass
         env:
+          IGNORED_LABEL_EVENT: ${{ github.event_name == 'pull_request' && github.event.action == 'labeled' && github.event.label.name != 'full-ci' }}
+          EXECUTION_TIER: ${{ needs.scope.outputs.execution-tier }}
+          SCOPE_MODE: ${{ needs.scope.outputs.mode }}
           SCOPE_RESULT: ${{ needs.scope.result }}
           COMMON_RESULT: ${{ needs.common-fast.result }}
           DEPENDENCY_RESULT: ${{ needs.dependency-policy.result }}
@@ -357,19 +393,12 @@ jobs:
           TYPECHECK_RESULT: ${{ needs.typecheck.result }}
           UNIT_RESULT: ${{ needs.unit-tests.result }}
           DAEMON_RESULT: ${{ needs.daemon-tests.result }}
+          DAEMON_SELECTED: ${{ needs.scope.outputs.daemon }}
         shell: bash
         run: |
           set -euo pipefail
-          failures=()
-          for lane in SCOPE COMMON DEPENDENCY BUILD TYPECHECK UNIT DAEMON; do
-            result_var="${lane}_RESULT"
-            result="${!result_var}"
-            if [[ "$result" != "success" && "$result" != "skipped" ]]; then
-              failures+=("$lane=$result")
-            fi
-          done
-          if (( ${#failures[@]} > 0 )); then
-            printf 'CI lanes failed: %s\n' "${failures[*]}"
-            exit 1
+          if [[ "${IGNORED_LABEL_EVENT:-false}" == "true" ]]; then
+            echo "Unrelated label event; no validation check result is replaced."
+            exit 0
           fi
-          echo "All applicable CI lanes passed; skipped lanes were outside this change scope."
+          node scripts/ci/execution-policy.mjs --check-quality
