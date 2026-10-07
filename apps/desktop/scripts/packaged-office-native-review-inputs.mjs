@@ -17,13 +17,20 @@
  *
  * No unresolved authored imports means every discovered literal authored edge
  * resolved in this fixed audit. It is not proof about nonliteral/user-selected
- * imports, generated dist/source equivalence, third-party vendor source, Rust/
+ * imports, third-party vendor source, Rust/
  * linker/native-publisher tool identities, the complete SDK or OS/kernel trust.
  * The fixed builder config is an explicit root for its nonliteral config URL.
  * Provider=true source-build verifier and Windows custom signer are not roots:
  * this fixed mac/provider=false lane rejects provider=true before packaging.
  * Provider-only data (including Cua entitlements/provider locks) is not used by
  * that lane; imported shared modules remain conservatively included below.
+ * The Office daemon lane bypasses workspace dist through retained reviewed
+ * authored bytes and checks its actual esbuild metafile. The nine pinned
+ * package/tsconfig files admit only the explicit NodeNext/ES2022 compiler
+ * policy. Build scripts import the self-contained authored review constant
+ * using Node's native TypeScript stripping (fixed build runtime Node 22.22.1).
+ * This does not attest the ordinary developer lane's existing dist or vendor
+ * generated files. Source config changes require a new explicit review.
  *
  * A graph change requires an explicit review of this fixed list. It must not
  * silently discover, regenerate, approve, or refresh digests during a build.
@@ -51,6 +58,7 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
   "apps/desktop/scripts/cua-driver-signing/signing-contract.mjs",
   "apps/desktop/scripts/macos-development-signing.mjs",
   "apps/desktop/scripts/package-macos-with-office.mjs",
+  "apps/desktop/scripts/packaged-office-daemon-source-inputs.mjs",
   "apps/desktop/scripts/packaged-codesign-review-publication.mjs",
   "apps/desktop/scripts/packaged-office-native-asar-checks.mjs",
   "apps/desktop/scripts/packaged-office-native-package-checks.mjs",
@@ -104,6 +112,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "apps/desktop/scripts/macos-development-signing.mjs",
   "apps/desktop/scripts/native/cua-driver-package-atomic-publish.cc",
   "apps/desktop/scripts/package-macos-with-office.mjs",
+  "apps/desktop/scripts/packaged-office-daemon-source-inputs.mjs",
   "apps/desktop/scripts/packaged-codesign-review-publication.mjs",
   "apps/desktop/scripts/packaged-office-native-asar-checks.mjs",
   "apps/desktop/scripts/packaged-office-native-package-checks.mjs",
@@ -1266,4 +1275,14 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/runner-pi/src/user-input-request.ts",
   "packages/runner-pi/src/utils.ts",
   "pnpm-lock.yaml",
+  "packages/browser-host/tsconfig.json",
+  "packages/contracts/tsconfig.json",
+  "packages/core/tsconfig.json",
+  "packages/daemon/package.json",
+  "packages/daemon/tsconfig.json",
+  "packages/localization/tsconfig.json",
+  "packages/plugin-sdk/tsconfig.json",
+  "packages/providers/tsconfig.json",
+  "packages/remote-protocol/tsconfig.json",
+  "packages/runner-pi/tsconfig.json",
 ]);

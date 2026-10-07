@@ -10,32 +10,50 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { build } from "esbuild";
 
 const script = fileURLToPath(new URL("../scripts/build-packaged-daemon.mjs", import.meta.url));
+const sourceScript = fileURLToPath(new URL("../scripts/packaged-office-daemon-source-inputs.mjs", import.meta.url));
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 let fixtureNumber = 0;
 function newFile(path, bytes) { mkdirSync(dirname(path), { recursive: true, mode: 0o700 }); writeFileSync(path, bytes, { mode: 0o600 }); }
 
-/** Real esbuild and disposable compiled modules; native/codesign origin is explicitly synthetic. */
+/** Real esbuild/source projection; native/codesign origin and review are explicitly synthetic. */
 async function fixture(t) {
   const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-office-emitted-test-")));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const modulePath = join(root, "apps/desktop/scripts/build-packaged-daemon.mjs");
   mkdirSync(dirname(modulePath), { recursive: true }); copyFileSync(script, modulePath);
+  copyFileSync(sourceScript, join(dirname(modulePath), "packaged-office-daemon-source-inputs.mjs"));
   const runtime = join(root, "packages/daemon/dist/runtime/sandbox");
-  const codesignModule = join(runtime, "packaged-codesign-published-review.js");
-  const officeModule = join(runtime, "packaged-office-native-published-review.js");
-  const codesignMarker = 'const embeddedPublishedReviewJson = "NO_PACKAGED_CODESIGN_REVIEW";';
-  const officeMarker = 'const embeddedPublishedOfficeReviewJson = "NO_PACKAGED_OFFICE_NATIVE_REVIEW";';
+  const sourceRuntime = join(root, "packages/daemon/src/runtime/sandbox");
+  const codesignModule = join(sourceRuntime, "packaged-codesign-published-review.ts");
+  const officeModule = join(sourceRuntime, "packaged-office-native-published-review.ts");
+  const codesignMarker = 'const embeddedPublishedReviewJson: string = "NO_PACKAGED_CODESIGN_REVIEW";';
+  const officeMarker = 'const embeddedPublishedOfficeReviewJson: string = "NO_PACKAGED_OFFICE_NATIVE_REVIEW";';
   newFile(codesignModule, codesignMarker + "\nexport const codesign = embeddedPublishedReviewJson;\n");
   newFile(officeModule, officeMarker + "\nexport const office = embeddedPublishedOfficeReviewJson;\n");
+  newFile(join(runtime, "packaged-codesign-published-review.js"), readFileSync(codesignModule, "utf8").replace(": string", ""));
+  newFile(join(runtime, "packaged-office-native-published-review.js"), readFileSync(officeModule, "utf8").replace(": string", ""));
   const entry = join(root, "packages/daemon/dist/cli.js");
   newFile(entry, 'export { codesign } from "./runtime/sandbox/packaged-codesign-published-review.js";\n'
     + 'export { office } from "./runtime/sandbox/packaged-office-native-published-review.js";\n');
+  const sourceEntry = join(root, "packages/daemon/src/cli.ts");
+  newFile(sourceEntry, readFileSync(entry));
+  const sourceFiles = [sourceEntry, codesignModule, officeModule];
+  for (const name of ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"]) {
+    const packagePath = join(root, "packages", name, "package.json"), configPath = join(root, "packages", name, "tsconfig.json");
+    newFile(packagePath, JSON.stringify({ name: "@ling-stack/" + name, type: "module", main: "./dist/index.js" }));
+    newFile(configPath, JSON.stringify({ compilerOptions: { module: "NodeNext", moduleResolution: "NodeNext", target: "ES2022",
+      outDir: "dist", rootDir: "src", strict: true }, include: ["src/**/*.ts"] }));
+    sourceFiles.push(packagePath, configPath);
+  }
+  const sourceReviewSha256 = hash("EXPLICIT SYNTHETIC REVIEW (not production approval)");
+  const sourceReview = Object.freeze({ sourceReviewSha256, review: Object.freeze({ packagingSha256: Object.freeze(
+    Object.fromEntries(sourceFiles.map(path => [path.slice(root.length + 1), hash(readFileSync(path))]))) }) });
   const cliPath = join(root, "apps/desktop/dist/daemon/cli.mjs");
   const token = Object.freeze({ synthetic: "original native token" });
-  const publication = Object.freeze({ synthetic: "native publication (not approval)", uniqueFixture: ++fixtureNumber });
+  const publication = Object.freeze({ synthetic: "native publication (not approval)", sourceReviewSha256, uniqueFixture: ++fixtureNumber });
   const codesignToken = Object.freeze({ synthetic: "codesign token" });
   const codesign = Object.freeze({ synthetic: "codesign publication (not approval)" });
-  const state = { active: publication, original: publication, token, publication, codesignToken, codesign,
+  const state = { active: publication, original: publication, token, publication, codesignToken, codesign, sourceReview,
     nativeBuilds: 0, codesignBuilds: 0, buildCompleted: false, builds: [], outputs: [], afterBuild: undefined, afterOriginalRead: undefined,
     readOriginal(receipt) {
       if (receipt !== token || !state.original) throw new Error("synthetic_original_token_invalid");
@@ -63,9 +81,11 @@ async function fixture(t) {
       export function readOriginalRestrictedCommandBuildPublication(receipt) {
         if (receipt !== state.codesignToken) throw new Error("synthetic_codesign_token_invalid"); return state.codesign;
       }`],
+    ["./packaged-office-native-review.mjs", bridge + "export function readReviewedPackagedOfficeSource() { return state.sourceReview; }"],
   ]);
   const loader = registerHooks({ resolve(specifier, context, nextResolve) {
-    if (context.parentURL === url && sources.has(specifier))
+    if ([url, pathToFileURL(join(dirname(modulePath), "packaged-office-daemon-source-inputs.mjs")).href].includes(context.parentURL)
+      && sources.has(specifier))
       return { shortCircuit: true, url: "data:text/javascript," + encodeURIComponent(sources.get(specifier)) };
     return nextResolve(specifier, context);
   } });
@@ -79,7 +99,7 @@ async function fixture(t) {
   delete process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED;
   t.after(() => { if (priorIntent === undefined) delete process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED;
     else process.env.LING_PACKAGED_CODESIGN_REVIEW_REQUIRED = priorIntent; });
-  return { root, api: await import(url), state, publication, token, entry, cliPath, officeModule, officeMarker, codesignModule, codesignMarker };
+  return { root, api: await import(url), state, publication, token, entry: sourceEntry, cliPath, officeModule, officeMarker, codesignModule, codesignMarker };
 }
 
 test("Office emitted CLI pins: real esbuild, synthetic publication/signature, not macOS package acceptance", async t => {
@@ -235,5 +255,5 @@ test("Office emitted CLI pins: real esbuild, synthetic publication/signature, no
     assert.equal(f.state.nativeBuilds, 1); assert.equal(f.state.codesignBuilds, 1);
     assert.equal(f.api.readActiveOriginalPackagedOfficeDaemonBundle().sha256, hash(readFileSync(f.cliPath)));
   });
-  t.diagnostic("Real esbuild output and disposable compiled modules only; synthetic original native/codesign readers. These contracts do not prove reviewed compiled-source freshness, real signatures, Electron, ZIP/DMG, or packaged acceptance.");
+  t.diagnostic("Real esbuild/source projection and disposable inputs only; synthetic source review and original native/codesign readers. These output custody contracts do not replace the real source-review integration, real signatures, Electron, ZIP/DMG, or packaged acceptance.");
 });

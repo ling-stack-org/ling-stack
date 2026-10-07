@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { buildNativeEvidence } from "../../../native/office-local/scripts/build.mjs";
-import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/dist/runtime/sandbox/packaged-office-native-published-review.js";
+import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts";
 import { readReviewedPackagedOfficeSource, assertReviewedOfficeNativeBuild } from "./packaged-office-native-review.mjs";
 import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs";
 

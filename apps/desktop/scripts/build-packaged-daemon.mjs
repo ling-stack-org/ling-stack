@@ -7,6 +7,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import { buildFreshRestrictedCommandHelperPublication, readOriginalRestrictedCommandBuildPublication } from "./build-restricted-command-helper.mjs";
 import { buildFreshPackagedOfficeNativePublication, readOriginalPackagedOfficeNativePublication,
   readActiveOriginalPackagedOfficeNativePublication } from "./build-packaged-office-native.mjs";
+import { createReviewedOfficeDaemonSourceInputs } from "./packaged-office-daemon-source-inputs.mjs";
 
 const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const emittedCliPath = resolve(desktopRoot, "dist/daemon/cli.mjs");
@@ -153,9 +154,10 @@ export async function buildFreshPackagedDaemonForMacOffice() {
   }
   return await bundleOriginalDaemon(() => {
     // Missing Office review must not invoke the other helper's compiler first.
+    const sourceInputs = createReviewedOfficeDaemonSourceInputs();
     const officeReceipt = buildFreshPackagedOfficeNativePublication();
     const codesignReceipt = buildFreshRestrictedCommandHelperPublication();
-    return { codesignReceipt, officeReceipt };
+    return { codesignReceipt, officeReceipt, sourceInputs };
   });
 }
 
@@ -163,14 +165,15 @@ async function bundleOriginalDaemon(prepareOriginals) {
   if (bundling) throw new Error("packaged_daemon_bundle_busy");
   bundling = true;
   try {
-    const { codesignReceipt, officeReceipt } = prepareOriginals();
-    await buildOriginalDaemonBundle(codesignReceipt, officeReceipt);
+    const { codesignReceipt, officeReceipt, sourceInputs } = prepareOriginals();
+    await buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceInputs);
     return officeReceipt;
   }
   finally { bundling = false; }
 }
 
-async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt) {
+async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt, sourceInputs) {
+  requireBundle(Boolean(officeReceipt) === Boolean(sourceInputs));
   const definitions = [
     {
       name: "codesign", suffix: /packaged-codesign-published-review\.js$/,
@@ -185,31 +188,35 @@ async function buildOriginalDaemonBundle(codesignReceipt, officeReceipt) {
       receipt: officeReceipt, read: readOriginalPackagedOfficeNativePublication,
     },
   ].map(item => ({ ...item, visits: 0,
-    reviewModule: realpathSync(resolve(desktopRoot, "../../packages/daemon/dist/runtime/sandbox", item.module)),
-    marker: `const ${item.declaration} = "${item.sentinel}";`,
+    reviewModule: realpathSync(resolve(desktopRoot, `../../packages/daemon/${sourceInputs ? "src" : "dist"}/runtime/sandbox`,
+      sourceInputs ? item.module.replace(/\.js$/u, ".ts") : item.module)),
+    marker: `const ${item.declaration}${sourceInputs ? ": string" : ""} = "${item.sentinel}";`,
     publication: item.receipt ? item.read(item.receipt) : undefined,
   }));
+  if (sourceInputs) requireBundle(definitions.find(item => item.name === "office_native").publication.sourceReviewSha256
+    === sourceInputs.sourceReviewSha256);
   const result = await build({
-    absWorkingDir: desktopRoot, entryPoints: ["../../packages/daemon/dist/cli.js"],
+    absWorkingDir: desktopRoot, entryPoints: [sourceInputs?.entryPoint ?? "../../packages/daemon/dist/cli.js"],
     bundle: true, platform: "node", format: "esm", outfile: "dist/daemon/cli.mjs",
-    ...(officeReceipt ? { write: false } : {}),
+    ...(sourceInputs ? { write: false, metafile: true, tsconfigRaw: sourceInputs.tsconfigRaw, target: "es2022" } : {}),
     banner: { js: 'import { createRequire as __lingCreateRequire } from "node:module"; const require = __lingCreateRequire(import.meta.url);' },
-    plugins: definitions.map(item => ({
+    plugins: [...definitions.map(item => ({
       name: `original-${item.name}-review-literal`,
       setup(plugin) {
-        plugin.onLoad({ filter: item.suffix }, args => {
+        plugin.onLoad({ filter: sourceInputs ? new RegExp(item.suffix.source.replace("\\.js", "\\.ts")) : item.suffix }, args => {
           if (realpathSync(args.path) !== item.reviewModule) throw new Error(`packaged_${item.name}_review_module_changed`);
           item.visits++;
-          const source = readFileSync(item.reviewModule, "utf8");
+          const source = sourceInputs ? sourceInputs.loadSource(item.reviewModule).contents : readFileSync(item.reviewModule, "utf8");
           if (source.split(item.marker).length !== 2) throw new Error(`packaged_${item.name}_review_marker_changed`);
           const contents = item.publication ? source.replace(item.marker,
-            `const ${item.declaration} = ${JSON.stringify(JSON.stringify(item.publication))};`) : source;
-          return { contents, loader: "js", resolveDir: resolve(item.reviewModule, "..") };
+            `const ${item.declaration}${sourceInputs ? ": string" : ""} = ${JSON.stringify(JSON.stringify(item.publication))};`) : source;
+          return { contents, loader: sourceInputs ? "ts" : "js", resolveDir: resolve(item.reviewModule, "..") };
         });
       },
-    })),
+    })), ...(sourceInputs ? [sourceInputs.plugin] : [])],
   });
   const originalOutput = officeReceipt ? pinOriginalBuildOutput(result) : undefined;
+  sourceInputs?.assertOriginalInputs(result);
   for (const item of definitions) {
     if (item.receipt && item.visits !== 1) throw new Error(`packaged_${item.name}_review_module_not_bundled`);
     const after = item.receipt ? item.read(item.receipt) : undefined;
