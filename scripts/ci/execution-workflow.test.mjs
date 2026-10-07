@@ -6,7 +6,8 @@ import { fileURLToPath } from "node:url";
 
 const workflow = readFileSync(new URL("../../.github/workflows/ci.yml", import.meta.url), "utf8");
 const root = fileURLToPath(new URL("../../", import.meta.url));
-const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON"];
+const lanes = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
+const platformJobs = ["daemon-tests", "daemon-linux-contracts", "restricted-command-macos"];
 
 /** Read a top-level job without matching similarly named steps. */
 function jobSource(id) {
@@ -34,16 +35,21 @@ test("PR transitions and full-ci labels trigger validation while full regression
   assert.match(jobSource("scope"), /--event-file "\$GITHUB_EVENT_PATH"/u);
   assert.match(jobSource("scope"), /--base="\$BASE_SHA"/u);
   assert.match(jobSource("scope"), /execution-tier: \$\{\{ steps\.policy\.outputs\.execution-tier \}\}/u);
+  for (const id of workflow.slice(workflow.indexOf("\njobs:\n")).matchAll(/^  ([a-z][a-z-]*):$/gmu)) {
+    const ids = [...jobSource(id[1]).matchAll(/^        id: (\S+)$/gmu)].map((match) => match[1]);
+    assert.equal(new Set(ids).size, ids.length, `${id[1]} must not contain duplicate step IDs`);
+  }
+  assert.equal([...jobSource("scope").matchAll(/^        id: policy$/gmu)].length, 1);
 });
 
 test("every expensive job requires complete execution and retains its scope selection", () => {
-  for (const id of ["dependency-policy", "build", "typecheck", "unit-tests", "daemon-tests"]) {
+  for (const id of ["dependency-policy", "build", "typecheck", "unit-tests", ...platformJobs]) {
     const source = jobSource(id);
     assert.match(source, /^    if: .*needs\.scope\.outputs\.execution-tier == 'complete'/mu, id);
-    assert.match(source, id === "daemon-tests" ? /needs\.scope\.outputs\.daemon == 'true'/u : /needs\.scope\.outputs\.mode != 'docs'/u, id);
+    assert.match(source, platformJobs.includes(id) ? /needs\.scope\.outputs\.daemon == 'true'/u : /needs\.scope\.outputs\.mode != 'docs'/u, id);
   }
   const common = jobSource("common-fast");
-  assert.match(common, /run: node --test scripts\/ci\/\*\.test\.mjs/u);
+  assert.match(common, /run: node --test scripts\/check-public-repo-safety\.test\.mjs scripts\/ci\/\*\.test\.mjs/u);
   assert.match(common, /name: Scan Git history for secrets\n        if: needs\.scope\.outputs\.execution-tier == 'complete' && needs\.scope\.outputs\.mode != 'docs'/u);
 });
 
@@ -58,7 +64,7 @@ test("unrelated labels cannot cancel validation or publish the required context"
 });
 
 test("long-running jobs respond to cancellation while quality still reports incomplete validation", () => {
-  for (const id of ["typecheck", "unit-tests", "daemon-tests"]) {
+  for (const id of ["typecheck", "unit-tests", ...platformJobs]) {
     const source = jobSource(id);
     assert.match(source, /^    if: \$\{\{ !cancelled\(\) &&/mu, id);
     assert.doesNotMatch(source, /^    if: .*always\(\)/mu, id);
@@ -70,7 +76,7 @@ test("long-running jobs respond to cancellation while quality still reports inco
   assert.match(cancelled.stdout, /UNIT=cancelled.*DAEMON=cancelled/u);
 });
 
-test("workflow gate requires all seven main lanes and refuses incomplete Draft validation", () => {
+test("workflow gate requires all nine lanes and refuses incomplete Draft validation", () => {
   const quality = jobSource("quality");
   assert.match(quality, /^    if: always\(\)/mu);
   assert.match(quality, /EXECUTION_TIER: \$\{\{ needs\.scope\.outputs\.execution-tier \}\}/u);
@@ -101,6 +107,16 @@ test("workflow affected scope cannot hide skipped product work or selected Daemo
     assert.equal(check.status, 1, check.stderr);
     assert.match(check.stdout, new RegExp(`${lane}=skipped`, "u"));
   }
-  const web = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped" });
+  const web = runQuality({ SCOPE_MODE: "affected", DAEMON_SELECTED: "false", DAEMON_RESULT: "skipped", LINUX_CONTRACT_RESULT: "skipped", MACOS_NATIVE_RESULT: "skipped" });
   assert.equal(web.status, 0, web.stderr);
+});
+
+test("workflow gate rejects failed, cancelled or missing results in every selected lane", () => {
+  for (const lane of lanes) {
+    for (const result of ["failure", "cancelled", "", undefined]) {
+      const check = runQuality({ [`${lane}_RESULT`]: result });
+      assert.equal(check.status, 1, check.stdout + check.stderr);
+      assert.ok(check.stdout.includes(`${lane}=`), check.stdout);
+    }
+  }
 });

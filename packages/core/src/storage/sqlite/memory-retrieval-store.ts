@@ -2,7 +2,6 @@ import type { SQLOutputValue } from "node:sqlite";
 import {
   createUsedMemoryEventId,
   type CreateUsedMemoryEventInput,
-  type ListMemoryObjectsOptions,
   type ListUsedMemoryEventsOptions,
   type MemoryObject,
   type MemoryRecallRequest,
@@ -12,45 +11,56 @@ import {
 } from "../../memory-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { stringifyJson } from "./helpers.js";
-import { mapUsedMemoryEvent } from "./memory-mappers.js";
-import { memoryUsedEventSelectSql } from "./select-sql.js";
+import { mapMemoryObject, mapUsedMemoryEvent } from "./memory-mappers.js";
+import { memoryObjectSelectSql, memoryUsedEventSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
-export interface SqliteMemoryRetrievalStorePorts {
-  readonly listMemoryObjects: (options?: ListMemoryObjectsOptions) => MemoryObject[];
-}
+const MEMORY_RECALL_POLICY_VERSION = "ling-memory-v1-lexical-v2";
 
 export class SqliteMemoryRetrievalStore {
-  constructor(
-    private readonly context: SqliteStoreContext,
-    private readonly ports: SqliteMemoryRetrievalStorePorts,
-  ) {}
+  constructor(private readonly context: SqliteStoreContext) {}
+
+  /** Same authority predicate as selection, but only test frozen IDs without decoding any body. */
+  getEligibleMemoryIdsForRecall(input: MemoryRecallRequest, memoryIds: readonly string[]): readonly string[] {
+    if (memoryIds.length > 20 || memoryIds.some((id) => typeof id !== "string" || !id)) throw new RangeError("Invalid prepared memory IDs.");
+    const ids = [...new Set(memoryIds)];
+    if (ids.length === 0) return [];
+    const { clause, params } = memoryRecallPredicate({ ...input, intent: "task-run", includeDisabled: false,
+      includePrivate: false, includeSecretAdjacent: false }, input.workspaceId ?? DEFAULT_WORKSPACE_ID, new Date().toISOString());
+    const rows = this.context.database.prepare(`SELECT id FROM memory_objects WHERE ${clause} AND id IN (${ids.map(() => "?").join(",")})`)
+      .all(...params, ...ids);
+    const eligible = new Set(rows.map((row) => String(row.id)));
+    return ids.filter((id) => eligible.has(id));
+  }
 
   recallMemory(input: MemoryRecallRequest): MemoryRecallResult {
     const workspaceId = input.workspaceId ?? DEFAULT_WORKSPACE_ID;
-    const maxResults = Math.min(Math.max(input.maxResults ?? 8, 1), 20);
-    const allowedScopes = memoryRecallAllowedScopes(input, workspaceId);
-    if (allowedScopes.length === 0) {
-      return { request: { ...input, workspaceId }, memories: [], policyVersion: "ling-memory-v1-lexical" };
+    if (!Number.isFinite(input.maxResults ?? 8)) throw new RangeError("Memory recall result limit must be finite.");
+    const maxResults = Math.min(Math.max(Math.trunc(input.maxResults ?? 8), 1), 20);
+    const requestedTags = new Set((input.tags ?? []).slice(0, 32)
+      .map((tag) => tag.slice(0, 256).trim().toLowerCase()).filter(Boolean));
+    const queryTerms = tokenizeMemoryQuery([input.query.slice(0, 8_192), ...requestedTags].join(" "));
+    const memories: MemoryRecallResult["memories"][number][] = [];
+    // Only an explicitly empty query browses recent memory; a non-matching token is not "show all".
+    if (queryTerms.length > 0 || requestedTags.size > 0 || input.query.trim().length === 0) {
+      const { clause, params } = memoryRecallPredicate(input, workspaceId, new Date().toISOString());
+      const browse = queryTerms.length === 0 && requestedTags.size === 0;
+      const query = `${memoryObjectSelectSql(`WHERE ${clause}`)} ORDER BY updated_at DESC, id DESC${browse ? " LIMIT ?" : ""}`;
+      // A single SQLite statement holds one snapshot. Scope/health filters precede body decoding.
+      // Stream all eligible candidates and retain only top-k; never truncate the candidate universe by recency.
+      for (const row of this.context.database.prepare(query).iterate(...params, ...(browse ? [maxResults] : []))) {
+        const candidate = scoreMemoryForRecall(mapMemoryObject(row as Record<string, SQLOutputValue>), queryTerms, requestedTags);
+        if (candidate.score <= 0) continue;
+        if (memories.length === maxResults && compareRecalledMemory(candidate, memories.at(-1)!) >= 0) continue;
+        memories.push(candidate);
+        memories.sort(compareRecalledMemory);
+        if (memories.length > maxResults) memories.pop();
+      }
     }
-
-    const listOptions: ListMemoryObjectsOptions = {
-      workspaceId,
-      limit: 500,
-    };
-    const candidates = this.ports.listMemoryObjects(input.includeDisabled ? listOptions : { ...listOptions, enabled: true })
-      .filter((memory) => memoryAllowedForRecall(memory, input, allowedScopes));
-    const queryTerms = tokenizeMemoryQuery([input.query, ...(input.tags ?? [])].join(" "));
-    const requestedTags = new Set((input.tags ?? []).map((tag) => tag.toLowerCase()));
-    const memories = candidates
-      .map((memory) => scoreMemoryForRecall(memory, queryTerms, requestedTags))
-      .filter((item) => item.score > 0)
-      .sort((left, right) => right.score - left.score || right.memory.updatedAt.localeCompare(left.memory.updatedAt))
-      .slice(0, maxResults);
     return {
       request: { ...input, workspaceId },
       memories,
-      policyVersion: "ling-memory-v1-lexical",
+      policyVersion: MEMORY_RECALL_POLICY_VERSION,
     };
   }
 
@@ -172,36 +182,68 @@ function memoryRecallAllowedScopes(
   return scopes;
 }
 
-function memoryAllowedForRecall(
-  memory: MemoryObject,
+function memoryRecallPredicate(
   input: MemoryRecallRequest,
-  allowedScopes: readonly { readonly scopeType: MemoryScopeType; readonly ownerId: string }[],
-): boolean {
-  if (!input.includeDisabled && (!memory.enabled || memory.reviewState !== "active")) {
-    return false;
+  workspaceId: string,
+  now: string,
+): { readonly clause: string; readonly params: (string | number)[] } {
+  const scopes = memoryRecallAllowedScopes(input, workspaceId);
+  const clauses = ["workspace_id = ?", `(${scopes.map(() => "(scope_type = ? AND owner_id = ?)").join(" OR ")})`];
+  const params: (string | number)[] = [workspaceId, ...scopes.flatMap((scope) => [scope.scopeType, scope.ownerId])];
+  const inspection = input.intent === "review" || input.intent === "search";
+  const inspectInactive = input.includeDisabled === true && inspection;
+  if (!inspectInactive) {
+    clauses.push("enabled = 1 AND review_state = 'active'");
+    clauses.push(`NOT EXISTS (
+      SELECT 1 FROM memory_self_improving_metadata AS health
+      WHERE health.memory_id = memory_objects.id AND (
+        health.superseded_by IS NOT NULL OR
+        (health.valid_until IS NOT NULL AND (julianday(health.valid_until) IS NULL OR julianday(health.valid_until) <= julianday(?)))
+      )
+    )`);
+    params.push(now);
   }
-  if (!input.includeSecretAdjacent && memory.sensitivity === "secret-adjacent") {
-    return false;
+  if (!(input.includeSecretAdjacent === true && inspection)) {
+    clauses.push("sensitivity != 'secret-adjacent'");
   }
-  if (
-    !input.includePrivate &&
-    memory.sensitivity === "private" &&
-    input.intent !== "private-chat" &&
-    input.intent !== "channel-reply" &&
-    input.intent !== "task-run"
-  ) {
-    return false;
+  if (!(input.includePrivate === true && inspection)) {
+    if (inspection) {
+      clauses.push("sensitivity != 'private'");
+    } else {
+      // Ownership was filtered above using Host-selected scopes. A shared workspace/channel
+      // record can be private without belonging to a teammate; this does not permit quoting
+      // it publicly or widen the selected channel/workspace. Inspection flags grant nothing.
+      const privateScopes = ["scope_type IN ('workspace', 'channel')"];
+      if (input.teammateId) {
+        privateScopes.push("(scope_type = 'teammate' AND owner_id = ?)");
+        params.push(input.teammateId);
+      }
+      clauses.push(`(sensitivity != 'private' OR ${privateScopes.join(" OR ")})`);
+    }
   }
-  return allowedScopes.some((scope) => scope.scopeType === memory.scopeType && scope.ownerId === memory.ownerId);
+  return { clause: clauses.join(" AND "), params };
 }
 
 function tokenizeMemoryQuery(query: string): readonly string[] {
-  const terms = query
-    .toLowerCase()
-    .split(/[^\p{L}\p{N}_-]+/u)
-    .map((term) => term.trim())
-    .filter((term) => term.length >= 2);
-  return [...new Set(terms)].slice(0, 32);
+  const terms = new Set<string>();
+  const words = query.toLowerCase().replace(/(\p{Script=Han}+)/gu, " $1 ").match(/[\p{L}\p{N}_-]+/gu) ?? [];
+  for (const word of words) {
+    const characters = Array.from(word);
+    if (characters.length < 2) continue;
+    terms.add(word);
+    if (/^\p{Script=Han}+$/u.test(word)) {
+      for (let index = 0; index + 1 < characters.length && terms.size < 32; index++) {
+        terms.add(characters[index]! + characters[index + 1]!);
+      }
+    }
+    if (terms.size >= 32) break;
+  }
+  return [...terms];
+}
+
+function compareRecalledMemory(left: MemoryRecallResult["memories"][number], right: MemoryRecallResult["memories"][number]): number {
+  return right.score - left.score || right.memory.updatedAt.localeCompare(left.memory.updatedAt)
+    || right.memory.id.localeCompare(left.memory.id);
 }
 
 function scoreMemoryForRecall(

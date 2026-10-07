@@ -14,20 +14,23 @@ import type {
 import type { LingTerminalReportRecord, TerminalReportOutcomeStatus } from "../../terminal-report-types.js";
 import type {
   CommitTerminalReportPublicationInput,
+  CommitWorkflowTerminalReportPublicationInput,
   CommitTerminalReportPublicationResult,
-  CommitLegacyWorkflowPublicationInput,
-  CommitLegacyWorkflowPublicationResult,
   TerminalReportPublicationConflictCode,
 } from "../../terminal-report-publication-types.js";
-import { DEFAULT_WORKSPACE_ID, LING_AGENT_ID, type ChannelWorkflow, type ChannelWorkflowStep } from "../../workspace-types.js";
+import { DEFAULT_WORKSPACE_ID, type ChannelWorkflow, type ChannelWorkflowStep } from "../../workspace-types.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { NormalTerminalReportReadStore } from "../../normal-terminal-report-basis.js";
+import { commitNormalTerminalReportWithinTransaction } from "./normal-terminal-report-publication.js";
 
-type PublicationItem = AppendConversationItemInput<"assistant_message">;
+type PublicationItem = AppendConversationItemInput<"terminal_report">;
 
 export interface SqliteTerminalReportPublicationStorePorts {
   readonly cwd: string;
   readonly getTerminalReport: (id: string) => LingTerminalReportRecord | undefined;
+  readonly commitTerminalReport: RunStore["commitTerminalReport"];
+  readonly normalReadStore: NormalTerminalReportReadStore;
   readonly getChannelWorkflow: (id: string) => ChannelWorkflow | undefined;
   readonly listChannelWorkflowSteps: (workflowId: string) => readonly ChannelWorkflowStep[];
   readonly completionReadStore: Pick<RunStore,
@@ -67,7 +70,9 @@ export class SqliteTerminalReportPublicationStore {
   ): CommitTerminalReportPublicationResult {
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
-      const result = this.commitWithinTransaction(input);
+      const result = "expectedNormalBasis" in input
+        ? commitNormalTerminalReportWithinTransaction(this.context, this.ports, input)
+        : this.commitWithinTransaction(input);
       if (!result.ok) {
         this.context.database.exec("ROLLBACK;");
         return result;
@@ -80,96 +85,8 @@ export class SqliteTerminalReportPublicationStore {
     }
   }
 
-  commitLegacyWorkflowPublication(
-    input: CommitLegacyWorkflowPublicationInput,
-  ): CommitLegacyWorkflowPublicationResult {
-    this.context.database.exec("BEGIN IMMEDIATE;");
-    try {
-      const workflow = this.ports.getChannelWorkflow(input.expectedWorkflowId);
-      const sourceTurnId = workflow?.metadata?.sourceTurnId;
-      const sourceItemId = workflow?.metadata?.sourceMessageId;
-      const sourceTurn = sourceTurnId ? this.ports.getLingTurn(sourceTurnId) : undefined;
-      const sourceItem = sourceItemId ? this.ports.getConversationItem(sourceItemId) : undefined;
-      if (!workflow || !sourceTurn || !sourceItem || sourceItem.turnId !== sourceTurn.id
-        || sourceItem.threadId !== sourceTurn.threadId || sourceItem.channelId !== workflow.channelId
-        || input.expectedSourceTurn.id !== sourceTurn.id
-        || input.expectedSourceTurn.status !== sourceTurn.status
-        || input.expectedSourceTurn.updatedAt !== sourceTurn.updatedAt) {
-        this.context.database.exec("ROLLBACK;");
-        return { ok: false, code: "source_turn_conflict" };
-      }
-      const targetStatus = deriveTargetStatus(workflow, input.expectedCompletion);
-      if (!targetStatus) {
-        this.context.database.exec("ROLLBACK;");
-        return { ok: false, code: "stale_completion_basis" };
-      }
-      if (workflow.metadata?.requiredParticipantManifest) {
-        const evaluation = input.expectedCompletion;
-        const steps = this.ports.listChannelWorkflowSteps(workflow.id);
-        if (!evaluation) {
-          this.context.database.exec("ROLLBACK;");
-          return { ok: false, code: "stale_completion_basis" };
-        }
-        const actual = buildWorkflowCompletionExpectedReadSet({
-          store: this.ports.completionReadStore,
-          workflow,
-          steps,
-          derivedEvidence: evaluation.expectedReadSet.derivedEvidence,
-        });
-        if (JSON.stringify(actual) !== JSON.stringify(evaluation.expectedReadSet)
-          || workflow.metadata.completionGate?.status !== evaluation.gate.status
-          || workflow.metadata.completionGate?.basisFingerprint !== evaluation.gate.basisFingerprint) {
-          this.context.database.exec("ROLLBACK;");
-          return { ok: false, code: "stale_completion_basis" };
-        }
-      }
-      if (!validLegacyPublicationItem(input.publicationItem, workflow, sourceItem.id, sourceTurn)) {
-        this.context.database.exec("ROLLBACK;");
-        return { ok: false, code: "item_conflict" };
-      }
-      const existingItem = input.publicationItem.id ? this.ports.getConversationItem(input.publicationItem.id) : undefined;
-      const settlementKey = settlementIdempotencyKey(workflow.id, input.publicationItem.id!, targetStatus);
-      const existingSettlement = this.ports.findStateTransitionByIdempotency("turn", sourceTurn.id, settlementKey);
-      const eventInput = legacyPublicationControlPlaneEvent(input, workflow, targetStatus, this.ports.cwd);
-      const existingEvent = this.ports.getControlPlaneEventByIdempotency(workflow.workspaceId, input.publicationEventIdempotencyKey);
-      if (existingItem && !samePublicationItem(existingItem, input.publicationItem)) {
-        this.context.database.exec("ROLLBACK;");
-        return { ok: false, code: "item_conflict" };
-      }
-      if (existingSettlement && !compatibleSettlement(existingSettlement, sourceTurn.id, targetStatus)) {
-        this.context.database.exec("ROLLBACK;");
-        return { ok: false, code: "source_turn_conflict" };
-      }
-      if (existingEvent && !sameControlPlaneEvent(existingEvent, eventInput)) {
-        this.context.database.exec("ROLLBACK;");
-        return { ok: false, code: "publication_event_conflict" };
-      }
-      const complete = Boolean(existingItem && existingSettlement && existingEvent && sourceTurn.status === targetStatus);
-      if ((existingItem || existingSettlement || existingEvent) && !complete) {
-        this.context.database.exec("ROLLBACK;");
-        return { ok: false, code: existingEvent ? "publication_event_conflict" : existingItem ? "item_conflict" : "source_turn_conflict" };
-      }
-      if (complete) {
-        this.context.database.exec("ROLLBACK;");
-        return { ok: true, item: existingItem!, sourceTurnId: sourceTurn.id, sourceTurnStatus: sourceTurn.status, controlPlaneEvent: existingEvent!, duplicate: true };
-      }
-      if (!turnCanSettle(sourceTurn.status, targetStatus)) {
-        this.context.database.exec("ROLLBACK;");
-        return { ok: false, code: "source_turn_conflict" };
-      }
-      const item = this.ports.appendConversationItemWithinTransaction(input.publicationItem, input.now);
-      settleSourceTurn(this.context, this.ports, sourceTurn, workflow, item.id, targetStatus, input.now);
-      const event = this.ports.appendControlPlaneEventWithinTransaction(eventInput, input.now);
-      this.context.database.exec("COMMIT;");
-      return { ok: true, item, sourceTurnId: sourceTurn.id, sourceTurnStatus: targetStatus, controlPlaneEvent: event, duplicate: false };
-    } catch (error) {
-      rollbackOwnedSqliteTransaction(this.context.database);
-      throw error;
-    }
-  }
-
   private commitWithinTransaction(
-    input: CommitTerminalReportPublicationInput,
+    input: CommitWorkflowTerminalReportPublicationInput,
   ): CommitTerminalReportPublicationResult {
     const report = this.ports.getTerminalReport(input.reportId);
     const workflow = this.ports.getChannelWorkflow(input.expectedWorkflowId);
@@ -244,7 +161,7 @@ export class SqliteTerminalReportPublicationStore {
     if (existingItem && !samePublicationItem(existingItem, input.publicationItem)) {
       return conflict("item_conflict");
     }
-    if (report.publishedMessageId && report.publishedMessageId !== input.publicationItem.id) {
+    if (report.resultItemId && report.resultItemId !== input.publicationItem.id) {
       return conflict("report_conflict");
     }
 
@@ -270,13 +187,13 @@ export class SqliteTerminalReportPublicationStore {
 
     const completeExistingLineage = Boolean(
       existingItem
-      && report.publishedMessageId === existingItem.id
+      && report.resultItemId === existingItem.id
       && existingSettlement
       && existingPublicationEvent
       && sourceTurn.status === targetStatus,
     );
     const partialExistingLineage = Boolean(
-      existingItem || report.publishedMessageId || existingSettlement || existingPublicationEvent,
+      existingItem || report.resultItemId || existingSettlement || existingPublicationEvent,
     );
     if (partialExistingLineage && !completeExistingLineage) {
       return conflict(existingPublicationEvent ? "publication_event_conflict" : existingItem ? "item_conflict" : "source_turn_conflict");
@@ -299,8 +216,8 @@ export class SqliteTerminalReportPublicationStore {
     const item = this.ports.appendConversationItemWithinTransaction(input.publicationItem, input.now);
     const marker = this.context.database.prepare(`
       UPDATE ling_terminal_reports
-      SET published_message_id = ?, updated_at = ?
-      WHERE id = ? AND published_message_id IS NULL
+      SET result_item_id = ?, updated_at = ?
+      WHERE id = ? AND result_item_id IS NULL
         AND status = ? AND evidence_fingerprint = ?
     `).run(
       item.id,
@@ -352,7 +269,11 @@ function outcomeMatchesTarget(
   outcome: TerminalReportOutcomeStatus,
   target: "succeeded" | "blocked" | "failed" | "cancelled",
 ): boolean {
-  if (target === "succeeded") return outcome === "succeeded";
+  // A verified workflow may finish all required work while its atomic audit
+  // retains a recovered tool failure. Keep that conservative report outcome;
+  // it must not strand the finished source Turn without a published result.
+  // Required-participant authority is independently revalidated above.
+  if (target === "succeeded") return outcome === "succeeded" || outcome === "partially_succeeded";
   if (target === "blocked") return outcome === "blocked" || outcome === "partially_succeeded";
   return outcome === target;
 }
@@ -364,52 +285,27 @@ function validPublicationItem(input: PublicationItem, authority: {
   readonly sourceTurn: LingTurn;
 }): boolean {
   const refs = input.domainRefs ?? [];
-  return input.id === `message_${authority.report.id}`
+  return input.id === `result_terminal_report:${authority.report.id}`
     && input.idempotencyKey === `terminal-report:${authority.report.id}`
     && input.channelId === authority.workflow.channelId
     && input.threadId === authority.sourceTurn.threadId
     && input.turnId === authority.sourceTurn.id
-    && input.kind === "assistant_message"
+    && input.kind === "terminal_report"
     && input.status === "committed"
-    && input.actorType === "ling_agent"
-    && input.actorId === LING_AGENT_ID
+    && input.actorType === "system"
+    && input.actorId === undefined
     && input.visibility === "channel"
-    && input.payload.format === "markdown"
-    && input.payload.streaming === false
-    && input.payload.deliveryStatus === "ready"
-    && input.payload.body.trim().length > 0
+    && input.payload.reportId === authority.report.id
+    && input.payload.generation === authority.report.generation
+    && input.payload.sourceKind === authority.report.sourceKind
+    && input.payload.sourceId === authority.report.sourceId
+    && input.payload.evidenceFingerprint === authority.report.evidenceFingerprint
+    && input.payload.outcomeStatus === authority.report.outcomeStatus
     && refs.every(allowedPublicationRef)
     && hasRef(refs, "terminal_report", authority.report.id)
     && hasRef(refs, "workflow", authority.workflow.id)
     && hasRef(refs, "conversation_item", authority.sourceItemId)
     && hasRef(refs, "turn", authority.sourceTurn.id);
-}
-
-function validLegacyPublicationItem(
-  input: PublicationItem,
-  workflow: ChannelWorkflow,
-  sourceItemId: string,
-  sourceTurn: LingTurn,
-): boolean {
-  const refs = input.domainRefs ?? [];
-  return input.id === `message_workflow_terminal_${workflow.id}`
-    && input.idempotencyKey === `workflow-terminal:${workflow.id}`
-    && input.channelId === workflow.channelId
-    && input.threadId === sourceTurn.threadId
-    && input.turnId === sourceTurn.id
-    && input.kind === "assistant_message"
-    && input.status === "committed"
-    && input.actorType === "ling_agent"
-    && input.actorId === LING_AGENT_ID
-    && input.visibility === "channel"
-    && input.payload.format === "markdown"
-    && input.payload.streaming === false
-    && input.payload.deliveryStatus === "ready"
-    && input.payload.body.trim().length > 0
-    && refs.every((ref) => ref.type === "workflow" || ref.type === "conversation_item" || ref.type === "turn" || ref.type === "run")
-    && hasRef(refs, "workflow", workflow.id)
-    && hasRef(refs, "conversation_item", sourceItemId)
-    && hasRef(refs, "turn", sourceTurn.id);
 }
 
 function allowedPublicationRef(ref: ConversationDomainRef): boolean {
@@ -520,7 +416,7 @@ function settleSourceTurn(
 }
 
 function publicationControlPlaneEvent(
-  input: CommitTerminalReportPublicationInput,
+  input: CommitWorkflowTerminalReportPublicationInput,
   report: LingTerminalReportRecord,
   workflow: ChannelWorkflow,
   cwd: string,
@@ -536,7 +432,7 @@ function publicationControlPlaneEvent(
       channelId: workflow.channelId,
       sourceKind: "workflow",
       sourceId: workflow.id,
-      publishedMessageId: input.publicationItem.id!,
+      resultItemId: input.publicationItem.id!,
       status: report.status,
     },
     idempotencyKey: input.publicationEventIdempotencyKey,
@@ -552,28 +448,4 @@ function sameControlPlaneEvent(existing: ControlPlaneEvent, input: AppendControl
     && existing.action === input.action
     && existing.idempotencyKey === input.idempotencyKey
     && JSON.stringify(existing.data) === JSON.stringify(input.data ?? {});
-}
-
-function legacyPublicationControlPlaneEvent(
-  input: CommitLegacyWorkflowPublicationInput,
-  workflow: ChannelWorkflow,
-  targetStatus: string,
-  cwd: string,
-): AppendControlPlaneEventInput {
-  return {
-    workspaceId: workflow.workspaceId,
-    cwd,
-    domain: "work_units",
-    entityType: "workflow",
-    entityId: workflow.id,
-    action: "workflow.final_result_published",
-    data: {
-      channelId: workflow.channelId,
-      sourceKind: "workflow",
-      sourceId: workflow.id,
-      publishedMessageId: input.publicationItem.id!,
-      status: targetStatus,
-    },
-    idempotencyKey: input.publicationEventIdempotencyKey,
-  };
 }

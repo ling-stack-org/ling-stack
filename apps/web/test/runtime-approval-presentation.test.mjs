@@ -1,14 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  buildComposerGateApprovalPresentationByRunId,
-  composerGateApprovalPresentationForWorkCell,
+  buildDialogOwnedApprovalPresentationByRunId,
+  dialogOwnedApprovalPresentationForWorkCell,
+  composerGateApprovalPresentationForRunId,
+  composerGateApprovalPresentationForRunIds,
 } from "../src/lib/runtime-approval-presentation.ts";
 
 const t = (key, values = {}) => key.replace(/\{(\w+)\}/gu, (_, name) => String(values[name] ?? ""));
 
-test("composer-gate approval projection keeps the queue's first approval per run", () => {
-  const presentations = buildComposerGateApprovalPresentationByRunId([
+test("dialog-owned approval projection keeps the queue's first approval per run", () => {
+  const presentations = buildDialogOwnedApprovalPresentationByRunId([
     view({
       id: "approval-critical",
       runId: "run-1",
@@ -30,8 +32,8 @@ test("composer-gate approval projection keeps the queue's first approval per run
   });
 });
 
-test("composer-gate approval projection resolves payload run ids and strips cwd from paths", () => {
-  const presentations = buildComposerGateApprovalPresentationByRunId([
+test("dialog-owned approval projection resolves payload run ids and strips cwd from paths", () => {
+  const presentations = buildDialogOwnedApprovalPresentationByRunId([
     view({
       id: "approval-edit",
       actionType: "edit",
@@ -43,7 +45,7 @@ test("composer-gate approval projection resolves payload run ids and strips cwd 
       },
     }),
   ], t);
-  const presentation = composerGateApprovalPresentationForWorkCell({
+  const presentation = dialogOwnedApprovalPresentationForWorkCell({
     anchorRunId: "run-other",
     runIds: ["run-other", "run-payload"],
   }, presentations);
@@ -53,6 +55,25 @@ test("composer-gate approval projection resolves payload run ids and strips cwd 
     runId: "run-payload",
     actionSentence: "Modify file: apps/web/src/App.tsx",
   });
+});
+
+test("composer approval ownership resolves directly from the durable run id", () => {
+  const presentations = buildDialogOwnedApprovalPresentationByRunId([
+    view({ id: "approval-run", runId: "run-direct", actionType: "bash", payload: { type: "bash", command: "pnpm test" } }),
+  ], t);
+  assert.deepEqual(composerGateApprovalPresentationForRunId("run-direct", presentations), presentations.get("run-direct"));
+  assert.equal(composerGateApprovalPresentationForRunId(" ", presentations), undefined);
+});
+
+test("composer approval ownership resolves workflow participants by durable run ids", () => {
+  const presentations = buildDialogOwnedApprovalPresentationByRunId([
+    view({ id: "approval-run-2", runId: "run-participant-2", actionType: "bash", payload: { type: "bash", command: "pnpm test" } }),
+  ], t);
+  assert.deepEqual(
+    composerGateApprovalPresentationForRunIds(["run-participant-1", "run-participant-2"], presentations),
+    presentations.get("run-participant-2"),
+  );
+  assert.equal(composerGateApprovalPresentationForRunIds([" ", undefined], presentations), undefined);
 });
 
 function view(input) {

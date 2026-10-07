@@ -6,6 +6,12 @@ import type {
   MediaWorkflowProtocolVariant,
 } from "@ling-stack/core";
 import { isRecord } from "../../../shared/validation.js";
+import {
+  decodeComfyUiJobObservation,
+  decodeComfyUiLegacyObservation,
+  type ComfyUiStatusObservation,
+  type ComfyUiTerminalObservation,
+} from "./comfyui-terminal-observation.js";
 
 export interface ComfyUiClientOptions {
   readonly connection: MediaWorkflowConnection;
@@ -26,8 +32,10 @@ export interface ComfyUiSubmission {
 
 export type ComfyUiPollResult =
   | { readonly status: "pending"; readonly recovery?: Record<string, unknown> }
-  | { readonly status: "succeeded"; readonly payload: Record<string, unknown> }
-  | { readonly status: "failed"; readonly message: string };
+  | { readonly status: "succeeded"; readonly payload: Record<string, unknown>;
+      readonly terminalObservation: ComfyUiTerminalObservation }
+  | { readonly status: "failed"; readonly message: string;
+      readonly terminalObservation?: ComfyUiTerminalObservation };
 
 export interface ComfyUiOutputFile {
   readonly filename: string;
@@ -131,6 +139,7 @@ export class ComfyUiClient {
     const declaredLength = Number(response.headers.get("content-length"));
     const limit = file.artifactType === "video" ? 512 * 1024 * 1024 : 25 * 1024 * 1024;
     if (Number.isFinite(declaredLength) && declaredLength > limit) {
+      await cancelResponseBody(response);
       throw new Error(`ComfyUI ${file.artifactType === "video" ? "视频" : "图片"}超过允许大小。`);
     }
     const bytes = new Uint8Array(await response.arrayBuffer());
@@ -162,13 +171,7 @@ export class ComfyUiClient {
       if (response.status === 404) return { status: "pending" };
       return { status: "failed", message: `ComfyUI 查询任务失败：HTTP ${response.status}。` };
     }
-    if (!isRecord(response.value)) {
-      return { status: "failed", message: "ComfyUI 任务状态返回格式无效。" };
-    }
-    const status = readStatus(response.value);
-    if (isFailureStatus(status)) return { status: "failed", message: readErrorMessage(response.value) };
-    if (isSuccessStatus(status) || hasOutputs(response.value)) return { status: "succeeded", payload: response.value };
-    return { status: "pending", recovery: status ? { status } : undefined };
+    return toPollResult(decodeComfyUiJobObservation(operationId, response.value));
   }
 
   private async pollLegacyHistory(operationId: string): Promise<ComfyUiPollResult> {
@@ -183,13 +186,7 @@ export class ComfyUiClient {
         if (response.status === 404) continue;
         return { status: "failed", message: `ComfyUI 查询历史失败：HTTP ${response.status}。` };
       }
-      if (!isRecord(response.value)) continue;
-      const entry = isRecord(response.value[operationId]) ? response.value[operationId] : response.value;
-      if (!isRecord(entry) || Object.keys(entry).length === 0) return { status: "pending" };
-      const status = readStatus(entry);
-      if (isFailureStatus(status)) return { status: "failed", message: readErrorMessage(entry) };
-      if (hasOutputs(entry) || isSuccessStatus(status)) return { status: "succeeded", payload: entry };
-      return { status: "pending", recovery: status ? { status } : undefined };
+      return toPollResult(decodeComfyUiLegacyObservation(operationId, response.value));
     }
     return { status: "pending" };
   }
@@ -197,7 +194,10 @@ export class ComfyUiClient {
   private async tryRequestJson(path: string, init: RequestInit): Promise<{ readonly ok: boolean; readonly status: number; readonly value?: unknown }> {
     try {
       const response = await this.request(path, init, false);
-      if (!response.ok) return { ok: false, status: response.status };
+      if (!response.ok) {
+        await cancelResponseBody(response);
+        return { ok: false, status: response.status };
+      }
       return { ok: true, status: response.status, value: await response.json() };
     } catch (error) {
       if (error instanceof ComfyUiHttpError) return { ok: false, status: error.status };
@@ -223,13 +223,36 @@ export class ComfyUiClient {
     }
     const response = await this.fetchImpl(url, { ...init, headers, redirect: "manual" });
     if (response.status >= 300 && response.status < 400) {
+      await cancelResponseBody(response);
       throw new Error("ComfyUI 返回了重定向，已为安全起见阻断。");
     }
     if (requireOk && !response.ok) {
-      const detail = await response.text().catch(() => "");
-      throw new ComfyUiHttpError(response.status, `ComfyUI 请求失败：HTTP ${response.status}${detail ? `，${detail.slice(0, 240)}` : ""}`);
+      await cancelResponseBody(response);
+      throw new ComfyUiHttpError(response.status, `ComfyUI 请求失败：HTTP ${response.status}。`);
     }
     return response;
+  }
+}
+
+/**
+ * Error/redirect bodies are not protocol status evidence. Await native cleanup
+ * with a fixed deadline; a started, rejected or stalled cancel is not completion.
+ * The original Promise remains observed even if the deadline wins.
+ */
+async function cancelResponseBody(response: Response): Promise<void> {
+  if (!response.body) return;
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  try {
+    await Promise.race([
+      response.body.cancel(),
+      new Promise<never>((_, reject) => {
+        timeout = setTimeout(() => reject(new Error("ComfyUI 响应体清理超时，完成状态未知。")), 1_000);
+      }),
+    ]);
+  } catch (error) {
+    throw new Error("ComfyUI 响应体清理未确认，完成状态未知。", { cause: error });
+  } finally {
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
@@ -276,23 +299,15 @@ function isPrivateAddress(value: string): boolean {
     (parts[0] === 192 && parts[1] === 168);
 }
 
-function readStatus(value: Record<string, unknown>): string {
-  if (typeof value.status === "string") return value.status.toLowerCase();
-  if (isRecord(value.status) && typeof value.status.status_str === "string") return value.status.status_str.toLowerCase();
-  if (typeof value.state === "string") return value.state.toLowerCase();
-  return "";
-}
-
-function isSuccessStatus(value: string): boolean {
-  return ["success", "succeeded", "completed", "complete", "done"].includes(value);
-}
-
-function isFailureStatus(value: string): boolean {
-  return ["failed", "error", "cancelled", "canceled"].includes(value);
-}
-
-function hasOutputs(value: Record<string, unknown>): boolean {
-  return isRecord(value.outputs) && Object.keys(value.outputs).length > 0;
+function toPollResult(observation: ComfyUiStatusObservation): ComfyUiPollResult {
+  if (observation.kind === "nonterminal") {
+    return { status: "pending", recovery: { observation: observation.reason,
+      ...(observation.rawStatus ? { status: observation.rawStatus } : {}) } };
+  }
+  const { terminalObservation, payload } = observation;
+  return terminalObservation.outcome === "completed"
+    ? { status: "succeeded", payload, terminalObservation }
+    : { status: "failed", message: readErrorMessage(payload), terminalObservation };
 }
 
 function readErrorMessage(value: Record<string, unknown>): string {

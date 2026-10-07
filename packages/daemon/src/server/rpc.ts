@@ -6,6 +6,7 @@ import { WebSocket, WebSocketServer, type RawData } from "ws";
 import type { DaemonContext } from "../context.js";
 import { maybeScheduleRunTerminalReport } from "../features/channels/terminal-report-coordinator.js";
 import { ensureRunCancelled } from "../features/runs/cancellation.js";
+import { HttpError } from "../errors.js";
 import {
   CONTROL_PLANE_POLL_DEFAULT_LIMIT,
   CONTROL_PLANE_POLL_MAX_LIMIT,
@@ -317,21 +318,28 @@ class RpcConnection {
       throw rpcError(-32009, "run_not_cancellable", `Run ${runId} is already ${run.status}.`);
     }
     const activeRun = this.context.activeRuns.get(runId);
-    const cancelled = ensureRunCancelled({
-      store,
-      runId,
-      taskId: run.taskId,
-      startedAt: run.startedAt,
-      reason: "user_requested",
-      active: Boolean(activeRun),
-      streamEnvelope: activeRun?.streamEnvelope,
-    });
-    activeRun?.abortController.abort();
+    let cancelled: ReturnType<typeof ensureRunCancelled>;
+    try {
+      cancelled = ensureRunCancelled({
+        store,
+        runId,
+        taskId: run.taskId,
+        startedAt: run.startedAt,
+        reason: "user_requested",
+        active: Boolean(activeRun),
+        streamEnvelope: activeRun?.streamEnvelope,
+      });
+    } catch (error) {
+      if (error instanceof HttpError && error.statusCode === 409) throw rpcError(-32009, error.code, error.message);
+      throw error;
+    }
+    if (!cancelled.inputWait) activeRun?.abortController.abort();
     return {
       cancelled: true,
-      active: Boolean(activeRun),
+      active: !cancelled.inputWait && Boolean(activeRun),
       run: store.getRun(runId),
       event: cancelled.event,
+      ...(cancelled.inputWait ? { inputWait: cancelled.inputWait } : {}),
     };
   }
 

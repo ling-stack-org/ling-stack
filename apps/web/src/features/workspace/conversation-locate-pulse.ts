@@ -1,4 +1,4 @@
-const locatePulseClassName = "conversation-work-cell-locate-pulse";
+const locatePulseClassName = "conversation-timeline-locate-pulse";
 
 export function revealConversationTarget(target: HTMLElement): void {
   const reducedMotion = globalThis.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;

@@ -29,6 +29,16 @@ test("run schemas derive permission mode from non-custom presets", () => {
   assert.equal(taskRun.permissionMode, "ask_everything");
 });
 
+test("run schema accepts only provider-safe reasoning summary modes", () => {
+  for (const mode of ["auto", "concise", "detailed", "none"]) {
+    assert.equal(parseRunRequest(runRequest({ reasoningSummary: mode })).reasoningSummary, mode);
+  }
+  assert.throws(
+    () => parseRunRequest(runRequest({ reasoningSummary: "raw" })),
+    /reasoningSummary must be one of: auto, concise, detailed, none/,
+  );
+});
+
 test("run schemas reject non-custom preset and mode mismatches", () => {
   assert.throws(
     () => parseRunRequest(runRequest({

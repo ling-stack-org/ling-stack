@@ -9,6 +9,15 @@ import type {
   LingApprovalCheckpoint,
   UpdateApprovalCheckpointStatusInput,
 } from "../../approval-checkpoints.js";
+import type { ApprovalRequest } from "../../approval-types.js";
+import type {
+  CommitExistingRunContinuationPreparationFailureInput,
+  FinishRunnerContinuationInput,
+  PrepareContinuationInput,
+  PreparedContinuation,
+  RunnerContinuationMutationResult,
+} from "../../harness/continuations.js";
+import type { RunnerContinuationV1 } from "@ling-stack/contracts";
 import type {
   AppendControlPlaneEventInput,
   ControlPlaneEvent,
@@ -28,6 +37,7 @@ import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 
 interface ApprovalResumeStorePorts {
+  readonly getApprovalRequest: (id: string) => ApprovalRequest | undefined;
   readonly getApprovalCheckpoint: (id: string) => LingApprovalCheckpoint | undefined;
   readonly updateApprovalCheckpointStatus: (
     id: string,
@@ -52,6 +62,22 @@ interface ApprovalResumeStorePorts {
   readonly getWorkUnitAttempt: (id: string) => WorkUnitAttempt | undefined;
   readonly createWorkUnitAttempt: (input: CreateWorkUnitAttemptInput) => WorkUnitAttempt;
   readonly createWorkUnitAttemptWithinTransaction: (input: CreateWorkUnitAttemptInput) => WorkUnitAttempt;
+  readonly prepareContinuationAndAttemptWithinTransaction: (input: PrepareContinuationInput) => PreparedContinuation;
+  readonly failRunnerContinuationPreparationWithinTransaction: (
+    input: Pick<
+      CommitExistingRunContinuationPreparationFailureInput,
+      | "continuationId"
+      | "expectedContinuationRevision"
+      | "expectedContinuationState"
+      | "claimOwner"
+      | "claimToken"
+      | "targetFence"
+      | "now"
+    >,
+  ) => RunnerContinuationV1 | undefined;
+  readonly finishRunnerContinuationWithinTransaction: (
+    input: FinishRunnerContinuationInput,
+  ) => RunnerContinuationMutationResult;
   readonly updateWorkUnitAttemptStatus: (input: {
     readonly attemptId: string;
     readonly workUnitId: string;
@@ -114,6 +140,13 @@ export class SqliteApprovalResumeStore {
   commitApprovalResumeClaim(input: CommitApprovalResumeClaimInput): CommitApprovalResumeClaimResult {
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
+      const continuationPreparation = input.continuationPreparation;
+      const replacementAttempt = input.replacementAttempt;
+      if (!continuationPreparation && !replacementAttempt) {
+        throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
+      }
+      const requestedReplacementAttemptId = continuationPreparation?.targetAttempt.id ?? replacementAttempt!.id;
+      const requestedReplacementWorkUnitId = continuationPreparation?.workUnitId ?? replacementAttempt!.workUnitId;
       const checkpoint = this.ports.getApprovalCheckpoint(input.checkpointId);
       if (!checkpoint
         || checkpoint.status !== input.expectedCheckpointStatus
@@ -124,9 +157,9 @@ export class SqliteApprovalResumeStore {
         || checkpoint.runId !== input.runId
         || checkpoint.resumeBasis?.runId !== input.runId
         || checkpoint.resumeBasis?.workUnitId !== input.workUnitId
-        || input.replacementAttempt.workUnitId !== input.workUnitId
+        || requestedReplacementWorkUnitId !== input.workUnitId
         || input.runnerResumeHandle.runId !== input.runId
-        || input.runnerResumeHandle.attemptId !== input.replacementAttempt.id) {
+        || input.runnerResumeHandle.attemptId !== requestedReplacementAttemptId) {
         throw new ApprovalResumeClaimAbort("approval_resume_lineage_mismatch");
       }
 
@@ -142,11 +175,20 @@ export class SqliteApprovalResumeStore {
       if (!workUnit || workUnit.status !== expectedStatus || workUnit.activeAttemptId !== input.expectedActiveAttemptId) {
         throw new ApprovalResumeClaimAbort("approval_resume_work_unit_state_stale");
       }
-      if (this.ports.getWorkUnitAttempt(input.replacementAttempt.id)) {
+      if (!continuationPreparation && this.ports.getWorkUnitAttempt(requestedReplacementAttemptId)) {
         throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
       }
 
-      if (input.attemptToLoseId) {
+      const preparedContinuation = continuationPreparation
+        ? this.ports.prepareContinuationAndAttemptWithinTransaction(continuationPreparation)
+        : undefined;
+      const replacementAttemptId = preparedContinuation?.attempt.id ?? requestedReplacementAttemptId;
+      if (replacementAttemptId !== requestedReplacementAttemptId
+        || (preparedContinuation && preparedContinuation.attempt.workUnitId !== input.workUnitId)) {
+        throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
+      }
+
+      if (input.attemptToLoseId && !preparedContinuation) {
         if (input.attemptToLoseId !== input.expectedActiveAttemptId) {
           throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
         }
@@ -194,26 +236,26 @@ export class SqliteApprovalResumeStore {
         throw new ApprovalResumeClaimAbort("approval_resume_checkpoint_stale");
       }
 
-      const createdAttempt = this.ports.createWorkUnitAttemptWithinTransaction({
-        ...input.replacementAttempt,
+      const createdAttempt = preparedContinuation?.attempt ?? this.ports.createWorkUnitAttemptWithinTransaction({
+        ...replacementAttempt!,
         status: "created",
       });
-      if (createdAttempt.id !== input.replacementAttempt.id) {
+      if (createdAttempt.id !== replacementAttemptId) {
         throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
       }
-      const attempt = this.ports.updateWorkUnitAttemptStatus({
-        attemptId: createdAttempt.id,
-        workUnitId: createdAttempt.workUnitId,
-        runtimeInstanceId: createdAttempt.runtimeInstanceId,
-        fencingToken: createdAttempt.fencingToken,
-        status: "started",
-        now: input.now,
-        startedAt: input.now,
-        lastHeartbeatAt: input.now,
-        errorCode: null,
-        errorMessage: null,
-      });
-      if (!attempt || attempt.status !== "started") {
+      const attempt = preparedContinuation ? createdAttempt : this.ports.updateWorkUnitAttemptStatus({
+          attemptId: createdAttempt.id,
+          workUnitId: createdAttempt.workUnitId,
+          runtimeInstanceId: createdAttempt.runtimeInstanceId,
+          fencingToken: createdAttempt.fencingToken,
+          status: "started",
+          now: input.now,
+          startedAt: input.now,
+          lastHeartbeatAt: input.now,
+          errorCode: null,
+          errorMessage: null,
+        });
+      if (!attempt || (preparedContinuation ? attempt.status !== "created" : attempt.status !== "started")) {
         throw new ApprovalResumeClaimAbort("approval_resume_attempt_conflict");
       }
 
@@ -248,22 +290,24 @@ export class SqliteApprovalResumeStore {
         }
       }
 
-      this.ports.appendRuntimeEvent({
-        workUnitId: workUnit.id,
-        attemptId: attempt.id,
-        runtimeInstanceId: attempt.runtimeInstanceId,
-        fencingToken: attempt.fencingToken,
-        type: "work_unit_started",
-        actor: "system",
-        ts: input.now,
-        data: {
-          reason: "approval_resume",
-          approvalId: input.approvalId,
-          priorAttemptId: input.expectedActiveAttemptId,
-          resumeBasisFingerprint: checkpoint.resumeBasis?.fingerprint,
-          recoveryMode: input.mode,
-        },
-      });
+      if (!preparedContinuation) {
+        this.ports.appendRuntimeEvent({
+          workUnitId: workUnit.id,
+          attemptId: attempt.id,
+          runtimeInstanceId: attempt.runtimeInstanceId,
+          fencingToken: attempt.fencingToken,
+          type: "work_unit_started",
+          actor: "system",
+          ts: input.now,
+          data: {
+            reason: "approval_resume",
+            approvalId: input.approvalId,
+            priorAttemptId: input.expectedActiveAttemptId,
+            resumeBasisFingerprint: checkpoint.resumeBasis?.fingerprint,
+            recoveryMode: input.mode,
+          },
+        });
+      }
 
       const controlPlaneEvents = appendClaimInvalidations(this.ports, input, workUnit.workspaceId, run.cwd);
       this.context.database.exec("COMMIT;");
@@ -281,6 +325,7 @@ export class SqliteApprovalResumeStore {
         run: committedRun,
         workUnit: committedWorkUnit,
         attempt: committedAttempt,
+        runnerContinuation: preparedContinuation?.continuation,
         controlPlaneEvents,
       };
     } catch (error) {
@@ -382,6 +427,9 @@ export class SqliteApprovalResumeStore {
     if (input.kind === "checkpoint_quarantine") {
       return this.commitApprovalResumeCheckpointQuarantine(input);
     }
+    if (input.kind === "suspended_approval_denied") {
+      return this.commitSuspendedApprovalDeniedTerminal(input);
+    }
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
       const checkpoint = this.ports.getApprovalCheckpoint(input.checkpointId);
@@ -404,6 +452,39 @@ export class SqliteApprovalResumeStore {
         || !attempt
         || attempt.workUnitId !== input.workUnitId) {
         throw new ApprovalResumeTransitionAbort("approval_resume_lineage_mismatch");
+      }
+
+      let terminalContinuation: RunnerContinuationV1 | undefined;
+      if (input.runnerContinuationTerminal) {
+        const continuation = input.runnerContinuationTerminal;
+        if (continuation.targetFence.workUnitId !== input.workUnitId
+          || continuation.targetFence.attemptId !== input.attemptId) {
+          throw new ApprovalResumeTransitionAbort("approval_resume_lineage_mismatch");
+        }
+        if (continuation.expectedState === "running") {
+          const finished = this.ports.finishRunnerContinuationWithinTransaction({
+            continuationId: continuation.continuationId,
+            expectedRevision: continuation.expectedRevision,
+            claimOwner: continuation.claimOwner,
+            claimToken: continuation.claimToken,
+            targetFence: continuation.targetFence,
+            nextState: input.status,
+            now: input.now,
+          });
+          if (!finished.ok) throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
+          terminalContinuation = finished.value;
+        } else {
+          terminalContinuation = this.ports.failRunnerContinuationPreparationWithinTransaction({
+            continuationId: continuation.continuationId,
+            expectedContinuationRevision: continuation.expectedRevision,
+            expectedContinuationState: continuation.expectedState,
+            claimOwner: continuation.claimOwner,
+            claimToken: continuation.claimToken,
+            targetFence: continuation.targetFence,
+            now: input.now,
+          });
+          if (!terminalContinuation) throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
+        }
       }
 
       const updatedCheckpoint = this.ports.updateApprovalCheckpointStatus(checkpoint.id, {
@@ -509,7 +590,133 @@ export class SqliteApprovalResumeStore {
         now: input.now,
       });
       this.context.database.exec("COMMIT;");
-      return reloadTerminalResult(this.ports, checkpoint.id, run.id, workUnit.id, attempt.id, controlPlaneEvents);
+      return reloadTerminalResult(
+        this.ports,
+        checkpoint.id,
+        run.id,
+        workUnit.id,
+        attempt.id,
+        controlPlaneEvents,
+        terminalContinuation,
+      );
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.context.database);
+      if (error instanceof ApprovalResumeTransitionAbort) {
+        return {
+          ok: false,
+          code: error.code === "approval_resume_lineage_mismatch"
+            ? "approval_resume_lineage_mismatch"
+            : "approval_resume_terminal_stale",
+        };
+      }
+      throw error;
+    }
+  }
+
+  private commitSuspendedApprovalDeniedTerminal(
+    input: Extract<CommitApprovalResumeTerminalInput, { readonly kind: "suspended_approval_denied" }>,
+  ): CommitApprovalResumeTerminalResult {
+    this.context.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const approval = this.ports.getApprovalRequest(input.approvalId);
+      const checkpoint = this.ports.getApprovalCheckpoint(input.checkpointId);
+      const run = this.ports.getRun(input.runId);
+      const workUnit = this.ports.getWorkUnit(input.workUnitId);
+      const attempt = this.ports.getWorkUnitAttempt(input.attemptId);
+      if (!approval
+        || approval.status !== "denied"
+        || (approval.resolvedBy !== "system-reviewer" && approval.resolvedBy !== "local-user")
+        || !checkpoint
+        || checkpoint.status !== "denied"
+        || checkpoint.revision !== input.expectedCheckpointRevision
+        || !run
+        || run.status !== "waiting_for_approval"
+        || !workUnit
+        || workUnit.status !== "waiting_for_approval") {
+        throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
+      }
+      if (approval.runId !== input.runId
+        || checkpoint.approvalId !== input.approvalId
+        || checkpoint.runId !== input.runId
+        || checkpoint.resumeBasis?.workUnitId !== input.workUnitId
+        || checkpoint.resumeBasis.priorAttemptId !== input.attemptId
+        || run.workUnitId !== input.workUnitId
+        || workUnit.activeAttemptId !== input.attemptId
+        || !attempt
+        || attempt.workUnitId !== input.workUnitId
+        || attempt.status !== "lost"
+        || attempt.errorCode !== "runtime_suspend") {
+        throw new ApprovalResumeTransitionAbort("approval_resume_lineage_mismatch");
+      }
+
+      // The user owns the approval decision, but only the Host may reconcile
+      // a lost Attempt. The approval row retains who made the decision.
+      const decisionActor = "system" as const;
+      const runTransition = this.ports.transitionRunStatus({
+        runId: run.id,
+        expectedStatus: "waiting_for_approval",
+        event: "approval_denied",
+        actor: decisionActor,
+        reason: input.reason,
+        idempotencyKey: suspendedApprovalDeniedIdempotencyKey(input, "run-transition"),
+        now: input.now,
+        endedAt: input.now,
+        errorMessage: input.reason,
+      });
+      const workUnitTransition = this.ports.transitionWorkUnitStatus({
+        ...toRuntimeAttemptFence(attempt),
+        terminalAttemptOwnership: { kind: "lost_attempt_reconciliation" as const },
+        expectedStatus: "waiting_for_approval",
+        event: "runner_failed",
+        actor: decisionActor,
+        reason: input.reason,
+        idempotencyKey: suspendedApprovalDeniedIdempotencyKey(input, "work-unit-transition"),
+        now: input.now,
+        endedAt: input.now,
+        errorCode: "approval_denied",
+        errorMessage: input.reason,
+      });
+      if (!runTransition.ok || !workUnitTransition.ok) {
+        throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
+      }
+      const task = this.ports.getTask(run.taskId);
+      if (task?.status === "running") {
+        const taskTransition = this.ports.transitionTaskStatus({
+          taskId: task.id,
+          expectedStatus: "running",
+          event: "run_failed",
+          actor: decisionActor,
+          reason: input.reason,
+          idempotencyKey: suspendedApprovalDeniedIdempotencyKey(input, "task-transition"),
+          now: input.now,
+          currentRunId: run.id,
+        });
+        if (!taskTransition.ok) {
+          throw new ApprovalResumeTransitionAbort("approval_resume_terminal_stale");
+        }
+      }
+      const fence = toRuntimeAttemptFence(attempt);
+      this.ports.releaseResourceLeasesForAttempt(fence, input.now, "approval-review-denied");
+      this.ports.releaseRuntimeSemaphoreSlotsForAttempt(fence, input.now, "approval-review-denied");
+      const controlPlaneEvents = appendResumeInvalidations(this.ports, {
+        workspaceId: workUnit.workspaceId,
+        cwd: run.cwd,
+        runId: run.id,
+        workUnitId: workUnit.id,
+        approvalId: approval.id,
+        action: "blocked",
+        idempotencyPrefix: `approval-review-denied:${checkpoint.id}:${checkpoint.revision}:${attempt.id}`,
+        now: input.now,
+      });
+      this.context.database.exec("COMMIT;");
+      return reloadSuspendedApprovalDeniedResult(
+        this.ports,
+        checkpoint.id,
+        run.id,
+        workUnit.id,
+        attempt.id,
+        controlPlaneEvents,
+      );
     } catch (error) {
       rollbackOwnedSqliteTransaction(this.context.database);
       if (error instanceof ApprovalResumeTransitionAbort) {
@@ -670,7 +877,8 @@ function reloadTerminalResult(
   workUnitId: string,
   attemptId: string,
   controlPlaneEvents: readonly ControlPlaneEvent[],
-): Extract<CommitApprovalResumeTerminalResult, { ok: true }> {
+  runnerContinuation?: RunnerContinuationV1,
+): Extract<CommitApprovalResumeTerminalResult, { readonly ok: true; readonly kind: "verified_lineage" }> {
   const checkpoint = ports.getApprovalCheckpoint(checkpointId);
   const run = ports.getRun(runId);
   const workUnit = ports.getWorkUnit(workUnitId);
@@ -678,15 +886,50 @@ function reloadTerminalResult(
   if (!checkpoint || !run || !workUnit || !attempt) {
     throw new Error("Approval resume terminal transition committed but could not be reloaded.");
   }
-  return { ok: true, kind: "verified_lineage", checkpoint, run, workUnit, attempt, controlPlaneEvents };
+  return {
+    ok: true,
+    kind: "verified_lineage",
+    checkpoint,
+    run,
+    workUnit,
+    attempt,
+    runnerContinuation,
+    controlPlaneEvents,
+  };
+}
+
+function reloadSuspendedApprovalDeniedResult(
+  ports: ApprovalResumeStorePorts,
+  checkpointId: string,
+  runId: string,
+  workUnitId: string,
+  attemptId: string,
+  controlPlaneEvents: readonly ControlPlaneEvent[],
+): Extract<CommitApprovalResumeTerminalResult, { ok: true; kind: "suspended_approval_denied" }> {
+  const checkpoint = ports.getApprovalCheckpoint(checkpointId);
+  const run = ports.getRun(runId);
+  const workUnit = ports.getWorkUnit(workUnitId);
+  const attempt = ports.getWorkUnitAttempt(attemptId);
+  if (!checkpoint || !run || !workUnit || !attempt) {
+    throw new Error("Suspended approval denial committed but could not be reloaded.");
+  }
+  return { ok: true, kind: "suspended_approval_denied", checkpoint, run, workUnit, attempt, controlPlaneEvents };
 }
 
 function claimIdempotencyKey(input: CommitApprovalResumeClaimInput, suffix: string): string {
-  return `approval-resume-claim:${input.checkpointId}:${input.expectedCheckpointRevision}:${input.replacementAttempt.id}:${suffix}`;
+  const attemptId = input.continuationPreparation?.targetAttempt.id ?? input.replacementAttempt!.id;
+  return `approval-resume-claim:${input.checkpointId}:${input.expectedCheckpointRevision}:${attemptId}:${suffix}`;
 }
 
 function terminalIdempotencyKey(input: CommitApprovalResumeVerifiedTerminalInput, suffix: string): string {
   return `approval-resume-terminal:${input.checkpointId}:${input.expectedCheckpointRevision}:${input.attemptId}:${input.status}:${suffix}`;
+}
+
+function suspendedApprovalDeniedIdempotencyKey(
+  input: Extract<CommitApprovalResumeTerminalInput, { readonly kind: "suspended_approval_denied" }>,
+  suffix: string,
+): string {
+  return `approval-review-denied:${input.checkpointId}:${input.expectedCheckpointRevision}:${input.attemptId}:${suffix}`;
 }
 
 function isAttemptTerminal(

@@ -1,4 +1,7 @@
 import type { ApprovalActionType, ApprovalRisk } from "./approvals.js";
+import type { HostOpenLocalTargetReceiptV1 } from "./host-open-receipt.js";
+
+export type ExecutionActionType = ApprovalActionType | "runtime_diagnostic";
 
 export type ExecutionActionStatus =
   | "proposed"
@@ -33,10 +36,40 @@ export interface ExecutionActionTargetRef {
     | "external_work_action"
     | "file"
     | "command"
-    | "mcp_tool";
+    | "mcp_tool"
+    | "host_capability";
   readonly id?: string;
   readonly label?: string;
   readonly path?: string;
+}
+
+/**
+ * Stable, redacted references used by projections and UI inspectors.
+ * This is deliberately separate from targetRefs: targetRefs describe what an
+ * action touched, while sourceRefs describe where the fact came from.
+ */
+export interface ExecutionActionSourceRef {
+  readonly kind: string;
+  readonly id: string;
+  readonly label?: string;
+  readonly path?: string;
+  /** Host-issued navigation target. Display-only refs intentionally omit it. */
+  readonly hostTarget?: "open_file" | "open_diff" | "open_artifact" | "open_run";
+  readonly capabilityId?: string;
+  readonly workspaceId?: string;
+  readonly visibility?: "conversation" | "private" | "audit";
+}
+
+export type ExecutionActionDiagnosticCode =
+  | "late_event"
+  | "stale_event"
+  | "source_conflict";
+
+/** Non-authoritative evidence rejected from the visible action state. */
+export interface ExecutionActionDiagnostic {
+  readonly code: ExecutionActionDiagnosticCode;
+  readonly message: string;
+  readonly sourceRefs: readonly ExecutionActionSourceRef[];
 }
 
 export interface ExecutionActionCommandOutputChunk {
@@ -69,16 +102,41 @@ export interface ExecutionActionCommandEvidence {
   readonly resultArtifactId?: string;
 }
 
+/** Bounded display evidence from accepted tool events, not navigation authority. */
+export interface ExecutionActionToolEvidence {
+  readonly toolName: string;
+  readonly inputSummary: string;
+  readonly outputText?: string;
+  readonly outputTruncated: boolean;
+  readonly latestEventSeq: number;
+}
+
+export interface ExecutionActionRuntimeDiagnostic {
+  readonly code: "execution_loop_detected";
+  readonly loopKind: "exact_repeat" | "repeated_update" | "cycle" | "no_progress_budget";
+  readonly repeatedCount: number;
+  readonly noProgressActionCount: number;
+  readonly cycleLength?: number;
+  readonly fingerprint: string;
+  readonly retryable: false;
+}
+
 export interface ExecutionAction {
   readonly id: string;
+  /** Monotonic event/approval revision for in-place transcript replacement. */
+  readonly revision: number;
+  /** Accepted tool_start sequence; unlike revision, this never moves on update. */
+  readonly sourceEventSequence?: number;
   readonly workspaceId: string;
   readonly threadId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
   readonly workUnitId?: string;
+  readonly participantId?: string;
+  readonly workflowStepId?: string;
   readonly approvalId?: string;
   readonly toolCallId?: string;
-  readonly actionType: ApprovalActionType;
+  readonly actionType: ExecutionActionType;
   readonly risk: ApprovalRisk;
   readonly status: ExecutionActionStatus;
   readonly title: string;
@@ -86,10 +144,16 @@ export interface ExecutionAction {
   readonly targetRefs: readonly ExecutionActionTargetRef[];
   readonly previewArtifactIds: readonly string[];
   readonly resultArtifactIds: readonly string[];
+  readonly sourceRefs: readonly ExecutionActionSourceRef[];
+  readonly diagnostics?: readonly ExecutionActionDiagnostic[];
   readonly scopes?: readonly ExecutionScope[];
   readonly scopeSummary?: string;
   readonly policySnapshot?: unknown;
   readonly commandEvidence?: ExecutionActionCommandEvidence;
+  readonly toolEvidence?: ExecutionActionToolEvidence;
+  readonly runtimeDiagnostic?: ExecutionActionRuntimeDiagnostic;
+  /** Original-call Host launch evidence, not proof of window visibility. */
+  readonly hostOpenReceipt?: HostOpenLocalTargetReceiptV1;
   readonly createdAt: string;
   readonly updatedAt?: string;
   readonly resolvedAt?: string;

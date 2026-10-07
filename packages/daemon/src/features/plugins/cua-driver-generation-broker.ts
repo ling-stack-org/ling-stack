@@ -11,6 +11,7 @@ import type { CuaDriverLeaseMcpClient } from "./cua-driver-lease-client.js";
 import type { CuaDriverLeaseRegistry } from "./cua-driver-lease.js";
 import type { LockedComputerControlRegistry } from "../computer-use/locked-control-registry.js";
 import { CUA_DRIVER_MCP_SERVER_ID } from "./presets.js";
+import { createHostMcpGenerationFacade } from "../mcp/broker.js";
 
 export type CuaDriverGenerationBrokerErrorCode =
   | "cua_desktop_lease_unavailable"
@@ -40,7 +41,7 @@ export function createCuaDriverGenerationBroker(input: {
   const useBundledClient = (server: McpServer): boolean =>
     input.bundledEnabled && server.id === CUA_DRIVER_MCP_SERVER_ID;
 
-  return {
+  const facade: McpBroker = {
     cuaDriverRuntimeAuthority: {
       enabled: input.bundledEnabled,
       workspaceCwd: input.workspaceCwd,
@@ -220,6 +221,8 @@ export function createCuaDriverGenerationBroker(input: {
       }
     },
   };
+  return createHostMcpGenerationFacade({ baseBroker: input.baseBroker,
+    route: { kind: "cua", bundledEnabled: input.bundledEnabled }, facade });
 }
 
 function bundledAvailabilityError(

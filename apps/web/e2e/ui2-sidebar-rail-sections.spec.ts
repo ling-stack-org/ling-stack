@@ -21,7 +21,7 @@ test("Sidebar collapse atomically swaps expanded navigation for an icon-only com
   await mockDaemon(page, createSidebarState({ dense: true }));
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? -1)).toBe(292);
   await expect(navigation.locator(".sidebar-product-row")).toHaveCount(0);
 
@@ -61,8 +61,8 @@ test("Sidebar collapse atomically swaps expanded navigation for an icon-only com
   await captureEvidence(page, "1440x960-ling-light-sidebar-compact.png");
 
   await page.getByRole("button", { name: "Show navigation" }).click();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
-  await expect.poll(async () => Math.round((await page.getByLabel("Ling Stack navigation").boundingBox())?.width ?? -1)).toBe(292);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
+  await expect.poll(async () => Math.round((await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).boundingBox())?.width ?? -1)).toBe(292);
   expect(runtimeErrors).toEqual([]);
 });
 
@@ -72,7 +72,7 @@ test("Sidebar remains a single scrollable 292px surface in dense dark mode", asy
   await mockDaemon(page, createSidebarState({ dense: true }));
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const scrollRegion = navigation.locator(".sidebar-scroll-region");
   await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? -1)).toBe(292);
   const metrics = await scrollRegion.evaluate((element) => ({
@@ -98,14 +98,14 @@ test("narrow desktop starts with compact navigation and can open the full Sideba
 
   const shell = page.locator("main.app-shell");
   await expect(shell).toHaveClass(/channel-sidebar-collapsed/u);
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveAttribute("data-sidebar-mode", "compact");
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveAttribute("data-sidebar-mode", "compact");
   await expect(page.locator(".sidebar-rail-launcher")).toHaveCount(3);
   await expect.poll(async () => shell.evaluate((element) => (
     Math.round(Number.parseFloat(getComputedStyle(element).gridTemplateColumns))
   ))).toBe(48);
 
   await page.getByRole("button", { name: "Show navigation" }).click();
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expect(navigation).toBeVisible();
   await expect.poll(async () => Math.round((await navigation.boundingBox())?.width ?? -1)).toBe(292);
   await expectNoHorizontalOverflow(page);

@@ -114,6 +114,27 @@ test("sqlite workspace settings persist Ling conversation tone", async () => {
   }
 });
 
+test("sqlite workspace settings persist provider-safe reasoning summary mode", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-reasoning-summary-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    assert.equal(store.getWorkspaceSettings().defaultReasoningSummary, undefined);
+    assert.equal(store.updateWorkspaceSettings({ defaultReasoningSummary: "detailed" }, "2026-09-12T04:30:00.000Z").defaultReasoningSummary, "detailed");
+    store.close();
+    const reopened = createSqliteRunStore(cwd);
+    try {
+      assert.equal(reopened.getWorkspaceSettings().defaultReasoningSummary, "detailed");
+      assert.equal(reopened.updateWorkspaceSettings({ defaultReasoningSummary: "none" }, "2026-09-12T04:31:00.000Z").defaultReasoningSummary, "none");
+      assert.equal(reopened.updateWorkspaceSettings({ defaultReasoningSummary: null }, "2026-09-12T04:32:00.000Z").defaultReasoningSummary, undefined);
+    } finally {
+      reopened.close();
+    }
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("sqlite workspace settings round-trip every supported interface and response locale", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-workspace-locales-"));
   const store = createSqliteRunStore(cwd);
@@ -1264,6 +1285,13 @@ test("sqlite work units link run sessions and enforce CAS transitions", async ()
       channelId: channel.id,
       taskId: task.id,
       providerPresetId: "provider_runtime",
+      runnerId: "pi",
+      requestedRunnerId: "external-test",
+      effectiveRunnerId: "pi",
+      fallbackReason: {
+        code: "runner_tool_conformance_failed",
+        message: "External runner receipt does not authorize the requested tool.",
+      },
       idempotencyKey: "wu-key-1",
       createdByActor: "user",
       request: { prompt: task.prompt, apiKey: "secret-value" },
@@ -1271,6 +1299,8 @@ test("sqlite work units link run sessions and enforce CAS transitions", async ()
     });
     assert.equal(workUnit.status, "queued");
     assert.equal(workUnit.attemptCount, 0);
+    assert.equal(workUnit.fallbackReason?.code, "runner_tool_conformance_failed");
+    assert.equal(store.getWorkUnit(workUnit.id)?.fallbackReason?.code, "runner_tool_conformance_failed");
     assert.deepEqual(workUnit.request, { prompt: task.prompt, apiKey: "[REDACTED]" });
     assert.equal(
       store.findWorkUnitByIdempotency({
@@ -1951,20 +1981,9 @@ test("runtime attempt fence migration discards unfenced development runtime stat
       acquiredAt: "2026-06-04T04:00:02.000Z",
       expiresAt: "2099-06-04T04:00:02.000Z",
     });
-    const priorSlot = store.acquireRuntimeSemaphoreSlot({
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      resourceType: "provider",
-      resourceKey: "provider_fence_clean_break_old",
-      limit: 1,
-      ownerType: "work_unit_attempt",
-      ownerId: priorAttempt.id,
-      workUnitId: workUnit.id,
-      attemptId: priorAttempt.id,
-      runtimeInstanceId: priorAttempt.runtimeInstanceId,
-      fencingToken: priorAttempt.fencingToken,
-      acquiredAt: "2026-06-04T04:00:02.000Z",
-      expiresAt: "2099-06-04T04:00:02.000Z",
-    });
+    // Like the prior lease, seed historical unfenced state below. Runtime admission
+    // must reject a replaced attempt, even when a migration fixture needs its old row.
+    const priorSlot = { id: "slot_runtime_fence_prior" };
     const currentSlot = store.acquireRuntimeSemaphoreSlot({
       workspaceId: DEFAULT_WORKSPACE_ID,
       resourceType: "provider",
@@ -2011,6 +2030,14 @@ test("runtime attempt fence migration discards unfenced development runtime stat
         ALTER TABLE runtime_semaphore_slots DROP COLUMN fencing_token;
         ALTER TABLE resource_leases DROP COLUMN runtime_instance_id;
         ALTER TABLE resource_leases DROP COLUMN fencing_token;
+        INSERT INTO runtime_semaphore_slots (
+          id, workspace_id, resource_type, resource_key, owner_type, owner_id,
+          work_unit_id, attempt_id, status, acquired_at, last_renewed_at, expires_at
+        ) VALUES (
+          '${priorSlot.id}', 'workspace_default', 'provider', 'provider_fence_clean_break_old',
+          'work_unit_attempt', '${priorAttempt.id}', '${workUnit.id}', '${priorAttempt.id}',
+          'active', '2026-06-04T04:00:02.000Z', '2026-06-04T04:00:02.000Z', '2099-06-04T04:00:02.000Z'
+        );
         UPDATE work_unit_attempts
         SET
           status = CASE WHEN id = '${priorAttempt.id}' THEN 'started' ELSE status END,
@@ -2170,6 +2197,8 @@ test("sqlite runtime supervisor migration self-heals missing runtime tables whil
     const database = new DatabaseSync(databasePath);
     try {
       database.exec(`
+        DROP TABLE IF EXISTS harness_tool_executions;
+        DROP TABLE IF EXISTS runner_continuations;
         DROP TABLE IF EXISTS runtime_semaphore_slots;
         DROP TABLE IF EXISTS runtime_heartbeats;
         DROP TABLE IF EXISTS runtime_events;
@@ -2496,6 +2525,117 @@ test("recoverStaleChannelWorkflows reconciles running steps from linked terminal
     assert.equal(store.getChannelWorkflowStep(step.id).status, "failed");
     assert.equal(store.getChannelWorkflow(workflow.id).status, "failed");
     assert.equal(store.listStateTransitionEvents({ entityType: "workflow_step", entityId: step.id }).some((event) => event.event === "fail"), true);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("startup recovery preserves an enforced Harness task Run for daemon-owned continuation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-recover-harness-run-"));
+  const now = "2026-09-13T01:00:00.000Z";
+  const recoveredAt = "2026-09-13T01:01:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const channel = store.createChannel({ name: "Harness recovery", boundPath: cwd }, now);
+    const task = store.createTask({
+      channelId: channel.id,
+      title: "Recover Harness run",
+      prompt: "Continue from frozen input.",
+    }, now);
+    const thread = store.createLingThread({
+      kind: "task",
+      taskId: task.id,
+      channelId: channel.id,
+      title: task.title,
+      objective: task.prompt,
+    }, now);
+    const turn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: task.title,
+      userInstruction: task.prompt,
+      taskId: task.id,
+      channelId: channel.id,
+      createdByActor: "local-user",
+    }, now);
+    const runId = "run_recover_enforced_harness";
+    const workUnit = store.createWorkUnit({
+      id: "work_unit_recover_enforced_harness",
+      workspaceId: DEFAULT_WORKSPACE_ID,
+      kind: "task_run",
+      ownerType: "task",
+      ownerId: task.id,
+      taskId: task.id,
+      channelId: channel.id,
+      runnerId: "pi",
+      effectiveRunnerId: "pi",
+      idempotencyKey: "recover-enforced-harness",
+      createdByActor: "system",
+      request: { runId },
+      now,
+    });
+    const attempt = store.createWorkUnitAttempt({
+      id: "attempt_recover_enforced_harness",
+      workUnitId: workUnit.id,
+      attemptNumber: 1,
+      runtimeInstanceId: "runtime_before_restart",
+      runnerId: "pi",
+      effectiveRunnerId: "pi",
+      now,
+    });
+    const run = store.createRun({
+      id: runId,
+      cwd,
+      taskId: task.id,
+      channelId: channel.id,
+      threadId: thread.id,
+      turnId: turn.id,
+      workUnitId: workUnit.id,
+      providerName: "test-provider",
+      providerModel: "test-model",
+      taskSnapshot: { id: task.id, title: task.title, prompt: task.prompt, channelId: channel.id },
+      providerSnapshot: { provider: "test-provider", model: "test-model" },
+      requestSnapshot: {
+        cwd,
+        task: { id: task.id, title: task.title, prompt: task.prompt, channelId: channel.id },
+        threadId: thread.id,
+        turnId: turn.id,
+        harnessFeatureSnapshot: {
+          schemaVersion: 1,
+          continuations: "enforce",
+          toolBroker: "off",
+          evaluations: "off",
+          evaluationModelGate: "shadow",
+          delegations: "off",
+          delegationMaxDepth: 3,
+        },
+        runnerExecutionInput: { schemaVersion: 1 },
+      },
+      contextViewId: "context_recover_enforced_harness",
+      contextViewCreatedAt: now,
+      createdAt: now,
+    });
+    store.linkRunToWorkUnit(run.id, workUnit.id, now);
+    store.markRunStarted(run.id, now);
+    assert.equal(store.transitionTaskStatus({ taskId: task.id, expectedStatus: "todo", event: "claim",
+      actor: "system", reason: `run:${run.id}`, now }).ok, true);
+    const fence = {
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
+    };
+    assert.equal(store.transitionWorkUnitStatus({ ...fence, activeAttemptId: attempt.id, expectedStatus: "queued",
+      event: "claim", actor: "system", now }).ok, true);
+    assert.equal(store.transitionWorkUnitStatus({ ...fence, expectedStatus: "claimed", event: "runner_started",
+      actor: "runner", now }).ok, true);
+    assert.ok(store.updateWorkUnitAttemptStatus({ ...fence, status: "started", now, startedAt: now }));
+
+    assert.equal(store.recoverStaleRuns(recoveredAt), 0);
+    assert.equal(store.getRun(run.id).status, "running");
+    assert.equal(store.getWorkUnit(workUnit.id).status, "running");
+    assert.equal(store.listEvents(run.id, { limit: 100 }).some((event) => event.type === "run_error"), false);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

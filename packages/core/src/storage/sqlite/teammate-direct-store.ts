@@ -196,6 +196,7 @@ export class SqliteTeammateDirectStore {
       teammateId: input.teammateId,
       authorType: input.authorType,
       authorId: input.authorId,
+      systemPurpose: input.systemPurpose,
       body: input.body,
       attachmentIds,
       linkPreviewIds,
@@ -217,6 +218,7 @@ export class SqliteTeammateDirectStore {
           teammate_id,
           author_type,
           author_id,
+          system_purpose,
           body,
           attachment_ids_json,
           link_preview_ids_json,
@@ -227,7 +229,7 @@ export class SqliteTeammateDirectStore {
           linked_run_id,
           created_at,
           updated_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `)
       .run(
         message.id,
@@ -236,6 +238,7 @@ export class SqliteTeammateDirectStore {
         message.teammateId,
         message.authorType,
         message.authorId ?? null,
+        message.systemPurpose ?? null,
         message.body,
         stringifyJson(message.attachmentIds),
         stringifyJson(message.linkPreviewIds),

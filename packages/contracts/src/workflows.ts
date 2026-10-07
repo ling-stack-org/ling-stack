@@ -263,6 +263,7 @@ export function delegatedStepRequirementFingerprintV1(
     workflowStepId: value.workflowStepId,
     participantId: value.participantId,
     participantManifestFingerprint: value.participantManifestFingerprint,
+    ...(value.executionPlanFingerprint === undefined ? {} : { executionPlanFingerprint: value.executionPlanFingerprint }),
     expectedOutcome: value.expectedOutcome,
     requiredOperationIds: [...value.requiredOperationIds].sort(),
     requiredDependencyStepIds: [...value.requiredDependencyStepIds].sort(),
@@ -325,13 +326,14 @@ export function isDelegatedStepRequirementV1(value: unknown): value is Delegated
   if (!Object.keys(record).every((key) => [
     "schemaVersion", "workflowId", "workflowStepId", "participantId",
     "participantManifestFingerprint", "expectedOutcome", "requiredOperationIds",
-    "requiredDependencyStepIds", "acceptedEvidenceKinds", "fingerprint",
+    "requiredDependencyStepIds", "acceptedEvidenceKinds", "fingerprint", "executionPlanFingerprint",
   ].includes(key))
     || record.schemaVersion !== 1
     || !isNonEmptyText(record.workflowId)
     || !isNonEmptyText(record.workflowStepId)
     || !isNonEmptyText(record.participantId)
     || !isNonEmptyText(record.participantManifestFingerprint)
+    || (record.executionPlanFingerprint !== undefined && !isNonEmptyText(record.executionPlanFingerprint))
     || !["execution", "verification", "synthesis"].includes(String(record.expectedOutcome))
     || !isUniqueNonEmptyTextArray(record.requiredOperationIds)
     || !isUniqueNonEmptyTextArray(record.requiredDependencyStepIds)
@@ -346,6 +348,7 @@ export function isDelegatedStepRequirementV1(value: unknown): value is Delegated
     workflowStepId: record.workflowStepId,
     participantId: record.participantId,
     participantManifestFingerprint: record.participantManifestFingerprint,
+    ...(record.executionPlanFingerprint === undefined ? {} : { executionPlanFingerprint: record.executionPlanFingerprint as string }),
     expectedOutcome: record.expectedOutcome as DelegatedStepRequirementV1["expectedOutcome"],
     requiredOperationIds: record.requiredOperationIds,
     requiredDependencyStepIds: record.requiredDependencyStepIds,
@@ -364,6 +367,7 @@ export type ChannelWorkflowStatus =
   | "ready"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -374,6 +378,7 @@ export type ChannelWorkflowStepStatus =
   | "claimed"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -703,6 +708,8 @@ export interface DelegatedStepRequirementV1 {
   readonly workflowStepId: string;
   readonly participantId: string;
   readonly participantManifestFingerprint: string;
+  /** Full typed operation plan, captured in the immutable Run requirement. Omitted only for legacy steps. */
+  readonly executionPlanFingerprint?: string;
   readonly expectedOutcome: "execution" | "verification" | "synthesis";
   readonly requiredOperationIds: readonly string[];
   readonly requiredDependencyStepIds: readonly string[];
@@ -736,6 +743,7 @@ export const delegatedBlockCodeValuesV1 = [
   "workflow_participant_provider_override_forbidden",
   "existing_proposal_participant_lineage_invalid",
   "runtime_interrupted_no_checkpoint",
+  "execution_loop_detected",
   "approval_resume_unsupported",
   "approval_resume_effect_unknown",
   "approval_resume_lineage_invalid",
@@ -1019,6 +1027,20 @@ export interface ChannelWorkflowStep {
   readonly status: ChannelWorkflowStepStatus;
   readonly blocker?: string;
   readonly resultSummary?: string;
+  /** Read-only public Q/A from the selected child Run, not the parent channel's cache. */
+  readonly runUserInputHistory?: import("./user-input-transcript.js").UserInputTranscriptRunHistoryV1 | null;
+  /** Read-only event projection for this step's selected run; never persisted or accepted on writes. */
+  readonly runNarration?: {
+    readonly runId: string;
+    readonly participantId: string;
+    readonly workflowStepId: string;
+    readonly threadId: string;
+    readonly turnId: string;
+    readonly sourceItemId: string;
+    readonly sourceItemSequence: number;
+    readonly attemptId?: string;
+    readonly segments: readonly import("./conversations.js").ConversationNarrationSegment[];
+  } | null;
   readonly metadata?: ChannelWorkflowStepMetadata;
   readonly createdAt: string;
   readonly updatedAt: string;

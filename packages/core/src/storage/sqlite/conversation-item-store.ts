@@ -86,6 +86,9 @@ export class SqliteConversationItemStore {
       .get(now, DEFAULT_WORKSPACE_ID, input.threadId) as Record<string, SQLOutputValue> | undefined;
     const sequence = readSafeInteger(sequenceRow?.sequence, "sequence");
     const status = input.status ?? "committed";
+    const payload = input.kind === "assistant_message" && !("presentationRole" in (input.payload as object))
+      ? { ...(input.payload as unknown as Record<string, unknown>), presentationRole: "narration" as const }
+      : input.payload;
     const item = {
       schemaVersion: 1,
       id: input.id ?? `item_${randomUUID()}`,
@@ -100,7 +103,7 @@ export class SqliteConversationItemStore {
       ...(input.actorId ? { actorId: input.actorId } : {}),
       visibility: input.visibility,
       ...(input.visibilityOwnerId ? { visibilityOwnerId: input.visibilityOwnerId } : {}),
-      payload: input.payload,
+      payload,
       domainRefs: input.domainRefs ?? [],
       ...(input.idempotencyKey ? { idempotencyKey: input.idempotencyKey } : {}),
       revision: 0,
@@ -426,9 +429,12 @@ export class SqliteConversationItemStore {
       );
     }
     const status = input.status ?? "pending";
+    const normalizedPayload = existing.kind === "assistant_message" && !("presentationRole" in (input.payload as object))
+      ? { ...(input.payload as unknown as Record<string, unknown>), presentationRole: existing.payload.presentationRole }
+      : input.payload;
     const candidate = {
       ...existing,
-      payload: input.payload as ConversationItemPayloadByKindV1[typeof existing.kind],
+      payload: normalizedPayload as ConversationItemPayloadByKindV1[typeof existing.kind],
       status,
       revision: existing.revision + 1,
       updatedAt: now,

@@ -35,6 +35,8 @@ export interface TerminalReportVerificationDto {
   readonly id: string;
   readonly title: string;
   readonly status: TerminalReportCheckStatus;
+  /** Host-derived classification, never accepted from report-model output. */
+  readonly expectation?: "evidence_backed" | "informational" | "unknown";
   readonly summary?: string;
   readonly command?: string;
   readonly durationMs?: number;
@@ -108,6 +110,12 @@ export interface TerminalReportDto {
   };
   readonly createdAt: string;
   readonly committedAt: string;
+}
+
+/** Conversation-detail join metadata for the Host-owned final-result Item. */
+export interface ConversationTerminalReportProjectionDto extends TerminalReportDto {
+  readonly generation: number;
+  readonly resultItemId: string;
 }
 
 export interface TerminalReportResponse {

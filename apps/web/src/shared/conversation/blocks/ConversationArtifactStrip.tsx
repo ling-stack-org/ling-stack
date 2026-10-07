@@ -1,27 +1,18 @@
 import { useEffect, useRef, useState, type CSSProperties, type ReactNode, type RefObject } from "react";
 import { createPortal } from "react-dom";
-import { ChevronDown, Code2, FilePenLine, FileText, Image as ImageIcon, Loader2, Redo2, Undo2 } from "lucide-react";
-import {
-  getTurnWorkspaceChanges,
-  getRunWorkspaceChanges,
-  getWorkflowWorkspaceChanges,
-} from "../../../api.js";
+import { ChevronDown, Code2, FilePenLine, FileText, Image as ImageIcon } from "lucide-react";
 import { useI18n, type Translate } from "../../../i18n.js";
 import { parseUnifiedDiff, summarizeFileChanges, type ConversationFileChange } from "../../../lib/diff-summary.js";
 import type { ConversationArtifactStripChangeArtifact, ConversationArtifactStripItem, ConversationWorkspaceRecoveryTarget } from "../../../lib/conversation-work-cell.js";
-import type { PreviewContentResponse, RunWorkspaceChangesResponse, TurnWorkspaceChangesResponse, WorkflowWorkspaceChangesResponse } from "../../../types.js";
+import type { PreviewContentResponse } from "../../../types.js";
 import type { ArtifactPreviewLoader } from "../preview/ArtifactPreviewDrawer.js";
-import {
-  ConversationArtifactRecoveryDialog,
-  type ConversationArtifactRecoveryAction,
-} from "./ConversationArtifactRecoveryDialog.js";
+import { ConversationWorkspaceRecoveryControls } from "./ConversationWorkspaceRecoveryControls.js";
 import { DiffViewer } from "./DiffViewer.js";
 import { WorkspaceFileOpenMenu } from "./WorkspaceFileOpenMenu.js";
 
 const artifactHoverDelayMs = 2_000;
 const artifactHoverHideDelayMs = 300;
 const collapsedChangeFileCount = 3;
-type WorkspaceRecoveryResponse = RunWorkspaceChangesResponse | TurnWorkspaceChangesResponse | WorkflowWorkspaceChangesResponse;
 
 export interface ConversationWorkspaceReviewTarget {
   readonly cwd: string;
@@ -170,10 +161,6 @@ function ChangedFilesGroup({
   const { t } = useI18n();
   const [showAll, setShowAll] = useState(false);
   const [loadedChanges, setLoadedChanges] = useState<readonly LoadedChangeFile[]>(() => fallbackChangeFiles(item.changeArtifacts ?? []));
-  const [recovery, setRecovery] = useState<WorkspaceRecoveryResponse>();
-  const [recoveryStatus, setRecoveryStatus] = useState<"idle" | "loading" | "loaded" | "unavailable">("idle");
-  const [recoveryAction, setRecoveryAction] = useState<ConversationArtifactRecoveryAction>();
-  const recoveryActionRef = useRef<HTMLButtonElement | null>(null);
 
   useEffect(() => {
     const artifacts = item.changeArtifacts ?? [];
@@ -193,31 +180,6 @@ function ChangedFilesGroup({
     };
   }, [cwd, item.changeArtifacts, loadPreview]);
 
-  useEffect(() => {
-    if (!cwd || !recoveryTarget) {
-      setRecovery(undefined);
-      setRecoveryStatus("idle");
-      return;
-    }
-    let cancelled = false;
-    setRecovery(undefined);
-    setRecoveryStatus("loading");
-    void getWorkspaceRecovery(cwd, recoveryTarget).then((response) => {
-      if (!cancelled) {
-        setRecovery(response);
-        setRecoveryStatus("loaded");
-      }
-    }, () => {
-      if (!cancelled) {
-        setRecovery(undefined);
-        setRecoveryStatus("unavailable");
-      }
-    });
-    return () => {
-      cancelled = true;
-    };
-  }, [cwd, recoveryTarget?.id, recoveryTarget?.kind]);
-
   const fileCount = loadedChanges.length || item.changeArtifacts?.length || 0;
   const exactChanges = loadedChanges.filter((entry) => entry.change && entry.exact);
   const summary = exactChanges.length === loadedChanges.length && loadedChanges.length > 0
@@ -226,7 +188,6 @@ function ChangedFilesGroup({
   const title = fileCount === 1 ? t("Edited 1 file") : t("Edited {count} files", { count: fileCount });
   const visibleChanges = showAll ? loadedChanges : loadedChanges.slice(0, collapsedChangeFileCount);
   const hiddenCount = Math.max(0, loadedChanges.length - visibleChanges.length);
-  const undoUnavailableReason = recovery?.unavailableReason ?? t("Undo is unavailable for this work");
 
   function openReview(path?: string): void {
     if (cwd) {
@@ -249,23 +210,11 @@ function ChangedFilesGroup({
           {summary ? <ChangeStat additions={summary.additions} deletions={summary.deletions} /> : null}
         </span>
         <span className="conversation-work-cell-change-actions">
-          {recovery?.canReapply ? (
-            <button ref={recoveryActionRef} type="button" onClick={() => setRecoveryAction("reapply")}>
-              <Redo2 size={13} />
-              {t("Reapply")}
-            </button>
-          ) : recoveryTarget ? (
-            <button
-              ref={recoveryActionRef}
-              type="button"
-              onClick={() => setRecoveryAction("undo")}
-              disabled={recoveryStatus !== "loaded" || !recovery?.canUndo}
-              title={recovery?.canUndo ? undefined : undoUnavailableReason}
-            >
-              {recoveryStatus === "loading" ? <Loader2 className="spin" size={13} /> : <Undo2 size={13} />}
-              {t("Undo")}
-            </button>
-          ) : null}
+          <ConversationWorkspaceRecoveryControls
+            cwd={cwd}
+            fileCountFallback={fileCountFromChanges(loadedChanges)}
+            target={recoveryTarget}
+          />
           {cwd && onOpenWorkspaceReview ? (
             <button type="button" onClick={() => openReview()}>
               <Code2 size={13} />
@@ -321,31 +270,8 @@ function ChangedFilesGroup({
           </button>
         ) : null}
       </div> : null}
-      <ConversationArtifactRecoveryDialog
-        action={recoveryAction}
-        cwd={cwd}
-        fileCount={recovery?.summary.fileCount ?? fileCountFromChanges(loadedChanges)}
-        returnFocusRef={recoveryActionRef}
-        target={recoveryTarget}
-        onClose={() => setRecoveryAction(undefined)}
-        onRecovered={(response) => {
-          setRecovery(response);
-          setRecoveryStatus("loaded");
-        }}
-      />
     </section>
   );
-}
-
-function getWorkspaceRecovery(
-  cwd: string,
-  target: ConversationWorkspaceRecoveryTarget,
-): Promise<WorkspaceRecoveryResponse> {
-  return target.kind === "workflow"
-    ? getWorkflowWorkspaceChanges(cwd, target.id)
-    : target.kind === "turn"
-      ? getTurnWorkspaceChanges(cwd, target.id)
-    : getRunWorkspaceChanges(cwd, target.id);
 }
 
 function fileCountFromChanges(changes: readonly LoadedChangeFile[]): number {

@@ -45,6 +45,7 @@ import {
 } from "../conversations/supersession-projection.js";
 import { runHasConversationGeneratedMedia } from "../media/conversation-projection.js";
 import { fallbackResponseLanguage, responseLanguageInstruction } from "../channels/response-language.js";
+import { assertTeammateDirectMessageScope, resolveTeammateDirectRunOwner } from "./direct-run-owner.js";
 
 export type StartTeammateDirectRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -81,9 +82,14 @@ export async function createAiTeammateDirectReply(input: {
   }) => void;
   readonly stream?: TeammateDirectReplyStream;
 }): Promise<TeammateDirectMessage> {
+  assertTeammateDirectMessageScope({ ...input, messages: [] });
   if (input.replyMessageId) {
     const existing = input.store.getTeammateDirectMessage(input.replyMessageId);
     if (existing) {
+      assertTeammateDirectMessageScope({ ...input, messages: [existing] });
+      if (existing.authorType !== "ai-teammate") {
+        throw new Error("Teammate direct reply author mismatch");
+      }
       return existing;
     }
   }
@@ -228,6 +234,10 @@ export async function createAiTeammateDirectReply(input: {
     const projection = createTeammateDirectRunProjection({
       store: input.store,
       pendingMessageId: pending.id,
+      scope: {
+        teammateId: input.teammate.id, directThreadId: input.thread.id,
+        canonicalThreadId: execution.thread.id, turnId: execution.runRequest.turnId,
+      },
       signal: input.signal,
       stream: input.stream,
       onRunLinked: ({ runId, workUnitId, attemptId }) => {
@@ -251,7 +261,12 @@ export async function createAiTeammateDirectReply(input: {
 
     const startedRunId = await input.startRun(execution.runRequest, projection.sink);
     const runId = startedRunId ?? projection.runId();
-    const run = runId ? input.store.getRun(runId) : undefined;
+    const owner = runId ? resolveTeammateDirectRunOwner(input.store, runId, {
+      teammateId: input.teammate.id, directThreadId: input.thread.id,
+      canonicalThreadId: execution.thread.id, turnId: execution.runRequest.turnId, replyMessageId: pending.id,
+    }) : undefined;
+    if (runId && !owner) throw new Error("Teammate direct completed Run owner scope mismatch");
+    const run = owner?.run;
     const current = input.store.getTeammateDirectMessage(pending.id);
     if (current?.status === "cancelled") {
       return current;

@@ -138,6 +138,9 @@ test("runner tool hydration returns runner-only tool schemas and bounded runtime
     const run = store.getRun(fixture.runId);
     const response = hydrateRunnerToolSurface({
       store,
+      sourceFence: { workUnitId: fixture.workUnitId, attemptId: fixture.attemptId,
+        runtimeInstanceId: store.getWorkUnitAttempt(fixture.attemptId).runtimeInstanceId,
+        fencingToken: store.getWorkUnitAttempt(fixture.attemptId).fencingToken },
       runnerRegistry: {
         list: () => [{
           id: "pi",
@@ -194,6 +197,9 @@ test("runner tool hydration writes bounded rejection evidence without schemas", 
     const run = store.getRun(fixture.runId);
     const response = hydrateRunnerToolSurface({
       store,
+      sourceFence: { workUnitId: fixture.workUnitId, attemptId: fixture.attemptId,
+        runtimeInstanceId: store.getWorkUnitAttempt(fixture.attemptId).runtimeInstanceId,
+        fencingToken: store.getWorkUnitAttempt(fixture.attemptId).fencingToken },
       runnerRegistry: {
         list: () => [{
           id: "pi",
@@ -382,6 +388,7 @@ function seedToolSurfaceFixture(store, cwd) {
     workUnitId: workUnit.id,
     createdAt: "2026-06-19T04:00:04.000Z",
   });
+  store.linkRunToWorkUnit("run_tool_surface", workUnit.id, now);
   return {
     runId: "run_tool_surface",
     workUnitId: workUnit.id,

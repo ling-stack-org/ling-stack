@@ -30,7 +30,7 @@ test("Settings shell owns navigation, embedded tools, and exact return at 1440x9
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  const appNavigation = page.getByLabel("Ling Stack navigation");
+  const appNavigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await appNavigation.getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   await appNavigation.getByRole("button", { name: "Settings" }).click();
@@ -88,7 +88,7 @@ test("Settings shell contains error, diagnostics, and desktop resize states at 1
     });
   });
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
 
   const shell = page.locator("[data-ui2-settings-shell]");
   const settingsNavigation = page.getByLabel("Settings sections");

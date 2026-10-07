@@ -151,7 +151,7 @@ test("normal conversation summary uses the channel panel motion", async ({ page 
   const maximumDockWidth = await page.evaluate(() => Math.floor(globalThis.innerWidth * 0.5));
   await expect.poll(async () => (await dockFrame.boundingBox())?.width ?? 0).toBeLessThanOrEqual(maximumDockWidth);
   await expect(summary).toBeHidden();
-  await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-pressed", "true");
+  await expect(toolbar.getByRole("button", { name: "Summary" })).not.toHaveAttribute("aria-pressed", "true");
   await expect(toolbar.getByRole("button", { name: "Summary" })).toHaveAttribute("aria-expanded", "false");
   await page.mouse.up();
 
@@ -209,7 +209,7 @@ test("AI teammate summary uses the channel panel motion", async ({ page }) => {
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   const toolbar = page.getByRole("toolbar", { name: "Private chat actions" });
   await toolbar.getByRole("button", { name: "Summary" }).click();
   await expect(page.locator(".teammate-chat-summary-popover")).toBeVisible();
@@ -277,7 +277,7 @@ test("summary intent survives constrained Details geometry and restores when Sid
     page.getByLabel("Channel workspace dock"),
   );
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   await expectSummaryConcealAndRestore(
     page,
     page.getByRole("toolbar", { name: "Private chat actions" }),
@@ -325,7 +325,7 @@ test("right dock hides as one shared state at 900px and restores inline above th
 
   await page.setViewportSize({ width: 1280, height: 800 });
   await ensureNavigationExpanded(page);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
   await expectResponsiveDockProjection({
     page,
     toolbar: page.getByRole("toolbar", { name: "Private chat actions" }),
@@ -392,7 +392,7 @@ for (const fixture of [
     await openBottomTerminal(page, channelToolbar);
     await captureEvidence(page, evidenceFilename(fixture, "channel-terminal"));
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
     const teammateToolbar = page.getByRole("toolbar", { name: "Private chat actions" });
     await openSummaryAndDock(
       teammateToolbar,
@@ -433,7 +433,7 @@ async function useEnglishLightSurface(page: Page, width = 1440): Promise<void> {
 
 async function openNormalConversationFixture(page: Page): Promise<void> {
   await page
-    .getByLabel("Ling Stack navigation")
+    .getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
     .locator(".sidebar-recent-row")
     .filter({ hasText: normalConversationFixtureTitle })
     .click();
@@ -471,7 +471,11 @@ async function openSummaryAndDock(
   await toolbar.getByRole("button", { name: "Show details" }).click();
   await expect(dock).toBeVisible();
   const summaryButton = toolbar.getByRole("button", { name: "Summary" });
-  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  if (summaryWithDock) {
+    await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  } else {
+    await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
+  }
   await expect(summaryButton).toHaveAttribute("aria-expanded", summaryWithDock ? "true" : "false");
   await expect.poll(async () => dock.evaluate((element) => {
     const rect = element.getBoundingClientRect();
@@ -567,7 +571,7 @@ async function expectSummaryConcealAndRestore(
   await toolbar.getByRole("button", { name: "Show details" }).click();
   await expect(dock).toBeVisible();
   await expect(summary).toBeHidden();
-  await expect(summaryButton).toHaveAttribute("aria-pressed", "true");
+  await expect(summaryButton).not.toHaveAttribute("aria-pressed", "true");
   await expect(summaryButton).toHaveAttribute("aria-expanded", "false");
 
   await page.getByRole("button", { name: "Hide navigation" }).click();

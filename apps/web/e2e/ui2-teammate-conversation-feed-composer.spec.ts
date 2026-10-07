@@ -33,7 +33,8 @@ for (const fixture of [
 
     await expect(feedOwner).toBeVisible();
     await expect(composerOwner).toBeVisible();
-    await expect(feed.locator(".message-feed-virtualizer")).toBeVisible();
+    await expect(feed).toHaveAttribute("data-conversation-feed-window-owner", "timeline");
+    await expect(feed.locator('[data-conversation-timeline][data-conversation-timeline-depth="0"]')).toHaveCount(1);
     const feedGeometry = await Promise.all([
       feedOwner.boundingBox(),
       feed.boundingBox(),
@@ -61,13 +62,9 @@ for (const fixture of [
       blockedRow.locator(":scope > .teammate-avatar-image"),
       blockedRow,
     );
-    const queuedGuidanceRow = feed.locator('[data-feed-item-id="message_ui2_teammate_guidance"] .teammate-message-row');
-    await expect(queuedGuidanceRow).toBeVisible();
-    await expect(queuedGuidanceRow).toHaveClass(/local-user/);
-    await expect(queuedGuidanceRow).toHaveClass(/message-bubble-own/);
-    await expect(queuedGuidanceRow).toContainText("Continue with the user's weather question.");
-    await expect(queuedGuidanceRow).not.toContainText("排队引导");
-    await expect(queuedGuidanceRow).not.toContainText("System");
+    await expect(feed.getByText("Continue with the user's weather question.", { exact: true })).toHaveCount(0);
+    await expect(feed.getByText(/排队引导/u)).toHaveCount(0);
+    await expect(feed.getByText("System", { exact: true })).toHaveCount(0);
     await memoryRow.locator(".conversation-evidence-toggle").click();
     await expect(memoryRow.getByText("Private feed memory", { exact: true })).toBeVisible();
     await expectNoDocumentOverflow(page);
@@ -98,9 +95,9 @@ for (const fixture of [
     )).toBeLessThanOrEqual(2);
 
     const pendingReplacement = feed.locator(".teammate-message-row.local-user").filter({ hasText: "Retry the private replacement" });
-    await expect(pendingReplacement).toHaveClass(/message-bubble-chat/);
+    await expect(pendingReplacement).toHaveClass(/message-bubble-document/);
     await expect(pendingReplacement).toHaveClass(/message-bubble-own/);
-    await expect(memoryRow).toHaveClass(/message-bubble-chat/);
+    await expect(memoryRow).toHaveClass(/message-bubble-document/);
     await expect(memoryRow).toHaveClass(/message-bubble-peer/);
     await expectMessageFrameContained(pendingReplacement);
     await expectMessageFrameContained(memoryRow);
@@ -445,7 +442,7 @@ function directMessage(input: {
 }
 
 async function openTeammate(page: Page, name: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name }).click();
   await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
 }
@@ -489,12 +486,6 @@ async function expectNoDocumentOverflow(page: Page): Promise<void> {
 }
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
-  const sessionDirectory = process.env.LING_SESSION_VALIDATION_DIR?.replace(/\/$/u, "");
-  if (sessionDirectory) {
-    await mkdir(sessionDirectory, { recursive: true });
-    await page.screenshot({ animations: "disabled", fullPage: true, path: `${sessionDirectory}/${filename}` });
-    return;
-  }
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
   await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({ animations: "disabled", fullPage: true, path: `${evidenceDirectory}${filename}` });

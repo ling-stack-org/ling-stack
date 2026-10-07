@@ -6,6 +6,7 @@ import {
   type ChannelWorkflowStep,
   type ExecutionAction,
   type LingTurn,
+  type LingTurnRun,
   type RunArtifact,
   type RunSession,
   type RunStore,
@@ -27,11 +28,13 @@ import {
 import type { ChannelIntentExecutionOperationV1 } from "@ling-stack/contracts";
 import { formatSynchronousCatalogMessage, isSupportedLocale } from "@ling-stack/localization";
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
+import { isWorkspaceDeliverableArtifact } from "../runs/public-artifacts.js";
 import { redactEvidenceText } from "./context-processing/evidence.js";
 import { inferUserLanguage } from "./response-language.js";
 import { boundedMarkdownText } from "./markdown-text.js";
 import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
+import { collectTerminalInterruptionRisks, terminalReportFailureSummary } from "./terminal-report-interruption-risks.js";
 import { extractWorkflowStepChangedPaths } from "./workflow-step-packets.js";
 
 export interface TerminalReportEvidenceBudgets {
@@ -70,7 +73,7 @@ export function collectWorkflowTerminalReportEvidence(
   options: TerminalReportEvidenceCollectionOptions = {},
 ): TerminalReportEvidenceSnapshot {
   const evidence = buildWorkflowEvidence(store, workflowId);
-  const terminalState = workflowTerminalState(evidence.workflow.status);
+  const sourceTerminalState = workflowTerminalState(evidence.workflow.status);
   const configuredLanguage = evidence.workflow.metadata?.responseLanguage;
   const language = options.language ?? (isSupportedLocale(configuredLanguage)
     ? configuredLanguage
@@ -86,19 +89,28 @@ export function collectWorkflowTerminalReportEvidence(
     workspaceFileRefsByArtifactId.get(artifact.id) ?? [],
   ));
   const artifactsById = new Map(evidence.artifacts.map((artifact) => [artifact.id, artifact]));
+  const executedActions = evidence.actions.filter(hasExecutedActionEvidence);
   const steps = evidence.steps
     .filter((item) => workflowStepHasActivity(item))
     .map((item) => mapWorkflowStep(item, budgets.summaryCharacters));
-  const operations = evidence.actions.map((action) => mapOperation(
+  const operations = executedActions.map((action) => mapOperation(
     action,
     artifactsById,
     budgets.summaryCharacters,
     action.runId ? runCwds.get(action.runId) : undefined,
   ));
-  const checks = collectWorkflowChecks(store, evidence, budgets.summaryCharacters, options.generatedAt ?? evidence.workflow.updatedAt);
+  const terminalState = deriveWorkflowAtomicTerminalState(
+    sourceTerminalState,
+    steps,
+    executedActions,
+  );
+  const interruptionRisks = collectTerminalInterruptionRisks(store,
+    uniqueById(evidence.steps.flatMap(item => item.linkedRun ? [item.linkedRun] : [])), language, executedActions);
+  const checks = collectWorkflowChecks(store, evidence, budgets.summaryCharacters,
+    options.generatedAt ?? evidence.workflow.updatedAt, interruptionRisks);
   const approvals = evidence.approvals.map(mapApproval);
   const participants = aggregateWorkflowParticipants(store, evidence, budgets.summaryCharacters);
-  const risks = collectWorkflowRisks(evidence, checks, budgets.summaryCharacters);
+  const risks = [...interruptionRisks, ...collectWorkflowRisks(evidence, checks, budgets.summaryCharacters)];
 
   return finalizeSnapshot({
     workspaceId: evidence.workflow.workspaceId,
@@ -135,7 +147,7 @@ export function collectRunTerminalReportEvidence(
   if (!run) {
     throw new Error(`Run not found for terminal report evidence: ${runId}`);
   }
-  const terminalState = runTerminalState(run.status);
+  const sourceTerminalState = runTerminalState(run.status);
   const turn = store.getLingTurnForRun(run.id);
   const thread = turn ? store.getLingThread(turn.threadId) : run.threadId ? store.getLingThread(run.threadId) : undefined;
   const task = store.getTask(run.taskId);
@@ -143,16 +155,20 @@ export function collectRunTerminalReportEvidence(
   const sourceRef = sourceRefFor("run", run.id, task?.title ?? turn?.title ?? "Run");
   const artifactsRaw = store.listArtifacts(run.id);
   const actions = listAllExecutionActionsForRun(store, run.id);
+  const executedActions = actions.filter(hasExecutedActionEvidence);
   const approvalsRaw = store.listApprovalRequests({ runId: run.id, complete: true });
   const artifactsById = new Map(artifactsRaw.map((artifact) => [artifact.id, artifact]));
   const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions, new Map([[run.id, run.cwd]]));
-  const changedPaths = changedPathsFromActions(actions, run.cwd);
+  const changedPaths = changedPathsFromActions(executedActions, run.cwd);
+  const terminalState = deriveAtomicUnitStatus(sourceTerminalState, executedActions);
+  const language = options.language ?? languageForRun(run, turn?.userInstruction ?? task?.prompt ?? task?.title) ?? "en-US";
+  const interruptionRisks = collectTerminalInterruptionRisks(store, [run], language, executedActions);
   const teammate = run.teammateId ? store.getAiTeammate(run.teammateId) : undefined;
   const workflowStep = run.workflowStepId ? store.getChannelWorkflowStep(run.workflowStepId) : undefined;
   const rejectedContext = workflowStepResultContextRejected(workflowStep);
   const resultSummary = rejectedContext
     ? undefined
-    : readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? run.errorMessage;
+    : readRunAssistantSummary(store, run.id, budgets.summaryCharacters) ?? terminalReportFailureSummary(run, language);
 
   return finalizeSnapshot({
     workspaceId: turn?.workspaceId ?? thread?.workspaceId ?? "workspace_default",
@@ -163,7 +179,7 @@ export function collectRunTerminalReportEvidence(
     sourceMessageId: turn?.sourceItemId,
     source: { kind: "run", id: run.id },
     objective: boundedMarkdownEvidenceText(workflowStep?.prompt || task?.prompt || task?.title || turn?.userInstruction || turn?.title || "Complete the run.", budgets.summaryCharacters),
-    language: options.language ?? languageForRun(run, turn?.userInstruction ?? task?.prompt ?? task?.title) ?? "en-US",
+    language,
     terminalState,
     terminalAt: run.endedAt ?? run.updatedAt,
     steps: [{
@@ -173,13 +189,13 @@ export function collectRunTerminalReportEvidence(
       teammateId: run.teammateId,
       runId: run.id,
       resultSummary: resultSummary ? boundedMarkdownEvidenceText(resultSummary, budgets.summaryCharacters) : undefined,
-      blocker: run.errorMessage ? boundedText(run.errorMessage, budgets.summaryCharacters) : undefined,
+      blocker: run.errorMessage ? boundedText(terminalReportFailureSummary(run, language)!, budgets.summaryCharacters) : undefined,
       changedPaths,
       artifactIds: artifactsRaw.map((artifact) => artifact.id),
-      sourceRefs: uniqueRefs([sourceRef, ...artifactsRaw.map((artifact) => artifactRef(artifact))]),
+      sourceRefs: uniqueRefs([sourceRef, ...artifactsRaw.filter(isWorkspaceDeliverableArtifact).map((artifact) => artifactRef(artifact))]),
     }],
-    operations: actions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters, run.cwd)),
-    checks: actions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters)),
+    operations: executedActions.map((action) => mapOperation(action, artifactsById, budgets.summaryCharacters, run.cwd)),
+    checks: executedActions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters, { interruptionRisks })),
     participants: run.teammateId && runHasAgentActivity(store, run) ? [{
       agentId: run.teammateId,
       displayName: teammate?.displayName ?? run.teammateId,
@@ -196,7 +212,8 @@ export function collectRunTerminalReportEvidence(
       workspaceFileRefsByArtifactId.get(artifact.id) ?? [],
     )),
     approvals: approvalsRaw.map(mapApproval),
-    risks: collectRunRisks(run, actions, approvalsRaw, sourceRef, budgets.summaryCharacters),
+    risks: [...interruptionRisks,
+      ...collectRunRisks(run, executedActions, approvalsRaw, sourceRef, budgets.summaryCharacters, language)],
     references: [
       sourceRef,
       ...(turn ? [sourceRefFor("turn", turn.id, turn.title)] : []),
@@ -214,7 +231,7 @@ export function collectTurnTerminalReportEvidence(
   if (!turn) {
     throw new Error(`Ling turn not found for terminal report evidence: ${turnId}`);
   }
-  const terminalState = turnTerminalState(turn.status);
+  const sourceTerminalState = turnTerminalState(turn.status);
   const thread = store.getLingThread(turn.threadId);
   const budgets = resolveBudgets(options.budgets);
   const runLinks = store.listLingTurnRuns(turn.id);
@@ -223,12 +240,25 @@ export function collectTurnTerminalReportEvidence(
     .filter((run): run is RunSession => Boolean(run));
   const artifactsRaw = uniqueById(runs.flatMap((run) => store.listArtifacts(run.id)));
   const actions = uniqueById(runs.flatMap((run) => listAllExecutionActionsForRun(store, run.id)));
+  const executedActions = actions.filter(hasExecutedActionEvidence);
   const approvalsRaw = uniqueById(runs.flatMap((run) => store.listApprovalRequests({ runId: run.id, complete: true })));
   const artifactsById = new Map(artifactsRaw.map((artifact) => [artifact.id, artifact]));
   const runCwds = new Map(runs.map((run) => [run.id, run.cwd] as const));
   const workspaceFileRefsByArtifactId = collectWorkspaceFileRefsByArtifactId(actions, runCwds);
   const sourceRef = sourceRefFor("turn", turn.id, turn.title);
-  const participants = aggregateRunParticipants(store, runs, budgets.summaryCharacters);
+  const language = options.language ?? runs.map(run => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction);
+  const interruptionRisks = collectTerminalInterruptionRisks(store, runs, language, executedActions);
+  const participants = aggregateRunParticipants(store, runs, runLinks, budgets.summaryCharacters);
+  const effectiveOutcomeRunIds = selectEffectiveOutcomeRunIds(runs, runLinks);
+  const terminalState = deriveCompositeAtomicTerminalState(
+    sourceTerminalState,
+    runs
+      .filter((run) => effectiveOutcomeRunIds.has(run.id))
+      .map((run) => deriveAtomicUnitStatus(
+        runTerminalState(run.status),
+        executedActions.filter((action) => action.runId === run.id),
+      )),
+  );
 
   return finalizeSnapshot({
     workspaceId: turn.workspaceId,
@@ -239,7 +269,7 @@ export function collectTurnTerminalReportEvidence(
     sourceMessageId: turn.sourceItemId,
     source: { kind: "turn", id: turn.id },
     objective: boundedMarkdownEvidenceText(turn.userInstruction || turn.title, budgets.summaryCharacters),
-    language: options.language ?? runs.map((run) => languageForRun(run, turn.userInstruction)).find(Boolean) ?? inferUserLanguage(turn.userInstruction),
+    language,
     terminalState,
     terminalAt: turn.completedAt ?? turn.updatedAt,
     steps: runs.map((run, index) => mapTurnRunStep(
@@ -248,15 +278,15 @@ export function collectTurnTerminalReportEvidence(
       run,
       index,
       budgets.summaryCharacters,
-      actions.filter((action) => action.runId === run.id),
+      executedActions.filter((action) => action.runId === run.id),
     )),
-    operations: actions.map((action) => mapOperation(
+    operations: executedActions.map((action) => mapOperation(
       action,
       artifactsById,
       budgets.summaryCharacters,
       action.runId ? runCwds.get(action.runId) : undefined,
     )),
-    checks: actions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters)),
+    checks: executedActions.filter(isCheckAction).map((action) => mapCheck(action, budgets.summaryCharacters, { interruptionRisks })),
     participants,
     artifacts: artifactsRaw.map((artifact) => mapArtifact(
       artifact,
@@ -264,7 +294,8 @@ export function collectTurnTerminalReportEvidence(
       workspaceFileRefsByArtifactId.get(artifact.id) ?? [],
     )),
     approvals: approvalsRaw.map(mapApproval),
-    risks: collectTurnRisks(turn, runs, actions, approvalsRaw, sourceRef, budgets.summaryCharacters),
+    risks: [...interruptionRisks,
+      ...collectTurnRisks(turn, runs, executedActions, approvalsRaw, sourceRef, budgets.summaryCharacters, language)],
     references: [
       sourceRef,
       ...(turn.sourceItemId ? [sourceRefFor("conversation_item", turn.sourceItemId, "Source item")] : []),
@@ -356,7 +387,7 @@ function mapWorkflowStep(item: WorkflowEvidence["steps"][number], maxCharacters:
     sourceRefs: uniqueRefs([
       sourceRefFor("workflow_step", step.id, step.title),
       ...(step.runId ? [sourceRefFor("run", step.runId, step.title)] : []),
-      ...item.linkedArtifacts.map((artifact) => artifactRef(artifact)),
+      ...item.linkedArtifacts.filter(isWorkspaceDeliverableArtifact).map((artifact) => artifactRef(artifact)),
     ]),
   };
 }
@@ -387,7 +418,7 @@ function mapTurnRunStep(
     sourceRefs: uniqueRefs([
       sourceRefFor("turn", turn.id, turn.title),
       sourceRefFor("run", run.id, task?.title ?? "Run"),
-      ...artifacts.map((artifact) => artifactRef(artifact)),
+      ...artifacts.filter(isWorkspaceDeliverableArtifact).map((artifact) => artifactRef(artifact)),
     ]),
   };
 }
@@ -414,7 +445,8 @@ function mapOperation(
       ...(action.runId ? [sourceRefFor("run", action.runId, "Operation run")] : []),
       ...action.resultArtifactIds
         .map((id) => artifactsById.get(id))
-        .filter((artifact): artifact is RunArtifact => Boolean(artifact))
+        .filter((artifact): artifact is RunArtifact => artifact !== undefined)
+        .filter(isWorkspaceDeliverableArtifact)
         .map((artifact) => artifactRef(artifact)),
       ...action.targetRefs.map(targetRefToSourceRef).filter((ref): ref is TerminalReportSourceRef => Boolean(ref)),
     ]),
@@ -424,18 +456,26 @@ function mapOperation(
 function mapCheck(
   action: ExecutionAction,
   maxCharacters: number,
-  overrides: { readonly title?: string } = {},
+  overrides: { readonly title?: string; readonly interruptionRisks?: readonly TerminalReportEvidenceRisk[] } = {},
 ): TerminalReportEvidenceCheck {
+  // A terminal Run/action fence is not a command exit receipt. Resolve this
+  // from the same accepted lifecycle facts as the mandatory Host warning.
+  const unconfirmed = overrides.interruptionRisks?.find(risk => risk.sourceRefs.some(ref =>
+    ref.kind === "operation" && ref.id === action.id));
   return {
     id: action.id,
     title: boundedText(overrides.title || action.title || "Verification", maxCharacters),
-    status: action.status === "succeeded" ? "passed"
+    status: unconfirmed ? "unknown" : action.status === "succeeded" ? "passed"
       : action.status === "failed" ? "failed"
         : action.status === "cancelled" ? "cancelled"
           : action.status === "denied" || action.status === "expired" ? "blocked"
             : "unknown",
-    command: boundedText(action.summary, maxCharacters),
-    summary: action.status === "succeeded" ? "Command completed successfully."
+    // The command is Host evidence. Model/action prose is only a narrative
+    // fallback and must never replace the exact command in a report check.
+    command: action.commandEvidence?.command
+      ? boundedText(action.commandEvidence.command, maxCharacters)
+      : undefined,
+    summary: unconfirmed ? unconfirmed.summary : action.status === "succeeded" ? "Command completed successfully."
       : action.status === "failed" ? "Command failed."
         : undefined,
     runId: action.runId,
@@ -458,11 +498,12 @@ function collectWorkflowChecks(
   evidence: WorkflowEvidence,
   maxCharacters: number,
   checkedAt: string,
+  interruptionRisks: readonly TerminalReportEvidenceRisk[],
 ): TerminalReportEvidenceCheck[] {
   const checksById = new Map<string, TerminalReportEvidenceCheck>();
   for (const action of evidence.actions) {
-    if (isCheckAction(action)) {
-      checksById.set(action.id, mapCheck(action, maxCharacters));
+    if (hasExecutedActionEvidence(action) && isCheckAction(action)) {
+      checksById.set(action.id, mapCheck(action, maxCharacters, { interruptionRisks }));
     }
   }
 
@@ -493,10 +534,12 @@ function collectWorkflowChecks(
         ? result.evidenceActionIds
         : [`workflow-check:${item.step.id}:${operation.id}`];
       for (const actionId of actionIds) {
-        const action = evidence.actions.find((candidate) => candidate.id === actionId);
+        const action = evidence.actions.find((candidate) =>
+          candidate.id === actionId && hasExecutedActionEvidence(candidate));
         if (action) {
           checksById.set(action.id, mapCheck(action, maxCharacters, {
             title: operation.targetRef.label || item.step.title,
+            interruptionRisks,
           }));
           continue;
         }
@@ -617,7 +660,7 @@ function aggregateWorkflowParticipants(
       agentId: row.agentId,
       displayName: teammate?.displayName ?? row.displayName ?? row.agentId,
       roleKey: teammate?.roleKey,
-      status: row.status,
+      status: foldParticipantStatus(existing?.status, row.status),
       workflowStepIds: uniqueStrings([...(existing?.workflowStepIds ?? []), row.workflowStepId]),
       runIds: uniqueStrings([...(existing?.runIds ?? []), row.runId]),
       contributionSummaries: uniqueStrings([
@@ -638,13 +681,22 @@ function workflowStepResultContextRejected(step: ChannelWorkflowStep | undefined
 function aggregateRunParticipants(
   store: RunStore,
   runs: readonly RunSession[],
+  runLinks: readonly LingTurnRun[],
   maxCharacters: number,
 ): TerminalReportEvidenceParticipant[] {
+  const activeRuns = runs.filter((run) => run.teammateId && runHasAgentActivity(store, run));
+  const effectiveRunIds = selectEffectiveParticipantRunIds(activeRuns, runs, runLinks);
+  const effectiveStatusByAgent = new Map<string, TerminalReportParticipantStatus>();
+  for (const run of activeRuns) {
+    if (!run.teammateId || !effectiveRunIds.has(run.id)) continue;
+    effectiveStatusByAgent.set(
+      run.teammateId,
+      foldParticipantStatus(effectiveStatusByAgent.get(run.teammateId), participantStatusForRun(run.status)),
+    );
+  }
   const byAgent = new Map<string, TerminalReportEvidenceParticipant>();
-  for (const run of runs) {
-    if (!run.teammateId || !runHasAgentActivity(store, run)) {
-      continue;
-    }
+  for (const run of activeRuns) {
+    if (!run.teammateId) continue;
     const teammate = store.getAiTeammate(run.teammateId);
     const existing = byAgent.get(run.teammateId);
     const summary = readRunEvidenceContribution(store, run, maxCharacters)
@@ -654,7 +706,7 @@ function aggregateRunParticipants(
       agentId: run.teammateId,
       displayName: teammate?.displayName ?? run.teammateId,
       roleKey: teammate?.roleKey,
-      status: participantStatusForRun(run.status),
+      status: effectiveStatusByAgent.get(run.teammateId) ?? participantStatusForRun(run.status),
       workflowStepIds: uniqueStrings([...(existing?.workflowStepIds ?? []), run.workflowStepId]),
       runIds: uniqueStrings([...(existing?.runIds ?? []), run.id]),
       contributionSummaries: uniqueStrings([...(existing?.contributionSummaries ?? []), summary ? boundedMarkdownEvidenceText(summary, maxCharacters) : undefined]),
@@ -662,6 +714,109 @@ function aggregateRunParticipants(
     });
   }
   return [...byAgent.values()];
+}
+
+/**
+ * A retry/repair replaces an earlier attempt of the same logical work, but it
+ * must not hide failures from a different workflow step or unrelated run.
+ * LingTurnRun.attemptNumber is the durable ordering authority; workflowStepId
+ * or a retry/resume/repair parent chain provides the stable ownership key.
+ * A validation run may reference its input run without replacing its outcome.
+ */
+function selectEffectiveParticipantRunIds(
+  candidateRuns: readonly RunSession[],
+  lineageRuns: readonly RunSession[],
+  runLinks: readonly LingTurnRun[],
+): ReadonlySet<string> {
+  const runsById = new Map(lineageRuns.map((run) => [run.id, run]));
+  const linksByRunId = new Map(runLinks.map((link) => [link.runId, link]));
+  const byOwnership = new Map<string, RunSession[]>();
+  for (const run of candidateRuns) {
+    if (!run.teammateId) continue;
+    const ownershipKey = run.workflowStepId
+      ? `workflow_step:${run.workflowStepId}`
+      : `run_lineage:${runLineageRootId(run, runsById, linksByRunId)}`;
+    const key = `${run.teammateId}:${ownershipKey}`;
+    const grouped = byOwnership.get(key) ?? [];
+    grouped.push(run);
+    byOwnership.set(key, grouped);
+  }
+  return new Set([...byOwnership.values()].flatMap((group) => {
+    const effective = [...group].sort((left, right) => compareRunAttempts(left, right, linksByRunId)).at(-1);
+    return effective ? [effective.id] : [];
+  }));
+}
+
+function selectEffectiveOutcomeRunIds(
+  runs: readonly RunSession[],
+  runLinks: readonly LingTurnRun[],
+): ReadonlySet<string> {
+  const runsById = new Map(runs.map((run) => [run.id, run]));
+  const linksByRunId = new Map(runLinks.map((link) => [link.runId, link]));
+  const byOwnership = new Map<string, RunSession[]>();
+  for (const run of runs) {
+    const link = linksByRunId.get(run.id);
+    const ownershipKey = link?.role === "validation"
+      ? `validation:${run.id}`
+      : run.workflowStepId
+        ? `workflow_step:${run.teammateId ?? "ling-agent"}:${run.workflowStepId}`
+        : `run_lineage:${run.teammateId ?? "ling-agent"}:${runLineageRootId(run, runsById, linksByRunId)}`;
+    const grouped = byOwnership.get(ownershipKey) ?? [];
+    grouped.push(run);
+    byOwnership.set(ownershipKey, grouped);
+  }
+  return new Set([...byOwnership.values()].flatMap((group) => {
+    const effective = [...group].sort((left, right) => compareRunAttempts(left, right, linksByRunId)).at(-1);
+    return effective ? [effective.id] : [];
+  }));
+}
+
+function runLineageRootId(
+  run: RunSession,
+  runsById: ReadonlyMap<string, RunSession>,
+  linksByRunId: ReadonlyMap<string, LingTurnRun>,
+): string {
+  const visited = new Set<string>([run.id]);
+  let current = run;
+  let rootId = run.id;
+  while (current.parentRunId && !visited.has(current.parentRunId)) {
+    const role = linksByRunId.get(current.id)?.role;
+    if (role !== "retry" && role !== "resume" && role !== "repair") break;
+    rootId = current.parentRunId;
+    visited.add(rootId);
+    const parent = runsById.get(rootId);
+    if (!parent) break;
+    current = parent;
+  }
+  return rootId;
+}
+
+function compareRunAttempts(
+  left: RunSession,
+  right: RunSession,
+  linksByRunId: ReadonlyMap<string, LingTurnRun>,
+): number {
+  const attemptDelta = (linksByRunId.get(left.id)?.attemptNumber ?? 0)
+    - (linksByRunId.get(right.id)?.attemptNumber ?? 0);
+  return attemptDelta
+    || left.updatedAt.localeCompare(right.updatedAt)
+    || left.createdAt.localeCompare(right.createdAt)
+    || left.id.localeCompare(right.id);
+}
+
+/** Match the workflow completion gate's terminal precedence. */
+function foldParticipantStatus(
+  current: TerminalReportParticipantStatus | undefined,
+  incoming: TerminalReportParticipantStatus,
+): TerminalReportParticipantStatus {
+  if (!current) return incoming;
+  const precedence: Readonly<Record<TerminalReportParticipantStatus, number>> = {
+    completed: 0,
+    blocked: 1,
+    cancelled: 2,
+    failed: 3,
+  };
+  return precedence[incoming] > precedence[current] ? incoming : current;
 }
 
 function collectWorkflowRisks(
@@ -705,6 +860,7 @@ function collectRunRisks(
   approvals: readonly ApprovalRequest[],
   sourceRef: TerminalReportSourceRef,
   maxCharacters: number,
+  language: TerminalReportLanguage,
 ): TerminalReportEvidenceRisk[] {
   const risks: TerminalReportEvidenceRisk[] = [];
   if (run.status === "failed" || run.errorMessage) {
@@ -712,7 +868,7 @@ function collectRunRisks(
       id: `run-failure:${run.id}`,
       severity: "critical",
       status: "unresolved",
-      summary: boundedText(run.errorMessage ?? "Run failed.", maxCharacters),
+      summary: boundedText(terminalReportFailureSummary(run, language) ?? "Run failed.", maxCharacters),
       sourceRefs: [sourceRef],
     });
   }
@@ -721,7 +877,7 @@ function collectRunRisks(
       id: `action-failure:${action.id}`,
       severity: "critical",
       status: "unresolved",
-      summary: boundedText(`${action.title}: ${action.summary}`, maxCharacters),
+      summary: boundedText(toolValidationFailureSummary(action) ?? `${action.title}: ${action.summary}`, maxCharacters),
       sourceRefs: [sourceRefFor("operation", action.id, action.title)],
     });
   }
@@ -731,6 +887,15 @@ function collectRunRisks(
   return uniqueById(risks);
 }
 
+function toolValidationFailureSummary(action: ExecutionAction): string | undefined {
+  const evidence = action.toolEvidence;
+  if (!evidence?.outputText) return undefined;
+  const match = /^Validation failed for tool "([a-z][a-z0-9_-]{0,63})":\r?\n[ \t]*- ([A-Za-z_][A-Za-z0-9_-]{0,63}): must have required properties ([A-Za-z_][A-Za-z0-9_-]{0,63})(?:\r?\n|$)/u.exec(evidence.outputText);
+  if (!match || match[1] !== evidence.toolName || match[2] !== match[3]) return undefined;
+  // Only project the validated field name, never arbitrary tool output into a report or later context.
+  return `${evidence.toolName}: missing required ${match[2]} argument`;
+}
+
 function collectTurnRisks(
   turn: LingTurn,
   runs: readonly RunSession[],
@@ -738,6 +903,7 @@ function collectTurnRisks(
   approvals: readonly ApprovalRequest[],
   sourceRef: TerminalReportSourceRef,
   maxCharacters: number,
+  language: TerminalReportLanguage,
 ): TerminalReportEvidenceRisk[] {
   const risks = runs.flatMap((run) => collectRunRisks(
     run,
@@ -745,6 +911,7 @@ function collectTurnRisks(
     approvals.filter((approval) => approval.runId === run.id),
     sourceRefFor("run", run.id, turn.title),
     maxCharacters,
+    language,
   ));
   if (turn.status === "blocked") {
     risks.push({
@@ -813,13 +980,30 @@ function runHasAgentActivity(store: RunStore, run: RunSession): boolean {
   );
 }
 
+/**
+ * An approval is authority to execute, not proof that execution happened.
+ * Terminal reports may retain approval lineage separately, but operations,
+ * checks, changed paths, and atomic outcomes must come from accepted Host/tool
+ * evidence only.
+ */
+function hasExecutedActionEvidence(action: ExecutionAction): boolean {
+  return action.sourceEventSequence !== undefined ||
+    Boolean(action.executedAt) ||
+    Boolean(action.commandEvidence) ||
+    Boolean(action.toolEvidence) ||
+    Boolean(action.hostOpenReceipt) ||
+    Boolean(action.runtimeDiagnostic) ||
+    action.sourceRefs.some((ref) => ref.kind === "run_event");
+}
+
 function isCheckAction(action: ExecutionAction): boolean {
-  if (action.actionType !== "bash") {
+  if (!hasExecutedActionEvidence(action) || action.actionType !== "bash") {
     return false;
   }
   const command = (action.commandEvidence?.command || action.summary).trim().toLowerCase();
   if (/(?:^|\s)(?:pnpm|npm|yarn|bun)\s+(?:run\s+)?(?:test|typecheck|lint|build|check)(?:\s|$)/u.test(command) ||
-    /(?:^|\s)(?:pytest|vitest|jest|tsc|eslint|cargo\s+test|go\s+test)(?:\s|$)/u.test(command)) {
+    /(?:^|\s)(?:pytest|vitest|jest|tsc|eslint|cargo\s+test|go\s+test)(?:\s|$)/u.test(command) ||
+    /(?:^|\s)python(?:3(?:\.\d+)?)?\s+-m\s+(?:unittest|pytest)(?:\s|$)/u.test(command)) {
     return true;
   }
   // Custom verifier scripts are common in delegated workflows (for example,
@@ -866,6 +1050,61 @@ function operationStatus(status: ExecutionAction["status"]): TerminalReportEvide
     return "blocked";
   }
   return "unknown";
+}
+
+function deriveWorkflowAtomicTerminalState(
+  sourceState: TerminalReportOutcomeStatus,
+  steps: readonly TerminalReportEvidenceStep[],
+  actions: readonly ExecutionAction[],
+): TerminalReportOutcomeStatus {
+  const effectiveRunIds = new Set(steps.flatMap((step) => step.runId ? [step.runId] : []));
+  const effectiveActions = actions.filter((action) => !action.runId || effectiveRunIds.has(action.runId));
+  const unitStates = steps.map((step) => deriveAtomicUnitStatus(
+    step.status === "skipped" ? "cancelled" : step.status,
+    step.runId ? effectiveActions.filter((action) => action.runId === step.runId) : [],
+  ));
+  unitStates.push(...effectiveActions
+    .filter((action) => !action.runId)
+    .map((action) => deriveAtomicUnitStatus("succeeded", [action])));
+  return deriveCompositeAtomicTerminalState(sourceState, unitStates);
+}
+
+function deriveAtomicUnitStatus(
+  sourceState: TerminalReportOutcomeStatus,
+  actions: readonly ExecutionAction[],
+): TerminalReportOutcomeStatus {
+  const statuses = actions
+    .filter(hasExecutedActionEvidence)
+    .filter(isTerminalOutcomeAction)
+    .map((action) => operationStatus(action.status));
+  if (sourceState === "failed") return "failed";
+  if (statuses.includes("failed")) {
+    return statuses.includes("succeeded") ? "partially_succeeded" : "failed";
+  }
+  if (sourceState === "blocked" || statuses.includes("blocked") || statuses.includes("unknown")) return "blocked";
+  if (sourceState === "cancelled" || statuses.includes("cancelled")) return "cancelled";
+  return "succeeded";
+}
+
+function deriveCompositeAtomicTerminalState(
+  sourceState: TerminalReportOutcomeStatus,
+  unitStates: readonly TerminalReportOutcomeStatus[],
+): TerminalReportOutcomeStatus {
+  if (unitStates.length === 0) return sourceState;
+  const states = sourceState === "succeeded" ? [...unitStates] : [...unitStates, sourceState];
+  const succeeded = states.some((status) => status === "succeeded" || status === "partially_succeeded");
+  const failed = states.some((status) => status === "failed" || status === "partially_succeeded");
+  const blocked = states.some((status) => status === "blocked");
+  const cancelled = states.some((status) => status === "cancelled");
+  if (succeeded && (failed || blocked || cancelled)) return "partially_succeeded";
+  if (failed) return "failed";
+  if (blocked) return "blocked";
+  if (cancelled) return "cancelled";
+  return "succeeded";
+}
+
+function isTerminalOutcomeAction(action: ExecutionAction): boolean {
+  return action.actionType !== "runtime_permission_request";
 }
 
 function workflowTerminalState(status: WorkflowEvidence["workflow"]["status"]): TerminalReportOutcomeStatus {
@@ -950,7 +1189,7 @@ function artifactRef(artifact: RunArtifact, folded = false): TerminalReportSourc
     "artifact",
     artifact.id,
     artifact.title?.trim() || artifact.path,
-    shouldFold ? "folded_evidence" : "conversation",
+    isWorkspaceDeliverableArtifact(artifact) ? (shouldFold ? "folded_evidence" : "conversation") : "developer_only",
     artifact.type === "log" ? "secret_adjacent" : "normal",
   );
 }
@@ -1022,7 +1261,7 @@ function readRunEvidenceContribution(
   run: RunSession,
   maxCharacters: number,
 ): string | undefined {
-  const actions = listAllExecutionActionsForRun(store, run.id);
+  const actions = listAllExecutionActionsForRun(store, run.id).filter(hasExecutedActionEvidence);
   if (actions.length === 0) return undefined;
   const contributions = actions.map((action) => {
     const operation = workflowOperationForAction(store, run, action);
@@ -1072,7 +1311,7 @@ function workflowOperationForAction(
 
 function changedPathsFromActions(actions: readonly ExecutionAction[], cwd?: string): string[] {
   return extractWorkflowStepChangedPaths({
-    actions,
+    actions: actions.filter(hasExecutedActionEvidence),
     cwd,
   })
     .map((path) => redactEvidenceText(path));

@@ -6,6 +6,7 @@ import { basename, extname, join } from "node:path";
 import { promisify } from "node:util";
 import type { WorkspaceFileOpenTarget } from "@ling-stack/contracts";
 import { workspaceFileOpenTargetDefinition } from "./workspace-file-open-targets.js";
+import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
 
 const execFileAsync = promisify(execFile);
 const iconSize = 64;
@@ -20,6 +21,26 @@ interface CommandResult {
   readonly stdout: string;
   readonly stderr: string;
 }
+
+interface IconProbeLaunch {
+  readonly command: string;
+  readonly args: readonly string[];
+  producerEntered: boolean;
+}
+
+const refusedIconProbeLaunches = new WeakSet<object>();
+
+/** Only the default runtime owns this original producer; custom runtimes receive no source proof. */
+export const WORKSPACE_ICON_PROBE_ACTOR_ENTRY = defineProtectedHostActorEntry("workspace_icon_probe",
+  async (launch: IconProbeLaunch): Promise<CommandResult> => {
+    launch.producerEntered = true;
+    const result = await execFileAsync(launch.command, [...launch.args], {
+      encoding: "utf8",
+      maxBuffer: 4 * 1024 * 1024,
+      windowsHide: true,
+    });
+    return { stdout: String(result.stdout ?? ""), stderr: String(result.stderr ?? "") };
+  });
 
 export interface WorkspaceFileOpenIconRuntime {
   readonly platform: NodeJS.Platform | string;
@@ -54,12 +75,13 @@ const defaultRuntime: WorkspaceFileOpenIconRuntime = {
   mkdtemp,
   rm: (path) => rm(path, { recursive: true, force: true }),
   execFile: async (command, args) => {
-    const result = await execFileAsync(command, [...args], {
-      encoding: "utf8",
-      maxBuffer: 4 * 1024 * 1024,
-      windowsHide: true,
-    });
-    return { stdout: String(result.stdout ?? ""), stderr: String(result.stderr ?? "") };
+    const launch: IconProbeLaunch = { command, args: Object.freeze([...args]), producerEntered: false };
+    try {
+      return await WORKSPACE_ICON_PROBE_ACTOR_ENTRY.invoke(undefined, launch);
+    } catch (error) {
+      if (!launch.producerEntered && typeof error === "object" && error !== null) refusedIconProbeLaunches.add(error);
+      throw error;
+    }
   },
 };
 
@@ -199,7 +221,8 @@ async function convertMacApplicationIcon(
       outputPath,
     ]);
     return result ? await runtime.readFile(outputPath) : undefined;
-  } catch {
+  } catch (error) {
+    if (isRefusedDefaultIconProbe(runtime, error)) throw error;
     return undefined;
   } finally {
     await runtime.rm(temporaryPath).catch(() => undefined);
@@ -214,6 +237,10 @@ async function safeStat(runtime: WorkspaceFileOpenIconRuntime, path: string): Pr
   }
 }
 
+function isRefusedDefaultIconProbe(runtime: WorkspaceFileOpenIconRuntime, error: unknown): boolean {
+  return runtime === defaultRuntime && typeof error === "object" && error !== null && refusedIconProbeLaunches.has(error);
+}
+
 async function safeExec(
   runtime: WorkspaceFileOpenIconRuntime,
   command: string,
@@ -221,7 +248,8 @@ async function safeExec(
 ): Promise<CommandResult | undefined> {
   try {
     return await runtime.execFile(command, args);
-  } catch {
+  } catch (error) {
+    if (isRefusedDefaultIconProbe(runtime, error)) throw error;
     return undefined;
   }
 }

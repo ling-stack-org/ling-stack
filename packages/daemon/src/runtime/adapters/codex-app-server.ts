@@ -1,4 +1,5 @@
 import type { RunnerAdapter } from "../../context.js";
+import type { RunnerToolExecutionConformanceV1 } from "../runner-tool-conformance.js";
 import {
   coerceExternalAgentRunResult,
   runExternalAgentTask,
@@ -21,10 +22,21 @@ export const codexAppServerCapabilityKeys = [
 
 export type CodexAppServerCapabilityKey = typeof codexAppServerCapabilityKeys[number];
 
+export const requiredCodexAppServerCapabilityKeys: readonly CodexAppServerCapabilityKey[] = [
+  "sessionLifecycle",
+  "textStreaming",
+  "toolEvents",
+  "artifacts",
+  "cancellation",
+  "workspaceBoundary",
+];
+
 export type CodexAppServerCapabilities = Readonly<Record<CodexAppServerCapabilityKey, boolean>>;
 
 export interface CodexAppServerClientOptions {
   readonly baseUrl: string;
+  readonly adapterRevision?: string;
+  readonly toolExecutionConformance?: RunnerToolExecutionConformanceV1;
   readonly timeoutMs?: number;
   readonly fetchImpl?: typeof globalThis.fetch;
 }
@@ -63,6 +75,8 @@ export function createCodexAppServerAdapter(options: CodexAppServerClientOptions
       return runExternalAgentTask({
         runnerId: "codex-app-server",
         backend: "codex-app-server",
+        adapterRevision: options.adapterRevision ?? `${LING_CODEX_APP_SERVER_PROTOCOL_VERSION}:adapter-unverified`,
+        toolExecutionConformance: options.toolExecutionConformance,
         options: runOptions,
         extraSecrets: [runOptions.provider.apiKey],
         run: (input, signal) => runCodexAppServerTask(options, input, signal),
@@ -184,7 +198,7 @@ function negotiateCodexAppServerCapabilities(result: CodexAppServerInitializeRes
   readonly missingCapabilities: readonly CodexAppServerCapabilityKey[];
 } {
   const protocolMatched = result.protocolVersion === LING_CODEX_APP_SERVER_PROTOCOL_VERSION;
-  const missingCapabilities = codexAppServerCapabilityKeys.filter((key) => result.capabilities[key] !== true);
+  const missingCapabilities = requiredCodexAppServerCapabilityKeys.filter((key) => result.capabilities[key] !== true);
   return {
     ok: protocolMatched && missingCapabilities.length === 0,
     missingCapabilities,

@@ -1,14 +1,16 @@
 import { createReadStream, statSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { basename, dirname } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, spawnSync, type SpawnSyncOptionsWithStringEncoding } from "node:child_process";
 import { pipeline } from "node:stream/promises";
 import type {
   WorkspaceFileOpenOption,
   WorkspaceFileOpenRequest,
   WorkspaceFileOpenTarget,
 } from "@ling-stack/contracts";
+import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody } from "../../shared/request.js";
+import { isAllowedLocalOrigin } from "../../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../../shared/response.js";
 import {
   resolveWorkspaceFileTarget,
@@ -21,6 +23,17 @@ import {
   type WorkspaceFileOpenTargetDefinition,
 } from "./workspace-file-open-targets.js";
 import { loadWorkspaceFileOpenIcon } from "./workspace-file-open-icons.js";
+import type { WorkspaceFileCapabilityRegistry } from "./workspace-file-capabilities.js";
+import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
+
+/** Original file-open UI launch; external/raw, not an attempt or isolated actor. */
+export const WORKSPACE_FILE_LAUNCH_ACTOR_ENTRY = defineProtectedHostActorEntry("workspace_file_launch",
+  (command: string, args: readonly string[], env: NodeJS.ProcessEnv) =>
+    spawn(command, [...args], { detached: true, env, stdio: "ignore", windowsHide: true }));
+
+/** Availability probes remain uncertified; PATH/config resolution cannot issue a protected-stage proof. */
+export const WORKSPACE_FILE_PROBE_ACTOR_ENTRY = defineProtectedHostActorEntry("workspace_file_probe",
+  (command: string, args: readonly string[], options: SpawnSyncOptionsWithStringEncoding) => spawnSync(command, [...args], options));
 
 export function handleGetWorkspaceFileOpenOptions(response: ServerResponse, url: URL): void {
   const request = workspaceFileQuery(url);
@@ -81,14 +94,48 @@ export async function handlePostWorkspaceFileOpen(
   response: ServerResponse,
   url: URL,
   maxBodyBytes: number,
+  stores?: RunStoreRegistry,
+  capabilities?: WorkspaceFileCapabilityRegistry,
 ): Promise<void> {
-  const query = workspaceFileQuery(url);
-  if (!query) {
-    writeJson(response, 400, { error: "bad_request", message: "cwd and path query parameters are required" });
-    return;
-  }
   try {
+    if (!isAllowedLocalOrigin(request.headers.origin)) {
+      writeJson(response, 403, { error: "forbidden_origin", message: "Workspace file actions are only available from local Ling Stack pages." });
+      return;
+    }
     const body = await readJsonBody(request, maxBodyBytes) as Partial<WorkspaceFileOpenRequest>;
+    if (body.capabilityId) {
+      if (!stores || !capabilities || !body.scope) {
+        writeJson(response, 400, { error: "bad_request", message: "capabilityId requires transcript scope" });
+        return;
+      }
+      if (!isWorkspaceFileOpenTarget(body.target)) {
+        writeJson(response, 400, { error: "bad_request", message: "target must be a supported workspace file open target" });
+        return;
+      }
+      const grant = capabilities.redeem(body.capabilityId, body.scope, stores);
+      if (!stores.isTrustedWorkspaceRoot(grant.cwd)) {
+        writeJson(response, 403, { error: "workspace_not_trusted", message: "Workspace file actions are limited to daemon-known workspaces." });
+        return;
+      }
+      await launchWorkspaceFile(body.target, grant.resource.contentPath, body.line);
+      writeJson(response, 200, {
+        cwd: grant.cwd,
+        path: grant.resource.displayPath,
+        target: body.target,
+        opened: true,
+        capabilityId: grant.capabilityId,
+      });
+      return;
+    }
+    const query = workspaceFileQuery(url);
+    if (!query) {
+      writeJson(response, 400, { error: "bad_request", message: "cwd and path query parameters are required" });
+      return;
+    }
+    if (stores && !stores.isTrustedWorkspaceRoot(query.cwd)) {
+      writeJson(response, 403, { error: "workspace_not_trusted", message: "Workspace file actions are limited to daemon-known workspaces." });
+      return;
+    }
     if (!isWorkspaceFileOpenTarget(body.target)) {
       writeJson(response, 400, { error: "bad_request", message: "target must be a supported workspace file open target" });
       return;
@@ -172,10 +219,11 @@ function commandAvailable(command: string): boolean {
 }
 
 function macApplicationAvailable(application: string): boolean {
-  return process.platform === "darwin" && spawnSync("/usr/bin/open", ["-Ra", application], { stdio: "ignore" }).status === 0;
+  return process.platform === "darwin" && WORKSPACE_FILE_PROBE_ACTOR_ENTRY.invoke(undefined,
+    "/usr/bin/open", ["-Ra", application], { stdio: "ignore", encoding: "utf8" }).status === 0;
 }
 
-async function launchWorkspaceFile(target: WorkspaceFileOpenTarget, path: string, line: number | undefined): Promise<void> {
+export async function launchWorkspaceFile(target: WorkspaceFileOpenTarget, path: string, line: number | undefined): Promise<void> {
   if (target === "finder") {
     await spawnDetached("/usr/bin/open", ["-R", path]);
     return;
@@ -218,7 +266,7 @@ function editorArgs(target: WorkspaceFileOpenTarget, path: string, line: number 
 
 function resolveCommandPath(command: string): string | undefined {
   const probe = process.platform === "win32" ? "where" : "which";
-  const result = spawnSync(probe, [command], { encoding: "utf8", windowsHide: true });
+  const result = WORKSPACE_FILE_PROBE_ACTOR_ENTRY.invoke(undefined, probe, [command], { encoding: "utf8", windowsHide: true });
   if (result.status !== 0) {
     return undefined;
   }
@@ -242,7 +290,7 @@ function spawnDetached(command: string, args: readonly string[]): Promise<void> 
 
 function spawnDetachedProcess(command: string, args: readonly string[], env = process.env): Promise<void> {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, [...args], { detached: true, env, stdio: "ignore", windowsHide: true });
+    const child = WORKSPACE_FILE_LAUNCH_ACTOR_ENTRY.invoke(undefined, command, args, env);
     child.once("error", reject);
     child.once("spawn", () => {
       child.unref();

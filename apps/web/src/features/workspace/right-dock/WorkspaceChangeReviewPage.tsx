@@ -6,11 +6,12 @@ import {
   X,
 } from "lucide-react";
 import { useI18n } from "../../../i18n.js";
-import { parseUnifiedDiff, type ConversationFileChange } from "../../../lib/diff-summary.js";
+import type { ConversationFileChange } from "../../../lib/diff-summary.js";
 import type {
   WorkspaceChangeFile,
   WorkspaceChangesResponse,
 } from "../../../types.js";
+import type { WorkspaceChangeReview } from "@ling-stack/contracts";
 import { DiffViewer } from "../../../shared/conversation/blocks/DiffViewer.js";
 import {
   terminalReportFileIcon,
@@ -30,6 +31,8 @@ import {
 export function WorkspaceChangeReviewPage({
   cwd,
   changes,
+  review,
+  scoped = false,
   loading,
   error,
   requestedPath,
@@ -37,6 +40,8 @@ export function WorkspaceChangeReviewPage({
 }: {
   readonly cwd?: string;
   readonly changes?: WorkspaceChangesResponse;
+  readonly review?: WorkspaceChangeReview;
+  readonly scoped?: boolean;
   readonly loading: boolean;
   readonly error?: string;
   readonly requestedPath?: string;
@@ -47,7 +52,8 @@ export function WorkspaceChangeReviewPage({
   const [filter, setFilter] = useState("");
   const [selectedPath, setSelectedPath] = useState<string>();
   const fileRefs = useRef(new Map<string, HTMLElement>());
-  const files = changes?.files ?? [];
+  const files = useMemo<readonly ReviewDisplayFile[]>(() => scoped ? (review?.files ?? []).map((file) => ({ ...file,
+    staged: false, unstaged: false, untracked: false, truncated: false })) : changes?.files ?? [], [scoped, review, changes]);
   const filteredFiles = useMemo(() => {
     const query = filter.trim().toLowerCase();
     return query ? files.filter((file) => file.path.toLowerCase().includes(query)) : files;
@@ -60,7 +66,9 @@ export function WorkspaceChangeReviewPage({
     }
     const frameId = globalThis.requestAnimationFrame(() => scrollToFile(requestedPath));
     return () => globalThis.cancelAnimationFrame(frameId);
-  }, [files.length, requestedPath]);
+  }, [files, requestedPath]);
+
+  useEffect(() => { setFilter(""); setSelectedPath(undefined); }, [review?.scope.kind, review?.scope.id]);
 
 
   function scrollToFile(path: string): void {
@@ -69,11 +77,13 @@ export function WorkspaceChangeReviewPage({
   }
 
   return (
-    <div className="workspace-change-review-page">
+    <div className="workspace-change-review-page" data-workspace-change-review-scope={scoped ? review?.scope.kind ?? "scoped" : "workspace"}
+      data-workspace-change-review-id={review?.scope.id} data-workspace-change-review-revision={review?.revision}>
       <header className="workspace-change-review-toolbar">
         <span className="workspace-change-review-summary">
-          <strong>{changes?.branchName || t("Workspace changes")}</strong>
-          {changes?.state === "dirty" ? (
+          <strong>{scoped ? t("This work's changes") : changes?.branchName || t("Workspace changes")}</strong>
+          {scoped && review ? <small>{t("{count} changed files", { count: files.length })}
+            <ChangeStats additions={review.additions} deletions={review.deletions} /></small> : changes?.state === "dirty" ? (
             <small>
               {changes.truncated
                 ? t("Showing {visible} of {total} changed files", { visible: files.length, total: changes.totalFileCount })
@@ -106,24 +116,25 @@ export function WorkspaceChangeReviewPage({
       </header>
 
       <div className="workspace-change-review-body">
-        {loading && !changes ? (
+        {loading && !(scoped ? review : changes) ? (
           <div className="workspace-change-review-state"><Spinner label={t("Loading")} size="sm" /></div>
         ) : error ? (
           <InlineFeedback className="workspace-change-review-state error" tone="danger">{error}</InlineFeedback>
-        ) : changes?.state !== "dirty" || files.length === 0 ? (
+        ) : (!scoped && changes?.state !== "dirty") || files.length === 0 ? (
           <EmptyState
             className="workspace-change-review-state"
             compact
             title={t("No code changes")}
-            description={changes?.unavailableReason ?? changes?.errorMessage}
+            description={scoped ? review?.unavailableReason : changes?.unavailableReason ?? changes?.errorMessage}
           />
         ) : (
           <div className="workspace-change-review-diffs">
             {files.map((file) => (
               <WorkspaceChangeFileSection
                 key={file.path}
-                cwd={changes.repoRoot ?? cwd ?? changes.cwd}
+                cwd={cwd ?? changes?.repoRoot ?? changes?.cwd ?? ""}
                 file={file}
+                scoped={scoped}
                 selected={selectedPath === file.path}
                 setRef={(element) => {
                   if (element) {
@@ -179,7 +190,7 @@ export function WorkspaceChangeReviewPage({
           </aside>
         ) : null}
       </div>
-      {cwd ? <WorkspaceSnapshotRestorePanel cwd={cwd} /> : null}
+      {cwd && !scoped ? <WorkspaceSnapshotRestorePanel cwd={cwd} /> : null}
     </div>
   );
 }
@@ -187,11 +198,13 @@ export function WorkspaceChangeReviewPage({
 function WorkspaceChangeFileSection({
   cwd,
   file,
+  scoped,
   selected,
   setRef,
 }: {
   readonly cwd: string;
-  readonly file: WorkspaceChangeFile;
+  readonly file: ReviewDisplayFile;
+  readonly scoped: boolean;
   readonly selected: boolean;
   readonly setRef: (element: HTMLElement | null) => void;
 }): React.JSX.Element {
@@ -224,9 +237,10 @@ function WorkspaceChangeFileSection({
           size="md"
           aria-expanded={!collapsed}
           aria-label={`${collapsed ? t("Expand code preview") : t("Collapse code preview")}: ${fileName}`}
+          leadingIcon={<span className="terminal-report-file-type-icon" data-file-kind={fileIcon.kind} aria-hidden="true"><fileIcon.Icon size={13} /></span>}
           onClick={() => setCollapsed((current) => !current)}
         >
-          <span className="terminal-report-file-type-icon" data-file-kind={fileIcon.kind} aria-hidden="true"><fileIcon.Icon size={13} /></span>
+          <span className="workspace-change-file-label">
           <span className="workspace-change-file-copy">
             <strong>{fileName}</strong>
             <small>{directoryName(file.path) || file.path}</small>
@@ -236,27 +250,30 @@ function WorkspaceChangeFileSection({
             {file.untracked ? <small>{t("Untracked")}</small> : null}
             <ChangeStats additions={file.additions} deletions={file.deletions} />
           </span>
+          </span>
         </Button>
-        {file.kind !== "deleted" ? <WorkspaceFileOpenMenu cwd={cwd} path={file.path} compact /> : null}
+        {!scoped && file.kind !== "deleted" ? <WorkspaceFileOpenMenu cwd={cwd} path={file.path} compact /> : null}
       </header>
       {!collapsed ? (
         change ? <DiffViewer change={change} maxCollapsedLines={220} showFoldMarkers={false} /> : (
-          <div className="workspace-change-file-empty">{file.truncated ? t("Preview truncated") : t("Preview unavailable")}</div>
+          <div className="workspace-change-file-empty">{file.unavailableReason ?? (file.truncated ? t("Preview truncated") : t("Preview unavailable"))}</div>
         )
       ) : null}
     </article>
   );
 }
 
-function workspaceChangeToConversationChange(file: WorkspaceChangeFile): ConversationFileChange | undefined {
+type ReviewDisplayFile = Omit<WorkspaceChangeFile, "additions" | "deletions"> & {
+  readonly additions?: number;
+  readonly deletions?: number;
+  readonly unavailableReason?: string;
+};
+
+function workspaceChangeToConversationChange(file: ReviewDisplayFile): ConversationFileChange | undefined {
   if (!file.diff?.trim()) {
     return undefined;
   }
-  return parseUnifiedDiff(file.diff, {
-    idPrefix: `workspace:${file.path}`,
-    fallbackPath: file.path,
-    status: "completed",
-  }).find((change) => change.path === file.path) ?? {
+  return {
     id: `workspace:${file.path}`,
     path: file.path,
     kind: workspaceChangeKind(file),
@@ -267,7 +284,7 @@ function workspaceChangeToConversationChange(file: WorkspaceChangeFile): Convers
   };
 }
 
-function workspaceChangeKind(file: WorkspaceChangeFile): ConversationFileChange["kind"] {
+function workspaceChangeKind(file: ReviewDisplayFile): ConversationFileChange["kind"] {
   if (file.kind === "added" || file.untracked) {
     return "add";
   }
@@ -280,12 +297,13 @@ function workspaceChangeKind(file: WorkspaceChangeFile): ConversationFileChange[
   return "update";
 }
 
-function ChangeStats({ additions, deletions }: { readonly additions: number; readonly deletions: number }): React.JSX.Element {
-  return <span className="workspace-change-stats"><span className="add">+{additions}</span><span className="delete">-{deletions}</span></span>;
+function ChangeStats({ additions, deletions }: { readonly additions?: number; readonly deletions?: number }): React.JSX.Element | null {
+  if (additions === undefined || deletions === undefined) return null;
+  return <span className="workspace-change-stats"><span className="add">+{additions}</span><span className="delete">−{deletions}</span></span>;
 }
 
-function groupFilesByDirectory(files: readonly WorkspaceChangeFile[]): readonly { readonly directory: string; readonly files: readonly WorkspaceChangeFile[] }[] {
-  const groups = new Map<string, WorkspaceChangeFile[]>();
+function groupFilesByDirectory(files: readonly ReviewDisplayFile[]): readonly { readonly directory: string; readonly files: readonly ReviewDisplayFile[] }[] {
+  const groups = new Map<string, ReviewDisplayFile[]>();
   for (const file of files) {
     const directory = directoryName(file.path) || ".";
     groups.set(directory, [...(groups.get(directory) ?? []), file]);

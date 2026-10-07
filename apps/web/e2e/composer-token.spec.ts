@@ -13,7 +13,7 @@ function channelComposerTextbox(scope: Page | Locator): Locator {
   return scope.getByRole("textbox", { name: "Message this channel or @ an AI teammate", exact: true });
 }
 
-test("channel composer keeps typed text visible after a GitHub link token", async ({ page }) => {
+test("channel composer keeps a trailing GitHub URL editable until a whitespace boundary", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.runs = [];
@@ -26,15 +26,17 @@ test("channel composer keeps typed text visible after a GitHub link token", asyn
   const composerInput = channelComposerTextbox(page);
   await composerInput.click();
   await page.keyboard.insertText("https://github.com/QuantConnect/Lean");
-  await expect(page.locator(".channel-composer .composer-inline-token.url-reference").filter({ hasText: "QuantConnect/Lean" })).toBeVisible();
+  await expect(page.locator(".channel-composer .composer-inline-token.url-reference")).toHaveCount(0);
+  await expect(page.locator(".channel-composer .composer-inline-text")).toContainText("https://github.com/QuantConnect/Lean");
 
   await page.keyboard.insertText(" 这段文字应该继续显示");
 
   await expect.poll(() => composerInput.getAttribute("data-value")).toBe("https://github.com/QuantConnect/Lean 这段文字应该继续显示");
+  await expect(page.locator(".channel-composer .composer-inline-token.url-reference").filter({ hasText: "QuantConnect/Lean" })).toBeVisible();
   await expect(page.locator(".channel-composer .composer-inline-text").filter({ hasText: "这段文字应该继续显示" })).toBeVisible();
 });
 
-test("channel composer keeps typed text visible when typing immediately after a GitHub link token", async ({ page }) => {
+test("channel composer recognizes CJK text as a boundary after a trailing GitHub URL", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.runs = [];
@@ -47,15 +49,16 @@ test("channel composer keeps typed text visible when typing immediately after a 
   const composerInput = channelComposerTextbox(page);
   await composerInput.click();
   await page.keyboard.insertText("https://github.com/QuantConnect/Lean");
-  await expect(page.locator(".channel-composer .composer-inline-token.url-reference").filter({ hasText: "QuantConnect/Lean" })).toBeVisible();
+  await expect(page.locator(".channel-composer .composer-inline-token.url-reference")).toHaveCount(0);
 
   await page.keyboard.insertText("这段文字应该继续显示");
 
-  await expect.poll(() => composerInput.getAttribute("data-value")).toBe("https://github.com/QuantConnect/Lean 这段文字应该继续显示");
+  await expect.poll(() => composerInput.getAttribute("data-value")).toBe("https://github.com/QuantConnect/Lean这段文字应该继续显示");
+  await expect(page.locator(".channel-composer .composer-inline-token.url-reference").filter({ hasText: "QuantConnect/Lean" })).toBeVisible();
   await expect(page.locator(".channel-composer .composer-inline-text").filter({ hasText: "这段文字应该继续显示" })).toBeVisible();
 });
 
-test("channel composer separates ASCII text typed immediately after a GitHub link token", async ({ page }) => {
+test("channel composer separates ASCII text after an explicit GitHub URL boundary", async ({ page }) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "pending" });
   state.runs = [];
@@ -68,11 +71,12 @@ test("channel composer separates ASCII text typed immediately after a GitHub lin
   const composerInput = channelComposerTextbox(page);
   await composerInput.click();
   await page.keyboard.insertText("https://github.com/QuantConnect/Lean");
-  await expect(page.locator(".channel-composer .composer-inline-token.url-reference").filter({ hasText: "QuantConnect/Lean" })).toBeVisible();
+  await expect(page.locator(".channel-composer .composer-inline-token.url-reference")).toHaveCount(0);
 
-  await page.keyboard.insertText("please continue");
+  await page.keyboard.insertText(" please continue");
 
   await expect.poll(() => composerInput.getAttribute("data-value")).toBe("https://github.com/QuantConnect/Lean please continue");
+  await expect(page.locator(".channel-composer .composer-inline-token.url-reference").filter({ hasText: "QuantConnect/Lean" })).toBeVisible();
   await expect(page.locator(".channel-composer .composer-inline-text").filter({ hasText: "please continue" })).toBeVisible();
 });
 

@@ -27,6 +27,9 @@ import type {
   WorkspaceFileOpenRequest,
   WorkspaceFileOpenResponse,
   WorkspaceFileOpenTarget,
+  WorkspaceFileCapabilityRequest,
+  WorkspaceFileCapabilityResponse,
+  WorkspaceFileCapabilityPreviewRequest,
 } from "@ling-stack/contracts";
 import type { LingDaemonEndpointContext, PublicEndpointGroup } from "../transport.js";
 
@@ -107,7 +110,15 @@ export const operationEndpoints = {
 
   async previewWorkspaceFile(this: LingDaemonEndpointContext, cwd: string, path: string, maxBytes?: number, line?: number): Promise<PreviewContentResponse> {
       return this._get("/workspace-files/preview", { cwd, path, maxBytes, line });
-    },
+  },
+
+  async issueWorkspaceFileCapability(this: LingDaemonEndpointContext, input: WorkspaceFileCapabilityRequest): Promise<WorkspaceFileCapabilityResponse> {
+      return this._post("/workspace-files/capabilities", {}, input);
+  },
+
+  async previewWorkspaceFileCapability(this: LingDaemonEndpointContext, input: WorkspaceFileCapabilityPreviewRequest): Promise<PreviewContentResponse> {
+      return this._post("/workspace-files/preview", {}, input);
+  },
 
   async getWorkspaceChanges(this: LingDaemonEndpointContext, cwd: string): Promise<WorkspaceChangesResponse> {
       return this._get("/workspace/changes", { cwd });
@@ -151,6 +162,10 @@ export const operationEndpoints = {
 
   async openWorkspaceFile(this: LingDaemonEndpointContext, cwd: string, path: string, input: WorkspaceFileOpenRequest): Promise<WorkspaceFileOpenResponse> {
       return this._post("/workspace-files/open", { cwd, path }, input);
+    },
+
+  async openWorkspaceFileCapability(this: LingDaemonEndpointContext, input: WorkspaceFileOpenRequest): Promise<WorkspaceFileOpenResponse> {
+      return this._post("/workspace-files/open", {}, input);
     },
 
   workspaceFileOpenIconUrl(this: LingDaemonEndpointContext, cwd: string, target: WorkspaceFileOpenTarget): string {

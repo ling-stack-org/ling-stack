@@ -1,5 +1,6 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { LingThread, LingTurn, RunSession, RunStore } from "@ling-stack/core";
+import { NormalConversationForkSourceInUseError } from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalJsonBody } from "../../shared/request.js";
@@ -63,6 +64,10 @@ export async function handleLingThreadHardDelete(
     }
     writeJson(response, 200, { tombstone: result.tombstone });
   } catch (error) {
+    if (error instanceof NormalConversationForkSourceInUseError) {
+      writeJson(response, 409, { error: error.code, message: error.message });
+      return;
+    }
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
       error: error instanceof HttpError ? error.code : "bad_request",
       message: error instanceof Error ? error.message : String(error),

@@ -31,7 +31,7 @@ async function useEnglish(page: Page, theme: "light" | "dark" = "light"): Promis
 }
 
 async function openWorkbench(page: Page): Promise<void> {
-  await page.getByLabel(/^(Ling Stack navigation|Sidebar display)$/).getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   await expect(page.locator(".provider-workbench")).toBeVisible();
 }

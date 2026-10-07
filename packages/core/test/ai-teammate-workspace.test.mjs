@@ -756,7 +756,67 @@ test("sqlite persists AI teammate direct thread, messages, channel memberships, 
       },
       "2026-05-29T01:01:00.000Z",
     );
-    assert.deepEqual(store.listTeammateDirectMessages({ teammateId: engineerId }).map((item) => item.id), [userMessage.id, aiMessage.id]);
+    const governanceMessage = store.createTeammateDirectMessage(
+      {
+        threadId: thread.id,
+        teammateId: engineerId,
+        authorType: "system",
+        authorId: "system",
+        systemPurpose: "governance_notification",
+        body: "Review needed: workspace memory.",
+        status: "ready",
+      },
+      "2026-05-29T01:02:00.000Z",
+    );
+    assert.equal(governanceMessage.systemPurpose, "governance_notification");
+    assert.deepEqual(store.listTeammateDirectMessages({ teammateId: engineerId }).map((item) => item.id), [userMessage.id, aiMessage.id, governanceMessage.id]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("sqlite upgrades teammate system purpose without colliding with accepted-input migration", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-teammate-system-purpose-migration-"));
+  let store = createSqliteRunStore(cwd);
+  const databasePath = store.paths.databasePath;
+  try {
+    store.close();
+
+    const legacy = new DatabaseSync(databasePath);
+    try {
+      assert.equal(
+        legacy.prepare("SELECT name FROM schema_migrations WHERE version = 130").get()?.name,
+        "persist_normal_conversation_accepted_input",
+      );
+      assert.equal(
+        legacy.prepare("SELECT name FROM schema_migrations WHERE version = 134").get()?.name,
+        "add_teammate_direct_system_purpose",
+      );
+      legacy.exec(`
+        ALTER TABLE teammate_direct_messages DROP COLUMN system_purpose;
+        DELETE FROM schema_migrations WHERE version = 134;
+      `);
+    } finally {
+      legacy.close();
+    }
+
+    store = createSqliteRunStore(cwd);
+    const migrated = new DatabaseSync(databasePath);
+    try {
+      assert.ok(migrated.prepare("SELECT 1 FROM pragma_table_info('teammate_direct_messages') WHERE name = 'system_purpose'").get());
+      assert.ok(migrated.prepare("SELECT 1 FROM pragma_table_info('conversation_context_snapshots') WHERE name = 'snapshot_use'").get());
+      assert.equal(
+        migrated.prepare("SELECT name FROM schema_migrations WHERE version = 130").get()?.name,
+        "persist_normal_conversation_accepted_input",
+      );
+      assert.equal(
+        migrated.prepare("SELECT name FROM schema_migrations WHERE version = 134").get()?.name,
+        "add_teammate_direct_system_purpose",
+      );
+    } finally {
+      migrated.close();
+    }
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

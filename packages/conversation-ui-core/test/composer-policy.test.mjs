@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   composerSlashCommandParts,
+  composerWorkspaceFileParts,
   conversationPermissionPresetRequiresConfirmation,
   filterSlashCommandPickerOptions,
   findActiveSlashCommand,
@@ -48,6 +49,54 @@ test("composer parser keeps adjacent natural-language text outside URL tokens", 
   assert.deepEqual(parts.map((part) => part.type), ["url_ref", "text"]);
   assert.equal(parts[0].raw, "https://github.com/QuantConnect/Lean");
   assert.equal(parts[1].text, "这段文字应该继续显示");
+});
+
+test("composer parser keeps adjacent natural-language text outside workspace file tokens", () => {
+  const parts = parseComposerInputParts("请查看 /private/tmp/ling-v391-qa-20260902-cdp/workspace/demo.ts。然后继续说明", {
+    cwd: "/private/tmp/ling-v391-qa-20260902-cdp/workspace",
+  });
+
+  assert.deepEqual(parts.map((part) => part.type), ["text", "workspace_file", "text"]);
+  assert.equal(parts[1].type, "workspace_file");
+  assert.equal(parts[1].raw, "/private/tmp/ling-v391-qa-20260902-cdp/workspace/demo.ts");
+  assert.equal(parts[2].text, "。然后继续说明");
+});
+
+test("composer workspace file refs deduplicate repeated path and line identities", () => {
+  const parts = parseComposerInputParts("修改 src/index.js，然后运行 node src/index.js，再检查 src/index.js:12", {
+    cwd: "/Users/example/ling-stack",
+  });
+
+  assert.deepEqual(
+    composerWorkspaceFileParts(parts).map((part) => ({ path: part.path, line: part.line })),
+    [
+      { path: "src/index.js", line: undefined },
+      { path: "src/index.js", line: 12 },
+    ],
+  );
+});
+
+test("composer defers trailing atomic tokens while the draft is still being typed", () => {
+  assert.deepEqual(
+    parseComposerInputParts("请查看 src/index.js", {
+      cwd: "/Users/example/ling-stack",
+      deferTrailingAtomicTokens: true,
+    }),
+    [{ type: "text", text: "请查看 src/index.js" }],
+  );
+  assert.deepEqual(
+    parseComposerInputParts("请打开 https://example.com", {
+      deferTrailingAtomicTokens: true,
+    }),
+    [{ type: "text", text: "请打开 https://example.com" }],
+  );
+  assert.equal(
+    parseComposerInputParts("请查看 src/index.js。", {
+      cwd: "/Users/example/ling-stack",
+      deferTrailingAtomicTokens: true,
+    })[1]?.type,
+    "workspace_file",
+  );
 });
 
 test("slash picker is pure and can insert command tokens", () => {

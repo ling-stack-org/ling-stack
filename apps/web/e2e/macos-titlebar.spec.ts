@@ -24,8 +24,8 @@ test("macOS Home chrome owns a fixed layout row and keeps the collapsed compact 
   const titlebarSurface = chrome.locator("[data-desktop-window-titlebar-surface='true']");
   const trafficLightExclusion = chrome.locator(".desktop-window-traffic-light-exclusion");
   const sidebarToggle = page.locator(".desktop-window-sidebar-toggle");
-  const navigation = page.getByLabel("Ling Stack navigation");
-  const newConversation = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" });
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
+  const newConversation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" });
 
   await expect(shell).toBeVisible();
   await expect(chrome).toHaveCount(1);
@@ -146,7 +146,7 @@ test("macOS normal-conversation and channel headers are draggable while their co
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.locator(".sidebar-recent-row").filter({ hasText: normalConversationFixtureTitle }).click();
 
   const conversation = page.getByLabel("Conversation page");
@@ -205,7 +205,7 @@ test("macOS Settings and Media stay below or inside the shared titlebar", async 
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Settings" }).click();
 
   const titlebar = page.locator("[data-desktop-window-chrome='true']");
@@ -224,9 +224,9 @@ test("macOS Settings and Media stay below or inside the shared titlebar", async 
   });
   await captureIfRequested(page, testInfo.outputPath("settings.png"));
   await backButton.click();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   const mediaToolbar = titlebarSurface.locator(".media-production-canvas-toolbar[data-desktop-window-drag-region='true']");
   const jobsButton = mediaToolbar.getByRole("radio", { name: "Generation tasks" });
   await expectDragRegion(mediaToolbar);
@@ -244,7 +244,7 @@ for (const theme of ["light", "dark"] as const) {
     await prepareSurface(page, "macos", { theme });
     await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
     await page.goto("/");
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
 
     const chrome = page.locator("[data-desktop-window-chrome='true']");
     const settingsNavigation = page.locator(".settings-section-nav");
@@ -266,7 +266,7 @@ test("macOS portal overlays subtract the underlying shell drag region", async ({
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const trigger = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" });
+  const trigger = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "No channel yet" });
   await trigger.click();
   let dialog = page.getByRole("dialog", { name: "New channel" });
   const scrim = page.locator("#ling-ui-overlay-root [data-ling-overlay-scrim='dialog']");
@@ -317,7 +317,7 @@ test("macOS management surfaces share one titlebar owner", async ({ page }, test
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const titlebarSurface = page.locator("[data-desktop-window-titlebar-surface='true']");
 
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
@@ -368,7 +368,7 @@ test("macOS titlebar stays bounded at 1280x800 in dark mode", async ({ page }, t
     chrome: "rgb(31, 31, 31)",
     leading: "rgb(40, 39, 37)",
   });
-  await expect.poll(async () => expandedSidebarDivider(shell, leading, page.getByLabel("Ling Stack navigation"))).toEqual({
+  await expect.poll(async () => expandedSidebarDivider(shell, leading, page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }))).toEqual({
     dividerBottom: 0,
     dividerColor: "rgb(65, 64, 61)",
     dividerLeft: 291,
@@ -379,7 +379,7 @@ test("macOS titlebar stays bounded at 1280x800 in dark mode", async ({ page }, t
     navigationRight: 292,
   });
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await expect(page.locator("[data-desktop-window-titlebar-surface='true']").getByRole("heading", { name: "Engineering" })).toBeVisible();
   const geometry = await page.evaluate(() => {
     const workspace = document.querySelector<HTMLElement>(".app-shell.desktop-macos > .workspace");
@@ -502,7 +502,7 @@ for (const host of [
     const chrome = page.locator("[data-desktop-window-chrome='true']");
     const titlebarSurface = chrome.locator("[data-desktop-window-titlebar-surface='true']");
     const sidebarToggle = chrome.locator(".desktop-window-sidebar-toggle");
-    const navigation = page.getByLabel("Ling Stack navigation");
+    const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
     await expect(shell).not.toHaveClass(/desktop-macos/u);
     await expect(chrome).toHaveCount(1);
     await expect.poll(async () => roundedBox(chrome)).toEqual({
@@ -531,9 +531,9 @@ for (const host of [
     expect(roundedRectangle(expandedToggleBox!)).toEqual(roundedRectangle(collapsedToggleBox!));
     await sidebarToggle.click();
     await expect(shell).not.toHaveClass(/channel-sidebar-collapsed/u);
-    await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+    await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
     const channelHeader = titlebarSurface.locator(".channel-header[data-desktop-window-drag-region='true']");
     await expect(channelHeader).toBeVisible();
     await expect(page.locator(".task-workbench-window > .channel-header")).toHaveCount(0);
@@ -667,7 +667,7 @@ async function expandedSidebarDivider(
   const navigationBox = await navigation.boundingBox();
   const styles = await shell.evaluate((element) => {
     const divider = getComputedStyle(element, "::before");
-    const navigationElement = document.querySelector<HTMLElement>("[aria-label='Ling Stack navigation']");
+    const navigationElement = document.querySelector<HTMLElement>("aside.left-nav");
     return {
       dividerBottom: Number.parseFloat(divider.bottom),
       dividerColor: divider.backgroundColor,

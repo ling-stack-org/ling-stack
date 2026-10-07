@@ -1,0 +1,61 @@
+import { realpathSync } from "node:fs";
+import { resolve } from "node:path";
+import { fileURLToPath, pathToFileURL } from "node:url";
+import { build, Platform, Arch } from "electron-builder";
+import { buildFreshPackagedDaemonForMacOffice } from "./build-packaged-daemon.mjs";
+import { withOriginalPackagedOfficeNativePublication } from "./build-packaged-office-native.mjs";
+import { withCuaDriverBuilderEnvironment } from "./cua-driver-builder-environment.mjs";
+import { runCuaDriverElectronPackageCli } from "./cua-driver-electron-package.mjs";
+import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs";
+
+const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
+const builderArguments = Object.freeze(["--mac", "dmg", "zip", "--arm64"]);
+let busy = false, configSequence = 0;
+
+/** Fixed same-process macOS lane; there is no CLI config/target/publication override. */
+export async function packageMacosWithOffice() {
+  if (busy) throw new Error("packaged_office_native_package_busy");
+  busy = true;
+  try {
+    if (process.platform !== "darwin" || process.arch !== "arm64"
+      || resolveSigningProfile().signingTier !== "unsigned_dev") {
+      throw new Error("packaged_office_native_package_profile_unsupported");
+    }
+    // Existing unsigned_dev Cua custom signing can return signed:false and has
+    // no default-sign fallback. This first Office lane uses Builder's default
+    // ad-hoc signer; do not silently call a noop custom signer a signed package.
+    if (process.env.LING_CUA_DRIVER_PACKAGE_PROVIDER === "1") {
+      throw new Error("packaged_office_native_provider_signing_lane_unsupported");
+    }
+    await runCuaDriverElectronPackageCli(["--platform", "darwin", "--", ...builderArguments], process.env, {
+      async runBuilder({ appRoot, args, environment }) {
+        if (realpathSync(appRoot) !== desktopRoot
+          || JSON.stringify(args) !== JSON.stringify(["--config", resolve(desktopRoot,
+            "scripts/cua-driver-electron-builder.config.mjs"), ...builderArguments])) {
+          throw new Error("packaged_office_native_builder_invocation_invalid");
+        }
+        return withCuaDriverBuilderEnvironment(environment, async () => {
+          const token = await buildFreshPackagedDaemonForMacOffice();
+          return withOriginalPackagedOfficeNativePublication(token, async () => {
+            // The URL is fixed original code. A fresh module instance prevents
+            // one validated Cua environment from leaking into a later build.
+            const configUrl = new URL("./cua-driver-electron-builder.config.mjs", import.meta.url);
+            configUrl.searchParams.set("officeInvocation", String(++configSequence));
+            const { default: config } = await import(configUrl.href);
+            if (config.mac.sign !== undefined || config.mac.identity !== "-") {
+              throw new Error("packaged_office_native_default_signer_required");
+            }
+            await build({ projectDir: desktopRoot, publish: "never",
+              targets: Platform.MAC.createTarget(["dmg", "zip"], Arch.arm64), config });
+            return 0;
+          });
+        });
+      },
+    });
+  } finally { busy = false; }
+}
+
+if (process.argv[1] && import.meta.url === pathToFileURL(resolve(process.argv[1])).href) {
+  if (process.argv.length !== 2) throw new Error("packaged_office_native_package_arguments_invalid");
+  await packageMacosWithOffice();
+}

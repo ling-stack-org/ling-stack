@@ -219,7 +219,7 @@ async function openRoleDetail(
   locale: Locale,
 ): Promise<{ readonly dialog: Locator; readonly trigger: Locator }> {
   const copy = labels[locale];
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: copy.settings }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: copy.settings }).click();
   await page.getByLabel(/Settings sections|设置分组/u)
     .getByRole("button", { name: copy.teammateManagement })
     .click();

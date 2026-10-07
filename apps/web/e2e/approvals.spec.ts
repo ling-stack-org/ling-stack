@@ -47,9 +47,9 @@ test("review queue resolves offline local approvals and refreshes state", async 
   await expect(page.locator(".approval-list")).toContainText("Inbox is clear");
 
   await page.locator("[data-approvals-ui2-page]").getByRole("button", { name: "Open Work Board" }).click();
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
-  await expect(page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Work Board" })).toHaveCount(0);
-  await expect(page.getByLabel("Ling Stack navigation").locator(".primary-nav [aria-current='page']")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Work Board" })).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".primary-nav [aria-current='page']")).toHaveCount(0);
   await expect(page.locator(".work-board-page")).toBeVisible();
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);
 });

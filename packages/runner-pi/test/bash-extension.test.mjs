@@ -12,6 +12,7 @@ test("runner-pi exposes OpenAI Codex Responses provider support", () => {
 
 test("unified exec bash extension returns daemon handled results", async () => {
   const registered = [];
+  let resultHook;
   createLingStackBashToolExtension({
     ...baseOptions(),
     runtimeToolFeatures: { unifiedExec: true },
@@ -27,7 +28,7 @@ test("unified exec bash extension returns daemon handled results", async () => {
         },
       };
     },
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on(_event, handler) { resultHook = handler; }, registerTool: (tool) => registered.push(tool) });
 
   assert.equal(registered.length, 1);
   assert.deepEqual(registered[0].parameters.properties.prefix_rule.items, { type: "string" });
@@ -38,6 +39,7 @@ test("unified exec bash extension returns daemon handled results", async () => {
 
 test("unified exec bash extension preserves daemon handled error results", async () => {
   const registered = [];
+  let resultHook;
   createLingStackBashToolExtension({
     ...baseOptions(),
     runtimeToolFeatures: { unifiedExec: true },
@@ -49,16 +51,17 @@ test("unified exec bash extension preserves daemon handled error results", async
         isError: true,
       },
     }),
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on(_event, handler) { resultHook = handler; }, registerTool: (tool) => registered.push(tool) });
 
   const result = await registered[0].execute("tool_bash_failed", { command: "exit 2" });
   assert.deepEqual(result.content, [{ type: "text", text: "Command exited 2 in 8ms." }]);
   assert.deepEqual(result.details, { unifiedExec: { status: "failed", exitCode: 2 } });
-  assert.equal(result.isError, true);
+  assert.equal(resultHook({ toolCallId: "tool_bash_failed", toolName: "bash", ...result, isError: false }).isError, true);
 });
 
 test("unified exec bash extension returns daemon handled denial results", async () => {
   const registered = [];
+  let resultHook;
   createLingStackBashToolExtension({
     ...baseOptions(),
     runtimeToolFeatures: { unifiedExec: true },
@@ -71,21 +74,22 @@ test("unified exec bash extension returns daemon handled denial results", async 
         isError: true,
       },
     }),
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on(_event, handler) { resultHook = handler; }, registerTool: (tool) => registered.push(tool) });
 
   const result = await registered[0].execute("tool_bash_denied", { command: "rm -rf out" });
   assert.equal(result.content[0].text, "Ling Stack policy denied bash.");
   assert.deepEqual(result.details, { unifiedExec: { status: "failed", denied: true } });
-  assert.equal(result.isError, true);
+  assert.equal(resultHook({ toolCallId: "tool_bash_denied", toolName: "bash", ...result, isError: false }).isError, true);
 });
 
 test("unified exec bash extension fails closed without handled result", async () => {
   const registered = [];
+  let resultHook;
   createLingStackBashToolExtension({
     ...baseOptions(),
     runtimeToolFeatures: { unifiedExec: true },
     onApprovalRequired: () => ({ approved: true }),
-  })({ registerTool: (tool) => registered.push(tool) });
+  })({ on(_event, handler) { resultHook = handler; }, registerTool: (tool) => registered.push(tool) });
 
   await assert.rejects(
     registered[0].execute("tool_bash_missing", { command: "echo missing" }),

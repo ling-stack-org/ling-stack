@@ -88,6 +88,7 @@ export function projectChannelItemDelta(
           body,
           streaming: true,
           deliveryStatus: "pending",
+          presentationRole: "reply_result",
         },
       };
     }

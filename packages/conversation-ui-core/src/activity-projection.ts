@@ -6,7 +6,7 @@ import type {
   ConversationWorkCellItem,
   ConversationWorkCellRow,
 } from "./work-cell-view-model.js";
-import { projectConversationCommandBatches } from "./command-batching.js";
+import { isCommandBatchEligible, projectConversationCommandBatches } from "./command-batching.js";
 
 const MINIMUM_EXPLORATION_BATCH_SIZE = 3;
 const READ_ACTION_TYPES = new Set(["read", "grep", "find", "ls"]);
@@ -15,35 +15,117 @@ export function projectConversationActivity(
   rows: readonly ConversationWorkCellRow[],
   options: { readonly participantScope?: string } = {},
 ): readonly ConversationWorkCellItem[] {
-  const commandItems = projectConversationCommandBatches(rows, options);
   const output: ConversationWorkCellItem[] = [];
-  let nonCommandRows: ConversationWorkCellRow[] = [];
+  let pendingCommands: Array<{ readonly row: ConversationWorkCellRow; readonly leadingRows: readonly ConversationWorkCellRow[] }> = [];
+  let pendingExplorationRows: ConversationWorkCellRow[] = [];
+  let pendingExplorationActions: ConversationWorkCellRow[] = [];
+  let leadingRows: ConversationWorkCellRow[] = [];
 
-  const flushNonCommandRows = (): void => {
-    if (nonCommandRows.length === 0) {
-      return;
+  const flushCommands = (): void => {
+    if (pendingCommands.length === 0) return;
+    if (pendingCommands.length >= 3) {
+      output.push(...projectConversationCommandBatches(
+        pendingCommands.flatMap((entry) => [...entry.leadingRows, entry.row]),
+        options,
+      ));
+    } else {
+      for (const entry of pendingCommands) {
+        output.push(...entry.leadingRows.map((row) => ({ kind: "operation" as const, row })));
+        output.push({ kind: "operation", row: entry.row });
+      }
     }
-    output.push(...projectConversationExplorationBatches(nonCommandRows, options));
-    nonCommandRows = [];
+    pendingCommands = [];
   };
 
-  for (const item of commandItems) {
-    if (item.kind === "command_batch") {
-      flushNonCommandRows();
-      output.push(item);
+  const flushExploration = (): void => {
+    if (pendingExplorationRows.length === 0) return;
+    if (pendingExplorationActions.length >= MINIMUM_EXPLORATION_BATCH_SIZE) {
+      output.push({
+        kind: "exploration_batch",
+        batch: buildExplorationBatch(pendingExplorationRows, pendingExplorationActions, options.participantScope),
+      });
+    } else {
+      output.push(...pendingExplorationRows.map((row) => ({ kind: "operation" as const, row })));
+    }
+    pendingExplorationRows = [];
+    pendingExplorationActions = [];
+  };
+
+  const flushLeading = (): void => {
+    if (leadingRows.length === 0) return;
+    output.push(...leadingRows.map((row) => ({ kind: "operation" as const, row })));
+    leadingRows = [];
+  };
+
+  for (const row of rows) {
+    if (row.presentation === "note") {
+      if (row.operationExecution?.actionId) {
+        leadingRows.push(row);
+      } else {
+        flushCommands();
+        flushExploration();
+        flushLeading();
+        output.push({ kind: "operation", row });
+      }
       continue;
     }
-    if (item.kind === "operation" && item.row.commandExecution) {
-      flushNonCommandRows();
-      output.push(item);
+
+    if (isCommandBatchEligible(row)) {
+      flushExploration();
+      if (pendingCommands.length > 0 && !sameCommandScope(pendingCommands[0]?.row, row)) {
+        flushCommands();
+      }
+      pendingCommands.push({ row, leadingRows });
+      leadingRows = [];
       continue;
     }
-    if (item.kind === "operation") {
-      nonCommandRows.push(item.row);
+
+    if (isExplorationBatchEligible(row)) {
+      flushCommands();
+      if (pendingExplorationActions.length > 0 && !sameExplorationScope(pendingExplorationActions[0], row)) {
+        flushExploration();
+      }
+      pendingExplorationRows.push(...leadingRows, row);
+      pendingExplorationActions.push(row);
+      leadingRows = [];
+      continue;
     }
+
+    flushCommands();
+    flushExploration();
+    flushLeading();
+    output.push({ kind: "operation", row });
   }
-  flushNonCommandRows();
+
+  flushCommands();
+  flushExploration();
+  flushLeading();
   return output;
+}
+
+function sameCommandScope(left: ConversationWorkCellRow | undefined, right: ConversationWorkCellRow): boolean {
+  if (!left) return false;
+  const leftCommand = left.commandExecution;
+  const rightCommand = right.commandExecution;
+  const leftOperation = left.operationExecution;
+  const rightOperation = right.operationExecution;
+  return Boolean(
+    leftCommand && rightCommand &&
+    leftCommand.runId === rightCommand.runId &&
+    (leftCommand.attemptId ?? leftOperation?.attemptId) === (rightCommand.attemptId ?? rightOperation?.attemptId) &&
+    (leftCommand.turnRunRole ?? leftOperation?.turnRunRole) === (rightCommand.turnRunRole ?? rightOperation?.turnRunRole) &&
+    (leftCommand.participantId ?? leftOperation?.participantId) === (rightCommand.participantId ?? rightOperation?.participantId) &&
+    leftCommand.workUnitId === rightCommand.workUnitId &&
+    leftCommand.workflowStepId === rightCommand.workflowStepId &&
+    (!leftOperation || !rightOperation || (
+      leftOperation.runId === rightOperation.runId &&
+      leftOperation.attemptId === rightOperation.attemptId &&
+      leftOperation.turnRunRole === rightOperation.turnRunRole &&
+      leftOperation.participantId === rightOperation.participantId &&
+      leftOperation.workUnitId === rightOperation.workUnitId &&
+      leftOperation.workflowStepId === rightOperation.workflowStepId
+    )),
+  );
 }
 
 export function projectConversationExplorationBatches(
@@ -195,6 +277,7 @@ function buildExplorationBatch(
     throw new Error("Exploration batches require a run identity.");
   }
   const actionIds = actionRows.map((row) => row.operationExecution?.actionId).filter((id): id is string => Boolean(id));
+  const childItemIds = actionRows.map((row) => row.id);
   const sourceRefs = uniqueSourceRefs(actionRows.flatMap((row) => row.operationExecution?.sourceRefs ?? []));
   const targetCount = actionRows.reduce((count, row) => {
     const files = uniqueRefs(row.operationExecution?.sourceRefs ?? [], "file");
@@ -202,11 +285,14 @@ function buildExplorationBatch(
   }, 0);
   return {
     id: `exploration-batch:${stableIdPart(participantScope)}:${stableIdPart(first.runId)}:${stableIdPart(first.actionId)}`,
+    revision: aggregateRevision(actionRows),
     revisionKey: actionRows.map((row) => {
       const execution = row.operationExecution;
       return `${execution?.actionId ?? row.id}:${execution?.status ?? "unknown"}:${execution?.latestEventSeq ?? 0}:${execution?.updatedAt ?? ""}`;
     }).join("|"),
     actionIds,
+    childActionIds: actionIds,
+    childItemIds,
     runId: first.runId,
     attemptId: first.attemptId,
     turnRunRole: first.turnRunRole,
@@ -219,6 +305,16 @@ function buildExplorationBatch(
     defaultExpanded: false,
     rows,
   };
+}
+
+function aggregateRevision(rows: readonly ConversationWorkCellRow[]): number {
+  let total = 0;
+  for (const row of rows) {
+    const revision = row.operationExecution?.revision ?? row.operationExecution?.latestEventSeq ?? 0;
+    if (!Number.isSafeInteger(revision) || revision < 0) continue;
+    total = Math.min(Number.MAX_SAFE_INTEGER, total + revision + 1);
+  }
+  return total;
 }
 
 function uniqueRefs(

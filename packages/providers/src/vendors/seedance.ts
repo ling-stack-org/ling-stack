@@ -1,5 +1,5 @@
 import { MediaAdapterExecutionError } from "../errors.js";
-import { defaultMediaVendorHttpClient, getMediaVendorResponseHeader, mapMediaVendorHttpStatus, parseContentLength, readHttpResponseBody } from "../media-vendor-http.js";
+import { defaultMediaVendorHttpClient, getMediaVendorResponseHeader, mapMediaVendorHttpStatus, parseContentLength } from "../media-vendor-http.js";
 import { redactSecretText, redactSecrets } from "../redaction.js";
 import type {
   LiveMediaVendorTransportOptions,
@@ -15,15 +15,28 @@ import type {
   MediaVendorTransportResult,
 } from "../types.js";
 import { isRecord, removeUndefined } from "../utils.js";
+import { createSeedanceStatusEndpoint, decodeSeedanceTaskStatusResponse, type SeedanceTerminalObservation } from "./seedance-task-status.js";
 
 const MAX_MEDIA_VENDOR_VIDEO_BYTES = 512 * 1024 * 1024;
 const DEFAULT_LIVE_MEDIA_VENDOR_TIMEOUT_MS = 180_000;
 const DEFAULT_SEEDANCE_POLL_INTERVAL_MS = 2_000;
 const DEFAULT_SEEDANCE_MAX_POLL_ATTEMPTS = 90;
 
-type SeedanceFinalVideoSuccess = { readonly status: "succeeded"; readonly videoUrl: string; readonly statusResponse: unknown };
-type SeedanceFinalVideoFailure = { readonly status: "failed"; readonly errorCode: MediaVendorTransportResult["errorCode"]; readonly errorMessage: string };
+type SeedanceFinalVideoSuccess = { readonly status: "succeeded"; readonly videoUrl: string; readonly statusResponse: unknown;
+  readonly terminalObservation: SeedanceTerminalObservation };
+type SeedanceFinalVideoFailure = { readonly status: "failed"; readonly errorCode: MediaVendorTransportResult["errorCode"]; readonly errorMessage: string;
+  readonly terminalObservation?: SeedanceTerminalObservation };
 type SeedanceFinalVideoResolution = SeedanceFinalVideoSuccess | SeedanceFinalVideoFailure;
+
+// Business projection only. Restored/edited recovery cannot create a protocol
+// observation, and the Host independently captures the original response.
+const observedRecoveries = new WeakMap<Record<string, unknown>, {
+  readonly options: LiveMediaVendorTransportOptions;
+  readonly statusEndpoint: string;
+  readonly videoUrl: string;
+  readonly statusResponse: unknown;
+  readonly terminalObservation: SeedanceTerminalObservation;
+}>();
 
 export async function submitSeedanceVideoTask(
   request: MediaVendorTransportRequest,
@@ -54,7 +67,10 @@ export async function submitSeedanceVideoTask(
     if (!externalOperationId) {
       return { status: "failed", errorCode: "invalid_request", errorMessage: "Seedance video task response did not include task id." };
     }
-    const statusEndpoint = `${options.baseUrl?.replace(/\/+$/, "")}/contents/generations/tasks/${encodeURIComponent(externalOperationId)}`;
+    const statusEndpoint = createSeedanceStatusEndpoint(options.baseUrl, externalOperationId);
+    if (!statusEndpoint) {
+      return { status: "failed", errorCode: "invalid_request", errorMessage: "Seedance task identity or status namespace is invalid." };
+    }
     const requestSummary = summarizeSeedanceRequest(payload);
     return {
       status: "submitted",
@@ -64,7 +80,6 @@ export async function submitSeedanceVideoTask(
         recovery: {
           statusEndpoint,
           requestSummary,
-          ...(extractSeedanceVideoUrl(createResponse) ? { videoUrl: extractSeedanceVideoUrl(createResponse) } : {}),
         },
       },
     };
@@ -91,12 +106,12 @@ export async function pollSeedanceVideoTask(
     return { status: "failed", errorCode: "unsupported_capability", errorMessage: "Unsupported media execution handle." };
   }
   const statusEndpoint = readRecoveryString(handle.recovery, "statusEndpoint");
-  const existingVideoUrl = readRecoveryString(handle.recovery, "videoUrl");
-  if (existingVideoUrl) {
-    return { status: "succeeded", recovery: handle.recovery };
-  }
   if (!statusEndpoint) {
     return { status: "failed", errorCode: "invalid_request", errorMessage: "Seedance execution handle is missing a status endpoint." };
+  }
+  const expectedEndpoint = createSeedanceStatusEndpoint(options.baseUrl, handle.externalOperationId);
+  if (!expectedEndpoint || statusEndpoint !== expectedEndpoint) {
+    return { status: "failed", errorCode: "invalid_request", errorMessage: "Seedance execution handle status endpoint does not match the exact task identity and provider namespace." };
   }
   const httpClient = options.httpClient ?? defaultMediaVendorHttpClient;
   try {
@@ -109,22 +124,33 @@ export async function pollSeedanceVideoTask(
       return { status: "failed", errorCode: failure.errorCode, errorMessage: failure.errorMessage };
     }
     const statusResponse = await response.json();
-    const videoUrl = extractSeedanceVideoUrl(statusResponse);
-    if (videoUrl) {
+    const observation = decodeSeedanceTaskStatusResponse(statusResponse, handle.externalOperationId);
+    if (observation.status === "succeeded") {
+      if (!observation.videoUrl) {
+        return { status: "failed", terminalObservation: observation.terminal, errorCode: "media_result_unavailable", errorMessage: "Seedance succeeded task response did not include a canonical final video URL." };
+      }
+      const recovery = {
+        statusEndpoint,
+        requestSummary: handle.recovery.requestSummary,
+        videoUrl: observation.videoUrl,
+      };
+      observedRecoveries.set(recovery, { options, statusEndpoint, videoUrl: observation.videoUrl, statusResponse,
+        terminalObservation: observation.terminal });
       return {
         status: "succeeded",
-        recovery: {
-          statusEndpoint,
-          requestSummary: handle.recovery.requestSummary,
-          videoUrl,
-        },
+        terminalObservation: observation.terminal,
+        recovery,
       };
     }
-    if (readSeedanceTaskStatus(statusResponse) === "pending") {
+    if (observation.status === "pending") {
       return { status: "pending" };
+    }
+    if (observation.status === "unknown") {
+      return { status: "failed", errorCode: "invalid_request", errorMessage: observation.reason };
     }
     return {
       status: "failed",
+      terminalObservation: observation.terminal,
       errorCode: "provider_internal_error",
       errorMessage: `Seedance video task ${handle.externalOperationId} did not return a usable video result.`,
     };
@@ -142,6 +168,11 @@ export async function collectSeedanceVideoArtifacts(
   options: LiveMediaVendorTransportOptions,
 ): Promise<MediaExecutionResult> {
   const videoUrl = readRecoveryString(handle.recovery, "videoUrl");
+  const observed = observedRecoveries.get(handle.recovery);
+  const terminalObservation = observed?.options === options && observed.videoUrl === videoUrl &&
+    observed.statusEndpoint === readRecoveryString(handle.recovery, "statusEndpoint") &&
+    observed.terminalObservation.externalOperationId === handle.externalOperationId
+    ? observed.terminalObservation : undefined;
   if (!videoUrl) {
     return { status: "failed", artifacts: [], errorCode: "invalid_request", errorMessage: "Seedance execution handle has no completed video URL." };
   }
@@ -153,6 +184,7 @@ export async function collectSeedanceVideoArtifacts(
       const videoArtifact = await downloadSeedanceVideoArtifact(videoUrl, httpClient, abortController.signal);
       return {
         status: "succeeded",
+        ...(terminalObservation ? { terminalObservation } : {}),
         artifacts: [
           {
             type: "json",
@@ -164,6 +196,8 @@ export async function collectSeedanceVideoArtifacts(
               taskId: handle.externalOperationId,
               statusEndpoint: readRecoveryString(handle.recovery, "statusEndpoint"),
               requestSummary: handle.recovery.requestSummary,
+              // Restored mutable recovery alone cannot supply an observed response.
+              ...(terminalObservation ? { response: observed!.statusResponse } : {}),
             }, mediaVendorRedactionValues(options)), null, 2),
           },
           videoArtifact,
@@ -176,8 +210,9 @@ export async function collectSeedanceVideoArtifacts(
     const isTimeout = error instanceof Error && error.name === "AbortError";
     return {
       status: "failed",
+      ...(terminalObservation ? { terminalObservation } : {}),
       artifacts: [],
-      errorCode: isTimeout ? "timeout" : "network_error",
+      errorCode: error instanceof MediaAdapterExecutionError ? error.code : isTimeout ? "timeout" : "network_error",
       errorMessage: redactSecretText(error instanceof Error ? error.message : String(error), mediaVendorRedactionValues(options)),
     };
   }
@@ -197,6 +232,7 @@ export async function executeSeedanceVideoTask(
   const abortController = new AbortController();
   const timeoutMs = options.timeoutMs ?? DEFAULT_LIVE_MEDIA_VENDOR_TIMEOUT_MS;
   const timeout = setTimeout(() => abortController.abort(), timeoutMs);
+  let terminalObservation: SeedanceTerminalObservation | undefined;
   try {
     const response = await httpClient(endpoint, {
       method: "POST",
@@ -222,15 +258,18 @@ export async function executeSeedanceVideoTask(
       };
     }
 
-    const statusEndpoint = `${options.baseUrl?.replace(/\/+$/, "")}/contents/generations/tasks/${encodeURIComponent(taskId)}`;
+    const statusEndpoint = createSeedanceStatusEndpoint(options.baseUrl, taskId);
+    if (!statusEndpoint) {
+      return { status: "failed", errorCode: "invalid_request", errorMessage: "Seedance task identity or status namespace is invalid." };
+    }
     const final = await waitForSeedanceFinalVideo({
       statusEndpoint,
       taskId,
       httpClient,
       options,
       signal: abortController.signal,
-      createResponse: createJson,
     });
+    terminalObservation = final.terminalObservation;
     if (final.status === "failed") {
       return final;
     }
@@ -238,6 +277,7 @@ export async function executeSeedanceVideoTask(
 
     return {
       status: "succeeded",
+      terminalObservation,
       artifacts: [
         {
           type: "json",
@@ -252,6 +292,7 @@ export async function executeSeedanceVideoTask(
             statusEndpoint,
             taskId,
             requestSummary: summarizeSeedanceRequest(payload),
+            response: final.statusResponse,
           }, mediaVendorRedactionValues(options)), null, 2),
         },
         videoArtifact,
@@ -261,6 +302,7 @@ export async function executeSeedanceVideoTask(
     if (error instanceof MediaAdapterExecutionError) {
       return {
         status: "failed",
+        ...(terminalObservation ? { terminalObservation } : {}),
         errorCode: error.code,
         errorMessage: redactSecretText(error.message, mediaVendorRedactionValues(options)),
       };
@@ -271,6 +313,7 @@ export async function executeSeedanceVideoTask(
       : error instanceof Error ? error.message : String(error);
     return {
       status: "failed",
+      ...(terminalObservation ? { terminalObservation } : {}),
       errorCode: isTimeout ? "timeout" : "network_error",
       errorMessage: redactSecretText(message, mediaVendorRedactionValues(options)),
     };
@@ -285,15 +328,9 @@ async function waitForSeedanceFinalVideo(input: {
   readonly httpClient: MediaVendorHttpClient;
   readonly options: LiveMediaVendorTransportOptions;
   readonly signal: AbortSignal;
-  readonly createResponse: unknown;
 }): Promise<
   SeedanceFinalVideoResolution
 > {
-  const firstVideoUrl = extractSeedanceVideoUrl(input.createResponse);
-  if (firstVideoUrl) {
-    return { status: "succeeded", videoUrl: firstVideoUrl, statusResponse: input.createResponse };
-  }
-
   const pollIntervalMs = Math.max(0, input.options.pollIntervalMs ?? DEFAULT_SEEDANCE_POLL_INTERVAL_MS);
   const maxPollAttempts = Math.max(1, input.options.maxPollAttempts ?? DEFAULT_SEEDANCE_MAX_POLL_ATTEMPTS);
   for (let attempt = 1; attempt <= maxPollAttempts; attempt += 1) {
@@ -312,23 +349,26 @@ async function waitForSeedanceFinalVideo(input: {
       return await normalizeSeedanceStatusHttpFailure(response, mediaVendorRedactionValues(input.options));
     }
     const json = await response.json();
-    const videoUrl = extractSeedanceVideoUrl(json);
-    if (videoUrl) {
-      return { status: "succeeded", videoUrl, statusResponse: json };
+    const observation = decodeSeedanceTaskStatusResponse(json, input.taskId);
+    if (observation.status === "succeeded") {
+      if (!observation.videoUrl) {
+        return { status: "failed", terminalObservation: observation.terminal, errorCode: "media_result_unavailable", errorMessage: "Seedance succeeded task response did not include a canonical final video URL." };
+      }
+      return { status: "succeeded", videoUrl: observation.videoUrl, statusResponse: json, terminalObservation: observation.terminal };
     }
-    const taskStatus = readSeedanceTaskStatus(json);
-    if (taskStatus === "failed") {
+    if (observation.status === "failed") {
       return {
         status: "failed",
+        terminalObservation: observation.terminal,
         errorCode: "provider_internal_error",
         errorMessage: redactSecretText(`Seedance video task ${input.taskId} failed before returning a video URL.`, mediaVendorRedactionValues(input.options)),
       };
     }
-    if (taskStatus === "unknown") {
+    if (observation.status === "unknown") {
       return {
         status: "failed",
         errorCode: "invalid_request",
-        errorMessage: "Seedance video task status response did not include a recognizable status or final video URL.",
+        errorMessage: observation.reason,
       };
     }
   }
@@ -549,7 +589,7 @@ function mediaVendorRedactionValues(options: LiveMediaVendorTransportOptions): r
 }
 
 async function normalizeSeedanceHttpFailure(response: MediaVendorHttpResponse, redactionValues: readonly string[]): Promise<MediaVendorTransportResult> {
-  const body = await readHttpResponseBody(response);
+  const body = await response.text();
   const redactedBody = redactSecretText(body, redactionValues);
   return {
     status: "failed",
@@ -561,7 +601,7 @@ async function normalizeSeedanceHttpFailure(response: MediaVendorHttpResponse, r
 }
 
 async function normalizeSeedanceStatusHttpFailure(response: MediaVendorHttpResponse, redactionValues: readonly string[]): Promise<SeedanceFinalVideoFailure> {
-  const body = await readHttpResponseBody(response);
+  const body = await response.text();
   const redactedBody = redactSecretText(body, redactionValues);
   return {
     status: "failed",
@@ -589,59 +629,4 @@ function extractSeedanceTaskId(value: unknown): string | undefined {
 function readRecoveryString(recovery: Record<string, unknown>, key: string): string | undefined {
   const value = recovery[key];
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function extractSeedanceVideoUrl(value: unknown): string | undefined {
-  for (const record of flattenSeedanceRecords(value)) {
-    for (const key of ["video_url", "videoUrl", "url"]) {
-      const candidate = record[key];
-      if (typeof candidate === "string" && candidate.trim()) {
-        return candidate.trim();
-      }
-    }
-  }
-  return undefined;
-}
-
-function readSeedanceTaskStatus(value: unknown): "pending" | "failed" | "unknown" {
-  for (const record of flattenSeedanceRecords(value)) {
-    for (const key of ["status", "state", "task_status", "taskStatus"]) {
-      const candidate = record[key];
-      if (typeof candidate !== "string") {
-        continue;
-      }
-      const normalized = candidate.trim().toLowerCase();
-      if (["queued", "pending", "running", "processing", "submitted", "in_progress", "in-progress"].includes(normalized)) {
-        return "pending";
-      }
-      if (["failed", "error", "cancelled", "canceled", "rejected"].includes(normalized)) {
-        return "failed";
-      }
-      if (["succeeded", "success", "completed", "complete", "done"].includes(normalized)) {
-        return "unknown";
-      }
-    }
-  }
-  return "unknown";
-}
-
-function flattenSeedanceRecords(value: unknown): Record<string, unknown>[] {
-  const records: Record<string, unknown>[] = [];
-  const visit = (candidate: unknown, depth: number): void => {
-    if (depth > 4 || !isRecord(candidate)) {
-      return;
-    }
-    records.push(candidate);
-    for (const key of ["data", "content", "output", "result", "task"]) {
-      visit(candidate[key], depth + 1);
-    }
-    const content = candidate.content;
-    if (Array.isArray(content)) {
-      for (const item of content) {
-        visit(item, depth + 1);
-      }
-    }
-  };
-  visit(value, 0);
-  return records;
 }

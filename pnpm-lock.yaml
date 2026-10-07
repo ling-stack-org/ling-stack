@@ -388,6 +388,9 @@ importers:
       '@xmldom/xmldom':
         specifier: 0.9.12
         version: 0.9.12
+      diff:
+        specifier: 8.0.4
+        version: 8.0.4
       docx:
         specifier: 9.7.1
         version: 9.7.1
@@ -426,6 +429,9 @@ importers:
 
   packages/providers:
     dependencies:
+      '@ling-stack/contracts':
+        specifier: workspace:*
+        version: link:../contracts
       '@ling-stack/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
@@ -456,6 +462,9 @@ importers:
       '@ling-stack/plugin-sdk':
         specifier: workspace:*
         version: link:../plugin-sdk
+      undici:
+        specifier: 7.29.0
+        version: 7.29.0
 
   packages/ui-react:
     dependencies:
@@ -12841,8 +12850,7 @@ snapshots:
 
   undici@6.29.0: {}
 
-  undici@7.29.0:
-    optional: true
+  undici@7.29.0: {}
 
   undici@8.9.0: {}
 

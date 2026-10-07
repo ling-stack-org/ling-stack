@@ -101,6 +101,33 @@ test("builds workspace review recovery and open-action requests", async () => {
   );
 });
 
+test("builds capability-bound transcript file requests without putting the token in the URL", async () => {
+  const mock = createFetchMock([
+    { cwd: "/repo", capability: { capabilityId: "wscap_1" } },
+    { kind: "code", ref: { displayPath: "src/a.ts" }, text: "const value = 1;" },
+  ]);
+  const client = new LingDaemonClient({ baseUrl: "http://daemon.test", fetch: mock.fetch });
+  const scope = {
+    workspaceId: "workspace_default",
+    threadId: "thread_1",
+    runId: "run_1",
+    actionId: "tool:run_1:tool_1",
+    participantId: "participant-engineer",
+  };
+  await client.issueWorkspaceFileCapability({ cwd: "/repo", capabilityTarget: "open_file", refId: "/repo/src/a.ts", scope });
+  await client.previewWorkspaceFileCapability({ cwd: "/repo", capabilityId: "wscap_1", scope, maxBytes: 4096, line: 12 });
+  assert.deepEqual(mock.calls.map((call) => [call.method, call.url]), [
+    ["POST", "http://daemon.test/workspace-files/capabilities"],
+    ["POST", "http://daemon.test/workspace-files/preview"],
+  ]);
+  assert.deepEqual(JSON.parse(mock.calls[0].body), {
+    cwd: "/repo", capabilityTarget: "open_file", refId: "/repo/src/a.ts", scope,
+  });
+  assert.deepEqual(JSON.parse(mock.calls[1].body), {
+    cwd: "/repo", capabilityId: "wscap_1", scope, maxBytes: 4096, line: 12,
+  });
+});
+
 test("binds global fetch to globalThis when no custom fetch is provided", async () => {
   const originalFetch = globalThis.fetch;
   try {
@@ -673,7 +700,23 @@ test("builds runner list and readiness endpoints", async () => {
         status: "blocked",
         checkedAt: "2026-06-14T00:00:00.000Z",
         featureFlagEnabled: false,
-        conformancePassed: false,
+        toolExecutionConformance: {
+          status: "blocked",
+          adapterRevision: "openclaw-acp:test",
+          receiptAdapterRevision: "openclaw-acp:test",
+          curatedTools: [],
+          toolSideEffects: {},
+          allowedSideEffects: [],
+          nativeSideEffectMode: "unverified",
+          toolSurfaceCurated: false,
+          approvalBridgeVerified: false,
+          sandboxBindingVerified: false,
+          evidenceCommitVerified: false,
+          abortPropagationVerified: false,
+          attemptFencingVerified: false,
+          workspaceBoundaryVerified: false,
+          artifactImportVerified: false,
+        },
         blockingReasons: [],
       },
     },
@@ -1114,7 +1157,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
     decision: "Handoffs stay manual.",
     createdBy: "local-user",
   });
-  await client.updateChannelDecision("/repo", "decision 1", { status: "superseded" });
+  await client.updateChannelDecision("/repo", "decision 1", { status: "rejected" });
   await client.createChannelHandoff("/repo", "channel 1", {
     sourceTaskId: "task 1",
     fromParticipantId: "tian",
@@ -1204,7 +1247,7 @@ test("sends mutation bodies for channel, task, provider, policy, media, and appr
   assert.equal(mock.calls[6].url, "http://daemon.test/channels/channel%201/decisions?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[6].body).sourceMessageId, "msg 1");
   assert.equal(mock.calls[7].url, "http://daemon.test/decisions/decision%201?cwd=%2Frepo");
-  assert.deepEqual(JSON.parse(mock.calls[7].body), { status: "superseded" });
+  assert.deepEqual(JSON.parse(mock.calls[7].body), { status: "rejected" });
   assert.equal(mock.calls[8].url, "http://daemon.test/channels/channel%201/handoffs?cwd=%2Frepo");
   assert.deepEqual(JSON.parse(mock.calls[8].body).toParticipantId, "engineer");
   assert.equal(mock.calls[9].url, "http://daemon.test/handoffs/handoff%201?cwd=%2Frepo");

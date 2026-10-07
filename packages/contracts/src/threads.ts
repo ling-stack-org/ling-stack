@@ -17,7 +17,7 @@ export const lingThreadKinds = [
 ] as const;
 export type LingThreadKind = (typeof lingThreadKinds)[number];
 
-export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
+export type LingThreadStatus = "open" | "running" | "waiting_for_approval" | "waiting_for_input" | "blocked" | "succeeded" | "failed" | "cancelled" | "archived";
 export type LingThreadArchivedFilter = "exclude" | "include" | "only";
 export const conversationModeKinds = ["default", "plan"] as const;
 export type ConversationModeKind = (typeof conversationModeKinds)[number];

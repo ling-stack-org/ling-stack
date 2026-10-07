@@ -20,6 +20,7 @@ export interface RuntimeInstance {
 export type WorkUnitKind =
   | "task_run"
   | "conversation_run"
+  | "approval_review"
   | "channel_turn_dispatch"
   | "channel_ai_reply"
   | "channel_terminal_report"
@@ -33,6 +34,7 @@ export type WorkUnitStatus =
   | "claimed"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "cancelling"
   | "succeeded"
   | "failed"
@@ -44,6 +46,7 @@ export type WorkUnitAttemptStatus =
   | "started"
   | "waiting_for_approval"
   | "cancelling"
+  | "yielded"
   | "succeeded"
   | "failed"
   | "cancelled"
@@ -57,6 +60,7 @@ export type RuntimeEventType =
   | "work_unit_heartbeat"
   | "work_unit_progress"
   | "work_unit_approval_requested"
+  | "work_unit_waiting_for_input"
   | "work_unit_cancelling"
   | "work_unit_succeeded"
   | "work_unit_failed"
@@ -99,7 +103,8 @@ export interface RunnerFallbackReason {
     | "missing_requested_runner"
     | "disabled_requested_runner"
     | "unsupported_provider_api"
-    | "unsupported_tool";
+    | "unsupported_tool"
+    | "runner_tool_conformance_failed";
   readonly message: string;
 }
 

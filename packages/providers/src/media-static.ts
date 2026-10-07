@@ -170,7 +170,8 @@ function createStaticVendorMediaAdapter(options: StaticMediaAdapterOptions & {
       if (transportResult.status === "failed") {
         return {
           status: "failed",
-          artifacts: [],
+          artifacts: transportResult.artifacts ?? [],
+          ...(transportResult.terminalObservation ? { terminalObservation: transportResult.terminalObservation } : {}),
           errorCode: transportResult.errorCode ?? "provider_internal_error",
           errorMessage: transportResult.errorMessage ?? "Media vendor transport failed.",
         };
@@ -178,14 +179,15 @@ function createStaticVendorMediaAdapter(options: StaticMediaAdapterOptions & {
 
       return {
         status: "succeeded",
+        ...(transportResult.terminalObservation ? { terminalObservation: transportResult.terminalObservation } : {}),
         artifacts: [
-          {
+          ...(transport.mode === "live" ? [] : [{
             type: "markdown",
             title: `${options.definition.displayName} ${formatMediaOperationLabel(request.operation)} request plan`,
             contentType: "text/markdown; charset=utf-8",
             pathHint: "vendor-request-plan.md",
             content: renderStaticVendorMediaResult(options.definition, request, requestPlan, transport.mode),
-          },
+          } as const]),
           ...(transportResult.artifacts ?? []),
         ],
       };

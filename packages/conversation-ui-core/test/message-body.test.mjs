@@ -1,6 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { collectLocalFileReferences, parseMessageBody, splitInlineTokens } from "../dist/index.js";
+import { collectLocalFileReferences, parseLocalFileReference, parseMessageBody, splitInlineTokens } from "../dist/index.js";
+
+test("relative file display resolves dot segments without granting outside paths workspace status", () => {
+  const cwd = "/workspace/ling-stack";
+  for (const path of ["docs/public.txt", "./docs/public.txt", "docs/../src/a.ts:12", "."]) {
+    assert.equal(parseLocalFileReference(path, cwd).insideWorkspace, true, path);
+  }
+  for (const path of ["../outside.txt", "docs/../../outside.txt#L7", "..", "~/outside.txt"]) {
+    const reference = parseLocalFileReference(path, cwd);
+    assert.equal(reference.insideWorkspace, false, path);
+    assert.equal(reference.raw, path);
+  }
+  assert.equal(parseLocalFileReference("docs/public.txt").insideWorkspace, false);
+});
 
 test("message body keeps html closing tags as text instead of file chips", () => {
   const tokens = splitInlineTokens("Rich <script>window.__ling_p5_xss = true</script>", "/workspace/ling-stack");
@@ -74,6 +87,33 @@ test("message body renders raw HTML as text and drops unsafe link destinations",
       { kind: "web_link", href: "https://example.com/docs", label: "safe" },
     ],
   });
+});
+
+test("message body does not absorb Chinese prose after a bare URL", () => {
+  const blocks = parseMessageBody(
+    "一个网页链接 https://example.com；以及本地文件路径 /workspace/ling-stack/todo.py。",
+    "/workspace/ling-stack",
+  );
+
+  assert.equal(blocks[0]?.kind, "paragraph");
+  assert.deepEqual(blocks[0].inlines.filter((token) => token.kind === "web_link"), [
+    { kind: "web_link", href: "https://example.com", label: "https://example.com" },
+  ]);
+  assert.equal(blocks[0].inlines.filter((token) => token.kind === "text").map((token) => token.text).join(""),
+    "一个网页链接 ；以及本地文件路径 。");
+  assert.equal(blocks[0].inlines.find((token) => token.kind === "local_file")?.reference.displayPath, "todo.py");
+
+  assert.deepEqual(splitInlineTokens("https://example.com。请继续"), [
+    { kind: "web_link", href: "https://example.com", label: "https://example.com" },
+    { kind: "text", text: "。请继续" },
+  ]);
+});
+
+test("message body preserves an explicitly linked internationalized URL", () => {
+  assert.deepEqual(parseMessageBody("[文档](https://example.com/中文)"), [{
+    kind: "paragraph",
+    inlines: [{ kind: "web_link", href: "https://example.com/中文", label: "文档" }],
+  }]);
 });
 
 test("message body preserves mentions and workspace file references inside Markdown", () => {

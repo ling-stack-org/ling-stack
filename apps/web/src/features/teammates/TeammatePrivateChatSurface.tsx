@@ -23,6 +23,7 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
   const { t } = useI18n();
   const {
     cwd,
+    authorizationMode,
     dockViewModel,
     dockActions,
     dockController,
@@ -30,6 +31,7 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
     dockPageRequest,
     onComposerKeyDown,
     onComposerSubmit,
+    onAuthorizationModeChange,
     onDockClose,
     onDockPageRequestConsumed,
     onFullAccessPresetSelected,
@@ -54,11 +56,13 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
   const terminalSession = useWorkspaceTerminalSession(cwd.trim());
   const composerController = useTeammatePrivateComposerController({
     identityKey: teammate.id,
+    authorizationMode,
     messageDraft: props.messageDraft,
     onComposerKeyDown,
     onComposerSubmit,
     onFullAccessPresetSelected,
     onMessageDraftChange,
+    onAuthorizationModeChange,
     onWorkspaceAccessModeChange,
     privateComposerSending,
     slashCommands,
@@ -92,7 +96,11 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
       ].filter(Boolean).join(" ")}
       ariaLabel={t("Private chat")}
       feedNode={<TeammatePrivateChatFeed {...props} messageController={messageController} />}
-      composerNode={props.composerGateNode ?? <TeammatePrivateChatComposer {...props} controller={composerController} />}
+      composerNode={props.composerGateNode != null ? (
+        <div className="teammate-private-composer-owner" data-ui2-teammate-private-composer="true">
+          {props.composerGateNode}
+        </div>
+      ) : <TeammatePrivateChatComposer {...props} controller={composerController} />}
       sideNode={(
         <>
           {dockController.resizable ? (

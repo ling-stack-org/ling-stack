@@ -139,27 +139,26 @@ function bindEvidenceFacts(
     participants: content.participants.map((participant) => {
       const evidence = evidenceParticipants.get(participant.agentId);
       const contribution = evidence?.contributionSummaries.filter(Boolean).join("; ").trim();
-      return contribution ? { ...participant, contribution } : participant;
+      return evidence ? {
+        ...participant,
+        ...(contribution ? { contribution } : {}),
+        sourceRefs: [...participant.sourceRefs, ...evidence.sourceRefs],
+      } : participant;
     }),
     artifacts: content.artifacts.map((artifact) => {
-      const trustedFileRefs = evidenceArtifacts.get(artifact.id)?.sourceRefs.filter((ref) =>
-        ref.kind === "file" && ref.visibility !== "developer_only" && ref.sensitivity !== "secret_adjacent"
-      ) ?? [];
-      if (trustedFileRefs.length === 0) {
+      const evidence = evidenceArtifacts.get(artifact.id);
+      if (!evidence) {
         return artifact;
       }
       return {
         ...artifact,
-        sourceRefs: uniqueTerminalReportSourceRefs([...artifact.sourceRefs, ...trustedFileRefs]),
+        // Rebinding Host facts must carry the entire section's privacy lineage.
+        // Keep model refs too: overwriting a weaker alias here would hide its
+        // downgrade from the validator and silently repair invalid output.
+        sourceRefs: [...artifact.sourceRefs, ...evidence.sourceRefs],
       };
     }),
   };
-}
-
-function uniqueTerminalReportSourceRefs(
-  refs: readonly TerminalReportSourceRef[],
-): readonly TerminalReportSourceRef[] {
-  return [...new Map(refs.map((ref) => [`${ref.kind}:${ref.id}`, ref])).values()];
 }
 
 function resolveSynthesisRuntime(input: Required<Pick<TerminalReportSynthesisInput, "store" | "snapshot" | "runnerRegistry" | "secretResolver">>) {

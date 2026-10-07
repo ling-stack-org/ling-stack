@@ -8,6 +8,7 @@ import {
 import type { LingThread } from "../../run-types.js";
 import { readNumber, readString, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { prepareNormalForkRetentionForThreadDelete } from "./normal-conversation-fork-store.js";
 
 export interface SqliteLingThreadCleanupStorePorts {
   readonly getLingThread: (threadId: string) => LingThread | undefined;
@@ -62,6 +63,7 @@ export class SqliteLingThreadCleanupStore {
 
     this.context.database.exec("BEGIN IMMEDIATE TRANSACTION");
     try {
+      prepareNormalForkRetentionForThreadDelete(this.context, threadId);
       this.context.database
         .prepare(`
           INSERT INTO retention_tombstones (

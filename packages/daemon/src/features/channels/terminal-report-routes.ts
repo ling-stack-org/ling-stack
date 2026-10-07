@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { TerminalReportDto, TerminalReportSourceRefDto } from "@ling-stack/contracts";
-import type { TerminalReport, TerminalReportSourceRef } from "@ling-stack/core";
+import type { TerminalReport, TerminalReportSourceRef, TerminalReportEvidenceSnapshot } from "@ling-stack/core";
+import { terminalReportVerificationExpectation } from "./terminal-report-verification-expectation.js";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalBooleanQuery, readOptionalIntegerQuery } from "../../shared/request.js";
@@ -35,7 +36,7 @@ export async function handleTerminalReportItem(
       writeJson(response, 404, { error: "terminal_report_not_found", message: `Terminal report not found: ${reportId}` });
       return;
     }
-    writeJson(response, 200, { report: projectTerminalReportDto(record.report) });
+    writeJson(response, 200, { report: projectTerminalReportDto(record.report, record.evidenceSnapshot) });
   } catch (error) {
     writeJson(response, 400, {
       error: "bad_request",
@@ -71,7 +72,7 @@ export async function handleTerminalReportsCollection(
     })
       .filter((record) => terminalReportIsEligibleForDisplay(storeRegistry.getStore(cwd), record))
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
-      .map((record) => projectTerminalReportDto(record.report!));
+      .map((record) => projectTerminalReportDto(record.report!, record.evidenceSnapshot));
     writeJson(response, 200, { reports });
   } catch (error) {
     writeJson(response, 400, {
@@ -116,7 +117,7 @@ export async function handleChannelTerminalReports(
     })
       .filter((record) => terminalReportIsEligibleForDisplay(store, record))
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
-      .map((record) => projectTerminalReportDto(record.report!));
+      .map((record) => projectTerminalReportDto(record.report!, record.evidenceSnapshot));
     writeJson(response, 200, { reports });
   } catch (error) {
     writeJson(response, 400, {
@@ -126,7 +127,7 @@ export async function handleChannelTerminalReports(
   }
 }
 
-export function projectTerminalReportDto(report: TerminalReport): TerminalReportDto {
+export function projectTerminalReportDto(report: TerminalReport, snapshot?: TerminalReportEvidenceSnapshot): TerminalReportDto {
   return {
     ...report,
     outcome: {
@@ -138,7 +139,8 @@ export function projectTerminalReportDto(report: TerminalReport): TerminalReport
       })),
     },
     changes: report.changes.map((change) => ({ ...change, sourceRefs: publicSourceRefs(change.sourceRefs) })),
-    verification: report.verification.map((check) => ({ ...check, sourceRefs: publicSourceRefs(check.sourceRefs) })),
+    verification: report.verification.map((check) => ({ ...check,
+      expectation: terminalReportVerificationExpectation(check, report, snapshot), sourceRefs: publicSourceRefs(check.sourceRefs) })),
     participants: report.participants.map((participant) => ({ ...participant, sourceRefs: publicSourceRefs(participant.sourceRefs) })),
     artifacts: report.artifacts.map((artifact) => ({ ...artifact, sourceRefs: publicSourceRefs(artifact.sourceRefs) })),
     risks: report.risks.map((risk) => ({ ...risk, sourceRefs: publicSourceRefs(risk.sourceRefs) })),

@@ -9,6 +9,7 @@ import {
   type TeammateDirectMessage,
 } from "@ling-stack/core";
 import type { WebEvidenceContext, WebEvidenceProgressEvent } from "./web-evidence-service.js";
+import { isTeammateDirectMessageInScope, resolveTeammateDirectRunOwner, type TeammateDirectRunOwnerStore } from "../teammates/direct-run-owner.js";
 
 export const WEB_EVIDENCE_RECORDED_EVENT = "web_evidence_recorded";
 export const WEB_EVIDENCE_PROGRESS_RUN_EVENT = "work_unit_progress";
@@ -149,15 +150,30 @@ export function enrichChannelMessagesWithWebEvidence(
 }
 
 export function enrichTeammateDirectMessageWithWebEvidence(
-  store: Pick<RunStore, "listWorkUnits" | "listRuntimeEvents">,
+  store: TeammateDirectRunOwnerStore & Pick<RunStore, "listWorkUnits" | "listRuntimeEvents">,
   message: TeammateDirectMessage,
 ): TeammateDirectMessage {
-  const evidence = findLatestMessageWebEvidence(store, message.id);
+  const scope = { teammateId: message.teammateId, directThreadId: message.threadId };
+  if (!message.linkedRunId || !isTeammateDirectMessageInScope(message, scope)) return message;
+  const owner = resolveTeammateDirectRunOwner(store, message.linkedRunId, {
+    ...scope, ...(message.authorType === "ai-teammate" ? { replyMessageId: message.id } : {}),
+  });
+  if (!owner?.run.workUnitId) return message;
+  const { run } = owner;
+  const evidence = findLatestMessageWebEvidence({
+    listWorkUnits: (options) => store.listWorkUnits(options).filter((unit) =>
+      unit.id === run.workUnitId && unit.kind === "teammate_direct_reply" &&
+      unit.ownerType === "teammate_direct_message" && unit.ownerId === run.taskId &&
+      unit.teammateId === scope.teammateId && unit.channelId === undefined &&
+      unit.linkedRunId === run.id && unit.linkedMessageId === message.id),
+    listRuntimeEvents: (id, options) => store.listRuntimeEvents(id, options).filter((event) =>
+      isRecord(event.data) && event.data.linkedMessageId === message.id && event.data.sourceMessageId === run.taskId),
+  }, message.id);
   return evidence ? { ...message, webEvidence: evidence } : message;
 }
 
 export function enrichTeammateDirectMessagesWithWebEvidence(
-  store: Pick<RunStore, "listWorkUnits" | "listRuntimeEvents">,
+  store: TeammateDirectRunOwnerStore & Pick<RunStore, "listWorkUnits" | "listRuntimeEvents">,
   messages: readonly TeammateDirectMessage[],
 ): readonly TeammateDirectMessage[] {
   return messages.map((message) => enrichTeammateDirectMessageWithWebEvidence(store, message));

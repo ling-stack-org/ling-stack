@@ -32,6 +32,16 @@
   text-align: right;
 }
 
+/* Sender geometry belongs to the shared MessageRow. Text within the user's
+   document remains left aligned regardless of the avatar's trailing position. */
+.message-bubble-inline.channel-message-row.message-bubble-document.local-user .message-body-shell,
+.message-bubble-inline.channel-message-row.message-bubble-document.local-user > .message-content > .message-body-renderer,
+.message-bubble-inline.channel-message-row.message-bubble-document.local-user > .message-content > p,
+.message-bubble-inline.channel-message-row.message-bubble-document.local-user .message-body-paragraph {
+  padding-right: 0;
+  text-align: left;
+}
+
 .channel-message-row.local-user > .message-content {
   padding-inline-end: calc(var(--ling-space-5) - 1px);
 }
@@ -106,11 +116,6 @@
   gap: 8px;
   width: min(var(--channel-conversation-width), 100%);
   min-width: 0;
-  margin-inline: auto;
-}
-
-.activity-shell .message-feed-virtual-row > .message-group {
-  width: min(var(--channel-conversation-width), 100%);
   margin-inline: auto;
 }
 

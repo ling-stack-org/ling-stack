@@ -1,5 +1,11 @@
-import type { RunEventEnvelope, RunStore, TeammateDirectMessage } from "@ling-stack/core";
+import type { TeammateDirectMessage } from "@ling-stack/contracts";
+import type { RunEventEnvelope, RunStore } from "@ling-stack/core";
+import { ConversationNarrationAccumulator } from "../conversations/narration-segments.js";
+import { createOwnedRunNarrationAccumulator } from "../conversations/narration-owner.js";
 import type { RunExecutionSink } from "../runs/orchestrator.js";
+import { projectTeammateDirectMessageNarration, projectTeammateDirectNarrationSnapshot, projectTeammateDirectReplyText } from "./direct-message-narration.js";
+import { isTeammateDirectMessageInScope, resolveTeammateDirectRunOwner, type TeammateDirectScope } from "./direct-run-owner.js";
+export { projectTeammateDirectReplyText } from "./direct-message-narration.js";
 
 export interface TeammateDirectReplyStream {
   readonly onReady: (message: TeammateDirectMessage) => void;
@@ -12,6 +18,7 @@ export interface TeammateDirectReplyStream {
 export function createTeammateDirectRunProjection(input: {
   readonly store: RunStore;
   readonly pendingMessageId: string;
+  readonly scope: TeammateDirectScope & { readonly canonicalThreadId: string; readonly turnId: string };
   readonly signal?: AbortSignal;
   readonly stream?: TeammateDirectReplyStream;
   readonly onRunLinked?: (link: { readonly runId: string; readonly workUnitId: string; readonly attemptId?: string }) => void;
@@ -23,8 +30,10 @@ export function createTeammateDirectRunProjection(input: {
 } {
   let runId: string | undefined;
   let errorMessage: string | undefined;
-  const textDeltas: string[] = [];
+  let narration = new ConversationNarrationAccumulator();
   let visibleText = "";
+  let visibleNarrationRevision = 0;
+  let visibleSourceRevision = 0;
   const closeListeners: (() => void)[] = [];
   if (input.signal) {
     input.signal.addEventListener("abort", () => {
@@ -50,16 +59,32 @@ export function createTeammateDirectRunProjection(input: {
       if (!linkedRunId) {
         return;
       }
+      if (runId === linkedRunId) return;
+      const pending = input.store.getTeammateDirectMessage(input.pendingMessageId);
+      const prepared = input.store.readSnapshot(() => {
+        const owner = resolveTeammateDirectRunOwner(input.store, linkedRunId, { ...input.scope, replyMessageId: input.pendingMessageId });
+        return owner ? { owner, narration: createOwnedRunNarrationAccumulator(input.store, linkedRunId, {
+          threadId: input.scope.canonicalThreadId, turnId: input.scope.turnId,
+          participantId: input.scope.teammateId, kind: "teammate_direct",
+        }) } : undefined;
+      });
+      const owner = prepared?.owner;
+      if (runId || !pending || pending.authorType !== "ai-teammate" ||
+        !isTeammateDirectMessageInScope(pending, input.scope) || !owner ||
+        (pending.linkedRunId && pending.linkedRunId !== linkedRunId)) {
+        throw new Error("Teammate direct live Run owner scope mismatch");
+      }
       runId = linkedRunId;
+      narration = prepared!.narration;
       const linked = input.store.updateTeammateDirectMessageRuntime(
         input.pendingMessageId,
         { linkedRunId, status: "pending", errorMessage: null },
         new Date().toISOString(),
       );
-      const run = input.store.getRun(linkedRunId);
+      const { run } = owner;
       const workUnit = run?.workUnitId ? input.store.getWorkUnit(run.workUnitId) : undefined;
       if (workUnit) {
-        input.onRunLinked?.({ runId: linkedRunId, workUnitId: workUnit.id, attemptId: workUnit.activeAttemptId });
+        input.onRunLinked?.({ runId: linkedRunId, workUnitId: workUnit.id, attemptId: narration.sourceLineage?.attemptId });
       }
       if (linked) {
         input.stream?.onRunLinked?.(linked);
@@ -67,29 +92,33 @@ export function createTeammateDirectRunProjection(input: {
     },
     writeEvent(_event, data) {
       const envelope = data as RunEventEnvelope;
-      if (envelope.type !== "assistant_text_delta") {
+      if (!runId || envelope.runId !== runId) return;
+      narration.append(envelope);
+      if (envelope.type !== "assistant_text_delta" && envelope.type !== "message_end"
+        && narration.sourceRevision === visibleSourceRevision) {
         return;
       }
-      const delta = readEventText(envelope.data);
-      if (!delta) {
-        return;
-      }
-      textDeltas.push(delta);
-      const nextVisibleText = projectTeammateDirectReplyText(textDeltas.join(""));
-      if (nextVisibleText === visibleText) {
+      const snapshot = narration.snapshot();
+      const projected = projectTeammateDirectNarrationSnapshot(snapshot);
+      const nextVisibleText = projected.content;
+      const nextRevision = projected.narrationSegments.at(-1)?.endEventSequence ?? 0;
+      if (nextVisibleText === visibleText && nextRevision === visibleNarrationRevision
+        && narration.sourceRevision === visibleSourceRevision) {
         return;
       }
       const visibleDelta = nextVisibleText.startsWith(visibleText)
         ? nextVisibleText.slice(visibleText.length)
         : nextVisibleText;
       visibleText = nextVisibleText;
+      visibleNarrationRevision = nextRevision;
+      visibleSourceRevision = narration.sourceRevision;
       const updated = input.store.updateTeammateDirectMessageRuntime(
         input.pendingMessageId,
         { body: visibleText, status: "pending", errorMessage: null },
         envelope.ts,
       );
       if (updated) {
-        input.stream?.onDelta(updated, visibleDelta);
+        input.stream?.onDelta(projectTeammateDirectMessageNarration(input.store, updated, snapshot), visibleDelta);
       }
     },
     writeError(_statusCode, body) {
@@ -99,42 +128,10 @@ export function createTeammateDirectRunProjection(input: {
   };
   return {
     sink,
-    text: () => projectTeammateDirectReplyText(textDeltas.join("")),
+    text: () => projectTeammateDirectReplyText(narration.snapshot().content),
     runId: () => runId,
     error: () => errorMessage,
   };
-}
-
-const DIRECT_RECEIPT_HEAD = String.raw`(?:(?:好的|好)[，,\s]*)?(?:已)?收到(?:了)?`;
-const DIRECT_RECEIPT_ECHO = String.raw`(?:[：:,，]\s*[^。\r\n！？!?]{0,80})?`;
-const DIRECT_RECEIPT_END = String.raw`[。！？!?]`;
-const directReceiptLinePattern = new RegExp(
-  String.raw`^${DIRECT_RECEIPT_HEAD}${DIRECT_RECEIPT_ECHO}${DIRECT_RECEIPT_END}?[\t ]*(?:\r?\n)+`,
-  "u",
-);
-const directReceiptSentencePattern = new RegExp(
-  String.raw`^${DIRECT_RECEIPT_HEAD}${DIRECT_RECEIPT_ECHO}${DIRECT_RECEIPT_END}[\t ]*(?=\S)`,
-  "u",
-);
-const directReceiptOnlyPattern = new RegExp(
-  String.raw`^${DIRECT_RECEIPT_HEAD}${DIRECT_RECEIPT_ECHO}${DIRECT_RECEIPT_END}?\s*$`,
-  "u",
-);
-const partialDirectReceiptPattern = new RegExp(
-  String.raw`^(?:好|好的|好的[，,\s]*|已|已收|收|收到(?:了)?(?:[：:,，]\s*[^。\r\n！？!?]{0,80})?)$`,
-  "u",
-);
-
-export function projectTeammateDirectReplyText(value: string): string {
-  const source = value.trimStart();
-  const leadingReceipt = directReceiptLinePattern.exec(source) ?? directReceiptSentencePattern.exec(source);
-  if (leadingReceipt) {
-    return source.slice(leadingReceipt[0].length).trimStart();
-  }
-  if (directReceiptOnlyPattern.test(source) || partialDirectReceiptPattern.test(source)) {
-    return "";
-  }
-  return value;
 }
 
 function readRunId(value: unknown): string | undefined {
@@ -143,14 +140,6 @@ function readRunId(value: unknown): string | undefined {
   }
   const runId = (value as Record<string, unknown>).runId;
   return typeof runId === "string" && runId.trim() ? runId : undefined;
-}
-
-function readEventText(value: unknown): string {
-  if (!value || typeof value !== "object" || Array.isArray(value)) {
-    return "";
-  }
-  const text = (value as Record<string, unknown>).text;
-  return typeof text === "string" ? text : "";
 }
 
 function readErrorMessage(value: unknown): string {

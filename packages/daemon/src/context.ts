@@ -10,6 +10,7 @@ import type {
   PiRunnerMcpToolCallResult,
   PiRunnerResult,
   PiRunnerRunOptions,
+  PiRunnerPreparedInput,
 } from "@ling-stack/runner-pi";
 import type { LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "./config.js";
@@ -35,6 +36,7 @@ import type { RunStoreFactory } from "./runtime/store-registry.js";
 import type { RunStoreRegistry } from "./runtime/store-registry.js";
 import type { RunnerRegistry } from "./runtime/runners.js";
 import type { RuntimeSupervisor } from "./runtime/supervisor.js";
+import type { OfficeLocalReviewedNativeArtifact } from "./runtime/sandbox/protected-host-office-native-identity.js";
 import type { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
 import type { StartupStateRegistry } from "./startup/state.js";
 import type { BundledCuaDriverActivationService } from "./features/plugins/cua-driver-bundled-activation.js";
@@ -47,17 +49,33 @@ import type { ChromeBrowserSessionController } from "./features/browser-extensio
 import type { ChromeBrowserPluginService } from "./features/plugins/chrome-browser.js";
 import type { OfficeDriverController } from "./features/office-documents/driver-controller.js";
 import type { OfficeDocumentsPluginService } from "./features/plugins/office-documents.js";
+import type { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
+import type { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
+import type { HostMcpOperation } from "./features/mcp/host-operation.js";
+import type { HostOfficeLocalMcpOperation } from "./features/mcp/office-local-mcp-operation.js";
 
 export interface RunnerAdapter {
+  /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
+  prepareTaskInput?(options: PiRunnerRunOptions): Promise<PiRunnerPreparedInput>;
   runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult>;
   resumeTask?(input: RunnerNativeResumeInputV1): Promise<PiRunnerResult>;
 }
 
 export interface RunnerNativeResumeInputV1 {
+  readonly schemaVersion: 1;
   readonly runId: string;
+  readonly rootRunId: string;
+  readonly workUnitId: string;
   readonly attemptId: string;
+  readonly sourceAttemptId: string;
+  readonly runnerId: string;
+  readonly runnerCapabilityRevision: string;
+  readonly contextViewId: string;
+  readonly workspaceIdentity: string;
+  readonly policySnapshotFingerprint: string;
   readonly handleRef: string;
-  readonly signal?: AbortSignal;
+  /** Live Host callbacks, secrets, cancellation and current approval bridge are never persisted in the handle. */
+  readonly options: PiRunnerRunOptions;
 }
 
 export interface McpBroker {
@@ -95,7 +113,7 @@ export interface McpBroker {
   ): Promise<PiRunnerMcpToolCallResult>;
 }
 
-export interface McpBrokerOptions {
+interface McpBrokerCommonOptions {
   readonly secretResolver: SecretResolver;
   /** Workspace authority for generation-scoped bundled providers. */
   readonly workspaceCwd?: string;
@@ -114,6 +132,12 @@ export interface McpBrokerOptions {
   };
 }
 
+/** Transport and fixed local Office scopes are distinct, mutually exclusive capabilities. */
+export type McpBrokerOptions = McpBrokerCommonOptions & (
+  | { readonly hostOperation?: HostMcpOperation; readonly officeLocalOperation?: never }
+  | { readonly hostOperation?: never; readonly officeLocalOperation: HostOfficeLocalMcpOperation }
+);
+
 export interface ExternalSecretStore extends SecretResolver {
   setSecret(ref: string, value: string, purpose?: SecretPurpose): SecretStatus;
   deleteSecret(ref: string, purpose?: SecretPurpose): SecretStatus;
@@ -123,6 +147,8 @@ export interface DaemonDependencies {
   readonly runner?: RunnerAdapter;
   readonly runnerRegistry?: RunnerRegistry;
   readonly storeFactory?: RunStoreFactory;
+  /** Host build selection only. Never supplied by workspace policy, HTTP or model input. */
+  readonly officeLocalNativeArtifact?: OfficeLocalReviewedNativeArtifact;
   readonly extensionRegistry?: LingExtensionRegistry;
   readonly secretResolver?: SecretResolver;
   readonly externalSecretStore?: ExternalSecretStore;
@@ -211,4 +237,7 @@ export interface DaemonContext {
   readonly chromeBrowserPlugin: ChromeBrowserPluginService;
   readonly officeDriverController: OfficeDriverController;
   readonly officeDocumentsPlugin: OfficeDocumentsPluginService;
+  /** Process-local transcript source grants; daemon restart invalidates all grants. */
+  readonly workspaceFileCapabilities: WorkspaceFileCapabilityRegistry;
+  readonly hostCapabilityBridge: HostCapabilityBridgeController;
 }

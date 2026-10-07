@@ -9,7 +9,7 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { ConversationGeneratedMedia, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
 export const cwd = "/tmp/ling-stack-workspace";
@@ -71,6 +71,10 @@ export interface MockState {
   channelWorkspaceGitStatusByChannel: Record<string, WorkspaceGitStatus | MockWorkspaceGitStatusFailure>;
   channelMessages: unknown[];
   channelConversationItemExtras?: unknown[];
+  conversationItems?: ConversationItemV1[];
+  userInputs?: import("@ling-stack/contracts").UserInputTranscriptItemV1[];
+  conversationReasoningSummaries?: ConversationReasoningSummaryRecord[];
+  conversationContextSnapshotsByThreadId?: Record<string, unknown[]>;
   channelMessageRouteDecisions: unknown[];
   channelIntentDecisions: unknown[];
   channelTurnContexts: Record<string, Record<string, unknown>>;
@@ -91,6 +95,9 @@ export interface MockState {
   channelContextSummaries: unknown[];
   channelWorkflows: unknown[];
   channelWorkflowSteps: unknown[];
+  failNextWorkflowOrchestrate?: { readonly error: string; readonly message: string; readonly status?: number; readonly delayMs?: number };
+  failNextWorkflowCancel?: { readonly error: string; readonly message: string; readonly status?: number };
+  failNextWorkflowStepRetry?: { readonly error: string; readonly message: string; readonly status?: number };
   channelProtocolDrafts: unknown[];
   channelPlaybookCandidates: unknown[];
   channelTeamExpertsByTurn: Record<string, unknown>;
@@ -214,6 +221,11 @@ export interface MockState {
   proposedPlans: ProposedPlanArtifact[];
   turns: MockLingTurn[];
   turnRunLinks: MockLingTurnRun[];
+  conversationSupersessionTombstonesByThreadId: Record<string, {
+    readonly turnIds: string[];
+    readonly runIds: string[];
+    readonly responseMessageIds: string[];
+  }>;
   failThreadTurnsForThreadIds: string[];
   failNextWorkspaceSettingsPatch?: { readonly error: string; readonly message: string; readonly status?: number };
   executionActions: MockExecutionAction[];
@@ -334,11 +346,15 @@ export interface MockRun {
 
 export interface MockExecutionAction {
   id: string;
+  revision?: number;
+  sourceEventSequence?: number;
   workspaceId: string;
   threadId?: string;
   runId?: string;
   attemptId?: string;
   workUnitId?: string;
+  participantId?: string;
+  workflowStepId?: string;
   approvalId?: string;
   toolCallId?: string;
   actionType: string;
@@ -346,10 +362,28 @@ export interface MockExecutionAction {
   status: string;
   title: string;
   summary: string;
+  scopeSummary?: string;
   targetRefs: Array<{ type: string; id?: string; label?: string; path?: string }>;
   previewArtifactIds: string[];
   resultArtifactIds: string[];
+  sourceRefs?: Array<{ kind: string; id: string; label?: string; path?: string; visibility?: string }>;
   policySnapshot?: unknown;
+  toolEvidence?: {
+    toolName: string;
+    inputSummary: string;
+    outputText?: string;
+    outputTruncated: boolean;
+    latestEventSeq: number;
+  };
+  runtimeDiagnostic?: {
+    code: "execution_loop_detected";
+    loopKind: "exact_repeat" | "repeated_update" | "cycle" | "no_progress_budget";
+    repeatedCount: number;
+    noProgressActionCount: number;
+    cycleLength?: number;
+    fingerprint: string;
+    retryable: false;
+  };
   commandEvidence?: {
     command: string;
     cwd?: string;
@@ -1149,11 +1183,7 @@ export async function openEngineeringChannel(page: Page): Promise<void> {
   if (await channelMessageFeed.isVisible().catch(() => false)) {
     return;
   }
-  // The shell's accessible label changed from the product name to the
-  // semantic sidebar label on current main. Keep this helper compatible with
-  // both labels so channel tests exercise the page instead of failing before
-  // the channel is opened.
-  const navigation = page.getByLabel(/Ling Stack navigation|Sidebar display|Ling Stack 导航|侧栏显示/).first();
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const showNavigation = page.getByRole("button", { name: /Show navigation|显示导航/ });
   await expect.poll(async () => (
     await navigation.isVisible().catch(() => false)
@@ -1253,6 +1283,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     channelWorkspaceGitStatusByChannel: {},
     channelMessages: [],
     channelConversationItemExtras: [],
+    conversationContextSnapshotsByThreadId: {},
     channelMessageRouteDecisions: [],
     channelIntentDecisions: [],
     channelTurnContexts: {},
@@ -1456,6 +1487,7 @@ export function createBaseState(options: { approvalStatus: "pending" | "expired"
     proposedPlans: [],
     turns: [],
     turnRunLinks: [],
+    conversationSupersessionTombstonesByThreadId: {},
     failThreadTurnsForThreadIds: [],
     executionActions: [],
     userProfile: {
@@ -6987,6 +7019,7 @@ async function handleMockConversationMessageEdit(
   const interruptedRunIds: string[] = [];
   let supersededTurnId: string | undefined;
   let replacementTurnId: string | undefined;
+  let supersessionThreadId: string | undefined;
   let replayedSupersessionId: string | undefined;
   let idempotentReplay = false;
 
@@ -7002,6 +7035,7 @@ async function handleMockConversationMessageEdit(
       return;
     }
     supersededTurnId = originalTurn.id;
+    supersessionThreadId = thread.id;
     originalTurn.status = "superseded";
     originalTurn.updatedAt = now;
     supersededResponseMessageIds.push(`conversation-assistant:${originalTurn.id}`);
@@ -7099,6 +7133,7 @@ async function handleMockConversationMessageEdit(
     const currentThreadId = typeof currentEntry?.item.threadId === "string"
       ? currentEntry.item.threadId
       : ensureMockChannelRootThread(state, ownerId).id;
+    supersessionThreadId = currentThreadId;
     for (let index = 0; index < state.channelMessages.length; index += 1) {
       const candidate = state.channelMessages[index];
       const matchesSupersededReply = isRecord(candidate) && candidate.authorType === "ai-teammate" && candidate.status !== "superseded" && (
@@ -7140,6 +7175,8 @@ async function handleMockConversationMessageEdit(
       await route.fulfill({ status: 404, json: { error: "message_not_found", message: "Private message not found." } });
       return;
     }
+    supersessionThreadId = state.threads.find((candidate) =>
+      candidate.kind === "teammate_direct" && candidate.teammateId === ownerId)?.id;
     const pendingReplacement = isRecord(current.pendingReplacement) && current.pendingReplacement.idempotencyKey === idempotencyKey
       ? current.pendingReplacement
       : undefined;
@@ -7192,6 +7229,19 @@ async function handleMockConversationMessageEdit(
     return;
   }
 
+  if (!idempotentReplay && supersessionThreadId) {
+    const tombstones = state.conversationSupersessionTombstonesByThreadId[supersessionThreadId] ?? {
+      turnIds: [],
+      runIds: [],
+      responseMessageIds: [],
+    };
+    state.conversationSupersessionTombstonesByThreadId[supersessionThreadId] = {
+      turnIds: [...new Set([...tombstones.turnIds, ...(supersededTurnId ? [supersededTurnId] : [])])].sort(),
+      runIds: [...new Set([...tombstones.runIds, ...interruptedRunIds])].sort(),
+      responseMessageIds: [...new Set([...tombstones.responseMessageIds, ...supersededResponseMessageIds])].sort(),
+    };
+  }
+
   await route.fulfill({
     json: {
       message: revision,
@@ -7207,7 +7257,7 @@ async function handleMockConversationMessageEdit(
   });
 }
 
-function buildMockConversationDetail(state: MockState, cwd: string, thread: MockLingThread): Record<string, unknown> {
+export function buildMockConversationDetail(state: MockState, cwd: string, thread: MockLingThread): Record<string, unknown> {
   const turns = state.turns
     .filter((turn) => turn.threadId === thread.id && turn.status !== "superseded")
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
@@ -7224,6 +7274,11 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
   });
   const runIds = new Set(runs.map((run) => run.id));
   const interventions = state.runInterventions.filter((intervention) => runIds.has(intervention.sourceRunId));
+  const approvals = state.approvals.filter((approval) => approval.runId && runIds.has(approval.runId));
+  const approvalIds = new Set(approvals.map((approval) => approval.id));
+  const approvalCheckpoints = state.approvalCheckpoints.filter((checkpoint) =>
+    approvalIds.has(checkpoint.approvalId) || Boolean(checkpoint.runId && runIds.has(checkpoint.runId))
+  );
   const turnMessageIds = new Set(turnMessages.map((message) => message.id));
   const guidanceMessages = interventions.flatMap((intervention) => {
     const id = `conversation-user:intervention:${intervention.id}`;
@@ -7249,6 +7304,122 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
   });
   const messages = [...turnMessages, ...guidanceMessages]
     .sort((left, right) => String(left.createdAt).localeCompare(String(right.createdAt)) || String(left.id).localeCompare(String(right.id)));
+  const conversationItems = messages.map((message, index) => {
+    const role = readString(message, "role");
+    const status = readString(message, "status");
+    const turnId = readOptionalString(message, "turnId");
+    const runId = readOptionalString(message, "runId");
+    const createdAt = readString(message, "createdAt") || thread.createdAt;
+    const updatedAt = readString(message, "updatedAt") || createdAt;
+    const committed = status !== "pending" && status !== "running";
+    const domainRefs = [
+      ...(turnId ? [{ type: "turn", id: turnId }] : []),
+      ...(runId ? [{ type: "run", id: runId }] : []),
+    ];
+    if (role === "assistant") {
+      return {
+        schemaVersion: 1,
+        id: readString(message, "id"),
+        workspaceId: thread.workspaceId,
+        threadId: thread.id,
+        ...(turnId ? { turnId } : {}),
+        sequence: index + 1,
+        kind: "assistant_message",
+        status: committed ? status === "failed" || status === "cancelled" ? "failed" : "committed" : "pending",
+        actorType: "ling_agent",
+        actorId: readOptionalString(message, "authorId") ?? "ling_agent",
+        visibility: "thread_participants",
+        payload: {
+          body: readString(message, "content"),
+          format: "markdown",
+          streaming: !committed,
+          deliveryStatus: status === "failed" || status === "cancelled" ? "failed" : committed ? "ready" : "pending",
+          presentationRole: "reply_result",
+        },
+        domainRefs,
+        revision: 1,
+        createdAt,
+        updatedAt,
+        ...(committed ? { committedAt: updatedAt } : {}),
+      };
+    }
+    return {
+      schemaVersion: 1,
+      id: readString(message, "id"),
+      workspaceId: thread.workspaceId,
+      threadId: thread.id,
+      ...(turnId ? { turnId } : {}),
+      sequence: index + 1,
+      kind: "user_message",
+      status: committed ? status === "failed" || status === "cancelled" ? "failed" : "committed" : "pending",
+      actorType: "local_user",
+      visibility: "thread_participants",
+      payload: {
+        body: readString(message, "content"),
+        format: "plain_text",
+        mentions: [],
+        attachmentIds: Array.isArray(message.attachments)
+          ? message.attachments.flatMap((attachment) => isRecord(attachment) && typeof attachment.id === "string" ? [attachment.id] : [])
+          : [],
+        linkPreviewIds: [],
+        fileRefs: Array.isArray(message.fileRefs) ? message.fileRefs : [],
+      },
+      domainRefs,
+      revision: 1,
+      createdAt,
+      updatedAt,
+      ...(committed ? { committedAt: updatedAt } : {}),
+    };
+  });
+  const terminalReportItems = state.terminalReports
+    .filter((report) => isRecord(report) && report.threadId === thread.id)
+    .flatMap((report, index) => {
+      const reportId = readString(report, "id");
+      const resultItemId = readString(report, "resultItemId") || (reportId ? `result_terminal_report:${reportId}` : "");
+      const generation = typeof report.generation === "number" ? report.generation : 1;
+      const source = isRecord(report.source) ? report.source : undefined;
+      const sourceKind = readString(source, "kind");
+      const sourceId = readString(source, "id");
+      const evidenceFingerprint = readString(report, "evidenceFingerprint");
+      const outcome = isRecord(report.outcome) ? report.outcome : undefined;
+      const outcomeStatus = readString(outcome, "status");
+      if (!reportId || !resultItemId || !sourceKind || !sourceId || !evidenceFingerprint || !outcomeStatus) {
+        return [];
+      }
+      const reportCreatedAt = readString(report, "createdAt") || thread.updatedAt;
+      const reportCommittedAt = readString(report, "committedAt") || reportCreatedAt;
+      return [{
+        schemaVersion: 1,
+        id: resultItemId,
+        workspaceId: thread.workspaceId,
+        threadId: thread.id,
+        ...(readString(report, "turnId") ? { turnId: readString(report, "turnId") } : {}),
+        sequence: messages.length + index + 1,
+        kind: "terminal_report",
+        status: "committed",
+        actorType: "host",
+        visibility: "thread_participants",
+        payload: {
+          reportId,
+          generation,
+          sourceKind,
+          sourceId,
+          evidenceFingerprint,
+          outcomeStatus,
+        },
+        domainRefs: [
+          { type: "terminal_report", id: reportId },
+          { type: sourceKind, id: sourceId },
+        ],
+        revision: 1,
+        createdAt: reportCreatedAt,
+        updatedAt: reportCommittedAt,
+        committedAt: reportCommittedAt,
+      }];
+    });
+  const allConversationItems = [...conversationItems, ...terminalReportItems,
+    ...(state.conversationItems ?? []).filter(item => item.threadId === thread.id && item.workspaceId === thread.workspaceId
+      && (item.kind === "user_input_request" || item.kind === "user_input_answer"))];
   const latestRun = runs[runs.length - 1];
   const requestSnapshot = isRecord(latestRun?.requestSnapshot) ? latestRun.requestSnapshot : {};
   const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
@@ -7256,11 +7427,33 @@ function buildMockConversationDetail(state: MockState, cwd: string, thread: Mock
     cwd,
     thread,
     turns,
+    conversationItems: allConversationItems,
+    userInputs: (state.userInputs ?? []).filter(record => allConversationItems.some(item => item.id === record.itemId)),
+    supersessionTombstones: state.conversationSupersessionTombstonesByThreadId[thread.id] ?? {
+      turnIds: [],
+      runIds: [],
+      responseMessageIds: [],
+    },
+    contextSnapshots: state.conversationContextSnapshotsByThreadId?.[thread.id] ?? [],
+    runLinks,
     runs,
-    executionActions: state.executionActions.filter((action) => action.threadId === thread.id || runs.some((run) => run.id === action.runId)),
-    approvals: state.approvals.filter((approval) => approval.runId && runIds.has(approval.runId)),
+    reasoningSummaries: (state.conversationReasoningSummaries ?? []).filter((summary) =>
+      summary.threadId === thread.id && runIds.has(summary.runId)
+    ),
+    executionActions: state.executionActions
+      .filter((action) => action.threadId === thread.id || runs.some((run) => run.id === action.runId))
+      .map((action) => ({
+        ...action,
+        // Keep the mock detail response aligned with the ExecutionAction
+        // contract consumed by the canonical transcript adapter.
+        revision: action.revision ?? 1,
+        sourceRefs: action.sourceRefs ?? [],
+      })),
+    approvals,
+    approvalCheckpoints,
     interventions,
     terminalReports: state.terminalReports.filter((report) => isRecord(report) && report.threadId === thread.id),
+    artifacts: runs.flatMap((run) => state.artifactsByRun[run.id] ?? []),
     messages,
     generatedMedia: mockConversationGeneratedMediaForRunIds(state, runIds),
     defaults: {
@@ -7445,6 +7638,141 @@ function buildEmptyMockTeamMetrics(channelId: string): Record<string, unknown> {
   };
 }
 
+interface MockWorkspaceFileCapabilityGrant {
+  readonly capabilityTarget: "open_file" | "open_diff" | "open_artifact";
+  readonly refId: string;
+  readonly displayPath: string;
+  readonly scope: {
+    readonly workspaceId: string;
+    readonly threadId: string;
+    readonly runId: string;
+    readonly actionId: string;
+    readonly participantId: string;
+    readonly workflowStepId?: string;
+  };
+}
+
+function issueMockWorkspaceFileCapability(
+  state: MockState,
+  input: unknown,
+): { readonly status: number; readonly body: Record<string, unknown> } {
+  if (!isRecord(input) || !isRecord(input.scope)) {
+    return { status: 400, body: { error: "bad_request", message: "Capability scope is required." } };
+  }
+  const capabilityTarget = readString(input, "capabilityTarget");
+  const refId = readString(input, "refId");
+  const requestedCwd = readString(input, "cwd");
+  const workflowStepId = readOptionalString(input.scope, "workflowStepId");
+  const scope = {
+    workspaceId: readString(input.scope, "workspaceId"),
+    threadId: readString(input.scope, "threadId"),
+    runId: readString(input.scope, "runId"),
+    actionId: readString(input.scope, "actionId"),
+    participantId: readString(input.scope, "participantId"),
+    ...(workflowStepId ? { workflowStepId } : {}),
+  };
+  if (requestedCwd !== cwd || !refId || !scope.workspaceId || !scope.threadId || !scope.runId || !scope.actionId || !scope.participantId ||
+    (capabilityTarget !== "open_file" && capabilityTarget !== "open_diff" && capabilityTarget !== "open_artifact")) {
+    return { status: 400, body: { error: "bad_request", message: "Capability request is incomplete." } };
+  }
+  const action = state.executionActions.find((candidate) => candidate.id === scope.actionId);
+  if (!action || action.workspaceId !== scope.workspaceId || action.threadId !== scope.threadId || action.runId !== scope.runId ||
+    action.participantId !== scope.participantId || (action.workflowStepId ?? undefined) !== scope.workflowStepId) {
+    return { status: 403, body: { error: "scope_mismatch", message: "Capability action scope is invalid." } };
+  }
+  const artifact = Object.values(state.artifactsByRun).flat().find((candidate) => candidate.id === refId);
+  const artifactOwned = Boolean(artifact && (action.previewArtifactIds.includes(refId) || action.resultArtifactIds.includes(refId)));
+  const target = action.targetRefs.find((candidate) => candidate.id === refId || candidate.path === refId || candidate.label === refId);
+  const source = action.sourceRefs?.find((candidate) => candidate.id === refId || candidate.path === refId);
+  if (!artifactOwned && !target && !source) {
+    return { status: 403, body: { error: "missing_context_source", message: "Capability ref is not owned by the action." } };
+  }
+  if (capabilityTarget === "open_diff" && artifact && artifact.type !== "diff") {
+    return { status: 403, body: { error: "missing_context_source", message: "Capability ref is not diff evidence." } };
+  }
+  const displayPath = artifact?.path ?? target?.path ?? source?.path ?? refId;
+  const grant: MockWorkspaceFileCapabilityGrant = {
+    capabilityTarget,
+    refId,
+    displayPath,
+    scope,
+  };
+  const capabilityId = `wscap_mock_${Buffer.from(JSON.stringify(grant), "utf8").toString("base64url")}`;
+  return {
+    status: 200,
+    body: {
+      cwd: requestedCwd,
+      capability: {
+        capabilityId,
+        capabilityTarget,
+        refId,
+        displayPath,
+        scope,
+        issuedAt: "2026-07-23T09:10:01.000Z",
+        expiresAt: "2099-07-23T09:15:01.000Z",
+        daemonEpoch: "mock-daemon-epoch",
+      },
+    },
+  };
+}
+
+function previewMockWorkspaceFileCapability(
+  state: MockState,
+  input: unknown,
+): { readonly status: number; readonly body: Record<string, unknown> } {
+  if (!isRecord(input) || !isRecord(input.scope)) {
+    return { status: 400, body: { error: "bad_request", message: "Capability preview scope is required." } };
+  }
+  const capabilityId = readString(input, "capabilityId");
+  if (!capabilityId.startsWith("wscap_mock_")) {
+    return { status: 403, body: { error: "workspace_file_capability_invalid", message: "Capability is invalid." } };
+  }
+  let grant: MockWorkspaceFileCapabilityGrant;
+  try {
+    grant = JSON.parse(Buffer.from(capabilityId.slice("wscap_mock_".length), "base64url").toString("utf8")) as MockWorkspaceFileCapabilityGrant;
+  } catch {
+    return { status: 403, body: { error: "workspace_file_capability_invalid", message: "Capability is invalid." } };
+  }
+  const workflowStepId = readOptionalString(input.scope, "workflowStepId");
+  const requestedScope = {
+    workspaceId: readString(input.scope, "workspaceId"),
+    threadId: readString(input.scope, "threadId"),
+    runId: readString(input.scope, "runId"),
+    actionId: readString(input.scope, "actionId"),
+    participantId: readString(input.scope, "participantId"),
+    ...(workflowStepId ? { workflowStepId } : {}),
+  };
+  if (JSON.stringify(requestedScope) !== JSON.stringify(grant.scope)) {
+    return { status: 403, body: { error: "scope_mismatch", message: "Capability scope does not match." } };
+  }
+  const action = state.executionActions.find((candidate) => candidate.id === grant.scope.actionId);
+  const artifact = Object.values(state.artifactsByRun).flat().find((candidate) => candidate.id === grant.refId);
+  if (!action || !artifact || (!action.previewArtifactIds.includes(artifact.id) && !action.resultArtifactIds.includes(artifact.id))) {
+    return { status: 403, body: { error: "missing_context_source", message: "Capability evidence is no longer available." } };
+  }
+  const previewKind = artifact.type === "diff" ? "diff" : artifact.type === "json" ? "json" : artifact.type === "log" ? "log" : "plain_text";
+  return {
+    status: 200,
+    body: {
+      ref: {
+        id: artifact.id,
+        source: "artifact",
+        scope: "run",
+        label: artifact.title ?? artifact.path,
+        displayPath: artifact.path,
+        contentType: artifact.contentType,
+        sizeBytes: artifact.sizeBytes,
+        previewable: true,
+      },
+      kind: previewKind,
+      text: artifact.contentText ?? "",
+      truncated: false,
+      sizeBytes: artifact.sizeBytes,
+      redactionNotes: [],
+    },
+  };
+}
+
 function mockProviderModelDiscoveryMetadata(stale = false): Record<string, unknown> {
   return {
     fetchedAt: "2026-09-22T03:00:00.000Z",
@@ -7610,6 +7938,18 @@ export async function handleDaemonRoute(
   if (request.method() === "GET" && path === "/workspace-settings") {
     state.workspaceSettings = normalizeWorkspaceSettings(state.workspaceSettings);
     await route.fulfill({ json: { cwd, settings: state.workspaceSettings } });
+    return;
+  }
+  if (request.method() === "POST" && path === "/workspace-files/capabilities") {
+    const body = await request.postDataJSON() as unknown;
+    const issued = issueMockWorkspaceFileCapability(state, body);
+    await route.fulfill({ status: issued.status, json: issued.body });
+    return;
+  }
+  if (request.method() === "POST" && path === "/workspace-files/preview") {
+    const body = await request.postDataJSON() as unknown;
+    const preview = previewMockWorkspaceFileCapability(state, body);
+    await route.fulfill({ status: preview.status, json: preview.body });
     return;
   }
   if (request.method() === "GET" && path === "/media-generation-targets") {
@@ -7926,7 +8266,23 @@ export async function handleDaemonRoute(
         readiness: {
           runnerId,
           featureFlagEnabled: runner.status === "enabled",
-          conformancePassed: runner.readiness.status === "ready",
+          toolExecutionConformance: {
+            status: runner.readiness.status === "ready" ? "verified" : "blocked",
+            adapterRevision: `${runnerId}:mock-adapter-v1`,
+            receiptAdapterRevision: `${runnerId}:mock-adapter-v1`,
+            curatedTools: runner.supportedTools ?? [],
+            toolSideEffects: Object.fromEntries((runner.supportedTools ?? []).map((tool) => [tool, "workspace_read"])),
+            allowedSideEffects: ["workspace_read"],
+            nativeSideEffectMode: "disabled",
+            toolSurfaceCurated: true,
+            approvalBridgeVerified: false,
+            sandboxBindingVerified: false,
+            evidenceCommitVerified: true,
+            abortPropagationVerified: true,
+            attemptFencingVerified: true,
+            workspaceBoundaryVerified: true,
+            artifactImportVerified: true,
+          },
           ...runner.readiness,
         },
       },
@@ -10102,6 +10458,7 @@ export async function handleDaemonRoute(
             teammateId,
             thread,
             messages: pageMessages,
+            timeline: buildMockTeammateDirectTimeline(state, teammateId),
             generatedMedia: mockConversationGeneratedMediaForRunIds(
               state,
               pageMessages.flatMap((message) => typeof message.linkedRunId === "string" ? [message.linkedRunId] : []),
@@ -11571,6 +11928,11 @@ export async function handleDaemonRoute(
         thread,
         turns: [...turnById.values()],
         items: pageItems,
+        turnContextAssignments: [...turnById.keys()].flatMap((turnId) => {
+          const context = state.channelTurnContexts[turnId];
+          return isRecord(context) && isRecord(context.assignment) ? [context.assignment] : [];
+        }),
+        userInputs: state.userInputs?.filter(record => pageItems.some(item => item.id === record.itemId)),
         decorations: mockChannelConversationDecorations(pageEntries),
         generatedMedia: mockConversationGeneratedMediaForRunIds(
           state,
@@ -12333,6 +12695,116 @@ export async function handleDaemonRoute(
     await route.fulfill({ json: { cwd, workflowId, card: buildMockCollaborationTaskCard(state, workflow) } });
     return;
   }
+  const workflowOrchestrateMatch = /^\/workflows\/([^/]+)\/orchestrate$/.exec(path);
+  if (workflowOrchestrateMatch && request.method() === "POST") {
+    if (state.failNextWorkflowOrchestrate) {
+      const failure = state.failNextWorkflowOrchestrate;
+      state.failNextWorkflowOrchestrate = undefined;
+      if (failure.delayMs) {
+        await new Promise((resolve) => setTimeout(resolve, failure.delayMs));
+      }
+      await route.fulfill({ status: failure.status ?? 409, json: { error: failure.error, message: failure.message } });
+      return;
+    }
+    const workflowId = decodeURIComponent(workflowOrchestrateMatch[1]);
+    const workflowIndex = state.channelWorkflows.findIndex((item) => isRecord(item) && item.id === workflowId);
+    if (workflowIndex === -1 || !isRecord(state.channelWorkflows[workflowIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found", message: `Workflow not found: ${workflowId}` } });
+      return;
+    }
+    const workflow = state.channelWorkflows[workflowIndex] as Record<string, unknown>;
+    const workflowStepIndex = state.channelWorkflowSteps.findIndex((step) =>
+      isRecord(step) && step.workflowId === workflowId && step.status === "queued"
+    );
+    if (workflowStepIndex === -1) {
+      const blockedStep = state.channelWorkflowSteps.find((step) =>
+        isRecord(step) && step.workflowId === workflowId && step.status === "blocked"
+      );
+      if (isRecord(blockedStep)) {
+        await route.fulfill({
+          json: {
+            status: "blocked",
+            workflow,
+            workflowStep: blockedStep,
+            blocker: typeof blockedStep.blocker === "string" ? blockedStep.blocker : "Workflow step is blocked.",
+          },
+        });
+        return;
+      }
+      const activeStep = state.channelWorkflowSteps.find((step) =>
+        isRecord(step) && step.workflowId === workflowId && ["claimed", "running", "waiting_for_approval"].includes(String(step.status))
+      );
+      if (isRecord(activeStep)) {
+        await route.fulfill({ json: { status: "idle", workflow, reason: "Workflow already has an active step." } });
+        return;
+      }
+      const updatedWorkflow = { ...workflow, status: "succeeded", updatedAt: "2026-05-25T00:38:00.000Z" };
+      state.channelWorkflows[workflowIndex] = updatedWorkflow;
+      await route.fulfill({ json: { status: "completed", workflow: updatedWorkflow } });
+      return;
+    }
+    const workflowStep = state.channelWorkflowSteps[workflowStepIndex] as Record<string, unknown>;
+    const updatedWorkflowStep = {
+      ...workflowStep,
+      status: "running",
+      blocker: undefined,
+      updatedAt: "2026-05-25T00:38:00.000Z",
+    };
+    const updatedWorkflow = { ...workflow, status: "running", updatedAt: "2026-05-25T00:38:00.000Z" };
+    state.channelWorkflowSteps[workflowStepIndex] = updatedWorkflowStep;
+    state.channelWorkflows[workflowIndex] = updatedWorkflow;
+    await route.fulfill({
+      json: {
+        status: "started",
+        workflow: updatedWorkflow,
+        workflowStep: updatedWorkflowStep,
+        taskId: `task_${String(workflowStep.id ?? workflowStepIndex + 1)}`,
+      },
+    });
+    return;
+  }
+  const workflowCancelMatch = /^\/workflows\/([^/]+)\/cancel$/.exec(path);
+  if (workflowCancelMatch && request.method() === "POST") {
+    if (state.failNextWorkflowCancel) {
+      const failure = state.failNextWorkflowCancel;
+      state.failNextWorkflowCancel = undefined;
+      await route.fulfill({ status: failure.status ?? 409, json: { error: failure.error, message: failure.message } });
+      return;
+    }
+    const workflowId = decodeURIComponent(workflowCancelMatch[1]);
+    const workflowIndex = state.channelWorkflows.findIndex((item) => isRecord(item) && item.id === workflowId);
+    if (workflowIndex === -1 || !isRecord(state.channelWorkflows[workflowIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found", message: `Workflow not found: ${workflowId}` } });
+      return;
+    }
+    const workflow = state.channelWorkflows[workflowIndex] as Record<string, unknown>;
+    const terminalWorkflowStatuses = new Set(["succeeded", "failed", "cancelled"]);
+    if (terminalWorkflowStatuses.has(String(workflow.status)) && workflow.status !== "cancelled") {
+      await route.fulfill({ status: 409, json: { error: "workflow_not_cancellable", message: `Workflow ${workflowId} is already ${String(workflow.status)}.` } });
+      return;
+    }
+    const updatedWorkflow = { ...workflow, status: "cancelled", updatedAt: "2026-05-25T00:39:00.000Z" };
+    const terminalStepStatuses = new Set(["succeeded", "failed", "skipped", "cancelled"]);
+    const updatedSteps = state.channelWorkflowSteps
+      .filter((step) => isRecord(step) && step.workflowId === workflowId)
+      .map((step) => terminalStepStatuses.has(String(step.status))
+        ? step
+        : { ...step, status: "cancelled", updatedAt: "2026-05-25T00:39:00.000Z" });
+    const updatedStepById = new Map(updatedSteps.map((step) => [String(step.id), step]));
+    state.channelWorkflowSteps = state.channelWorkflowSteps.map((step) =>
+      isRecord(step) && updatedStepById.has(String(step.id)) ? (updatedStepById.get(String(step.id)) ?? step) : step
+    );
+    state.channelWorkflows[workflowIndex] = updatedWorkflow;
+    await route.fulfill({
+      json: {
+        workflow: updatedWorkflow,
+        workflowSteps: updatedSteps,
+        cancelledRunIds: [],
+        cancelledApprovalIds: [],
+      },
+    });
+    return;
+  }
   const workflowMatch = /^\/workflows\/([^/]+)$/.exec(path);
   if (workflowMatch && request.method() === "GET") {
     const workflowId = decodeURIComponent(workflowMatch[1]);
@@ -12448,6 +12920,55 @@ export async function handleDaemonRoute(
       return;
     }
     await route.fulfill({ json: { workflowStep: updatedStep, task } });
+    return;
+  }
+  const workflowStepRetryMatch = /^\/workflow-steps\/([^/]+)\/retry$/.exec(path);
+  if (workflowStepRetryMatch && request.method() === "POST") {
+    if (state.failNextWorkflowStepRetry) {
+      const failure = state.failNextWorkflowStepRetry;
+      state.failNextWorkflowStepRetry = undefined;
+      await route.fulfill({ status: failure.status ?? 409, json: { error: failure.error, message: failure.message } });
+      return;
+    }
+    const stepId = decodeURIComponent(workflowStepRetryMatch[1]);
+    const stepIndex = state.channelWorkflowSteps.findIndex((step) => isRecord(step) && step.id === stepId);
+    if (stepIndex === -1 || !isRecord(state.channelWorkflowSteps[stepIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_step_not_found", message: `Workflow step not found: ${stepId}` } });
+      return;
+    }
+    const step = state.channelWorkflowSteps[stepIndex] as Record<string, unknown>;
+    if (step.status !== "blocked") {
+      await route.fulfill({ status: 409, json: { error: "workflow_step_not_retryable", message: `Workflow step ${stepId} is ${String(step.status)}; only blocked steps can be retried.` } });
+      return;
+    }
+    const workflowIndex = state.channelWorkflows.findIndex((workflow) => isRecord(workflow) && workflow.id === step.workflowId);
+    if (workflowIndex === -1 || !isRecord(state.channelWorkflows[workflowIndex])) {
+      await route.fulfill({ status: 404, json: { error: "workflow_not_found", message: `Workflow not found: ${String(step.workflowId)}` } });
+      return;
+    }
+    const workflow = state.channelWorkflows[workflowIndex] as Record<string, unknown>;
+    if (["succeeded", "failed", "cancelled"].includes(String(workflow.status))) {
+      await route.fulfill({ status: 409, json: { error: "workflow_terminal", message: `Workflow ${String(workflow.id)} is already ${String(workflow.status)}.` } });
+      return;
+    }
+    const updatedStep = {
+      ...step,
+      status: "running",
+      blocker: undefined,
+      resultSummary: undefined,
+      updatedAt: "2026-05-25T00:40:00.000Z",
+    };
+    const updatedWorkflow = { ...workflow, status: "running", updatedAt: "2026-05-25T00:40:00.000Z" };
+    state.channelWorkflowSteps[stepIndex] = updatedStep;
+    state.channelWorkflows[workflowIndex] = updatedWorkflow;
+    await route.fulfill({
+      json: {
+        status: "started",
+        workflow: updatedWorkflow,
+        workflowStep: updatedStep,
+        taskId: `task_retry_${stepId}`,
+      },
+    });
     return;
   }
   const workflowStepMatch = /^\/workflow-steps\/([^/]+)$/.exec(path);
@@ -15558,6 +16079,22 @@ export function getOrCreateMockTeammateThread(
   };
   state.teammateDirectThreads[teammateId] = thread;
   return thread;
+}
+
+/** Private details use the explicit fixture source graph, never generated message anchors. */
+function buildMockTeammateDirectTimeline(state: MockState, teammateId: string): Record<string, unknown> | undefined {
+  const thread = state.threads.find((candidate) => candidate.kind === "teammate_direct" && candidate.teammateId === teammateId);
+  if (!thread) return undefined;
+  const detail = buildMockConversationDetail(state, cwd, thread);
+  return {
+    ...detail,
+    messages: [],
+    // Keep rejecting legacy raw mock statuses even though canonical V1 excludes them.
+    conversationItems: (state.conversationItems ?? []).filter((item) => item.threadId === thread.id && item.workspaceId === thread.workspaceId && (item.status as string) !== "superseded"),
+    plans: [],
+    contextSummaries: [],
+    compactionCheckpoints: [],
+  };
 }
 
 export function buildMockTeammateDirectRuntime(

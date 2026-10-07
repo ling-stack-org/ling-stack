@@ -37,7 +37,7 @@ for (const fixture of [
     await expectToolbarContract(channelToolbar, ["search", "teammates", "summary", "terminal", "details"]);
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-channel-toolbar.png`);
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName }).click();
     const teammateToolbar = page.getByRole("toolbar", { name: "Private chat actions" });
     await expectToolbarContract(teammateToolbar, ["search", "summary", "terminal", "details"]);
     await teammateToolbar.getByRole("button", { name: "Search" }).hover();
@@ -45,7 +45,7 @@ for (const fixture of [
     await page.mouse.move(0, 0);
     await captureEvidence(page, `${fixture.width}x${fixture.height}-ling-${fixture.theme}-teammate-toolbar.png`);
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "New conversation" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "New conversation" }).click();
     const home = page.getByLabel("Conversation home");
     await home.getByRole("textbox", { name: "Conversation message" }).fill("Verify the shared conversation toolbar");
     await home.getByRole("button", { name: "Send" }).click();

@@ -27,7 +27,6 @@ export function TeammateChatHeader({
   searchOpen,
   searchQuery,
   searchTriggerRef,
-  summaryOpen,
   summaryVisible,
   summaryDockOffset,
   summaryDockResizing,
@@ -59,7 +58,6 @@ export function TeammateChatHeader({
   readonly searchOpen: boolean;
   readonly searchQuery: string;
   readonly searchTriggerRef: Ref<HTMLButtonElement>;
-  readonly summaryOpen: boolean;
   readonly summaryVisible: boolean;
   readonly summaryDockOffset: number;
   readonly summaryDockResizing: boolean;
@@ -148,7 +146,7 @@ export function TeammateChatHeader({
         searchLabel={t("Search")}
         fileCount={attachmentCount}
         filesLabel={t("{label}: {count}", { label: t("Private attachments"), count: attachmentCount })}
-        summaryActive={summaryOpen}
+        summaryActive={summaryVisible}
         summaryExpanded={summaryVisible}
         summaryLabel={t("Summary")}
         terminalActive={terminalOpen}

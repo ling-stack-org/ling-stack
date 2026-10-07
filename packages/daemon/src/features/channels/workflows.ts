@@ -9,18 +9,15 @@ import {
   type ChannelWorkflowStepStatus,
   type RunStore,
   type RunTool,
-  type ResponseLanguage,
   type SkillApprovalProfile,
   type Task,
 } from "@ling-stack/core";
-import { formatServerCatalogMessage } from "@ling-stack/localization";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
-import { fallbackResponseLanguage } from "./response-language.js";
 import {
   compileWorkflowTemplate,
   isWorkflowTemplateCompileRequest,
@@ -52,8 +49,6 @@ import {
   readOptionalChannelWorkflowStepStatusQuery,
 } from "./schemas.js";
 import { assertChannelWorkspaceReady } from "./workspace.js";
-import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
-import { getChannelMessageView } from "./conversation-item-messages.js";
 import {
   maybeScheduleWorkflowTerminalReport,
   terminalReportsEnabledForStore,
@@ -62,6 +57,7 @@ import { buildWorkflowEvidence } from "./workflow-evidence.js";
 import { renderUsedMemoryPromptForView } from "../memory/prompt.js";
 import { reviewWorkflowFanInContext } from "./workflow-fanin.js";
 import type { PreselectedMemoryUse } from "../runs/schemas.js";
+import { createWorkflowOperationExecutionSnapshot, type WorkflowOperationExecutionSnapshot } from "../runs/workflow-operation-snapshot.js";
 import type {
   ChannelIntentExecutionOperationV1,
   DelegatedBlockCodeV1,
@@ -70,9 +66,10 @@ import type {
 } from "@ling-stack/contracts";
 import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { resolveWorkflowHandoffExecutionContext } from "./workflow-handoffs.js";
-import { evaluateWorkflowCompletion, evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
+import { evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
 import { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
 import { blockDelegatedWorkflowStepBeforeRun } from "./workflow-step-finalizer.js";
+import { projectWorkflowStepNarration } from "./workflow-step-narration.js";
 import { workflowStepExecutionOperationBindings } from "./workflow-operation-evidence.js";
 import {
   resolveWorkflowParticipantRunProfile,
@@ -91,9 +88,12 @@ export interface WorkflowStepRunRequest {
   readonly runnerId?: string;
   readonly teammateId?: string;
   readonly workflowStepId?: string;
+  /** Canonical channel message that owns this workflow step's evidence. */
+  readonly sourceMessageId?: string;
   readonly delegatedRequirement?: DelegatedStepRequirementV1;
   /** Internal-only Host execution bindings for workflow-owned operations. */
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
+  readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
   readonly requestedSkillId?: string;
   readonly skipProviderPreflight?: boolean;
   readonly skipMemoryRecall?: boolean;
@@ -262,6 +262,15 @@ export async function handleChannelWorkflowFromHandoff(
     }
     const body = await readJsonBody(request, config.maxBodyBytes);
     const input = parseChannelWorkflowFromHandoffRequest(body);
+    const existingWorkflow = store.getChannelWorkflowForHandoff(handoff.channelId, handoff.id);
+    const existingWorkflowStep = existingWorkflow
+      ? store.listChannelWorkflowSteps({ workflowId: existingWorkflow.id, complete: true })
+        .find((step) => step.sourceHandoffId === handoff.id)
+      : undefined;
+    if (existingWorkflow && existingWorkflowStep) {
+      writeJson(response, 200, { workflow: existingWorkflow, workflowStep: existingWorkflowStep });
+      return;
+    }
     const createdAt = new Date().toISOString();
     const continuityContext = resolveWorkflowHandoffExecutionContext({
       store,
@@ -272,37 +281,37 @@ export async function handleChannelWorkflowFromHandoff(
       throw new Error(`Workflow handoff cannot start: ${continuityContext.blocker}`);
     }
     const sourceItemId = continuityContext.sourceItemId ?? handoff.sourceMessageId;
-    const workflow = store.createChannelWorkflow(
+    const result = store.createOrReuseChannelHandoffWorkflow(
       {
         channelId: handoff.channelId,
         sourceHandoffId: handoff.id,
-        title: input.title ?? `Handoff to ${handoff.toParticipantLabel}`,
-        objective: input.objective ?? (handoff.expectedOutput || handoff.reason || "Complete handoff workflow."),
-        createdBy: input.createdBy,
-        metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
+        workflow: {
+          title: input.title ?? `Handoff to ${handoff.toParticipantLabel}`,
+          objective: input.objective ?? (handoff.expectedOutput || handoff.reason || "Complete handoff workflow."),
+          createdBy: input.createdBy,
+          metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
+        },
+        workflowStep: {
+          contextSummaryId: input.contextSummaryId,
+          title: `Complete handoff: ${handoff.expectedOutput || handoff.reason || handoff.toParticipantLabel}`,
+          prompt: formatHandoffStepPrompt(handoff),
+          toParticipantId: handoff.toParticipantId,
+          toParticipantLabel: handoff.toParticipantLabel,
+          participantAuthority: createWorkflowParticipantAuthorityV1({
+            kind: "workflow_definition",
+            origin: "channel_handoff",
+            participantId: handoff.toParticipantId,
+            sourceId: handoff.id,
+          }),
+          metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
+        },
       },
       createdAt,
     );
-    const workflowStep = store.createChannelWorkflowStep(
-      {
-        workflowId: workflow.id,
-        sourceHandoffId: handoff.id,
-        contextSummaryId: input.contextSummaryId,
-        title: `Complete handoff: ${handoff.expectedOutput || handoff.reason || handoff.toParticipantLabel}`,
-        prompt: formatHandoffStepPrompt(handoff),
-        toParticipantId: handoff.toParticipantId,
-        toParticipantLabel: handoff.toParticipantLabel,
-        participantAuthority: createWorkflowParticipantAuthorityV1({
-          kind: "workflow_definition",
-          origin: "channel_handoff",
-          participantId: handoff.toParticipantId,
-          sourceId: handoff.id,
-        }),
-        metadata: sourceItemId ? { sourceMessageId: sourceItemId } : undefined,
-      },
-      createdAt,
-    );
-    writeJson(response, 201, { workflow, workflowStep });
+    writeJson(response, result.reused ? 200 : 201, {
+      workflow: result.workflow,
+      workflowStep: result.workflowStep,
+    });
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
@@ -381,7 +390,7 @@ export async function handleChannelWorkflowStepsCollection(
           workflowId,
           status: readOptionalChannelWorkflowStepStatusQuery(url, "status"),
           limit: readOptionalIntegerQuery(url, "limit", 1),
-        }),
+        }).map(step => projectWorkflowStepNarration(store, step)),
       });
       return;
     }
@@ -420,7 +429,7 @@ export async function handleChannelWorkflowStepItem(
       return;
     }
     if (request.method === "GET") {
-      writeJson(response, 200, { workflowStep: existing });
+      writeJson(response, 200, { workflowStep: projectWorkflowStepNarration(store, existing) });
       return;
     }
     if (request.method !== "PATCH") {
@@ -943,8 +952,10 @@ export function prepareWorkflowStepStart(
     runnerId,
     teammateId: assigneeTeammateId,
     workflowStepId: step.id,
+    sourceMessageId: step.metadata?.sourceMessageId ?? workflow.metadata?.sourceMessageId,
     delegatedRequirement: step.metadata?.delegatedRequirement,
     executionOperationBindings: workflowStepExecutionOperationBindings(step),
+    workflowOperationExecution: createWorkflowOperationExecutionSnapshot(step),
     skipProviderPreflight: input.skipProviderPreflight ?? false,
     skipMemoryRecall: true,
     preselectedMemoryUse: renderedMemory.memoryIds.length > 0
@@ -1173,113 +1184,12 @@ export function maybeCreateWorkflowTerminalCoordinatorReply(
   if (!workflow || !workflowCoordinatorReplyStatusIsTerminal(workflow.status)) {
     return undefined;
   }
-  if (terminalReportsEnabledForStore(store)) {
-    return maybeScheduleWorkflowTerminalReport(store, workflowId, input);
-  }
-  const sourceMessageId = workflow.metadata?.sourceMessageId;
-  if (!sourceMessageId) {
-    return undefined;
-  }
-  const sourceMessage = getChannelMessageView(store, sourceMessageId);
-  if (!sourceMessage) {
-    return undefined;
-  }
-  const messageId = legacyWorkflowTerminalMessageId(workflow.id);
-  const sourceItem = store.getConversationItem(sourceMessage.id);
-  const sourceTurnId = workflow.metadata?.sourceTurnId;
-  const sourceTurn = sourceTurnId ? store.getLingTurn(sourceTurnId) : undefined;
-  if (!sourceItem || !sourceTurn || sourceItem.turnId !== sourceTurn.id) return undefined;
-  const steps = store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
-  const now = input.now ?? new Date().toISOString();
-  const expectedCompletion = workflow.metadata?.requiredParticipantManifest
-    ? evaluateWorkflowCompletion({ store, workflow, steps, now })
-    : undefined;
-  const result = store.commitLegacyWorkflowPublication({
-    expectedWorkflowId: workflow.id,
-    expectedSourceTurn: { id: sourceTurn.id, status: sourceTurn.status, updatedAt: sourceTurn.updatedAt },
-    ...(expectedCompletion ? { expectedCompletion } : {}),
-    publicationItem: {
-      id: messageId,
-      channelId: workflow.channelId,
-      threadId: sourceTurn.threadId,
-      turnId: sourceTurn.id,
-      kind: "assistant_message",
-      status: "committed",
-      actorType: "ling_agent",
-      actorId: LING_AGENT_EXECUTOR_ID,
-      visibility: "channel",
-      payload: { body: workflowTerminalCoordinatorReplyBody(workflow, steps), format: "markdown", streaming: false, deliveryStatus: "ready" },
-      domainRefs: [
-        { type: "workflow", id: workflow.id },
-        { type: "conversation_item", id: sourceMessage.id },
-        { type: "turn", id: sourceTurn.id },
-        ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
-      ],
-      idempotencyKey: `workflow-terminal:${workflow.id}`,
-    },
-    publicationEventIdempotencyKey: `workflow-terminal:${workflow.id}:published`,
-    now,
-  });
-  if (!result.ok) return undefined;
-  return getChannelMessageView(store, result.item.id);
+  if (!terminalReportsEnabledForStore(store)) return undefined;
+  return maybeScheduleWorkflowTerminalReport(store, workflowId, input);
 }
 
 function workflowCoordinatorReplyStatusIsTerminal(status: ChannelWorkflowStatus): boolean {
   return status === "succeeded" || status === "blocked" || status === "failed" || status === "cancelled";
-}
-
-function legacyWorkflowTerminalMessageId(workflowId: string): string {
-  return `message_workflow_terminal_${workflowId}`;
-}
-
-function workflowTerminalCoordinatorReplyBody(
-  workflow: ChannelWorkflow,
-  steps: readonly ChannelWorkflowStep[],
-): string {
-  const language = fallbackResponseLanguage(workflow.metadata?.responseLanguage);
-  const title = workflow.title.trim() || formatServerCatalogMessage(language, "daemon.workflow.default_title");
-  const blocker = workflowTerminalBlocker(workflow, steps, language);
-  const resultSummary = workflowTerminalResultSummary(steps);
-  if (workflow.status === "succeeded") {
-    return resultSummary
-      ? formatServerCatalogMessage(language, "daemon.workflow.succeeded_with_result", { title, result: resultSummary })
-      : formatServerCatalogMessage(language, "daemon.workflow.succeeded", { title });
-  }
-  if (workflow.status === "cancelled") {
-    return formatServerCatalogMessage(language, "daemon.workflow.cancelled", { title });
-  }
-  return formatServerCatalogMessage(language, "daemon.workflow.not_completed", { title, reason: blocker });
-}
-
-function workflowTerminalResultSummary(steps: readonly ChannelWorkflowStep[]): string | undefined {
-  const summary = [...steps]
-    .reverse()
-    .map((step) => step.resultSummary?.trim())
-    .find((candidate): candidate is string => Boolean(candidate && !isGenericRunSuccessSummary(candidate)));
-  return summary;
-}
-
-function isGenericRunSuccessSummary(summary: string): boolean {
-  return /^(Run succeeded\.?|Task created from workflow step\.)$/iu.test(summary.trim());
-}
-
-function workflowTerminalBlocker(
-  workflow: ChannelWorkflow,
-  steps: readonly ChannelWorkflowStep[],
-  language: ResponseLanguage,
-): string {
-  const blockedStep = steps.find((step) => step.status === "blocked" || step.status === "failed" || step.status === "cancelled");
-  const blocker = blockedStep?.blocker?.trim();
-  if (blocker) {
-    return blocker;
-  }
-  if (workflow.status === "failed") {
-    return formatServerCatalogMessage(language, "daemon.workflow.failed_reason");
-  }
-  if (workflow.status === "blocked") {
-    return formatServerCatalogMessage(language, "daemon.workflow.blocked_reason");
-  }
-  return formatServerCatalogMessage(language, "daemon.workflow.missing_reason");
 }
 
 function renderWorkflowStepContextPackPrompt(pack: ContextPack): string {

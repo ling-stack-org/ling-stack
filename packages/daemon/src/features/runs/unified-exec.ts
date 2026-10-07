@@ -1,4 +1,4 @@
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcessWithoutNullStreams } from "node:child_process";
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
@@ -9,30 +9,39 @@ import {
   type RunEventEmitter,
   type RunSession,
   type RunStore,
+  type RuntimeAttemptFenceV1,
   type UnifiedExecArtifactSummary,
   type UnifiedExecCommand,
   type UnifiedExecEnvironmentPolicy,
   type UnifiedExecEnvironmentSummary,
-  type UnifiedExecOutputChunk,
   type UnifiedExecRequest,
+  type UnifiedExecProcessObservation,
   type UnifiedExecResult,
   type UnifiedExecStatus,
-  type UnifiedExecStreamSummary,
+  type UnifiedExecIsolationEvidence,
 } from "@ling-stack/core";
 import type { PiRunnerApprovalRequest, PiRunnerToolHandledResult } from "@ling-stack/runner-pi";
 import { normalizeArtifactPath } from "../../shared/path.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { isRecord } from "../../shared/validation.js";
 import { createShellSnapshotWriter } from "./shell-snapshots.js";
+import { renderUnifiedExecModelOutput } from "./unified-exec-model-output.js";
+import { observeCommandProcess } from "./unified-exec-process.js";
+import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
+import { createRestrictedCommandDispatch } from "./restricted-command-dispatch.js";
+import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
+import { validateWorkflowOperationRunContext } from "./workflow-operation-snapshot.js";
+import { createStreamCapture, createSyntheticStreamCapture, toStreamSummary, type StreamCaptureSnapshot } from "./unified-exec-output.js";
+import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
+import { createUnifiedExecRawDispatch } from "./unified-exec-raw-source.js";
+import { normalizeBashRequest } from "./unified-exec-request.js";
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
-const STREAM_PREVIEW_BYTES = 8 * 1024;
-const OUTPUT_CHUNK_BYTES = 4 * 1024;
-const ARTIFACT_BYTES = 2 * 1024 * 1024;
-const REDACTION_CARRY_CHARS = 256;
 
 export async function executeUnifiedBashTool(input: {
+  readonly restrictedCommandRuntime?: NativeRestrictedCommandRuntime;
   readonly store: RunStore;
+  readonly sourceFence: RuntimeAttemptFenceV1;
   readonly run: RunSession;
   readonly request: PiRunnerApprovalRequest;
   readonly approvalId?: string;
@@ -40,20 +49,59 @@ export async function executeUnifiedBashTool(input: {
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly shellSnapshotEnabled?: boolean;
+  /** Called only after the bounded result and output artifacts are durable. */
+  readonly onDurableResult?: (result: PiRunnerToolHandledResult) => void;
+  readonly hostOperation?: HostCommandOperation;
 }): Promise<PiRunnerToolHandledResult> {
-  const normalized = normalizeBashRequest(input.run, input.request, input.approvalId);
-  if ("error" in normalized) {
-    return writeSyntheticFailureResult({
+  let delegated = false;
+  try {
+    input.hostOperation?.assertMayPrepare();
+    const normalized = normalizeBashRequest(input.run, input.request, input.approvalId);
+    if ("error" in normalized) {
+      return writeSyntheticFailureResult({
+        ...input,
+        request: normalized.request,
+        message: normalized.error,
+        status: "failed",
+      });
+    }
+    const rejection = validateWorkflowOperationRunContext(input).status === "legacy"
+      ? undefined : workflowOperationEffectRejection(input);
+    if (rejection) return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
+      approvalId: input.approvalId, reason: rejection.code + ": " + rejection.reason });
+    let restrictedDispatch: ReturnType<typeof createRestrictedCommandDispatch>;
+    let rawDispatch: ReturnType<typeof createUnifiedExecRawDispatch> | undefined;
+    try { restrictedDispatch = createRestrictedCommandDispatch(input); }
+    catch (error) { return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
+      approvalId: input.approvalId, reason: formatError(error) }); }
+    if (restrictedDispatch === undefined) {
+      try { rawDispatch = createUnifiedExecRawDispatch({ ...input,
+        approvalRequest: input.request, request: normalized.request }); }
+      catch (error) {
+        // A cancellation is control flow, not a policy-denied handled result.
+        throwIfAborted(input.signal);
+        return createUnifiedExecDeniedResult({ toolCallId: input.request.toolCallId,
+          approvalId: input.approvalId, reason: formatError(error) });
+      }
+    }
+    delegated = true;
+    return await executeUnifiedExec({
       ...input,
+      restrictedDispatch,
+      rawDispatch,
       request: normalized.request,
-      message: normalized.error,
-      status: "failed",
     });
+  } finally {
+    // Before internal command preparation there has been no OS/native producer
+    // dispatch. Early denial/invalid input is a real instrumented no-start.
+    if (!delegated && input.hostOperation) {
+      try { input.hostOperation.settleNoStart(); }
+      catch (error) {
+        input.hostOperation.markUnknown("command_pre_dispatch_unconfirmed");
+        throw error;
+      }
+    }
   }
-  return executeUnifiedExec({
-    ...input,
-    request: normalized.request,
-  });
 }
 
 export function createUnifiedExecDeniedResult(input: {
@@ -77,56 +125,54 @@ export function createUnifiedExecDeniedResult(input: {
   };
 }
 
-function normalizeBashRequest(
-  run: RunSession,
-  approvalRequest: PiRunnerApprovalRequest,
-  approvalId: string | undefined,
-): { readonly request: UnifiedExecRequest } | { readonly request: UnifiedExecRequest; readonly error: string } {
-  const command = readInputString(approvalRequest.input, "command", "");
-  const requestedCwd = readInputString(approvalRequest.input, "cwd", approvalRequest.cwd || run.cwd);
-  const cwd = isAbsolute(requestedCwd) ? resolvePath(requestedCwd) : resolvePath(run.cwd, requestedCwd);
-  const timeoutMs = readTimeoutMs(approvalRequest.input);
-  const idleTimeoutMs = readInputNumber(approvalRequest.input, "idleTimeoutMs");
-  const pty = readInputBoolean(approvalRequest.input, "pty") ?? false;
-  const request: UnifiedExecRequest = {
-    runId: run.id,
-    taskId: run.taskId,
-    toolCallId: approvalRequest.toolCallId,
-    approvalId,
-    cwd,
-    command: { kind: "shell", command, shell: "bash" },
-    timeoutMs,
-    idleTimeoutMs,
-    pty,
-    environment: { mode: "inherit_minimal" },
-    startedBy: "run_tool",
-  };
-  if (!command.trim()) {
-    return { request, error: "Ling Stack unified exec rejected an empty bash command." };
-  }
-  if (pty) {
-    return { request, error: "Ling Stack unified exec P1 does not support PTY shell commands." };
-  }
-  if (!isPathInsideRoot(run.cwd, cwd)) {
-    return { request, error: `Ling Stack unified exec rejected cwd outside the run workspace: ${cwd}` };
-  }
-  return { request };
-}
-
 async function executeUnifiedExec(input: {
+  readonly restrictedDispatch?: ReturnType<typeof createRestrictedCommandDispatch>;
+  readonly rawDispatch?: ReturnType<typeof createUnifiedExecRawDispatch>;
   readonly store: RunStore;
+  readonly sourceFence: RuntimeAttemptFenceV1;
   readonly run: RunSession;
   readonly request: UnifiedExecRequest;
   readonly appendAndMaybeStream: RunEventEmitter;
   readonly signal?: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly shellSnapshotEnabled?: boolean;
+  readonly onDurableResult?: (result: PiRunnerToolHandledResult) => void;
+  readonly hostOperation?: HostCommandOperation;
 }): Promise<PiRunnerToolHandledResult> {
-  throwIfAborted(input.signal);
   const secrets = input.extraSecrets ?? [];
   const startedAt = new Date().toISOString();
   const startedMs = Date.now();
-  const environment = buildEnvironment(input.request.cwd, input.request.environment);
+  let environment = buildEnvironment(input.request.cwd, input.request.environment);
+  let prepared: (Awaited<ReturnType<NativeRestrictedCommandRuntime["prepare"]>> & {
+    readonly finishHostPreparation?: () => void;
+  }) | undefined;
+  let cleanupSafe = false;
+  let ticket: ReturnType<RunStore["prepareHostCommandExecution"]> | undefined;
+  let preparationAttempted = false;
+  let spawnEntered = false;
+  let noStartSettled = false;
+  let commandPreparationAttempted = false;
+  try {
+    throwIfAborted(input.signal);
+    input.hostOperation?.assertMayPrepare();
+    commandPreparationAttempted = true;
+    ticket = input.store.prepareHostCommandExecution({
+      runId: input.run.id, sourceFence: input.sourceFence, toolCallId: input.request.toolCallId,
+      cwd: input.request.cwd, command: input.request.command,
+    });
+    input.hostOperation?.bindCommandExecution(ticket.executionId);
+    try {
+      preparationAttempted = input.restrictedDispatch !== undefined;
+      prepared = await input.restrictedDispatch?.prepare();
+      if (prepared) environment = { env: {}, summary: prepared.environmentSummary };
+    } catch (error) {
+      input.store.settleHostCommandExecution(ticket, { kind: "not_started" });
+      noStartSettled = true;
+      cleanupSafe = true;
+      throwIfAborted(input.signal);
+      return writeSyntheticFailureResult({ ...input, message: formatError(error), status: "failed",
+        environmentSummary: environment.summary, startedAt, startedMs });
+    }
   const stdout = createStreamCapture("stdout", input.request.toolCallId, input.appendAndMaybeStream, secrets);
   const stderr = createStreamCapture("stderr", input.request.toolCallId, input.appendAndMaybeStream, secrets);
   const shellSnapshots = createShellSnapshotWriter({
@@ -138,106 +184,93 @@ async function executeUnifiedExec(input: {
     appendAndMaybeStream: (type, data) => input.appendAndMaybeStream(type, data),
     extraSecrets: input.extraSecrets,
   });
-  let timedOut = false;
-  let cancelled = false;
-  let processSignal: string | undefined;
-  let exitCode: number | undefined;
-  let killTimer: NodeJS.Timeout | undefined;
-
-  shellSnapshots.captureStart({ startedAt, startedMs });
-  let child: ChildProcessWithoutNullStreams;
+  let child: ChildProcessWithoutNullStreams | undefined;
+  let launchFailed = false;
+  let launchError: unknown;
   try {
-    child = spawnCommand(input.request.command, {
-      cwd: input.request.cwd,
-      env: environment.env,
-    });
+    shellSnapshots.captureStart({ startedAt, startedMs });
+    const launch = () => {
+      throwIfAborted(input.signal);
+      if (prepared) {
+        // Native preparation has its own enrolled physical effects. Keep its
+        // existing conservative latch; it is not authority for a raw producer.
+        spawnEntered = true;
+        child = prepared.spawn();
+      } else {
+        if (!input.rawDispatch) throw new Error("unified_exec_raw_source_missing");
+        child = input.rawDispatch.spawn(environment.env, () => { spawnEntered = true; });
+      }
+    };
+    const preflight = () => {
+      throwIfAborted(input.signal);
+      input.restrictedDispatch?.assertMayLaunch();
+      input.rawDispatch?.assertMayLaunch();
+    };
+    if (input.hostOperation) input.hostOperation.launch(ticket, launch, preflight);
+    else input.store.launchHostCommandExecution(ticket, launch, preflight);
   } catch (error) {
-    const handled = writeSyntheticFailureResult({
-      ...input,
-      message: `Ling Stack unified exec failed to spawn bash: ${formatError(error)}`,
-      status: "failed",
-      environmentSummary: environment.summary,
-      startedAt,
-      startedMs,
-    });
-    shellSnapshots.captureEnd(readUnifiedExecResult(handled));
-    return handled;
-  }
-
-  const killChild = (reason: "timeout" | "cancelled"): void => {
-    if (reason === "timeout") {
-      timedOut = true;
+    if (child) {
+      // An OS process exists even if the database commit failed. Do not call it not_started.
+      launchFailed = true;
+      launchError = error;
     } else {
-      cancelled = true;
+      // An entered native producer can throw before returning a child. No
+      // handle is not proof that no process/effect exists.
+      if (spawnEntered) {
+        input.store.settleHostCommandExecution(ticket, { kind: "observed", observation: {
+          scope: process.platform === "win32" ? "leader" : "process_group", settledBy: "cleanup_deadline",
+          leaderExited: false, stdioClosed: false, descendants: "unverified", stopReason: "observer_error", signalFailures: [],
+        } });
+      } else {
+        input.store.settleHostCommandExecution(ticket, { kind: "not_started" });
+        noStartSettled = true;
+        cleanupSafe = true;
+      }
+      throwIfAborted(input.signal);
+      const handled = writeSyntheticFailureResult({
+        ...input,
+        message: `Ling Stack unified exec failed to spawn bash: ${formatError(error)}`,
+        status: "failed",
+        environmentSummary: environment.summary,
+        startedAt,
+        startedMs,
+      });
+      shellSnapshots.captureEnd(readUnifiedExecResult(handled));
+      return handled;
     }
-    terminateProcessTree(child, "SIGTERM");
-    killTimer = setTimeout(() => terminateProcessTree(child, "SIGKILL"), 500);
-    if (typeof killTimer.unref === "function") {
-      killTimer.unref();
-    }
-  };
-
-  const abortListener = (): void => {
-    killChild("cancelled");
-  };
-  input.signal?.addEventListener("abort", abortListener, { once: true });
-
-  const timeoutMs = input.request.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
-  const timeoutTimer = setTimeout(() => {
-    killChild("timeout");
-  }, timeoutMs);
-  if (typeof timeoutTimer.unref === "function") {
-    timeoutTimer.unref();
   }
-
-  let idleTimer: NodeJS.Timeout | undefined;
-  const resetIdleTimer = (): void => {
-    if (!input.request.idleTimeoutMs || input.request.idleTimeoutMs <= 0) {
-      return;
-    }
-    if (idleTimer) {
-      clearTimeout(idleTimer);
-    }
-    idleTimer = setTimeout(() => {
-      killChild("timeout");
-    }, input.request.idleTimeoutMs);
-    if (typeof idleTimer.unref === "function") {
-      idleTimer.unref();
-    }
-  };
-  resetIdleTimer();
-
-  child.stdout.on("data", (chunk: Buffer) => {
-    resetIdleTimer();
-    stdout.ingest(chunk);
+  if (!child) throw new Error("Host command launcher returned without a process.");
+  const processResult = await observeCommandProcess({
+    child, signal: launchFailed ? AbortSignal.abort(launchError) : input.signal,
+    timeoutMs: input.request.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS,
+    idleTimeoutMs: input.request.idleTimeoutMs,
+    onOutput: (stream, chunk) => (stream === "stdout" ? stdout : stderr).ingest(chunk),
   });
-  child.stderr.on("data", (chunk: Buffer) => {
-    resetIdleTimer();
-    stderr.ingest(chunk);
-  });
+  const observed = launchFailed ? { ...processResult,
+    observation: { ...processResult.observation, stopReason: "observer_error" as const },
+    error: launchError instanceof Error ? launchError : new Error(formatError(launchError)),
+  } : processResult;
+  const { observation: processObservation, exitCode, signal: processSignal } = observed;
+  cleanupSafe = processObservation.settledBy === "close" && processObservation.leaderExited
+    && processObservation.stdioClosed && !processObservation.stopReason && processObservation.signalFailures.length === 0;
+  // Persist independently of Runner/SSE callbacks: cancellation closes those channels.
+  // Do this before flushing output or writing artifacts, either of which can throw.
+  input.store.settleHostCommandExecution(ticket,
+    processObservation.settledBy === "spawn_error" && child.pid === undefined
+      ? { kind: "not_started" }
+      : { kind: "observed", observation: input.signal?.aborted && !processObservation.stopReason
+        ? { ...processObservation, stopReason: "cancelled" } : processObservation });
+  const cancelled = processObservation.stopReason === "cancelled";
+  const timedOut = processObservation.stopReason === "timeout";
+  if (observed.error) stderr.ingest(Buffer.from(`Ling Stack unified exec process error: ${formatError(observed.error)}\n`));
+  stdout.flush();
+  stderr.flush();
 
-  try {
-    const closed = await waitForChild(child);
-    exitCode = closed.exitCode ?? undefined;
-    processSignal = closed.signal ?? undefined;
-  } catch (error) {
-    stderr.ingest(Buffer.from(`Ling Stack unified exec process error: ${formatError(error)}\n`));
-    exitCode = undefined;
-  } finally {
-    clearTimeout(timeoutTimer);
-    if (idleTimer) {
-      clearTimeout(idleTimer);
-    }
-    if (killTimer) {
-      clearTimeout(killTimer);
-    }
-    input.signal?.removeEventListener("abort", abortListener);
-    stdout.flush();
-    stderr.flush();
-  }
-
-  const stdoutSnapshot = stdout.snapshot();
-  const stderrSnapshot = stderr.snapshot();
+  const outputIncomplete = processObservation.settledBy === "cleanup_deadline" && !processObservation.stdioClosed;
+  const stdoutSnapshot = outputIncomplete
+    ? { ...stdout.snapshot(), previewTruncated: true, artifactTruncated: true } : stdout.snapshot();
+  const stderrSnapshot = outputIncomplete
+    ? { ...stderr.snapshot(), previewTruncated: true, artifactTruncated: true } : stderr.snapshot();
 
   if (cancelled || input.signal?.aborted) {
     const handled = writeUnifiedExecResult({
@@ -250,16 +283,19 @@ async function executeUnifiedExec(input: {
       timedOut,
       cancelled: true,
       status: "cancelled",
+      processObservation,
+      isolation: prepared?.evidence,
       stdout: stdoutSnapshot,
       stderr: stderrSnapshot,
     });
     shellSnapshots.captureEnd(readUnifiedExecResult(handled));
+    input.onDurableResult?.(handled);
     throw createAbortError();
   }
 
   const status: UnifiedExecStatus = timedOut
     ? "timed_out"
-    : exitCode === 0
+    : exitCode === 0 && !observed.error && !processObservation.stopReason
       ? "succeeded"
       : "failed";
   const handled = writeUnifiedExecResult({
@@ -272,11 +308,38 @@ async function executeUnifiedExec(input: {
     timedOut,
     cancelled,
     status,
+    processObservation,
+    isolation: prepared?.evidence,
     stdout: stdoutSnapshot,
     stderr: stderrSnapshot,
   });
   shellSnapshots.captureEnd(readUnifiedExecResult(handled));
+  input.onDurableResult?.(handled);
   return handled;
+  } finally {
+    // Unknown descendants may still be running. Retain their isolated files for
+    // inspection, alongside the journal's stop_unconfirmed reservation.
+    try {
+      if (cleanupSafe) prepared?.dispose();
+    } finally {
+      try { prepared?.finishHostPreparation?.(); }
+      finally {
+        if (input.hostOperation) {
+          // A returned command result, clean leader close, cancellation or
+          // native preparation callback cannot prove the whole physical scope.
+          if (spawnEntered || preparationAttempted || (commandPreparationAttempted && !noStartSettled)) {
+            input.hostOperation.markUnknown("command_physical_scope_unverified");
+          } else {
+            try { input.hostOperation.settleNoStart(); }
+            catch (error) {
+              input.hostOperation.markUnknown("command_preparation_unconfirmed");
+              throw error;
+            }
+          }
+        }
+      }
+    }
+  }
 }
 
 function writeSyntheticFailureResult(input: {
@@ -290,12 +353,13 @@ function writeSyntheticFailureResult(input: {
   readonly environmentSummary?: UnifiedExecEnvironmentSummary;
   readonly startedAt?: string;
   readonly startedMs?: number;
+  readonly onDurableResult?: (result: PiRunnerToolHandledResult) => void;
 }): PiRunnerToolHandledResult {
   const secrets = input.extraSecrets ?? [];
   const startedAt = input.startedAt ?? new Date().toISOString();
   const startedMs = input.startedMs ?? Date.now();
   const stderr = createSyntheticStreamCapture(input.message, secrets);
-  return writeUnifiedExecResult({
+  const handled = writeUnifiedExecResult({
     store: input.store,
     run: input.run,
     request: input.request,
@@ -312,9 +376,12 @@ function writeSyntheticFailureResult(input: {
     stdout: createSyntheticStreamCapture("", secrets),
     stderr,
   });
+  input.onDurableResult?.(handled);
+  return handled;
 }
 
 function writeUnifiedExecResult(input: {
+  readonly isolation?: UnifiedExecIsolationEvidence;
   readonly store: RunStore;
   readonly run: RunSession;
   readonly request: UnifiedExecRequest;
@@ -327,6 +394,7 @@ function writeUnifiedExecResult(input: {
   readonly signal?: string;
   readonly timedOut: boolean;
   readonly cancelled: boolean;
+  readonly processObservation?: UnifiedExecProcessObservation;
   readonly status: UnifiedExecStatus;
   readonly stdout: StreamCaptureSnapshot;
   readonly stderr: StreamCaptureSnapshot;
@@ -369,6 +437,10 @@ function writeUnifiedExecResult(input: {
   }
 
   const endedAt = now;
+  const actualCommandSecrets = input.isolation?.actualCommand.kind === "argv"
+    ? [input.isolation.actualCommand.argv[0]]
+    : [];
+  const publishedSecrets = [...input.extraSecrets ?? [], ...actualCommandSecrets];
   const baseResult = {
     status: input.status,
     runId: input.run.id,
@@ -385,6 +457,9 @@ function writeUnifiedExecResult(input: {
     signal: input.signal,
     timedOut: input.timedOut,
     cancelled: input.cancelled,
+    processObservation: input.processObservation,
+    ...(input.isolation ? { isolation: { ...input.isolation,
+      actualCommand: redactCommand(input.isolation.actualCommand, publishedSecrets) } } : {}),
     stdout: stdoutSummary,
     stderr: stderrSummary,
   };
@@ -396,7 +471,9 @@ function writeUnifiedExecResult(input: {
       role: "result",
       contentType: "application/json",
       sizeBytes: 0,
-      redacted: wasCommandRedacted(input.request.command, input.extraSecrets ?? []) || input.stdout.redacted || input.stderr.redacted,
+      redacted: wasCommandRedacted(input.request.command, input.extraSecrets ?? [])
+        || (input.isolation ? wasCommandRedacted(input.isolation.actualCommand, publishedSecrets) : false)
+        || input.stdout.redacted || input.stderr.redacted,
       truncated: false,
     },
     ...outputArtifactSummaries,
@@ -439,134 +516,9 @@ function writeUnifiedExecResult(input: {
   });
 
   return {
-    content: [{ type: "text", text: summarizeResult(result) }],
+    content: [{ type: "text", text: redactTextWithSecrets(renderUnifiedExecModelOutput(result), input.extraSecrets ?? []) }],
     details: { unifiedExec: result },
     isError: result.status !== "succeeded",
-  };
-}
-
-function createStreamCapture(
-  stream: "stdout" | "stderr",
-  toolCallId: string,
-  appendAndMaybeStream: RunEventEmitter,
-  extraSecrets: readonly (string | undefined)[],
-): {
-  readonly ingest: (chunk: Buffer) => void;
-  readonly flush: () => void;
-  readonly snapshot: () => StreamCaptureSnapshot;
-} {
-  let rawByteCount = 0;
-  let sequence = 0;
-  let carry = "";
-  const capture = createMutableStreamCapture();
-  return {
-    ingest(chunk) {
-      rawByteCount += chunk.byteLength;
-      const text = carry + chunk.toString("utf8");
-      const emitLength = Math.max(0, text.length - REDACTION_CARRY_CHARS);
-      carry = text.slice(emitLength);
-      appendRedactedText(text.slice(0, emitLength));
-    },
-    flush() {
-      appendRedactedText(carry);
-      carry = "";
-    },
-    snapshot() {
-      return {
-        ...capture,
-        byteCount: rawByteCount,
-        lineCount: countLines(capture.artifactContent),
-      };
-    },
-  };
-
-  function appendRedactedText(text: string): void {
-    if (!text) {
-      return;
-    }
-    const redacted = redactTextWithSecrets(text, extraSecrets);
-    const wasRedacted = redacted !== text;
-    capture.redacted = capture.redacted || wasRedacted;
-    appendBounded(capture, redacted);
-    for (const chunkText of splitByBytes(redacted, OUTPUT_CHUNK_BYTES)) {
-      sequence += 1;
-      const chunk: UnifiedExecOutputChunk = {
-        toolCallId,
-        stream,
-        sequence,
-        text: chunkText,
-        byteCount: Buffer.byteLength(chunkText, "utf8"),
-        redacted: wasRedacted,
-        truncated: false,
-        ts: new Date().toISOString(),
-      };
-      appendAndMaybeStream("tool_update", {
-        toolCallId,
-        toolName: "bash",
-        partialResult: chunk,
-      });
-    }
-  }
-}
-
-function createSyntheticStreamCapture(text: string, extraSecrets: readonly (string | undefined)[]): StreamCaptureSnapshot {
-  const redacted = redactTextWithSecrets(text, extraSecrets);
-  const capture = createMutableStreamCapture();
-  capture.redacted = redacted !== text;
-  appendBounded(capture, redacted);
-  return {
-    ...capture,
-    byteCount: Buffer.byteLength(text, "utf8"),
-    lineCount: countLines(redacted),
-  };
-}
-
-function createMutableStreamCapture(): MutableStreamCapture {
-  return {
-    byteCount: 0,
-    lineCount: 0,
-    preview: "",
-    artifactContent: "",
-    previewBytes: 0,
-    artifactBytes: 0,
-    previewTruncated: false,
-    artifactTruncated: false,
-    redacted: false,
-  };
-}
-
-function appendBounded(capture: MutableStreamCapture, text: string): void {
-  const previewRemaining = STREAM_PREVIEW_BYTES - capture.previewBytes;
-  if (previewRemaining > 0) {
-    const previewChunk = truncateToBytes(text, previewRemaining);
-    capture.preview += previewChunk;
-    capture.previewBytes += Buffer.byteLength(previewChunk, "utf8");
-    if (previewChunk.length < text.length) {
-      capture.previewTruncated = true;
-    }
-  } else if (text.length > 0) {
-    capture.previewTruncated = true;
-  }
-
-  const artifactRemaining = ARTIFACT_BYTES - capture.artifactBytes;
-  if (artifactRemaining <= 0) {
-    capture.artifactTruncated = capture.artifactTruncated || text.length > 0;
-    return;
-  }
-  const artifactChunk = truncateToBytes(text, artifactRemaining);
-  capture.artifactContent += artifactChunk;
-  capture.artifactBytes += Buffer.byteLength(artifactChunk, "utf8");
-  if (artifactChunk.length < text.length) {
-    capture.artifactTruncated = true;
-  }
-}
-
-function toStreamSummary(capture: StreamCaptureSnapshot): UnifiedExecStreamSummary & { artifactId?: string } {
-  return {
-    byteCount: capture.byteCount,
-    lineCount: capture.lineCount,
-    preview: capture.preview,
-    truncated: capture.previewTruncated || capture.artifactTruncated,
   };
 }
 
@@ -663,80 +615,6 @@ function buildEnvironment(cwd: string, policy: UnifiedExecEnvironmentPolicy | un
   };
 }
 
-function spawnCommand(
-  command: UnifiedExecCommand,
-  options: { readonly cwd: string; readonly env: NodeJS.ProcessEnv },
-): ChildProcessWithoutNullStreams {
-  if (command.kind === "argv") {
-    const [file, ...args] = command.argv;
-    if (!file) {
-      throw new Error("argv command requires at least one argument.");
-    }
-    return spawn(file, args, {
-      cwd: options.cwd,
-      env: options.env,
-      detached: process.platform !== "win32",
-      stdio: "pipe",
-    });
-  }
-  return spawn(command.shell ?? "bash", ["-lc", command.command], {
-    cwd: options.cwd,
-    env: options.env,
-    detached: process.platform !== "win32",
-    stdio: "pipe",
-  });
-}
-
-function waitForChild(child: ChildProcessWithoutNullStreams): Promise<{ readonly exitCode: number | null; readonly signal: string | null }> {
-  return new Promise((resolve, reject) => {
-    let settled = false;
-    child.once("error", (error) => {
-      if (!settled) {
-        settled = true;
-        reject(error);
-      }
-    });
-    child.once("close", (exitCode, signal) => {
-      if (!settled) {
-        settled = true;
-        resolve({ exitCode, signal });
-      }
-    });
-  });
-}
-
-function terminateProcessTree(child: ChildProcessWithoutNullStreams, signal: NodeJS.Signals): void {
-  if (!child.pid) {
-    return;
-  }
-  try {
-    if (process.platform !== "win32") {
-      process.kill(-child.pid, signal);
-      return;
-    }
-  } catch {
-    // Fall back to the child process if the process-group kill is unavailable.
-  }
-  try {
-    child.kill(signal);
-  } catch {
-    // Termination is best-effort; the close event or run cancellation path owns final state.
-  }
-}
-
-function summarizeResult(result: UnifiedExecResult): string {
-  if (result.status === "timed_out") {
-    return `Command timed out after ${result.durationMs}ms.`;
-  }
-  if (result.status === "cancelled") {
-    return `Command cancelled after ${result.durationMs}ms.`;
-  }
-  if (result.exitCode !== undefined) {
-    return `Command exited ${result.exitCode} in ${result.durationMs}ms.`;
-  }
-  return `Command ${result.status} in ${result.durationMs}ms.`;
-}
-
 function redactCommand(command: UnifiedExecCommand, extraSecrets: readonly (string | undefined)[]): UnifiedExecCommand {
   if (command.kind === "argv") {
     return {
@@ -752,79 +630,6 @@ function redactCommand(command: UnifiedExecCommand, extraSecrets: readonly (stri
 
 function wasCommandRedacted(command: UnifiedExecCommand, extraSecrets: readonly (string | undefined)[]): boolean {
   return JSON.stringify(command) !== JSON.stringify(redactCommand(command, extraSecrets));
-}
-
-function splitByBytes(text: string, maxBytes: number): string[] {
-  const chunks: string[] = [];
-  let remaining = text;
-  while (remaining.length > 0) {
-    const chunk = truncateToBytes(remaining, maxBytes);
-    if (!chunk) {
-      break;
-    }
-    chunks.push(chunk);
-    remaining = remaining.slice(chunk.length);
-  }
-  return chunks;
-}
-
-function truncateToBytes(text: string, maxBytes: number): string {
-  if (Buffer.byteLength(text, "utf8") <= maxBytes) {
-    return text;
-  }
-  let end = text.length;
-  while (end > 0 && Buffer.byteLength(text.slice(0, end), "utf8") > maxBytes) {
-    end = Math.floor(end * 0.9);
-  }
-  while (end < text.length && Buffer.byteLength(text.slice(0, end + 1), "utf8") <= maxBytes) {
-    end += 1;
-  }
-  return text.slice(0, end);
-}
-
-function countLines(text: string): number {
-  if (!text) {
-    return 0;
-  }
-  return text.split(/\r\n|\r|\n/).length;
-}
-
-function readInputString(input: unknown, key: string, fallback: string): string {
-  if (!isRecord(input)) {
-    return fallback;
-  }
-  const value = input[key];
-  return typeof value === "string" ? value : fallback;
-}
-
-function readInputNumber(input: unknown, key: string): number | undefined {
-  if (!isRecord(input)) {
-    return undefined;
-  }
-  const value = input[key];
-  return typeof value === "number" && Number.isFinite(value) && value > 0 ? value : undefined;
-}
-
-function readInputBoolean(input: unknown, key: string): boolean | undefined {
-  if (!isRecord(input)) {
-    return undefined;
-  }
-  const value = input[key];
-  return typeof value === "boolean" ? value : undefined;
-}
-
-function readTimeoutMs(input: unknown): number | undefined {
-  const timeoutMs = readInputNumber(input, "timeoutMs");
-  if (timeoutMs !== undefined) {
-    return timeoutMs;
-  }
-  const timeoutSeconds = readInputNumber(input, "timeout");
-  return timeoutSeconds === undefined ? undefined : Math.max(1, Math.floor(timeoutSeconds * 1000));
-}
-
-function isPathInsideRoot(root: string, path: string): boolean {
-  const relativePath = relative(resolvePath(root), resolvePath(path));
-  return relativePath === "" || (!relativePath.startsWith("..") && !isAbsolute(relativePath));
 }
 
 function artifactIdFor(runId: string, toolCallId: string, role: string): string {
@@ -862,28 +667,4 @@ function createAbortError(): Error {
   const error = new Error("Run cancelled.");
   error.name = "AbortError";
   return error;
-}
-
-interface MutableStreamCapture {
-  byteCount: number;
-  lineCount: number;
-  preview: string;
-  artifactContent: string;
-  previewBytes: number;
-  artifactBytes: number;
-  previewTruncated: boolean;
-  artifactTruncated: boolean;
-  redacted: boolean;
-}
-
-interface StreamCaptureSnapshot {
-  readonly byteCount: number;
-  readonly lineCount: number;
-  readonly preview: string;
-  readonly artifactContent: string;
-  readonly previewBytes: number;
-  readonly artifactBytes: number;
-  readonly previewTruncated: boolean;
-  readonly artifactTruncated: boolean;
-  readonly redacted: boolean;
 }

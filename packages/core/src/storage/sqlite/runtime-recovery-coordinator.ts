@@ -30,6 +30,7 @@ export interface SqliteRuntimeRecoveryCoordinatorPorts {
   readonly appendRunEvent: <K extends RunEventType>(runId: string, type: K, data: RunEventDataByType[K]) => unknown;
   readonly markRunFailed: (runId: string, endedAt: string, errorMessage: string) => void;
   readonly getRun: (runId: string) => RunSession | undefined;
+  readonly getWorkUnit: (workUnitId: string) => import("../../runtime-supervisor-types.js").WorkUnit | undefined;
   readonly getLingThread: (threadId: string) => LingThread | undefined;
   readonly updateLingThread: (threadId: string, input: UpdateLingThreadInput, now: string) => LingThread | undefined;
   readonly listRecoverableChannelWorkflows: () => ChannelWorkflow[];
@@ -72,8 +73,9 @@ export class SqliteRuntimeRecoveryCoordinator {
 
     for (const runId of staleRuns) {
       const runBeforeRecovery = this.ports.getRun(runId);
+      let resumableApproval: ApprovalRequest | undefined;
       if (runBeforeRecovery?.status === "waiting_for_approval" || runBeforeRecovery?.status === "running") {
-        const resumableApproval = this.ports.listApprovalRequests({ runId, limit: 20 })
+        resumableApproval = this.ports.listApprovalRequests({ runId, limit: 20 })
           .find((approval) => approval.status === "pending" || approval.status === "approved");
         const checkpoint = resumableApproval
           ? this.ports.getApprovalCheckpointForApproval(resumableApproval.id)
@@ -88,6 +90,14 @@ export class SqliteRuntimeRecoveryCoordinator {
           && checkpoint.resumeBasis.approvalId === resumableApproval.id) {
           continue;
         }
+      }
+      if (!resumableApproval && runBeforeRecovery && this.isDaemonRecoverableHarnessRun(runBeforeRecovery)) {
+        // The daemon owns restart continuation for enforced Harness task,
+        // conversation, and private Runs. Channel reply children have their
+        // own dispatch recovery path and must not be claimed here.
+        // Core preserves the logical Run until RuntimeSupervisor fences the
+        // abandoned Attempt and the daemon creates its replacement atomically.
+        continue;
       }
       if (!this.ports.hasTerminalRunEvent(runId)) {
         this.ports.appendRunEvent(runId, "run_error", { message: STALE_RUN_ERROR });
@@ -110,6 +120,30 @@ export class SqliteRuntimeRecoveryCoordinator {
     }
 
     return recovered;
+  }
+
+  private isDaemonRecoverableHarnessRun(run: RunSession): boolean {
+    if ((run.status !== "queued" && run.status !== "running") || !run.workUnitId || !run.contextViewId) {
+      return false;
+    }
+    const workUnit = this.ports.getWorkUnit(run.workUnitId);
+    const thread = run.threadId ? this.ports.getLingThread(run.threadId) : undefined;
+    if (!workUnit
+      || !["task_run", "conversation_run", "teammate_direct_reply"].includes(workUnit.kind)
+      || workUnit.linkedRunId !== run.id
+      || !workUnit.activeAttemptId
+      || !["claimed", "running", "cancelling"].includes(workUnit.status)) {
+      return false;
+    }
+    if (workUnit.kind === "conversation_run" && thread?.kind !== "conversation") return false;
+    if (workUnit.kind === "teammate_direct_reply"
+      && (thread?.kind !== "teammate_direct" || !run.teammateId
+        || thread.teammateId !== run.teammateId || workUnit.teammateId !== run.teammateId)) return false;
+    const snapshot = run.requestSnapshot;
+    if (!isRecord(snapshot) || !isRecord(snapshot.harnessFeatureSnapshot)) return false;
+    return snapshot.harnessFeatureSnapshot.schemaVersion === 1
+      && snapshot.harnessFeatureSnapshot.continuations === "enforce"
+      && isRecord(snapshot.runnerExecutionInput);
   }
 
   recoverStaleChannelWorkflows(now: string): number {
@@ -389,4 +423,8 @@ export class SqliteRuntimeRecoveryCoordinator {
     }
     return 0;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }

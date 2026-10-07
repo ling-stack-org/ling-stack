@@ -104,6 +104,13 @@ export class OfficeDriverRuntime {
     this.platformValue = undefined;
   }
 
+  /** Rebind the desktop driver lease after the daemon authority is recreated. */
+  async restart(): Promise<void> {
+    if (!this.runPromise && !this.abortController) return;
+    await this.stop();
+    await this.start();
+  }
+
   private async runClaimLoop(signal: AbortSignal): Promise<void> {
     while (!signal.aborted) {
       try {
@@ -113,7 +120,13 @@ export class OfficeDriverRuntime {
         await this.client?.complete(result, signal);
       } catch (error) {
         if (signal.aborted) return;
-        this.options.onDiagnostic?.("office_driver.claim_failed", { error: safeErrorCode(error) });
+        const code = safeErrorCode(error);
+        this.options.onDiagnostic?.("office_driver.claim_failed", { error: code });
+        if (code === "office_driver_authority_invalid" && this.platformValue) {
+          await this.refreshAvailability(this.platformValue).catch((recoveryError) => {
+            if (!signal.aborted) this.options.onDiagnostic?.("office_driver.availability_failed", { error: safeErrorCode(recoveryError) });
+          });
+        }
         await delay(ERROR_BACKOFF_MS, signal);
       }
     }

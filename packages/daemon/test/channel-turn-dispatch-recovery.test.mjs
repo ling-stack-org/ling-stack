@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
+import { setImmediate as nextTick } from "node:timers/promises";
 import {
   createRequiredParticipantManifestV1,
   createWorkflowParticipantAuthorityV1,
@@ -12,6 +13,23 @@ import { createSqliteRunStore } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { replayAcceptedChannelTurnDispatch } from "../dist/features/channels/channel-turn-dispatch-lifecycle.js";
 import { buildConversationContextProjection } from "../dist/features/channels/context-processing/conversation-context-projector.js";
+
+for (const beforeDispatch of [false, true]) {
+  test(`delayed recovery fixture honors cancellation before/after dispatch: ${beforeDispatch}`, async (t) => {
+    const runner = new DelayedRecoveryRunner();
+    const controller = new AbortController();
+    const events = [];
+    let outcome;
+    if (beforeDispatch) controller.abort();
+    const pending = runner.runTask({ task: { id: "abort-fixture" }, signal: controller.signal,
+      onEvent: event => events.push(event) }).then(() => { outcome = "completed"; }, error => { outcome = error.name; });
+    t.after(async () => { runner.release("fixture cleanup"); await pending; });
+    controller.abort();
+    await nextTick();
+    assert.equal(outcome, "AbortError", "test Runner must obey the same shutdown contract as Pi");
+    assert.deepEqual(events, []);
+  });
+}
 
 for (const checkpoint of ["accepted", "intent_committed"]) {
   test(`daemon startup resumes a ${checkpoint} channel dispatch once and terminal replay stays idempotent`, async (t) => {
@@ -83,6 +101,7 @@ test("an active reply child keeps dispatch ownership and idempotent observers do
     assert.ok(replyItemId);
     const sourceItem = fixture.store.getConversationItem(first.userItem.id);
     assert.ok(sourceItem?.turnId);
+    assert.equal(fixture.store.getLingTurn(sourceItem.turnId)?.kind, "initial_request");
     const dispatch = fixture.store.findWorkUnitByIdempotency({
       kind: "channel_turn_dispatch",
       ownerType: "ling_turn",
@@ -94,6 +113,7 @@ test("an active reply child keeps dispatch ownership and idempotent observers do
 
     const replay = await postJson(`${fixture.url}/channels/${encodeURIComponent(seeded.channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, body);
     assert.equal(replay.userItem.id, first.userItem.id);
+    assert.equal(fixture.store.getLingTurn(sourceItem.turnId)?.kind, "initial_request");
     assert.equal(replay.assistantItems?.[0]?.id, replyItemId);
     assert.equal(runner.replyRuns.length, 1);
     assert.equal(fixture.store.listRuns({ channelId: seeded.channel.id, limit: 100 }).length, 1);
@@ -106,6 +126,81 @@ test("an active reply child keeps dispatch ownership and idempotent observers do
     assert.equal(fixture.store.listRuns({ channelId: seeded.channel.id, limit: 100 }).length, 1);
   } finally {
     runner.release("cleanup");
+    await fixture.daemon.stop();
+  }
+});
+
+test("channel replay preserves its accepted follow-up source after the active Run finishes", async (t) => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-channel-followup-replay-"));
+  t.after(async () => rm(cwd, { recursive: true, force: true }));
+  const runner = new DelayedRecoveryRunner();
+  const fixture = await startRecoveryDaemon(cwd, runner);
+  try {
+    const seeded = seedProviderAndChannel(fixture.store, cwd);
+    const url = `${fixture.url}/channels/${encodeURIComponent(seeded.channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`;
+    const first = await postJson(url, {
+      body: "Keep this source active for a queued follow-up.", requestAiReply: true,
+      providerPresetId: seeded.provider.id, idempotencyKey: "followup-source",
+    });
+    await waitUntil(() => runner.replyRuns.length === 1);
+    const sourceTurn = fixture.store.getLingTurn(first.userItem.turnId);
+    const runId = fixture.store.listLingTurnRuns(sourceTurn.id)[0].runId;
+    const body = {
+      body: "Remember this follow-up without dispatching another reply.", requestAiReply: false,
+      replyDisposition: { mode: "queue_followup", activeRunId: runId }, idempotencyKey: "stable-followup-source",
+    };
+    const accepted = await postJson(url, body);
+    const acceptedTurn = fixture.store.getLingTurn(accepted.userItem.turnId);
+    assert.equal(acceptedTurn.kind, "queued_followup");
+    assert.equal(acceptedTurn.sourceTurnId, sourceTurn.id);
+    runner.release("Source finished.");
+    await waitUntil(() => fixture.store.getRun(runId)?.status === "succeeded");
+    const replay = await postJson(url, body);
+    assert.equal(replay.userItem.id, accepted.userItem.id);
+    assert.equal(fixture.store.getLingTurn(acceptedTurn.id)?.kind, "queued_followup");
+    assert.equal(fixture.store.getLingTurn(acceptedTurn.id)?.sourceTurnId, sourceTurn.id);
+    for (const conflict of [
+      { body: "Conflicting user payload" },
+      { replyDisposition: { mode: "queue_followup", activeRunId: "another-run" } },
+    ]) {
+      const rejected = await fetch(url, {
+        method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ ...body, ...conflict }),
+      });
+      assert.equal(rejected.status, 400);
+      assert.match((await rejected.json()).message, /idempotency key belongs to another/);
+    }
+    assert.equal(fixture.store.listLingTurns({ threadId: sourceTurn.threadId }).length, 2);
+  } finally {
+    runner.release("cleanup");
+    await fixture.daemon.stop();
+  }
+});
+
+test("channel rename-then-replay preserves mention identity without treating its display label as input authority", async (t) => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-channel-mention-rename-replay-"));
+  t.after(async () => rm(cwd, { recursive: true, force: true }));
+  const fixture = await startRecoveryDaemon(cwd, new RecoveryRunner("No reply requested"));
+  try {
+    const seeded = seedProviderAndChannel(fixture.store, cwd);
+    const teammateId = "teammate_builtin_engineer";
+    const originalLabel = fixture.store.getAiTeammate(teammateId).displayName;
+    const url = `${fixture.url}/channels/${encodeURIComponent(seeded.channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`;
+    const body = {
+      body: "A request with an explicit participant id.", requestAiReply: false,
+      mentions: [{ id: teammateId, label: originalLabel, kind: "ai-teammate" }], idempotencyKey: "mention-rename-replay",
+    };
+    const accepted = await postJson(url, body);
+    fixture.store.updateAiTeammate(teammateId, { displayName: "Renamed Engineer" }, new Date().toISOString());
+    const replay = await postJson(url, body);
+    assert.equal(replay.userItem.id, accepted.userItem.id);
+    assert.deepEqual(replay.userItem.payload.mentions, [{ id: teammateId, label: originalLabel, kind: "ai_teammate" }]);
+    const changedIdentity = await fetch(url, {
+      method: "POST", headers: { "content-type": "application/json" },
+      body: JSON.stringify({ ...body, mentions: [{ id: "teammate_builtin_designer", label: "Designer", kind: "ai-teammate" }] }),
+    });
+    assert.equal(changedIdentity.status, 400);
+    assert.equal(fixture.store.listLingTurns({ threadId: accepted.userItem.threadId }).length, 1);
+  } finally {
     await fixture.daemon.stop();
   }
 });
@@ -591,13 +686,26 @@ class DelayedRecoveryRunner extends RecoveryRunner {
   }
 
   async runTask(options) {
+    if (options.signal?.aborted) throw new DOMException("Recovery fixture aborted.", "AbortError");
     if (/context segmentation policy proposer/i.test(options.systemPrompt ?? "")) {
       return await super.runTask(options);
     }
     this.replyRuns.push(options);
-    const text = await new Promise((resolveReply) => {
-      this.resolveReply = resolveReply;
-    });
+    let abort;
+    let resolveThisReply;
+    let text;
+    try {
+      text = await new Promise((resolveReply, reject) => {
+        resolveThisReply = resolveReply;
+        this.resolveReply = resolveReply;
+        abort = () => reject(new DOMException("Recovery fixture aborted.", "AbortError"));
+        options.signal?.addEventListener("abort", abort, { once: true });
+      });
+    } finally {
+      if (abort) options.signal?.removeEventListener("abort", abort);
+      if (this.resolveReply === resolveThisReply) this.resolveReply = undefined;
+    }
+    if (options.signal?.aborted) throw new DOMException("Recovery fixture aborted.", "AbortError");
     options.onEvent?.({ type: "assistant_text_delta", text });
     return { taskId: options.task.id, messages: [text], events: [] };
   }

@@ -68,6 +68,7 @@ import { registerDesktopIpc } from "./ipc.js";
 import { registerDesktopThemePackageIpc } from "./theme-packages/theme-package-ipc.js";
 import { DesktopMobileAccessClient } from "./mobile-access/client.js";
 import { OfficeDriverRuntime, resolveOfficeDriverExecutablePath } from "./office-driver/runtime.js";
+import { HostCapabilityRuntime } from "./host-capabilities/runtime.js";
 import { DesktopThemePackageRepository } from "./theme-packages/theme-package-repository.js";
 import { DesktopNavigationIntentStore } from "./navigation-intent.js";
 import { openDesktopOwnerWindow } from "./owner-window.js";
@@ -163,6 +164,7 @@ let desktopRuntime: DesktopRuntime | undefined;
 let desktopDaemonAutomaticRecoveryArmed = false;
 let desktopDaemonAutomaticRecoveryUsed = false;
 let officeDriverRuntime: OfficeDriverRuntime | undefined;
+let hostCapabilityRuntime: HostCapabilityRuntime | undefined;
 let computerUse: ComputerUsePreviewCoordinator | undefined;
 const desktopNavigationIntents = new DesktopNavigationIntentStore();
 const desktopRendererThemeStore = new DesktopRendererThemeStore(
@@ -402,6 +404,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           defaultWorkspaceCwd,
           desktopBridgeToken: bridgeToken,
           browserHostPath: resources.browserHostPath,
+          packaged: app.isPackaged,
           cuaDriverFeatureFlags: featureFlags,
           ...(smokeHeadless && app.runningUnderARM64Translation ? { startupTimeoutMs: 60_000 } : {}),
           onUnexpectedExit: (details) => {
@@ -457,6 +460,22 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   }
   logStartup("daemon.connected", { ownedByDesktop: desktopRuntime.status.ownedByDesktop });
   desktopDaemonAutomaticRecoveryArmed = desktopRuntime.status.ownedByDesktop;
+  if (!hostCapabilityRuntime) {
+    hostCapabilityRuntime = new HostCapabilityRuntime({
+      daemonBaseUrl,
+      bridgeToken,
+      desktopInstanceId: desktopRuntime.desktopInstanceId,
+      onDiagnostic: logStartup,
+    });
+    await hostCapabilityRuntime.start();
+    logStartup("host_capability.started", { capabilities: ["host.open_local_target"] });
+  }
+  if (!attempt.isCurrent()) {
+    const staleHostCapabilityRuntime = hostCapabilityRuntime;
+    hostCapabilityRuntime = undefined;
+    await staleHostCapabilityRuntime?.stop();
+    return false;
+  }
   if (!officeDriverRuntime) {
     const officeDriverExecutablePath = resolveOfficeDriverExecutablePath({
       appPath: app.getAppPath(),
@@ -751,7 +770,8 @@ function requestDesktopDaemonRecovery(details: {
     signal: details.signal,
   });
   void runtime.ensureStarted().then(
-    (status) => {
+    async (status) => {
+      await restartDesktopCapabilityRuntimes();
       logStartup("daemon.unexpected_exit_recovered", {
         baseUrl: details.baseUrl,
         ownedByDesktop: status.ownedByDesktop,
@@ -764,6 +784,19 @@ function requestDesktopDaemonRecovery(details: {
       });
     },
   );
+}
+
+async function restartDesktopCapabilityRuntimes(): Promise<void> {
+  const host = hostCapabilityRuntime;
+  const office = officeDriverRuntime;
+  await Promise.all([
+    host?.restart(),
+    office?.restart(),
+  ]);
+  logStartup("desktop_capabilities.rebound", {
+    hostCapability: Boolean(host),
+    officeDriver: Boolean(office),
+  });
 }
 
 function isLoopbackDaemonUrl(value: string): boolean {
@@ -1992,6 +2025,10 @@ async function shutdown(): Promise<void> {
   const activeOfficeDriverRuntime = officeDriverRuntime;
   officeDriverRuntime = undefined;
   await attemptCleanup(() => activeOfficeDriverRuntime?.stop());
+
+  const activeHostCapabilityRuntime = hostCapabilityRuntime;
+  hostCapabilityRuntime = undefined;
+  await attemptCleanup(() => activeHostCapabilityRuntime?.stop());
 
   const activeDesktopRuntime = desktopRuntime;
   desktopRuntime = undefined;

@@ -30,6 +30,12 @@
   }
 
   .activity-chat-layout.with-thread > .thread-reply-panel {
+    display: grid;
+  }
+
+  /* Keep the opened topic usable in a narrow desktop window. Closing it
+     reveals the still-mounted channel feed and preserves its scroll/draft. */
+  .activity-chat-layout.with-thread > .activity-chat-main {
     display: none;
   }
 
@@ -48,8 +54,7 @@
   }
 
   .activity-shell .message-feed-wrap,
-  .activity-shell .message-feed,
-  .message-feed-virtualizer {
+  .activity-shell .message-feed {
     max-width: 100%;
     min-width: 0;
     overflow-x: hidden;

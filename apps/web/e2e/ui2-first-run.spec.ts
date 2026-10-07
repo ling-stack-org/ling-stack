@@ -21,7 +21,7 @@ test("First Run opens softly, skip survives refresh, and leaves the application 
   await expect(dialog.getByRole("button", { name: "Skip for now" }).last()).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
   expect(await page.evaluate(() => JSON.parse(localStorage.getItem("ling-first-run:v1") ?? "null")?.status)).toBe("skipped");
 
   await page.evaluate(() => localStorage.removeItem("ling-first-run:v1"));
@@ -29,7 +29,7 @@ test("First Run opens softly, skip survives refresh, and leaves the application 
   await expect(dialog).toBeVisible();
   await dialog.getByRole("button", { name: "Skip for now" }).last().click();
   await expect(dialog).toHaveCount(0);
-  await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
 
   await page.reload();
   await expect(page.getByRole("dialog", { name: "Get started with Ling" })).toHaveCount(0);

@@ -1,6 +1,6 @@
 # Conversation Shared Capabilities
 
-Status: implemented
+Status: implemented baseline; transcript rendering superseded by v3.7
 Date: 2026-07-13
 Scope: normal conversation, channel root, channel branch, topic reply, teammate private
 chat, shared conversation components, rich content rendering, and latest-user-message edit
@@ -13,6 +13,20 @@ Related docs:
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
+
+> v3.7 authority note: this document records the shared capability baseline and product
+> policy. Typed transcript item kinds, evidence ownership, renderer selection, batching and
+> completion are defined by [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+> and [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md).
+> WorkCell references here are migration inputs; v3.7 production rendering uses the single
+> `ConversationTimeline` registry.
+
+> **Implementation boundary:** this document is still the authority for content capabilities,
+> composer behavior and surface policy, but not for transcript geometry. New work must not
+> add a `ConversationWorkCell`/`MessageRow` activity renderer, a second summary row, or a
+> route-local Markdown parser. Those concerns are implemented by the v3.7 Timeline registry
+> and its document/fact/nested lanes. Existing WorkCell view models may be read by a strict
+> migration adapter until the surface cutover removes their production callers.
 
 ## Purpose
 
@@ -46,8 +60,8 @@ The following are existing Ling capabilities and must be reused rather than rebu
 | Stop and redirect | `interrupt_redirect` with confirmation | Keep; do not silently inject redirects |
 | Channel work branches | `LingThread` parent/turn/run lineage | Reuse for explicit branch actions |
 | Topic replies | channel message thread attached to a source message | Reuse for channel follow-up discussion |
-| Work process display | `ConversationWorkCell` and transcript blocks | Reuse across execution-capable surfaces |
-| Final result | structured `TerminalReport` | Reuse; surface policy controls participants |
+| Work process display | canonical typed items + `ConversationTimeline` registry | Replace WorkCell/activity DOM callers; keep strict adapters only until cutover |
+| Final result | durable structured `TerminalReport` projected as one `terminalReport` item | Render once inside the Timeline; surface policy controls participant detail |
 | Artifact and diff inspection | shared preview and diff primitives | Extend rather than replace |
 
 The implementation must not introduce:
@@ -56,6 +70,13 @@ The implementation must not introduce:
 - a second follow-up queue beside run guidance;
 - a second branch table beside `LingThread` lineage;
 - assistant-copy parsing to infer tools, participants, changes, or final state.
+
+`conversation_items` is the target canonical transcript spine for every surface. Existing
+`channel_messages` and teammate-direct/normal message stores may remain temporarily as
+one-way persistence adapters or lookup indexes while E4 migrates write/read paths, but they
+must not independently determine order, context, renderer choice or completion. This is a
+storage cutover boundary, not an old-client renderer compatibility layer: production DOM has
+one typed Timeline throughout the migration.
 
 ### Active-Run Follow-Ups
 
@@ -69,7 +90,8 @@ or lose the message.
 
 Normal conversation detail includes approvals and run interventions associated with its
 runs. Teammate-private runtime includes approvals associated with linked private runs.
-WorkCell adapters consume these snapshots instead of passing empty approval arrays.
+The E4 migration adapters consume these snapshots and emit typed approval/fact items; they
+must not mount a second WorkCell or pass an empty approval array to the Timeline.
 Approval, artifact, tool and intervention events trigger event-driven detail refresh;
 there is no idle conversation polling.
 
@@ -88,7 +110,7 @@ Interaction Protocol
   -> copy, feedback, edit latest, topic reply, explicit fork, open artifact
 
 Execution Protocol
-  -> tools, approvals, work cells, queued guidance, TerminalReport
+  -> tools, approvals, typed evidence, queued guidance, terminalReport result
 ```
 
 The contracts are shared, but each surface enables a different policy projection.
@@ -101,12 +123,13 @@ The target Conversation UI Kit is:
 ConversationSurface
   ConversationShell
     ConversationFeed / ConversationVirtualFeed
-      MessageRow
-        MessageBodyRenderer
-        ConversationAttachmentStrip
-        ConversationWorkCell
+      ConversationTimeline
+        DocumentRenderer (Markdown / code / path)
+        FactRenderer (command / file / tool / approval)
+        ResultRenderer (execute terminalReport)
+        BatchRenderer (display-only disclosure)
+        SubAgentRenderer (depth=1, same registry)
         EvidenceDisclosure
-        TerminalReportBlock
         MessageActionBar
     ConversationComposer
     RightDock
@@ -210,9 +233,10 @@ selected teammate
 
 Persona and skill text may shape the prompt but cannot grant execution authority.
 
-Private execution remains single-agent. Its WorkCell can show read, edit, shell, search,
-approval, check, and artifact operations, but its TerminalReport does not render a
-Participants section.
+Private execution remains single-agent. Its typed Timeline can show read, edit, shell,
+search, approval, check and artifact facts; an execute `terminalReport` does not render a
+Participants section. The legacy WorkCell is only a migration adapter and never a second
+production renderer.
 
 ## Latest User Message Edit
 
@@ -292,8 +316,8 @@ tooltip, accessible label, and keyboard access.
 
 The design is implemented when:
 
-- channel, normal conversation, and private chat render through the same message, body,
-  action, work, terminal, and composer primitives;
+- channel, normal conversation, and private chat render through the same document, fact,
+  result, batch, nested and composer primitives;
 - private chat can perform a real read/edit/shell/check flow under teammate policy;
 - normal and private TerminalReports omit Participants;
 - fenced Mermaid renders safely and falls back cleanly on invalid source;

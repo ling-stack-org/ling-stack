@@ -21,6 +21,7 @@ const DOCUMENTATION_ROOT_FILES = new Set([
 const MAINTENANCE_CHECK_FILES = new Set([
   "scripts/check-markdown-links.mjs",
   "scripts/check-public-repo-safety.mjs",
+  "scripts/check-public-repo-safety.test.mjs",
 ]);
 
 const FORCE_FULL_PATTERNS = [

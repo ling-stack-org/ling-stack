@@ -107,7 +107,7 @@ test("Teammate chat hides active status and renders paused and disabled without 
     await route.fulfill({ json: { cwd, teammates: state.aiTeammates } });
   });
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: displayName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: displayName }).click();
 
   const header = page.locator("[data-ui2-teammate-chat-header='true']");
   await expect(header).toBeVisible();
@@ -228,7 +228,7 @@ function createCouncilLifecycleState(): MockState {
 }
 
 async function openCouncilWorkspace(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Council Workspace" }).click();
   const surface = page.locator("[data-settings-workspace-tool='councils']");
   await expect(surface.locator(".council-list-health-row").first()).toBeVisible();

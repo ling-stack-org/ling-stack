@@ -1,8 +1,9 @@
 import { useEffect, useState } from "react";
-import { previewWorkspaceFile } from "../../../api.js";
+import { previewWorkspaceFile, previewWorkspaceFileCapability } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
 import type { DockFileItem, DockReviewItem } from "../../../shared/conversation/index.js";
 import { WorkspaceFileOpenMenu } from "../../../shared/conversation/blocks/WorkspaceFileOpenMenu.js";
+import { ArtifactPreview } from "../../../shared/conversation/preview/ArtifactPreview.js";
 import {
   DockReviewCodePreview,
   fileNameFromPath,
@@ -60,7 +61,16 @@ export function DockWorkspaceFilePreview({
     setLoading(true);
     setError("");
     setPreview(undefined);
-    void previewWorkspaceFile(cwd, target.path, 64 * 1024, target.line).then((response) => {
+    const previewRequest = target.capabilityId && target.capabilityScope
+      ? previewWorkspaceFileCapability({
+        cwd,
+        capabilityId: target.capabilityId,
+        scope: target.capabilityScope,
+        maxBytes: 64 * 1024,
+        line: target.line,
+      })
+      : previewWorkspaceFile(cwd, target.path, 64 * 1024, target.line);
+    void previewRequest.then((response) => {
       if (!cancelled) {
         setPreview(response);
       }
@@ -76,7 +86,7 @@ export function DockWorkspaceFilePreview({
     return () => {
       cancelled = true;
     };
-  }, [cwd, target.line, target.path]);
+  }, [cwd, target.capabilityId, target.capabilityScope, target.line, target.path]);
 
   if (loading) {
     return <div className="artifact-preview-loading">{t("Loading preview...")}</div>;
@@ -87,13 +97,33 @@ export function DockWorkspaceFilePreview({
   if (!preview) {
     return <div className="artifact-preview-empty">{t("Preview unavailable")}</div>;
   }
+  const capabilityTarget = target.capabilityTarget ?? "open_file";
+  if (capabilityTarget === "open_artifact") {
+    return (
+      <article
+        className="right-dock-workspace-file-preview"
+        data-workspace-file-path={target.path}
+        data-workspace-capability-target={capabilityTarget}
+        data-workspace-viewer-kind="artifact"
+      >
+        <ArtifactPreview preview={preview} />
+      </article>
+    );
+  }
+  if (capabilityTarget === "open_diff" && preview.kind !== "diff") {
+    return <div className="artifact-preview-error" role="alert">{t("Diff preview unavailable")}</div>;
+  }
   const codePreview = workspaceFileCodePreview(target, preview);
   if (!codePreview) {
     return (
-      <div className="artifact-preview-empty">
-        <strong>{target.label || fileNameFromPath(target.path) || target.path}</strong>
-        <span>{t("Preview unavailable")}</span>
-      </div>
+      <article
+        className="right-dock-workspace-file-preview"
+        data-workspace-file-path={target.path}
+        data-workspace-capability-target={capabilityTarget}
+        data-workspace-viewer-kind="file"
+      >
+        <ArtifactPreview preview={preview} />
+      </article>
     );
   }
   const item: DockReviewItem = {
@@ -106,10 +136,17 @@ export function DockWorkspaceFilePreview({
     pathLabel: codePreview.pathLabel,
   };
   return (
-    <article className="right-dock-workspace-file-preview" data-workspace-file-path={target.path}>
-      <div className="right-dock-workspace-file-preview-actions">
-        <WorkspaceFileOpenMenu cwd={cwd} path={target.path} line={target.line} compact />
-      </div>
+    <article
+      className="right-dock-workspace-file-preview"
+      data-workspace-file-path={target.path}
+      data-workspace-capability-target={capabilityTarget}
+      data-workspace-viewer-kind={capabilityTarget === "open_diff" ? "diff" : "file"}
+    >
+      {capabilityTarget === "open_file" ? (
+        <div className="right-dock-workspace-file-preview-actions">
+          <WorkspaceFileOpenMenu cwd={cwd} path={target.path} line={target.line} compact capabilityId={target.capabilityId} scope={target.capabilityScope} />
+        </div>
+      ) : null}
       <DockReviewCodePreview item={item} preview={codePreview} focusLine={target.line} />
     </article>
   );

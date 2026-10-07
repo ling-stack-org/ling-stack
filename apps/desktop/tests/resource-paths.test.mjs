@@ -25,11 +25,17 @@ test("packaged resourcesRoot is Electron process.resourcesPath", async (t) => {
   const packagedResourcesPath = join(fixture.root, "packaged-resources");
   await mkdir(join(packagedResourcesPath, "web"), { recursive: true });
   await mkdir(join(packagedResourcesPath, "browser-host"), { recursive: true });
+  await mkdir(join(packagedResourcesPath, "restricted-command"), { recursive: true });
+  await mkdir(join(packagedResourcesPath, "office-local", "source"), { recursive: true });
   await writeFile(join(packagedResourcesPath, "web", "index.html"), "fixture");
   await writeFile(
     join(packagedResourcesPath, "browser-host", process.platform === "win32" ? "ling-browser-host.exe" : "ling-browser-host"),
     "fixture",
   );
+  await writeFile(join(packagedResourcesPath, "restricted-command", "ling-sandbox-runner"), "fixture");
+  await writeFile(join(packagedResourcesPath, "restricted-command", "manifest.json"), "{}");
+  await writeFile(join(packagedResourcesPath, "office-local", "office-local.node"), "test-only addon bytes");
+  await writeFile(join(packagedResourcesPath, "office-local", "build-manifest.json"), "test-only build data");
   const app = { isPackaged: true, getAppPath: () => fixture.appPath };
 
   assert.equal(resolveDesktopResourcesRoot(app, packagedResourcesPath), resolve(packagedResourcesPath));
@@ -46,11 +52,12 @@ test("packaged Web entry keeps public assets relative and exposes the shared Des
   const webDistRoot = resolve(import.meta.dirname, "../../web/dist");
   const html = await readFile(join(webDistRoot, "index.html"), "utf8");
   const scriptPath = entryAssetPath(html, "script", "js");
-  const stylesheetPath = entryAssetPath(html, "link", "css");
-  const [script, stylesheet] = await Promise.all([
+  const stylesheetPaths = entryStylesheetPaths(html);
+  const [script, stylesheets] = await Promise.all([
     readFile(join(webDistRoot, scriptPath), "utf8"),
-    readFile(join(webDistRoot, stylesheetPath), "utf8"),
+    Promise.all(stylesheetPaths.map((path) => readFile(join(webDistRoot, path), "utf8"))),
   ]);
+  const stylesheet = stylesheets.join("\n");
   const javascriptBundles = await readJavascriptBundles(join(webDistRoot, "assets"));
 
   assert.match(javascriptBundles, /ling-mark-compact\.svg/u);
@@ -77,6 +84,18 @@ test("packaged Web entry keeps public assets relative and exposes the shared Des
   assert.match(stylesheet, /pointer-events:\s*none/u);
   assert.match(stylesheet, /-webkit-app-region:\s*drag/u);
   assert.match(stylesheet, /-webkit-app-region:\s*no-drag/u);
+});
+
+test("packaged entry stylesheet discovery includes split CSS but excludes preload-only assets", () => {
+  const html = [
+    '<link rel="preload" as="style" href="./assets/not-applied.css">',
+    '<link rel="stylesheet" crossorigin href="./assets/components.css">',
+    '<link href="./assets/shell.css" rel="stylesheet">',
+    '<script src="./assets/main.js"></script>',
+  ].join("\n");
+  assert.deepEqual(entryStylesheetPaths(html), ["assets/components.css", "assets/shell.css"]);
+  assert.throws(() => entryStylesheetPaths('<link rel="preload" href="./assets/unused.css">'), /missing entry stylesheet/u);
+  assert.throws(() => entryStylesheetPaths('<link rel="stylesheet" href="/assets/absolute.css">'), /relative packaged stylesheet/u);
 });
 
 async function readJavascriptBundles(assetsRoot) {
@@ -114,4 +133,17 @@ function entryAssetPath(html, tagName, extension) {
   const match = new RegExp(`<${tagName}[^>]+(?:src|href)="\\./([^\"]+\\.${extension})"`, "u").exec(html);
   assert.ok(match?.[1], `missing ${extension} entry asset`);
   return match[1];
+}
+
+function entryStylesheetPaths(html) {
+  // Only HTML-linked styles count. Scanning every emitted CSS chunk could hide
+  // a real missing-import bug behind an unrelated or unreachable stylesheet.
+  const links = (html.match(/<link\b[^>]*>/gu) ?? [])
+    .filter((tag) => /\brel=["']stylesheet["']/u.test(tag));
+  assert.ok(links.length > 0, "missing entry stylesheet");
+  return links.map((tag) => {
+    const match = /\bhref=["']\.\/([^"']+\.css)["']/u.exec(tag);
+    assert.ok(match?.[1], "expected a relative packaged stylesheet");
+    return match[1];
+  });
 }

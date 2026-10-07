@@ -17,6 +17,7 @@ import { DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
 import type { LingExtensionMetadata, LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "../config.js";
 import { HttpError } from "../errors.js";
+import { assertNoUnsafeRequiredPause } from "../features/runs/user-input-cancellation-guard.js";
 import { appendControlPlaneEvent } from "../features/control-plane/events.js";
 import type { ControlPlaneEventHub } from "../features/control-plane/events.js";
 import type { WorkUnitRoute } from "../server/routes.js";
@@ -55,6 +56,16 @@ export type RuntimeRunCanceller = (input: {
   readonly active: boolean;
   readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
 }) => { readonly event?: RunEventEnvelope };
+
+export type RuntimeTaskRunRetrier = (input: {
+  readonly cwd: string;
+  readonly store: RunStore;
+  readonly run: RunSession;
+  readonly workUnit: WorkUnit;
+}) => Promise<
+  | { readonly ok: true; readonly runId: string }
+  | { readonly ok: false; readonly statusCode: number; readonly error: string; readonly message: string }
+>;
 
 export function handleListStateTransitions(response: ServerResponse, url: URL, storeRegistry: RunStoreRegistry): void {
   const cwd = url.searchParams.get("cwd");
@@ -346,7 +357,7 @@ export async function handleRuntimeSettings(
   }
 }
 
-export function handleWorkUnitRoute(
+export async function handleWorkUnitRoute(
   request: IncomingMessage,
   response: ServerResponse,
   url: URL,
@@ -356,17 +367,34 @@ export function handleWorkUnitRoute(
   route: WorkUnitRoute,
   cancelRun: RuntimeRunCanceller,
   controlPlaneEvents: ControlPlaneEventHub,
-): void {
+  retryTaskRun: RuntimeTaskRunRetrier,
+): Promise<void> {
   const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
   if (!resolved) {
     return;
   }
-  runtimeSupervisor.getRuntime(resolved.cwd, resolved.store);
   const workUnit = resolved.store.getWorkUnit(route.workUnitId);
   if (!workUnit) {
     writeJson(response, 404, { error: "work_unit_not_found", message: `Work unit not found: ${route.workUnitId}` });
     return;
   }
+
+  // Reconciliation itself may mark an Attempt lost and release resources.
+  // Check manual mutations before even invoking startup reconciliation.
+  if (request.method === "POST" && (route.kind === "cancel" || route.kind === "reconcile") && workUnit.linkedRunId) {
+    const run = resolved.store.getRun(workUnit.linkedRunId);
+    if (run && !["succeeded", "failed", "cancelled"].includes(run.status)
+      && (route.kind === "reconcile" || run.status !== "yielded")) {
+      try {
+        assertNoUnsafeRequiredPause(resolved.store, run);
+      } catch (error) {
+        if (!(error instanceof HttpError)) throw error;
+        writeJson(response, error.statusCode, { error: error.code, message: error.message });
+        return;
+      }
+    }
+  }
+  runtimeSupervisor.getRuntime(resolved.cwd, resolved.store);
 
   if (route.kind === "detail") {
     if (request.method !== "GET") {
@@ -406,15 +434,21 @@ export function handleWorkUnitRoute(
     if (runId) {
       const run = resolved.store.getRun(runId);
       if (run) {
-        cancelRun({
-          store: resolved.store,
-          runId,
-          taskId: run.taskId,
-          startedAt: run.startedAt,
-          reason: "work_unit_cancel_requested",
-          active: Boolean(activeRun),
-          streamEnvelope: activeRun?.streamEnvelope,
-        });
+        try {
+          cancelRun({
+            store: resolved.store,
+            runId,
+            taskId: run.taskId,
+            startedAt: run.startedAt,
+            reason: "work_unit_cancel_requested",
+            active: Boolean(activeRun),
+            streamEnvelope: activeRun?.streamEnvelope,
+          });
+        } catch (error) {
+          if (!(error instanceof HttpError)) throw error;
+          writeJson(response, error.statusCode, { error: error.code, message: error.message });
+          return;
+        }
       } else {
         cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
       }
@@ -447,6 +481,37 @@ export function handleWorkUnitRoute(
         error: "terminal_state",
         message: "Cancelled work units cannot be retried from the runtime control plane.",
         workUnit: current,
+      });
+      return;
+    }
+    const linkedRun = current.kind === "task_run" && current.linkedRunId
+      ? resolved.store.getRun(current.linkedRunId)
+      : undefined;
+    if (linkedRun && isHarnessContinuationEnforced(linkedRun)) {
+      if (current.status !== "failed" || linkedRun.status !== "failed") {
+        writeJson(response, 409, {
+          error: "continuation_activation_state_stale",
+          message: "Enforced task Run retry requires both the Run and WorkUnit to be failed.",
+          run: linkedRun,
+          workUnit: current,
+        });
+        return;
+      }
+      const started = await retryTaskRun({ cwd: resolved.cwd, store: resolved.store, run: linkedRun, workUnit: current });
+      if (!started.ok) {
+        writeJson(response, started.statusCode, {
+          error: started.error,
+          message: started.message,
+          run: resolved.store.getRun(linkedRun.id) ?? linkedRun,
+          workUnit: resolved.store.getWorkUnit(current.id) ?? current,
+        });
+        return;
+      }
+      writeJson(response, 202, {
+        cwd: resolved.cwd,
+        run: resolved.store.getRun(linkedRun.id) ?? linkedRun,
+        workUnit: resolved.store.getWorkUnit(current.id) ?? current,
+        continuation: { origin: "runner_retry", status: "started", runId: started.runId },
       });
       return;
     }
@@ -509,6 +574,12 @@ export function handleWorkUnitRoute(
     cwd: resolved.cwd,
     workUnit: resolved.store.getWorkUnit(reconciled.id) ?? reconciled,
   });
+}
+
+function isHarnessContinuationEnforced(run: RunSession): boolean {
+  return isRecord(run.requestSnapshot)
+    && isRecord(run.requestSnapshot.harnessFeatureSnapshot)
+    && run.requestSnapshot.harnessFeatureSnapshot.continuations === "enforce";
 }
 
 function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: WorkUnit): {
@@ -638,6 +709,7 @@ function isWorkUnitKind(value: string): value is WorkUnitKind {
   return (
     value === "task_run" ||
     value === "conversation_run" ||
+    value === "approval_review" ||
     value === "channel_turn_dispatch" ||
     value === "channel_ai_reply" ||
     value === "channel_terminal_report" ||

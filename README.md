@@ -5,7 +5,7 @@
   <p>
     <a href="https://github.com/tianxiaochannel-oss88/ling-stack/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tianxiaochannel-oss88/ling-stack/actions/workflows/ci.yml/badge.svg" /></a>
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
-    <img alt="Node.js 22.15+" src="https://img.shields.io/badge/Node.js-22.15%2B-3c873a.svg" />
+    <img alt="Node.js 22.22.1+" src="https://img.shields.io/badge/Node.js-22.22.1%2B-3c873a.svg" />
     <img alt="pnpm 10" src="https://img.shields.io/badge/pnpm-10-f69220.svg" />
   </p>
   <p>
@@ -170,7 +170,7 @@ status from old phase names or Git history.
 ### Requirements
 
 - Git
-- Node.js `22.15` or newer
+- Node.js `22.22.1` or newer (required for SQLite transaction state and native TypeScript source imports)
 - Corepack with pnpm `10`
 
 The repository is a pnpm workspace and is not currently published as a stable npm or

@@ -28,14 +28,15 @@ test("documentation-only changes use the fast lane", () => {
   assert.equal(classify(["README.md", "packages/core/README.md", "docs/assets/preview.png"]).mode, "docs");
 });
 
-test("Issue templates and existing maintenance checks need no product packages", () => {
+test("Issue templates and allowlisted maintenance checks need no product packages", () => {
   const maintenanceFiles = [
     ".github/ISSUE_TEMPLATE/bug_report.yml",
     ".github/ISSUE_TEMPLATE/nested/feature.md",
     "scripts/check-markdown-links.mjs",
     "scripts/check-public-repo-safety.mjs",
+    "scripts/check-public-repo-safety.test.mjs",
   ];
-  for (const files of [...maintenanceFiles.map((file) => [file]), ["docs/ci.md", ...maintenanceFiles]]) {
+  for (const files of maintenanceFiles.map((file) => [file]).concat([["docs/ci.md", ...maintenanceFiles]])) {
     const scope = classify(files);
     assert.equal(scope.mode, "docs", files.join(", "));
     assert.match(scope.reason, /maintenance/u);
@@ -50,7 +51,7 @@ test("Issue templates and existing maintenance checks need no product packages",
 test("maintenance mixed with source retains affected consumers", () => {
   const scope = classify([
     ".github/ISSUE_TEMPLATE/bug_report.yml",
-    "scripts/check-public-repo-safety.mjs",
+    "scripts/check-public-repo-safety.test.mjs",
     "packages/providers/src/index.ts",
   ]);
   assert.equal(scope.mode, "affected");
@@ -60,12 +61,11 @@ test("maintenance mixed with source retains affected consumers", () => {
   assert.equal(scope.web, false);
 });
 
-test("maintenance exceptions preserve unknown-script and full-run boundaries", () => {
+test("maintenance exceptions do not weaken unknown paths or explicit full runs", () => {
   const maintenance = "scripts/check-markdown-links.mjs";
   for (const file of [
     ".github/ISSUE_TEMPLATES/bug_report.yml",
     ".github/workflows/ci.yml",
-    "scripts/check-public-repo-safety.test.mjs",
     "scripts/check-markdown-links.test.mjs",
     "scripts/check-public-repo-safety.mjs.backup",
     "scripts/ci/check-markdown-links.mjs",

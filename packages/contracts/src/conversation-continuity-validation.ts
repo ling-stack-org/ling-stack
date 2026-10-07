@@ -1,3 +1,6 @@
+import { channelOperationPlanFingerprintV1, isChannelOperationBindingV1 } from "./channel-operation-bindings.js";
+import { isUserInputRunEventPositionV1 } from "./user-input-event-position.js";
+import { hasConsistentCommittedRunNarration, isCommittedRunNarrationV1 } from "./committed-run-narration.js";
 import {
   channelIntentDecisionV2Actions,
   channelIntentDecisionV2CreatedByValues,
@@ -8,6 +11,7 @@ import {
   requiredParticipantRequirementsV1,
   requiredParticipantManifestFingerprintV1,
   conversationAssistantDeliveryStatusesV1,
+  conversationAssistantPresentationRolesV1,
   contextSegmentStates,
   conversationContextSummaryScopes,
   conversationContextSummaryStatuses,
@@ -26,6 +30,7 @@ import {
   type ChannelIntentDecisionV2,
   type ChannelIntentDecisionV2Action,
   type ChannelIntentExecutionPlanV1,
+  type ChannelIntentExecutionOperationV1,
   type CommandMatchPolicyV1,
   type RequiredParticipantManifestV1,
   type ContextSegment,
@@ -77,14 +82,17 @@ const PAYLOAD_KEYS: Readonly<Record<ConversationItemKindV1, ReadonlySet<string>>
     "replyToItemId",
     "quotedItemIds",
   ]),
-  assistant_message: new Set(["body", "format", "streaming", "deliveryStatus", "errorMessage"]),
+  assistant_message: new Set(["body", "format", "streaming", "deliveryStatus", "presentationRole", "errorMessage", "runNarration"]),
   tool_call: new Set(["toolCallId", "toolName", "title", "inputSummary"]),
   tool_result: new Set(["toolCallId", "status", "outputSummary", "errorCode"]),
   approval_request: new Set(["approvalRequestId", "title", "summary"]),
   approval_decision: new Set(["approvalRequestId", "decision", "reason"]),
+  user_input_request: new Set(["requestId", "requestVersion", "runEventPosition"]),
+  user_input_answer: new Set(["requestId", "requestVersion", "answerId", "runEventPosition"]),
   handoff: new Set(["handoffId", "targetTeammateId", "summary"]),
   operation_state: new Set(["operationId", "state", "title", "summary"]),
   artifact_ref: new Set(["artifactId", "title", "artifactKind"]),
+  terminal_report: new Set(["reportId", "generation", "sourceKind", "sourceId", "evidenceFingerprint", "outcomeStatus"]),
   system_event: new Set(["eventType", "summary"]),
 };
 
@@ -296,7 +304,7 @@ export function isConversationItemV1(value: unknown): value is ConversationItemV
   } else if (value.committedAt !== undefined) {
     return false;
   }
-  if (value.kind === "assistant_message" && !isAssistantItemStateConsistent(value)) {
+  if (value.kind === "assistant_message" && (!isAssistantItemStateConsistent(value) || !hasConsistentCommittedRunNarration(value))) {
     return false;
   }
   return value.supersedesItemId !== value.id
@@ -549,6 +557,12 @@ export function serializeConversationContinuityGoldenFixtureV1(
 function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknown): boolean {
   if (!isRecordWithOnlyKeys(value, PAYLOAD_KEYS[kind])) return false;
   switch (kind) {
+    case "user_input_request":
+      return isText(value.requestId) && isPositiveInteger(value.requestVersion)
+        && (value.runEventPosition === undefined || isUserInputRunEventPositionV1(value.runEventPosition));
+    case "user_input_answer":
+      return isText(value.requestId) && isPositiveInteger(value.requestVersion) && isText(value.answerId)
+        && (value.runEventPosition === undefined || isUserInputRunEventPositionV1(value.runEventPosition));
     case "user_message":
       return typeof value.body === "string"
         && value.body.length <= 32_768
@@ -565,10 +579,12 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
         && (value.quotedItemIds === undefined || isUniqueTextArray(value.quotedItemIds));
     case "assistant_message":
       return typeof value.body === "string"
+        && (value.runNarration === undefined || isCommittedRunNarrationV1(value.runNarration))
         && value.body.length <= 128_000
         && (value.format === "plain_text" || value.format === "markdown")
         && typeof value.streaming === "boolean"
         && includes(conversationAssistantDeliveryStatusesV1, value.deliveryStatus)
+        && includes(conversationAssistantPresentationRolesV1, value.presentationRole)
         && isOptionalText(value.errorMessage, 8_192);
     case "tool_call":
       return isText(value.toolCallId)
@@ -601,6 +617,17 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
       return isText(value.artifactId)
         && isOptionalText(value.title)
         && isOptionalText(value.artifactKind);
+    case "terminal_report":
+      return isText(value.reportId)
+        && isPositiveInteger(value.generation)
+        && (value.sourceKind === "workflow" || value.sourceKind === "run" || value.sourceKind === "turn")
+        && isText(value.sourceId)
+        && isText(value.evidenceFingerprint)
+        && (value.outcomeStatus === "succeeded"
+          || value.outcomeStatus === "partially_succeeded"
+          || value.outcomeStatus === "blocked"
+          || value.outcomeStatus === "failed"
+          || value.outcomeStatus === "cancelled");
     case "system_event":
       return isText(value.eventType)
         && isText(value.summary, 8_192);
@@ -610,6 +637,10 @@ function isConversationItemPayloadV1(kind: ConversationItemKindV1, value: unknow
 function isAssistantItemStateConsistent(item: Record<string, unknown>): boolean {
   if (!isRecord(item.payload)) return false;
   const payload = item.payload;
+  // A terminal Run may fail after producing text. Its immutable message was
+  // still committed successfully; execution/delivery failure is a separate axis.
+  if (payload.runNarration !== undefined && item.status === "committed" && payload.streaming === false
+    && payload.deliveryStatus === "failed") return true;
   if (item.status === "pending") {
     return payload.streaming === true
       && payload.deliveryStatus === "pending"
@@ -655,29 +686,51 @@ function isClarification(value: unknown): boolean {
 }
 
 export function isChannelIntentExecutionPlanV1(value: unknown): value is ChannelIntentExecutionPlanV1 {
-  if (!isRecordWithOnlyKeys(value, new Set(["operations"]))
+  if (!isRecordWithOnlyKeys(value, new Set(["operations", "bindingVersion", "fingerprint"]))
     || !Array.isArray(value.operations)
     || value.operations.length === 0
     || !value.operations.every(isExecutionOperation)) {
     return false;
   }
+  if (value.bindingVersion === undefined
+    ? value.fingerprint !== undefined || value.operations.some((operation) => operation.binding !== undefined || operation.kind === "file_read")
+    : value.bindingVersion !== 1 || value.operations.some((operation) => !operation.binding)
+      || value.fingerprint !== channelOperationPlanFingerprintV1(value.operations)) return false;
   const operationIds = new Set(value.operations.map((operation) => operation.id));
   if (operationIds.size !== value.operations.length
     || value.operations.some((operation) => operation.dependsOn.some((dependencyId) => !operationIds.has(dependencyId)))) {
     return false;
   }
+  if (value.bindingVersion === 1) {
+    const byId = new Map(value.operations.map((operation) => [operation.id, operation]));
+    for (const operation of value.operations) {
+      const binding = operation.binding!;
+      const goal = binding.commandGoal;
+      if (goal?.inputOperationId !== undefined) {
+        const predecessor = byId.get(goal.inputOperationId);
+        if (!predecessor || !operation.dependsOn.includes(predecessor.id)
+          || !["file_read", "file_create", "file_edit"].includes(predecessor.kind)
+          || !(predecessor.kind === "file_read" ? predecessor.binding?.inputRefs : predecessor.binding?.outputRefs)
+            ?.some(ref => ref.path === goal.modulePath)) return false;
+      }
+      const content = binding.contentSource;
+      if (content?.kind !== "generated_objective") continue;
+      const inputPaths: string[] = operation.kind === "file_edit" ? [binding.outputRefs[0]!.path] : [];
+      for (const inputId of content.inputOperationIds) {
+        const predecessor = byId.get(inputId);
+        if (!predecessor || predecessor.kind !== "file_read"
+          || predecessor.binding?.ownerParticipantId !== binding.ownerParticipantId
+          || !operation.dependsOn.includes(inputId)) return false;
+        const path = predecessor.binding.inputRefs[0]!.path;
+        if (!inputPaths.includes(path)) inputPaths.push(path);
+      }
+      if (JSON.stringify(binding.effectScope.readPaths) !== JSON.stringify(inputPaths)) return false;
+    }
+  }
   return !executionPlanHasCycle(value.operations);
 }
 
-function isExecutionOperation(value: unknown): value is {
-  readonly id: string;
-  readonly kind: "file_create" | "file_edit" | "open_local_target" | "run_command";
-  readonly targetKind: "file" | "directory" | "command" | "workspace";
-  readonly targetRef: ConversationDomainRef;
-  readonly commandMatchPolicy?: CommandMatchPolicyV1;
-  readonly required: boolean;
-  readonly dependsOn: readonly string[];
-} {
+function isExecutionOperation(value: unknown): value is ChannelIntentExecutionOperationV1 {
   if (!isRecordWithOnlyKeys(value, new Set([
     "id",
     "kind",
@@ -686,11 +739,12 @@ function isExecutionOperation(value: unknown): value is {
     "commandMatchPolicy",
     "required",
     "dependsOn",
+    "binding",
   ]))) {
     return false;
   }
   if (!isText(value.id)
-    || (value.kind !== "file_create" && value.kind !== "file_edit" && value.kind !== "open_local_target" && value.kind !== "run_command")
+    || (value.kind !== "file_read" && value.kind !== "file_create" && value.kind !== "file_edit" && value.kind !== "open_local_target" && value.kind !== "run_command")
     || (value.targetKind !== "file" && value.targetKind !== "directory" && value.targetKind !== "command" && value.targetKind !== "workspace")
     || !isConversationDomainRef(value.targetRef)
     || typeof value.required !== "boolean"
@@ -698,7 +752,20 @@ function isExecutionOperation(value: unknown): value is {
     || value.dependsOn.includes(value.id)) {
     return false;
   }
-  if (value.kind === "file_create" || value.kind === "file_edit" || value.kind === "open_local_target") {
+  if (value.binding !== undefined) {
+    if (!isChannelOperationBindingV1(value.binding)) return false;
+    const binding = value.binding;
+    if (binding.commandGoal !== undefined && value.kind !== "run_command") return false;
+    const writes = value.kind === "file_create" || value.kind === "file_edit";
+    if (writes ? binding.outputRefs.length !== 1 || !binding.contentSource : binding.outputRefs.length > 0 || binding.contentSource !== undefined) return false;
+    const targets = writes ? binding.outputRefs : binding.inputRefs;
+    if (value.kind !== "run_command" && (targets.length !== 1 || value.targetRef.label !== targets[0]?.path)) return false;
+    if (value.kind === "run_command"
+      ? !isCommandMatchPolicyV1(value.commandMatchPolicy) || value.commandMatchPolicy.kind !== "exact_command"
+        || binding.effectScope.exactCommands.length !== 1 || binding.effectScope.exactCommands[0] !== value.commandMatchPolicy.command
+      : binding.effectScope.exactCommands.length !== 0) return false;
+  }
+  if (value.kind === "file_read" || value.kind === "file_create" || value.kind === "file_edit" || value.kind === "open_local_target") {
     return value.targetKind === "file" && value.commandMatchPolicy === undefined;
   }
   return value.targetKind === "command"

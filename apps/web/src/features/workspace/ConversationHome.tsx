@@ -7,7 +7,7 @@ import {
   SquareTerminal,
 } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import type { ConversationAttachment, PermissionConfirmation, PermissionPreset, ProviderThinkingMode } from "../../types.js";
+import type { AuthorizationMode, ConversationAttachment, PermissionConfirmation, PermissionPreset, ProviderThinkingMode, ReasoningSummaryMode } from "../../types.js";
 import {
   filterSlashCommandPickerOptions,
   composerWorkspaceFileParts,
@@ -74,6 +74,7 @@ export function ConversationHome({
   initialProjectLabel = "",
   initialProviderPresetId = "",
   initialThinkingLevel = "off",
+  initialReasoningSummary = "auto",
   initialAuthorizationMode,
   initialWorkspaceAccessMode,
   initialPermissionMode,
@@ -110,6 +111,12 @@ export function ConversationHome({
   const [slashActiveIndex, setSlashActiveIndex] = useState(0);
   const [selectedProviderPresetId, setSelectedProviderPresetId] = useState(initialProviderPresetId.trim());
   const [selectedThinkingLevel, setSelectedThinkingLevel] = useState<ProviderThinkingMode>(initialThinkingLevel);
+  const [selectedReasoningSummary, setSelectedReasoningSummary] = useState<ReasoningSummaryMode>(initialReasoningSummary);
+  const [selectedAuthorizationMode, setSelectedAuthorizationMode] = useState<AuthorizationMode>(() => resolveAuthorizationMode(
+    initialAuthorizationMode,
+    initialPermissionMode,
+    initialPermissionPreset,
+  ));
   const [selectedPermissionPreset, setSelectedPermissionPreset] = useState<PermissionPreset>(() => permissionPresetForWorkspaceAccessMode(resolveWorkspaceAccessMode(
     initialWorkspaceAccessMode,
     initialPermissionMode,
@@ -323,17 +330,25 @@ export function ConversationHome({
   const composerInputParts = useMemo(
     () => parseComposerInputParts(draft, {
       cwd: project.projectPath,
+      deferTrailingAtomicTokens: true,
+      slashCommands,
+    }),
+    [draft, project.projectPath, slashCommands],
+  );
+  const composerSubmissionInputParts = useMemo(
+    () => parseComposerInputParts(draft, {
+      cwd: project.projectPath,
       slashCommands,
     }),
     [draft, project.projectPath, slashCommands],
   );
   const composerFileRefs = useMemo(
-    () => composerWorkspaceFileParts(composerInputParts).map((part) => ({
+    () => composerWorkspaceFileParts(composerSubmissionInputParts).map((part) => ({
       path: part.path,
       ...(part.line !== undefined ? { line: part.line } : {}),
       source: "composer" as const,
     })),
-    [composerInputParts],
+    [composerSubmissionInputParts],
   );
 
   useEffect(() => {
@@ -366,19 +381,25 @@ export function ConversationHome({
   useEffect(() => {
     setSelectedProviderPresetId(initialProviderPresetId.trim());
     setSelectedThinkingLevel(initialThinkingLevel);
-  }, [conversationIdentityController.ownerKey, initialProviderPresetId, initialThinkingLevel]);
+    setSelectedReasoningSummary(initialReasoningSummary);
+  }, [conversationIdentityController.ownerKey, initialProviderPresetId, initialReasoningSummary, initialThinkingLevel]);
 
   useEffect(() => {
     if (permissionSelectionBoundThreadRef.current === conversationIdentityController.identity) {
       return;
     }
     permissionSelectionBoundThreadRef.current = "";
+    setSelectedAuthorizationMode(resolveAuthorizationMode(
+      initialAuthorizationMode,
+      initialPermissionMode,
+      initialPermissionPreset,
+    ));
     setSelectedPermissionPreset(permissionPresetForWorkspaceAccessMode(resolveWorkspaceAccessMode(
       initialWorkspaceAccessMode,
       initialPermissionMode,
       initialPermissionPreset,
     )));
-  }, [conversationIdentityController.ownerKey, initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]);
+  }, [conversationIdentityController.ownerKey, initialAuthorizationMode, initialPermissionMode, initialPermissionPreset, initialWorkspaceAccessMode]);
 
   useEffect(() => {
     if (!thinkingEnabled) {
@@ -420,7 +441,6 @@ export function ConversationHome({
       actionFeedback.report("validation", activeModelOption?.blocker || t("Please configure a chat model before sending."));
       return;
     }
-    const authorizationMode = resolveAuthorizationMode(initialAuthorizationMode, initialPermissionMode, initialPermissionPreset);
     const workspaceAccessMode = workspaceAccessModeForPermissionPreset(selectedPermissionPreset);
     let permissionConfirmation: PermissionConfirmation | undefined;
     if (workspaceAccessMode === "full_access") {
@@ -429,7 +449,7 @@ export function ConversationHome({
         return;
       }
     }
-    const legacyPermission = authorizationAndAccessToLegacyPermission(authorizationMode, workspaceAccessMode);
+    const legacyPermission = authorizationAndAccessToLegacyPermission(selectedAuthorizationMode, workspaceAccessMode);
     const now = new Date().toISOString();
     const pendingUserMessage: ConversationHomeMessage = {
       id: createConversationHomeMessageId(),
@@ -478,9 +498,10 @@ export function ConversationHome({
         model: {
           providerPresetId,
           ...(thinkingEnabled && selectedThinkingLevel !== "off" ? { thinkingLevel: selectedThinkingLevel } : {}),
+          reasoningSummary: selectedReasoningSummary,
         },
         authorization: {
-          authorizationMode,
+          authorizationMode: selectedAuthorizationMode,
           workspaceAccessMode,
           permissionMode: legacyPermission.permissionMode,
           permissionPreset: legacyPermission.permissionPreset,
@@ -648,6 +669,12 @@ export function ConversationHome({
     actionFeedback.clear("validation");
   }
 
+  function selectReasoningSummary(mode: ReasoningSummaryMode): void {
+    if (composerBusy || activeReply) return;
+    setSelectedReasoningSummary(mode);
+    actionFeedback.clear("validation");
+  }
+
   const composerNode = (
     <NormalConversationComposer
       draft={draft}
@@ -657,6 +684,7 @@ export function ConversationHome({
       slashOptions={slashCommandPickerOptions}
       slashActiveIndex={slashActiveIndex}
       pendingAttachments={pendingAttachments}
+      authorizationMode={selectedAuthorizationMode}
       permissionPreset={selectedPermissionPreset}
       fullAccessConfirmed={fullAccessConfirmed}
       modelOptions={modelOptions}
@@ -664,6 +692,7 @@ export function ConversationHome({
       defaultProviderPresetId={defaultProviderPresetId}
       defaultProviderLabel={defaultProviderLabel}
       selectedThinkingLevel={selectedThinkingLevel}
+      selectedReasoningSummary={selectedReasoningSummary}
       sendBusy={sendBusy}
       activeRun={Boolean(activeReply)}
       stopping={stopping}
@@ -685,17 +714,27 @@ export function ConversationHome({
       onDrop={composerDropController.onDrop}
       onOpenModelWorkbench={onOpenModelWorkbench}
       onRemoveAttachment={attachmentController.removeAttachment}
+      onAuthorizationModeChange={setSelectedAuthorizationMode}
       onPermissionPresetChange={(preset) => {
-        if (preset !== "full_access" || !onConfirmFullAccessSelection) {
+        if (preset !== "full_access") {
           setSelectedPermissionPreset(preset);
           return;
         }
-        void onConfirmFullAccessSelection().then((confirmation) => {
-          if (confirmation) setSelectedPermissionPreset(preset);
-        });
+        if (!onConfirmFullAccessSelection) {
+          actionFeedback.report("validation", t("Use full access for this conversation after explicit confirmation."));
+          return;
+        }
+        void onConfirmFullAccessSelection()
+          .then((confirmation) => {
+            if (confirmation) setSelectedPermissionPreset(preset);
+          })
+          .catch((error: unknown) => {
+            actionFeedback.report("validation", error instanceof Error ? error.message : String(error));
+          });
       }}
       onModelChange={selectModel}
       onThinkingLevelChange={selectThinkingLevel}
+      onReasoningSummaryChange={selectReasoningSummary}
       onSubmit={submitDraft}
       onStop={activeReply && onStopConversation ? () => onStopConversation(activeReply) : undefined}
     />
@@ -726,7 +765,6 @@ export function ConversationHome({
           searchOpen: normalConversationHeader.searchOpen,
           searchQuery: messageSearchQuery,
           searchTriggerRef: normalConversationHeader.searchTriggerRef,
-          summaryActive: conversationSummaryOpen,
           terminalActive: conversationTerminalOpen,
           terminalDisabled: !workspaceCwd.trim(),
           detailsActive: conversationDockController.expanded,

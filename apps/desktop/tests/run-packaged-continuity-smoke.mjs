@@ -9,9 +9,26 @@ import { createHash } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 import { pathToFileURL } from "node:url";
 
+import { resolvePackagedArtifactName } from "./packaged-artifact-path.mjs";
+import {
+  buildPackagedContinuityIntentFixture,
+  extractPackagedExactCommand,
+  resolvePackagedContinuityWorkspaces,
+} from "./support/packaged-continuity-intent-fixture.mjs";
+
 const repositoryRoot = resolve(new URL("../../..", import.meta.url).pathname);
 const defaultApp = join(repositoryRoot, "apps/desktop/release/mac-arm64/Ling Stack.app/Contents/MacOS/Ling Stack");
-const defaultArtifact = join(repositoryRoot, "apps/desktop/release/Ling-Stack-0.0.0-macos-arm64.zip");
+const desktopPackage = JSON.parse(await readFile(join(repositoryRoot, "apps/desktop/package.json"), "utf8"));
+const defaultArtifact = join(
+  repositoryRoot,
+  "apps/desktop/release",
+  resolvePackagedArtifactName({
+    artifactName: desktopPackage.build?.mac?.artifactName,
+    version: desktopPackage.version,
+    arch: "arm64",
+    ext: "zip",
+  }),
+);
 const options = parseArgs(process.argv.slice(2));
 
 if (process.platform !== "darwin") {
@@ -26,19 +43,25 @@ const browserHostDefaultExecutable = process.arch === "x64" ? "ling-browser-host
 const runRoot = options.output ? resolve(options.output) : await mkdtemp(join(tmpdir(), "ling-packaged-continuity-"));
 const userData = join(runRoot, "user-data");
 const lingHome = join(runRoot, "ling-stack-home");
-const workspace = join(runRoot, "workspace");
+const scenarioWorkspaces = resolvePackagedContinuityWorkspaces(runRoot);
+const workspace = scenarioWorkspaces.continuity;
+const effectUnknownWorkspace = scenarioWorkspaces.effectUnknown;
 const logs = join(runRoot, "logs");
 const desktopStartupLog = join(userData, "desktop-startup.log");
 const proofFileName = "r5-packaged-proof.txt";
 const proofContent = "continuity-v2-r5-proof";
 const exactVerificationCommand = `node -e "const fs=require('fs');const p=Buffer.from('${Buffer.from(proofFileName, "utf8").toString("base64")}','base64').toString('utf8');const e=Buffer.from('${Buffer.from(proofContent, "utf8").toString("base64")}','base64').toString('utf8');if(fs.readFileSync(p,'utf8')!==e)process.exit(1)"`;
 await mkdir(workspace, { recursive: true });
+await mkdir(effectUnknownWorkspace, { recursive: true });
 await mkdir(logs, { recursive: true });
 
 const report = {
   schemaVersion: 2,
   kind: "ling-desktop-macos-packaged-continuity",
   status: "running",
+  simulation: true,
+  evidenceScope: "packaged-host-with-local-mock-provider",
+  nativeGuiVerified: false,
   appExecutable,
   artifact,
   runRoot,
@@ -52,6 +75,7 @@ const report = {
   },
   paths: {
     workspace,
+    effectUnknownWorkspace,
     userData,
     lingHome,
     logs,
@@ -200,21 +224,12 @@ async function startMockOpenAICompatibleServer() {
     let toolCall;
 
     if (/channel intent selector/i.test(systemPrompt)) {
-      const nakedReady = /naked-ready/i.test(prompt);
-      content = JSON.stringify({
-        action: "execute",
-        reason: nakedReady
-          ? "The user explicitly requested a delegated execution that must prove evidence before completion."
-          : "The user explicitly requested a bounded multi-participant file and verification workflow.",
-        execution: {
-          operations: nakedReady
-            ? [{ id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] }]
-            : [
-                { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
-                { id: "verify_target", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
-              ],
-        },
-      });
+      content = JSON.stringify(buildPackagedContinuityIntentFixture({
+        prompt,
+        proofFileName,
+        proofContent,
+        exactVerificationCommand,
+      }));
     } else if (/terminal report synthesizer/i.test(systemPrompt)) {
       const ref = (prompt.match(/Allowed source refs:\s*([^\n]+)/i)?.[1] ?? "").split(",")[0]?.trim();
       const [kind, id] = ref.split(":");
@@ -246,12 +261,10 @@ async function startMockOpenAICompatibleServer() {
         arguments: { path: proofFileName, content: proofContent },
       };
     } else if (toolNames.includes("bash")) {
-      const commandMatch = prompt.match(/exact command:\s*([^\n\r]+)/i);
-      const command = commandMatch?.[1]?.trim().replace(/^`|`$/g, "") || exactVerificationCommand;
       toolCall = {
         id: "packaged_qa_verify",
         name: "bash",
-        arguments: { command },
+        arguments: { command: extractPackagedExactCommand(prompt, exactVerificationCommand) },
       };
     }
 
@@ -631,6 +644,32 @@ async function startDirectPackagedRun(baseUrl, cwd, providerPresetId, taskId, pr
   return { runId: ready.data.runId, sse };
 }
 
+async function configurePackagedMockProvider(baseUrl, cwd, providerUrl, displayName = "Packaged Continuity Mock") {
+  const cwdQuery = `?cwd=${encodeURIComponent(cwd)}`;
+  const providerResponse = await request(baseUrl, `/providers${cwdQuery}`, {
+    method: "POST",
+    headers: jsonHeaders(),
+    body: JSON.stringify({
+      kind: "openai-compatible",
+      displayName,
+      providerId: "packaged-continuity-mock",
+      model: "packaged-continuity",
+      api: "openai-completions",
+      baseUrl: `${providerUrl}/v1`,
+      capabilities: ["chat", "tool_call"],
+      input: ["text"],
+      authHeader: false,
+      apiKey: "packaged-mock-key",
+      enabled: true,
+    }),
+  });
+  if (providerResponse.status !== 201) throw new Error(`provider_create:${providerResponse.text}`);
+  const providerId = providerResponse.body.provider.id;
+  const providerCheck = await request(baseUrl, `/providers/${encodeURIComponent(providerId)}/check${cwdQuery}`, { method: "POST" });
+  if (providerCheck.status !== 200) throw new Error(`provider_check:${providerCheck.text}`);
+  return providerId;
+}
+
 async function waitForRunStatus(baseUrl, cwd, runId, status, failureCode) {
   return await waitFor(async () => {
     const response = await request(baseUrl, `/runs/${encodeURIComponent(runId)}?cwd=${encodeURIComponent(cwd)}`);
@@ -676,8 +715,8 @@ function readSqliteAudit(databasePath, ids) {
     if (runs.length !== ids.runIds.length || runs.some((run) => run.status !== "succeeded")) throw new Error("sqlite_lineage_runs_incomplete");
     const evidenceEvents = count(`SELECT COUNT(*) AS count FROM run_events WHERE run_id IN (${ids.runIds.map(() => "?").join(",")}) AND type IN ('tool_start','tool_end')`, ...ids.runIds);
     if (evidenceEvents < 4) throw new Error(`sqlite_lineage_evidence_incomplete:${evidenceEvents}`);
-    const reports = rows("SELECT id, source_kind, source_id, outcome_status, published_message_id FROM ling_terminal_reports WHERE source_kind = 'workflow' AND source_id = ? AND status IN ('committed','fallback')", ids.workflowId);
-    if (reports.length !== 1 || reports[0].outcome_status !== "succeeded" || !reports[0].published_message_id) throw new Error("sqlite_lineage_terminal_report_incomplete");
+    const reports = rows("SELECT id, source_kind, source_id, outcome_status, result_item_id FROM ling_terminal_reports WHERE source_kind = 'workflow' AND source_id = ? AND status IN ('committed','fallback')", ids.workflowId);
+    if (reports.length !== 1 || reports[0].outcome_status !== "succeeded" || !reports[0].result_item_id) throw new Error("sqlite_lineage_terminal_report_incomplete");
     const succeededTransitions = count("SELECT COUNT(*) AS count FROM state_transition_events WHERE entity_type = 'turn' AND entity_id = ? AND to_status = 'succeeded'", sourceTurn.id);
     if (succeededTransitions !== 1) throw new Error(`sqlite_lineage_turn_settlement_not_idempotent:${succeededTransitions}`);
     const manifest = JSON.parse(decision.participant_manifest_json);
@@ -691,7 +730,7 @@ function readSqliteAudit(databasePath, ids) {
       runIds: runs.map((run) => run.id),
       evidenceEvents,
       terminalReportId: reports[0].id,
-      publishedMessageId: reports[0].published_message_id,
+      resultItemId: reports[0].result_item_id,
       succeededTransitions,
       foreignKeyCheck: "ok",
       integrityCheck: "ok",
@@ -716,6 +755,16 @@ try {
   report.environment.macos = readMacOsMetadata();
   const artifactSha256 = await hashFile(artifact);
   report.artifactSha256 = artifactSha256;
+  // The supplied archive may predate an explicitly selected app. Identify the
+  // actual executable and separate Web payload without asserting archive parity.
+  const appAsarPath = join(packagedContentsPath, "Resources", "app.asar");
+  const webIndexPath = join(packagedContentsPath, "Resources", "web", "index.html");
+  report.packageIdentity = {
+    executable: { path: appExecutable, sha256: await hashFile(appExecutable) },
+    appAsar: { path: appAsarPath, sha256: await hashFile(appAsarPath) },
+    webIndex: { path: webIndexPath, sha256: await hashFile(webIndexPath) },
+    artifactToBundleParityVerified: false,
+  };
   const browserHostMetadata = await readJson(browserHostMetadataPath);
   const browserHostExecutable = join(dirname(browserHostMetadataPath), browserHostMetadata.executable ?? browserHostDefaultExecutable);
   const browserHostSourceExecutable = join(repositoryRoot, "packages/browser-host/dist/native", browserHostMetadata.executable ?? browserHostDefaultExecutable);
@@ -736,6 +785,7 @@ try {
   check("artifact", "passed", {
     sha256: artifactSha256,
     app: appExecutable,
+    packageIdentity: report.packageIdentity,
   });
   check("browser_host_build", "passed", {
     sourceSha256: browserHostSourceSha256,
@@ -775,27 +825,7 @@ try {
   });
 
   const cwdQuery = `?cwd=${encodeURIComponent(workspace)}`;
-  const providerResponse = await request(baseUrl, `/providers${cwdQuery}`, {
-    method: "POST",
-    headers: jsonHeaders(),
-    body: JSON.stringify({
-      kind: "openai-compatible",
-      displayName: "Packaged Continuity Mock",
-      providerId: "packaged-continuity-mock",
-      model: "packaged-continuity",
-      api: "openai-completions",
-      baseUrl: `${mockProvider.url}/v1`,
-      capabilities: ["chat", "tool_call"],
-      input: ["text"],
-      authHeader: false,
-      apiKey: "packaged-mock-key",
-      enabled: true,
-    }),
-  });
-  if (providerResponse.status !== 201) throw new Error(`provider_create:${providerResponse.text}`);
-  const providerId = providerResponse.body.provider.id;
-  const providerCheck = await request(baseUrl, `/providers/${encodeURIComponent(providerId)}/check${cwdQuery}`, { method: "POST" });
-  if (providerCheck.status !== 200) throw new Error(`provider_check:${providerCheck.text}`);
+  const providerId = await configurePackagedMockProvider(baseUrl, workspace, mockProvider.url);
   const approvalPolicy = await request(baseUrl, `/approval-policy${cwdQuery}`, {
     method: "PATCH",
     headers: jsonHeaders(),
@@ -817,6 +847,7 @@ try {
   });
   if (channelResponse.status !== 201) throw new Error(`channel_create:${channelResponse.text}`);
   const channelId = channelResponse.body.channel.id;
+  const channelExecutionPath = channelResponse.body.channel.workspaceBinding?.executionPath ?? workspace;
   for (const teammateId of ["teammate_builtin_engineer", "teammate_builtin_qa"]) {
     const teammateResponse = await request(baseUrl, `/teammates/${encodeURIComponent(teammateId)}${cwdQuery}`, {
       method: "PATCH",
@@ -868,10 +899,15 @@ try {
     terminalEvent: replayText.includes("event: blocked") ? "blocked" : replayText.includes("event: done") ? "done" : "unknown",
   });
 
-  await waitForFile(join(workspace, proofFileName), proofContent);
-  const workflowsResponse = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/workflows${cwdQuery}`);
-  if (workflowsResponse.status !== 200 || workflowsResponse.body.workflows?.length !== 1) throw new Error(`workflow_list:${workflowsResponse.text}`);
-  const workflow = workflowsResponse.body.workflows[0];
+  await waitForFile(join(channelExecutionPath, proofFileName), proofContent);
+  const { response: workflowsResponse, workflow } = await waitFor(async () => {
+    const response = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/workflows${cwdQuery}`);
+    if (response.status !== 200 || response.body.workflows?.length !== 1) return undefined;
+    const candidate = response.body.workflows[0];
+    return ["succeeded", "blocked", "failed", "cancelled"].includes(candidate.status)
+      ? { response, workflow: candidate }
+      : undefined;
+  }, "workflow_terminal_timeout");
   if (workflow.status !== "succeeded" || workflow.metadata?.completionGate?.status !== "verified") {
     throw new Error(`workflow_completion_gate:${JSON.stringify({ status: workflow.status, gate: workflow.metadata?.completionGate })}`);
   }
@@ -882,8 +918,8 @@ try {
   }
 
   const itemsResponse = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/items${cwdQuery}`);
-  const items = itemsResponse.body.items ?? [];
-  const userItems = items.filter((item) => item.kind === "user_message");
+  const initialItems = itemsResponse.body.items ?? [];
+  const userItems = initialItems.filter((item) => item.kind === "user_message");
   if (userItems.length !== 1) throw new Error(`duplicate_user_items:${userItems.length}`);
   const sourceTurnId = userItems[0].turnId;
   const intentResponse = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/intent-decisions${cwdQuery}`);
@@ -891,10 +927,19 @@ try {
   if (!decision || decision.participantManifest?.participants?.length !== 2) throw new Error("participant_manifest_not_persisted");
   if (new Set(decision.participantManifest.participants.map((participant) => participant.participantId)).size !== 2) throw new Error("participant_manifest_not_distinct");
 
-  const terminalReportsResponse = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/terminal-reports${cwdQuery}`);
-  if (terminalReportsResponse.status !== 200 || terminalReportsResponse.body.reports?.length !== 1 || terminalReportsResponse.body.reports[0].outcome.status !== "succeeded") {
-    throw new Error(`terminal_reports:${terminalReportsResponse.text}`);
-  }
+  // Workflow settlement and terminal-report publication are separate durable
+  // steps. The workflow can be succeeded before the async report coordinator
+  // finishes its evidence barrier and publishes the fallback/model report.
+  // Do not treat that valid intermediate empty collection as a packaged
+  // failure; wait for the public API to expose the committed/fallback report.
+  const terminalReportsResponse = await waitFor(async () => {
+    const response = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/terminal-reports${cwdQuery}`);
+    return response.status === 200
+      && response.body.reports?.length === 1
+      && response.body.reports[0].outcome?.status === "succeeded"
+      ? response
+      : undefined;
+  }, "terminal_report_publication_timeout", 150);
   for (const step of workflowSteps) {
     const eventsResponse = await request(baseUrl, `/runs/${encodeURIComponent(step.runId)}/events${cwdQuery}`);
     const events = eventsResponse.body.events ?? [];
@@ -902,9 +947,26 @@ try {
       throw new Error(`run_evidence:${step.runId}:${eventsResponse.text}`);
     }
   }
-  const terminalReportId = terminalReportsResponse.body.reports[0].id;
-  const terminalItems = items.filter((item) => item.kind === "assistant_message" && item.idempotencyKey === `terminal-report:${terminalReportId}`);
+  const terminalReport = terminalReportsResponse.body.reports[0];
+  const terminalReportId = terminalReport.id;
+  const expectedResultItemId = typeof terminalReport.resultItemId === "string" && terminalReport.resultItemId.length > 0
+    ? terminalReport.resultItemId
+    : `result_terminal_report:${terminalReportId}`;
+  // The report coordinator commits the terminal-report item after the report
+  // becomes publicly readable. Refresh the canonical item snapshot before
+  // asserting lineage; otherwise a valid async publication is mistaken for a
+  // missing or duplicate terminal item.
+  const settledItemsResponse = await waitFor(async () => {
+    const response = await request(baseUrl, `/channels/${encodeURIComponent(channelId)}/items${cwdQuery}`);
+    const currentItems = response.body.items ?? [];
+    return response.status === 200 && currentItems.some((item) => item.kind === "terminal_report" && item.id === expectedResultItemId)
+      ? response
+      : undefined;
+  }, "terminal_item_publication_timeout", 150);
+  const items = settledItemsResponse.body.items ?? [];
+  const terminalItems = items.filter((item) => item.kind === "terminal_report" && item.id === expectedResultItemId);
   if (terminalItems.length !== 1) throw new Error(`duplicate_terminal_items:${terminalItems.length}`);
+  if (terminalItems[0].payload?.reportId !== terminalReportId) throw new Error("terminal_report_item_lineage_mismatch");
   check("lineage_before_restart", "passed", {
     itemCount: items.length,
     userItemCount: userItems.length,
@@ -913,7 +975,7 @@ try {
     workflowStepIds: workflowSteps.map((step) => step.id),
     runIds: workflowSteps.map((step) => step.runId),
     terminalReportCount: terminalReportsResponse.body.reports.length,
-    hostEvidence: { path: proofFileName, content: proofContent },
+    hostEvidence: { executionPath: channelExecutionPath, path: proofFileName, content: proofContent },
   });
 
   const nakedTeammateResponse = await request(baseUrl, `/teammates${cwdQuery}`, {
@@ -1068,8 +1130,8 @@ try {
   // S4.3 packaged restart matrix. These are direct daemon-owned Runs behind the
   // packaged Electron process so the assertions cover the real lifecycle boundary,
   // not only the in-process coordinator tests.
-  const patchApprovalPolicy = async (toolDecisions) => {
-    const response = await request(baseUrl, `/approval-policy${cwdQuery}`, {
+  const patchApprovalPolicy = async (cwd, toolDecisions) => {
+    const response = await request(baseUrl, `/approval-policy?cwd=${encodeURIComponent(cwd)}`, {
       method: "PATCH",
       headers: jsonHeaders(),
       body: JSON.stringify({ toolDecisions, allowedWritePaths: ["."] }),
@@ -1077,7 +1139,7 @@ try {
     if (response.status !== 200) throw new Error(`packaged_restart_policy:${response.text}`);
   };
 
-  await patchApprovalPolicy({ bash: "ask" });
+  await patchApprovalPolicy(workspace, { bash: "ask" });
   const safeRestartCommand = "printf 'packaged-safe-resume\\n' > packaged-safe-resume.txt";
   const safeRestart = await startDirectPackagedRun(
     baseUrl,
@@ -1108,7 +1170,7 @@ try {
     error: safeCompleted.errorMessage,
   });
 
-  await patchApprovalPolicy({ bash: "allow" });
+  await patchApprovalPolicy(workspace, { bash: "allow" });
   const noCheckpointCommand = "sleep 30; printf 'must-not-complete\\n' > packaged-no-checkpoint.txt";
   const noCheckpoint = await startDirectPackagedRun(
     baseUrl,
@@ -1139,12 +1201,22 @@ try {
     error: noCheckpointFailed.errorMessage,
   });
 
-  await patchApprovalPolicy({ bash: "ask" });
+  await stop(session);
+  session = launch(baseUrl, effectUnknownWorkspace);
+  await waitForHealth(baseUrl, session);
+  const effectUnknownProviderId = await configurePackagedMockProvider(
+    baseUrl,
+    effectUnknownWorkspace,
+    mockProvider.url,
+    "Packaged Effect Unknown Mock",
+  );
+  const effectUnknownCwdQuery = `?cwd=${encodeURIComponent(effectUnknownWorkspace)}`;
+  await patchApprovalPolicy(effectUnknownWorkspace, { bash: "ask" });
   const effectUnknownCommand = "sleep 30; printf 'must-not-repeat\\n' > packaged-effect-unknown.txt";
   const effectUnknown = await startDirectPackagedRun(
     baseUrl,
-    workspace,
-    providerId,
+    effectUnknownWorkspace,
+    effectUnknownProviderId,
     "packaged_effect_unknown_restart",
     `Run the exact command: ${effectUnknownCommand}`,
   );
@@ -1156,23 +1228,23 @@ try {
   // tool_start/effect boundary we need to interrupt.
   await effectUnknown.sse.close();
   await stop(session);
-  session = launch(baseUrl, workspace);
+  session = launch(baseUrl, effectUnknownWorkspace);
   await waitForHealth(baseUrl, session);
-  const effectApprove = await request(baseUrl, `/approvals/${encodeURIComponent(effectApprovalId)}/approve${cwdQuery}`, {
+  const effectApprove = await request(baseUrl, `/approvals/${encodeURIComponent(effectApprovalId)}/approve${effectUnknownCwdQuery}`, {
     method: "POST",
     headers: jsonHeaders(),
     body: JSON.stringify({ reason: "packaged effect unknown probe" }),
   });
   if (effectApprove.status !== 200) throw new Error(`packaged_effect_unknown_approve:${effectApprove.text}`);
-  await waitForResumedToolStart(workspace, effectRunId, effectApprovalId, "packaged_effect_unknown_tool_start_timeout");
+  await waitForResumedToolStart(effectUnknownWorkspace, effectRunId, effectApprovalId, "packaged_effect_unknown_tool_start_timeout");
   // The resumed process owns the long-running shell now. Stop the packaged app
   // immediately after the durable resumed tool_start, while the side effect is
   // still in flight; waiting for terminal output would miss the crash window.
   await stop(session);
-  session = launch(baseUrl, workspace);
+  session = launch(baseUrl, effectUnknownWorkspace);
   await waitForHealth(baseUrl, session);
-  const effectUnknownFailed = await waitForRunStatus(baseUrl, workspace, effectRunId, "failed", "packaged_effect_unknown_timeout");
-  const effectDatabase = new DatabaseSync(databasePathFor(workspace), { readOnly: true });
+  const effectUnknownFailed = await waitForRunStatus(baseUrl, effectUnknownWorkspace, effectRunId, "failed", "packaged_effect_unknown_timeout");
+  const effectDatabase = new DatabaseSync(databasePathFor(effectUnknownWorkspace), { readOnly: true });
   try {
     const checkpoint = effectDatabase.prepare("SELECT status, resume_failure_reason FROM approval_checkpoints WHERE approval_id = ?")
       .get(effectApprovalId);
@@ -1186,7 +1258,7 @@ try {
     effectDatabase.close();
   }
   try {
-    await access(join(workspace, "packaged-effect-unknown.txt"));
+    await access(join(effectUnknownWorkspace, "packaged-effect-unknown.txt"));
     throw new Error("packaged_effect_unknown_side_effect");
   } catch (error) {
     if (error?.message === "packaged_effect_unknown_side_effect") throw error;
@@ -1238,7 +1310,7 @@ try {
     terminalReportStatus: terminalReportsResponse.body.reports[0]?.outcome?.status ?? null,
     visibleItemCount: recoveredItems.length,
     userItemCount: recoveredUsers.length,
-    terminalReportItemCount: recoveredItems.filter((item) => item.kind === "assistant_message").length,
+    terminalReportItemCount: recoveredItems.filter((item) => item.kind === "terminal_report").length,
     sseReconnectReady: recoveredReplay.text.includes("event: ready"),
     daemonReadiness: recoveredHealth.readiness,
     canonicalReplayIdempotent: true,

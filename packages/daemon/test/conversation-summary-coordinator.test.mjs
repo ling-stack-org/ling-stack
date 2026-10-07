@@ -6,6 +6,8 @@ import test from "node:test";
 import { createSqliteRunStore } from "../../core/dist/index.js";
 import {
   coordinateConversationContextSummary,
+  assessConversationContextSummary,
+  executeConversationSummaryPlan,
   planConversationContextSummary,
 } from "../dist/features/channels/context-processing/conversation-summary-coordinator.js";
 import { buildConversationContextProjection } from "../dist/features/channels/context-processing/conversation-context-projector.js";
@@ -154,7 +156,7 @@ test("summary coordinator selects the hard trigger and discards a late assignmen
     },
     now: "2026-08-10T04:31:00.000Z",
   });
-  assert.equal(result.status, "completed");
+  assert.equal(result.status, "source_conflict");
   assert.deepEqual(result.commit, { status: "discarded_stale", reason: "assignments_changed" });
   assert.equal(result.checkpoint, undefined);
   assert.deepEqual(fixture.store.listCompactionCheckpoints({ threadId: fixture.thread.id }), []);
@@ -329,6 +331,93 @@ test("branch projection reconstructs from its immutable snapshot without copying
   assert.deepEqual(reconstructed.items.map((item) => item.id), [parent.item.id, child.item.id]);
   assert.equal(reconstructed.items[0].payload.body, "Original parent fact");
   assert.deepEqual(reconstructed.sharedCore.objectives, ["Original parent objective"]);
+});
+
+test("hard maintenance without an eligible prefix is not reported as unnecessary", async (t) => {
+  const fixture = await createFixture(t, "required-tail");
+  const turn = addCompletedTurn(fixture, "required-tail", "Required tail " + "x".repeat(9_000));
+  let calls = 0;
+  const result = await coordinateConversationContextSummary({
+    store: fixture.store, sourceItemId: turn.item.id, inputBudgetTokens: 1_024,
+    generate: async () => { calls++; throw new Error("must not summarize the protected tail"); },
+  });
+  assert.equal(result.status, "no_eligible_prefix");
+  assert.equal(result.trigger, "hard");
+  assert.equal(result.inputBudgetTokens, 1_024);
+  assert.ok(result.estimatedProjectionTokens > 1_024);
+  assert.equal(result.threadId, turn.item.threadId);
+  assert.equal(result.sourceItemId, turn.item.id);
+  assert.deepEqual(Object.keys(result).sort(), ["status", "trigger", "sourceItemId", "threadId", "segmentId",
+    "inputBudgetTokens", "estimatedProjectionTokens"].sort());
+  assert.equal(calls, 0);
+  assert.equal(fixture.store.getConversationItem(turn.item.id).payload.body, turn.item.payload.body);
+  assert.deepEqual(fixture.store.listConversationContextSummaries({ threadId: fixture.thread.id }), []);
+  assert.deepEqual(fixture.store.listCompactionCheckpoints({ threadId: fixture.thread.id }), []);
+});
+
+test("soft maintenance with only a protected tail stays distinct from a capacity verdict", async (t) => {
+  const fixture = await createFixture(t, "soft-tail");
+  const turn = addCompletedTurn(fixture, "soft-tail", "Small but protected decision");
+  const result = await coordinateConversationContextSummary({
+    store: fixture.store, sourceItemId: turn.item.id, inputBudgetTokens: 16_000,
+    policy: { ...summaryPolicy, softCompletedTurnCount: 1 },
+  });
+  assert.equal(result.status, "no_eligible_prefix");
+  assert.equal(result.trigger, "soft");
+  assert.ok(result.estimatedProjectionTokens < result.inputBudgetTokens);
+});
+
+test("below-threshold context remains not_needed without calling a generator", async (t) => {
+  const fixture = await createFixture(t, "below-threshold");
+  const turn = addCompletedTurn(fixture, "below-threshold", "Short decision");
+  const result = await coordinateConversationContextSummary({
+    store: fixture.store, sourceItemId: turn.item.id, inputBudgetTokens: 16_000,
+    generate: async () => { throw new Error("must not generate"); },
+  });
+  assert.equal(result.status, "not_needed");
+});
+
+test("an active turn cannot become an eligible prefix just because its context is large", async (t) => {
+  const fixture = await createFixture(t, "active-only");
+  const turn = fixture.store.appendConversationUserTurn({
+    channelId: fixture.channel.id, threadId: fixture.thread.id, title: "Active request",
+    userInstruction: "Continue unfinished work", idempotencyKey: "active-only",
+    payload: { body: "Unfinished constraint " + "x".repeat(9_000), format: "plain_text",
+      mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
+  }, nextTimestamp(fixture));
+  const assessment = assessConversationContextSummary({
+    store: fixture.store, sourceItemId: turn.item.id, inputBudgetTokens: 1_024,
+    policy: { ...summaryPolicy, rawTailCompletedTurnCount: 1 },
+  });
+  assert.equal(assessment.status, "no_eligible_prefix");
+  assert.equal(assessment.trigger, "hard");
+  assert.deepEqual(fixture.store.listConversationContextSummaries({ threadId: fixture.thread.id }), []);
+});
+
+test("a ready assessment preserves the same plan and source fences as the plan-only query", async (t) => {
+  const fixture = await createFixture(t, "assessment-ready");
+  addCompletedTurn(fixture, "assessment-ready-prefix", "Summarize this stable decision");
+  const turn = addCompletedTurn(fixture, "assessment-ready-tail", "Keep this recent decision verbatim");
+  const input = { store: fixture.store, sourceItemId: turn.item.id, inputBudgetTokens: 16_000,
+    policy: { ...summaryPolicy, softCompletedTurnCount: 1, rawTailCompletedTurnCount: 1 } };
+  const assessment = assessConversationContextSummary(input);
+  assert.equal(assessment.status, "ready");
+  assert.equal(assessment.plan.trigger, "soft");
+  const plan = planConversationContextSummary(input);
+  assert.deepEqual(assessment.plan.sourceFence, plan.sourceFence);
+  assert.deepEqual(assessment.plan.sourceRefs, plan.sourceRefs);
+  assert.equal(assessment.plan.estimatedProjectionTokens, plan.estimatedProjectionTokens);
+});
+
+test("already cancelled generation cannot fall through to generator_unavailable", async () => {
+  const controller = new AbortController();
+  const reason = new Error("synthetic cancellation");
+  controller.abort(reason);
+  const result = await executeConversationSummaryPlan({
+    store: {}, plan: { trigger: "hard" }, signal: controller.signal,
+  });
+  assert.equal(result.status, "cancelled");
+  assert.equal(result.error, reason);
 });
 
 async function createFixture(t, suffix) {

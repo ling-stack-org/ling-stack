@@ -327,7 +327,9 @@ export class TeammateDirectRemoteConversationAdapter extends BaseRemoteConversat
       surfaces: ["teammate_direct"],
       ownerId: thread.teammateId,
       laneId: thread.id,
-    })).map((message) => projectTeammateDirectMessageRevisionMetadata(this.options.store, message));
+    }))
+      .filter(teammateDirectMessageIsPublicTranscript)
+      .map((message) => projectTeammateDirectMessageRevisionMetadata(this.options.store, message));
     const messages = visible.map((message) => this.projectMessage(message, now));
     return {
       summary: this.projectSummary(thread, now),
@@ -350,11 +352,7 @@ export class TeammateDirectRemoteConversationAdapter extends BaseRemoteConversat
   private projectSummary(thread: TeammateDirectThread, now: string): RemoteConversationSummaryV1 {
     const teammate = this.options.store.getAiTeammate(thread.teammateId);
     const readState = this.readState(thread.id, now);
-    const latest = this.options.store.listTeammateDirectMessagesPage({
-      teammateId: thread.teammateId,
-      threadId: thread.id,
-      limit: 1,
-    }).messages.at(-1);
+    const latest = findLatestPublicTeammateDirectMessage(this.options.store, thread);
     const label = teammate?.displayName ?? thread.title;
     return {
       workspaceId: this.options.workspaceId,
@@ -411,6 +409,29 @@ export class TeammateDirectRemoteConversationAdapter extends BaseRemoteConversat
     }
     return thread;
   }
+}
+
+function teammateDirectMessageIsPublicTranscript(message: TeammateDirectMessage): boolean {
+  return message.authorType !== "system" || message.systemPurpose === "governance_notification";
+}
+
+function findLatestPublicTeammateDirectMessage(
+  store: Pick<RunStore, "listTeammateDirectMessagesPage">,
+  thread: TeammateDirectThread,
+): TeammateDirectMessage | undefined {
+  let beforeMessageId: string | undefined;
+  do {
+    const page = store.listTeammateDirectMessagesPage({
+      teammateId: thread.teammateId,
+      threadId: thread.id,
+      ...(beforeMessageId ? { beforeMessageId } : {}),
+      limit: 500,
+    });
+    const latest = [...page.messages].reverse().find(teammateDirectMessageIsPublicTranscript);
+    if (latest) return latest;
+    beforeMessageId = page.hasMore ? page.nextBeforeMessageId : undefined;
+  } while (beforeMessageId);
+  return undefined;
 }
 
 function projectStoredMessageStatus(

@@ -11,11 +11,13 @@ import type {
   ChannelMessageFileRef,
   ConversationTranscriptMessage,
   ConversationTranscriptStatus,
+  LingApprovalCheckpoint,
 } from "@ling-stack/contracts";
 import { readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 
 export interface ConversationRuntimeProjection {
   readonly approvals: readonly ApprovalRequest[];
+  readonly approvalCheckpoints: readonly LingApprovalCheckpoint[];
   readonly interventions: readonly RunIntervention[];
   readonly interventionById: ReadonlyMap<string, RunIntervention>;
 }
@@ -31,8 +33,12 @@ export function collectConversationRuntimeProjection(
     .flatMap((run) => store.listApprovalRequests({ runId: run.id, limit: 500 }))
     .filter((approval, index, all) => all.findIndex((candidate) => candidate.id === approval.id) === index)
     .sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  const approvalCheckpoints = approvals
+    .map((approval) => store.getApprovalCheckpointForApproval(approval.id))
+    .filter((checkpoint): checkpoint is NonNullable<typeof checkpoint> => Boolean(checkpoint));
   return {
     approvals,
+    approvalCheckpoints,
     interventions,
     interventionById: new Map(interventions.map((intervention) => [intervention.id, intervention])),
   };
@@ -65,16 +71,18 @@ export function projectUnboundConversationInterventionMessages(input: {
   readonly runs: readonly RunSession[];
   readonly interventions: readonly RunIntervention[];
   readonly existingMessageIds: ReadonlySet<string>;
+  /** Includes filtered/superseded Turns: their guidance must not reappear as unbound. */
+  readonly boundInterventionIds: ReadonlySet<string>;
 }): ConversationTranscriptMessage[] {
   return input.interventions.flatMap((intervention) => {
     const id = conversationInterventionMessageId(intervention.id);
-    if (input.existingMessageIds.has(id)) return [];
+    if (input.existingMessageIds.has(id) || input.boundInterventionIds.has(intervention.id)) return [];
     const attachments = conversationAttachmentsFromIntervention(input.store, intervention);
     const fileRefs = conversationFileRefsFromIntervention(intervention);
     const continuationRun = input.runs.find((run) => run.interventionId === intervention.id);
     return [{
       id,
-      role: "user",
+      role: intervention.requestedBy === "system" ? "system" : "user",
       content: intervention.messagePayload?.body || intervention.instruction,
       ...(attachments.length > 0 ? { attachments } : {}),
       ...(fileRefs.length > 0 ? { fileRefs } : {}),

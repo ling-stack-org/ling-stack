@@ -201,7 +201,7 @@ test("delayed disable result cannot cross a teammate identity switch", async ({ 
 
   const oldPanel = await openDanger(page, ordinaryName);
   await oldPanel.getByRole("button", { name: "Disable" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: secondName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: secondName }).click();
   const currentPanel = await openDanger(page, secondName);
   oldRequestGate.resolve();
   await expect(currentPanel.getByText("Unknown error", { exact: true })).toHaveCount(0);
@@ -311,7 +311,7 @@ async function openTeammateSettings(
   teammateName: string,
   labels: DangerLabels = englishLabels,
 ): Promise<Locator> {
-  const navButton = page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName });
+  const navButton = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName });
   await expect(navButton).toBeVisible();
   await navButton.click();
   const chatHeader = page.locator("[data-ui2-teammate-chat-header]");

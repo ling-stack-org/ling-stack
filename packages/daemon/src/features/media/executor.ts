@@ -12,6 +12,7 @@ import {
   type WorkUnitAttempt,
 } from "@ling-stack/core";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
+import { MediaLocalExecutionAdmissionError, type MediaLocalExecutionHandle } from "../../runtime/media-local-executions.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { writeJson } from "../../shared/response.js";
 import { resolveProviderSecret } from "../providers/secrets.js";
@@ -20,6 +21,8 @@ import {
   synchronizeConversationMediaWorkUnitTerminal,
 } from "./conversation-runtime-recovery.js";
 import { resumePendingProviderMediaJobs, runProviderMediaJobExecution } from "./provider-executor.js";
+import { mediaApprovalRecoveryBlocked } from "./approval-recovery-guard.js";
+import { isCapturedConversationMediaJob } from "./local-execution-binding.js";
 import { resumePendingWorkflowMediaJobs, runWorkflowMediaJobExecution } from "./workflows/workflow-executor.js";
 
 type MediaRuntimeStartStore =
@@ -50,6 +53,13 @@ export interface MediaRuntimeHandle {
   readonly attempt: WorkUnitAttempt;
 }
 
+export interface MediaRuntimeRecoveryRequest {
+  readonly store: MediaRuntimeStartStore;
+  readonly workUnit: WorkUnit;
+  readonly reason: string;
+  readonly providerPresetId?: string;
+}
+
 export interface MediaRuntimeTerminalTransitionRequest {
   readonly store: MediaRuntimeTerminalStore;
   readonly workUnitId: string;
@@ -65,6 +75,7 @@ export interface MediaRuntimeTerminalTransitionRequest {
 
 export interface RunMediaJobHooks {
   readonly startRuntimeWorkUnit: (input: MediaRuntimeStartRequest) => MediaRuntimeHandle;
+  readonly recoverRuntimeWorkUnit: (input: MediaRuntimeRecoveryRequest) => MediaRuntimeHandle | undefined;
   readonly transitionRuntimeWorkUnitTerminal: (input: MediaRuntimeTerminalTransitionRequest) => void;
   readonly transitionRuntimeWorkUnitCancelled: (input: {
     readonly store: MediaRuntimeTerminalStore;
@@ -92,6 +103,8 @@ export interface RunMediaJobExecutionInput {
   readonly hooks: RunMediaJobHooks;
   /** Only the explicit POST /run action may revive a terminal job. */
   readonly retryTerminal?: boolean;
+  /** Host-issued local lifetime capability; neither an SDK result nor remote safety proof. */
+  readonly localExecution?: MediaLocalExecutionHandle;
 }
 
 export async function handleRunMediaJob(
@@ -108,46 +121,68 @@ export async function handleRunMediaJob(
     return;
   }
 
-  const result = await runMediaJobExecution({
+  let result: MediaJobExecutionResult;
+  try { result = await runMediaJobExecution({
     cwd,
     storeRegistry,
     secretResolver,
     mediaJobId,
     hooks,
     retryTerminal: true,
-  });
+  }); } catch (error) {
+    if (!(error instanceof MediaLocalExecutionAdmissionError)) throw error;
+    writeJson(response, 409, { error: "media_host_owner_unavailable", message: "The original Media execution is isolated; no new submission was made." });
+    return;
+  }
   writeJson(response, result.statusCode, result.body);
 }
 
 export async function runMediaJobExecution(input: RunMediaJobExecutionInput): Promise<MediaJobExecutionResult> {
-  const store = input.storeRegistry.getStore(input.cwd);
-  const job = store.getMediaJob(input.mediaJobId);
-  if (!job) {
-    return { statusCode: 404, body: { error: "media_job_not_found", message: `生成任务不存在：${input.mediaJobId}` } };
-  }
-  return job.executionSource.kind === "workflow"
-    ? await runWorkflowMediaJobExecution(input)
-    : await runProviderMediaJobExecution(input);
+  const registry = input.storeRegistry.mediaLocalExecutions;
+  const localExecution = registry.getOrStart({ cwd: input.cwd, mediaJobId: input.mediaJobId, execution: input.localExecution });
+  const capturedInput = { ...input, localExecution };
+  return registry.track(localExecution, async () => {
+    const store = input.storeRegistry.getStore(input.cwd);
+    const job = store.getMediaJob(input.mediaJobId);
+    if (!job) {
+      return { statusCode: 404, body: { error: "media_job_not_found", message: `生成任务不存在：${input.mediaJobId}` } };
+    }
+    return job.executionSource.kind === "workflow"
+      ? await runWorkflowMediaJobExecution(capturedInput)
+      : await runProviderMediaJobExecution(capturedInput);
+  });
 }
 
 export function dispatchMediaJobExecution(input: RunMediaJobExecutionInput): void {
-  void runMediaJobExecution(input).catch((error) => {
-    const store = input.storeRegistry.getStore(input.cwd);
-    const job = store.getMediaJob(input.mediaJobId);
-    if (!job || job.status === "succeeded" || job.status === "failed" || job.status === "cancelled") {
-      return;
+  const registry = input.storeRegistry.mediaLocalExecutions;
+  const localExecution = registry.getOrStart({ cwd: input.cwd, mediaJobId: input.mediaJobId, execution: input.localExecution });
+  // This outer producer includes the complete fallback writer, not only the
+  // single owner tick. Pending timers retain the same opaque chain capability.
+  void registry.track(localExecution, async () => {
+    try { await runMediaJobExecution({ ...input, localExecution }); }
+    catch (error) {
+      if (error instanceof MediaLocalExecutionAdmissionError) throw error;
+      registry.assertCompletionAllowed(localExecution);
+      const store = input.storeRegistry.getStore(input.cwd);
+      const job = store.getMediaJob(input.mediaJobId);
+      if (!job || job.status === "succeeded" || job.status === "failed" || job.status === "cancelled") {
+        return;
+      }
+      const provider = job.providerPresetId ? store.getProviderPreset(job.providerPresetId) : undefined;
+      const mediaSecret = provider?.apiKeyRef ? resolveProviderSecret(store, provider, input.secretResolver) : undefined;
+      const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [mediaSecret?.value]);
+      const failedAt = new Date().toISOString();
+      store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, failedAt);
+      synchronizeConversationMediaWorkUnitTerminal(store, job.id, "failed", failedAt);
+      try {
+        input.hooks.onMediaJobProjectionChanged?.({ cwd: input.cwd, mediaJobId: job.id });
+      } catch {
+        // Projection invalidation is best-effort; persisted state remains authoritative.
+      }
     }
-    const provider = job.providerPresetId ? store.getProviderPreset(job.providerPresetId) : undefined;
-    const mediaSecret = provider?.apiKeyRef ? resolveProviderSecret(store, provider, input.secretResolver) : undefined;
-    const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [mediaSecret?.value]);
-    const failedAt = new Date().toISOString();
-    store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, failedAt);
-    synchronizeConversationMediaWorkUnitTerminal(store, job.id, "failed", failedAt);
-    try {
-      input.hooks.onMediaJobProjectionChanged?.({ cwd: input.cwd, mediaJobId: job.id });
-    } catch {
-      // Projection invalidation is best-effort; persisted state remains authoritative.
-    }
+  }).catch(() => {
+    // The registry observes and retains local completion failures. No throw or
+    // callback return is interpreted here as whole-operation safety.
   });
 }
 
@@ -172,12 +207,14 @@ export function resumePendingMediaJobExecutions(input: {
       workUnit.ownerType !== "conversation_run" ||
       request.source !== "conversation_media_tool" ||
       !mediaJobId ||
+      isCapturedConversationMediaJob(store, mediaJobId) ||
       store.getMediaJobExecutionHandle(mediaJobId)
     ) {
       continue;
     }
     const mediaJob = store.getMediaJob(mediaJobId);
     if (!mediaJob || mediaJob.status !== "queued") continue;
+    if (mediaApprovalRecoveryBlocked(store, mediaJobId, undefined)) continue;
     if (input.dispatchInitialConversationMediaJob) {
       input.dispatchInitialConversationMediaJob(mediaJobId);
     } else {
@@ -208,6 +245,9 @@ export function syncMediaJobForApprovalDecision(input: {
   }
 
   if (approval.status === "approved") {
+    // Approval grants the cost decision, not the previous Attempt's execution
+    // authority. Recovery requires its retained source capability/receipt.
+    if (isCapturedConversationMediaJob(input.storeRegistry.getStore(input.cwd), job.id)) return job;
     const currentJob = job.status === "waiting_for_approval"
       ? input.store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, input.now) ?? job
       : job;

@@ -246,6 +246,7 @@ function upsertAssistantItem(input: {
       format: "markdown",
       streaming: input.streaming,
       deliveryStatus,
+      presentationRole: input.streaming ? "narration" : "reply_result",
       ...(input.errorMessage ? { errorMessage: input.errorMessage } : {}),
     },
     domainRefs: [runRef(input.input.run.id), turnRef(input.input.turn.id)],

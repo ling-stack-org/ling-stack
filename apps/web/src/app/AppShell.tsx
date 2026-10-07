@@ -8,6 +8,8 @@ import {
   getBuiltinSkillPack,
 } from "@ling-stack/core/builtin-skill-packs";
 import { isSupportedLocale } from "@ling-stack/localization";
+import { projectConversationDetailTimeline } from "../domains/conversations/canonical-transcript-snapshot.js";
+import { liveNarrationWorkflowIds } from "../lib/workflow-narration-refresh.js";
 import { useI18n } from "../i18n.js";
 import { useTheme } from "../theme.js";
 import { useLingToast } from "../shared/ui/index.js";
@@ -16,7 +18,6 @@ import type {
   ChannelBranch,
   ChannelCollaborationProtocolResponse,
   ChannelMessage,
-  ConversationTranscriptMessage,
   DaemonFeatureFlags,
   ExternalWorkActionView,
   MediaJob,
@@ -49,6 +50,7 @@ import { SidebarCompactRail } from "../features/navigation/SidebarCompactRail.js
 import { ChannelCreateDialog, type ChannelCreateProjectOption } from "../features/workspace/ChannelCreateDialog.js";
 import { useChannelFeedbackController } from "../features/workspace/useChannelFeedbackController.js";
 import { ConversationHome, type ConversationHomeMessage } from "../features/workspace/ConversationHome.js";
+import { homeMessageFromTranscript } from "../features/workspace/normal-conversation-transcript-message.js";
 import {
   LazyAutomationsPage as AutomationsPage,
   LazyAiTeammatesPage as AiTeammatesPage,
@@ -76,7 +78,6 @@ import {
   effectiveApprovalStatus,
 } from "../lib/approvals.js";
 import { buildInlineApprovalViews } from "../lib/inline-approvals.js";
-import { resolveRuntimeRunOwner } from "../lib/runtime-approval-ownership.js";
 import {
   channelToForm,
   defaultChannelCreateForm,
@@ -157,6 +158,7 @@ import {
   buildSidebarChannelNotifications,
   buildSidebarConversationApprovalCounts,
   buildSidebarTeammateNotifications,
+  conversationThreadHasActiveWork,
   projectSidebarConversationStatus,
 } from "./sidebar-status-projections.js";
 import { useAppNavigationController } from "./use-app-navigation-controller.js";
@@ -346,6 +348,9 @@ export function AppShell(): React.JSX.Element {
     taskRunProviderId,
     channelMessages,
     channelConversationItems,
+    channelTurnContextAssignments,
+    channelUserInputs,
+    channelReasoningSummaries,
     channelGeneratedMedia,
     memoryObjects,
     usedMemoryEvents,
@@ -1106,20 +1111,17 @@ export function AppShell(): React.JSX.Element {
     ));
   }, [activeView, conversationThreads, form.cwd, selectedChannelId, selectedConversationThreadId]);
   const recentConversations = useMemo<readonly SidebarRecentConversation[]>(() => {
-    const activeThreadIds = new Set([...runs, ...(run ? [run] : [])]
-      .filter((item) => item.status === "queued" || item.status === "running")
-      .map((item) => {
-        const owner = resolveRuntimeRunOwner(item, { workUnits });
-        return owner?.kind === "normal_conversation" ? owner.threadId : undefined;
-      })
-      .filter((threadId): threadId is string => Boolean(threadId)));
     return conversationThreads
       .map((thread) => ({
         id: thread.id,
         label: thread.title || t("Conversation"),
         primaryStatus: projectSidebarConversationStatus(
           thread.status,
-          activeThreadIds.has(thread.id) || (thread.id === selectedConversationThreadId && conversationStreamBusy),
+          conversationThreadHasActiveWork(
+            thread,
+            selectedConversationThreadId,
+            conversationStreamBusy,
+          ),
           (sidebarConversationApprovalCounts.get(thread.id) ?? 0) > 0,
           hasAcknowledgedSidebarConversationFailure(
             sidebarFailureReadState,
@@ -1132,7 +1134,7 @@ export function AppShell(): React.JSX.Element {
       }) satisfies SidebarRecentConversation)
       .sort((left, right) => right.updatedAt.localeCompare(left.updatedAt))
       .slice(0, 5);
-  }, [conversationStreamBusy, conversationThreads, form.cwd, run, runs, selectedConversationThreadId, sidebarConversationApprovalCounts, sidebarFailureReadState, t, workUnits]);
+  }, [conversationStreamBusy, conversationThreads, form.cwd, selectedConversationThreadId, sidebarConversationApprovalCounts, sidebarFailureReadState, t]);
   const conversationChatProviders = useMemo(
     () => providers.filter(canUseConversationProvider),
     [providers],
@@ -1171,24 +1173,7 @@ export function AppShell(): React.JSX.Element {
     ? defaultConversationProvider.label
     : t("No chat model selected");
   const selectedConversationMessages = useMemo<readonly ConversationHomeMessage[]>(
-    () => (selectedConversationDetail?.messages ?? []).map((message) => ({
-      id: message.id,
-      threadId: message.threadId,
-      turnId: message.turnId,
-      runId: message.runId,
-      role: message.role,
-      authorLabel: message.authorLabel,
-      content: message.content,
-      errorMessage: message.errorMessage,
-      attachments: message.attachments,
-      fileRefs: message.fileRefs,
-      status: message.status,
-      revision: message.revision,
-      editedAt: message.editedAt,
-      pendingReplacement: message.pendingReplacement,
-      createdAt: message.createdAt,
-      updatedAt: message.updatedAt,
-    })),
+    () => (selectedConversationDetail?.messages ?? []).map(homeMessageFromTranscript),
     [selectedConversationDetail],
   );
   const activeConversationRun = useMemo(
@@ -1269,6 +1254,7 @@ export function AppShell(): React.JSX.Element {
     () => channelRunsForArtifacts.map((item) => `${item.id}:${item.updatedAt}`).join("|"),
     [channelRunsForArtifacts],
   );
+  const hasLiveWorkflowTimeline = liveNarrationWorkflowIds(channelWorkflowSteps, channelRunsForArtifacts, selectedChannelId).length > 0;
   const inlineApprovalIds = useMemo(() => {
     if (!selectedChannelId) {
       return new Set<string>();
@@ -2002,7 +1988,7 @@ export function AppShell(): React.JSX.Element {
     const hasActiveVisibleRun = channelRunsForArtifacts.some((candidate) =>
       candidate.status === "queued" || candidate.status === "running" || candidate.status === "waiting_for_approval",
     );
-    if (activeView !== "workspace" || !cwd || !selectedChannelId || !hasActiveVisibleRun) {
+    if (activeView !== "workspace" || !cwd || !selectedChannelId || (!hasActiveVisibleRun && !hasLiveWorkflowTimeline)) {
       return undefined;
     }
     const interval = window.setInterval(() => {
@@ -2011,7 +1997,7 @@ export function AppShell(): React.JSX.Element {
       }
     }, 750);
     return () => window.clearInterval(interval);
-  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId]);
+  }, [activeView, channelRunArtifactsKey, form.cwd, selectedChannelId, hasLiveWorkflowTimeline]);
 
   useEffect(() => {
     if (activeView !== "workspace") {
@@ -2206,6 +2192,14 @@ export function AppShell(): React.JSX.Element {
         return;
 
       case "approval.resolved":
+        if (event.reconciliationPending) {
+          showToast({
+            message: t("Approval was recorded, but execution recovery is pending. Check run status before trying again."),
+            scope: `approval:${event.approvalId}:postcommit`,
+            tone: "warning",
+            durationMs: 15_000,
+          });
+        }
         await refreshApprovals(workspaceCwd, event.runId);
         await refreshConversationThreads(workspaceCwd);
         window.setTimeout(() => {
@@ -2547,6 +2541,9 @@ export function AppShell(): React.JSX.Element {
             taskForm={taskForm}
             channelMessages={channelMessages}
             channelConversationItems={channelConversationItems}
+            channelTurnContextAssignments={channelTurnContextAssignments}
+            channelUserInputs={channelUserInputs}
+            channelReasoningSummaries={channelReasoningSummaries}
             channelGeneratedMedia={channelGeneratedMedia}
             memoryById={memoryById}
             usedMemoryEvents={usedMemoryEvents}
@@ -2620,6 +2617,7 @@ export function AppShell(): React.JSX.Element {
             isRunning={isRunning}
             isCancellingRun={Boolean(cancellingRunId)}
             approvalPolicy={approvalPolicy}
+            authorizationMode={form.authorizationMode}
             permissionMode={form.permissionMode}
             permissionPreset={permissionPresetForWorkspaceAccessMode(form.workspaceAccessMode)}
             fullAccessConfirmed={fullAccessConfirmation.isConfirmed(channelConversationFullAccessScope)}
@@ -2654,18 +2652,18 @@ export function AppShell(): React.JSX.Element {
             onSaveBrief={(input) => void saveChannelBrief(input)}
             onSaveChannelProtocol={saveChannelProtocolPatch}
             onRevertChannelProtocol={revertChannelProtocolSettings}
-            onSupersedeDecision={(decision) => void supersedeChannelDecision(decision)}
-            onRejectDecision={(decision) => void rejectChannelDecision(decision)}
+            onSupersedeDecision={supersedeChannelDecision}
+            onRejectDecision={rejectChannelDecision}
             onCreateHandoffFromTask={createHandoffFromTask}
             onUpdateHandoffStatus={(handoff, status) => void updateHandoffStatusValue(handoff, status)}
-            onStartWorkflowFromHandoff={(handoff) => void startWorkflowFromHandoff(handoff)}
+            onStartWorkflowFromHandoff={startWorkflowFromHandoff}
             onStartTemplateWorkflow={() => void startAutoplanWorkflow()}
-            onOrchestrateWorkflow={(workflow) => void orchestrateWorkflowAction(workflow)}
-            onCancelWorkflow={(workflow) => void cancelWorkflowAction(workflow)}
+            onOrchestrateWorkflow={orchestrateWorkflowAction}
+            onCancelWorkflow={cancelWorkflowAction}
             onStartWorkflowStep={(step, mode) => void startWorkflowStepAction(step, mode)}
-            onRetryWorkflowStep={(step) => void retryWorkflowStepAction(step)}
+            onRetryWorkflowStep={retryWorkflowStepAction}
             onUpdateWorkflowStepStatus={(step, status) => void updateWorkflowStepStatus(step, status)}
-            onCreateTaskFromContextSummary={(summary) => void createTaskFromContextSummary(summary)}
+            onCreateTaskFromContextSummary={createTaskFromContextSummary}
             onRunActivityTriageAction={runActivityTriageAction}
             onLoadOlderChannelMessages={() => void loadOlderChannelMessages(selectedChannelId, selectedChannelMessageThreadId)}
             onRefreshChannelMessages={() => void Promise.all([
@@ -2697,6 +2695,17 @@ export function AppShell(): React.JSX.Element {
             onSelectTask={setSelectedTaskId}
             onCheckThenRunTask={(task) => void checkThenRunPersistedTask(task)}
             onRunTask={(task) => void runPersistedTask(task)}
+            onAuthorizationModeChange={(authorizationMode) => {
+              setForm((current) => {
+                const legacy = authorizationAndAccessToLegacyPermission(authorizationMode, current.workspaceAccessMode);
+                return {
+                  ...current,
+                  authorizationMode,
+                  permissionMode: legacy.permissionMode,
+                  permissionPreset: legacy.permissionPreset,
+                };
+              });
+            }}
             onPermissionModeChange={async (permissionMode) => {
               if (permissionMode === "full_access") {
                 const confirmation = await fullAccessConfirmation.request(channelConversationFullAccessScope);
@@ -2755,19 +2764,28 @@ export function AppShell(): React.JSX.Element {
                   initialProjectLabel={selectedConversationProjectLabel}
                   initialProviderPresetId={selectedConversationDetail?.defaults.providerPresetId ?? ""}
                   initialThinkingLevel={selectedConversationDetail?.defaults.thinkingLevel ?? "off"}
+                  initialReasoningSummary={selectedConversationDetail?.defaults.reasoningSummary ?? workspaceSettings?.defaultReasoningSummary ?? "auto"}
                   initialAuthorizationMode={selectedConversationDetail?.defaults.authorizationMode ?? workspaceSettings?.defaultAuthorizationMode}
                   initialWorkspaceAccessMode={selectedConversationDetail?.defaults.workspaceAccessMode ?? workspaceSettings?.defaultWorkspaceAccessMode}
                   initialPermissionMode={selectedConversationDetail?.defaults.permissionMode ?? workspaceSettings?.defaultPermissionMode}
                   initialPermissionPreset={selectedConversationDetail?.defaults.permissionPreset ?? workspaceSettings?.defaultPermissionPreset}
                   detailContext={selectedConversationDetail ? {
                     threadId: selectedConversationDetail.thread.id,
+                    conversationItems: selectedConversationDetail.conversationItems,
+                    runLinks: selectedConversationDetail.runLinks,
                     turns: selectedConversationDetail.turns,
                     runs: selectedConversationDetail.runs,
                     executionActions: selectedConversationDetail.executionActions,
                     approvals: selectedConversationDetail.approvals,
                     interventions: selectedConversationDetail.interventions,
                     terminalReports: selectedConversationDetail.terminalReports,
+                    artifacts: selectedConversationDetail.artifacts,
+                    plans: selectedConversationDetail.plans,
+                    compactionCheckpoints: selectedConversationDetail.compactionCheckpoints,
+                    contextSnapshots: selectedConversationDetail.contextSnapshots,
+                    contextSummaries: selectedConversationDetail.contextSummaries,
                     generatedMedia: selectedConversationDetail.generatedMedia,
+                    timelineProjection: projectConversationDetailTimeline(selectedConversationDetail),
                   } : undefined}
                   inlineApprovalViews={normalConversationInlineApprovalViews}
                   resolvingApprovals={resolvingApprovals}
@@ -2820,6 +2838,7 @@ export function AppShell(): React.JSX.Element {
                       projectPath: input.project.projectPath,
                       providerPresetId: input.model.providerPresetId || defaultConversationProviderPresetId,
                       thinkingLevel: input.model.thinkingLevel,
+                      reasoningSummary: input.model.reasoningSummary,
                       authorizationMode: input.authorization.authorizationMode,
                       workspaceAccessMode: input.authorization.workspaceAccessMode,
                       permissionMode: input.authorization.permissionMode,
@@ -3466,26 +3485,6 @@ function readRequestWorkspaceAccessMode(requestBody: unknown): WorkspaceAccessMo
   }
   const value = (requestBody as { readonly workspaceAccessMode?: unknown }).workspaceAccessMode;
   return value === "read_only" || value === "workspace_write" || value === "full_access" ? value : undefined;
-}
-
-function homeMessageFromTranscript(message: ConversationTranscriptMessage): ConversationHomeMessage {
-  return {
-    id: message.id,
-    threadId: message.threadId,
-    turnId: message.turnId,
-    runId: message.runId,
-    role: message.role,
-    authorLabel: message.authorLabel,
-    content: message.content,
-    errorMessage: message.errorMessage,
-    attachments: message.attachments,
-    status: message.status,
-    revision: message.revision,
-    editedAt: message.editedAt,
-    pendingReplacement: message.pendingReplacement,
-    createdAt: message.createdAt,
-    updatedAt: message.updatedAt,
-  };
 }
 
 function summarizeConversationProjectPath(path: string): string {

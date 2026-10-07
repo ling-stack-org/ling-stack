@@ -21,6 +21,13 @@ test("workspace settings schema accepts exactly the shared locale registry", () 
     () => parseWorkspaceSettingsUpdate({ responseLanguage: "xx-YY" }),
     /responseLanguage must be follow_user, a supported locale, or null/u,
   );
+  for (const mode of ["auto", "concise", "detailed", "none", null]) {
+    assert.equal(parseWorkspaceSettingsUpdate({ defaultReasoningSummary: mode }).defaultReasoningSummary, mode);
+  }
+  assert.throws(
+    () => parseWorkspaceSettingsUpdate({ defaultReasoningSummary: "raw" }),
+    /defaultReasoningSummary must be auto, concise, detailed, none, or null/u,
+  );
 });
 
 test("effective config reports user defaults and workspace execution sources", async () => {
@@ -37,6 +44,7 @@ test("effective config reports user defaults and workspace execution sources", a
       locale: "zh-CN",
       responseLanguage: "en-US",
       lingConversationTone: "friendly",
+      defaultReasoningSummary: "concise",
     }), "utf8");
     await writeFile(resolve(userRoot, "config.json"), JSON.stringify({
       schemaVersion: 1,
@@ -62,6 +70,8 @@ test("effective config reports user defaults and workspace execution sources", a
     assert.equal(initial.values.lingConversationTone.value, "friendly");
     assert.equal(initial.values.lingConversationTone.source, "user");
     assert.equal(initial.values.lingConversationTone.path, resolve(userRoot, "settings.json"));
+    assert.equal(initial.values.reasoningSummary.value, "concise");
+    assert.equal(initial.values.reasoningSummary.source, "user");
     assert.equal(initial.values.skillGovernancePolicy.value.generationMode, "semi_auto");
     assert.equal(initial.values.skillGovernancePolicy.source, "workspace");
     assert.equal(initial.values.runtime.defaultRunnerId.value, "pi");
@@ -78,6 +88,7 @@ test("effective config reports user defaults and workspace execution sources", a
       theme: "light",
       locale: "en-US",
       lingConversationTone: "pragmatic",
+      defaultReasoningSummary: "detailed",
       skillGovernancePolicy: {
         generationMode: "approval_only",
         recordingMode: "user_initiated",
@@ -99,6 +110,8 @@ test("effective config reports user defaults and workspace execution sources", a
     assert.equal(patched.values.lingConversationTone.value, "pragmatic");
     assert.equal(patched.values.lingConversationTone.source, "workspace");
     assert.equal(patched.values.lingConversationTone.path, resolve(cwd, ".ling-stack", "ling-stack.sqlite"));
+    assert.equal(patched.values.reasoningSummary.value, "detailed");
+    assert.equal(patched.values.reasoningSummary.source, "workspace");
     assert.equal(patched.values.skillGovernancePolicy.value.generationMode, "approval_only");
     assert.equal(patched.values.skillGovernancePolicy.source, "workspace");
     assert.equal(patched.values.runtime.defaultRunnerId.source, "workspace");

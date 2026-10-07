@@ -147,6 +147,9 @@
 
 .workspace-change-file-toggle:hover { background: var(--ling-bg-subtle); }
 
+.workspace-change-file-toggle > .ling-ui-button-label { width: 100%; }
+.workspace-change-file-label { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; gap: var(--ling-space-3); }
+
 .workspace-change-file-toggle:focus-visible {
   outline: 2px solid var(--ling-border-focus);
   outline-offset: -2px;

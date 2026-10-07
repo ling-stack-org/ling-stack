@@ -145,7 +145,7 @@ test("1280x800 Ling Dark gives Code and Mermaid CopyAction one Radix Tooltip and
   runtime.expectClean();
 });
 
-test("1440x960 Quiet Ocean keeps structured protocol and runtime MessageBubble semantics", async ({ page }) => {
+test("1440x960 Quiet Ocean keeps structured messages and typed protocol Timeline semantics", async ({ page }) => {
   await prepareSurface(page, { height: 960, theme: "light", width: 1440 });
   const runtime = watchRuntime(page);
   const state = createBaseState({ approvalStatus: "expired" });
@@ -160,15 +160,14 @@ test("1440x960 Quiet Ocean keeps structured protocol and runtime MessageBubble s
 
   const feed = page.getByLabel("Channel message feed");
   const structured = feed.locator(".message-bubble-system").filter({ hasText: "Structured package boundary" });
-  const protocol = feed.locator(".message-bubble-protocol").filter({ hasText: "Protocol package boundary" });
-  const runtimeMessage = feed.locator(".message-bubble-runtime").filter({ hasText: "Runtime package boundary" });
+  const protocol = feed.locator('[data-conversation-timeline-kind="protocolEvent"]').filter({ hasText: "Protocol package boundary" });
+  const runtimeMessage = feed.locator('[data-conversation-timeline-kind="protocolEvent"]').filter({ hasText: "Runtime package boundary" });
   await expect(structured).toBeVisible();
   await expect(protocol).toBeVisible();
   await expect(runtimeMessage).toBeVisible();
-  await expectMessageRootAttributes(feed.locator(".message-bubble"));
+  await expectMessageRootAttributes(structured);
   await expectSemanticMessageColor(structured, "--ling-status-neutral", "--ling-bg-subtle");
-  await expectSemanticMessageColor(protocol, "--ling-status-info", "--ling-status-info-bg");
-  await expectSemanticMessageColor(runtimeMessage, "--ling-status-info", "--ling-status-info-bg");
+  await expect(feed.locator(".message-bubble-protocol, .message-bubble-runtime")).toHaveCount(0);
   await expectNoHorizontalOverflow(page, [feed, structured, protocol, runtimeMessage]);
   await runtimeMessage.scrollIntoViewIfNeeded();
   await captureEvidence(page, "1440x960-quiet-ocean-structured-message-boundary.png");

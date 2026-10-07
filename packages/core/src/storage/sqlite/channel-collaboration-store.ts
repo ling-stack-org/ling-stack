@@ -1,6 +1,8 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
   DEFAULT_WORKSPACE_ID,
+  ChannelDecisionStatusConflictError,
+  ChannelDecisionSupersessionConflictError,
   createChannelBriefId,
   createChannelDecisionId,
   createChannelHandoffId,
@@ -8,14 +10,17 @@ import {
   type ChannelDecision,
   type ChannelHandoff,
   type CreateChannelDecisionInput,
+  type CreateOrReuseSupersedingChannelDecisionResult,
+  type CreateSupersedingChannelDecisionInput,
   type CreateChannelHandoffInput,
   type ListChannelDecisionsOptions,
   type ListChannelHandoffsOptions,
+  type RejectActiveChannelDecisionInput,
   type UpdateChannelBriefInput,
   type UpdateChannelDecisionInput,
   type UpdateChannelHandoffInput,
 } from "../../workspace-types.js";
-import { nullableUpdate, stringifyJson } from "./helpers.js";
+import { nullableUpdate, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import {
   mapChannelBrief,
   mapChannelDecision,
@@ -36,6 +41,23 @@ export interface SqliteChannelCollaborationStorePorts {
   ) => void;
   readonly assertAttachmentInChannel: (channelId: string, attachmentId: string) => void;
   readonly assertLinkPreviewInChannel: (channelId: string, linkPreviewId: string) => void;
+}
+
+function isEquivalentSupersedingDecision(
+  existing: ChannelDecision,
+  input: CreateSupersedingChannelDecisionInput,
+): boolean {
+  return existing.channelId === input.channelId &&
+    existing.supersedesDecisionId === input.supersedesDecisionId &&
+    existing.sourceMessageId === input.sourceMessageId &&
+    existing.sourceTaskId === input.sourceTaskId &&
+    existing.sourceRunId === input.sourceRunId &&
+    existing.title === input.title &&
+    existing.decision === input.decision &&
+    existing.rationale === (input.rationale ?? "") &&
+    existing.createdBy === input.createdBy &&
+    existing.alternatives.length === (input.alternatives?.length ?? 0) &&
+    existing.alternatives.every((alternative, index) => alternative === input.alternatives?.[index]);
 }
 
 export class SqliteChannelCollaborationStore {
@@ -134,12 +156,66 @@ export class SqliteChannelCollaborationStore {
   }
 
   createChannelDecision(input: CreateChannelDecisionInput, now: string): ChannelDecision {
+    if (input.supersedesDecisionId) {
+      return this.createOrReuseSupersedingChannelDecision(
+        { ...input, supersedesDecisionId: input.supersedesDecisionId },
+        now,
+      ).decision;
+    }
     this.ports.assertChannelExists(input.channelId);
     this.ports.assertSourceRefsInChannel(input.channelId, input);
-    if (input.supersedesDecisionId) {
-      this.assertDecisionInChannel(input.channelId, input.supersedesDecisionId);
-      this.updateChannelDecision(input.supersedesDecisionId, { status: "superseded" }, now);
+    return this.insertChannelDecision(input, now);
+  }
+
+  createOrReuseSupersedingChannelDecision(
+    input: CreateSupersedingChannelDecisionInput,
+    now: string,
+  ): CreateOrReuseSupersedingChannelDecisionResult {
+    if (input.status !== undefined && input.status !== "active") {
+      throw new Error("Superseding channel decisions must be active");
     }
+    this.ports.assertChannelExists(input.channelId);
+    this.ports.assertSourceRefsInChannel(input.channelId, input);
+    this.assertDecisionInChannel(input.channelId, input.supersedesDecisionId);
+
+    this.context.database.exec("BEGIN IMMEDIATE;");
+    try {
+      const existingSuccessor = this.getSupersedingChannelDecision(input.supersedesDecisionId);
+      if (existingSuccessor) {
+        if (!isEquivalentSupersedingDecision(existingSuccessor, input)) {
+          throw new ChannelDecisionSupersessionConflictError(input.supersedesDecisionId, existingSuccessor.id);
+        }
+        this.context.database.exec("COMMIT;");
+        return { decision: existingSuccessor, reused: true };
+      }
+
+      const supersededDecision = this.getChannelDecision(input.supersedesDecisionId);
+      if (!supersededDecision || supersededDecision.channelId !== input.channelId || supersededDecision.status !== "active") {
+        throw new ChannelDecisionSupersessionConflictError(input.supersedesDecisionId);
+      }
+
+      const transition = this.context.database
+        .prepare(`
+          UPDATE channel_decisions
+          SET status = 'superseded', updated_at = ?
+          WHERE id = ? AND workspace_id = ? AND channel_id = ? AND status = 'active'
+        `)
+        .run(now, input.supersedesDecisionId, DEFAULT_WORKSPACE_ID, input.channelId);
+      if (transition.changes !== 1) {
+        const racedSuccessor = this.getSupersedingChannelDecision(input.supersedesDecisionId);
+        throw new ChannelDecisionSupersessionConflictError(input.supersedesDecisionId, racedSuccessor?.id);
+      }
+
+      const decision = this.insertChannelDecision({ ...input, status: "active" }, now);
+      this.context.database.exec("COMMIT;");
+      return { decision, reused: false };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.context.database);
+      throw error;
+    }
+  }
+
+  private insertChannelDecision(input: CreateChannelDecisionInput, now: string): ChannelDecision {
 
     const decision: ChannelDecision = {
       id: createChannelDecisionId(),
@@ -204,6 +280,13 @@ export class SqliteChannelCollaborationStore {
     return created;
   }
 
+  private getSupersedingChannelDecision(supersedesDecisionId: string): ChannelDecision | undefined {
+    const row = this.context.database
+      .prepare(channelDecisionSelectSql("WHERE supersedes_decision_id = ? ORDER BY created_at ASC, rowid ASC LIMIT 1"))
+      .get(supersedesDecisionId);
+    return row ? mapChannelDecision(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
   getChannelDecision(id: string): ChannelDecision | undefined {
     const row = this.context.database.prepare(channelDecisionSelectSql("WHERE id = ?")).get(id);
     return row ? mapChannelDecision(row as Record<string, SQLOutputValue>) : undefined;
@@ -246,6 +329,42 @@ export class SqliteChannelCollaborationStore {
       `)
       .run(next.title, next.decision, next.rationale, stringifyJson(next.alternatives), next.status, next.updatedAt, id);
     return this.getChannelDecision(id);
+  }
+
+  rejectActiveChannelDecision(
+    id: string,
+    input: RejectActiveChannelDecisionInput,
+    now: string,
+  ): ChannelDecision | undefined {
+    const result = this.context.database
+      .prepare(`
+        UPDATE channel_decisions
+        SET
+          title = COALESCE(?, title),
+          decision = COALESCE(?, decision),
+          rationale = COALESCE(?, rationale),
+          alternatives_json = COALESCE(?, alternatives_json),
+          status = 'rejected',
+          updated_at = ?
+        WHERE id = ? AND workspace_id = ? AND status = 'active'
+      `)
+      .run(
+        input.title ?? null,
+        input.decision ?? null,
+        input.rationale ?? null,
+        input.alternatives === undefined ? null : stringifyJson(input.alternatives),
+        now,
+        id,
+        DEFAULT_WORKSPACE_ID,
+      );
+    if (result.changes === 1) {
+      return this.getChannelDecision(id);
+    }
+    const existing = this.getChannelDecision(id);
+    if (!existing) {
+      return undefined;
+    }
+    throw new ChannelDecisionStatusConflictError(id, "active", existing.status);
   }
 
   createChannelHandoff(input: CreateChannelHandoffInput, now: string): ChannelHandoff {

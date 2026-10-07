@@ -19,12 +19,34 @@ export interface ConversationOperationSourceRef {
   readonly kind: string;
   readonly id: string;
   readonly label?: string;
+  readonly href?: string;
   readonly path?: string;
-  readonly visibility?: "conversation" | "private";
+  /** Granted only by the Host adapter; absent refs remain copyable text. */
+  readonly hostTarget?: "open_file" | "open_diff" | "open_artifact" | "open_run";
+  readonly capabilityId?: string;
+  readonly workspaceId?: string;
+  readonly visibility?: "conversation" | "private" | "audit" | "folded_evidence" | "developer_only";
+  readonly sensitivity?: "normal" | "private" | "secret_adjacent";
 }
+
+/**
+ * A source reference that the Host has explicitly authorised for an action.
+ *
+ * Renderers may display every source reference as copyable text. A typed
+ * operation item may pass a display ref plus its full action lineage to the
+ * Host so the Host can mint a fresh capability; model message text cannot.
+ * This narrowed shape represents a capability that was already Host-issued.
+ */
+export type ConversationTrustedSourceRef = ConversationOperationSourceRef & {
+  readonly hostTarget: "open_file" | "open_diff" | "open_artifact" | "open_run";
+  /** Present when the Host minted a capability for this ref. */
+  readonly capabilityId?: string;
+  readonly workspaceId?: string;
+};
 
 export interface ConversationOperationExecutionView {
   readonly actionId: string;
+  readonly revision?: number;
   readonly toolCallId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
@@ -39,6 +61,27 @@ export interface ConversationOperationExecutionView {
   readonly updatedAt?: string;
   readonly latestEventSeq?: number;
   readonly sourceRefs: readonly ConversationOperationSourceRef[];
+  readonly runtimeDiagnostic?: ConversationRuntimeDiagnostic;
+}
+
+/** Bounded Host diagnosis shared by legacy adapters and the typed timeline. */
+export interface ConversationRuntimeDiagnostic {
+  readonly code: "execution_loop_detected";
+  readonly loopKind: "exact_repeat" | "repeated_update" | "cycle" | "no_progress_budget";
+  readonly repeatedCount: number;
+  readonly noProgressActionCount: number;
+  readonly cycleLength?: number;
+  readonly fingerprint: string;
+  readonly retryable: false;
+}
+
+/** Bounded, Host-derived tool output. Input labels are never result evidence. */
+export interface ConversationToolEvidence {
+  readonly toolName: string;
+  readonly inputSummary: string;
+  readonly outputText?: string;
+  readonly outputTruncated: boolean;
+  readonly latestEventSeq: number;
 }
 
 export interface ConversationActivitySummary {
@@ -51,6 +94,7 @@ export interface ConversationActivitySummary {
 
 export interface ConversationCommandExecutionView {
   readonly actionId: string;
+  readonly revision?: number;
   readonly toolCallId?: string;
   readonly runId?: string;
   readonly attemptId?: string;
@@ -64,15 +108,29 @@ export interface ConversationCommandExecutionView {
   readonly risk: "low" | "medium" | "high" | "critical";
   readonly status: string;
   readonly commandText: string;
+  readonly cwd?: string;
   readonly startedAt?: string;
   readonly completedAt?: string;
   readonly durationMs?: number;
   readonly exitCode?: number;
+  readonly signal?: string;
+  readonly timedOut?: boolean;
   readonly latestEventSeq: number;
+  readonly outputTail?: readonly {
+    readonly eventSeq: number;
+    readonly stream: "stdout" | "stderr";
+    readonly text: string;
+    readonly redacted: boolean;
+  }[];
+  /** Total bytes captured by the Host for stdout + stderr. */
+  readonly outputByteCount?: number;
+  /** Total logical lines captured by the Host for stdout + stderr. */
+  readonly outputLineCount?: number;
   readonly sourceRefs?: readonly ConversationOperationSourceRef[];
   readonly outputTruncated: boolean;
   readonly stdoutArtifactId?: string;
   readonly stderrArtifactId?: string;
+  readonly resultArtifactId?: string;
 }
 
 export interface ConversationWorkCellStat {
@@ -92,6 +150,7 @@ export interface ConversationWorkCellRow {
   readonly meta?: string;
   readonly commandText?: string;
   readonly commandExecution?: ConversationCommandExecutionView;
+  readonly toolEvidence?: ConversationToolEvidence;
   readonly operationExecution?: ConversationOperationExecutionView;
   readonly changePreview?: ConversationWorkCellChangePreview;
   readonly detailLines?: readonly ConversationWorkCellRowDetailLine[];
@@ -126,6 +185,11 @@ export type ConversationAgentActivitySpanKind = "agent" | "overflow";
 export interface ConversationAgentActivitySpan {
   readonly id: string;
   readonly participantId?: string;
+  /** Parent run lineage for the nested participant span, when available. */
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly workflowStepId?: string;
+  readonly sourceRefs?: readonly ConversationOperationSourceRef[];
   readonly kind?: ConversationAgentActivitySpanKind;
   readonly label: string;
   readonly summary?: string;
@@ -135,6 +199,8 @@ export interface ConversationAgentActivitySpan {
   readonly latestRow?: ConversationWorkCellRow;
   readonly rows: readonly ConversationWorkCellRow[];
   readonly items?: readonly ConversationWorkCellItem[];
+  /** Event-positioned child rows, using the root timeline's renderer contract. */
+  readonly typedTimelineItems?: readonly import("./transcript-item.js").ConversationTimelineItem[];
 }
 
 /** @deprecated Use ConversationAgentActivitySpan. */
@@ -212,11 +278,16 @@ export interface ConversationCommandBatchItem {
 
 export interface ConversationCommandBatch {
   readonly id: string;
+  /** Monotonic aggregate revision of the atomic command children. */
+  readonly revision?: number;
   readonly revisionKey: string;
   readonly commandCount: number;
   readonly durationMs?: number;
   readonly defaultExpanded: boolean;
   readonly actionIds: readonly string[];
+  /** Full atomic membership; actionIds remains as the legacy alias during cutover. */
+  readonly childActionIds?: readonly string[];
+  readonly childItemIds?: readonly string[];
   readonly runId?: string;
   readonly attemptId?: string;
   readonly attemptNumber?: number;
@@ -230,8 +301,13 @@ export interface ConversationCommandBatch {
 
 export interface ConversationExplorationBatch {
   readonly id: string;
+  /** Monotonic aggregate revision of the atomic exploration children. */
+  readonly revision?: number;
   readonly revisionKey: string;
   readonly actionIds: readonly string[];
+  /** Full atomic membership; actionIds remains as the legacy alias during cutover. */
+  readonly childActionIds?: readonly string[];
+  readonly childItemIds?: readonly string[];
   readonly runId: string;
   readonly attemptId?: string;
   readonly attemptNumber?: number;
@@ -278,6 +354,10 @@ export interface ConversationOperationCellViewModel {
   readonly elapsedMs?: number;
   readonly operationRows: readonly ConversationWorkCellRow[];
   readonly operationItems?: readonly ConversationWorkCellItem[];
+  /** Canonical Codex-style typed facts. When present, this is the renderer source of truth. */
+  readonly typedTimelineItems?: readonly import("./transcript-item.js").ConversationTimelineItem[];
+  /** Immutable ContextSnapshot segment lookup used only by display batching. */
+  readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
   readonly activitySummary?: ConversationActivitySummary;
   readonly agentSpans: readonly ConversationAgentActivitySpan[];
   /** @deprecated Use agentSpans. Kept while call sites migrate. */

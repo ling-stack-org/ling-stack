@@ -231,12 +231,14 @@ function createTriageState() {
 }
 
 function activityBubble(page: Page, kind: string, title: string): Locator {
-  return page.locator(".message-bubble").filter({ hasText: kind }).filter({ hasText: title }).first();
+  const timelineKind = kind === "Approval event" ? "approval" : "protocolEvent";
+  const rowTitle = kind === "Run event" ? `Run for ${title}` : title;
+  return page.locator(`[data-conversation-timeline-item="${timelineKind}"]`).filter({ hasText: rowTitle }).first();
 }
 
 async function openTriageEditor(page: Page, bubble: Locator, action: string): Promise<Locator> {
   await expect(bubble).toBeVisible();
-  await bubble.getByRole("button", { name: "Details" }).click();
+  await bubble.getByRole("button", { name: "Details", exact: true }).click();
   const drawer = page.getByLabel("Activity details");
   await expect(drawer).toBeVisible();
   const triage = drawer.locator(".activity-triage-section");

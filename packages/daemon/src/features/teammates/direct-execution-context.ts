@@ -15,10 +15,11 @@ import {
 } from "@ling-stack/core";
 import type { RunRequest } from "../runs/schemas.js";
 import type { DirectWorkspaceReady } from "./direct-workspace.js";
+import { ingestTeammateDirectExecutionSource } from "./direct-execution-ingest.js";
 
 export interface TeammateDirectExecutionContext {
   readonly thread: LingThread;
-  readonly runRequest: RunRequest;
+  readonly runRequest: RunRequest & { readonly turnId: string };
 }
 
 export function resolveTeammateDirectExecutionContext(input: {
@@ -42,8 +43,25 @@ export function resolveTeammateDirectExecutionContext(input: {
   readonly toolsOverride?: readonly RunTool[];
   readonly idempotencyKeyOverride?: string;
 }): TeammateDirectExecutionContext {
+  if (input.directThread.teammateId !== input.teammate.id
+    || [input.sourceMessage, input.replyMessage].some((message) =>
+      message.threadId !== input.directThread.id || message.teammateId !== input.teammate.id)) {
+    throw new Error("Teammate direct execution scope mismatch");
+  }
+  if (input.sourceMessage.authorType !== "local-user" && input.sourceMessage.authorType !== "system") {
+    throw new Error("Teammate direct execution source must be a user or system message");
+  }
   const now = new Date().toISOString();
   const thread = ensureTeammateDirectLingThread(input.store, input.teammate, input.directThread, now);
+  const accepted = ingestTeammateDirectExecutionSource({
+    store: input.store,
+    thread,
+    directThread: input.directThread,
+    message: input.sourceMessage,
+    title: `Private chat with ${input.teammate.displayName}`,
+    executionInput: { prompt: input.prompt, systemPrompt: input.systemPrompt },
+    continuationReason: input.continuationReason,
+  }, now);
   const permissionMode = input.permissionPreset ? permissionModeForPreset(input.permissionPreset) : undefined;
   return {
     thread,
@@ -54,6 +72,8 @@ export function resolveTeammateDirectExecutionContext(input: {
       teammateId: input.teammate.id,
       runnerId: input.teammate.runnerId,
       threadId: thread.id,
+      turnId: accepted.turnId,
+      teammateDirectInputRef: { id: accepted.inputSnapshot.id, fingerprint: accepted.inputSnapshot.fingerprint },
       sourceMessageId: input.sourceMessage.id,
       linkedMessageId: input.replyMessage.id,
       createdByActor: input.sourceMessage.authorType === "system" ? "system" : "local-user",
@@ -68,7 +88,7 @@ export function resolveTeammateDirectExecutionContext(input: {
       permissionConfirmation: input.permissionConfirmation,
       responseLanguage: input.responseLanguage,
       thinkingLevel: "medium",
-      systemPrompt: input.systemPrompt,
+      systemPrompt: accepted.inputSnapshot.payload.systemPrompt,
       skipMemoryRecall: true,
       directWorkspaceBinding: input.workspace.binding,
       directWorkspaceSnapshot: input.workspace.snapshot,
@@ -77,7 +97,7 @@ export function resolveTeammateDirectExecutionContext(input: {
       task: {
         id: input.sourceMessage.id,
         title: `Private chat with ${input.teammate.displayName}`,
-        prompt: input.prompt,
+        prompt: accepted.inputSnapshot.payload.prompt,
       },
     },
   };

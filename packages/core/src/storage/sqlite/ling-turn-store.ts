@@ -20,8 +20,11 @@ import { readNumber } from "./helpers.js";
 import { mapLingTurn, mapLingTurnRun, runStatusToLingTurnStatus } from "./run-mappers.js";
 import { lingTurnSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { UserInputWait } from "../../user-input-wait-types.js";
+import { projectTurnUserInputWait } from "./user-input-wait-projection.js";
 
 export interface SqliteLingTurnStorePorts {
+  readonly getUserInputWait: (threadId: string, requestId: string) => UserInputWait | undefined;
   readonly getLingThread: (threadId: string) => LingThread | undefined;
   readonly getRun: (runId: string) => RunSession | undefined;
   readonly rebuildLingThreadMetadata: (threadId: string | undefined, now: string) => void;
@@ -208,12 +211,17 @@ export class SqliteLingTurnStore {
         right.run.updatedAt.localeCompare(left.run.updatedAt) ||
         right.run.id.localeCompare(left.run.id),
       )[0];
+    const inputWaitStatus = projectTurnUserInputWait(
+      this.context.database, this.ports.getUserInputWait, turn, runs.map(item => item.run), latest?.run.id,
+    );
     const nextStatus: LingTurnStatus = turn.status === "superseded"
       ? "superseded"
       : latestWaiting
         ? "waiting_for_approval"
         : latestActive
           ? "running"
+          : inputWaitStatus
+            ? inputWaitStatus
           : latest
             ? runStatusToLingTurnStatus(latest.run.status)
             : "open";

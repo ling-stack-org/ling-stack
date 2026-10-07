@@ -3,8 +3,13 @@ import { accessSync, constants, existsSync, statSync } from "node:fs";
 import { mkdir, realpath } from "node:fs/promises";
 import { dirname } from "node:path";
 import { promisify } from "node:util";
+import { defineProtectedHostActorEntry } from "../../runtime/sandbox/protected-host-actor-inventory.js";
 
 const execFileAsync = promisify(execFile);
+
+/** Shared original Git producer for repository reads and worktree mutations; neither family is certified by this hook. */
+export const MANAGED_WORKTREES_GIT_ACTOR_ENTRY = defineProtectedHostActorEntry("managed_worktrees_git",
+  (cwd: string, args: readonly string[]) => execFileAsync("git", args, { cwd, timeout: 15000, maxBuffer: 1024 * 1024 }));
 
 export interface GitCommandResult {
   readonly stdout: string;
@@ -41,7 +46,7 @@ export interface ManagedWorktreeCleanupResult {
 }
 
 export async function git(cwd: string, args: readonly string[]): Promise<GitCommandResult> {
-  const result = await execFileAsync("git", args, { cwd, timeout: 15000, maxBuffer: 1024 * 1024 });
+  const result = await MANAGED_WORKTREES_GIT_ACTOR_ENTRY.invoke(undefined, cwd, args);
   return { stdout: result.stdout, stderr: result.stderr };
 }
 

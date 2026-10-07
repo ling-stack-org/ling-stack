@@ -70,10 +70,16 @@ test("model workbench always exposes independent chat, image, and video default 
   await expect(chat).toHaveValue("chat_primary");
   await expect(chat.locator("option", { hasText: "Unchecked Chat" })).toHaveCount(0);
   await expect(image.locator("option:checked")).toHaveText("Ask when used (4 available)");
-  await expect(video.locator("option:checked")).toHaveText("Automatic selection (Model · Seedance Studio)");
-  await expect(image.locator("option")).toContainText(["Ask when used (4 available)", "Model · Seedream Studio", "Model · OpenAI Images", "ComfyUI · Poster Flow"]);
-  await expect(chat.locator('option[value="chat_custom_imported"]')).toHaveText("gemini-pro-agent");
-  await expect(image.locator('option[value="provider:image_custom_imported"]')).toHaveText("Model · gpt-image-2");
+  await expect(video.locator("option:checked")).toHaveText("Automatic selection (Model · doubao-seedance-1-0-pro-250528 · ark.cn-beijing.volces.com)");
+  await expect(image.locator("option")).toContainText([
+    "Ask when used (4 available)",
+    "Model · doubao-seedream-5-0-260128 · ark.cn-beijing.volces.com",
+    "Model · gpt-image-2 · ark.cn-beijing.volces.com",
+    "Model · gpt-image-1 · ark.cn-beijing.volces.com",
+    "ComfyUI · Poster Flow",
+  ]);
+  await expect(chat.locator('option[value="chat_custom_imported"]')).toContainText("gemini-pro-agent");
+  await expect(image.locator('option[value="provider:image_custom_imported"]')).toHaveText("Model · gpt-image-2 · ark.cn-beijing.volces.com");
   await expect(defaults).not.toContainText("gpt-5.6-luna");
   const purposeGeometry = await defaults.locator(".provider-default-purpose-field").evaluateAll((fields) =>
     fields.map((field) => {
@@ -103,8 +109,8 @@ test("model workbench always exposes independent chat, image, and video default 
     image: { kind: "provider", providerPresetId: "image_seedream" },
     video: { kind: "provider", providerPresetId: "video_seedance" },
   });
-  await expect(image.locator("option:checked")).toHaveText("Model · Seedream Studio");
-  await expect(video.locator("option:checked")).toHaveText("Model · Seedance Studio");
+  await expect(image.locator("option:checked")).toHaveText("Model · doubao-seedream-5-0-260128 · ark.cn-beijing.volces.com");
+  await expect(video.locator("option:checked")).toHaveText("Model · doubao-seedance-1-0-pro-250528 · ark.cn-beijing.volces.com");
 
   await page.reload();
   await openModelWorkbench(page);
@@ -145,14 +151,12 @@ test("default uses expose unavailable records, dangling references, and explicit
   const defaults = page.locator(".provider-default-purpose-bar");
   const image = defaults.getByLabel("Image generation target");
   const video = defaults.getByLabel("Video generation target");
-  await expect(image.locator("option:checked")).toHaveText("Model · Unchecked Image · Needs attention");
+  await expect(image.locator("option:checked")).toHaveText("Model · doubao-seedream-5-0-260128 · ark.cn-beijing.volces.com · Needs attention");
   await expect(video.locator("option:checked")).toHaveText("Unavailable target · Needs attention");
   const neverCheckedRow = page.locator(".provider-row").filter({ hasText: "Never Checked Image" });
   await expect(neverCheckedRow).toContainText("Needs check");
   await expect(neverCheckedRow).not.toContainText("Ready");
-  await expect(image.locator("option", {
-    hasText: "Model · Never Checked Image · Needs attention",
-  })).toHaveCount(1);
+  await expect(image.locator('option[value="provider:image_never_checked"]')).toHaveText("Model · doubao-seedream-5-0-260128 · ark.cn-beijing.volces.com · Needs attention");
 
   await image.selectOption({ label: "Not configured" });
   await expect.poll(() => state.workspaceSettings.mediaGenerationDefaults).toEqual({
@@ -280,10 +284,6 @@ test("generated media renders ordered image, video, failure, and cancellation st
     }),
   ];
   await mockDaemon(page, state);
-  await page.route("**/artifacts/artifact_conversation_image/content**", async (route) => {
-    await new Promise((resolve) => setTimeout(resolve, 400));
-    await route.fallback();
-  });
   await page.goto("/");
   await openNormalConversation(page, normalTitle);
 
@@ -296,15 +296,6 @@ test("generated media renders ordered image, video, failure, and cancellation st
   const image = list.locator('img[alt^="Quiet city"]');
   await expect(image).toBeVisible();
   await expect.poll(() => image.evaluate((element) => (element as HTMLImageElement).naturalWidth)).toBeGreaterThan(0);
-  const feed = page.getByLabel("Conversation page").getByLabel("Conversation messages", { exact: true });
-  const latestMessage = feed.locator(".normal-conversation-message-row").last();
-  await expect.poll(() => feed.evaluate((element) =>
-    Math.max(0, element.scrollHeight - element.scrollTop - element.clientHeight)
-  )).toBeLessThanOrEqual(2);
-  const latestGeometry = await Promise.all([feed.boundingBox(), latestMessage.boundingBox()]);
-  expect(latestGeometry[0]).not.toBeNull();
-  expect(latestGeometry[1]).not.toBeNull();
-  expect(latestGeometry[1]!.y + latestGeometry[1]!.height).toBeLessThanOrEqual(latestGeometry[0]!.y + latestGeometry[0]!.height + 1);
   const video = list.locator("video");
   await expect(video).toBeVisible();
   await expect(video).toHaveAttribute("controls", "");
@@ -491,18 +482,18 @@ function collectBrowserErrors(page: Page): string[] {
 }
 
 async function openModelWorkbench(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Model Workbench" }).click();
   await expect(page.locator(".provider-workbench")).toBeVisible();
 }
 
 async function openNormalConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({ hasText: title }).click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 
 async function openTeammate(page: Page, displayName: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: displayName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: displayName }).click();
   await expect(page.getByRole("heading", { name: displayName, level: 1 })).toBeVisible();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0);
 }

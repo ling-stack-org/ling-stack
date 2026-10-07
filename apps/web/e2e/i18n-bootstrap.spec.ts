@@ -15,7 +15,7 @@ test("localization bootstrap keeps the first visible frame free of product text"
   const bootstrap = page.locator("[data-i18n-bootstrap]");
   await expect(bootstrap).toBeVisible();
   await expect(bootstrap).toHaveText("");
-  await expect(bootstrap).toHaveAttribute("aria-label", /Ling Stack/u);
+  await expect(bootstrap).toHaveAttribute("aria-label", "Loading");
 
   releaseCatalog();
   await expect(bootstrap).toHaveCount(0);

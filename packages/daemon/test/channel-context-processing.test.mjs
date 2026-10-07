@@ -924,12 +924,12 @@ test("memory eligibility keeps channel memory but excludes private and secret me
   assert.deepEqual(memoryEligibilityForView(channelMemory, "ling_agent_channel_view"), {
     mode: "public_quote",
     quotePolicy: "public_ok",
-    policyVersion: "memory_use_isolation_v1",
+    policyVersion: "memory_use_isolation_v2",
   });
   assert.deepEqual(memoryEligibilityForView(influenceOnlyMemory, "ling_agent_channel_view"), {
     mode: "influence_only",
     quotePolicy: "influence_only",
-    policyVersion: "memory_use_isolation_v1",
+    policyVersion: "memory_use_isolation_v2",
   });
 });
 
@@ -971,11 +971,11 @@ test("memory eligibility allows private memory only for the matching teammate co
   assert.deepEqual(memoryEligibilityForView(privateMemory, "workflow_step_view", "teammate_a"), {
     mode: "influence_only",
     quotePolicy: "influence_only",
-    policyVersion: "memory_use_isolation_v1",
+    policyVersion: "memory_use_isolation_v2",
   });
 });
 
-test("private chat context view keeps private thread sources and explicit task/run refs", () => {
+test("private chat context view keeps private thread sources without importing linked channel task or workflow facts", () => {
   const teammate = createTeammate();
   const thread = createDirectThread({ teammateId: teammate.id });
   const priorMessage = createDirectMessage({
@@ -1026,15 +1026,10 @@ test("private chat context view keeps private thread sources and explicit task/r
     "teammate_profile:teammate_designer",
     "private_message:direct_prior",
     "private_message:direct_latest",
-    "private_ref:task:task_1",
-    "private_ref:run:run_1",
     "memory:private",
   ]);
   assert.deepEqual(view.dropped, [{ sourceId: "recent_message:channel", reason: "scope" }]);
-  assert.ok(view.sourceRefs.some((ref) => ref.type === "task" && ref.id === "task_1"));
-  assert.ok(view.sourceRefs.some((ref) => ref.type === "run" && ref.id === "run_1"));
-  assert.ok(view.sourceRefs.some((ref) => ref.type === "workflow" && ref.id === "workflow_1"));
-  assert.ok(view.sourceRefs.some((ref) => ref.type === "workflow_step" && ref.id === "step_1"));
+  assert.ok(!view.sourceRefs.some((ref) => ["task", "run", "workflow", "workflow_step", "channel"].includes(ref.type)));
 });
 
 test("memory eligibility keeps raw memory out of selector and proposal views", () => {
@@ -1093,7 +1088,7 @@ test("memory eligibility keeps memory inspect-only for evidence inspect views", 
   assert.deepEqual(memoryEligibilityForView(secretMemory, "evidence_inspect_view"), {
     mode: "inspect_only",
     quotePolicy: "inspect_only",
-    policyVersion: "memory_use_isolation_v1",
+    policyVersion: "memory_use_isolation_v2",
   });
 });
 

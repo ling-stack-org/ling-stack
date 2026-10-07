@@ -1,10 +1,11 @@
 import { createBashToolDefinition, type ExtensionFactory, type ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { normalizeHandledToolResultPreservingError } from "../content.js";
+import { createHostToolResultAdapter } from "../host-tool-results.js";
 import type { PiRunnerApprovalDecision, PiRunnerRunOptions } from "../types.js";
 import { isRecord } from "../utils.js";
 
 export function createLingStackBashToolExtension(options: PiRunnerRunOptions): ExtensionFactory {
   return (pi) => {
+    const adaptResult = createHostToolResultAdapter(pi);
     const originalBash = createBashToolDefinition(options.cwd) as ToolDefinition;
 
     pi.registerTool({
@@ -12,12 +13,17 @@ export function createLingStackBashToolExtension(options: PiRunnerRunOptions): E
       label: "bash",
       description: `${originalBash.description} For a simple low-risk command, you may propose a conservative argv prefix in prefix_rule so the user can allow similar commands in this workspace.`,
       parameters: createCommandRuleAwareBashParameters(originalBash.parameters),
-      async execute(toolCallId, params) {
+      async execute(toolCallId, params, signal) {
+        signal?.throwIfAborted();
         const decision = await requireDaemonHandledBash(options, toolCallId, params);
+        signal?.throwIfAborted();
         if (!decision.handledResult) {
           throw new Error("Ling Stack unified exec approved bash without a handled result.");
         }
-        return normalizeHandledToolResultPreservingError(decision.handledResult);
+        return adaptResult(toolCallId, "bash", {
+          ...decision.handledResult,
+          isError: !decision.approved || decision.handledResult.isError === true,
+        });
       },
       renderCall: originalBash.renderCall,
       renderResult: originalBash.renderResult,

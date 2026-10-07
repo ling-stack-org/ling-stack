@@ -37,7 +37,7 @@ test("ComfyUI adapter writes the scene prompt to the semantic prompt field and c
     if (parsed.pathname === "/api/history/prompt_1") {
       return jsonResponse({
         prompt_1: {
-          status: { status_str: "success" },
+          status: { status_str: "success", completed: true },
           outputs: { "9": { videos: [{ filename: "scene.mp4", type: "output" }] } },
         },
       });

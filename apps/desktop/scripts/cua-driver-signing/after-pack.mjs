@@ -1,7 +1,10 @@
 import { runAfterPack } from "./hooks.mjs";
 import { validateCuaDriverPackageAuthority } from "../../shared/cua-driver-package-authority-contract.mjs";
+import { verifyOfficeAfterPack } from "../packaged-office-native-package-checks.mjs";
 
 export default async function afterPack(context) {
+  // Office verification must run before Cua's no-provider/state early returns.
+  await verifyOfficeAfterPack(context);
   const packageProvider = process.env.LING_CUA_DRIVER_PACKAGE_PROVIDER === "1";
   return runAfterPack(context, {
     ...(packageProvider

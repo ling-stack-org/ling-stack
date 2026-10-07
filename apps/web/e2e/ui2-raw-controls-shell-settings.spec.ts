@@ -34,7 +34,7 @@ test("owned shell and settings sources use the shared Input contract without pri
   expect(policyEditorSource).toContain("onKeyDown={handlePathKeyDown}");
   expect(policyEditorSource).toContain("onSubmit={submitPath}");
   expect(sidebarCss).not.toMatch(/sidebar-branch-create-form\s+input/gu);
-  expect(sidebarCss).not.toContain(".ling-ui-");
+  expect(sidebarCss).not.toMatch(/\.ling-ui-(?:input|textarea)\b/gu);
   expect(authorizationCss).not.toContain(".ling-ui-");
 });
 
@@ -116,7 +116,7 @@ async function openBranchDraft(page: Page): Promise<{
   readonly input: Locator;
   readonly navigation: Locator;
 }> {
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const engineeringGroup = navigation.locator(".sidebar-channel-group").filter({ hasText: "Engineering" });
   await engineeringGroup.locator(".sidebar-row-shell").first().hover();
   await engineeringGroup.getByRole("button", { name: "Create branch" }).click();

@@ -36,16 +36,16 @@ for (const viewport of viewportCases) {
 
     await page.getByRole("button", { name: "Hide navigation" }).click();
     await expectShellGeometry(page, 48);
-    await expect(page.getByLabel("Ling Stack navigation")).toHaveAttribute("data-sidebar-mode", "compact");
+    await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveAttribute("data-sidebar-mode", "compact");
     await expect(page.locator(".sidebar-rail-launcher")).toHaveCount(3);
     await captureGeometryEvidence(page, runtimeErrors, `${viewport.width}x${viewport.height}-${theme}-compact.png`);
 
     await page.getByRole("button", { name: "Show navigation" }).click();
     await expectShellGeometry(page, 292);
-    await expect(page.getByLabel("Ling Stack navigation")).toBeVisible();
+    await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toBeVisible();
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
-    await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
+    await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
     const settingsShell = page.locator("main.app-shell.settings-fullscreen-shell");
     await expect(settingsShell).toBeVisible();
     await expect.poll(async () => settingsShell.evaluate((element) => (
@@ -62,7 +62,7 @@ test("ordinary collapse has no width animation or transient navigation text", as
   await page.goto("/");
 
   const shell = page.locator("main.app-shell");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expectShellGeometry(page, 292);
   const motion = await navigation.evaluate((element) => ({
     animationDuration: getComputedStyle(element).animationDuration,
@@ -75,7 +75,7 @@ test("ordinary collapse has no width animation or transient navigation text", as
   const before = await toggle.boundingBox();
   await toggle.click();
   await expectShellGeometry(page, 48);
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveAttribute("data-sidebar-mode", "compact");
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveAttribute("data-sidebar-mode", "compact");
   await expect(page.locator(".sidebar-section-title, .sidebar-row-shell")).toHaveCount(0);
   await page.waitForTimeout(80);
   expect(await shell.evaluate((element) => getComputedStyle(element).transitionDuration)).toBe("0s");
@@ -106,7 +106,7 @@ async function prepareSurface(
 
 async function expectShellGeometry(page: Page, sidebarWidth: 48 | 292): Promise<void> {
   const geometry = await page.locator("main.app-shell").evaluate((shell) => {
-    const navigation = shell.querySelector<HTMLElement>("[aria-label='Ling Stack navigation']");
+    const navigation = shell.querySelector<HTMLElement>("aside.left-nav");
     const workspace = shell.querySelector<HTMLElement>(":scope > .workspace");
     const shellBox = shell.getBoundingClientRect();
     const workspaceBox = workspace?.getBoundingClientRect();

@@ -1,5 +1,7 @@
 import { randomUUID } from "node:crypto";
+import "../../runtime/sandbox/core-original-process-bridge.js";
 import {
+  isCoreOriginalLaunchRefusal,
   parseExternalWorkflowMarkdown,
   pollGitHubExternalWork,
   reconcileExternalWork,
@@ -139,7 +141,15 @@ export class ExternalWorkBackgroundSchedulerRegistry {
     const nextPollAt = new Date(Date.now() + entry.scheduler.pollIntervalMs).toISOString();
     entry.scheduler = { ...entry.scheduler, nextPollAt };
     entry.timer = setTimeout(() => {
-      void this.runTick(entry).finally(() => this.schedule(entry));
+      entry.timer = undefined;
+      void this.runTick(entry).then(() => this.schedule(entry)).catch(error => {
+        // Consume unexpected timer failures as well; a failed tick cannot keep
+        // scheduling behind an unhandled rejection or pretend to be running.
+        if (entry.timer) clearTimeout(entry.timer);
+        entry.timer = undefined;
+        entry.scheduler = { ...entry.scheduler, status: "failed", nextPollAt: undefined,
+          lastErrorCode: "background_tick_failed", lastErrorMessage: error instanceof Error ? error.message : String(error) };
+      });
     }, entry.scheduler.pollIntervalMs);
     entry.timer.unref?.();
   }
@@ -191,12 +201,14 @@ export class ExternalWorkBackgroundSchedulerRegistry {
         lastReconcile: reconcile,
       };
     } catch (error) {
+      const launchRefused = isCoreOriginalLaunchRefusal(error);
       entry.scheduler = {
         ...entry.scheduler,
-        status: "running",
+        status: launchRefused ? "failed" : "running",
+        ...(launchRefused ? { nextPollAt: undefined } : {}),
         tickCount: entry.scheduler.tickCount + 1,
         lastPollAt: now,
-        lastErrorCode: "background_tick_failed",
+        lastErrorCode: launchRefused && error instanceof Error ? error.message : "background_tick_failed",
         lastErrorMessage: error instanceof Error ? error.message : String(error),
       };
     } finally {

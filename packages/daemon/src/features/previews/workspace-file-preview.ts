@@ -35,15 +35,11 @@ export function resolveWorkspaceFileTarget(cwd: string, requestedPath: string): 
   const lexicalTarget = isAbsolute(requestedPath)
     ? resolvePath(requestedPath)
     : resolvePath(workspaceRoot, requestedPath);
-  if (!isPathInsideRoot(workspaceRoot, lexicalTarget)) {
-    throw new WorkspaceFileTargetError(403, "workspace_file_outside_root", "Workspace file path is outside the active workspace.");
-  }
-
   let contentPath: string;
   try {
     contentPath = realpathSync(lexicalTarget);
   } catch (error) {
-    throw new WorkspaceFileTargetError(404, "workspace_file_not_found", error instanceof Error ? error.message : String(error));
+      throw new WorkspaceFileTargetError(404, "workspace_file_not_found", error instanceof Error ? error.message : String(error));
   }
   if (!isPathInsideRoot(workspaceRoot, contentPath)) {
     throw new WorkspaceFileTargetError(403, "workspace_file_outside_root", "Workspace file path resolved outside the active workspace.");

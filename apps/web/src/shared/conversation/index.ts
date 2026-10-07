@@ -1,4 +1,5 @@
 export {
+  ComposerAuthorizationMenu,
   ComposerPermissionMenu,
   ConversationComposerShell,
   ConversationEmptyState,
@@ -26,6 +27,7 @@ export {
   TeammateAvatarStack,
   TokenizedComposerInput,
   ToolPlaceholderPage,
+  type ComposerAuthorizationMenuProps,
   type ComposerPermissionMenuProps,
   type ConversationComposerDensity,
   type ConversationComposerShellProps,
@@ -113,6 +115,19 @@ export {
 } from "@ling-stack/conversation-ui-core";
 export { ConversationAttachmentStrip, type ConversationAttachmentChip, type ConversationAttachmentStripProps } from "./preview/ConversationAttachmentStrip.js";
 export { ConversationReferenceStrip, type ConversationReferenceItem } from "./preview/ConversationReferenceStrip.js";
+export {
+  ConversationTimeline,
+  type ConversationTimelineDisclosureIntent,
+  type ConversationTimelineItemLocator,
+  type ConversationTimelineLocateResult,
+  type ConversationTimelineProps,
+} from "./timeline/ConversationTimeline.js";
+export {
+  mountConversationTimeline,
+  type ConversationTimelineMount,
+  type ConversationTimelineMountInput,
+} from "./timeline/mountConversationTimeline.js";
+export { collectConversationTimelineViewRetainKeys } from "./timeline/conversation-timeline-view-retain-keys.js";
 export { isConversationGuidanceQueueVisible } from "./feedback/conversation-guidance-visibility.js";
 export {
   ConversationSendLifecycleStore,
@@ -131,8 +146,9 @@ export { MessageEvidencePanel } from "./blocks/MessageEvidencePanel.js";
 export { MessageRow, type MessageRowAuthorType, type MessageRowProps, type MessageRowTone } from "./blocks/MessageRow.js";
 export { ConversationSummaryRow, type ConversationSummaryMetaItem, type ConversationSummaryRowProps } from "./feedback/ConversationSummaryRow.js";
 export { ConversationReplacementRetry } from "./feedback/ConversationReplacementRetry.js";
-export { ConversationVirtualFeed, type ConversationVirtualFeedProps } from "./blocks/ConversationVirtualFeed.js";
-export { ConversationArtifactStripPanel, ConversationWorkCell, type ConversationWorkCellDetailsState, type ConversationWorkCellProps } from "./blocks/ConversationWorkCell.js";
+export { ConversationTimelineFeed, type ConversationTimelineFeedProps } from "./blocks/ConversationTimelineFeed.js";
+export { ConversationArtifactStripPanel } from "./blocks/ConversationArtifactStripPanel.js";
+export type { ConversationTimelineDetailsState, ConversationTimelineDetailsStatus, ConversationWorkCellDetailsState } from "./blocks/conversation-evidence-details.js";
 export { ConversationGeneratedMediaBlock, type ConversationGeneratedMediaBlockProps } from "./blocks/ConversationGeneratedMediaBlock.js";
 export type { ConversationWorkspaceReviewTarget } from "./blocks/ConversationArtifactStrip.js";
 export { TerminalReportBlock, type TerminalReportFileTarget } from "./blocks/TerminalReportBlock.js";
@@ -183,18 +199,18 @@ export {
   type TranscriptExpandedDetail,
 } from "./transcript/index.js";
 export type {
-  ConversationEvidenceMode,
-  ConversationRawDetailMode,
-  ConversationSurfaceKind,
-  ConversationSurfacePolicy,
-  ConversationWorkCellMode,
+  ConversationInteractionPolicy,
+  ConversationInteractionSurfaceKind,
+  ConversationTimelineScope,
+  ConversationTimelineScopeKind,
   TerminalReportArtifactMode,
   TerminalReportProjectionPolicy,
 } from "./tokens/conversation-surface-policy.js";
 export {
-  getConversationSurfacePolicy,
+  getConversationInteractionPolicy,
   getTerminalReportProjectionPolicy,
-  mergeConversationSurfacePolicy,
+  mergeConversationInteractionPolicy,
+  resolveTimelineScope,
 } from "./tokens/conversation-surface-policy.js";
 export type {
   ConversationAction,

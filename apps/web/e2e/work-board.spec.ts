@@ -46,7 +46,7 @@ test("work board merges durable items and supports claim heartbeat", async ({ pa
   await expect(channelBoard).toContainText("Durable inspect handoff");
   await expect(channelBoard).toContainText("durable");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await openWorkBoardFromInbox(page);
   await expect(navigation).toBeVisible();
   await expect(page.locator(".settings-tool-return-row")).toHaveCount(0);

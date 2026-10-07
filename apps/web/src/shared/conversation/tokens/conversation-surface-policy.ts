@@ -1,9 +1,8 @@
 export type {
-  ConversationEvidenceMode,
-  ConversationRawDetailMode,
-  ConversationSurfaceKind,
-  ConversationSurfacePolicy,
-  ConversationWorkCellMode,
+  ConversationInteractionPolicy,
+  ConversationInteractionSurfaceKind,
+  ConversationTimelineScope,
+  ConversationTimelineScopeKind,
   MessageActionKind,
   SourceIconKind,
   TerminalReportArtifactMode,
@@ -11,7 +10,8 @@ export type {
 } from "@ling-stack/conversation-ui-core";
 export {
   conversationActionAllowedByPolicy,
-  getConversationSurfacePolicy,
+  getConversationInteractionPolicy,
   getTerminalReportProjectionPolicy,
-  mergeConversationSurfacePolicy,
+  mergeConversationInteractionPolicy,
+  resolveTimelineScope,
 } from "@ling-stack/conversation-ui-core";

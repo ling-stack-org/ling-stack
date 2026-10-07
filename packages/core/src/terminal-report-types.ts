@@ -286,7 +286,8 @@ export interface LingTerminalReportRecord {
   readonly promptVersion?: string;
   readonly attemptCount: number;
   readonly validationCodes: readonly string[];
-  readonly publishedMessageId?: string;
+  /** Stable ConversationItem anchor for the committed result. */
+  readonly resultItemId?: string;
   readonly errorCode?: string;
   readonly createdAt: string;
   readonly updatedAt: string;

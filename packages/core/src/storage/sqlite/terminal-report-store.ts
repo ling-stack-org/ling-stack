@@ -55,7 +55,7 @@ export class SqliteTerminalReportStore {
           prompt_version,
           attempt_count,
           validation_codes_json,
-          published_message_id,
+          result_item_id,
           error_code,
           created_at,
           updated_at,
@@ -252,8 +252,8 @@ export class SqliteTerminalReportStore {
     if (current.status !== "committed" && current.status !== "fallback") {
       throw new Error(`Only committed terminal reports can be published: ${input.reportId}`);
     }
-    if (current.publishedMessageId) {
-      if (current.publishedMessageId !== input.messageId) {
+    if (current.resultItemId) {
+      if (current.resultItemId !== input.messageId) {
         throw new Error(`Terminal report is already published by another message: ${input.reportId}`);
       }
       return current;
@@ -262,13 +262,13 @@ export class SqliteTerminalReportStore {
     const result = this.context.database
       .prepare(`
         UPDATE ling_terminal_reports
-        SET published_message_id = ?, updated_at = ?
-        WHERE id = ? AND published_message_id IS NULL AND status IN ('committed', 'fallback')
+        SET result_item_id = ?, updated_at = ?
+        WHERE id = ? AND result_item_id IS NULL AND status IN ('committed', 'fallback')
       `)
       .run(input.messageId, input.now, input.reportId);
     if (result.changes !== 1) {
       const raced = this.requireReport(input.reportId);
-      if (raced.publishedMessageId === input.messageId) {
+      if (raced.resultItemId === input.messageId) {
         return raced;
       }
       throw new Error(`Terminal report publication compare-and-set failed: ${input.reportId}`);

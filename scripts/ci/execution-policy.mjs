@@ -4,9 +4,9 @@ import { pathToFileURL } from "node:url";
 
 const EXECUTION_TIERS = new Set(["complete", "preview", "ignore"]);
 const SCOPE_MODES = new Set(["docs", "affected", "full"]);
-const LANES = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON"];
+const LANES = ["SCOPE", "COMMON", "DEPENDENCY", "BUILD", "TYPECHECK", "UNIT", "DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
 const PRODUCT_LANES = ["DEPENDENCY", "BUILD", "TYPECHECK", "UNIT"];
-const DAEMON_LANES = ["DAEMON"];
+const DAEMON_LANES = ["DAEMON", "LINUX_CONTRACT", "MACOS_NATIVE"];
 const JOB_RESULTS = new Set(["success", "failure", "cancelled", "skipped"]);
 
 /**

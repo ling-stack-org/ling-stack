@@ -1,11 +1,17 @@
 import {
   LING_ACP_PROTOCOL_VERSION,
-  acpCapabilityKeys,
   type AcpCapabilityKey,
   type AcpInitializeResult,
 } from "./protocol.js";
 
-export const requiredAcpCapabilities: readonly AcpCapabilityKey[] = acpCapabilityKeys;
+export const requiredAcpCapabilities: readonly AcpCapabilityKey[] = [
+  "sessionLifecycle",
+  "textStreaming",
+  "toolCalls",
+  "artifacts",
+  "cancellation",
+  "workspaceBoundary",
+];
 
 export interface AcpCapabilityNegotiationResult {
   readonly ok: boolean;

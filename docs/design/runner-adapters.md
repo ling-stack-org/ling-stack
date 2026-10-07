@@ -44,8 +44,17 @@ Implemented:
   `disabledReason` metadata, so internal diagnostics and audit clients can explain why
   `codex-app-server` and `openclaw-acp` are unavailable.
 - daemon config can express `runners.codexAppServer.enabled` and
-  `runners.openclawAcp.enabled`, but registrations fail closed until endpoint,
-  readiness, and conformance gates pass.
+  `runners.openclawAcp.enabled`, but registrations fail closed until endpoint and
+  readiness gates pass. Tool execution is controlled separately by a code-owned,
+  adapter-revision-bound conformance receipt; workspace config cannot self-assert it.
+- external adapter receipts currently curate only `read`, `grep`, `find`, and `ls` with
+  `none/workspace_read` side effects. Runner-native command, edit, write, network,
+  secret, delivery, and MCP effects remain disabled.
+- every external tool proposal is checked against the active Run tool list, curated
+  receipt, side-effect class, adapter revision, evidence commit, abort propagation,
+  Attempt fencing, and workspace boundary before Ling publishes normalized evidence.
+- the old external-runner `conformancePassed` config boolean has been removed. Missing
+  receipts, revision drift, undeclared tools, and side-effectful proposals fail closed.
 - ordinary Settings uses Pi implicitly and does not expose runner selection, feature
   flags, readiness blockers, or fallback controls;
 - sandbox profile contracts now define fail-closed backend verification, network policy,
@@ -55,10 +64,10 @@ Implemented:
 Still future:
 
 - daemon-managed connection setup or service launch instead of manual endpoint wiring;
-- automatic readiness and capability probes that persist verifiable evidence rather
-  than trusting manually entered `readinessPassed` or `conformancePassed` booleans;
-- full tool parity for read, command, edit, write, approval, cancellation, artifact, and
-  workspace-bound execution;
+- automatic readiness and capability probes that persist endpoint evidence rather than
+  trusting the remaining manually entered `readinessPassed` bootstrap flag;
+- full command/edit/write parity through Ling's durable ToolExecution broker. It remains
+  blocked until the external protocol supports a real pre-side-effect Host round trip;
 - safe fallback behavior with clear requested/effective runner audit;
 - OpenAI Agents SDK adapter decision refresh after platform-native sandbox policy and
   runner hydration observability are implemented;

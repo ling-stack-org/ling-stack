@@ -2,6 +2,7 @@ import {
   authorizationModes,
   readOnlyRunTools,
   lingConversationTones,
+  reasoningSummaryModes,
   permissionModeForPreset,
   permissionPresets,
   providerTransports,
@@ -17,6 +18,7 @@ import {
   type LingTurnCreatedByActor,
   type LingConversationTone,
   type PermissionPreset,
+  type ReasoningSummaryMode,
   type ResponseLanguage,
   type RunContinuationReason,
   type RunTool,
@@ -30,9 +32,14 @@ import type {
   ChannelIntentExecutionOperationV1,
   ConversationContextProjectionMetadata,
   DelegatedStepRequirementV1,
+  HarnessFeatureSnapshotV1,
+  RunnerContinuationOrigin,
   WorkflowParticipantProviderBindingV1,
 } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
+import type { WorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
+import type { UserInputContinuationContext } from "./user-input-continuation-context.js";
+import type { NormalConversationContextSnapshot } from "../conversations/normal-conversation-context.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import {
   isRecord,
@@ -53,11 +60,13 @@ export interface PreselectedMemoryUse {
 export interface RunRequest extends Omit<
   PiRunnerRunOptions,
   | "onApprovalRequired"
+  | "onToolBefore"
   | "onEvent"
   | "provider"
   | "tools"
   | "mcpTools"
   | "onMcpToolCall"
+  | "hostCompactionEnabled"
   | "mediaGenerationTools"
   | "onMediaGenerationToolCall"
 > {
@@ -72,6 +81,8 @@ export interface RunRequest extends Omit<
   readonly delegatedRequirement?: DelegatedStepRequirementV1;
   /** Internal-only Host execution bindings for workflow-owned operations. */
   readonly executionOperationBindings?: readonly ChannelIntentExecutionOperationV1[];
+  /** Internal-only full accepted plan plus exact step-owned IDs, durably captured at dispatch. */
+  readonly workflowOperationExecution?: WorkflowOperationExecutionSnapshot;
   readonly threadId?: string;
   readonly turnId?: string;
   readonly runnerId?: string;
@@ -88,6 +99,7 @@ export interface RunRequest extends Omit<
   readonly idempotencyKey?: string;
   readonly lingConversationTone?: LingConversationTone;
   readonly responseLanguage?: ResponseLanguage;
+  readonly reasoningSummary?: ReasoningSummaryMode;
   readonly conversationAttachmentIds?: readonly string[];
   readonly conversationFileRefs?: readonly ChannelMessageFileRef[];
   readonly parentRunId?: string;
@@ -103,6 +115,23 @@ export interface RunRequest extends Omit<
   readonly preselectedMemoryUse?: PreselectedMemoryUse;
   /** Internal-only evidence version for conversation-derived runs. External request parsing does not accept it. */
   readonly contextProjection?: ConversationContextProjectionMetadata;
+  /** Internal-only frozen normal input evidence. External request parsing never accepts it. */
+  readonly normalConversationContext?: NormalConversationContextSnapshot;
+  /** Internal acceptance evidence; never parsed from an external RunRequest. */
+  readonly normalConversationAcceptedSnapshotId?: string;
+  /** Internal immutable request preparation, never accepted by external parsing. */
+  readonly normalConversationPreparedRequestRef?: { readonly id: string; readonly fingerprint: string };
+  readonly normalConversationPreparedExecutionRef?: { readonly id: string; readonly fingerprint: string };
+  /** Internal frozen private input evidence; external parsing never accepts this field. */
+  readonly teammateDirectInputRef?: { readonly id: string; readonly fingerprint: string };
+  /** Host-produced source SDK input. External parsing never accepts or restores it as authority. */
+  readonly runnerExecutionInput?: import("./prepared-runner-input.js").PreparedRunnerInput;
+  /** Internal-only immutable Harness rollout snapshot. External parsing never accepts this field. */
+  readonly harnessFeatureSnapshot?: HarnessFeatureSnapshotV1;
+  /** Internal-only normalized continuation origin. External parsing never accepts this field. */
+  readonly harnessContinuationOrigin?: RunnerContinuationOrigin;
+  /** Internal-only answer continuation lineage; external parsing never accepts this field. */
+  readonly userInputContinuationContext?: UserInputContinuationContext;
   /** Internal-only override used by trusted multi-reply channel orchestration. */
   readonly channelParallelLimit?: number;
 }
@@ -175,6 +204,7 @@ export function parseRunRequest(value: unknown): RunRequest {
     permissionMode,
     permissionConfirmation: readOptionalPermissionConfirmation(value, "permissionConfirmation"),
     thinkingLevel: readOptionalThinkingLevel(value, "thinkingLevel"),
+    reasoningSummary: readOptionalReasoningSummary(value, "reasoningSummary"),
     systemPrompt: readOptionalString(value, "systemPrompt"),
     appendSystemPrompt: readOptionalStringArray(value, "appendSystemPrompt"),
     agentDir: readOptionalString(value, "agentDir"),
@@ -198,6 +228,15 @@ function readOptionalLingConversationTone(record: Record<string, unknown>, key: 
     throw new Error(`${key} must be one of: ${lingConversationTones.join(", ")}`);
   }
   return value as LingConversationTone;
+}
+
+function readOptionalReasoningSummary(record: Record<string, unknown>, key: string): ReasoningSummaryMode | undefined {
+  const value = readOptionalString(record, key);
+  if (value === undefined) return undefined;
+  if (!reasoningSummaryModes.includes(value as ReasoningSummaryMode)) {
+    throw new Error(`${key} must be one of: ${reasoningSummaryModes.join(", ")}`);
+  }
+  return value as ReasoningSummaryMode;
 }
 
 function readOptionalResponseLanguage(record: Record<string, unknown>, key: string): ResponseLanguage | undefined {

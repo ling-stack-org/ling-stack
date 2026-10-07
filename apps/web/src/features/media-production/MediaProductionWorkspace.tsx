@@ -261,9 +261,7 @@ export function MediaProductionWorkspace({
     if (isOverlayBusy(overlay, state.busy, workflowController.state.busyAction)) return;
     const closingOverlay = overlay;
     setOverlay({ kind: "none" });
-    if (closingOverlay.kind === "run-project") {
-      restoreOverlayTriggerFocus(closingOverlay.trigger, ".media-production-primary-action");
-    } else if (closingOverlay.kind === "preview") {
+    if (closingOverlay.kind === "preview") {
       restoreOverlayTriggerFocus(closingOverlay.trigger, ".storyboard-scene-preview");
     }
   }
@@ -380,11 +378,11 @@ export function MediaProductionWorkspace({
           failure={selectMediaProductionFailure(state.failures, ["project-run"], project.mediaProject.id)}
           isSubmitting={state.busy.projectRunId === project.mediaProject.id}
           onClose={closeOverlay}
+          onRestoreFocus={() => restoreOverlayTriggerFocus(overlay.trigger, ".media-production-primary-action")}
           onConfirm={async () => {
             const outcome = await actions.runProject(projectRunReview.ready.map((item) => item.sceneId));
             if (outcome.ok) {
               setOverlay({ kind: "none" });
-              restoreOverlayTriggerFocus(overlay.trigger, ".media-production-primary-action");
             }
           }}
         />

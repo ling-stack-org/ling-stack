@@ -1,13 +1,17 @@
 # Conversation Surface Contract
 
-Status: active design contract for the shared conversation UI
-Date: 2026-06-28
-Updated: 2026-08-06
+Status: active shell/policy contract; typed transcript authority is v3.9.1 (v3.9 contract + interface-level component design)
+Original date: 2026-06-28
+Updated: 2026-09-01
 Scope: normal conversation, channel root, channel branch, topic reply, teammate private
 chat, run/thread detail, and future Desktop/PC conversation renderers
 
 Related docs:
 
+- [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+- [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
+- [Conversation Codex-Parity Component Detailed Design](conversation-codex-parity-component-detailed-design.md)
+- [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Conversation Surface Contract Implementation Plan](conversation-surface-contract-implementation-plan.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
@@ -19,6 +23,187 @@ Related docs:
 - [Conversation Shared Capabilities Detailed Design](conversation-shared-capabilities-detailed-design.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)
 - [Conversation Media Generation Tools](conversation-media-generation-tools.md)
+
+Typed item semantics, evidence ownership, renderer registry, batching, nested Agent
+presentation and completion gates are owned by the v3.9.1 documents above. This contract
+only defines surface scope, shell chrome, composer policy and Host callback boundaries;
+it must not add a route-local transcript renderer or summary owner.
+
+2026-09-06 execution-entry increment: [Host capability integration](channel-execution-capability-integration-plan.md)
+is part of the current plan, not a shipped feature. Normal, private and channel surfaces
+share the capability catalog/compiler, action evidence and renderer contract. Availability
+is the intersection of Host support, runner bridge support, workspace policy and the current
+participant/surface permission snapshot, not a consequence of sharing UI. Private chat
+must not delegate to another Agent to obtain a missing capability. Channel root/topic/branch
+and child calls require their own validated scope and owner; a parent grant cannot be
+silently inherited. Existing deny/read-only policies must not be loosened to pass QA.
+Workspace-file viewer tokens remain a separate capability lifecycle.
+
+## Typed transcript override (v3.9.1)
+
+For message, activity, command, file, tool, approval, child-agent, batching, and
+completion presentation, v3.9.1 is the current authority. This surface contract still
+defines shell and product-policy differences, but it must not add a route-local
+renderer or second completion owner. Normal, teammate-private, and channel surfaces
+must mount the shared `ConversationTimeline`; channel-only differences are roster,
+topic/branch controls, and multi-Agent policy.
+
+Historical sections below still use `MessageRow`, `EvidenceBundlePanel` and
+`ConversationWorkCell` to describe the shipped pre-v3.6 baseline. They are migration
+inputs, not target renderers or independent fact owners. During the v3.7 cutover:
+
+- existing data adapters may be reused to create strict canonical items;
+- production activity rendering moves to the shared `ConversationTimeline` registry;
+- Composer, right dock and EnvironmentPopover may focus/open an owning row but may not
+  duplicate its action summary, output, approval control or completion state;
+- user/agent narrative uses shared sender-aware document geometry (user lane/avatar right,
+  Agent lane/avatar left, text inside both left aligned) and the fact row status
+  vocabulary is closed; a surface must not restore a right-side bubble or local status copy;
+- after all surface parity fixtures pass, production WorkCell/activity callers are
+  removed without a legacy renderer feature flag.
+
+> **v3.7 topic scope override:** the channel list may retain
+> `ChannelMessage.threadId = sourceMessage.id` as a legacy grouping index, but the typed
+> transcript adapter must resolve a durable topic `LingThread.id` with
+> `parentThreadId + anchorItemId` before mounting. It must not use the message id, a
+> `topic:<id>` string, or `channel:<id>` as a synthetic transcript thread. Unresolved
+> scope becomes `diagnostic(scope_mismatch)` and never falls back to the parent feed.
+
+同样，历史章节中出现的“user message 右对齐”“assistant row 的独立 work cell”以及
+“MessageRow/EvidenceBundlePanel/WorkCell”组合，只用于解释旧版本行为和迁移来源。v3.7
+实现一律以左对齐 document lane、共享 `ConversationTimeline` 和单一 fact owner 为准；
+实现者不得从历史章节复制这些几何或组件边界。若历史描述与本节 override 或视觉规范
+冲突，以 v3.7 规范为准，不需要再保留兼容 CSS。
+
+If any later paragraph conflicts with this override, the v3.9.1 typed transcript design
+and visual specification win.
+
+### v3.9.1-final 全 surface parity 速查
+
+普通会话、队友私聊、频道 root/topic/branch 和 depth-1 子 Agent 不是四套会话产品，
+而是同一 `ConversationTimeline` 的不同 scope/chrome。实现者只需记住下面这条组合：
+
+```text
+route state -> real LingThread.id + scope -> TimelineSourceSnapshot
+           -> EvidenceFold -> atomic TimelineSnapshot -> mountConversationTimeline (一次)
+```
+
+| 允许变化 | 必须一致 |
+| --- | --- |
+| 标题、roster、participant rail、topic/branch 控件、权限提示、Host callback 可用性 | item union、rendererKey、排序、状态文案、行高、disclosure、lineage、scroll owner |
+
+私聊保持一对一和权限收敛，但不再保持另一套 transcript renderer；它与 normal/channel
+一样显示 document lane、fact rail、result lane，只有参与者 chrome 和 policy 不同。频道的
+多 Agent 只增加 participant rail 和 child span，不改变 child 的 item renderer。任何旧
+章节中出现的“compact WorkCell”“private-only activity card”均只代表迁移输入，不是
+v3.9.1-final 生产实现。
+
+这里的“一次”是每个 surface viewport 一次，不是每条 message/activity 一次。当前
+`NormalConversationMessageRow`、`TeammatePrivateChatFeed`、`ChannelMessageRenderers` 内部
+分别 mount shared Timeline 的过渡形态仍然是多个 transcript owner，E4 必须删除。actor、
+附件、引用、feedback/edit/reply/create-task 和 protocol action 进入 shared typed
+presentation/interaction contract；不能靠外层 `MessageRow`、route-local card 或任意
+`ReactNode` slot 维持旧组合。细化见组件设计 §28 和实施计划 §4.14。
+
+### Canonical type names
+
+本文件后面的旧章节仍会出现 `ConversationSurfacePolicy`、`ConversationSurfaceView` 和
+`ConversationRowView`。这些名称只描述 v3.6 及更早版本的迁移输入，不是 v3.7 的新 API。
+实现代码统一使用 `ConversationInteractionPolicy`、`ResolvedConversationSurface` 和
+`TimelineSnapshot`；旧类型不得在新 surface 中重新导出，也不得据此增加第二个 renderer。
+
+## v3.7 Surface Adapter、Viewer 和状态所有权细化
+
+这一节把“统一会话组件”落成可直接实现的接口。普通会话、队友私聊、频道
+root/topic/branch 和 depth-1 子 Agent 都必须先解析成同一个 `ResolvedConversationSurface`，
+再调用唯一的 `mountConversationTimeline`。surface 只提供 scope、policy、chrome 和 Host
+回调；它不能自行排序、分组、解析 Markdown 或渲染第二份 activity。
+
+```ts
+type ResolvedConversationSurface = {
+  readonly kind: "normal" | "private" | "channel_root" | "topic" | "branch" | "child";
+  readonly workspaceId: string;
+  readonly threadId: string;              // always a real LingThread.id
+  readonly parentThreadId: string | null;
+  readonly anchorItemId: string | null;
+  readonly depth: 0 | 1;
+  readonly policy: ConversationInteractionPolicy;
+  readonly chrome: {
+    readonly title: string;
+    readonly participantIds: readonly string[];
+  };
+};
+
+/** Shell-level controls; distinct from the Timeline renderer callbacks in the
+ * typed transcript contract. These controls never render a second fact row. */
+type ConversationSurfaceCallbacks = {
+  readonly onFocusItem: (itemId: string) => void;
+  readonly onOpenSourceRef: (
+    ref: ConversationTrustedSourceRef,
+    lineage: ConversationTimelineItemLineage,
+  ) => Promise<void>;
+  readonly onApprovalDecision: (approvalId: string, decision: "allow" | "deny") => Promise<void>;
+  readonly onStopRun: (runId: string) => Promise<void>;
+  readonly onRetryAttempt: (attemptId: string) => Promise<void>;
+};
+```
+
+`ConversationSurfaceCallbacks` 只由 shell/Composer/approval gate 使用；它不是
+`ConversationTimelineCallbacks`，也不能通过 `renderFactActions` 注入 Timeline。Timeline
+中的 approval/protocol row 只呈现状态、详情和 focus；allow/deny、stop、retry 各自只有
+一个 shell 控件 owner。
+
+Conversation detail 不再把裸 `TerminalReportDto[]` 当作可排序历史；它返回
+`ConversationTerminalReportProjectionDto[]`，每项同时携带 `report`、`generation` 和
+`resultItemId`，并由专用 `conversation_item(kind="terminal_report")` 锚定。surface 不得
+按 `committedAt`、数组位置或 Markdown 内容选择结果，也不得把 TerminalReport 重新包装成
+`assistant_message`。reply 使用 `assistant_message.presentationRole="reply_result"`；execute
+使用唯一 `terminal_report` result Item，provider 的 `execution_summary` 只进入 audit/
+synthesis。
+
+滚动所有权也固定在 shell：`ConversationFeed`/`ConversationVirtualFeed` 是唯一的
+`ConversationFeedViewport`，负责纵向 `overflow`、贴底、加载旧记录和历史 anchor。
+`ConversationTimeline` 以及 depth-1 child、batch、fact detail 都是普通文档流，不得创建
+第二个纵向滚动容器；这条规则适用于 normal、private、channel、topic、branch 和 child。
+
+`onOpenSourceRef` 的第二个参数是 renderer 已经拥有的 lineage，不允许 callback 再从
+路径字符串、surface 名称或当前选中项猜 scope。点击链路固定为：
+
+```text
+display-only ref
+  -> daemon issue capability（workspace/thread/run/action/participant/step/ref）
+  -> user click
+  -> daemon redeem + TTL/epoch/realpath/permission 二次校验
+  -> 专用 viewer
+```
+
+Host viewer 的目标不可混用：
+
+| capability target | 唯一 viewer | 允许的结果 |
+| --- | --- | --- |
+| `open_file` | files/right-dock file preview | 查看或编辑单个文件 |
+| `open_diff` | review/diff viewer | 结构化 diff、hunk、回到 owning row |
+| `open_artifact` | artifact preview/review viewer | 完整日志、报告或生成物 |
+
+失败时仍显示 basename、完整路径 tooltip 和复制入口，但只生成
+`diagnostic(blocked)`，不得静默降级成普通文件打开。daemon restart 会使旧 capability
+失效；事实行仍从 SQLite 恢复，下一次点击重新签发。
+
+状态所有权固定如下：
+
+| 区域 | 唯一拥有 | 只能提供/明确禁止 |
+| --- | --- | --- |
+| `ConversationFeedViewport`（`ConversationFeed`/`ConversationVirtualFeed`） | 唯一纵向 overflow、贴底、历史 anchor、加载旧记录 | 只承载已投影 Timeline DOM；禁止读取 SQLite/SSE、排序 item 或判断完成 |
+| `ConversationTimeline` | item、revision、disclosure、focus | focus/source callback；不得创建第二个纵向 overflow、不得拥有完成判定 |
+| `Composer` / approval gate | 输入、stop、retry、allow/deny | 定位 owning row |
+| `EnvironmentPopover` | 当前 active run/action 的两行 ambient hint | focus owning row |
+| right dock / viewer | source ref 的预览 | 返回 Timeline |
+| `terminalReport` result row / fan-in | atomic evidence 的结论 | lineage/source link；禁止在 Timeline 外再挂结果卡 |
+
+同一 canonical fixture 在 normal/private/channel/topic/branch/child 中必须产生相同的
+`itemKinds`、顺序、`rendererKeys`、状态文案、行高和 disclosure 数；只允许 shell title、
+roster、participant rail 和 policy hints 不同。这个 fingerprint 是 cutover 的退出条件，
+截图只能作为补充证据。
 
 2026-07-30 model ownership update: private chat still has no composer model picker. A
 user-created teammate uses its fixed model; a built-in teammate explicitly follows the
@@ -54,6 +239,11 @@ This is a product and implementation contract. Future UI work should change this
 document first when it changes shared behavior.
 
 ## Shipped Baseline
+
+The entries in this section describe the pre-v3.6 shared-surface baseline. They are kept
+for migration traceability only. The v3.7 target is the single `ConversationTimeline`
+registry and owner described above; no new implementation should add another WorkCell,
+message bubble, activity summary, or route-local renderer.
 
 The current shared UI slice established these baseline decisions:
 
@@ -117,7 +307,7 @@ message primitives
   -> row, avatar, meta, body, action bar
 
 evidence primitives
-  -> evidence bundle, source icon stack, work cell, file/reference blocks
+  -> typed fact row, source icon stack, file/diff/artifact viewers
 
 composer primitives
   -> shell, tokenized input, toolbar, permission menu, preview strip, status/guidance slots
@@ -150,15 +340,18 @@ message/composer/evidence model.
 3. A capability block renders only when real evidence exists. Do not show "web search",
    "sources", "files", or "context" rows as decorative placeholders.
 4. The message action row is the last visual layer of the current message/turn. Team
-   activity, evidence, references, and work cells sit above it.
+   activity, typed evidence, and references sit above it; the historical WorkCell name
+   does not authorize a second v3.7 activity renderer.
 5. Private chat is one-to-one. It must not expose `@` teammate routing or invite other
    teammates into the private thread.
 6. Channel is the only default multi-teammate collaboration surface. Normal conversation
    can show selected model/assistant work, but not channel teammate rosters by default.
 7. Topic reply is channel-specific. Do not show topic-reply controls in normal
    conversation or teammate private chat.
-8. Work cells and evidence are shared capabilities, not run-thread-only UI. Surface
-   policy decides whether they are inline, collapsed, or routed to detail.
+8. Typed evidence rows and viewers are shared capabilities, not run-thread-only UI. Surface
+   policy decides whether they are inline, collapsed, or routed to detail. The historical
+   `ConversationWorkCell` is only a migration adapter and must not be a v3.7 production
+   renderer or completion owner.
 9. Raw ids, provider metadata, token counts, workflow packet names, and JSON payloads are
    not default feed copy. They belong in expanded evidence or developer raw detail.
 10. Surface-specific CSS may position the shared components, but must not redefine their
@@ -172,8 +365,9 @@ message/composer/evidence model.
 13. Right-side workspace tools must use the shared Right Dock model. Channel, normal
     conversation, and teammate private chat may expose different pages, but they must not
     fork separate drawer, review, or evidence UI systems.
-14. Executed-work final results consume the shared `TerminalReport` contract. Surfaces
-    must not derive outcome, verification, participants, or artifacts from assistant copy.
+14. Executed-work final results consume the shared `TerminalReport` contract and project to
+    one `terminalReport` result item inside the Timeline. Surfaces must not derive outcome,
+    verification, participants, or artifacts from assistant copy or render a second result card.
 15. Only the latest local-user message in the active scoped lane is editable in the first
     implementation. Editing supersedes the latest logical turn, keeps current workspace
     side effects, and starts again in the same thread or branch.
@@ -450,7 +644,7 @@ Rules:
 
 Own:
 
-- scrolling,
+- the single vertical `ConversationFeedViewport` scroll owner,
 - loading older rows,
 - empty state placement,
 - scroll-to-latest affordance,
@@ -702,8 +896,8 @@ Required behavior:
 - resolve and execute the selected teammate's permitted tools, skills, MCP, provider,
   runner, direct workspace, authorization snapshot, and approval policy,
 - render private execution with the shared operation and approval components,
-- render TerminalReport outcome, changes, verification, artifacts, risks, and references
-  without a Participants section,
+- render the shared `terminalReport` outcome, changes, verification, artifacts, risks, and
+  references without a Participants section,
 - keep private chat empty state centered.
 
 Must not:
@@ -757,7 +951,11 @@ Do not invent page-local labels such as `complete-card`, `experts-running`, or
 `web_search_pending` as UI state. Those may be implementation details inside evidence,
 but the shared renderer receives the common state vocabulary.
 
-## Data Contract
+## Historical v3.6 Data Contract (migration input only)
+
+> 本节保留旧字段，方便 adapter 对照。v3.7 新代码不得直接消费这里的
+> `ConversationTurnView`/`ConversationSurfaceView`，必须先转换到
+> `ResolvedConversationSurface + TimelineSnapshot`。
 
 The Web can continue deriving this from existing stores during the next slice, but the
 view model should converge toward this shape:
@@ -826,7 +1024,10 @@ tool-event wording. Refresh and reconnect rebuild the same projection from stora
 Policy is explicit. Components should not infer policy from route name, message text, or
 whether `threadId` is present.
 
-## Detailed Surface View Contract
+## Historical v3.6 Detailed Surface View Contract (migration input only)
+
+> 下面的 `rows`、`workCell`、`floatingActivity` 是旧投影的输入形状。它们不能直接进入
+> 生产 DOM；统一入口是 `mountConversationTimeline()`，重复内容必须在 adapter 阶段归一化。
 
 Shared conversation UI should receive an already-scoped surface view. It should not fetch
 daemon state, resolve channel membership, inspect teammate settings, or guess context from
@@ -953,9 +1154,11 @@ Current first-pass matching:
 4. `message.threadId` is preserved for ownership and future detail linking, but must not
    be used as a broad per-row fallback that duplicates all thread runs.
 
-Rendering rules:
+Rendering rules (v3.7 target; the pre-v3.6 geometry is historical only):
 
-- user messages remain right-aligned and do not show avatars or teammate avatar stacks,
+- user and assistant messages share the document renderer, with the user lane end-aligned
+  and the assistant lane start-aligned; text inside both stays left aligned. Identity comes from
+  lightweight author metadata, not a right-side square bubble,
 - assistant messages do not show a Ling Agent avatar or repeat the Ling Agent label on
   every ordinary reply,
 - assistant rows can show copy/feedback only when the action state exists,
@@ -1076,7 +1279,8 @@ Shared visual rules:
 - pending images, files, links and file references stay in one non-wrapping row; overflow
   scrolls horizontally inside the strip and never expands the page or wraps into a second
   Composer row,
-- user messages align with the same right edge as assistant rows' content column,
+- user lanes end-align and assistant lanes start-align within the same document width;
+  user avatars are trailing and Agent avatars leading, while all body text stays left aligned,
 - avatars are compact and actual where available,
 - icon stacks overlap cleanly with stable spacing,
 - no redundant "teammate" label when the avatar stack already occupies that slot,
@@ -1097,7 +1301,8 @@ Every future slice touching conversation UI should keep or add focused tests for
 - private chat empty state shares the centered conversation empty state,
 - private chat does not expose `@` teammate routing,
 - channel teammate activity renders above the action row,
-- assistant action row remains the final visual layer of the turn,
+- execute turns end with the shared `terminalReport` result row; reply turns end with the
+  final assistant document, and neither may be duplicated outside the Timeline,
 - source icons render only for actual sources,
 - `web_search` text does not render when no search occurred,
 - avatar/source overflow counts do not collide with the stack,
@@ -1144,6 +1349,11 @@ Every future slice touching conversation UI should keep or add focused tests for
   scrolled away from the latest turn, asynchronous growth must not pull them back to the bottom.
 
 ## Implementation Slice Status
+
+> 这些 Slice 的 `implemented` 状态记录的是 v3.6 shared-surface baseline，不等于
+> v3.7 typed transcript 已完成。v3.7 cutover 后，WorkCell、旧 operation block 和
+> summary 只能作为 adapter 输入；是否完成以 canonical Timeline fingerprint、atomic
+> recovery 和 packaged macOS evidence 为准。
 
 ### Slice 2A: Contract And Component Boundary
 
@@ -1312,25 +1522,25 @@ Detailed package boundaries, component migration map, renderer-slot strategy, de
 guards, and validation commands are defined in
 [Conversation UI Package Extraction Implementation Plan](./conversation-surface-contract-implementation-plan.md).
 
-## Open Decisions
+## v3.7 Decision Disposition
 
-No blocker remains for Slice 2A, the current 2B first pass, the focused Slice 2C guard,
-or the core-only Slice 3 extraction.
+The former open transcript decisions are resolved so implementation cannot preserve a
+second UI path by accident:
 
-Deferred decisions:
+- the floating activity surface becomes the shared `EnvironmentPopover` shell slot. It
+  shows only the current ambient run/action and never becomes a channel-only history or
+  summary panel;
+- no `turnId` or thread-level time/text fallback may attach work. Projection requires an
+  explicit turn-run/action relation and a same-thread conversation-item anchor;
+- thread work appears in its owning typed row. Full detail can open through a trusted
+  run/artifact ref; there is no separate thread summary strip;
+- production `ConversationWorkCell` activity rendering is removed after surface parity
+  cutover. Preview, file and diff primitives may later move packages without changing
+  the one Timeline/registry ownership;
+- semantic fingerprint tests are mandatory now. Packaged macOS screenshots plus
+  semantic state, lineage and redacted logs are the release gate; whether pixel snapshots
+  also run on every CI job is tooling policy, not a product-design blocker.
 
-- whether the right floating activity panel becomes a shared shell slot or remains
-  channel-only until the next visual pass,
-- whether `turnId` fallback can be enabled after an explicit turn-run relation and
-  regression tests exist,
-- whether thread-level work belongs under one selected row, a separate thread summary
-  strip, or only run/thread detail,
-- whether second-wave components such as `ConversationWorkCell`, evidence previews,
-  file chips, and code/diff renderers are dependency-clean enough for
-  `packages/conversation-ui-react`,
-- whether screenshot regression becomes mandatory in CI or stays local/manual until the
-  fixtures stabilize.
-
-The approved shared-capability phase has no implementation-blocking product decision.
 Latest-message editing retains current workspace state, stays in the same thread/branch,
 and hides superseded work from the default transcript while preserving audit evidence.
+There are no unresolved product or architecture decisions for the v3.7 implementation.

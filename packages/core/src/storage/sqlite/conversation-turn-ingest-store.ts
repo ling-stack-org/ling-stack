@@ -36,13 +36,20 @@ export class SqliteConversationTurnIngestStore {
     input: AppendConversationUserTurnInput,
     now: string,
   ): AppendConversationUserTurnResult {
+    const scope = this.resolveThreadScope(input);
+    const actorType = input.actorType ?? "local_user";
+    if (actorType !== "local_user" && actorType !== "system") {
+      throw new Error(`Conversation turn input actor is not supported: ${actorType}`);
+    }
+    const createdByActor = actorType === "system" ? "system" : "local-user";
     const replay = this.items.getConversationItemByIdempotencyKey(input.threadId, input.idempotencyKey);
       if (replay) {
         if (replay.kind !== "user_message" || !replay.turnId || replay.channelId !== input.channelId) {
           throw new Error(`Conversation turn idempotency key belongs to another input: ${input.idempotencyKey}`);
         }
         const replayTurn = this.context.database.prepare(`
-          SELECT title, user_instruction, source_item_id
+          SELECT thread_id, kind, channel_id, teammate_id, title, user_instruction,
+                 source_item_id, source_turn_id, intervention_id, created_by_actor
           FROM ling_turns
           WHERE workspace_id = ? AND id = ?
         `).get(DEFAULT_WORKSPACE_ID, replay.turnId) as Record<string, SQLOutputValue> | undefined;
@@ -51,22 +58,34 @@ export class SqliteConversationTurnIngestStore {
           || (input.itemId !== undefined && input.itemId !== replay.id)
           || (input.turnId !== undefined && input.turnId !== replay.turnId)
           || replay.actorId !== input.actorId
+          || replay.actorType !== actorType
+          || replay.visibility !== scope.visibility
+          || replay.visibilityOwnerId !== scope.visibilityOwnerId
           || replay.supersedesItemId !== input.supersedesItemId
           || !sameUserMessagePayload(replay.payload, input.payload)
           || JSON.stringify(replay.domainRefs) !== JSON.stringify(input.domainRefs ?? [])
           || readString(replayTurn, "title") !== input.title
           || readString(replayTurn, "user_instruction") !== input.userInstruction
+          || readString(replayTurn, "thread_id") !== input.threadId
+          || readString(replayTurn, "kind") !== (input.turnKind ?? "initial_request")
+          || readNullableString(replayTurn, "channel_id") !== scope.channelId
+          || readNullableString(replayTurn, "teammate_id") !== scope.teammateId
+          || readNullableString(replayTurn, "source_turn_id") !== input.sourceTurnId
+          || readNullableString(replayTurn, "intervention_id") !== input.interventionId
+          || readString(replayTurn, "created_by_actor") !== createdByActor
           || readString(replayTurn, "source_item_id") !== replay.id) {
           throw new Error(`Conversation turn idempotency key belongs to another input: ${input.idempotencyKey}`);
         }
         const assignment = this.context.database.prepare(`
-          SELECT segment_id
+          SELECT segment_id, status
           FROM turn_context_assignments
-          WHERE turn_id = ? AND status = 'committed'
+          WHERE turn_id = ?
           ORDER BY revision DESC
           LIMIT 1
         `).get(replay.turnId) as Record<string, SQLOutputValue> | undefined;
-        if (!assignment) {
+        // Match getEffectiveTurnContextAssignment: a persisted provisional
+        // decision is effective too. Never fall back to an older revision.
+        if (!assignment || !["committed", "provisional"].includes(readString(assignment, "status"))) {
           throw new Error(`Conversation turn replay is missing its context assignment: ${replay.turnId}`);
         }
         return {
@@ -80,17 +99,8 @@ export class SqliteConversationTurnIngestStore {
         };
       }
 
-      const thread = this.context.database.prepare(`
-        SELECT channel_id, status
-        FROM ling_threads
-        WHERE workspace_id = ? AND id = ?
-      `).get(DEFAULT_WORKSPACE_ID, input.threadId) as Record<string, SQLOutputValue> | undefined;
-      if (!thread) throw new Error(`Ling thread not found: ${input.threadId}`);
-      if (readString(thread, "status") === "archived") {
+      if (scope.archived) {
         throw new Error(`Ling thread is archived: ${input.threadId}`);
-      }
-      if (readNullableString(thread, "channel_id") !== input.channelId) {
-        throw new Error(`Ling thread does not belong to channel: ${input.threadId}`);
       }
       if (input.sourceTurnId) {
         const source = this.context.database.prepare(`
@@ -110,8 +120,8 @@ export class SqliteConversationTurnIngestStore {
           automation_id, source_item_id, source_turn_id, intervention_id,
           active_run_id, last_run_id, created_by_actor, created_at, updated_at,
           completed_at
-        ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, NULL, NULL, NULL, NULL, NULL, ?, ?,
-          NULL, NULL, NULL, 'local-user', ?, ?, NULL)
+        ) VALUES (?, ?, ?, ?, 'open', ?, ?, ?, NULL, ?, NULL, NULL, NULL, ?, ?,
+          ?, NULL, NULL, ?, ?, ?, NULL)
       `).run(
         turnId,
         DEFAULT_WORKSPACE_ID,
@@ -119,9 +129,12 @@ export class SqliteConversationTurnIngestStore {
         input.turnKind ?? "initial_request",
         input.title,
         input.userInstruction,
-        input.channelId,
+        scope.channelId ?? null,
+        scope.teammateId ?? null,
         itemId,
         input.sourceTurnId ?? null,
+        input.interventionId ?? null,
+        createdByActor,
         now,
         now,
       );
@@ -132,9 +145,10 @@ export class SqliteConversationTurnIngestStore {
         turnId,
         kind: "user_message",
         status: "committed",
-        actorType: "local_user",
+        actorType,
         ...(input.actorId ? { actorId: input.actorId } : {}),
-        visibility: "channel",
+        visibility: scope.visibility,
+        ...(scope.visibilityOwnerId ? { visibilityOwnerId: scope.visibilityOwnerId } : {}),
         payload: input.payload,
         domainRefs: input.domainRefs ?? [],
         idempotencyKey: input.idempotencyKey,
@@ -180,7 +194,7 @@ export class SqliteConversationTurnIngestStore {
         dispatchWorkUnitId,
         DEFAULT_WORKSPACE_ID,
         turnId,
-        input.channelId,
+        scope.channelId ?? null,
         `channel-turn-dispatch:${turnId}`,
         stringifyJson({
           ...input.dispatch,
@@ -220,6 +234,54 @@ export class SqliteConversationTurnIngestStore {
         ...(dispatchWorkUnitId ? { dispatchWorkUnitId } : {}),
         idempotentReplay: false,
       };
+  }
+
+  /** Resolve authority from the durable Thread, never from a caller's visibility flag. */
+  private resolveThreadScope(input: AppendConversationUserTurnInput): {
+    readonly channelId?: string;
+    readonly teammateId?: string;
+    readonly visibility: "channel" | "thread_participants" | "agent_private";
+    readonly visibilityOwnerId?: string;
+    readonly archived: boolean;
+  } {
+    const thread = this.context.database.prepare(`
+      SELECT kind, channel_id, teammate_id, status, archived_at
+      FROM ling_threads WHERE workspace_id = ? AND id = ?
+    `).get(DEFAULT_WORKSPACE_ID, input.threadId) as Record<string, SQLOutputValue> | undefined;
+    if (!thread) throw new Error(`Ling thread not found: ${input.threadId}`);
+    const archived = readString(thread, "status") === "archived" || Boolean(readNullableString(thread, "archived_at"));
+    const kind = readString(thread, "kind");
+    const channelId = readNullableString(thread, "channel_id");
+    const teammateId = readNullableString(thread, "teammate_id");
+    if (channelId !== input.channelId) {
+      throw new Error(`Ling thread does not belong to channel: ${input.threadId}`);
+    }
+    if (input.teammateId !== undefined && input.teammateId !== teammateId) {
+      throw new Error(`Ling thread does not belong to teammate: ${input.threadId}`);
+    }
+    if (kind === "conversation" || kind === "teammate_direct") {
+      if (channelId || input.dispatch) {
+        throw new Error(`Non-channel conversation cannot accept a channel dispatch: ${input.threadId}`);
+      }
+      if (kind === "teammate_direct" && !teammateId?.trim()) {
+        throw new Error(`Private conversation thread has no teammate owner: ${input.threadId}`);
+      }
+      for (const itemId of [input.payload.replyToItemId, ...(input.payload.quotedItemIds ?? [])]) {
+        if (!itemId) continue;
+        const referenced = this.items.getEffectiveConversationItem(itemId);
+        if (!referenced || referenced.threadId !== input.threadId) {
+          throw new Error(`Conversation source item does not belong to thread: ${itemId}`);
+        }
+      }
+      return {
+        teammateId,
+        archived,
+        visibility: kind === "teammate_direct" ? "agent_private" : "thread_participants",
+        ...(kind === "teammate_direct" ? { visibilityOwnerId: teammateId } : {}),
+      };
+    }
+    if (!channelId) throw new Error(`Conversation turn thread kind is not supported: ${kind}`);
+    return { channelId, teammateId, visibility: "channel", archived };
   }
 
   private requireMatchingDispatchWorkUnitId(
@@ -290,8 +352,10 @@ function sameUserMessagePayload(
   existing: AppendConversationUserTurnInput["payload"],
   requested: AppendConversationUserTurnInput["payload"],
 ): boolean {
-  const existingMentionIds = existing.mentions.map((mention) => `${mention.kind}:${mention.id}`);
-  const requestedMentionIds = requested.mentions.map((mention) => `${mention.kind}:${mention.id}`);
+  // Labels are current presentation data (for example a teammate rename), not
+  // input identity. Preserve the accepted label while comparing exact ids.
+  const existingMentionIds = existing.mentions.map((mention) => [mention.kind, mention.id]);
+  const requestedMentionIds = requested.mentions.map((mention) => [mention.kind, mention.id]);
   return existing.body === requested.body
     && existing.format === requested.format
     && JSON.stringify(existingMentionIds) === JSON.stringify(requestedMentionIds)

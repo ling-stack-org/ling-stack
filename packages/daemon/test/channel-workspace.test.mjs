@@ -1,5 +1,7 @@
 import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync, realpathSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
@@ -15,8 +17,9 @@ import {
   resolveStoragePaths,
 } from "../../core/dist/index.js";
 import { createRequiredParticipantManifestV1, createWorkflowParticipantAuthorityV1 } from "../../contracts/dist/index.js";
+import { PiRunnerAdapter } from "../../runner-pi/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
-import { buildContextPack, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
+import { buildContextPack, estimateTextTokens, resolveProviderContextBudget } from "../dist/features/channels/context-packs.js";
 import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
 import { resolveChannelReplyExecutionTarget } from "../dist/features/channels/channel-reply-execution-target.js";
 import { resolveWorkflowParticipantRunProfile } from "../dist/features/channels/workflow-participant-run-profile.js";
@@ -41,9 +44,57 @@ import { ensureDirectWorkspaceReady } from "../dist/features/teammates/direct-wo
 import { createInitialWorkspaceBinding, createManagedGitWorktree, resolveGitRepoRoot } from "../dist/features/workspaces/managed-worktrees.js";
 import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureEmptyGitRepo, ensureGitRepo, ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
+import { commandOperationCandidate, fileOperationCandidate } from "./support/channel-operation-candidate-fixture.mjs";
+import { messageText, startRealPiChannelFixture, systemText } from "./support/channel-operation-real-pi-fixture.mjs";
+import { prepareFixtureTaskInput } from "./support/prepared-input-fixture.mjs";
 
 const require = createRequire(import.meta.url);
 const ASYNC_SETTLE_TIMEOUT_MS = 10_000;
+const TEST_RESTRICTED_NODE_PATH = realpathSync(process.execPath);
+const TEST_RESTRICTED_NODE_SHA256 = createHash("sha256")
+  .update(readFileSync(TEST_RESTRICTED_NODE_PATH))
+  .digest("hex");
+
+function withRestrictedCommandReadiness(config) {
+  return {
+    ...config,
+    testVerifiedPiRunner: true,
+    sandbox: {
+      ...config.sandbox,
+      restrictedCommands: {
+        // These orchestration tests never execute this helper. They need a
+        // Host-owned runtime identity so the fail-closed readiness gate can
+        // admit the typed plan before their synthetic Runner emits evidence.
+        inputHelper: {
+          path: TEST_RESTRICTED_NODE_PATH,
+          sha256: TEST_RESTRICTED_NODE_SHA256,
+          version: "channel-workspace-readiness-v1",
+        },
+        executables: {
+          node: {
+            path: TEST_RESTRICTED_NODE_PATH,
+            sha256: TEST_RESTRICTED_NODE_SHA256,
+          },
+        },
+      },
+    },
+  };
+}
+
+class VerifiedExecutionTestRunner extends PiRunnerAdapter {
+  constructor(delegate) {
+    super();
+    this.delegate = delegate;
+  }
+
+  async prepareTaskInput(options) {
+    return this.delegate.prepareTaskInput?.(options) ?? prepareFixtureTaskInput(options);
+  }
+
+  async runTask(options) {
+    return this.delegate.runTask(options);
+  }
+}
 
 function projectionFor(item, assignment) {
   return {
@@ -185,6 +236,117 @@ test("provider runtime availability mapper records transient failures only", () 
     now: "2026-06-27T00:00:00.000Z",
   });
   assert.equal(promptLeak, undefined);
+});
+
+test("channel proposal confirmation claim is durable, first-writer-wins, and recoverable", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-proposal-cas-"));
+  const store = createSqliteRunStore(cwd);
+  const now = "2026-09-19T10:00:00.000Z";
+  try {
+    const { channel, message } = createStoreChannelAndMessage(store, cwd, "prepare a safe change");
+    const proposal = store.createChannelExecutionProposal({
+      channelId: channel.id,
+      sourceMessageId: message.id,
+      proposedByTeammateId: "ling_agent",
+      title: "Safe change",
+      prompt: "Prepare a safe change",
+      assigneeTeammateId: "ling_agent",
+      status: "draft",
+    }, now);
+    assert.equal(proposal.revision, 1);
+
+    const first = store.claimChannelExecutionProposal(
+      proposal.id,
+      "proposal-confirm:first",
+      now,
+      "2026-09-19T10:05:00.000Z",
+    );
+    assert.equal(first.kind, "claimed");
+    assert.equal(first.proposal.revision, 2);
+
+    const second = store.claimChannelExecutionProposal(
+      proposal.id,
+      "proposal-confirm:second",
+      now,
+      "2026-09-19T10:05:00.000Z",
+    );
+    assert.equal(second.kind, "busy");
+
+    assert.equal(store.updateChannelExecutionProposal(proposal.id, {
+      status: "cancelled",
+    }, now), undefined, "a stale UI cancel cannot steal an active confirmation claim");
+    assert.equal(store.updateChannelExecutionProposal(proposal.id, {
+      status: "blocked",
+      expectedRevision: 1,
+    }, now), undefined, "an old revision cannot overwrite a claimed proposal");
+
+    const blocked = store.updateChannelExecutionProposal(proposal.id, {
+      status: "blocked",
+      errorMessage: "provider unavailable",
+      expectedRevision: first.proposal.revision,
+      confirmationClaimId: "proposal-confirm:first",
+    }, now);
+    assert.equal(blocked?.status, "blocked");
+    assert.equal(blocked?.revision, 3);
+
+    const recovered = store.claimChannelExecutionProposal(
+      proposal.id,
+      "proposal-confirm:recovery",
+      "2026-09-19T10:06:00.000Z",
+      "2026-09-19T10:11:00.000Z",
+    );
+    assert.equal(recovered.kind, "claimed", "blocked proposals can be retried after the prior claim is released");
+    assert.equal(recovered.proposal.revision, 4);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("an expired proposal confirmation lease can be reclaimed without releasing the old claim", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-proposal-lease-expiry-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const now = "2026-09-19T11:00:00.000Z";
+    const { channel, message } = createStoreChannelAndMessage(store, cwd, "recover an abandoned confirmation");
+    const proposal = store.createChannelExecutionProposal({
+      channelId: channel.id,
+      sourceMessageId: message.id,
+      proposedByTeammateId: "ling_agent",
+      title: "Abandoned confirmation",
+      prompt: "Recover an abandoned confirmation",
+      assigneeTeammateId: "ling_agent",
+      status: "draft",
+    }, now);
+
+    const first = store.claimChannelExecutionProposal(
+      proposal.id,
+      "proposal-confirm:abandoned",
+      now,
+      "2026-09-19T11:05:00.000Z",
+    );
+    assert.equal(first.kind, "claimed");
+    assert.equal(first.proposal.revision, 2);
+
+    const recovered = store.claimChannelExecutionProposal(
+      proposal.id,
+      "proposal-confirm:recovered",
+      "2026-09-19T11:06:00.000Z",
+      "2026-09-19T11:11:00.000Z",
+    );
+    assert.equal(recovered.kind, "claimed");
+    assert.equal(recovered.proposal.revision, 3);
+
+    assert.equal(store.updateChannelExecutionProposal(proposal.id, {
+      status: "blocked",
+      errorMessage: "The expired owner cannot finalize this proposal.",
+      expectedRevision: first.proposal.revision,
+      confirmationClaimId: "proposal-confirm:abandoned",
+    }, "2026-09-19T11:06:00.000Z"), undefined);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test("channel branches follow archive restore and delete lifecycle", async () => {
@@ -366,6 +528,15 @@ test("context budget manager resolves provider modes and trims lower priority se
   assert.deepEqual(trimmed.sections.map((section) => section.id), ["must"]);
   assert.deepEqual(trimmed.droppedSectionIds, ["low", "high"]);
   assert.equal(trimmed.overBudget, false);
+
+  const protectedOnly = buildContextPack({
+    kind: "channel_reply",
+    providerPreset: { ...providerBase, contextWindow: 1800, maxTokens: 512 },
+    sections: [{ id: "current_user_turn", role: "user", priority: "must_keep", text: "full current request", estimatedTokens: 3_000 }],
+  });
+  assert.deepEqual(protectedOnly.sections.map((section) => section.id), ["current_user_turn"]);
+  assert.deepEqual(protectedOnly.droppedSectionIds, []);
+  assert.equal(protectedOnly.overBudget, true);
 });
 
 test("ling agent session view is open when channel has no active work", async () => {
@@ -3692,7 +3863,7 @@ test("conversation stream materializes uploaded attachments into the run prompt"
   }
 });
 
-test("channel message stream does not expose hidden task proposal blocks", async () => {
+test("channel message stream hides unbound task proposal blocks without creating approvals", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-message-stream-proposal-"));
   const runner = new ScriptedRunner([
     `可以开始。\n<ling_task_proposal>{"title":"Stream proposal","prompt":"Implement streaming","assigneeTeammateId":"teammate_builtin_engineer","acceptanceCriteria":["reply streams"],"collaborationSteps":[{"teammateId":"teammate_builtin_engineer","action":"coordinated","summary":"Implement"}],"requiredTools":["read"],"riskSummary":"low"}</ling_task_proposal>`,
@@ -3727,8 +3898,7 @@ test("channel message stream does not expose hidden task proposal blocks", async
     assert.equal(events[5].data.aiReply.body, "可以开始。");
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].title, "Stream proposal");
+    assert.equal(proposals.proposals.length, 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -3984,6 +4154,128 @@ test("channel hard summary uses the effective workspace provider before dispatch
     assert.equal(summaries[0].objective, "Preserve the durable historical objective.");
     assert.ok(summaries[0].coveredThroughSequence < currentItem.sequence);
     assert.match(runner.replyRuns[0].task.prompt, /Preserve the durable historical objective/);
+    const dispatch = store.findWorkUnitByIdempotency({
+      kind: "channel_turn_dispatch", ownerType: "ling_turn", ownerId: currentItem.turnId,
+      idempotencyKey: `channel-turn-dispatch:${currentItem.turnId}`,
+    });
+    assert.ok(dispatch);
+    const summaryEvents = store.listRuntimeEvents(dispatch.id)
+      .filter((event) => event.type === "work_unit_progress" && event.data.stage === "conversation_hard_summary");
+    assert.deepEqual(summaryEvents.map((event) => event.data.status), ["completed"]);
+    assert.equal(summaryEvents[0].attemptId, dispatch.activeAttemptId);
+    assert.equal(summaryEvents[0].data.sourceItemId, currentItem.id);
+
+    runner.failSummary = true;
+    for (let index = 10; index < 20; index += 1) {
+      const createdAt = new Date(Date.parse("2026-08-10T06:02:00.000Z") + index * 10_000).toISOString();
+      const turn = store.appendConversationUserTurn({
+        itemId: `item_proactive_summary_${index}`,
+        turnId: `turn_proactive_summary_${index}`,
+        channelId: channel.id,
+        threadId: thread.id,
+        title: `Historical fact ${index}`,
+        userInstruction: `Historical fact ${index}`,
+        payload: {
+          body: `Historical fact ${index}: ${"x".repeat(900)}`,
+          format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [],
+        },
+        idempotencyKey: `proactive-summary:${index}`,
+      }, createdAt);
+      const run = store.createRun({
+        id: `run_proactive_summary_${index}`,
+        cwd,
+        taskId: `task_proactive_summary_${index}`,
+        channelId: channel.id,
+        threadId: thread.id,
+        turnId: turn.turnId,
+        providerName: "test",
+        providerModel: "test",
+        taskSnapshot: { id: `task_proactive_summary_${index}`, title: `Historical fact ${index}`, prompt: `Historical fact ${index}` },
+        providerSnapshot: { provider: "test", model: "test" },
+        requestSnapshot: { cwd, task: { id: `task_proactive_summary_${index}`, title: `Historical fact ${index}`, prompt: `Historical fact ${index}` } },
+        createdAt: new Date(Date.parse(createdAt) + 1_000).toISOString(),
+      });
+      store.markRunStarted(run.id, new Date(Date.parse(createdAt) + 2_000).toISOString());
+      store.markRunSucceeded(run.id, new Date(Date.parse(createdAt) + 3_000).toISOString());
+    }
+    const failedSummaryTurn = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Engineer continue with the retained facts after summary failure.",
+      mentions: [{ id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" }],
+      teammateId: "teammate_builtin_engineer",
+      requestAiReply: true,
+    });
+    const failedSource = store.getConversationItem(failedSummaryTurn.message.id);
+    assert.ok(failedSource);
+    const failedDispatch = store.findWorkUnitByIdempotency({
+      kind: "channel_turn_dispatch", ownerType: "ling_turn", ownerId: failedSource.turnId,
+      idempotencyKey: `channel-turn-dispatch:${failedSource.turnId}`,
+    });
+    assert.ok(failedDispatch);
+    const failedEvents = store.listRuntimeEvents(failedDispatch.id)
+      .filter((event) => event.type === "work_unit_progress" && event.data.stage === "conversation_hard_summary");
+    assert.deepEqual(failedEvents.map((event) => event.data.status), ["generation_failed"]);
+    assert.equal(failedEvents[0].data.fallback, "prepared_input_budget_gate");
+    assert.equal(store.listConversationContextSummaries({ threadId: thread.id }).length, 1);
+    const listedFallback = await waitForChannelMessageStatus(
+      daemon.url, cwd, channel.id, failedSummaryTurn.aiReply.id, "ready", failedSummaryTurn.message.threadId,
+    );
+    const fallbackReply = listedFallback.messages.find((message) => message.id === failedSummaryTurn.aiReply.id);
+    assert.equal(fallbackReply.body, "Reply after proactive summary.");
+    assert.equal(runner.replyRuns.length, 2);
+    const fallbackRun = runner.replyRuns[1];
+    const preparedTokens = estimateTextTokens(fallbackRun.systemPrompt) + estimateTextTokens(fallbackRun.task.prompt);
+    assert.ok(preparedTokens <= resolveProviderContextBudget(provider, "channel_reply").inputBudgetTokens);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("channel hard summary with no completed prefix records the limitation and blocks oversized input", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-no-summary-prefix-"));
+  const runner = new SummaryAwareRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const provider = (await createStaticChatProvider(daemon.url, cwd, {
+      contextWindow: 1_800, maxTokens: 512,
+    })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    await setWorkspaceDefaultProvider(daemon.url, cwd, provider.id);
+    await putJson(`${daemon.url}/teammates/${encodeURIComponent("teammate_builtin_engineer")}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      memberships: [{ channelId: channel.id }],
+    });
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: `@Engineer analyze this full input: ${"x".repeat(12_000)}`,
+      mentions: [{ id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" }],
+      teammateId: "teammate_builtin_engineer",
+      providerPresetId: provider.id,
+      requestAiReply: true,
+    });
+    const listed = await waitForChannelMessageStatus(
+      daemon.url, cwd, channel.id, created.aiReply.id, "blocked", created.message.threadId,
+    );
+    assert.match(listed.messages.find((message) => message.id === created.aiReply.id).body, /context budget/u);
+    const store = stores.get(cwd);
+    const source = store.getConversationItem(created.message.id);
+    const dispatch = store.findWorkUnitByIdempotency({
+      kind: "channel_turn_dispatch", ownerType: "ling_turn", ownerId: source.turnId,
+      idempotencyKey: `channel-turn-dispatch:${source.turnId}`,
+    });
+    assert.ok(dispatch);
+    const events = store.listRuntimeEvents(dispatch.id)
+      .filter((event) => event.type === "work_unit_progress" && event.data.stage === "conversation_hard_summary");
+    assert.deepEqual(events.map((event) => event.data.status), ["no_eligible_prefix"]);
+    assert.equal(events[0].data.fallback, "prepared_input_budget_gate");
+    assert.equal(runner.runs.length, 0);
+    assert.equal(store.listRuns({ limit: 10 }).length, 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -4289,7 +4581,9 @@ test("multi-participant concrete file workflow preserves operation-derived tools
       ],
       requestAiReply: true,
     });
-    assertCoordinatorWorkflowStartReply(created);
+    assert.ok(created.autoStartedWorkflow);
+    assert.equal(created.aiReply.kind, "ai_reply");
+    assert.ok(["pending", "ready"].includes(created.aiReply.status));
     const store = stores.get(cwd);
     assert.ok(store);
     const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
@@ -4333,10 +4627,70 @@ test("multi-participant concrete file workflow preserves operation-derived tools
   }
 });
 
+test("review-only participant uses an output packet while execution participant keeps Host evidence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-review-only-participant-"));
+  const runner = new RecordingRunner();
+  const stores = new Map();
+  const daemon = await startDaemonForTest(runner, {
+    storeFactory: (storeCwd) => {
+      const store = createSqliteRunStore(storeCwd);
+      stores.set(storeCwd, store);
+      return store;
+    },
+  });
+  try {
+    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
+    for (const teammateId of ["teammate_builtin_designer", "teammate_builtin_engineer"]) {
+      await patchJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}?cwd=${encodeURIComponent(cwd)}`, {
+        providerPresetId: provider.id,
+      });
+    }
+    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      name: "Review then execute",
+      status: "active",
+      boundPath: cwd,
+      defaultProviderPresetId: provider.id,
+      autoReplyMode: "mentions_only",
+      allowedTools: ["read", "bash", "edit", "write"],
+    })).channel;
+    for (const teammateId of ["teammate_builtin_designer", "teammate_builtin_engineer"]) {
+      await putJson(`${daemon.url}/teammates/${encodeURIComponent(teammateId)}/channels?cwd=${encodeURIComponent(cwd)}`, {
+        memberships: [{ channelId: channel.id }],
+      });
+    }
+
+    const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
+      body: "@Designer @Engineer 现在开始执行这个多 Agent 工作流：Designer 先评审文件结构和验收标准，Engineer 创建 review-only-proof.js 并运行 node review-only-proof.js。",
+      mentions: [
+        { id: "teammate_builtin_designer", label: "Designer", kind: "ai-teammate" },
+        { id: "teammate_builtin_engineer", label: "Engineer", kind: "ai-teammate" },
+      ],
+      requestAiReply: true,
+    });
+
+    assert.ok(created.autoStartedWorkflow);
+    assert.equal(created.aiReply.kind, "ai_reply");
+    assert.ok(["pending", "ready"].includes(created.aiReply.status));
+    assert.equal(created.autoStartedWorkflow.workflowSteps.length, 2);
+    const [designerStep, engineerStep] = created.autoStartedWorkflow.workflowSteps;
+    assert.equal(designerStep.toParticipantId, "teammate_builtin_designer");
+    assert.equal(designerStep.metadata.delegatedRequirement.expectedOutcome, "synthesis");
+    assert.deepEqual(designerStep.metadata.executionOperationIds, []);
+    assert.equal(engineerStep.toParticipantId, "teammate_builtin_engineer");
+    assert.equal(engineerStep.metadata.delegatedRequirement.expectedOutcome, "execution");
+    assert.ok(engineerStep.metadata.executionOperationIds.length > 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("workflow Host binding rejects a semantic substitute before Completion Gate", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-exact-command-boundary-"));
   const runner = new MismatchedExactCommandRunner();
-  const daemon = await startDaemonForTest(runner, undefined, { channels: { intentSelector: true } });
+  const daemon = await startDaemonForTest(runner, undefined,
+    withRestrictedCommandReadiness({ channels: { intentSelector: true } }));
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -4363,7 +4717,8 @@ test("workflow Host binding rejects a semantic substitute before Completion Gate
     assertCoordinatorWorkflowStartReply(created);
     await waitForCondition(() => runner.decisions.length === 1, "workflow exact-command binding rejection");
     assert.equal(runner.decisions[0].approved, false);
-    assert.match(runner.decisions[0].reason, /exact command binding rejected bash/u);
+    assert.match(runner.decisions[0].reason,
+      /operation_binding_command_out_of_scope: No unique owned operation authorizes this exact command\./u);
     await waitForCondition(async () => {
       const steps = await getJson(`${daemon.url}/workflows/${encodeURIComponent(created.autoStartedWorkflow.workflow.id)}/steps?cwd=${encodeURIComponent(cwd)}`);
       return steps.workflowSteps.every((step) =>
@@ -4562,7 +4917,7 @@ test("channel intent selector asks one clarify question for underspecified work 
 test("channel intent selector auto-starts explicit direct workflow proposals", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-direct-workflow-"));
   const runner = new WorkflowEvidenceRunner();
-  const daemon = await startDaemonForTest(runner);
+  const daemon = await startDaemonForTest(runner, {}, { channels: { terminalReports: true } });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -4590,15 +4945,23 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
 
     assertCoordinatorWorkflowStartReply(created);
     assert.equal(created.autoStartedWorkflow.workflowSteps.length, 3);
-    await waitForCondition(() => runner.runs.length === 3, "direct workflow proposal runner sequence");
+    await waitForCondition(
+      () => runner.runs.filter((run) => !/terminal report synthesizer/i.test(run.systemPrompt ?? "")).length === 3,
+      "direct workflow proposal runner sequence",
+    );
     let listedMessages;
     await waitForCondition(async () => {
       listedMessages = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/items?cwd=${encodeURIComponent(cwd)}`);
-      return listedMessages.messages.some((message) =>
-        message.kind === "ai_reply" && message.authorId === "ling_agent" && /^(完成：|Done:)/u.test(message.body));
+      return listedMessages.items.some((item) =>
+        item.kind === "terminal_report" && item.payload?.outcomeStatus === "succeeded");
     }, "direct workflow terminal publication");
-    const terminalReply = assertCoordinatorWorkflowTerminalReply(listedMessages.messages);
-    assert.match(terminalReply.body, /(?:结果：|Result:) Designer reply/);
+    const terminalItem = listedMessages.items.find((item) =>
+      item.kind === "terminal_report" && item.payload?.outcomeStatus === "succeeded");
+    assert.ok(terminalItem);
+    const terminalReport = await getJson(`${daemon.url}/terminal-reports/${encodeURIComponent(terminalItem.payload.reportId)}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(terminalReport.report.outcome.status, "succeeded");
+    assert.match(terminalReport.report.outcome.summary, /任务已完成/u);
+    assert.equal(terminalReport.report.participants.length, 3);
 
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
@@ -4617,7 +4980,7 @@ test("channel intent selector auto-starts explicit direct workflow proposals", a
     assert.equal(decisions.decisions[0].action, "execute");
     assert.equal(decisions.decisions[0].status, "accepted");
     assert.equal(decisions.decisions[0].proposalId, proposals.proposals[0].id);
-    assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
+    assert.equal(decisions.decisions.some((decision) => decision.workflowId === created.autoStartedWorkflow.workflow.id && /proposal .*: (?:started|queued)\./u.test(decision.reason)), true);
 
     assert.equal(created.autoStartedWorkflow.workflow.metadata.responseLanguage, "follow_user");
     assert.match(created.autoStartedWorkflow.workflowSteps[0].prompt, /Match the language of the most recent user message/);
@@ -4733,7 +5096,7 @@ test("single-step file creation becomes direct workflow with bounded write tools
     assert.equal(decisions.decisions.length, 2);
     assert.equal(decisions.decisions[0].action, "execute");
     assert.equal(decisions.decisions[0].status, "accepted");
-    assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
+    assert.equal(decisions.decisions.some((decision) => decision.workflowId === created.autoStartedWorkflow.workflow.id && /proposal .*: (?:started|queued)\./u.test(decision.reason)), true);
 
     assert.deepEqual(created.autoStartedWorkflow.workflowSteps[0].metadata.requiredTools, ["write"]);
     assert.equal(runner.runs.length, 1);
@@ -4991,18 +5354,20 @@ test("thread follow-up can create the single file named by the previous Ling Age
   }
 });
 
-test("thread follow-up opens the recent HTML target with bounded bash tools", async () => {
+test("thread follow-up opens the recent HTML target with the dedicated Host capability", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-followup-browser-open-"));
   const runner = new RecordingRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
+    desktopBridgeToken: "deterministic-open-host-token",
     storeFactory: (storeCwd) => {
       const store = createSqliteRunStore(storeCwd);
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, withRestrictedCommandReadiness({ defaultWorkspaceCwd: cwd }));
   try {
+    await publishHostOpenAvailability(daemon.url, "deterministic-open-host-token");
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -5051,11 +5416,12 @@ test("thread follow-up opens the recent HTML target with bounded bash tools", as
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
     assert.equal(proposals.proposals[0].status, "accepted");
-    assert.deepEqual(proposals.proposals[0].requiredTools, ["bash"]);
-    assert.match(proposals.proposals[0].prompt, /Open index\.html in the local browser/);
+    assert.deepEqual(proposals.proposals[0].requiredTools, []);
+    assert.match(proposals.proposals[0].prompt, /dedicated Ling Host preview capability/);
     assert.doesNotMatch(proposals.proposals[0].prompt, /Create index\.html|declared file tool scope/);
     assert.equal(runner.runs.length, 1);
-    assert.deepEqual(runner.runs[0].tools, ["bash"]);
+    assert.deepEqual(runner.runs[0].tools, []);
+    assert.deepEqual(runner.runs[0].hostCapabilityTools?.map((tool) => tool.name), ["host_open_local_target"]);
     assert.match(runner.runs[0].task.prompt, /Target: index\.html/);
     assert.match(runner.runs[0].task.prompt, /Do not recreate or edit the file/);
   } finally {
@@ -5066,23 +5432,27 @@ test("thread follow-up opens the recent HTML target with bounded bash tools", as
 
 test("model-assisted thread follow-up opens recent target from typed operation kind", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-open-"));
+  let previousReply;
   const runner = new ScriptedRunner([
-    JSON.stringify({
+    () => JSON.stringify({
       action: "execute",
       reason: "User wants to preview the recent local artifact.",
-      execution: { operations: [{ id: "open_target", kind: "open_local_target", targetKind: "file", required: true, dependsOn: [] }] },
+      execution: { schemaVersion: 2, operations: [fileOperationCandidate({ id: "open_target", kind: "open_local_target",
+        sourceQuote: "可以直接帮我展示一下这个成果吗？", path: "index.html", targetSourceItemId: previousReply.id })] },
     }),
     "Opened local target.",
   ]);
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
+    desktopBridgeToken: "typed-open-host-token",
     storeFactory: (storeCwd) => {
       const store = createSqliteRunStore(storeCwd);
       stores.set(storeCwd, store);
       return store;
     },
-  }, { channels: { intentSelector: true } });
+  }, withRestrictedCommandReadiness({ defaultWorkspaceCwd: cwd, channels: { intentSelector: true } }));
   try {
+    await publishHostOpenAvailability(daemon.url, "typed-open-host-token");
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
@@ -5105,7 +5475,7 @@ test("model-assisted thread follow-up opens recent target from typed operation k
       },
       "2026-06-12T09:00:00.000Z",
     );
-    appendChannelItemFixture(store,
+    previousReply = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         threadId: previousUser.threadId,
@@ -5129,20 +5499,21 @@ test("model-assisted thread follow-up opens recent target from typed operation k
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 1);
     assert.equal(proposals.proposals[0].status, "accepted");
-    assert.deepEqual(proposals.proposals[0].requiredTools, ["bash"]);
-    assert.match(proposals.proposals[0].prompt, /Open index\.html in the local browser/);
-    assert.doesNotMatch(proposals.proposals[0].prompt, /Create index\.html|declared file tool scope/);
+    assert.deepEqual(proposals.proposals[0].requiredTools, []);
+    assert.match(proposals.proposals[0].prompt, /open_target: open_local_target \(index\.html\)/);
+    assert.doesNotMatch(proposals.proposals[0].prompt, /file_create|file_edit/);
     const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(intentDecisions.decisions.some((decision) =>
       decision.action === "execute" &&
       decision.createdBy === "model_policy" &&
-      /execute\/open_local_target/.test(decision.reason)
+      decision.execution?.operations[0]?.kind === "open_local_target"
     ), true);
     assert.equal(runner.runs.length, 2);
     assert.match(runner.runs[0].systemPrompt, /channel intent selector/i);
-    assert.deepEqual(runner.runs[1].tools, ["bash"]);
-    assert.match(runner.runs[1].task.prompt, /Target: index\.html/);
-    assert.match(runner.runs[1].task.prompt, /Do not recreate or edit the file/);
+    assert.deepEqual(runner.runs[1].tools, []);
+    assert.deepEqual(runner.runs[1].hostCapabilityTools?.map((tool) => tool.name), ["host_open_local_target"]);
+    assert.match(runner.runs[1].task.prompt, /open_target: open_local_target -> index\.html/);
+    assert.match(runner.runs[1].task.prompt, /Execute only the operations owned by this step/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5151,24 +5522,21 @@ test("model-assisted thread follow-up opens recent target from typed operation k
 
 test("model-assisted thread follow-up writes the recent local target without phrase-rule matching", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-file-"));
-  const runner = new ScriptedRunner([
-    JSON.stringify({
+  let previousReply;
+  const content = "<!doctype html>\n<html><body><canvas id=\"game\"></canvas><script>const gameReady = true;</script></body></html>";
+  const daemon = await startRealPiChannelFixture(cwd, (request) => {
+    if (/channel intent selector/i.test(systemText(request))) return { text: JSON.stringify({
       action: "execute",
       reason: "User is asking Ling to write the previously discussed file locally.",
-      execution: { operations: [{ id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] }] },
-    }),
-    "Created local file.",
-  ]);
-  const stores = new Map();
-  const daemon = await startDaemonForTest(runner, {
-    storeFactory: (storeCwd) => {
-      const store = createSqliteRunStore(storeCwd);
-      stores.set(storeCwd, store);
-      return store;
-    },
-  }, { channels: { intentSelector: true } });
+      execution: { schemaVersion: 2, operations: [fileOperationCandidate({ id: "create_file",
+        sourceQuote: "你现在可以帮我写在本地里面了吗？", path: "index.html", targetSourceItemId: previousReply.id,
+        contentSource: { kind: "literal", text: content, sourceQuote: content, sourceItemId: previousReply.id } })] },
+    }) };
+    if (!request.messages.some((message) => message.role === "tool")) return { tool: "write", input: { path: "index.html", content } };
+    return { text: "Created local file: index.html." };
+  });
   try {
-    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    const provider = (await createStaticChatProvider(daemon.url, cwd, daemon.providerOverrides)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Model thread follow-up execution",
@@ -5178,7 +5546,7 @@ test("model-assisted thread follow-up writes the recent local target without phr
       autoReplyMode: "mentions_only",
       allowedTools: ["read", "grep", "find", "ls", "write"],
     })).channel;
-    const store = stores.get(cwd);
+    const store = daemon.store;
     assert.ok(store);
     const previousUser = appendChannelItemFixture(store,
       {
@@ -5190,7 +5558,7 @@ test("model-assisted thread follow-up writes the recent local target without phr
       },
       "2026-06-12T09:00:00.000Z",
     );
-    appendChannelItemFixture(store,
+    previousReply = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         threadId: previousUser.threadId,
@@ -5215,6 +5583,7 @@ test("model-assisted thread follow-up writes the recent local target without phr
       body: "你现在可以帮我写在本地里面了吗？",
     });
 
+    assert.ok(created.aiReply, JSON.stringify({ created, decisions: store.listChannelIntentDecisions({ channelId: channel.id, limit: 10 }) }));
     assertCoordinatorWorkflowStartReply(created, previousUser.id);
     assert.equal(created.autoStartedWorkflow.workflowSteps.length, 1);
     assert.doesNotMatch(created.aiReply.body, /不能直接修改工作区|cannot directly modify|没有被授权执行工作区写入/i);
@@ -5223,21 +5592,28 @@ test("model-assisted thread follow-up writes the recent local target without phr
     assert.equal(proposals.proposals[0].status, "accepted");
     assert.equal(proposals.proposals[0].linkedWorkflowId, created.autoStartedWorkflow.workflow.id);
     assert.deepEqual(proposals.proposals[0].requiredTools, ["write"]);
-    assert.match(proposals.proposals[0].prompt, /Target: index\.html/);
+    assert.match(proposals.proposals[0].prompt, /create_file: file_create \(index\.html\)/);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(routeDecisions.decisions, []);
     const intentDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(intentDecisions.decisions.some((decision) =>
       decision.action === "execute" &&
       decision.createdBy === "model_policy" &&
-      /Model-assisted execute\/file_create validated/.test(decision.reason)
+      decision.execution?.operations[0]?.kind === "file_create"
     ), true);
-    assert.equal(runner.runs.length, 2);
-    assert.match(runner.runs[0].systemPrompt, /channel intent selector/i);
-    assert.deepEqual(runner.runs[1].tools, ["write"]);
-    assert.match(runner.runs[1].task.prompt, /Target: index\.html/);
-    assert.match(runner.runs[1].task.prompt, /Requested content from recent same-thread code block/);
-    assert.match(runner.runs[1].task.prompt, /gameReady = true/);
+    const createOperation = intentDecisions.decisions.find((decision) => decision.createdBy === "model_policy").execution.operations[0];
+    assert.equal(createOperation.binding.contentSource.kind, "literal");
+    assert.equal(createOperation.binding.contentSource.text, content);
+    assert.deepEqual(createOperation.binding.contentSource.sourceRefs.map((ref) => ref.itemId), [previousReply.id]);
+    const { runs } = await daemon.assertWorkflowCompleted(created, { files: [{ path: "index.html", content }],
+      actionTypes: ["write"], participantIds: ["ling_agent"] });
+    assert.equal(daemon.selectorRequests.length, 1);
+    assert.match(systemText(daemon.selectorRequests[0]), /channel intent selector/i);
+    assert.equal(runs.length, 1);
+    assert.deepEqual(runs[0].requestSnapshot.tools, ["write"]);
+    assert.match(runs[0].taskSnapshot.prompt, /create_file: file_create -> index\.html/);
+    assert.match(runs[0].taskSnapshot.prompt, /"kind":"literal"/);
+    assert.match(runs[0].taskSnapshot.prompt, /gameReady = true/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5251,9 +5627,11 @@ test("model-assisted create-and-run materializes ordered write and Node operatio
       action: "execute",
       reason: "User explicitly requested a file write followed by a Node verification.",
       execution: {
+        schemaVersion: 2,
         operations: [
-          { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
-          { id: "run_command", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
+          fileOperationCandidate({ id: "create_file", sourceQuote: "创建 app.js，内容是 console.log('ok')", path: "app.js",
+            contentSource: { kind: "literal", text: "console.log('ok')", sourceQuote: "console.log('ok')" } }),
+          commandOperationCandidate({ sourceQuote: "然后运行 node app.js 验证。", command: "node app.js", dependsOn: ["create_file"] }),
         ],
       },
     }),
@@ -5266,7 +5644,7 @@ test("model-assisted create-and-run materializes ordered write and Node operatio
       stores.set(storeCwd, store);
       return store;
     },
-  }, { channels: { intentSelector: true } });
+  }, withRestrictedCommandReadiness({ channels: { intentSelector: true } }));
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -5316,32 +5694,35 @@ test("model-assisted create-and-run materializes ordered write and Node operatio
   }
 });
 
-test("model-assisted multi-agent file verification synthesizes Host content evidence when no command is supplied", async () => {
+test("model-assisted multi-agent file verification binds an actual QA read when no command is supplied", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-model-multi-agent-file-verify-"));
-  const runner = new ScriptedRunner([
-    JSON.stringify({
+  const daemon = await startRealPiChannelFixture(cwd, (request) => {
+    if (/channel intent selector/i.test(systemText(request))) return { text: JSON.stringify({
       action: "execute",
       reason: "Engineer writes the file and QA verifies its literal content.",
       execution: {
+        schemaVersion: 2,
         operations: [
-          { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
-          { id: "run_command", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
+          fileOperationCandidate({ id: "create_file", path: "proof.txt",
+            sourceQuote: "@Engineer @QA 请协作创建 proof.txt，内容为 model-multi-agent-ok；QA 必须在 Engineer 完成后验证文件内容。",
+            owner: { participantId: "teammate_builtin_engineer", sourceQuote: "Engineer" },
+            contentSource: { kind: "literal", text: "model-multi-agent-ok", sourceQuote: "model-multi-agent-ok" } }),
+          fileOperationCandidate({ id: "verify_target", kind: "file_read", path: "proof.txt", dependsOn: ["create_file"],
+            sourceQuote: "@Engineer @QA 请协作创建 proof.txt，内容为 model-multi-agent-ok；QA 必须在 Engineer 完成后验证文件内容。",
+            owner: { participantId: "teammate_builtin_qa", sourceQuote: "QA" } }),
         ],
       },
-    }),
-    "Engineer completed the file write.",
-    "QA completed the content verification.",
-  ]);
-  const stores = new Map();
-  const daemon = await startDaemonForTest(runner, {
-    storeFactory: (storeCwd) => {
-      const store = createSqliteRunStore(storeCwd);
-      stores.set(storeCwd, store);
-      return store;
-    },
-  }, { channels: { intentSelector: true } });
+    }) };
+    const isWriter = request.tools.some((tool) => tool.function.name === "write");
+    const toolResult = request.messages.find((message) => message.role === "tool");
+    if (!toolResult) return isWriter
+      ? { tool: "write", input: { path: "proof.txt", content: "model-multi-agent-ok" } }
+      : { tool: "read", input: { path: "proof.txt" } };
+    if (!isWriter) assert.equal(messageText(toolResult), "model-multi-agent-ok", "QA must receive the actual file bytes");
+    return { text: isWriter ? "Engineer completed proof.txt." : "QA read proof.txt and verified model-multi-agent-ok." };
+  });
   try {
-    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    const provider = (await createStaticChatProvider(daemon.url, cwd, daemon.providerOverrides)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
     const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Model multi-agent file verification",
@@ -5370,21 +5751,26 @@ test("model-assisted multi-agent file verification synthesizes Host content evid
     });
 
     assertCoordinatorWorkflowStartReply(created);
-    const store = stores.get(cwd);
+    const store = daemon.store;
     assert.ok(store);
     const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
       .find((candidate) => candidate.action === "execute");
     assert.ok(decision);
     const verificationOperation = decision.execution?.operations.find((operation) => operation.id === "verify_target");
-    assert.equal(verificationOperation?.kind, "run_command");
-    assert.equal(verificationOperation?.commandMatchPolicy?.kind, "exact_command");
-    assert.match(verificationOperation?.commandMatchPolicy?.command ?? "", /node -e/u);
-    assert.match(
-      verificationOperation?.commandMatchPolicy?.command ?? "",
-      new RegExp(`Buffer\\.from\\('${Buffer.from("model-multi-agent-ok", "utf8").toString("base64")}','base64'\\)`),
-    );
+    assert.equal(verificationOperation?.kind, "file_read");
+    assert.equal(verificationOperation?.commandMatchPolicy, undefined);
+    assert.equal(verificationOperation?.binding.ownerParticipantId, "teammate_builtin_qa");
+    assert.deepEqual(verificationOperation?.binding.inputRefs.map((ref) => ref.path), ["proof.txt"]);
     assert.equal(created.autoStartedWorkflow.workflowSteps.length, 2);
     assert.deepEqual(created.autoStartedWorkflow.workflowSteps.map((step) => step.metadata.executionOperationIds), [["create_file"], ["verify_target"]]);
+    const { runs, actions } = await daemon.assertWorkflowCompleted(created, {
+      files: [{ path: "proof.txt", content: "model-multi-agent-ok" }], actionTypes: ["write", "read"],
+      participantIds: ["teammate_builtin_engineer", "teammate_builtin_qa"],
+    });
+    assert.deepEqual(runs.map((run) => run.requestSnapshot.tools), [["write"], ["read"]]);
+    assert.deepEqual(actions.map((action) => action.participantId), ["teammate_builtin_engineer", "teammate_builtin_qa"]);
+    assert.equal(store.getAiTeammate("teammate_builtin_qa").allowedTools.includes("write"), false);
+    assert.equal(runs[0].requestSnapshot.workflowOperationExecution.plan.fingerprint, runs[1].requestSnapshot.workflowOperationExecution.plan.fingerprint);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5398,9 +5784,14 @@ test("model-assisted natural-language Node work materializes executable evidence
       action: "execute",
       reason: "User requested a file write followed by a Node invocation.",
       execution: {
+        schemaVersion: 2,
         operations: [
-          { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
-          { id: "run_command", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
+          fileOperationCandidate({ id: "create_file", path: "continuity-v2-proof.js",
+            sourceQuote: "创建 continuity-v2-proof.js，内容是导出 formatProof",
+            contentSource: { kind: "generated_objective", text: "导出 formatProof", sourceQuote: "导出 formatProof", inputOperationIds: [] } }),
+          { ...commandOperationCandidate({ sourceQuote: "然后运行 Node 调用 formatProof(\"7319\") 验证。", dependsOn: ["create_file"] }),
+            commandGoal: { kind: "node_function", module: { path: "continuity-v2-proof.js", sourceQuote: "continuity-v2-proof.js" },
+              invocation: 'formatProof("7319")', sourceQuote: 'formatProof("7319")' } },
         ],
       },
     }),
@@ -5413,7 +5804,7 @@ test("model-assisted natural-language Node work materializes executable evidence
       stores.set(storeCwd, store);
       return store;
     },
-  }, { channels: { intentSelector: true } });
+  }, withRestrictedCommandReadiness({ channels: { intentSelector: true } }));
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -5437,8 +5828,12 @@ test("model-assisted natural-language Node work materializes executable evidence
       .find((candidate) => candidate.action === "execute");
     assert.ok(decision?.execution);
     const commandOperation = decision.execution.operations.find((operation) => operation.id === "run_command");
-    assert.deepEqual(commandOperation?.commandMatchPolicy, { kind: "executable", executable: "node" });
-    assert.equal(commandOperation?.targetRef?.label, "Node");
+    assert.equal(commandOperation?.commandMatchPolicy?.kind, "exact_command");
+    assert.equal(commandOperation?.binding?.commandGoal?.modulePath, "continuity-v2-proof.js");
+    assert.equal(commandOperation?.binding?.commandGoal?.invocation, 'formatProof("7319")');
+    assert.deepEqual(commandOperation?.binding?.effectScope.readPaths, ["continuity-v2-proof.js"]);
+    assert.deepEqual(commandOperation?.dependsOn, ["create_file"]);
+    assert.equal(commandOperation?.targetRef?.label, 'continuity-v2-proof.js → formatProof("7319")');
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -5625,7 +6020,7 @@ test("explicit custom executable participant is preserved ahead of same-role fal
       stores.set(storeCwd, store);
       return store;
     },
-  }, { channels: { intentSelector: true, terminalReports: true } });
+  }, withRestrictedCommandReadiness({ channels: { intentSelector: true, terminalReports: true } }));
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -5712,6 +6107,7 @@ test("explicit custom executable participant is preserved ahead of same-role fal
     const executionRun = runner.executionRuns[0];
     assert.equal(executionRun.systemPrompt, systemPrompt);
     assert.equal(executionRun.appendSystemPrompt.includes(appendSystemPrompt), true);
+    assert.equal(executionRun.appendSystemPrompt.filter((prompt) => prompt.startsWith("Ling conversation response style v1:")).length, 1);
     assert.deepEqual(executionRun.tools, ["bash"]);
     const run = store.getRun(store.getChannelWorkflowStep(step.id).runId);
     assert.equal(run.teammateId, customEngineer.id);
@@ -6073,7 +6469,7 @@ test("explicit executable participant missing a required tool blocks without sub
     assert.ok(proposal);
     assert.equal(proposal.status, "blocked");
     assert.equal(proposal.assigneeTeammateId, namedEngineer.id);
-    assert.match(proposal.errorMessage, /缺少所需工具[：:]bash|missing required tools: bash/iu);
+    assert.match(proposal.errorMessage, /缺少所需工具[：:]bash|missing required tools?:? bash/iu);
     const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
       .find((candidate) => candidate.proposalId === proposal.id);
     assert.ok(decision);
@@ -6098,7 +6494,7 @@ test("distinct explicit same-role participants remain separate workflow requirem
       stores.set(storeCwd, store);
       return store;
     },
-  }, { channels: { intentSelector: true } });
+  }, withRestrictedCommandReadiness({ channels: { intentSelector: true } }));
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -6128,8 +6524,16 @@ test("distinct explicit same-role participants remain separate workflow requirem
       });
     }
 
+    const requestBody = "@BuilderOne @BuilderTwo 创建 participant-proof.js，内容是 console.log('proof')，然后运行 node participant-proof.js 验证。";
+    runner.selectorExecution = { schemaVersion: 2, operations: [
+      fileOperationCandidate({ id: "create_file", path: "participant-proof.js", sourceQuote: requestBody,
+        owner: { participantId: participants[0].id, sourceQuote: "BuilderOne" },
+        contentSource: { kind: "literal", text: "console.log('proof')", sourceQuote: "console.log('proof')" } }),
+      commandOperationCandidate({ command: "node participant-proof.js", sourceQuote: requestBody, dependsOn: ["create_file"],
+        owner: { participantId: participants[1].id, sourceQuote: "BuilderTwo" } }),
+    ] };
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
-      body: "@BuilderOne @BuilderTwo 创建 participant-proof.js，内容是 console.log('proof')，然后运行 node participant-proof.js 验证。",
+      body: requestBody,
       mentions: participants.map((participant) => ({
         id: participant.id,
         label: participant.displayName,
@@ -6207,6 +6611,9 @@ test("multi-participant executable request blocks when one explicit participant 
       });
     }
 
+    runner.selectorExecution = { schemaVersion: 2, operations: [commandOperationCandidate({ command,
+      sourceQuote: `@RunnerOne @RunnerTwo 运行 \`${command}\` 并验证输出。`,
+      owner: { participantId: participants[0].id, sourceQuote: "RunnerOne" } })] };
     const created = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: `@RunnerOne @RunnerTwo 运行 \`${command}\` 并验证输出。`,
       mentions: participants.map((participant) => ({
@@ -6218,21 +6625,21 @@ test("multi-participant executable request blocks when one explicit participant 
     });
 
     assert.equal(created.autoStartedWorkflow, undefined);
+    assert.equal(runner.selectorRuns.length, 1, "the operation graph must reach the model intent selector");
     assert.equal(runner.executionRuns.length, 0);
     const store = stores.get(cwd);
     assert.ok(store);
-    const proposal = store.listChannelExecutionProposals({
+    const proposals = store.listChannelExecutionProposals({
       channelId: channel.id,
       sourceMessageId: created.message.id,
       limit: 20,
-    })[0];
-    assert.equal(proposal.status, "blocked");
-    assert.match(proposal.errorMessage, /没有可安全分配的必需操作|no safely assignable required operation/i);
+    });
+    assert.deepEqual(proposals, []);
     const decision = store.listChannelIntentDecisions({ sourceItemId: created.message.id, limit: 20 })
-      .find((candidate) => candidate.proposalId === proposal.id);
+      .find((candidate) => candidate.action === "clarify");
     assert.ok(decision);
-    assert.deepEqual(decision.selectedTeammateIds, participants.map((participant) => participant.id));
-    assert.equal(decision.errorCode, "participant_operation_assignment_incomplete");
+    assert.deepEqual(decision.clarification.missingFields, ["participant.operations"]);
+    assert.equal(store.listRuns({ channelId: channel.id, limit: 20 }).length, 0);
   } finally {
     runner.releaseExecution();
     await daemon.close();
@@ -6251,7 +6658,7 @@ test("single-participant execute acknowledgement stays non-terminal until callba
       stores.set(storeCwd, store);
       return store;
     },
-  }, { channels: { intentSelector: true, terminalReports: true } });
+  }, withRestrictedCommandReadiness({ channels: { intentSelector: true, terminalReports: true } }));
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -6322,9 +6729,9 @@ test("single-participant execute acknowledgement stays non-terminal until callba
     assert.equal(finalWorkflow.status, "succeeded");
     assert.equal(finalWorkflow.metadata.completionGate.status, "verified");
     assert.equal(reports.length, 1);
-    assert.ok(reports[0].publishedMessageId);
+    assert.ok(reports[0].resultItemId);
     assert.equal(store.listConversationItemsForTurn({ turnId: sourceItem.turnId })
-      .filter((item) => item.id === reports[0].publishedMessageId).length, 1);
+      .filter((item) => item.id === reports[0].resultItemId).length, 1);
     assert.equal(store.listStateTransitionEvents({ entityType: "turn", entityId: sourceItem.turnId })
       .filter((event) => event.toStatus === "succeeded").length, 1);
     assert.equal(store.listControlPlaneEvents({
@@ -6349,9 +6756,11 @@ test("model-assisted create-and-run clarifies when the required command is missi
       action: "execute",
       reason: "User requested a file write and a follow-up run, but supplied no exact command.",
       execution: {
+        schemaVersion: 2,
         operations: [
-          { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
-          { id: "run_command", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
+          fileOperationCandidate({ id: "create_file", sourceQuote: "创建 app.js，内容是 console.log('ok')", path: "app.js",
+            contentSource: { kind: "literal", text: "console.log('ok')", sourceQuote: "console.log('ok')" } }),
+          commandOperationCandidate({ sourceQuote: "然后运行验证。", dependsOn: ["create_file"] }),
         ],
       },
     }),
@@ -6390,11 +6799,13 @@ test("model-assisted create-and-run clarifies when the required command is missi
 
 test("model-assisted thread follow-up clarifies instead of creating empty recent target", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-thread-model-followup-empty-file-"));
+  let previousReply;
   const runner = new ScriptedRunner([
-    JSON.stringify({
+    () => JSON.stringify({
       action: "execute",
       reason: "User is asking Ling to write the previously discussed file locally.",
-      execution: { operations: [{ id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] }] },
+      execution: { schemaVersion: 2, operations: [fileOperationCandidate({ id: "create_file",
+        sourceQuote: "你现在可以帮我写在本地里面了吗？", path: "index.html", targetSourceItemId: previousReply.id })] },
     }),
   ]);
   const stores = new Map();
@@ -6428,7 +6839,7 @@ test("model-assisted thread follow-up clarifies instead of creating empty recent
       },
       "2026-06-12T09:00:00.000Z",
     );
-    appendChannelItemFixture(store,
+    previousReply = appendChannelItemFixture(store,
       {
         channelId: channel.id,
         threadId: previousUser.threadId,
@@ -6451,11 +6862,13 @@ test("model-assisted thread follow-up clarifies instead of creating empty recent
     assert.equal(created.aiReply.kind, "ai_reply");
     assert.equal(created.aiReply.status, "ready");
     assert.equal(created.aiReply.authorId, "ling_agent");
-    assert.match(created.aiReply.body, /目标文件是 index\.html/);
-    assert.match(created.aiReply.body, /没有明确要写入的内容/);
+    assert.match(created.aiReply.body, /内容要求/u);
+    assert.doesNotMatch(created.aiReply.body, /contentSource/u);
+    const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
+    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["contentSource"]);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
-    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before final clarification");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -6468,7 +6881,8 @@ test("model-assisted local write request clarifies when no target validates", as
     JSON.stringify({
       action: "execute",
       reason: "User is asking Ling to write something locally.",
-      execution: { operations: [{ id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] }] },
+      execution: { schemaVersion: 2, operations: [fileOperationCandidate({ id: "create_file",
+        sourceQuote: "你现在可以帮我写在本地里面了吗？" })] },
     }),
   ]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
@@ -6492,9 +6906,10 @@ test("model-assisted local write request clarifies when no target validates", as
     assert.equal(created.aiReply.kind, "ai_reply");
     assert.equal(created.aiReply.status, "ready");
     assert.equal(created.aiReply.authorId, "ling_agent");
-    assert.match(created.aiReply.body, /确认目标|clarify the target/i);
+    assert.match(created.aiReply.body, /输入和输出文件/u);
+    assert.doesNotMatch(created.aiReply.body, /\btarget\b/iu);
     assert.doesNotMatch(created.aiReply.body, /不能直接修改工作区|cannot directly modify|没有被授权执行工作区写入/i);
-    assert.equal(runner.runs.length, 1);
+    assert.equal(runner.runs.length, 2, "one bounded source-binding repair before final clarification");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.deepEqual(proposals.proposals, []);
     const routeDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -6505,7 +6920,7 @@ test("model-assisted local write request clarifies when no target validates", as
     assert.equal(intentDecisions.decisions[0].createdBy, "model_policy");
     assert.deepEqual(intentDecisions.decisions[0].clarification.missingFields, ["target"]);
     assert.equal(intentDecisions.decisions[0].clarification.question, created.aiReply.body);
-    assert.match(intentDecisions.decisions[0].reason, /target validation failed/);
+    assert.match(intentDecisions.decisions[0].reason, /incompatible target/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -6694,7 +7109,7 @@ test("text attachment preview can feed a direct README write workflow", async ()
     assert.match(proposals.proposals[0].prompt, /README body from attachment/);
     assert.match(runner.runs[0].task.prompt, /README body from attachment/);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
-    assert.equal(decisions.decisions.some((decision) => /auto-started proposal/.test(decision.reason)), true);
+    assert.equal(decisions.decisions.some((decision) => decision.workflowId === created.autoStartedWorkflow.workflow.id && /proposal .*: (?:started|queued)\./u.test(decision.reason)), true);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -7009,7 +7424,9 @@ test("single-step file creation blocks when channel lacks the required write too
       body: `在 ${cwd} 下创建 README.md`,
     });
 
-    assertCoordinatorWorkflowStartReply(created);
+    assert.equal(created.aiReply.status, "blocked");
+    assert.doesNotMatch(created.aiReply.body, /Starting now|现在开始处理/u);
+    assert.match(created.aiReply.body, /blocked|阻塞/u);
     assert.equal(created.autoStartedWorkflow.orchestration.status, "blocked");
     assert.match(created.autoStartedWorkflow.orchestration.blocker, /channel|tools|write/i);
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
@@ -7386,9 +7803,12 @@ test("model-assisted channel intent no_reply falls through to ordinary Ling repl
   }
 });
 
-test("model-assisted channel intent selector does not fall back to phrase-rule workflow proposal", async () => {
+test("model-assisted channel intent fallback cannot turn a reply block into a confirmable proposal", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-intent-model-fallback-"));
-  const runner = new ScriptedRunner(["not json", "普通频道回复。"]);
+  const runner = new ScriptedRunner([
+    "not json",
+    `普通频道回复。<ling_task_proposal>{"title":"Unbound proposal","prompt":"Start three agents","acceptanceCriteria":["done"],"requiredTools":["read"]}</ling_task_proposal>`,
+  ]);
   const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
@@ -7419,8 +7839,12 @@ test("model-assisted channel intent selector does not fall back to phrase-rule w
     assert.equal(created.aiReply.kind, "ai_reply");
     assert.ok(["pending", "ready"].includes(created.aiReply.status));
     await waitForCondition(() => runner.runs.length === 2, "ordinary channel reply after selector parse failure");
+    const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
+    assert.equal(listed.messages.find((message) => message.id === created.aiReply.id).body, "普通频道回复。");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(proposals.proposals.length, 0);
+    const allProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(allProposals.proposals.length, 0);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assertSingleReplyIntentDecision(decisions.decisions, created.message.id);
     assert.equal(decisions.decisions[0].createdBy, "deterministic");
@@ -7438,13 +7862,10 @@ test("model execution proposal cannot declare command evidence authority", async
       action: "execute",
       reason: "Run Node.",
       execution: {
+        schemaVersion: 2,
         operations: [{
-          id: "run_command",
-          kind: "run_command",
-          targetKind: "command",
+          ...commandOperationCandidate({ sourceQuote: "运行 node app.js", command: "node app.js" }),
           commandMatchPolicy: { kind: "executable", executable: "node" },
-          required: true,
-          dependsOn: [],
         }],
       },
     }),
@@ -7471,8 +7892,8 @@ test("model execution proposal cannot declare command evidence authority", async
     await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions.length, 1);
-    assert.equal(decisions.decisions[0].action, "reply");
-    assert.match(decisions.decisions[0].reason, /output was unavailable or invalid/i);
+    assert.equal(decisions.decisions[0].action, "clarify");
+    assert.deepEqual(decisions.decisions[0].clarification.missingFields, ["execution.operations"]);
     assert.equal(decisions.decisions[0].execution, undefined);
   } finally {
     await daemon.close();
@@ -7482,30 +7903,50 @@ test("model execution proposal cannot declare command evidence authority", async
 
 test("issue #421 article continuation stays reply while an explicit README save executes", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-issue-421-article-"));
-  const runner = new ScriptedRunner([
-    JSON.stringify({ action: "reply", reason: "The user asked for conversational article content." }),
-    "提纲：一、可恢复记忆；二、选择性投影；三、多 Agent 一致性。",
-    JSON.stringify({ action: "reply", reason: "The user confirmed that the article should continue in chat." }),
-    "正文：可恢复记忆的关键不是无限拼接历史，而是保留可追溯事实并按当前任务投影。",
-    JSON.stringify({
+  // file_create needs an absent target; the generic channel test helper seeds a
+  // README.md for its Git baseline, which a real exclusive create must reject.
+  await ensureEmptyGitRepo(cwd);
+  let continuedReply;
+  let selectorCalls = 0;
+  let replies = 0;
+  const daemon = await startRealPiChannelFixture(cwd, (request) => {
+    if (/channel intent selector/i.test(systemText(request))) {
+      selectorCalls += 1;
+      if (selectorCalls <= 2) return { text: JSON.stringify({ action: "reply",
+        reason: selectorCalls === 1 ? "The user asked for conversational article content." : "The user confirmed that the article should continue in chat." }) };
+      return { text: JSON.stringify({
       action: "execute",
       reason: "The user explicitly requested a local README write.",
-      execution: { operations: [{ id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] }] },
-    }),
-    "README.md saved.",
-  ]);
-  const daemon = await startDaemonForTest(runner, {}, { channels: { intentSelector: true } });
+      execution: { schemaVersion: 2, operations: [fileOperationCandidate({ id: "create_file", path: "README.md",
+        sourceQuote: "把刚才的文章保存到 README.md。",
+        contentSource: { kind: "literal", text: continuedReply.body, sourceQuote: continuedReply.body, sourceItemId: continuedReply.id } })] },
+      }) };
+    }
+    if (selectorCalls <= 2) {
+      replies += 1;
+      return { text: replies === 1 ? "提纲：一、可恢复记忆；二、选择性投影；三、多 Agent 一致性。"
+        : "正文：可恢复记忆的关键不是无限拼接历史，而是保留可追溯事实并按当前任务投影。" };
+    }
+    if (!request.messages.some((message) => message.role === "tool")) return { tool: "write", input: { path: "README.md", content: continuedReply.body } };
+    return { text: "README.md saved." };
+  });
   try {
-    const provider = (await createStaticChatProvider(daemon.url, cwd, { capabilities: ["chat", "tool_call"] })).provider;
+    const provider = (await createStaticChatProvider(daemon.url, cwd, daemon.providerOverrides)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
-    const channel = (await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
-      name: "Issue 421 article continuity",
-      status: "active",
-      boundPath: cwd,
-      defaultProviderPresetId: provider.id,
-      autoReplyMode: "mentions_only",
-      allowedTools: ["read", "grep", "find", "ls", "write"],
-    })).channel;
+    const channelResponse = await fetch(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({
+        name: "Issue 421 article continuity",
+        status: "active",
+        boundPath: cwd,
+        defaultProviderPresetId: provider.id,
+        autoReplyMode: "mentions_only",
+        allowedTools: ["read", "grep", "find", "ls", "write"],
+      }),
+    });
+    const channelPayload = await channelResponse.json();
+    assert.equal(channelResponse.ok, true, JSON.stringify(channelPayload));
+    const channel = channelPayload.channel;
+    await assert.rejects(readFile(resolve(cwd, "README.md")), /ENOENT/);
 
     const article = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/turns?cwd=${encodeURIComponent(cwd)}`, {
       body: "帮我写一篇关于可恢复多 Agent 记忆的长文，先给提纲。",
@@ -7526,7 +7967,7 @@ test("issue #421 article continuation stays reply while an explicit README save 
       continuation.aiReply.id,
       "ready",
     );
-    const continuedReply = continuedMessages.messages.find((message) => message.id === continuation.aiReply.id);
+    continuedReply = continuedMessages.messages.find((message) => message.id === continuation.aiReply.id);
     assert.match(continuedReply.body, /可恢复记忆/);
 
     const articleDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(article.message.id)}`);
@@ -7551,7 +7992,7 @@ test("issue #421 article continuation stays reply while an explicit README save 
     const saveProposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(save.message.id)}`);
     assert.equal(saveProposals.proposals.length, 1);
     assert.equal(saveProposals.proposals[0].status, "accepted");
-    assert.match(saveProposals.proposals[0].prompt, /Target: README\.md/);
+    assert.match(saveProposals.proposals[0].prompt, /create_file: file_create \(README\.md\)/);
     const saveDecisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/intent-decisions?cwd=${encodeURIComponent(cwd)}&sourceItemId=${encodeURIComponent(save.message.id)}`);
     assert.equal(saveDecisions.decisions.length, 2);
     assert(saveDecisions.decisions.every((decision) => decision.action === "execute"));
@@ -7566,7 +8007,13 @@ test("issue #421 article continuation stays reply while an explicit README save 
     const started = saveDecisions.decisions.find((decision) => decision.workflowId === save.autoStartedWorkflow.workflow.id);
     assert.ok(classified);
     assert.ok(started);
+    assert.equal(classified.execution.operations[0].binding.contentSource.text, continuedReply.body);
+    assert.deepEqual(classified.execution.operations[0].binding.contentSource.sourceRefs.map((ref) => ref.itemId), [continuedReply.id]);
     assert.deepEqual(started.resultItemIds, [save.aiReply.id]);
+    assert.equal(replies, 2);
+    assert.equal(daemon.selectorRequests.length, 3);
+    await daemon.assertWorkflowCompleted(save, { files: [{ path: "README.md", content: continuedReply.body }],
+      actionTypes: ["write"], participantIds: ["ling_agent"] });
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -7964,7 +8411,7 @@ test("default_teammate creates a blocked Ling Agent reply when the channel has n
   }
 });
 
-test("explicit mentions still reply and keep proposal extraction enabled", async () => {
+test("explicit mentions keep reply text but cannot create an unbound proposal", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-explicit-route-"));
   const runner = new ScriptedRunner([
     `Visible explicit reply<ling_task_proposal>{"title":"Explicit proposal","prompt":"Create explicit task","acceptanceCriteria":["ok"],"requiredTools":["read"],"riskSummary":"explicit"}</ling_task_proposal>`,
@@ -7991,13 +8438,12 @@ test("explicit mentions still reply and keep proposal extraction enabled", async
     const listed = await waitForChannelMessageStatus(daemon.url, cwd, channel.id, created.aiReply.id, "ready");
     const finalReply = listed.messages.find((message) => message.id === created.aiReply.id);
     assert.equal(finalReply.body, "Visible explicit reply");
-    assert.match(runner.runs[0].systemPrompt, /include one hidden proposal block/);
+    assert.match(runner.runs[0].systemPrompt, /Do not include hidden proposal blocks/);
     const decisions = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/message-route-decisions?cwd=${encodeURIComponent(cwd)}&sourceMessageId=${encodeURIComponent(created.message.id)}`);
     assert.equal(decisions.decisions[0].createdBy, "explicit_mention");
     assert.equal(decisions.decisions[0].status, "accepted");
     const proposals = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/proposals?cwd=${encodeURIComponent(cwd)}`);
-    assert.equal(proposals.proposals.length, 1);
-    assert.equal(proposals.proposals[0].title, "Explicit proposal");
+    assert.equal(proposals.proposals.length, 0);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -8741,6 +9187,103 @@ test("channel collaboration protocol endpoints persist state and reject cross-ch
   }
 });
 
+test("concurrent decision supersession accepts one successor, reuses exact retries, and rejects conflicts", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-decision-supersession-api-"));
+  const daemon = await startDaemonForTest();
+  try {
+    const channel = await createChannel(daemon.url, cwd);
+    const source = await postJson(`${daemon.url}/channels/${encodeURIComponent(channel.id)}/decisions?cwd=${encodeURIComponent(cwd)}`, {
+      title: "Original decision",
+      decision: "Use protocol A.",
+      createdBy: "local-user",
+    });
+    const url = `${daemon.url}/channels/${encodeURIComponent(channel.id)}/decisions?cwd=${encodeURIComponent(cwd)}`;
+    const replacementA = {
+      title: "Replacement decision",
+      decision: "Use protocol B.",
+      rationale: "B is the verified replacement.",
+      supersedesDecisionId: source.decision.id,
+      createdBy: "local-user",
+    };
+    const replacementB = {
+      ...replacementA,
+      decision: "Use conflicting protocol C.",
+    };
+    const supersede = (body) => fetch(url, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+
+    for (const unsupportedStatus of ["active", "superseded"]) {
+      const unsupportedPatch = await fetch(`${daemon.url}/decisions/${encodeURIComponent(source.decision.id)}?cwd=${encodeURIComponent(cwd)}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: unsupportedStatus }),
+      });
+      assert.equal(unsupportedPatch.status, 400);
+      const unsupportedPatchBody = await unsupportedPatch.json();
+      assert.equal(unsupportedPatchBody.error, "bad_request");
+      assert.match(unsupportedPatchBody.message, /status must be rejected/u);
+    }
+
+    const invalidStatus = await supersede({
+      ...replacementA,
+      status: "rejected",
+    });
+    assert.equal(invalidStatus.status, 400);
+    const invalidStatusBody = await invalidStatus.json();
+    assert.equal(invalidStatusBody.error, "bad_request");
+    assert.match(invalidStatusBody.message, /status must be active/u);
+
+    const rejectable = await postJson(url, {
+      title: "Decision to reject",
+      decision: "Do not keep this decision.",
+      createdBy: "local-user",
+    });
+    const activeReject = await fetch(`${daemon.url}/decisions/${encodeURIComponent(rejectable.decision.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "rejected" }),
+    });
+    assert.equal(activeReject.status, 200);
+    assert.equal((await activeReject.json()).decision.status, "rejected");
+
+    const attempts = await Promise.all([supersede(replacementA), supersede(replacementB)]);
+    assert.deepEqual(attempts.map((attempt) => attempt.status).sort(), [201, 409]);
+    const createdResponse = attempts.find((attempt) => attempt.status === 201);
+    const conflictResponse = attempts.find((attempt) => attempt.status === 409);
+    const created = await createdResponse.json();
+    const conflict = await conflictResponse.json();
+    assert.equal(conflict.error, "decision_supersession_conflict");
+
+    const retry = await supersede(created.decision.decision === replacementA.decision ? replacementA : replacementB);
+    assert.equal(retry.status, 200);
+    assert.equal((await retry.json()).decision.id, created.decision.id);
+
+    const staleReject = await fetch(`${daemon.url}/decisions/${encodeURIComponent(source.decision.id)}?cwd=${encodeURIComponent(cwd)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ status: "rejected" }),
+    });
+    assert.equal(staleReject.status, 409);
+    const staleRejectBody = await staleReject.json();
+    assert.equal(staleRejectBody.error, "decision_status_conflict");
+    assert.equal(staleRejectBody.decisionId, source.decision.id);
+    assert.equal(staleRejectBody.expectedStatus, "active");
+    assert.equal(staleRejectBody.actualStatus, "superseded");
+
+    const decisions = await getJson(`${url}&limit=10`);
+    assert.equal(decisions.decisions.find((decision) => decision.id === source.decision.id).status, "superseded");
+    const successors = decisions.decisions.filter((decision) => decision.supersedesDecisionId === source.decision.id);
+    assert.equal(successors.length, 1);
+    assert.equal(successors[0].status, "active");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("channel handoff workflows start steps, create tasks, and expose blockers", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflows-api-"));
   const daemon = await startDaemonForTest();
@@ -8764,11 +9307,28 @@ test("channel handoff workflows start steps, create tasks, and expose blockers",
       createdBy: "local-user",
     });
 
-    const createdWorkflow = await postJson(`${daemon.url}/handoffs/${encodeURIComponent(handoff.handoff.id)}/workflow?cwd=${encodeURIComponent(cwd)}`, {
-      createdBy: "local-user",
-    });
+    const workflowFromHandoffUrl = `${daemon.url}/handoffs/${encodeURIComponent(handoff.handoff.id)}/workflow?cwd=${encodeURIComponent(cwd)}`;
+    const createFromHandoff = async () => {
+      const response = await fetch(workflowFromHandoffUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ createdBy: "local-user" }),
+      });
+      if (!response.ok) {
+        assert.fail(`${response.status} ${response.statusText}: ${await response.text()}`);
+      }
+      return { status: response.status, payload: await response.json() };
+    };
+    const attempts = await Promise.all([createFromHandoff(), createFromHandoff()]);
+    assert.deepEqual(attempts.map((attempt) => attempt.status).sort(), [200, 201]);
+    const createdWorkflow = attempts.find((attempt) => attempt.status === 201).payload;
+    const retriedWorkflow = attempts.find((attempt) => attempt.status === 200).payload;
     assert.equal(createdWorkflow.workflow.status, "draft");
     assert.equal(createdWorkflow.workflowStep.status, "queued");
+    assert.equal(retriedWorkflow.workflow.id, createdWorkflow.workflow.id);
+    assert.equal(retriedWorkflow.workflowStep.id, createdWorkflow.workflowStep.id);
+    const handoffWorkflows = await getJson(`${daemon.url}/channels/${encodeURIComponent(first.id)}/workflows?cwd=${encodeURIComponent(cwd)}&limit=10`);
+    assert.deepEqual(handoffWorkflows.workflows.map((workflow) => workflow.id), [createdWorkflow.workflow.id]);
 
     const started = await postJson(`${daemon.url}/workflow-steps/${encodeURIComponent(createdWorkflow.workflowStep.id)}/start?cwd=${encodeURIComponent(cwd)}`, {
       mode: "create_task",
@@ -9304,7 +9864,7 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
     assert.equal(firstWorkUnit.workUnit.request.preselectedMemoryUse, undefined);
     const firstRunMemoryUse = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(firstRun.id)}`);
     assert.deepEqual(firstRunMemoryUse.events[0].memoryIds, [firstStepMemory.id]);
-    assert.match(firstRunMemoryUse.events[0].policyVersion, /memory_use_isolation_v1/u);
+    assert.match(firstRunMemoryUse.events[0].policyVersion, /memory_use_isolation_v2/u);
     const runsForStep = await getJson(`${daemon.url}/runs?cwd=${encodeURIComponent(cwd)}&workflowStepId=${encodeURIComponent(firstStepAfterFirstTick.id)}`);
     assert.deepEqual(runsForStep.runs.map((run) => run.id), [firstRun.id]);
     const threadsForStep = await getJson(`${daemon.url}/threads?cwd=${encodeURIComponent(cwd)}&workflowStepId=${encodeURIComponent(firstStepAfterFirstTick.id)}`);
@@ -12110,7 +12670,7 @@ test("memory API scopes lexical recall and channel replies audit used memory", a
     const used = await getJson(`${daemon.url}/memory/used?cwd=${encodeURIComponent(cwd)}&responseId=${encodeURIComponent(created.aiReply.id)}`);
     assert.ok(used.events[0].memoryIds.includes(channelMemory.id));
     assert.equal(used.events[0].memoryIds.includes(teammateMemory.id), false);
-    assert.match(used.events[0].policyVersion, /memory_use_isolation_v1/);
+    assert.match(used.events[0].policyVersion, /memory_use_isolation_v2/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -13857,6 +14417,14 @@ test("teammate direct execution creates a supervised run and projects tool event
     const turn = store.getLingTurnForRun(run.id);
     assert.equal(thread?.kind, "teammate_direct");
     assert.equal(turn?.sourceItemId, run.taskId);
+    const anchor = store.getConversationItem(turn.sourceItemId);
+    assert.ok(anchor, "private tool events require a persisted canonical conversation item");
+    assert.equal(anchor.threadId, run.threadId);
+    assert.equal(anchor.turnId, turn.id);
+    assert.equal(anchor.visibility, "agent_private");
+    assert.equal(anchor.visibilityOwnerId, teammateId);
+    const actions = await getJson(`${daemon.url}/execution-actions?cwd=${encodeURIComponent(cwd)}&runId=${encodeURIComponent(run.id)}`);
+    assert.ok(actions.actions.some((action) => action.sourceRefs.some((ref) => ref.kind === "conversation_item" && ref.id === anchor.id)));
     const workUnit = store.getWorkUnit(run.workUnitId);
     assert.equal(workUnit?.kind, "teammate_direct_reply");
     assert.equal(workUnit?.linkedRunId, run.id);
@@ -14247,7 +14815,7 @@ test("teammate direct reply uses private chat memory isolation", async () => {
     assert.ok(used.events[0].memoryIds.includes(privateMemory.id));
     assert.equal(used.events[0].memoryIds.includes(otherPrivateMemory.id), false);
     assert.equal(used.events[0].memoryIds.includes(channelMemory.id), false);
-    assert.match(used.events[0].policyVersion, /memory_use_isolation_v1/);
+    assert.match(used.events[0].policyVersion, /memory_use_isolation_v2/);
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -14286,6 +14854,7 @@ test("teammate direct prompt anchors latest attachment message instead of old gu
         teammateId,
         authorType: "system",
         authorId: "system",
+        systemPurpose: "execution_control",
         body: "排队引导：旧排队引导不应继续生效。",
         status: "ready",
       },
@@ -14657,11 +15226,16 @@ class SummaryAwareRunner {
     this.runs = [];
     this.summaryRuns = [];
     this.replyRuns = [];
+    this.failSummary = false;
   }
 
   async runTask(options) {
     this.runs.push(options);
     const summary = /conversation summary coordinator/i.test(options.systemPrompt ?? "");
+    if (summary && this.failSummary) {
+      this.summaryRuns.push(options);
+      throw new Error("synthetic summary provider failure");
+    }
     const text = summary
       ? JSON.stringify({
           objective: "Preserve the durable historical objective.",
@@ -14746,15 +15320,8 @@ class DelayedCommandEvidenceRunner {
       const text = JSON.stringify({
         action: "execute",
         reason: "The user explicitly requested one bounded command execution.",
-        execution: {
-          operations: [{
-            id: "run_command",
-            kind: "run_command",
-            targetKind: "command",
-            required: true,
-            dependsOn: [],
-          }],
-        },
+        execution: this.selectorExecution ?? { schemaVersion: 2,
+          operations: [commandOperationCandidate({ sourceQuote: this.command, command: this.command })] },
       });
       options.onEvent?.({ type: "assistant_text_delta", text });
       return { taskId: options.task.id, messages: [text], events: [] };
@@ -14803,15 +15370,9 @@ class MismatchedExactCommandRunner {
       const text = JSON.stringify({
         action: "execute",
         reason: "The user explicitly requested one bounded command execution.",
-        execution: {
-          operations: [{
-            id: "run_command",
-            kind: "run_command",
-            targetKind: "command",
-            required: true,
-            dependsOn: [],
-          }],
-        },
+        execution: { schemaVersion: 2, operations: [commandOperationCandidate({
+          sourceQuote: "@QA 执行 `node app.js` 验证，并且必须提供真实 evidence。", command: "node app.js",
+          owner: { participantId: "teammate_builtin_qa", sourceQuote: "QA" } })] },
       });
       options.onEvent?.({ type: "assistant_text_delta", text });
       return { taskId: options.task.id, messages: [text], events: [] };
@@ -14855,12 +15416,7 @@ class DelayedFileCommandRunner {
       const text = JSON.stringify({
         action: "execute",
         reason: "The user explicitly requested a file write followed by a Node verification.",
-        execution: {
-          operations: [
-            { id: "create_file", kind: "file_create", targetKind: "file", required: true, dependsOn: [] },
-            { id: "run_command", kind: "run_command", targetKind: "command", required: true, dependsOn: ["create_file"] },
-          ],
-        },
+        execution: this.selectorExecution,
       });
       options.onEvent?.({ type: "assistant_text_delta", text });
       return { taskId: options.task.id, messages: [text], events: [] };
@@ -14978,7 +15534,8 @@ class ScriptedRunner {
 
   async runTask(options) {
     this.runs.push(options);
-    const response = this.responses.shift();
+    const queuedResponse = this.responses.shift();
+    const response = typeof queuedResponse === "function" ? queuedResponse(options) : queuedResponse;
     if (response instanceof Error) {
       throw response;
     }
@@ -15146,8 +15703,11 @@ function unusedRunnerRegistry() {
 }
 
 async function startDaemonForTest(runner, dependencies = {}, config = {}) {
-  const { channels, ...restConfig } = config;
-  const routedRunner = wrapTestRunnerContextSegmentation(runner);
+  const { channels, testVerifiedPiRunner, ...restConfig } = config;
+  const executionRunner = testVerifiedPiRunner && runner
+    ? new VerifiedExecutionTestRunner(runner)
+    : runner;
+  const routedRunner = wrapTestRunnerContextSegmentation(executionRunner);
   const daemon = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
@@ -15166,12 +15726,31 @@ async function startDaemonForTest(runner, dependencies = {}, config = {}) {
   };
 }
 
+async function publishHostOpenAvailability(baseUrl, bridgeToken) {
+  const response = await fetch(new URL("/desktop/capabilities/host/availability", baseUrl), {
+    method: "POST",
+    headers: {
+      "content-type": "application/json",
+      "x-ling-desktop-bridge-token": bridgeToken,
+    },
+    body: JSON.stringify({
+      protocol: "ling-host-capability-bridge/v1",
+      desktopInstanceId: "desktop-channel-test",
+      generation: 1,
+      capabilities: ["host.open_local_target"],
+      checkedAt: new Date().toISOString(),
+    }),
+  });
+  assert.equal(response.status, 200, await response.text());
+}
+
 function wrapTestRunnerContextSegmentation(runner) {
   if (!runner) {
     return undefined;
   }
   runner.segmentationRuns ??= [];
   const routed = Object.create(runner);
+  routed.prepareTaskInput = runner.prepareTaskInput?.bind(runner) ?? prepareFixtureTaskInput;
   routed.runTask = async (options) => {
     if (!/context segmentation policy proposer/i.test(options.systemPrompt ?? "")) {
       return runner.runTask(options);
@@ -15482,25 +16061,40 @@ async function getArtifactJson(baseUrl, cwd, artifactId) {
 
 function assertCoordinatorWorkflowStartReply(result) {
   assert.equal(result.aiReply.kind, "ai_reply");
-  assert.equal(result.aiReply.status, "ready");
   assert.equal(result.aiReply.threadId, result.message.threadId);
   assert.equal(result.aiReply.authorId, "ling_agent");
-  assert.match(result.aiReply.body, /^(?:已确认：|Confirmed:)/u);
-  assert.match(result.aiReply.body, /(?:现在开始处理。|Starting now\.)$/u);
+  assert.doesNotMatch(result.aiReply.body, /Starting now|现在开始处理|workflow_start\./u);
+  const orchestration = result.autoStartedWorkflow?.orchestration;
+  assert.ok(orchestration, `coordinator startup must have a dispatch result; reply=${result.aiReply.status}: ${result.aiReply.body}`);
+  switch (orchestration.status) {
+    case "started":
+      assert.equal(result.aiReply.status, "ready");
+      assert.match(result.aiReply.body, /^(?:Run started|Queued|运行已开始|已排队): .+/u);
+      assert.ok((orchestration.startedSteps ?? [orchestration]).some((step) => step.runId));
+      break;
+    case "blocked":
+    case "failed":
+      assert.equal(result.aiReply.status, orchestration.status);
+      assert.ok(result.aiReply.body.includes(orchestration.blocker));
+      break;
+    case "waiting_for_approval":
+      assert.equal(result.aiReply.status, "blocked");
+      assert.match(result.aiReply.body, /^(?:Waiting for approval to continue\.|等待审批后继续。)$/u);
+      break;
+    case "idle":
+      assert.equal(result.aiReply.status, "ready");
+      assert.ok(result.aiReply.body.includes(orchestration.reason));
+      assert.match(result.aiReply.body, /^(?:Waiting:|等待：)/u);
+      break;
+    case "completed":
+      assert.equal(result.aiReply.status, "ready");
+      assert.match(result.aiReply.body, /^(?:Workflow: Completed|工作流: 已完成)$/u);
+      break;
+    default:
+      assert.fail(`unasserted coordinator state: ${orchestration.status}`);
+  }
   assert.doesNotMatch(result.aiReply.body, /主会话/);
   assert.doesNotMatch(result.aiReply.body, /工作证据|折叠证据摘要/);
-}
-
-function assertCoordinatorWorkflowTerminalReply(messages) {
-  const reply = messages.find((message) =>
-    message.kind === "ai_reply" &&
-    message.authorId === "ling_agent" &&
-    /^(完成：|Done:)/u.test(message.body)
-  );
-  assert.ok(reply, "expected Ling Agent workflow terminal summary reply");
-  assert.equal(reply.status, "ready");
-  assert.doesNotMatch(reply.body, /我已完成|I finished|打开工作证据|展开下方证据摘要|evidence summary/i);
-  return reply;
 }
 
 function assertIntentDecisionInspectPayloadIsSafe(decision) {

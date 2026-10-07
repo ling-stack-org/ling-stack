@@ -79,7 +79,7 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): Reac
           title={t("Council Workspace")}
           description={t("Manage councils, members, health, and channel usage from one workspace.")}
           meta={<CouncilListOverviewSummary overview={props.listHealthController.overview} />}
-          primaryAction={(
+          primaryAction={props.settingsToolMode ? undefined : (
             <Button
               disabled={props.createCloneBlocked}
               leadingIcon={<Plus />}
@@ -90,7 +90,7 @@ export function CouncilWorkspacePanels(props: CouncilWorkspacePanelsProps): Reac
               {t("Create council")}
             </Button>
           )}
-          secondaryActions={(
+          secondaryActions={props.settingsToolMode ? undefined : (
             <>
               <Button onClick={props.onOpenAiTeammates} size="sm" variant="secondary">
                 {t("Open AI Teammates")}

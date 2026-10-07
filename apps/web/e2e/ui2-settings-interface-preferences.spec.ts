@@ -303,7 +303,7 @@ async function prepareWebSurface(
 }
 
 async function openInterfacePreferences(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Interface preferences" }).click();
   const panel = page.locator("[data-ui2-interface-preferences]");
   await expect(panel).toBeVisible();

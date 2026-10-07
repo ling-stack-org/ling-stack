@@ -10,21 +10,19 @@ import { startFakeCodexAppServer } from "../dist/runtime/adapters/fake-codex-app
 
 test("runner readiness routes expose external runners after gates pass", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runner-readiness-"));
-  const acp = await startFakeAcpServer();
-  const codex = await startFakeCodexAppServer();
+  const acp = await startFakeAcpServer({ capabilities: { approvalBridge: false } });
+  const codex = await startFakeCodexAppServer({ capabilities: { approvalBridge: false, nativeResume: false } });
   const daemon = await startDaemonForTest({
     runners: {
       codexAppServer: {
         enabled: true,
         baseUrl: codex.baseUrl,
         readinessPassed: true,
-        conformancePassed: true,
       },
       openclawAcp: {
         enabled: true,
         endpoint: acp.endpoint,
         readinessPassed: true,
-        conformancePassed: true,
       },
     },
   });
@@ -45,7 +43,10 @@ test("runner readiness routes expose external runners after gates pass", async (
     assert.equal(readiness.readiness.runnerId, "openclaw-acp");
     assert.equal(readiness.readiness.status, "ready");
     assert.equal(readiness.readiness.featureFlagEnabled, true);
-    assert.equal(readiness.readiness.conformancePassed, true);
+    assert.equal(readiness.readiness.toolExecutionConformance.status, "verified");
+    assert.equal(readiness.readiness.toolExecutionConformance.nativeSideEffectMode, "disabled");
+    assert.equal(readiness.readiness.toolExecutionConformance.approvalBridgeVerified, false);
+    assert.deepEqual(readiness.readiness.toolExecutionConformance.curatedTools, ["read", "grep", "find", "ls"]);
     assert.equal(readiness.readiness.endpointReachable, true);
     assert.equal(readiness.readiness.capabilityNegotiated, true);
     assert.deepEqual(blockerCodes(readiness), []);
@@ -78,7 +79,6 @@ test("runner readiness keeps ACP capability failures blocked", async () => {
         enabled: true,
         endpoint: acp.endpoint,
         readinessPassed: true,
-        conformancePassed: true,
       },
     },
   });
@@ -102,7 +102,7 @@ test("runner readiness reports feature flag and endpoint blockers by default", a
     const readiness = await getJson(`${daemon.url}/runners/codex-app-server/readiness?cwd=${encodeURIComponent(cwd)}`);
     assert.equal(readiness.readiness.status, "blocked");
     assert.equal(readiness.readiness.featureFlagEnabled, false);
-    assert.equal(readiness.readiness.conformancePassed, false);
+    assert.equal(readiness.readiness.toolExecutionConformance.status, "verified");
     assert.equal(blockerCodes(readiness).includes("feature_flag_disabled"), true);
     assert.equal(blockerCodes(readiness).includes("missing_endpoint"), true);
     assert.equal(blockerCodes(readiness).includes("adapter_not_implemented"), false);

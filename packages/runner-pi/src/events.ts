@@ -1,5 +1,17 @@
 import type { AgentSessionEvent } from "@earendil-works/pi-coding-agent";
-import type { PiRunnerEvent } from "./types.js";
+import type { PiRunnerEvent, PiRunnerTokenUsage } from "./types.js";
+import { extractSafeReasoningSummary } from "./reasoning-summary.js";
+import { classifyProviderError } from "./provider-error-diagnostic.js";
+
+export function translatePiEvents(event: AgentSessionEvent): readonly PiRunnerEvent[] {
+  if (event.type === "message_end") {
+    const terminal = messageEndEvent(event.message);
+    const summary = extractSafeReasoningSummary(event.message);
+    return summary ? [{ type: "assistant_reasoning_summary", ...summary }, terminal] : [terminal];
+  }
+  const translated = translatePiEvent(event);
+  return translated ? [translated] : [];
+}
 
 export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | undefined {
   switch (event.type) {
@@ -7,6 +19,53 @@ export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | unde
       return { type: "turn_start" };
     case "turn_end":
       return { type: "turn_end" };
+    case "auto_retry_start":
+    case "summarization_retry_scheduled": {
+      const retryAttempt = readTokenCount(event.attempt);
+      const maxRetryAttempts = readTokenCount(event.maxAttempts);
+      const delayMs = readTokenCount(event.delayMs);
+      if (!retryAttempt || !maxRetryAttempts || retryAttempt > maxRetryAttempts || delayMs === undefined) return undefined;
+      return { type: "provider_retry", policyVersion: "pi_sdk_retry_v1",
+        scope: event.type === "auto_retry_start" ? "assistant" : "summarization", phase: "scheduled",
+        retryAttempt, maxRetryAttempts, delayMs, errorDiagnostic: classifyProviderError({ errorMessage: event.errorMessage }) };
+    }
+    case "auto_retry_end": {
+      const retryAttempt = readTokenCount(event.attempt);
+      if (!retryAttempt || typeof event.success !== "boolean") return undefined;
+      if (event.success) return { type: "provider_retry", policyVersion: "pi_sdk_retry_v1", scope: "assistant",
+        phase: "settled", retryAttempt, outcome: "succeeded" };
+      const errorDiagnostic = classifyProviderError({ errorMessage: event.finalError });
+      return { type: "provider_retry", policyVersion: "pi_sdk_retry_v1", scope: "assistant", phase: "settled",
+        retryAttempt, outcome: event.finalError === "Retry cancelled" ? "cancelled" : "failed", errorDiagnostic };
+    }
+    case "summarization_retry_attempt_start":
+      if (event.source === "branchSummary") return { type: "provider_retry", policyVersion: "pi_sdk_retry_v1",
+        scope: "summarization", phase: "attempt_start", source: "branch_summary" };
+      if (event.source === "compaction" && ["manual", "threshold", "overflow"].includes(event.reason)) {
+        return { type: "provider_retry", policyVersion: "pi_sdk_retry_v1", scope: "summarization",
+          phase: "attempt_start", source: "compaction", reason: event.reason };
+      }
+      return undefined;
+    case "summarization_retry_finished":
+      // Pi does not provide an outcome here; the compaction_end is the authority.
+      return { type: "provider_retry", policyVersion: "pi_sdk_retry_v1", scope: "summarization", phase: "settled" };
+    case "compaction_start":
+      return { type: "context_compaction_start", reason: event.reason, policyVersion: "pi_sdk_lifecycle_v1" };
+    case "compaction_end": {
+      const tokensBefore = readTokenCount(event.result?.tokensBefore);
+      const estimatedTokensAfter = readTokenCount(event.result?.estimatedTokensAfter);
+      const usage = readTokenUsage(event.result?.usage);
+      return {
+        type: "context_compaction_end",
+        reason: event.reason,
+        policyVersion: "pi_sdk_lifecycle_v1",
+        outcome: event.aborted ? "aborted" : event.result ? "sdk_installed" : "failed",
+        willRetry: event.willRetry,
+        ...(tokensBefore === undefined ? {} : { tokensBefore }),
+        ...(estimatedTokensAfter === undefined ? {} : { estimatedTokensAfter }),
+        ...(usage ? { usage } : {}),
+      };
+    }
     case "message_update":
       if (event.assistantMessageEvent.type === "text_delta") {
         return { type: "assistant_text_delta", text: event.assistantMessageEvent.delta };
@@ -37,7 +96,7 @@ export function translatePiEvent(event: AgentSessionEvent): PiRunnerEvent | unde
         toolCallId: event.toolCallId,
         toolName: event.toolName,
         result: event.result,
-        isError: event.isError || isHandledUnifiedExecError(event.result),
+        isError: event.isError,
       };
     default:
       return undefined;
@@ -49,15 +108,35 @@ function messageEndEvent(message: unknown): Extract<PiRunnerEvent, { readonly ty
   const text = role === "assistant" ? getMessageText(message) : undefined;
   const stopReason = role === "assistant" ? getStopReason(message) : undefined;
   const errorMessage = role === "assistant" ? getSafeErrorMessage(message) : undefined;
+  const errorDiagnostic = role === "assistant" && (errorMessage || stopReason === "error" || stopReason === "aborted")
+    ? classifyProviderError(message) : undefined;
   const contentKinds = role === "assistant" ? getContentKinds(message) : [];
+  const usage = role === "assistant" && isRecord(message) ? readTokenUsage(message.usage) : undefined;
   return {
     type: "message_end",
     role,
     ...(text ? { text } : {}),
     ...(stopReason ? { stopReason } : {}),
     ...(errorMessage ? { errorMessage } : {}),
+    ...(errorDiagnostic ? { errorDiagnostic } : {}),
     ...(contentKinds.length > 0 ? { contentKinds } : {}),
+    ...(usage ? { usage } : {}),
   };
+}
+
+function readTokenCount(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isSafeInteger(value) && value >= 0 ? value : undefined;
+}
+
+function readTokenUsage(value: unknown): PiRunnerTokenUsage | undefined {
+  if (!isRecord(value)) return undefined;
+  const input = readTokenCount(value.input);
+  const output = readTokenCount(value.output);
+  const cacheRead = readTokenCount(value.cacheRead);
+  const cacheWrite = readTokenCount(value.cacheWrite);
+  const totalTokens = readTokenCount(value.totalTokens);
+  if (input === undefined || output === undefined || cacheRead === undefined || cacheWrite === undefined || totalTokens === undefined) return undefined;
+  return { input, output, cacheRead, cacheWrite, totalTokens };
 }
 
 function getMessageText(message: unknown): string | undefined {
@@ -119,25 +198,6 @@ function getContentKinds(message: unknown): readonly string[] {
       : "other";
   });
   return [...new Set(kinds)];
-}
-
-function isHandledUnifiedExecError(result: unknown): boolean {
-  if (!isRecord(result)) {
-    return false;
-  }
-  if (result.isError === true) {
-    return true;
-  }
-  const details = result.details;
-  if (!isRecord(details)) {
-    return false;
-  }
-  const unifiedExec = details.unifiedExec;
-  if (!isRecord(unifiedExec)) {
-    return false;
-  }
-  const status = unifiedExec.status;
-  return status === "failed" || status === "timed_out" || status === "cancelled";
 }
 
 function getMessageRole(message: unknown): string {

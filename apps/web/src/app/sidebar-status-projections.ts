@@ -1,4 +1,4 @@
-import type { AiTeammate, ApprovalRequest, Channel, ChannelWorkflowStep, LingThreadStatus, RunSession, Task, WorkUnit } from "../types.js";
+import type { AiTeammate, ApprovalRequest, Channel, ChannelWorkflowStep, LingThread, LingThreadStatus, RunSession, Task, WorkUnit } from "../types.js";
 import type {
   SidebarNotification,
   SidebarPrimaryStatus,
@@ -128,6 +128,21 @@ export function projectSidebarConversationStatus(
   return undefined;
 }
 
+/**
+ * Thread state is the durable activity authority for recent conversations.
+ * The local stream flag only covers the optimistic interval before the daemon
+ * has bound and refreshed the newly created thread.
+ */
+export function conversationThreadHasActiveWork(
+  thread: Pick<LingThread, "id" | "activeRunId">,
+  selectedThreadId: string,
+  selectedStreamBusy: boolean,
+): boolean {
+  return Boolean(thread.activeRunId?.trim()) || (
+    selectedStreamBusy && thread.id === selectedThreadId
+  );
+}
+
 export function buildSidebarConversationApprovalCounts(
   approvals: readonly ApprovalRequest[],
   runs: readonly RunSession[],
@@ -144,10 +159,13 @@ function countPendingApprovals(
   ownerId: (approval: ApprovalRequest) => string | undefined,
 ): Map<string, number> {
   const counts = new Map<string, number>();
+  const seenApprovalIds = new Set<string>();
   for (const approval of approvals) {
     if (effectiveApprovalStatus(approval) !== "pending") continue;
     const id = ownerId(approval);
-    if (id) counts.set(id, (counts.get(id) ?? 0) + 1);
+    if (!id || seenApprovalIds.has(approval.id)) continue;
+    seenApprovalIds.add(approval.id);
+    counts.set(id, (counts.get(id) ?? 0) + 1);
   }
   return counts;
 }
@@ -157,10 +175,12 @@ function summarizePendingApprovals(
   ownerId: (approval: ApprovalRequest) => string | undefined,
 ): Map<string, { readonly critical: number; readonly total: number }> {
   const counts = new Map<string, { readonly critical: number; readonly total: number }>();
+  const seenApprovalIds = new Set<string>();
   for (const approval of approvals) {
     if (effectiveApprovalStatus(approval) !== "pending") continue;
     const id = ownerId(approval);
-    if (!id) continue;
+    if (!id || seenApprovalIds.has(approval.id)) continue;
+    seenApprovalIds.add(approval.id);
     const current = counts.get(id) ?? { critical: 0, total: 0 };
     counts.set(id, {
       critical: current.critical + (approval.risk === "critical" ? 1 : 0),

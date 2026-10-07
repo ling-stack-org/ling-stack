@@ -70,7 +70,7 @@ test("UI 2.0 Input and Field keep external-work forms readable in dark compact d
   });
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await openSettingsSection(page, /External work/);
 
   const panel = page.locator("[data-ui2-external-work]");
@@ -127,7 +127,7 @@ test("mixed migration keeps the shared New Channel input contained during focus"
   await page.goto("/");
   await page.addStyleTag({ content: "*, *::before, *::after { animation: none !important; transition: none !important; }" });
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "No channel yet" }).click();
   const dialog = page.getByRole("dialog", { name: "New channel" });
   const input = dialog.getByLabel("Name");
@@ -221,7 +221,7 @@ async function prepareSettings(
 }
 
 async function openSettingsSection(page: Page, name: RegExp): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name }).click();
 }
 

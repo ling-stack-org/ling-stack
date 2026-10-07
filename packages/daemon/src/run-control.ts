@@ -11,6 +11,8 @@ import {
   toRuntimeAttemptFence,
 } from "@ling-stack/core";
 import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./features/runs/threads.js";
+import { assertNoUnsafeRequiredPause } from "./features/runs/user-input-cancellation-guard.js";
+import { ensureRunCancelled } from "./features/runs/cancellation.js";
 
 export interface ActiveRunHandle {
   readonly abortController: AbortController;
@@ -47,6 +49,13 @@ export class RunControlService {
         active: false,
         run: current,
       };
+    }
+    if (current.status === "yielded") {
+      // Safe waits have a separate atomic logical cancellation. Do not mutate
+      // the old execution or abort whichever successor is currently active.
+      ensureRunCancelled({ store: input.store, runId: current.id, taskId: current.taskId,
+        reason: input.reason, active: false });
+      return { cancelled: true, active: false, run: input.store.getRun(current.id) };
     }
 
     const active = Boolean(input.activeRun);
@@ -120,6 +129,8 @@ export class RunControlService {
     if (!current || isTerminalRunStatus(current.status)) {
       return undefined;
     }
+
+    assertNoUnsafeRequiredPause(input.store, current);
 
     const endedAt = new Date().toISOString();
     this.cancelPendingApprovalsForRun(input.store, input.run.id, endedAt, `Run cancelled: ${input.reason}`, input.streamEnvelope);

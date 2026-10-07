@@ -114,7 +114,7 @@ test("generation tasks page lists, runs, and creates generation tasks", async ({
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("heading", { name: "Media Production", level: 1 })).toHaveCount(0);
   await expect(page.locator(".media-production-canvas-toolbar")).toBeVisible();
   await page.getByRole("radio", { name: "Generation tasks", exact: true }).click();
@@ -203,7 +203,7 @@ test("generation tasks page routes empty model state to model configuration", as
   await mockDaemon(page, state, { templates: createDefaultProviderTemplates() });
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("heading", { name: "Media Production", level: 1 })).toHaveCount(0);
   await expect(page.locator(".media-production-canvas-toolbar")).toBeVisible();
   await page.getByRole("radio", { name: "Generation tasks", exact: true }).click();
@@ -244,7 +244,7 @@ test("generation tasks page treats OpenAI Images presets as runnable generation 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await expect(page.getByRole("heading", { name: "Media Production", level: 1 })).toHaveCount(0);
   await expect(page.locator(".media-production-canvas-toolbar")).toBeVisible();
   await page.getByRole("radio", { name: "Generation tasks", exact: true }).click();
@@ -295,7 +295,7 @@ test("generation tasks page runs live generation without media cost approval", a
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await page.getByRole("radio", { name: "Generation tasks", exact: true }).click();
   const detailPanel = page.locator("[data-media-job-inspector]");
   const jobRow = page.locator("[data-media-job-row]").first();
@@ -345,7 +345,7 @@ test("generation tasks page lets legacy waiting media jobs run directly", async 
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Media Production" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Media Production" }).click();
   await page.getByRole("radio", { name: "Generation tasks", exact: true }).click();
   const jobRow = page.locator("[data-media-job-row]").first();
   const detailPanel = page.locator("[data-media-job-inspector]");

@@ -1,4 +1,4 @@
-export type TaskStatus = "todo" | "claimed" | "running" | "blocked" | "review" | "done" | "failed" | "cancelled";
+export type TaskStatus = "todo" | "claimed" | "running" | "waiting_for_input" | "blocked" | "review" | "done" | "failed" | "cancelled";
 
 export interface Task {
   readonly id: string;

@@ -40,6 +40,34 @@ export interface RunWorkspaceChangeFile {
   readonly deletions: number;
 }
 
+/** A review is an immutable, scoped net diff, not summed recovery operations or current Git status. */
+export interface WorkspaceChangeReview {
+  readonly scope: { readonly kind: "turn" | "run" | "workflow"; readonly id: string };
+  readonly workspaceId: string;
+  readonly threadId?: string;
+  readonly runIds: readonly string[];
+  readonly revision: string;
+  readonly state: "exact" | "partial" | "unavailable";
+  readonly files: readonly WorkspaceChangeReviewFile[];
+  /** Includes paths restored to baseline, which correctly have no net-diff row. */
+  readonly coveredPaths: readonly string[];
+  /** Present only when every included path has a complete, bounded net diff. */
+  readonly additions?: number;
+  readonly deletions?: number;
+  readonly unavailableReason?: string;
+}
+
+export interface WorkspaceChangeReviewFile {
+  readonly id: string;
+  readonly path: string;
+  readonly kind: "added" | "modified" | "deleted";
+  readonly state: "exact" | "unavailable";
+  readonly additions?: number;
+  readonly deletions?: number;
+  readonly diff?: string;
+  readonly unavailableReason?: string;
+}
+
 export interface RunWorkspaceChangeSummary {
   readonly fileCount: number;
   readonly addCount: number;
@@ -60,6 +88,7 @@ export interface RunWorkspaceChangesResponse {
   readonly summary: RunWorkspaceChangeSummary;
   readonly unavailableReason?: string;
   readonly updatedAt: string;
+  readonly review?: WorkspaceChangeReview;
 }
 
 export const workspaceMutationOperations = ["add", "update", "delete", "move"] as const;
@@ -187,6 +216,7 @@ export interface TurnWorkspaceChangesResponse {
   readonly provenanceComplete: boolean;
   readonly unavailableReason?: string;
   readonly updatedAt: string;
+  readonly review?: WorkspaceChangeReview;
 }
 
 export const postCompactionUndoStates = [
@@ -266,6 +296,7 @@ export interface WorkflowWorkspaceChangesResponse {
   readonly summary: RunWorkspaceChangeSummary;
   readonly unavailableReason?: string;
   readonly updatedAt: string;
+  readonly review?: WorkspaceChangeReview;
 }
 
 export type WorkspaceFileOpenTarget =
@@ -280,6 +311,50 @@ export type WorkspaceFileOpenTarget =
   | "intellij"
   | "finder"
   | "terminal";
+
+export type WorkspaceFileCapabilityTarget = "open_file" | "open_diff" | "open_artifact";
+
+export interface WorkspaceFileCapabilityScope {
+  readonly workspaceId: string;
+  readonly threadId: string;
+  readonly runId: string;
+  readonly actionId: string;
+  readonly participantId: string;
+  readonly workflowStepId?: string;
+}
+
+/** Request for a short-lived Host grant. The ref id is checked against durable action evidence. */
+export interface WorkspaceFileCapabilityRequest {
+  readonly cwd: string;
+  readonly capabilityTarget: WorkspaceFileCapabilityTarget;
+  readonly refId: string;
+  readonly scope: WorkspaceFileCapabilityScope;
+  readonly ttlMs?: number;
+}
+
+export interface WorkspaceFileCapability {
+  readonly capabilityId: string;
+  readonly capabilityTarget: WorkspaceFileCapabilityTarget;
+  readonly refId: string;
+  readonly displayPath: string;
+  readonly scope: WorkspaceFileCapabilityScope;
+  readonly issuedAt: string;
+  readonly expiresAt: string;
+  readonly daemonEpoch: string;
+}
+
+export interface WorkspaceFileCapabilityResponse {
+  readonly cwd: string;
+  readonly capability: WorkspaceFileCapability;
+}
+
+export interface WorkspaceFileCapabilityPreviewRequest {
+  readonly cwd: string;
+  readonly capabilityId: string;
+  readonly scope: WorkspaceFileCapabilityScope;
+  readonly maxBytes?: number;
+  readonly line?: number;
+}
 
 export interface WorkspaceFileOpenOption {
   readonly id: WorkspaceFileOpenTarget;
@@ -296,6 +371,9 @@ export interface WorkspaceFileOpenOptionsResponse {
 export interface WorkspaceFileOpenRequest {
   readonly target: WorkspaceFileOpenTarget;
   readonly line?: number;
+  /** Required when opening a transcript-owned trusted ref; omitted for generic workspace browsing. */
+  readonly capabilityId?: string;
+  readonly scope?: WorkspaceFileCapabilityScope;
 }
 
 export interface WorkspaceFileOpenResponse {
@@ -303,4 +381,5 @@ export interface WorkspaceFileOpenResponse {
   readonly path: string;
   readonly target: WorkspaceFileOpenTarget;
   readonly opened: true;
+  readonly capabilityId?: string;
 }

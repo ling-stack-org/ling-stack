@@ -238,6 +238,7 @@ export function useApprovalsDomain(input: {
         runId: response.approval.runId || approvalBeforeResolution?.runId,
         mediaJobId: response.approval.mediaJobId || approvalBeforeResolution?.mediaJobId,
         externalWorkActionId: response.approval.externalWorkActionId || approvalBeforeResolution?.externalWorkActionId,
+        reconciliationPending: response.postCommit?.status === "deferred",
       });
     } catch (caught) {
       if (!isCurrentExternalRequest(`approval:${approvalId}`, requestId, cwd, externalMutationRequestRef.current)) return;

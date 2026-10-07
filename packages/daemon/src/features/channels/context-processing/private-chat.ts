@@ -3,7 +3,6 @@ import type {
   ChannelMessageFileRef,
   RunSession,
   RunStore,
-  Task,
   TeammateDirectLinkPreview,
   TeammateDirectMessage,
   TeammateDirectThread,
@@ -11,6 +10,7 @@ import type {
 } from "@ling-stack/core";
 import type { ChannelContextDroppedSource, ChannelContextSection, ChannelContextSource, ChannelContextSourceRef, ChannelContextView } from "./types.js";
 import { buildChannelContextView } from "./views.js";
+import { assertTeammateDirectMessageScope, resolveTeammateDirectRunOwner } from "../../teammates/direct-run-owner.js";
 
 export interface PrivateChatAttachmentMaterialization {
   readonly attachmentId: string;
@@ -35,6 +35,7 @@ export interface BuildPrivateChatContextViewInput {
 }
 
 export function buildPrivateChatContextView(input: BuildPrivateChatContextViewInput): ChannelContextView {
+  assertTeammateDirectMessageScope(input);
   const attachmentsById = input.attachmentsById ?? new Map();
   const materializationsByAttachmentId = input.materializationsByAttachmentId ?? new Map();
   const promptMessages = privatePromptMessages(input.messages, input.sourceMessage);
@@ -127,6 +128,7 @@ export function collectPrivateMessageSources(input: {
   readonly materializationsByAttachmentId?: ReadonlyMap<string, PrivateChatAttachmentMaterialization>;
   readonly linkPreviewsById?: ReadonlyMap<string, TeammateDirectLinkPreview>;
 }): readonly ChannelContextSource[] {
+  assertTeammateDirectMessageScope(input);
   const attachmentsById = input.attachmentsById ?? new Map();
   const materializationsByAttachmentId = input.materializationsByAttachmentId ?? new Map();
   const linkPreviewsById = input.linkPreviewsById ?? new Map();
@@ -151,8 +153,6 @@ export function collectPrivateMessageSources(input: {
         return { type: "teammate_direct_link_preview", id: linkPreviewId, label: preview?.title ?? preview?.url };
         }),
         ...fileRefs.map((fileRef, index) => ({ type: "workspace_file_ref", id: `${message.id}:${index}`, label: renderPrivateFileRef(fileRef) })),
-        ...(message.linkedTaskId ? [{ type: "task", id: message.linkedTaskId, label: "Linked task" }] : []),
-        ...(message.linkedRunId ? [{ type: "run", id: message.linkedRunId, label: "Linked run" }] : []),
       ],
       title: message.id === input.sourceMessage.id ? "Latest private message" : `Private ${message.authorType} message`,
       text: renderPrivateMessageLine(
@@ -173,8 +173,6 @@ export function collectPrivateMessageSources(input: {
         materializedAttachmentCount: attachmentIds
           .map((attachmentId) => materializationsByAttachmentId.get(attachmentId))
           .filter(hasPrivateAttachmentPromptContent).length,
-        linkedTaskId: message.linkedTaskId,
-        linkedRunId: message.linkedRunId,
         createdAt: message.createdAt,
       },
       sensitivity: "private" as const,
@@ -189,27 +187,22 @@ export function collectPrivateLinkedReferenceSources(input: {
   readonly thread: TeammateDirectThread;
   readonly messages: readonly TeammateDirectMessage[];
 }): readonly ChannelContextSource[] {
+  assertTeammateDirectMessageScope(input);
   const sources: ChannelContextSource[] = [];
   for (const message of input.messages) {
-    if (message.linkedTaskId) {
-      const task = input.store.getTask(message.linkedTaskId);
-      sources.push(linkedTaskSource({
-        teammate: input.teammate,
-        thread: input.thread,
-        message,
-        taskId: message.linkedTaskId,
-        task,
-      }));
-    }
+    // Converting a private message to a channel task remains supported by its
+    // command route. That link does not grant this private context its facts.
     if (message.linkedRunId) {
-      const run = input.store.getRun(message.linkedRunId);
+      const owner = resolveTeammateDirectRunOwner(input.store, message.linkedRunId, {
+        teammateId: input.teammate.id, directThreadId: input.thread.id,
+        ...(message.authorType === "ai-teammate" ? { replyMessageId: message.id } : {}),
+      });
+      if (!owner) continue;
       sources.push(linkedRunSource({
-        store: input.store,
         teammate: input.teammate,
         thread: input.thread,
         message,
-        runId: message.linkedRunId,
-        run,
+        run: owner.run,
       }));
     }
   }
@@ -258,11 +251,7 @@ function privatePromptMessages(
 }
 
 function isHistoricalGuidanceMessage(message: TeammateDirectMessage): boolean {
-  if (message.authorType !== "system") {
-    return false;
-  }
-  const body = message.body.trim();
-  return body.startsWith("排队引导：") || body.startsWith("已停止上一条回复，并按新引导继续：");
+  return message.authorType === "system" && message.systemPurpose === "execution_control";
 }
 
 function renderPrivateMessageLine(
@@ -344,74 +333,31 @@ function hasPrivateAttachmentPromptContent(
   return Boolean(materialization?.status === "available" && materialization.contentText?.trim());
 }
 
-function linkedTaskSource(input: {
-  readonly teammate: AiTeammate;
-  readonly thread: TeammateDirectThread;
-  readonly message: TeammateDirectMessage;
-  readonly taskId: string;
-  readonly task?: Task;
-}): ChannelContextSource {
-  return {
-    id: `private_ref:task:${input.taskId}`,
-    kind: "active_work",
-    workspaceId: input.thread.workspaceId,
-    channelId: input.task?.channelId,
-    teammateId: input.teammate.id,
-    sourceRefs: [
-      { type: "teammate_direct_message", id: input.message.id, label: "Private message explicit reference" },
-      { type: "task", id: input.taskId, label: input.task?.title ?? "Linked task" },
-      ...(input.task?.channelId ? [{ type: "channel", id: input.task.channelId, label: "Linked task channel" }] : []),
-    ],
-    title: input.task?.title ?? "Linked task",
-    text: input.task ? boundedText(input.task.prompt, 1_200) : undefined,
-    metadata: {
-      explicitReference: true,
-      entityType: "task",
-      taskId: input.taskId,
-      status: input.task?.status,
-      sourceMessageId: input.message.id,
-    },
-    sensitivity: "normal",
-    freshness: "durable",
-  };
-}
-
 function linkedRunSource(input: {
-  readonly store: RunStore;
   readonly teammate: AiTeammate;
   readonly thread: TeammateDirectThread;
   readonly message: TeammateDirectMessage;
-  readonly runId: string;
-  readonly run?: RunSession;
+  readonly run: RunSession;
 }): ChannelContextSource {
-  const workflowStep = input.run?.workflowStepId ? input.store.getChannelWorkflowStep(input.run.workflowStepId) : undefined;
-  const workflow = workflowStep ? input.store.getChannelWorkflow(workflowStep.workflowId) : undefined;
-  const task = input.run ? input.store.getTask(input.run.taskId) : undefined;
   return {
-    id: `private_ref:run:${input.runId}`,
+    id: `private_ref:run:${input.run.id}`,
     kind: "active_work",
     workspaceId: input.thread.workspaceId,
-    channelId: input.run?.channelId ?? task?.channelId ?? workflow?.channelId,
     teammateId: input.teammate.id,
     sourceRefs: [
       { type: "teammate_direct_message", id: input.message.id, label: "Private message explicit reference" },
-      { type: "run", id: input.runId, label: "Linked run" },
-      ...(task ? [{ type: "task", id: task.id, label: task.title }] : []),
-      ...(workflow ? [{ type: "workflow", id: workflow.id, label: workflow.title }] : []),
-      ...(workflowStep ? [{ type: "workflow_step", id: workflowStep.id, label: workflowStep.title }] : []),
+      { type: "run", id: input.run.id, label: "Linked run" },
     ],
     title: runTitle(input.run) ?? "Linked run",
     text: input.run?.errorMessage ? boundedText(input.run.errorMessage, 800) : undefined,
     metadata: {
       explicitReference: true,
       entityType: "run",
-      runId: input.runId,
+      runId: input.run.id,
       status: input.run?.status,
-      taskId: input.run?.taskId,
-      workflowStepId: input.run?.workflowStepId,
       sourceMessageId: input.message.id,
     },
-    sensitivity: "normal",
+    sensitivity: "private",
     freshness: "durable",
   };
 }

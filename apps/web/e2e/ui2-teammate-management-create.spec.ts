@@ -254,7 +254,7 @@ function createCreateState(providerId = "provider_ready"): ReturnType<typeof cre
 }
 
 async function openTeammateManagement(page: Page): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Teammate Management" }).click();
   const surface = page.locator("[data-ui2-settings-workspace-tool][data-settings-workspace-tool='teammates']");
   await expect(surface).toBeVisible();

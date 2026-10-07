@@ -18,6 +18,7 @@ import { confirmChannelExecutionProposalWorkflow } from "../dist/features/channe
 import { materializeCommandIntent } from "../dist/features/channels/command-operation-match.js";
 import {
   finalizeOrchestratedWorkflowStepRun,
+  retryChannelWorkflowStep,
   syncWorkflowApprovalDecision,
 } from "../dist/features/channels/orchestrator.js";
 import { verifyWorkflowStepExecutionOperations } from "../dist/features/channels/workflow-operation-evidence.js";
@@ -842,7 +843,8 @@ test("approval restart resume feeds QA evidence through the shared multi-agent c
         list() { return []; },
         resolve() { throw new Error("unused"); },
       },
-      runtimeSupervisor: {
+runtimeSupervisor: {
+        getRestrictedCommandRuntime() { return undefined; },
         getRuntime() {
           return { runtimeInstanceId: "runtime_after_restart" };
         },
@@ -1003,7 +1005,8 @@ test("approval resume rejects a command that no longer matches the workflow bind
         list() { return []; },
         resolve() { throw new Error("unused"); },
       },
-      runtimeSupervisor: {
+runtimeSupervisor: {
+        getRestrictedCommandRuntime() { return undefined; },
         getRuntime() {
           return { runtimeInstanceId: "runtime_after_restart" };
         },
@@ -1110,6 +1113,77 @@ test("approval resume unsupported is a structured delegated blocker, not workflo
     assert.equal(step.metadata.delegatedOutcome.kind, "blocked");
     assert.equal(step.metadata.delegatedOutcome.code, "approval_resume_unsupported");
     assert.equal(workflow.status, "blocked");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("execution loop blocks the delegated participant, fan-in, and unchanged retry", async () => {
+  const fixture = await createMultiAgentOperationFixture("execution-loop-blocker");
+  try {
+    fixture.store.appendEvent(fixture.engineerRun.id, "loop_detected", {
+      code: "execution_loop_detected",
+      attemptId: `attempt_${fixture.engineerRun.id}`,
+      loopKind: "cycle",
+      observedEventType: "tool_end",
+      observedEventSeq: 6,
+      repeatedCount: 3,
+      noProgressActionCount: 6,
+      cycleLength: 2,
+      fingerprint: "b".repeat(64),
+      message: "Execution stopped after a 2-action cycle repeated 3 times.",
+      retryable: false,
+    });
+    fixture.store.markRunFailed(
+      fixture.engineerRun.id,
+      "2026-08-15T03:10:00.000Z",
+      "execution_loop_detected",
+    );
+
+    finalizeOrchestratedWorkflowStepRun(
+      fixture.store,
+      fixture.engineerStep.id,
+      fixture.engineerTask.id,
+      fixture.store.getRun(fixture.engineerRun.id),
+      "2026-08-15T03:10:01.000Z",
+    );
+
+    const workflow = fixture.store.getChannelWorkflow(fixture.workflow.id);
+    const steps = fixture.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
+    const engineerStep = steps.find((step) => step.id === fixture.engineerStep.id);
+    assert.equal(engineerStep.status, "blocked");
+    assert.equal(engineerStep.metadata.delegatedOutcome.kind, "blocked");
+    assert.equal(engineerStep.metadata.delegatedOutcome.code, "execution_loop_detected");
+    assert.deepEqual(engineerStep.metadata.delegatedOutcome.missingRequirements, ["manual_intervention"]);
+    assert.equal(workflow.status, "blocked");
+
+    const gate = evaluateWorkflowCompletionGate({
+      store: fixture.store,
+      workflow,
+      steps,
+      now: "2026-08-15T03:10:02.000Z",
+    });
+    assert.equal(gate.status, "blocked");
+    assert.equal(
+      gate.participantResults.find((result) => result.participantId === engineerStep.toParticipantId)?.status,
+      "blocked",
+    );
+
+    let startRunCalled = false;
+    await assert.rejects(
+      retryChannelWorkflowStep({
+        store: fixture.store,
+        cwd: fixture.engineerRun.cwd,
+        workflowStepId: engineerStep.id,
+        validateRunRequest: () => undefined,
+        startRun: async () => {
+          startRunCalled = true;
+          return "unexpected-retry-run";
+        },
+      }),
+      (error) => error?.statusCode === 409 && error?.code === "workflow_step_loop_failure_not_retryable",
+    );
+    assert.equal(startRunCalled, false);
   } finally {
     await fixture.close();
   }
@@ -1283,7 +1357,7 @@ test("startup synthesis finalization prepares one deterministic output packet an
     const firstReport = await processWorkflowTerminalReport(fixture.store, fixture.workflow.id, {
       now: "2026-08-12T14:25:11.500Z",
     });
-    assert.ok(firstReport.record.publishedMessageId);
+    assert.ok(firstReport.record.resultItemId);
     assert.equal(fixture.store.getLingTurn(sourceItem.turnId).status, "succeeded");
 
     const duplicate = reconcileWorkflowFromCanonicalState({
@@ -1299,9 +1373,9 @@ test("startup synthesis finalization prepares one deterministic output packet an
       now: "2026-08-12T14:25:12.500Z",
     });
     assert.equal(duplicateReport.record.id, firstReport.record.id);
-    assert.equal(duplicateReport.record.publishedMessageId, firstReport.record.publishedMessageId);
+    assert.equal(duplicateReport.record.resultItemId, firstReport.record.resultItemId);
     assert.equal(fixture.store.listConversationItemsForTurn({ turnId: sourceItem.turnId })
-      .filter((item) => item.id === firstReport.record.publishedMessageId).length, 1);
+      .filter((item) => item.id === firstReport.record.resultItemId).length, 1);
     assert.equal(fixture.store.listStateTransitionEvents({ entityType: "turn", entityId: sourceItem.turnId })
       .filter((event) => event.toStatus === "succeeded").length, 1);
   } finally {
@@ -1430,6 +1504,57 @@ test("post-step approval cannot replace missing required operation evidence", as
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+for (const sample of [
+  {
+    name: "assistant message boundaries preserve Markdown",
+    events: [
+      ["assistant_text_delta", { text: "Inspect first." }],
+      ["message_end", { role: "assistant", text: "Inspect first." }],
+      ["assistant_text_delta", { text: "## Result\n\n```js\n" }],
+      ["assistant_text_delta", { text: "console.log('ok');\n```" }],
+      ["message_end", { role: "assistant", text: "## Result\n\n```js\nconsole.log('ok');\n```" }],
+    ],
+    expected: "Inspect first.\n\n## Result\n\n```js\nconsole.log('ok');\n```",
+  },
+  {
+    name: "end-only assistant content is retained",
+    events: [["message_end", { role: "assistant", text: "Completed without text deltas." }]],
+    expected: "Completed without text deltas.",
+  },
+  {
+    name: "narration after the first event page is retained",
+    events: [
+      ["assistant_text_delta", { text: "Before tool work." }],
+      ["message_end", { role: "assistant", text: "Before tool work." }],
+      ...Array.from({ length: 1001 }, () => ["message_end", { role: "toolResult" }]),
+      ["assistant_text_delta", { text: "After tool work." }],
+      ["message_end", { role: "assistant", text: "After tool work." }],
+    ],
+    expected: "Before tool work.\n\nAfter tool work.",
+  },
+]) {
+  test(`delegated result narration: ${sample.name}`, async () => {
+    const fixture = await createMultiAgentOperationFixture("result-narration");
+    try {
+      appendToolAction(fixture.store, fixture.engineerRun.id, "write_app", "write", { path: "app.js", content: "ok" }, false);
+      for (const [type, data] of sample.events) fixture.store.appendEvent(fixture.engineerRun.id, type, data);
+      fixture.store.markRunSucceeded(fixture.engineerRun.id, "2026-08-12T17:00:10.000Z");
+      const result = finalizeDelegatedWorkflowStepFromCanonicalState({
+        store: fixture.store,
+        workflowStepId: fixture.engineerStep.id,
+        cause: "run_terminal",
+        now: "2026-08-12T17:00:11.000Z",
+      });
+      assert.equal(result.status, "finalized");
+      const step = fixture.store.getChannelWorkflowStep(fixture.engineerStep.id);
+      assert.equal(step.status, "succeeded");
+      assert.equal(step.resultSummary, sample.expected);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
 
 test("delegated finalization is idempotent across duplicate callbacks", async () => {
   const fixture = await createMultiAgentOperationFixture("duplicate-callback");
@@ -2197,17 +2322,20 @@ async function createGenericDelegatedActionFixture(suffix) {
 }
 
 function createFixtureRun(store, cwd, channelId, workflowStepId, task, id, now) {
+  const step = store.getChannelWorkflowStep(workflowStepId);
+  const delegatedRequirement = step?.metadata?.delegatedRequirement;
   const run = store.createRun({
     id,
     cwd,
     taskId: task.id,
     channelId,
     workflowStepId,
+    teammateId: step?.toParticipantId,
     providerName: "test-provider",
     providerModel: "test-model",
     taskSnapshot: { id: task.id, title: task.title },
     providerSnapshot: { provider: "test-provider", model: "test-model" },
-    requestSnapshot: { cwd },
+    requestSnapshot: { cwd, ...(delegatedRequirement ? { delegatedRequirement } : {}) },
     createdAt: now,
   });
   store.markRunStarted(run.id, now);
