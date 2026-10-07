@@ -15,9 +15,14 @@ import {
 import { removeUndefined } from "../../shared/validation.js";
 import type { RunRequest } from "./schemas.js";
 
-export function resolveProviderForRun(
+type ProviderRunSelection = Pick<
+  RunRequest,
+  "providerPresetId" | "provider" | "skipProviderPreflight"
+>;
+
+export function resolveProviderForRun<T extends ProviderRunSelection>(
   store: ProviderStoreFacet,
-  runRequest: RunRequest,
+  runRequest: T,
   secretResolver: SecretResolver,
   options: { readonly providerWebSocketFallbackEnabled?: boolean } = {},
 ): PiRunnerProviderConfig {

@@ -1,8 +1,8 @@
 # Conversation Surface Taxonomy
 
-Status: design boundary for normal conversation, channel, branch, topic reply, private chat, and future session surfaces
+Status: product vocabulary boundary; typed transcript scope authority v3.9.1
 Date: 2026-06-25
-Last updated: 2026-06-28
+Last updated: 2026-09-01
 
 Related docs:
 
@@ -12,6 +12,20 @@ Related docs:
 - [AI Teammate Private Workspace](ai-teammate-private-workspace.md)
 - [Channel Context Processing Layer](channel-context-processing-layer.md)
 - [Channel Auto Reply Router](channel-auto-reply-router.md)
+
+> v3.9.1 authority note: this document defines product vocabulary and surface ownership only.
+> Transcript item kinds, evidence ownership, renderer selection, batching, and completion
+> semantics are defined by [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+> and [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md).
+> Mentions of WorkCell below describe the pre-v3.7 migration input and must not be used to
+> create a second production renderer.
+
+> **v3.9.1 scope override:** a topic reply may still use `ChannelMessage.threadId` for legacy
+> channel grouping, but the canonical transcript adapter must resolve it to a real
+> `LingThread.id` (`surfaceKind="topic"`) anchored to the source message. The adapter must
+> never manufacture `channel:<id>`, `topic:<messageId>`, or another string-only thread id.
+> If the topic thread cannot be resolved, the transcript is `diagnostic(scope_mismatch)`;
+> it must not silently fall back to the parent root or duplicate the parent history.
 
 ## Purpose
 
@@ -51,13 +65,33 @@ should be a user-facing view over `LingThread`, scoped to one owner surface.
 | Surface | User-facing meaning | Primary storage | Scope owner | Default visibility |
 | --- | --- | --- | --- | --- |
 | Normal conversation | The conversation created after sending from the home composer | `LingThread` + turn/message/evidence records | User + selected workspace | Private to the user unless explicitly shared/promoted |
-| Channel root | The main shared room for a project or work area | `Channel` + root `ChannelMessage` rows | `Channel` | Public inside the channel |
+| Channel root | The main shared room for a project or work area | `Channel` + root `LingThread` + root `ChannelMessage` rows | `Channel` for room policy, root `LingThread` for transcript scope | Public inside the channel |
 | Channel branch | A named lane under one channel, such as `test` or `Model routing fix` | `ChannelBranch.rootThreadId` + `LingThread` + branch-scoped `ChannelMessage.threadId` rows | Parent `Channel` | Public inside the channel, filtered to the branch |
-| Topic reply | A lightweight side discussion under one message | `ChannelMessage.threadId = sourceMessage.id` | Source `ChannelMessage` | Public inside the channel, nested under the source message |
-| Teammate private chat | A private conversation with one teammate | Teammate direct thread/message store | Teammate + user | Private to that direct chat |
+| Topic reply | A lightweight side discussion under one message | `LingThread(surfaceKind="topic")` with `parentThreadId` + `anchorItemId`; legacy `ChannelMessage.threadId` remains an adapter index | Source `ChannelMessage` anchor + topic `LingThread` | Public inside the channel, nested under the source message |
+| Teammate private chat | A private conversation with one teammate | user/teammate-scoped `LingThread` + direct message records | Teammate + user; `LingThread` for transcript scope | Private to that direct chat |
 | Work/session thread | A durable unit the user can resume, fork, audit, or search | `LingThread` and related turn/run/evidence tables | Depends on owning surface | Shown through the owning surface and Work History |
 
 ## Ownership Rules
+
+### v3.7 canonical thread mapping
+
+The resolver must return a real `LingThread` before any item is projected. The mapping is
+deterministic and is the same for initial load, SSE replay, resume and daemon restart:
+
+| Entry | Canonical thread | Anchor/fork record | Transcript scope |
+| --- | --- | --- | --- |
+| Channel root | one `LingThread(surfaceKind="channel_root")` owned by the channel | none | root turns/items only |
+| Topic reply | one `LingThread(surfaceKind="topic")` per promoted topic | `parentThreadId` + source `anchorItemId` | topic turns/items only; parent message is a reference |
+| Channel branch | one `LingThread(surfaceKind="branch")` per branch | `parentThreadId` + immutable `forkContextSnapshotId` | branch turns/items only |
+| Normal conversation | one workspace-scoped `LingThread(surfaceKind="work")` | none | direct user/Agent turns |
+| Teammate private | one user/teammate-scoped `LingThread(surfaceKind="direct")` | none | direct pair only |
+| Child Agent | parent thread plus `ParticipantSpan` | parent item + participant/run/attempt | nested depth-1 items; no child thread |
+
+`ChannelMessage.threadId` is therefore an index used by older channel list/read paths, not
+the transcript authority. A root/topic/branch adapter may read it, but must resolve the
+corresponding durable `LingThread` and verify workspace, parent and anchor before mounting
+the shared timeline. This makes a topic as recoverable as a branch without turning every
+ordinary reply into a new visible room.
 
 ### Normal Conversation
 
@@ -133,14 +167,18 @@ messages.
 A topic reply is message-level discussion. It is lighter than a channel branch and should
 not become a navigation lane.
 
-Topic reply messages use:
+Historically, topic reply messages used:
 
 ```text
 ChannelMessage.threadId = source channel message id
 ```
 
-This keeps replies attached to the source bubble and avoids creating a separate
-`ChannelBranch` or `LingThread` unless a later workflow explicitly promotes the discussion.
+This keeps replies attached to the source message for channel listing. In the v3.7 typed
+transcript, the surface resolver additionally requires a durable topic `LingThread` so
+turns, runs, evidence, retry and reconnect have one canonical owner. The source message is
+the immutable anchor; its body is not copied into the topic timeline. A topic remains
+lighter than a branch (no independent channel policy or roster), but it is not a synthetic
+session and it must survive reload/resume with the same thread id.
 
 Topic replies should not trigger ordinary channel auto-reply by default. If future work
 adds topic-level Ling replies, it needs an explicit route policy so every small side thread

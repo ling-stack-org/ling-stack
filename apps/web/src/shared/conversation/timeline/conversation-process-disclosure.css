@@ -1,0 +1,22 @@
+.conversation-process-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: fit-content;
+  padding: 5px 0;
+  border: 0;
+  background: transparent;
+  color: var(--conversation-text-muted, var(--ling-text-muted));
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.conversation-process-header:hover,
+.conversation-process-header:focus-visible {
+  color: var(--conversation-text-strong, var(--ling-text-strong));
+}
+
+.conversation-process-header svg:last-child { transform: rotate(-90deg); }
+.conversation-process-header svg.expanded:last-child { transform: rotate(0deg); }
+.conversation-process-group { display: contents; }

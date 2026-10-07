@@ -3,6 +3,7 @@ import {
   type RunExecutionStoreFacet,
   type RunEventEnvelope,
   type RunSummary,
+  type RuntimeAttemptFenceV1,
 } from "@ling-stack/core";
 
 export function writeTerminalSummary(summaryPath: string, summary: RunSummary): string | undefined {
@@ -17,13 +18,14 @@ export function writeTerminalSummary(summaryPath: string, summary: RunSummary): 
 export function appendFailureEvent(
   store: RunExecutionStoreFacet,
   runId: string,
+  sourceFence: RuntimeAttemptFenceV1,
   message: string,
   sinkClosed: boolean,
   sink: { writeEvent(event: string, data: unknown): void },
   extraData: Record<string, unknown> = {},
 ): RunEventEnvelope | undefined {
   try {
-    const envelope = store.appendEvent(runId, "run_error", { message, ...extraData });
+    const envelope = store.appendExecutionEvent(runId, sourceFence, "run_error", { message, ...extraData });
     if (!sinkClosed) {
       sink.writeEvent(envelope.type, envelope);
     }

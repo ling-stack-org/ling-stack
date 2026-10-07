@@ -31,8 +31,12 @@ import {
 } from "../../api.js";
 import type { DomainController, DomainError } from "../../app/domain-controller.js";
 import { deriveChannelTasks } from "../../lib/channel-artifacts.js";
-import { mergeConversationItems, projectChannelConversationItemPage } from "../../lib/channel-conversation-items.js";
+import { mergeConversationItems, mergeChannelUserInputPage, projectChannelConversationItemPage, type ChannelConversationMessagePage } from "../../lib/channel-conversation-items.js";
+import { createConversationReadEpoch } from "../../lib/conversation-read-epoch.js";
+import { isUserInputAnchor } from "@ling-stack/conversation-ui-core";
+import type { ConversationReasoningSummaryRecord, TurnContextAssignment, UserInputTranscriptItemV1 } from "@ling-stack/contracts";
 import { channelMessagesEqual } from "../../lib/channel-message-equality.js";
+import { liveNarrationWorkflowIds, mergeWorkflowNarration, mergeWorkflowStepReadModels } from "../../lib/workflow-narration-refresh.js";
 import {
   defaultChannelCreateForm,
   defaultChannelEditForm,
@@ -108,6 +112,9 @@ export interface WorkspaceState {
   readonly taskRunProviderId: string;
   readonly channelMessages: readonly ChannelMessage[];
   readonly channelConversationItems: readonly ConversationItemV1[];
+  readonly channelTurnContextAssignments: readonly TurnContextAssignment[];
+  readonly channelUserInputs: readonly UserInputTranscriptItemV1[];
+  readonly channelReasoningSummaries: readonly ConversationReasoningSummaryRecord[];
   readonly channelGeneratedMedia: readonly ConversationGeneratedMedia[];
   readonly memoryObjects: readonly MemoryObject[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
@@ -246,6 +253,18 @@ export function useWorkspaceDomain(input: {
   const [taskRunProviderId, setTaskRunProviderId] = useState("");
   const [channelMessages, setChannelMessages] = useState<readonly ChannelMessage[]>([]);
   const [channelConversationItems, setChannelConversationItems] = useState<readonly ConversationItemV1[]>([]);
+  const [channelTurnContextAssignmentState, setChannelTurnContextAssignmentState] = useState<{
+    owner: string;
+    assignments: readonly TurnContextAssignment[];
+  }>({ owner: "", assignments: [] });
+  const [channelUserInputState, setChannelUserInputState] = useState<{ owner: string; items: readonly UserInputTranscriptItemV1[] }>({ owner: "", items: [] });
+  const [channelReasoningSummaryState, setChannelReasoningSummaryState] = useState<{
+    owner: string;
+    items: readonly ConversationReasoningSummaryRecord[];
+  }>({ owner: "", items: [] });
+  const channelInputPageRef = useRef<ChannelConversationMessagePage | undefined>(undefined);
+  const channelReadEpochRef = useRef(createConversationReadEpoch());
+  const channelReadOwnerRef = useRef("");
   const [channelGeneratedMedia, setChannelGeneratedMedia] = useState<readonly ConversationGeneratedMedia[]>([]);
   const [channelItemsBeforeSequence, setChannelItemsBeforeSequence] = useState<number | undefined>();
   const [memoryObjects, setMemoryObjects] = useState<readonly MemoryObject[]>([]);
@@ -268,6 +287,9 @@ export function useWorkspaceDomain(input: {
   const [channelContextSummaries, setChannelContextSummaries] = useState<readonly ChannelContextSummary[]>([]);
   const [channelWorkflows, setChannelWorkflows] = useState<readonly ChannelWorkflow[]>([]);
   const [channelWorkflowSteps, setChannelWorkflowSteps] = useState<readonly ChannelWorkflowStep[]>([]);
+  // Active-run polling can outlive the initial protocol load. Read its latest scope.
+  const channelWorkflowStepsRef = useRef(channelWorkflowSteps);
+  channelWorkflowStepsRef.current = channelWorkflowSteps;
   const [channelMessagesLoading, setChannelMessagesLoading] = useState(false);
   const [channelFilesLoading, setChannelFilesLoading] = useState(false);
   const [channelRunArtifactsLoading, setChannelRunArtifactsLoading] = useState(false);
@@ -301,6 +323,12 @@ export function useWorkspaceDomain(input: {
   const selectedChannelMessageThreadIdRef = useRef(selectedChannelMessageThreadId);
   selectedChannelIdRef.current = selectedChannelId;
   selectedChannelMessageThreadIdRef.current = selectedChannelMessageThreadId;
+  const channelReadOwner = JSON.stringify([input.cwd.trim(), selectedChannelId, selectedChannelMessageThreadId ?? ""]);
+  if (channelReadOwnerRef.current !== channelReadOwner) {
+    channelReadOwnerRef.current = channelReadOwner;
+    channelReadEpochRef.current.invalidate();
+    channelInputPageRef.current = undefined;
+  }
 
   function isSelectedChannelConversation(channelId: string, threadId?: string): boolean {
     return channelId === selectedChannelIdRef.current && threadId === selectedChannelMessageThreadIdRef.current;
@@ -487,13 +515,22 @@ export function useWorkspaceDomain(input: {
     if (!cwd || !channelId) {
       setChannelMessages([]);
       setChannelConversationItems([]);
+      setChannelTurnContextAssignmentState({ owner: channelReadOwnerRef.current, assignments: [] });
+      channelReadEpochRef.current.invalidate();
+      channelInputPageRef.current = undefined;
+      setChannelUserInputState({ owner: channelReadOwnerRef.current, items: [] });
+      setChannelReasoningSummaryState({ owner: channelReadOwnerRef.current, items: [] });
       setChannelMessagesHasOlder(false);
       setChannelItemsBeforeSequence(undefined);
       return;
     }
 
+    const readOwner = JSON.stringify([cwd, channelId, threadId ?? ""]);
+    if (readOwner !== channelReadOwnerRef.current) return;
     const guardKey = `messages:${cwd}:${channelId}`;
     const token = loadGuard.next(guardKey);
+    const readTicket = channelReadEpochRef.current.begin(readOwner);
+    setChannelMessagesLoadingOlder(false);
     if (!options?.silent) {
       setChannelMessagesLoading(true);
     }
@@ -506,16 +543,24 @@ export function useWorkspaceDomain(input: {
         limit: channelMessageInitialLimit,
         surface: threadId ? { kind: "thread", threadId } : { kind: "channel_root" },
       });
-      if (!loadGuard.isCurrent(guardKey, token)) {
+      if (!loadGuard.isCurrent(guardKey, token) || !channelReadEpochRef.current.isCurrent(readTicket)) {
         return;
       }
       if (!isSelectedChannelConversation(channelId, threadId)) {
         return;
       }
       const page = projectChannelConversationItemPage(response);
+      if (response.channelId !== channelId || response.thread.channelId !== channelId
+        || (threadId !== undefined && response.thread.id !== threadId)) throw new Error("Channel response scope mismatch.");
+      const hydrated = mergeChannelUserInputPage(channelInputPageRef.current, page);
+      channelInputPageRef.current = hydrated;
+      setChannelTurnContextAssignmentState({ owner: readOwner, assignments: hydrated.turnContextAssignments });
+      setChannelUserInputState({ owner: readOwner, items: hydrated.userInputs ?? [] });
+      setChannelReasoningSummaryState({ owner: readOwner, items: hydrated.reasoningSummaries });
       const messagesChanged = !channelMessagesEqual(channelMessages, page.messages);
       setChannelMessages((current) => channelMessagesEqual(current, page.messages) ? current : page.messages);
-      setChannelConversationItems(page.conversationItems);
+      const visibleIds = new Set(page.conversationItems.map(item => item.id));
+      setChannelConversationItems(hydrated.conversationItems.filter(item => visibleIds.has(item.id)));
       setChannelGeneratedMedia(page.generatedMedia);
       setChannelMessagesHasOlder(page.hasMore);
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
@@ -523,12 +568,12 @@ export function useWorkspaceDomain(input: {
         input.onChannelMessagesLoaded?.(channelId, page.messages);
       }
     } catch (caught) {
-      if (!loadGuard.isCurrent(guardKey, token) || !isSelectedChannelConversation(channelId, threadId)) return;
+      if (!loadGuard.isCurrent(guardKey, token) || !channelReadEpochRef.current.isCurrent(readTicket) || !isSelectedChannelConversation(channelId, threadId)) return;
       if (!options?.silent) {
         reportScopedFeedback("composer", channelId, "load", caught);
       }
     } finally {
-      if (loadGuard.isCurrent(guardKey, token) && isSelectedChannelConversation(channelId, threadId)) {
+      if (loadGuard.isCurrent(guardKey, token) && channelReadEpochRef.current.isCurrent(readTicket) && isSelectedChannelConversation(channelId, threadId)) {
         setChannelMessagesLoading(false);
       }
     }
@@ -540,34 +585,50 @@ export function useWorkspaceDomain(input: {
       return;
     }
 
+    const readOwner = JSON.stringify([cwd, channelId, threadId ?? ""]);
+    if (readOwner !== channelReadOwnerRef.current) return;
     const guardKey = `olderMessages:${cwd}:${channelId}`;
     const token = loadGuard.next(guardKey);
+    const readTicket = channelReadEpochRef.current.begin(readOwner, "page");
+    const requestedBeforeSequence = channelItemsBeforeSequence;
     setChannelMessagesLoadingOlder(true);
     try {
       clearScopedFeedback("composer", channelId);
       setError(undefined);
       const response = await listChannelConversationItems(cwd, channelId, {
         limit: channelMessageOlderLimit,
-        beforeSequence: channelItemsBeforeSequence,
+        beforeSequence: requestedBeforeSequence,
         surface: threadId ? { kind: "thread", threadId } : { kind: "channel_root" },
       });
-      if (!loadGuard.isCurrent(guardKey, token)) {
+      if (!loadGuard.isCurrent(guardKey, token) || !channelReadEpochRef.current.isCurrent(readTicket)) {
         return;
       }
       if (!isSelectedChannelConversation(channelId, threadId)) {
         return;
       }
       const page = projectChannelConversationItemPage(response);
+      if (response.channelId !== channelId || response.thread.channelId !== channelId
+        || (threadId !== undefined && response.thread.id !== threadId)) throw new Error("Channel response scope mismatch.");
+      const hydrated = mergeChannelUserInputPage(channelInputPageRef.current, page, requestedBeforeSequence);
+      channelInputPageRef.current = hydrated;
+      setChannelTurnContextAssignmentState({ owner: readOwner, assignments: hydrated.turnContextAssignments });
+      setChannelUserInputState({ owner: readOwner, items: hydrated.userInputs ?? [] });
+      setChannelReasoningSummaryState({ owner: readOwner, items: hydrated.reasoningSummaries });
       setChannelMessages((current) => mergeChannelMessages(page.messages, current));
-      setChannelConversationItems((current) => mergeConversationItems(page.conversationItems, current));
+      setChannelConversationItems((current) => {
+        const visibleIds = new Set([...current, ...page.conversationItems].map(item => item.id));
+        return mergeConversationItems(page.conversationItems.filter(item => !isUserInputAnchor(item)), current.filter(item => !isUserInputAnchor(item)))
+          .concat(hydrated.conversationItems.filter(item => isUserInputAnchor(item) && visibleIds.has(item.id)))
+          .sort((a, b) => a.sequence - b.sequence || a.id.localeCompare(b.id));
+      });
       setChannelGeneratedMedia((current) => mergeGeneratedMedia(page.generatedMedia, current));
       setChannelMessagesHasOlder(page.hasMore);
       setChannelItemsBeforeSequence(page.nextBeforeSequence);
     } catch (caught) {
-      if (!loadGuard.isCurrent(guardKey, token) || !isSelectedChannelConversation(channelId, threadId)) return;
+      if (!loadGuard.isCurrent(guardKey, token) || !channelReadEpochRef.current.isCurrent(readTicket) || !isSelectedChannelConversation(channelId, threadId)) return;
       reportScopedFeedback("composer", channelId, "load", caught);
     } finally {
-      if (loadGuard.isCurrent(guardKey, token) && isSelectedChannelConversation(channelId, threadId)) {
+      if (loadGuard.isCurrent(guardKey, token) && channelReadEpochRef.current.isCurrent(readTicket) && isSelectedChannelConversation(channelId, threadId)) {
         setChannelMessagesLoadingOlder(false);
       }
     }
@@ -698,7 +759,7 @@ export function useWorkspaceDomain(input: {
     }
 
     const token = loadGuard.next(`executionActions:${cwd}:${channelId}`);
-    const results = await Promise.all(
+    const [results, narrationResults] = await Promise.all([Promise.all(
       channelRuns.map(async (sourceRun) => {
         try {
           const response = await listExecutionActions(cwd, { runId: sourceRun.id, limit: 100 });
@@ -707,13 +768,21 @@ export function useWorkspaceDomain(input: {
           return { error: caught instanceof Error ? caught.message : String(caught) } as const;
         }
       }),
-    );
+    ), Promise.all(liveNarrationWorkflowIds(channelWorkflowStepsRef.current, channelRuns, channelId).map(async workflowId => {
+      try {
+        return { steps: (await listChannelWorkflowSteps(cwd, workflowId)).workflowSteps };
+      } catch (caught) {
+        return { error: caught instanceof Error ? caught.message : String(caught) };
+      }
+    }))]);
     if (!loadGuard.isCurrent(`executionActions:${cwd}:${channelId}`, token)) {
       return;
     }
 
     const nextActions = new Map<string, ExecutionAction>();
     const errors = new Set<string>();
+    setChannelWorkflowSteps(current => mergeWorkflowNarration(current, narrationResults.flatMap(result => result.steps ?? [])));
+    for (const result of narrationResults) if (result.error) errors.add(result.error);
     for (const result of results) {
       if ("error" in result) {
         errors.add(result.error ?? "unknown_error");
@@ -939,7 +1008,7 @@ export function useWorkspaceDomain(input: {
       setChannelHandoffs(handoffsResponse.handoffs);
       setChannelContextSummaries(summariesResponse.contextSummaries);
       setChannelWorkflows(workflowsResponse.workflows);
-      setChannelWorkflowSteps(workflowSteps);
+      setChannelWorkflowSteps(current => mergeWorkflowStepReadModels(current, workflowSteps));
     } catch (caught) {
       if (!loadGuard.isCurrent(`protocol:${cwd}:${channelId}`, token)) return;
       reportScopedFeedback("protocol", channelId, "load", caught);
@@ -999,9 +1068,14 @@ export function useWorkspaceDomain(input: {
   }
 
   function resetSelectedChannelActivity(): void {
+    channelReadEpochRef.current.invalidate();
+    channelInputPageRef.current = undefined;
+    setChannelUserInputState({ owner: channelReadOwnerRef.current, items: [] });
+    setChannelReasoningSummaryState({ owner: channelReadOwnerRef.current, items: [] });
     setTasks([]);
     setChannelMessages([]);
     setChannelConversationItems([]);
+    setChannelTurnContextAssignmentState({ owner: channelReadOwnerRef.current, assignments: [] });
     setChannelGeneratedMedia([]);
     setChannelMessagesHasOlder(false);
     setChannelItemsBeforeSequence(undefined);
@@ -1027,6 +1101,10 @@ export function useWorkspaceDomain(input: {
   }
 
   function resetForCwd(cwd: string): void {
+    channelReadEpochRef.current.invalidate();
+    channelInputPageRef.current = undefined;
+    setChannelUserInputState({ owner: "", items: [] });
+    setChannelReasoningSummaryState({ owner: "", items: [] });
     loadGuard.reset();
     channelActivityTransitionsLoadedScopeRef.current = "";
     setChannels([]);
@@ -1052,6 +1130,7 @@ export function useWorkspaceDomain(input: {
     setTasksLoading(false);
     setChannelMessages([]);
     setChannelConversationItems([]);
+    setChannelTurnContextAssignmentState({ owner: channelReadOwnerRef.current, assignments: [] });
     setChannelGeneratedMedia([]);
     setMemoryObjects([]);
     setUsedMemoryEvents([]);
@@ -1102,6 +1181,13 @@ export function useWorkspaceDomain(input: {
       taskRunProviderId,
       channelMessages,
       channelConversationItems,
+      channelTurnContextAssignments: channelTurnContextAssignmentState.owner === channelReadOwner
+        ? channelTurnContextAssignmentState.assignments
+        : [],
+      channelUserInputs: channelUserInputState.owner === channelReadOwner ? channelUserInputState.items : [],
+      channelReasoningSummaries: channelReasoningSummaryState.owner === channelReadOwner
+        ? channelReasoningSummaryState.items
+        : [],
       channelGeneratedMedia,
       memoryObjects,
       usedMemoryEvents,

@@ -17,6 +17,7 @@ import {
   omitUndefined,
   parseJson,
   parseJsonStringArray,
+  readNullableNumber,
   readNullableString,
   readString,
 } from "./helpers.js";
@@ -24,6 +25,7 @@ import {
 export function mapChannelExecutionProposal(row: Record<string, SQLOutputValue>): ChannelExecutionProposal {
   return omitUndefined({
     id: readString(row, "id"),
+    revision: readNullableNumber(row, "revision") ?? 1,
     workspaceId: readString(row, "workspace_id"),
     channelId: readString(row, "channel_id"),
     sourceMessageId: readString(row, "source_message_id"),

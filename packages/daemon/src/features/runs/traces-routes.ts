@@ -175,6 +175,7 @@ function buildTraceProjectionInput(input: {
     runtimeEventsByWorkUnitId,
     artifacts,
     executionActions: input.actions,
+    approvals: input.runs.flatMap((run) => input.store.listApprovalRequests({ runId: run.id, complete: true })),
     transitions: input.transitions,
     interventions: input.interventions,
     generatedAt: new Date().toISOString(),

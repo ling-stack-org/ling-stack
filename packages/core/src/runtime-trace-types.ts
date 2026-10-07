@@ -1,3 +1,4 @@
+import type { ApprovalRequest } from "./approval-types.js";
 import type { ExecutionAction, RunArtifact, RunEventEnvelope, RunIntervention, RunSession } from "./run-types.js";
 import type { RuntimeEvent } from "./runtime-supervisor-types.js";
 import type { StateTransitionEvent } from "./channel-runtime-types.js";
@@ -31,6 +32,8 @@ export type LingTraceStatus =
   | "queued"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
+  | "yielded"
   | "succeeded"
   | "failed"
   | "cancelled"
@@ -93,6 +96,7 @@ export interface ProjectLingTraceInput {
   readonly runtimeEventsByWorkUnitId?: Readonly<Record<string, readonly RuntimeEvent[]>>;
   readonly artifacts?: readonly RunArtifact[];
   readonly executionActions?: readonly ExecutionAction[];
+  readonly approvals?: readonly ApprovalRequest[];
   readonly transitions?: readonly StateTransitionEvent[];
   readonly interventions?: readonly RunIntervention[];
   readonly generatedAt?: string;

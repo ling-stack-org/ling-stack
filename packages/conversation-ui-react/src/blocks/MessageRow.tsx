@@ -1,21 +1,23 @@
 import type { ReactNode } from "react";
 import { Loader2 } from "lucide-react";
 import {
-  getConversationSurfacePolicy,
-  type ConversationSurfaceKind,
+  getConversationInteractionPolicy,
+  type ConversationInteractionSurfaceKind,
   type LocalFileReference,
 } from "@ling-stack/conversation-ui-core";
 import { MessageBodyRenderer } from "./MessageBodyRenderer.js";
 
 export type MessageRowAuthorType = "local-user" | "ai-teammate" | "system";
-export type MessageRowTone = "chat" | "chat-blocked" | "system";
+export type MessageRowTone = "chat" | "chat-blocked" | "document" | "system";
 
 export interface MessageRowProps {
   readonly id?: string;
   readonly className?: string;
-  readonly surface: ConversationSurfaceKind;
+  readonly surface: ConversationInteractionSurfaceKind;
   readonly authorType: MessageRowAuthorType;
   readonly avatar?: ReactNode;
+  /** Reserve the identity column without repeating an avatar for this response. */
+  readonly identityContinuation?: boolean;
   readonly authorName: string;
   readonly createdAtLabel?: string;
   readonly tone?: MessageRowTone;
@@ -41,6 +43,7 @@ export function MessageRow({
   surface,
   authorType,
   avatar,
+  identityContinuation = false,
   authorName,
   createdAtLabel,
   tone,
@@ -60,13 +63,14 @@ export function MessageRow({
   actionsNode,
 }: MessageRowProps): React.JSX.Element {
   const ownMessage = authorType === "local-user";
-  const surfacePolicy = getConversationSurfacePolicy(surface);
+  const surfacePolicy = getConversationInteractionPolicy(surface);
   const avatarAllowed = authorType === "local-user"
     ? surfacePolicy.showUserAvatar
     : authorType === "ai-teammate"
       ? surfacePolicy.showAgentAvatar
       : true;
-  const resolvedAvatar = avatarAllowed ? avatar : undefined;
+  const resolvedAvatar = avatarAllowed ? identityContinuation
+    ? <span className="conversation-message-avatar-placeholder" aria-hidden="true" /> : avatar : undefined;
   const hasAvatar = resolvedAvatar !== null && resolvedAvatar !== undefined && resolvedAvatar !== false;
   const resolvedIdentityLabelMode = identityLabelMode ?? (authorType === "system" ? "visible" : "sr-only");
   const legacySideClass = authorType === "local-user" ? "message-bubble-own" : "message-bubble-peer";

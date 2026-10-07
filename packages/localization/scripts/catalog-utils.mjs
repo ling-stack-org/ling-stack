@@ -44,6 +44,14 @@ export function sourceRevision(messages) {
   return createHash("sha256").update(stable).digest("hex");
 }
 
+/** Fail before writing when a legacy import would silently remove source messages. */
+export function assertCatalogImportRetainsMessages(previousMessages, nextMessages) {
+  const dropped = Object.keys(previousMessages).filter((key) => !Object.hasOwn(nextMessages, key));
+  if (dropped.length > 0) {
+    throw new Error(`Legacy catalog import would drop ${dropped.length} source messages: ${dropped.join(", ")}. Restore their source entries or perform an explicit catalog migration.`);
+  }
+}
+
 export function messageSourceHash(value) {
   return createHash("sha256").update(value).digest("hex");
 }

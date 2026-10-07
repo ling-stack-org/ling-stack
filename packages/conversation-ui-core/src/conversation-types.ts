@@ -1,6 +1,6 @@
-import type { ConversationSurfaceKind, MessageActionKind } from "./surface-policy.js";
+import type { ConversationInteractionSurfaceKind, MessageActionKind } from "./surface-policy.js";
 
-export type ConversationSurface = ConversationSurfaceKind;
+export type ConversationSurface = ConversationInteractionSurfaceKind;
 
 export type ConversationActorKind = "local_user" | "ai_teammate" | "coordinator" | "system";
 

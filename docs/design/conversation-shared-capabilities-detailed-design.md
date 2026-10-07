@@ -1,7 +1,8 @@
 # Conversation Shared Capabilities Detailed Design
 
-Status: implemented
-Date: 2026-07-13
+Status: implemented capability baseline; transcript/storage authority updated for v3.7
+Original date: 2026-07-13
+Updated: 2026-09-01
 Scope: shared conversation components, rich content parsing/rendering, Mermaid, latest
 user message editing, teammate-private execution, transcript supersession, and tests
 
@@ -14,6 +15,25 @@ Related docs:
 - [Thread-First Work History V2 Detailed Design](thread-first-work-history-v2-detailed-design.md)
 - [Run Interruption And Continuation](run-interruption-continuation.md)
 - [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
+
+> v3.7 authority note: this document records the shared capability baseline and service
+> boundaries. Typed transcript item kinds, evidence ownership, renderer selection, batching
+> and completion are defined by [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+> and [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md).
+> WorkCell references here are migration inputs; v3.7 production rendering uses the single
+> `ConversationTimeline` registry.
+
+> **v3.7 migration rule:** the shared capability services remain reusable, but their old
+> `MessageRow`/`ConversationWorkCell` composition is not a target renderer. A capability
+> contributes a typed `ConversationTimelineItem` (or a trusted source ref) and is rendered
+> once by the shared registry. Do not add a second activity summary, route-specific row, or
+> Composer/Right-Dock copy of command, file, tool or TerminalReport facts.
+
+For transcript-owned workspace references, the same short-lived Host capability now covers
+both actions and previews: the adapter issues an opaque grant after durable lineage checks,
+then uses `POST /workspace-files/preview` for the right-dock preview and
+`POST /workspace-files/open` for the external viewer. An unscoped workspace browser may keep
+the GET preview adapter; a trusted transcript ref must never fall back to it.
 
 ## 1. Design Goals
 
@@ -47,8 +67,8 @@ Daemon application services
   -> rich-content-independent edit orchestration and private execution dispatch
 
 Core stores
-  -> Channel conversation items, private-chat messages, supersession links,
-     turn/run state, audit records
+  -> canonical conversation_items spine, strict legacy storage adapters,
+     supersession links, turn/run state, audit records
 ```
 
 Hard dependency rules:
@@ -56,8 +76,11 @@ Hard dependency rules:
 - shared React components do not import daemon routes or workspace stores;
 - content renderers receive normalized blocks and callbacks, not API clients;
 - edit orchestration does not live in React hooks;
-- `conversation_items` is the Channel timeline authority; teammate-direct and other
-  non-Channel surfaces retain their scoped native stores;
+- `conversation_items` is the target canonical timeline authority for Channel, normal,
+  teammate-direct, Topic and Branch surfaces;
+- existing Channel/direct/normal message stores are one-way persistence adapters or lookup
+  indexes during E4 cutover; they cannot become a second ordering, context, renderer or
+  completion authority;
 - revision and supersession records remain the authority for edit history;
 - `LingTurn`, `RunSession`, approvals, artifacts, and `TerminalReport` remain the authority
   for execution evidence.
@@ -67,12 +90,12 @@ Hard dependency rules:
 ```mermaid
 flowchart LR
   Surface["Channel / Normal / Private / Topic adapter"]
-  Policy["ConversationSurfacePolicy"]
+  Policy["ConversationInteractionPolicy"]
   View["ConversationMessageView"]
-  UI["Shared MessageRow / WorkCell / TerminalReport"]
+  UI["Shared ConversationTimeline + Composer / viewer controls"]
   Edit["Conversation message edit service"]
   Direct["Teammate direct execution service"]
-  Stores["Channel Items + scoped private stores + supersession ledger"]
+  Stores["conversation_items + strict legacy adapters + supersession ledger"]
   Runtime["LingTurn + RunSession + approvals + artifacts"]
 
   Surface --> Policy
@@ -782,8 +805,9 @@ Filtering inputs:
 - archive/read-only state;
 - availability of a real target.
 
-The action bar remains the final visual layer of a message/turn. Rich content, work cells,
-evidence, teammate activity, and final summaries remain above it.
+The action bar remains the final control layer of a message/turn. Rich content, typed facts,
+teammate activity and the single `terminalReport` result row remain above it; no Timeline
+external summary is allowed.
 
 ## 8. TerminalReport Projection Policy
 

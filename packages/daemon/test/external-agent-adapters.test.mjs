@@ -37,7 +37,6 @@ test("openclaw-acp registry selection executes fake ACP through normalized event
           enabled: true,
           endpoint: acp.endpoint,
           readinessPassed: true,
-          conformancePassed: true,
         },
       },
     });
@@ -68,6 +67,251 @@ test("openclaw-acp registry selection executes fake ACP through normalized event
     const artifactContent = await readFile(artifactEvent.result.path, "utf8");
     assert.equal(artifactContent.includes("sk-test-secret"), false);
     assert.deepEqual(readMethods(acp.requests), ["initialize", "session/run"]);
+  } finally {
+    await acp.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("external adapter accepts only requested read-only proposals from its curated receipt", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-openclaw-acp-read-proposal-"));
+  const acp = await startFakeAcpServer({
+    runResult: {
+      taskId: "task_external",
+      events: [{
+        type: "tool_proposal",
+        data: {
+          backendToolCallId: "tool_read_1",
+          toolName: "read",
+          input: { path: "README.md" },
+          sideEffect: "workspace_read",
+        },
+      }],
+      messages: [],
+    },
+  });
+  try {
+    const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
+      runners: { openclawAcp: { enabled: true, endpoint: acp.endpoint, readinessPassed: true } },
+    });
+    const resolution = registry.resolve({
+      requestedRunnerId: "openclaw-acp",
+      explicitFallbackPolicy: "disabled",
+      tools: ["read"],
+    });
+    const events = [];
+    await resolution.runner.adapter.runTask({
+      ...baseRunOptions(cwd),
+      tools: ["read"],
+      onEvent: (event) => events.push(event),
+    });
+    assert.equal(events.some((event) => event.type === "tool_start" && event.toolName === "read"), true);
+    assert.equal(events.some((event) => event.type === "tool_end" && event.toolName === "read" && event.isError === false), true);
+  } finally {
+    await acp.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("external adapter rejects backend side-effect downgrades against the Host receipt", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-openclaw-acp-side-effect-downgrade-"));
+  const acp = await startFakeAcpServer({
+    runResult: {
+      taskId: "task_external",
+      events: [{
+        type: "tool_proposal",
+        data: {
+          backendToolCallId: "tool_read_1",
+          toolName: "read",
+          input: { path: "README.md" },
+          sideEffect: "none",
+        },
+      }],
+      messages: [],
+    },
+  });
+  try {
+    const adapter = createOpenClawAcpAdapter({
+      endpoint: acp.endpoint,
+      adapterRevision: "ling-acp/0.1:adapter-v1",
+      toolExecutionConformance: readOnlyReceipt("ling-acp/0.1:adapter-v1"),
+    });
+    await assert.rejects(
+      () => adapter.runTask({ ...baseRunOptions(cwd), tools: ["read"] }),
+      /side-effect classification mismatch/i,
+    );
+  } finally {
+    await acp.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("external adapter rejects unrequested side-effect proposals without asking for approval", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-openclaw-acp-write-proposal-"));
+  const acp = await startFakeAcpServer({
+    runResult: {
+      taskId: "task_external",
+      events: [{
+        type: "tool_proposal",
+        data: {
+          backendToolCallId: "tool_write_1",
+          toolName: "write",
+          input: { path: "README.md", content: "unsafe" },
+          sideEffect: "workspace_write",
+        },
+      }],
+      messages: [],
+    },
+  });
+  try {
+    const registry = createDefaultRunnerRegistry(new RecordingRunner(), {
+      runners: { openclawAcp: { enabled: true, endpoint: acp.endpoint, readinessPassed: true } },
+    });
+    const resolution = registry.resolve({
+      requestedRunnerId: "openclaw-acp",
+      explicitFallbackPolicy: "disabled",
+      tools: ["read"],
+    });
+    const approvals = [];
+    await assert.rejects(
+      () => resolution.runner.adapter.runTask({
+        ...baseRunOptions(cwd),
+        tools: ["read"],
+        onApprovalRequired: async (request) => {
+          approvals.push(request);
+          return { approved: true, approvalId: "approval_unexpected" };
+        },
+      }),
+      /not requested|not part of the curated surface|native side effects are disabled/i,
+    );
+    assert.equal(approvals.length, 0);
+  } finally {
+    await acp.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("external adapter rejects conformance receipts from an older adapter revision", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-openclaw-acp-revision-drift-"));
+  const acp = await startFakeAcpServer({
+    runResult: {
+      taskId: "task_external",
+      events: [{
+        type: "tool_proposal",
+        data: {
+          backendToolCallId: "tool_read_1",
+          toolName: "read",
+          input: { path: "README.md" },
+          sideEffect: "workspace_read",
+        },
+      }],
+      messages: [],
+    },
+  });
+  try {
+    const adapter = createOpenClawAcpAdapter({
+      endpoint: acp.endpoint,
+      adapterRevision: "ling-acp/0.1:adapter-v2",
+      toolExecutionConformance: readOnlyReceipt("ling-acp/0.1:adapter-v1"),
+    });
+    await assert.rejects(
+      () => adapter.runTask({ ...baseRunOptions(cwd), tools: ["read"] }),
+      /revision does not match/i,
+    );
+  } finally {
+    await acp.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("external adapter fails closed when a tool proposal has no Host receipt", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-openclaw-acp-missing-receipt-"));
+  const acp = await startFakeAcpServer({
+    runResult: {
+      taskId: "task_external",
+      events: [{
+        type: "tool_proposal",
+        data: {
+          backendToolCallId: "tool_read_1",
+          toolName: "read",
+          input: { path: "README.md" },
+          sideEffect: "workspace_read",
+        },
+      }],
+      messages: [],
+    },
+  });
+  try {
+    const adapter = createOpenClawAcpAdapter({ endpoint: acp.endpoint });
+    await assert.rejects(
+      () => adapter.runTask({ ...baseRunOptions(cwd), tools: ["read"] }),
+      /conformance receipt is missing/i,
+    );
+  } finally {
+    await acp.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("external adapter fails closed when an artifact has no Host receipt", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-openclaw-acp-artifact-missing-receipt-"));
+  const acp = await startFakeAcpServer({
+    runResult: {
+      taskId: "task_external",
+      events: [{
+        type: "artifact",
+        data: {
+          toolCallId: "artifact_1",
+          role: "artifact",
+          filename: "result.txt",
+          content: "untrusted",
+        },
+      }],
+      messages: [],
+    },
+  });
+  try {
+    const adapter = createOpenClawAcpAdapter({ endpoint: acp.endpoint });
+    await assert.rejects(
+      () => adapter.runTask(baseRunOptions(cwd)),
+      /conformance receipt is missing/i,
+    );
+  } finally {
+    await acp.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("external adapter rejects artifact import when its receipt does not verify the boundary", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-openclaw-acp-artifact-unverified-"));
+  const acp = await startFakeAcpServer({
+    runResult: {
+      taskId: "task_external",
+      events: [{
+        type: "artifact",
+        data: {
+          toolCallId: "artifact_1",
+          role: "artifact",
+          filename: "result.txt",
+          content: "untrusted",
+        },
+      }],
+      messages: [],
+    },
+  });
+  try {
+    const adapter = createOpenClawAcpAdapter({
+      endpoint: acp.endpoint,
+      adapterRevision: "ling-acp/0.1:adapter-v1",
+      toolExecutionConformance: {
+        ...readOnlyReceipt("ling-acp/0.1:adapter-v1"),
+        artifactImportVerified: false,
+      },
+    });
+    await assert.rejects(
+      () => adapter.runTask(baseRunOptions(cwd)),
+      /artifact import is not verified/i,
+    );
   } finally {
     await acp.close();
     await rm(cwd, { recursive: true, force: true });
@@ -174,6 +418,24 @@ function baseRunOptions(cwd) {
       apiKey: "sk-test-secret",
     },
     tools: ["read"],
+  };
+}
+
+function readOnlyReceipt(adapterRevision) {
+  return {
+    adapterRevision,
+    curatedTools: ["read"],
+    toolSideEffects: { read: "workspace_read" },
+    allowedSideEffects: ["workspace_read"],
+    nativeSideEffectMode: "disabled",
+    toolSurfaceCurated: true,
+    approvalBridgeVerified: false,
+    sandboxBindingVerified: false,
+    evidenceCommitVerified: true,
+    abortPropagationVerified: true,
+    attemptFencingVerified: true,
+    workspaceBoundaryVerified: true,
+    artifactImportVerified: true,
   };
 }
 

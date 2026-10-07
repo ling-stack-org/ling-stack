@@ -23,7 +23,7 @@ test.describe("T13-O.21 Teammates legacy writer release", () => {
     await mockDaemon(page, createTeammatesState());
     await page.goto("/");
 
-    const navigation = page.getByLabel("Ling Stack navigation");
+    const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
     const sidebarTeammate = navigation.getByRole("button", {
       name: "Ling Interface Architect with an intentionally long identity",
       exact: true,
@@ -69,7 +69,7 @@ test.describe("T13-O.21 Teammates legacy writer release", () => {
     await mockDaemon(page, state);
     await page.goto("/");
 
-    await page.getByLabel("Ling Stack navigation").getByRole("button", {
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", {
       name: "Ling Interface Architect with an intentionally long identity",
       exact: true,
     }).click();
@@ -97,12 +97,12 @@ test.describe("T13-O.21 Teammates legacy writer release", () => {
     await toolbar.getByRole("button", { name: "Summary" }).click();
     const summary = page.locator(".teammate-chat-summary-popover");
     await expect(summary).toBeVisible();
+    await expectReducedMotion(summary);
     await toolbar.getByRole("button", { name: "Show details" }).click();
     const dock = page.getByRole("complementary", { name: "Private chat workspace dock" });
     const dockFrame = page.locator(".teammate-private-right-dock-frame");
     await expect(dock).toBeVisible();
-    await expect(summary).toBeVisible();
-    await expectReducedMotion(summary);
+    await expect(summary).toHaveCount(0);
     await expectReducedMotion(dockFrame);
     await expect.poll(() => page.evaluate(() => matchMedia("(prefers-reduced-motion: reduce)").matches)).toBe(true);
     await expect.poll(() => feed.evaluate((element) => getComputedStyle(element).overflowY)).toBe("auto");
@@ -328,12 +328,12 @@ async function openTeammateManagement(page: Page): Promise<Locator> {
 }
 
 async function openSettingsTool(page: Page, name: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name }).click();
 }
 
 async function openTeammateSettings(page: Page, teammateName: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammateName, exact: true }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: teammateName, exact: true }).click();
   const header = page.locator("[data-ui2-teammate-chat-header='true']");
   await expect(header).toBeVisible();
   await header.getByRole("button", { name: "Show details" }).click();

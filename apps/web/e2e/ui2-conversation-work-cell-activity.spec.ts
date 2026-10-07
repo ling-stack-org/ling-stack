@@ -1,6 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mkdir } from "node:fs/promises";
-import { fileURLToPath } from "node:url";
+import { timelineBatchGroup } from "./support/timeline-batch-group";
 import {
   installActiveChannelWorkCellFixture,
   installChannelWorkCellFixture,
@@ -12,12 +11,8 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/conversations/shared-conversation-work-cell-activity/",
-  import.meta.url,
-));
 
-test("Channel multi-agent Activity keeps rows and command batches keyboard-operable", async ({ page }) => {
+test("Channel multi-agent Timeline keeps rows and command batches keyboard-operable", async ({ page }) => {
   await prepareSurface(page, { theme: "light", width: 1440, height: 960, workCellDemo: true });
   const runtimeErrors = collectRuntimeErrors(page);
   await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
@@ -26,24 +21,31 @@ test("Channel multi-agent Activity keeps rows and command batches keyboard-opera
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
-  const workCell = feed.locator('.conversation-work-cell[data-operation-source="workflow"]').first();
+  const workCell = feed.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
-  await expect(workCell.locator(".conversation-work-cell-agent-span")).toHaveCount(4);
+  await expect(workCell.locator("[data-conversation-timeline-sub-agent]")).toHaveCount(4);
 
-  const engineer = workCell.locator('.conversation-work-cell-agent-span[data-agent-participant-id="engineer"]');
-  const editRow = engineer.locator(".conversation-work-cell-row").filter({ hasText: /ConversationWorkCell\.tsx/u });
-  const editTrigger = editRow.locator(".conversation-work-cell-row-main");
+  const engineer = workCell.locator('[data-conversation-timeline-sub-agent][data-conversation-participant-id="engineer"]');
+  const engineerTrigger = engineer.locator(".conversation-timeline-sub-agent-head");
+  await expect(engineerTrigger).toHaveAttribute("aria-expanded", "false");
+  await engineerTrigger.focus();
+  await engineerTrigger.press("Space");
+  await expect(engineerTrigger).toHaveAttribute("aria-expanded", "true");
+  const groupId = await engineerTrigger.getAttribute("aria-controls");
+  expect(groupId).toBeTruthy();
+  const engineerGroup = workCell.locator(`[id="${groupId}"]`);
+  const editRow = engineerGroup.locator('[data-conversation-timeline-kind="fileChange"]').filter({ hasText: /ConversationWorkCell\.tsx/u });
+  const editTrigger = editRow.locator(".conversation-timeline-activity-main");
   await editTrigger.focus();
   await editTrigger.press("Space");
   await expect(editTrigger).toHaveAttribute("aria-expanded", "true");
 
-  const batch = engineer.locator(".conversation-command-batch");
+  const batch = engineerGroup.locator(".conversation-command-batch");
   const batchTrigger = batch.locator(".conversation-command-batch-header");
   await batchTrigger.focus();
   await batchTrigger.press("Space");
   await expect(batchTrigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect((await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
   await expectWorkCellMotionTokens(workCell);
   await batchTrigger.click();
   await batchTrigger.click();
@@ -53,7 +55,7 @@ test("Channel multi-agent Activity keeps rows and command batches keyboard-opera
   expect(runtimeErrors).toEqual([]);
 });
 
-test("Active WorkCell shimmer pauses offscreen and resumes when visible", async ({ page }) => {
+test("Active Timeline keeps the running command available after viewport changes", async ({ page }) => {
   await prepareSurface(page, { theme: "light", width: 1440, height: 960 });
   const state = createBaseState({ approvalStatus: "expired" });
   const { threadId } = installActiveChannelWorkCellFixture(state);
@@ -63,114 +65,77 @@ test("Active WorkCell shimmer pauses offscreen and resumes when visible", async 
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
-  const workCell = feed.locator(`.conversation-work-cell.active[data-thread-id="${threadId}"]`);
+  const workCell = feed.locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
 
-  const shimmerTarget = workCell.locator([
-    ".conversation-work-cell-row.running .conversation-work-cell-row-copy strong",
-    ".conversation-work-cell-evidence-summary span",
-  ].join(", ")).first();
-  await expect(shimmerTarget).toBeVisible();
-  await expect(workCell).toHaveAttribute("data-work-cell-activity", "running");
-  await expectAnimationName(shimmerTarget, "conversation-active-shimmer");
+  const runningRow = workCell.locator('.conversation-timeline-activity[data-conversation-timeline-kind="commandExecution"].status-running').first();
+  await expect(runningRow).toBeVisible();
+  const runningIcon = runningRow.locator(".conversation-timeline-activity-main > svg").first();
+  await expect(runningIcon).toBeVisible();
 
   const originalTransform = await feed.evaluate((element) => element.style.transform);
   await feed.evaluate((element) => { element.style.transform = "translateY(200vh)"; });
   await expect(workCell).not.toBeInViewport();
-  await expect(workCell).toHaveAttribute("data-work-cell-activity", "paused");
-  await expectAnimationName(shimmerTarget, "none");
 
   await feed.evaluate((element, transform) => { element.style.transform = transform; }, originalTransform);
   await workCell.evaluate((element) => element.scrollIntoView({ block: "nearest" }));
   await expect(workCell).toBeVisible();
-  await expect(workCell).toHaveAttribute("data-work-cell-activity", "running");
-  await expectAnimationName(shimmerTarget, "conversation-active-shimmer");
+  await expect(runningRow).toBeVisible();
 });
 
-test("Channel Details exposes loading, loaded evidence, and one cached request", async ({ page }) => {
+test("Channel Timeline exposes command evidence without a second details owner", async ({ page }) => {
   await prepareSurface(page, { theme: "light", width: 1440, height: 960 });
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "expired" });
   const { threadId } = installChannelWorkCellFixture(state, "loaded");
   await mockDaemon(page, state);
-  let evidenceRequests = 0;
-  await page.route(new RegExp(`/threads/${threadId}/evidence(?:\\?.*)?$`, "u"), async (route) => {
-    evidenceRequests += 1;
-    await wait(240);
-    await route.fallback();
-  });
-
   await page.goto("/");
   await openEngineeringChannel(page);
   const feed = page.getByLabel("Channel message feed");
-  const workCell = feed.locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
+  const workCell = feed.locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
 
-  const evidenceTrigger = workCell.locator(".conversation-work-cell-evidence-summary");
-  await evidenceTrigger.focus();
-  await evidenceTrigger.press("Enter");
-  await expect(workCell.locator(".conversation-work-cell-details-state")).toContainText("Loading details");
-  await expect(workCell.locator(".conversation-work-cell-details")).toContainText("Ran command");
-  expect(evidenceRequests).toBe(1);
-
-  await evidenceTrigger.click();
-  await expect(evidenceTrigger).toHaveAttribute("aria-expanded", "false");
-  await evidenceTrigger.click();
-  await expect(evidenceTrigger).toHaveAttribute("aria-expanded", "true");
-  await expect(workCell.locator(".conversation-work-cell-details")).toContainText("Ran command");
-  expect(evidenceRequests).toBe(1);
-  await expectContained(page, [feed, workCell, workCell.locator(".conversation-work-cell-details")]);
+  const batch = workCell.locator(".conversation-command-batch");
+  await batch.locator(".conversation-command-batch-header").press("Enter");
+  const command = (await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="commandExecution"][data-conversation-timeline-id="action:execution_action_typecheck_loaded"]');
+  await command.locator(".conversation-timeline-activity-main").click();
+  await expect(command.locator(".conversation-timeline-activity-main")).toContainText("corepack pnpm --filter @ling-stack/web typecheck");
+  await expectContained(page, [feed, workCell, command]);
   await captureEvidence(page, "1440x960-ling-light-channel-details-loaded.png");
   expect(runtimeErrors).toEqual([]);
 });
 
-test("Channel Details error retries by keyboard and disables WorkCell motion", async ({ page }) => {
+test("Failed Channel Timeline evidence stays expanded and honors reduced motion", async ({ page }) => {
   await prepareSurface(page, { theme: "dark", width: 1280, height: 800, reducedMotion: true });
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "expired" });
   const { threadId } = installChannelWorkCellFixture(state, "retry");
   await mockDaemon(page, state);
-  let evidenceRequests = 0;
-  await page.route(new RegExp(`/threads/${threadId}/evidence(?:\\?.*)?$`, "u"), async (route) => {
-    evidenceRequests += 1;
-    if (evidenceRequests === 1) {
-      await route.fulfill({
-        status: 503,
-        json: { error: "focused_evidence_unavailable", message: "Focused evidence is temporarily unavailable." },
-      });
-      return;
-    }
-    await route.fallback();
-  });
+  state.executionActions = state.executionActions.map((action, index) => index === 0
+    ? {
+        ...action,
+        status: "failed",
+        summary: "corepack pnpm --filter @ling-stack/web typecheck failed",
+        commandEvidence: action.commandEvidence ? {
+          ...action.commandEvidence,
+          exitCode: 1,
+          outputTail: [{ ...action.commandEvidence.outputTail[0]!, text: "typecheck failed\n" }],
+        } : undefined,
+      }
+    : action);
 
   await page.goto("/");
   await openEngineeringChannel(page);
   const feed = page.getByLabel("Channel message feed");
-  const workCell = feed.locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
+  const workCell = feed.locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
 
-  const evidenceTrigger = workCell.locator(".conversation-work-cell-evidence-summary");
-  await evidenceTrigger.focus();
-  await evidenceTrigger.press("Space");
-  const failure = workCell.locator(".conversation-work-cell-details-state.failed");
-  await expect(failure).toContainText("Focused evidence is temporarily unavailable");
+  const failure = workCell.locator('[data-conversation-timeline-kind="commandExecution"].status-failed').first();
+  await expect(failure).toBeVisible();
+  await expect(failure.locator(".conversation-timeline-activity-detail")).toContainText("exit 1");
   await captureEvidence(page, "1280x800-ling-dark-channel-details-error.png");
-
-  const retry = failure.getByRole("button", { name: "Retry evidence" });
-  await retry.focus();
-  await retry.press("Enter");
-  await expect(workCell.locator(".conversation-work-cell-details")).toContainText("Ran command");
-  expect(evidenceRequests).toBe(2);
-
-  const batch = workCell.locator(".conversation-command-batch").first();
-  const batchTrigger = batch.locator(".conversation-command-batch-header");
-  await batchTrigger.focus();
-  await batchTrigger.press("Space");
-  await expect(batchTrigger).toHaveAttribute("aria-expanded", "true");
   await expectWorkCellMotionDisabled(workCell);
-  await expectContained(page, [feed, workCell, batch]);
+  await expectContained(page, [feed, workCell, failure]);
   await captureEvidence(page, "1280x800-ling-dark-channel-command-batch-expanded.png");
   expect(runtimeErrors).toEqual([]);
 });
@@ -183,14 +148,11 @@ test("Normal conversation keeps the completed command batch in the shared WorkCe
   await mockDaemon(page, state);
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("button", { name: /Open recent conversation \d+/u }).filter({ hasText: title }).click();
   const conversation = page.getByLabel("Conversation page");
-  const workCell = conversation.locator(".conversation-work-cell");
+  const workCell = conversation.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
   await expect(workCell).toBeVisible();
-  await expect(workCell).toHaveAttribute("data-work-cell-activity", "paused");
-  await expandOperationShell(workCell);
   await expectCommandBatchKeyboardFlow(workCell);
-  await expectNoWorkCellShimmer(workCell);
   await expectContained(page, [conversation, workCell]);
   await captureEvidence(page, "1440x960-ling-light-normal-work-cell.png");
   expect(runtimeErrors).toEqual([]);
@@ -207,10 +169,9 @@ test("Completed WorkCell collapses adjacent read actions into an expandable expl
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
-  const workCell = feed.locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
+  const workCell = feed.locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
-  await expect(workCell.locator(".conversation-operation-shell-status")).toContainText("Read 3 items");
-  await expandOperationShell(workCell);
+  await expect(workCell.getByRole("button", { name: "Read 3 items. Expand read records" })).toBeVisible();
 
   const batch = workCell.locator(".conversation-exploration-batch");
   const trigger = batch.locator(".conversation-exploration-batch-header");
@@ -218,7 +179,7 @@ test("Completed WorkCell collapses adjacent read actions into an expandable expl
   await trigger.focus();
   await trigger.press("Space");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator(".conversation-exploration-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect((await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="exploration"]')).toHaveCount(3);
   await expectContained(page, [feed, workCell, batch]);
   expect(runtimeErrors).toEqual([]);
 });
@@ -234,32 +195,20 @@ test("Dense exploration activity stays scrollable after ten atomic rows", async 
   await openEngineeringChannel(page);
 
   const feed = page.getByLabel("Channel message feed");
-  const workCell = feed.locator(`.conversation-work-cell[data-thread-id="${threadId}"]`);
+  const workCell = feed.locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
-  await expect(workCell.locator(".conversation-operation-shell-status")).toContainText("Read 11 items");
-  await expandOperationShell(workCell);
+  await expect(workCell.getByRole("button", { name: "Read 11 items. Expand read records" })).toBeVisible();
 
-  const stream = workCell.locator('[data-conversation-work-stream="primary"]');
+  const stream = workCell;
   await expect(stream).toHaveAttribute("data-activity-density", "dense");
-  await expect(stream).toHaveCSS("overflow-y", "auto");
-  await expect.poll(() => stream.evaluate((element) => ({
-    clientHeight: element.clientHeight,
-    scrollHeight: element.scrollHeight,
-  }))).toEqual(expect.objectContaining({
-    scrollHeight: expect.any(Number),
-  }));
-  const dimensions = await stream.evaluate((element) => ({
-    clientHeight: element.clientHeight,
-    scrollHeight: element.scrollHeight,
-  }));
-  expect(dimensions.scrollHeight).toBeGreaterThan(dimensions.clientHeight);
+  await expect(stream).toHaveCSS("overflow-y", "visible");
 
   const batch = workCell.locator(".conversation-exploration-batch");
   const trigger = batch.locator(".conversation-exploration-batch-header");
   await trigger.focus();
   await trigger.press("Space");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator(".conversation-exploration-batch-list .conversation-work-cell-row")).toHaveCount(11);
+  await expect((await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="exploration"]')).toHaveCount(11);
   await expectContained(page, [feed, workCell, stream, batch]);
   expect(runtimeErrors).toEqual([]);
 });
@@ -272,11 +221,10 @@ test("Teammate conversation keeps command activity contained in dark reduced mot
   await mockDaemon(page, state);
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: teammate.displayName }).click();
+  await page.getByRole("button", { name: teammate.displayName, exact: true }).click();
   const feed = page.getByLabel("Private message feed", { exact: true });
-  const workCell = feed.locator(".conversation-work-cell");
+  const workCell = feed.locator('[data-conversation-timeline="true"][data-conversation-timeline-depth="0"]').first();
   await expect(workCell).toBeVisible();
-  await expandOperationShell(workCell);
   await expectCommandBatchKeyboardFlow(workCell);
   await expectWorkCellMotionDisabled(workCell);
   await expectContained(page, [feed, workCell]);
@@ -304,15 +252,6 @@ async function prepareSurface(page: Page, input: {
   }, { theme: input.theme, workCellDemo: input.workCellDemo });
 }
 
-async function expandOperationShell(workCell: Locator): Promise<void> {
-  const trigger = workCell.locator(".conversation-operation-shell-head");
-  if (await trigger.getAttribute("aria-expanded") === "false") {
-    await trigger.focus();
-    await trigger.press("Enter");
-  }
-  await expect(trigger).toHaveAttribute("aria-expanded", "true");
-}
-
 async function expectCommandBatchKeyboardFlow(workCell: Locator): Promise<void> {
   const batch = workCell.locator(".conversation-command-batch");
   const trigger = batch.locator(".conversation-command-batch-header");
@@ -320,15 +259,17 @@ async function expectCommandBatchKeyboardFlow(workCell: Locator): Promise<void> 
   await trigger.focus();
   await trigger.press("Enter");
   await expect(trigger).toHaveAttribute("aria-expanded", "true");
-  await expect(batch.locator(".conversation-command-batch-list .conversation-work-cell-row")).toHaveCount(3);
+  await expect((await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="commandExecution"]')).toHaveCount(3);
 
-  const firstCommand = batch.locator(".conversation-work-cell-row").first();
-  const firstCommandTrigger = firstCommand.locator(".conversation-work-cell-row-main");
-  const firstCommandTitle = (await firstCommand.locator(".conversation-work-cell-row-copy strong").innerText()).trim();
+  const firstCommand = (await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="commandExecution"]').first();
+  const firstCommandTrigger = firstCommand.locator(".conversation-timeline-activity-main");
   await firstCommandTrigger.focus();
   await firstCommandTrigger.press("Space");
   await expect(firstCommandTrigger).toHaveAttribute("aria-expanded", "true");
-  await expect(firstCommand.locator(".conversation-work-cell-row-detail")).toContainText(`${firstCommandTitle} passed`);
+  // The header owns the exact command. Expanding adds only its output/result.
+  await expect(firstCommand.locator(".conversation-timeline-activity-main strong")).toHaveAttribute("title", "git diff --check");
+  await expect(firstCommand.locator(".conversation-timeline-command")).toHaveCount(0);
+  await expect(firstCommand.locator(".conversation-timeline-activity-detail")).not.toContainText("exit 0");
 }
 
 async function expectWorkCellMotionDisabled(workCell: Locator): Promise<void> {
@@ -336,10 +277,10 @@ async function expectWorkCellMotionDisabled(workCell: Locator): Promise<void> {
   const animated = await workCell.evaluate((root) => [
     root,
     ...root.querySelectorAll<HTMLElement>([
-      ".conversation-work-cell-row",
+      ".conversation-timeline-activity",
       ".conversation-command-batch",
-      ".conversation-work-cell-agent-span",
-      ".conversation-work-cell-row.running .conversation-work-cell-row-copy strong",
+      ".conversation-timeline-sub-agent",
+      ".conversation-timeline-activity.status-running .conversation-timeline-activity-main > svg",
       ".conversation-work-cell-evidence-summary span",
     ].join(", ")),
   ].map((element) => ({
@@ -349,8 +290,7 @@ async function expectWorkCellMotionDisabled(workCell: Locator): Promise<void> {
   expect(animated).toEqual([]);
   const transitioning = await workCell.evaluate((root) => [
     ...root.querySelectorAll<HTMLElement>([
-      ".conversation-work-cell-row-toggle",
-      ".conversation-work-cell-row-toggle svg",
+      ".conversation-timeline-activity-chevron",
       ".conversation-command-batch-toggle",
       ".conversation-command-batch-toggle svg",
     ].join(", ")),
@@ -360,30 +300,19 @@ async function expectWorkCellMotionDisabled(workCell: Locator): Promise<void> {
 }
 
 async function expectWorkCellMotionTokens(workCell: Locator): Promise<void> {
-  const durations = await workCell.evaluate((root) => ({
-    batchToggle: getComputedStyle(root.querySelector<HTMLElement>(".conversation-command-batch-toggle")!).transitionDuration,
-    batchIcon: getComputedStyle(root.querySelector<SVGElement>(".conversation-command-batch-toggle svg")!).transitionDuration,
-    rowToggle: getComputedStyle(root.querySelector<HTMLElement>(".conversation-work-cell-row-toggle")!).transitionDuration,
-    rowIcon: getComputedStyle(root.querySelector<SVGElement>(".conversation-work-cell-row-toggle svg")!).transitionDuration,
-  }));
-  expect(durations).toEqual({
-    batchToggle: "0.12s, 0.12s",
-    batchIcon: "0.18s",
-    rowToggle: "0.12s, 0.12s",
-    rowIcon: "0.18s",
-  });
+  const durations = await workCell.evaluate((root) => [
+    ...root.querySelectorAll<HTMLElement>([
+      ".conversation-timeline-activity-chevron",
+      ".conversation-command-batch-toggle",
+      ".conversation-command-batch-toggle svg",
+    ].join(", ")),
+  ].map((element) => getComputedStyle(element).transitionDuration));
+  expect(durations.length).toBeGreaterThan(0);
+  expect(durations.every((duration) => duration.split(",").some((part) => part.trim() !== "0s"))).toBe(true);
 }
 
 async function expectAnimationName(element: Locator, expected: string): Promise<void> {
   await expect.poll(() => element.evaluate((node) => getComputedStyle(node).animationName)).toBe(expected);
-}
-
-async function expectNoWorkCellShimmer(workCell: Locator): Promise<void> {
-  const animationNames = await workCell.locator([
-    ".conversation-work-cell-row.running .conversation-work-cell-row-copy strong",
-    ".conversation-work-cell-evidence-summary span",
-  ].join(", ")).evaluateAll((elements) => elements.map((element) => getComputedStyle(element).animationName));
-  expect(animationNames.every((name) => name === "none")).toBe(true);
 }
 
 async function expectContained(page: Page, elements: readonly Locator[]): Promise<void> {
@@ -408,14 +337,9 @@ function collectRuntimeErrors(page: Page): string[] {
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     fullPage: true,
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
-}
-
-function wait(ms: number): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, ms));
 }

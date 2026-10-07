@@ -49,6 +49,7 @@ export interface ChannelMessageRouteInput {
   readonly config: ResolvedDaemonConfig;
   readonly requestedProviderPresetId?: string;
   readonly requestedTeammateId?: string;
+  readonly hostCapabilityAvailable?: (capabilityId: "host.open_local_target") => boolean;
 }
 
 export type ChannelMessageRouteResult =

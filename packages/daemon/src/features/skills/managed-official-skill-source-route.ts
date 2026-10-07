@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import "../../runtime/sandbox/core-original-process-bridge.js";
 import {
   OFFICIAL_GSTACK_ORIGIN_URL,
   OFFICIAL_GSTACK_REF,

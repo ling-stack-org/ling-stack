@@ -336,7 +336,7 @@ test("channel dock uses shared controls across launcher and deep pages", async (
   expect(runtimeErrors).toEqual([]);
 });
 
-test("channel approval composer gate, settings, and dock remain contained at 1280 in dark mode", async ({ page }) => {
+test("channel approval gate, settings, and dock remain contained at 1280 in dark mode", async ({ page }) => {
   await prepareSurface(page, "dark", 1280, 800);
   const runtimeErrors = collectRuntimeErrors(page);
   const state = createBaseState({ approvalStatus: "pending" });
@@ -359,9 +359,10 @@ test("channel approval composer gate, settings, and dock remain contained at 128
   await openEngineeringChannel(page);
   const approvalGate = page.getByRole("region", { name: "Allow this action?" });
   await expect(approvalGate).toBeVisible();
-  await expect(page.getByRole("dialog", { name: "Allow this action?" })).toHaveCount(0);
+  await expect(approvalGate).toHaveAttribute("data-conversation-decision-kind", "runtime_approval");
+  await expect(approvalGate).toHaveAttribute("data-surface", "channel");
   await expectNoDocumentOverflow(page);
-  await captureEvidence(page, "1280x800-ling-dark-runtime-approval-composer-gate.png");
+  await captureEvidence(page, "1280x800-ling-dark-runtime-approval-gate.png");
   await page.keyboard.press("Escape");
   await expect(approvalGate).toBeVisible();
   await approvalGate.getByRole("button", { name: "Deny" }).click();
@@ -492,10 +493,9 @@ test("resolved channel approval detail remains an in-feed inspector", async ({ p
   await page.goto("/");
   await openChannelChatTools(page);
 
-  const approvalBubble = page.locator(".message-bubble")
-    .filter({ hasText: "Approval event" })
+  const approvalItem = page.locator('[data-conversation-timeline-kind="approval"]')
     .filter({ hasText: "Approval expired" });
-  await approvalBubble.getByRole("button", { name: "Open approval" }).click();
+  await approvalItem.getByRole("button", { name: "Open approval" }).click();
   const inspector = page.locator(".conversation-detail-overlay");
   await expect(inspector).toBeVisible();
   await expect(inspector).toHaveAttribute("data-ui2-channel-inline-detail", "true");

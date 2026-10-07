@@ -70,7 +70,7 @@ for (const fixture of [
     page.on("pageerror", (error) => pageErrors.push(error.message));
 
     await page.goto("/");
-    const navigation = page.getByLabel("Ling Stack navigation");
+    const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
     await navigation.getByRole("button", { name: "Engineering" }).click();
     await expect(page.getByLabel("Channel composer")).toBeVisible();
     await expect(page.getByText("Synthetic scoped Provider failure", { exact: true })).toHaveCount(0);

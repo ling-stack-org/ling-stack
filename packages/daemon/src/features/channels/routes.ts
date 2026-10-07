@@ -1,5 +1,15 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
-import { createChannelBranchId, createChannelId, type Channel, type ChannelBranch, type ProposedPlanArtifactStatus, type RunStore, type SecretResolver } from "@ling-stack/core";
+import {
+  ChannelDecisionStatusConflictError,
+  ChannelDecisionSupersessionConflictError,
+  createChannelBranchId,
+  createChannelId,
+  type Channel,
+  type ChannelBranch,
+  type ProposedPlanArtifactStatus,
+  type RunStore,
+  type SecretResolver,
+} from "@ling-stack/core";
 import { HttpError } from "../../errors.js";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -564,7 +574,14 @@ export async function handleChannelExecutionProposalItem(
       const body = await readJsonBody(request, config.maxBodyBytes);
       const input = parseChannelExecutionProposalUpdateInput(body);
       const updated = store.updateChannelExecutionProposal(proposalId, input, new Date().toISOString());
-      writeJson(response, 200, { proposal: updated ?? proposal });
+      if (!updated) {
+        writeJson(response, 409, {
+          error: "proposal_stale_or_claimed",
+          message: "Channel proposal changed or is currently being confirmed. Refresh it before retrying.",
+        });
+        return;
+      }
+      writeJson(response, 200, { proposal: updated });
       return;
     }
 
@@ -730,13 +747,26 @@ export async function handleChannelDecisionsCollection(
         writeJson(response, referenceError.statusCode, { error: referenceError.code, message: referenceError.message });
         return;
       }
-      const decision = store.createChannelDecision({ ...input, channelId }, new Date().toISOString());
+      const now = new Date().toISOString();
+      if (input.supersedesDecisionId) {
+        const result = store.createOrReuseSupersedingChannelDecision(
+          { ...input, channelId, supersedesDecisionId: input.supersedesDecisionId },
+          now,
+        );
+        writeJson(response, result.reused ? 200 : 201, { decision: result.decision });
+        return;
+      }
+      const decision = store.createChannelDecision({ ...input, channelId }, now);
       writeJson(response, 201, { decision });
       return;
     }
 
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for channel decisions` });
   } catch (error) {
+    if (error instanceof ChannelDecisionSupersessionConflictError) {
+      writeJson(response, 409, { error: error.code, message: error.message });
+      return;
+    }
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
 }
@@ -768,9 +798,27 @@ export async function handleChannelDecisionItem(
     }
     const body = await readJsonBody(request, config.maxBodyBytes);
     const input = parseChannelDecisionUpdateRequest(body);
-    const decision = store.updateChannelDecision(decisionId, input, new Date().toISOString());
+    const now = new Date().toISOString();
+    const decision = input.status === "rejected"
+      ? store.rejectActiveChannelDecision(decisionId, {
+          title: input.title,
+          decision: input.decision,
+          rationale: input.rationale,
+          alternatives: input.alternatives,
+        }, now)
+      : store.updateChannelDecision(decisionId, input, now);
     writeJson(response, 200, { decision: decision ?? existing });
   } catch (error) {
+    if (error instanceof ChannelDecisionStatusConflictError) {
+      writeJson(response, 409, {
+        error: error.code,
+        message: error.message,
+        decisionId: error.decisionId,
+        expectedStatus: error.expectedStatus,
+        actualStatus: error.actualStatus,
+      });
+      return;
+    }
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
 }

@@ -1,11 +1,12 @@
-import type { ChannelMessage, ControlPlaneEvent, RunStore, TerminalReport } from "@ling-stack/core";
-import { formatSynchronousCatalogMessage } from "@ling-stack/localization";
-import { LING_AGENT_EXECUTOR_ID } from "./ling-agent-executor.js";
+import type { ChannelMessage, ControlPlaneEvent, NormalTerminalReportBasis, RunStore, TerminalReport } from "@ling-stack/core";
+import type { ConversationItemV1 } from "@ling-stack/contracts";
 import { getChannelMessageView } from "./conversation-item-messages.js";
 import { evaluateWorkflowCompletion } from "./workflow-completion-gate.js";
+import { publishNormalTerminalReport } from "./normal-terminal-report-publisher.js";
 
 export interface TerminalReportPublication {
-  readonly message: ChannelMessage;
+  readonly message?: ChannelMessage;
+  readonly resultItem?: ConversationItemV1;
   readonly controlPlaneEvent?: ControlPlaneEvent;
   readonly duplicate: boolean;
 }
@@ -23,8 +24,13 @@ export function publishTerminalReportPublication(input: {
   readonly store: RunStore;
   readonly report: TerminalReport;
   readonly linkedRunId?: string;
+  readonly expectedNormalBasis?: NormalTerminalReportBasis;
   readonly now: string;
 }): TerminalReportPublication | undefined {
+  if (!input.report.channelId && input.report.source.kind !== "workflow" && input.report.threadId
+    && input.store.getLingThread(input.report.threadId)?.kind === "conversation") {
+    return publishNormalTerminalReport(input);
+  }
   if (!input.report.channelId || !input.report.sourceMessageId) {
     return undefined;
   }
@@ -52,17 +58,17 @@ export function publishTerminalReportPublication(input: {
     throw new TerminalReportPublicationError("stale_completion_basis", `Workflow completion gate is stale or unverified: ${workflow.id}`);
   }
 
-  const supersededMessageId = input.store.listTerminalReports({
+  const supersededResultItemId = input.store.listTerminalReports({
     sourceKind: "workflow",
     sourceId: workflow.id,
     limit: 500,
   })
     .filter((record) => record.generation < (input.store.getTerminalReport(input.report.id)?.generation ?? Number.MAX_SAFE_INTEGER))
     .sort((left, right) => right.generation - left.generation)
-    .map((record) => record.publishedMessageId)
-    .find((messageId): messageId is string => Boolean(messageId));
+    .map((record) => record.resultItemId)
+    .find((itemId): itemId is string => Boolean(itemId));
 
-  const messageId = terminalReportMessageId(input.report.id);
+  const resultItemId = terminalReportResultItemId(input.report.id);
   const result = input.store.commitTerminalReportPublication({
     reportId: input.report.id,
     expectedReportStatus: input.report.status,
@@ -75,20 +81,21 @@ export function publishTerminalReportPublication(input: {
       updatedAt: sourceTurn.updatedAt,
     },
     publicationItem: {
-      id: messageId,
+      id: resultItemId,
       channelId: workflow.channelId,
       threadId: sourceTurn.threadId,
       turnId: sourceTurn.id,
-      kind: "assistant_message",
+      kind: "terminal_report",
       status: "committed",
-      actorType: "ling_agent",
-      actorId: LING_AGENT_EXECUTOR_ID,
+      actorType: "system",
       visibility: "channel",
       payload: {
-        body: renderTerminalReportMarkdown(input.report),
-        format: "markdown",
-        streaming: false,
-        deliveryStatus: "ready",
+        reportId: input.report.id,
+        generation: input.store.getTerminalReport(input.report.id)?.generation ?? 1,
+        sourceKind: input.report.source.kind,
+        sourceId: input.report.source.id,
+        evidenceFingerprint: input.report.evidenceFingerprint,
+        outcomeStatus: input.report.outcome.status,
       },
       domainRefs: [
         { type: "terminal_report", id: input.report.id },
@@ -98,7 +105,7 @@ export function publishTerminalReportPublication(input: {
         ...(input.linkedRunId ? [{ type: "run" as const, id: input.linkedRunId }] : []),
       ],
       idempotencyKey: `terminal-report:${input.report.id}`,
-      ...(supersededMessageId ? { supersedesItemId: supersededMessageId } : {}),
+      ...(supersededResultItemId ? { supersedesItemId: supersededResultItemId } : {}),
     },
     publicationEventIdempotencyKey: `terminal-report:${input.report.id}:published`,
     now: input.now,
@@ -121,27 +128,33 @@ function publishLegacyTerminalReport(
   sourceMessage: ChannelMessage,
 ): TerminalReportPublication {
   const currentRecord = input.store.getTerminalReport(input.report.id);
-  if (currentRecord?.publishedMessageId) {
-    const published = getChannelMessageView(input.store, currentRecord.publishedMessageId);
-    if (!published) throw new Error(`Published TerminalReport message not found: ${currentRecord.publishedMessageId}`);
+  if (currentRecord?.resultItemId) {
+    const published = getChannelMessageView(input.store, currentRecord.resultItemId);
+    if (!published) throw new Error(`Published TerminalReport result item not found: ${currentRecord.resultItemId}`);
     return { message: published, duplicate: true };
   }
-  const messageId = terminalReportMessageId(input.report.id);
+  const resultItemId = terminalReportResultItemId(input.report.id);
   const sourceItem = input.store.getConversationItem(sourceMessage.id);
   if (!sourceItem?.turnId) throw new Error(`TerminalReport source Item has no Turn: ${sourceMessage.id}`);
-  const existing = input.store.getConversationItem(messageId);
+  const existing = input.store.getConversationItem(resultItemId);
   const item = existing ?? input.store.appendConversationItem({
-    id: messageId,
+    id: resultItemId,
     channelId: input.report.channelId,
     threadId: sourceItem.threadId,
     turnId: sourceItem.turnId,
-    kind: "assistant_message",
+    kind: "terminal_report",
     status: "committed",
-    actorType: "ling_agent",
+    actorType: "system",
     idempotencyKey: `terminal-report:${input.report.id}`,
-    actorId: LING_AGENT_EXECUTOR_ID,
     visibility: "channel",
-    payload: { body: renderTerminalReportMarkdown(input.report), format: "markdown", streaming: false, deliveryStatus: "ready" },
+    payload: {
+      reportId: input.report.id,
+      generation: input.store.getTerminalReport(input.report.id)?.generation ?? 1,
+      sourceKind: input.report.source.kind,
+      sourceId: input.report.source.id,
+      evidenceFingerprint: input.report.evidenceFingerprint,
+      outcomeStatus: input.report.outcome.status,
+    },
     domainRefs: [
       { type: "terminal_report", id: input.report.id },
       { type: "conversation_item", id: sourceMessage.id },
@@ -168,50 +181,6 @@ export class TerminalReportPublicationError extends Error {
   }
 }
 
-export function renderTerminalReportMarkdown(report: TerminalReport): string {
-  const sections: string[] = [
-    `**${report.outcome.title}**`,
-    report.outcome.summary,
-  ];
-  if (report.changes.length > 0) {
-    sections.push(
-      `**${formatSynchronousCatalogMessage(report.language, "terminal_report.section.changes")}**`,
-      ...report.changes.map((change) => `- ${change.summary}`),
-    );
-  }
-  if (report.verification.length > 0) {
-    sections.push(
-      `**${formatSynchronousCatalogMessage(report.language, "terminal_report.section.verification")}**`,
-      ...report.verification.map((verification) => {
-        const status = verificationStatusLabel(verification.status, report.language);
-        const command = verification.command ? ` · \`${verification.command}\`` : "";
-        return `- ${status} ${verification.title}${command}`;
-      }),
-    );
-  }
-  if (report.participants.length > 0) {
-    sections.push(
-      `**${formatSynchronousCatalogMessage(report.language, "terminal_report.section.participants")}**`,
-      ...report.participants.map((participant) => `- **${participant.displayName}**: ${participant.contribution}`),
-    );
-  }
-  if (report.risks.length > 0) {
-    sections.push(
-      `**${formatSynchronousCatalogMessage(report.language, "terminal_report.section.open_issues")}**`,
-      ...report.risks.map((risk) => `- ${risk.summary}${risk.nextAction ? ` ${risk.nextAction}` : ""}`),
-    );
-  }
-  return sections.join("\n\n");
-}
-
-export function terminalReportMessageId(reportId: string): string {
-  return `message_${reportId}`;
-}
-
-function verificationStatusLabel(
-  status: TerminalReport["verification"][number]["status"],
-  language: TerminalReport["language"],
-): string {
-  const normalized = status === "not_run" || status === "unknown" ? "unverified" : status;
-  return formatSynchronousCatalogMessage(language, `terminal_report.meta.${normalized}`);
+export function terminalReportResultItemId(reportId: string): string {
+  return `result_terminal_report:${reportId}`;
 }

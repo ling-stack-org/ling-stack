@@ -9,7 +9,7 @@
   "main": "./dist/main/main.js",
   "scripts": {
     "generate:icons": "node scripts/generate-brand-icons.mjs",
-    "build": "corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && esbuild ../../packages/daemon/dist/cli.js --bundle --platform=node --format=esm --banner:js=\"import { createRequire as __lingCreateRequire } from 'node:module'; const require = __lingCreateRequire(import.meta.url);\" --outfile=dist/daemon/cli.mjs && vite build --config vite.config.ts",
+    "build": "corepack pnpm build:office-driver && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/chrome-extension build && corepack pnpm --filter @ling-stack/web build && corepack pnpm --filter @ling-stack/daemon build && tsc -p tsconfig.main.json && esbuild preload/main-window.ts preload/computer-use-preview.ts --bundle --platform=node --format=cjs --external:electron --outdir=dist/preload --out-extension:.js=.cjs && node scripts/build-packaged-daemon.mjs && vite build --config vite.config.ts",
     "build:office-driver": "node scripts/build-office-driver.mjs",
     "typecheck:ci": "tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
     "typecheck": "corepack pnpm --filter @ling-stack/localization build && corepack pnpm --filter @ling-stack/browser-host build && corepack pnpm --filter @ling-stack/ui-react build && corepack pnpm --filter @ling-stack/api-client build && tsc -p tsconfig.main.json --noEmit && tsc -p tsconfig.preload.json --noEmit && tsc -p tsconfig.renderer.json --noEmit",
@@ -45,7 +45,8 @@
     "package:signing-feasibility": "node tests/run-cua-driver-signing-builder-fixture.mjs",
     "screenshots:update:computer-use": "corepack pnpm build && electron tests/screenshot-app --update",
     "screenshots:verify:computer-use": "corepack pnpm build && electron tests/screenshot-app",
-    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform darwin -- --mac dmg zip --arm64",
+    "build:restricted-command-helper:mac": "node scripts/build-restricted-command-helper.mjs --platform darwin",
+    "package:mac": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/package-macos-with-office.mjs",
     "package:win": "corepack pnpm --filter @ling-stack/browser-host build:native && corepack pnpm build && node scripts/cua-driver-electron-package.mjs --platform win32-x64 -- --win nsis --x64"
   },
   "dependencies": {
@@ -88,6 +89,8 @@
     "files": [
       "dist/**/*",
       "package.json",
+      "!dist/office-local{,/**/*}",
+      "!dist/.office-local-next-*{,/**/*}",
       "!**/node_modules/@ling-stack/browser-host/dist/native{,/**/*}",
       "!**/node_modules/@ling-stack/browser-host/native{,/**/*}",
       "!**/node_modules/@ling-stack/browser-host/scripts{,/**/*}",
@@ -147,6 +150,22 @@
       "category": "public.app-category.developer-tools",
       "icon": "build/icon.icns",
       "artifactName": "Ling-Stack-${version}-macos-${arch}.${ext}",
+      "extraResources": [
+        {
+          "from": "dist/office-local",
+          "to": "office-local",
+          "filter": ["office-local.node", "build-manifest.json", "source/**/*"]
+        },
+        {
+          "from": "dist/restricted-command",
+          "to": "restricted-command",
+          "filter": [
+            "ling-sandbox-runner",
+            "manifest.json",
+            "licenses/**/*"
+          ]
+        }
+      ],
       "target": [
         "dmg",
         "zip"

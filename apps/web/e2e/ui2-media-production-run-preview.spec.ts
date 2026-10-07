@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page, type Route } from "@playwright/t
 import { mockDaemon, type MockState } from "./support/mock-daemon";
 import { createBaseState, createMediaProvider } from "./support/mock-state";
 import { openMediaProduction } from "./support/media-production-fixtures";
+import { isViteClientTransportError } from "./support/vite-client-console-error";
 
 test.describe.configure({ mode: "serial" });
 
@@ -381,7 +382,7 @@ async function delay(milliseconds: number): Promise<void> {
 function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
   page.on("console", (message) => {
-    if (message.type() === "error") errors.push(`console:${message.text()}`);
+    if (message.type() === "error" && !isViteClientTransportError(message)) errors.push(`console:${message.text()}`);
   });
   page.on("pageerror", (error) => errors.push(`pageerror:${error.message}`));
   return errors;

@@ -21,18 +21,29 @@ test("external tool surface allows read-only proposals and rejects forbidden sid
     input: { path: "README.md" },
     sideEffect: "workspace_read",
   }, policy));
+  const forbiddenPolicy = {
+    ...policy,
+    requestedTools: [...policy.requestedTools, "secret", "deliver"],
+    curatedTools: [...policy.curatedTools, "secret", "deliver"],
+    toolSideEffects: {
+      ...policy.toolSideEffects,
+      secret: "provider_or_secret",
+      deliver: "external_delivery",
+    },
+    allowedSideEffects: [...policy.allowedSideEffects, "provider_or_secret", "external_delivery"],
+  };
   assert.throws(() => assertExternalToolAllowed({
     backendToolCallId: "tool_2",
     toolName: "secret",
     input: {},
     sideEffect: "provider_or_secret",
-  }, policy), /not enabled|provider secrets/i);
+  }, forbiddenPolicy), /provider secrets/i);
   assert.throws(() => assertExternalToolAllowed({
     backendToolCallId: "tool_3",
     toolName: "deliver",
     input: {},
     sideEffect: "external_delivery",
-  }, policy), /not enabled|delivery/i);
+  }, forbiddenPolicy), /delivery/i);
 });
 
 test("external approval bridge fails closed for side-effectful proposals", async () => {

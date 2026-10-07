@@ -41,6 +41,7 @@ test("Desktop daemon starts in the selected workspace and stops the owned child"
   );
   assert.equal(spawnInputs[0].env.LING_STACK_RUNTIME_UNIFIED_EXEC, "1");
   assert.equal(spawnInputs[0].env.ELECTRON_RUN_AS_NODE, "1");
+  assert.equal(spawnInputs[0].env.LING_STACK_PACKAGED_DESKTOP, undefined);
 
   const repeatedStatus = await lifecycle.ensureStarted();
   assert.equal(repeatedStatus.ownedByDesktop, true, "re-probing an owned child must not erase ownership");
@@ -50,6 +51,26 @@ test("Desktop daemon starts in the selected workspace and stops the owned child"
 
   assert.deepEqual(child.killSignals, ["SIGTERM"]);
   assert.equal(lifecycle.status.state, "disconnected");
+});
+
+test("packaged Desktop marks only its fixed child bootstrap as packaged", async () => {
+  const child = createFakeChild();
+  const inputs = [];
+  let healthChecks = 0;
+  const lifecycle = new DesktopDaemonLifecycle({
+    baseUrl: "http://127.0.0.1:17995",
+    daemonEntryPath: existingEntryPath,
+    defaultWorkspaceCwd: "/tmp/ling-desktop-packaged-workspace",
+    packaged: true,
+    fetch: async () => ++healthChecks === 1
+      ? Promise.reject(new TypeError("fetch failed"))
+      : daemonHealth("/tmp/ling-desktop-packaged-workspace"),
+    probePort: async () => "free",
+    spawnDaemon: input => { inputs.push(input); return child; },
+  });
+  await lifecycle.ensureStarted();
+  assert.equal(inputs[0].env.LING_STACK_PACKAGED_DESKTOP, "1");
+  await lifecycle.stopOwnedDaemon();
 });
 
 test("unexpected owned child exit emits one recovery signal while intentional stop stays silent", async () => {

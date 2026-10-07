@@ -1,6 +1,46 @@
-import { execFileSync } from "node:child_process";
+import { execFileSync, type ExecFileSyncOptions, type ExecFileSyncOptionsWithStringEncoding } from "node:child_process";
 import { parseSecretRef, type ResolvedSecret, type SecretStatus } from "@ling-stack/core";
 import type { ExternalSecretStore } from "../../context.js";
+import { defineProtectedHostActorEntry, isProtectedHostActorEntryLaunchRefusal } from "../../runtime/sandbox/protected-host-actor-inventory.js";
+
+declare const keychainSecurityRecordBrand: unique symbol;
+interface KeychainSecurityRecord { readonly [keychainSecurityRecordBrand]: true }
+interface KeychainSecurityLaunch {
+  readonly args: readonly string[];
+  readonly options: ExecFileSyncOptions;
+  consumed: boolean;
+}
+const originalExecFileSync = execFileSync;
+const keychainSecurityLaunches = new WeakMap<KeychainSecurityRecord, KeychainSecurityLaunch>();
+
+/** Source-owned fixed security producer. A caller cannot supply argv or inherit default source proof. */
+export const KEYCHAIN_SECURITY_ACTOR_ENTRY = defineProtectedHostActorEntry("keychain_security",
+  (record: KeychainSecurityRecord): string | Buffer => {
+    const launch = keychainSecurityLaunches.get(record);
+    if (!launch?.consumed || !keychainSecurityLaunches.delete(record)) throw new Error("keychain_security_record_invalid");
+    return originalExecFileSync("/usr/bin/security", [...launch.args], launch.options);
+  },
+  (record: KeychainSecurityRecord): void => {
+    const launch = keychainSecurityLaunches.get(record);
+    if (!launch || launch.consumed) throw new Error("keychain_security_record_invalid");
+    launch.consumed = true; // Rejected launches are consumed too; no replay after the gate changes.
+  });
+
+function runKeychainSecurity(args: readonly string[], options: ExecFileSyncOptionsWithStringEncoding): string;
+function runKeychainSecurity(args: readonly string[], options: ExecFileSyncOptions): Buffer;
+function runKeychainSecurity(args: readonly string[], options: ExecFileSyncOptions): string | Buffer {
+  const record = Object.freeze({}) as KeychainSecurityRecord;
+  const stdio = Array.isArray(options.stdio) ? [...options.stdio] : options.stdio;
+  if (Array.isArray(stdio)) Object.freeze(stdio);
+  keychainSecurityLaunches.set(record, { args: Object.freeze([...args]),
+    options: Object.freeze({ ...options, stdio }),
+    consumed: false });
+  return KEYCHAIN_SECURITY_ACTOR_ENTRY.invoke(undefined, record);
+}
+
+function isOriginalKeychainSecurityRefusal(error: unknown): boolean {
+  return isProtectedHostActorEntryLaunchRefusal(KEYCHAIN_SECURITY_ACTOR_ENTRY, error);
+}
 
 export function createSystemKeychainSecretStore(): ExternalSecretStore {
   const service = "ling-stack";
@@ -39,11 +79,12 @@ export function createSystemKeychainSecretStore(): ExternalSecretStore {
         return unavailable(ref);
       }
       try {
-        execFileSync("/usr/bin/security", ["find-generic-password", "-s", service, "-a", parsed.name], {
+        runKeychainSecurity(["find-generic-password", "-s", service, "-a", parsed.name], {
           stdio: ["ignore", "ignore", "pipe"],
         });
         return { ref, kind: "keychain", configured: true };
       } catch (error) {
+        if (isOriginalKeychainSecurityRefusal(error)) throw error;
         const message = readProcessErrorMessage(error);
         if (message.includes("could not be found") || message.includes("The specified item could not be found")) {
           return {
@@ -64,12 +105,13 @@ export function createSystemKeychainSecretStore(): ExternalSecretStore {
       }
       const parsed = parseSecretRef(ref);
       try {
-        const value = execFileSync("/usr/bin/security", ["find-generic-password", "-s", service, "-a", parsed.name, "-w"], {
+        const value = runKeychainSecurity(["find-generic-password", "-s", service, "-a", parsed.name, "-w"], {
           encoding: "utf8",
           stdio: ["ignore", "pipe", "pipe"],
         }).trim();
         return { ref, configured: Boolean(value), value, status };
       } catch (error) {
+        if (isOriginalKeychainSecurityRefusal(error)) throw error;
         const message = readProcessErrorMessage(error);
         return {
           ref,
@@ -99,11 +141,12 @@ export function createSystemKeychainSecretStore(): ExternalSecretStore {
         return unavailable(ref);
       }
       try {
-        execFileSync("/usr/bin/security", ["add-generic-password", "-U", "-s", service, "-a", parsed.name, "-w", value], {
+        runKeychainSecurity(["add-generic-password", "-U", "-s", service, "-a", parsed.name, "-w", value], {
           stdio: ["ignore", "ignore", "pipe"],
         });
         return { ref, kind: "keychain", configured: true };
       } catch (error) {
+        if (isOriginalKeychainSecurityRefusal(error)) throw error;
         return {
           ref,
           kind: "keychain",
@@ -128,10 +171,11 @@ export function createSystemKeychainSecretStore(): ExternalSecretStore {
         return unavailable(ref);
       }
       try {
-        execFileSync("/usr/bin/security", ["delete-generic-password", "-s", service, "-a", parsed.name], {
+        runKeychainSecurity(["delete-generic-password", "-s", service, "-a", parsed.name], {
           stdio: ["ignore", "ignore", "pipe"],
         });
       } catch (error) {
+        if (isOriginalKeychainSecurityRefusal(error)) throw error;
         const message = readProcessErrorMessage(error);
         if (!message.includes("could not be found") && !message.includes("The specified item could not be found")) {
           return {

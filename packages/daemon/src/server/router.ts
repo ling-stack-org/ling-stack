@@ -3,6 +3,8 @@ import { defaultProviderTemplates, executeExternalWorkAction, toRuntimeAttemptFe
 import type { AiTeammate, RunSession, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
+import { createHarnessFeatureSnapshot } from "../features/harness/index.js";
+import { runApprovalPostCommitEffects } from "../features/runs/approval-postcommit-effects.js";
 import {
   handleAutomationItem,
   handleAutomationDraftItem,
@@ -208,6 +210,7 @@ import { handleExecutionActionsCollection } from "../features/runs/execution-act
 import {
   createDetachedRunExecutionSink,
   createSseRunExecutionSink,
+  executeExistingRunContinuation,
   executeRunRequest,
   type RunExecutionSink,
 } from "../features/runs/orchestrator.js";
@@ -240,6 +243,7 @@ import {
   handleRun,
 } from "../features/runs/routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
+import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capability-bridge-routes.js";
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
 import { handleTraceItem, handleTracesCollection } from "../features/runs/traces-routes.js";
 import { resolveProviderForRun } from "../features/runs/providers.js";
@@ -250,6 +254,10 @@ import {
   handleGetWorkspaceFileOpenOptions,
   handlePostWorkspaceFileOpen,
 } from "../features/previews/workspace-file-actions.js";
+import {
+  handlePostWorkspaceFileCapabilityIssue,
+  handlePostWorkspaceFileCapabilityPreview,
+} from "../features/previews/workspace-file-capability-routes.js";
 import { handleGetWorkspaceFilePreview } from "../features/previews/workspace-file-preview.js";
 import {
   handleGetRunWorkspaceChanges,
@@ -302,6 +310,7 @@ import {
   handleWorkUnitRoute,
 } from "../runtime/routes.js";
 import {
+  retryRuntimeWorkUnit,
   startRuntimeWorkUnit,
   transitionWorkUnitCancelled,
   transitionWorkUnitTerminal,
@@ -383,7 +392,9 @@ export async function routeRequest(
     providerStartupRefresh,
     startupState,
     computerUsePreviews,
+    hostCapabilityBridge,
     cuaDriverActivationService,
+    workspaceFileCapabilities,
   } = context;
   setCorsHeaders(response);
 
@@ -422,6 +433,76 @@ export async function routeRequest(
       computerUsePreviews,
     });
   };
+  const retryTaskRun = (input: {
+    readonly cwd: string;
+    readonly store: RunStore;
+    readonly run: RunSession;
+  }): Promise<
+    | { readonly ok: true; readonly runId: string }
+    | { readonly ok: false; readonly statusCode: number; readonly error: string; readonly message: string }
+  > => new Promise((resolveRetry) => {
+    let settled = false;
+    const settle = (result:
+      | { readonly ok: true; readonly runId: string }
+      | { readonly ok: false; readonly statusCode: number; readonly error: string; readonly message: string }): void => {
+      if (settled) return;
+      settled = true;
+      resolveRetry(result);
+    };
+    const detached = createDetachedRunExecutionSink();
+    const sink: RunExecutionSink = {
+      ...detached,
+      writeReady: () => settle({ ok: true, runId: input.run.id }),
+      writeError: (statusCode, body) => {
+        const value = body && typeof body === "object" ? body as Record<string, unknown> : {};
+        settle({
+          ok: false,
+          statusCode,
+          error: typeof value.error === "string" ? value.error : "runner_retry_failed",
+          message: typeof value.message === "string" ? value.message : "Task Run retry failed before Runner dispatch.",
+        });
+      },
+      end: () => settle({
+        ok: false,
+        statusCode: 409,
+        error: "runner_retry_not_started",
+        message: "Task Run retry ended before Runner dispatch.",
+      }),
+    };
+    void executeExistingRunContinuation(
+      {
+        cwd: input.cwd,
+        runId: input.run.id,
+        origin: "runner_retry",
+        idempotencyDiscriminator: `manual-retry:${input.run.id}:${input.run.updatedAt}`,
+      },
+      sink,
+      runnerRegistry,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      {
+        afterRunTerminal: maybeContinueRunInterventions,
+        controlPlaneEvents,
+        startupState,
+        computerUsePreviews,
+        hostCapabilityBridge,
+      },
+    ).then((runId) => {
+      if (!settled) {
+        settle(runId
+          ? { ok: true, runId }
+          : { ok: false, statusCode: 409, error: "runner_retry_not_started", message: "Task Run retry was not started." });
+      }
+    }, (error) => settle({
+      ok: false,
+      statusCode: 500,
+      error: "runner_retry_failed",
+      message: error instanceof Error ? error.message : String(error),
+    }));
+  });
   const startTeammateDirectRun = async (runRequest: RunRequest, sink: RunExecutionSink): Promise<string | undefined> =>
     executeRunRequest(
       runRequest,
@@ -451,6 +532,7 @@ export async function routeRequest(
 
   const mediaJobHooks: RunMediaJobHooks = {
     startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
+    recoverRuntimeWorkUnit: (input) => retryRuntimeWorkUnit({ ...input, runtimeSupervisor }),
     transitionRuntimeWorkUnitTerminal: (input) => {
       transitionWorkUnitTerminal(input.store, {
         workUnitId: input.workUnitId,
@@ -487,6 +569,9 @@ export async function routeRequest(
   if (await handleCuaDriverLeaseRoute(request, response, context)) {
     return;
   }
+  if (await handleHostCapabilityBridgeRoute(request, response, context)) {
+    return;
+  }
   if (await handleOfficeDriverRoute(request, response, context)) {
     return;
   }
@@ -497,6 +582,7 @@ export async function routeRequest(
       defaultWorkspaceCwd: config.defaultWorkspaceCwd,
       readiness: startupState.snapshot(config.defaultWorkspaceCwd)?.state ?? "starting",
       features: {
+        harness: createHarnessFeatureSnapshot(config),
         channels: {
           autoRoute: config.channels.autoRoute === true,
           intentSelector: config.channels.intentSelector === true,
@@ -881,6 +967,7 @@ export async function routeRequest(
             controlPlaneEvents,
             startupState,
             computerUsePreviews,
+            hostCapabilityBridge,
           },
         );
       },
@@ -1039,6 +1126,7 @@ export async function routeRequest(
           controlPlaneEvents,
           startupState,
           computerUsePreviews,
+          hostCapabilityBridge: context.hostCapabilityBridge,
         },
       ), imageVisionSummarizer);
     return;
@@ -1317,6 +1405,7 @@ export async function routeRequest(
           controlPlaneEvents,
           startupState,
           computerUsePreviews,
+          hostCapabilityBridge: context.hostCapabilityBridge,
         },
       ));
     return;
@@ -1461,7 +1550,8 @@ export async function routeRequest(
 
   const workUnitRoute = parseWorkUnitRoute(url.pathname);
   if (workUnitRoute) {
-    handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute, ensureRunCancelled, controlPlaneEvents);
+    await handleWorkUnitRoute(request, response, url, storeRegistry, activeRuns, runtimeSupervisor, workUnitRoute,
+      ensureRunCancelled, controlPlaneEvents, retryTaskRun);
     return;
   }
 
@@ -1479,6 +1569,14 @@ export async function routeRequest(
       return;
     }
     await handleGetWorkspaceFilePreview(response, url);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/workspace-files/capabilities") {
+    await handlePostWorkspaceFileCapabilityIssue(request, response, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
+    return;
+  }
+  if (request.method === "POST" && url.pathname === "/workspace-files/preview") {
+    await handlePostWorkspaceFileCapabilityPreview(request, response, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
     return;
   }
   if (request.method === "GET" && url.pathname === "/workspace/changes") {
@@ -1509,10 +1607,7 @@ export async function routeRequest(
     return;
   }
   if (request.method === "POST" && url.pathname === "/workspace-files/open") {
-    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd: url.searchParams.get("cwd") ?? undefined })) {
-      return;
-    }
-    await handlePostWorkspaceFileOpen(request, response, url, config.maxBodyBytes);
+    await handlePostWorkspaceFileOpen(request, response, url, config.maxBodyBytes, storeRegistry, workspaceFileCapabilities);
     return;
   }
   if (request.method === "GET" && url.pathname === "/workspace-files/content") {
@@ -1525,14 +1620,20 @@ export async function routeRequest(
 
   const artifactRoute = parseArtifactRoute(url.pathname);
   if (request.method === "GET" && artifactRoute?.kind === "artifact") {
+    const cwd = request.headers.origin ? url.searchParams.get("cwd") ?? undefined : undefined;
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
     handleGetArtifact(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
   if (request.method === "GET" && artifactRoute?.kind === "content") {
+    const cwd = request.headers.origin ? url.searchParams.get("cwd") ?? undefined : undefined;
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
     handleGetArtifactContent(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
   if (request.method === "GET" && artifactRoute?.kind === "preview") {
+    const cwd = request.headers.origin ? url.searchParams.get("cwd") ?? undefined : undefined;
+    if (!allowLocalWorkspaceRequest({ request, response, storeRegistry, cwd })) return;
     handleGetArtifactPreview(response, url, storeRegistry, artifactRoute.artifactId);
     return;
   }
@@ -1640,6 +1741,7 @@ export async function routeRequest(
             controlPlaneEvents,
             startupState,
             computerUsePreviews,
+            hostCapabilityBridge,
           },
         ).then(resolveOnce, () => resolveOnce(undefined));
       });
@@ -1652,6 +1754,8 @@ export async function routeRequest(
     readonly proposalId: string;
   }) => {
     const confirmed = confirmChannelExecutionProposalWorkflow({
+      restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime(),
+      hostCapabilityAvailable: (capabilityId) => hostCapabilityBridge.hasCapability(capabilityId),
       store: input.store,
       cwd: input.cwd,
       proposalId: input.proposalId,
@@ -1693,6 +1797,7 @@ export async function routeRequest(
             thread: editable.thread,
             message: revision.body,
             messageId: revision.messageId,
+            revisionId: revision.id,
             attachmentIds: revision.attachmentIds,
             providerPresetId: editRequest.providerPresetId,
             permissionPreset: editRequest.permissionPreset,
@@ -2586,16 +2691,28 @@ export async function routeRequest(
   const approvalRoute = parseApprovalRoute(url.pathname);
   if (approvalRoute) {
     await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, controlPlaneEvents, ({ cwd, store, approval, now }) => {
-      context.approvalResumeCoordinator.resumeAfterApproval({ store, approval });
-      syncWorkflowApprovalDecision(store, approval, now);
-      return syncMediaJobForApprovalDecision({
-        cwd,
-        store,
-        storeRegistry,
-        secretResolver,
-        approval,
-        now,
-        hooks: mediaJobHooks,
+      return runApprovalPostCommitEffects({
+        resumeRun: () => {
+          const result = context.approvalResumeCoordinator.resumeAfterApproval({ store, approval });
+          if (result.status === "blocked") throw new Error(result.reason);
+          if (result.status === "not_applicable" && approval.runId
+            && store.getRun(approval.runId)?.status === "waiting_for_approval") {
+            throw new Error("approval_run_owner_unreconciled");
+          }
+        },
+        syncWorkflow: () => {
+          const result = syncWorkflowApprovalDecision(store, approval, now);
+          if (result.status === "missing_owner") throw new Error("approval_workflow_owner_missing");
+        },
+        syncMedia: () => syncMediaJobForApprovalDecision({
+          cwd,
+          store,
+          storeRegistry,
+          secretResolver,
+          approval,
+          now,
+          hooks: mediaJobHooks,
+        }),
       });
     });
     return;

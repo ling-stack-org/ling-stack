@@ -1,4 +1,4 @@
-import type { AuthorizationMode, PermissionPreset, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
+import type { AuthorizationMode, PermissionPreset, ReasoningSummaryMode, SessionPermissionMode, WorkspaceAccessMode } from "./shared.js";
 import type { WorkspaceMediaGenerationDefaults } from "./media-generation-routing.js";
 import type {
   ExplicitResponseLanguage,
@@ -31,6 +31,7 @@ export interface WorkspaceSettings {
   readonly locale?: InterfaceLocale;
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly lingConversationTone?: LingConversationTone;
+  readonly defaultReasoningSummary?: ReasoningSummaryMode;
   readonly defaultProviderPresetId?: string;
   readonly mediaGenerationDefaults?: WorkspaceMediaGenerationDefaults;
   readonly defaultAuthorizationMode?: AuthorizationMode;
@@ -49,6 +50,7 @@ export interface UpdateWorkspaceSettingsRequest {
   readonly locale?: InterfaceLocale | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly lingConversationTone?: LingConversationTone | null;
+  readonly defaultReasoningSummary?: ReasoningSummaryMode | null;
   readonly defaultProviderPresetId?: string | null;
   readonly mediaGenerationDefaults?: WorkspaceMediaGenerationDefaults | null;
   readonly defaultAuthorizationMode?: AuthorizationMode | null;
@@ -118,6 +120,7 @@ export interface EffectiveConfigResponse {
     readonly locale: EffectiveConfigValue<InterfaceLocale>;
     readonly responseLanguage: EffectiveConfigValue<ResponseLanguagePreference>;
     readonly lingConversationTone: EffectiveConfigValue<LingConversationTone>;
+    readonly reasoningSummary: EffectiveConfigValue<ReasoningSummaryMode>;
     readonly skillGovernancePolicy: EffectiveConfigValue<SkillGovernancePolicy>;
     readonly runtime: {
       readonly defaultRunnerId: EffectiveConfigValue<string>;

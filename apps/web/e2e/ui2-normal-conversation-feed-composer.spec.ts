@@ -37,7 +37,11 @@ for (const fixture of [
       .last();
     await expect(runningMessage.locator(".conversation-work-cell")).toHaveCount(0);
     await expect(runningMessage).not.toContainText("Working on UI2 feed run 20");
-    await expect(feed.locator('.normal-conversation-message-error[data-tone="danger"]')).toContainText("Provider timed out while generating the response.");
+    const failedMessage = feed
+      .locator('[data-conversation-timeline-kind="agentMessage"][data-conversation-timeline-status="failed"]')
+      .filter({ hasText: "Provider timed out while generating the response." });
+    await expect(failedMessage).toBeVisible();
+    await expect(failedMessage.locator(".normal-conversation-message-error")).toHaveCount(0);
     await expect(feed.locator(".conversation-attachment-chip")).toContainText("release-checklist.pdf");
     await expect(feed.getByRole("button", { name: "Retry response" })).toBeVisible();
     await expect(composer.getByRole("button", { name: "Stop" })).toBeVisible();
@@ -63,9 +67,9 @@ for (const fixture of [
 
     const ownMessage = feed.locator(".normal-conversation-message-row.local-user").filter({ hasText: "UI2 history prompt 20" });
     const peerMessage = feed.locator(".normal-conversation-message-row.ai-teammate").last();
-    await expect(ownMessage).toHaveClass(/message-bubble-chat/);
+    await expect(ownMessage).toHaveClass(/message-bubble/);
     await expect(ownMessage).toHaveClass(/message-bubble-own/);
-    await expect(peerMessage).toHaveClass(/message-bubble-chat/);
+    await expect(peerMessage).toHaveClass(/message-bubble/);
     await expect(peerMessage).toHaveClass(/message-bubble-peer/);
     await expect(ownMessage).toHaveAttribute("data-has-avatar", "false");
     await expect(peerMessage).toHaveAttribute("data-has-avatar", "false");
@@ -854,7 +858,7 @@ function installStableConversationFixture(state: MockState): string {
 }
 
 async function openConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("button", { name: /Open recent conversation \d+/u }).filter({ hasText: title }).click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 

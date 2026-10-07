@@ -66,7 +66,7 @@ test("normal conversation sends active-run guidance as one ordinary user message
   const state = normalRuntimeFeedbackState();
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: "Normal runtime feedback" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({ hasText: "Normal runtime feedback" }).click();
 
   const conversation = page.getByLabel("Conversation page");
   const composer = conversation.locator(".normal-conversation-composer");
@@ -97,7 +97,7 @@ test("teammate runtime status and queued guidance stay contained in dark reduced
   await mockDaemon(page, state);
   await page.goto("/");
 
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Ling Engineer" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Ling Engineer" }).click();
   const privateHeader = page.locator(".teammate-chat-header");
   const privateComposer = page.locator(".teammate-private-composer-owner");
   const modelWarning = privateComposer.locator(".teammate-model-status-strip");

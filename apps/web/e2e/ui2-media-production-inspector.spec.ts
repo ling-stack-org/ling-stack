@@ -1,4 +1,5 @@
 import { expect, test, type Locator, type Page, type Route } from "@playwright/test";
+import { isViteClientTransportError } from "./support/vite-client-console-error";
 import { mockDaemon, type MockState } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
 import { openMediaProduction } from "./support/media-production-fixtures";
@@ -615,7 +616,7 @@ function artifact(id: string, mediaJobId: string): MockState["artifactsByMediaJo
 
 function collectBrowserErrors(page: Page): string[] {
   const errors: string[] = [];
-  page.on("console", (message) => { if (message.type() === "error") errors.push(`console:${message.text()}`); });
+  page.on("console", (message) => { if (message.type() === "error" && !isViteClientTransportError(message)) errors.push(`console:${message.text()}`); });
   page.on("pageerror", (error) => errors.push(`pageerror:${error.message}`));
   return errors;
 }

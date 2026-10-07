@@ -65,33 +65,9 @@
   height: 0;
 }
 
-.message-feed-virtualizer {
-  position: relative;
-  flex: 0 0 auto;
-  width: 100%;
-}
-
-.message-feed-virtual-row {
-  position: absolute;
-  top: 0;
-  left: 0;
-  width: 100%;
-  padding: 0 0 12px;
-  will-change: transform;
-}
-
-.message-feed-virtual-row:has(.workspace-file-open-popover) {
-  z-index: 20;
-}
-
-.message-feed-virtual-row:focus {
-  outline: none;
-}
-
-.message-feed-virtual-row:focus-visible {
-  border-radius: 8px;
-  outline: 2px solid var(--conversation-focus-ring);
-  outline-offset: 2px;
+.activity-shell [data-conversation-timeline="true"][data-conversation-timeline-depth="0"] {
+  box-sizing: border-box;
+  padding-block-end: 38px;
 }
 
 .message-feed-loader-row {

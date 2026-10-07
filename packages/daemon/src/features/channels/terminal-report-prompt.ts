@@ -63,26 +63,41 @@ export function buildTerminalReportPrompt(
 }
 
 function modelVisibleSnapshot(snapshot: TerminalReportEvidenceSnapshot): TerminalReportEvidenceSnapshot {
+  // Resolve restrictions before deduplication: a public alias must not wash away
+  // a Host restriction attached to the same evidence identity elsewhere.
+  const hidden = new Set(collectSnapshotRefs(snapshot)
+    .filter((ref) => ref.visibility === "developer_only" || ref.sensitivity === "secret_adjacent")
+    .map(sourceRefKey));
   const visibleRef = (ref: TerminalReportSourceRef) =>
-    ref.visibility !== "developer_only" && ref.sensitivity !== "secret_adjacent";
+    !hidden.has(sourceRefKey(ref));
+  const visibleSection = (item: { readonly sourceRefs: readonly TerminalReportSourceRef[] }) =>
+    item.sourceRefs.every(visibleRef);
   const filterRefs = (refs: readonly TerminalReportSourceRef[]) => refs.filter(visibleRef);
   return {
     ...snapshot,
-    steps: snapshot.steps.map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
-    operations: snapshot.operations.map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
-    checks: snapshot.checks.map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
-    participants: snapshot.participants.map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
-    artifacts: snapshot.artifacts
+    steps: snapshot.steps.filter(visibleSection).map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
+    operations: snapshot.operations.filter(visibleSection).map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
+    checks: snapshot.checks.filter(visibleSection).map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
+    participants: snapshot.participants.filter(visibleSection).map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
+    artifacts: snapshot.artifacts.filter(visibleSection)
       .filter((item) => item.sourceRefs.some((ref) => ref.kind === "artifact" && ref.id === item.id && visibleRef(ref)))
       .map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
-    approvals: snapshot.approvals.map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
-    risks: snapshot.risks.map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
+    approvals: snapshot.approvals.filter(visibleSection).map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
+    risks: snapshot.risks.filter(visibleSection).map((item) => ({ ...item, sourceRefs: filterRefs(item.sourceRefs) })),
     references: filterRefs(snapshot.references),
   };
 }
 
 function collectAllowedRefs(snapshot: TerminalReportEvidenceSnapshot): TerminalReportSourceRef[] {
-  const refs = [
+  return [...new Map(collectSnapshotRefs(snapshot).map((ref) => [sourceRefKey(ref), ref])).values()];
+}
+
+function sourceRefKey(ref: TerminalReportSourceRef): string {
+  return JSON.stringify([ref.kind, ref.id]);
+}
+
+function collectSnapshotRefs(snapshot: TerminalReportEvidenceSnapshot): TerminalReportSourceRef[] {
+  return [
     ...snapshot.references,
     ...snapshot.steps.flatMap((item) => item.sourceRefs),
     ...snapshot.operations.flatMap((item) => item.sourceRefs),
@@ -92,7 +107,6 @@ function collectAllowedRefs(snapshot: TerminalReportEvidenceSnapshot): TerminalR
     ...snapshot.approvals.flatMap((item) => item.sourceRefs),
     ...snapshot.risks.flatMap((item) => item.sourceRefs),
   ];
-  return [...new Map(refs.map((ref) => [`${ref.kind}:${ref.id}`, ref])).values()];
 }
 
 function sourceRefShape(): Record<string, string> {

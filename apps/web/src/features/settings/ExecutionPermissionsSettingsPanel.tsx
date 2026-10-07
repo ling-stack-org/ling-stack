@@ -50,8 +50,8 @@ export function ExecutionPermissionsSettingsPanel({
     },
     {
       value: "smart",
-      label: t("Smart authorization"),
-      description: t("Allow workspace edits; ask before commands, external actions, or policy risks."),
+      label: t("Help me approve"),
+      description: t("Use a locked-down reviewer for approval requests and ask you when review is inconclusive."),
       icon: Shield,
     },
     {

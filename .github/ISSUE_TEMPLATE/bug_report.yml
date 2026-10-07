@@ -35,7 +35,7 @@ body:
     attributes:
       label: Environment
       description: Include OS, architecture, Node version, browser or Desktop mode, and relevant provider type. Do not include keys.
-      placeholder: macOS 15 arm64, Node 22.15, Web UI from source
+      placeholder: macOS 15 arm64, Node 22.22.1, Web UI from source
     validations:
       required: true
   - type: textarea

@@ -1,11 +1,14 @@
 import type { ApprovalToolDecision } from "./approvals.js";
 import type { ConversationModeKind } from "./threads.js";
 
-export type RunStatus = "queued" | "running" | "waiting_for_approval" | "succeeded" | "failed" | "cancelled";
+export type RunStatus = "queued" | "running" | "waiting_for_approval" | "yielded" | "succeeded" | "failed" | "cancelled";
 
 export type RunTool = "read" | "grep" | "find" | "ls" | "bash" | "edit" | "write";
 
 export type RunThinkingLevel = "off" | "minimal" | "low" | "medium" | "high" | "xhigh";
+
+/** Provider-designated public reasoning summary verbosity; never raw chain-of-thought. */
+export type ReasoningSummaryMode = "auto" | "concise" | "detailed" | "none";
 
 export type SessionPermissionMode = "ask_everything" | "balanced" | "workspace_write" | "full_access" | "custom";
 

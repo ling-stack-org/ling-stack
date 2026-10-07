@@ -38,7 +38,7 @@
   row-gap: var(--ling-space-2);
 }
 
-[data-conversation-message-row] > :where(img, .avatar-initial, .user-profile-avatar) {
+[data-conversation-message-row] > :where(img, .avatar-initial, .user-profile-avatar, .conversation-message-avatar-placeholder) {
   box-sizing: border-box;
   width: var(--conversation-message-avatar-size);
   height: var(--conversation-message-avatar-size);
@@ -188,6 +188,80 @@
 
 [data-conversation-message-row].message-bubble-chat.message-bubble-own > .message-content {
   background: var(--conversation-bg-muted, var(--ling-bg-subtle));
+}
+
+/* The document lane leaves Agent narrative and typed facts unboxed. User
+   messages keep their own bubble below; neither treatment changes identity,
+   timeline ownership or the separate message-action row. */
+[data-conversation-message-row].message-bubble-document > .message-content {
+  width: 100%;
+  max-width: min(100%, 760px);
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+[data-conversation-message-row].message-bubble-document.message-bubble-peer {
+  grid-template-columns: var(--conversation-message-avatar-size) minmax(0, 1fr);
+}
+
+[data-conversation-message-row].message-bubble-document.message-bubble-own {
+  grid-template-columns: minmax(0, 1fr) var(--conversation-message-avatar-size);
+}
+
+[data-conversation-message-row][data-has-avatar="false"].message-bubble-document,
+[data-conversation-message-row].message-bubble-document.message-bubble-own-with-author {
+  grid-template-columns: minmax(0, 1fr);
+}
+
+[data-conversation-message-row].message-bubble-document > .message-content,
+[data-conversation-message-row].message-bubble-document.message-bubble-peer > .message-content {
+  grid-column: 2;
+  justify-self: start;
+}
+
+[data-conversation-message-row].message-bubble-document.message-bubble-own > .message-content {
+  grid-column: 1;
+  justify-self: end;
+  width: fit-content;
+  max-width: min(76%, var(--conversation-message-max-width));
+  padding: var(--ling-space-5) var(--ling-space-6);
+  border-radius: calc(var(--ling-radius-lg) * 2);
+  background: var(--conversation-bg-muted, var(--ling-bg-subtle));
+}
+
+[data-conversation-message-row].message-bubble-document.message-bubble-own > :where(img, .avatar-initial, .user-profile-avatar) {
+  grid-column: 2;
+  grid-row: 1;
+}
+
+/* Own-message DOM puts content before the avatar. Pin both to the same row
+   so sparse grid placement cannot move the trailing avatar below the body. */
+[data-conversation-message-row].message-bubble-document.message-bubble-own:not(.message-bubble-own-with-author) > .message-content {
+  grid-row: 1;
+}
+
+[data-conversation-message-row][data-has-avatar="false"].message-bubble-document > .message-content {
+  grid-column: 1;
+}
+
+[data-conversation-message-row].message-bubble-document > .message-row-own-actions {
+  grid-column: 1;
+  justify-self: end;
+}
+
+[data-conversation-message-row][data-has-avatar="false"].message-bubble-document > .message-row-own-actions {
+  grid-column: 1;
+}
+
+[data-conversation-message-row].message-bubble-document > .message-content > .message-row-peer-identity {
+  margin-bottom: var(--ling-space-2);
+}
+
+[data-conversation-message-row].message-bubble-document > .message-content > :is(.message-body-shell, .conversation-turn-assistant-transcript) {
+  min-width: 0;
 }
 
 [data-conversation-message-row].message-row-identity-sr-only > .message-content > .message-row-peer-identity {

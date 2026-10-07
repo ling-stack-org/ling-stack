@@ -22,21 +22,6 @@ export class SqliteResourceLeaseStore {
     if (!isValidResourceLeaseInput(input)) {
       return undefined;
     }
-    if (input.ownerType === "run" || input.ownerType === "work_unit_attempt") {
-      const fencedAttempt = this.context.database.prepare(`
-        SELECT 1 AS ok
-        FROM work_unit_attempts AS attempts
-        JOIN work_units AS units ON units.id = attempts.work_unit_id
-        WHERE attempts.id = ?
-          AND attempts.work_unit_id = ?
-          AND attempts.runtime_instance_id = ?
-          AND attempts.fencing_token = ?
-          AND units.active_attempt_id = attempts.id
-      `).get(input.attemptId, input.workUnitId, input.runtimeInstanceId, input.fencingToken);
-      if (!fencedAttempt) {
-        return undefined;
-      }
-    }
     const lease: ResourceLease = {
       id: createResourceLeaseId(),
       workspaceId: input.workspaceId,
@@ -54,7 +39,7 @@ export class SqliteResourceLeaseStore {
       fencingToken: input.fencingToken,
     };
     try {
-      this.context.database
+      const result = this.context.database
         .prepare(`
           INSERT INTO resource_leases (
             id,
@@ -73,7 +58,14 @@ export class SqliteResourceLeaseStore {
             attempt_id,
             runtime_instance_id,
             fencing_token
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          ) SELECT ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
+          WHERE ? IN ('workflow_step','system') OR EXISTS (
+            SELECT 1 FROM work_unit_attempts AS attempts
+            JOIN work_units AS units ON units.id=attempts.work_unit_id
+            WHERE attempts.id=? AND attempts.work_unit_id=? AND attempts.runtime_instance_id=?
+              AND attempts.fencing_token=? AND units.active_attempt_id=attempts.id
+              AND units.workspace_id=? AND attempts.status IN ('created','started','waiting_for_approval','cancelling')
+          )
         `)
         .run(
           lease.id,
@@ -92,8 +84,14 @@ export class SqliteResourceLeaseStore {
           lease.attemptId ?? null,
           lease.runtimeInstanceId ?? null,
           lease.fencingToken ?? null,
+          lease.ownerType,
+          lease.attemptId ?? null,
+          lease.workUnitId ?? null,
+          lease.runtimeInstanceId ?? null,
+          lease.fencingToken ?? null,
+          lease.workspaceId,
         );
-      return lease;
+      return Number(result.changes) === 1 ? lease : undefined;
     } catch {
       return undefined;
     }

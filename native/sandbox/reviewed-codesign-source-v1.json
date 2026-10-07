@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "reviewId": "packaged_codesign_original_host_v1",
+  "approval": "approved_source_and_packaging_review",
+  "target": "aarch64-apple-darwin",
+  "toolchain": "1.97.1",
+  "sourceSha256": {
+    "Cargo.toml": "01870bf261735745ae72a5c908e70de0c2a097d7bf2033dd4bb0a04a87fe8984",
+    "Cargo.lock": "290ca72ac99599eb21b54eb7ec449a1ec4ed90b459d71791bfa2385825da792d",
+    "rust-toolchain.toml": "3003a09987459e5921dcddde94f8ea929b2d5e66efbbc30160e9d78de7ff010a",
+    "src/main.rs": "8c6f04360d5ff9cc91b4fa33b606c05dc81d304aa42e20a57a3a18a1ae769ac6",
+    "src/protocol.rs": "43b4982b885348fb44224b99a1be11e015ccf607116cc1116d6525cf386b8ed8",
+    "src/input_read.rs": "09c8f43025c3b4401e5496dcdc4a2f129d8c008e98b3c810fc483f8aa9d667ab",
+    "src/codesign.rs": "91b11c723933a4fc1560e06e5d4dcc3136dbb08b0ec715f19fe889d7edc8fe73",
+    "src/codesign_darwin.rs": "18355036de4e72e46c14c7142efe98c2ec411a97a1f64f94ac9e01709b9eb85f",
+    "src/codesign_mach.rs": "72fe000ff32d904abd48b9fc274b7b79e090ca8ac8d29200dfdc8c4b72bc499a",
+    "scripts/build.mjs": "4be37f1916123df92c3c0d899de72104b0dedaed65f8a71aab1b78478a7121be",
+    "tests/protocol-smoke.mjs": "9a2f4283e950afcee089a214f0e8e38b0de7bafd3d12c73d24f94876696f407f",
+    "tests/input-read-smoke.mjs": "5339edae8aaeec52c13d0bd7f2e01e872006c2ccee123b51e4f4f52031d7ad8f",
+    "tests/codesign-leaf-smoke.mjs": "0d41fb7899fa9d4dfa8964e8254e330682111017840bb123abe0bbc75644fd92",
+    "tests/build-evidence.test.mjs": "91a3292d80b585ce5005deb290e4a520d2f0a33fe6ee92d9bbeecf18e232a750",
+    "src/codesign_faults.rs": "b2b35aa90c2a138167ef3c2ccc2d3572922dada3ff697b6cb26a967f14227f91",
+    "src/codesign_darwin_tests.rs": "dfc0a90afbd2b3fb90500cc8a0abdfa3303fb9c56e300a50f2959b4c74268085",
+    "src/codesign_capability_tests.rs": "2476366d3cfd9e8fcf8590d8efc96cab6039aca3e98b712bb28e0f7f967264bc",
+    "tests/support/codesign-capability-wire.rs": "4dc95feaef92f655aa57b24237ae54d1f918ec76cb5f42d5267b615b225ff591",
+    "tests/support/codesign-capability-observer.rs": "bfe85e54041e86e12db7c5c9f74691a4bd05a6843f4b9447d437583030e6c2f8"
+  },
+  "runtime": {
+    "platform": "darwin",
+    "architecture": "arm64",
+    "electron": "44.1.1",
+    "node": "24.19.0",
+    "uv": "1.52.1"
+  },
+  "os": {
+    "release": "27.0.0",
+    "backendHelperVersion": "ling-seatbelt-v1:27.0.0:bdfc2354c683c8fb95a39e63fbc8610e9739b0256c89ab880564edefbe73a5ce",
+    "backendSha256": "58839ef01b4eef8aac0d2aa8f9d1c074ae45aafe3533965b030672450064acc8",
+    "codesignSha256": "d517c9be608ffd266ec106c685e880cda71abc94001450e36d2476016406dd1e",
+    "templateSha256": "12d57318f9c62af5c345d791d20b9af726b96093e12c7699cd5559f85e847784",
+    "taskgatedBinding": "reviewed_xml_v1"
+  },
+  "trust": "original_host_and_trusted_packaging_transform_v1"
+}

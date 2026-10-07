@@ -241,13 +241,13 @@ async function prepareApp(page: Page): Promise<void> {
 }
 
 async function openInterfacePreferences(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: "Interface preferences" }).click();
   await expect(page.locator(".interface-settings-panel")).toBeVisible();
 }
 
 async function openCuaInstallDrawer(page: Page): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Plugin Manager" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Plugin Manager" }).click();
   await page.locator('.plugin-table-row[data-plugin-id="trusted-local:cua-driver"]').getByRole("button", { name: "Installation guide" }).click();
   await expect(page.getByRole("dialog", { name: "Install Cua Driver" })).toBeVisible();
 }

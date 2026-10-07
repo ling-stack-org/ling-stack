@@ -424,7 +424,7 @@ export class SqliteConversationContextStore {
   }
 
   getConversationContextSnapshot(snapshotId: string): ConversationContextSnapshot | undefined {
-    const row = this.context.database.prepare(`${conversationContextSnapshotSelectSql} WHERE id = ?`).get(snapshotId);
+    const row = this.context.database.prepare(`${conversationContextSnapshotSelectSql} WHERE id = ? AND snapshot_use = 'fork_context'`).get(snapshotId);
     return row ? mapConversationContextSnapshot(row as Record<string, SQLOutputValue>) : undefined;
   }
 
@@ -434,7 +434,7 @@ export class SqliteConversationContextStore {
     const limit = Math.min(Math.max(options.limit ?? 50, 1), 200);
     return this.context.database.prepare(`
       ${conversationContextSnapshotSelectSql}
-      WHERE workspace_id = ? AND thread_id = ?
+      WHERE workspace_id = ? AND thread_id = ? AND snapshot_use = 'fork_context'
       ORDER BY created_at DESC, id DESC
       LIMIT ?
     `).all(DEFAULT_WORKSPACE_ID, options.threadId, limit)

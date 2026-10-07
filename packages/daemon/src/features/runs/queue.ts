@@ -22,8 +22,10 @@ export function createQueuedRunForConflict(input: {
   readonly queuedAt: string;
   readonly reason: QueueableRunConflictCode;
   readonly message: string;
+  /** Continuation runs are persisted before concurrency admission. Reuse that row. */
+  readonly existingRun?: RunSession;
 }): RunSession {
-  const run = input.store.createRun({
+  const run = input.existingRun ?? input.store.createRun({
     id: input.runId,
     cwd: input.runRequest.cwd,
     taskId: input.runRequest.task.id,
@@ -59,11 +61,13 @@ export function createQueuedRunForConflict(input: {
     contextViewCreatedAt: input.runRequest.contextProjection?.contextViewCreatedAt,
     createdAt: input.queuedAt,
   });
-  input.store.linkRunToWorkUnit(run.id, input.workUnit.id, input.queuedAt);
-  if (input.thread) {
-    markLingThreadRunActive(input.store, input.thread.id, run.id, input.queuedAt);
+  if (!input.existingRun) {
+    input.store.linkRunToWorkUnit(run.id, input.workUnit.id, input.queuedAt);
+    if (input.thread) {
+      markLingThreadRunActive(input.store, input.thread.id, run.id, input.queuedAt);
+    }
+    input.storeRegistry.rememberRun(run.id, input.store);
   }
-  input.storeRegistry.rememberRun(run.id, input.store);
   input.store.appendEvent(run.id, "run_created", {
     taskId: run.taskId,
     workUnitId: input.workUnit.id,

@@ -6,7 +6,7 @@ import test from "node:test";
 import { DEFAULT_WORKSPACE_ID, createSqliteRunStore } from "../../core/dist/index.js";
 import { auditIgnoredRunnerCompletion } from "../dist/features/runs/stale-completion.js";
 
-test("stale runner completion audit is idempotent per run attempt and status", async () => {
+for (const status of ["cancelled", "yielded"]) test(`stale runner completion audit remains idempotent after ${status}`, async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-stale-completion-"));
   const store = createSqliteRunStore(cwd);
   try {
@@ -21,7 +21,7 @@ test("stale runner completion audit is idempotent per run attempt and status", a
       requestedRunnerId: "pi",
       effectiveRunnerId: "pi",
       idempotencyKey: "stale-completion-test",
-      status: "cancelled",
+      status: status === "yielded" ? "waiting_for_input" : "cancelled",
       createdByActor: "user",
       request: { prompt: "cancelled" },
       now,
@@ -34,7 +34,7 @@ test("stale runner completion audit is idempotent per run attempt and status", a
       runnerId: "pi",
       requestedRunnerId: "pi",
       effectiveRunnerId: "pi",
-      status: "cancelled",
+      status,
       now,
     });
     const run = store.createRun({
@@ -50,7 +50,11 @@ test("stale runner completion audit is idempotent per run attempt and status", a
       createdAt: now,
     });
     store.linkRunToWorkUnit(run.id, workUnit.id, now);
-    store.markRunCancelled(run.id, "2026-06-05T00:00:01.000Z");
+    if (status === "cancelled") store.markRunCancelled(run.id, "2026-06-05T00:00:01.000Z");
+    else {
+      store.markRunStarted(run.id, now);
+      assert.equal(store.transitionRunStatus({ runId: run.id, expectedStatus: "running", event: "runner_yielded", actor: "system", now }).ok, true);
+    }
 
     const first = auditIgnoredRunnerCompletion({
       store,
@@ -73,10 +77,10 @@ test("stale runner completion audit is idempotent per run attempt and status", a
     assert.equal(duplicate, undefined);
     const events = store.listEvents(run.id, { limit: 1000 }).filter((event) => event.type === "stale_runner_completion_ignored");
     assert.equal(events.length, 1);
-    assert.equal(events[0].data.reason, "run_cancelled");
+    assert.equal(events[0].data.reason, status === "cancelled" ? "run_cancelled" : "terminal_state_changed");
     assert.equal(events[0].data.reportedStatus, "succeeded");
-    assert.equal(events[0].data.currentRunStatus, "cancelled");
-    assert.equal(events[0].data.currentWorkUnitStatus, "cancelled");
+    assert.equal(events[0].data.currentRunStatus, status);
+    assert.equal(events[0].data.currentWorkUnitStatus, status === "yielded" ? "waiting_for_input" : "cancelled");
 
     const runtimeEvents = store.listRuntimeEvents(workUnit.id, { limit: 1000 })
       .filter((event) => event.type === "stale_runner_completion_ignored");

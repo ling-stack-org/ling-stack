@@ -8,7 +8,7 @@ import { createBaseState, createMockTeammate } from "./support/mock-state";
 import { triggerFocusRevalidation } from "./support/focus-revalidation";
 
 async function openPluginManager(page: Page): Promise<void> {
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await navigation.getByRole("button", { name: /^(Plugin Manager|插件管理)$/ }).click();
   await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();
@@ -132,7 +132,7 @@ test("Cua Driver uses one table row, global toasts, and a separate detail drawer
 
   await cuaRow.getByRole("button", { name: "Details" }).click();
   await page.getByRole("dialog", { name: "Cua Driver" }).getByRole("button", { name: "Open MCP connection" }).click();
-  await expect(page.getByLabel("Ling Stack navigation")).toHaveCount(0);
+  await expect(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })).toHaveCount(0);
   await expect(page.getByLabel("Settings sections").getByRole("button", { name: /MCP tool servers/ })).toHaveClass(/active/);
   await expect(page.locator(".mcp-server-row").filter({ hasText: "Cua Driver" })).toBeVisible();
 });

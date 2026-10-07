@@ -2,7 +2,7 @@ import type { AiTeammate, RunTool } from "@ling-stack/core";
 import type { ChannelIntentExecutionOperationV1 } from "@ling-stack/contracts";
 
 export interface ExecutionOperationParticipant {
-  readonly teammate: Pick<AiTeammate, "roleKey">;
+  readonly teammate: Pick<AiTeammate, "roleKey"> & Partial<Pick<AiTeammate, "id">>;
 }
 
 export function assignExecutionOperationOwners(
@@ -15,6 +15,12 @@ export function assignExecutionOperationOwners(
   const resolveOwner = (operation: ChannelIntentExecutionOperationV1): number => {
     const existing = owners.get(operation.id);
     if (existing !== undefined) return existing;
+    if (operation.binding) {
+      const boundOwner = participants.findIndex((participant) => participant.teammate.id === operation.binding!.ownerParticipantId);
+      if (boundOwner < 0) throw new Error(`operation_owner_not_available:${operation.id}:${operation.binding.ownerParticipantId}`);
+      owners.set(operation.id, boundOwner);
+      return boundOwner;
+    }
     if (resolving.has(operation.id)) return 0;
     resolving.add(operation.id);
     const minimumOwner = Math.max(0, ...operation.dependsOn.map((dependencyId) => {
@@ -58,10 +64,14 @@ export function ownedExecutionOperations(
 export function requiredToolsForExecutionOperations(
   operations: readonly ChannelIntentExecutionOperationV1[],
 ): readonly RunTool[] {
-  return [...new Set(operations.map((operation) =>
-    operation.kind === "file_create"
-      ? "write" as const
-      : operation.kind === "file_edit"
-        ? "edit" as const
-        : "bash" as const))];
+  return [...new Set(operations.flatMap((operation): RunTool[] => {
+    switch (operation.kind) {
+      case "file_read": return ["read"];
+      case "file_create": return ["write"];
+      case "file_edit": return ["edit"];
+      case "run_command": return ["bash"];
+      case "open_local_target": return [];
+      default: throw new Error(`unsupported_execution_operation:${String(operation.kind)}`);
+    }
+  }))];
 }

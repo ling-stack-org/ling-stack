@@ -1,4 +1,4 @@
-import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent, WorkflowWorkspaceChangesResponse } from "../types.js";
+import type { ChannelMessage, ChannelWorkflow, ChannelWorkflowStep, ConversationItemV1, ExecutionAction, MemoryObject, PreviewContentKind, PreviewContentResponse, RunArtifact, RunSession, TerminalReportDto, UsedMemoryEvent, WorkflowWorkspaceChangesResponse } from "../types.js";
 import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import type { PreviewRequest } from "./previews.js";
 
@@ -6,6 +6,7 @@ export const channelWorkCellDemoStorageKey = "ling-stack.workCellDemo";
 
 export interface ChannelWorkCellDemoFixture {
   readonly channelMessages: readonly ChannelMessage[];
+  readonly conversationItems: readonly ConversationItemV1[];
   readonly workflows: readonly ChannelWorkflow[];
   readonly workflowSteps: readonly ChannelWorkflowStep[];
   readonly runs: readonly RunSession[];
@@ -14,6 +15,7 @@ export interface ChannelWorkCellDemoFixture {
   readonly memoryObjects: readonly MemoryObject[];
   readonly usedMemoryEvents: readonly UsedMemoryEvent[];
   readonly terminalReports: readonly TerminalReportDto[];
+  readonly contextSegmentIdByItemId: ReadonlyMap<string, string>;
 }
 
 const channelWorkCellDemoArtifactPrefix = "demo_work_cell_";
@@ -107,6 +109,7 @@ export function createChannelWorkCellDemoFixture(input: {
   const idPrefix = `${channelWorkCellDemoArtifactPrefix}${safeId(channelId)}`;
   const discussionMessageId = `${idPrefix}_message_discussion`;
   const sourceMessageId = `${idPrefix}_message_request`;
+  const sourceTurnId = `conversation-turn:${sourceMessageId}`;
   const terminalReportId = `${idPrefix}_terminal_report`;
   const terminalMessageId = `message_${terminalReportId}`;
   const workflowId = `${idPrefix}_workflow`;
@@ -194,6 +197,9 @@ export function createChannelWorkCellDemoFixture(input: {
       id: sourceMessageId,
       workspaceId,
       channelId,
+      threadId: sourceMessageId,
+      turnId: sourceTurnId,
+      threadSurfaceKind: "channel_root",
       kind: "message",
       intent: "discuss",
       authorType: "local-user",
@@ -212,6 +218,8 @@ export function createChannelWorkCellDemoFixture(input: {
       workspaceId,
       channelId,
       threadId: sourceMessageId,
+      turnId: sourceTurnId,
+      threadSurfaceKind: "channel_root",
       kind: "ai_reply",
       intent: "discuss",
       authorType: "ai-teammate",
@@ -425,6 +433,7 @@ export function createChannelWorkCellDemoFixture(input: {
     workspaceId,
     channelId,
     threadId: sourceMessageId,
+    turnId: sourceTurnId,
     sourceMessageId,
     source: { kind: "workflow", id: workflowId },
     status: "committed",
@@ -511,16 +520,48 @@ export function createChannelWorkCellDemoFixture(input: {
 
   return {
     channelMessages,
+    conversationItems: [{
+      schemaVersion: 1,
+      id: `result_terminal_report:${terminalReportId}`,
+      workspaceId,
+      channelId,
+      threadId: sourceMessageId,
+      turnId: sourceTurnId,
+      sequence: 1,
+      kind: "terminal_report",
+      status: "committed",
+      actorType: "system",
+      visibility: "channel",
+      payload: {
+        reportId: terminalReportId,
+        generation: 1,
+        sourceKind: "workflow",
+        sourceId: workflowId,
+        evidenceFingerprint: terminalReport.evidenceFingerprint,
+        outcomeStatus: terminalReport.outcome.status,
+      },
+      domainRefs: [
+        { type: "terminal_report", id: terminalReportId },
+        { type: "workflow", id: workflowId },
+        { type: "message", id: sourceMessageId },
+      ],
+      revision: 1,
+      createdAt: completedAt,
+      updatedAt: terminalReport.committedAt,
+      committedAt: terminalReport.committedAt,
+    }],
     memoryObjects,
     usedMemoryEvents,
     terminalReports: [terminalReport],
     workflows: [workflow],
     workflowSteps,
     runs,
+    contextSegmentIdByItemId: new Map([[sourceMessageId, `${idPrefix}_context_segment`]]),
     executionActions: [
       demoAction({
         id: `${idPrefix}_action_architect_read`,
         runId: runArchitectId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "read",
         title: "读取频道投影入口",
@@ -533,6 +574,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_architect_search`,
         runId: runArchitectId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "grep",
         title: "搜索 work-cell 投影函数",
@@ -545,6 +587,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_designer_review`,
         runId: runDesignerId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "mcp_tool_call",
         title: "审阅操作记录视觉层级",
@@ -557,6 +600,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_edit_component`,
         runId: runEngineerId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "edit",
         risk: "medium",
@@ -571,6 +615,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_edit_css`,
         runId: runEngineerId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "edit",
         risk: "medium",
@@ -585,6 +630,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_typecheck`,
         runId: runEngineerId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "bash",
         risk: "medium",
@@ -598,6 +644,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_qa_e2e`,
         runId: runQaId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "bash",
         risk: "medium",
@@ -612,6 +659,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_doc`,
         runId: runEngineerFollowupId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "edit",
         risk: "low",
@@ -626,6 +674,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_followup_typecheck`,
         runId: runEngineerFollowupId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "bash",
         title: "复查会话类型",
@@ -637,6 +686,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_followup_i18n`,
         runId: runEngineerFollowupId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "bash",
         title: "检查会话文案",
@@ -648,6 +698,7 @@ export function createChannelWorkCellDemoFixture(input: {
       demoAction({
         id: `${idPrefix}_action_engineer_followup_diff_check`,
         runId: runEngineerFollowupId,
+        sourceItemId: sourceMessageId,
         workspaceId,
         actionType: "bash",
         title: "检查补丁格式",
@@ -879,6 +930,7 @@ function demoArtifactPreviewText(artifact: RunArtifact): string {
 function demoAction(input: {
   readonly id: string;
   readonly runId: string;
+  readonly sourceItemId?: string;
   readonly workspaceId: string;
   readonly actionType: ExecutionAction["actionType"];
   readonly title: string;
@@ -896,6 +948,7 @@ function demoAction(input: {
   const durationMs = Math.max(0, Date.parse(input.completedAt) - Date.parse(input.createdAt));
   return {
     id: input.id,
+    revision: 3,
     workspaceId: input.workspaceId,
     runId: input.runId,
     attemptId: `attempt:${input.runId}`,
@@ -908,6 +961,15 @@ function demoAction(input: {
     targetRefs: input.targetRefs,
     previewArtifactIds: [],
     resultArtifactIds: input.resultArtifactIds ?? [],
+    sourceRefs: [
+      ...(input.sourceItemId ? [{ kind: "conversation_item", id: input.sourceItemId }] : []),
+      ...input.targetRefs.map((ref) => ({
+      kind: ref.type,
+      id: ref.path ?? ref.id ?? ref.label ?? ref.type,
+      ...(ref.label ? { label: ref.label } : {}),
+      ...(ref.path ? { path: ref.path } : {}),
+      })),
+    ],
     ...(commandText ? {
       toolCallId: `tool_${input.id}`,
       commandEvidence: {

@@ -22,7 +22,7 @@ test("External Work keeps no-channel and ready GitHub states quiet and truthful"
   await expect(panel.getByRole("button", { name: "Check status" })).toHaveCount(0);
 
   await page.getByRole("button", { name: "Back to app" }).click();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   await openExternalWork(page, false);
 
   await expect(panel).toBeVisible();
@@ -232,9 +232,9 @@ async function openExternalWork(
   sectionName: RegExp = /External work/,
 ): Promise<Locator> {
   if (selectChannel) {
-    await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
   }
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Settings|设置/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Settings|设置/ }).click();
   await page.getByLabel(/Settings sections|设置分组/).getByRole("button", { name: sectionName }).click();
   const panel = page.locator("[data-ui2-external-work]");
   await expect(panel).toBeVisible();

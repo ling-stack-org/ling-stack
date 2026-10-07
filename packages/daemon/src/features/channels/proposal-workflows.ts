@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import {
   type AiTeammate,
   type Channel,
@@ -17,12 +18,14 @@ import type {
 } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
+import type { NativeRestrictedCommandRuntime } from "../../runtime/sandbox/restricted-command-runtime.js";
 import { teammateCanWorkInEffectiveChannel } from "./channel-teammate-availability.js";
 import { responseLanguageInstruction } from "./response-language.js";
 import { createLingAgentExecutor, isLingAgentExecutorId } from "./ling-agent-executor.js";
 import { compileWorkflowGraph } from "./workflow-graph.js";
 import type { ValidateWorkflowStepRunRequest } from "./workflows.js";
 import { materializeWorkflowDelegatedStepRequirements } from "./workflow-step-requirement.js";
+import { assertChannelOperationRunnerReady, assertChannelOperationRuntimeReady } from "./channel-operation-runtime-readiness.js";
 import {
   assignExecutionOperationOwners,
   ownedExecutionOperations,
@@ -34,6 +37,8 @@ import {
 } from "./workflow-participant-provider.js";
 
 export interface ConfirmChannelExecutionProposalWorkflowInput {
+  readonly restrictedCommandRuntime?: NativeRestrictedCommandRuntime;
+  readonly hostCapabilityAvailable?: (capabilityId: "host.open_local_target") => boolean;
   readonly store: RunStore;
   readonly cwd: string;
   readonly proposalId: string;
@@ -55,29 +60,63 @@ type ProposalParticipant = {
 };
 
 const confirmableProposalStatuses = new Set<ChannelExecutionProposal["status"]>(["draft", "blocked", "run_failed"]);
+const CHANNEL_PROPOSAL_CONFIRMATION_LEASE_MS = 5 * 60 * 1000;
 
 export function confirmChannelExecutionProposalWorkflow(
   input: ConfirmChannelExecutionProposalWorkflowInput,
 ): ConfirmChannelExecutionProposalWorkflowResult {
   const now = input.now ?? new Date().toISOString();
-  const proposal = input.store.getChannelExecutionProposal(input.proposalId);
-  if (!proposal) {
+  const observed = input.store.getChannelExecutionProposal(input.proposalId);
+  if (!observed) {
     throw new HttpError(404, "proposal_not_found", `Channel proposal not found: ${input.proposalId}`);
   }
 
-  const existing = existingLinkedWorkflow(input.store, proposal);
-  if (existing && proposal.status === "accepted") {
+  const existing = existingLinkedWorkflow(input.store, observed);
+  if (existing && observed.status === "accepted") {
     return existing;
   }
 
+  const claimId = `proposal-confirm:${randomUUID()}`;
+  const claimExpiresAt = new Date(Date.parse(now) + CHANNEL_PROPOSAL_CONFIRMATION_LEASE_MS).toISOString();
+  const claim = input.store.claimChannelExecutionProposal(input.proposalId, claimId, now, claimExpiresAt);
+  if (claim.kind === "not_found") {
+    throw new HttpError(404, "proposal_not_found", `Channel proposal not found: ${input.proposalId}`);
+  }
+  if (claim.kind === "busy") {
+    throw new HttpError(409, "proposal_confirmation_in_progress", "This channel proposal is already being confirmed.");
+  }
+  if (claim.kind === "stale") {
+    throw new HttpError(409, "proposal_stale", "This channel proposal changed before confirmation. Refresh it and retry.");
+  }
+  const proposal = claim.proposal;
+
   try {
-    return confirmChannelExecutionProposalWorkflowOrThrow(input, proposal, now);
+    const orphanedWorkflow = existingLinkedWorkflow(input.store, proposal);
+    if (orphanedWorkflow) {
+      const accepted = input.store.updateChannelExecutionProposal(proposal.id, {
+        status: "accepted",
+        linkedTaskId: null,
+        linkedRunId: null,
+        linkedWorkflowId: orphanedWorkflow.workflow.id,
+        errorMessage: null,
+        blocker: null,
+        expectedRevision: proposal.revision,
+        confirmationClaimId: claimId,
+      }, now);
+      if (!accepted) {
+        throw new HttpError(409, "proposal_stale", "The proposal changed while recovering its existing workflow.");
+      }
+      return { ...orphanedWorkflow, proposal: accepted };
+    }
+    return confirmChannelExecutionProposalWorkflowOrThrow(input, proposal, now, claimId);
   } catch (error) {
     if (error instanceof HttpError && error.statusCode !== 404) {
       input.store.updateChannelExecutionProposal(proposal.id, {
         status: "blocked",
         errorMessage: error.message,
         blocker: error instanceof WorkflowParticipantProviderPreflightError ? error.blocker : null,
+        expectedRevision: proposal.revision,
+        confirmationClaimId: claimId,
       }, now);
     }
     throw error;
@@ -88,6 +127,7 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
   input: ConfirmChannelExecutionProposalWorkflowInput,
   proposal: ChannelExecutionProposal,
   now: string,
+  confirmationClaimId: string,
 ): ConfirmChannelExecutionProposalWorkflowResult {
   if (!confirmableProposalStatuses.has(proposal.status)) {
     throw new HttpError(409, "proposal_not_confirmable", `Proposal cannot be confirmed from status: ${proposal.status}`);
@@ -116,10 +156,18 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
   const participantManifest = sourceDecision.participantManifest;
   assertProposalParticipantManifest(participants, participantManifest);
   const executionPlan = sourceDecision.execution;
-  const requiredExecutionPlan = executionPlan?.operations.some((operation) => operation.required) ? executionPlan : undefined;
+  // Typed plans must reach the capability interlock intact, including optional
+  // operations; dropping them here would turn an unsupported plan into legacy.
+  const requiredExecutionPlan = executionPlan?.bindingVersion === 1 || executionPlan?.operations.some((operation) => operation.required) ? executionPlan : undefined;
   const operationOwners = requiredExecutionPlan
     ? assignExecutionOperationOwners(requiredExecutionPlan.operations, participants)
     : new Map<string, number>();
+  assertChannelOperationRuntimeReady(
+    requiredExecutionPlan,
+    operationOwners,
+    input.restrictedCommandRuntime,
+    input.hostCapabilityAvailable,
+  );
   validateProposalRequiredTools(channel, proposal, participants, requiredExecutionPlan, operationOwners);
   const providerBoundParticipants = participants.map((participant, index): ProposalParticipant => {
     const requiredTools = requiredExecutionPlan
@@ -139,6 +187,8 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
     return { ...participant, providerBinding: preflight.binding };
   });
 
+  assertChannelOperationRunnerReady({ plan: requiredExecutionPlan, store: input.store,
+    runnerRegistry: input.runnerRegistry, participants: providerBoundParticipants });
   const graph = buildProposalWorkflowGraph(
     proposal,
     providerBoundParticipants,
@@ -234,7 +284,13 @@ function confirmChannelExecutionProposalWorkflowOrThrow(
     ...(proposal.shaping ? { shaping: { ...proposal.shaping, status: "converted_to_task" as const, updatedAt: now } } : {}),
     errorMessage: null,
     blocker: null,
+    expectedRevision: proposal.revision,
+    confirmationClaimId,
   }, now) ?? proposal;
+
+  if (accepted === proposal) {
+    throw new HttpError(409, "proposal_stale", "The proposal changed while creating its workflow.");
+  }
 
   return { proposal: accepted, workflow, workflowSteps };
 }
@@ -261,10 +317,11 @@ function existingLinkedWorkflow(
   store: RunStore,
   proposal: ChannelExecutionProposal,
 ): ConfirmChannelExecutionProposalWorkflowResult | undefined {
-  if (!proposal.linkedWorkflowId) {
-    return undefined;
-  }
-  const workflow = store.getChannelWorkflow(proposal.linkedWorkflowId);
+  const workflow = proposal.linkedWorkflowId
+    ? store.getChannelWorkflow(proposal.linkedWorkflowId)
+    : store
+      .listChannelWorkflows({ channelId: proposal.channelId, limit: 500 })
+      .find((candidate) => candidate.metadata?.sourceProposalId === proposal.id);
   if (!workflow) {
     return undefined;
   }
@@ -364,6 +421,14 @@ function validateProposalRequiredTools(
   operationOwners: ReadonlyMap<string, number> = new Map(),
 ): void {
   if (executionPlan) {
+    if (executionPlan.bindingVersion === 1) {
+      const missingChannelTools = requiredToolsForExecutionOperations(executionPlan.operations)
+        .filter((tool) => !channel.allowedTools.includes(tool));
+      if (missingChannelTools.length > 0) {
+        throw new HttpError(400, "proposal_required_tools_not_available",
+          `Channel is missing required tools: ${missingChannelTools.join(", ")}.`);
+      }
+    }
     for (const [index, participant] of participants.entries()) {
       const requiredTools = requiredToolsForExecutionOperations(ownedExecutionOperations(executionPlan.operations, operationOwners, index));
       const missingTeammateTools = requiredTools.filter((tool) => !participant.teammate.allowedTools.includes(tool));
@@ -447,7 +512,8 @@ function renderOwnedOperationBinding(
       : operation.commandMatchPolicy?.kind === "executable"
         ? `; executable: ${operation.commandMatchPolicy.executable}`
         : "";
-    return `- ${operation.id}: ${operation.kind} -> ${target}${dependency}${command}`;
+    const binding = operation.binding ? `; binding: ${JSON.stringify(operation.binding)}` : "";
+    return `- ${operation.id}: ${operation.kind} -> ${target}${dependency}${command}${binding}`;
   });
   const header = "Host-materialized operation bindings (authoritative for completion, not display advice):";
   const rule = "Execute only the operations owned by this step. An exact command must be run exactly; do not substitute a semantically equivalent command. If the binding cannot be executed, return structured blocked instead of ready text or narration.";

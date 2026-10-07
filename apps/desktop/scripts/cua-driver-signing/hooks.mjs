@@ -493,7 +493,7 @@ export async function runArtifactBuildCompleted(context, callOptions = {}) {
   });
 }
 
-function isCompanionBlockmap(context) {
+export function isCompanionBlockmap(context) {
   const path = context?.artifactPath ?? context?.file ?? context?.safeArtifactName;
   const targetName = String(context?.target?.name ?? "").toLowerCase();
   return typeof path === "string"

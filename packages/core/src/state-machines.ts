@@ -33,6 +33,8 @@ export type TransitionResult<TStatus extends string> =
 
 export type TaskTransitionEvent =
   | "claim"
+  | "user_input_requested"
+  | "user_input_answered"
   | "start_run"
   | "run_succeeded"
   | "run_failed"
@@ -45,12 +47,14 @@ export type TaskTransitionEvent =
 
 export type RunTransitionEvent =
   | "runner_started"
+  | "runner_yielded"
   | "approval_requested"
   | "approval_approved"
   | "approval_denied"
   | "approval_expired"
   | "runner_succeeded"
   | "runner_failed"
+  | "retry"
   | "cancel";
 
 export type ApprovalTransitionEvent = "approve" | "deny" | "expire" | "cancel_owner";
@@ -70,6 +74,7 @@ export type WorkflowStatus =
   | "ready"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -80,6 +85,7 @@ export type WorkflowStepStatus =
   | "claimed"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -88,6 +94,8 @@ export type WorkflowStepStatus =
 
 export type WorkflowTransitionEvent =
   | "prepare"
+  | "user_input_requested"
+  | "user_input_answered"
   | "start"
   | "approval_requested"
   | "approval_approved"
@@ -98,6 +106,8 @@ export type WorkflowTransitionEvent =
 
 export type WorkflowStepTransitionEvent =
   | "claim"
+  | "user_input_requested"
+  | "user_input_answered"
   | "start"
   | "approval_requested"
   | "approval_approved"
@@ -109,7 +119,10 @@ export type WorkflowStepTransitionEvent =
   | "cancel";
 
 export type WorkUnitTransitionEvent =
+  | "user_input_cancelled"
   | "claim"
+  | "user_input_requested"
+  | "user_input_answered"
   | "runner_started"
   | "approval_requested"
   | "approval_approved"
@@ -119,6 +132,7 @@ export type WorkUnitTransitionEvent =
   | "runner_failed"
   | "idle_timeout"
   | "hard_timeout"
+  | "execution_loop_detected"
   | "runner_lost"
   | "runner_cancelled"
   | "cancel_timeout"
@@ -129,6 +143,8 @@ export type WorkUnitTransitionEvent =
 
 export type LingTurnTransitionEvent =
   | "start"
+  | "user_input_requested"
+  | "user_input_answered"
   | "approval_requested"
   | "approval_approved"
   | "block"
@@ -137,7 +153,8 @@ export type LingTurnTransitionEvent =
   | "cancel";
 
 const taskTerminalStatuses = new Set<TaskStatus>(["done", "cancelled"]);
-const runTerminalStatuses = new Set<RunStatus>(["succeeded", "failed", "cancelled"]);
+// State-machine immutability is physical closure, not business completion.
+const runTerminalStatuses = new Set<RunStatus>(["yielded", "succeeded", "failed", "cancelled"]);
 const approvalTerminalStatuses = new Set<ApprovalStatus>(["approved", "denied", "expired", "cancelled"]);
 const mediaJobTerminalStatuses = new Set<MediaJobStatus>(["succeeded", "failed", "cancelled"]);
 const workflowTerminalStatuses = new Set<WorkflowStatus>(["succeeded", "failed", "cancelled"]);
@@ -147,15 +164,17 @@ const lingTurnTerminalStatuses = new Set<LingTurnStatus>(["succeeded", "failed",
 
 const taskTransitions: Readonly<Record<TaskStatus, Partial<Record<TaskTransitionEvent, TaskStatus>>>> = {
   todo: { claim: "claimed", cancel: "cancelled" },
-  claimed: { start_run: "running", cancel: "cancelled" },
+  claimed: { start_run: "running", run_failed: "failed", cancel: "cancelled" },
   running: {
     run_succeeded: "done",
+    user_input_requested: "waiting_for_input",
     run_failed: "failed",
     run_cancelled: "cancelled",
     run_waiting_for_human: "blocked",
     cancel: "cancelled",
   },
   blocked: { human_resolved: "claimed", cancel: "cancelled" },
+  waiting_for_input: { user_input_answered: "claimed", cancel: "cancelled" },
   review: { accept: "done", cancel: "cancelled" },
   failed: { retry: "claimed", cancel: "cancelled" },
   done: {},
@@ -163,8 +182,9 @@ const taskTransitions: Readonly<Record<TaskStatus, Partial<Record<TaskTransition
 };
 
 const runTransitions: Readonly<Record<RunStatus, Partial<Record<RunTransitionEvent, RunStatus>>>> = {
-  queued: { runner_started: "running", cancel: "cancelled" },
+  queued: { runner_started: "running", runner_failed: "failed", cancel: "cancelled" },
   running: {
+    runner_yielded: "yielded",
     approval_requested: "waiting_for_approval",
     runner_succeeded: "succeeded",
     runner_failed: "failed",
@@ -177,8 +197,9 @@ const runTransitions: Readonly<Record<RunStatus, Partial<Record<RunTransitionEve
     runner_failed: "failed",
     cancel: "cancelled",
   },
+  yielded: {},
   succeeded: {},
-  failed: {},
+  failed: { retry: "queued" },
   cancelled: {},
 };
 
@@ -213,6 +234,7 @@ const workflowTransitions: Readonly<Record<WorkflowStatus, Partial<Record<Workfl
   draft: { prepare: "ready", cancel: "cancelled" },
   ready: { start: "running", cancel: "cancelled" },
   running: {
+    user_input_requested: "waiting_for_input",
     approval_requested: "waiting_for_approval",
     step_blocked: "blocked",
     step_failed: "failed",
@@ -221,6 +243,7 @@ const workflowTransitions: Readonly<Record<WorkflowStatus, Partial<Record<Workfl
   },
   waiting_for_approval: { approval_approved: "running", step_blocked: "blocked", step_failed: "failed", cancel: "cancelled" },
   blocked: { start: "running", step_failed: "failed", cancel: "cancelled" },
+  waiting_for_input: { user_input_answered: "running", step_blocked: "blocked", step_failed: "failed", cancel: "cancelled" },
   succeeded: {},
   failed: {},
   cancelled: {},
@@ -230,6 +253,7 @@ const workflowStepTransitions: Readonly<Record<WorkflowStepStatus, Partial<Recor
   queued: { claim: "claimed", skip: "skipped", cancel: "cancelled" },
   claimed: { start: "running", cancel: "cancelled" },
   running: {
+    user_input_requested: "waiting_for_input",
     approval_requested: "waiting_for_approval",
     blocked: "blocked",
     succeed: "succeeded",
@@ -239,6 +263,7 @@ const workflowStepTransitions: Readonly<Record<WorkflowStepStatus, Partial<Recor
   },
   waiting_for_approval: { approval_approved: "running", blocked: "blocked", fail: "failed", skip: "skipped", cancel: "cancelled" },
   blocked: { resume: "claimed", fail: "failed", cancel: "cancelled" },
+  waiting_for_input: { user_input_answered: "claimed", blocked: "blocked", cancel: "cancelled" },
   succeeded: {},
   failed: {},
   skipped: {},
@@ -252,15 +277,18 @@ const workUnitTransitions: Readonly<Record<WorkUnitStatus, Partial<Record<WorkUn
     runner_failed: "failed",
     idle_timeout: "cancelling",
     hard_timeout: "cancelling",
+    execution_loop_detected: "cancelling",
     runner_lost: "stale",
     cancel: "cancelling",
   },
   running: {
+    user_input_requested: "waiting_for_input",
     approval_requested: "waiting_for_approval",
     runner_succeeded: "succeeded",
     runner_failed: "failed",
     idle_timeout: "cancelling",
     hard_timeout: "cancelling",
+    execution_loop_detected: "cancelling",
     runner_lost: "stale",
     cancel: "cancelling",
   },
@@ -272,6 +300,7 @@ const workUnitTransitions: Readonly<Record<WorkUnitStatus, Partial<Record<WorkUn
     runner_failed: "failed",
     idle_timeout: "cancelling",
     hard_timeout: "cancelling",
+    execution_loop_detected: "cancelling",
     cancel: "cancelling",
   },
   cancelling: {
@@ -286,13 +315,15 @@ const workUnitTransitions: Readonly<Record<WorkUnitStatus, Partial<Record<WorkUn
     retry: "queued",
   },
   failed: { retry: "queued" },
+  waiting_for_input: { user_input_answered: "claimed", user_input_cancelled: "cancelled", cancel: "cancelling" },
   succeeded: {},
   cancelled: { retry: "queued" },
 };
 
 const lingTurnTransitions: Readonly<Record<LingTurnStatus, Partial<Record<LingTurnTransitionEvent, LingTurnStatus>>>> = {
   open: { start: "running", approval_requested: "waiting_for_approval", block: "blocked", succeed: "succeeded", fail: "failed", cancel: "cancelled" },
-  running: { approval_requested: "waiting_for_approval", block: "blocked", succeed: "succeeded", fail: "failed", cancel: "cancelled" },
+  running: { user_input_requested: "waiting_for_input", approval_requested: "waiting_for_approval", block: "blocked", succeed: "succeeded", fail: "failed", cancel: "cancelled" },
+  waiting_for_input: { user_input_answered: "running", block: "blocked", cancel: "cancelled" },
   waiting_for_approval: { approval_approved: "running", block: "blocked", succeed: "succeeded", fail: "failed", cancel: "cancelled" },
   blocked: { start: "running", fail: "failed", cancel: "cancelled" },
   succeeded: {},

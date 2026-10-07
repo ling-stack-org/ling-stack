@@ -11,11 +11,13 @@ import {
 import {
   getWorkspaceFileOpenOptions,
   openWorkspaceFile,
+  openWorkspaceFileCapability,
   workspaceFileContentUrl,
   workspaceFileOpenIconUrl,
 } from "../../../api.js";
 import { useI18n } from "../../../i18n.js";
 import type {
+  WorkspaceFileCapabilityScope,
   WorkspaceFileOpenOption,
   WorkspaceFileOpenTarget,
 } from "../../../types.js";
@@ -24,12 +26,16 @@ export function WorkspaceFileOpenMenu({
   cwd,
   path,
   line,
+  capabilityId,
+  scope,
   compact = false,
   placement = "below",
 }: {
   readonly cwd: string;
   readonly path: string;
   readonly line?: number;
+  readonly capabilityId?: string;
+  readonly scope?: WorkspaceFileCapabilityScope;
   readonly compact?: boolean;
   readonly placement?: "below" | "auto";
 }): React.JSX.Element {
@@ -111,7 +117,11 @@ export function WorkspaceFileOpenMenu({
   async function launch(target: WorkspaceFileOpenTarget): Promise<void> {
     setError("");
     try {
-      await openWorkspaceFile(cwd, path, { target, line });
+      if (capabilityId && scope) {
+        await openWorkspaceFileCapability({ target, line, capabilityId, scope });
+      } else {
+        await openWorkspaceFile(cwd, path, { target, line });
+      }
       setOpen(false);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : String(reason));
@@ -145,10 +155,12 @@ export function WorkspaceFileOpenMenu({
               <span>{openTargetLabel(option, t)}</span>
             </button>
           ))}
-          <a href={workspaceFileContentUrl(cwd, path, true)} download>
-            <Download size={13} />
-            <span>{t("Download")}</span>
-          </a>
+          {!capabilityId ? (
+            <a href={workspaceFileContentUrl(cwd, path, true)} download>
+              <Download size={13} />
+              <span>{t("Download")}</span>
+            </a>
+          ) : null}
           {error ? <small title={error}>{error}</small> : null}
         </span>
       ) : null}

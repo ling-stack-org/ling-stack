@@ -453,6 +453,12 @@ test("default projections hide superseded turns and response messages while audi
     const audit = buildConversationDetail(store, cwd, thread, { includeSuperseded: true });
     assert.deepEqual(visible.turns.map((turn) => turn.id), [replacementTurn.id]);
     assert.deepEqual(audit.turns.map((turn) => turn.id), [oldTurn.id, replacementTurn.id]);
+    assert.deepEqual(visible.supersessionTombstones, {
+      turnIds: [oldTurn.id],
+      runIds: [],
+      responseMessageIds: [`conversation-assistant:${oldTurn.id}`],
+    });
+    assert.deepEqual(audit.supersessionTombstones, visible.supersessionTombstones);
     assert.equal(store.getLingTurn(oldTurn.id)?.status, "superseded");
 
     const channel = store.createChannel({ name: "Projection channel", boundPath: cwd }, "2026-07-12T07:01:00.000Z");
@@ -514,6 +520,62 @@ test("default projections hide superseded turns and response messages while audi
     });
     assert.deepEqual(filterSupersededTeammateDirectMessages([directSource, directReply], directProjection).map((message) => message.id), [directSource.id]);
     assert.equal(store.getTeammateDirectMessage(directReply.id)?.body, "Direct old reply");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("normal conversation detail keeps workspace artifacts but not Host-only provenance payloads", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-artifact-visibility-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const createdAt = "2026-07-12T07:59:00.000Z";
+    const thread = store.createLingThread({
+      kind: "conversation", teammateId: LING_AGENT_ID, title: "Artifacts", objective: "Artifacts",
+    }, createdAt);
+    const turn = store.createLingTurn({
+      threadId: thread.id, kind: "initial_request", title: "Artifacts", userInstruction: "Inspect artifacts",
+      teammateId: LING_AGENT_ID, createdByActor: "local-user",
+    }, createdAt);
+    const run = store.createRun(createRunInput({ id: "run_artifact_visibility", cwd, threadId: thread.id, turnId: turn.id, createdAt }));
+    const internal = store.createArtifact({
+      runId: run.id, type: "json", path: `.ling-stack/provenance/${run.id}/inverse-plan.json`,
+      title: "Workspace inverse patch plan", sealedPayload: { secret: "SECRET_SENTINEL" }, createdAt,
+    });
+    const visible = store.createArtifact({
+      runId: run.id, type: "file", path: "reports/result.txt", title: "Result", createdAt,
+    });
+
+    const detail = buildConversationDetail(store, cwd, thread);
+    assert.deepEqual(detail.artifacts.map((artifact) => artifact.id), [visible.id]);
+    assert.equal(JSON.stringify(detail).includes("SECRET_SENTINEL"), false);
+    assert.deepEqual(store.getArtifact(internal.id)?.sealedPayload, { secret: "SECRET_SENTINEL" });
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("normal conversation detail includes only the edit-owned Run diff metadata", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-owned-diff-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const createdAt = "2026-09-28T00:00:00.000Z";
+    const thread = store.createLingThread({ kind: "conversation", teammateId: LING_AGENT_ID, title: "Diff", objective: "Diff" }, createdAt);
+    const turn = store.createLingTurn({ threadId: thread.id, kind: "initial_request", title: "Diff", userInstruction: "Edit todo.py", teammateId: LING_AGENT_ID, createdByActor: "local-user" }, createdAt);
+    const run = store.createRun(createRunInput({ id: "run_owned_diff", cwd, threadId: thread.id, turnId: turn.id, createdAt }));
+    const owned = store.createArtifact({ runId: run.id, type: "diff", path: `${run.id}/008-generated-edit-diff-todo.py.diff`, contentType: "text/x-diff", title: "Generated edit diff", sealedPayload: { private: "SECRET_SENTINEL" }, createdAt });
+    const unowned = store.createArtifact({ runId: run.id, type: "diff", path: `${run.id}/009-unowned.diff`, contentType: "text/x-diff", createdAt });
+    store.appendEvent(run.id, "tool_start", { toolCallId: "edit-1", toolName: "edit", args: { path: "todo.py" } });
+    store.appendEvent(run.id, "artifact_created", { toolCallId: "edit-1", artifactId: owned.id });
+    store.appendEvent(run.id, "tool_end", { toolCallId: "edit-1", toolName: "edit", result: { content: [{ type: "text", text: "edited" }] } });
+
+    const detail = buildConversationDetail(store, cwd, thread);
+    assert.deepEqual(detail.artifacts.map((artifact) => artifact.id), [owned.id]);
+    assert.equal(detail.executionActions.some((action) => action.actionType === "edit" && action.resultArtifactIds.includes(owned.id)), true);
+    assert.equal(JSON.stringify(detail).includes("SECRET_SENTINEL"), false);
+    assert.equal(detail.artifacts.some((artifact) => artifact.id === unowned.id), false);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -719,6 +781,106 @@ test("conversation detail prefers streamed text and treats a completely empty ch
     assert.equal(streamed?.content, "Streamed answer");
     assert.equal(empty?.status, "failed");
     assert.equal(empty?.content, "模型没有返回可显示的内容，请重试或切换模型。");
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("conversation detail preserves distinct assistant messages and their durable event order", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-narration-order-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.createLingThread({ kind: "conversation", teammateId: LING_AGENT_ID, title: "Narration order", objective: "Narration order" }, "2026-07-12T09:15:00.000Z");
+    const turn = store.createLingTurn({ threadId: thread.id, kind: "initial_request", title: "Inspect then write", userInstruction: "Inspect then write", teammateId: LING_AGENT_ID, createdByActor: "local-user" }, "2026-07-12T09:15:01.000Z");
+    const run = store.createRun(createRunInput({ id: "run_narration_order", cwd, threadId: thread.id, turnId: turn.id, createdAt: "2026-07-12T09:15:02.000Z" }));
+    const first = store.appendEvent(run.id, "assistant_text_delta", { text: "I will inspect" });
+    store.appendEvent(run.id, "assistant_text_delta", { text: "\n\n" });
+    store.appendEvent(run.id, "assistant_text_delta", { text: "the files." });
+    const firstEnd = store.appendEvent(run.id, "message_end", { role: "assistant", text: "I will inspect\n\nthe files." });
+    store.appendEvent(run.id, "tool_start", { toolCallId: "read-1", toolName: "read", args: { path: "README.md" } });
+    store.appendEvent(run.id, "tool_end", { toolCallId: "read-1", toolName: "read", isError: false });
+    store.appendEvent(run.id, "message_end", { role: "toolResult" });
+    // The second message is beyond the first page of persisted run events.
+    for (let index = 0; index < 1000; index += 1) {
+      store.appendEvent(run.id, "tool_update", { toolCallId: "read-1", toolName: "read", output: "" });
+    }
+    const second = store.appendEvent(run.id, "assistant_text_delta", { text: "Now I will write." });
+    assert.ok(second.seq > 1000);
+    const secondEnd = store.appendEvent(run.id, "message_end", { role: "assistant", text: "Now I will write." });
+    store.appendEvent(run.id, "tool_start", { toolCallId: "write-1", toolName: "write", args: { path: "app.js", content: "export {};" } });
+    const assistant = buildConversationDetail(store, cwd, thread).messages.find((message) => message.role === "assistant");
+    assert.equal(assistant?.content, "I will inspect\n\nthe files.\n\nNow I will write.");
+    assert.deepEqual(assistant?.narrationSegments?.map((segment) => ({
+      content: segment.content,
+      firstEventId: segment.firstEventId,
+      lastEventId: segment.lastEventId,
+      startEventSequence: segment.startEventSequence,
+      endEventSequence: segment.endEventSequence,
+      completed: segment.completed,
+    })), [
+      { content: "I will inspect\n\nthe files.", firstEventId: first.id, lastEventId: firstEnd.id, startEventSequence: first.seq, endEventSequence: firstEnd.seq, completed: true },
+      { content: "Now I will write.", firstEventId: second.id, lastEventId: secondEnd.id, startEventSequence: second.seq, endEventSequence: secondEnd.seq, completed: true },
+    ]);
+  } finally {
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("conversation detail preserves whitespace-only streaming chunks in markdown", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-conversation-markdown-chunks-"));
+  const store = createSqliteRunStore(cwd);
+  try {
+    const thread = store.createLingThread({
+      kind: "conversation",
+      teammateId: LING_AGENT_ID,
+      title: "Markdown chunk boundaries",
+      objective: "Markdown chunk boundaries",
+    }, "2026-07-12T09:15:00.000Z");
+    const turn = store.createLingTurn({
+      threadId: thread.id,
+      kind: "initial_request",
+      title: "Render markdown",
+      userInstruction: "Render markdown",
+      teammateId: LING_AGENT_ID,
+      createdByActor: "local-user",
+    }, "2026-07-12T09:15:01.000Z");
+    const run = store.createRun(createRunInput({
+      id: "run_conversation_markdown_chunks",
+      cwd,
+      threadId: thread.id,
+      turnId: turn.id,
+      createdAt: "2026-07-12T09:15:02.000Z",
+    }));
+    finishRun(store, run.id, "2026-07-12T09:15:03.000Z");
+
+    const chunks = [
+      "First paragraph.\n\n",
+      "Second paragraph.\n\n",
+      "- First item",
+      "\n",
+      "- Second item",
+      "\n\n",
+      "```javascript",
+      "\n",
+      "function add(a, b) { return a + b; }",
+      "\n",
+      "```",
+    ];
+    for (const text of chunks) {
+      store.appendEvent(run.id, "assistant_text_delta", { type: "assistant_text_delta", text });
+    }
+    store.appendEvent(run.id, "message_end", {
+      type: "message_end",
+      role: "assistant",
+      text: chunks.join(""),
+    });
+
+    const assistant = buildConversationDetail(store, cwd, thread).messages
+      .find((message) => message.id === `conversation-assistant:${turn.id}`);
+    assert.equal(assistant?.content, chunks.join(""));
+    assert.equal(assistant?.status, "succeeded");
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

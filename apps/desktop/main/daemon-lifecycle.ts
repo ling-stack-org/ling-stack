@@ -77,6 +77,7 @@ export interface DesktopDaemonLifecycleOptions {
     readonly env: NodeJS.ProcessEnv;
   }) => ChildProcess;
   readonly executablePath?: string;
+  readonly packaged?: boolean;
   readonly desktopBridgeToken?: string;
   readonly browserHostPath?: string;
   readonly cuaDriverFeatureFlags?: CuaDriverFeatureFlags;
@@ -222,6 +223,7 @@ export class DesktopDaemonLifecycle {
           ...process.env,
           ...desktopCuaDriverDaemonFeatureEnvironment(this.cuaDriverFeatureFlags),
           ELECTRON_RUN_AS_NODE: "1",
+          ...(this.options.packaged ? { LING_STACK_PACKAGED_DESKTOP: "1" } : {}),
           LING_STACK_HOST: url.hostname,
           LING_STACK_PORT: url.port || (url.protocol === "https:" ? "443" : "80"),
           LING_STACK_DEFAULT_WORKSPACE_CWD: this.defaultWorkspaceCwd,

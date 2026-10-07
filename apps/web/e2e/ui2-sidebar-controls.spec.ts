@@ -15,7 +15,7 @@ test("Sidebar primary navigation and section menus keep one accessible interacti
   await mockDaemon(page, createControlsState());
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const primary = navigation.locator(".primary-nav");
   const primaryButtons = primary.getByRole("button");
   await expect(primaryButtons).toHaveCount(3);
@@ -60,7 +60,7 @@ test("Sidebar toggle remains stable while compact navigation stays usable", asyn
   await mockDaemon(page, createControlsState());
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const navigationToggle = page.getByRole("button", { name: "Hide navigation" });
   await expect(navigationToggle).toHaveAttribute("data-ling-icon-button-contract", "typed-lucide");
   const expandedBox = await navigationToggle.boundingBox();
@@ -89,7 +89,7 @@ test("Sidebar toggle remains stable while compact navigation stays usable", asyn
   await captureEvidence(page, "1280x800-ling-dark-navigation-compact.png");
 
   await showToggle.click();
-  await expect.poll(async () => Math.round((await page.getByLabel("Ling Stack navigation").boundingBox())?.width ?? 0)).toBe(292);
+  await expect.poll(async () => Math.round((await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).boundingBox())?.width ?? 0)).toBe(292);
   expect(runtimeErrors).toEqual([]);
 });
 

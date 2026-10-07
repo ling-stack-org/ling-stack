@@ -44,8 +44,14 @@ export function deriveExecutionActionCommandEvidence(input: {
   readonly start?: RunEventEnvelope;
   readonly end?: RunEventEnvelope;
 }): ExecutionActionCommandEvidence | undefined {
-  const start = latestToolEvent(input.events, input.toolCallId, "tool_start") ?? input.start;
-  const end = latestToolEvent(input.events, input.toolCallId, "tool_end") ?? input.end;
+  const start = firstToolEvent(input.events, input.toolCallId, "tool_start") ?? input.start;
+  // The first durable tool_end is the terminal fence for one logical call.
+  // A delayed output chunk or duplicate end after this fence is stale and must
+  // not mutate a terminal transcript row during replay/reconnect.
+  const end = start
+    ? firstToolEndAfterStart(input.events, input.toolCallId, start.seq) ??
+      (input.end && input.end.seq >= start.seq ? input.end : undefined)
+    : firstToolEvent(input.events, input.toolCallId, "tool_end") ?? input.end;
   const unifiedExecEnvelopePresent = hasUnifiedExecEnvelope(end);
   const result = readUnifiedExecResult(end);
   const outcome = unifiedExecEnvelopePresent
@@ -57,7 +63,11 @@ export function deriveExecutionActionCommandEvidence(input: {
   }
 
   const updateEvents = input.events
-    .filter((event) => event.type === "tool_update" && readToolCallId(event) === input.toolCallId)
+    .filter((event) =>
+      event.type === "tool_update" &&
+      readToolCallId(event) === input.toolCallId &&
+      (!start || event.seq > start.seq) &&
+      (!end || event.seq < end.seq))
     .sort((left, right) => left.seq - right.seq);
   const structuredStreamedChunks = updateEvents
     .map(readOutputChunk)
@@ -106,16 +116,29 @@ export function deriveExecutionActionCommandEvidence(input: {
   };
 }
 
-function latestToolEvent(
+function firstToolEvent(
   events: readonly RunEventEnvelope[],
   toolCallId: string,
   type: RunEventEnvelope["type"],
 ): RunEventEnvelope | undefined {
-  return events.reduce<RunEventEnvelope | undefined>((latest, event) => {
+  return events.reduce<RunEventEnvelope | undefined>((first, event) => {
     if (event.type !== type || readToolCallId(event) !== toolCallId) {
-      return latest;
+      return first;
     }
-    return !latest || event.seq > latest.seq ? event : latest;
+    return !first || event.seq < first.seq ? event : first;
+  }, undefined);
+}
+
+function firstToolEndAfterStart(
+  events: readonly RunEventEnvelope[],
+  toolCallId: string,
+  startSeq: number,
+): RunEventEnvelope | undefined {
+  return events.reduce<RunEventEnvelope | undefined>((first, event) => {
+    if (event.type !== "tool_end" || readToolCallId(event) !== toolCallId || event.seq < startSeq) {
+      return first;
+    }
+    return !first || event.seq < first.seq ? event : first;
   }, undefined);
 }
 
@@ -283,7 +306,9 @@ function boundOutputChunks(chunks: readonly ExecutionActionCommandOutputChunk[])
   while (countChunkLines(bounded) > MAX_OUTPUT_LINES && bounded.length > 0) {
     const [first, ...rest] = bounded;
     const remainingLines = countChunkLines(rest);
-    const allowedLines = MAX_OUTPUT_LINES - remainingLines;
+    const continuedLine = first.text.length > 0 && !first.text.endsWith("\n")
+      && rest.some((chunk) => chunk.stream === first.stream && chunk.text.length > 0);
+    const allowedLines = MAX_OUTPUT_LINES - remainingLines + (continuedLine ? 1 : 0);
     if (allowedLines <= 0) {
       bounded = rest;
       truncated = true;
@@ -437,15 +462,37 @@ function countChunkBytes(chunks: readonly ExecutionActionCommandOutputChunk[]): 
 }
 
 function countChunkLines(chunks: readonly ExecutionActionCommandOutputChunk[]): number {
-  return chunks.reduce((sum, chunk) => sum + countLines(chunk.text), 0);
+  // Streams have independent unfinished lines. Transport boundaries are not
+  // line boundaries, including when CRLF is split across two updates.
+  const unfinished = new Set<ExecutionActionCommandOutputChunk["stream"]>();
+  let count = 0;
+  for (const chunk of chunks) {
+    if (!chunk.text) continue;
+    count += countLines(chunk.text) - (unfinished.has(chunk.stream) ? 1 : 0);
+    if (chunk.text.endsWith("\n")) unfinished.delete(chunk.stream);
+    else unfinished.add(chunk.stream);
+  }
+  return count;
 }
 
 function countLines(value: string): number {
-  return value ? value.split(/\r?\n/u).length : 0;
+  if (!value) return 0;
+  let count = value.endsWith("\n") ? 0 : 1;
+  for (let index = 0; index < value.length; index += 1) {
+    if (value[index] === "\n") count += 1;
+  }
+  return count;
 }
 
 function takeLastLines(value: string, limit: number): string {
-  return value.split(/\r?\n/u).slice(-limit).join("\n");
+  if (limit <= 0) return "";
+  let remaining = limit;
+  // A trailing delimiter terminates the last real line; it is not an extra
+  // empty line. Keep original CRLF bytes instead of rewriting the output.
+  for (let index = value.length - (value.endsWith("\n") ? 2 : 1); index >= 0; index -= 1) {
+    if (value[index] === "\n" && --remaining === 0) return value.slice(index + 1);
+  }
+  return value;
 }
 
 function takeLastUtf8Bytes(value: string, limit: number): string {

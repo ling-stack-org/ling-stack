@@ -29,7 +29,10 @@ import {
   X,
 } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
-import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
+import {
+  conversationAuthorizationModeMenuOptions,
+  conversationPermissionPresetMenuOptions,
+} from "../../lib/session-permissions.js";
 import { useI18n } from "../../i18n.js";
 import {
   ComposerPendingAssetStrip,
@@ -40,6 +43,7 @@ import {
   type TokenizedComposerInputProps,
 } from "../../shared/components/index.js";
 import {
+  ComposerAuthorizationMenu,
   ComposerPermissionMenu,
   ConversationComposerShell,
   ConversationGuidanceStrip,
@@ -48,6 +52,7 @@ import {
 import type {
   ChannelAttachment,
   ChannelMention,
+  AuthorizationMode,
   LingThreadGoal,
   PermissionPreset,
 } from "../../types.js";
@@ -91,6 +96,7 @@ interface ChannelComposerProps {
   readonly pendingAttachments: readonly PendingAttachmentItem<ChannelAttachment>[];
   readonly pendingMessageAssetsVisible: boolean;
   readonly permissionLocked: boolean;
+  readonly authorizationMode: AuthorizationMode;
   readonly permissionPreset: PermissionPreset;
   readonly fullAccessConfirmed: boolean;
   readonly planModeActive: boolean;
@@ -129,6 +135,7 @@ interface ChannelComposerProps {
   readonly onInputPasteFiles: (files: readonly File[]) => void;
   readonly onInputSelect: (value: string, caret: number) => void;
   readonly onInsertMentionTrigger: () => void;
+  readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onTogglePlanMode: () => void;
   readonly onRevealPlanModeChip: () => void;
@@ -179,6 +186,7 @@ export function ChannelComposer({
   onInputPasteFiles,
   onInputSelect,
   onInsertMentionTrigger,
+  onAuthorizationModeChange,
   onPermissionPresetChange,
   onTogglePlanMode,
   onRevealPlanModeChip,
@@ -201,6 +209,7 @@ export function ChannelComposer({
   pendingAttachments,
   pendingMessageAssetsVisible,
   permissionLocked,
+  authorizationMode,
   permissionPreset,
   fullAccessConfirmed,
   planModeActive,
@@ -540,6 +549,15 @@ export function ChannelComposer({
           <button className="icon-button composer-tool-button" type="button" onClick={onInsertMentionTrigger} disabled={!selectedChannelId || composerBusy} aria-label={t("Mention teammate")} title={t("Mention teammate")}>
             <AtSign size={16} />
           </button>
+          <ComposerAuthorizationMenu
+            mode={authorizationMode}
+            options={conversationAuthorizationModeMenuOptions(t)}
+            disabled={permissionLocked}
+            disabledReason={t("Authorization is locked while this channel run or message is active.")}
+            selectedModeLabel={t("Selected authorization mode {label}")}
+            menuLabel={t("Authorization mode")}
+            onModeChange={onAuthorizationModeChange}
+          />
           <ComposerPermissionMenu
             preset={permissionPreset}
             options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}

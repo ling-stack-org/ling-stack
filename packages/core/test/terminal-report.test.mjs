@@ -8,6 +8,28 @@ import {
   validateTerminalReportEvidenceSnapshot,
 } from "../dist/index.js";
 
+test("terminal report fallback preserves attempted model provenance without changing evidence", () => {
+  const snapshot = buildSnapshot();
+  const report = buildDeterministicTerminalReport(snapshot, {
+    providerPresetId: "provider_report",
+    model: "report-model",
+    attemptCount: 2,
+    validationCodes: ["terminal_report_schema_invalid"],
+  });
+  assert.equal(report.status, "fallback");
+  assert.equal(report.synthesis.mode, "deterministic_fallback");
+  assert.equal(report.synthesis.attemptCount, 2);
+  assert.equal(report.synthesis.providerPresetId, "provider_report");
+  assert.equal(report.synthesis.model, "report-model");
+  assert.deepEqual(report.synthesis.validationCodes, ["terminal_report_schema_invalid"]);
+  assert.deepEqual(report.outcome, buildDeterministicTerminalReportContent(snapshot).outcome);
+  assert.equal(report.evidenceFingerprint, snapshot.evidenceFingerprint);
+  const unattempted = buildDeterministicTerminalReport(snapshot);
+  assert.equal(unattempted.synthesis.attemptCount, 0);
+  assert.equal(unattempted.synthesis.providerPresetId, undefined);
+  assert.equal(unattempted.synthesis.model, undefined);
+});
+
 test("terminal report fallback aggregates workflow evidence", () => {
   const snapshot = buildSnapshot();
   const content = buildDeterministicTerminalReportContent(snapshot);
@@ -19,6 +41,21 @@ test("terminal report fallback aggregates workflow evidence", () => {
   assert.equal(content.participants.length, 2);
   assert.equal(content.artifacts.length, 2);
   assert.equal(validateTerminalReportContent(content, snapshot).ok, true);
+});
+
+test("model synthesis cannot omit or weaken a Host unknown-effect warning", () => {
+  const snapshot = buildSnapshot();
+  snapshot.terminalState = "failed";
+  snapshot.risks = [{ id: "execution-unconfirmed:run_qa:unfinished", severity: "critical", status: "unverified",
+    summary: "Process stop and effects are unconfirmed.", sourceRefs: [workflowRef()] }];
+  const content = buildDeterministicTerminalReportContent(snapshot);
+  assert.equal(validateTerminalReportContent(content, snapshot).ok, true);
+  const hostRisk = content.risks[0];
+  const reorderedRisk = { sourceRefs: hostRisk.sourceRefs, summary: hostRisk.summary, status: hostRisk.status, severity: hostRisk.severity, id: hostRisk.id };
+  assert.equal(validateTerminalReportContent({ ...content, risks: [reorderedRisk] }, snapshot).ok, true);
+  for (const risks of [[], [{ ...content.risks[0], status: "mitigated" }], [{ ...content.risks[0], summary: "Definitely stopped." }]]) {
+    assert.equal(validateTerminalReportContent({ ...content, risks }, snapshot).ok, false);
+  }
 });
 
 test("terminal report fallback does not treat artifact storage paths as workspace changes", () => {
@@ -71,6 +108,37 @@ test("terminal report validation rejects a successful checked snapshot without v
   const snapshot = buildSnapshot();
   const content = buildDeterministicTerminalReportContent(snapshot);
   const result = validateTerminalReportContent({ ...content, verification: [] }, snapshot);
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.some((item) => item.code === "terminal_report_unverified_success_claim"));
+});
+
+test("terminal report validation rejects a model downgrading a passed Host check to unknown", () => {
+  const snapshot = buildSnapshot();
+  const content = buildDeterministicTerminalReportContent(snapshot);
+  const invalid = {
+    ...content,
+    verification: content.verification.map((item) => ({ ...item, status: "unknown" })),
+  };
+
+  const result = validateTerminalReportContent(invalid, snapshot);
+  assert.equal(result.ok, false);
+  assert.ok(result.issues.some((item) => item.code === "terminal_report_unverified_success_claim"));
+});
+
+test("terminal report validation requires each visible Host check, not an unrelated unknown row", () => {
+  const snapshot = buildSnapshot();
+  const content = buildDeterministicTerminalReportContent(snapshot);
+  const invalid = {
+    ...content,
+    verification: [{
+      id: "unrelated-command",
+      title: "Count command",
+      status: "unknown",
+      sourceRefs: [snapshot.references.find((ref) => ref.kind === "run" && ref.id === "run_qa")],
+    }],
+  };
+
+  const result = validateTerminalReportContent(invalid, snapshot);
   assert.equal(result.ok, false);
   assert.ok(result.issues.some((item) => item.code === "terminal_report_unverified_success_claim"));
 });

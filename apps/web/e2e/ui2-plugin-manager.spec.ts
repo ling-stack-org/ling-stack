@@ -473,7 +473,7 @@ async function setupPluginManager(
 
 async function openPluginManager(page: Page, waitForRows = true): Promise<void> {
   await page.goto("/");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await navigation.getByRole("button", { name: "Plugin Manager" }).click();
   await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();

@@ -1,7 +1,10 @@
 import {
   normalizeConversationOperationCell,
+  batchCanonicalTranscriptItems,
   projectConversationActivity,
   projectConversationCommandBatches,
+  projectConversationSubAgentActivity,
+  projectConversationTimelineItems,
   summarizeConversationActivity,
   terminalReportToViewModel,
   type ConversationAgentActivitySpan,
@@ -15,6 +18,7 @@ import {
   type ConversationOperationCellSourceKind,
   type ConversationOperationCellStatus,
   type ConversationOperationCellViewModel,
+  type ConversationTimelineItem,
   type ConversationOperationExecutionView,
   type ConversationOperationKind,
   type ConversationOperationSourceRef,
@@ -38,11 +42,15 @@ import { truncatePreview } from "./data.js";
 import { artifactLooksLikeDiff } from "./diff-summary.js";
 import { executionActionSourceRefs } from "./execution-action-lineage.js";
 import { projectConversationLatestAttemptEvidence } from "./conversation-work-cell-attempts.js";
+import { formatCommandOutputTail } from "./command-output-tail.js";
 
 export {
+  batchCanonicalTranscriptItems,
   normalizeConversationOperationCell,
   projectConversationActivity,
   projectConversationCommandBatches,
+  projectConversationSubAgentActivity,
+  projectConversationTimelineItems,
   summarizeConversationActivity,
 };
 export type {
@@ -59,6 +67,7 @@ export type {
   ConversationOperationCellSourceKind,
   ConversationOperationCellStatus,
   ConversationOperationCellViewModel,
+  ConversationTimelineItem,
   ConversationOperationExecutionView,
   ConversationOperationKind,
   ConversationOperationSourceRef,
@@ -77,6 +86,146 @@ export type {
   ConversationWorkCellViewModel,
   ConversationWorkspaceRecoveryTarget,
 } from "@ling-stack/conversation-ui-core";
+
+/**
+ * Projects all WorkCell activity, including participant spans, through the one
+ * typed timeline boundary used by every conversation surface.
+ */
+export function projectConversationWorkCellTimeline(input: {
+  readonly operationItems: readonly ConversationWorkCellItem[];
+  readonly agentSpans: readonly ConversationAgentActivitySpan[];
+  readonly turnId?: string;
+}): readonly ConversationTimelineItem[] {
+  const participantItems = input.agentSpans.map((span) => {
+    const childItems = span.typedTimelineItems ?? span.items ?? projectConversationActivity(span.rows, {
+      participantScope: span.participantId ?? span.id,
+    });
+    return projectConversationSubAgentActivity(span, childItems, { turnId: input.turnId });
+  });
+  return projectConversationTimelineItems([...input.operationItems, ...participantItems], { turnId: input.turnId });
+}
+
+/**
+ * Returns the facts for one WorkCell through the shared Timeline contract.
+ *
+ * Canonical snapshots are preferred when a caller has them. Legacy WorkCell
+ * rows are only an adapter fallback; they are projected once and never exposed
+ * to a renderer. Batching is applied only when an explicit ContextSnapshot
+ * lookup is present, because a missing context boundary is not permission to
+ * infer that neighboring operations share model context.
+ *
+ * A pending Composer approval owns its decision controls. Facts carrying that
+ * approval are therefore suppressed from the transcript to avoid showing the
+ * same action as both an expandable row and an approval gate.
+ */
+export function conversationTimelineItemsForModel(
+  model: ConversationOperationCellViewModel,
+  composerApprovalId?: string,
+): readonly ConversationTimelineItem[] {
+  const approvalId = composerApprovalId?.trim();
+  const operationItems = model.operationItems ?? projectConversationActivity(model.operationRows);
+  const fallbackItems = approvalId
+    ? operationItems.filter((item) => !workCellItemMatchesApproval(item, approvalId))
+    : operationItems;
+  const atomicItems = model.typedTimelineItems && model.typedTimelineItems.length > 0
+    ? model.typedTimelineItems
+    : projectConversationWorkCellTimeline({
+        operationItems: fallbackItems,
+        agentSpans: model.agentSpans,
+        turnId: model.turnId,
+      });
+  const visibleItems = approvalId
+    ? atomicItems.filter((item) => !timelineItemMatchesApproval(item, approvalId))
+    : atomicItems;
+  return model.contextSegmentIdByItemId
+    ? batchCanonicalTranscriptItems(visibleItems, {
+        contextSegmentIdByItemId: model.contextSegmentIdByItemId,
+      })
+    : visibleItems;
+}
+
+function workCellItemMatchesApproval(item: ConversationWorkCellItem, approvalId: string): boolean {
+  if (item.kind === "operation") {
+    return item.row.id === `approval:${approvalId}` || item.row.id === `pending:${approvalId}` ||
+      item.row.operationExecution?.approvalId === approvalId || item.row.commandExecution?.approvalId === approvalId;
+  }
+  if (item.kind === "command_batch") {
+    return item.batch.commands.some((command) => workCellItemMatchesApproval({ kind: "operation", row: command.row }, approvalId));
+  }
+  return item.batch.rows.some((row) => workCellItemMatchesApproval({ kind: "operation", row }, approvalId));
+}
+
+function timelineItemMatchesApproval(item: ConversationTimelineItem, approvalId: string): boolean {
+  if (item.approvalId === approvalId) return true;
+  if (item.kind === "commandBatch") {
+    return item.batch.commands.some((command) => timelineItemMatchesApproval(command, approvalId));
+  }
+  if (item.kind === "explorationBatch") {
+    return item.batch.children.some((child) => timelineItemMatchesApproval(child, approvalId));
+  }
+  if (item.kind === "subAgentActivity") {
+    return item.childItems.some((child) => timelineItemMatchesApproval(child, approvalId));
+  }
+  return false;
+}
+
+export interface ConversationWorkCellFactOwnership {
+  readonly artifactIds: ReadonlySet<string>;
+  readonly filePaths: ReadonlySet<string>;
+}
+
+/** Returns the artifact/path keys already owned by typed file-change items. */
+export function conversationWorkCellFactOwnership(model: ConversationOperationCellViewModel): ConversationWorkCellFactOwnership {
+  const operationItems = model.operationItems ?? projectConversationActivity(model.operationRows);
+  const items = projectConversationWorkCellTimeline({
+    operationItems,
+    agentSpans: model.agentSpans,
+    turnId: model.turnId,
+  });
+  const artifactIds = new Set<string>();
+  const filePaths = new Set<string>();
+  const visit = (item: ConversationTimelineItem): void => {
+    if (item.kind === "fileChange") {
+      if (item.changePreview?.artifactId) artifactIds.add(item.changePreview.artifactId);
+      for (const file of item.files) {
+        if (file.fileRef.path) filePaths.add(normalizeConversationWorkCellPath(file.fileRef.path));
+        if (file.diffRef?.kind === "artifact") artifactIds.add(file.diffRef.id);
+      }
+    }
+    if (item.kind === "commandBatch") {
+      for (const child of item.batch.commands) visit(child);
+    }
+    if (item.kind === "explorationBatch") {
+      for (const child of item.batch.children) visit(child);
+    }
+    if (item.kind === "subAgentActivity") {
+      for (const child of item.childItems) visit(child);
+    }
+  };
+  for (const item of items) visit(item);
+  return { artifactIds, filePaths };
+}
+
+export function normalizeConversationWorkCellPath(path: string): string {
+  return path.trim().replace(/\\/gu, "/").replace(/^\.\//u, "");
+}
+
+export function artifactStripItemOwnedByTypedFact(
+  item: ConversationArtifactStripItem,
+  ownership: ConversationWorkCellFactOwnership,
+): boolean {
+  const ids = [
+    item.artifactId,
+    ...(item.changeArtifacts ?? []).map((artifact) => artifact.artifactId),
+  ].filter((id): id is string => Boolean(id));
+  if (ids.some((id) => ownership.artifactIds.has(id))) return true;
+  const paths = [
+    item.workspaceFilePath,
+    item.path,
+    ...(item.changeArtifacts ?? []).map((artifact) => artifact.path),
+  ].filter((path): path is string => Boolean(path)).map(normalizeConversationWorkCellPath);
+  return paths.some((path) => ownership.filePaths.has(path));
+}
 
 /** @deprecated Use ConversationOperationCellMode from @ling-stack/conversation-ui-core. */
 export type ConversationWorkCellMode = ConversationOperationCellMode;
@@ -442,6 +591,8 @@ function mainFeedGroupSummary(
 
 export interface BuildConversationWorkCellInput {
   readonly threadId: string;
+  /** Surface-owned participant identity used when legacy actions omit it. */
+  readonly participantId?: string;
   readonly runs: readonly RunSession[];
   readonly turns?: readonly LingTurn[];
   readonly turnRunLinks?: readonly LingTurnRun[];
@@ -452,6 +603,9 @@ export interface BuildConversationWorkCellInput {
   readonly t: Translate;
   readonly artifactHref?: (artifact: RunArtifact) => string;
   readonly terminalReport?: TerminalReportDto;
+  readonly typedTimelineItems?: readonly import("@ling-stack/conversation-ui-core").ConversationTimelineItem[];
+  /** Explicit ContextSnapshot-derived segment lookup for display-only batching. */
+  readonly contextSegmentIdByItemId?: ReadonlyMap<string, string>;
 }
 
 export function buildConversationWorkCellViewModel(input: BuildConversationWorkCellInput): ConversationWorkCellViewModel | undefined {
@@ -523,7 +677,7 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
   const operationRows = buildActiveRows({
     t: input.t,
     latestRun,
-    attemptCount: runs.length,
+    participantId: input.participantId,
     turnRunLinks: input.turnRunLinks,
     pendingApprovals,
     artifacts,
@@ -555,6 +709,8 @@ export function buildConversationWorkCellViewModel(input: BuildConversationWorkC
     elapsedMs: workCellElapsedMs(runs),
     operationRows,
     operationItems: projectConversationActivity(operationRows),
+    ...(input.typedTimelineItems && input.typedTimelineItems.length > 0 ? { typedTimelineItems: input.typedTimelineItems } : {}),
+    ...(input.contextSegmentIdByItemId ? { contextSegmentIdByItemId: input.contextSegmentIdByItemId } : {}),
     activitySummary: summarizeConversationActivity(operationRows),
     agentBranches: [],
     terminalReportId: terminalReport?.reportId,
@@ -1074,7 +1230,7 @@ function emptyWorkCellGroups(t: Translate): readonly ConversationWorkCellGroup[]
 function buildActiveRows(input: {
   readonly t: Translate;
   readonly latestRun: RunSession;
-  readonly attemptCount: number;
+  readonly participantId?: string;
   readonly turnRunLinks?: readonly LingTurnRun[];
   readonly pendingApprovals: readonly ApprovalRequest[];
   readonly artifacts: readonly RunArtifact[];
@@ -1087,6 +1243,7 @@ function buildActiveRows(input: {
     .filter(isMainFeedActionRow)
     .sort(compareExecutionActionTranscriptOrder)
     .flatMap((action) => executionActionTranscriptRows(action, artifactsById, input.t, {
+      participantId: input.participantId ?? action.participantId ?? "ling",
       turnRunRole: action.runId ? turnRunRoleByRunId.get(action.runId) ?? "primary" : undefined,
     }));
 
@@ -1111,16 +1268,6 @@ function buildActiveRows(input: {
       description: approval.description,
       meta: input.t("Approval required"),
       tone: "waiting",
-    });
-  }
-
-  if (input.attemptCount > 1) {
-    rows.push({
-      id: "attempts",
-      kind: "watch",
-      title: input.t("Earlier tries"),
-      description: input.t("{count} earlier tries", { count: input.attemptCount - 1 }),
-      tone: "neutral",
     });
   }
 
@@ -1285,15 +1432,17 @@ function executionActionEvidenceRow(
 ): ConversationWorkCellRow {
   const commandText = executionActionCommandText(action);
   const detailLines = executionActionDetailLines(action, artifactsById, t);
-  const operationExecution = executionActionExecutionView(action, context);
+  const operationExecution = executionActionExecutionView(action, context, artifactsById);
   return {
     id: `action:${action.id}`,
     kind: operationKindForExecutionAction(action),
     presentation: commandText ? "shell" : undefined,
     title: executionActionDisplayTitle(action, artifactsById, t),
     commandText,
+    toolEvidence: action.toolEvidence,
     commandExecution: commandText && action.commandEvidence ? {
       actionId: action.id,
+      revision: action.revision,
       toolCallId: action.toolCallId,
       runId: action.runId,
       attemptId: action.attemptId,
@@ -1301,16 +1450,27 @@ function executionActionEvidenceRow(
       turnRunRole: operationExecution.turnRunRole,
       participantId: operationExecution.participantId,
       workUnitId: action.workUnitId,
-      workflowStepId: action.targetRefs.find((ref) => ref.type === "workflow_step")?.id,
+      workflowStepId: operationExecution.workflowStepId,
       actionType: action.actionType,
       risk: action.risk,
       status: action.status,
       commandText,
+      cwd: action.commandEvidence.cwd,
       startedAt: action.commandEvidence.startedAt,
       completedAt: action.commandEvidence.completedAt,
       durationMs: action.commandEvidence.durationMs,
       exitCode: action.commandEvidence.exitCode,
+      signal: action.commandEvidence.signal,
+      timedOut: action.commandEvidence.timedOut,
       latestEventSeq: action.commandEvidence.latestEventSeq,
+      outputTail: action.commandEvidence.outputTail.map((chunk) => ({
+        eventSeq: chunk.eventSeq,
+        stream: chunk.stream,
+        text: chunk.text,
+        redacted: chunk.redacted,
+      })),
+      outputByteCount: action.commandEvidence.outputByteCount,
+      outputLineCount: action.commandEvidence.outputLineCount,
       sourceRefs: operationExecution.sourceRefs,
       outputTruncated: action.commandEvidence.outputTruncated,
       stdoutArtifactId: action.commandEvidence.stdoutArtifactId,
@@ -1356,7 +1516,7 @@ function executionActionTranscriptRows(
   } = {},
 ): readonly ConversationWorkCellRow[] {
   const rows: ConversationWorkCellRow[] = [];
-  const operationExecution = executionActionExecutionView(action, context);
+  const operationExecution = executionActionExecutionView(action, context, artifactsById);
   const scopeSummary = action.scopeSummary?.trim();
   if (scopeSummary && !isInternalExecutionScopeSummary(scopeSummary)) {
     rows.push({
@@ -1399,23 +1559,26 @@ function executionActionExecutionView(
     readonly turnRunRole?: ConversationTurnRunRole;
     readonly workflowStepId?: string;
   } = {},
+  artifactsById: ReadonlyMap<string, RunArtifact> = new Map(),
 ): ConversationOperationExecutionView {
-  const workflowStepId = context.workflowStepId ?? action.targetRefs.find((ref) => ref.type === "workflow_step")?.id;
+  const workflowStepId = context.workflowStepId ?? action.workflowStepId ?? action.targetRefs.find((ref) => ref.type === "workflow_step")?.id;
   return {
     actionId: action.id,
+    revision: action.revision,
     toolCallId: action.toolCallId,
     runId: action.runId,
     attemptId: action.attemptId,
     approvalId: action.approvalId,
     turnRunRole: context.turnRunRole,
-    participantId: context.participantId,
+    participantId: context.participantId ?? action.participantId,
     workUnitId: action.workUnitId,
     workflowStepId,
     actionType: action.actionType,
     status: action.status,
     updatedAt: action.updatedAt ?? action.completedAt ?? action.executedAt ?? action.createdAt,
-    latestEventSeq: action.commandEvidence?.latestEventSeq,
-    sourceRefs: executionActionSourceRefs(action, workflowStepId),
+    latestEventSeq: action.commandEvidence?.latestEventSeq ?? action.toolEvidence?.latestEventSeq ?? action.revision,
+    sourceRefs: executionActionSourceRefs(action, workflowStepId, artifactsById),
+    ...(action.runtimeDiagnostic ? { runtimeDiagnostic: action.runtimeDiagnostic } : {}),
   };
 }
 
@@ -1424,6 +1587,11 @@ function executionActionDisplayTitle(
   artifactsById: ReadonlyMap<string, RunArtifact>,
   t: Translate,
 ): string {
+  const actionType = String(action.actionType).trim().toLowerCase();
+  if (actionType === "image_view" || actionType === "image_viewer" || actionType === "image" ||
+    actionType === "mcp_tool_call" || actionType === "dynamic_tool_call" || actionType === "host_capability" || actionType === "collab_agent_tool_call") {
+    return action.title;
+  }
   const kind = operationKindForExecutionAction(action);
   const targetSummary = executionActionTargetSummary(action, artifactsById, t);
   if (kind === "read") {
@@ -1585,7 +1753,7 @@ function executionActionOutputTail(action: ExecutionAction): string | undefined 
   if (chunks.length === 0) {
     return undefined;
   }
-  const text = chunks.map((chunk) => chunk.text).join("");
+  const text = formatCommandOutputTail(chunks);
   if (!text.trim()) {
     return undefined;
   }
@@ -1752,6 +1920,9 @@ function operationKindForExecutionAction(action: ExecutionAction): ConversationO
   }
   if (action.actionType === "mcp_tool_call") {
     return "search";
+  }
+  if (action.actionType === "runtime_diagnostic") {
+    return "watch";
   }
   return "approval";
 }

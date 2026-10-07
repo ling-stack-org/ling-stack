@@ -23,12 +23,13 @@ import {
   SiYaml,
 } from "react-icons/si";
 import type { IconType } from "react-icons";
+import type { WorkspaceFileCapabilityScope, WorkspaceFileCapabilityTarget } from "@ling-stack/contracts";
 import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import type { ConversationWorkCellRow } from "../../../lib/conversation-work-cell.js";
 import { useI18n } from "../../../i18n.js";
 import {
   getTerminalReportProjectionPolicy,
-  type ConversationSurfaceKind,
+  type ConversationInteractionSurfaceKind,
   type TerminalReportProjectionPolicy,
 } from "../tokens/conversation-surface-policy.js";
 import { TerminalReportParticipants } from "./TerminalReportParticipants.js";
@@ -39,6 +40,9 @@ export interface TerminalReportFileTarget {
   readonly path: string;
   readonly line?: number;
   readonly label?: string;
+  readonly capabilityId?: string;
+  readonly capabilityTarget?: WorkspaceFileCapabilityTarget;
+  readonly capabilityScope?: WorkspaceFileCapabilityScope;
 }
 
 export function TerminalReportBlock({
@@ -53,7 +57,7 @@ export function TerminalReportBlock({
   readonly blockId: string;
   readonly rows: readonly ConversationWorkCellRow[];
   readonly renderParticipantAvatar?: (participantId: string | undefined, label: string) => ReactNode;
-  readonly surface: ConversationSurfaceKind;
+  readonly surface: ConversationInteractionSurfaceKind;
   readonly projectionPolicy?: Partial<TerminalReportProjectionPolicy>;
   readonly cwd?: string;
   readonly onOpenWorkspaceFile?: (target: TerminalReportFileTarget) => void;

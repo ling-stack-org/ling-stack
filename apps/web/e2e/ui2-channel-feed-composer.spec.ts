@@ -80,7 +80,7 @@ for (const viewport of [
     await expect(composer).toHaveAttribute("data-surface", "channel");
     await expect(composer).toHaveAttribute("data-density", "docked");
     const latestMessage = feed.locator(".channel-message-row").filter({ hasText: "UI 2.0 channel message 32" });
-    await expect(latestMessage).toHaveClass(/message-bubble-chat/);
+    await expect(latestMessage).toHaveClass(/message-bubble-document/);
     await expect(latestMessage).toHaveClass(/message-bubble-own/);
     await expectMessageFrameContained(latestMessage);
 
@@ -119,10 +119,6 @@ for (const viewport of [
     });
     await expect(page.getByRole("button", { name: "Jump to latest message" })).toBeVisible();
     expect(Math.abs(((await composer.boundingBox())?.y ?? 0) - composerY)).toBeLessThanOrEqual(1);
-    await captureEvidence(
-      page,
-      `${viewport.width}x${viewport.height}-ling-${viewport.theme}-channel-feed-composer-base.png`,
-    );
 
     const permissionButton = composer.getByRole("button", { name: /Selected permission preset/ });
     await expectCompactMutedComposerControl(permissionButton);
@@ -187,12 +183,6 @@ test("channel composer keeps failed drafts and uses shared persistent feedback",
 });
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
-  const sessionDirectory = process.env.LING_SESSION_VALIDATION_DIR?.replace(/\/$/u, "");
-  if (sessionDirectory) {
-    await mkdir(sessionDirectory, { recursive: true });
-    await page.screenshot({ animations: "disabled", fullPage: true, path: `${sessionDirectory}/${filename}` });
-    return;
-  }
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") {
     return;
   }

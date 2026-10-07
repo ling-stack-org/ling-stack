@@ -114,7 +114,7 @@ async function openPrivateDock(
   targetTeammateName: string,
   labels: typeof englishLabels | typeof chineseLabels,
 ): Promise<Locator> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: targetTeammateName }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: targetTeammateName }).click();
   const header = page.locator("[data-ui2-teammate-chat-header]");
   await expect(header).toBeVisible();
   await header.getByRole("button", { name: labels.details }).click();

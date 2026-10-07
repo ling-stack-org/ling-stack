@@ -28,6 +28,7 @@ import { readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { createAiTeammateDirectReply, type StartTeammateDirectRun } from "./direct-replies.js";
 import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
 import { assertDirectFileRefsWithinWorkspace, ensureDirectWorkspaceReady } from "./direct-workspace.js";
+import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-guard.js";
 
 export interface TeammateDirectRuntimeSnapshot {
   readonly teammateId: string;
@@ -103,6 +104,9 @@ export class DirectReplyControlService {
     const active = this.findActiveReply(input.store, teammate.id, thread.id);
     if (!active) {
       throw new Error("当前没有正在回复的私聊消息。");
+    }
+    if (input.mode === "interrupt_redirect") {
+      this.assertReplyCancellationAdmitted(input.store, active.workUnit);
     }
     if (input.messagePayload?.fileRefs?.length) {
       assertDirectFileRefsWithinWorkspace({
@@ -194,6 +198,7 @@ export class DirectReplyControlService {
         message: "当前回复已结束，已开始执行这条引导。",
       };
     }
+    this.assertReplyCancellationAdmitted(input.store, active.workUnit);
     const now = new Date().toISOString();
     const cancelling = input.store.updateTeammateDirectReplyInterventionStatus({
       interventionId: intervention.id,
@@ -272,6 +277,7 @@ export class DirectReplyControlService {
           teammateId: input.teammate.id,
           authorType: queuedFollowup ? "local-user" : "system",
           authorId: queuedFollowup ? "local-user" : "system",
+          systemPurpose: queuedFollowup ? undefined : "execution_control",
           body: renderDirectGuidanceMessage(starting),
           attachmentIds: starting.messagePayload?.attachmentIds ?? [],
           linkPreviewIds: starting.messagePayload?.linkPreviewIds ?? [],
@@ -336,6 +342,16 @@ export class DirectReplyControlService {
         failureReason: error instanceof Error ? error.message : String(error),
         now: new Date().toISOString(),
       });
+    }
+  }
+
+  /** Check before intervention writes; the later RunControl check remains the effect boundary. */
+  private assertReplyCancellationAdmitted(store: RunStore, workUnit: WorkUnit): void {
+    const run = workUnit.linkedRunId ? store.getRun(workUnit.linkedRunId) : undefined;
+    // A committed wait is cancelled atomically by RunControl, not through the
+    // generic execution guard. Terminal Runs have no execution to interrupt.
+    if (run && !["yielded", "succeeded", "failed", "cancelled"].includes(run.status)) {
+      assertNoUnsafeRequiredPause(store, run);
     }
   }
 

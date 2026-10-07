@@ -52,13 +52,13 @@ async function installComputerControlBridge(
 
 async function openComputerControl(page: Page): Promise<void> {
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /^(Settings|设置)$/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /^(Settings|设置)$/ }).click();
   await page.getByLabel(/^(Settings sections|设置分组)$/).getByRole("button", { name: /^(Computer Control|电脑控制)$/ }).click();
   await expect(page.locator(".computer-control-settings")).toBeVisible();
 }
 
 async function openPluginManager(page: Page): Promise<void> {
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await navigation.getByRole("button", { name: /^(Plugin Manager|插件管理)$/ }).click();
   await expect(page.locator(".plugin-manager-page .settings-plugin-manager")).toBeVisible();

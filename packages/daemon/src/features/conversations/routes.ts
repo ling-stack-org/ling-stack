@@ -1,7 +1,10 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { projectConversationUserInputs } from "./user-input-transcript.js";
+import { createHash } from "node:crypto";
 import {
   DEFAULT_WORKSPACE_ID,
   LING_AGENT_ID,
+  redactSecrets,
   type ConversationAttachment,
   type LingConversationTone,
   type LingThread,
@@ -35,7 +38,7 @@ import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js"
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { isRecord, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { persistConversationAttachment, CHANNEL_ATTACHMENT_REQUEST_MAX_BYTES } from "../channels/attachments.js";
-import { responseLanguageInstruction } from "../channels/response-language.js";
+import { inferUserLanguage, responseLanguageInstruction } from "../channels/response-language.js";
 import { parseChannelAttachmentRequest, readOptionalChannelMessageFileRefs } from "../channels/schemas.js";
 import { buildEffectiveConfigResponse } from "../settings/effective-config.js";
 import type { LingImageVisionSummarizer } from "../channels/materialization/registry.js";
@@ -44,6 +47,12 @@ import type { RunRequest } from "../runs/schemas.js";
 import { materializeInlineConversationAttachments, type ConversationAttachmentMaterialization } from "./materialization.js";
 import { lingConversationToneInstruction } from "./conversation-tone.js";
 import { projectConversationActiveReplyTarget } from "./active-reply-target.js";
+import { projectNormalExecutionContextSnapshots } from "./normal-execution-context-snapshots.js";
+import { ConversationNarrationAccumulator } from "./narration-segments.js";
+import { createOwnedRunNarrationAccumulator } from "./narration-owner.js";
+import { prepareNormalConversationInput } from "./normal-conversation-input.js";
+import { saveNormalConversationPreparedRequest } from "./normal-conversation-prepared-request.js";
+import { renderNormalConversationRunPrompt, type NormalConversationContextSnapshot } from "./normal-conversation-context.js";
 import { projectTerminalReportDto } from "../channels/terminal-report-routes.js";
 import { listExecutionActions } from "../runs/execution-actions.js";
 import {
@@ -54,6 +63,7 @@ import {
   buildConversationSupersessionProjection,
   filterSupersededLingTurns,
   filterSupersededTerminalReports,
+  projectConversationSupersessionTombstones,
   projectPendingConversationReplacement,
 } from "./supersession-projection.js";
 import {
@@ -61,6 +71,8 @@ import {
   projectConversationTurnUserRuntime,
   projectUnboundConversationInterventionMessages,
 } from "./runtime-projection.js";
+import { projectConversationReasoningSummaries } from "./reasoning-summary-projection.js";
+import { projectConversationArtifacts } from "../runs/public-artifacts.js";
 
 type StartConversationRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
 
@@ -70,6 +82,7 @@ export async function startConversationReplacementRun(input: {
   readonly thread: LingThread;
   readonly message: string;
   readonly messageId: string;
+  readonly revisionId: string;
   readonly attachmentIds: readonly string[];
   readonly providerPresetId?: string;
   readonly permissionPreset?: PermissionPreset;
@@ -80,15 +93,6 @@ export async function startConversationReplacementRun(input: {
   readonly imageVisionSummarizer?: LingImageVisionSummarizer;
 }): Promise<{ readonly turn: LingTurn; readonly runId?: string }> {
   const now = new Date().toISOString();
-  const attachments = input.attachmentIds
-    .map((attachmentId) => input.store.getConversationAttachment(attachmentId))
-    .filter((attachment): attachment is ConversationAttachment => Boolean(attachment));
-  const attachmentMaterializations = await materializeInlineConversationAttachments({
-    store: input.store,
-    attachments,
-    now,
-    imageVisionSummarizer: input.imageVisionSummarizer,
-  });
   const previousSnapshot = readRecord(input.previousRun?.requestSnapshot);
   const providerPresetId = input.providerPresetId
     ?? input.previousRun?.providerPresetId
@@ -96,48 +100,64 @@ export async function startConversationReplacementRun(input: {
   if (!providerPresetId) {
     throw new HttpError(409, "edit_replacement_start_failed", "No provider preset is available for the replacement conversation run.");
   }
+  const revision = input.store.listConversationMessageRevisions({ surface: "normal_conversation", messageId: input.messageId })
+    .find((revision) => revision.id === input.revisionId);
+  if (!revision || revision.ownerId !== input.thread.id || revision.body !== input.message ||
+    JSON.stringify(revision.attachmentIds) !== JSON.stringify(input.attachmentIds)) {
+    throw new HttpError(409, "edit_replacement_source_mismatch", "Replacement preparation requires its committed message revision.");
+  }
+  const replacementSource = input.previousRun ? input.store.getLingTurnForRun(input.previousRun.id)
+    : input.store.getConversationItem(input.messageId)?.turnId;
+  const prepared = prepareNormalConversationInput({ store: input.store, thread: input.thread, message: input.message,
+    title: conversationTitle(input.message), attachmentIds: input.attachmentIds, fileRefs: revision.fileRefs,
+    idempotencyKey: `message-edit:${revision.id}`,
+    replacementSourceTurnId: typeof replacementSource === "string" ? replacementSource : replacementSource?.id, now });
+  const { turn, attachments } = prepared;
+  if (prepared.replayRequest) {
+    return { turn, runId: await startRunAndWaitUntilReady(prepared.replayRequest, input.startRun) };
+  }
+  const attachmentMaterializations = await materializeInlineConversationAttachments({
+    store: input.store, attachments, now, imageVisionSummarizer: input.imageVisionSummarizer,
+  });
   const effectiveConfig = await buildEffectiveConfigResponse({ cwd: input.workspaceCwd, store: input.store, runnerRegistry: input.runnerRegistry });
-  const turn = input.store.createLingTurn({
-    threadId: input.thread.id,
-    kind: "manual_followup",
-    title: conversationTitle(input.message),
-    userInstruction: input.message,
-    teammateId: LING_AGENT_ID,
-    sourceItemId: input.messageId,
-    createdByActor: "local-user",
-  }, now);
   const streamInput: ConversationStreamRequest = {
     threadId: input.thread.id,
     message: input.message,
     attachmentIds: [...input.attachmentIds],
+    fileRefs: [...revision.fileRefs],
     projectPath: readOptionalRecordString(previousSnapshot, "projectPath")
       ?? (input.previousRun?.cwd && input.previousRun.cwd !== input.workspaceCwd ? input.previousRun.cwd : undefined),
     providerPresetId,
     thinkingLevel: readThinkingLevel(readOptionalRecordString(previousSnapshot, "thinkingLevel")),
+    reasoningSummary: readReasoningSummary(readOptionalRecordString(previousSnapshot, "reasoningSummary")),
     permissionPreset: input.permissionPreset ?? readPermissionPreset(readOptionalRecordString(previousSnapshot, "permissionPreset")),
     permissionMode: readPermissionMode(readOptionalRecordString(previousSnapshot, "permissionMode")),
     responseLanguage: readResponseLanguagePreference(readOptionalRecordString(previousSnapshot, "responseLanguage")),
     tools: readOptionalStringArray(previousSnapshot, "tools", runTools),
-    idempotencyKey: `conversation-replacement:${turn.id}`,
+    idempotencyKey: prepared.idempotencyKey,
   };
-  const runRequest = {
+  const runRequest = saveNormalConversationPreparedRequest(input.store, {
     ...buildConversationRunRequest({
       workspaceCwd: input.workspaceCwd,
       thread: input.thread,
       turn,
       input: streamInput,
       lingConversationTone: effectiveConfig.values.lingConversationTone.value,
+      defaultReasoningSummary: effectiveConfig.values.reasoningSummary.value,
       attachments,
       attachmentMaterializations,
+      normalConversationContext: prepared.context,
+      normalConversationAcceptedSnapshotId: prepared.acceptedSnapshotId,
     }),
     permissionConfirmation: input.permissionConfirmation,
-  };
+  }, now);
   const runId = await startRunAndWaitUntilReady(runRequest, input.startRun);
   return { turn, runId };
 }
 
 const defaultConversationTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const thinkingLevels: readonly RunThinkingLevel[] = ["off", "minimal", "low", "medium", "high", "xhigh"];
+const reasoningSummaryModes = ["auto", "concise", "detailed", "none"] as const;
 const runTools: readonly RunTool[] = ["read", "grep", "find", "ls", "bash", "edit", "write"];
 const permissionPresets: readonly PermissionPreset[] = ["read_only", "workspace_collaboration", "full_access", "custom"];
 const permissionModes: readonly SessionPermissionMode[] = ["ask_everything", "balanced", "workspace_write", "full_access", "custom"];
@@ -169,25 +189,20 @@ export async function handleConversationStream(
     const store = storeRegistry.getStore(workspaceCwd);
     const now = new Date().toISOString();
     const thread = resolveConversationThread(store, input, now);
-    const turnInstruction = input.message.trim() || "User attached files.";
-    const turn = store.createLingTurn({
-      threadId: thread.id,
-      kind: thread.metadata?.lastTurnId ? "manual_followup" : "initial_request",
-      title: conversationTitle(turnInstruction),
-      userInstruction: turnInstruction,
-      teammateId: LING_AGENT_ID,
-      createdByActor: "local-user",
-    }, now);
-    const conversationAttachments = assignConversationAttachments(store, input.attachmentIds ?? [], thread.id, turn.id);
-    const attachmentMaterializations = await materializeInlineConversationAttachments({
+    const prepared = prepareNormalConversationInput({ store, thread, message: input.message,
+      title: conversationTitle(input.message.trim() || "User attached files."), attachmentIds: input.attachmentIds ?? [],
+      fileRefs: input.fileRefs ?? [], idempotencyKey: input.idempotencyKey, now });
+    const { turn, attachments: conversationAttachments } = prepared;
+    const attachmentMaterializations = prepared.replayRequest ? new Map<string, ConversationAttachmentMaterialization>() : await materializeInlineConversationAttachments({
       store,
       attachments: conversationAttachments,
       now,
       imageVisionSummarizer,
     });
-    const effectiveConfig = await buildEffectiveConfigResponse({ cwd: workspaceCwd, store, runnerRegistry });
+    const effectiveConfig = prepared.replayRequest ? undefined : await buildEffectiveConfigResponse({ cwd: workspaceCwd, store, runnerRegistry });
     const userMessage = createUserTranscriptMessage(thread, turn, conversationAttachments, input.fileRefs ?? []);
     let assistantMessage = createAssistantTranscriptMessage(thread, turn, undefined, "", "running", now);
+    let narration = new ConversationNarrationAccumulator();
     let runId = "";
     let closed = false;
 
@@ -210,6 +225,10 @@ export async function handleConversationStream(
       writeReady(data) {
         const ready = data as { readonly runId?: unknown };
         if (typeof ready.runId === "string") {
+          if (runId && runId !== ready.runId) throw new Error("Conversation Run owner changed during streaming.");
+          if (!runId) narration = store.readSnapshot(() => createOwnedRunNarrationAccumulator(store, ready.runId as string, {
+            threadId: thread.id, turnId: turn.id, participantId: LING_AGENT_ID, kind: "conversation",
+          }));
           runId = ready.runId;
           assistantMessage = { ...assistantMessage, runId };
         }
@@ -230,21 +249,21 @@ export async function handleConversationStream(
       },
       writeEvent(_event, data) {
         const envelope = data as RunEventEnvelope;
-        if (envelope.type === "assistant_text_delta") {
+        if (!runId || envelope.runId !== runId) return;
+        const sourceRevision = narration.sourceRevision;
+        narration.append(envelope);
+        const narrativeSnapshot = narration.snapshot();
+        if (sourceRevision !== narration.sourceRevision) assistantMessage = {
+          ...assistantMessage, ...narrativeSnapshot,
+          contentSource: narrativeSnapshot.content.trim() ? "run_narration" : "host_status",
+        };
+        if (envelope.type === "assistant_text_delta" || (
+          envelope.type === "message_end" && readEventRole(envelope) === "assistant"
+        )) {
           assistantMessage = {
             ...assistantMessage,
-            content: assistantMessage.content + readEventText(envelope),
-            status: "running",
-            updatedAt: envelope.ts,
-          };
-        } else if (
-          envelope.type === "message_end" &&
-          readEventRole(envelope) === "assistant" &&
-          !assistantMessage.content.trim()
-        ) {
-          assistantMessage = {
-            ...assistantMessage,
-            content: readEventText(envelope),
+            ...narrativeSnapshot,
+            contentSource: narrativeSnapshot.content.trim() ? "run_narration" : "host_status",
             status: "running",
             updatedAt: envelope.ts,
           };
@@ -320,17 +339,20 @@ export async function handleConversationStream(
       },
     };
 
-    writeSseHead(response);
-    safeWrite("ready", { thread, turn, userMessage, assistantMessage });
-    const runRequest = buildConversationRunRequest({
+    const runRequest = prepared.replayRequest ?? saveNormalConversationPreparedRequest(store, buildConversationRunRequest({
       workspaceCwd,
       thread,
       turn,
-      input,
-      lingConversationTone: effectiveConfig.values.lingConversationTone.value,
+      input: { ...input, idempotencyKey: prepared.idempotencyKey },
+      lingConversationTone: effectiveConfig!.values.lingConversationTone.value,
+      defaultReasoningSummary: effectiveConfig!.values.reasoningSummary.value,
       attachments: conversationAttachments,
       attachmentMaterializations,
-    });
+      normalConversationContext: prepared.context,
+      normalConversationAcceptedSnapshotId: prepared.acceptedSnapshotId,
+    }), now);
+    writeSseHead(response);
+    safeWrite("ready", { thread, turn, userMessage, assistantMessage });
     await startRun(runRequest, streamSink);
   } catch (error) {
     writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
@@ -519,25 +541,62 @@ export function buildConversationDetail(
     runs,
     interventions: runtimeProjection.interventions,
     existingMessageIds: new Set(messageById.keys()),
+    boundInterventionIds: new Set(storedTurns.flatMap((turn) => turn.interventionId ? [turn.interventionId] : [])),
   })) {
     messageById.set(message.id, message);
   }
   const latestRun = runs[runs.length - 1];
   const latestSnapshot = readRecord(latestRun?.requestSnapshot);
   const latestProjectPath = latestRun?.cwd && latestRun.cwd !== cwd ? latestRun.cwd : undefined;
+  const sourceItems = listAllConversationItems(store, thread.id, !options.includeSuperseded)
+    .filter(item => options.includeSuperseded || (item.kind !== "user_input_request" && item.kind !== "user_input_answer")
+      || (item.turnId && !projection.supersededTurnIds.has(item.turnId)
+        && store.getLingTurn(item.turnId)?.status !== "superseded"));
+  const { conversationItems, userInputs } = projectConversationUserInputs(store, thread.id, sourceItems);
+  const executionActions = listExecutionActions(store, { threadId: thread.id, limit: 500 });
   return {
     cwd,
     thread,
     turns,
+    conversationItems,
+    userInputs,
+    supersessionTombstones: projectConversationSupersessionTombstones(projection),
+    runLinks,
     runs,
-    executionActions: listExecutionActions(store, { threadId: thread.id, limit: 500 }),
+    reasoningSummaries: projectConversationReasoningSummaries({
+      store,
+      thread,
+      runLinks,
+      runs,
+      items: conversationItems,
+    }),
+    executionActions,
     approvals: runtimeProjection.approvals,
+    approvalCheckpoints: runtimeProjection.approvalCheckpoints,
     interventions: runtimeProjection.interventions,
     terminalReports: (options.includeSuperseded
       ? store.listTerminalReports({ threadId: thread.id, limit: 200 })
       : filterSupersededTerminalReports(store.listTerminalReports({ threadId: thread.id, limit: 200 }), projection))
       .filter((record) => Boolean(record.report) && (record.status === "committed" || record.status === "fallback"))
-      .map((record) => projectTerminalReportDto(record.report!)),
+      .flatMap((record) => record.resultItemId
+        ? [{
+            ...projectTerminalReportDto(record.report!, record.evidenceSnapshot),
+            generation: record.generation,
+            resultItemId: record.resultItemId,
+          }]
+        : []),
+    artifacts: projectConversationArtifacts(runs.flatMap((run) => store.listArtifacts(run.id)), executionActions),
+    plans: store.listProposedPlanArtifacts({ threadId: thread.id, limit: 200 }),
+    compactionCheckpoints: store.listCompactionCheckpoints({ threadId: thread.id, limit: 100 }),
+    contextSnapshots: [
+      ...store.listConversationContextSnapshots({ threadId: thread.id, limit: 100 }),
+      ...projectNormalExecutionContextSnapshots({ store, thread, turns, runs, items: conversationItems }),
+    ],
+    contextSummaries: store.listConversationContextSummaries({
+      threadId: thread.id,
+      statuses: ["active", "superseded", "invalidated"],
+      limit: 200,
+    }),
     messages: [...messageById.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id)),
     generatedMedia: buildConversationGeneratedMediaProjection({
       store,
@@ -547,12 +606,43 @@ export function buildConversationDetail(
       projectPath: readOptionalRecordString(latestSnapshot, "projectPath") || latestProjectPath,
       providerPresetId: latestRun?.providerPresetId ?? readOptionalRecordString(latestSnapshot, "providerPresetId"),
       thinkingLevel: readThinkingLevel(readOptionalRecordString(latestSnapshot, "thinkingLevel")),
+      reasoningSummary: readReasoningSummary(readOptionalRecordString(latestSnapshot, "reasoningSummary")),
       authorizationMode: readAuthorizationMode(readOptionalRecordString(latestSnapshot, "authorizationMode")),
       workspaceAccessMode: readWorkspaceAccessMode(readOptionalRecordString(latestSnapshot, "workspaceAccessMode")),
       permissionPreset: readPermissionPreset(readOptionalRecordString(latestSnapshot, "permissionPreset")),
       permissionMode: readPermissionMode(readOptionalRecordString(latestSnapshot, "permissionMode")),
     },
   };
+}
+
+/**
+ * Read the complete canonical item line without imposing the UI's page size on
+ * history. The SQLite store pages newest-first; this helper reverses each page
+ * through the store contract and returns one source-ordered list. No timestamp
+ * or array-arrival order is used as a fallback authority.
+ */
+function listAllConversationItems(
+  store: RunStore,
+  threadId: string,
+  effectiveOnly: boolean,
+): readonly import("@ling-stack/contracts").ConversationItemV1[] {
+  const items: import("@ling-stack/contracts").ConversationItemV1[] = [];
+  let beforeSequence = Number.MAX_SAFE_INTEGER;
+  for (;;) {
+    const page = store.listConversationItemsPage({
+      threadId,
+      beforeSequence,
+      effectiveOnly,
+      limit: 500,
+    });
+    for (const item of page.items) {
+      items.push(item);
+    }
+    const next = page.nextBeforeSequence;
+    if (next === undefined || next >= beforeSequence) break;
+    beforeSequence = next;
+  }
+  return items.sort((left, right) => left.sequence - right.sequence);
 }
 
 function parseConversationStreamRequest(value: unknown): ConversationStreamRequest {
@@ -580,6 +670,7 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
     projectPath: readOptionalString(value, "projectPath")?.trim() || undefined,
     providerPresetId,
     thinkingLevel: readThinkingLevel(readOptionalString(value, "thinkingLevel")),
+    reasoningSummary: readReasoningSummary(readOptionalString(value, "reasoningSummary")),
     authorizationMode: readAuthorizationMode(readOptionalString(value, "authorizationMode")),
     workspaceAccessMode: readWorkspaceAccessMode(readOptionalString(value, "workspaceAccessMode")),
     permissionPreset: readPermissionPreset(readOptionalString(value, "permissionPreset")),
@@ -592,10 +683,18 @@ function parseConversationStreamRequest(value: unknown): ConversationStreamReque
 }
 
 function resolveConversationThread(store: RunStore, input: ConversationStreamRequest, now: string): LingThread {
-  if (input.threadId) {
-    const thread = store.getLingThread(input.threadId);
+  const keyedThreadId = !input.threadId && input.idempotencyKey
+    ? `thread_normal_${createHash("sha256").update(JSON.stringify([store.paths.cwd, input.idempotencyKey])).digest("hex")}`
+    : undefined;
+  const threadId = input.threadId ?? keyedThreadId;
+  if (threadId) {
+    const thread = store.getLingThread(threadId);
+    if (!thread && keyedThreadId) {
+      return store.createLingThread({ id: keyedThreadId, kind: "conversation", teammateId: LING_AGENT_ID,
+        title: conversationTitle(input.message), objective: input.message.trim(), status: "open" }, now);
+    }
     if (!thread || thread.kind !== "conversation") {
-      throw new HttpError(404, "conversation_not_found", `Conversation not found: ${input.threadId}`);
+      throw new HttpError(404, "conversation_not_found", `Conversation not found: ${threadId}`);
     }
     if (thread.status === "archived" || thread.archivedAt) {
       throw new HttpError(409, "conversation_archived", `Conversation is archived: ${thread.id}`);
@@ -617,8 +716,11 @@ function buildConversationRunRequest(input: {
   readonly turn: LingTurn;
   readonly input: ConversationStreamRequest;
   readonly lingConversationTone: LingConversationTone;
+  readonly defaultReasoningSummary: NonNullable<ConversationStreamRequest["reasoningSummary"]>;
   readonly attachments: readonly ConversationAttachment[];
   readonly attachmentMaterializations: ReadonlyMap<string, ConversationAttachmentMaterialization>;
+  readonly normalConversationContext: NormalConversationContextSnapshot;
+  readonly normalConversationAcceptedSnapshotId?: string;
 }): RunRequest {
   const toneInstruction = lingConversationToneInstruction(input.lingConversationTone);
   const responseLanguagePreference = input.input.responseLanguage ?? "follow_user";
@@ -633,16 +735,16 @@ function buildConversationRunRequest(input: {
   return {
     workspaceCwd: input.workspaceCwd,
     cwd: input.input.projectPath || input.workspaceCwd,
-    task: {
+    task: redactSecrets({
       id: conversationRunTaskId(input.turn.id),
       title: input.turn.title,
-      prompt: buildConversationRunPrompt(
+      prompt: renderNormalConversationRunPrompt(input.normalConversationContext, buildConversationRunPrompt(
         input.input.message,
         input.attachments,
         input.attachmentMaterializations,
         input.input.fileRefs ?? [],
-      ),
-    },
+      )),
+    }) as RunRequest["task"],
     threadId: input.thread.id,
     turnId: input.turn.id,
     teammateId: LING_AGENT_ID,
@@ -655,11 +757,15 @@ function buildConversationRunRequest(input: {
     permissionMode: input.input.permissionMode,
     permissionConfirmation: input.input.permissionConfirmation,
     thinkingLevel: input.input.thinkingLevel,
+    reasoningSummary: input.input.reasoningSummary ?? input.defaultReasoningSummary,
     lingConversationTone: input.lingConversationTone,
     responseLanguage,
     appendSystemPrompt,
     conversationAttachmentIds: input.attachments.map((attachment) => attachment.id),
     conversationFileRefs: input.input.fileRefs ?? [],
+    normalConversationContext: input.normalConversationContext,
+    normalConversationAcceptedSnapshotId: input.normalConversationAcceptedSnapshotId,
+    contextProjection: input.normalConversationContext.projection,
     idempotencyKey: input.input.idempotencyKey ?? `conversation:${input.turn.id}`,
   };
 }
@@ -673,7 +779,7 @@ function createUserTranscriptMessage(
 ): ConversationTranscriptMessage {
   return {
     id: turn.sourceItemId?.startsWith("conversation-user:") ? turn.sourceItemId : `conversation-user:${turn.id}`,
-    role: "user",
+    role: turn.createdByActor === "system" ? "system" : "user",
     content,
     ...(attachments.length > 0 ? { attachments } : {}),
     ...(fileRefs.length > 0 ? { fileRefs } : {}),
@@ -694,6 +800,7 @@ function createAssistantTranscriptMessage(
   status: ConversationTranscriptStatus,
   now: string,
   errorMessage?: string,
+  contentSource: ConversationTranscriptMessage["contentSource"] = "host_status",
 ): ConversationTranscriptMessage {
   return {
     id: conversationAssistantMessageId(turn.id),
@@ -701,6 +808,7 @@ function createAssistantTranscriptMessage(
     authorId: LING_AGENT_ID,
     authorLabel: "Ling Agent",
     content,
+    contentSource,
     ...(errorMessage ? { errorMessage } : {}),
     status,
     threadId: thread.id,
@@ -712,19 +820,36 @@ function createAssistantTranscriptMessage(
 }
 
 function assistantMessageFromRun(store: RunStore, thread: LingThread, turn: LingTurn, run: RunSession): ConversationTranscriptMessage {
-  const events = store.listEvents(run.id, { limit: 1000 });
-  const streamedContent = events.filter((event) => event.type === "assistant_text_delta").map(readEventText).join("");
-  const finalContent = [...events]
-    .reverse()
-    .find((event) => event.type === "message_end" && readEventRole(event) === "assistant" && readEventText(event).trim());
-  const content = streamedContent || (finalContent ? readEventText(finalContent) : "");
-  const error = [...events].reverse().map(readEventError).find(Boolean);
+  return store.readSnapshot(() => assistantMessageFromRunSnapshot(store, thread, turn, run));
+}
+
+function assistantMessageFromRunSnapshot(store: RunStore, thread: LingThread, turn: LingTurn, run: RunSession): ConversationTranscriptMessage {
+  const published = publishedNormalConversationMessage(store, thread, turn, run);
+  if (published) return published;
+  const narration = createOwnedRunNarrationAccumulator(store, run.id, {
+    threadId: thread.id, turnId: turn.id, participantId: LING_AGENT_ID, kind: "conversation",
+  });
+  let error: string | undefined;
+  let afterSeq = 0;
+  for (;;) {
+    const events = store.listEvents(run.id, { afterSeq, limit: 1000 });
+    if (events.length === 0) break;
+    for (const event of events) {
+      if (event.runId !== run.id) continue;
+      narration.append(event);
+      error = readEventError(event) || error;
+    }
+    const nextSequence = events.at(-1)!.seq;
+    if (nextSequence <= afterSeq) break;
+    afterSeq = nextSequence;
+  }
+  const { content, narrationSegments } = narration.snapshot();
   const status = statusFromRun(run) ?? "running";
   const hasGeneratedMedia = runHasConversationGeneratedMedia(store, run.id);
   const projectedStatus = status === "succeeded" && !content.trim() && !hasGeneratedMedia ? "failed" : status;
   const requestSnapshot = readRecord(run.requestSnapshot);
   const responseLanguage = readResponseLanguagePreference(readOptionalRecordString(requestSnapshot, "responseLanguage"));
-  return createAssistantTranscriptMessage(
+  return { ...createAssistantTranscriptMessage(
     thread,
     turn,
     run,
@@ -734,20 +859,21 @@ function assistantMessageFromRun(store: RunStore, thread: LingThread, turn: Ling
     projectedStatus,
     run.updatedAt,
     error,
-  );
+    content.trim() ? "run_narration" : "host_status",
+  ), narrationSegments };
 }
 
 function statusFromTurn(turn: LingTurn): ConversationTranscriptStatus {
   if (turn.status === "failed") {
     return "failed";
   }
-  if (turn.status === "blocked" || turn.status === "waiting_for_approval") {
+  if (turn.status === "blocked") {
     return "blocked";
   }
   if (turn.status === "cancelled" || turn.status === "superseded") {
     return "cancelled";
   }
-  if (turn.status === "running") {
+  if (turn.status === "running" || turn.status === "waiting_for_approval") {
     return "running";
   }
   return "succeeded";
@@ -760,13 +886,10 @@ function statusFromRun(run: RunSession | undefined): ConversationTranscriptStatu
   if (run.status === "failed") {
     return "failed";
   }
-  if (run.status === "waiting_for_approval") {
-    return "blocked";
-  }
   if (run.status === "cancelled") {
     return "cancelled";
   }
-  if (run.status === "queued" || run.status === "running") {
+  if (run.status === "queued" || run.status === "running" || run.status === "waiting_for_approval") {
     return "running";
   }
   return "succeeded";
@@ -783,10 +906,6 @@ function conversationRunTaskId(turnId: string): string {
 
 function conversationAssistantMessageId(turnId: string): string {
   return `conversation-assistant:${turnId}`;
-}
-
-function readEventText(event: RunEventEnvelope): string {
-  return readOptionalRecordString(readRecord(event.data), "text") ?? "";
 }
 
 function readEventRole(event: RunEventEnvelope): string {
@@ -843,6 +962,12 @@ function readThinkingLevel(value: string | undefined): RunThinkingLevel | undefi
   return value && thinkingLevels.includes(value as RunThinkingLevel) ? value as RunThinkingLevel : undefined;
 }
 
+function readReasoningSummary(value: string | undefined): ConversationStreamRequest["reasoningSummary"] {
+  return value && (reasoningSummaryModes as readonly string[]).includes(value)
+    ? value as ConversationStreamRequest["reasoningSummary"]
+    : undefined;
+}
+
 function readPermissionPreset(value: string | undefined): PermissionPreset | undefined {
   return value && permissionPresets.includes(value as PermissionPreset) ? value as PermissionPreset : undefined;
 }
@@ -880,11 +1005,11 @@ function readResponseLanguagePreference(value: string | undefined): ResponseLang
   return value === "follow_user" || isSupportedLocale(value) ? value : undefined;
 }
 
-function resolveConversationResponseLanguage(
+export function resolveConversationResponseLanguage(
   responseLanguage: ResponseLanguagePreference | undefined,
-  _message: string,
+  message: string,
 ): Exclude<ResponseLanguagePreference, "follow_user"> {
-  return responseLanguage && responseLanguage !== "follow_user" ? responseLanguage : "en-US";
+  return responseLanguage && responseLanguage !== "follow_user" ? responseLanguage : inferUserLanguage(message);
 }
 
 function buildConversationRunPrompt(
@@ -936,31 +1061,6 @@ function renderConversationAttachmentsForPrompt(
 
 function indentAttachmentContent(content: string): string {
   return content.trim().split(/\r?\n/).map((line) => `  ${line}`).join("\n");
-}
-
-function assignConversationAttachments(
-  store: RunStore,
-  attachmentIds: readonly string[],
-  threadId: string,
-  turnId: string,
-): ConversationAttachment[] {
-  return normalizeStringList(attachmentIds).map((attachmentId) => {
-    const existing = store.getConversationAttachment(attachmentId);
-    if (!existing) {
-      throw new HttpError(404, "conversation_attachment_not_found", `Conversation attachment not found: ${attachmentId}`);
-    }
-    if (existing.threadId && existing.threadId !== threadId) {
-      throw new HttpError(409, "conversation_attachment_thread_mismatch", `Conversation attachment belongs to a different thread: ${attachmentId}`);
-    }
-    if (existing.turnId && existing.turnId !== turnId) {
-      throw new HttpError(409, "conversation_attachment_already_used", `Conversation attachment was already used: ${attachmentId}`);
-    }
-    const assigned = store.assignConversationAttachment({ attachmentId, threadId, turnId });
-    if (!assigned) {
-      throw new HttpError(404, "conversation_attachment_not_found", `Conversation attachment not found: ${attachmentId}`);
-    }
-    return assigned;
-  });
 }
 
 function conversationAttachmentsFromRunSnapshot(store: RunStore, run: RunSession | undefined): readonly ConversationAttachment[] {
@@ -1022,3 +1122,4 @@ async function startRunAndWaitUntilReady(runRequest: RunRequest, startRun: Start
   });
   return await ready;
 }
+import { publishedNormalConversationMessage } from "./normal-conversation-published-message.js";

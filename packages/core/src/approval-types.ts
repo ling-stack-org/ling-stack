@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { HostCapabilityCallV1, RuntimeAttemptFenceV1 } from "@ling-stack/contracts";
 import type { ApplyPatchFormat, PatchPlan, PatchSummary } from "./patch/index.js";
 import type { RunTool } from "./approval-policy.js";
 import type { UnifiedExecEnvironmentSummary } from "./exec/unified-exec-types.js";
@@ -20,6 +21,7 @@ export type ApprovalActionType =
   | "provider_change"
   | "workflow_step"
   | "mcp_tool_call"
+  | "host_capability"
   | "runtime_permission_request";
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
@@ -134,6 +136,7 @@ export type MediaCostApprovalPayload =
     };
 
 export type ApprovalPayload =
+  | ({ readonly type: "host_capability"; readonly cwd: string } & HostCapabilityCallV1)
   | {
       readonly type: "file_write";
       readonly path: string;
@@ -239,7 +242,7 @@ export interface ApprovalRequest {
   readonly createdAt: string;
   readonly expiresAt?: string;
   readonly resolvedAt?: string;
-  readonly resolvedBy?: "local-user";
+  readonly resolvedBy?: "local-user" | "system-reviewer";
   readonly decisionReason?: string;
   readonly availableDecisions?: readonly ApprovalDecisionKind[];
   readonly proposedCommandRule?: ApprovalCommandRuleProposal;
@@ -268,10 +271,48 @@ export interface CreateApprovalRequestInput {
 
 export interface ResolveApprovalRequestInput {
   readonly reason?: string;
-  readonly resolvedBy?: "local-user";
+  readonly resolvedBy?: "local-user" | "system-reviewer";
   readonly decisionKind?: Extract<ApprovalDecisionKind, "approve_once" | "approve_command_rule">;
   readonly proposedRuleFingerprint?: string;
+  /** Captured pre-execution cleanup authority; rechecked inside the denied/cancelled UPDATE. */
+  readonly executionCleanup?: {
+    readonly runId: string;
+    readonly approvalCreatedAt: string;
+    readonly toolCallId: string;
+    readonly sourceFence: RuntimeAttemptFenceV1;
+  };
 }
+
+/**
+ * Immutable authority captured before an isolated reviewer starts. The Store
+ * rechecks every field in the same SQLite mutation that records the verdict.
+ */
+export interface ResolveApprovalBySystemReviewerInput {
+  readonly approvalId: string;
+  readonly approvalCreatedAt: string;
+  readonly runId: string;
+  readonly toolCallId: string;
+  readonly sideEffectFingerprint: string;
+  readonly workspacePolicyUpdatedAt: string;
+  readonly sourceFence: RuntimeAttemptFenceV1;
+  /** Recovery is allowed only for the exact startup-suspended approval wait. */
+  readonly sourceAuthority?: "active_execution" | "recoverable_suspension";
+  readonly decision: "approve" | "deny";
+  readonly reason: string;
+}
+
+export type ResolveApprovalBySystemReviewerResult =
+  | { readonly ok: true; readonly approval: ApprovalRequest }
+  | {
+      readonly ok: false;
+      readonly code:
+        | "approval_not_found"
+        | "approval_not_pending"
+        | "approval_identity_changed"
+        | "approval_effect_changed"
+        | "approval_policy_changed"
+        | "approval_execution_stale";
+    };
 
 export interface ListApprovalRequestsOptions {
   readonly status?: ApprovalStatus;

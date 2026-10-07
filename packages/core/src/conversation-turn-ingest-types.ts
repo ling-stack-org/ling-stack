@@ -10,15 +10,22 @@ import type { LingTurnKind } from "./run-types.js";
 export interface AppendConversationUserTurnInput {
   readonly itemId?: string;
   readonly turnId?: string;
-  readonly channelId: string;
+  /** Optional scope assertion. Channel turns still require their real channel id. */
+  readonly channelId?: string;
   readonly threadId: string;
+  /** Optional owner assertion; the persisted Turn always inherits its Thread owner. */
+  readonly teammateId?: string;
   readonly turnKind?: LingTurnKind;
   readonly title: string;
   readonly userInstruction: string;
   readonly actorId?: string;
+  /** System-dispatched input must not be relabelled as a local user action. */
+  readonly actorType?: "local_user" | "system";
   readonly payload: ConversationUserMessagePayloadV1;
   readonly domainRefs?: readonly ConversationDomainRef[];
   readonly sourceTurnId?: string;
+  /** Existing intervention lineage, preserved by atomic input creation and replay. */
+  readonly interventionId?: string;
   readonly supersedesItemId?: string;
   readonly idempotencyKey: string;
   readonly dispatch?: {

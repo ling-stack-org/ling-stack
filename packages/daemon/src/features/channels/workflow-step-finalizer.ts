@@ -21,6 +21,7 @@ import {
 } from "@ling-stack/contracts";
 import { isRecord } from "../../shared/validation.js";
 import { listAllExecutionActionsForRun } from "../runs/execution-actions.js";
+import { readRunNarrationSnapshot } from "../conversations/narration-segments.js";
 import { preserveMarkdownLayout } from "./markdown-text.js";
 import { verifyWorkflowStepExecutionOperations } from "./workflow-operation-evidence.js";
 import {
@@ -217,6 +218,15 @@ export function finalizeDelegatedWorkflowStepFromCanonicalState(input: {
     }, input.cause, now, approval);
   }
   if (run.status === "failed" || run.status === "cancelled") {
+    const loopDetection = run.status === "failed" ? latestExecutionLoopDetection(input.store, run.id) : undefined;
+    if (loopDetection) {
+      return commitCandidate(input.store, workflow, step, run, {
+        finalStatus: "blocked",
+        outcome: blockedOutcome(step, "execution_loop_detected", loopDetection.message, ["manual_intervention"]),
+        blocker: loopDetection.message,
+        resultSummary: undefined,
+      }, input.cause, now, approval);
+    }
     const policy = run.status === "cancelled"
       ? resolveWorkflowStepPolicy(step).onRunCancelled
       : resolveWorkflowStepPolicy(step).onRunFailed;
@@ -475,6 +485,17 @@ function listAllRunEvents(store: RunStore, runId: string): readonly RunEventEnve
   }
 }
 
+function latestExecutionLoopDetection(
+  store: RunStore,
+  runId: string,
+): RunEventEnvelope["data"] & { readonly message: string } | undefined {
+  const event = listAllRunEvents(store, runId).filter((candidate) => candidate.type === "loop_detected").at(-1);
+  return event && isRecord(event.data) && event.data.code === "execution_loop_detected"
+    && typeof event.data.message === "string"
+    ? event.data as RunEventEnvelope["data"] & { readonly message: string }
+    : undefined;
+}
+
 function evidenceRefsForSuccessfulStep(
   store: RunStore,
   workflow: ChannelWorkflow,
@@ -554,11 +575,7 @@ function failurePolicyStatus(policy: WorkflowStepFailurePolicy): "blocked" | "fa
 }
 
 function workflowStepRunResultSummary(store: RunStore, run: RunSession): string {
-  const text = store.listEvents(run.id, { limit: 1000 })
-    .filter((event) => event.type === "assistant_text_delta")
-    .map((event) => isRecord(event.data) && typeof event.data.text === "string" ? event.data.text : "")
-    .join("");
-  const normalizedText = preserveMarkdownLayout(text);
+  const normalizedText = preserveMarkdownLayout(readRunNarrationSnapshot(store, run.id).content);
   if (normalizedText) return normalizedText;
   const labels = store.listArtifacts(run.id)
     .filter((artifact) => artifact.type === "file" || artifact.type === "diff")

@@ -1,11 +1,15 @@
 import { CircleAlert, FileText, Plus, Send, SlidersHorizontal, Square } from "lucide-react";
 import { useI18n } from "../../i18n.js";
-import { conversationPermissionPresetMenuOptions } from "../../lib/session-permissions.js";
+import {
+  conversationAuthorizationModeMenuOptions,
+  conversationPermissionPresetMenuOptions,
+} from "../../lib/session-permissions.js";
 import {
   ComposerFileReferenceToken,
   ComposerPendingAssetStrip,
 } from "../../shared/components/index.js";
 import {
+  ComposerAuthorizationMenu,
   ComposerPermissionMenu,
   ConversationComposerShell,
   ConversationGuidanceStrip,
@@ -261,6 +265,15 @@ export function TeammatePrivateChatComposer({
                 }}
               />
             </label>
+            <ComposerAuthorizationMenu
+              mode={controller.selectedAuthorizationMode}
+              options={conversationAuthorizationModeMenuOptions(t)}
+              disabled={permissionLocked}
+              disabledReason={t("Authorization is locked while the private reply is running.")}
+              selectedModeLabel={t("Selected authorization mode {label}")}
+              menuLabel={t("Authorization mode")}
+              onModeChange={controller.handleAuthorizationModeChange}
+            />
             <ComposerPermissionMenu
               preset={controller.selectedPermissionPreset}
               options={conversationPermissionPresetMenuOptions(t, fullAccessConfirmed)}

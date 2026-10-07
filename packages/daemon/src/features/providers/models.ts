@@ -19,6 +19,7 @@ import {
   type ProviderStoreFacet,
   type SecretResolver,
 } from "@ling-stack/core";
+import { fetchProvider } from "@ling-stack/runner-pi";
 import { HttpError } from "../../errors.js";
 import { readLimitedResponseText } from "../../shared/http.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
@@ -69,7 +70,7 @@ export async function listProviderModels(
     const seenPageTokens = new Set<string>();
     let pageSource = request.source;
     for (;;) {
-      const response = await fetch(pageSource, {
+      const response = await fetchProvider(pageSource, {
         method: "GET",
         headers: request.headers,
         signal,
@@ -124,7 +125,7 @@ async function listMediaProviderModels(
 
   const request = createProviderModelDiscoveryRequest(preset, materialized.headers, materialized.apiKeySecret.value);
   try {
-    const response = await fetch(request.source, {
+    const response = await fetchProvider(request.source, {
       method: "GET",
       headers: request.headers,
       signal: AbortSignal.timeout(PROVIDER_CHECK_TIMEOUT_MS),

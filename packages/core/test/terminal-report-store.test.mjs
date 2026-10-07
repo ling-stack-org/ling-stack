@@ -51,15 +51,15 @@ test("sqlite terminal reports create, update, commit, publish, list, and reopen"
 
     const published = store.markTerminalReportPublished({
       reportId: draft.id,
-      messageId: "message_terminal_report",
+      messageId: "result_terminal_report:terminal_report_store",
       now: "2026-07-11T01:05:03.000Z",
     });
-    assert.equal(published.publishedMessageId, "message_terminal_report");
+    assert.equal(published.resultItemId, "result_terminal_report:terminal_report_store");
     assert.equal(store.markTerminalReportPublished({
       reportId: draft.id,
-      messageId: "message_terminal_report",
+      messageId: "result_terminal_report:terminal_report_store",
       now: "2026-07-11T01:05:04.000Z",
-    }).publishedMessageId, "message_terminal_report");
+    }).resultItemId, "result_terminal_report:terminal_report_store");
     assert.deepEqual(store.listTerminalReports({ sourceKind: "run" }).map((item) => item.id), [draft.id]);
     assert.throws(() => store.updateTerminalReportDraft({
       reportId: draft.id,
@@ -69,14 +69,14 @@ test("sqlite terminal reports create, update, commit, publish, list, and reopen"
     }), /immutable/);
     assert.throws(() => store.markTerminalReportPublished({
       reportId: draft.id,
-      messageId: "message_other",
+      messageId: "result_terminal_report:other",
       now: "2026-07-11T01:05:05.000Z",
     }), /another message/);
 
     store.close();
     const reopened = createSqliteRunStore(cwd);
     try {
-      assert.equal(reopened.getTerminalReport(draft.id)?.publishedMessageId, "message_terminal_report");
+      assert.equal(reopened.getTerminalReport(draft.id)?.resultItemId, "result_terminal_report:terminal_report_store");
       assert.equal(reopened.getTerminalReport(draft.id)?.report?.id, draft.id);
     } finally {
       reopened.close();

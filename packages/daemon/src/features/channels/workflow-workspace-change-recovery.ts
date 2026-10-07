@@ -35,6 +35,7 @@ import {
   type RecoveryPlanStep,
   type RunPatchSet,
 } from "../runs/workspace-change-recovery.js";
+import { buildWorkspaceChangeReview } from "../runs/workspace-change-review.js";
 
 interface WorkflowPatchRun {
   readonly run: RunSession;
@@ -173,6 +174,7 @@ export async function buildWorkflowWorkspaceChangesResponse(
     files,
     summary,
     updatedAt: workflow.updatedAt,
+    review: buildWorkspaceChangeReview(store, { scope: { kind: "workflow", id: workflow.id }, runs: context.runs }),
   } as const;
   if (context.unavailableReason || !context.ownerRun || !context.cwd) {
     return {

@@ -102,7 +102,7 @@ test("channel header search keeps the toolbar stable and searches channel activi
 
   await searchButton.click();
   await page.getByRole("textbox", { name: "Search channel activity" }).fill("Release checklist");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Operations" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Operations" }).click();
   await expect(page.getByRole("textbox", { name: "Search channel activity" })).toHaveCount(0);
   await expect(page.locator(".channel-title-line h1")).toHaveText("Operations");
   await expect(page.getByLabel("Channel message feed")).toContainText("No channel messages yet");
@@ -190,7 +190,7 @@ for (const fixture of [
     })];
     await mockDaemon(page, state);
     await page.goto("/");
-    await page.getByLabel("Ling Stack navigation").getByRole("button", {
+    await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", {
       name: "Engineering release coordination and architecture review workspace",
     }).click();
 

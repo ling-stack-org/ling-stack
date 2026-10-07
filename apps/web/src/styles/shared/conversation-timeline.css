@@ -1,0 +1,425 @@
+/*
+ * Shared Codex-style transcript presentation.
+ *
+ * The older conversation-work-cell stylesheet still contains migration-only rules
+ * for unrelated callers. These selectors are the semantic Timeline contract and
+ * intentionally load after it so the new renderer has one quiet visual grammar.
+ */
+
+[data-conversation-timeline="true"] {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  max-width: 100%;
+  overflow: visible;
+}
+
+/* Q/A shares message rails, theme and hover/focus copy chrome. It never owns scrolling. */
+.conversation-timeline-user-input,
+.conversation-user-input-content,
+.conversation-user-input-content > section {
+  min-width: 0;
+  max-width: 100%;
+  overflow-wrap: anywhere;
+}
+
+.conversation-user-input-content {
+  display: grid;
+  gap: 12px;
+  color: var(--conversation-text-strong);
+}
+
+.conversation-user-input-options {
+  margin: 8px 0 0;
+  padding-inline-start: 20px;
+  color: var(--conversation-text-muted);
+  white-space: pre-wrap;
+}
+
+.conversation-user-input-status {
+  color: var(--conversation-text-muted);
+  font-size: 12px;
+}
+
+.conversation-user-input-status[data-tone="danger"] {
+  color: var(--conversation-status-danger);
+}
+
+[data-conversation-timeline="true"].virtualized {
+  display: block;
+}
+
+.conversation-timeline-virtualizer {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.conversation-timeline-virtual-row {
+  position: absolute;
+  inset: 0 0 auto;
+  width: 100%;
+}
+
+.conversation-timeline-focus-block {
+  min-width: 0;
+  border-radius: 8px;
+  outline: none;
+}
+
+.conversation-timeline-focus-block:focus-visible {
+  outline: 2px solid var(--conversation-focus-ring);
+  outline-offset: 2px;
+}
+
+/* The page/feed owns scrolling.  Never turn a nested Timeline into a second
+ * scroll container just because a run has many facts. */
+[data-conversation-timeline="true"][data-activity-density="dense"] {
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
+  scrollbar-gutter: auto;
+  padding-inline-end: 0;
+}
+
+/* Disclosure stays in normal document flow. The feed is the only vertical
+ * scroll owner; full output is bounded by the evidence projector or opens in
+ * the trusted artifact viewer rather than creating a nested terminal. */
+.conversation-command-batch[data-conversation-batch-density="large"] .conversation-command-batch-list,
+.conversation-exploration-batch[data-conversation-batch-density="large"] .conversation-exploration-batch-list {
+  max-height: none;
+  overflow: visible;
+  overscroll-behavior: auto;
+  scrollbar-gutter: auto;
+  padding-inline-end: 0;
+}
+
+.conversation-timeline-activity {
+  min-width: 0;
+}
+
+.conversation-timeline-activity-copy {
+  display: grid;
+  align-items: start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.conversation-timeline-activity-copy strong,
+.conversation-timeline-activity-copy small,
+.conversation-timeline-activity-status {
+  min-width: 0;
+  overflow: visible;
+  overflow-wrap: anywhere;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.conversation-timeline-activity-copy strong {
+  display: block;
+}
+
+.conversation-timeline-activity.compact .conversation-timeline-activity-copy strong {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.conversation-timeline-protocol-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 8px;
+}
+
+.conversation-timeline-message {
+  min-width: 0;
+  max-width: 100%;
+}
+
+/* Reasoning summaries are safe provider-authored context, not execution facts.
+ * Keep them in a quiet document lane instead of rendering another fact card. */
+.conversation-timeline-reasoning {
+  min-width: 0;
+  max-width: 100%;
+  padding: 2px 0 2px 10px;
+  border-left: 1px solid color-mix(in srgb, var(--ling-border-subtle) 72%, transparent);
+  color: var(--conversation-text-muted, var(--ling-text-muted));
+}
+
+.conversation-timeline-reasoning-heading {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 5px;
+  color: var(--conversation-text-muted, var(--ling-text-muted));
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.conversation-timeline-reasoning-body,
+.conversation-timeline-reasoning-body .message-body-renderer,
+.conversation-timeline-reasoning-body .message-body-paragraph,
+.conversation-timeline-reasoning-body .message-body-list {
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.55;
+}
+
+.conversation-timeline-reasoning-body .message-body-renderer > * + * {
+  margin-top: 7px;
+}
+
+.conversation-timeline-message .message-body-renderer,
+.conversation-timeline-user-input .message-body-renderer {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.conversation-timeline-message .message-body-renderer > * + *,
+.conversation-timeline-user-input .message-body-renderer > * + * {
+  margin-top: 10px;
+}
+
+/* User text and agent narration remain primary content after completion.
+ * The semantic Timeline scope also outranks legacy message-frame colors
+ * without depending on run status, surface wrappers, or nesting depth. */
+[data-conversation-timeline] .conversation-timeline-message:is(.agentMessage, .userMessage) .message-body-renderer,
+[data-conversation-timeline] .conversation-timeline-message:is(.agentMessage, .userMessage) .message-body-paragraph,
+[data-conversation-timeline] .conversation-timeline-message:is(.agentMessage, .userMessage) .message-body-list,
+[data-conversation-timeline] .conversation-timeline-user-input .message-body-renderer,
+[data-conversation-timeline] .conversation-timeline-user-input .message-body-paragraph,
+[data-conversation-timeline] .conversation-timeline-user-input .message-body-list {
+  color: var(--conversation-text-strong, var(--ling-text-strong));
+}
+
+/* A quote is quoted evidence, not the speaker's own narration. Let its
+ * paragraphs and lists inherit the existing quote treatment; code and links
+ * retain their own semantic colors. */
+[data-conversation-timeline] .conversation-timeline-message:is(.agentMessage, .userMessage) .message-body-quote :is(.message-body-paragraph, .message-body-list),
+[data-conversation-timeline] .conversation-timeline-user-input .message-body-quote :is(.message-body-paragraph, .message-body-list) {
+  color: inherit;
+}
+
+.conversation-timeline-command,
+.conversation-timeline-output,
+.conversation-timeline-detail-code {
+  max-width: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.conversation-timeline-output {
+  max-height: none;
+  overflow: visible;
+}
+
+.conversation-timeline-sub-agent {
+  min-width: 0;
+}
+
+.conversation-timeline-sub-agent-group,
+.conversation-timeline-batch-group {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  overflow: visible;
+}
+
+/* Expanded Agent facts stay in the root Timeline's one-dimensional row range.
+ * The rail communicates ownership without introducing a nested card or scroll
+ * surface, and bridges the root virtualizer's 10px row gap. */
+.conversation-timeline-sub-agent-child-row {
+  box-sizing: border-box;
+  padding-inline-start: 26px;
+}
+
+.conversation-timeline-sub-agent-child-row:not(.conversation-timeline-virtual-row) {
+  position: relative;
+}
+
+.conversation-timeline-sub-agent-child-row::before {
+  position: absolute;
+  z-index: 0;
+  inset-block: -10px;
+  inset-inline-start: 10px;
+  width: 1px;
+  background: color-mix(in srgb, var(--conversation-border) 70%, transparent);
+  content: "";
+  pointer-events: none;
+}
+
+.conversation-timeline-sub-agent-child-row[data-conversation-sub-agent-child-first="true"]::before {
+  inset-block-start: -6px;
+}
+
+.conversation-timeline-sub-agent-child-row[data-conversation-sub-agent-child-last="true"]::before {
+  inset-block-end: calc(100% - 16px);
+}
+
+/* The semantic role=group wrapper must not participate in virtual layout.
+ * Its child rows are measured and positioned by the root virtualizer. */
+.conversation-timeline.virtualized .conversation-timeline-sub-agent-group,
+.conversation-timeline.virtualized .conversation-timeline-batch-group {
+  display: block;
+  height: 0;
+  min-height: 0;
+  overflow: visible;
+}
+
+.conversation-timeline-terminal-report,
+.conversation-timeline-terminal-section,
+.conversation-timeline-terminal-section-list,
+.conversation-timeline-terminal-entry {
+  display: grid;
+  min-width: 0;
+}
+
+.conversation-timeline-terminal-report {
+  gap: 10px;
+}
+
+.conversation-timeline-terminal-section {
+  gap: 5px;
+}
+
+.conversation-timeline-terminal-section-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+
+.conversation-timeline-terminal-section-head > h4 {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  margin: 0;
+  color: var(--conversation-text-strong);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 16px;
+}
+
+.conversation-timeline-terminal-section-head > h4 span {
+  color: var(--conversation-text-muted);
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+}
+
+.conversation-workspace-recovery-controls {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.conversation-timeline-terminal-recovery > button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 26px;
+  padding: 3px 8px;
+  border: 1px solid var(--conversation-code-border);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--conversation-text-muted);
+  font: inherit;
+  font-size: 11px;
+  line-height: 16px;
+  cursor: pointer;
+}
+
+.conversation-timeline-terminal-recovery > button:hover,
+.conversation-timeline-terminal-recovery > button:focus-visible {
+  border-color: var(--conversation-border-strong);
+  color: var(--conversation-text-strong);
+}
+
+.conversation-timeline-terminal-recovery > button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
+.conversation-timeline-terminal-section-list {
+  gap: 6px;
+}
+
+.conversation-timeline-terminal-entry {
+  gap: 3px;
+  padding-left: 10px;
+  border-left: 1px solid var(--conversation-code-border);
+}
+
+.conversation-timeline-terminal-entry-head {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  min-width: 0;
+}
+
+.conversation-timeline-terminal-entry-head strong,
+.conversation-timeline-terminal-entry p {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+
+.conversation-timeline-terminal-entry-head strong {
+  color: var(--conversation-text-strong);
+  font-size: 12px;
+  font-weight: 550;
+  line-height: 17px;
+}
+
+.conversation-timeline-terminal-entry-head small,
+.conversation-timeline-terminal-entry p {
+  color: var(--conversation-text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.conversation-timeline-terminal-entry-summary {
+  color: var(--conversation-text-muted);
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.conversation-timeline-terminal-entry-sources > summary {
+  color: var(--conversation-text-muted);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 16px;
+}
+
+.conversation-timeline-terminal-entry-sources > summary:hover,
+.conversation-timeline-terminal-entry-sources > summary:focus-visible {
+  color: var(--conversation-text-strong);
+}
+
+.conversation-timeline-terminal-lineage-ref {
+  color: var(--conversation-text-muted);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+@media (max-width: 720px) {
+  .conversation-timeline-activity-main {
+    grid-template-columns: 16px minmax(0, 1fr) 14px;
+  }
+
+  .conversation-timeline-activity-main .conversation-timeline-activity-status {
+    grid-column: 2 / -1;
+    justify-self: start;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  [data-conversation-timeline="true"][data-activity-density="dense"] {
+    scroll-behavior: auto;
+  }
+
+}

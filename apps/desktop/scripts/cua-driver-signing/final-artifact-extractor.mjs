@@ -27,6 +27,8 @@ import {
 } from "../cua-driver-package-atomic-publish.mjs";
 
 import { SigningContractError } from "./signing-contract.mjs";
+import { createDmgInputSnapshot } from "./dmg-input-snapshot.mjs";
+import { createDmgAttachmentCustody } from "./dmg-attachment-custody.mjs";
 
 const require = createRequire(import.meta.url);
 const COMMAND_TIMEOUT_MS = 120_000;
@@ -82,50 +84,174 @@ async function extractZip(artifactPath, dependencies) {
 
 async function mountDmg(artifactPath, dependencies) {
   const createTemporaryRoot = dependencies.mkdtemp ?? mkdtemp;
-  const removeEmptyDirectory = dependencies.rmdir ?? rmdir;
   const runCommand = dependencies.runCommand ?? runBoundedCommand;
-  const mountPoint = await createTemporaryRoot(join(tmpdir(), "ling-cua-final-dmg-"));
-  let attachAttempted = false;
+  const createSnapshot = dependencies.createDmgInputSnapshot ?? createDmgInputSnapshot;
+  // hdiutil may write checksum-cache xattrs even when the volume is read-only.
+  // It must never receive the original immutable final artifact pathname.
+  const snapshot = await createSnapshot(artifactPath, dependencies);
+  let custody;
+  try {
+    const temporaryRoot = await createTemporaryRoot(join(tmpdir(), "ling-cua-final-dmg-"));
+    custody = await initializeDmgMountPointCustody(temporaryRoot, dependencies);
+  } catch (error) {
+    await cleanupAfterExtractionFailure(error, () => snapshot.cleanup());
+  }
+  const mountPoint = custody.root;
+  let attachment;
+  let attachEntered = false;
   let detached = false;
+  let hostRemoved = false;
   const cleanup = retryableCleanup(async () => {
-    if (!detached && attachAttempted) {
+    if (attachEntered) {
       try {
-        await runCommand("/usr/bin/hdiutil", ["detach", mountPoint], { timeoutMs: 30_000 });
+        // A previous detach does not authorize a later filesystem retry: a
+        // retained backing image may have been attached again in the meantime.
+        await attachment.detach();
         detached = true;
-      } catch (ordinaryError) {
-        try {
-          await runCommand(
-            "/usr/bin/hdiutil",
-            ["detach", "-force", mountPoint],
-            { timeoutMs: 30_000 },
-          );
-          detached = true;
-        } catch (forceError) {
-          throw new AggregateError(
-            [ordinaryError, forceError],
-            `final_artifact_dmg_detach_failed:${mountPoint}`,
-          );
-        }
+      } catch (detachError) {
+        // Unknown or changed attachment ownership cannot authorize path detach
+        // or deletion of a potentially mounted backing image, even on retry.
+        const causes = [detachError];
+        try { await snapshot.releaseHandles(); }
+        catch (releaseError) { causes.push(releaseError); }
+        const error = new AggregateError(causes, `final_artifact_dmg_detach_failed:${mountPoint}`);
+        attachTemporaryRootCleanupReceipt(error, custody);
+        Object.defineProperties(error, {
+          snapshotResiduePath: { value: snapshot.path },
+          attachmentReceipt: { value: attachment.receipt() },
+        });
+        throw error;
       }
     }
-    if (detached || !attachAttempted) {
-      await removeEmptyDirectory(mountPoint);
+    if (detached || !attachEntered) {
+      // A mounted path exposes the volume root, not these original host pins.
+      // Only after detach may the exact original empty host directory be removed.
+      const causes = [];
+      if (!hostRemoved) {
+        try {
+          await removeUninitializedTemporaryRoot(custody, dependencies);
+          hostRemoved = true;
+        } catch (error) { causes.push(error); }
+      }
+      // Confirm original host recovery before deleting the backing image. A
+      // failed host cleanup only releases handles; retry retains all old pins.
+      try {
+        if (hostRemoved) await snapshot.cleanup();
+        else await snapshot.releaseHandles();
+      }
+      catch (error) { causes.push(error); }
+      if (causes.length > 1) {
+        throw new AggregateError(causes, "final_artifact_dmg_host_and_input_cleanup_failed");
+      }
+      if (causes.length === 1) throw causes[0];
     }
   });
   try {
-    attachAttempted = true;
-    await runCommand("/usr/bin/hdiutil", [
-      "attach",
-      "-nobrowse",
-      "-readonly",
-      "-mountpoint",
+    attachment = createDmgAttachmentCustody({
+      snapshotPath: snapshot.path,
       mountPoint,
-      artifactPath,
-    ]);
+      runCommand,
+      async beforeAttach() {
+        // info is awaited. Recheck the original host inode after that read,
+        // before a pathname can be handed to the OS mount command.
+        await assertDmgMountPointCustody(custody, dependencies);
+        await snapshot.verifySnapshot();
+        await snapshot.verifyOriginal();
+      },
+    });
+    await snapshot.verifyOriginal();
+    await snapshot.verifySnapshot();
+    attachEntered = true;
+    await attachment.attach();
+    await snapshot.verifySnapshot();
+    await snapshot.verifyOriginal();
     await assertRealDirectory(mountPoint);
     return Object.freeze({ artifactRoot: mountPoint, cleanup });
   } catch (error) {
     await cleanupAfterExtractionFailure(error, cleanup);
+  }
+}
+
+async function assertDmgMountPointCustody(receipt, dependencies) {
+  const withParentLease = dependencies.withAtomicPublishParentLease ?? withAtomicPublishParentLease;
+  const readIdentities = dependencies.readAtomicPublishDirectoryIdentities ?? readAtomicPublishDirectoryIdentities;
+  await withParentLease({ parentRoot: receipt.parentRoot }, async lease => {
+    const current = await guardLease(lease, () => readIdentities({
+      parentRoot: receipt.parentRoot,
+      sourceName: receipt.sourceName,
+    }, lease));
+    assertLeaseHeld(lease);
+    if (current?.parentIdentity !== receipt.parentIdentity || current?.sourceIdentity !== receipt.sourceIdentity) {
+      throw contractError("final_artifact_cleanup_identity_mismatch", "DMG host mountpoint changed before attach");
+    }
+  });
+}
+
+/** Pin the first host-directory stat, never the mounted view or a later replacement. */
+async function initializeDmgMountPointCustody(rootValue, dependencies) {
+  let receipt;
+  try {
+    const root = resolve(rootValue);
+    const parentRoot = await realpath(dirname(root));
+    const sourceName = basename(root);
+    const [parent, source] = await Promise.all([
+      lstat(parentRoot, { bigint: true }),
+      lstat(root, { bigint: true }),
+    ]);
+    if (!parent.isDirectory() || parent.isSymbolicLink()
+      || !source.isDirectory() || source.isSymbolicLink()) {
+      throw contractError("final_artifact_cleanup_root_invalid", `Unsafe initial DMG mountpoint: ${root}`);
+    }
+    receipt = Object.freeze({
+      // Darwin IdentityString casts dev/ino to uint64_t, then emits lowercase hex.
+      parentIdentity: `${BigInt.asUintN(64, parent.dev).toString(16)}:${BigInt.asUintN(64, parent.ino).toString(16)}`,
+      parentRoot,
+      root: join(parentRoot, sourceName),
+      sourceIdentity: `${BigInt.asUintN(64, source.dev).toString(16)}:${BigInt.asUintN(64, source.ino).toString(16)}`,
+      sourceName,
+    });
+    const withParentLease = dependencies.withAtomicPublishParentLease ?? withAtomicPublishParentLease;
+    const readIdentities = dependencies.readAtomicPublishDirectoryIdentities ?? readAtomicPublishDirectoryIdentities;
+    const securePrivateDirectory = dependencies.securePrivateStagingDirectory ?? securePrivateStagingDirectory;
+    await withParentLease({ parentRoot }, async lease => {
+      const current = await guardLease(lease, () => readIdentities({ parentRoot, sourceName }, lease));
+      assertLeaseHeld(lease);
+      if (current?.parentIdentity !== receipt.parentIdentity || current?.sourceIdentity !== receipt.sourceIdentity) {
+        throw contractError("final_artifact_cleanup_identity_mismatch", `DMG mountpoint changed before binding: ${root}`);
+      }
+      const secured = await guardLease(lease, () => securePrivateDirectory({
+        directoryName: sourceName,
+        expectedDirectoryIdentity: receipt.sourceIdentity,
+        expectedParentIdentity: receipt.parentIdentity,
+        parentRoot,
+      }, lease));
+      assertLeaseHeld(lease);
+      if (secured?.parentIdentity !== receipt.parentIdentity || secured?.directoryIdentity !== receipt.sourceIdentity) {
+        throw contractError("final_artifact_cleanup_identity_mismatch", `DMG mountpoint changed while securing: ${root}`);
+      }
+    });
+    return receipt;
+  } catch (initializationError) {
+    if (receipt !== undefined) {
+      try {
+        await removeUninitializedTemporaryRoot(receipt, dependencies);
+      } catch (cleanupError) {
+        const aggregate = new AggregateError(
+          [initializationError, cleanupError],
+          "final_artifact_cleanup_initialization_and_recovery_failed",
+        );
+        attachTemporaryRootCleanupReceipt(aggregate, receipt);
+        throw aggregate;
+      }
+      throw initializationError;
+    }
+    // No trusted initial identity: do not fall back to path-only rmdir.
+    const aggregate = new AggregateError(
+      [initializationError],
+      "final_artifact_cleanup_initialization_and_recovery_failed",
+    );
+    attachTemporaryRootCleanupReceipt(aggregate, { root: resolve(rootValue) });
+    throw aggregate;
   }
 }
 
@@ -610,24 +736,47 @@ async function assertRealDirectory(path) {
   }
 }
 
-async function runBoundedCommand(command, args, options = {}) {
-  await new Promise((settle, reject) => {
-    execFile(command, args, {
+export async function runBoundedCommand(command, args, options = {}) {
+  if (options.stdin !== undefined && typeof options.stdin !== "string") {
+    throw contractError("final_artifact_command_input_invalid", "Command stdin must be text");
+  }
+  if (options.stdin !== undefined && Buffer.byteLength(options.stdin, "utf8") > COMMAND_MAX_BUFFER_BYTES) {
+    throw contractError("final_artifact_command_input_oversized", "Command stdin exceeds the fixed bound");
+  }
+  return new Promise((settle, reject) => {
+    let inputError;
+    const child = execFile(command, args, {
       encoding: "utf8",
       maxBuffer: COMMAND_MAX_BUFFER_BYTES,
       timeout: options.timeoutMs ?? COMMAND_TIMEOUT_MS,
       windowsHide: true,
-    }, (error) => {
-      if (error) {
-        reject(contractError(
+    }, (error, stdout, stderr) => {
+      const boundedOutput = typeof stdout === "string" && typeof stderr === "string"
+        && Buffer.byteLength(stdout, "utf8") <= COMMAND_MAX_BUFFER_BYTES
+        && Buffer.byteLength(stderr, "utf8") <= COMMAND_MAX_BUFFER_BYTES;
+      if (error || inputError || !boundedOutput) {
+        const cause = error && inputError ? new AggregateError([error, inputError], "command_and_stdin_failed")
+          : error ?? inputError;
+        const failure = contractError(
           "final_artifact_command_failed",
-          `${basename(command)} failed with ${String(error.code ?? "unknown")}`,
-          error,
-        ));
+          `${basename(command)} failed with ${String(error?.code ?? "unknown")}`,
+          cause,
+        );
+        Object.defineProperty(failure, "commandReceipt", { value: Object.freeze({
+          stdout: boundedOutput ? stdout : "",
+          stderr: boundedOutput ? stderr : "",
+          // Only a completed nonzero exit can retain a complete partial-attach
+          // receipt. Timeout, signal, pipe failure and maxBuffer are unknown.
+          outputComplete: boundedOutput && !inputError && Number.isInteger(error?.code)
+            && error.killed !== true && !error.signal,
+        }) });
+        reject(failure);
       } else {
-        settle();
+        settle(Object.freeze({ stdout, stderr }));
       }
     });
+    child.stdin?.on("error", error => { inputError = error; });
+    child.stdin?.end(options.stdin);
   });
 }
 

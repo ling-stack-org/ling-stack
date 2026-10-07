@@ -241,7 +241,7 @@ async function prepareSurface(
 }
 
 async function openSkillLibrary(page: Page): Promise<Locator> {
-  await page.getByLabel(/Ling Stack navigation/).getByRole("button", { name: /Settings|设置/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Settings|设置/ }).click();
   await page.getByLabel(/Settings sections|设置分组/).getByRole("button", { name: /Skill library|技能库/ }).click();
   const panel = page.locator("[data-ui2-skill-library]");
   await expect(panel).toBeVisible();

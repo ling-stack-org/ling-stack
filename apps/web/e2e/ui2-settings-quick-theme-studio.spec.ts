@@ -18,7 +18,7 @@ test("Quick Theme Studio generates and installs a token-only theme without gener
   const state = createBaseState({ approvalStatus: "expired" });
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByRole("button", { name: "Create theme" }).click();
 
@@ -43,7 +43,8 @@ test("Quick Theme Studio generates and installs a token-only theme without gener
   await page.screenshot({ animations: "disabled", path: `${evidenceDirectory}1440x960-ling-light-quick-theme.png` });
 
   await studio.getByRole("button", { name: "Install and use" }).click();
-  await expect(page.getByText("Theme installed and applied")).toBeVisible();
+  await expect(page.getByRole("region", { name: "Notifications" })
+    .getByText("Theme installed and applied", { exact: true })).toBeVisible();
   const stored = await page.evaluate(async () => {
     return await new Promise<{ artwork: unknown; assetCount: number; generationMode: unknown; profileId: unknown }>((resolve, reject) => {
       const request = indexedDB.open("ling-stack-ui2");
@@ -72,7 +73,7 @@ test("Quick Theme Studio generates and installs a token-only theme without gener
   await studio.getByRole("button", { name: "Back to themes" }).click();
   await expect(page.getByRole("button", { name: /quiet-sky/ })).toBeVisible();
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByRole("button", { name: "Create theme" }).click();
   await expect(page.getByRole("textbox", { name: "Theme name" })).toHaveValue("quiet-sky");
@@ -86,7 +87,7 @@ test("Quick Theme Studio keeps the canvas readable at 1280x800 in dark mode", as
   state.workspaceSettings.theme = "dark";
   await mockDaemon(page, state);
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Settings" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Settings" }).click();
   await page.getByLabel("Settings sections").getByRole("button", { name: /Interface preferences/ }).click();
   await page.getByRole("button", { name: "Create theme" }).click();
   const studio = page.locator("[data-ui2-theme-studio]");

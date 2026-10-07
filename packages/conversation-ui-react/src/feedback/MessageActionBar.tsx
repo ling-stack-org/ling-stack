@@ -3,10 +3,10 @@ import { Check, Loader2 } from "lucide-react";
 import { Tooltip } from "@ling-stack/ui-react";
 import {
   conversationActionAllowedByPolicy,
-  getConversationSurfacePolicy,
+  getConversationInteractionPolicy,
   type MessageActionKind,
-  type ConversationSurfaceKind,
-  type ConversationSurfacePolicy,
+  type ConversationInteractionSurfaceKind,
+  type ConversationInteractionPolicy,
 } from "@ling-stack/conversation-ui-core";
 
 export type { MessageActionKind };
@@ -29,8 +29,8 @@ export interface MessageActionBarAction {
 }
 
 export interface MessageActionBarProps {
-  readonly surface: ConversationSurfaceKind;
-  readonly policy?: Partial<ConversationSurfacePolicy>;
+  readonly surface: ConversationInteractionSurfaceKind;
+  readonly policy?: Partial<ConversationInteractionPolicy>;
   readonly className?: string;
   readonly actions: readonly MessageActionBarAction[];
   readonly visibility?: "hover-focus" | "always" | "critical";
@@ -46,7 +46,7 @@ export function MessageActionBar({
   visibility = "hover-focus",
 }: MessageActionBarProps): React.JSX.Element | null {
   const resolvedPolicy = {
-    ...getConversationSurfacePolicy(surface),
+    ...getConversationInteractionPolicy(surface),
     ...policy,
     surface,
   };

@@ -389,21 +389,19 @@ export function useChannelComposerActionsController({
     const retryingFailedSend = sendState === "failed";
     const liveDraft = draftOverride ?? composerInputRef.current?.readValue() ?? messageDraft;
     const readyAttachmentIds = pendingAttachments.flatMap((item) => item.attachment ? [item.attachment.id] : []);
-    const liveInputParts = liveDraft === messageDraft
-      ? composerInputParts
-      : parseComposerInputParts(liveDraft, {
-          cwd,
-          attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
-          teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
-          slashCommands,
-          linkPreviews: pendingLinkPreviews.map((item) => ({
-            url: item.url,
-            normalizedUrl: item.preview?.normalizedUrl,
-            title: item.preview?.title,
-            state: item.state,
-            error: item.error ?? item.preview?.errorMessage,
-          })),
-        });
+    const liveInputParts = parseComposerInputParts(liveDraft, {
+      cwd,
+      attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
+      teammateMentions: teammateOptions.map((teammate) => ({ id: teammate.id, label: teammate.label })),
+      slashCommands,
+      linkPreviews: pendingLinkPreviews.map((item) => ({
+        url: item.url,
+        normalizedUrl: item.preview?.normalizedUrl,
+        title: item.preview?.title,
+        state: item.state,
+        error: item.error ?? item.preview?.errorMessage,
+      })),
+    });
     const serializedInput = serializeComposerInputParts(liveInputParts);
     const body = serializedInput.body.trim();
     const fileRefs = composerWorkspaceFileParts(liveInputParts).map((part): ChannelMessageFileRef => ({

@@ -237,7 +237,10 @@ test("delayed policy loads and mutations cannot cross channel selection identity
     policyFixture("channel_design", ["council_builtin_review"], "council_builtin_review"),
   ];
   const control = createPolicyRouteControl();
-  control.getDelayByChannel.set("channel_engineering", 420);
+  let releaseEngineeringPolicy!: () => void;
+  control.getGateByChannel.set("channel_engineering", new Promise<void>((resolve) => {
+    releaseEngineeringPolicy = resolve;
+  }));
   await mockDaemon(page, state);
   await installPolicyRouteOverlay(page, control);
   await page.goto("/");
@@ -247,11 +250,15 @@ test("delayed policy loads and mutations cannot cross channel selection identity
   await expect(panel.getByLabel("Loading councils")).toBeVisible();
   await select.selectOption("channel_design");
   await expect(councilRow(panel, "council_builtin_review")).toContainText("Preferred");
-  await page.waitForTimeout(500);
+  const staleEngineeringResponse = page.waitForResponse((response) =>
+    response.request().method() === "GET" && new URL(response.url()).pathname === "/channels/channel_engineering/council-policy"
+  );
+  releaseEngineeringPolicy();
+  await staleEngineeringResponse;
   await expect(councilRow(panel, "council_alpha")).toHaveCount(0);
   await expect(councilRow(panel, "council_builtin_review")).toContainText("Preferred");
 
-  control.getDelayByChannel.set("channel_engineering", 0);
+  control.getGateByChannel.delete("channel_engineering");
   await select.selectOption("channel_engineering");
   await expect(councilRow(panel, "council_alpha")).toContainText("Preferred");
   control.putDelayMs = 360;
@@ -327,6 +334,7 @@ interface PolicyRouteControl {
   failNextGetMessage?: string;
   failNextPutMessage?: string;
   readonly getDelayByChannel: Map<string, number>;
+  readonly getGateByChannel: Map<string, Promise<void>>;
   readonly getRequests: string[];
   putDelayMs: number;
   readonly putBodies: Array<{ readonly channelId: string; readonly payload: Record<string, unknown> }>;
@@ -336,6 +344,7 @@ function createPolicyRouteControl(): PolicyRouteControl {
   return {
     failNextGetCount: 0,
     getDelayByChannel: new Map(),
+    getGateByChannel: new Map(),
     getRequests: [],
     putBodies: [],
     putDelayMs: 0,
@@ -353,6 +362,8 @@ async function installPolicyRouteOverlay(page: Page, control: PolicyRouteControl
     const channelId = decodeURIComponent(match[1]);
     if (request.method() === "GET") {
       control.getRequests.push(channelId);
+      const gate = control.getGateByChannel.get(channelId);
+      if (gate) await gate;
       const delay = control.getDelayByChannel.get(channelId) ?? 0;
       if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
       if (control.failNextGetCount > 0 && control.failNextGetMessage) {
@@ -480,7 +491,7 @@ async function expectTypedIconAction(page: Page, action: Locator, label: string)
 }
 
 async function openCouncilWorkspace(page: Page): Promise<Locator> {
-  await page.getByLabel(/Ling Stack navigation|Ling Stack 导航/).getByRole("button", { name: /Settings|设置/ }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Settings|设置/ }).click();
   await page.getByLabel(/Settings sections|设置分组/).getByRole("button", { name: /Council Workspace|智囊团工作区/ }).click();
   const surface = page.locator("[data-settings-workspace-tool='councils']");
   await expect(surface).toBeVisible();

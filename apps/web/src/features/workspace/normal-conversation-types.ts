@@ -7,12 +7,17 @@ import type {
   ConversationAttachment,
   ConversationPendingReplacement,
   ConversationGeneratedMedia,
+  ConversationItemV1,
+  ConversationNarrationSegment,
+  ConversationTranscriptMessage,
+  RunArtifact,
   ConversationTranscriptStatus,
   ExecutionAction,
   LingTurn,
   PermissionConfirmation,
   PermissionPreset,
   ProviderThinkingMode,
+  ReasoningSummaryMode,
   RunSession,
   RunIntervention,
   SessionPermissionMode,
@@ -21,6 +26,7 @@ import type {
 } from "../../types.js";
 import type { InlineApprovalView } from "../../lib/inline-approvals.js";
 import type { ApprovalResolution } from "../approvals/types.js";
+import type { CanonicalTranscriptProjection } from "@ling-stack/conversation-ui-core";
 
 export interface ConversationHomeProjectSelection {
   readonly projectPath?: string;
@@ -42,9 +48,11 @@ export interface ConversationHomeModelOption {
 export interface ConversationHomeModelSelection {
   readonly providerPresetId?: string;
   readonly thinkingLevel?: ProviderThinkingMode;
+  readonly reasoningSummary?: ReasoningSummaryMode;
 }
 
 export interface ConversationHomeMessage {
+  readonly canonicalItemId?: string;
   readonly id: string;
   readonly threadId?: string;
   readonly turnId?: string;
@@ -52,6 +60,8 @@ export interface ConversationHomeMessage {
   readonly role: "user" | "assistant" | "system";
   readonly authorLabel?: string;
   readonly content: string;
+  readonly contentSource?: ConversationTranscriptMessage["contentSource"];
+  readonly narrationSegments?: readonly ConversationNarrationSegment[];
   readonly errorMessage?: string;
   readonly attachments?: readonly ConversationAttachment[];
   readonly fileRefs?: readonly ChannelMessageFileRef[];
@@ -65,13 +75,23 @@ export interface ConversationHomeMessage {
 
 export interface ConversationHomeDetailContext {
   readonly threadId?: string;
+  /** Canonical Continuity snapshot; messages remain a compatibility view only. */
+  readonly conversationItems: readonly ConversationItemV1[];
+  readonly runLinks: readonly import("../../types.js").LingTurnRun[];
   readonly turns: readonly LingTurn[];
   readonly runs: readonly RunSession[];
   readonly executionActions: readonly ExecutionAction[];
   readonly approvals: readonly ApprovalRequest[];
   readonly interventions: readonly RunIntervention[];
   readonly terminalReports: readonly TerminalReportDto[];
+  readonly artifacts: readonly RunArtifact[];
+  readonly plans?: readonly import("../../types.js").ProposedPlanArtifact[];
+  readonly compactionCheckpoints?: readonly import("../../types.js").CompactionCheckpoint[];
+  readonly contextSnapshots?: readonly import("../../types.js").ConversationContextSnapshot[];
+  readonly contextSummaries?: readonly import("../../types.js").ConversationContextSummary[];
   readonly generatedMedia: readonly ConversationGeneratedMedia[];
+  /** One canonical typed projection shared by all normal conversation renderers. */
+  readonly timelineProjection?: CanonicalTranscriptProjection;
 }
 
 export interface ConversationHomeSendInput {
@@ -104,6 +124,7 @@ export interface ConversationHomeProps {
   readonly initialProjectLabel?: string;
   readonly initialProviderPresetId?: string;
   readonly initialThinkingLevel?: ProviderThinkingMode;
+  readonly initialReasoningSummary?: ReasoningSummaryMode;
   readonly initialAuthorizationMode?: AuthorizationMode;
   readonly initialWorkspaceAccessMode?: WorkspaceAccessMode;
   readonly initialPermissionMode?: SessionPermissionMode;

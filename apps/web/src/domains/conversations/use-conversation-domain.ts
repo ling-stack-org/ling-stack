@@ -14,6 +14,7 @@ import type {
   PermissionConfirmation,
   PermissionPreset,
   ProviderThinkingMode,
+  ReasoningSummaryMode,
   ResponseLanguagePreference,
   RunThinkingLevel,
   RunTool,
@@ -26,6 +27,8 @@ import {
   type ConversationErrorOperation,
 } from "./conversation-error-owner.js";
 import { createConversationDraftIdentity } from "./conversation-surface-identity.js";
+import { mergeConversationDetailSnapshots } from "./conversation-detail-merge.js";
+import { createConversationReadEpoch } from "../../lib/conversation-read-epoch.js";
 import { useConversationStreamBusyOwner } from "./use-conversation-stream-busy-owner.js";
 
 export interface ConversationSendInput {
@@ -35,6 +38,7 @@ export interface ConversationSendInput {
   readonly projectPath?: string;
   readonly providerPresetId: string;
   readonly thinkingLevel?: ProviderThinkingMode;
+  readonly reasoningSummary?: ReasoningSummaryMode;
   readonly authorizationMode?: AuthorizationMode;
   readonly workspaceAccessMode?: WorkspaceAccessMode;
   readonly permissionPreset?: PermissionPreset;
@@ -96,9 +100,11 @@ export function useConversationDomain(input: {
   const currentCwdRef = useRef(input.cwd.trim());
   const conversationOwnerCwdRef = useRef(input.cwd.trim());
   const selectionSequenceRef = useRef(0);
+  const selectionInFlightRef = useRef<number | undefined>(undefined);
   const threadListLoadingOperationsRef = useRef(0);
   currentCwdRef.current = input.cwd.trim();
   const conversationErrors = useConversationErrorOwner();
+  const detailReadEpochRef = useRef(createConversationReadEpoch());
   const conversationStreamBusyOwner = useConversationStreamBusyOwner();
 
   const beginThreadListLoading = useCallback((): void => {
@@ -125,7 +131,9 @@ export function useConversationDomain(input: {
     const workspaceCwd = input.cwd.trim();
     if (conversationOwnerCwdRef.current === workspaceCwd) return;
     conversationOwnerCwdRef.current = workspaceCwd;
+    detailReadEpochRef.current.invalidate();
     selectionSequenceRef.current += 1;
+    selectionInFlightRef.current = undefined;
     const draftGeneration = conversationDraftGenerationRef.current + 1;
     conversationDraftGenerationRef.current = draftGeneration;
     commitSelectedConversationThreadId("");
@@ -161,7 +169,9 @@ export function useConversationDomain(input: {
   }, [beginThreadListLoading, conversationErrors, finishThreadListLoading, input.cwd]);
 
   const openNewConversation = useCallback((): void => {
+    detailReadEpochRef.current.invalidate();
     selectionSequenceRef.current += 1;
+    selectionInFlightRef.current = undefined;
     const draftGeneration = conversationDraftGenerationRef.current + 1;
     conversationDraftGenerationRef.current = draftGeneration;
     commitSelectedConversationThreadId("");
@@ -185,6 +195,8 @@ export function useConversationDomain(input: {
       return false;
     }
     const selectionSequence = ++selectionSequenceRef.current;
+    selectionInFlightRef.current = selectionSequence;
+    const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, threadId]));
     commitConversationSurfaceIdentity(threadId);
     const operation = conversationErrors.begin({
       workspaceCwd,
@@ -195,16 +207,18 @@ export function useConversationDomain(input: {
     conversationErrors.clear(operation);
     try {
       const detail = await getConversation(workspaceCwd, threadId);
+      if (detail.thread.id !== threadId) throw new Error("Conversation response scope mismatch.");
       conversationErrors.clear(operation);
       if (
-        selectionSequence !== selectionSequenceRef.current
+        !detailReadEpochRef.current.isCurrent(detailRead)
+        || selectionSequence !== selectionSequenceRef.current
         || currentCwdRef.current !== workspaceCwd
         || !shouldCommit()
       ) {
         return false;
       }
       commitSelectedConversationThreadId(threadId);
-      setSelectedConversationDetail(detail);
+      setSelectedConversationDetail(mergeConversationDetailSnapshots(undefined, detail));
       commitConversationSurfaceIdentity(threadId);
       return true;
     } catch (error) {
@@ -217,13 +231,19 @@ export function useConversationDomain(input: {
         return false;
       }
       return false;
+    } finally {
+      if (selectionInFlightRef.current === selectionSequence) {
+        selectionInFlightRef.current = undefined;
+      }
     }
   }, [commitConversationSurfaceIdentity, commitSelectedConversationThreadId, conversationErrors, input.cwd, openNewConversation]);
 
   const refreshSelectedConversation = useCallback(async (cwd = input.cwd): Promise<void> => {
+    // A background refresh must not supersede a navigation selection read.
+    if (selectionInFlightRef.current !== undefined) return;
     const workspaceCwd = cwd.trim();
     const requestedThreadId = selectedConversationThreadIdRef.current;
-    if (!workspaceCwd || !requestedThreadId) {
+    if (!workspaceCwd || !requestedThreadId || conversationSurfaceIdentityRef.current !== requestedThreadId) {
       return;
     }
     const operation = conversationErrors.begin({
@@ -232,16 +252,19 @@ export function useConversationDomain(input: {
       identity: requestedThreadId,
       scope: "refresh",
     });
+    const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, requestedThreadId]));
     conversationErrors.clear(operation);
     try {
       const detail = await getConversation(workspaceCwd, requestedThreadId);
+      if (detail.thread.id !== requestedThreadId) throw new Error("Conversation response scope mismatch.");
       conversationErrors.clear(operation);
       if (
-        conversationErrors.isCurrent(operation)
+        detailReadEpochRef.current.isCurrent(detailRead)
+        && conversationErrors.isCurrent(operation)
         && currentCwdRef.current === workspaceCwd
         && selectedConversationThreadIdRef.current === requestedThreadId
       ) {
-        setSelectedConversationDetail(detail);
+        setSelectedConversationDetail((current) => mergeConversationDetailSnapshots(current, detail));
       }
     } catch (error) {
       conversationErrors.report(operation, error instanceof Error ? error.message : String(error));
@@ -399,6 +422,7 @@ export function useConversationDomain(input: {
         projectPath: message.projectPath,
         providerPresetId: message.providerPresetId,
         thinkingLevel: normalizeThinkingLevel(message.thinkingLevel),
+        reasoningSummary: message.reasoningSummary,
         authorizationMode: message.authorizationMode,
         workspaceAccessMode: message.workspaceAccessMode,
         permissionPreset: message.permissionPreset,
@@ -414,7 +438,7 @@ export function useConversationDomain(input: {
       let evidenceRefreshPromise: Promise<void> | undefined;
       let evidenceRefreshRequested = false;
       const refreshActiveConversationEvidence = (): Promise<void> => {
-        if (!activeThreadId) {
+        if (!activeThreadId || !canCommitToSurface(activeThreadId)) {
           return Promise.resolve();
         }
         if (evidenceRefreshPromise) {
@@ -422,11 +446,13 @@ export function useConversationDomain(input: {
           return evidenceRefreshPromise;
         }
         const requestedThreadId = activeThreadId;
+        const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, requestedThreadId]));
         evidenceRefreshPromise = (async () => {
           try {
             const detail = await getConversation(workspaceCwd, requestedThreadId);
-            if (requestedThreadId === activeThreadId && canCommitToSurface(requestedThreadId)) {
-              setSelectedConversationDetail((current) => mergeConversationDetailSnapshot(current, detail));
+            if (detail.thread.id !== requestedThreadId) throw new Error("Conversation response scope mismatch.");
+            if (detailReadEpochRef.current.isCurrent(detailRead) && requestedThreadId === activeThreadId && canCommitToSurface(requestedThreadId)) {
+              setSelectedConversationDetail((current) => mergeConversationDetailSnapshots(current, detail));
             }
           } catch {
             // The terminal refresh remains authoritative if an incremental refresh races startup.
@@ -472,7 +498,6 @@ export function useConversationDomain(input: {
             handlers.onMessageAccepted?.(event);
             messageAccepted = true;
             if (event.activeReply) handlers.onReplyLinked?.(event.activeReply);
-            void refreshConversationThreads(workspaceCwd);
           }
           return;
         }
@@ -519,10 +544,7 @@ export function useConversationDomain(input: {
           if (event.assistantMessage && canCommitToSurface(activeThreadId)) {
             setSelectedConversationDetail((current) => mergeConversationMessages(current, workspaceCwd, event.thread, [event.assistantMessage as ConversationTranscriptMessage]));
           }
-          if (canCommitToSurface(activeThreadId)) {
-            handlers.onBlocked?.(event);
-            void refreshConversationThreads(workspaceCwd);
-          }
+          if (canCommitToSurface(activeThreadId)) handlers.onBlocked?.(event);
           return;
         }
         if (parsed.event === "error") {
@@ -548,7 +570,7 @@ export function useConversationDomain(input: {
       evidenceRefreshRequested = false;
       await evidenceRefreshPromise;
       await refreshConversationThreads(workspaceCwd);
-      if (activeThreadId) {
+      if (activeThreadId && canCommitToSurface(activeThreadId)) {
         const refreshOperation = conversationErrors.begin({
           workspaceCwd,
           surface: "thread",
@@ -556,10 +578,14 @@ export function useConversationDomain(input: {
           scope: "refresh",
         });
         conversationErrors.clear(refreshOperation);
+        const detailRead = detailReadEpochRef.current.begin(JSON.stringify([workspaceCwd, activeThreadId]));
         try {
           const detail = await getConversation(workspaceCwd, activeThreadId);
+          if (detail.thread.id !== activeThreadId) throw new Error("Conversation response scope mismatch.");
           conversationErrors.clear(refreshOperation);
-          if (canCommitToSurface(activeThreadId)) setSelectedConversationDetail(detail);
+          if (detailReadEpochRef.current.isCurrent(detailRead) && canCommitToSurface(activeThreadId)) {
+            setSelectedConversationDetail((current) => mergeConversationDetailSnapshots(current, detail));
+          }
         } catch (error) {
           conversationErrors.report(refreshOperation, error instanceof Error ? error.message : String(error));
         }
@@ -621,7 +647,8 @@ export function useConversationDomain(input: {
 }
 
 function conversationEventNeedsDetailRefresh(type: ConversationStreamRunEvent["event"]["type"]): boolean {
-  return type === "tool_start"
+  return type === "assistant_reasoning_summary"
+    || type === "tool_start"
     || type === "tool_update"
     || type === "tool_end"
     || type === "approval_requested"
@@ -636,23 +663,6 @@ function conversationEventNeedsDetailRefresh(type: ConversationStreamRunEvent["e
     || type === "run_continuation_starting"
     || type === "run_continuation_started"
     || type === "run_intervention_failed";
-}
-
-function mergeConversationDetailSnapshot(
-  current: ConversationDetailResponse | undefined,
-  snapshot: ConversationDetailResponse,
-): ConversationDetailResponse {
-  if (!current || current.thread.id !== snapshot.thread.id) {
-    return snapshot;
-  }
-  const messages = new Map(snapshot.messages.map((message) => [conversationMessageMergeKey(message), message]));
-  for (const message of current.messages) {
-    messages.set(conversationMessageMergeKey(message), message);
-  }
-  return {
-    ...snapshot,
-    messages: [...messages.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
-  };
 }
 
 function formatConversationArchiveError(
@@ -686,11 +696,26 @@ function mergeConversationMessages(
     cwd: current?.cwd ?? cwd,
     thread: thread ?? current?.thread ?? messagesThreadFallback(messages),
     turns: current?.turns ?? [],
+    conversationItems: current?.conversationItems ?? [],
+    userInputs: current?.userInputs ?? [],
+    supersessionTombstones: current?.supersessionTombstones ?? {
+      turnIds: [],
+      runIds: [],
+      responseMessageIds: [],
+    },
+    runLinks: current?.runLinks ?? [],
     runs: current?.runs ?? [],
+    reasoningSummaries: current?.reasoningSummaries ?? [],
     executionActions: current?.executionActions ?? [],
     approvals: current?.approvals ?? [],
+    approvalCheckpoints: current?.approvalCheckpoints ?? [],
     interventions: current?.interventions ?? [],
     terminalReports: current?.terminalReports ?? [],
+    artifacts: current?.artifacts ?? [],
+    plans: current?.plans ?? [],
+    compactionCheckpoints: current?.compactionCheckpoints ?? [],
+    contextSnapshots: current?.contextSnapshots ?? [],
+    contextSummaries: current?.contextSummaries ?? [],
     messages: [...byId.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
     generatedMedia: current?.generatedMedia ?? [],
     defaults: current?.defaults ?? {},

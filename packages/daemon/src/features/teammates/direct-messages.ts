@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import type { TeammateDirectMessage } from "@ling-stack/contracts";
 import {
   isLingAgentTeammateId,
   type AiTeammate,
@@ -7,7 +8,6 @@ import {
   type PermissionPreset,
   type RunStore,
   type SkillOptimizationMode,
-  type TeammateDirectMessage,
   type TeammateDirectThread,
   type WorkspaceAccessMode,
 } from "@ling-stack/core";
@@ -34,6 +34,9 @@ import {
 } from "../conversations/supersession-projection.js";
 import { projectConversationActiveReplyTarget } from "../conversations/active-reply-target.js";
 import { buildConversationGeneratedMediaProjection } from "../media/conversation-projection.js";
+import { projectTeammateDirectMessageNarration } from "./direct-message-narration.js";
+import { buildTeammateDirectTranscript } from "./direct-transcript.js";
+import { collectTeammateDirectRunIds, isTeammateDirectMessageInScope } from "./direct-run-owner.js";
 
 export type CreateTeammateDirectAiReply = (input: {
   readonly store: RunStore;
@@ -153,22 +156,27 @@ export async function handleTeammateDirectMessagesCollection(
         beforeMessageId: url.searchParams.get("beforeMessageId") ?? undefined,
         limit: readOptionalIntegerQuery(url, "limit", 1),
       });
+      const scopedMessages = page.messages.filter((message) => isTeammateDirectMessageInScope(message, { teammateId, directThreadId: thread.id }));
       const visibleMessages = url.searchParams.get("includeSuperseded") === "true"
-        ? page.messages
-        : filterSupersededTeammateDirectMessages(page.messages, buildConversationSupersessionProjection(store, {
+        ? scopedMessages
+        : filterSupersededTeammateDirectMessages(scopedMessages, buildConversationSupersessionProjection(store, {
             surfaces: ["teammate_direct"],
             ownerId: teammateId,
             laneId: thread.id,
           }));
-      const messages = enrichTeammateDirectMessagesWithWebEvidence(store, visibleMessages.map((message) => projectTeammateDirectMessageRevisionMetadata(store, message)));
+      const messages = enrichTeammateDirectMessagesWithWebEvidence(store, visibleMessages.map((message) => projectTeammateDirectMessageRevisionMetadata(store, message)))
+        .map((message) => projectTeammateDirectMessageNarration(store, message));
       writeJson(response, 200, {
         cwd,
         teammateId,
         thread,
         messages,
+        timeline: buildTeammateDirectTranscript(store, teammateId, {
+          includeSuperseded: url.searchParams.get("includeSuperseded") === "true",
+        }),
         generatedMedia: buildConversationGeneratedMediaProjection({
           store,
-          runIds: messages.flatMap((message) => message.linkedRunId ? [message.linkedRunId] : []),
+          runIds: collectTeammateDirectRunIds(store, messages, { teammateId, directThreadId: thread.id }),
         }),
         hasMore: page.hasMore,
         nextBeforeMessageId: page.nextBeforeMessageId,
@@ -215,7 +223,7 @@ export async function handleTeammateDirectMessagesCollection(
             workspace: undefined,
           })
         : undefined;
-      writeJson(response, 201, aiReply ? { message, aiReply: enrichTeammateDirectMessageWithWebEvidence(store, aiReply) } : { message });
+      writeJson(response, 201, aiReply ? { message, aiReply: projectTeammateDirectMessageNarration(store, enrichTeammateDirectMessageWithWebEvidence(store, aiReply)) } : { message });
       return;
     }
 
@@ -311,7 +319,7 @@ export async function handleTeammateDirectMessageStream(
           activeDirectReplies?.register({ ...handle, abortController });
         },
         stream: {
-          onReady: (aiReply) => safeWriteSse("ready", { message, aiReply }),
+          onReady: (aiReply) => safeWriteSse("ready", { message, aiReply: projectTeammateDirectMessageNarration(store, aiReply) }),
           onRunLinked: (aiReply) => {
             const activeReply = projectConversationActiveReplyTarget({
               store,
@@ -329,10 +337,11 @@ export async function handleTeammateDirectMessageStream(
             messageId: aiReply.id,
             delta,
             body: aiReply.body,
+            narrationSegments: aiReply.narrationSegments,
           }),
-          onDone: (aiReply) => safeWriteSse("done", { message, aiReply: enrichTeammateDirectMessageWithWebEvidence(store, aiReply) }),
+          onDone: (aiReply) => safeWriteSse("done", { message, aiReply: projectTeammateDirectMessageNarration(store, enrichTeammateDirectMessageWithWebEvidence(store, aiReply)) }),
           onBlocked: (aiReply) => {
-            const enrichedReply = enrichTeammateDirectMessageWithWebEvidence(store, aiReply);
+            const enrichedReply = projectTeammateDirectMessageNarration(store, enrichTeammateDirectMessageWithWebEvidence(store, aiReply));
             safeWriteSse(aiReply.status === "failed" ? "error" : "blocked", { message, aiReply: enrichedReply, error: aiReply.errorMessage });
           },
         },

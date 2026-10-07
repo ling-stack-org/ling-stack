@@ -35,6 +35,7 @@ export type TaskStatus =
   | "todo"
   | "claimed"
   | "running"
+  | "waiting_for_input"
   | "blocked"
   | "review"
   | "done"
@@ -45,6 +46,7 @@ export const taskStatuses: readonly TaskStatus[] = [
   "todo",
   "claimed",
   "running",
+  "waiting_for_input",
   "blocked",
   "review",
   "done",
@@ -75,6 +77,11 @@ export const responseLanguagePreferences: readonly ResponseLanguagePreference[] 
 export type LingConversationTone = "friendly" | "pragmatic" | "none";
 
 export const lingConversationTones: readonly LingConversationTone[] = ["friendly", "pragmatic", "none"];
+
+/** Provider-designated public reasoning summary verbosity; never raw chain-of-thought. */
+export type ReasoningSummaryMode = "auto" | "concise" | "detailed" | "none";
+
+export const reasoningSummaryModes: readonly ReasoningSummaryMode[] = ["auto", "concise", "detailed", "none"];
 
 export const DEFAULT_LING_CONVERSATION_TONE: LingConversationTone = "pragmatic";
 
@@ -492,6 +499,7 @@ export interface WorkspaceSettings {
   readonly locale?: InterfaceLocale;
   readonly responseLanguage?: ResponseLanguagePreference;
   readonly lingConversationTone?: LingConversationTone;
+  readonly defaultReasoningSummary?: ReasoningSummaryMode;
   readonly defaultProviderPresetId?: string;
   readonly mediaGenerationDefaults?: import("./media-generation-routing-types.js").WorkspaceMediaGenerationDefaults;
   readonly defaultAuthorizationMode?: AuthorizationMode;
@@ -510,6 +518,7 @@ export interface UpdateWorkspaceSettingsInput {
   readonly locale?: InterfaceLocale | null;
   readonly responseLanguage?: ResponseLanguagePreference | null;
   readonly lingConversationTone?: LingConversationTone | null;
+  readonly defaultReasoningSummary?: ReasoningSummaryMode | null;
   readonly defaultProviderPresetId?: string | null;
   readonly mediaGenerationDefaults?: import("./media-generation-routing-types.js").WorkspaceMediaGenerationDefaults | null;
   readonly defaultAuthorizationMode?: AuthorizationMode | null;
@@ -981,6 +990,8 @@ export type TeammateDirectMessageStatus = "pending" | "ready" | "blocked" | "fai
 
 export type TeammateDirectMessageAuthorType = "local-user" | "ai-teammate" | "system";
 
+export type TeammateDirectMessageSystemPurpose = "governance_notification" | "execution_control";
+
 export interface ConversationPendingReplacement {
   readonly supersessionId: string;
   readonly idempotencyKey: string;
@@ -994,6 +1005,8 @@ export interface TeammateDirectMessage {
   readonly teammateId: string;
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
+  /** Host-issued purpose for system rows. Unknown system rows are never display authority. */
+  readonly systemPurpose?: TeammateDirectMessageSystemPurpose;
   readonly body: string;
   readonly attachmentIds: readonly string[];
   readonly linkPreviewIds: readonly string[];
@@ -1017,6 +1030,7 @@ export interface CreateTeammateDirectMessageInput {
   readonly teammateId: string;
   readonly authorType: TeammateDirectMessageAuthorType;
   readonly authorId?: string;
+  readonly systemPurpose?: TeammateDirectMessageSystemPurpose;
   readonly body: string;
   readonly attachmentIds?: readonly string[];
   readonly linkPreviewIds?: readonly string[];
@@ -1486,6 +1500,8 @@ export interface ChannelRequirementShaping {
 
 export interface ChannelExecutionProposal {
   readonly id: string;
+  /** Monotonic durable version used for proposal edits and execution claims. */
+  readonly revision: number;
   readonly workspaceId: string;
   readonly channelId: string;
   readonly sourceMessageId: string;
@@ -1531,6 +1547,10 @@ export interface CreateChannelExecutionProposalInput {
 }
 
 export interface UpdateChannelExecutionProposalInput {
+  /** When provided, the mutation must win a durable compare-and-swap. */
+  readonly expectedRevision?: number;
+  /** Internal owner token for completing a confirmation claim. */
+  readonly confirmationClaimId?: string;
   readonly title?: string;
   readonly prompt?: string;
   readonly assigneeTeammateId?: string;
@@ -1547,6 +1567,12 @@ export interface UpdateChannelExecutionProposalInput {
   readonly errorMessage?: string | null;
   readonly blocker?: WorkflowParticipantProviderBlockerV1 | null;
 }
+
+export type ChannelExecutionProposalClaimResult =
+  | { readonly kind: "claimed"; readonly proposal: ChannelExecutionProposal }
+  | { readonly kind: "not_found" }
+  | { readonly kind: "stale"; readonly proposal: ChannelExecutionProposal }
+  | { readonly kind: "busy"; readonly proposal: ChannelExecutionProposal };
 
 export interface ListChannelExecutionProposalsOptions {
   readonly channelId: string;
@@ -1733,6 +1759,42 @@ export interface CreateChannelDecisionInput {
   readonly createdBy: string;
 }
 
+export type CreateSupersedingChannelDecisionInput = CreateChannelDecisionInput & {
+  readonly supersedesDecisionId: string;
+};
+
+export interface CreateOrReuseSupersedingChannelDecisionResult {
+  readonly decision: ChannelDecision;
+  readonly reused: boolean;
+}
+
+export class ChannelDecisionSupersessionConflictError extends Error {
+  readonly code = "decision_supersession_conflict";
+
+  constructor(
+    readonly supersededDecisionId: string,
+    readonly successorDecisionId?: string,
+  ) {
+    super(successorDecisionId
+      ? `Channel decision ${supersededDecisionId} already has a different successor: ${successorDecisionId}`
+      : `Channel decision is not active and cannot be superseded: ${supersededDecisionId}`);
+    this.name = "ChannelDecisionSupersessionConflictError";
+  }
+}
+
+export class ChannelDecisionStatusConflictError extends Error {
+  readonly code = "decision_status_conflict";
+
+  constructor(
+    readonly decisionId: string,
+    readonly expectedStatus: ChannelDecisionStatus,
+    readonly actualStatus: ChannelDecisionStatus,
+  ) {
+    super(`Channel decision ${decisionId} must be ${expectedStatus}, but is ${actualStatus}`);
+    this.name = "ChannelDecisionStatusConflictError";
+  }
+}
+
 export interface UpdateChannelDecisionInput {
   readonly title?: string;
   readonly decision?: string;
@@ -1740,6 +1802,8 @@ export interface UpdateChannelDecisionInput {
   readonly alternatives?: readonly string[];
   readonly status?: ChannelDecisionStatus;
 }
+
+export type RejectActiveChannelDecisionInput = Omit<UpdateChannelDecisionInput, "status">;
 
 export interface ListChannelDecisionsOptions {
   readonly channelId: string;
@@ -1874,6 +1938,7 @@ export type ChannelWorkflowStatus =
   | "ready"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -1895,6 +1960,7 @@ export type ChannelWorkflowStepStatus =
   | "claimed"
   | "running"
   | "waiting_for_approval"
+  | "waiting_for_input"
   | "blocked"
   | "succeeded"
   | "failed"
@@ -2416,6 +2482,19 @@ export interface CreateChannelWorkflowInput {
   readonly status?: ChannelWorkflowStatus;
   readonly createdBy: string;
   readonly metadata?: ChannelWorkflowMetadata;
+}
+
+export interface CreateOrReuseChannelHandoffWorkflowInput {
+  readonly channelId: string;
+  readonly sourceHandoffId: string;
+  readonly workflow: Omit<CreateChannelWorkflowInput, "channelId" | "sourceHandoffId">;
+  readonly workflowStep: Omit<CreateChannelWorkflowStepInput, "workflowId" | "sourceHandoffId">;
+}
+
+export interface CreateOrReuseChannelHandoffWorkflowResult {
+  readonly workflow: ChannelWorkflow;
+  readonly workflowStep: ChannelWorkflowStep;
+  readonly reused: boolean;
 }
 
 export interface UpdateChannelWorkflowInput {

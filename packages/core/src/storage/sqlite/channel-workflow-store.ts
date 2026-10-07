@@ -42,6 +42,8 @@ import {
   type ChannelWorkflowStepStatus,
   type CreateChannelWorkflowInput,
   type CreateChannelWorkflowStepInput,
+  type CreateOrReuseChannelHandoffWorkflowInput,
+  type CreateOrReuseChannelHandoffWorkflowResult,
   type CreateWorkflowHandoffIntentInput,
   type CreateWorkflowSelectorDecisionInput,
   type ListChannelWorkflowsOptions,
@@ -586,8 +588,63 @@ export class SqliteChannelWorkflowStore {
     return created;
   }
 
+  createOrReuseChannelHandoffWorkflow(
+    input: CreateOrReuseChannelHandoffWorkflowInput,
+    now: string,
+  ): CreateOrReuseChannelHandoffWorkflowResult {
+    this.context.database.exec("BEGIN IMMEDIATE;");
+    try {
+      this.ports.assertChannelExists(input.channelId);
+      this.ports.assertHandoffInChannel(input.channelId, input.sourceHandoffId);
+      const existingWorkflow = this.getChannelWorkflowForHandoff(input.channelId, input.sourceHandoffId);
+      if (existingWorkflow) {
+        const existingStep = this.listChannelWorkflowSteps({ workflowId: existingWorkflow.id, complete: true })
+          .find((step) => step.sourceHandoffId === input.sourceHandoffId)
+          ?? this.createChannelWorkflowStep(
+            {
+              ...input.workflowStep,
+              workflowId: existingWorkflow.id,
+              sourceHandoffId: input.sourceHandoffId,
+            },
+            now,
+          );
+        this.context.database.exec("COMMIT;");
+        return { workflow: existingWorkflow, workflowStep: existingStep, reused: true };
+      }
+
+      const workflow = this.createChannelWorkflow(
+        {
+          ...input.workflow,
+          channelId: input.channelId,
+          sourceHandoffId: input.sourceHandoffId,
+        },
+        now,
+      );
+      const workflowStep = this.createChannelWorkflowStep(
+        {
+          ...input.workflowStep,
+          workflowId: workflow.id,
+          sourceHandoffId: input.sourceHandoffId,
+        },
+        now,
+      );
+      this.context.database.exec("COMMIT;");
+      return { workflow, workflowStep, reused: false };
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.context.database);
+      throw error;
+    }
+  }
+
   getChannelWorkflow(id: string): ChannelWorkflow | undefined {
     const row = this.context.database.prepare(channelWorkflowSelectSql("WHERE id = ?")).get(id);
+    return row ? mapChannelWorkflow(row as Record<string, SQLOutputValue>) : undefined;
+  }
+
+  getChannelWorkflowForHandoff(channelId: string, sourceHandoffId: string): ChannelWorkflow | undefined {
+    const row = this.context.database
+      .prepare(channelWorkflowSelectSql("WHERE workspace_id = ? AND channel_id = ? AND source_handoff_id = ? LIMIT 1"))
+      .get(DEFAULT_WORKSPACE_ID, channelId, sourceHandoffId);
     return row ? mapChannelWorkflow(row as Record<string, SQLOutputValue>) : undefined;
   }
 

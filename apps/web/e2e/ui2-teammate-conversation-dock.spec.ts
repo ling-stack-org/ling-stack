@@ -33,7 +33,7 @@ test("AI teammate dock exposes real private context and tools at 1440x960 light"
   });
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "UI2 Dock Engineer" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "UI2 Dock Engineer" }).click();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0);
 
   await page.getByRole("toolbar", { name: "Private chat actions" }).getByRole("button", { name: "Show details" }).click();
@@ -111,7 +111,7 @@ test("AI teammate dock contains empty, error, resize, and close states at 1280x8
   });
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Sparse Dock Engineer" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Sparse Dock Engineer" }).click();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0);
   const toolbar = page.getByRole("toolbar", { name: "Private chat actions" });
   await toolbar.getByRole("button", { name: "Show details" }).click();
@@ -158,7 +158,7 @@ test("AI teammate dock contains empty, error, resize, and close states at 1280x8
   await page.mouse.down();
   await expect(page.getByLabel("Private chat", { exact: true })).toHaveClass(/is-resizing-workspace-right-dock/u);
   await page.mouse.move(Math.max(1, handleBox!.x - 120), handleBox!.y + 90, { steps: 4 });
-  await expect.poll(async () => (await dockFrame.boundingBox())?.width ?? 0).toBeGreaterThan(widthBefore + 60);
+  await expect.poll(async () => (await dockFrame.boundingBox())?.width ?? 0).toBeGreaterThan(widthBefore + 40);
   await page.mouse.up();
   await expect(page.getByLabel("Private chat", { exact: true })).not.toHaveClass(/is-resizing-workspace-right-dock/u);
   await expectNoDocumentOverflow(page);

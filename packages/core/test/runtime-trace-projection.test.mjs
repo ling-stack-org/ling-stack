@@ -76,7 +76,7 @@ test("runtime trace projection creates deterministic spans from durable records"
     ],
     executionActions: [
       {
-        id: "approval:approval_1",
+        id: "tool:run_1:tool_1",
         workspaceId: "workspace_default",
         threadId: "thread_1",
         runId: "run_1",
@@ -94,6 +94,23 @@ test("runtime trace projection creates deterministic spans from durable records"
         createdAt: "2026-06-19T00:00:01.500Z",
         resolvedAt: "2026-06-19T00:00:01.800Z",
         completedAt: "2026-06-19T00:00:01.800Z",
+      },
+    ],
+    approvals: [
+      {
+        id: "approval_1",
+        runId: "run_1",
+        toolCallId: "tool_1",
+        actionType: "bash",
+        risk: "medium",
+        title: "Approve bash command",
+        description: "Do not expose raw command text.",
+        payload: { type: "bash", cwd: "/tmp/project", command: "echo secret-value", riskFlags: [] },
+        status: "approved",
+        createdAt: "2026-06-19T00:00:01.500Z",
+        resolvedAt: "2026-06-19T00:00:01.800Z",
+        resolvedBy: "local-user",
+        decisionKind: "approve_once",
       },
     ],
     transitions: [

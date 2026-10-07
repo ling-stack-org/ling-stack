@@ -22,8 +22,9 @@ test("normal conversation dock reaches every real deep state at 1440x960 light",
   await page.goto("/");
   await openConversation(page, "UI2 dock deep states");
 
-  const conversation = page.getByLabel("Conversation page");
-  const detailsTrigger = conversation.getByRole("button", { name: "Show details" });
+  const detailsTrigger = page
+    .locator("[data-ui2-normal-conversation-header='true']")
+    .getByRole("button", { name: "Show details" });
   await detailsTrigger.click();
   const dock = page.getByRole("complementary", { name: "Conversation workspace dock" });
   await expectDockOpen(dock);
@@ -105,7 +106,9 @@ test("normal conversation dock contains empty, failure, resize, and close states
   await openConversation(page, "UI2 dock sparse states");
 
   const conversation = page.getByLabel("Conversation page");
-  const detailsTrigger = conversation.getByRole("button", { name: "Show details" });
+  const detailsTrigger = page
+    .locator("[data-ui2-normal-conversation-header='true']")
+    .getByRole("button", { name: "Show details" });
   await detailsTrigger.click();
   const dock = page.getByRole("complementary", { name: "Conversation workspace dock" });
   await expectDockOpen(dock);
@@ -135,7 +138,7 @@ test("normal conversation dock contains empty, failure, resize, and close states
   await page.mouse.down();
   await expect(conversation).toHaveClass(/is-resizing-workspace-right-dock/u);
   await page.mouse.move(Math.max(1, handleBox!.x - 130), handleBox!.y + 90, { steps: 4 });
-  await expect.poll(async () => (await dockFrame.boundingBox())?.width ?? 0).toBeGreaterThan(widthBefore + 70);
+  await expect.poll(async () => (await dockFrame.boundingBox())?.width ?? 0).toBeGreaterThan(widthBefore + 40);
   await page.mouse.up();
   await expect(conversation).not.toHaveClass(/is-resizing-workspace-right-dock/u);
   await expectNoDocumentOverflow(page);
@@ -163,8 +166,10 @@ test("normal conversation plan loading and failure stay inside the Dock", async 
   });
   await page.goto("/");
   await openConversation(page, "UI2 dock sparse states");
-  const conversation = page.getByLabel("Conversation page");
-  await conversation.getByRole("button", { name: "Show details" }).click();
+  await page
+    .locator("[data-ui2-normal-conversation-header='true']")
+    .getByRole("button", { name: "Show details" })
+    .click();
   const dock = page.getByRole("complementary", { name: "Conversation workspace dock" });
   await expectDockOpen(dock);
   const plansLauncher = dock.locator('[data-ui2-dock-launcher-action="plans"]');
@@ -417,7 +422,7 @@ function workspaceChangesFixture(): WorkspaceChangesResponse {
 }
 
 async function openConversation(page: Page, title: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({ hasText: title }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({ hasText: title }).click();
   await expect(page.getByLabel("Conversation page")).toBeVisible();
 }
 

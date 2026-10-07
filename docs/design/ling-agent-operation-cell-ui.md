@@ -1,7 +1,8 @@
 # Ling Agent Operation Cell UI
 
-Status: implementation design patch for conversation UI
+Status: historical baseline; superseded by typed transcript design
 Date: 2026-06-14
+Superseded: 2026-08-30
 Scope: channel conversation feed, Ling Agent session rows, multi-agent collaboration
 projection, operation evidence, and interruption entry points
 
@@ -14,6 +15,17 @@ Related docs:
 - [Multi-Agent App Detailed Design](multi-agent-app-detailed-design.md)
 - [Conversation Performance Deferral And Virtualization](conversation-performance-deferral-and-virtualization.md)
 - [Ling Agent TerminalReport Protocol](ling-agent-terminal-report-protocol.md)
+- [Ling Typed Transcript Detailed Design](conversation-typed-transcript-detailed-design.md)
+- [Conversation Codex-Parity Visual Specification](conversation-codex-parity-visual-spec.md)
+
+## 2026-08-30 Supersession Notice
+
+本文保留早期 OperationCell、协作摘要和 Codex 对照的背景，但不再是新实现的渲染
+契约。`OperationCell` 在 typed transcript 中只对应 `TimelineFactRow`；
+`ConversationTimeline` 是普通会话、队友私聊、频道和子 Agent 的唯一 feed renderer。
+本文中“再追加 coordinator summary”“父 WorkCell 拥有完成状态”或“route-local
+activity row”的段落均视为历史方案，不能据此新增 UI owner。事实完成、fan-in、审批
+和恢复必须以 typed transcript 设计及其 atomic evidence 规则为准。
 
 ## Summary
 
@@ -1402,40 +1414,22 @@ Surface-specific copy rules:
 | Floating run popover | `{actor} · {elapsed} · {latest action}` | one line plus optional action icon | history, logs, completed summaries |
 | Inline expanded detail | semantic evidence bullets | bounded section | unbounded logs, provider metadata |
 | Explicit raw/debug detail | technical labels and exact payloads | folded sections | repeated coordinator summary |
-| Composer approval gate | action + target | one compact panel | vague `continue?` prompts, technical metadata |
+| Approval modal | action + scope + consequence | title plus options | vague `continue?` prompts |
 
 Approval copy must be explicit, for example `等待审批：运行 pnpm install`.
 
-Pending runtime approval decisions are owned by the conversation that created them.
-`ApprovalCell` owns only the compact pending marker and the immutable approved/denied
-history after resolution. Channel, normal conversation, and teammate private chat render
-one shared approval gate in the owning Composer slot. The gate handles one decision at a
-time and preserves the existing risk/time order, while Sidebar navigation and unrelated
-conversation Composers remain usable.
+Pending runtime approval decisions are owned by a shared blocking dialog outside the
+Composer and virtual transcript. `ApprovalCell` owns only the compact pending marker and
+the immutable approved/denied history after resolution. Channel, normal conversation,
+and teammate private chat must not render approval action cards inside their Composer.
+The dialog handles one decision at a time, preserves the existing risk/time order, and
+cannot be dismissed without approve or deny.
 
-When the Composer gate owns a pending approval, the owning `OperationCell` is replaced by one
+When the dialog owns a pending approval, the owning `OperationCell` is replaced by one
 non-interactive marker that uses the same localized action sentence. It cannot expand
 and cannot expose approval titles, raw permission ids, evidence groups, request ids, or
 duplicate approval controls. This rule is a projection boundary, not a CSS visibility
 rule. Complete data remains available in explicit Run detail and audit surfaces.
-
-### Operation-Shell Box Model
-
-`conversation-operation-shell` is a layout-neutral grid and deliberately has no outer
-padding. Its direct visual payload must therefore use one of three owned slots:
-
-- `head` for the toggle/status row;
-- `body` for expandable semantic evidence;
-- `static content` for non-expandable status such as a Composer-owned pending approval.
-
-The static-content slot applies the shared operation-cell inline inset and `min-width: 0`
-before rendering its marker. This guarantees symmetric left/right breathing room without
-changing the alignment of ordinary operation rows. Pending markers must not recover spacing
-with one-off margins, viewport-specific selectors, or parent-state overrides.
-
-Runtime approvals and actionable channel task proposals use the same
-`ConversationDecisionGate` shell in the owning Composer slot. The feed keeps only compact,
-non-interactive state; task proposal decisions do not use a centered Dialog.
 
 Bad approval copy:
 

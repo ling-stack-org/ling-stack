@@ -18,6 +18,12 @@ const DOCUMENTATION_ROOT_FILES = new Set([
   "WORKFLOW.example.md",
 ]);
 
+const MAINTENANCE_CHECK_FILES = new Set([
+  "scripts/check-markdown-links.mjs",
+  "scripts/check-public-repo-safety.mjs",
+  "scripts/check-public-repo-safety.test.mjs",
+]);
+
 const FORCE_FULL_PATTERNS = [
   /^(?:package\.json|pnpm-lock\.yaml|pnpm-workspace\.yaml)$/u,
   /^(?:\.github|scripts|patches)(?:\/|$)/u,
@@ -34,7 +40,8 @@ const SUPPORTED_TEST_PACKAGE_DIRECTORIES = new Set(["apps/web", "apps/chrome-ext
  * Classify a pull request by the narrowest safe CI scope.
  *
  * The classifier is intentionally conservative: a path that is not recognized
- * as documentation or a workspace package escalates to the full CI lane.
+ * as documentation, allowlisted maintenance, or a workspace package escalates
+ * to the full CI lane.
  * @param {{files: string[], eventName?: string, forceFull?: boolean, packageEntries?: PackageEntry[]}} input
  * @returns {CiScope}
  */
@@ -47,12 +54,15 @@ export function classifyChangedFiles(input) {
     return buildScope("full", files, packages, "non-PR event or explicit full CI");
   }
 
-  if (files.some((file) => FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
+  if (files.some((file) => !isMaintenancePath(file) && FORCE_FULL_PATTERNS.some((pattern) => pattern.test(file)))) {
     return buildScope("full", files, packages, "root, workflow, dependency, or build configuration change");
   }
 
-  if (files.every(isDocumentationPath)) {
-    return buildScope("docs", files, packages, "documentation and documentation assets only");
+  if (files.every((file) => isDocumentationPath(file) || isMaintenancePath(file))) {
+    const reason = files.some(isMaintenancePath)
+      ? "documentation and allowlisted maintenance checks only"
+      : "documentation and documentation assets only";
+    return buildScope("docs", files, packages, reason);
   }
 
   const changedEntries = new Set();
@@ -61,7 +71,7 @@ export function classifyChangedFiles(input) {
   const unresolvedFiles = [];
 
   for (const file of files) {
-    if (isDocumentationPath(file)) continue;
+    if (isDocumentationPath(file) || isMaintenancePath(file)) continue;
     const entry = findOwningPackage(file, packages);
     if (!entry) {
       unresolvedFiles.push(file);
@@ -136,6 +146,11 @@ function isDocumentationPath(file) {
   return file.startsWith("docs/")
     || DOCUMENTATION_ROOT_FILES.has(file)
     || /(?:^|\/)README\.md$/iu.test(file);
+}
+
+/** @param {string} file */
+function isMaintenancePath(file) {
+  return file.startsWith(".github/ISSUE_TEMPLATE/") || MAINTENANCE_CHECK_FILES.has(file);
 }
 
 /** @param {string} file */

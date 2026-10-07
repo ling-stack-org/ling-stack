@@ -37,6 +37,9 @@ const credentialRules = [
 const allowedCredentialDigests = new Set([
   // Deterministic CUA lease-token golden fixture, not a stored credential.
   "53f9e1b3d5d8062e8ab2f2bbf5edb1018445a0d8e6db1826e3d628b2fdc93dc7",
+  // Deterministic second-access sentinel in conversation-media-execution-admission.test.mjs.
+  // It must never be read or persisted; keep the exact fixture, not a key-prefix exemption.
+  "71fc1755dc1336c6d16c112ac2db3f361dbb1a862a0dee2ce27bd86461af5620",
 ]);
 const failures = [];
 
@@ -70,6 +73,9 @@ function scanPrivatePaths(file, text) {
     if (!allowedUserSegments.has(match[1])) addFailure(file, text, match.index, "personal macOS user path");
   }
   for (const match of text.matchAll(/\/Volumes\/([^\/\s"'`]+)/g)) {
+    // The fixed OS-owned Preboot location is not a user's mounted volume.
+    // A standalone volume with the same name must still be reported.
+    if (match[1] === "Preboot" && /(?:^|[\s"'`])\/System$/.test(text.slice(0, match.index))) continue;
     if (!allowedVolumeSegments.has(match[1])) addFailure(file, text, match.index, "personal macOS volume path");
   }
   for (const match of text.matchAll(/[A-Za-z]:\\Users\\([^\\\s"'`]+)/g)) {

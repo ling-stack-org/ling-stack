@@ -5,6 +5,7 @@ import type {
   ControlPlaneSnapshotResponse,
   DaemonHealthResponse,
   EffectiveConfigResponse,
+  HarnessFeatureSnapshotV1,
   UpdateUserProfileRequest,
   UpdateWorkspaceSettingsRequest,
   StartupRefreshResponse,
@@ -138,6 +139,7 @@ function readDaemonFeatureFlags(value: unknown): DaemonHealthResponse["features"
   const features = value as Record<string, unknown>;
   const channels = features.channels;
   const transports = features.transports;
+  const harness = readHarnessFeatureSnapshot(features.harness);
   const channelRecord = typeof channels === "object" && channels !== null && !Array.isArray(channels)
     ? channels as Record<string, unknown>
     : {};
@@ -153,7 +155,35 @@ function readDaemonFeatureFlags(value: unknown): DaemonHealthResponse["features"
       providerWebSocketFallback: transportRecord.providerWebSocketFallback === true,
       localWebSocketRpc: transportRecord.localWebSocketRpc === true,
     },
+    ...(harness ? { harness } : {}),
   };
+}
+
+function readHarnessFeatureSnapshot(value: unknown): HarnessFeatureSnapshotV1 | undefined {
+  if (typeof value !== "object" || value === null || Array.isArray(value)) {
+    return undefined;
+  }
+  const snapshot = value as Record<string, unknown>;
+  const { schemaVersion, continuations, toolBroker, evaluations, evaluationModelGate, delegations, delegationMaxDepth } = snapshot;
+  if (
+    schemaVersion !== 1
+    || !isHarnessMode(continuations)
+    || !isHarnessMode(toolBroker)
+    || !isHarnessMode(evaluations)
+    || (evaluationModelGate !== "shadow" && evaluationModelGate !== "enforce")
+    || !isHarnessMode(delegations)
+    || typeof delegationMaxDepth !== "number"
+    || !Number.isInteger(delegationMaxDepth)
+    || delegationMaxDepth < 1
+    || delegationMaxDepth > 16
+  ) {
+    return undefined;
+  }
+  return { schemaVersion, continuations, toolBroker, evaluations, evaluationModelGate, delegations, delegationMaxDepth };
+}
+
+function isHarnessMode(value: unknown): value is HarnessFeatureSnapshotV1["continuations"] {
+  return value === "off" || value === "shadow" || value === "enforce";
 }
 
 function readStartupReadiness(value: unknown): DaemonHealthResponse["readiness"] {

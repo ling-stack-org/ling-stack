@@ -20,12 +20,14 @@ export function ProjectRunReviewDialog({
   review,
   onClose,
   onConfirm,
+  onRestoreFocus,
   isSubmitting,
 }: {
   readonly failure?: MediaProductionFailure;
   readonly review: ProjectRunReview;
   readonly onClose: () => void;
   readonly onConfirm: () => Promise<void>;
+  readonly onRestoreFocus: () => void;
   readonly isSubmitting: boolean;
 }): React.JSX.Element {
   const { t } = useI18n();
@@ -54,6 +56,10 @@ export function ProjectRunReviewDialog({
         overlayClassName="project-run-review-overlay"
         size="md"
         data-media-production-dialog="project-run-review"
+        onCloseAutoFocus={(event) => {
+          event.preventDefault();
+          onRestoreFocus();
+        }}
       >
         <DialogHeader
           closeLabel={t("Close")}

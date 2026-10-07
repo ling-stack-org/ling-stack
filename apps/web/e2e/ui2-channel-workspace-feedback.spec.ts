@@ -241,7 +241,7 @@ test("T13-P.6-G keeps failures in Workspace Settings until the owning recovery c
   await workspace.getByRole("button", { name: "Open path" }).click();
   await expect(workspace.locator(".ling-ui-inline-feedback[data-tone='danger']"))
     .toContainText("Workspace path could not be opened.");
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button").filter({ hasText: "Research" }).first().click();
   await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
   await navigation.getByRole("button").filter({ hasText: "Engineering" }).first().click();

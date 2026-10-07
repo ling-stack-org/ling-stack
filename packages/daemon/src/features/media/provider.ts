@@ -12,6 +12,7 @@ import {
   createLiveMediaVendorTransport,
   resolveMediaAdapter,
   resolveMediaVendorTransportGateConfig,
+  type MediaVendorHttpClient,
 } from "@ling-stack/providers";
 import { HttpError } from "../../errors.js";
 import { materializeProviderSecrets } from "../providers/secret-materializer.js";
@@ -39,7 +40,8 @@ export function assertMediaJobProvider(store: ProviderStoreFacet, input: CreateM
   return normalizedPreset;
 }
 
-export function createMediaAdapterForProvider(store: ProviderStoreFacet, provider: ProviderPreset, secretResolver: SecretResolver) {
+export function createMediaAdapterForProvider(store: ProviderStoreFacet, provider: ProviderPreset, secretResolver: SecretResolver,
+  execution?: { readonly httpClient: MediaVendorHttpClient }) {
   const normalizedProvider = normalizeProviderPresetForMediaRuntime(provider);
   const gate = resolveMediaVendorTransportGateConfig(normalizedProvider.compat);
   if (!gate.ok) {
@@ -55,6 +57,7 @@ export function createMediaAdapterForProvider(store: ProviderStoreFacet, provide
         apiKey: materialized.apiKeySecret.value,
         headers: materialized.headers,
         redactionValues: materialized.redactionValues,
+        httpClient: execution?.httpClient,
       })
       : undefined,
   });

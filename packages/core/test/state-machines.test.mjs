@@ -88,6 +88,35 @@ test("run approval round trip returns to running only after approval", () => {
   assert.deepEqual(approved, { ok: true, from: "waiting_for_approval", to: "running" });
 });
 
+test("a failed logical run can be explicitly reopened for a fenced retry", () => {
+  const retried = transitionRun({
+    entityId: "run_retry",
+    currentStatus: "failed",
+    expectedStatus: "failed",
+    event: "retry",
+    actor: "local-user",
+  });
+
+  assert.deepEqual(retried, { ok: true, from: "failed", to: "queued" });
+});
+
+test("pre-run preparation failure can close claimed tasks and queued Runs", () => {
+  assert.deepEqual(transitionTask({
+    entityId: "task_prepare_failed",
+    currentStatus: "claimed",
+    expectedStatus: "claimed",
+    event: "run_failed",
+    actor: "system",
+  }), { ok: true, from: "claimed", to: "failed" });
+  assert.deepEqual(transitionRun({
+    entityId: "run_prepare_failed",
+    currentStatus: "queued",
+    expectedStatus: "queued",
+    event: "runner_failed",
+    actor: "system",
+  }), { ok: true, from: "queued", to: "failed" });
+});
+
 test("approval states are terminal after a decision", () => {
   const approved = transitionApproval({
     entityId: "approval_1",
@@ -217,6 +246,15 @@ test("work unit transitions enforce supervisor lifecycle and terminal guards", (
     }),
     { ok: true, from: "cancelled", to: "queued" },
   );
+});
+
+test("execution loop detection enters the normal cancelling fence", () => {
+  assert.deepEqual(transitionWorkUnit({
+    entityId: "wu_loop",
+    currentStatus: "running",
+    event: "execution_loop_detected",
+    actor: "system",
+  }), { ok: true, from: "running", to: "cancelling" });
 });
 
 test("work unit can finish if approval resume event was already consumed", () => {

@@ -8,6 +8,12 @@ import type {
   ConversationWorkCellRow,
   ConversationWorkCellRowTone,
 } from "./work-cell-view-model.js";
+import {
+  isUserVisibleTerminalReportArtifact,
+  isUserVisibleTerminalReportSourceRef,
+  userVisibleTerminalReportChanges,
+} from "./terminal-report-visibility.js";
+import { projectVisibleTerminalReportContent } from "./terminal-report-presentation.js";
 
 interface TerminalReportSourceRefInput {
   readonly kind: string;
@@ -102,7 +108,8 @@ export interface TerminalReportViewModel {
   readonly updatedAt: string;
 }
 
-export function terminalReportToViewModel(report: TerminalReportViewInput): TerminalReportViewModel {
+export function terminalReportToViewModel(input: TerminalReportViewInput): TerminalReportViewModel {
+  const report = projectVisibleTerminalReportContent(input);
   const rawSections: readonly TerminalReportSectionInput[] = [
     report.outcome,
     ...report.outcome.corrections,
@@ -116,7 +123,7 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
     ...report.references,
     ...rawSections.flatMap((section) => section.sourceRefs),
   ];
-  const changes = workspaceChanges(report.changes, allSourceRefs);
+  const changes = userVisibleTerminalReportChanges(report.changes, allSourceRefs);
   const visibleArtifacts = report.artifacts.filter(isUserVisibleTerminalReportArtifact);
   const sections: readonly TerminalReportSectionInput[] = [
     report.outcome,
@@ -241,22 +248,6 @@ export function terminalReportToViewModel(report: TerminalReportViewInput): Term
   };
 }
 
-function workspaceChanges(
-  changes: TerminalReportViewInput["changes"],
-  sourceRefs: readonly TerminalReportSourceRefInput[],
-): TerminalReportViewInput["changes"] {
-  const artifactStoragePrefixes = sourceRefs
-    .filter((ref) => ref.kind === "run")
-    .map((ref) => `${ref.id}/`);
-  if (artifactStoragePrefixes.length === 0) {
-    return changes;
-  }
-  return changes.flatMap((change) => {
-    const paths = change.paths.filter((path) => !artifactStoragePrefixes.some((prefix) => path.startsWith(prefix)));
-    return paths.length > 0 ? [{ ...change, paths }] : [];
-  });
-}
-
 const WORKSPACE_FILE_ARTIFACT_KINDS = new Set<TerminalReportArtifactKindInput>([
   "file",
   "diff",
@@ -300,44 +291,6 @@ function localizedChangedFilesLabel(language: TerminalReportViewInput["language"
 function uniqueSourceRefs(refs: readonly TerminalReportSourceRefInput[]): TerminalReportSourceRefInput[] {
   const visible = refs.filter(isUserVisibleTerminalReportSourceRef);
   return [...new Map(visible.map((ref) => [`${ref.kind}:${ref.id}`, ref])).values()];
-}
-
-const INTERNAL_TERMINAL_REPORT_REFERENCE_KINDS = new Set([
-  "approval",
-  "check",
-  "message",
-  "operation",
-  "run",
-  "task",
-  "turn",
-  "workflow",
-  "workflow_step",
-]);
-
-function isUserVisibleTerminalReportSourceRef(ref: TerminalReportSourceRefInput): boolean {
-  if (ref.visibility === "developer_only" || ref.sensitivity === "secret_adjacent") {
-    return false;
-  }
-  if (INTERNAL_TERMINAL_REPORT_REFERENCE_KINDS.has(ref.kind)) {
-    return false;
-  }
-  if (isInternalTerminalReportArtifactText(ref.label ?? "")) {
-    return false;
-  }
-  if (ref.kind === "external") {
-    return Boolean(ref.href);
-  }
-  return ref.kind === "artifact" || ref.kind === "file" || ref.kind === "memory" || Boolean(ref.href);
-}
-
-function isUserVisibleTerminalReportArtifact(artifact: TerminalReportViewInput["artifacts"][number]): boolean {
-  return !isInternalTerminalReportArtifactText([artifact.title, artifact.path].filter(Boolean).join(" "));
-}
-
-function isInternalTerminalReportArtifactText(value: string): boolean {
-  return /^(Generated file metadata|Workflow step context|Workflow step output|Action preview):/iu.test(value.trim()) ||
-    /^Unified exec (?:stdout|stderr|result)\b/iu.test(value.trim()) ||
-    /\bcontent log\b/iu.test(value);
 }
 
 /**

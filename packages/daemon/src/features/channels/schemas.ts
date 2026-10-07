@@ -87,7 +87,7 @@ export interface ChannelDecisionUpdateRequest {
   readonly decision?: string;
   readonly rationale?: string;
   readonly alternatives?: readonly string[];
-  readonly status?: ChannelDecisionStatus;
+  readonly status?: "rejected";
 }
 
 export interface ChannelHandoffRequest {
@@ -325,6 +325,7 @@ export function parseChannelExecutionProposalUpdateInput(value: unknown): Update
     throw new Error("Channel proposal update must be a JSON object");
   }
   const input: UpdateChannelExecutionProposalInput = {
+    expectedRevision: readOptionalNumber(value, "expectedRevision"),
     title: readOptionalString(value, "title"),
     prompt: readOptionalString(value, "prompt"),
     assigneeTeammateId: readOptionalString(value, "assigneeTeammateId"),
@@ -340,6 +341,9 @@ export function parseChannelExecutionProposalUpdateInput(value: unknown): Update
     linkedWorkflowId: readNullableString(value, "linkedWorkflowId"),
     errorMessage: readNullableString(value, "errorMessage"),
   };
+  if (input.expectedRevision !== undefined && (!Number.isSafeInteger(input.expectedRevision) || input.expectedRevision < 1)) {
+    throw new Error("expectedRevision must be a positive safe integer");
+  }
   validateChannelExecutionProposalInput(input);
   return input;
 }
@@ -392,6 +396,11 @@ export function parseChannelDecisionRequest(value: unknown): ChannelDecisionRequ
   if (!isRecord(value)) {
     throw new Error("Channel decision request must be a JSON object");
   }
+  const status = readOptionalChannelDecisionStatus(value, "status");
+  const supersedesDecisionId = readOptionalString(value, "supersedesDecisionId");
+  if (supersedesDecisionId && status !== undefined && status !== "active") {
+    throw new Error("status must be active when supersedesDecisionId is provided");
+  }
   return {
     sourceMessageId: readOptionalString(value, "sourceMessageId"),
     sourceTaskId: readOptionalString(value, "sourceTaskId"),
@@ -400,8 +409,8 @@ export function parseChannelDecisionRequest(value: unknown): ChannelDecisionRequ
     decision: readString(value, "decision"),
     rationale: readOptionalString(value, "rationale"),
     alternatives: readOptionalStringArray(value, "alternatives") ?? [],
-    status: readOptionalChannelDecisionStatus(value, "status"),
-    supersedesDecisionId: readOptionalString(value, "supersedesDecisionId"),
+    status,
+    supersedesDecisionId,
     createdBy: readString(value, "createdBy"),
   };
 }
@@ -410,12 +419,16 @@ export function parseChannelDecisionUpdateRequest(value: unknown): ChannelDecisi
   if (!isRecord(value)) {
     throw new Error("Channel decision update must be a JSON object");
   }
+  const status = readOptionalChannelDecisionStatus(value, "status");
+  if (status !== undefined && status !== "rejected") {
+    throw new Error("status must be rejected when updating a decision; supersession requires creating a successor");
+  }
   return {
     title: readOptionalString(value, "title"),
     decision: readOptionalString(value, "decision"),
     rationale: readOptionalString(value, "rationale"),
     alternatives: readOptionalStringArray(value, "alternatives"),
-    status: readOptionalChannelDecisionStatus(value, "status"),
+    status,
   };
 }
 

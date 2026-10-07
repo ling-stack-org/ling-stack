@@ -33,7 +33,7 @@ test("UI 2.0 Sidebar object rows keep compact identity and actions in the expand
   });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await navigation.getByRole("button", { name: "Engineering" }).click();
   await expect(page.getByLabel("Channel composer")).toBeVisible();
   const channel = navigation.getByRole("button", { name: "Engineering", exact: true });
@@ -125,7 +125,7 @@ test("UI 2.0 Sidebar preview stays inside the minimum desktop window", async ({ 
   await mockDaemon(page, createSidebarState());
   await page.goto("/");
 
-  const recent = page.getByLabel("Ling Stack navigation").locator(".sidebar-recent-row").filter({
+  const recent = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).locator(".sidebar-recent-row").filter({
     hasText: "A deliberately long conversation title",
   });
   await recent.hover();

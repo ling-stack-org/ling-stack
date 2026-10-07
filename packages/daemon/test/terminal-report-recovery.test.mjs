@@ -44,14 +44,19 @@ test("terminal report recovery publishes committed reports without duplicating t
       attemptCount: 0,
       now,
     });
-    assert.equal(store.getTerminalReport(draft.id)?.publishedMessageId, undefined);
+    assert.equal(store.getTerminalReport(draft.id)?.resultItemId, undefined);
 
     configureTerminalReportStore(store, { enabled: true });
     await recoverWorkflowTerminalReports(store);
     const recovered = store.getTerminalReport(draft.id);
-    assert.ok(recovered?.publishedMessageId);
+    assert.ok(recovered?.resultItemId);
     await recoverWorkflowTerminalReports(store);
-    assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 }).filter((message) => message.id === recovered?.publishedMessageId).length, 1);
+    assert.equal(store.listConversationItemsByChannelPage({
+      channelId: fixture.channel.id,
+      kinds: ["terminal_report"],
+      effectiveOnly: true,
+      limit: 100,
+    }).items.filter((item) => item.id === recovered?.resultItemId).length, 1);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -128,7 +133,12 @@ test("terminal report recovery rejects incompatible partial publication lineage"
       /publication conflict: terminal_report_turn_recovery\/publication_event_conflict/u,
     );
     assert.equal(store.getLingTurn(sourceItem.turnId).status, "running");
-    assert.equal(listChannelItemViewsFixture(store, { channelId: fixture.channel.id, limit: 100 }).filter((message) => message.id === published.id).length, 1);
+    assert.equal(store.listConversationItemsByChannelPage({
+      channelId: fixture.channel.id,
+      kinds: ["terminal_report"],
+      effectiveOnly: true,
+      limit: 100,
+    }).items.filter((item) => item.id === published.id).length, 1);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });

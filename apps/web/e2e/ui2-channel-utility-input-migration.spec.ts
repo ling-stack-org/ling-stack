@@ -42,7 +42,7 @@ test("Channel Create uses shared fields without changing validation, project sea
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const trigger = page.getByLabel("Ling Stack navigation").getByRole("button", { name: "No channel yet" });
+  const trigger = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "No channel yet" });
   await trigger.click();
   let dialog = page.getByRole("dialog", { name: "New channel" });
   let nameInput = dialog.getByLabel("Name");

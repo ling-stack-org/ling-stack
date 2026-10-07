@@ -9,7 +9,7 @@ import { WebSocket } from "ws";
 import { createDaemonServer } from "../dist/index.js";
 import { checkProviderPreset } from "../dist/features/providers/preflight.js";
 import { resolveProviderForRun } from "../dist/features/runs/providers.js";
-import { appendApprovalCreatedControlPlaneEvent } from "../dist/features/runs/approvals.js";
+import { appendApprovalCreatedControlPlaneEvent, appendApprovalResolvedControlPlaneEvent } from "../dist/features/runs/approvals.js";
 
 test("control-plane snapshot returns requested redacted domains and isolates domain failures", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-control-plane-snapshot-"));
@@ -888,7 +888,9 @@ test("run approvals append redacted control-plane created and resolved events", 
   const stores = new Map();
   const daemon = await startDaemonForTest({ stores });
   try {
-    const store = stores.get(cwd) ?? createStoreForCwd(stores, cwd);
+    await getJson(`${daemon.url}/approvals?cwd=${encodeURIComponent(cwd)}`);
+    const store = stores.get(cwd);
+    assert.ok(store, "the approval fixture must use the daemon-owned Store");
     const createdAt = "2026-06-06T00:00:00.000Z";
     store.createRun({
       id: "run_control_plane_approval",
@@ -901,6 +903,7 @@ test("run approvals append redacted control-plane created and resolved events", 
       requestSnapshot: { cwd },
       createdAt,
     });
+    store.markRunStarted("run_control_plane_approval", createdAt);
     const approval = store.createApprovalRequest({
       runId: "run_control_plane_approval",
       taskId: "task_control_plane_approval",
@@ -918,6 +921,7 @@ test("run approvals append redacted control-plane created and resolved events", 
       expiresAt: "2999-01-01T00:00:00.000Z",
     }, createdAt);
     appendApprovalCreatedControlPlaneEvent(store, { publish() {} }, cwd, approval, createdAt);
+    assert.equal(store.getRun("run_control_plane_approval")?.status, "running");
 
     await postJson(`${daemon.url}/approvals/${encodeURIComponent(approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
       reason: "approved for control-plane test",
@@ -939,6 +943,11 @@ test("run approvals append redacted control-plane created and resolved events", 
     assert.equal(resolved.data.ownerType, "run");
     assert.equal(resolved.data.ownerId, "run_control_plane_approval");
     assert.equal(resolved.data.resolvedBy, "local-user");
+    const persistedApproval = store.getApprovalRequest(approval.id);
+    appendApprovalResolvedControlPlaneEvent(store, { publish() {} }, cwd, persistedApproval, "pending", "approved", persistedApproval.resolvedAt);
+    const afterRetry = await getJson(`${daemon.url}/control-plane/events?cwd=${encodeURIComponent(cwd)}&afterSeq=0&limit=1000&domains=approvals`);
+    assert.equal(afterRetry.events.filter((event) => event.action === "approval.resolved" && event.entityId === approval.id).length, 1,
+      "a recovery retry must not create another durable approval decision event");
     assertControlPlanePayloadRedacted(listed, [
       "echo sk-test-approval-secret-value",
       "sk-test-approval-secret-value",

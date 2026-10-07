@@ -520,7 +520,7 @@ async function handleEvidenceRoute(
 
 async function openEvidenceMediaProduction(page: Page): Promise<void> {
   await page
-    .getByLabel("Ling Stack navigation")
+    .getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
     .getByRole("button", { name: /^(Media Production|媒体生产)$/u })
     .click();
 }

@@ -128,12 +128,12 @@ function updateChromeFixture(
 
 async function openPluginManager(page: Page, url: string): Promise<void> {
   await page.goto(url);
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Plugin Manager|插件管理/u }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Plugin Manager|插件管理/u }).click();
 }
 
 async function reopenPluginManager(page: Page): Promise<void> {
   await page.reload();
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: /Plugin Manager|插件管理/u }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Plugin Manager|插件管理/u }).click();
 }
 
 async function prepareSurface(

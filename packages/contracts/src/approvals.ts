@@ -18,6 +18,7 @@ export type ApprovalActionType =
   | "provider_change"
   | "workflow_step"
   | "mcp_tool_call"
+  | "host_capability"
   | "runtime_permission_request";
 
 export type ApprovalRisk = "low" | "medium" | "high" | "critical";
@@ -53,6 +54,20 @@ export interface RunnerResumeHandle {
   readonly verified?: boolean;
 }
 
+export interface ApprovalResumeBasisV1 {
+  readonly schemaVersion: 1;
+  readonly approvalId: string;
+  readonly runId: string;
+  readonly workUnitId: string;
+  readonly priorAttemptId: string;
+  readonly workflowStepId?: string;
+  readonly toolCallId: string;
+  readonly actionType: ApprovalActionType;
+  readonly sideEffectFingerprint: string;
+  readonly delegatedRequirementFingerprint?: string;
+  readonly fingerprint: string;
+}
+
 export interface ApprovalRequest {
   readonly id: string;
   readonly runId?: string;
@@ -71,7 +86,7 @@ export interface ApprovalRequest {
   readonly createdAt: string;
   readonly expiresAt?: string;
   readonly resolvedAt?: string;
-  readonly resolvedBy?: "local-user";
+  readonly resolvedBy?: "local-user" | "system-reviewer";
   readonly decisionReason?: string;
   readonly availableDecisions?: readonly ApprovalDecisionKind[];
   readonly proposedCommandRule?: ApprovalCommandRuleProposal;
@@ -97,6 +112,8 @@ export interface LingApprovalCheckpoint {
   readonly sideEffect: unknown;
   readonly previewArtifactIds: readonly string[];
   readonly resultArtifactIds: readonly string[];
+  readonly revision: number;
+  readonly resumeBasis?: ApprovalResumeBasisV1;
   readonly runnerResumeHandle?: RunnerResumeHandle;
   readonly createdAt: string;
   readonly updatedAt: string;
@@ -113,6 +130,11 @@ export interface ApprovalListResponse {
 export interface ApprovalMutationResponse {
   readonly approval: ApprovalRequest;
   readonly mediaJob?: MediaJob;
+  /** Decision is durable, but a downstream projection needs reconciliation. */
+  readonly postCommit?: {
+    readonly status: "deferred";
+    readonly code: "approval_postcommit_reconciliation_required";
+  };
 }
 
 export interface ResolveApprovalRequest {

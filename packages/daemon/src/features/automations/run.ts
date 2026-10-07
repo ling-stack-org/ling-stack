@@ -361,6 +361,7 @@ function buildHeartbeatRunRequest(input: {
     permissionMode: readSnapshotString(input.requestSnapshot, "permissionMode") as RunRequest["permissionMode"],
     permissionConfirmation: optionalRecord(input.requestSnapshot.permissionConfirmation) as RunRequest["permissionConfirmation"],
     thinkingLevel: readSnapshotString(input.requestSnapshot, "thinkingLevel") as RunRequest["thinkingLevel"],
+    reasoningSummary: readSnapshotReasoningSummary(input.requestSnapshot, "reasoningSummary"),
     systemPrompt: readSnapshotString(input.requestSnapshot, "systemPrompt"),
     appendSystemPrompt: [
       ...readSnapshotStringArray(input.requestSnapshot, "appendSystemPrompt"),
@@ -400,6 +401,16 @@ function optionalRecord(value: unknown): Record<string, unknown> | undefined {
 function readSnapshotString(record: Record<string, unknown>, key: string): string | undefined {
   const value = record[key];
   return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function readSnapshotReasoningSummary(
+  record: Record<string, unknown>,
+  key: string,
+): RunRequest["reasoningSummary"] {
+  const value = readSnapshotString(record, key);
+  return value === "auto" || value === "concise" || value === "detailed" || value === "none"
+    ? value
+    : undefined;
 }
 
 function readSnapshotBoolean(record: Record<string, unknown>, key: string): boolean | undefined {

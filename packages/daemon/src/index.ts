@@ -1,11 +1,11 @@
 import { randomBytes } from "node:crypto";
 import { createServer, type Server } from "node:http";
 import {
-  createSqliteRunStore,
   listBuiltinSkillPackExtensions,
   listBuiltinToolExtensions,
   createCompositeSecretResolver,
   resolveStoragePaths,
+  type RunStore,
 } from "@ling-stack/core";
 import { createPiRunner, getPiRunnerExtension } from "@ling-stack/runner-pi";
 import {
@@ -46,14 +46,27 @@ import { ProviderStartupRefreshService } from "./features/providers/startup-refr
 import { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
-import { resumePendingMediaJobExecutions } from "./features/media/executor.js";
+import { ApprovalAutoReviewRecoveryCoordinator } from "./features/runs/approval-auto-review-recovery.js";
+import { recoverApprovalPostCommitStore } from "./features/runs/approval-postcommit-recovery.js";
+import { runApprovalPostCommitEffects } from "./features/runs/approval-postcommit-effects.js";
+import { syncWorkflowApprovalDecision } from "./features/channels/orchestrator.js";
+import { DaemonRunnerRecoveryCoordinator } from "./features/harness/continuations/daemon-recovery-coordinator.js";
+import { reconcileHarnessToolExecutionsAtStartup } from "./features/harness/tool-execution/recovery.js";
+import { RunEvaluationSchedulerRegistry } from "./features/harness/evaluations/scheduler.js";
+import {
+  createDetachedRunExecutionSink,
+  executeExistingRunContinuation,
+} from "./features/runs/orchestrator.js";
+import { resumePendingMediaJobExecutions, syncMediaJobForApprovalDecision } from "./features/media/executor.js";
 import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
 import { ActiveRunRegistry } from "./runtime/active-runs.js";
 import { createRunnerRegistry, DEFAULT_RUNNER_ID, LEGACY_PI_RUNNER_ID, type RunnerRegistry } from "./runtime/runners.js";
 import { listExternalRunnerRegistrations } from "./runtime/external-runners.js";
 import { RunStoreRegistry, type RunStoreFactory } from "./runtime/store-registry.js";
 import { RuntimeSupervisor } from "./runtime/supervisor.js";
+import { createOriginalOfficeDirectoryStoreFactory } from "./features/office-documents/office-local-directory-core-authority.js";
 import {
+  retryRuntimeWorkUnit,
   startRuntimeWorkUnit,
   transitionWorkUnitCancelled,
   transitionWorkUnitTerminal,
@@ -76,6 +89,7 @@ import { createOfficeDocumentsGenerationBroker } from "./features/plugins/office
 import { writeJson } from "./shared/response.js";
 import { StartupOptionalWarmupCoordinator } from "./startup/optional-warmups.js";
 import { StartupStateRegistry } from "./startup/state.js";
+import { initializeDaemonWithCleanup } from "./startup/initialization.js";
 import { warmDefaultWorkspaceStartup } from "./startup/warmup.js";
 import { ComputerUseProjectionRegistry } from "./features/computer-use/registry.js";
 import { CuaDriverDesktopBridgeAuthority } from "./features/computer-use/desktop-bridge-authority.js";
@@ -98,25 +112,36 @@ import {
 import { BundledCuaDriverActivationService } from "./features/plugins/cua-driver-bundled-activation.js";
 import { CuaDriverDaemonActivationCoordinator } from "./features/plugins/cua-driver-daemon-composition.js";
 import { createCuaDriverGenerationBroker } from "./features/plugins/cua-driver-generation-broker.js";
+import { WorkspaceFileCapabilityRegistry } from "./features/previews/workspace-file-capabilities.js";
 import { createCuaDriverDescriptor } from "./features/plugins/presets.js";
 import { RemoteAccessController } from "./features/remote-access/controller.js";
 import { DefaultRemoteReplyDispatcher } from "./features/remote-access/default-reply-dispatcher.js";
+import { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
 
 export { defaultDaemonConfig } from "./config.js";
-export type { DaemonConfig, ResolvedDaemonConfig } from "./config.js";
-export type { DaemonDependencies, ExternalSecretStore, McpBroker, RunnerAdapter } from "./context.js";
+export type { DaemonConfig, HarnessFeatureConfig, ResolvedDaemonConfig } from "./config.js";
+export * from "./features/harness/index.js";
+export type { DaemonDependencies, ExternalSecretStore, McpBroker, RunnerAdapter, RunnerNativeResumeInputV1 } from "./context.js";
 export {
   createRunnerRegistry,
   DEFAULT_RUNNER_ID,
   LEGACY_PI_RUNNER_ID,
   UnsupportedRunnerError,
   normalizeRunnerId,
+  resolveRunnerNativeResumeGate,
   resolveRunnerResumeCapabilities,
+  resolveRunnerToolExecutionGate,
   type RegisteredRunner,
+  type RunnerNativeResumeConformanceV1,
+  type RunnerNativeResumeGateBlocker,
+  type RunnerNativeResumeGateV1,
   type RunnerResumeCapabilitiesV1,
   type RunnerRegistry,
   type RunnerResolution,
   type RunnerResolutionInput,
+  type RunnerToolExecutionConformanceV1,
+  type RunnerToolExecutionGateBlocker,
+  type RunnerToolExecutionGateV1,
 } from "./runtime/runners.js";
 export type { RunnerFallbackReason } from "@ling-stack/core";
 export { ActiveRunRegistry } from "./runtime/active-runs.js";
@@ -230,6 +255,7 @@ export function createDaemonServer(
   const controlPlaneEvents = new ControlPlaneEventHub();
   const startupState = new StartupStateRegistry();
   const computerUsePreviews = new ComputerUseProjectionRegistry(dependencies.computerUseProjectionOptions);
+  const hostCapabilityBridge = new HostCapabilityBridgeController();
   const providerStartupRefresh = new ProviderStartupRefreshService({ secretResolver, controlPlaneEvents, startupState });
   const providerImportPreflight = new ProviderImportPreflightService({ secretResolver, controlPlaneEvents });
   let automationSchedulers: AutomationSchedulerRegistry;
@@ -237,9 +263,47 @@ export function createDaemonServer(
   let channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
   let channelTurnDispatchReady = false;
   let approvalResumeCoordinator: ApprovalResumeCoordinator | undefined;
-  const storeRegistry = new RunStoreRegistry(dependencies.storeFactory ?? createDefaultRunStore, {
+  const approvalRecoveryStores = new Set<RunStore>();
+  let approvalRecoveryTimer: ReturnType<typeof setInterval> | undefined;
+  let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
+  let daemonRunnerRecoveryCoordinator: DaemonRunnerRecoveryCoordinator | undefined;
+  let runEvaluationScheduler: RunEvaluationSchedulerRegistry | undefined;
+  // Chrome/Office plugin synchronization opens the Store during construction.
+  // The same original Supervisor must exist before any default Store is opened;
+  // an injected factory remains untrusted and is never retrofitted with custody.
+  const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig, (event) => {
+    appendControlPlaneEvent(event.store, controlPlaneEvents, {
+      workspaceId: event.workUnit.workspaceId,
+      cwd: event.cwd,
+      domain: "work_units",
+      entityType: "work_unit",
+      entityId: event.workUnit.id,
+      action: "work_unit.transitioned",
+      data: {
+        previousStatus: event.previousStatus,
+        status: event.status,
+        reason: event.reason,
+        runId: event.workUnit.linkedRunId ?? null,
+        attemptId: event.workUnit.activeAttemptId ?? null,
+      },
+    }, event.now);
+  }, dependencies.officeLocalNativeArtifact
+    ? { officeLocalNativeArtifact: dependencies.officeLocalNativeArtifact }
+    : undefined);
+  const storeRegistry = new RunStoreRegistry(
+    dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
+      approvalRecoveryStores.add(store);
+      // A process may have crossed the shell side-effect boundary before the
+      // daemon disappeared. Expired executing claims are never retried; they
+      // become explicit unknown outcomes before any recovery dispatch runs.
+      reconcileHarnessToolExecutionsAtStartup({ cwd, store, now: new Date().toISOString(), limit: 500 });
+      configureNormalNarrationPublication(store, (event) => controlPlaneEvents.publish(event));
+      void recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
+        // Do not leak database/provider details, but do not hide a failed recovery sweep.
+        console.warn("normal_narration_recovery_failed: pending publications remain recoverable");
+      });
       configureTerminalReportStore(store, {
         enabled: resolvedConfig.channels.terminalReports === true,
         runnerRegistry,
@@ -247,13 +311,21 @@ export function createDaemonServer(
         onPublished: ({ event }) => controlPlaneEvents.publish(event),
       });
       approvalResumeCoordinator?.registerStore(store);
+      approvalAutoReviewRecoveryCoordinator?.registerStore(store);
+      daemonRunnerRecoveryCoordinator?.registerStore(store);
+      runEvaluationScheduler?.registerStore(store);
       startupOptionalWarmups?.start(cwd, store);
       reconcileAllContinuityWorkflows(store, { cause: "startup" });
       if (resolvedConfig.channels.terminalReports === true) {
-        void recoverTerminalReports(store).catch(() => undefined);
+        void recoverTerminalReports(store).catch(() => {
+          console.warn("terminal_report_recovery_failed: conflicting sources remain recoverable");
+        });
       }
       if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
     },
+  });
+  runEvaluationScheduler = new RunEvaluationSchedulerRegistry({
+    enabled: resolvedConfig.harness.evaluations.mode !== "off",
   });
   const chromeBrowserSessions = new ChromeBrowserSessionController({
     workspaceCwd: resolvedConfig.defaultWorkspaceCwd,
@@ -369,23 +441,6 @@ export function createDaemonServer(
   });
   const backgroundSchedulers = new ExternalWorkBackgroundSchedulerRegistry(storeRegistry, secretResolver, externalWorkFetch);
   const activeRuns = new ActiveRunRegistry();
-  const runtimeSupervisor = new RuntimeSupervisor(resolvedConfig, (event) => {
-    appendControlPlaneEvent(event.store, controlPlaneEvents, {
-      workspaceId: event.workUnit.workspaceId,
-      cwd: event.cwd,
-      domain: "work_units",
-      entityType: "work_unit",
-      entityId: event.workUnit.id,
-      action: "work_unit.transitioned",
-      data: {
-        previousStatus: event.previousStatus,
-        status: event.status,
-        reason: event.reason,
-        runId: event.workUnit.linkedRunId ?? null,
-        attemptId: event.workUnit.activeAttemptId ?? null,
-      },
-    }, event.now);
-  });
   automationSchedulers = new AutomationSchedulerRegistry(
     runnerRegistry,
     storeRegistry,
@@ -425,6 +480,7 @@ export function createDaemonServer(
       startupState,
       computerUsePreviews,
     });
+    daemonRunnerRecoveryCoordinator?.recoverStore(store);
   };
   approvalResumeCoordinator = new ApprovalResumeCoordinator({
     runtimeSupervisor,
@@ -432,6 +488,64 @@ export function createDaemonServer(
     runnerRegistry,
     controlPlaneEvents,
     afterRunTerminal: afterChannelRunTerminal,
+    executeExistingRunContinuation: ({ cwd, runId, approvalId, preparedExecution }) =>
+      executeExistingRunContinuation(
+        {
+          cwd,
+          runId,
+          origin: "approval_resume",
+          idempotencyDiscriminator: approvalId,
+          preparedExecution,
+        },
+        createDetachedRunExecutionSink(),
+        runnerRegistry,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        mcpBroker,
+        {
+          controlPlaneEvents,
+          startupState,
+          computerUsePreviews,
+          hostCapabilityBridge,
+          afterRunTerminal: afterChannelRunTerminal,
+        },
+      ),
+  });
+  approvalAutoReviewRecoveryCoordinator = new ApprovalAutoReviewRecoveryCoordinator({
+    runtimeSupervisor,
+    runnerRegistry,
+    secretResolver,
+    approvalResumeCoordinator,
+  });
+  daemonRunnerRecoveryCoordinator = new DaemonRunnerRecoveryCoordinator({
+    runtimeSupervisor,
+    activeRuns,
+    executeExistingRunContinuation: ({ cwd, runId, origin, idempotencyDiscriminator, preparedExecution }) =>
+      executeExistingRunContinuation(
+        {
+          cwd,
+          runId,
+          origin,
+          idempotencyDiscriminator,
+          preparedExecution,
+        },
+        createDetachedRunExecutionSink(),
+        runnerRegistry,
+        storeRegistry,
+        activeRuns,
+        runtimeSupervisor,
+        secretResolver,
+        mcpBroker,
+        {
+          controlPlaneEvents,
+          startupState,
+          computerUsePreviews,
+          hostCapabilityBridge,
+          afterRunTerminal: afterChannelRunTerminal,
+        },
+      ),
   });
   channelTurnDispatchWorker = new ChannelTurnDispatchWorkerRegistry(
     runtimeSupervisor,
@@ -446,6 +560,7 @@ export function createDaemonServer(
       controlPlaneEvents,
       startupState,
       computerUsePreviews,
+      hostCapabilityBridge,
       replyDispatchCoordinator: channelReplyDispatchCoordinator,
       imageVisionSummarizer,
       webFetch,
@@ -481,6 +596,7 @@ export function createDaemonServer(
     managementAllowedOrigins: resolvedConfig.remoteAccess.managementAllowedOrigins,
     dispatcher: remoteReplyDispatcher,
   });
+  const workspaceFileCapabilities = new WorkspaceFileCapabilityRegistry();
   const context: DaemonContext = {
     config: resolvedConfig,
     runnerRegistry,
@@ -524,20 +640,30 @@ export function createDaemonServer(
     chromeBrowserPlugin,
     officeDriverController,
     officeDocumentsPlugin,
+    workspaceFileCapabilities,
+    hostCapabilityBridge,
   };
-  const server = createServer(async (request, response) => {
-    try {
-      await routeRequest(request, response, context);
-    } catch (error) {
-      if (!response.headersSent) {
-        writeJson(response, 500, {
-          error: "internal_error",
-          message: error instanceof Error ? error.message : String(error),
-        });
-      } else {
-        response.end();
-      }
+  const server = createServer((request, response) => {
+    if (activeRuns.isShuttingDown()) {
+      writeJson(response, 503, { error: "runtime_shutting_down", message: "Runtime is shutting down." });
+      return;
     }
+    const completion = Promise.resolve().then(async () => {
+      try {
+        await routeRequest(request, response, context);
+      } catch (error) {
+        if (!response.headersSent) {
+          writeJson(response, 500, {
+            error: "internal_error",
+            message: error instanceof Error ? error.message : String(error),
+          });
+        } else {
+          response.end();
+        }
+      }
+    });
+    // Closing a socket does not cancel its async route handler.
+    activeRuns.trackCompletion(completion);
   });
   const rpcWebSocketServer = attachRpcWebSocketServer(server, context);
   const chromeBrowserWebSocketServer = attachChromeBrowserWebSocketServer({
@@ -561,7 +687,7 @@ export function createDaemonServer(
       })
     : undefined;
 
-  return {
+  const daemon: DaemonServer = {
     server,
     config: resolvedConfig,
     extensionRegistry,
@@ -580,33 +706,37 @@ export function createDaemonServer(
           resolve();
         });
       });
-      await chromeBrowserNativeBroker?.start().catch(() => {
-        chromeBrowserSessions.observeNativeState({
-          cwd: resolvedConfig.defaultWorkspaceCwd,
-          hostState: "missing",
+      await initializeDaemonWithCleanup(async () => {
+        await chromeBrowserNativeBroker?.start().catch(() => {
+          chromeBrowserSessions.observeNativeState({
+            cwd: resolvedConfig.defaultWorkspaceCwd,
+            hostState: "missing",
+          });
         });
-      });
-      await warmDefaultWorkspaceStartup({
-        cwd: resolvedConfig.defaultWorkspaceCwd,
-        startupState,
-        storeRegistry,
-        runnerRegistry,
-        secretResolver,
-      });
-      // Ephemeral control-plane servers are used by tests and embedded fixtures.
-      // They must never claim the installation-global Remote Gateway listener.
-      if (resolvedConfig.port !== 0) {
-        await remoteAccess.startIfEnabled();
-      }
-      startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
-      channelTurnDispatchReady = true;
-      channelTurnDispatchWorker.start(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
-      resumePendingMediaJobExecutions({
-        cwd: resolvedConfig.defaultWorkspaceCwd,
-        storeRegistry,
-        secretResolver,
-        hooks: {
+        await warmDefaultWorkspaceStartup({
+          cwd: resolvedConfig.defaultWorkspaceCwd,
+          startupState,
+          storeRegistry,
+          runnerRegistry,
+          secretResolver,
+        });
+        await approvalAutoReviewRecoveryCoordinator.recoverStore(
+          storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
+        );
+        runEvaluationScheduler.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+        daemonRunnerRecoveryCoordinator.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+        daemonRunnerRecoveryCoordinator.start();
+        // Ephemeral control-plane servers are used by tests and embedded fixtures.
+        // They must never claim the installation-global Remote Gateway listener.
+        if (resolvedConfig.port !== 0) {
+          await remoteAccess.startIfEnabled();
+        }
+        startupOptionalWarmups.start(resolvedConfig.defaultWorkspaceCwd, storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+        channelTurnDispatchReady = true;
+        channelTurnDispatchWorker.start(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
+        const mediaRecoveryHooks: Parameters<typeof resumePendingMediaJobExecutions>[0]["hooks"] = {
           startRuntimeWorkUnit: (input) => startRuntimeWorkUnit({ ...input, runtimeSupervisor }),
+          recoverRuntimeWorkUnit: (input) => retryRuntimeWorkUnit({ ...input, runtimeSupervisor }),
           transitionRuntimeWorkUnitTerminal: (input) => {
             transitionWorkUnitTerminal(input.store, {
               workUnitId: input.workUnitId,
@@ -636,29 +766,87 @@ export function createDaemonServer(
               createdArtifactIds: input.createdArtifactIds,
             });
           },
-        },
-      });
+        };
+        const recoverApprovals = () => {
+          for (const store of approvalRecoveryStores) {
+            if (typeof store.listApprovalPostCommitEffects !== "function") continue;
+            try {
+              recoverApprovalPostCommitStore({
+                store, cwd: store.paths.cwd, controlPlaneEvents,
+                onOwnerResolved: (approval) => runApprovalPostCommitEffects({
+                  resumeRun: () => {
+                    if (!approval.runId) return;
+                    if (approval.status !== "approved" && approval.status !== "denied") {
+                      const run = store.getRun(approval.runId);
+                      if (run?.status === "waiting_for_approval") throw new Error("approval_terminal_owner_pending");
+                      return;
+                    }
+                    const result = approval.status === "denied"
+                      ? approvalResumeCoordinator!.finalizeSuspendedApprovalDenial({ store, approval })
+                      : approvalResumeCoordinator!.resumeAfterApproval({ store, approval });
+                    if (result.status === "blocked") throw new Error(result.reason);
+                    if (result.status === "not_applicable"
+                      && store.getRun(approval.runId)?.status === "waiting_for_approval") {
+                      throw new Error("approval_run_owner_unreconciled");
+                    }
+                  },
+                  syncWorkflow: () => {
+                    const result = syncWorkflowApprovalDecision(store, approval);
+                    if (result.status === "missing_owner") throw new Error("approval_workflow_owner_missing");
+                  },
+                  syncMedia: () => syncMediaJobForApprovalDecision({
+                    cwd: store.paths.cwd, store, storeRegistry, secretResolver, approval,
+                    now: new Date().toISOString(), hooks: mediaRecoveryHooks,
+                  }),
+                }),
+              });
+            } catch {
+              console.warn("approval_postcommit_recovery_failed: durable effects remain pending");
+            }
+          }
+        };
+        recoverApprovals();
+        approvalRecoveryTimer = setInterval(recoverApprovals, 10_000);
+        approvalRecoveryTimer.unref();
+        resumePendingMediaJobExecutions({
+          cwd: resolvedConfig.defaultWorkspaceCwd,
+          storeRegistry,
+          secretResolver,
+          hooks: mediaRecoveryHooks,
+        });
+      }, () => daemon.stop());
     },
     stop: async () => {
+      storeRegistry.mediaLocalExecutions.beginShutdown();
+      if (approvalRecoveryTimer) clearInterval(approvalRecoveryTimer);
+      approvalRecoveryTimer = undefined;
+      daemonRunnerRecoveryCoordinator.beginShutdown();
+      runEvaluationScheduler.beginShutdown();
       channelTurnDispatchReady = false;
+      channelTurnDispatchWorker.beginShutdown();
+      activeRuns.suspendAll("daemon_restart");
+      activeDirectReplies.cancelAll();
+      channelReplyDispatchCoordinator.close();
+      backgroundSchedulers.stopAll();
+      automationSchedulers.stopAll();
       cuaDriverActivationCoordinator.beginShutdown();
       const providerImportShutdown = providerImportPreflight.shutdown();
       await remoteAccess.stop();
       await chromeBrowserNativeBroker?.close();
       await new Promise<void>((resolve, reject) => {
-        activeRuns.suspendAll("daemon_restart");
-        activeDirectReplies.cancelAll();
-        channelReplyDispatchCoordinator.close();
-        backgroundSchedulers.stopAll();
-        automationSchedulers.stopAll();
         controlPlaneEvents.closeAll();
         computerUsePreviews.closeAll();
+        hostCapabilityBridge.close();
         cuaDriverDesktopBridgeAuthority.clear();
         lockedComputerControl?.close();
         chromeBrowserSessions.close();
         officeDriverController.close();
         chromeBrowserWebSocketServer.close();
         rpcWebSocketServer.close();
+        if (!server.listening) {
+          resolve();
+          return;
+        }
         server.close((error) => {
           if (error) {
             reject(error);
@@ -668,24 +856,23 @@ export function createDaemonServer(
         });
         server.closeAllConnections();
       });
-      await activeRuns.waitForIdle();
       await channelTurnDispatchWorker.close();
       await automationSchedulers.waitForIdle();
+      await runEvaluationScheduler.waitForIdle();
       await providerImportShutdown;
       await cuaDriverActivationCoordinator.shutdown();
+      await activeRuns.waitForIdle();
+      await storeRegistry.mediaLocalExecutions.waitForIdle();
       runtimeSupervisor.releaseAll();
       storeRegistry.closeAll();
     },
   };
+  return daemon;
 }
 
 function readChromeBrowserExtensionIds(value: string | undefined): readonly string[] {
   const configured = value?.split(",").map((item) => item.trim()).filter(Boolean) ?? [];
   return configured.length > 0 ? configured : CHROME_BROWSER_DEFAULT_EXTENSION_IDS;
-}
-
-function createDefaultRunStore(cwd: string) {
-  return createSqliteRunStore(cwd, resolveStoragePaths(cwd).workspace);
 }
 
 function createLazyCuaDriverLeaseClientFactory(
@@ -713,6 +900,7 @@ export function createDefaultRunnerRegistry(
   const extension = getPiRunnerExtension();
   const piToolHydration = resolvePiRunnerToolHydrationCapability(config);
   const piSandboxBindingEnabled = config.runners?.pi?.sandboxBinding?.enabled === true;
+  const piAdapterRevision = `${extension.runnerId}:${extension.manifest.version}:adapter-v1`;
   const piCapabilities = [
     ...extension.manifest.capabilities,
     ...(config.runtimeTools?.requestPermissions ? ["runtime:request-permissions"] : []),
@@ -727,11 +915,52 @@ export function createDefaultRunnerRegistry(
       displayName: extension.manifest.name,
       status: "enabled",
       adapter: runner,
+      executionBoundary: "embedded",
+      adapterRevision: piAdapterRevision,
       aliases: [LEGACY_PI_RUNNER_ID],
       supportedProviderApis: extension.supportedProviderApis,
       supportedTools: extension.supportedTools,
+      toolSideEffects: {
+        read: "workspace_read",
+        grep: "workspace_read",
+        find: "workspace_read",
+        ls: "workspace_read",
+        bash: "shell",
+        edit: "workspace_write",
+        write: "workspace_write",
+      },
+      toolExecutionConformance: {
+        adapterRevision: piAdapterRevision,
+        curatedTools: extension.supportedTools,
+        toolSideEffects: {
+          read: "workspace_read",
+          grep: "workspace_read",
+          find: "workspace_read",
+          ls: "workspace_read",
+          bash: "shell",
+          edit: "workspace_write",
+          write: "workspace_write",
+        },
+        allowedSideEffects: ["workspace_read", "workspace_write", "shell"],
+        nativeSideEffectMode: "daemon_brokered",
+        toolSurfaceCurated: true,
+        approvalBridgeVerified: true,
+        sandboxBindingVerified: true,
+        evidenceCommitVerified: true,
+        abortPropagationVerified: true,
+        attemptFencingVerified: true,
+        workspaceBoundaryVerified: true,
+        artifactImportVerified: true,
+      },
       capabilities: piCapabilities,
       resumeCapabilities: extension.resumeCapabilities,
+      nativeResumeConformance: {
+        revision: `${extension.runnerId}:${extension.manifest.version}:resume-v1`,
+        readinessPassed: true,
+        conformancePassed: true,
+        abortPropagationVerified: true,
+        approvalBridgeVerified: true,
+      },
       toolHydration: piToolHydration,
     },
     ...listExternalRunnerRegistrations(config),
@@ -804,3 +1033,4 @@ export async function startDaemon(
   await daemon.start();
   return daemon;
 }
+import { configureNormalNarrationPublication, recoverNormalNarrationPublications } from "./features/conversations/normal-narration-publication.js";

@@ -1,8 +1,15 @@
 # Conversation Surface Contract Implementation Plan
 
-Status: active implementation plan
+> **v3.9 authority note (2026-09-01):** transcript item semantics, evidence ownership,
+> renderer sharing, batching, nested Agent presentation, and completion gates are
+> defined by [Conversation Typed Transcript — Detailed Design](conversation-typed-transcript-detailed-design.md)
+> and [Codex-style Typed Transcript Implementation Plan](conversation-codex-style-transcript-implementation-plan.md).
+> This older plan remains useful for shell/composer migration only; it must not create
+> a second transcript renderer or completion summary.
+
+Status: active shell/policy migration plan; transcript cutover delegated to v3.7 plan
 Owner: conversation UI package and product-surface maintainers
-Last verified: 2026-08-07
+Last verified: 2026-09-01
 
 ## Owning Contracts
 

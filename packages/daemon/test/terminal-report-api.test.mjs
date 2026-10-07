@@ -49,7 +49,7 @@ test("terminal report API exposes committed reports without developer synthesis 
     cwd,
     channel: fixture.channel,
   });
-  assert.equal(store.getTerminalReport(historicalInvalidReport.report.id)?.publishedMessageId, historicalInvalidReport.message.id);
+  assert.equal(store.getTerminalReport(historicalInvalidReport.report.id)?.resultItemId, historicalInvalidReport.message.id);
   store.close();
 
   const paths = resolveRuntimePaths(cwd);

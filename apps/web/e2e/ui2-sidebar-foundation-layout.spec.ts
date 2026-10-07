@@ -21,7 +21,7 @@ test("Sidebar foundation keeps one bounded expanded navigation surface", async (
   await mockDaemon(page, createDenseSidebarState());
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const scrollRegion = navigation.locator(".sidebar-scroll-region");
   await expect(navigation).toBeVisible();
   await expectWidth(navigation, 292);
@@ -96,7 +96,7 @@ test("Sidebar branch draft and section menu stay contained in dark reduced-motio
   await mockDaemon(page, createDenseSidebarState());
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const longTeammate = navigation.getByRole("button", { name: "A teammate identity that is intentionally longer than the available Sidebar row" });
   await longTeammate.scrollIntoViewIfNeeded();
   const longTeammateShell = longTeammate.locator("xpath=ancestor::div[contains(concat(' ', normalize-space(@class), ' '), ' sidebar-row-shell ')][1]");
@@ -158,7 +158,7 @@ test("Sidebar compact state keeps a 48px navigation rail and returns to the 292p
   await mockDaemon(page, createDenseSidebarState());
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expectWidth(navigation, 292);
   await page.getByRole("button", { name: "Hide navigation" }).click();
   await expectWidth(navigation, 48);
@@ -172,7 +172,7 @@ test("Sidebar compact state keeps a 48px navigation rail and returns to the 292p
   await captureEvidence(page, "1280x800-ling-light-sidebar-compact.png");
 
   await page.getByRole("button", { name: "Show navigation" }).click();
-  const restoredNavigation = page.getByLabel("Ling Stack navigation");
+  const restoredNavigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expectWidth(restoredNavigation, 292);
   await expect(page.locator("main.app-shell")).not.toHaveClass(/channel-sidebar-collapsed/);
   await expect(restoredNavigation.getByRole("button", { name: "Channel actions" })).toBeVisible();
@@ -189,7 +189,7 @@ test("Sidebar foundation preserves shell geometry across the 900 and 901px bound
   await page.goto("/");
 
   const shell = page.locator("main.app-shell");
-  let navigation = page.getByLabel("Ling Stack navigation");
+  let navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expectBoundaryGeometry(page, shell, navigation, 901, 292);
   await captureEvidence(page, "901x800-ling-dark-expanded-boundary.png");
 
@@ -203,12 +203,12 @@ test("Sidebar foundation preserves shell geometry across the 900 and 901px bound
   await captureEvidence(page, "900x800-ling-dark-compact-boundary.png");
 
   await page.setViewportSize({ width: 901, height: 800 });
-  await expectWidth(page.getByLabel("Ling Stack navigation"), 48);
+  await expectWidth(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }), 48);
   await expect.poll(async () => shell.evaluate((element) => (
     Math.round(Number.parseFloat(getComputedStyle(element).gridTemplateColumns))
   ))).toBe(48);
   await page.getByRole("button", { name: "Show navigation" }).click();
-  navigation = page.getByLabel("Ling Stack navigation");
+  navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expectBoundaryGeometry(page, shell, navigation, 901, 292);
   await captureEvidence(page, "901x800-ling-dark-reexpanded-boundary.png");
   await expectReducedMotion(navigation);

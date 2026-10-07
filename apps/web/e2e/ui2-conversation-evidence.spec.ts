@@ -80,7 +80,7 @@ test("Channel available web evidence uses the shared disclosure and keeps diagno
   await mockDaemon(page, state);
 
   await page.goto("/");
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name: "Engineering" }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Engineering" }).click();
 
   const feed = page.getByLabel("Channel message feed");
   const availableRow = feed.locator(".channel-message-row").filter({ hasText: "Available web evidence for the focused owner." });
@@ -355,7 +355,7 @@ function directMessage(input: {
 }
 
 async function openTeammate(page: Page, name: string): Promise<void> {
-  await page.getByLabel("Ling Stack navigation").getByRole("button", { name }).click();
+  await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name }).click();
   await expect(page.getByRole("heading", { name, level: 1 })).toBeVisible();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0);
 }

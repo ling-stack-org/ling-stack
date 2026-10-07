@@ -74,6 +74,7 @@ export function createChannelReplyContinuationProjection(input: {
         format: "markdown",
         streaming: true,
         deliveryStatus: "pending",
+        presentationRole: "reply_result",
       },
       domainRefs: [{ type: "conversation_item", id: sourceItem.id }],
       idempotencyKey: `assistant-reply:${replyMessageId}`,

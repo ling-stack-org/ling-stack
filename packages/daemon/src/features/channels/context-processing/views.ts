@@ -40,7 +40,7 @@ export function buildChannelContextView(input: BuildChannelContextViewInput): Ch
   const keptSources: ChannelContextSource[] = [];
   const dropped: ChannelContextDroppedSource[] = [...(input.dropped ?? [])];
   for (const source of input.sources ?? []) {
-    const reason = sourceDropReasonForView(source, input.kind, input.consumerTeammateId);
+    const reason = sourceDropReasonForView(source, input.kind, input.consumerTeammateId, input);
     if (reason) {
       dropped.push({ sourceId: source.id, reason });
       continue;

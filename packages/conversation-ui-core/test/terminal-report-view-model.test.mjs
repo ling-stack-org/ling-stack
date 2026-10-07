@@ -204,8 +204,8 @@ test("terminal report artifact workspace paths require one trusted changed-file 
         id: "developer_only_file_ref",
         kind: "file",
         title: "notes.md",
-        path: "docs/notes.md",
-        sourceRefs: [{ kind: "file", id: "docs/notes.md", visibility: "developer_only" }],
+        path: "docs/private-notes.md",
+        sourceRefs: [{ kind: "file", id: "docs/private-notes.md", visibility: "developer_only" }],
       },
       {
         id: "unsupported_kind",

@@ -1,5 +1,4 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type UIEvent } from "react";
-import { useVirtualizer } from "@tanstack/react-virtual";
 import {
   Bot,
   Brain,
@@ -259,6 +258,11 @@ export function TeammateWorkspace({
   const [generatedMedia, setGeneratedMedia] = useState<readonly ConversationGeneratedMedia[]>([]);
   const workspaceMessageIdentity = JSON.stringify([cwd.trim(), teammate.id]);
   const [messageSnapshotIdentity, setMessageSnapshotIdentity] = useState(workspaceMessageIdentity);
+  const [selectedAuthorizationMode, setSelectedAuthorizationMode] = useState<AuthorizationMode>(() => resolveAuthorizationMode(
+    defaultAuthorizationMode,
+    defaultPermissionMode,
+    defaultPermissionPreset,
+  ));
   const [selectedWorkspaceAccessMode, setSelectedWorkspaceAccessMode] = useState<WorkspaceAccessMode>(() => resolveWorkspaceAccessMode(
     defaultWorkspaceAccessMode,
     defaultPermissionMode,
@@ -396,11 +400,18 @@ export function TeammateWorkspace({
   );
   const composerInputParts = parseComposerInputParts(messageDraft, {
     cwd: cwd.trim(),
+    deferTrailingAtomicTokens: true,
     attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
     skills: effectiveSkills.map((skill) => ({ id: skill.skillId, label: skill.skill.name })),
     slashCommands: privateSlashCommands,
   });
-  const composerFileReferenceParts = composerWorkspaceFileParts(composerInputParts);
+  const composerSubmissionInputParts = useMemo(() => parseComposerInputParts(messageDraft, {
+    cwd: cwd.trim(),
+    attachments: readyAttachmentIds.map((attachmentId) => ({ attachmentId })),
+    skills: effectiveSkills.map((skill) => ({ id: skill.skillId, label: skill.skill.name })),
+    slashCommands: privateSlashCommands,
+  }), [cwd, effectiveSkills, messageDraft, privateSlashCommands, readyAttachmentIds]);
+  const composerFileReferenceParts = composerWorkspaceFileParts(composerSubmissionInputParts);
   const composerFileReferenceTokens = composerFileReferenceParts.map((part, index) => ({
     part,
     occurrenceIndex: composerFileReferenceParts.slice(0, index).filter((candidate) => candidate.raw === part.raw).length,
@@ -576,15 +587,6 @@ export function TeammateWorkspace({
         latestVisiblePrivateMessage.attachmentIds.join(","),
       ].join("|")
     : "";
-  const privateMessageFeedVirtualizer = useVirtualizer({
-    count: visibleMessages.length,
-    getScrollElement: () => privateFeedRef.current,
-    estimateSize: () => 112,
-    overscan: 8,
-    getItemKey: (index) => visibleMessages[index]?.id ?? index,
-    useFlushSync: false,
-  });
-  const privateMessageFeedVirtualRows = privateMessageFeedVirtualizer.getVirtualItems();
   const directAttachments = useMemo(
     () => privateAttachments.filter((attachment) => attachment.scope === "teammate_direct_thread"),
     [privateAttachments],
@@ -704,7 +706,7 @@ export function TeammateWorkspace({
   const openDirectInterventions = currentDirectRuntime?.interventions ?? [];
   const hasQueuedDirectGuidance = openDirectInterventions.some((intervention) => intervention.status === "queued");
   const privateComposerPayload = useMemo(() => {
-    const serializedInput = serializeComposerInputParts(composerInputParts);
+    const serializedInput = serializeComposerInputParts(composerSubmissionInputParts);
     const fileRefs = directComposerFileRefs(composerFileReferenceParts);
     return {
       body: serializedInput.body.trim(),
@@ -712,7 +714,7 @@ export function TeammateWorkspace({
       linkPreviewIds: [...pendingDirectLinkPreviewIds],
       fileRefs,
     };
-  }, [composerFileReferenceParts, composerInputParts, pendingDirectLinkPreviewIds]);
+  }, [composerFileReferenceParts, composerSubmissionInputParts, pendingDirectLinkPreviewIds]);
   const privateComposerHasGuidancePayload =
     privateComposerPayload.body.length > 0 ||
     privateComposerPayload.attachmentIds.length > 0 ||
@@ -738,19 +740,18 @@ export function TeammateWorkspace({
     : hasQueuedDirectGuidance
       ? t("Guidance is queued. Wait for it to run, or run it now.")
       : t("Message this AI teammate privately");
-  const directAuthorizationMode = resolveAuthorizationMode(
-    defaultAuthorizationMode,
-    defaultPermissionMode,
-    defaultPermissionPreset,
-  );
-
   useEffect(() => {
+    setSelectedAuthorizationMode(resolveAuthorizationMode(
+      defaultAuthorizationMode,
+      defaultPermissionMode,
+      defaultPermissionPreset,
+    ));
     setSelectedWorkspaceAccessMode(resolveWorkspaceAccessMode(
       defaultWorkspaceAccessMode,
       defaultPermissionMode,
       defaultPermissionPreset,
     ));
-  }, [defaultPermissionMode, defaultPermissionPreset, defaultWorkspaceAccessMode, teammate.id]);
+  }, [defaultAuthorizationMode, defaultPermissionMode, defaultPermissionPreset, defaultWorkspaceAccessMode, teammate.id]);
 
   useEffect(() => {
     setSettingsForm(teammateToSettingsForm(teammate));
@@ -844,9 +845,6 @@ export function TeammateWorkspace({
     const scrollToLatest = (attempt: number): void => {
       privateFeedAutoFollowUntilRef.current = Date.now() + 1_000;
       privateFeedUserScrollIntentRef.current = false;
-      if (visibleMessages.length > 0) {
-        privateMessageFeedVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: "end" });
-      }
       feed.scrollTop = feed.scrollHeight;
       privateFeedPinnedToLatestRef.current = true;
       setPrivateFeedLatestButtonVisible(false);
@@ -860,7 +858,7 @@ export function TeammateWorkspace({
     return () => {
       frameIds.forEach((scheduledFrameId) => globalThis.cancelAnimationFrame(scheduledFrameId));
     };
-  }, [latestVisiblePrivateMessageId, latestVisiblePrivateMessageSignature, loading, privateMessageFeedVirtualizer, visibleMessages.length, workspaceView]);
+  }, [latestVisiblePrivateMessageId, latestVisiblePrivateMessageSignature, loading, workspaceView]);
 
   useEffect(() => {
     if (workspaceView !== "chat" || !hasDirectRuntimeActivity || !cwd.trim()) {
@@ -1122,10 +1120,11 @@ export function TeammateWorkspace({
   }
 
   async function sendPrivateMessage(authorization: {
+    readonly authorizationMode: AuthorizationMode;
     readonly permissionPreset: PermissionPreset;
     readonly permissionConfirmation?: PermissionConfirmation;
   }): Promise<void> {
-    const serializedInput = serializeComposerInputParts(composerInputParts);
+    const serializedInput = serializeComposerInputParts(composerSubmissionInputParts);
     const body = serializedInput.body.trim();
     const attachmentIds = [...serializedInput.attachmentIds];
     const fileRefs = directComposerFileRefs(composerFileReferenceParts);
@@ -1161,7 +1160,7 @@ export function TeammateWorkspace({
         linkPreviewIds: linkPreviews.map((preview) => preview.id),
         fileRefs,
         providerPresetId: teammate.providerPresetId,
-        authorizationMode: directAuthorizationMode,
+        authorizationMode: authorization.authorizationMode,
         workspaceAccessMode: selectedWorkspaceAccessMode,
         permissionPreset: authorization.permissionPreset,
         permissionConfirmation,
@@ -1182,6 +1181,7 @@ export function TeammateWorkspace({
             setMessages((current) => current.map((message) => message.id === data.messageId ? {
               ...message,
               body: data.body,
+              narrationSegments: data.narrationSegments ?? message.narrationSegments,
               status: "pending",
             } : message));
           });
@@ -1419,6 +1419,7 @@ export function TeammateWorkspace({
   }
 
   function handlePrivateComposerSubmit(authorization: {
+    readonly authorizationMode: AuthorizationMode;
     readonly permissionPreset: PermissionPreset;
     readonly permissionConfirmation?: PermissionConfirmation;
   }): void {
@@ -1436,6 +1437,7 @@ export function TeammateWorkspace({
   function handlePrivateComposerKeyDown(
     event: KeyboardEvent<HTMLDivElement>,
     authorization: {
+      readonly authorizationMode: AuthorizationMode;
       readonly permissionPreset: PermissionPreset;
       readonly permissionConfirmation?: PermissionConfirmation;
     },
@@ -1596,6 +1598,7 @@ export function TeammateWorkspace({
   function cancelPrivateFeedAutoFollow(): void {
     privateFeedAutoFollowUntilRef.current = 0;
     privateFeedUserScrollIntentRef.current = true;
+    privateFeedPinnedToLatestRef.current = false;
   }
 
   function scrollPrivateFeedToLatest(): void {
@@ -1605,9 +1608,6 @@ export function TeammateWorkspace({
     }
     privateFeedAutoFollowUntilRef.current = Date.now() + 1_000;
     privateFeedUserScrollIntentRef.current = false;
-    if (visibleMessages.length > 0) {
-      privateMessageFeedVirtualizer.scrollToIndex(visibleMessages.length - 1, { align: "end" });
-    }
     feed.scrollTop = feed.scrollHeight;
     privateFeedPinnedToLatestRef.current = true;
     setPrivateFeedLatestButtonVisible(false);
@@ -1654,7 +1654,6 @@ export function TeammateWorkspace({
           searchOpen={chatHeaderController.searchOpen}
           searchQuery={messageSearchQuery}
           searchTriggerRef={chatHeaderController.searchTriggerRef}
-          summaryOpen={chatSummaryOpen}
           summaryVisible={chatSummaryLayout.visible}
           summaryDockOffset={chatSummaryDockOffset}
           summaryDockResizing={chatDockController.resizing}
@@ -1754,14 +1753,13 @@ export function TeammateWorkspace({
         <TeammatePrivateChatSurface
           cwd={cwd}
           teammate={teammate}
+          threadId={currentDirectWorkspace?.threadId}
           userProfile={userProfile}
           loading={loading}
           visibleMessages={visibleMessages}
           generatedMedia={currentGeneratedMedia}
           normalizedMessageSearchQuery={normalizedMessageSearchQuery}
           privateFeedRef={privateFeedRef}
-          privateMessageFeedVirtualizer={privateMessageFeedVirtualizer}
-          privateMessageFeedVirtualRows={privateMessageFeedVirtualRows}
           usedMemoryEvents={usedMemoryEvents}
           memoryById={memoryById}
           runs={runs}
@@ -1840,6 +1838,8 @@ export function TeammateWorkspace({
           onRemoveComposerFileReference={removeComposerFileReference}
           onRemovePendingLinkPreview={(previewId) => setPendingDirectLinkPreviewIds((current) => current.filter((id) => id !== previewId))}
           onRemovePendingAttachment={removePendingAttachment}
+          authorizationMode={selectedAuthorizationMode}
+          onAuthorizationModeChange={setSelectedAuthorizationMode}
           workspaceAccessMode={selectedWorkspaceAccessMode}
           onWorkspaceAccessModeChange={setSelectedWorkspaceAccessMode}
           onFullAccessPresetSelected={onConfirmFullAccessSelection}

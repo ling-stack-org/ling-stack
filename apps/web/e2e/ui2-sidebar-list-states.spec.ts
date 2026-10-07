@@ -19,6 +19,7 @@ test("Sidebar channel and teammate rows expose one truthful primary state", asyn
   const runtimeErrors = collectRuntimeErrors(page);
   await prepareSurface(page, "light", 1440, 960);
   const state = createBaseState({ approvalStatus: "expired" });
+  state.workspaceSettings.channelNotifications = { channel_running: "all" };
   state.tasks = [
     task("task_channel_running", "channel_running", "running"),
     task("task_channel_failed", "channel_failed", "failed"),
@@ -54,7 +55,7 @@ test("Sidebar channel and teammate rows expose one truthful primary state", asyn
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   await expectPrimaryStatus(navigation, "Paused Channel", "paused");
   await expectPrimaryStatus(navigation, "Running Channel", "running");
   await expectPrimaryStatus(navigation, "Failed Channel", "failed");
@@ -83,7 +84,7 @@ test("Recent conversations keep a stable header while the initial list uses a Sk
   });
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const recentHeaderStatus = navigation.locator('[data-sidebar-section="recent"] .sidebar-section-status');
   await expect(recentHeaderStatus.getByRole("status", { name: "Loading conversations..." })).toHaveCount(0);
   await expect(recentHeaderStatus.locator(".sidebar-section-count")).toHaveText("0");
@@ -132,7 +133,7 @@ test("Opening a failed recent conversation acknowledges only the current failure
   await mockDaemon(page, state);
   await page.goto("/");
 
-  const navigation = page.getByLabel("Ling Stack navigation");
+  const navigation = page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u });
   const failedRow = rowFor(navigation, failedTitle);
   await expectPrimaryStatus(navigation, failedTitle, "failed");
   await failedRow.getByRole("button", { name: "Open recent conversation 1" }).click();
@@ -141,7 +142,7 @@ test("Opening a failed recent conversation acknowledges only the current failure
   expect(state.threads[0]!.status).toBe("failed");
 
   await page.reload();
-  await expect(rowFor(page.getByLabel("Ling Stack navigation"), failedTitle).locator('[data-sidebar-primary-status="failed"]')).toHaveCount(0);
+  await expect(rowFor(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }), failedTitle).locator('[data-sidebar-primary-status="failed"]')).toHaveCount(0);
 
   state.threads[0] = {
     ...state.threads[0]!,
@@ -149,7 +150,7 @@ test("Opening a failed recent conversation acknowledges only the current failure
     metadata: { lastActivityAt: "2026-07-19T00:11:00.000Z" },
   };
   await page.reload();
-  await expectPrimaryStatus(page.getByLabel("Ling Stack navigation"), failedTitle, "failed");
+  await expectPrimaryStatus(page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }), failedTitle, "failed");
   expect(runtimeErrors).toEqual([]);
 });
 
