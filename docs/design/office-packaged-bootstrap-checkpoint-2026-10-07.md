@@ -109,8 +109,28 @@ selection evidence, not retained-original-FD custody or malicious same-UID
 isolation. Exact CLI byte comparison includes the injected literals; it does
 not prove reviewed source/generated-output equivalence.
 
-The existing DMG extractor has bounded detach/force fallback and cleanup but
-still lacks the ZIP extractor's equivalent initial mountpoint inode guard.
+The DMG extractor now captures its first host parent/source inode pins, checks
+the actual native uint64 hexadecimal wire format, and secures that same
+directory before attach. It does not compare the mounted volume root with the
+hidden host directory. After detach, only the exact original empty host
+directory may be removed through the identity-bound native operation. A lost
+identity is not refreshed and does not fall back to path-only deletion.
+Retry, concurrent cleanup, detach/force fallback and both failure causes are
+preserved. Partial/force-attach OS behavior and original attachment ownership
+are still not proven by these guards.
+
+A real one-normal-detach probe using an old local image observed the host
+inode restored and the image SHA256 unchanged. It also exposed a separate
+remaining defect: `hdiutil attach` may update its checksum-cache attribute
+even with a read-only mounted volume, changing the host image ctime. Passing
+the original final DMG directly to it conflicts with the outer immutable
+artifact fence. The solution must consume a private, exclusive, original-FD
+byte snapshot and keep the original artifact's complete identity/ctime fence;
+removing ctime checks or disabling checksum verification is not the solution.
+This input-snapshot chain is not implemented by the mountpoint increment.
+The original probe ended RED, not whole-probe GREEN; its separately verified
+host-inode and unchanged-byte observations do not constitute package acceptance.
+
 Toolchain/vendor review, generated-output freshness and real final package
 acceptance remain separate gates. No production approved row exists, so this
 checkpoint does not enable the incomplete route. Synthetic fixtures do not
@@ -143,6 +163,13 @@ public-repository safety and diff checks also passed. Earlier neighborhood
 counts are superseded for this increment, not added to these results. Real
 esbuild output and local ASAR fixtures are used where explicitly stated;
 native publication, signer and outer extractor substitutes remain synthetic.
+
+The subsequent DMG mountpoint increment passed the complete affected
+extractor module's 46 tests with zero failures or skips, including existing
+local native cleanup neighbors. Its 32 synthetic DMG cases are included in
+46, not additional. Stable old deletion and native-wire RED runs are retained.
+The real old-image probe, its unchanged-byte readback and identity-bound
+empty-directory recovery are separate evidence with the limitations above.
 
 Before T6 can complete, the work still requires independent source/packaging
 and toolchain/runtime approval, a real final signed bundle, each actual ZIP/DMG

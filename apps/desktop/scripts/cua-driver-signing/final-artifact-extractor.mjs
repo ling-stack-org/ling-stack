@@ -82,9 +82,10 @@ async function extractZip(artifactPath, dependencies) {
 
 async function mountDmg(artifactPath, dependencies) {
   const createTemporaryRoot = dependencies.mkdtemp ?? mkdtemp;
-  const removeEmptyDirectory = dependencies.rmdir ?? rmdir;
   const runCommand = dependencies.runCommand ?? runBoundedCommand;
-  const mountPoint = await createTemporaryRoot(join(tmpdir(), "ling-cua-final-dmg-"));
+  const temporaryRoot = await createTemporaryRoot(join(tmpdir(), "ling-cua-final-dmg-"));
+  const custody = await initializeDmgMountPointCustody(temporaryRoot, dependencies);
+  const mountPoint = custody.root;
   let attachAttempted = false;
   let detached = false;
   const cleanup = retryableCleanup(async () => {
@@ -109,7 +110,9 @@ async function mountDmg(artifactPath, dependencies) {
       }
     }
     if (detached || !attachAttempted) {
-      await removeEmptyDirectory(mountPoint);
+      // A mounted path exposes the volume root, not these original host pins.
+      // Only after detach may the exact original empty host directory be removed.
+      await removeUninitializedTemporaryRoot(custody, dependencies);
     }
   });
   try {
@@ -126,6 +129,74 @@ async function mountDmg(artifactPath, dependencies) {
     return Object.freeze({ artifactRoot: mountPoint, cleanup });
   } catch (error) {
     await cleanupAfterExtractionFailure(error, cleanup);
+  }
+}
+
+/** Pin the first host-directory stat, never the mounted view or a later replacement. */
+async function initializeDmgMountPointCustody(rootValue, dependencies) {
+  let receipt;
+  try {
+    const root = resolve(rootValue);
+    const parentRoot = await realpath(dirname(root));
+    const sourceName = basename(root);
+    const [parent, source] = await Promise.all([
+      lstat(parentRoot, { bigint: true }),
+      lstat(root, { bigint: true }),
+    ]);
+    if (!parent.isDirectory() || parent.isSymbolicLink()
+      || !source.isDirectory() || source.isSymbolicLink()) {
+      throw contractError("final_artifact_cleanup_root_invalid", `Unsafe initial DMG mountpoint: ${root}`);
+    }
+    receipt = Object.freeze({
+      // Darwin IdentityString casts dev/ino to uint64_t, then emits lowercase hex.
+      parentIdentity: `${BigInt.asUintN(64, parent.dev).toString(16)}:${BigInt.asUintN(64, parent.ino).toString(16)}`,
+      parentRoot,
+      root: join(parentRoot, sourceName),
+      sourceIdentity: `${BigInt.asUintN(64, source.dev).toString(16)}:${BigInt.asUintN(64, source.ino).toString(16)}`,
+      sourceName,
+    });
+    const withParentLease = dependencies.withAtomicPublishParentLease ?? withAtomicPublishParentLease;
+    const readIdentities = dependencies.readAtomicPublishDirectoryIdentities ?? readAtomicPublishDirectoryIdentities;
+    const securePrivateDirectory = dependencies.securePrivateStagingDirectory ?? securePrivateStagingDirectory;
+    await withParentLease({ parentRoot }, async lease => {
+      const current = await guardLease(lease, () => readIdentities({ parentRoot, sourceName }, lease));
+      assertLeaseHeld(lease);
+      if (current?.parentIdentity !== receipt.parentIdentity || current?.sourceIdentity !== receipt.sourceIdentity) {
+        throw contractError("final_artifact_cleanup_identity_mismatch", `DMG mountpoint changed before binding: ${root}`);
+      }
+      const secured = await guardLease(lease, () => securePrivateDirectory({
+        directoryName: sourceName,
+        expectedDirectoryIdentity: receipt.sourceIdentity,
+        expectedParentIdentity: receipt.parentIdentity,
+        parentRoot,
+      }, lease));
+      assertLeaseHeld(lease);
+      if (secured?.parentIdentity !== receipt.parentIdentity || secured?.directoryIdentity !== receipt.sourceIdentity) {
+        throw contractError("final_artifact_cleanup_identity_mismatch", `DMG mountpoint changed while securing: ${root}`);
+      }
+    });
+    return receipt;
+  } catch (initializationError) {
+    if (receipt !== undefined) {
+      try {
+        await removeUninitializedTemporaryRoot(receipt, dependencies);
+      } catch (cleanupError) {
+        const aggregate = new AggregateError(
+          [initializationError, cleanupError],
+          "final_artifact_cleanup_initialization_and_recovery_failed",
+        );
+        attachTemporaryRootCleanupReceipt(aggregate, receipt);
+        throw aggregate;
+      }
+      throw initializationError;
+    }
+    // No trusted initial identity: do not fall back to path-only rmdir.
+    const aggregate = new AggregateError(
+      [initializationError],
+      "final_artifact_cleanup_initialization_and_recovery_failed",
+    );
+    attachTemporaryRootCleanupReceipt(aggregate, { root: resolve(rootValue) });
+    throw aggregate;
   }
 }
 
