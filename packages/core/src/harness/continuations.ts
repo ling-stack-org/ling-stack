@@ -232,11 +232,23 @@ export interface FinishRunnerContinuationInput {
   readonly now: string;
 }
 
+/** Discovery position in the ascending due-time, creation-time, id ordering. */
+export interface RunnerContinuationDiscoveryCursor {
+  /** nextAttemptAt, or createdAt when the continuation is not deferred. */
+  readonly dueAt: string;
+  readonly createdAt: string;
+  readonly id: string;
+}
+
 export interface ListClaimableRunnerContinuationsInput {
   readonly now: string;
   readonly limit?: number;
   /** Only rows explicitly deferred by the daemon after a queueable conflict. */
   readonly scheduledOnly?: boolean;
+  /** Exclusive discovery position; does not claim or authorize execution. */
+  readonly after?: RunnerContinuationDiscoveryCursor;
+  /** Frozen sweep cutoff. Rows created later are discovered by a subsequent sweep. */
+  readonly createdAtOrBefore?: string;
 }
 
 export type RunnerContinuationStoreErrorCode =

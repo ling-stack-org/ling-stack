@@ -14,6 +14,7 @@ import { isHarnessLeaseClaimable } from "../../harness/common.js";
 import { toRuntimeAttemptFence, type RuntimeAttemptFenceV1, type WorkUnitAttempt } from "../../runtime-supervisor-types.js";
 import type { RunArtifact } from "../../run-types.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
+import { assertRecoveryDiscoveryId, assertRecoveryDiscoveryTimestamp } from "./recovery-discovery-validation.js";
 import { mapRunnerContinuation, runnerContinuationSelectSql } from "./runner-continuation-mappers.js";
 import type { SqliteRuntimeWorkUnitStore } from "./runtime-work-unit-store.js";
 import type { SqliteStoreContext } from "./store-context.js";
@@ -48,15 +49,34 @@ export class SqliteRunnerContinuationStore {
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 500) {
       throw new Error("Runner continuation claim limit must be between 1 and 500.");
     }
-    const scheduledClause = input.scheduledOnly ? "AND next_attempt_at IS NOT NULL" : "";
+    const clauses: string[] = [];
+    const params: (string | number)[] = [input.now, input.now];
+    if (input.scheduledOnly) clauses.push("next_attempt_at IS NOT NULL");
+    if (input.createdAtOrBefore !== undefined) {
+      assertRecoveryDiscoveryTimestamp(input.createdAtOrBefore, "creation cutoff");
+      clauses.push("created_at <= ?");
+      params.push(input.createdAtOrBefore);
+    }
+    if (input.after !== undefined) {
+      if (!input.after || typeof input.after !== "object") {
+        throw new Error("Invalid recovery discovery continuation cursor.");
+      }
+      assertRecoveryDiscoveryTimestamp(input.after.dueAt, "cursor due time");
+      assertRecoveryDiscoveryTimestamp(input.after.createdAt, "cursor creation time");
+      assertRecoveryDiscoveryId(input.after.id);
+      clauses.push("(COALESCE(next_attempt_at, created_at), created_at, id) > (?, ?, ?)");
+      params.push(input.after.dueAt, input.after.createdAt, input.after.id);
+    }
+    const discoveryClause = clauses.length > 0 ? `AND ${clauses.join(" AND ")}` : "";
+    params.push(limit);
     return this.context.database
       .prepare(`${runnerContinuationSelectSql(`
         WHERE state = 'prepared'
           AND (next_attempt_at IS NULL OR next_attempt_at <= ?)
           AND (claim_owner IS NULL OR claim_expires_at IS NULL OR claim_expires_at <= ?)
-          ${scheduledClause}
+          ${discoveryClause}
       `)} ORDER BY COALESCE(next_attempt_at, created_at) ASC, created_at ASC, id ASC LIMIT ?`)
-      .all(input.now, input.now, limit)
+      .all(...params)
       .map((row) => mapRunnerContinuation(row as Record<string, SQLOutputValue>));
   }
 
