@@ -4,6 +4,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, HOST_OFFICE_LOCAL_PROTOCOL, toRuntimeAttemptFence } from "../../dist/index.js";
+import { createSqliteRunStoreFixture } from "./sqlite-run-store-fixture.mjs";
 
 export const officeTerminalNow = () => new Date().toISOString();
 export const officeTerminalHash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -14,7 +15,7 @@ export const officeTerminalError = expected => error => error.code === expected;
 /** Independent, isolated real SQLite/native-file fixture; importing this helper registers no tests. */
 export async function officeTerminalFixture(t) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-office-local-terminal-"));
-  const store = createSqliteRunStore(cwd), other = createSqliteRunStore(cwd), opened = new Set();
+  const store = createSqliteRunStoreFixture(cwd), other = createSqliteRunStore(cwd), opened = new Set();
   t.after(async () => {
     for (const fd of opened) { try { closeSync(fd); } catch {} }
     other.close(); store.close(); await rm(cwd, { recursive: true, force: true });

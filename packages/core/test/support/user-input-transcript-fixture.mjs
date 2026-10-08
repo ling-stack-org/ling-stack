@@ -2,7 +2,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { createSqliteRunStore, resolveRuntimePaths, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence } from "../../dist/index.js";
+import { resolveRuntimePaths, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence } from "../../dist/index.js";
+import { createSqliteRunStoreFixture } from "./sqlite-run-store-fixture.mjs";
 
 export const now = "2026-09-07T00:00:00.000Z";
 export const acceptedAt = "2026-09-07T00:00:01.000Z";
@@ -12,7 +13,7 @@ export const claimedAt = "2026-09-07T00:00:03.000Z";
 export async function userInputTranscriptFixture(t, { surface = "normal", storedTask = false, workflow = false } = {}) {
   if ((storedTask || workflow) && surface !== "channel") throw new Error("Stored workflow fixtures require the channel surface");
   const cwd = await mkdtemp(join(tmpdir(), "ling-input-transcript-"));
-  const f = { cwd, store: createSqliteRunStore(cwd), participantId: surface === "private" ? "teammate_builtin_engineer" : "ling_agent" };
+  const f = { cwd, store: createSqliteRunStoreFixture(cwd), participantId: surface === "private" ? "teammate_builtin_engineer" : "ling_agent" };
   f.db = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
   f.db.exec("PRAGMA foreign_keys=ON");
   t.after(async () => { f.db.close(); f.store.close(); await rm(cwd, { recursive: true, force: true }); });

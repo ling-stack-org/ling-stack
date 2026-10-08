@@ -8,6 +8,7 @@ import test from "node:test";
 import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, toRuntimeAttemptFence, HOST_OFFICE_LOCAL_PROTOCOL } from "../dist/index.js";
 import { SqliteHostOperationJournalStore } from "../dist/storage/sqlite/host-operation-journal-store.js";
 import { digestHarnessToolValue } from "../dist/harness/tool-executions.js";
+import { createSqliteRunStoreFixture } from "./support/sqlite-run-store-fixture.mjs";
 
 const now = () => new Date().toISOString();
 const code = expected => error => error.code === expected;
@@ -23,7 +24,7 @@ const officePairSnapshot = f => ({
 /** Real isolated SQLite and binary filesystem calls; not packaged Office/GUI evidence. */
 async function fixture(t, override = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-office-local-facts-"));
-  const store = createSqliteRunStore(cwd), other = createSqliteRunStore(cwd);
+  const store = createSqliteRunStoreFixture(cwd), other = createSqliteRunStore(cwd);
   t.after(async () => { other.close(); store.close(); await rm(cwd, { recursive: true, force: true }); });
   const at = now();
   const unit = store.createWorkUnit({ workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "run", ownerId: "run",
