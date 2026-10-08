@@ -7,6 +7,8 @@ import { withOriginalPackagedOfficeNativePublication } from "./build-packaged-of
 import { withCuaDriverBuilderEnvironment } from "./cua-driver-builder-environment.mjs";
 import { runCuaDriverElectronPackageCli } from "./cua-driver-electron-package.mjs";
 import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs";
+import { assertPackagedOfficeSigningConfig,
+  assertPackagedOfficeSigningEnvironment } from "./packaged-office-signing-inputs.mjs";
 
 const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const builderArguments = Object.freeze(["--mac", "dmg", "zip", "--arm64"]);
@@ -27,6 +29,7 @@ export async function packageMacosWithOffice() {
     if (process.env.LING_CUA_DRIVER_PACKAGE_PROVIDER === "1") {
       throw new Error("packaged_office_native_provider_signing_lane_unsupported");
     }
+    assertPackagedOfficeSigningEnvironment(process.env);
     await runCuaDriverElectronPackageCli(["--platform", "darwin", "--", ...builderArguments], process.env, {
       async runBuilder({ appRoot, args, environment }) {
         if (realpathSync(appRoot) !== desktopRoot
@@ -34,7 +37,10 @@ export async function packageMacosWithOffice() {
             "scripts/cua-driver-electron-builder.config.mjs"), ...builderArguments])) {
           throw new Error("packaged_office_native_builder_invocation_invalid");
         }
+        assertPackagedOfficeSigningEnvironment(process.env);
+        assertPackagedOfficeSigningEnvironment(environment);
         return withCuaDriverBuilderEnvironment(environment, async () => {
+          assertPackagedOfficeSigningEnvironment(process.env);
           const token = await buildFreshPackagedDaemonForMacOffice();
           return withOriginalPackagedOfficeNativePublication(token, async () => {
             // The URL is fixed original code. A fresh module instance prevents
@@ -45,6 +51,8 @@ export async function packageMacosWithOffice() {
             if (config.mac.sign !== undefined || config.mac.identity !== "-") {
               throw new Error("packaged_office_native_default_signer_required");
             }
+            assertPackagedOfficeSigningConfig(config);
+            assertPackagedOfficeSigningEnvironment(process.env);
             await build({ projectDir: desktopRoot, publish: "never",
               targets: Platform.MAC.createTarget(["dmg", "zip"], Arch.arm64), config });
             return 0;
