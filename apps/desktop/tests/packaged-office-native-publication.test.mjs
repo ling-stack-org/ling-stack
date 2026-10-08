@@ -53,6 +53,9 @@ const addedDependencyGroups = Object.freeze({
     "packages/daemon/src/runtime/sandbox/macos-sandbox-backend.ts",
     "packages/daemon/src/runtime/sandbox/macos-seatbelt-profile.ts",
   ],
+  recovery: [
+    "packages/core/src/storage/sqlite/recovery-discovery-validation.ts",
+  ],
   packaging: [
     "apps/desktop/scripts/packaged-office-signing-inputs.mjs",
     "apps/desktop/scripts/cua-driver-package-staging-contract.mjs",
@@ -84,6 +87,11 @@ test("Office signing admission remains an explicit authored root and packaging s
   const path = "apps/desktop/scripts/packaged-office-signing-inputs.mjs";
   assert.ok(PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS.includes(path));
   assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path));
+});
+
+test("Office recovery discovery validation remains an explicit packaging source input", () => {
+  assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
+    "packages/core/src/storage/sqlite/recovery-discovery-validation.ts"));
 });
 
 /** Disposable, explicitly synthetic compiler/signature fixture. It never approves product sources. */

@@ -485,6 +485,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/core/src/storage/sqlite/provider-mappers.ts",
   "packages/core/src/storage/sqlite/provider-store.ts",
   "packages/core/src/storage/sqlite/read-snapshot.ts",
+  "packages/core/src/storage/sqlite/recovery-discovery-validation.ts",
   "packages/core/src/storage/sqlite/remote-access-store.ts",
   "packages/core/src/storage/sqlite/resource-lease-store.ts",
   "packages/core/src/storage/sqlite/run-compaction-checkpoint-migration.ts",
