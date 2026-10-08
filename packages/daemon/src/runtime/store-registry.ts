@@ -38,7 +38,20 @@ export class RunStoreRegistry {
     store.recoverStaleRuns(now);
     store.recoverStaleChannelWorkflows(now);
     this.storesByCwd.set(cwd, store);
-    void Promise.resolve(this.options.onStoreInitialized?.(cwd, store)).catch(() => undefined);
+    try {
+      void Promise.resolve(this.options.onStoreInitialized?.(cwd, store)).catch(() => undefined);
+    } catch (error) {
+      this.storesByCwd.delete(cwd);
+      for (const [runId, rememberedStore] of this.storesByRunId) {
+        if (rememberedStore === store) this.storesByRunId.delete(runId);
+      }
+      try {
+        store.close();
+      } catch {
+        // Cleanup failure must not replace the original initialization error.
+      }
+      throw error;
+    }
     return store;
   }
 

@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import {
   digestHarnessToolValue,
+  type HarnessToolExecutionRecoveryCursor,
   type ReconciledHarnessToolExecutionOutcome,
   type RunStore,
 } from "@ling-stack/core";
@@ -11,18 +12,39 @@ import {
   type FileMutationRecoveryBasis,
 } from "./executors/file-mutation.js";
 
-/** Reconcile expired file effects from durable pre/post hashes before generic unknown-outcome fallback. */
+export interface HarnessToolStartupRecoveryResult {
+  readonly scanned: number;
+  readonly updated: number;
+  readonly skipped: number;
+  readonly pages: number;
+}
+
+/** Synchronously drain bounded discovery pages before any recovery dispatch can observe this Store. */
 export function reconcileHarnessToolExecutionsAtStartup(input: {
   readonly cwd: string;
   readonly store: RunStore;
   readonly now: string;
   readonly limit?: number;
-}): readonly HarnessToolExecutionV1[] {
-  return input.store.reconcileAbandonedHarnessToolExecutions({
-    now: input.now,
-    limit: input.limit,
-    classify: (execution) => classifyAbandonedFileMutation(input.store, input.cwd, execution),
-  });
+  readonly signal?: AbortSignal;
+}): HarnessToolStartupRecoveryResult {
+  let cursor: HarnessToolExecutionRecoveryCursor | undefined;
+  let scanned = 0;
+  let updated = 0;
+  let pages = 0;
+  do {
+    input.signal?.throwIfAborted();
+    const page = input.store.reconcileAbandonedHarnessToolExecutionsPage({
+      now: input.now,
+      limit: input.limit,
+      cursor,
+      classify: (execution) => classifyAbandonedFileMutation(input.store, input.cwd, execution),
+    });
+    scanned += page.scanned;
+    updated += page.updated.length;
+    pages += 1;
+    cursor = page.nextCursor;
+  } while (cursor);
+  return { scanned, updated, skipped: scanned - updated, pages };
 }
 
 function classifyAbandonedFileMutation(

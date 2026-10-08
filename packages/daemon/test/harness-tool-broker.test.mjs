@@ -548,10 +548,11 @@ for (const [name, observedContent, expectedState, expectedFailure] of [
       now: new Date(startedAt.getTime() + 2000).toISOString(),
     });
 
-    assert.equal(recovered.length, 1);
-    assert.equal(recovered[0].state, expectedState);
-    assert.equal(recovered[0].failureCode, expectedFailure);
-    assert.equal(recovered[0].resultSummary.outcome, name.replace("-", "_"));
-    assert.ok(recovered[0].evidenceArtifactIds.includes(recovered[0].policySnapshotArtifactId));
+    assert.deepEqual(recovered, { scanned: 1, updated: 1, skipped: 0, pages: 1 });
+    const execution = f.store.getHarnessToolExecution(approved.id);
+    assert.equal(execution.state, expectedState);
+    assert.equal(execution.failureCode, expectedFailure);
+    assert.equal(execution.resultSummary.outcome, name.replace("-", "_"));
+    assert.ok(execution.evidenceArtifactIds.includes(execution.policySnapshotArtifactId));
   });
 }

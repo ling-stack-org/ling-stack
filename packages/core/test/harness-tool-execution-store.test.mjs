@@ -441,6 +441,235 @@ test("stale Attempt cannot commit success and is reconciled as unknown", async (
   assert.equal(f.store.reconcileAbandonedHarnessToolExecutions({ now: later })[0].state, "unknown_outcome");
 });
 
+test("recovery pages reconcile 1001 equal-expiry rows after reopen without claiming future or pre-effect rows", async (t) => {
+  const f = await fixture(t);
+  const expectedIds = Array.from({ length: 1001 }, (_, index) => `paged-${String(index).padStart(4, "0")}`);
+  for (const id of expectedIds) seedRecoveryExecution(f, id);
+  seedRecoveryExecution(f, "future-execution", { claimExpiresAt: expires });
+  seedRecoveryExecution(f, "claimed-execution", { start: false });
+  f.store.close();
+  f.store = createSqliteRunStore(f.cwd);
+
+  const recoveredIds = [];
+  const scannedPerPage = [];
+  let cursor;
+  do {
+    const page = f.store.reconcileAbandonedHarnessToolExecutionsPage({ now: later, limit: 500, cursor });
+    scannedPerPage.push(page.scanned);
+    assert.equal(page.updated.length, page.scanned);
+    for (const execution of page.updated) {
+      assert.equal(execution.state, "unknown_outcome");
+      assert.equal(execution.failureCode, "tool.unknown_side_effect_outcome");
+      assert.equal(execution.revision, 3);
+      assert.deepEqual(execution.evidenceArtifactIds, []);
+      recoveredIds.push(execution.id);
+    }
+    if (page.nextCursor) {
+      assert.deepEqual(page.nextCursor, { claimExpiresAt: expired, id: page.updated.at(-1).id });
+    }
+    cursor = page.nextCursor;
+    assert.ok(scannedPerPage.length <= 3, "equal-expiry keysets must not repeat a full page");
+  } while (cursor);
+
+  assert.deepEqual(scannedPerPage, [500, 500, 1]);
+  assert.deepEqual(recoveredIds, expectedIds);
+  assert.equal(f.store.getHarnessToolExecution("future-execution").state, "executing");
+  assert.equal(f.store.getHarnessToolExecution("future-execution").revision, 2);
+  assert.equal(f.store.getHarnessToolExecution("claimed-execution").state, "claimed");
+  assert.equal(f.store.getHarnessToolExecution("claimed-execution").revision, 1);
+  assert.deepEqual(f.store.reconcileAbandonedHarnessToolExecutionsPage({ now: later, limit: 500 }), {
+    scanned: 0, updated: [],
+  });
+  assert.equal(count(f, "harness_tool_executions", "state='unknown_outcome'"), 1001);
+  assert.equal(count(f, "run_events", "type='host_command_prepared'"), 0);
+});
+
+test("a competing public Store wins recovery CAS while the losing page still advances its scanned cursor", async (t) => {
+  const f = await fixture(t);
+  seedRecoveryExecution(f, "race-a");
+  seedRecoveryExecution(f, "race-b");
+  const competingStore = createSqliteRunStore(f.cwd);
+  try {
+    let classified = 0;
+    const first = f.store.reconcileAbandonedHarnessToolExecutionsPage({
+      now: later,
+      limit: 1,
+      classify: (execution) => {
+        classified += 1;
+        assert.equal(execution.id, "race-a");
+        const winner = competingStore.reconcileAbandonedHarnessToolExecutionsPage({ now: later, limit: 1 });
+        assert.equal(winner.scanned, 1);
+        assert.deepEqual(winner.updated.map((row) => row.id), ["race-a"]);
+        return undefined;
+      },
+    });
+    assert.equal(classified, 1);
+    assert.equal(first.scanned, 1);
+    assert.deepEqual(first.updated, []);
+    assert.deepEqual(first.nextCursor, { claimExpiresAt: expired, id: "race-a" });
+    const second = f.store.reconcileAbandonedHarnessToolExecutionsPage({
+      now: later, limit: 1, cursor: first.nextCursor,
+    });
+    assert.equal(second.scanned, 1);
+    assert.deepEqual(second.updated.map((row) => row.id), ["race-b"]);
+    assert.equal(second.nextCursor, undefined);
+    assert.equal(competingStore.getHarnessToolExecution("race-a").revision, 3);
+    assert.equal(competingStore.getHarnessToolExecution("race-b").revision, 3);
+  } finally {
+    competingStore.close();
+  }
+});
+
+test("classifier renewal of a page's last row keeps the original expiry cursor and does not skip the tail", async (t) => {
+  const f = await fixture(t);
+  seedRecoveryExecution(f, "renew-a");
+  seedRecoveryExecution(f, "renew-b");
+  const first = f.store.reconcileAbandonedHarnessToolExecutionsPage({
+    now: later,
+    limit: 1,
+    classify: (execution) => {
+      assert.equal(execution.id, "renew-a");
+      assert.equal(f.database.prepare(`
+        UPDATE harness_tool_executions
+        SET claim_expires_at = ?, revision = revision + 1, updated_at = ?
+        WHERE id = ?
+      `).run(expires, later, execution.id).changes, 1);
+      return undefined;
+    },
+  });
+  assert.equal(first.scanned, 1);
+  assert.deepEqual(first.updated, []);
+  assert.deepEqual(first.nextCursor, { claimExpiresAt: expired, id: "renew-a" });
+  const second = f.store.reconcileAbandonedHarnessToolExecutionsPage({
+    now: later, limit: 1, cursor: first.nextCursor,
+  });
+  assert.deepEqual(second.updated.map((row) => row.id), ["renew-b"]);
+  assert.equal(second.nextCursor, undefined);
+  const renewed = f.store.getHarnessToolExecution("renew-a");
+  assert.equal(renewed.state, "executing");
+  assert.equal(renewed.claimExpiresAt, expires);
+  assert.equal(renewed.revision, 3);
+  assert.equal(renewed.resultDigest, undefined);
+});
+
+test("a throwing recovery classifier commits the existing unknown-outcome fallback without replay", async (t) => {
+  const f = await fixture(t);
+  seedRecoveryExecution(f, "throwing-classifier");
+  const page = f.store.reconcileAbandonedHarnessToolExecutionsPage({
+    now: later,
+    limit: 1,
+    classify: () => { throw new Error("durable file evidence could not be read"); },
+  });
+  assert.equal(page.scanned, 1);
+  assert.equal(page.updated.length, 1);
+  assert.equal(page.nextCursor, undefined);
+  assert.equal(page.updated[0].state, "unknown_outcome");
+  assert.equal(page.updated[0].failureCode, "tool.unknown_side_effect_outcome");
+  assert.equal(page.updated[0].resultSummary.reason, "claim_expired_after_possible_side_effect");
+  assert.equal(page.updated[0].revision, 3);
+  assert.equal(count(f, "run_events", "type='host_command_prepared'"), 0);
+});
+
+test("a row deleted after discovery still counts as scanned and advances the cursor before the surviving tail", async (t) => {
+  const f = await fixture(t);
+  for (const id of ["delete-a", "delete-b", "delete-c"]) seedRecoveryExecution(f, id);
+  const classifiedIds = [];
+  const first = f.store.reconcileAbandonedHarnessToolExecutionsPage({
+    now: later,
+    limit: 2,
+    classify: (execution) => {
+      classifiedIds.push(execution.id);
+      assert.equal(f.database.prepare("DELETE FROM harness_tool_executions WHERE id = ?").run("delete-b").changes, 1);
+      return undefined;
+    },
+  });
+  assert.deepEqual(classifiedIds, ["delete-a"]);
+  assert.equal(first.scanned, 2);
+  assert.deepEqual(first.updated.map((row) => row.id), ["delete-a"]);
+  assert.deepEqual(first.nextCursor, { claimExpiresAt: expired, id: "delete-b" });
+  assert.equal(f.store.getHarnessToolExecution("delete-b"), undefined);
+  const second = f.store.reconcileAbandonedHarnessToolExecutionsPage({
+    now: later, limit: 2, cursor: first.nextCursor,
+  });
+  assert.equal(second.scanned, 1);
+  assert.deepEqual(second.updated.map((row) => row.id), ["delete-c"]);
+  assert.equal(second.nextCursor, undefined);
+});
+
+test("recovery cursor quotes are SQL-bound ordering data and cannot broaden the eligible page", async (t) => {
+  const f = await fixture(t);
+  seedRecoveryExecution(f, "query-a");
+  seedRecoveryExecution(f, "query-b");
+  const page = f.store.reconcileAbandonedHarnessToolExecutionsPage({
+    now: later,
+    limit: 1,
+    cursor: { claimExpiresAt: expired, id: "query-a' OR 1=1 --" },
+  });
+  assert.equal(page.scanned, 1);
+  assert.deepEqual(page.updated.map((row) => row.id), ["query-b"]);
+  assert.equal(page.nextCursor, undefined);
+  assert.equal(f.store.getHarnessToolExecution("query-a").state, "executing");
+  assert.equal(f.store.getHarnessToolExecution("query-a").revision, 2);
+  assert.equal(count(f, "harness_tool_executions"), 2);
+  assert.equal(count(f, "artifacts"), 1);
+});
+
+test("recovery pages reject invalid limits and cursors with typed errors before mutation", async (t) => {
+  const f = await fixture(t);
+  seedRecoveryExecution(f, "invalid-input-execution");
+  const invalidInputs = [
+    ...[
+      ["zero", 0], ["negative", -1], ["over-bound", 501], ["fractional", 1.5],
+      ["NaN", Number.NaN], ["infinite", Number.POSITIVE_INFINITY], ["unsafe", Number.MAX_SAFE_INTEGER + 1],
+      ["string", "1"], ["null", null],
+    ].map(([name, limit]) => [`limit ${name}`, { limit }]),
+    ...[
+      ["null", null], ["false", false], ["zero", 0], ["empty string", ""],
+      ["array", []], ["empty object", {}],
+      ["missing id", { claimExpiresAt: expired }],
+      ["non-string id", { claimExpiresAt: expired, id: 1 }],
+      ["empty id", { claimExpiresAt: expired, id: "" }],
+      ["trimmed id", { claimExpiresAt: expired, id: " id " }],
+      ["oversized id", { claimExpiresAt: expired, id: "x".repeat(1025) }],
+      ["invalid expiry", { claimExpiresAt: "invalid", id: "id" }],
+      ["noncanonical expiry", { claimExpiresAt: "2026-09-13T00:00:30Z", id: "id" }],
+      ["future expiry", { claimExpiresAt: expires, id: "id" }],
+    ].map(([name, cursor]) => [`cursor ${name}`, { cursor }]),
+  ];
+  for (const [name, input] of invalidInputs) {
+    await t.test(name, () => {
+      const before = f.store.getHarnessToolExecution("invalid-input-execution");
+      assert.throws(() => f.store.reconcileAbandonedHarnessToolExecutionsPage({ now: later, ...input }), hasCode("tool.invalid_input"));
+      assert.deepEqual(f.store.getHarnessToolExecution("invalid-input-execution"), before);
+    });
+  }
+});
+
+function seedRecoveryExecution(f, id, { claimExpiresAt = expired, start = true } = {}) {
+  const prepared = f.store.prepareHarnessToolExecution({ ...f.input, id, toolCallId: `tool-call-${id}` });
+  const claimed = f.store.claimHarnessToolExecution({
+    executionId: prepared.execution.id,
+    expectedRevision: prepared.execution.revision,
+    claimOwner: "daemon:recovery-fixture",
+    claimToken: `claim-${id}`,
+    claimExpiresAt,
+    sourceFence: f.input.sourceFence,
+    now,
+  });
+  assert.equal(claimed.ok, true);
+  if (!start) return claimed.value;
+  const started = f.store.startHarnessToolExecution({
+    executionId: id,
+    expectedRevision: claimed.value.revision,
+    claimOwner: claimed.value.claimOwner,
+    claimToken: claimed.value.claimToken,
+    sourceFence: f.input.sourceFence,
+    now,
+  });
+  assert.equal(started.ok, true);
+  return started.value;
+}
+
 function count(f, table, where) {
   return f.database.prepare(`SELECT COUNT(*) AS count FROM ${table}${where ? ` WHERE ${where}` : ""}`).get().count;
 }

@@ -62,9 +62,11 @@ import type {
   FailApprovedHarnessToolExecutionInput,
   FinishHarnessToolExecutionInput,
   HarnessToolExecutionMutationResult,
+  HarnessToolExecutionRecoveryPage,
   PrepareHarnessToolExecutionInput,
   PreparedHarnessToolExecution,
   ReconcileAbandonedHarnessToolExecutionsInput,
+  ReconcileAbandonedHarnessToolExecutionsPageInput,
   ResolveHarnessToolApprovalInput,
   StartHarnessToolExecutionInput,
 } from "./harness/tool-executions.js";
@@ -1861,6 +1863,9 @@ export interface RunStore extends DelegationQueryStore {
   reconcileAbandonedHarnessToolExecutions(
     input: ReconcileAbandonedHarnessToolExecutionsInput,
   ): readonly HarnessToolExecutionV1[];
+  reconcileAbandonedHarnessToolExecutionsPage(
+    input: ReconcileAbandonedHarnessToolExecutionsPageInput,
+  ): HarnessToolExecutionRecoveryPage;
   getRunEvaluation(id: string): RunEvaluationV1 | undefined;
   getRunEvaluationGrade(id: string): RunEvaluationGradeV1 | undefined;
   findRunEvaluationByIdempotencyKey(idempotencyKey: string): RunEvaluationV1 | undefined;

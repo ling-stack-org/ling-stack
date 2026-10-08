@@ -26,9 +26,11 @@ import type {
   FailApprovedHarnessToolExecutionInput,
   FinishHarnessToolExecutionInput,
   HarnessToolExecutionMutationResult,
+  HarnessToolExecutionRecoveryPage,
   PrepareHarnessToolExecutionInput,
   PreparedHarnessToolExecution,
   ReconcileAbandonedHarnessToolExecutionsInput,
+  ReconcileAbandonedHarnessToolExecutionsPageInput,
   ResolveHarnessToolApprovalInput,
   StartHarnessToolExecutionInput,
 } from "./tool-executions.js";
@@ -75,6 +77,9 @@ export interface HarnessToolExecutionStore {
   reconcileAbandonedHarnessToolExecutions(
     input: ReconcileAbandonedHarnessToolExecutionsInput,
   ): readonly HarnessToolExecutionV1[];
+  reconcileAbandonedHarnessToolExecutionsPage(
+    input: ReconcileAbandonedHarnessToolExecutionsPageInput,
+  ): HarnessToolExecutionRecoveryPage;
 }
 
 export interface RunEvaluationStore {

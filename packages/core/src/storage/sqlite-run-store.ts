@@ -2509,6 +2509,12 @@ export class SqliteRunStore implements RunStore {
     return this.harnessToolExecutions.reconcileAbandonedHarnessToolExecutions(input);
   }
 
+  reconcileAbandonedHarnessToolExecutionsPage(
+    input: import("../harness/tool-executions.js").ReconcileAbandonedHarnessToolExecutionsPageInput,
+  ): import("../harness/tool-executions.js").HarnessToolExecutionRecoveryPage {
+    return this.harnessToolExecutions.reconcileAbandonedHarnessToolExecutionsPage(input);
+  }
+
   getDelegationStep(...args: Parameters<RunStore["getDelegationStep"]>): ReturnType<RunStore["getDelegationStep"]> {
     return this.delegations.getDelegationStep(...args);
   }

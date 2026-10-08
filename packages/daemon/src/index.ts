@@ -294,11 +294,11 @@ export function createDaemonServer(
     dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
-      approvalRecoveryStores.add(store);
       // A process may have crossed the shell side-effect boundary before the
       // daemon disappeared. Expired executing claims are never retried; they
       // become explicit unknown outcomes before any recovery dispatch runs.
       reconcileHarnessToolExecutionsAtStartup({ cwd, store, now: new Date().toISOString(), limit: 500 });
+      approvalRecoveryStores.add(store);
       configureNormalNarrationPublication(store, (event) => controlPlaneEvents.publish(event));
       void recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
         // Do not leak database/provider details, but do not hide a failed recovery sweep.

@@ -13,9 +13,11 @@ import {
   type FailApprovedHarnessToolExecutionInput,
   type FinishHarnessToolExecutionInput,
   type HarnessToolExecutionMutationResult,
+  type HarnessToolExecutionRecoveryPage,
   type PrepareHarnessToolExecutionInput,
   type PreparedHarnessToolExecution,
   type ReconcileAbandonedHarnessToolExecutionsInput,
+  type ReconcileAbandonedHarnessToolExecutionsPageInput,
   type ReconciledHarnessToolExecutionOutcome,
   type ResolveHarnessToolApprovalInput,
   type StartHarnessToolExecutionInput,
@@ -296,18 +298,41 @@ export class SqliteHarnessToolExecutionStore {
   reconcileAbandonedHarnessToolExecutions(
     input: ReconcileAbandonedHarnessToolExecutionsInput,
   ): readonly HarnessToolExecutionV1[] {
+    return this.reconcileAbandonedHarnessToolExecutionsPage(input).updated;
+  }
+
+  reconcileAbandonedHarnessToolExecutionsPage(
+    input: ReconcileAbandonedHarnessToolExecutionsPageInput,
+  ): HarnessToolExecutionRecoveryPage {
     validateReconcileInput(input);
+    if (input.cursor !== undefined) {
+      if (!input.cursor || typeof input.cursor !== "object" || Array.isArray(input.cursor)
+        || typeof input.cursor.claimExpiresAt !== "string" || typeof input.cursor.id !== "string") {
+        throw new HarnessToolExecutionStoreError("tool.invalid_input");
+      }
+      assertTimestamp(input.cursor.claimExpiresAt);
+      validateIdentity(input.cursor.id, "recovery cursor id");
+      if (input.cursor.claimExpiresAt > input.now) throw new HarnessToolExecutionStoreError("tool.invalid_input");
+    }
     const limit = input.limit ?? 100;
-    const rows = this.context.database.prepare(`
-      SELECT id FROM harness_tool_executions
+    const cursorClause = input.cursor
+      ? "AND (claim_expires_at > ? OR (claim_expires_at = ? AND id COLLATE BINARY > ?))" : "";
+    const parameters = input.cursor
+      ? [input.now, input.cursor.claimExpiresAt, input.cursor.claimExpiresAt, input.cursor.id, limit + 1]
+      : [input.now, limit + 1];
+    const discovered = this.context.database.prepare(`
+      SELECT id, claim_expires_at FROM harness_tool_executions
       WHERE state IN ('executing', 'committing_evidence')
         AND claim_expires_at IS NOT NULL AND claim_expires_at <= ?
-      ORDER BY claim_expires_at ASC, id ASC LIMIT ?
-    `).all(input.now, limit) as Array<{ readonly id: string }>;
+        ${cursorClause}
+      ORDER BY claim_expires_at ASC, id COLLATE BINARY ASC LIMIT ?
+    `).all(...parameters) as Array<{ readonly id: string; readonly claim_expires_at: string }>;
+    const rows = discovered.slice(0, limit);
     const updated: HarnessToolExecutionV1[] = [];
     for (const row of rows) {
       const current = this.getHarnessToolExecution(row.id);
-      if (!current) continue;
+      if (!current || !["executing", "committing_evidence"].includes(current.state)
+        || !current.claimExpiresAt || current.claimExpiresAt > input.now) continue;
       let classified: ReconciledHarnessToolExecutionOutcome | undefined;
       try {
         classified = input.classify?.(current);
@@ -318,7 +343,13 @@ export class SqliteHarnessToolExecutionStore {
       const recovered = this.reconcileExpiredExecution(current, outcome, input.now);
       if (recovered) updated.push(recovered);
     }
-    return updated;
+    const last = rows.at(-1);
+    return {
+      scanned: rows.length,
+      updated,
+      ...(discovered.length > limit && last
+        ? { nextCursor: { claimExpiresAt: last.claim_expires_at, id: last.id } } : {}),
+    };
   }
 
   private reconcileExpiredExecution(
