@@ -76,8 +76,9 @@ owned by this migration. Caller-owned transactions must never be rolled back.
 
 ## Acceptance status
 
-The migration prerequisite is implemented. Final whole-Daemon verification is
-in progress; preserve original failure logs separately from passing candidates.
+The migration prerequisite is implemented and its frozen whole-Daemon
+verification has completed. Preserve original failure logs separately from
+passing candidates; this is not runtime delegation or packaged acceptance.
 Current authored migration SHA-256 is
 `b3b5b8ab9ba33a03e1e2ffa7d8b6d0725f9ca05971d40f485581874626e93170`;
 the migration test SHA-256 is
@@ -105,6 +106,7 @@ Fresh current-source evidence under `output/e6-20260928/`:
 | Node 22 Desktop full | 1,878 pass, 3 Windows-only skips, exit 0 | `delegation-migration-v1-desktop-full-final-20261009.tap` |
 | Daemon startup/config/health/continuation/approval/input neighbors | 88/88, exit 0 | `delegation-migration-v1-daemon-neighbors-isolated-final-20261009.tap` |
 | Effective-config isolated fixture | 4/4, exit 0 | `delegation-migration-effective-config-isolation-green-20261009.tap` |
+| Node 22 Daemon frozen full | 3,672/3,672; zero fail/cancel/skip/todo; exit 0 | `delegation-migration-v1-daemon-full-frozen-final-20261009.tap` |
 | Workspace typecheck | exit 0 | `delegation-migration-v1-workspace-typecheck-final-20261009.log` |
 
 Desktop's actual esbuild metadata includes the exact migration SHA above and
@@ -121,10 +123,13 @@ process-isolated whole run reported **3,671/3,672**, exit 1: the only remaining
 failure explicitly used `resolve(".")` in the Computer Use relative-path fixture.
 That fixture now uses a temporary workspace's relative path; its full module
 passes **29/29**, including the unchanged route authorization and canonical
-path assertions. A final frozen whole-Daemon rerun is in progress; its result
-is not yet claimed. Save this only as a local checkpoint, not a release gate.
+path assertions. The final frozen whole-Daemon process, session 82381, returned
+exit 0: **3,672/3,672**, zero fail/cancel/skip/todo, in 664,278.536375 ms.
+All eight source/test SHA-256 entries were reread and match the frozen manifest.
+Save this only as a local checkpoint, not a release gate.
 
-Save the tested source normally before continuing the store gate.
+The tested source is saved in local checkpoint `3945ce8b`; save the final
+verification receipt separately before continuing the store gate.
 H10/T10, H11/T11, H12/T12 and original packaged macOS gates remain unchecked.
 
 No new user policy decision is required for this additive migration slice.

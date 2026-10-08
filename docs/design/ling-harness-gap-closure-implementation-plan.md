@@ -1167,6 +1167,10 @@ Synthesized from this review's findings. Each task derives from a specific revie
   - Surfaced by: Architecture D5 and gaps G19-G20.
   - Files: core delegation domain/store and runtime budget ports.
   - Verify: capability escalation and over-reservation roll back child creation.
+  - Migration prerequisite saved at `3945ce8b`: Node 22 Core full 2,462/2,462,
+    frozen Daemon full 3,672/3,672 and Desktop full 1,878 pass with three
+    Windows-only skips. These do not certify Store authority, G19/G20 or
+    packaged execution. See [the persistence checkpoint](harness-delegation-storage-checkpoint-2026-10-09.md).
 - [ ] **T11 (P2, human: ~2 days / CC: ~75 min)** — Delegation operations — Implement durable spawn/message/wait/interrupt/resume and restart recovery.
   - Surfaced by: Architecture D5 and gaps G22-G23.
   - Files: daemon harness delegation coordinator/recovery and runner tool surface.
