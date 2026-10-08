@@ -12,14 +12,14 @@ import { throwIfAborted } from "./utils.js";
 export async function createInitializedPiSession(options: PiRunnerRunOptions, bindRuntime: (runtime: ModelRuntime) => void): Promise<AgentSession> {
   throwIfAborted(options.signal);
   const modelRuntime = await ModelRuntime.create({ credentials: new InMemoryCredentialStore(), modelsPath: null,
-    modelsStore: new InMemoryModelsStore() });
+    modelsStore: new InMemoryModelsStore(), allowModelNetwork: false, refreshOnCreate: false, signal: options.signal });
   if (options.provider.apiKey) await modelRuntime.setRuntimeApiKey(options.provider.provider, options.provider.apiKey);
   bindRuntime(modelRuntime);
   const model = modelRuntime.getModel(options.provider.provider, options.provider.model);
   if (!model) throw new Error(`Pi model not found: ${options.provider.provider}/${options.provider.model}`);
   const cwd = options.cwd;
   const agentDir = options.agentDir ?? options.runtimePaths?.piDir ?? join(cwd, ".ling-stack", "pi");
-  const settingsManager = SettingsManager.inMemory({ compaction: { enabled: options.hostCompactionEnabled === true }, retry: { enabled: true, maxRetries: 1 },
+  const settingsManager = SettingsManager.inMemory({ cacheWarming: "off", compaction: { enabled: options.hostCompactionEnabled === true }, retry: { enabled: true, maxRetries: 1 },
     transport: options.provider.providerTransport ?? "auto" });
   const resourceLoader = await createLingStackResourceLoader(options, agentDir, settingsManager);
   throwIfAborted(options.signal);
@@ -28,6 +28,7 @@ export async function createInitializedPiSession(options: PiRunnerRunOptions, bi
     ...(options.mcpTools?.map((tool) => tool.registeredName) ?? []),
     ...(options.hostCapabilityTools?.map(tool => tool.name) ?? []),
     ...(isUserInputToolSurfaceEnabled(options) ? ["request_user_input"] : []),
+    ...(options.runtimeToolFeatures?.requestPermissions ? ["request_permission"] : []),
     ...((options.initialToolSurface?.mediaGeneration ?? Boolean(options.onMediaGenerationToolCall))
       ? (options.mediaGenerationTools ?? []).filter((tool) => tool.targets.length > 0).map((tool) => tool.name) : []),
     ...((options.initialToolSurface?.toolHydration ?? Boolean(options.onToolHydrationRequest)) ? [TOOL_HYDRATION_LOAD_TOOL_NAME, TOOL_HYDRATION_CALL_TOOL_NAME] : []),

@@ -75,9 +75,9 @@ export async function prepareApprovedToolContinuation(input: {
     input: {
       command: approval.payload.command,
       cwd: approval.payload.cwd,
-      timeoutMs: approval.payload.exec?.timeoutMs,
-      idleTimeoutMs: approval.payload.exec?.idleTimeoutMs,
-      pty: approval.payload.exec?.pty,
+      ...(approval.payload.exec?.timeoutMs !== undefined ? { timeoutMs: approval.payload.exec.timeoutMs } : {}),
+      ...(approval.payload.exec?.idleTimeoutMs !== undefined ? { idleTimeoutMs: approval.payload.exec.idleTimeoutMs } : {}),
+      ...(approval.payload.exec?.pty !== undefined ? { pty: approval.payload.exec.pty } : {}),
     },
     task: readTaskSnapshot(input.run),
     cwd: approval.payload.cwd,
@@ -135,6 +135,12 @@ export async function prepareApprovedToolContinuation(input: {
       resumedFromApprovalId: approval.id,
       attemptId: input.attempt.id,
     } as RunEventDataByType["tool_end"]);
+    // The executor's in-memory details may contain absent optional fields.
+    // Continue from the canonical SQLite JSON evidence, exactly as restart
+    // recovery does, rather than silently normalizing it inside the Runner.
+    const completed = readApprovedToolPhase(input.store, input.run.id, approval.id, approval.toolCallId);
+    if (completed.uncertain || !completed.result) throw new Error("approval_resume_result_not_durable");
+    result = completed.result;
   }
 
   return {

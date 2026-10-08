@@ -72,16 +72,11 @@ export function createLingStackModelContextBudgetExtension(options: {
   readonly acceptedTaskPrompt?: string;
 } = {}): ExtensionFactory {
   return (pi) => {
-    // The published 0.84.4 root declarations expose this hook, while some
-    // workspace resolutions omit that overload. Keep the runtime hook typed
-    // locally instead of weakening the public projection contract.
-    const onContext = pi.on as unknown as (
-      name: "context",
-      handler: (event: { readonly messages: readonly unknown[] }) => { readonly messages: readonly unknown[] },
-    ) => void;
-    onContext("context", (event) => ({
+    // Pi 1.1 exposes conversation-only context officially and restores its
+    // system/tool transcript after this immutable Host evidence projection.
+    pi.on("context", (event) => ({
       messages: boundModelToolResults(options.acceptedTaskPrompt === undefined ? event.messages
-        : projectCompactionTaskView(event.messages, options.acceptedTaskPrompt), options).messages,
+        : projectCompactionTaskView(event.messages, options.acceptedTaskPrompt), options).messages as typeof event.messages,
     }));
   };
 }

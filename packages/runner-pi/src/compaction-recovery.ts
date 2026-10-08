@@ -1,9 +1,63 @@
-import type { AgentSession } from "@earendil-works/pi-coding-agent";
+import { convertToLlm, type AgentSession } from "@earendil-works/pi-coding-agent";
+import type { Context } from "@earendil-works/pi-ai";
 import type { PiRunnerCompactionRecovery, PiRunnerCompactionRecoveryMode } from "./types.js";
 import { isRecord } from "./utils.js";
 import { assertAcceptedTaskAnchor } from "./compaction-task-anchor.js";
+import { appendPiSessionAuthority } from "./session-continuation.js";
+import { piConversation, piTranscript } from "./session-transcript.js";
+import { boundModelToolResults } from "./model-context-budget.js";
+
+/** Compare the actual first request with the sealed conversation, not just a nonempty history. */
+export function assertCompactionRecoveryModelContext(recovery: PiRunnerCompactionRecovery, context: Context): void {
+  const sealed = readCompactionRecoveryView(recovery);
+  const expected = convertToLlm(boundModelToolResults(sealed).messages as Parameters<typeof convertToLlm>[0]);
+  const actual = piConversation(piTranscript(context).messages);
+  // appendCompaction creates its own timestamp. It is conversion metadata,
+  // absent from wire requests; all sealed content and every retained tail entry
+  // must remain byte-for-byte equal. Do not normalize any tail metadata.
+  const comparison = (messages: typeof actual) => messages.map((message, index) => index === 0
+    ? { ...message, timestamp: 0 } : message);
+  if (JSON.stringify(comparison(actual)) !== JSON.stringify(comparison(expected))) {
+    throw new Error("Pi compaction recovery changed before the first model request");
+  }
+}
 
 const MAX_MODEL_VIEW_BYTES = 512 * 1024;
+
+/**
+ * Map only a restored compaction's SDK-generated metadata back to its Host seal.
+ * The canonical journal and provider context keep the SDK's own metadata. Public
+ * projection provenance binds this mapping to one source entry; a later genuine
+ * compaction is never rewritten, even if its summary text happens to be identical.
+ */
+export function createCompactionRecoveryCheckpointProjector(
+  session: Pick<AgentSession, "sessionManager">,
+  recovery: PiRunnerCompactionRecovery,
+): (messages: readonly unknown[]) => readonly unknown[] {
+  const sealedSummary = readCompactionRecoveryView(recovery)[0];
+  const current = () => session.sessionManager.buildSessionProjection().entries.find(entry =>
+    entry.sourceEntry.type === "compaction" && entry.messages.some(message => message.role === "compactionSummary"));
+  const restored = current();
+  const sdkSummary = restored?.messages.find(message => message.role === "compactionSummary");
+  if (!restored || sdkSummary?.role !== "compactionSummary" || !isRecord(sealedSummary)
+    || sdkSummary.summary !== sealedSummary.summary) {
+    throw new Error("Pi recovered checkpoint has no matching canonical compaction summary");
+  }
+  const sourceEntryId = restored.sourceEntry.id;
+  const summaryProof = JSON.stringify(sdkSummary);
+  return messages => {
+    const active = current();
+    if (!active) throw new Error("Pi recovered checkpoint lost its canonical compaction summary");
+    if (active.sourceEntry.id !== sourceEntryId) return messages;
+    const activeSummary = active.messages.find(message => message.role === "compactionSummary");
+    if (JSON.stringify(activeSummary) !== summaryProof || JSON.stringify(messages[0]) !== summaryProof) {
+      throw new Error("Pi recovered checkpoint changed its canonical compaction summary");
+    }
+    // No old tail is reinserted: genuine history drift remains visible to the
+    // Host's byte-exact prefix check. Cloning prevents a consumer editing the seal.
+    return [structuredClone(sealedSummary), ...messages.slice(1)];
+  };
+}
 
 /** Install Host-verified Pi messages without replaying the original prompt. */
 export function installCompactionRecoveryView(
@@ -18,7 +72,12 @@ export function installCompactionRecoveryView(
   if (!session.isIdle || session.messages.length !== 0) {
     throw new Error("Pi compaction recovery requires an idle empty session");
   }
-  session.state.messages = structuredClone(modelView) as never;
+  appendPiSessionAuthority(session);
+  const summary = modelView[0] as { summary: string; tokensBefore?: number };
+  session.sessionManager.appendCompaction(summary.summary, null,
+    Number.isSafeInteger(summary.tokensBefore) && summary.tokensBefore! >= 0 ? summary.tokensBefore! : 0);
+  for (const message of modelView.slice(1)) session.sessionManager.appendMessage(structuredClone(message) as never);
+  session.refreshContext();
   return recoveryMode(modelView)!;
 }
 
@@ -45,6 +104,7 @@ function isValidModelView(value: readonly unknown[]): boolean {
   const results = new Set<string>();
   for (const message of value) {
     if (!isRecord(message)) return false;
+    if (message !== first && !["user", "assistant", "toolResult"].includes(String(message.role))) return false;
     if (message.role === "assistant" && Array.isArray(message.content)) {
       for (const block of message.content) {
         if (isRecord(block) && block.type === "toolCall") {

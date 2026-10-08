@@ -7,22 +7,173 @@ import {
   applyConversationModeToEffectiveRunPolicySnapshot,
   approvalSideEffectFingerprintV1,
   createApprovalResumeBasisV1,
+  createCompositeSecretResolver,
   createSqliteRunStore,
   getRunSummaryPath,
   resolveSessionRunPolicy,
   runnerContinuationIdempotencyKey,
+  toRuntimeAttemptFence,
 } from "../../core/dist/index.js";
 import { resolveConfig } from "../dist/config.js";
 import { ApprovalResumeCoordinator } from "../dist/features/runs/approval-resume-coordinator.js";
+import { prepareApprovedToolContinuation } from "../dist/features/runs/approval-continuation-tool.js";
 import { createDetachedRunExecutionSink, executeExistingRunContinuation } from "../dist/features/runs/orchestrator.js";
 import { capturePreparedRunnerInput } from "../dist/features/runs/prepared-runner-input.js";
 import { resolveProviderForRun } from "../dist/features/runs/providers.js";
+import { appendApprovalDecisionEvent } from "../dist/features/runs/approvals.js";
+import { ensureLingThreadForRun, ensureLingTurnForRun } from "../dist/features/runs/threads.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
 import { createRunnerRegistry } from "../dist/runtime/runners.js";
 import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 import { RuntimeSupervisor } from "../dist/runtime/supervisor.js";
 import { PiRunnerAdapter } from "../../runner-pi/dist/index.js";
 import { createTypedWorkflowBasis, gateOwner, typedOperation } from "./support/workflow-operation-gate-fixture.mjs";
+import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
+
+// Actual SQLite + production continuation dispatcher + Pi SDK + HTTP/SSE. The
+// provider is deterministic, not a live model or packaged-client acceptance.
+for (const [phase, exec] of [
+  ["approved"], ["approved-with-exec", { timeoutMs: 3_000, idleTimeoutMs: 3_000, pty: false }],
+  ["before-tool-start"], ["after-tool-end"],
+]) {
+  test(`real Pi approval recovery ${phase} sends durable evidence once after SQLite reopen`, { timeout: 15_000 }, async (t) => {
+    const provider = await startLoopbackPiProvider(() => ({ text: "Loopback recovered conclusion." }));
+    t.after(() => provider.close());
+    const fixture = await createResumeFixture(
+      `pi-http-${phase}`, "printf x >> real-resume-count.txt", false, true, true, "approve",
+      { providerBaseUrl: provider.baseUrl, realSdk: true, exec },
+    );
+    t.after(() => fixture.close());
+    const alreadyApproved = phase.startsWith("approved");
+    if (!alreadyApproved) {
+      const claimed = claimResume(fixture, `attempt_pi_http_${phase}`);
+      if (phase === "after-tool-end") {
+        // Seed the crash-after-effect boundary. The other phases exercise the
+        // actual Host command; this one proves durable results are not replayed.
+        await writeFile(resolve(fixture.cwd, "real-resume-count.txt"), "x", "utf8");
+        appendResumeToolStart(fixture, claimed.attempt.id);
+        fixture.store.appendEvent(fixture.run.id, "tool_end", {
+          type: "tool_end", toolCallId: fixture.approval.toolCallId, toolName: "bash",
+          result: { content: [{ type: "text", text: "Persisted approved result." }], isError: false },
+          isError: false, resumedFromApprovalId: fixture.approval.id, attemptId: claimed.attempt.id,
+        });
+      }
+    }
+    fixture.storeRegistry.closeAll();
+    fixture.storeRegistry = new RunStoreRegistry(createSqliteRunStore);
+    fixture.store = fixture.storeRegistry.getStore(fixture.cwd);
+    fixture.approval = fixture.store.getApprovalRequest(fixture.approval.id);
+    fixture.checkpoint = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id);
+
+    const activeRuns = new ActiveRunRegistry();
+    const coordinator = createCoordinator(activeRuns, fixture);
+    assert.ok(fixture.store.getLingTurnForRun(fixture.run.id), "SQLite reopen preserves the Run/Turn link");
+    assert.ok(fixture.store.getLingThread(fixture.run.threadId), "SQLite reopen preserves the owning Thread");
+    coordinator.registerStore(fixture.store);
+    coordinator.registerStore(fixture.store);
+    await activeRuns.waitForIdle();
+    assert.deepEqual(fixture.dispatchErrors, [], "production dispatcher must accept the stored continuation lineage");
+    await waitForCondition(() => ["succeeded", "failed", "cancelled"].includes(
+      fixture.store.getRun(fixture.run.id)?.status,
+    ), "real Pi recovery did not settle");
+
+    assert.equal(fixture.store.getRun(fixture.run.id)?.status, "succeeded", JSON.stringify({
+      errors: fixture.dispatchErrors, reason: fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.resumeFailureReason,
+      requestCount: provider.requests.length,
+    }));
+    assert.equal(fixture.runnerCalls[0]?.approvedToolContinuation?.result.isError, false,
+      JSON.stringify(fixture.runnerCalls[0]?.approvedToolContinuation?.result));
+    assert.equal(await readFile(resolve(fixture.cwd, "real-resume-count.txt"), "utf8"), "x");
+    assert.equal(fixture.runnerCalls.length, 1);
+    assert.equal(fixture.runnerResults.length, 1);
+    assert.match(JSON.stringify(fixture.runnerResults[0].messages), /Loopback recovered conclusion\./u);
+    assert.equal(provider.requests.length, 1, "no original prompt replay or cache warming request");
+    const [request] = provider.requests;
+    const prepared = fixture.store.getRun(fixture.run.id).requestSnapshot.runnerExecutionInput.preparedInput;
+    assert.equal(request.model, prepared.model.id);
+    assert.equal(request.messages[0].content, prepared.systemPrompt);
+    assert.deepEqual(request.messages.map(message => message.role), ["system", "user", "assistant", "tool"]);
+    assert.deepEqual(request.messages[1].content, [{ type: "text", text: prepared.userPrompt }]);
+    const evidence = fixture.runnerCalls[0].approvedToolContinuation;
+    assert.equal(evidence.approvalId, fixture.approval.id);
+    assert.equal(evidence.toolCallId, fixture.approval.toolCallId);
+    assert.equal(evidence.sideEffectFingerprint, fixture.checkpoint.resumeBasis.sideEffectFingerprint);
+    assert.deepEqual(evidence.args, { command: fixture.command, cwd: fixture.cwd, ...exec });
+    assert.equal(request.messages[2].tool_calls.length, 1);
+    assert.equal(request.messages[2].tool_calls[0].id, fixture.approval.toolCallId);
+    assert.equal(request.messages[2].tool_calls[0].function.name, "bash");
+    assert.deepEqual(JSON.parse(request.messages[2].tool_calls[0].function.arguments), evidence.args);
+    assert.equal(request.messages[3].tool_call_id, fixture.approval.toolCallId);
+    assert.equal(request.messages[3].content, evidence.result.content.map(block => block.text).join("\n"));
+    assert.doesNotMatch(JSON.stringify(request), /ling_host_resume/u, "SDK control item must not leak to the provider");
+    assert.equal(matchingToolEvents(fixture).filter(event => event.type === "tool_start").length, 1);
+    assert.equal(matchingToolEvents(fixture).filter(event => event.type === "tool_end").length, 1);
+    assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.status, "resumed");
+    assert.deepEqual(evidence.result, matchingToolEvents(fixture).find(event => event.type === "tool_end").data.result,
+      "same-process and reopened continuations consume the same canonical durable result");
+    assert.equal(fixture.store.listApprovalRequests({ runId: fixture.run.id }).length, 1);
+    const attempts = fixture.store.listWorkUnitAttempts(fixture.workUnit.id);
+    assert.equal(attempts.at(-1).status, "succeeded");
+    assert.equal(attempts.length, alreadyApproved ? 2 : 3);
+    const continuation = fixture.store.findRunnerContinuationByIdempotencyKey(`${runnerContinuationIdempotencyKey({
+      runId: fixture.run.id, sourceAttemptId: alreadyApproved ? fixture.priorAttempt.id : `attempt_pi_http_${phase}`,
+      origin: "approval_resume", generation: 0,
+    })}:${fixture.approval.id}`);
+    assert.equal(continuation?.state, "succeeded");
+    assert.equal(continuation?.targetAttemptId, attempts.at(-1).id);
+    assert.equal(fixture.store.listRuntimeSemaphoreSlots({ workUnitId: fixture.workUnit.id, status: "active" }).length, 0);
+    assert.equal(fixture.store.listResourceLeases({ workUnitId: fixture.workUnit.id, status: "active" }).length, 0);
+
+    coordinator.registerStore(fixture.store);
+    coordinator.registerStore(fixture.store);
+    await activeRuns.waitForIdle();
+    assert.equal(provider.requests.length, 1, "duplicate recovery must not dispatch again");
+    assert.equal(fixture.runnerCalls.length, 1);
+    assert.equal(await readFile(resolve(fixture.cwd, "real-resume-count.txt"), "utf8"), "x");
+  });
+}
+
+test("approval continuation with a missing durable tool_end refuses SDK dispatch and replay", { timeout: 15_000 }, async (t) => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "Must not be requested." }));
+  t.after(() => provider.close());
+  const fixture = await createResumeFixture("pi-end-not-durable", "printf x >> real-resume-count.txt",
+    false, true, true, "approve", { providerBaseUrl: provider.baseUrl, realSdk: true });
+  t.after(() => fixture.close());
+  appendApprovalDecisionEvent(fixture.store, fixture.approval);
+  fixture.runtimeSupervisor.getRuntime(fixture.cwd, fixture.store);
+  const claimed = claimResume(fixture, "attempt_pi_end_not_durable");
+  const sourceFence = toRuntimeAttemptFence(claimed.attempt);
+  await assert.rejects(prepareApprovedToolContinuation({
+    store: fixture.store, run: fixture.store.getRun(fixture.run.id),
+    workUnit: fixture.store.getWorkUnit(fixture.workUnit.id), attempt: claimed.attempt,
+    approvalId: fixture.approval.id, runtimeSupervisor: fixture.runtimeSupervisor, signal: new AbortController().signal,
+    appendAndMaybeStream(type, data) {
+      // Fault injection: the effect finishes but its terminal write is lost.
+      if (type === "tool_end") {
+        assert.equal(data.result.isError, false, JSON.stringify(data.result));
+        return undefined;
+      }
+      return fixture.store.appendExecutionEvent(fixture.run.id, sourceFence, type, data);
+    },
+  }), /approval_resume_result_not_durable/u);
+  assert.equal(await readFile(resolve(fixture.cwd, "real-resume-count.txt"), "utf8"), "x");
+  assert.equal(matchingToolEvents(fixture).filter(event => event.type === "tool_start").length, 1);
+  assert.equal(matchingToolEvents(fixture).filter(event => event.type === "tool_end").length, 0);
+  assert.equal(fixture.runnerCalls.length, 0);
+  assert.equal(provider.requests.length, 0);
+  const activeRuns = new ActiveRunRegistry();
+  const coordinator = createCoordinator(activeRuns, fixture);
+  coordinator.registerStore(fixture.store);
+  coordinator.registerStore(fixture.store);
+  await activeRuns.waitForIdle();
+  assert.equal(fixture.store.getRun(fixture.run.id)?.status, "failed");
+  const checkpoint = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id);
+  assert.equal(checkpoint.status, "resume_failed");
+  assert.equal(checkpoint.resumeFailureReason, "approval_resume_effect_unknown");
+  assert.equal(await readFile(resolve(fixture.cwd, "real-resume-count.txt"), "utf8"), "x");
+  assert.equal(fixture.runnerCalls.length, 0);
+  assert.equal(provider.requests.length, 0);
+});
 
 test("typed bash recovery is blocked before tool_start when isolation is unavailable", async () => {
   const fixture = await createResumeFixture("typed-isolation", "printf x >> must-not-run.txt", true);
@@ -488,7 +639,7 @@ function createCoordinator(activeRuns, fixture) {
           fixture.storeRegistry,
           activeRuns,
           runtimeSupervisor,
-          { resolve: () => ({ configured: false }) },
+          fixture.secretResolver ?? { resolve: () => ({ configured: false }) },
           {},
         ),
     } : {}),
@@ -543,7 +694,11 @@ function claimResume(fixture, attemptId) {
       runId: fixture.run.id,
       attemptId,
       verified: true,
-      payload: { schemaVersion: 1, approvalId: fixture.approval.id },
+      payload: {
+        schemaVersion: 1,
+        approvalId: fixture.approval.id,
+        resumeBasisFingerprint: fixture.checkpoint.resumeBasis.fingerprint,
+      },
     },
     mode: "activate_waiting",
     now: "2026-08-16T02:02:00.000Z",
@@ -570,11 +725,14 @@ function matchingToolEvents(fixture) {
   });
 }
 
-async function createResumeFixture(suffix, command, typed = false, harness = false, trackedTask = false, resolution = "approve") {
+async function createResumeFixture(suffix, command, typed = false, harness = false, trackedTask = false, resolution = "approve", sdkOptions = {}) {
   const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-approval-resume-recovery-${suffix}-`));
   const storeRegistry = new RunStoreRegistry(createSqliteRunStore);
   const store = storeRegistry.getStore(cwd);
   const now = "2026-08-16T02:00:00.000Z";
+  const secretResolver = sdkOptions.realSdk
+    ? createCompositeSecretResolver({ env: { LING_TEST_APPROVAL_KEY: "loopback-only-not-a-credential" } })
+    : { resolve: () => ({ configured: false }) };
   const basis = typed ? createTypedWorkflowBasis(store, cwd, [typedOperation("run_command", command)], now) : undefined;
   const taskChannel = trackedTask
     ? basis?.channel ?? store.createChannel({
@@ -595,13 +753,15 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     prompt: "Resume safely",
     ...(taskChannel ? { channelId: taskChannel.id } : {}),
   };
-  const thread = harness ? store.createLingThread({
+  const thread = harness && sdkOptions.realSdk ? ensureLingThreadForRun(store, { cwd, task: taskSnapshot }, now) : harness ? store.createLingThread({
     kind: "conversation",
     teammateId: "ling_agent",
     title: "Approval resume recovery",
     objective: "Continue after one durable approved tool result",
   }, now) : undefined;
-  const accepted = thread ? store.appendConversationUserTurn({
+  const accepted = thread && sdkOptions.realSdk
+    ? { turnId: ensureLingTurnForRun(store, thread, { cwd, task: taskSnapshot }, now).id }
+    : thread ? store.appendConversationUserTurn({
     threadId: thread.id,
     title: taskSnapshot.title,
     userInstruction: taskSnapshot.prompt,
@@ -614,8 +774,9 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     providerId: "approval-resume-fixture",
     model: "fixture",
     api: "openai-completions",
-    baseUrl: "https://fixture.invalid/v1",
+    baseUrl: sdkOptions.providerBaseUrl ?? "https://fixture.invalid/v1",
     authHeader: false,
+    ...(sdkOptions.realSdk ? { apiKeyRef: "env:LING_TEST_APPROVAL_KEY" } : {}),
     reasoning: false,
     capabilities: ["chat", "tool_call"],
     enabled: true,
@@ -629,7 +790,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
   const provider = preset ? resolveProviderForRun(
     store,
     { providerPresetId: preset.id },
-    { resolve: () => ({ configured: false }) },
+    secretResolver,
   ) : undefined;
   const runtimeSupervisor = harness ? new RuntimeSupervisor(resolveConfig({
     defaultWorkspaceCwd: cwd,
@@ -711,17 +872,21 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
   store.transitionWorkUnitStatus({ ...priorFence, expectedStatus: "running", event: "approval_requested", actor: "system", now });
   store.updateWorkUnitAttemptStatus({ ...priorFence, status: "waiting_for_approval", now });
   store.transitionRunStatus({ runId: run.id, expectedStatus: "running", event: "approval_requested", actor: "system", now });
-  const payload = { type: "bash", cwd, command, riskFlags: [] };
-  const approval = store.createApprovalRequest({
+  const payload = { type: "bash", cwd, command, riskFlags: [], ...(sdkOptions.exec ? { exec: sdkOptions.exec } : {}) };
+  const approvalInput = {
     runId: run.id,
     taskId: run.taskId,
+    ...(sdkOptions.realSdk && taskChannel ? { channelId: taskChannel.id } : {}),
     toolCallId: `tool_resume_recovery_${suffix}`,
     actionType: "bash",
     risk: "medium",
     title: "Approve resume recovery",
     description: command,
     payload,
-  }, now);
+  };
+  const approval = sdkOptions.realSdk
+    ? store.createExecutionApprovalRequest(approvalInput, priorFence, now)
+    : store.createApprovalRequest(approvalInput, now);
   const initialCheckpoint = store.getApprovalCheckpointForApproval(approval.id);
   assert.ok(initialCheckpoint);
   const resumeBasis = createApprovalResumeBasisV1({
@@ -750,11 +915,17 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
   assert.equal(resolved?.status, resolution === "pending" ? "pending" : "approved");
   const checkpoint = store.getApprovalCheckpointForApproval(approval.id);
   const runnerCalls = [];
+  const runnerResults = [];
   const dispatchErrors = [];
   class ApprovalContinuationRunner extends PiRunnerAdapter {
     async runTask(options) {
       assert.ok(options.approvedToolContinuation, "approval resume must reach Runner as approved tool evidence");
       runnerCalls.push(options);
+      if (sdkOptions.realSdk) {
+        const result = await super.runTask(options);
+        runnerResults.push(result);
+        return result;
+      }
       return {
         taskId: options.task.id,
         events: [],
@@ -774,7 +945,9 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     command,
     store,
     storeRegistry,
+    secretResolver,
     runnerCalls,
+    runnerResults,
     dispatchErrors,
     runnerRegistry,
     runtimeSupervisor,
@@ -785,7 +958,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     checkpoint,
     async close() {
       runtimeSupervisor?.releaseAll();
-      storeRegistry.closeAll();
+      this.storeRegistry.closeAll();
       await rm(cwd, { recursive: true, force: true });
     },
   };

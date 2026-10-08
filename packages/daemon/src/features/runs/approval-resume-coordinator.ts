@@ -170,6 +170,12 @@ export class ApprovalResumeCoordinator {
     if (existingActive) {
       return { status: "already_active", runId: input.approval.runId, attemptId: existingActive.attemptId };
     }
+    // Harness dispatch has a preflight window before ActiveRun registration.
+    // The same startup scan visits approved then resume_pending; it must not
+    // replace the just-claimed Attempt while that dispatch is still pending.
+    if (this.harnessDispatches.has(input.approval.runId)) {
+      return { status: "already_active", runId: input.approval.runId, attemptId: checkpoint.runnerResumeHandle?.attemptId };
+    }
     const validated = validateResumeBasis(input.store, input.approval, checkpoint);
     if (!validated.ok) {
       this.failResume(input.store, checkpoint, validated.reason);

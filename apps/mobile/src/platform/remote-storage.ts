@@ -7,11 +7,14 @@ import type {
   RemoteCacheStore,
   RemoteClientState,
 } from "@ling-stack/remote-client";
+import {
+  draftNamespacePrefix,
+  removeConversationDraftsFromStorage,
+} from "./conversation-draft-cleanup";
 
 const BINDING_KEY = "ling.remote.binding.v1";
 const CACHE_PREFIX = "ling.remote.cache.v1.";
 const THEME_KEY = "ling.mobile.theme.v1";
-const DRAFT_PREFIX = "ling.mobile.draft.v1.";
 
 export const mobileRemoteBindingStore: RemoteBindingStore = {
   async read(): Promise<RemoteBindingV1 | undefined> {
@@ -72,11 +75,7 @@ export async function writeConversationDraft(workspaceBindingId: string, convers
 }
 
 export async function removeConversationDrafts(workspaceBindingId: string): Promise<void> {
-  const prefix = draftNamespacePrefix(workspaceBindingId);
-  const keys = (await AsyncStorage.getAllKeys()).filter((key) => key.startsWith(prefix));
-  if (keys.length > 0) {
-    await AsyncStorage.removeMany(keys);
-  }
+  await removeConversationDraftsFromStorage(AsyncStorage, workspaceBindingId);
 }
 
 function cacheKey(workspaceBindingId: string): string {
@@ -85,8 +84,4 @@ function cacheKey(workspaceBindingId: string): string {
 
 function draftKey(workspaceBindingId: string, conversationId: string): string {
   return `${draftNamespacePrefix(workspaceBindingId)}${encodeURIComponent(conversationId)}`;
-}
-
-function draftNamespacePrefix(workspaceBindingId: string): string {
-  return `${DRAFT_PREFIX}${encodeURIComponent(workspaceBindingId)}.`;
 }

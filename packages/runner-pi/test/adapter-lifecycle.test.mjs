@@ -322,7 +322,10 @@ test("tool-result compaction recovery continues exactly once from the sealed too
   assert.equal(f.events.filter((event) => event.type === "run_end").length, 1);
 });
 
-test("provider admission exposes the task-constrained settled tool view after compacted recovery", { timeout: 10000 }, async (t) => {
+for (const [sealKind, summaryMetadata] of [
+  ["minimal", {}],
+  ["complete legacy metadata", { timestamp: 1, tokensBefore: 1200 }],
+]) test(`provider admission exposes the task-constrained settled tool view after compacted recovery: ${sealKind}`, { timeout: 10000 }, async (t) => {
   const views = [];
   const f = await fixture(t, {
     runId: "run_progress_fixture", runnerAttemptId: "attempt_progress_fixture", hostCompactionEnabled: true,
@@ -332,7 +335,7 @@ test("provider admission exposes the task-constrained settled tool view after co
     onMcpToolCall: async () => ({ content: [{ type: "text", text: "settled read" }] }),
   }, ["fixture_read"]);
   const initialView = [
-    { role: "compactionSummary", summary: "Continue after the completed earlier tool." },
+    { role: "compactionSummary", summary: "Continue after the completed earlier tool.", ...summaryMetadata },
     acceptedTaskAnchor(f.options),
     { role: "assistant", content: [{ type: "toolCall", id: "earlier", name: "fixture_read", arguments: {} }] },
     { role: "toolResult", toolCallId: "earlier", toolName: "fixture_read",
@@ -342,7 +345,10 @@ test("provider admission exposes the task-constrained settled tool view after co
   await f.runner.runTask({ ...f.options, compactionRecovery: { schemaVersion: 1, modelView: initialView } });
   assert.equal(f.requestCount(), 2);
   assert.ok(views.length >= 2);
-  assert.deepEqual(views[0], initialView, "the already constrained Host seal remains an exact prefix");
+  assert.deepEqual(views[0], initialView,
+    "public checkpoint projection preserves the original Host-sealed summary metadata and exact tail");
+  for (const view of views) assert.deepEqual(view.slice(0, initialView.length), initialView,
+    "each subsequent settled tool round must extend the exact original seal prefix");
   assert.deepEqual(initialView, frozenInitialView, "projection must not mutate the installed recovery evidence");
   assert.equal(views.at(-1).at(-1).role, "toolResult");
   assert.equal(views.at(-1).at(-1).toolCallId, "call_0");

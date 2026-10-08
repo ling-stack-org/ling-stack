@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
+import { getCurrentTools } from "@earendil-works/pi-ai";
 import { PiRunnerAdapter } from "../dist/adapter.js";
 import { createLingStackUserInputExtension } from "../dist/extensions/user-input.js";
 
@@ -15,7 +16,7 @@ async function fixture(t, userInput) {
     registerCustomProviderIfNeeded(runtime, provider) {
       super.registerCustomProviderIfNeeded(runtime, provider);
       runtime.registerProvider(provider.provider, { api: "openai-completions", streamSimple: (model, context, options) => {
-        contexts.push({ ...context, tools: context.tools?.map(({ name, description, parameters, constrainedSampling }) =>
+        contexts.push({ ...context, tools: getCurrentTools(context.messages).map(({ name, description, parameters, constrainedSampling }) =>
           ({ name, description, parameters, ...(constrainedSampling !== undefined ? { constrainedSampling } : {}) })) });
         return stream(model, context, { ...options, fetch: async (_url, request) => {
           requests.push(JSON.parse(request.body));

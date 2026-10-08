@@ -1,9 +1,10 @@
 import { createHash } from "node:crypto";
-import type { Api, Context, Model, Tool } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools, type Api, type Context, type Model, type Tool, type TranscriptContext } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type { PiRunnerRunOptions, PiRunnerTask } from "./types.js";
 import { boundModelToolResults, MODEL_TOOL_CONTEXT_BYTES } from "./model-context-budget.js";
 import { formatTaskPrompt, isRecord } from "./utils.js";
+import { piConversation, piTranscript } from "./session-transcript.js";
 
 type PreparedModel = Pick<Model<Api>, "id" | "provider" | "api" | "baseUrl" | "reasoning" | "input" | "contextWindow" | "maxTokens" | "compat" | "thinkingLevelMap">;
 
@@ -30,16 +31,18 @@ export function capturePreparedPiInput(session: AgentSession, options: PiRunnerR
 }
 
 /** Fit the transport-only tool view to the remaining model capacity on every request. */
-export function assertPiModelContextCapacity(model: Model<Api>, context: Context): Context {
+export function assertPiModelContextCapacity(model: Model<Api>, input: Context): TranscriptContext {
+  const context = piTranscript(input);
   // The SDK can report a context-hook failure and continue. Enforce the
   // projection's fail-closed marker budget again at the provider boundary.
   const budget = modelInputBudget(model);
-  const fixedTokens = estimatePreparedTokens(context.systemPrompt ?? "")
-    + estimatePreparedTokens(JSON.stringify(context.tools ?? []));
+  const fixedTokens = estimatePreparedTokens(getCurrentSystemPrompt(context.messages))
+    + estimatePreparedTokens(JSON.stringify(getCurrentTools(context.messages)));
   const projected = boundModelToolResults(context.messages);
-  const inputTokens = (messages: readonly unknown[]): number => fixedTokens + estimatePreparedTokens(JSON.stringify(messages));
+  const inputTokens = (messages: readonly unknown[]): number => fixedTokens
+    + estimatePreparedTokens(JSON.stringify(piConversation(messages as Context["messages"])));
   if (inputTokens(projected.messages) <= budget) {
-    return { ...context, messages: projected.messages as Context["messages"] };
+    return piTranscript({ messages: projected.messages as Context["messages"] });
   }
   if (projected.originalBytes === 0) {
     throw modelCapacityError(inputTokens(projected.messages), budget);
@@ -72,7 +75,7 @@ export function assertPiModelContextCapacity(model: Model<Api>, context: Context
     }
   }
   if (!fitting) throw modelCapacityError(minimumInput, budget);
-  return { ...context, messages: fitting };
+  return piTranscript({ messages: fitting });
 }
 
 function modelInputBudget(model: Pick<Model<Api>, "contextWindow" | "maxTokens">): number {
@@ -98,7 +101,7 @@ function estimatePreparedTokens(text: string): number {
     if (character.charCodeAt(0) <= 0x7f) ascii += 1;
     else nonAscii += 1;
   }
-  return Math.ceil(ascii / 4 + nonAscii / 1.6);
+  return Math.ceil(ascii / 3.5 + nonAscii / 1.6);
 }
 
 /** Validate serialized evidence before using it as a comparison baseline. */
@@ -141,14 +144,16 @@ export function assertPreparedPiModelContext(
   options: { readonly allowRestoredMessages?: boolean } = {},
 ): void {
   const expected = readPreparedPiInput(prepared);
-  const first = context.messages[0];
+  const transcript = piTranscript(context);
+  const conversation = piConversation(transcript.messages);
+  const first = conversation[0];
   const text = first?.role === "user" ? (typeof first.content === "string" ? first.content :
     first.content.every((block) => block.type === "text") ? first.content.map((block) => block.type === "text" ? block.text : "").join("") : undefined) : undefined;
   const messagesMatch = options.allowRestoredMessages
-    ? context.messages.length > 0
-    : context.messages.length === 1 && text === expected.userPrompt;
-  if (!messagesMatch || (!options.allowRestoredMessages && text !== expected.userPrompt) || (context.systemPrompt ?? "") !== expected.systemPrompt ||
-    hash(modelDescriptor(model)) !== hash(expected.model) || hash(toolDescriptors(context.tools ?? [])) !== hash(expected.tools)) {
+    ? conversation.length > 0
+    : conversation.length === 1 && text === expected.userPrompt;
+  if (!messagesMatch || (!options.allowRestoredMessages && text !== expected.userPrompt) || getCurrentSystemPrompt(transcript.messages) !== expected.systemPrompt ||
+    hash(modelDescriptor(model)) !== hash(expected.model) || hash(toolDescriptors(getCurrentTools(transcript.messages))) !== hash(expected.tools)) {
     throw new Error("Pi prepared input changed before the first model request");
   }
 }

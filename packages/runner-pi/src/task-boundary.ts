@@ -3,10 +3,13 @@ import type { PiRunnerRunOptions, PiRunnerUserInputYieldDirective } from "./type
 import { readUserInputYieldDirective } from "./task-yield.js";
 import { readUserInputRequestReceipt, readUserInputWaitMode } from "./user-input-request.js";
 import { throwIfAborted } from "./utils.js";
-import { assertPiModelContextCapacity, assertPreparedPiModelContext } from "./prepared-input.js";
+import { assertPiModelContextCapacity, assertPreparedPiModelContext, type PiRunnerPreparedInput } from "./prepared-input.js";
 import { assertApprovedToolContinuationModelContext } from "./approved-tool-continuation.js";
 import { applyReasoningSummaryModeToPayload } from "./reasoning-summary.js";
 import { assertAcceptedTaskAnchor, hasCompactionSummary } from "./compaction-task-anchor.js";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
+import { piTranscript } from "./session-transcript.js";
+import { assertCompactionRecoveryModelContext } from "./compaction-recovery.js";
 
 /** Internal latch only. The public yielded outcome requires an idle SDK first. */
 class PendingUserInputYield extends Error {
@@ -47,6 +50,8 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
   readonly systemPrompt: string;
   readonly messages: readonly unknown[];
   readonly acceptedTaskPrompt: string;
+  readonly sessionId: string;
+  readonly preparedInput: PiRunnerPreparedInput;
 } | undefined) {
   const stop = new AbortController();
   const signal = options.signal ? AbortSignal.any([options.signal, stop.signal]) : stop.signal;
@@ -146,6 +151,7 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
                 allowRestoredMessages: Boolean(options.compactionRecovery),
               });
             }
+            if (options.compactionRecovery) assertCompactionRecoveryModelContext(options.compactionRecovery, context);
           }
           catch (error) {
             failure ??= error instanceof Error ? error : new Error("Invalid Pi prepared input");
@@ -157,7 +163,11 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
         let modelContext: typeof context;
         try {
           const taskContext = readTaskContext?.();
-          if (taskContext && (context.systemPrompt ?? "") === taskContext.systemPrompt && hasCompactionSummary(taskContext.messages)) {
+          if (taskContext && taskContext.sessionId !== undefined && streamOptions?.sessionId === taskContext.sessionId) {
+            assertPreparedPiModelContext(taskContext.preparedInput, model, context, { allowRestoredMessages: true });
+            if (firstRequest && options.compactionRecovery) assertCompactionRecoveryModelContext(options.compactionRecovery, context);
+          }
+          if (taskContext && getCurrentSystemPrompt(piTranscript(context).messages) === taskContext.systemPrompt && hasCompactionSummary(taskContext.messages)) {
             assertAcceptedTaskAnchor(context.messages, taskContext.acceptedTaskPrompt);
           }
           modelContext = assertPiModelContextCapacity(model, context);
