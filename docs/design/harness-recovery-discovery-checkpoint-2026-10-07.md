@@ -129,6 +129,42 @@ unchanged since its complete 2406/2406 receipt. This verdict is tied to the
 checkpoint-base dependency graph; after integrating new main dependencies,
 build/typecheck and affected regressions must be rerun with new receipts.
 
+## Integration with current main — 2026-10-08
+
+The 14-file recovery change was saved as local commit `1bb3022a`. Normal merge
+of verified remote main `8335905a` produced `13552478`, with no conflicting
+paths and no reset, history rewrite or root-checkout change. The new main
+adds compatible locked dependencies and Core fixture templates, not an Office
+missing-parent production repair. Recovery fixtures retain the original SQLite
+factory rather than template copies, so first-init/reopen evidence is unchanged.
+
+Fresh validation on this integrated dependency graph is now terminal:
+
+- Frozen-lockfile install: exit 0; no lockfile rewrite or extra lifecycle
+  script permission. The existing pnpm policy still blocks the GenAI script.
+- All **18 available** workspace `build:ci` scripts and all **18**
+  `typecheck:ci` scripts: exit 0. Mobile's script intentionally emits no
+  standalone artifact; this is not Desktop package or signing acceptance.
+- Core complete suite: **2413/2413** (`recovery-main833-core-full-20261008.tap`).
+- Runner complete suite: **249/249** (`recovery-main833-runner-full-20261008.tap`).
+- Daemon 17-file recovery/approval/input/channel/security/MCP/Office affected
+  matrix: **212/212** (`recovery-main833-daemon-affected-20261008.tap`).
+- License policy: **1227** dependency versions checked, exit 0.
+
+All three test receipts have zero failures, cancellations, skips or todos.
+The prior 3600/3600 Daemon full receipt is explicitly the pre-integration
+dependency graph; it is not relabeled as a new-graph full-suite execution.
+These commits are local only at this checkpoint: no new PR, push, merge into
+remote main, release, production review row or packaged GUI claim.
+
+The source-only Office input gate is already implemented in ancestor
+`56cfc5df`; a readback matched its current five-file hashes and original
+RED/GREEN receipts. Do not reimplement the obsolete generated-dist TODO.
+The actual next product gates remain independent vendor/toolchain/SDK/default
+signer review, controlled-actor coverage, real approved inputs and signed
+App/ZIP/DMG plus same-package/Computer Use acceptance. This recovery slice has
+no unresolved implementation decision; those separate product gates remain open.
+
 Neither component execution with a fixture runner nor database reopen is
 packaged macOS/real-provider/GUI restart acceptance. The overall goal remains
 active; discovery regression completion is separate from those product gates.

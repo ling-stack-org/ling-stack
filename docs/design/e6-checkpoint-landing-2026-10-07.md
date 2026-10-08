@@ -24,6 +24,14 @@ The new remote Core test-fixture optimization does not modify Office production
 code; missing-parent V2, source-review/signing and macOS packaged gates remain
 open. Overall D0/E1–E6, U/T and Harness remains active, without release.
 
+Recovery was subsequently saved locally as `1bb3022a`, and verified main
+`8335905a` normally integrated as `13552478`, without conflicting paths.
+New-graph frozen install, 18 available build scripts, 18 typechecks and license
+policy pass; fresh Core full **2413/2413**, Runner full **249/249** and Daemon
+affected **212/212** all pass with no skips/cancellations. These are local-only
+commits, not a new remote PR/merge or a signed/macOS GUI verdict. The earlier
+Daemon 3600/3600 receipt remains explicitly pre-integration.
+
 ## Scope and user decision
 
 Implementation stays in `codex/e6-safe-continuation` in the dedicated E6 worktree.
