@@ -1,10 +1,11 @@
 # Documentation Governance And Cleanup Record
 
-Status: cleanup completed locally; incremental documentation cleanup recorded
-Baseline commit: `ea8c40e3a1f6a083df64c0a69e252805bc96a320`
-Completed: 2026-09-03
+Status: current classified documentation manifest; historical cleanup batches retained below
+Historical cleanup baseline: `ea8c40e3a1f6a083df64c0a69e252805bc96a320`
+Source baseline for this refresh: `958fe499100cc4874e938eee45f6f92a9caa23d0`
+Last cleanup refresh: 2026-10-08
 Owner: repository maintainers
-Last verified: 2026-09-03
+Last verified: 2026-10-08 (paths, classification and counts)
 
 ## Outcome
 
@@ -18,8 +19,8 @@ superseded selector and two completed Sidebar implementation plans, refreshed th
 links, and classified ten current documents that had been added since the previous ledger
 update. The 2026-09-03 cleanup removed 38 test screenshots, removed three completed or
 superseded documents from the default branch, and classified five still-current documents
-plus the CI maintenance guide. The classified tree now contains 233 Markdown files, a net
-reduction of 316 files.
+plus the CI maintenance guide. The classified tree at that checkpoint contained 233
+Markdown files, a net reduction of 316 files. The current count is calculated in Retained Classification below.
 The governance record, canonical design index, implementation-status index, publication
 checklist, and release policy are the long-lived navigation documents.
 
@@ -30,8 +31,15 @@ under `docs/design/validation/sidebar-approval-dialogs-2026-08-26/`. The brand a
 not test evidence. Git history remains the historical archive for deleted captures and
 documents.
 
+The 2026-10-08 refresh moves the transcript implementation brief out of the public design
+index and consolidates five dated checkpoints into
+[Development Handoffs](development-handoffs.md), preserving their safety rules and
+unfinished gates. The old branch-specific instructions are explicitly historical;
+current delivery status remains owned by the active contracts and plans. Public guides,
+development-package instructions and governance material are included in the current manifest.
+
 No runtime code, daemon API, database schema, migration, approval behavior, or release
-state was changed by this cleanup.
+state was changed by this documentation cleanup.
 
 ## Executed Batches
 
@@ -51,6 +59,7 @@ state was changed by this cleanup.
 | Secondary copy policy | 1 added Markdown file | Explanatory copy is limited to decisions, consequences, dynamic state, and recovery. |
 | Incremental open-source documentation cleanup | 3 Markdown files | Removed one superseded selector reference and two completed Sidebar implementation plans; current contracts remain indexed. |
 | 2026-09-03 document and screenshot cleanup | 38 screenshots and 3 Markdown files | Removed test captures and completed or superseded documents; current window, environment, internationalization, right-dock, and command-rule documents remain indexed. |
+| 2026-10-08 publication navigation and handoffs | 5 standalone checkpoints consolidated | Retained the original handoff content and unfinished safety boundaries, refreshed the Desktop overview, and enumerated the current Markdown tree. |
 
 ## Canonical Replacements
 
@@ -69,26 +78,31 @@ state was changed by this cleanup.
 
 ## Retained Classification
 
-Every remaining Markdown file is classified by the following closed rules. There are no
-unclassified or review-pending files.
+The manifest below was enumerated from all `docs/**/*.md` files on 2026-10-08,
+including the new public guides and retained maintenance handoffs. Each path has
+exactly one class. Classification records ownership and retention, not proof that
+an implementation or platform gate is complete.
 
 | Retained class | Files | Rule |
 | --- | ---: | --- |
-| `CANONICAL_CONTRACT` - product and architecture contracts | 124 | Current capability or bounded subsystem authority |
-| `PROTECTED_SAFETY_RUNTIME` - safety, migration, recovery, and runtime contracts | 29 | Deletion requires explicit security or architecture review |
-| `ACTIVE_PROTECTED_PLAN` - active or protected implementation plans | 21 | Material work remains, or the plan is part of a high-risk implementation boundary |
-| `ADR_RELEASE_API` - ADR, release, and daemon API authority | 9 | Permanent architecture or release evidence |
+| `CANONICAL_CONTRACT` - product and architecture contracts | 132 | Current capability or bounded subsystem authority |
+| `PROTECTED_SAFETY_RUNTIME` - safety, migration, recovery, and runtime contracts | 42 | Deletion requires explicit security or architecture review |
+| `ACTIVE_PROTECTED_PLAN` - active or protected implementation plans | 28 | Material work remains, or the plan is part of a high-risk implementation boundary |
+| `ADR_RELEASE_API` - ADR, release, and daemon API authority | 10 | Architecture decisions, API reference, release policy and development distribution boundaries |
 | `UI2_CONTRACT` - UI2 contracts | 40 | Current foundation, architecture, component, module, theme, and index rules |
 | `UI2_MIGRATION_RELEASE` - UI2 migration and release authority | 2 | One compatibility record and one packaged Desktop release checklist |
 | `UI2_ACTIVE_PLAN` - active UI2 implementation plans | 4 | Work Board, Startup/Diagnostics, Workspace Tools, and protected Desktop theme publication |
-| `GOVERNANCE_INDEX` - governance and indexes | 4 | Canonical design index, implementation-status index, cleanup record, and publication checklist |
-| **Total** | **233** | |
+| `USER_GUIDE` - source setup and troubleshooting | 2 | Public user instructions; design and implementation checkpoints are separate |
+| `GOVERNANCE_INDEX` - governance and indexes | 5 | Navigation, documentation ownership, asset provenance and publication checklist |
+| `DEVELOPMENT_HANDOFF` - bounded maintainer transition records | 9 | Snapshot context for open native, recovery or implementation gates; not current acceptance authority |
+| **Total** | **274** | |
 
 ## Path Classification
 
-This closed manifest classifies every Markdown file currently under `docs/`. Classes are
-mutually exclusive and use the retained-class definitions above. Update this table and the
-aggregate counts in the same change whenever a document is added, deleted or reclassified.
+This manifest covers every Markdown file present under `docs/` at verification.
+Classes are mutually exclusive. Update the path table and calculate its class counts
+from the same filesystem snapshot whenever a document is added, deleted or reclassified.
+Do not carry historical batch counts forward as the current total.
 
 | Path | Retained class |
 | --- | --- |
@@ -111,9 +125,11 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/channel-context-processing-layer.md` | `CANONICAL_CONTRACT` |
 | `docs/design/channel-conversation-continuity-v2.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/channel-environment-information-hierarchy.md` | `CANONICAL_CONTRACT` |
+| `docs/design/channel-execution-capability-integration-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/channel-execution-completion-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/channel-message-streaming.md` | `CANONICAL_CONTRACT` |
 | `docs/design/channel-settings-tabbed-information-architecture.md` | `CANONICAL_CONTRACT` |
+| `docs/design/channel-seven-execution-closure-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/channel-team-operating-system.md` | `CANONICAL_CONTRACT` |
 | `docs/design/chrome-browser-built-in-plugin-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/chrome-browser-built-in-plugin.md` | `PROTECTED_SAFETY_RUNTIME` |
@@ -129,14 +145,18 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/codex-window-shell-parity.md` | `CANONICAL_CONTRACT` |
 | `docs/design/contracts-api-client.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-activity-summary-and-exploration-batching-detailed-design.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-codex-parity-component-detailed-design.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-codex-parity-visual-spec.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-codex-style-transcript-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/conversation-command-execution-batching-detailed-design.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-composer-unification.md` | `CANONICAL_CONTRACT` |
-| `docs/design/conversation-media-generation-tools.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-media-generation-tools-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
+| `docs/design/conversation-media-generation-tools.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-memory-citations-and-sources.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-model-binding-and-creation-validation.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-performance-deferral-and-virtualization.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-plan-and-goal-modes.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-response-style.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-right-dock-responsive-visibility-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/conversation-right-dock-workspace-tools.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-session-full-access-confirmation.md` | `CANONICAL_CONTRACT` |
@@ -145,6 +165,11 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/conversation-surface-contract-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/conversation-surface-contract.md` | `CANONICAL_CONTRACT` |
 | `docs/design/conversation-surface-taxonomy.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-turn-process-disclosure.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-turn-response-ownership.md` | `CANONICAL_CONTRACT` |
+| `docs/design/conversation-typed-transcript-detailed-design.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/conversation-user-input-and-sandbox-integration.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/conversation-user-input-runtime-lifecycle.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/core-tools-runtime-boundary-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/core-tools-runtime-boundary.md` | `CANONICAL_CONTRACT` |
 | `docs/design/cua-driver-bundled-embedded-detailed-design.md` | `PROTECTED_SAFETY_RUNTIME` |
@@ -152,14 +177,16 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/cua-driver-bundled-embedded.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/cua-driver-guided-installation-detailed-design.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/cua-driver-guided-installation.md` | `PROTECTED_SAFETY_RUNTIME` |
-| `docs/design/data-revalidation-and-manual-refresh-policy.md` | `CANONICAL_CONTRACT` |
 | `docs/design/daemon-lifecycle-p0.md` | `CANONICAL_CONTRACT` |
 | `docs/design/daemon-modularization.md` | `CANONICAL_CONTRACT` |
+| `docs/design/data-revalidation-and-manual-refresh-policy.md` | `CANONICAL_CONTRACT` |
 | `docs/design/desktop-adaptive-layout-model-workbench.md` | `CANONICAL_CONTRACT` |
 | `docs/design/desktop-computer-use-picture-in-picture-detailed-design.md` | `CANONICAL_CONTRACT` |
 | `docs/design/desktop-computer-use-picture-in-picture-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/desktop-computer-use-picture-in-picture.md` | `CANONICAL_CONTRACT` |
 | `docs/design/desktop-shell.md` | `CANONICAL_CONTRACT` |
+| `docs/design/e6-checkpoint-landing-2026-10-07.md` | `DEVELOPMENT_HANDOFF` |
+| `docs/design/e6-wip-checkpoint-2026-10-04.md` | `DEVELOPMENT_HANDOFF` |
 | `docs/design/execution-orchestration-hardening.md` | `CANONICAL_CONTRACT` |
 | `docs/design/external-agent-runner-adapters-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/external-runtime-decision-hermes.md` | `CANONICAL_CONTRACT` |
@@ -174,6 +201,7 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/global-feedback-toast-system.md` | `CANONICAL_CONTRACT` |
 | `docs/design/gstack-skill-source-sync.md` | `CANONICAL_CONTRACT` |
 | `docs/design/gstack-source-upgrade-lifecycle.md` | `CANONICAL_CONTRACT` |
+| `docs/design/harness-context-reliability-integration.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/implementation-status.md` | `GOVERNANCE_INDEX` |
 | `docs/design/inline-runtime-approval-detailed-design.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/input-materialization-detailed-design.md` | `CANONICAL_CONTRACT` |
@@ -185,12 +213,14 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/ling-agent-terminal-report-protocol.md` | `CANONICAL_CONTRACT` |
 | `docs/design/ling-design-system.md` | `CANONICAL_CONTRACT` |
 | `docs/design/ling-framework.md` | `CANONICAL_CONTRACT` |
+| `docs/design/ling-harness-gap-closure-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/ling-memory-v1.md` | `CANONICAL_CONTRACT` |
 | `docs/design/ling-native-skill-recording-p0-detailed-design.md` | `CANONICAL_CONTRACT` |
 | `docs/design/ling-web-tools.md` | `CANONICAL_CONTRACT` |
 | `docs/design/local-service-manager.md` | `CANONICAL_CONTRACT` |
 | `docs/design/locked-computer-control-detailed-design.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/locked-computer-control-policy.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/macos-bootstrap-reviewed-support-2026-10-06.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/managed-official-skill-source-p16.md` | `CANONICAL_CONTRACT` |
 | `docs/design/managed-worktree-lifecycle.md` | `CANONICAL_CONTRACT` |
 | `docs/design/mcp-status-boundaries-p2.md` | `CANONICAL_CONTRACT` |
@@ -211,21 +241,39 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/multi-agent-orchestrator.md` | `CANONICAL_CONTRACT` |
 | `docs/design/multi-agent-slash-commands.md` | `CANONICAL_CONTRACT` |
 | `docs/design/multi-channel-concurrency.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/normal-interrupted-turn-publication.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/office-daemon-source-input-checkpoint-2026-10-07.md` | `DEVELOPMENT_HANDOFF` |
 | `docs/design/office-documents-native-plugin-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/office-documents-native-plugin.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/office-lease-checkpoint-2026-10-07.md` | `DEVELOPMENT_HANDOFF` |
+| `docs/design/office-local-directory-native-v2.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/office-local-execution-checkpoint-2026-10-05.md` | `DEVELOPMENT_HANDOFF` |
+| `docs/design/office-original-host-bridge-2026-10-06.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/office-original-host-window-composition-2026-10-07.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/office-packaged-bootstrap-checkpoint-2026-10-07.md` | `DEVELOPMENT_HANDOFF` |
+| `docs/design/office-tracker-consumer-checkpoint-2026-10-07.md` | `DEVELOPMENT_HANDOFF` |
 | `docs/design/openai-agents-sdk-adapter-decision-record.md` | `CANONICAL_CONTRACT` |
 | `docs/design/openai-agents-sdk-runtime-patterns.md` | `CANONICAL_CONTRACT` |
 | `docs/design/orchestrator-advanced.md` | `CANONICAL_CONTRACT` |
 | `docs/design/platform-architecture.md` | `CANONICAL_CONTRACT` |
+| `docs/design/platform-native-sandbox-v1-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/plugin-manager-add-local-plugin.md` | `CANONICAL_CONTRACT` |
 | `docs/design/plugin-manager.md` | `CANONICAL_CONTRACT` |
 | `docs/design/post-compaction-snapshot-restore.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/post-compaction-undo.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/private-execution-context-snapshot-seam.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/project-defect-remediation-contract-2026-09.md` | `CANONICAL_CONTRACT` |
+| `docs/design/project-defect-remediation-plan-2026-09.md` | `ACTIVE_PROTECTED_PLAN` |
+| `docs/design/protected-host-launcher-integration-2026-10-05.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/provider-domestic-templates.md` | `CANONICAL_CONTRACT` |
+| `docs/design/provider-error-retry-evidence.md` | `CANONICAL_CONTRACT` |
 | `docs/design/provider-generation-runtime.md` | `CANONICAL_CONTRACT` |
 | `docs/design/provider-hardening-and-media-adapter-completion.md` | `CANONICAL_CONTRACT` |
+| `docs/design/provider-model-catalog-and-discovery-p15-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
+| `docs/design/provider-model-catalog-and-discovery-p15.md` | `CANONICAL_CONTRACT` |
 | `docs/design/provider-presets.md` | `CANONICAL_CONTRACT` |
 | `docs/design/provider-runner-internal-modularization.md` | `CANONICAL_CONTRACT` |
+| `docs/design/run-compaction-task-constraints.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/run-interruption-continuation.md` | `CANONICAL_CONTRACT` |
 | `docs/design/run-store-facets.md` | `CANONICAL_CONTRACT` |
 | `docs/design/runner-adapters.md` | `CANONICAL_CONTRACT` |
@@ -234,8 +282,8 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/runtime-control-plane-roadmap.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/runtime-provider-secrets-inheritance.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/runtime-supervisor.md` | `PROTECTED_SAFETY_RUNTIME` |
-| `docs/design/secrets-keychain.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/secondary-copy-and-information-density.md` | `CANONICAL_CONTRACT` |
+| `docs/design/secrets-keychain.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/session-persistence.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/settings-advanced-workspace-policy-productization.md` | `CANONICAL_CONTRACT` |
 | `docs/design/settings-archived-items-permanent-delete.md` | `CANONICAL_CONTRACT` |
@@ -249,10 +297,12 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/skill-library-height-and-ai-evolution-lifecycle.md` | `CANONICAL_CONTRACT` |
 | `docs/design/skill-library-ownership-separation.md` | `CANONICAL_CONTRACT` |
 | `docs/design/skill-source-sync-simplification-p15.md` | `CANONICAL_CONTRACT` |
+| `docs/design/skills-autoreview-harness-integration.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/sqlite-storage-ling-and-domain-slices.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/sqlite-storage-modularization-next-slices.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/design/startup-readiness-chain.md` | `CANONICAL_CONTRACT` |
 | `docs/design/state-machine-recovery.md` | `PROTECTED_SAFETY_RUNTIME` |
+| `docs/design/ten-day-wip-reconciliation-2026-09-19.md` | `DEVELOPMENT_HANDOFF` |
 | `docs/design/thread-first-work-history-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/thread-first-work-history-v2-detailed-design.md` | `CANONICAL_CONTRACT` |
 | `docs/design/thread-first-work-history.md` | `CANONICAL_CONTRACT` |
@@ -313,18 +363,23 @@ aggregate counts in the same change whenever a document is added, deleted or rec
 | `docs/design/workspace-command-rule-approval-implementation-plan.md` | `ACTIVE_PROTECTED_PLAN` |
 | `docs/design/workspace-state-storage.md` | `PROTECTED_SAFETY_RUNTIME` |
 | `docs/external-work-live-smoke.md` | `CANONICAL_CONTRACT` |
+| `docs/getting-started.md` | `USER_GUIDE` |
+| `docs/maintenance/asset-provenance.md` | `GOVERNANCE_INDEX` |
 | `docs/maintenance/ci.md` | `ADR_RELEASE_API` |
+| `docs/maintenance/development-handoffs.md` | `DEVELOPMENT_HANDOFF` |
 | `docs/maintenance/document-cleanup-inventory.md` | `GOVERNANCE_INDEX` |
 | `docs/maintenance/open-source-readiness.md` | `GOVERNANCE_INDEX` |
 | `docs/pi-coding-agent-integration.md` | `CANONICAL_CONTRACT` |
 | `docs/product-design.md` | `CANONICAL_CONTRACT` |
 | `docs/provider-adapters.md` | `CANONICAL_CONTRACT` |
+| `docs/release/README.md` | `ADR_RELEASE_API` |
 | `docs/release/desktop-windows-release-decisions.md` | `ADR_RELEASE_API` |
 | `docs/release/desktop.md` | `ADR_RELEASE_API` |
+| `docs/release/development-packages.md` | `ADR_RELEASE_API` |
 | `docs/release/evidence/README.md` | `ADR_RELEASE_API` |
 | `docs/release/locked-computer-control-windows-handoff.md` | `ADR_RELEASE_API` |
-| `docs/release/README.md` | `ADR_RELEASE_API` |
 | `docs/seedream-live-smoke.md` | `CANONICAL_CONTRACT` |
+| `docs/troubleshooting.md` | `USER_GUIDE` |
 
 ## Protected Boundaries
 
@@ -351,6 +406,12 @@ When one of these plans completes, merge durable rules into its owning contract 
 delete the plan in the same change.
 
 ## Evidence Policy
+
+Retained `DEVELOPMENT_HANDOFF` files are a bounded transition exception for unfinished
+native, recovery and implementation gates. They do not authorize execution or certify
+current `main`. Do not add new per-run diaries to them; when the owning gate closes,
+consolidate unique durable rules into the contract and retain the checkpoint only in Git
+history. Consolidation must preserve unresolved safety and recovery requirements.
 
 - Do not add screenshot folders, metadata diaries, per-run hashes, or test-by-test
   closeout logs under `docs/design`.

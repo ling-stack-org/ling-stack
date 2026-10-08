@@ -1,14 +1,24 @@
 # Architecture
 
-## Recommended Shape
+Status: current architecture overview
+Owner: repository maintainers
+Last verified: 2026-10-08 (Desktop source and release wording)
+Document type: architecture contract
+Code and test anchors: `apps/desktop/package.json`, `apps/desktop/README.md`, and the owning contracts below
 
-Ling Stack should start as a local runtime with three front doors:
+## Current Shape
+
+Ling Stack is a local runtime with three source-based entry points:
 
 - CLI.
-- Local web UI.
-- Future desktop shell.
+- Local Web UI.
+- Electron Desktop shell.
 
-The desktop app should call the same local daemon API as the web UI. This keeps the product usable before packaging work is finished.
+The Desktop shell is implemented as a source alpha and uses the same local daemon API
+and shared Web UI. This keeps the product usable before packaging work is finished.
+Source implementation does not establish a supported signed release: signing,
+clean-machine and platform acceptance remain governed by
+[Desktop Release And Acceptance](release/desktop.md).
 
 ```mermaid
 flowchart TD
@@ -59,7 +69,7 @@ Provider support must be capability-driven, not chat-only.
 
 Owns the first execution kernel adapter.
 
-Ling Stack should wrap `@earendil-works/pi-coding-agent` instead of forking it. Pi gives us a maintained coding-agent harness, provider routing, sessions, tool calling, and file/shell/git-oriented tools. Ling Stack keeps ownership of the product layer: channels, tasks, approvals, audit logs, provider policy, and future desktop/web surfaces.
+Ling Stack should wrap `@earendil-works/pi-coding-agent` instead of forking it. Pi gives us a maintained coding-agent harness, provider routing, sessions, tool calling, and file/shell/git-oriented tools. Ling Stack keeps ownership of the product layer: channels, tasks, approvals, audit logs, provider policy, and the shared Desktop/Web surfaces.
 
 The adapter boundary is:
 
@@ -107,13 +117,13 @@ Local UI:
 
 ### `apps/desktop`
 
-Future wrapper:
+Current Electron source alpha wrapper over the shared Web UI and daemon.
 
-- macOS, Windows, Linux distribution.
-- Tray/background daemon control.
-- Keychain integration.
-- Local notifications.
-- Auto-update.
+The shell owns daemon lifecycle and native integration boundaries, including menu/tray,
+file selection, Keychain, notifications and update UX. Supported distribution and native
+capabilities are platform-gated; macOS and Windows acceptance is tracked in
+[Desktop Release And Acceptance](release/desktop.md). Read the
+[Desktop package guide](../apps/desktop/README.md) for current implementation and open gates.
 
 ## Storage
 
@@ -224,13 +234,10 @@ The next implementation slices are documented separately so the platform archite
 
 ## Desktop Strategy
 
-Do not start with a desktop-first implementation.
+The architecture began with CLI + daemon, followed by a local Web UI and then an Electron
+alpha. That order keeps the daemon and product model independent of desktop packaging.
+Electron is the selected current shell for the TypeScript-heavy application.
 
-Recommended order:
-
-1. CLI + daemon.
-2. Local web UI.
-3. Electron alpha if speed matters most.
-4. Tauri evaluation if package size and native boundary become important.
-
-Electron is faster for a TypeScript-heavy AI tool. Tauri is attractive later for smaller bundles and clearer native boundaries.
+Tauri remains a deferred architecture option if package size or native boundaries justify
+a separate review; it is not the current implementation plan. The Desktop shell must
+continue to consume the shared daemon contracts and Web surface.

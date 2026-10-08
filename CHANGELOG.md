@@ -8,6 +8,16 @@ release versions will follow [Semantic Versioning](https://semver.org/spec/v2.0.
 
 ## [Unreleased]
 
+### Changed
+
+- Simplified the public README and added source setup, troubleshooting, and platform
+  development-package instructions with a fresh workspace screenshot.
+
+### Fixed
+
+- Desktop packaging now starts the installed Electron Builder CLI directly with Node,
+  avoiding Windows `.cmd` shim execution failures while preserving governed arguments.
+
 ## [0.1.2-alpha.1] - 2026-08-27
 
 ### Added

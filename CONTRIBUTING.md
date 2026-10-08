@@ -26,15 +26,15 @@ not need a new design document.
 
 Requirements:
 
-- Node.js 22.22.1 or newer
+- Git and Node.js 22.22.1 or newer
 - Corepack with pnpm 10
 
 ```bash
-git clone https://github.com/tianxiaochannel-oss88/ling-stack.git
+git clone https://github.com/ling-stack-org/ling-stack.git
 cd ling-stack
 corepack enable
-corepack pnpm install
-corepack pnpm build
+corepack pnpm install --frozen-lockfile
+corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/cli...' -r build
 ```
 
 Start the daemon and Web UI in separate terminals:
@@ -44,8 +44,16 @@ corepack pnpm ling daemon start --foreground
 corepack pnpm ling ui --foreground --open
 ```
 
-See [Quick Start From Source](README.md#quick-start-from-source) for ports, health
-checks, desktop development, and local data paths.
+This builds the CLI, daemon, Web app, and their workspace dependencies. Run both
+startup commands from the repository root, each in its own terminal. Follow
+[Getting started](docs/getting-started.md) for model setup and a first conversation,
+and [Troubleshooting](docs/troubleshooting.md) for setup errors. Run `ling doctor`
+after configuring and checking a chat model; an unconfigured workspace reports a
+provider failure.
+
+Desktop development has additional platform requirements: Xcode Command Line Tools
+with Swift and `codesign` on macOS, or the .NET 8 SDK on Windows, plus the Electron
+platform binary. See [Desktop development](README.md#desktop-development).
 
 ## Branches And Pull Requests
 
@@ -104,6 +112,12 @@ corepack pnpm typecheck
 corepack pnpm test
 corepack pnpm build
 ```
+
+These repository-wide commands include Desktop checks, and `test` also includes
+Mobile checks. They require the relevant platform toolchain and test fixtures;
+use package filters for a scoped change and state which checks ran. The default
+Web setup above does not establish that all native or browser test fixtures are
+available. CI selects and builds the affected package graph separately.
 
 Web changes should also run:
 

@@ -6,9 +6,9 @@ licenses.
 
 ## Dependency Audit Baseline
 
-Last verified: 2026-08-03
+Last verified: 2026-10-08
 
-The pnpm lockfile currently resolves 1,171 dependency versions across 23 reported license
+The pnpm lockfile currently resolves 1,223 dependency versions across 23 reported license
 families. The dependency set is predominantly MIT, Apache-2.0, BSD, ISC, BlueOak, and
 other permissive licenses.
 
@@ -35,6 +35,10 @@ option. A new unknown, proprietary, source-available, AGPL, or unreviewed copyle
 license must fail review instead of being silently accepted.
 
 ## Native And Bundled Components
+
+Repository artwork, screenshots, and font provenance are tracked separately in the
+[asset provenance inventory](docs/maintenance/asset-provenance.md). Passing the dependency
+check does not establish the origin or publication rights of every media asset.
 
 The locked Cua Driver source-build input carries its own
 [MIT license](apps/desktop/resources/providers/cua-driver/0.8.3-ling.1/LICENSE.md) and

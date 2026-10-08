@@ -2,6 +2,7 @@
 
 import { spawn } from "node:child_process";
 import { mkdtemp, mkdir, rm, rmdir } from "node:fs/promises";
+import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -18,6 +19,7 @@ import {
 
 const APP_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const CONFIG_PATH = resolve(APP_ROOT, "scripts/cua-driver-electron-builder.config.mjs");
+const require = createRequire(import.meta.url);
 
 export async function prepareCuaDriverElectronPackage(input, dependencies = {}) {
   const platform = normalizePlatform(input?.platform);
@@ -208,10 +210,12 @@ export async function runCuaDriverElectronPackageCli(
   if (cleanupError) throw cleanupError;
 }
 
-async function spawnElectronBuilder({ appRoot, args, environment }) {
-  const executable = process.platform === "win32" ? "corepack.cmd" : "corepack";
+export async function spawnElectronBuilder({ appRoot, args, environment }) {
+  // .cmd shims cannot be spawned directly on Windows without a shell.
+  // Use the installed CLI with this Node runtime and preserve the argv boundary.
+  const cliPath = require.resolve("electron-builder/cli.js");
   return new Promise((settle, reject) => {
-    const child = spawn(executable, ["pnpm", "exec", "electron-builder", ...args], {
+    const child = spawn(process.execPath, [cliPath, ...args], {
       cwd: appRoot,
       env: environment,
       shell: false,

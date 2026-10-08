@@ -1,338 +1,174 @@
 <div align="center">
   <img src="apps/web/public/icons/ling-mark.svg" alt="Ling Stack" width="88" height="88" />
   <h1>Ling Stack</h1>
-  <p><strong>A local-first workspace for AI teammates, models, tools, approvals, and auditable work.</strong></p>
+  <p><strong>A local workspace for working with AI teammates.</strong></p>
+  <p>Bring conversations, models, tools, approvals, and results together.</p>
   <p>
-    <a href="https://github.com/tianxiaochannel-oss88/ling-stack/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/tianxiaochannel-oss88/ling-stack/actions/workflows/ci.yml/badge.svg" /></a>
+    <img alt="Source alpha" src="https://img.shields.io/badge/Status-source_alpha-5964a0.svg" />
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
     <img alt="Node.js 22.22.1+" src="https://img.shields.io/badge/Node.js-22.22.1%2B-3c873a.svg" />
     <img alt="pnpm 10" src="https://img.shields.io/badge/pnpm-10-f69220.svg" />
   </p>
   <p>
-    <a href="docs/product-design.md">Product</a> ·
+    <a href="docs/getting-started.md">Getting started</a> ·
+    <a href="docs/troubleshooting.md">Troubleshooting</a> ·
     <a href="docs/architecture.md">Architecture</a> ·
-    <a href="docs/design/README.md">Design docs</a> ·
-    <a href="CHANGELOG.md">Changelog</a> ·
     <a href="CONTRIBUTING.md">Contributing</a> ·
-    <a href="SECURITY.md">Security</a> ·
-    <a href="LICENSE">MIT License</a>
+    <a href="CHANGELOG.md">Changelog</a>
   </p>
 </div>
 
-> [!WARNING]
-> Ling Stack is a source-first alpha. The Web app, CLI, local daemon, and Electron
-> desktop shell are under active development. Stable signed installers and a supported
+> [!NOTE]
+> **Source-first alpha.** Start with the Web UI, local daemon, and CLI from source.
+> Desktop development is available separately; stable signed installers and a supported
 > production release are not available yet.
 
-Ling Stack brings conversations, channels, AI teammates, model configuration, skills,
-tools, media generation, approvals, artifacts, and runtime history into one local
-workspace. It is designed for work that needs more structure and accountability than a
-standalone chat window.
+![Ling Stack homepage in a fresh workspace](docs/assets/ling-workspace-home.jpg)
 
-## Why Ling Stack
+Fresh local workspace before configuring a model. Model requests require your own
+provider configuration and API key.
 
-AI work is often split across a chat client, coding-agent CLI, model relay, media tool,
-task tracker, and an informal review process. That fragmentation makes it difficult to
-answer basic operational questions:
+## Who Is It For?
 
-- Which model and tools were used?
-- What did the agent read, change, or generate?
-- Which actions required human approval?
-- Where are the resulting files and evidence?
-- Can an interrupted run be inspected or resumed safely?
+Ling Stack is for developers and people who work with several AI models or teammates
+and want to keep their work in one place. It connects OpenAI, Anthropic, Volcengine Ark,
+DeepSeek-compatible endpoints, MiniMax, GLM, and OpenAI-compatible relays through a
+shared Model Workbench.
 
-Ling Stack makes those boundaries explicit. A workspace owns the context and policy;
-maintained runtimes execute scoped work; humans remain in control of risky side effects.
+Workspace state, conversation history, and run evidence are stored locally. Requests
+and their context go to the model or tool providers you choose. The interface supports
+Chinese and English.
 
-## What You Can Do
+## Three Ways To Use It
 
-- **Work with AI teammates:** use normal conversations, private teammate chats, and
-  channel collaboration with explicit model and tool configuration.
-- **Connect different model providers:** configure OpenAI, Anthropic, Volcengine Ark,
-  DeepSeek-compatible endpoints, MiniMax, GLM, and OpenAI-compatible relays through the
-  Model Workbench.
-- **Run auditable agent work:** execute tasks through the Pi coding-agent adapter while
-  preserving events, approvals, artifacts, and session history.
-- **Inspect structured channel transcripts:** view tool calls and results, approvals,
-  handoffs, artifacts, operations, and final results as typed content layers while
-  operator-only and agent-private items stay out of the channel transcript.
-- **Control authority:** apply workspace permission presets and require confirmation for
-  file writes, shell commands, paid media generation, and other governed actions.
-- **Manage reusable skills:** import, edit, bind, and review skills without treating a
-  skill as implicit execution permission.
-- **Produce media:** create image and video jobs through capability-checked model adapters
-  and the scene-based Media Production workspace.
-- **Connect tools:** register MCP servers and assign their tools to AI teammates
-  explicitly.
-- **Coordinate external work:** import and inspect GitHub or Linear work locally, with
-  external mutations separated behind explicit approval and execution steps.
-- **Use one local control plane:** access the same daemon-backed product from the Web UI,
-  CLI, or Electron desktop shell.
-
-## Current Integrations
-
-| Integration | Current boundary |
-| --- | --- |
-| Chrome Extension + Browser Host | Implemented for local development; Chrome Web Store release pending |
-| Plugin Manager | Source alpha with explicit activation, capability, and approval boundaries |
-| Office Documents Native Plugin | Implemented for local Desktop development; signed distribution pending |
-| MCP and local tools | Source alpha; tools are assigned explicitly and remain policy governed |
-| Model providers | Source alpha with capability checks and local secret references |
-
-“Implemented” means the source and focused verification exist on `main`; it does not mean
-that a signed installer, store listing, or stable support commitment is available. See
-[Implementation Status](docs/design/implementation-status.md) for the maintained closure
-gates.
-
-## Product Principles
-
-- **Local first:** workspace state, audit records, and generated artifacts stay local by
-  default.
-- **Capability driven:** model and tool availability is based on verified capabilities,
-  not optimistic labels.
-- **Explicit authority:** a configured skill or provider does not silently grant tools,
-  filesystem access, network access, or external mutation rights.
-- **Auditable by design:** runs produce durable events and artifacts that can be inspected
-  after execution.
-- **One product model:** Web, Desktop, and CLI share daemon contracts and state machines
-  instead of implementing separate behavior.
-- **Multilingual:** Chinese and English product surfaces are maintained together.
-
-## Architecture
-
-```mermaid
-flowchart LR
-  subgraph Clients["Client surfaces"]
-    Web["Web UI"]
-    Desktop["Electron Desktop"]
-    CLI["CLI"]
-  end
-
-  Web --> Daemon["Local daemon"]
-  Desktop --> Daemon
-  CLI --> Daemon
-
-  Daemon --> Core["Workspace, channels, tasks, and AI teammates<br/>Policy, approvals, and durable state"]
-  Daemon --> Runtime["Runtime supervisor<br/>and runner adapters"]
-  Core -. "governs execution" .-> Runtime
-
-  Runtime --> Providers["Model and media providers"]
-  Runtime --> Tools["MCP and local tools"]
-  Core --> Store[("SQLite")]
-  Core --> Evidence["Artifacts, session logs,<br/>and audit evidence"]
-```
-
-The daemon is the local authority for workspace state, approvals, runs, and recovery.
-The UI does not bypass it to call tools or provider adapters directly. Pi owns the first
-maintained coding-agent runtime; Ling Stack owns the surrounding product, policy, and
-evidence model.
-
-| Area | Path | Responsibility |
+| Scenario | What you do | What stays together |
 | --- | --- | --- |
-| Web application | `apps/web` | Shared local workspace UI |
-| Desktop application | `apps/desktop` | Electron lifecycle, native integration, and shared Web surface |
-| CLI | `packages/cli` | Local lifecycle, diagnostics, and workspace commands |
-| Daemon | `packages/daemon` | HTTP/SSE API, orchestration, persistence, and recovery |
-| Core | `packages/core` | Workspace domain, policy, approvals, and state machines |
-| Contracts | `packages/contracts` | Shared public and internal API contracts |
-| API client | `packages/api-client` | Typed daemon client |
-| Providers | `packages/providers` | Chat, search, image, and video adapters |
-| Runner | `packages/runner-pi` | Pi coding-agent integration |
-| UI packages | `packages/ui-react`, `packages/conversation-ui-*` | Shared React components and conversation primitives |
-| Plugin SDK | `packages/plugin-sdk` | Plugin contracts and validation |
+| Ask a model | Configure a chat model and start a conversation about a document, idea, or project | Messages, model selection, attachments, and results |
+| Work with AI teammates | Give teammates model and tool bindings, then collaborate in a project channel | Participants, tool activity, approvals, artifacts, and the final report |
+| Create media | Configure an image or video capability and use Media Production | Projects, scenes, generation jobs, and outputs |
 
-See [Architecture](docs/architecture.md) and the
-[design documentation index](docs/design/README.md) for ownership details.
-
-## Project Status
-
-The repository currently contains working foundations for:
-
-- local channels, conversations, tasks, AI teammates, and model bindings;
-- provider setup, readiness checks, and workspace defaults;
-- streamed coding-agent runs with SQLite state, JSONL events, approvals, and artifacts;
-- skills, teammate bindings, AI-generated skill review, and skill revision;
-- image/video media jobs and a scene-based media production surface;
-- MCP management, local tools, automations, and external-work orchestration;
-- shared Web and Electron UI, theme persistence, and Computer Use PiP foundations.
-
-Important open gates include signed desktop distribution, clean-machine platform
-acceptance, remaining Computer Use platform verification, selected media-provider live
-adapters, and several product surfaces that remain intentionally hidden pending review.
-Mobile is not part of the current product acceptance scope.
-
-The maintained list of incomplete work is in
-[Implementation Status](docs/design/implementation-status.md). Do not infer current
-status from old phase names or Git history.
+Begin with a simple conversation, then add teammates or tools when the work needs them.
+Skills provide instructions; tool access and permission remain explicit. Coding-agent
+work uses the Pi runtime adapter, and available execution tools depend on platform setup
+and workspace policy.
 
 ## Quick Start From Source
 
-### Requirements
+Requirements: Git, Node.js **22.22.1 or newer**, and **Corepack with pnpm 10**.
+The repository pins pnpm `10.0.0`; Node `22.22.1` is the CI baseline.
 
-- Git
-- Node.js `22.22.1` or newer (required for SQLite transaction state and native TypeScript source imports)
-- Corepack with pnpm `10`
-
-The repository is a pnpm workspace and is not currently published as a stable npm or
-desktop release.
-
-### 1. Clone and install
+### 1. Install and build the local Web stack
 
 ```bash
-git clone https://github.com/tianxiaochannel-oss88/ling-stack.git
+git clone https://github.com/ling-stack-org/ling-stack.git
 cd ling-stack
 corepack enable
-corepack pnpm install
+corepack pnpm install --frozen-lockfile
+corepack pnpm --workspace-concurrency=1 --filter '@ling-stack/cli...' -r build
 ```
 
-### 2. Build the workspace
+The filtered build includes the CLI, daemon, Web app, and their workspace dependencies.
+Desktop and Mobile builds have separate setup requirements.
 
-```bash
-corepack pnpm build
-```
+### 2. Start the daemon
 
-### 3. Start the daemon
-
-In the first terminal:
+Keep this command running in the first terminal, from the repository root:
 
 ```bash
 corepack pnpm ling daemon start --foreground
 ```
 
-The daemon listens on `http://127.0.0.1:17891` by default. Keep it bound to loopback
-unless you have designed and reviewed a separate authenticated remote-access boundary.
+The default daemon address is `http://127.0.0.1:17891`. Keep it on loopback.
 
-### 4. Start the Web UI
+### 3. Open the Web UI
 
-In a second terminal:
+In a second terminal, from the same repository root:
 
 ```bash
 corepack pnpm ling ui --foreground --open
 ```
 
-Open `http://127.0.0.1:5173` if the browser does not open automatically.
+Open `http://127.0.0.1:5173` if the browser does not open automatically. In another
+terminal, `curl http://127.0.0.1:17891/health` should return JSON with `"ok": true`.
 
-### 5. Verify the local stack
+### 4. Connect a model and try a conversation
+
+Open **Settings → Model Workbench**, add a chat-capable model with your own API key,
+and run **Check**. The first verified chat model becomes the workspace default. Start
+a new conversation and ask a small question, then inspect the response and its details.
+
+After configuring and checking the model, run:
 
 ```bash
-curl http://127.0.0.1:17891/health
 corepack pnpm ling doctor
 ```
 
-Ling Stack can be explored before a provider is configured. To run model-backed work,
-open **Model Workbench**, add a chat-capable model, save the API key to the supported
-secret store or environment reference, and run its readiness check. The first verified
-chat model becomes the workspace default; later default changes remain explicit.
+Doctor reports model readiness as well as local service health. A fresh workspace with
+no chat model reports a provider failure even when the daemon and Web UI are running.
+
+Follow [Getting started](docs/getting-started.md) for the first model, conversation,
+and project channel. See [Troubleshooting](docs/troubleshooting.md) for setup errors.
+
+## Support And Limits
+
+| Surface or integration | Current scope |
+| --- | --- |
+| Web, daemon, and CLI | Source alpha; the default getting-started path |
+| Electron Desktop | Development shell; platform setup and clean-machine acceptance remain separate gates |
+| Chrome extension and Browser Host | Local development integration; Chrome Web Store publication pending |
+| MCP and Plugin Manager | Explicit tool assignment, activation, and approval boundaries |
+| Office and Computer Use native features | Platform-dependent development; consult the maintained implementation and release gates |
+| Image and video generation | Provider- and capability-dependent; selected live adapters still have open gates |
+| Mobile | Experimental work outside the current product acceptance scope |
+
+Platform execution, accessibility, signing, and installer acceptance remain open for
+selected native features. The [Implementation Status](docs/design/implementation-status.md)
+index records what is implemented and what still needs acceptance. A source build or
+focused test result does not establish installer readiness.
+
+For questions and reproducible bugs, read [Support](SUPPORT.md) and use the
+[GitHub Issue forms](https://github.com/ling-stack-org/ling-stack/issues/new/choose).
+Maintenance is best effort. Report vulnerabilities through [Security](SECURITY.md).
 
 ### Desktop development
 
-The Electron application builds the shared Web app and daemon before launch:
+Desktop has additional requirements: Xcode Command Line Tools with Swift and `codesign`
+on macOS, or the .NET 8 SDK on Windows for the Office driver. The current Desktop
+distribution targets are macOS arm64 and Windows x64. Electron also needs its platform
+binary; see [Desktop troubleshooting](docs/troubleshooting.md#desktop-development).
 
 ```bash
 corepack pnpm --filter @ling-stack/desktop dev
 ```
 
-Desktop packaging and signing have additional platform gates. Read
-[Desktop release and acceptance](docs/release/desktop.md) before treating a local package
-as distributable.
+For platform tools, build commands, and manual checks, follow the
+[Mac and Windows development-package guide](docs/release/development-packages.md).
+Read [Desktop release and acceptance](docs/release/desktop.md) before packaging for
+distribution. Public source publication and signed binary releases are separate steps.
 
-## Configuration And Data
+## Data And Permissions
 
-Provider secrets should be supplied through supported secret references such as
-`env:NAME` or the desktop/keychain flow. Do not commit API keys, tokens, local provider
-configuration, or workspace state.
+Default workspace state is under `.ling-stack/`, including `ling-stack.sqlite`,
+`sessions/`, `artifacts/`, and `logs/`. Provider keys entered in Model Workbench are
+saved in local workspace storage. Environment and supported keychain references are
+also available; see [Configuration and data](docs/getting-started.md#configuration-and-data).
 
-Common development variables are documented in [.env.example](.env.example). The
-example file contains names and placeholders only; copy only the variables you actually
-need into your local environment.
+Keep keys, databases, session logs, and private outputs out of Git and public reports.
+Workspace permissions govern file access, shell commands, external mutations, and paid
+generation. Review approval requests before accepting them. For storage migration, use
+the [CLI storage flows](docs/design/workspace-state-storage.md).
 
-By default, runtime state is local to the workspace under `.ling-stack/`:
+## Explore Or Contribute
 
-```text
-.ling-stack/
-  ling-stack.sqlite   SQLite workspace state
-  sessions/           JSONL run events and evidence
-  artifacts/          Generated and collected files
-  logs/               Local runtime logs
-```
+The Web app (`apps/web`), Desktop shell (`apps/desktop`), and CLI (`packages/cli`) share
+the daemon (`packages/daemon`). Core domain logic, contracts, provider adapters, and
+runner integrations live under `packages/`.
 
-An explicit user-data-directory mode is also available. State-location changes use the
-CLI migration and registry-repair flows; do not move the database by hand. See
-[Workspace State Storage](docs/design/workspace-state-storage.md).
+- [Contributing](CONTRIBUTING.md): setup, focused checks, and pull request expectations.
+- [Architecture](docs/architecture.md) and [Daemon API](docs/daemon-api.md): system boundaries.
+- [Design index](docs/design/README.md) and [Implementation Status](docs/design/implementation-status.md): maintained contracts and acceptance gates.
+- [Provider adapters](docs/provider-adapters.md) and [Pi integration](docs/pi-coding-agent-integration.md): model and runtime integration.
+- [Release policy](docs/release/README.md), [Changelog](CHANGELOG.md), and [Third-party notices](THIRD_PARTY_NOTICES.md): publication and licensing.
 
-## Model And Tool Boundaries
-
-Provider support is capability based. Chat, tool calling, reasoning, web search, image
-generation, image editing, and video generation are separate capabilities. A media-only
-provider cannot be selected for a normal AI teammate conversation.
-
-Coding sessions use `@earendil-works/pi-coding-agent` through
-`@ling-stack/runner-pi`. Media jobs use dedicated adapters and do not pass through the
-coding-agent runtime. MCP servers and local tools are governed separately from skills.
-
-More detail:
-
-- [Provider adapters](docs/provider-adapters.md)
-- [Pi coding-agent integration](docs/pi-coding-agent-integration.md)
-- [Approval policy](docs/design/approval-policy.md)
-- [Plugin Manager](docs/design/plugin-manager.md)
-- [Daemon API](docs/daemon-api.md)
-
-## Development
-
-Run the repository-wide checks with:
-
-```bash
-corepack pnpm typecheck
-corepack pnpm test
-corepack pnpm build
-corepack pnpm check:docs
-corepack pnpm check:licenses
-corepack pnpm check:public
-```
-
-Package-specific scripts are available through pnpm filters. Some desktop and native
-Computer Use checks require their target operating system, signing material, or dedicated
-test fixtures and are not implied by the generic commands above.
-
-Before opening a pull request, read [CONTRIBUTING.md](CONTRIBUTING.md). Keep changes scoped,
-state which validations ran, and do not commit local workspace data or credentials.
-
-## Documentation
-
-- [Product design](docs/product-design.md)
-- [Architecture](docs/architecture.md)
-- [Design documentation index](docs/design/README.md)
-- [Implementation status](docs/design/implementation-status.md)
-- [Architecture Decision Records](docs/adr/README.md)
-- [Daemon API](docs/daemon-api.md)
-- [Desktop release and acceptance](docs/release/desktop.md)
-- [Release policy](docs/release/README.md)
-- [Documentation governance](docs/maintenance/document-cleanup-inventory.md)
-- [Open-source readiness](docs/maintenance/open-source-readiness.md)
-- [Changelog](CHANGELOG.md)
-- [Third-party notices](THIRD_PARTY_NOTICES.md)
-- [Security policy](SECURITY.md)
-- [Contributing](CONTRIBUTING.md)
-- [Community support](SUPPORT.md)
-
-Design contracts describe durable product and architecture boundaries. Completed
-implementation diaries and screenshot evidence belong in Git history or CI/release
-artifacts rather than the main documentation tree.
-
-## Security
-
-- Keep the daemon on loopback by default.
-- Never commit provider keys, external-service tokens, workspace databases, session logs,
-  or generated artifacts.
-- Treat skills as instructions, not authority grants.
-- Keep destructive tools, external mutations, deployments, credential changes, and paid
-  generation behind explicit policy and approval boundaries.
-- Do not describe unsigned or locally built desktop packages as production releases.
-
-Report vulnerabilities through the private process in [SECURITY.md](SECURITY.md). Do not
-include sensitive vulnerability details in a public issue or pull request.
-
-## License
-
-Ling Stack is available under the [MIT License](LICENSE).
+Ling Stack is available under the [MIT License](LICENSE). Community participation
+follows the [Code of Conduct](CODE_OF_CONDUCT.md).
