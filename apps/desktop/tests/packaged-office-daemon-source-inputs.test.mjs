@@ -17,6 +17,11 @@ const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.me
 const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
+const pi110AuthoredLeaves = [
+  "packages/runner-pi/src/provider-request-auth.ts",
+  "packages/runner-pi/src/session-continuation.ts",
+  "packages/runner-pi/src/session-transcript.ts",
+];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -24,6 +29,13 @@ function newFile(path, bytes) {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, bytes, { mode: 0o600 });
 }
+
+test("Office packaging review requires every new Pi 1.1 authored runtime leaf", () => {
+  for (const name of pi110AuthoredLeaves) {
+    assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
+      `Pi runtime leaf must be an explicit required review input: ${name}`);
+  }
+});
 
 test("Office fixed fresh daemon must not consume a stale compiled bridge with unchanged reviewed TS (real esbuild, synthetic native only)", {
   skip: process.platform !== "darwin" || process.arch !== "arm64",
@@ -93,6 +105,64 @@ test("Office fixed fresh daemon consumes an explicitly reviewed authored bridge 
     explicitFixtureReviewSha256: hash(readFileSync(f.reviewPath)), realEsbuildSourceAudit: sourceAudit }));
 });
 
+test("Office fixed fresh daemon rejects missing review digests, changed authored bytes and missing Pi 1.1 sources before any build (synthetic native only)", {
+  skip: process.platform !== "darwin" || process.arch !== "arm64",
+}, async t => {
+  const f = await approvedSyntheticFixture(t);
+  const originalReview = readFileSync(f.reviewPath);
+  assert.equal(f.reviewApi.readReviewedPackagedOfficeSource().sourceReviewSha256, hash(originalReview));
+  for (const name of pi110AuthoredLeaves) {
+    await t.test(name, async t => {
+      const sourcePath = join(f.root, name), authoredBefore = readFileSync(sourcePath);
+      const distPath = join(f.root, name.replace("/src/", "/dist/").replace(/\.ts$/u, ".js"));
+      const compiledBefore = readFileSync(distPath);
+      assert.ok(compiledBefore.length > 0, "the stale generated leaf must exist throughout the rejection checks");
+      await t.test("missing required review digest", async () => {
+        const review = JSON.parse(originalReview.toString("utf8"));
+        delete review.packagingSha256[name];
+        const incompleteReview = Buffer.from(JSON.stringify(review));
+        writeFileSync(f.reviewPath, incompleteReview);
+        try {
+          await assert.rejects(f.bundle(), /packaged_office_native_source_review_invalid/u);
+          assert.deepEqual(readFileSync(f.reviewPath), incompleteReview);
+          assert.deepEqual(readFileSync(sourcePath), authoredBefore);
+          assertNoBuild(f);
+        } finally { writeFileSync(f.reviewPath, originalReview); }
+      });
+      await t.test("authored mutation with unchanged review", async () => {
+        const changed = Buffer.concat([Buffer.from("// EXPLICIT TEST-ONLY UNREVIEWED PI LEAF\n"), authoredBefore]);
+        writeFileSync(sourcePath, changed);
+        try {
+          await assert.rejects(f.bundle(), /packaged_office_native_source_review_invalid/u);
+          assert.deepEqual(readFileSync(f.reviewPath), originalReview);
+          assert.deepEqual(readFileSync(sourcePath), changed);
+          assertNoBuild(f);
+        } finally { writeFileSync(sourcePath, authoredBefore); }
+      });
+      await t.test("missing authored source cannot fall back to existing dist", async () => {
+        rmSync(sourcePath); // This exact path is inside the disposable mkdtemp fixture.
+        try {
+          await assert.rejects(f.bundle(), error => error.code === "ENOENT" && error.path === sourcePath);
+          assert.equal(existsSync(sourcePath), false);
+          assert.deepEqual(readFileSync(f.reviewPath), originalReview);
+          assertNoBuild(f);
+        } finally { writeFileSync(sourcePath, authoredBefore, { mode: 0o600 }); }
+      });
+      assert.deepEqual(readFileSync(distPath), compiledBefore);
+    });
+  }
+  t.diagnostic(JSON.stringify({ fixtureOnly: true, artifactExecuted: false, pi110AuthoredLeaves,
+    nativeCompilerCalls: f.counts.nativeCompilerCalls, signCalls: f.counts.signCalls,
+    nativeVerifyCalls: f.counts.nativeVerifyCalls, helperNormalizeCalls: f.counts.helperNormalizeCalls,
+    realEsbuildCalls: f.builds.length }));
+});
+
+/** A rejected review must not reach native compilation, codesign or actual esbuild. */
+function assertNoBuild(f) {
+  assert.deepEqual(f.counts, { nativeCompilerCalls: 0, signCalls: 0, nativeVerifyCalls: 0, helperNormalizeCalls: 0 });
+  assert.equal(f.builds.length, 0);
+}
+
 /** Independent checks of captured real esbuild metadata and original API output pins. */
 function assertOriginalSourceOnlyBuild(f, bundle, index) {
   const observed = f.builds[index];
@@ -117,10 +187,19 @@ function assertOriginalSourceOnlyBuild(f, bundle, index) {
   const bridgeInputName = Object.keys(observed.metafile.inputs).find(name => resolve(f.root, "apps/desktop", name) === bridgePath);
   assert.equal(observed.metafile.inputs[bridgeInputName].bytes, authored.length);
   assert.equal(workspaceInputs.every(path => Object.hasOwn(review.packagingSha256, path.slice(f.root.length + 1).split(sep).join("/"))), true);
+  const reviewedPi110Sha256 = Object.fromEntries(pi110AuthoredLeaves.map(name => {
+    const path = join(f.root, name), bytes = readFileSync(path);
+    assert.equal(paths.includes(path), true, `actual esbuild metafile must contain the reviewed Pi runtime leaf: ${name}`);
+    assert.equal(hash(bytes), review.packagingSha256[name]);
+    const inputName = Object.keys(observed.metafile.inputs).find(input => resolve(f.root, "apps/desktop", input) === path);
+    assert.equal(observed.metafile.inputs[inputName].bytes, bytes.length);
+    return [name, hash(bytes)];
+  }));
   assert.deepEqual(observed.outputFiles, [{ path: bundle.pins.path, sha256: bundle.pins.sha256, sizeBytes: bundle.pins.sizeBytes }],
     "original emitted API pins must match the untouched true esbuild output, not a synthesized result");
   return { entryPoint: "packages/daemon/src/cli.ts", runtimeInputs: paths.length, authoredWorkspaceRuntimeInputs: workspaceInputs.length,
     nineWorkspaceDistRuntimeInputs: anyWorkspaceDist.length, reviewedBridgeSha256: hash(authored),
+    reviewedPi110Sha256,
     originalEsbuildOutputSha256: observed.outputFiles[0].sha256 };
 }
 

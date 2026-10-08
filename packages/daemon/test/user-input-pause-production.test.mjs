@@ -5,6 +5,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { createSqliteRunStore } from "@ling-stack/core";
 import { PiRunnerAdapter, PiRunnerYielded } from "@ling-stack/runner-pi";
+import { getCurrentTools } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/index.js";
 import { stream } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js";
 import { createDetachedRunExecutionSink, executeRunRequest } from "../dist/features/runs/orchestrator.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
@@ -120,13 +121,15 @@ for (const selected of [false, true]) {
   test(`real Pi production keeps its frozen user-input tool surface: selected=${selected}`, async t => {
     let calls = 0;
     let transportTools;
+    let wireTools;
     class Runner extends PiRunnerAdapter {
       registerCustomProviderIfNeeded(runtime, provider) {
         super.registerCustomProviderIfNeeded(runtime, provider);
         runtime.registerProvider(provider.provider, { api: "openai-completions", streamSimple: (model, context, options) =>
-          stream(model, context, { ...options, fetch: async () => {
+          stream(model, context, { ...options, fetch: async (_url, request) => {
             calls++;
-            transportTools = context.tools.map(tool => tool.name);
+            transportTools = getCurrentTools(context.messages).map(tool => tool.name);
+            wireTools = (JSON.parse(request.body).tools ?? []).map(tool => tool.function.name);
             const delta = selected
               ? { tool_calls: [{ index: 0, id: "real-ask", type: "function",
                   function: { name: "request_user_input", arguments: JSON.stringify(requiredInput) } }] }
@@ -141,6 +144,9 @@ for (const selected of [false, true]) {
     const run = f.store.getRun(f.runId);
     assert.equal(run.status, selected ? "yielded" : "succeeded", run.errorMessage);
     assert.equal(calls, 1, "actual SDK input must match before the first provider call");
+    assert.deepEqual(wireTools, transportTools, "the final provider payload must keep the canonical SDK tool surface");
+    assert.deepEqual(transportTools, run.requestSnapshot.runnerExecutionInput.preparedInput.tools.map(tool => tool.name),
+      "the actual tool surface must exactly match the Host's frozen descriptors");
     assert.equal(transportTools.includes("request_user_input"), selected);
     assert.equal(run.requestSnapshot.runnerExecutionInput.preparedInput.tools.some(tool => tool.name === "request_user_input"), selected);
     assert.equal(f.store.listEvents(f.runId).some(event => event.type === "run_error"), false);

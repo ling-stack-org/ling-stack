@@ -72,8 +72,9 @@ Keychain/defaults or create OS accounts for this migration.
 ## Current status
 
 As of 2026-10-09, both dependency lanes are installed and implemented in the E6
-tree, and the repaired joint gate passes. The whole-Daemon gate is still running;
-no migration work has been published.
+tree, and the repaired joint gate passes. Source checkpoint c388a208 saved 30
+files atomically, including the shared lockfile and matching manifests. The
+whole-Daemon final rerun is still running; no migration work has been published.
 Root owns dependency lock/install work; source owners have disjoint scopes.
 
 ### Installed graph and Mobile evidence
@@ -118,6 +119,29 @@ Root owns dependency lock/install work; source owners have disjoint scopes.
 - Root reran the fresh-built 12-file joint gate after that repair: **141/141**,
   no fail/cancel/skip/todo, including actual child-process crash and SQLite
   restart recovery. Do not weaken prefix/tail, prepared-input or effect guards.
+- The initial full Daemon result was 3,670/3,672, with two old test transports
+  still reading context.tools. The production adapter already used transcript
+  tools. Correct that test to the public getCurrentTools API and also compare
+  final wire tool names against both SDK tools and Host frozen descriptors;
+  preserve one-request, selected/unselected and yielded/succeeded assertions.
+  The affected production-input/prepared-input neighbors pass 60/60. Keep the
+  original full red log and collect the full rerun's actual terminal result.
+
+### Desktop bundle and source-review admission
+
+Fresh Desktop bundle build passes; it is not a packaged GUI acceptance. Initial
+Desktop unit tests were 1,858 pass / 2 fail / 3 Windows-only skips. The source
+copies included every new module, but the **formal required-review inventory**
+omitted provider-request-auth.ts, session-continuation.ts and session-transcript.ts.
+Add these as mandatory hashed review inputs, not as automatically approved code.
+Keep the source resolver strict and do not create a real approval manifest.
+
+Actual esbuild metafile tests prove each new leaf's source hash/bytes and zero
+workspace dist inputs. Nine missing-digest, changed-byte and missing-source
+cases reject before compiler/sign/helper-normalize/esbuild. Both Node 22 and 24
+source-review neighbors pass 259/259. Root's final full Desktop unit run is
+**1,874 pass / 0 fail / 0 cancel / 3 Windows-only skips**, 1,877 total; this is
+not Windows OS acceptance or real native publication approval.
 
 Local receipts and raw logs are under output/e6-20260928; the sole continuation
 entry is CONTINUE-HERE.md. Runner-only passes do not substitute for the joint
@@ -137,5 +161,8 @@ database rewrite is authorized.
 
 No SDK57 pairing decision remains. Native Dev Client rebuild/device acceptance,
 fresh macOS packaged E6 cases, and the existing Office/Keychain/Harness gates
-remain open. Cloud CI stays manually paused; do not dismiss the six upstream or
+remain open. A readonly environment probe found that the currently selected
+toolchain cannot locate simctl (xcrun exit 72); this does not establish that no
+Xcode is installed. Do not change the global toolchain, credentials or Keychains
+to make the device gate appear complete. Cloud CI stays manually paused; do not dismiss the six upstream or
 version-based security alerts merely because local tests pass.
