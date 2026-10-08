@@ -73,8 +73,10 @@ Keychain/defaults or create OS accounts for this migration.
 
 As of 2026-10-09, both dependency lanes are installed and implemented in the E6
 tree, and the repaired joint gate passes. Source checkpoint c388a208 saved 30
-files atomically, including the shared lockfile and matching manifests. The
-whole-Daemon final rerun is still running; no migration work has been published.
+files atomically, including the shared lockfile and matching manifests. Follow-up
+bded3506 saved required-review inputs and the production-input test adapter.
+Whole-Daemon final tests pass 3,672/3,672, zero fail/cancel/skip/todo; no migration
+work has been pushed, merged or published.
 Root owns dependency lock/install work; source owners have disjoint scopes.
 
 ### Installed graph and Mobile evidence
@@ -124,8 +126,9 @@ Root owns dependency lock/install work; source owners have disjoint scopes.
   tools. Correct that test to the public getCurrentTools API and also compare
   final wire tool names against both SDK tools and Host frozen descriptors;
   preserve one-request, selected/unselected and yielded/succeeded assertions.
-  The affected production-input/prepared-input neighbors pass 60/60. Keep the
-  original full red log and collect the full rerun's actual terminal result.
+  The affected production-input/prepared-input neighbors pass 60/60. The final
+  full rerun passes **3,672/3,672**, no fail/cancel/skip/todo, exit 0. Keep the
+  original full red log; do not label it as the final passing result.
 
 ### Desktop bundle and source-review admission
 
@@ -145,10 +148,20 @@ not Windows OS acceptance or real native publication approval.
 
 Local receipts and raw logs are under output/e6-20260928; the sole continuation
 entry is CONTINUE-HERE.md. Runner-only passes do not substitute for the joint
-gate. Save the verified dependency/runtime/API checkpoint while the whole-Daemon
-and fresh Desktop bundle/unit gates run, then record their actual terminal
-results. This checkpoint is not publication or GUI acceptance. Do not claim that
-the old dependency graph certifies this one.
+gate. The verified dependency/runtime/API and source-admission checkpoints are
+saved, with final full Runner/Daemon/Desktop terminal results. This is not
+publication or GUI acceptance. Do not claim that the old dependency graph
+certifies this one.
+
+| Final local gate | Result | Evidence in output/e6-20260928 |
+| --- | --- | --- |
+| Runner Node 22 / Node 24 | each 294/294 | pi110-runner-node22-combined-final-20261009.tap; node24 counterpart |
+| Host recovery joint gate | 141/141 | pi1-daemon-joint-neighbors-progress-final-20261009.tap |
+| Daemon Node 22 full | 3,672/3,672 | pi1-expo57-daemon-full-green-20261009.tap |
+| Desktop Node 22 full | 1,874 pass, 3 Windows-only skips | pi1-expo57-desktop-node-full-green-20261009.tap |
+| Final workspace typecheck | exit 0 | pi1-expo57-progress-final-workspace-typecheck-20261009.log |
+| Fresh Desktop bundle | exit 0, not packaged GUI | pi1-expo57-desktop-bundle-build-20261009.log |
+| Frozen install / security / licenses | exit 0; groups 8/1/9; 1,204 versions | pi1-expo57-final-frozen-install-20261009.log; final-security TAP; final-licenses log |
 
 ### Upgrade and acceptance policy
 
