@@ -1,5 +1,23 @@
 # E6 checkpoint landing and continuation — 2026-10-07
 
+## Superseding readback — 2026-10-08, main7b
+
+The current local checkpoint has integrated main `7b266981` through normal
+merge `8bf22b9b`. PR #516 is now merged, with complete Undici 7.30.0 manifest
+and lock coverage; #517 was closed by the bot. #520's current diff is Lucide
+lock-only, not the removed major cohort. The cloud CI workflow is disabled
+by its owner; do not enable it or call absent checks a product CI pass.
+The signing admission fix and five-file Desktop source-pin/test correction
+are saved locally as `38af2f29` and `97500855`, unpushed. Fresh Desktop Node
+full is 1863 tests / 1860 pass / zero fail or cancellation / three actual
+Windows platform skips. The original failing full receipt is preserved.
+Fresh main7b Daemon full completed 3600/3600, zero fail/cancel/skip/todo,
+before starting the independent H09 shadow report slice.
+See [the current signing-input checkpoint](office-packaged-signing-input-checkpoint-2026-10-08.md)
+for exact evidence, the failed CSO admission and remaining Keychain/Office/
+packaged gates. The earlier live snapshots below are historical, not commands
+to repeat. No release or new packaged GUI acceptance is implied.
+
 ## Live continuation update — 2026-10-08
 
 The earlier #518-open/close-plan snapshots below are historical. GitHub now
@@ -113,6 +131,11 @@ are not claimed implemented; accepting EPL or migrating SDK/native APIs requires
 their own review and tests, not a policy bypass.
 
 ## Open work after checkpoint landing
+
+This list records the original checkpoint boundary. Item 4 below is now
+implemented and verified by the recovery checkpoint; do not restart it.
+Items 1–3 remain product/release gates. Independent H09 shadow calibration
+is still open in the Harness implementation plan.
 
 1. **Office missing-parent creation remains functionally blocked.** The original
    production route selects the V2 chain for missing ancestors. Missing reviewed

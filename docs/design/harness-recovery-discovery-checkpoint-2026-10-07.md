@@ -1,5 +1,23 @@
 # Harness recovery discovery checkpoint — 2026-10-07
 
+## Superseding integration readback — 2026-10-08, main7b
+
+Main `7b266981` is integrated normally as `8bf22b9b`; Undici 7.30.0 manifest
+and lock are now covered by merged #516. #517 was bot-closed and #520's current
+diff is Lucide lock-only. Cloud CI is owner-disabled, not an all-GREEN result.
+The fixed Office packaging review closure now explicitly includes the new
+import-free `recovery-discovery-validation.ts` leaf, saved in `97500855`;
+real source-only esbuild/publication/projection regressions pass 221/221.
+No recovery admission or resolver was relaxed and no review was approved.
+Fresh Desktop full is 1863 tests / 1860 pass / zero fail or cancellation /
+three actual Windows platform skips. The original failure is retained.
+Fresh main7b Daemon full also completed 3600/3600, no fail/cancel/skip/todo;
+its raw receipt is `office-signing-main7b-daemon-full-20261008.tap`. This is
+the pre-H09 graph, not certification of later independent additions.
+See [the current signing-input checkpoint](office-packaged-signing-input-checkpoint-2026-10-08.md)
+for the current dependency graph and release boundaries. The external landing
+snapshot at the end of this document is historical, not an open-PR instruction.
+
 ## Scope and confirmed failure
 
 Implementation continues from merged checkpoint `main@097fecf4` in the dedicated
