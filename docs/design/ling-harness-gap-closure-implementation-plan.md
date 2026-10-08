@@ -1144,6 +1144,11 @@ Synthesized from this review's findings. Each task derives from a specific revie
   - Surfaced by: Test T2 and gaps G15/G18.
   - Files: daemon graders, evaluation APIs/projections, fixtures.
   - Verify: model gate remains shadow and threshold math passes fixed datasets.
+  - 2026-10-08 partial checkpoint: the isolated report-only analyzer passes 42/42 synthetic
+    cases and Root's 67/67 Daemon + 11/11 Core neighbor matrices. It has no production
+    caller, no authenticated human/independent repeat evidence and no enforcement authority.
+    Next: strict readonly storage/artifact projection; real grader/admission/recovery remains
+    incomplete. See [the calibration checkpoint](harness-shadow-promotion-report-checkpoint-2026-10-08.md).
 - [ ] **T10 (P2, human: ~1.5 days / CC: ~60 min)** — Delegation storage and policy — Add migration 138, tree lineage, subset checks, depth/cycle checks, and root budget reservation.
   - Surfaced by: Architecture D5 and gaps G19-G20.
   - Files: core delegation domain/store and runtime budget ports.
