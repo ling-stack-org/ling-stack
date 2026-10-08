@@ -1,0 +1,19 @@
+diff --git a/index.js b/index.js
+index f01e9a16b4781dc24c8f43dc7a4c8e6d1e4ae5eb..da5a2bf1e154d7036611c561aba6063888724eb9 100644
+--- a/index.js
++++ b/index.js
+@@ -394,6 +394,13 @@ module.exports = class CachePolicy {
+     evaluateRequest(req) {
+         this._assertRequestHasHeaders(req);
+-
++
++        // A security-zeroed cache entry must never be revived by max-stale.
++        // Conservatively revalidate all zero-freshness responses, including
++        // private/no-cache entries and shared responses carrying Set-Cookie.
++        if (this.maxAge() === 0) {
++            return this._evaluateRequestMissResult(req);
++        }
++
+         // In all circumstances, a cache MUST NOT ignore the must-revalidate directive
+         if (this._rescc['must-revalidate']) {
+             return this._evaluateRequestMissResult(req);
