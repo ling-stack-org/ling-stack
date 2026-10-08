@@ -2502,6 +2502,10 @@ export class SqliteRunStore implements RunStore {
     return this.runEvaluations.getRunEvaluation(id);
   }
 
+  getRunEvaluationGrade(id: string): import("@ling-stack/contracts").RunEvaluationGradeV1 | undefined {
+    return this.runEvaluations.getRunEvaluationGrade(id);
+  }
+
   findRunEvaluationByIdempotencyKey(
     idempotencyKey: string,
   ): import("@ling-stack/contracts").RunEvaluationV1 | undefined {

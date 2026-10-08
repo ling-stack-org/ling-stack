@@ -55,6 +55,12 @@ export class SqliteRunEvaluationStore {
     return row ? mapRunEvaluation(row as Record<string, SQLOutputValue>) : undefined;
   }
 
+  /** Exact bounded grade lookup; does not enumerate evaluation history. */
+  getRunEvaluationGrade(id: string): RunEvaluationGradeV1 | undefined {
+    validateIdentity(id, "grade id");
+    return this.getRunEvaluationGradeUnchecked(id);
+  }
+
   findRunEvaluationByIdempotencyKey(idempotencyKey: string): RunEvaluationV1 | undefined {
     const row = this.context.database.prepare(runEvaluationSelectSql("WHERE idempotency_key = ?")).get(idempotencyKey);
     return row ? mapRunEvaluation(row as Record<string, SQLOutputValue>) : undefined;
@@ -316,7 +322,7 @@ export class SqliteRunEvaluationStore {
       return {
         ok: true,
         evaluation: this.getRunEvaluation(input.evaluationId)!,
-        grade: this.getRunEvaluationGrade(preparedGrade.id)!,
+        grade: this.getRunEvaluationGradeUnchecked(preparedGrade.id)!,
         replayed: false,
       };
     });
@@ -336,7 +342,7 @@ export class SqliteRunEvaluationStore {
           : { ok: false, code: "grade_conflict" };
       }
       this.insertGrade(grade);
-      return { ok: true, grade: this.getRunEvaluationGrade(grade.id)!, replayed: false };
+      return { ok: true, grade: this.getRunEvaluationGradeUnchecked(grade.id)!, replayed: false };
     });
   }
 
@@ -419,7 +425,8 @@ export class SqliteRunEvaluationStore {
     };
   }
 
-  private getRunEvaluationGrade(id: string): RunEvaluationGradeV1 | undefined {
+  // Internal commit readback retains existing write semantics, including legacy ID validation.
+  private getRunEvaluationGradeUnchecked(id: string): RunEvaluationGradeV1 | undefined {
     const row = this.context.database.prepare(runEvaluationGradeSelectSql("WHERE id = ?")).get(id);
     return row ? mapRunEvaluationGrade(row as Record<string, SQLOutputValue>) : undefined;
   }

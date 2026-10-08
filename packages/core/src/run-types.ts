@@ -1861,6 +1861,7 @@ export interface RunStore {
     input: ReconcileAbandonedHarnessToolExecutionsInput,
   ): readonly HarnessToolExecutionV1[];
   getRunEvaluation(id: string): RunEvaluationV1 | undefined;
+  getRunEvaluationGrade(id: string): RunEvaluationGradeV1 | undefined;
   findRunEvaluationByIdempotencyKey(idempotencyKey: string): RunEvaluationV1 | undefined;
   listRunEvaluations(input?: ListRunEvaluationsInput): readonly RunEvaluationV1[];
   listClaimableRunEvaluations(input: ListClaimableRunEvaluationsInput): readonly RunEvaluationV1[];
