@@ -9,6 +9,7 @@ import test from "node:test";
 import {
   prepareCuaDriverElectronPackage,
   runCuaDriverElectronPackageCli,
+  spawnElectronBuilder,
 } from "../scripts/cua-driver-electron-package.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -30,6 +31,19 @@ const HOST_AUTHORITY = Object.freeze({
 test("repository declares a package.json workspace root for Electron Builder fallback detection", async () => {
   const rootPackage = JSON.parse(await readFile(join(repositoryRoot, "package.json"), "utf8"));
   assert.deepEqual(rootPackage.workspaces, ["apps/*", "packages/*"]);
+});
+
+test("Builder CLI starts without a PATH shim or shell in a directory with spaces", async () => {
+  const appRoot = await mkdtemp(join(tmpdir(), "ling-builder cli path-"));
+  try {
+    assert.equal(await spawnElectronBuilder({
+      appRoot,
+      args: ["--version"],
+      environment: { ...process.env, PATH: "" },
+    }), 0);
+  } finally {
+    await rm(appRoot, { recursive: true, force: true });
+  }
 });
 
 test("Electron Builder config keeps external-only provider authority unchanged by default", async () => {
