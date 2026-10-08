@@ -195,9 +195,13 @@ and mapper SHA
 with zero workspace-dist runtime inputs. New-leaf missing-review, mutation and
 missing-source cases reject before builders. The nine-path source/test manifest
 and raw final receipts are under `output/e6-20260928/delegation-store-*`.
-The final whole-Daemon process (39039) is still running; do not report it as
-passed or restart it after a wait timeout. This prerequisite remains a local
-checkpoint, not G19/G20, packaged/device acceptance or publication approval.
+The final frozen whole-Daemon process (39039) returned exit 0:
+**3,672/3,672**, zero fail/cancel/skip/todo, in 743,084.235333 ms. All nine
+manifest entries matched on the post-terminal reread. Source checkpoint
+`55172c7e` saved 11 files (+708/-1); the tree remains clean and unpublished.
+The read prerequisite and its full regression gate are complete. This remains
+a local checkpoint, not G19/G20, packaged/device acceptance or publication
+approval. Do not repeat terminal test handles when continuing the writer gate.
 
 ### Subsequent writer gate
 
