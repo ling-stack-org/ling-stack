@@ -714,14 +714,23 @@ Optional children may be cancelled when the parent step completes. Their termina
 
 ## Storage and Migration Plan
 
-The current implementation branch migration head is version `134`. Versions `130-133` were already claimed by local feature work and must not be reused. This branch reserves the next free contiguous versions `135-138`; recheck the head immediately before each migration commit and renumber before merge if upstream claims them first.
+The original foundation reserved `135-138` when the branch head was `134`.
+Continuation/tool/evaluation migrations `135-137` have landed; `138` was later
+claimed by channel-proposal CAS and must not be reused for delegation. The
+current inspected migration head on 2026-10-09 is `153`; delegation uses the
+next free version `154`, with the distinct name `create_delegation_tree_v1`.
+The historical development marker `139/create_delegation_tree` is preserved,
+not claimed by V1; incompatible old table definitions still refuse startup.
+Recheck the head before each migration commit and
+renumber before merge if upstream claims that version first. Do not rewrite
+already-applied migration markers or invent historical delegation rows.
 
 | Proposed version | Migration | Tables / changes | Backfill |
 | --- | --- | --- | --- |
 | 135 | `create_runner_continuations` | `runner_continuations`, indexes by run/state/due time/idempotency | No synthetic historical continuation rows; existing runs remain readable through current lineage |
 | 136 | `create_harness_tool_executions` | `harness_tool_executions`, indexes by attempt/tool call/state/due time | New tool calls only; existing execution actions remain unchanged |
 | 137 | `create_run_evaluations` | `run_evaluations`, `run_evaluation_grades`, version indexes and unique grader-result key | No historical scores are invented |
-| 138 | `create_delegation_tree` | `delegation_steps`, `delegation_messages`, lineage, child-run, state, and due-time indexes | Existing static workflows remain graph-only with no synthetic children |
+| 154 | `create_delegation_tree_v1` | `delegation_steps`, `delegation_messages`, lineage, child-run, state, and created-time indexes | Existing static workflows remain graph-only with no synthetic children |
 
 Migration rules:
 
@@ -982,7 +991,7 @@ Each PR must be reviewable and releasable behind flags. Do not combine all four 
 | H07 | P1 | Sandbox profiles and external-runner tool conformance suite | H06 | native runner tools disabled by default | Non-conformant adapter fails closed |
 | H08 | P1 | Migration 137, evaluation store, low-priority claim scheduler, rule grader | H01 | evaluation `shadow` | G14, G16, G17 pass; normal run slots unaffected |
 | H09 | P1 | Model/human grades, cost/latency artifacts, promotion report | H08 | model gate `shadow` | G15, G18 pass; no merge block from model grader |
-| H10 | P2 | Migration 138, delegation store, subset and budget policies | H01, H02 | delegation `shadow` | G19-G20 pass |
+| H10 | P2 | Migration 154, delegation store, subset and budget policies | H01, H02 | delegation `shadow` | G19-G20 pass |
 | H11 | P2 | Spawn/message/wait/interrupt/resume coordinator and recovery | H10 | delegation `shadow` | G22-G23 pass with fake runners |
 | H12 | P2 | Workflow completion gate integration and controlled enablement | H11 | delegation `enforce` for selected workflows | G21 passes; accepted workflow graph is unchanged |
 | H13 | P2 | Rebuildable projections, operator diagnostics, artifact retention, performance budgets | H04, H07, H09, H12 | staged per domain | Recovery dashboard and p95 budgets verified |
@@ -1154,7 +1163,7 @@ Synthesized from this review's findings. Each task derives from a specific revie
     human/200-call corpus remains not assessed. Real grader/admission/recovery is still
     incomplete. See [the calibration checkpoint](harness-shadow-promotion-report-checkpoint-2026-10-08.md)
     and [the stored-claims boundary](harness-shadow-storage-projection-checkpoint-2026-10-08.md).
-- [ ] **T10 (P2, human: ~1.5 days / CC: ~60 min)** — Delegation storage and policy — Add migration 138, tree lineage, subset checks, depth/cycle checks, and root budget reservation.
+- [ ] **T10 (P2, human: ~1.5 days / CC: ~60 min)** — Delegation storage and policy — Add migration 154, tree lineage, subset checks, depth/cycle checks, and root budget reservation.
   - Surfaced by: Architecture D5 and gaps G19-G20.
   - Files: core delegation domain/store and runtime budget ports.
   - Verify: capability escalation and over-reservation roll back child creation.

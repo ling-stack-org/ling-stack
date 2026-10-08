@@ -17,10 +17,11 @@ const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.me
 const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
-const pi110AuthoredLeaves = [
+const newAuthoredRuntimeLeaves = [
   "packages/runner-pi/src/provider-request-auth.ts",
   "packages/runner-pi/src/session-continuation.ts",
   "packages/runner-pi/src/session-transcript.ts",
+  "packages/core/src/storage/sqlite/delegation-migration.ts",
 ];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";
@@ -30,10 +31,10 @@ function newFile(path, bytes) {
   writeFileSync(path, bytes, { mode: 0o600 });
 }
 
-test("Office packaging review requires every new Pi 1.1 authored runtime leaf", () => {
-  for (const name of pi110AuthoredLeaves) {
+test("Office packaging review requires every new Pi and delegation authored runtime leaf", () => {
+  for (const name of newAuthoredRuntimeLeaves) {
     assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
-      `Pi runtime leaf must be an explicit required review input: ${name}`);
+      `Runtime leaf must be an explicit required review input: ${name}`);
   }
 });
 
@@ -105,13 +106,13 @@ test("Office fixed fresh daemon consumes an explicitly reviewed authored bridge 
     explicitFixtureReviewSha256: hash(readFileSync(f.reviewPath)), realEsbuildSourceAudit: sourceAudit }));
 });
 
-test("Office fixed fresh daemon rejects missing review digests, changed authored bytes and missing Pi 1.1 sources before any build (synthetic native only)", {
+test("Office fixed fresh daemon rejects missing review digests, changed authored bytes and missing new runtime sources before any build (synthetic native only)", {
   skip: process.platform !== "darwin" || process.arch !== "arm64",
 }, async t => {
   const f = await approvedSyntheticFixture(t);
   const originalReview = readFileSync(f.reviewPath);
   assert.equal(f.reviewApi.readReviewedPackagedOfficeSource().sourceReviewSha256, hash(originalReview));
-  for (const name of pi110AuthoredLeaves) {
+  for (const name of newAuthoredRuntimeLeaves) {
     await t.test(name, async t => {
       const sourcePath = join(f.root, name), authoredBefore = readFileSync(sourcePath);
       const distPath = join(f.root, name.replace("/src/", "/dist/").replace(/\.ts$/u, ".js"));
@@ -130,7 +131,7 @@ test("Office fixed fresh daemon rejects missing review digests, changed authored
         } finally { writeFileSync(f.reviewPath, originalReview); }
       });
       await t.test("authored mutation with unchanged review", async () => {
-        const changed = Buffer.concat([Buffer.from("// EXPLICIT TEST-ONLY UNREVIEWED PI LEAF\n"), authoredBefore]);
+        const changed = Buffer.concat([Buffer.from("// EXPLICIT TEST-ONLY UNREVIEWED RUNTIME LEAF\n"), authoredBefore]);
         writeFileSync(sourcePath, changed);
         try {
           await assert.rejects(f.bundle(), /packaged_office_native_source_review_invalid/u);
@@ -151,7 +152,7 @@ test("Office fixed fresh daemon rejects missing review digests, changed authored
       assert.deepEqual(readFileSync(distPath), compiledBefore);
     });
   }
-  t.diagnostic(JSON.stringify({ fixtureOnly: true, artifactExecuted: false, pi110AuthoredLeaves,
+  t.diagnostic(JSON.stringify({ fixtureOnly: true, artifactExecuted: false, newAuthoredRuntimeLeaves,
     nativeCompilerCalls: f.counts.nativeCompilerCalls, signCalls: f.counts.signCalls,
     nativeVerifyCalls: f.counts.nativeVerifyCalls, helperNormalizeCalls: f.counts.helperNormalizeCalls,
     realEsbuildCalls: f.builds.length }));
@@ -187,9 +188,9 @@ function assertOriginalSourceOnlyBuild(f, bundle, index) {
   const bridgeInputName = Object.keys(observed.metafile.inputs).find(name => resolve(f.root, "apps/desktop", name) === bridgePath);
   assert.equal(observed.metafile.inputs[bridgeInputName].bytes, authored.length);
   assert.equal(workspaceInputs.every(path => Object.hasOwn(review.packagingSha256, path.slice(f.root.length + 1).split(sep).join("/"))), true);
-  const reviewedPi110Sha256 = Object.fromEntries(pi110AuthoredLeaves.map(name => {
+  const reviewedAuthoredRuntimeSha256 = Object.fromEntries(newAuthoredRuntimeLeaves.map(name => {
     const path = join(f.root, name), bytes = readFileSync(path);
-    assert.equal(paths.includes(path), true, `actual esbuild metafile must contain the reviewed Pi runtime leaf: ${name}`);
+    assert.equal(paths.includes(path), true, `actual esbuild metafile must contain the reviewed runtime leaf: ${name}`);
     assert.equal(hash(bytes), review.packagingSha256[name]);
     const inputName = Object.keys(observed.metafile.inputs).find(input => resolve(f.root, "apps/desktop", input) === path);
     assert.equal(observed.metafile.inputs[inputName].bytes, bytes.length);
@@ -199,7 +200,7 @@ function assertOriginalSourceOnlyBuild(f, bundle, index) {
     "original emitted API pins must match the untouched true esbuild output, not a synthesized result");
   return { entryPoint: "packages/daemon/src/cli.ts", runtimeInputs: paths.length, authoredWorkspaceRuntimeInputs: workspaceInputs.length,
     nineWorkspaceDistRuntimeInputs: anyWorkspaceDist.length, reviewedBridgeSha256: hash(authored),
-    reviewedPi110Sha256,
+    reviewedAuthoredRuntimeSha256,
     originalEsbuildOutputSha256: observed.outputFiles[0].sha256 };
 }
 

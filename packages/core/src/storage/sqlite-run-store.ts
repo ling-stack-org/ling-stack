@@ -642,6 +642,7 @@ import { applyRunnerContinuationMigration } from "./sqlite/runner-continuation-m
 import { applyRunCompactionCheckpointMigration } from "./sqlite/run-compaction-checkpoint-migration.js";
 import { applyHarnessToolExecutionMigration } from "./sqlite/harness-tool-execution-migration.js";
 import { applyRunEvaluationMigration } from "./sqlite/run-evaluation-migration.js";
+import { applyDelegationMigration } from "./sqlite/delegation-migration.js";
 import { SqliteUserProfileStore } from "./sqlite/user-profile-store.js";
 import { SqliteWorkspaceSettingsStore } from "./sqlite/workspace-settings-store.js";
 import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
@@ -1502,6 +1503,13 @@ export class SqliteRunStore implements RunStore {
               recordMigration: (version, name) => this.recordMigration(version, name),
             });
           }
+          // Delegation owns the next free version (154), not the historical 138
+          // reservation already used by channel-proposal CAS. No child is backfilled.
+          applyDelegationMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
         }
       });
     } catch (error) {
