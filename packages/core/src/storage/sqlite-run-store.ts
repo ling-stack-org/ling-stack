@@ -637,6 +637,7 @@ import { SqliteRuntimeWorkUnitStore } from "./sqlite/runtime-work-unit-store.js"
 import { SqliteRunnerContinuationStore } from "./sqlite/runner-continuation-store.js";
 import { SqliteHarnessToolExecutionStore } from "./sqlite/harness-tool-execution-store.js";
 import { SqliteRunEvaluationStore } from "./sqlite/run-evaluation-store.js";
+import { SqliteDelegationStore } from "./sqlite/delegation-store.js";
 import { SqliteHarnessCommitCoordinator } from "./sqlite/harness-commit-coordinator.js";
 import { applyRunnerContinuationMigration } from "./sqlite/runner-continuation-migration.js";
 import { applyRunCompactionCheckpointMigration } from "./sqlite/run-compaction-checkpoint-migration.js";
@@ -748,6 +749,7 @@ export class SqliteRunStore implements RunStore {
   private readonly runnerContinuations: SqliteRunnerContinuationStore;
   private readonly harnessToolExecutions: SqliteHarnessToolExecutionStore;
   private readonly runEvaluations: SqliteRunEvaluationStore;
+  private readonly delegations: SqliteDelegationStore;
   private readonly harnessCommits: SqliteHarnessCommitCoordinator;
   private readonly userProfile: SqliteUserProfileStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
@@ -923,6 +925,7 @@ export class SqliteRunStore implements RunStore {
         getArtifact: (id) => this.getArtifact(id),
       },
     );
+    this.delegations = new SqliteDelegationStore({ database: this.database });
     this.harnessCommits = new SqliteHarnessCommitCoordinator(
       { database: this.database },
       this.runnerContinuations,
@@ -2504,6 +2507,26 @@ export class SqliteRunStore implements RunStore {
     input: import("../harness/tool-executions.js").ReconcileAbandonedHarnessToolExecutionsInput,
   ): readonly import("@ling-stack/contracts").HarnessToolExecutionV1[] {
     return this.harnessToolExecutions.reconcileAbandonedHarnessToolExecutions(input);
+  }
+
+  getDelegationStep(...args: Parameters<RunStore["getDelegationStep"]>): ReturnType<RunStore["getDelegationStep"]> {
+    return this.delegations.getDelegationStep(...args);
+  }
+
+  listDelegationChildren(...args: Parameters<RunStore["listDelegationChildren"]>): ReturnType<RunStore["listDelegationChildren"]> {
+    return this.delegations.listDelegationChildren(...args);
+  }
+
+  listDelegationMessages(...args: Parameters<RunStore["listDelegationMessages"]>): ReturnType<RunStore["listDelegationMessages"]> {
+    return this.delegations.listDelegationMessages(...args);
+  }
+
+  queryDelegationChildren(...args: Parameters<RunStore["queryDelegationChildren"]>): ReturnType<RunStore["queryDelegationChildren"]> {
+    return this.delegations.queryDelegationChildren(...args);
+  }
+
+  queryDelegationMessages(...args: Parameters<RunStore["queryDelegationMessages"]>): ReturnType<RunStore["queryDelegationMessages"]> {
+    return this.delegations.queryDelegationMessages(...args);
   }
 
   getRunEvaluation(id: string): import("@ling-stack/contracts").RunEvaluationV1 | undefined {

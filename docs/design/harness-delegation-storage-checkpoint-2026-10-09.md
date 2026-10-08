@@ -140,6 +140,67 @@ local checkpoint.
 
 ## Next Store gate, not an authenticated producer yet
 
+### Additive read prerequisite
+
+Implement the existing three `DelegationStore` reads with a focused SQLite
+store and strict row mappers. `RunStore` extends the shared read facet rather
+than redefining its signatures; its existing large facade only delegates.
+The constructor receives the database context, not Runner, policy, artifact
+body, current-Attempt or budget authority. This slice adds no mutation or API
+route, creates no children and does not change the migration or feature flags.
+
+The two array-returning legacy lists mean **complete or explicit failure**:
+read at most 1,001 rows and throw typed `read_limit_exceeded` if the collection
+exceeds 1,000. Never silently return a partial array as a complete child set.
+Separate additive `queryDelegationChildren` and `queryDelegationMessages`
+methods return `items`, `hasMore` and an optional `nextCursor`. Page limits
+default to 200, with a maximum of 1,000; invalid values fail rather than clamp.
+This bound limits row count, not payload bytes.
+
+Keyset cursors bind schema version, query kind, exact scope ID and the last
+returned row's original `(createdAt, id)`. The schema only guarantees nonempty
+date strings; keep them unchanged and compare/order with SQLite BINARY
+semantics. Do not normalize through `Date.parse`, use the lookahead row as the
+cursor, or accept a children cursor for messages or another scope. These are
+live discovery pages, not an atomic tree snapshot. A concurrent append before
+the cursor can be missed; `hasMore=false` is never a required-child completion,
+authorization or root-budget decision. Later fan-in must use its own atomic
+authoritative query, not page exhaustion.
+
+Mappers require every selected column, distinguish SQL NULL from a missing
+field, accept only 0/1 booleans and safe-integer numeric fields, and validate
+contract enums/digests and single-row child/terminal invariants. Bad rows fail
+the read rather than disappearing into a healthy-looking subset. Artifact IDs
+remain references; mapping does not authenticate their contents, Run ancestry,
+policy provenance or current execution ownership. Do not add current max-depth
+or canonical timestamp assumptions to historical reads.
+
+Acceptance must cover actual temporary SQLite reopen through the public facade,
+same-time keyset order, scope isolation, limit boundaries, malformed cursors,
+complete nullable mapping, poisoned-row rejection and no data/schema writes.
+Every new runtime leaf must also enter the existing explicit source-review
+inventory and actual-esbuild missing/mutated/absent-source rejection matrix.
+The read prerequisite is implemented and frozen. Final-source Node 22
+reader/migration tests pass 48/48; Node 24 reader tests pass 11/11; Core full
+passes 2,473/2,473; Desktop full passes 1,886 with three Windows-only skips.
+Fresh Core/Daemon builds and final workspace typecheck pass. The original
+feature-missing RED and two revoked-Proxy RED cases are preserved separately.
+Exact bigint reads plus strict mapping reject poisoned SQLite integers with
+typed errors; input capture never leaks the revoked-Proxy IsArray TypeError.
+
+Actual esbuild includes the frozen Store SHA
+`b33ec94ccdc6732101de0a830642e9344a9fd387f21d586646380dbf1aeaf77e`
+and mapper SHA
+`d49b765fd37ce7a840cb7d112317ab776e79b3e5075017e83cd73561ecb7ecbc`,
+with zero workspace-dist runtime inputs. New-leaf missing-review, mutation and
+missing-source cases reject before builders. The nine-path source/test manifest
+and raw final receipts are under `output/e6-20260928/delegation-store-*`.
+The final whole-Daemon process (39039) is still running; do not report it as
+passed or restart it after a wait timeout. This prerequisite remains a local
+checkpoint, not G19/G20, packaged/device acceptance or publication approval.
+
+### Subsequent writer gate
+
 The next mutation must validate the exact captured Attempt fence inside its
 write transaction using the existing `runExecutionOwnerSql` predicate, not
 merely an Attempt lookup or a fence-shaped object. Resolve full Run ancestry

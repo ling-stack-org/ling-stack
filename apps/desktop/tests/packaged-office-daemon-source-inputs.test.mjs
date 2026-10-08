@@ -22,6 +22,8 @@ const newAuthoredRuntimeLeaves = [
   "packages/runner-pi/src/session-continuation.ts",
   "packages/runner-pi/src/session-transcript.ts",
   "packages/core/src/storage/sqlite/delegation-migration.ts",
+  "packages/core/src/storage/sqlite/delegation-mappers.ts",
+  "packages/core/src/storage/sqlite/delegation-store.ts",
 ];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";

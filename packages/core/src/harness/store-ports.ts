@@ -45,6 +45,7 @@ import type {
   RunnerContinuationMutationResult,
   StartRunnerContinuationInput,
 } from "./continuations.js";
+import type { DelegationQueryPage, DelegationQueryPageInput } from "./delegations.js";
 
 export interface RunnerContinuationStore {
   getRunnerContinuation(id: string): RunnerContinuationV1 | undefined;
@@ -94,6 +95,13 @@ export interface RunEvaluationStore {
 
 export interface DelegationStore {
   getDelegationStep(id: string): DelegationStepV1 | undefined;
+  /** Complete direct children or read_limit_exceeded; never a silently truncated array. */
   listDelegationChildren(parentDelegationStepId: string): readonly DelegationStepV1[];
+  /** Complete message metadata or read_limit_exceeded; artifact bodies are not read. */
   listDelegationMessages(delegationStepId: string): readonly DelegationMessageV1[];
+}
+
+export interface DelegationQueryStore extends DelegationStore {
+  queryDelegationChildren(parentDelegationStepId: string, input?: DelegationQueryPageInput): DelegationQueryPage<DelegationStepV1>;
+  queryDelegationMessages(delegationStepId: string, input?: DelegationQueryPageInput): DelegationQueryPage<DelegationMessageV1>;
 }

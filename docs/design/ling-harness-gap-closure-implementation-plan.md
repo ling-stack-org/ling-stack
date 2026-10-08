@@ -1171,6 +1171,11 @@ Synthesized from this review's findings. Each task derives from a specific revie
     frozen Daemon full 3,672/3,672 and Desktop full 1,878 pass with three
     Windows-only skips. These do not certify Store authority, G19/G20 or
     packaged execution. See [the persistence checkpoint](harness-delegation-storage-checkpoint-2026-10-09.md).
+  - Metadata-only Store/query prerequisite is implemented: Node 22 focused
+    48/48, Node 24 reader 11/11, Core full 2,473/2,473, Desktop full 1,886
+    pass/three Windows-only skips and workspace typecheck pass. Final Daemon
+    full is still running. No writer authority, reservation or child producer
+    is enabled; do not close T10 from these read-only results.
 - [ ] **T11 (P2, human: ~2 days / CC: ~75 min)** — Delegation operations — Implement durable spawn/message/wait/interrupt/resume and restart recovery.
   - Surfaced by: Architecture D5 and gaps G22-G23.
   - Files: daemon harness delegation coordinator/recovery and runner tool surface.
