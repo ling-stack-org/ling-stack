@@ -174,8 +174,24 @@ database rewrite is authorized.
 
 No SDK57 pairing decision remains. Native Dev Client rebuild/device acceptance,
 fresh macOS packaged E6 cases, and the existing Office/Keychain/Harness gates
-remain open. A readonly environment probe found that the currently selected
-toolchain cannot locate simctl (xcrun exit 72); this does not establish that no
-Xcode is installed. Do not change the global toolchain, credentials or Keychains
-to make the device gate appear complete. Cloud CI stays manually paused; do not dismiss the six upstream or
-version-based security alerts merely because local tests pass.
+remain open. The earlier xcrun exit 72 was specific to the globally selected
+Command Line Tools, not a missing Xcode installation. A fresh readonly probe on
+2026-10-09, using only a per-command
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`, reports Xcode 26.6
+(17F113) and finds simctl. However, simctl's runtime list is empty and the
+registered physical iPhone is currently unavailable. No runtime was downloaded,
+device installed, simulator booted, global toolchain switched, or credential
+access performed. The older Mobile README physical-device receipt belongs to
+a different source revision and does not certify this SDK57 migration.
+
+Office Keychain T1 still needs a specified isolated macOS environment and its
+previously requested, narrowly scoped dummy-Keychain write authorization. The
+existing source receipt is not that authorization. Do not query or modify the
+current user's Keychains/default/search-list, skip the startup probe, reset
+Registry coverage, or issue source certification from synthetic results.
+H09 still has no production authenticated human/invocation producer; declared
+grade fields and the readonly projector do not authenticate samples. Do not
+fabricate a runtime producer or qualifying count just to bypass either gate.
+These are acceptance/authority gaps, not reasons to redo the saved migrations.
+Cloud CI stays manually paused; do not dismiss the six upstream or version-based
+security alerts merely because local tests pass.
