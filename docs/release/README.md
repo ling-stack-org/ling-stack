@@ -2,7 +2,7 @@
 
 Status: active release boundary
 Owner: repository maintainers
-Last verified: 2026-10-08
+Last verified: 2026-10-09
 Document type: release policy
 Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
 `.github/workflows/ci.yml`
@@ -12,7 +12,7 @@ Code and workflow anchors: `package.json`, `apps/desktop/package.json`,
 | Class | Purpose | Current status |
 | --- | --- | --- |
 | Public source snapshot | Review and source-based development | Allowed after the open-source readiness checklist passes |
-| Alpha GitHub tag | Named prerelease source baseline | Not created yet |
+| Alpha GitHub tag | Named prerelease source baseline | Initial target: `v0.1.2-alpha.1`; [published Releases](https://github.com/ling-stack-org/ling-stack/releases) record publication status |
 | Local Desktop development candidate | Engineering checks on a platform host | See the [Mac and Windows packaging checklist](development-packages.md); macOS currently requires an independent Office source review record |
 | Public Desktop binary | End-user installation | Blocked by signing, platform, notice, and clean-machine gates |
 | Stable release | Supported product line | Not defined yet |
@@ -24,8 +24,8 @@ Making the repository public is not permission to publish an unsigned Desktop ar
 Future releases use Semantic Versioning. Before `1.0.0`, incompatible product or API
 changes may occur in minor releases but must still be documented.
 
-- The current product version is `0.1.2-alpha.1`; a corresponding source prerelease tag
-  would be `v0.1.2-alpha.1` after maintainer review. This document does not create a tag.
+- The current product version is `0.1.2-alpha.1`; its source prerelease identifier is
+  `v0.1.2-alpha.1`. Tags and Releases are created explicitly after maintainer review.
 - Release tags must point to reviewed commits on `main`.
 - `VERSION`, root, and Desktop package versions must match the approved tag.
 - Internal workspace packages still using `0.0.0` have a development sentinel, not the
