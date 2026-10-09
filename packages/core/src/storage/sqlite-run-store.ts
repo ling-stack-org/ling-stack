@@ -587,6 +587,9 @@ import {
 } from "./sqlite/helpers.js";
 import { SqliteAutomationStore } from "./sqlite/automation-store.js";
 import { SqliteProviderStore } from "./sqlite/provider-store.js";
+import { SqliteProviderCheckPublicationStore } from "./sqlite/provider-check-publication-store.js";
+import { applyProviderCheckMigration } from "./sqlite/provider-check-migration.js";
+import type { ProviderCheckPublicationStore, ProviderCheckRequestTicket, ProviderCheckSource } from "../provider-check-publication-types.js";
 import { SqliteMcpStore } from "./sqlite/mcp-store.js";
 import { SqliteMcpMetadataPublicationStore } from "./sqlite/mcp-metadata-publication-store.js";
 import { applyMcpMetadataMigration } from "./sqlite/mcp-metadata-migration.js";
@@ -720,6 +723,7 @@ export class SqliteRunStore implements RunStore {
   private readonly legacyContinuityFixtureMode: boolean;
   private readonly automations: SqliteAutomationStore;
   private readonly providers: SqliteProviderStore;
+  private readonly providerChecks: SqliteProviderCheckPublicationStore;
   private readonly mcps: SqliteMcpStore;
   private readonly mcpMetadata: SqliteMcpMetadataPublicationStore;
   private readonly managedPlugins: SqliteManagedPluginStore;
@@ -888,6 +892,7 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.controlPlane = new SqliteControlPlaneStore({ database: this.database });
+    this.providerChecks = new SqliteProviderCheckPublicationStore(this.database, this.providers, this.controlPlane);
     this.mcpMetadata = new SqliteMcpMetadataPublicationStore(this.database, this.mcps, this.controlPlane);
     this.userInput = new SqliteUserInputStore({ database: this.database }, this.conversationItems, this.controlPlane, this);
     this.userInputTranscript = new SqliteUserInputTranscriptStore({ database: this.database }, this,
@@ -1530,6 +1535,11 @@ export class SqliteRunStore implements RunStore {
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyProviderCheckMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
         }
@@ -4461,6 +4471,18 @@ export class SqliteRunStore implements RunStore {
 
   recordProviderCheckResult(id: string, result: ProviderCheckResult): ProviderPreset | undefined {
     return this.providers.recordProviderCheckResult(id, result);
+  }
+
+  getProviderCheckAuthority(id: string): ReturnType<ProviderCheckPublicationStore["getProviderCheckAuthority"]> {
+    return this.providerChecks.getProviderCheckAuthority(id);
+  }
+
+  beginProviderCheckRequest(id: string, source: ProviderCheckSource, pendingCheck?: ProviderCheckResult): ReturnType<ProviderCheckPublicationStore["beginProviderCheckRequest"]> {
+    return this.providerChecks.beginProviderCheckRequest(id, source, pendingCheck);
+  }
+
+  commitProviderCheckResult(ticket: ProviderCheckRequestTicket, result: ProviderCheckResult, cwd: string): ReturnType<ProviderCheckPublicationStore["commitProviderCheckResult"]> {
+    return this.providerChecks.commitProviderCheckResult(ticket, result, cwd);
   }
 
   deleteProviderPreset(id: string): boolean {

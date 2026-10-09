@@ -131,6 +131,7 @@ import type {
   ProviderPresetInput,
   ProviderPresetUpdateInput,
 } from "./provider-types.js";
+import type { ProviderCheckPublicationStore } from "./provider-check-publication-types.js";
 import type { LingStackRuntimePaths } from "./runtime-paths.js";
 import type {
   OfficialSkillSourceSubscription,
@@ -2347,6 +2348,9 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore 
   listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];
   updateProviderPreset(id: string, input: ProviderPresetUpdateInput, now: string): ProviderPreset | undefined;
   recordProviderCheckResult(id: string, result: ProviderCheckResult): ProviderPreset | undefined;
+  getProviderCheckAuthority: ProviderCheckPublicationStore["getProviderCheckAuthority"];
+  beginProviderCheckRequest: ProviderCheckPublicationStore["beginProviderCheckRequest"];
+  commitProviderCheckResult: ProviderCheckPublicationStore["commitProviderCheckResult"];
   deleteProviderPreset(id: string): boolean;
   setProviderSecret(providerId: string, secretValue: string, now: string): void;
   getProviderSecret(providerId: string): string | undefined;

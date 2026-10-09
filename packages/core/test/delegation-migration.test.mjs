@@ -162,7 +162,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through154/155 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through154/155/156 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -170,6 +170,9 @@ test("real schema153 upgrades through154/155 preserving historical SQL/markers/r
   const run = first.handle.createRun({ id: "legacy-run", cwd: f.cwd, taskId: task.id, providerName: "test",
     providerModel: "fixture", taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, createdAt: now });
   first.handle.createArtifact({ id: "legacy-artifact", runId: run.id, type: "json", path: "legacy.json", createdAt: now });
+  const provider = first.handle.createProviderPreset({ kind: "openai-compatible", displayName: "Legacy provider",
+    providerId: "fixture", model: "legacy-model", api: "openai-completions", capabilities: ["chat"], authHeader: false }, now);
+  first.handle.recordProviderCheckResult(provider.id, { ok: true, code: "fixture", message: "Historical check", checkedAt: now });
   first.close();
   const path = resolveRuntimePaths(f.cwd).databasePath;
   const old = f.open(path);
@@ -177,7 +180,15 @@ test("real schema153 upgrades through154/155 preserving historical SQL/markers/r
   // Reconstruct the actual historical schema, not latest-minus-delegation.
   old.handle.exec(`ALTER TABLE mcp_authority_revisions DROP COLUMN metadata_published_revision;
     ALTER TABLE mcp_authority_revisions DROP COLUMN metadata_request_revision;
-    DELETE FROM schema_migrations WHERE version=155;`);
+    DELETE FROM schema_migrations WHERE version=155;
+    DROP TRIGGER provider_check_insert;
+    DROP TRIGGER provider_check_update;
+    DROP TRIGGER provider_check_delete;
+    DROP TRIGGER provider_check_secret_insert;
+    DROP TRIGGER provider_check_secret_update;
+    DROP TRIGGER provider_check_secret_delete;
+    DROP TABLE provider_check_authorities;
+    DELETE FROM schema_migrations WHERE version=156;`);
   assert.equal(old.handle.prepare("SELECT max(version) AS version FROM schema_migrations").get().version, 153);
   const oldSchema = schema(old.handle);
   const oldMarkers = old.handle.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
@@ -185,21 +196,31 @@ test("real schema153 upgrades through154/155 preserving historical SQL/markers/r
   const oldArtifact = old.handle.prepare("SELECT * FROM artifacts WHERE id='legacy-artifact'").get();
   const oldAuthorityColumns = old.handle.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
   const oldAuthorityRows = old.handle.prepare("SELECT * FROM mcp_authority_revisions ORDER BY server_id").all();
+  const oldProvider = old.handle.prepare("SELECT * FROM provider_presets WHERE id=?").get(provider.id);
   old.close();
   const reopened = f.own(createSqliteRunStore(f.cwd));
   reopened.close();
   const upgraded = f.open(path);
   const database = upgraded.handle;
-  // 155 intentionally appends two columns to this one table; all other historical
-  // SQL, including authority triggers, must remain byte-for-byte unchanged.
+  // Exclude exactly the newly owned overlays. Historical provider table/trigger
+  // SQL and rows, like all other schema153 history, remain byte-for-byte checked.
+  const providerOverlay = new Set(["provider_check_authorities", "provider_check_insert", "provider_check_update",
+    "provider_check_delete", "provider_check_secret_insert", "provider_check_secret_update", "provider_check_secret_delete",
+    "sqlite_autoindex_provider_check_authorities_1"]);
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
-    && row.name !== "mcp_authority_revisions"), oldSchema.filter(row => row.name !== "mcp_authority_revisions"));
+    && row.name !== "mcp_authority_revisions" && !providerOverlay.has(row.name)), oldSchema.filter(row => row.name !== "mcp_authority_revisions"));
   const newAuthorityColumns = database.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
   assert.deepEqual(newAuthorityColumns.slice(0, oldAuthorityColumns.length), oldAuthorityColumns);
   assert.deepEqual(newAuthorityColumns.slice(oldAuthorityColumns.length).map(column => column.name),
     ["metadata_request_revision", "metadata_published_revision"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156) ORDER BY version").all(), oldMarkers);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=156").get().name,
+    "add_provider_check_publication_authority");
+  assert.deepEqual(database.prepare("SELECT * FROM provider_presets WHERE id=?").get(provider.id), oldProvider);
+  assert.deepEqual({ ...database.prepare("SELECT * FROM provider_check_authorities WHERE provider_id=?").get(provider.id) }, {
+    provider_id: provider.id, config_revision: 1, request_revision: 0, published_revision: 0, request_source: null,
+  });
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=155").get().name,
     "add_mcp_metadata_publication_revisions");
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=138").get().name, "add_channel_execution_proposal_cas");
