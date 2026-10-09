@@ -1,4 +1,4 @@
-import type { McpServer, McpStoreFacet, PublicMcpServer, SecretPurpose, SecretResolver, SecretStatus } from "@ling-stack/core";
+import type { McpRuntimeStatusSnapshot, McpServer, McpStoreFacet, PublicMcpServer, SecretPurpose, SecretResolver, SecretStatus } from "@ling-stack/core";
 import { deriveMcpServerStatus } from "./status.js";
 
 export interface McpTransportSecretRef {
@@ -12,6 +12,8 @@ export function toPublicMcpServer(input: {
   readonly server: McpServer;
   readonly secretResolver: SecretResolver;
   readonly now: string;
+  /** Mutation receipts must project the same committed snapshot at both response levels. */
+  readonly committedStatusSnapshot?: McpRuntimeStatusSnapshot;
 }): PublicMcpServer {
   const refs = mcpServerSecretRefs(input.server);
   const secretStatuses = refs.map((item) => input.secretResolver.status(item.ref, item.purpose));
@@ -23,7 +25,7 @@ export function toPublicMcpServer(input: {
   for (const secretName of legacySecretNames) {
     secretConfigured[secretName] = false;
   }
-  const statusSnapshot = input.store.getMcpStatusSnapshot(input.server.id, input.now);
+  const statusSnapshot = input.committedStatusSnapshot ?? input.store.getMcpStatusSnapshot(input.server.id, input.now);
   return {
     ...input.server,
     status: deriveMcpServerStatus(statusSnapshot, input.server.status),

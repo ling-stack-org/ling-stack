@@ -28,6 +28,9 @@ const newAuthoredRuntimeLeaves = [
   "packages/core/src/storage/sqlite/harness-diagnostics-store.ts",
   "packages/core/src/storage/sqlite/harness-diagnostics-validation.ts",
   "packages/daemon/src/runtime/harness-diagnostics.ts",
+  "packages/core/src/storage/sqlite/mcp-metadata-migration.ts",
+  "packages/core/src/storage/sqlite/mcp-metadata-publication-store.ts",
+  "packages/daemon/src/features/mcp/metadata-publication.ts",
 ];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";

@@ -467,6 +467,12 @@ import {
   type UpdateMcpServerInput,
 } from "../mcp-types.js";
 import type {
+  CommitMcpMetadataResult,
+  CommitMcpMetadataResultInput,
+  McpMetadataRequestKind,
+  McpMetadataRequestTicket,
+} from "../mcp-metadata-types.js";
+import type {
   CommitCuaDriverActivationInput,
   CommitCuaDriverActivationResult,
   CuaDriverActivationState,
@@ -582,6 +588,8 @@ import {
 import { SqliteAutomationStore } from "./sqlite/automation-store.js";
 import { SqliteProviderStore } from "./sqlite/provider-store.js";
 import { SqliteMcpStore } from "./sqlite/mcp-store.js";
+import { SqliteMcpMetadataPublicationStore } from "./sqlite/mcp-metadata-publication-store.js";
+import { applyMcpMetadataMigration } from "./sqlite/mcp-metadata-migration.js";
 import { SqliteManagedPluginStore } from "./sqlite/managed-plugin-store.js";
 import { SqliteCuaDriverActivationStore } from "./sqlite/cua-driver-activation-store.js";
 import { SqliteChromeBrowserCredentialStore } from "./sqlite/chrome-browser-credential-store.js";
@@ -713,6 +721,7 @@ export class SqliteRunStore implements RunStore {
   private readonly automations: SqliteAutomationStore;
   private readonly providers: SqliteProviderStore;
   private readonly mcps: SqliteMcpStore;
+  private readonly mcpMetadata: SqliteMcpMetadataPublicationStore;
   private readonly managedPlugins: SqliteManagedPluginStore;
   private readonly cuaDriverActivation: SqliteCuaDriverActivationStore;
   private readonly chromeBrowserCredentials: SqliteChromeBrowserCredentialStore;
@@ -879,6 +888,7 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.controlPlane = new SqliteControlPlaneStore({ database: this.database });
+    this.mcpMetadata = new SqliteMcpMetadataPublicationStore(this.database, this.mcps, this.controlPlane);
     this.userInput = new SqliteUserInputStore({ database: this.database }, this.conversationItems, this.controlPlane, this);
     this.userInputTranscript = new SqliteUserInputTranscriptStore({ database: this.database }, this,
       (threadId, deliveryId) => this.userInputContinuation.readReceiptWithinTransaction(threadId, deliveryId));
@@ -1514,6 +1524,12 @@ export class SqliteRunStore implements RunStore {
           applyDelegationMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyMcpMetadataMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
         }
@@ -4477,6 +4493,14 @@ export class SqliteRunStore implements RunStore {
 
   getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined {
     return this.mcps.getMcpAuthorityRevision(serverId);
+  }
+
+  beginMcpMetadataRequest(serverId: string, kind: McpMetadataRequestKind): McpMetadataRequestTicket | undefined {
+    return this.mcpMetadata.beginMcpMetadataRequest(serverId, kind);
+  }
+
+  commitMcpMetadataResult(input: CommitMcpMetadataResultInput): CommitMcpMetadataResult {
+    return this.mcpMetadata.commitMcpMetadataResult(input);
   }
 
   listMcpServers(options: ListMcpServersOptions = {}): McpServer[] {

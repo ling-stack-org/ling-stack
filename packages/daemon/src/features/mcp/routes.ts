@@ -14,6 +14,7 @@ import { isPluginReservedMcpServerId } from "./reserved-ids.js";
 import { toPublicMcpServer } from "./secrets.js";
 import { bundledEmbeddedCuaDriverGateEnabled } from "../plugins/cua-driver-feature-gates.js";
 import { CUA_DRIVER_MCP_SERVER_ID } from "../plugins/presets.js";
+import { publishManualMcpMetadata } from "./metadata-publication.js";
 
 export async function handleMcpServersCollection(
   request: IncomingMessage,
@@ -148,27 +149,12 @@ export async function handleMcpServerItem(
     if (request.method === "POST" && route.action === "check") {
       assertGenericCuaDriverMutationAllowed(config, server.id);
       const now = new Date().toISOString();
-      const result = await mcpBroker.checkServer(server, {
-        secretResolver,
-        workspaceCwd: cwd,
-        now: () => now,
+      const publication = await publishManualMcpMetadata({
+        store, serverId: server.id, kind: "check", cwd, broker: mcpBroker, secretResolver, hub: controlPlaneEvents,
       });
-      const statusSnapshot = store.upsertMcpStatusSnapshot(result.statusSnapshot, now);
-      const publicServer = toPublicMcpServer({ store, server, secretResolver, now });
-      appendControlPlaneEvent(store, controlPlaneEvents, {
-        workspaceId: DEFAULT_WORKSPACE_ID,
-        cwd,
-        domain: "mcp",
-        entityType: "mcp_server",
-        entityId: server.id,
-        action: "mcp.status_checked",
-        data: {
-          serverId: server.id,
-          status: statusSnapshot.status,
-          toolCount: statusSnapshot.toolCount ?? 0,
-          missingSecretCount: statusSnapshot.missingSecretRefs.length,
-        },
-      }, now);
+      const { statusSnapshot } = publication;
+      const publicServer = toPublicMcpServer({ store, server: publication.server, secretResolver, now,
+        committedStatusSnapshot: statusSnapshot });
       if (statusSnapshot.status === "ready" || statusSnapshot.status === "disabled") {
         writeJson(response, 200, { server: publicServer, statusSnapshot });
       } else {
@@ -185,38 +171,23 @@ export async function handleMcpServerItem(
     if (request.method === "POST" && route.action === "sync-tools") {
       assertGenericCuaDriverMutationAllowed(config, server.id);
       const now = new Date().toISOString();
-      const result = await mcpBroker.listTools(server, {
-        secretResolver,
-        workspaceCwd: cwd,
-        now: () => now,
+      const publication = await publishManualMcpMetadata({
+        store, serverId: server.id, kind: "sync-tools", cwd, broker: mcpBroker, secretResolver, hub: controlPlaneEvents,
       });
-      const statusSnapshot = store.upsertMcpStatusSnapshot(result.statusSnapshot, now);
+      const { statusSnapshot } = publication;
+      const publicServer = toPublicMcpServer({ store, server: publication.server, secretResolver, now,
+        committedStatusSnapshot: statusSnapshot });
       if (statusSnapshot.status === "ready") {
-        const cached = store.replaceMcpServerTools(server.id, result.tools, now);
-        appendControlPlaneEvent(store, controlPlaneEvents, {
-          workspaceId: DEFAULT_WORKSPACE_ID,
-          cwd,
-          domain: "mcp",
-          entityType: "mcp_server",
-          entityId: server.id,
-          action: "mcp.tools_synced",
-          data: {
-            serverId: server.id,
-            status: statusSnapshot.status,
-            toolCount: cached.length,
-            missingSecretCount: statusSnapshot.missingSecretRefs.length,
-          },
-        }, now);
         writeJson(response, 200, {
-          server: toPublicMcpServer({ store, server, secretResolver, now }),
+          server: publicServer,
           statusSnapshot,
-          tools: cached,
+          tools: publication.tools ?? [],
         });
       } else {
         writeJson(response, 400, {
           error: "mcp_tool_sync_failed",
           message: statusSnapshot.message ?? "MCP tool sync failed.",
-          server: toPublicMcpServer({ store, server, secretResolver, now }),
+          server: publicServer,
           statusSnapshot,
           tools: [],
         });

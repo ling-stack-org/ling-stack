@@ -162,7 +162,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades to154 preserving all historical SQL/markers/rows and reopens idempotently without synthetic children", async (t) => {
+test("real schema153 upgrades through154/155 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -174,18 +174,34 @@ test("real schema153 upgrades to154 preserving all historical SQL/markers/rows a
   const path = resolveRuntimePaths(f.cwd).databasePath;
   const old = f.open(path);
   removeDelegationOverlay(old.handle);
+  // Reconstruct the actual historical schema, not latest-minus-delegation.
+  old.handle.exec(`ALTER TABLE mcp_authority_revisions DROP COLUMN metadata_published_revision;
+    ALTER TABLE mcp_authority_revisions DROP COLUMN metadata_request_revision;
+    DELETE FROM schema_migrations WHERE version=155;`);
   assert.equal(old.handle.prepare("SELECT max(version) AS version FROM schema_migrations").get().version, 153);
   const oldSchema = schema(old.handle);
   const oldMarkers = old.handle.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
   const oldRun = old.handle.prepare("SELECT * FROM run_sessions WHERE id='legacy-run'").get();
   const oldArtifact = old.handle.prepare("SELECT * FROM artifacts WHERE id='legacy-artifact'").get();
+  const oldAuthorityColumns = old.handle.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
+  const oldAuthorityRows = old.handle.prepare("SELECT * FROM mcp_authority_revisions ORDER BY server_id").all();
   old.close();
   const reopened = f.own(createSqliteRunStore(f.cwd));
   reopened.close();
   const upgraded = f.open(path);
   const database = upgraded.handle;
-  assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")), oldSchema);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version<>154 ORDER BY version").all(), oldMarkers);
+  // 155 intentionally appends two columns to this one table; all other historical
+  // SQL, including authority triggers, must remain byte-for-byte unchanged.
+  assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
+    && row.name !== "mcp_authority_revisions"), oldSchema.filter(row => row.name !== "mcp_authority_revisions"));
+  const newAuthorityColumns = database.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
+  assert.deepEqual(newAuthorityColumns.slice(0, oldAuthorityColumns.length), oldAuthorityColumns);
+  assert.deepEqual(newAuthorityColumns.slice(oldAuthorityColumns.length).map(column => column.name),
+    ["metadata_request_revision", "metadata_published_revision"]);
+  assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155) ORDER BY version").all(), oldMarkers);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=155").get().name,
+    "add_mcp_metadata_publication_revisions");
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=138").get().name, "add_channel_execution_proposal_cas");
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=154").get().name, DELEGATION_MIGRATION_NAME);
   assert.deepEqual(database.prepare("SELECT * FROM run_sessions WHERE id='legacy-run'").get(), oldRun);

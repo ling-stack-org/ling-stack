@@ -496,6 +496,12 @@ import type {
   UpdateMcpServerInput,
 } from "./mcp-types.js";
 import type {
+  CommitMcpMetadataResult,
+  CommitMcpMetadataResultInput,
+  McpMetadataRequestKind,
+  McpMetadataRequestTicket,
+} from "./mcp-metadata-types.js";
+import type {
   CommitCuaDriverActivationInput,
   CommitCuaDriverActivationResult,
   CuaDriverActivationState,
@@ -2459,6 +2465,8 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore 
   createMcpServer(input: CreateMcpServerInput, now: string): McpServer;
   getMcpServer(id: string): McpServer | undefined;
   getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined;
+  beginMcpMetadataRequest(serverId: string, kind: McpMetadataRequestKind): McpMetadataRequestTicket | undefined;
+  commitMcpMetadataResult(input: CommitMcpMetadataResultInput): CommitMcpMetadataResult;
   listMcpServers(options?: ListMcpServersOptions): McpServer[];
   updateMcpServer(id: string, input: UpdateMcpServerInput, now: string): McpServer | undefined;
   updateMcpServerStatus(id: string, status: McpServerStatus, now: string): McpServer | undefined;
@@ -2993,6 +3001,8 @@ export type WorkItemStoreFacet = RunStoreFacet<
   | "completeWorkItem"
   | "failWorkItem"
 >;
+
+export type McpMetadataStoreFacet = RunStoreFacet<"beginMcpMetadataRequest" | "commitMcpMetadataResult">;
 
 export type McpStoreFacet = RunStoreFacet<
   | "createMcpServer"
