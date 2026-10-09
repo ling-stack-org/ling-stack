@@ -57,6 +57,7 @@
       "brace-expansion@>=5.0.0 <5.0.12": "5.0.12",
       "fast-uri@>=3.0.0 <3.1.8": "3.1.8",
       "hono@>=4.0.0 <4.13.7": "4.13.7",
+      "http-cache-semantics@>=4.0.0 <4.3.0": "4.3.0",
       "ip-address@>=10.0.0 <10.7.1": "10.7.1",
       "js-yaml@>=4.0.0 <4.3.2": "4.3.2",
       "postcss@>=8.0.0 <=8.5.17": "8.5.25",
@@ -70,7 +71,7 @@
     },
     "patchedDependencies": {
       "image-size@1.2.1": "patches/image-size@1.2.1.patch",
-      "http-cache-semantics@4.2.0": "patches/http-cache-semantics@4.2.0.patch"
+      "http-cache-semantics@4.3.0": "patches/http-cache-semantics@4.3.0.patch"
     }
   }
 }

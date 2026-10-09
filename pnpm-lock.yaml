@@ -10,6 +10,7 @@ overrides:
   brace-expansion@>=5.0.0 <5.0.12: 5.0.12
   fast-uri@>=3.0.0 <3.1.8: 3.1.8
   hono@>=4.0.0 <4.13.7: 4.13.7
+  http-cache-semantics@>=4.0.0 <4.3.0: 4.3.0
   ip-address@>=10.0.0 <10.7.1: 10.7.1
   js-yaml@>=4.0.0 <4.3.2: 4.3.2
   postcss@>=8.0.0 <=8.5.17: 8.5.25
@@ -22,9 +23,9 @@ overrides:
   katex@>=0.11.0 <0.18.2: 0.19.0
 
 patchedDependencies:
-  http-cache-semantics@4.2.0:
-    hash: fbbeb873abd1fe4a76feb8781bd7712461e0036b77afa91342229d846e205a9c
-    path: patches/http-cache-semantics@4.2.0.patch
+  http-cache-semantics@4.3.0:
+    hash: 03e58cecb06676afed23b54884e117f11f59d59690746f98e498e365102f6da0
+    path: patches/http-cache-semantics@4.3.0.patch
   image-size@1.2.1:
     hash: 43bb822cac079e46add6c6bbaed80033abe5280c5b09c066254f8354478e6377
     path: patches/image-size@1.2.1.patch
@@ -4075,8 +4076,8 @@ packages:
   html-void-elements@3.0.0:
     resolution: {integrity: sha512-bEqo66MRXsUGxWHV5IP0PUiAWwoEjba4VCzg0LjFJBpchPaTfyfCKTG6bc5F8ucKec3q5y6qOdGyYTSBEvhCrg==}
 
-  http-cache-semantics@4.2.0:
-    resolution: {integrity: sha512-dTxcvPXqPvXBQpq5dUr6mEMJX4oIEFv6bwom3FDwKRDsuIjjJGANqhBuoAn9c1RQJIdAKav33ED65E2ys+87QQ==}
+  http-cache-semantics@4.3.0:
+    resolution: {integrity: sha512-M5t5LlJpS1UHMjvwRQVdFHvPISGeLAxNcrWuJkeGh0KxsqCHZ1O3NXZU/8x7cD0BDcGW8kapxMKTvwlqrNkHkA==}
 
   http-errors@2.0.1:
     resolution: {integrity: sha512-4FbRdAX+bSdmo4AUFuS0WNiPz8NgFt+r8ThgNWmlrjQjt1Q7ZR9+zTlce2859x4KSXrwIsaeTqDoKQmtP8pLmQ==}
@@ -9188,7 +9189,7 @@ snapshots:
     dependencies:
       clone-response: 1.0.3
       get-stream: 5.2.0
-      http-cache-semantics: 4.2.0(patch_hash=fbbeb873abd1fe4a76feb8781bd7712461e0036b77afa91342229d846e205a9c)
+      http-cache-semantics: 4.3.0(patch_hash=03e58cecb06676afed23b54884e117f11f59d59690746f98e498e365102f6da0)
       keyv: 4.5.4
       lowercase-keys: 2.0.0
       normalize-url: 6.1.0
@@ -10434,7 +10435,7 @@ snapshots:
 
   html-void-elements@3.0.0: {}
 
-  http-cache-semantics@4.2.0(patch_hash=fbbeb873abd1fe4a76feb8781bd7712461e0036b77afa91342229d846e205a9c): {}
+  http-cache-semantics@4.3.0(patch_hash=03e58cecb06676afed23b54884e117f11f59d59690746f98e498e365102f6da0): {}
 
   http-errors@2.0.1:
     dependencies:

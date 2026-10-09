@@ -1,4 +1,6 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 
@@ -12,6 +14,18 @@ const cacheRequire = createRequire(gotRequire.resolve("cacheable-request"));
 const CachePolicy = cacheRequire("http-cache-semantics");
 
 const request = { url: "https://cache.example.test/account", method: "GET", headers: {} };
+
+test("the downloader consumes the pinned cache version and current patch bytes", () => {
+  const manifest = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8"));
+  const patchPath = manifest.pnpm.patchedDependencies["http-cache-semantics@4.3.0"];
+  assert.equal(patchPath, "patches/http-cache-semantics@4.3.0.patch");
+  const patch = readFileSync(new URL("../" + patchPath, import.meta.url), "utf8").replaceAll("\r\n", "\n");
+  const digest = createHash("sha256").update(patch).digest("hex");
+  const lock = readFileSync(new URL("../pnpm-lock.yaml", import.meta.url), "utf8");
+  assert.ok(lock.includes(`http-cache-semantics@4.3.0:\n    hash: ${digest}`));
+  assert.equal(cacheRequire("http-cache-semantics/package.json").version, "4.3.0");
+  assert.ok(cacheRequire.resolve("http-cache-semantics").includes(`patch_hash=${digest}`), "actual consumer path matches the frozen patch digest");
+});
 
 for (const [label, headers] of [
   ["shared Set-Cookie", { "set-cookie": "session=first-user", "cache-control": "max-age=3600" }],
@@ -73,5 +87,43 @@ test("zero-freshness public responses also revalidate before serving stale conte
     const decision = policy.evaluateRequest({ ...request, headers });
     assert.equal(decision.response, undefined);
     assert.equal(decision.revalidation?.synchronous, true);
+  }
+});
+
+for (const vary of ["* ", " *", " * ", "*,", "*, accept-language", "accept-language, *"]) {
+  test(`Vary ${JSON.stringify(vary)} cannot reuse a cached response (CVE-2026-93750)`, () => {
+    const original = { ...request, headers: { "accept-language": "en" } };
+    const policy = new CachePolicy(original, {
+      status: 200, headers: { "cache-control": "public, max-age=3600", vary },
+    });
+    for (const headers of [original.headers, { ...original.headers, "cache-control": "max-stale" }]) {
+      const replayRequest = { ...request, headers };
+      assert.equal(policy.satisfiesWithoutRevalidation(replayRequest), false);
+      assert.equal(policy.evaluateRequest(replayRequest).response, undefined);
+    }
+  });
+}
+
+test("Vary matches only own request headers, not inherited properties", () => {
+  const original = { ...request, headers: { authorization: "test-token" } };
+  const policy = new CachePolicy(original, {
+    status: 200, headers: { "cache-control": "public, max-age=3600", vary: "authorization" },
+  });
+  const inherited = { ...request, headers: Object.create({ authorization: "test-token" }) };
+  assert.equal(policy.satisfiesWithoutRevalidation(inherited), false);
+  assert.equal(policy.evaluateRequest(inherited).response, undefined);
+  assert.equal(policy.satisfiesWithoutRevalidation(original), true);
+});
+
+test("legitimate own Vary fields and reserved names preserve cache hits and status", () => {
+  for (const name of ["accept-language", "constructor"]) {
+    const original = { ...request, headers: { [name]: "same" } };
+    const policy = new CachePolicy(original, {
+      status: 203, headers: { "cache-control": "public, max-age=3600", vary: name },
+    });
+    assert.equal(policy.satisfiesWithoutRevalidation(original), true);
+    assert.equal(policy.satisfiesWithoutRevalidation({ ...request, headers: { [name]: "different" } }), false);
+    assert.equal(policy.evaluateRequest(original).response?.status, 203);
+    assert.equal(policy.status(), 203);
   }
 });

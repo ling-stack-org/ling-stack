@@ -195,3 +195,16 @@ fabricate a runtime producer or qualifying count just to bypass either gate.
 These are acceptance/authority gaps, not reasons to redo the saved migrations.
 Cloud CI stays manually paused; do not dismiss the six upstream or version-based
 security alerts merely because local tests pass.
+
+### Subsequent security and environment refresh, 2026-10-09
+
+The migrations above are saved and are not restarted by the user's repeated
+integration request. A later bounded cache update moves the downloader to
+http-cache-semantics4.3.0 for its Vary fixes while retaining the Ling guard;
+security tests pass27/27 and the final post-reimport Desktop suite has1902
+passes/3Windows-only skips. See [the security follow-through checkpoint](security-upgrade-followthrough-2026-10-09.md).
+The six remote alerts remain open and main CI remains disabled_manually.
+The physical iPhone is now available/paired on a fresh read-only probe;
+native build, signing, installation and device acceptance remain uncompleted.
+This supersedes the earlier unavailable-device observation, not the requirement
+for real current-source acceptance or existing credential/Keychain boundaries.
