@@ -4,7 +4,11 @@ Windows x64 开发安装包已完成构建，安装后的真实程序通过模�
 
 ## 下载与固定源码
 
-附件发布到本次 PR 指定仓库的开发预发布，标签为 windows-dev-0.1.2-alpha.1-20261009-f0a632b。
+- [开发预发布页面](https://github.com/ling-stack-org/ling-stack/releases/tag/windows-dev-0.1.2-alpha.1-20261009-f0a632b)
+- [Windows x64 安装包](https://github.com/ling-stack-org/ling-stack/releases/download/windows-dev-0.1.2-alpha.1-20261009-f0a632b/Ling-Stack-0.1.2-alpha.1-windows-x64-f0a632b-setup.exe)
+- [匹配的固定源码](https://github.com/ling-stack-org/ling-stack/releases/download/windows-dev-0.1.2-alpha.1-20261009-f0a632b/ling-stack-source-f0a632b.zip)
+- [脱敏证据包](https://github.com/ling-stack-org/ling-stack/releases/download/windows-dev-0.1.2-alpha.1-20261009-f0a632b/windows-dev-evidence-20261009.zip)
+- [SHA-256 校验清单](https://github.com/ling-stack-org/ling-stack/releases/download/windows-dev-0.1.2-alpha.1-20261009-f0a632b/SHA256SUMS.txt)
 
 安装包对应固定源码 **f0a632b1bd5bd09b12778cbd7da3d26c354b832f**，基础提交为 b529a4b475f41442b29b59ff5bfeeece8879c74e。开发预发布标签指向实际打包提交；PR 新增报告、将来合并或 squash 得到的提交号不作为此安装包的构建输入。
 

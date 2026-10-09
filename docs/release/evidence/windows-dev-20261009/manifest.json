@@ -7,7 +7,7 @@
   "baseSha": "b529a4b475f41442b29b59ff5bfeeece8879c74e",
   "sourceSha": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f",
   "releaseTag": "windows-dev-0.1.2-alpha.1-20261009-f0a632b",
-  "releaseRepository": null,
+  "releaseRepository": "ling-stack-org/ling-stack",
   "installer": {
     "filename": "Ling-Stack-0.1.2-alpha.1-windows-x64-f0a632b-setup.exe",
     "sizeBytes": 246639272,
