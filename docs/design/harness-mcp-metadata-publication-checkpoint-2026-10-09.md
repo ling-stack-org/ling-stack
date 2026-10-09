@@ -101,12 +101,15 @@ The event no longer serializes a request-derived idempotency key. One-time
 consumption and its event are in the same transaction, so duplicate use cannot
 rewrite state or add events. Request tickets/revisions remain Host-private.
 
-Final source-bound verification so far:
+Final source-bound verification (all processes completed with exit0):
 
 - Node 22 Core/publication/catalog/delegation/notification neighbors: **79/79**.
 - Node 22 HTTP focused: **14/14**; complete API file: **19/19**.
 - Node 24 combined same neighbors and HTTP: **98/98**.
 - Node 22 complete Core suite: **2,564/2,564**, zero fail/cancel/skip/todo.
+- Node 22 complete Daemon suite: **3,703/3,703**, zero fail/cancel/skip/todo.
+- Desktop complete unit suite: **1,914 pass / 0 fail / 0 cancel / 3 Windows-only
+  skips**, 1,917 total. This is not Windows OS or packaged GUI acceptance.
 - Workspace typecheck: exit 0; Desktop reviewed authored-source admission:
   **56/56**. This uses real esbuild but synthetic native/sign inputs, not App
   or production signing acceptance.
@@ -124,9 +127,16 @@ actual RED. True race RED is **2 pass / 10 fail** with old results returning200
 instead of409. The unfinished first Daemon-full was stopped before final
 source changes and is not a final receipt. All original RED logs are retained.
 
-Final Daemon/Desktop whole-suite runs are pending; do not infer their verdict
-from these focused passes. No unresolved ordering choice in this slice.
-External credential authority and other T13A producers remain unfinished.
+All final source hashes still match after the full runs. Local source checkpoint
+is `f49752de` (17 files); its document honestly recorded the then-pending full
+gate. This subsequent receipt records that gate's actual completion, not a new
+implementation. Original delegation-writer WIP diff hash remains
+`312530d527ff7d209c8c281de4bc17e27261bfb7d15358a9006a281dc59e43db`.
+Docs/public-repository safety and whitespace checks pass. No push/PR/merge,
+cloud CI, real DB/credential/Keychain operation or release was performed.
+
+No unresolved ordering choice in this slice. External credential authority,
+other T13A producers and original native/packaged gates remain unfinished.
 
 ## DEBUG REPORT
 
@@ -144,5 +154,8 @@ failure retains receipt; full catalog firstSeenAt preservation.
 Evidence: true HTTP RED→GREEN, SQLite two-connection/reopen/rollback cases and
 source-bound final Core/Node24/API/typecheck/packaging-input tests above.
 
-Status: implementation and focused/complete Core verification passed; final
-Daemon/Desktop full verdict still pending. Whole T13A/Harness/E6 remains active.
+Status: **DONE_WITH_CONCERNS** for the bounded manual MCP metadata slice, with
+full Core/Daemon/Desktop and directed HTTP/Node24 evidence. Whole
+T13A/Harness/E6 remains active. Continue Provider manual/startup/import,
+discovery/observation/request-key ownership and credential-authority design;
+do not repeat Pi/Expo migration or accepted duration/R03/layout work.
