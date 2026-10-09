@@ -1,0 +1,54 @@
+{
+  "result": "PASS_FOR_TESTED_SCOPE",
+  "model": "gpt-6.1-sol",
+  "protocol": "openai-responses",
+  "configurationSource": "Existing Codex connection",
+  "configurationSaved": true,
+  "credentialsConfigured": true,
+  "installationPassed": true,
+  "applicationWindowProcessRunning": true,
+  "modelConnectionPassed": true,
+  "conversationAnswer": "17 加 25 等于 42。",
+  "readWriteReadPassed": true,
+  "oneTimeWriteApprovalPassed": true,
+  "generatedTotalYuan": 95,
+  "conversationPersisted": true,
+  "generatedFileSha256": "3EB5A52C4B51A016E710DB8BCC949E7BC903B2C1DDB2973EA31CDE7C02BBF414",
+  "sourceSha": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f",
+  "installedExecutableSha256": "BD0AED10D7ECBE4643D4974456EDDBC41330F8BA9365AD9FEB0E30CFF016FA66",
+  "startupState": "degraded",
+  "startupDiagnosticCodes": [
+    "secret_store_unavailable"
+  ],
+  "tools": [
+    {
+      "tool": "read",
+      "path": "测试输入.txt",
+      "startSeq": 6,
+      "endSeq": 7,
+      "succeeded": true
+    },
+    {
+      "tool": "write",
+      "path": "功能测试结果.md",
+      "startSeq": 13,
+      "endSeq": 19,
+      "succeeded": true
+    },
+    {
+      "tool": "read",
+      "path": "功能测试结果.md",
+      "startSeq": 27,
+      "endSeq": 28,
+      "succeeded": true
+    }
+  ],
+  "scope": "Installed application backend API, saved configuration and process checks",
+  "notExercisedThisRun": [
+    "GUI interaction and screenshots",
+    "Application restart",
+    "System restart",
+    "Uninstall"
+  ],
+  "completedUtc": "2026-10-09T14:12:14.3774312Z"
+}
