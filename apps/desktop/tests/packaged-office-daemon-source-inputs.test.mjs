@@ -35,6 +35,16 @@ const newAuthoredRuntimeLeaves = [
   "packages/core/src/storage/sqlite/provider-check-publication-store.ts",
   "packages/daemon/src/features/providers/check-publication.ts",
   "packages/daemon/src/features/providers/model-discovery-authority.ts",
+  "packages/core/src/provider-runtime-availability-types.ts",
+  "packages/core/src/storage/sqlite/availability-incident-provenance-migration.ts",
+  "packages/core/src/storage/sqlite/availability-incident-provenance-store.ts",
+  "packages/core/src/storage/sqlite/availability-incident-source.ts",
+  "packages/daemon/src/features/providers/runtime-failure-observations.ts",
+  "packages/daemon/src/features/providers/runtime-invocations.ts",
+  "packages/daemon/src/features/providers/runtime-observation-scope.ts",
+  "packages/daemon/src/features/runs/provider-persistence.ts",
+  "packages/daemon/src/features/runs/tool-context-budget.ts",
+  "packages/runner-pi/src/provider-invocation.ts",
 ];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";
@@ -44,7 +54,7 @@ function newFile(path, bytes) {
   writeFileSync(path, bytes, { mode: 0o600 });
 }
 
-test("Office packaging review requires every new Pi, delegation and diagnostics authored runtime leaf", () => {
+test("Office packaging review requires every new Pi, delegation, diagnostics and Provider authored runtime leaf", () => {
   for (const name of newAuthoredRuntimeLeaves) {
     assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
       `Runtime leaf must be an explicit required review input: ${name}`);
