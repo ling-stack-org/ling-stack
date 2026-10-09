@@ -7,6 +7,7 @@ export * from "./harness/evaluation-json.js";
 export * from "./harness/evaluation-rule-grader.js";
 export * from "./harness/delegations.js";
 export * from "./harness/store-ports.js";
+export { HarnessDiagnosticsStoreError, validateHarnessDiagnosticQuery } from "./storage/sqlite/harness-diagnostics-validation.js";
 export * from "./approval-policy.js";
 export * from "./approval-types.js";
 export * from "./approval-postcommit-types.js";

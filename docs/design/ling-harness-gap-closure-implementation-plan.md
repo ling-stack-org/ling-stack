@@ -1189,6 +1189,13 @@ Synthesized from this review's findings. Each task derives from a specific revie
   - Surfaced by: Performance P1-P3 and production failure review.
   - Files: daemon control-plane projections/diagnostics, artifact retention, harness workers.
   - Verify: restart reconciliation and the stated p95/event-size budgets on a representative local database.
+  - 2026-10-09 locally verified slice: metadata-only continuation/tool diagnostics
+    are connected to the existing Run debug disclosure. Cold-workspace
+    observation does not initialize/recover/dispatch; scope and Attempt reads
+    do not parse unrelated private JSON. Final Core/Daemon/API/Web counts are
+    2525/3688/87/455, with bounded real-browser fixture checks and a 44-test
+    authored-source gate. See [the diagnostics checkpoint](harness-diagnostics-checkpoint-2026-10-09.md).
+    This does not close T13 or replace packaged E6 acceptance.
 
 ## Delivery Checklist
 

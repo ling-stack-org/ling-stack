@@ -48,6 +48,18 @@ import type {
   StartRunnerContinuationInput,
 } from "./continuations.js";
 import type { DelegationQueryPage, DelegationQueryPageInput } from "./delegations.js";
+import type {
+  HarnessDiagnosticAttemptV1,
+  HarnessDiagnosticPageV1,
+  HarnessDiagnosticQueryV1,
+  HarnessDiagnosticScopeV1,
+} from "@ling-stack/contracts";
+
+export interface HarnessDiagnosticsStore {
+  queryWorkUnitHarnessDiagnosticScope(workUnitId: string): HarnessDiagnosticScopeV1 | undefined;
+  getHarnessDiagnosticAttempt(workUnitId: string, attemptId: string): HarnessDiagnosticAttemptV1;
+  queryHarnessDiagnostics(runId: string, workUnitId: string, input?: HarnessDiagnosticQueryV1): HarnessDiagnosticPageV1;
+}
 
 export interface RunnerContinuationStore {
   getRunnerContinuation(id: string): RunnerContinuationV1 | undefined;

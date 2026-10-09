@@ -55,6 +55,12 @@ export class RunStoreRegistry {
     return store;
   }
 
+  /** Observation only: never constructs a Store, reconciles state or dispatches recovery. */
+  getInitializedStore(cwd: string): RunStore | undefined {
+    if (this.closed) throw new Error("Run Store registry is closed; observation is unavailable.");
+    return this.storesByCwd.get(cwd);
+  }
+
   rememberRun(runId: string, store: RunStore): void {
     this.storesByRunId.set(runId, store);
   }

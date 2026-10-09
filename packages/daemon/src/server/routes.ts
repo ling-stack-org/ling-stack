@@ -319,6 +319,7 @@ export function parseSkillRoute(pathname: string): SkillRoute | undefined {
 export type WorkUnitRoute =
   | { readonly kind: "detail"; readonly workUnitId: string }
   | { readonly kind: "events"; readonly workUnitId: string }
+  | { readonly kind: "harness"; readonly workUnitId: string }
   | { readonly kind: "cancel"; readonly workUnitId: string }
   | { readonly kind: "retry"; readonly workUnitId: string }
   | { readonly kind: "reconcile"; readonly workUnitId: string };
@@ -333,7 +334,7 @@ export function parseWorkUnitRoute(pathname: string): WorkUnitRoute | undefined 
     return { kind: "detail", workUnitId: segments[1] };
   }
   if (segments.length === 3 && segments[0] === "work-units") {
-    if (segments[2] === "events" || segments[2] === "cancel" || segments[2] === "retry" || segments[2] === "reconcile") {
+    if (segments[2] === "events" || segments[2] === "harness" || segments[2] === "cancel" || segments[2] === "retry" || segments[2] === "reconcile") {
       return { kind: segments[2], workUnitId: segments[1] };
     }
   }

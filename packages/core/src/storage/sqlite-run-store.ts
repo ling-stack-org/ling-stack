@@ -636,6 +636,7 @@ import { SqliteRuntimeRecoveryCoordinator } from "./sqlite/runtime-recovery-coor
 import { SqliteRuntimeWorkUnitStore } from "./sqlite/runtime-work-unit-store.js";
 import { SqliteRunnerContinuationStore } from "./sqlite/runner-continuation-store.js";
 import { SqliteHarnessToolExecutionStore } from "./sqlite/harness-tool-execution-store.js";
+import { SqliteHarnessDiagnosticsStore } from "./sqlite/harness-diagnostics-store.js";
 import { SqliteRunEvaluationStore } from "./sqlite/run-evaluation-store.js";
 import { SqliteDelegationStore } from "./sqlite/delegation-store.js";
 import { SqliteHarnessCommitCoordinator } from "./sqlite/harness-commit-coordinator.js";
@@ -748,6 +749,7 @@ export class SqliteRunStore implements RunStore {
   private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore;
   private readonly runnerContinuations: SqliteRunnerContinuationStore;
   private readonly harnessToolExecutions: SqliteHarnessToolExecutionStore;
+  private readonly harnessDiagnostics: SqliteHarnessDiagnosticsStore;
   private readonly runEvaluations: SqliteRunEvaluationStore;
   private readonly delegations: SqliteDelegationStore;
   private readonly harnessCommits: SqliteHarnessCommitCoordinator;
@@ -918,6 +920,7 @@ export class SqliteRunStore implements RunStore {
         getRunnerContinuation: (id) => this.getRunnerContinuation(id),
       },
     );
+    this.harnessDiagnostics = new SqliteHarnessDiagnosticsStore({ database: this.database });
     this.runEvaluations = new SqliteRunEvaluationStore(
       { database: this.database },
       {
@@ -2452,6 +2455,24 @@ export class SqliteRunStore implements RunStore {
     id: string,
   ): import("@ling-stack/contracts").HarnessToolExecutionV1 | undefined {
     return this.harnessToolExecutions.getHarnessToolExecution(id);
+  }
+
+  queryHarnessDiagnostics(
+    ...args: Parameters<RunStore["queryHarnessDiagnostics"]>
+  ): ReturnType<RunStore["queryHarnessDiagnostics"]> {
+    return this.harnessDiagnostics.queryHarnessDiagnostics(...args);
+  }
+
+  queryWorkUnitHarnessDiagnosticScope(
+    ...args: Parameters<RunStore["queryWorkUnitHarnessDiagnosticScope"]>
+  ): ReturnType<RunStore["queryWorkUnitHarnessDiagnosticScope"]> {
+    return this.harnessDiagnostics.queryWorkUnitHarnessDiagnosticScope(...args);
+  }
+
+  getHarnessDiagnosticAttempt(
+    ...args: Parameters<RunStore["getHarnessDiagnosticAttempt"]>
+  ): ReturnType<RunStore["getHarnessDiagnosticAttempt"]> {
+    return this.harnessDiagnostics.getHarnessDiagnosticAttempt(...args);
   }
 
   findHarnessToolExecution(

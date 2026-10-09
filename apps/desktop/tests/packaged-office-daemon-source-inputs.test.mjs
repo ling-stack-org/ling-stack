@@ -24,6 +24,10 @@ const newAuthoredRuntimeLeaves = [
   "packages/core/src/storage/sqlite/delegation-migration.ts",
   "packages/core/src/storage/sqlite/delegation-mappers.ts",
   "packages/core/src/storage/sqlite/delegation-store.ts",
+  "packages/core/src/storage/sqlite/harness-diagnostics-mappers.ts",
+  "packages/core/src/storage/sqlite/harness-diagnostics-store.ts",
+  "packages/core/src/storage/sqlite/harness-diagnostics-validation.ts",
+  "packages/daemon/src/runtime/harness-diagnostics.ts",
 ];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";
@@ -33,7 +37,7 @@ function newFile(path, bytes) {
   writeFileSync(path, bytes, { mode: 0o600 });
 }
 
-test("Office packaging review requires every new Pi and delegation authored runtime leaf", () => {
+test("Office packaging review requires every new Pi, delegation and diagnostics authored runtime leaf", () => {
   for (const name of newAuthoredRuntimeLeaves) {
     assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
       `Runtime leaf must be an explicit required review input: ${name}`);

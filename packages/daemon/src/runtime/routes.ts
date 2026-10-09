@@ -38,6 +38,7 @@ import {
 import type { RunnerRegistry } from "./runners.js";
 import type { RunStoreRegistry } from "./store-registry.js";
 import type { RuntimeSupervisor } from "./supervisor.js";
+import { handleWorkUnitHarnessDiagnostics } from "./harness-diagnostics.js";
 import {
   cancelStandaloneWorkUnit,
   isActiveWorkUnitStatus,
@@ -369,6 +370,10 @@ export async function handleWorkUnitRoute(
   controlPlaneEvents: ControlPlaneEventHub,
   retryTaskRun: RuntimeTaskRunRetrier,
 ): Promise<void> {
+  if (route.kind === "harness") {
+    handleWorkUnitHarnessDiagnostics(request, response, url, storeRegistry, route.workUnitId);
+    return;
+  }
   const resolved = getCwdStoreOrWriteError(response, url, storeRegistry);
   if (!resolved) {
     return;
