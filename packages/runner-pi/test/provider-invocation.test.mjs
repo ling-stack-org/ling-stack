@@ -177,7 +177,7 @@ test("one validated logical request reports private lineage, not payload or cred
   assert.equal(f.admitted[0].attemptId, "fixture-attempt");
   assert.deepEqual(f.settled[0], { ...f.admitted[0], settledAt: f.settled[0].settledAt, outcome: "succeeded" });
   assert.ok(Date.parse(f.settled[0].settledAt) >= Date.parse(f.admitted[0].admittedAt));
-  assert.deepEqual(Object.keys(f.admitted[0]).sort(), ["admittedAt", "attemptId", "invocationId", "runId", "taskId"]);
+  assert.deepEqual(Object.keys(f.admitted[0]).sort(), ["admittedAt", "attemptId", "contextBudget", "invocationId", "runId", "taskId"]);
   assert.equal(JSON.stringify([...f.admitted, ...f.settled]).includes("never-public"), false);
 });
 

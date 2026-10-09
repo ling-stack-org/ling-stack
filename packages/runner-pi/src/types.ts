@@ -46,6 +46,18 @@ export interface PiRunnerTask {
   readonly channelId?: string;
 }
 
+/** Numeric estimate of the projected SDK context; never a payload or wire token count. */
+export interface PiRunnerProviderInvocationContextBudget {
+  readonly schemaVersion: 1;
+  readonly basis: "pi_projected_context_estimate";
+  readonly estimatedInputTokens: number;
+  readonly contextWindowTokens: number;
+  /** Conservative selected-model maxTokens reservation, not the request's wire maximum. */
+  readonly reservedOutputTokens: number;
+  readonly reservedRuntimeOverheadTokens: number;
+  readonly inputBudgetTokens: number;
+}
+
 /** Host-private logical SDK request admission; not proof of HTTP/WebSocket dispatch. */
 export interface PiRunnerProviderInvocationAdmittedReceipt {
   readonly invocationId: string;
@@ -53,6 +65,8 @@ export interface PiRunnerProviderInvocationAdmittedReceipt {
   readonly runId?: string;
   readonly attemptId?: string;
   readonly admittedAt: string;
+  /** Missing or invalid numeric evidence is unknown, never a fabricated default budget. */
+  readonly contextBudget?: PiRunnerProviderInvocationContextBudget;
 }
 
 /** One admitted stream's terminal outcome, never an aggregate Run/UI failure. */

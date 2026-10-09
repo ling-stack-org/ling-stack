@@ -1,9 +1,9 @@
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { PiRunnerRunOptions, PiRunnerUserInputYieldDirective } from "./types.js";
+import type { PiRunnerProviderInvocationContextBudget, PiRunnerRunOptions, PiRunnerUserInputYieldDirective } from "./types.js";
 import { readUserInputYieldDirective } from "./task-yield.js";
 import { readUserInputRequestReceipt, readUserInputWaitMode } from "./user-input-request.js";
 import { throwIfAborted } from "./utils.js";
-import { assertPiModelContextCapacity, assertPreparedPiModelContext, type PiRunnerPreparedInput } from "./prepared-input.js";
+import { assertPiModelContextCapacity, assertPreparedPiModelContext, estimatePiModelContextBudget, type PiRunnerPreparedInput } from "./prepared-input.js";
 import { assertApprovedToolContinuationModelContext } from "./approved-tool-continuation.js";
 import { applyReasoningSummaryModeToPayload } from "./reasoning-summary.js";
 import { assertAcceptedTaskAnchor, hasCompactionSummary } from "./compaction-task-anchor.js";
@@ -182,9 +182,14 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
         // not be able to mutate that copy after prepared-input validation.
         const dispatchedContext = JSON.stringify(modelContext);
         firstRequest = false;
+        let contextBudget: PiRunnerProviderInvocationContextBudget | undefined;
+        if (options.onProviderInvocationAdmitted || options.onProviderInvocationSettled) {
+          try { contextBudget = estimatePiModelContextBudget(model, modelContext); }
+          catch { /* Diagnostic evidence is optional; do not introduce another model-call gate. */ }
+        }
         const invocation = createPiProviderInvocation(options, () =>
           options.signal?.aborted || streamOptions?.signal?.aborted ? "cancelled"
-            : failure || yieldRequest || stop.signal.aborted ? "local_rejected" : undefined);
+            : failure || yieldRequest || stop.signal.aborted ? "local_rejected" : undefined, contextBudget);
         const observeLocalCallbackFailure = <Args extends unknown[]>(callback: (...args: Args) => void | Promise<void>) =>
           async (...args: Args): Promise<void> => {
             try { await callback(...args); }

@@ -4,6 +4,7 @@ import type { ModelRuntime } from "@earendil-works/pi-coding-agent";
 import { classifyProviderError } from "./provider-error-diagnostic.js";
 import type {
   PiRunnerProviderInvocationAdmittedReceipt,
+  PiRunnerProviderInvocationContextBudget,
   PiRunnerProviderInvocationSettledReceipt,
   PiRunnerRunOptions,
 } from "./types.js";
@@ -54,6 +55,7 @@ export function bindPiProviderInvocationResolution(runtime: ModelRuntime, option
 export function createPiProviderInvocation(
   options: PiRunnerRunOptions,
   readLocalRejection: () => LocalRejection | undefined,
+  contextBudget?: PiRunnerProviderInvocationContextBudget,
 ) {
   const enabled = Boolean(options.onProviderInvocationAdmitted || options.onProviderInvocationSettled);
   let admissionAttempted = false;
@@ -62,6 +64,7 @@ export function createPiProviderInvocation(
   let observationUnknown = false;
   let settled = false;
   let verifyResolvedTuple: (() => boolean) | undefined;
+  const budgetSnapshot = snapshotContextBudget(contextBudget);
 
   const notify = <Receipt>(callback: ((receipt: Receipt) => void) | undefined, receipt: Receipt): void => {
     if (!callback) return;
@@ -131,6 +134,7 @@ export function createPiProviderInvocation(
           ...(options.runId === undefined ? {} : { runId: options.runId }),
           ...(options.runnerAttemptId === undefined ? {} : { attemptId: options.runnerAttemptId }),
           admittedAt: new Date().toISOString(),
+          ...(budgetSnapshot ? { contextBudget: budgetSnapshot } : {}),
         });
         notify(options.onProviderInvocationAdmitted, admitted);
       } catch {
@@ -195,4 +199,21 @@ function canonicalHeaders(headers: unknown): Map<string, string> | undefined {
     result.set(canonical, value);
   }
   return result;
+}
+
+/** Reject malformed diagnostic data as unknown, without changing execution. */
+function snapshotContextBudget(value: PiRunnerProviderInvocationContextBudget | undefined): PiRunnerProviderInvocationContextBudget | undefined {
+  try {
+    if (!value || Object.keys(value).sort().join(",") !== ["basis", "contextWindowTokens", "estimatedInputTokens", "inputBudgetTokens",
+      "reservedOutputTokens", "reservedRuntimeOverheadTokens", "schemaVersion"].join(",")) return undefined;
+    const { schemaVersion, basis, estimatedInputTokens, contextWindowTokens,
+      reservedOutputTokens, reservedRuntimeOverheadTokens, inputBudgetTokens } = value;
+    if (schemaVersion !== 1 || basis !== "pi_projected_context_estimate"
+      || ![estimatedInputTokens, contextWindowTokens, reservedOutputTokens, reservedRuntimeOverheadTokens, inputBudgetTokens].every(Number.isSafeInteger)
+      || estimatedInputTokens < 0 || contextWindowTokens < 1 || reservedOutputTokens < 1 || reservedRuntimeOverheadTokens !== 512
+      || inputBudgetTokens < 1 || inputBudgetTokens !== contextWindowTokens - reservedOutputTokens - reservedRuntimeOverheadTokens
+      || estimatedInputTokens > inputBudgetTokens) return undefined;
+    return Object.freeze({ schemaVersion, basis, estimatedInputTokens, contextWindowTokens,
+      reservedOutputTokens, reservedRuntimeOverheadTokens, inputBudgetTokens });
+  } catch { return undefined; }
 }

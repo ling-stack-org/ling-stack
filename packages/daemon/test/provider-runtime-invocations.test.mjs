@@ -92,6 +92,86 @@ function fail(callbacks, receipt = admitted(), overrides = {}) {
   callbacks.onProviderInvocationSettled(settled(receipt, overrides));
 }
 
+function numericBudget(overrides = {}) {
+  return {
+    schemaVersion: 1, basis: "pi_projected_context_estimate", estimatedInputTokens: 100,
+    contextWindowTokens: 128_000, reservedOutputTokens: 4_000,
+    reservedRuntimeOverheadTokens: 512, inputBudgetTokens: 123_488, ...overrides,
+  };
+}
+
+test("Host budget fact retains an immutable copy of the exact admitted numeric snapshot", async (t) => {
+  const f = await fixture(t);
+  const budget = numericBudget();
+  const receipt = admitted("budget-copy", { contextBudget: budget });
+  fail(observer(f), receipt);
+  assert.equal(f.failures.length, 1);
+  const fact = readProviderInvocationFailure(f.failures[0]);
+  assert.deepEqual(fact.contextBudget, budget);
+  assert.notEqual(fact.contextBudget, budget);
+  assert.equal(Object.isFrozen(fact.contextBudget), true);
+  budget.estimatedInputTokens = 500;
+  assert.equal(fact.contextBudget.estimatedInputTokens, 100);
+  assert.equal(JSON.stringify(f.failures[0]), "{}");
+});
+
+test("Host budget fact never fabricates defaults from missing, malformed or text-bearing evidence", async (t) => {
+  const f = await fixture(t);
+  const candidates = [
+    undefined,
+    numericBudget({ schemaVersion: 2 }),
+    numericBudget({ basis: PRIVATE_KEY }),
+    numericBudget({ estimatedInputTokens: NaN }),
+    numericBudget({ estimatedInputTokens: Infinity }),
+    numericBudget({ estimatedInputTokens: -1 }),
+    numericBudget({ estimatedInputTokens: 100.5 }),
+    numericBudget({ contextWindowTokens: Number.MAX_SAFE_INTEGER + 1 }),
+    numericBudget({ reservedOutputTokens: 0 }),
+    numericBudget({ reservedRuntimeOverheadTokens: 0 }),
+    numericBudget({ inputBudgetTokens: 123_487 }),
+    numericBudget({ estimatedInputTokens: 123_489 }),
+    numericBudget({ payload: PRIVATE_HEADER, privatePath: PRIVATE_PATH }),
+  ];
+  const callbacks = observer(f);
+  for (const [index, contextBudget] of candidates.entries()) {
+    fail(callbacks, admitted(`budget-invalid-${index}`, { contextBudget }));
+    const fact = readProviderInvocationFailure(f.failures.at(-1));
+    assert.equal(fact.contextBudget, undefined);
+    assert.equal(fact.classification.label, "provider context window retry");
+    assert.doesNotMatch(JSON.stringify(fact), /private-key-marker|private-header-marker|private-path/);
+  }
+  assert.equal(f.failures.length, candidates.length, "budget uncertainty must not suppress independent availability evidence");
+});
+
+test("Host budget fact requires settlement to preserve its own admitted snapshot", async (t) => {
+  const f = await fixture(t);
+  const callbacks = observer(f);
+  const receipt = admitted("budget-mutated", { contextBudget: numericBudget() });
+  callbacks.onProviderInvocationAdmitted(receipt);
+  receipt.contextBudget.estimatedInputTokens = 101;
+  callbacks.onProviderInvocationSettled(settled(receipt));
+  assert.equal(readProviderInvocationFailure(f.failures[0]).contextBudget, undefined);
+  const missing = admitted("budget-missing-settlement", { contextBudget: numericBudget() });
+  fail(callbacks, missing, { contextBudget: undefined });
+  assert.equal(readProviderInvocationFailure(f.failures[1]).contextBudget, undefined);
+  const unadmitted = admitted("budget-invented-settlement");
+  fail(callbacks, unadmitted, { contextBudget: numericBudget() });
+  assert.equal(readProviderInvocationFailure(f.failures[2]).contextBudget, undefined);
+  assert.equal(f.failures.length, 3);
+});
+
+test("Host budget facts from concurrent invocations cannot borrow each other's numeric inputs", async (t) => {
+  const f = await fixture(t);
+  const callbacks = observer(f);
+  const a = admitted("budget-a", { contextBudget: numericBudget({ estimatedInputTokens: 50 }) });
+  const b = admitted("budget-b", { contextBudget: numericBudget({ estimatedInputTokens: 500 }) });
+  callbacks.onProviderInvocationAdmitted(a);
+  callbacks.onProviderInvocationAdmitted(b);
+  callbacks.onProviderInvocationSettled(settled(b));
+  callbacks.onProviderInvocationSettled(settled(a));
+  assert.deepEqual(f.failures.map(failure => readProviderInvocationFailure(failure).contextBudget.estimatedInputTokens), [500, 50]);
+});
+
 test("an admitted provider error yields one private immutable fact tied to its original scope", async (t) => {
   const f = await fixture(t);
   const callbacks = observer(f);
