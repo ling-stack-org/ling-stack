@@ -46,8 +46,13 @@ import {
   updatePendingAssistantMessage,
 } from "./conversation-item-messages.js";
 import { runHasConversationGeneratedMedia } from "../media/conversation-projection.js";
+import type { ProviderInvocationFailure, ProviderInvocationFailureSink } from "../providers/runtime-invocations.js";
 
-export type StartChannelReplyRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
+export type StartChannelReplyRun = (
+  runRequest: RunRequest,
+  sink: RunExecutionSink,
+  onProviderInvocationFailure?: ProviderInvocationFailureSink,
+) => Promise<string | undefined>;
 
 export async function createAiChannelReply(input: {
   readonly startRun: StartChannelReplyRun;
@@ -498,7 +503,9 @@ async function startProjectedChannelReplyRun(input: {
 }): Promise<{
   readonly run: RunSession;
   readonly projection: ReturnType<typeof createChannelReplyRunProjection>;
+  readonly providerFailures: readonly ProviderInvocationFailure[];
 }> {
+  const providerFailures: ProviderInvocationFailure[] = [];
   const projection = createChannelReplyRunProjection({
     store: input.input.store,
     pendingMessageId: input.input.pending.id,
@@ -548,7 +555,7 @@ async function startProjectedChannelReplyRun(input: {
     compactedRetry: input.compactedRetry,
     recoveryAttempt: input.recoveryAttempt ?? input.input.replyRecoveryAttempt,
     contextProjection: input.contextProjection,
-  }), projection.sink);
+  }), projection.sink, (failure) => { providerFailures.push(failure); });
   const runId = startedRunId ?? projection.runId();
   if (!runId) {
     throw new Error(projection.error() ?? "Channel reply run failed to start.");
@@ -557,7 +564,7 @@ async function startProjectedChannelReplyRun(input: {
   if (!run) {
     throw new Error(`Channel reply run was not persisted: ${runId}`);
   }
-  return { run, projection };
+  return { run, projection, providerFailures };
 }
 
 function requireContextProjection(pack: ContextPack): NonNullable<ContextPack["contextProjection"]> {

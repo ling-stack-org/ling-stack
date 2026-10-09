@@ -84,9 +84,27 @@ extension hook alone is incomplete because compaction can bypass it.
 The wrapper issues a distinct Host-only logical admission only after the awaited
 payload hook, cancellation/Host latch, prepared-input validation, projected
 context immutability and reasoning-payload conversion all pass. The actual
-request Model and explicit stream API-key/header/environment overrides must be
-provably consistent with the captured Host provider. Mismatch or missing proof
-means observation unknown, not a model-call denial. Each stream is independent;
+request Model and effective stream API-key/header/environment values must be
+provably consistent with the captured Host provider. Checking the outer
+`runtime.streamSimple` options is insufficient: Pi's subsequent request
+preparation resolves credentials and header expressions, merges headers and
+applies `transformHeaders`. A changed or deleted tenant/authentication header
+must not borrow the pre-transform Host scope.
+
+Use the public `getProvider` / `registerProvider` composed-provider seam to
+sample the SDK-prepared tuple, preserving the previously registered provider
+and its existing authentication/fetch behavior. Associate that sample with
+the exact stream's `onPayload` function identity in a private WeakMap, then
+revalidate it at the final payload gate. Do not cast, monkeypatch or depend on
+the private SDK `prepareRequest` method. Compare full effective headers,
+including omissions, in process; never serialize their values or fingerprints.
+An unsupported runtime or missing post-resolution sample is unknown, even
+when its original options happen to equal the Host configuration.
+
+Mismatch or missing proof means observation unknown, not a model-call denial.
+The proof describes logical SDK preparation, not the final network client's
+automatic transport headers or bytes. An independently registered inner
+provider remains responsible for its transport behavior. Each stream is independent;
 repeat payload hooks do not generate another identity. This is not evidence that
 HTTP/WebSocket bytes were sent, nor a per-HTTP-retry counter.
 
@@ -117,6 +135,33 @@ execution cannot synthesize a new private receipt; live provider identity and
 callbacks must survive continuation reconstruction. Reviewer and direct selector
 calls still require their own observer connections before the final cutover.
 
+## Run snapshot credential boundary
+
+Run snapshots are persisted facts, not reusable credential authority. A common
+copy-only persistence adapter masks the API key and every materialized header
+value for both normal and queued Runs; the live resolver output is unchanged.
+Resume/fork from an inline snapshot containing masked credentials rejects with
+409 before dispatch. It cannot send placeholders or silently assume anonymous
+access. A configured preset continues through fresh resolution and the same
+scope capture. No historical snapshot or credential is rewritten/backfilled.
+
+## Next slice: actual projected numeric budget
+
+Use one Runner estimator shared with `assertPiModelContextCapacity` for the
+latest system prompt, latest tool definitions and `piConversation` view of the
+**projected** SDK context. Retain the existing ASCII/3.5, non-ASCII-codepoint/1.6
+estimate and 512-token runtime reservation. Capture selected model capacity
+and max-output reservation, estimated input and resulting input budget as safe
+finite integers. This is a conservative input estimate, not billed usage or
+proof of the final serialized transport payload.
+
+Each admitted stream carries its own immutable numeric snapshot; its settlement
+inherits that exact snapshot. Tool-result clipping, retries, summary streams
+and later conversation messages can produce different budgets. Do not infer
+one from an earlier discussion pack or share a mutable current-request slot.
+Missing/invalid numeric evidence is unknown for window learning, not permission
+to borrow an old window. Existing capacity rejection remains unchanged.
+
 ## Required subsequent production chain
 
 - After preparation awaits, replace provider and scope together. Preserve the
@@ -129,6 +174,15 @@ calls still require their own observer connections before the final cutover.
 - All three context-error producers and four availability producers consume
   original invocation facts. Display/storage errors before provider dispatch
   must not create a Provider availability incident.
+- Capture only safe numeric context-budget metrics from the actual projected
+  SDK model context, using the existing `prepared-input.ts` estimator for
+  system prompt, tool definitions and conversation. Include the actual model
+  capacity/output reservation and explicit runtime overhead. An earlier
+  discussion/route/intent pack is not that request: Web/Memory/preparation
+  awaits and Provider changes can separate the pack's configuration from the
+  actual call. Do not retain the prompt, payload or another credential copy in
+  the private observation fact, and do not describe an estimate as wire token
+  usage.
 - Context budget consumption validates current workspace/configuration/value
   scope. Expired observations are discarded before minimum-window merging as
   well as reads; preserve the existing six-hour `>` expiry boundary.
@@ -138,6 +192,55 @@ calls still require their own observer connections before the final cutover.
   before pagination/limits; preserve historical incidents and saved snapshots.
 
 ## Required verification
+
+### Incident provenance and limit-before-filter implementation boundary
+
+Current source audit finds only the runtime module as a production availability
+writer, but old rows do not encode their origin. Kind, summary text, TTL or
+Provider ID cannot prove whether an imported/manual row was generic or runtime.
+Do not infer provenance from prose or rewrite/delete history.
+
+Add a private incident-provenance sidecar. New generic writes retain the existing
+API and atomically record `generic`; a dedicated runtime publication atomically
+records `provider_runtime`, safe original invocation lineage/configuration
+revision and an opaque observation reference. Neither entry carries credential
+proofs. A failed sidecar write rolls back the incident; a naked partial runtime
+row must not become generic by default.
+
+Absent provenance is `legacy_unclassified`. Old Provider/model-associated rows
+remain in history but their current runtime applicability is unknown. Old
+Provider-unrelated agent-only rows retain their previous semantics. This cannot
+automatically preserve the current-health behavior of an old imported generic
+Provider row: it lacks the fact needed to prove origin. Newly tagged generic
+rows, including Provider-bound ones, retain generic behavior and are not invalidated
+by runtime credential/configuration changes. No historical snapshot is rebuilt.
+
+Core exposes private joined candidate keyset pages ordered by observed time and
+row ID, with workspace, expiry and requested agent/Provider lane constraints.
+Hold an initial row-ID high-water bound; same-time candidates use the row-ID
+cursor to avoid duplicate/lost rows. Daemon applies current scope checks and
+origin classification **before** collecting the requested accepted limit.
+Continue until enough applicable records or EOF, not an arbitrary 500-candidate
+cap. Observer's two lanes, metrics and newly created snapshots share this
+projection; public history DTOs do not acquire private metadata.
+
+### Ordered implementation gates
+
+1. Finish and save the logical-invocation/snapshot-privacy foundation against
+   its frozen full-suite source. Do not rebuild while that suite is running.
+2. Runner numeric-budget slice: single estimator, per-stream immutable budget,
+   real SDK projected-input regressions. This alone is not the cache fix.
+3. Core atomic provenance/keyset support and Daemon scope-aware cache/projection:
+   expiry before read and minimum merge; stale late errors remain historical.
+4. Reply/route/intent/reviewer and reconstruction production consumption: each
+   actual call owns its observer. Remove aggregate local-error classification
+   and post-await preset rereads for attribution. The independent reviewer
+   Attempt is not the outer task Attempt.
+5. Current summary/tool-budget and observer/metrics/new-snapshot consumer wiring,
+   actual SDK race/TTL/pagination tests, affected full suites and independent
+   review. Only then claim the original cache baseline counterexamples fixed.
+6. Continue the separate external-model and fresh packaged macOS acceptance
+   gates; deterministic SDK/SQLite tests do not stand in for GUI evidence.
 
 Use synthetic credentials and disposable SQLite only. No real env/Keychain
 value is printed or modified.

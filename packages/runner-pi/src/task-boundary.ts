@@ -10,6 +10,7 @@ import { assertAcceptedTaskAnchor, hasCompactionSummary } from "./compaction-tas
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { piTranscript } from "./session-transcript.js";
 import { assertCompactionRecoveryModelContext } from "./compaction-recovery.js";
+import { bindPiProviderInvocationResolution, createPiProviderInvocation } from "./provider-invocation.js";
 
 /** Internal latch only. The public yielded outcome requires an idle SDK first. */
 class PendingUserInputYield extends Error {
@@ -133,6 +134,7 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
     /** Guard this run's runtime, including built-in and custom providers. */
     bindModelRuntime(runtime: ModelRuntime): void {
       const streamSimple = runtime.streamSimple.bind(runtime);
+      const associateInvocation = bindPiProviderInvocationResolution(runtime, options);
       let firstRequest = true;
       runtime.streamSimple = (model, context, streamOptions) => {
         assertOpen();
@@ -180,10 +182,16 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
         // not be able to mutate that copy after prepared-input validation.
         const dispatchedContext = JSON.stringify(modelContext);
         firstRequest = false;
-        return streamSimple(model, modelContext, {
-          ...streamOptions,
-          signal: streamOptions?.signal ? AbortSignal.any([signal, streamOptions.signal]) : signal,
-          onPayload: async (payload, requestModel) => {
+        const invocation = createPiProviderInvocation(options, () =>
+          options.signal?.aborted || streamOptions?.signal?.aborted ? "cancelled"
+            : failure || yieldRequest || stop.signal.aborted ? "local_rejected" : undefined);
+        const observeLocalCallbackFailure = <Args extends unknown[]>(callback: (...args: Args) => void | Promise<void>) =>
+          async (...args: Args): Promise<void> => {
+            try { await callback(...args); }
+            catch (error) { invocation.rejectLocally(); throw error; }
+          };
+        const onPayload: NonNullable<NonNullable<typeof streamOptions>["onPayload"]> = async (payload, requestModel) => {
+          try {
             assertOpen();
             const next = await streamOptions?.onPayload?.(payload, requestModel);
             // The awaited SDK hook may have swallowed the Host failure. Never
@@ -197,9 +205,26 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
             }
             const candidate = next ?? payload;
             const summaryPayload = applyReasoningSummaryModeToPayload(candidate, requestModel.api, options.reasoningSummary);
+            // This wrapper also covers SDK summary streams without an Agent
+            // extension hook. It observes logical admission, not network I/O.
+            invocation.admit(requestModel);
             return summaryPayload ?? next;
-          },
+          } catch (error) {
+            invocation.rejectLocally();
+            throw error;
+          }
+        };
+        associateInvocation(onPayload, invocation);
+        const requestStream = streamSimple(model, modelContext, {
+          ...streamOptions,
+          ...(streamOptions?.onResponse ? { onResponse: observeLocalCallbackFailure(streamOptions.onResponse) } : {}),
+          ...(streamOptions?.onProviderStreamEvent
+            ? { onProviderStreamEvent: observeLocalCallbackFailure(streamOptions.onProviderStreamEvent) } : {}),
+          signal: streamOptions?.signal ? AbortSignal.any([signal, streamOptions.signal]) : signal,
+          onPayload,
         });
+        invocation.observe(requestStream);
+        return requestStream;
       };
     },
   };

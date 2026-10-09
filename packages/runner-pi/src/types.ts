@@ -46,6 +46,23 @@ export interface PiRunnerTask {
   readonly channelId?: string;
 }
 
+/** Host-private logical SDK request admission; not proof of HTTP/WebSocket dispatch. */
+export interface PiRunnerProviderInvocationAdmittedReceipt {
+  readonly invocationId: string;
+  readonly taskId: string;
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly admittedAt: string;
+}
+
+/** One admitted stream's terminal outcome, never an aggregate Run/UI failure. */
+export interface PiRunnerProviderInvocationSettledReceipt extends PiRunnerProviderInvocationAdmittedReceipt {
+  readonly settledAt: string;
+  readonly outcome: "succeeded" | "provider_error" | "cancelled" | "local_rejected";
+  /** Bounded diagnostic enum/status/code only; never raw Provider text or credentials. */
+  readonly errorDiagnostic?: PiProviderErrorDiagnostic;
+}
+
 export interface PiRunnerApprovalRequest {
   readonly toolCallId: string;
   readonly toolName: PiRunnerApprovalToolName;
@@ -373,6 +390,15 @@ export interface PiRunnerRunOptions {
   readonly sandbox?: PiRunnerSandboxBinding;
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: PiRunnerEvent) => void;
+  /**
+   * Host-only synchronous observation after actual SDK auth/header resolution
+   * matches the Host tuple and all model payload/authority gates have passed.
+   * Not a RunEvent, permission grant, network-dispatch proof or preparation receipt.
+   * Throwing or async observers become unknown without changing model execution.
+   */
+  readonly onProviderInvocationAdmitted?: (receipt: PiRunnerProviderInvocationAdmittedReceipt) => void;
+  /** Observe the same logical stream's outcome without consuming model events. */
+  readonly onProviderInvocationSettled?: (receipt: PiRunnerProviderInvocationSettledReceipt) => void;
   /** Host authority check for every tool, including tools outside the approval catalog. */
   readonly onToolBefore?: (request: {
     readonly toolCallId: string;

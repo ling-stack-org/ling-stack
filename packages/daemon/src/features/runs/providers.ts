@@ -13,6 +13,7 @@ import {
   materializeProviderSecrets,
 } from "../providers/secret-materializer.js";
 import { removeUndefined } from "../../shared/validation.js";
+import { assertInlineProviderCredentialsAvailable } from "./provider-persistence.js";
 import type { RunRequest } from "./schemas.js";
 import {
   bindResolvedProviderObservationScope,
@@ -83,6 +84,7 @@ export function resolveProviderForRun<T extends ProviderRunSelection>(
     throw new HttpError(400, "bad_request", "Either providerPresetId or provider is required");
   }
 
+  assertInlineProviderCredentialsAvailable(runRequest.provider);
   return removeUndefined({
     ...runRequest.provider,
     providerTransport: resolveEffectiveProviderTransport(

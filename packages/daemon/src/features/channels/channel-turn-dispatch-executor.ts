@@ -16,6 +16,7 @@ import {
 import type { RunRequest } from "../runs/schemas.js";
 import type { HostCapabilityBridgeController } from "../runs/host-capability-bridge-controller.js";
 import { resolveProviderForRun } from "../runs/providers.js";
+import type { ProviderInvocationFailureSink } from "../providers/runtime-invocations.js";
 import { createAiChannelReply } from "./ai-replies.js";
 import {
   findChannelAssistantReplyForSource,
@@ -243,7 +244,11 @@ function channelReplyMessageId(sourceTurnId: string, teammateId: string | undefi
 }
 
 function createStartRun(options: ChannelTurnDispatchExecutorOptions) {
-  return async (runRequest: RunRequest, sink: RunExecutionSink): Promise<string | undefined> =>
+  return async (
+    runRequest: RunRequest,
+    sink: RunExecutionSink,
+    onProviderInvocationFailure?: ProviderInvocationFailureSink,
+  ): Promise<string | undefined> =>
     await executeRunRequest(
       runRequest,
       sink,
@@ -254,6 +259,7 @@ function createStartRun(options: ChannelTurnDispatchExecutorOptions) {
       options.secretResolver,
       options.mcpBroker,
       {
+        onProviderInvocationFailure,
         afterRunTerminal: options.afterRunTerminal,
         controlPlaneEvents: options.controlPlaneEvents,
         startupState: options.startupState,

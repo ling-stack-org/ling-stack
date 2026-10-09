@@ -1,9 +1,9 @@
 import { isDeepStrictEqual } from "node:util";
 import type { RunStore } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
-import { HttpError } from "../../errors.js";
 import { isRecord } from "../../shared/validation.js";
 import type { RunRequest } from "../runs/schemas.js";
+import { assertInlineProviderCredentialsAvailable } from "../runs/provider-persistence.js";
 
 /** Provider credentials remain at their existing source, never in preparation evidence. */
 export function inlineProviderDescriptor(provider: PiRunnerProviderConfig): Omit<PiRunnerProviderConfig, "apiKey" | "headers"> {
@@ -33,11 +33,7 @@ export function restorePreparedInlineProvider(store: RunStore, request: RunReque
   if (!isDeepStrictEqual(inlineProviderDescriptor(current), request.provider)) {
     throw new Error("Prepared inline provider configuration changed");
   }
-  const credentials = [current.apiKey, ...Object.values(current.headers ?? {})];
-  if (credentials.some((value) => typeof value !== "string" && value !== undefined || value?.includes("[REDACTED]"))) {
-    throw new HttpError(409, "prepared_inline_credentials_unavailable",
-      "The source Run has no reusable inline credentials. Select a configured provider preset for a new continuation.");
-  }
+  assertInlineProviderCredentialsAvailable(current);
   return { ...request.provider!, ...(current.apiKey !== undefined ? { apiKey: current.apiKey } : {}),
     ...(current.headers !== undefined ? { headers: { ...current.headers } } : {}) };
 }

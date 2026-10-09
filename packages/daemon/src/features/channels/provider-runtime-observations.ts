@@ -31,7 +31,7 @@ export interface ProviderRuntimeAvailabilityIncidentInput {
   readonly expiresAt?: string | null;
 }
 
-interface ProviderRuntimeFailureClassification {
+export interface ProviderRuntimeFailureClassification {
   readonly kind: CreateAvailabilityIncidentInput["kind"];
   readonly state: CreateAvailabilityIncidentInput["state"];
   readonly severity: CreateAvailabilityIncidentInput["severity"];
@@ -149,7 +149,7 @@ function providerRuntimeObservationKey(providerPreset: ProviderPreset): string {
   ].join(":");
 }
 
-function classifyProviderRuntimeFailure(
+export function classifyProviderRuntimeFailure(
   code: string | undefined,
   message: string | undefined,
 ): ProviderRuntimeFailureClassification | undefined {

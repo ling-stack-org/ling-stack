@@ -172,6 +172,11 @@ import { commitRunCompactionProgress } from "../harness/continuations/run-compac
 import { projectPublicRunEventEnvelope } from "./public-artifacts.js";
 import { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
 import { UserInputPauseCoordinator } from "./user-input-pause-coordinator.js";
+import { providerForRunPersistence } from "./provider-persistence.js";
+import {
+  createProviderInvocationObserver,
+  type ProviderInvocationFailureSink,
+} from "../providers/runtime-invocations.js";
 
 interface ExistingRunContinuationExecutionOptions {
   readonly runId: string;
@@ -181,6 +186,8 @@ interface ExistingRunContinuationExecutionOptions {
 }
 
 export interface ExecuteRunRequestOptions {
+  /** Private diagnostic facts only; never selected from public Run request input. */
+  readonly onProviderInvocationFailure?: ProviderInvocationFailureSink;
   readonly onRunReady?: (runId: string) => void;
   readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
   /** Runs after a durable user-input yield, never for ordinary terminal completion. */
@@ -762,7 +769,7 @@ async function executeAdmittedRunRequest(
       throw new Error("Run persistence dependencies were not initialized.");
     }
     const persistenceStore = store;
-    const persistenceProvider = resolvedProvider;
+    const persistenceProvider = providerForRunPersistence(resolvedProvider);
     const persistencePolicySnapshot = effectivePolicySnapshot;
     const persistenceThread = thread;
     const persistenceTurn = turn;
@@ -2000,6 +2007,13 @@ async function executeAdmittedRunRequest(
       : undefined;
     const boundRunnerRequest: PiRunnerRunOptions = {
       ...runnerRequest,
+      ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
+        ? createProviderInvocationObserver({
+            store, provider: activeProvider, taskId: runnerRequest.task.id,
+            runId: run.id, attemptId: attempt.id, origin: "task",
+            signal: abortController.signal, onFailure: options.onProviderInvocationFailure,
+          })
+        : {}),
       runId: run.id,
       runnerAttemptId: attempt.id,
       hostCompactionEnabled,
