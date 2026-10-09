@@ -2348,6 +2348,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore 
   listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];
   updateProviderPreset(id: string, input: ProviderPresetUpdateInput, now: string): ProviderPreset | undefined;
   recordProviderCheckResult(id: string, result: ProviderCheckResult): ProviderPreset | undefined;
+  getProviderConfigurationSnapshot: ProviderCheckPublicationStore["getProviderConfigurationSnapshot"];
   getProviderCheckAuthority: ProviderCheckPublicationStore["getProviderCheckAuthority"];
   beginProviderCheckRequest: ProviderCheckPublicationStore["beginProviderCheckRequest"];
   commitProviderCheckResult: ProviderCheckPublicationStore["commitProviderCheckResult"];
@@ -2908,6 +2909,7 @@ export type ChannelStoreFacet = RunStoreFacet<
 export type ProviderStoreFacet = RunStoreFacet<
   | "createProviderPreset"
   | "getProviderPreset"
+  | "getProviderConfigurationSnapshot"
   | "listProviderPresets"
   | "updateProviderPreset"
   | "recordProviderCheckResult"

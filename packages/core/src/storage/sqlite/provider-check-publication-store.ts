@@ -2,12 +2,14 @@ import type { DatabaseSync } from "node:sqlite";
 import type { ProviderCheckResult } from "../../provider-types.js";
 import type {
   ProviderCheckAdmission, ProviderCheckAuthority, ProviderCheckPublicationResult,
-  ProviderCheckRequestTicket, ProviderCheckSource,
+  ProviderCheckRequestTicket, ProviderCheckSource, ProviderConfigurationSnapshot,
 } from "../../provider-check-publication-types.js";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import type { SqliteProviderStore } from "./provider-store.js";
 import type { SqliteControlPlaneStore } from "./control-plane-store.js";
 import { readNumber, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
+import { mapProviderPreset } from "./provider-mappers.js";
+import { providerPresetSelectSql } from "./select-sql.js";
 
 /** Synchronous admission/publication only; no network, secrets or notifications in a transaction. */
 export class SqliteProviderCheckPublicationStore {
@@ -16,6 +18,22 @@ export class SqliteProviderCheckPublicationStore {
     private readonly providers: SqliteProviderStore,
     private readonly events: SqliteControlPlaneStore,
   ) {}
+
+  /** One statement prevents combining an old preset with a newer authority. */
+  getProviderConfigurationSnapshot(providerId: string): ProviderConfigurationSnapshot | undefined {
+    const statement = this.database.prepare(`SELECT preset.*, authority.config_revision
+      FROM (${providerPresetSelectSql("")}) AS preset
+      LEFT JOIN provider_check_authorities AS authority ON authority.provider_id=preset.id
+      WHERE preset.id=?`);
+    statement.setReadBigInts(true);
+    const row = statement.get(providerId);
+    if (!row) return undefined;
+    const configRevision = readNumber(row, "config_revision");
+    if (!Number.isSafeInteger(configRevision) || configRevision < 1) {
+      throw new Error("Invalid provider configuration authority.");
+    }
+    return { provider: mapProviderPreset(row), configRevision };
+  }
 
   getProviderCheckAuthority(providerId: string): ProviderCheckAuthority | undefined {
     if (!this.providers.getProviderPreset(providerId)) return undefined;

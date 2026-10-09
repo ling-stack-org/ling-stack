@@ -10,6 +10,12 @@ export interface ProviderCheckAuthority {
   readonly publishedRevision: number;
 }
 
+/** Host-only atomic configuration read; it never admits or consumes a check. */
+export interface ProviderConfigurationSnapshot {
+  readonly provider: ProviderPreset;
+  readonly configRevision: number;
+}
+
 export interface ProviderCheckRequestTicket {
   readonly providerId: string;
   readonly configRevision: number;
@@ -32,6 +38,7 @@ export type ProviderCheckPublicationResult =
     };
 
 export interface ProviderCheckPublicationStore {
+  getProviderConfigurationSnapshot(providerId: string): ProviderConfigurationSnapshot | undefined;
   getProviderCheckAuthority(providerId: string): ProviderCheckAuthority | undefined;
   beginProviderCheckRequest(providerId: string, source: ProviderCheckSource, pendingCheck?: ProviderCheckResult): ProviderCheckAdmission | undefined;
   commitProviderCheckResult(ticket: ProviderCheckRequestTicket, result: ProviderCheckResult, cwd: string): ProviderCheckPublicationResult;

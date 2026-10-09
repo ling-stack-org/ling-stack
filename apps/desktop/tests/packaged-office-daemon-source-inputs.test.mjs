@@ -34,6 +34,7 @@ const newAuthoredRuntimeLeaves = [
   "packages/core/src/storage/sqlite/provider-check-migration.ts",
   "packages/core/src/storage/sqlite/provider-check-publication-store.ts",
   "packages/daemon/src/features/providers/check-publication.ts",
+  "packages/daemon/src/features/providers/model-discovery-authority.ts",
 ];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";

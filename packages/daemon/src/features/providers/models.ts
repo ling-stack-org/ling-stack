@@ -29,6 +29,7 @@ import {
   materializeProviderSecrets,
 } from "./secret-materializer.js";
 import { isLocalProviderSecretRef } from "./secrets.js";
+import { captureProviderModelDiscoveryAuthority } from "./model-discovery-authority.js";
 import {
   createProviderModelDiscoveryRequest,
   providerModelDiscoveryItems,
@@ -47,17 +48,37 @@ export async function listProviderModels(
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,
 ): Promise<ProviderModelListResponse> {
-  const preset = providerModelListInputToPreset(store, input);
+  const authority = captureProviderModelDiscoveryAuthority(store, input.providerPresetId);
+  const preset = providerModelListInputToPreset(input, authority.savedPreset);
+  try {
+    const result = await discoverProviderModels(store, preset, input, secretResolver, authority.assertCurrent);
+    authority.assertCurrent();
+    return result;
+  } catch (error) {
+    // Stale errors and media fallbacks are not current evidence either.
+    authority.assertCurrent();
+    throw error;
+  }
+}
+
+async function discoverProviderModels(
+  store: ProviderStoreFacet,
+  preset: ProviderPreset,
+  input: ProviderModelListRequest,
+  secretResolver: SecretResolver,
+  assertCurrent: () => void,
+): Promise<ProviderModelListResponse> {
   if (preset.baseUrl) {
     validateUrl(preset.baseUrl, "baseUrl");
   }
   if (preset.api === "media-job") {
-    return await listMediaProviderModels(store, preset, input, secretResolver);
+    return await listMediaProviderModels(store, preset, input, secretResolver, assertCurrent);
   }
   if (!supportsProviderModelDiscovery(preset)) {
     throw new HttpError(400, "unsupported_capability", `Model discovery is not implemented for ${preset.api}.`);
   }
   const materialized = materializeProviderModelListSecrets(store, preset, input, secretResolver);
+  assertCurrent();
   if (providerModelDiscoveryNeedsApiKey(preset, materialized.headers) && !materialized.apiKeySecret.configured) {
     throw new HttpError(400, "secret_missing", "API key missing. Add an API key before fetching models.");
   }
@@ -70,6 +91,7 @@ export async function listProviderModels(
     const seenPageTokens = new Set<string>();
     let pageSource = request.source;
     for (;;) {
+      assertCurrent();
       const response = await fetchProvider(pageSource, {
         method: "GET",
         headers: request.headers,
@@ -112,10 +134,12 @@ async function listMediaProviderModels(
   preset: ProviderPreset,
   input: ProviderModelListRequest,
   secretResolver: SecretResolver,
+  assertCurrent: () => void,
 ): Promise<ProviderModelListResponse> {
   const mediaKind = providerMediaKind(preset);
   const builtin = builtinMediaModelCandidates(mediaKind);
   const materialized = materializeProviderModelListSecrets(store, preset, input, secretResolver);
+  assertCurrent();
   if (preset.authHeader === false && !materialized.apiKeySecret.configured) {
     return providerModelListResponse("builtin:generation-models", builtin);
   }
@@ -159,16 +183,9 @@ async function listMediaProviderModels(
 }
 
 function providerModelListInputToPreset(
-  store: ProviderStoreFacet,
   input: ProviderModelListRequest,
+  savedPreset: ProviderPreset | undefined,
 ): ProviderPreset {
-  const savedPreset = input.providerPresetId
-    ? store.getProviderPreset(input.providerPresetId)
-    : undefined;
-  if (input.providerPresetId && !savedPreset) {
-    throw new HttpError(404, "provider_not_found", `Provider preset not found: ${input.providerPresetId}`);
-  }
-
   const requestedLocalRef = input.apiKeyRef && isLocalProviderSecretRef(input.apiKeyRef)
     ? input.apiKeyRef
     : undefined;
@@ -239,10 +256,12 @@ function materializeProviderModelListSecrets(
       apiKeyOverride: input.apiKey,
     });
   } catch (error) {
-    if (error instanceof ProviderSecretMaterializationError) {
-      throw new HttpError(400, error.code, error.message);
-    }
-    throw error;
+    // Resolver status messages/codes and thrown exceptions are not public data.
+    const code = error instanceof ProviderSecretMaterializationError
+      && ["secret_missing", "secret_access_denied", "secret_store_unavailable", "invalid_secret_ref"].includes(error.code)
+      ? error.code : "secret_materialization_failed";
+    throw new HttpError(400, code,
+      "Provider credentials could not be prepared. Verify the configured credentials and try again.");
   }
 }
 

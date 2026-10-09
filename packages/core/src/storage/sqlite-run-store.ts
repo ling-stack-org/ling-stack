@@ -4477,6 +4477,10 @@ export class SqliteRunStore implements RunStore {
     return this.providerChecks.getProviderCheckAuthority(id);
   }
 
+  getProviderConfigurationSnapshot(id: string): ReturnType<ProviderCheckPublicationStore["getProviderConfigurationSnapshot"]> {
+    return this.providerChecks.getProviderConfigurationSnapshot(id);
+  }
+
   beginProviderCheckRequest(id: string, source: ProviderCheckSource, pendingCheck?: ProviderCheckResult): ReturnType<ProviderCheckPublicationStore["beginProviderCheckRequest"]> {
     return this.providerChecks.beginProviderCheckRequest(id, source, pendingCheck);
   }

@@ -923,6 +923,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/providers/check-publication.ts",
   "packages/daemon/src/features/providers/keychain-secret-store.ts",
   "packages/daemon/src/features/providers/model-discovery-adapters.ts",
+  "packages/daemon/src/features/providers/model-discovery-authority.ts",
   "packages/daemon/src/features/providers/models.ts",
   "packages/daemon/src/features/providers/preflight.ts",
   "packages/daemon/src/features/providers/provider-reference-guard.ts",
