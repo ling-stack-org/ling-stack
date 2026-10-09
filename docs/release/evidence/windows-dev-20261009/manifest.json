@@ -1,0 +1,36 @@
+{
+  "schemaVersion": 1,
+  "version": "0.1.2-alpha.1",
+  "channel": "unsigned_dev + development",
+  "architecture": "x64",
+  "testDate": "2026-10-09",
+  "baseSha": "b529a4b475f41442b29b59ff5bfeeece8879c74e",
+  "sourceSha": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f",
+  "releaseTag": "windows-dev-0.1.2-alpha.1-20261009-f0a632b",
+  "releaseRepository": null,
+  "installer": {
+    "filename": "Ling-Stack-0.1.2-alpha.1-windows-x64-f0a632b-setup.exe",
+    "sizeBytes": 246639272,
+    "sha256": "2BB170CE7BD16032CBBA5CBE56EE655FCDAED46C80F9DE94F1231BA7A19C50A9"
+  },
+  "sourceArchive": {
+    "filename": "ling-stack-source-f0a632b.zip",
+    "sizeBytes": 42867630,
+    "sha256": "E7A1C009D5164C30FA0E0040F6DD5867AE9DE4E793EB63D46BD112A35BC70F54"
+  },
+  "installedExecutableSha256": "BD0AED10D7ECBE4643D4974456EDDBC41330F8BA9365AD9FEB0E30CFF016FA66",
+  "supportedTarget": "Windows 10/11 x64; Windows 11 build 26200 tested; Windows 10 not exercised.",
+  "bundledCuaDriver": false,
+  "signed": false,
+  "acceptance": "Core backend scope passed; full GUI acceptance incomplete.",
+  "sourceFixes": [
+    "982fc0b82c9496b1d026ce233e71b6c2e36f4bbe",
+    "f0a632b1bd5bd09b12778cbd7da3d26c354b832f"
+  ],
+  "prePrValidation": {
+    "windowsBootstrapGuard": "PASS",
+    "officeNativeBuild": "PASS",
+    "sourceSha": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f",
+    "checkedUtc": "2026-10-09T14:38:56.5050159Z"
+  }
+}
