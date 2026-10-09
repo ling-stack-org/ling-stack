@@ -1,5 +1,10 @@
 # Expo SDK57 current-source native readiness, 2026-10-09
 
+The [2026-10-10 unsigned-capsule checkpoint](mobile-expo57-unsigned-capsule-checkpoint-2026-10-10.md)
+supersedes the pending EXConstants/nested-JSI script boundary below. Preparation
+and regression tests now pass; actual native compilation/device acceptance do
+not. The rest of this page records the original preparation and exit64 evidence.
+
 ## Source and boundaries
 
 This is subsequent acceptance work for the already saved
