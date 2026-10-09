@@ -100,6 +100,11 @@ final evidence for this source. No source is rebuilt while its full suite runs.
 
 ## Not yet the runtime producer/consumer cutover
 
+This section records the foundation's original completion boundary. The later
+[production cutover checkpoint](provider-runtime-cutover-checkpoint-2026-10-10.md)
+now records completion of this chain with its own frozen-source evidence.
+Do not reuse the foundation's 3846-test Daemon receipt as the cutover's full suite.
+
 The current old cache and incident consumers are deliberately not called fixed
 by this foundation. The remaining chain is:
 

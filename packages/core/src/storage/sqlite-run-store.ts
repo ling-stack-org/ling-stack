@@ -79,6 +79,11 @@ import type {
   UpdateChannelTeamPatternInput,
   UpdateChannelTeamEvidenceItemInput,
 } from "../channel-team-types.js";
+import type {
+  AvailabilityIncidentCandidatePage,
+  CreateProviderRuntimeAvailabilityIncidentInput,
+  ListAvailabilityIncidentCandidatesOptions,
+} from "../provider-runtime-availability-types.js";
 import {
   type ApprovalPolicy,
   type ApprovalPolicyUpdateInput,
@@ -589,6 +594,7 @@ import { SqliteAutomationStore } from "./sqlite/automation-store.js";
 import { SqliteProviderStore } from "./sqlite/provider-store.js";
 import { SqliteProviderCheckPublicationStore } from "./sqlite/provider-check-publication-store.js";
 import { applyProviderCheckMigration } from "./sqlite/provider-check-migration.js";
+import { applyAvailabilityIncidentProvenanceMigration } from "./sqlite/availability-incident-provenance-migration.js";
 import type { ProviderCheckPublicationStore, ProviderCheckRequestTicket, ProviderCheckSource } from "../provider-check-publication-types.js";
 import { SqliteMcpStore } from "./sqlite/mcp-store.js";
 import { SqliteMcpMetadataPublicationStore } from "./sqlite/mcp-metadata-publication-store.js";
@@ -1538,6 +1544,11 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
           applyProviderCheckMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyAvailabilityIncidentProvenanceMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
@@ -2980,6 +2991,14 @@ export class SqliteRunStore implements RunStore {
 
   listAvailabilityIncidents(options: ListAvailabilityIncidentsOptions = {}): AvailabilityIncident[] {
     return this.channelTeamLifecycle.listAvailabilityIncidents(options);
+  }
+
+  createProviderRuntimeAvailabilityIncident(input: CreateProviderRuntimeAvailabilityIncidentInput, now: string): AvailabilityIncident {
+    return this.channelTeamLifecycle.createProviderRuntimeAvailabilityIncident(input, now);
+  }
+
+  listAvailabilityIncidentCandidates(options: ListAvailabilityIncidentCandidatesOptions): AvailabilityIncidentCandidatePage {
+    return this.channelTeamLifecycle.listAvailabilityIncidentCandidates(options);
   }
 
   createChannelTeamPattern(input: CreateChannelTeamPatternInput, now: string): ChannelTeamPattern {

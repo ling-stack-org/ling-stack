@@ -62,6 +62,11 @@ They are preserved, not rerun or renamed into successful evidence.
 
 ## Remaining production gate
 
+The following is this numeric slice's historical completion boundary. The
+subsequent [production cutover](provider-runtime-cutover-checkpoint-2026-10-10.md)
+has now connected and verified it; that checkpoint has separate source and
+full-suite evidence. Do not repeat the completed numeric implementation.
+
 The new budget foundation does not fix the old cache by itself. Core atomic
 provenance/keyset and Daemon scoped fold/projection are the next slices. Then
 reply/route/intent/reviewer/reconstruction and summary/tool/observer/metrics/new

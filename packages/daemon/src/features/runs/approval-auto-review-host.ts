@@ -5,6 +5,7 @@ import {
   type EffectiveRunPolicySnapshot,
   type RunSession,
   type RunStore,
+  type SecretResolver,
   type RuntimeAttemptFenceV1,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
@@ -48,6 +49,7 @@ export interface ReviewPendingApprovalAutomaticallyInput {
   readonly runner: RunnerAdapter;
   readonly provider: PiRunnerProviderConfig;
   readonly providerPresetId?: string;
+  readonly secretResolver?: SecretResolver;
   readonly run: RunSession;
   readonly approval: ApprovalRequest;
   readonly sourceFence: RuntimeAttemptFenceV1;
@@ -119,6 +121,10 @@ export async function reviewPendingApprovalAutomatically(
       evidenceFingerprint: evidence.fingerprint,
       serializedEvidence: evidence.serialized,
       signal,
+      ...(input.secretResolver ? { providerObservation: {
+        store: input.store, secretResolver: input.secretResolver,
+        runId: input.run.id, attemptId: reviewUnit.attempt.id,
+      } } : {}),
       localWriters: input.localWriters,
     }),
   });

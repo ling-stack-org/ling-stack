@@ -9,6 +9,7 @@ import {
   type ChannelWorkflowStepStatus,
   type RunStore,
   type RunTool,
+  type SecretResolver,
   type SkillApprovalProfile,
   type Task,
 } from "@ling-stack/core";
@@ -582,6 +583,7 @@ export async function handleChannelWorkflowStepStartRoute(
   workflowStepId: string,
   validateRunRequest: ValidateWorkflowStepRunRequest,
   startRun: StartWorkflowStepRun,
+  secretResolver?: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -597,7 +599,7 @@ export async function handleChannelWorkflowStepStartRoute(
       writeJson(response, 404, { error: "workflow_step_not_found", message: `Channel workflow step not found: ${workflowStepId}` });
       return;
     }
-    await handleChannelWorkflowStepStart(request, response, config, storeRegistry, cwd, existing.id, validateRunRequest, startRun);
+    await handleChannelWorkflowStepStart(request, response, config, storeRegistry, cwd, existing.id, validateRunRequest, startRun, secretResolver);
   } catch (error) {
     writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
   }
@@ -612,6 +614,7 @@ async function handleChannelWorkflowStepStart(
   workflowStepId: string,
   validateRunRequest: ValidateWorkflowStepRunRequest,
   startRun: StartWorkflowStepRun,
+  secretResolver?: SecretResolver,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for workflow step start` });
@@ -621,7 +624,7 @@ async function handleChannelWorkflowStepStart(
   const store = storeRegistry.getStore(cwd);
   const body = await readJsonBody(request, config.maxBodyBytes);
   const input = parseChannelWorkflowStepStartRequest(body);
-  const started = prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest);
+  const started = prepareWorkflowStepStart(store, workflowStepId, input, cwd, validateRunRequest, secretResolver);
   if (started.kind === "blocked") {
     writeJson(response, 200, {
       workflow: store.getChannelWorkflow(started.workflowId),
@@ -698,6 +701,7 @@ export function prepareWorkflowStepStart(
   input: ChannelWorkflowStepStartRequest,
   cwd: string,
   validateRunRequest: ValidateWorkflowStepRunRequest,
+  secretResolver?: SecretResolver,
 ): PreparedWorkflowStepStart {
   const step = store.getChannelWorkflowStep(workflowStepId);
   if (!step) {
@@ -897,6 +901,7 @@ export function prepareWorkflowStepStart(
   });
   const contextPackInput = {
     store,
+    secretResolver,
     channel,
     workflow,
     step,

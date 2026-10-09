@@ -6,11 +6,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createSqliteRunStore, resolveStoragePaths } from "@ling-stack/core";
+import { appendChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import { isRunEventData } from "@ling-stack/contracts";
 import { PiRunnerAdapter } from "@ling-stack/runner-pi";
 import { resolveConfig } from "../dist/config.js";
 import { HttpError } from "../dist/errors.js";
 import { readProviderInvocationFailure } from "../dist/features/providers/runtime-invocations.js";
+import { listCurrentlyApplicableAvailabilityIncidents } from "../dist/features/providers/runtime-failure-observations.js";
 import {
   compareProviderRuntimeObservationScope,
   providerRuntimeScopeIdentity,
@@ -22,6 +24,11 @@ import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
 import { createRunnerRegistry } from "../dist/runtime/runners.js";
 import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 import { RuntimeSupervisor } from "../dist/runtime/supervisor.js";
+import { startRuntimeWorkUnit } from "../dist/runtime/work-units.js";
+import { executeApprovalAutoReviewModel } from "../dist/features/runs/approval-auto-review-executor.js";
+import { routeChannelMessageReply } from "../dist/features/channels/channel-message-router.js";
+import { selectChannelWorkflowIntent } from "../dist/features/channels/channel-intent-selector.js";
+import { createAiChannelReply } from "../dist/features/channels/ai-replies.js";
 
 const PRIVATE_KEY = "synthetic-orchestrator-key-marker";
 const PRIVATE_HEADER = "synthetic-orchestrator-header-marker";
@@ -162,7 +169,40 @@ async function fixture(t, transport) {
     void running.then(() => pending.delete(running));
     return running;
   };
-  return { cwd, store, preset, secretResolver, request, failures, errors, publicEvents, dispatch };
+  const startReply = (runRequest, sink, failureSink) => {
+    const running = executeRunRequest(runRequest, sink, createRunnerRegistry([{
+      id: "pi", displayName: "Synthetic production Pi reply", status: "enabled", adapter: new NoHttpRetryRunner(),
+    }]), stores, activeRuns, supervisor, secretResolver, {}, {
+      onProviderInvocationFailure: failureSink, providerInvocationOrigin: "reply",
+    });
+    pending.add(running);
+    void running.then(() => pending.delete(running), () => pending.delete(running));
+    return running;
+  };
+  return { cwd, store, preset, secretResolver, request, failures, errors, publicEvents, dispatch, startReply, supervisor };
+}
+
+function channelSource(f, body = "Explain the current test result.") {
+  const now = new Date().toISOString();
+  const channel = f.store.createChannel({ name: "Synthetic invocation channel", boundPath: f.cwd,
+    defaultProviderPresetId: f.preset.id, autoReplyMode: "auto_route" }, now);
+  const sourceMessage = appendChannelItemFixture(f.store, { channelId: channel.id, authorType: "local-user", body }, now);
+  return { channel, sourceMessage };
+}
+
+function assertDurableOrigin(f, transport, origin, taskId, attemptId) {
+  assert.ok(transport.requests.length > 0, "the original production entry must reach real loopback HTTP");
+  transport.requests.forEach(assertTransport);
+  const candidates = f.store.listAvailabilityIncidentCandidates({ now: new Date().toISOString() }).candidates;
+  assert.equal(candidates.length, transport.requests.length);
+  for (const row of candidates) {
+    assert.equal(row.provenance, "provider_runtime");
+    assert.equal(row.source.origin, origin);
+    assert.equal(row.source.taskId, taskId);
+    if (attemptId) assert.equal(row.source.attemptId, attemptId);
+  }
+  assert.doesNotMatch(JSON.stringify(candidates), /synthetic-orchestrator-key-marker|synthetic-orchestrator-header-marker|synthetic-orchestrator-provider-body-marker/);
+  return candidates;
 }
 
 function assertTransport(request) {
@@ -227,6 +267,13 @@ test("real orchestrator Pi failure reaches the private sink with its actual Run/
         store: f.store, scope: fact.scope, secretResolver: f.secretResolver,
       }).state, "sampled_value_match");
     }
+    const candidates = f.store.listAvailabilityIncidentCandidates({ now: new Date().toISOString() }).candidates;
+    assert.equal(candidates.length, facts.length, "every actual failed invocation has an atomic durable source");
+    assert.ok(candidates.every(row => row.provenance === "provider_runtime" && row.source.origin === "task"));
+    assert.deepEqual(new Set(candidates.map(row => row.source.invocationId)), new Set(facts.map(fact => fact.invocationId)));
+    assert.equal(listCurrentlyApplicableAvailabilityIncidents({ store: f.store, secretResolver: f.secretResolver,
+      providerPresetId: f.preset.id, now: new Date().toISOString() }).length, facts.length);
+    assert.doesNotMatch(JSON.stringify(candidates), /synthetic-orchestrator-key-marker|synthetic-orchestrator-header-marker|synthetic-orchestrator-provider-body-marker/);
     assertNoPrivatePublication(f, outcome.runId, facts);
   });
 
@@ -266,6 +313,12 @@ test("the production orchestrator keeps held A's late failure on A after Store s
       store: f.store, scope: scopeB, secretResolver: f.secretResolver,
     }).state, "sampled_value_match");
     assert.notEqual(fact.identity.configRevision, providerRuntimeScopeIdentity(scopeB).configRevision);
+    const candidates = f.store.listAvailabilityIncidentCandidates({ now: new Date().toISOString() }).candidates;
+    assert.equal(candidates.length, 1, "late A remains durable history after B is selected");
+    assert.equal(candidates[0].source.identity.modelId, MODEL_A);
+    assert.equal(candidates[0].source.identity.configRevision, before.configRevision);
+    assert.deepEqual(listCurrentlyApplicableAvailabilityIncidents({ store: f.store, secretResolver: f.secretResolver,
+      providerPresetId: f.preset.id, now: new Date().toISOString() }), [], "current B health cannot consume A's late failure");
     assertNoPrivatePublication(f, outcome.runId, [fact]);
   });
 
@@ -308,6 +361,7 @@ test("SDK preparation rejection never becomes a Provider failure or dispatches H
     assert.deepEqual(f.store.listRuns(), []);
     assert.deepEqual(transport.requests, []);
     assert.deepEqual(f.failures, []);
+    assert.deepEqual(f.store.listAvailabilityIncidents({ includeExpired: true }), []);
   });
 
 test("a non-Pi adapter cannot borrow saved-preset proof through forged receipt-shaped results or runtime events",
@@ -388,3 +442,49 @@ test("a real inline Pi Provider error without private saved-preset binding stays
     assert.deepEqual(f.failures, [], "matching public connection values cannot manufacture private resolver authority");
     assertNoPrivatePublication(f, outcome.runId);
   });
+
+for (const origin of ["route", "intent"]) {
+  test(`the real channel ${origin} entry publishes only its own actual SDK failure lineage`, { timeout: 25_000 }, async t => {
+    const transport = await loopbackProvider(t, "provider-error");
+    const f = await fixture(t, transport);
+    const source = channelSource(f);
+    f.store.updateWorkspaceSettings({ defaultProviderPresetId: f.preset.id }, new Date().toISOString());
+    const input = { ...source, store: f.store, secretResolver: f.secretResolver,
+      config: resolveConfig({ defaultWorkspaceCwd: f.cwd, channels: { autoRoute: true, intentSelector: true } }),
+      runnerRegistry: createRunnerRegistry([{ id: "pi", displayName: "Synthetic production selector", status: "enabled", adapter: new NoHttpRetryRunner() }]) };
+    const result = origin === "route" ? await routeChannelMessageReply(input) : await selectChannelWorkflowIntent(input);
+    assert.ok(transport.requests.length > 0, `selector must dispatch, result: ${JSON.stringify(result)}`);
+    const candidates = assertDurableOrigin(f, transport, origin, source.sourceMessage.id);
+    assert.ok(candidates.every(row => row.source.runId === undefined && row.source.attemptId === undefined),
+      "selectors do not borrow a task Run or Attempt they do not own");
+  });
+}
+
+test("the actual isolated reviewer executor attributes HTTP failures to its independent Core Attempt", { timeout: 25_000 }, async t => {
+  const transport = await loopbackProvider(t, "provider-error");
+  const f = await fixture(t, transport);
+  const unit = startRuntimeWorkUnit({ store: f.store, runtimeSupervisor: f.supervisor, kind: "approval_review",
+    ownerType: "approval_request", ownerId: "synthetic-review-approval", providerPresetId: f.preset.id,
+    request: {}, idempotencyKey: "synthetic-review-unit" });
+  const provider = resolveProviderForRun(f.store, { providerPresetId: f.preset.id, skipProviderPreflight: true }, f.secretResolver);
+  const fingerprint = "a".repeat(64);
+  await assert.rejects(executeApprovalAutoReviewModel({ runner: new NoHttpRetryRunner(), provider, cwd: f.cwd,
+    approvalId: "synthetic-review-approval", evidenceFingerprint: fingerprint, serializedEvidence: '{"schemaVersion":1}',
+    providerObservation: { store: f.store, secretResolver: f.secretResolver, runId: "synthetic-source-run", attemptId: unit.attempt.id } }));
+  const candidates = assertDurableOrigin(f, transport, "reviewer", `approval-review:synthetic-review-approval:${fingerprint.slice(0, 16)}`, unit.attempt.id);
+  assert.ok(candidates.every(row => row.source.runId === "synthetic-source-run"));
+  assert.equal(f.store.getWorkUnitAttempt(unit.attempt.id).workUnitId, unit.workUnit.id);
+});
+
+test("the real channel reply wrapper deduplicates its callback and orchestrator durable publication", { timeout: 25_000 }, async t => {
+  const transport = await loopbackProvider(t, "provider-error");
+  const f = await fixture(t, transport), source = channelSource(f);
+  const reply = await createAiChannelReply({ ...source, store: f.store, secretResolver: f.secretResolver,
+    providerPresetId: f.preset.id, teammateId: "ling_agent", disableWebEvidence: true, completionMode: "inline", startRun: f.startReply });
+  assert.equal(reply.status, "blocked");
+  const candidates = assertDurableOrigin(f, transport, "reply", f.store.listRuns()[0].taskId);
+  const run = f.store.listRuns()[0], unit = f.store.getWorkUnit(run.workUnitId);
+  assert.ok(candidates.every(row => row.source.runId === run.id && row.source.attemptId === unit.activeAttemptId));
+  assert.equal(f.store.listAvailabilityIncidents({ includeExpired: true }).length, transport.requests.length,
+    "the reply callback does not publish the same authentic failure twice");
+});

@@ -1440,7 +1440,7 @@ export async function routeRequest(
     return;
   }
   if (runRoute?.kind === "tool-load-requests") {
-    await handleToolLoadRequestsCollection(request, response, config, url, storeRegistry, runnerRegistry, runRoute.runId);
+    await handleToolLoadRequestsCollection(request, response, config, url, storeRegistry, runnerRegistry, runRoute.runId, secretResolver);
     return;
   }
   if (request.method === "GET" && runRoute?.kind === "run") {
@@ -1729,6 +1729,7 @@ export async function routeRequest(
               if (terminalRun.status === "succeeded") {
                 await orchestrateChannelWorkflow({
                   store,
+                  secretResolver,
                   cwd,
                   workflowId: workflow.id,
                   validateRunRequest: (candidateRunRequest) => {
@@ -1767,6 +1768,7 @@ export async function routeRequest(
     const startOrchestratedRun = createStartOrchestratedRun(input.store, input.cwd);
     const orchestration = await orchestrateChannelWorkflow({
       store: input.store,
+      secretResolver,
       cwd: input.cwd,
       workflowId: confirmed.workflow.id,
       validateRunRequest: (candidateRunRequest) => {
@@ -1958,6 +1960,7 @@ export async function routeRequest(
           const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
           const result = await orchestrateChannelWorkflow({
             store,
+            secretResolver,
             cwd,
             workflowId: workflowRoute.workflowId,
             validateRunRequest: (candidateRunRequest) => {
@@ -2046,6 +2049,7 @@ export async function routeRequest(
         const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
         const result = await retryChannelWorkflowStep({
           store,
+          secretResolver,
           cwd,
           workflowStepId: workflowRoute.workflowStepId,
           validateRunRequest: (candidateRunRequest) => {
@@ -2108,6 +2112,7 @@ export async function routeRequest(
               computerUsePreviews,
             },
           ),
+        secretResolver,
       );
       return;
     }
@@ -2269,7 +2274,7 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "team-metrics") {
-      await handleChannelTeamMetricsProjection(request, response, config, storeRegistry, channelRoute.channelId);
+      await handleChannelTeamMetricsProjection(request, response, config, storeRegistry, channelRoute.channelId, secretResolver);
       return;
     }
     if (channelRoute.action === "team-authority-ledger") {
@@ -2281,7 +2286,7 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "team-snapshots") {
-      await handleChannelTeamSnapshots(request, response, config, storeRegistry, channelRoute.channelId);
+      await handleChannelTeamSnapshots(request, response, config, storeRegistry, channelRoute.channelId, secretResolver);
       return;
     }
     if (channelRoute.action === "team-evaluations") {

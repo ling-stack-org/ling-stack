@@ -58,6 +58,11 @@ import type {
 } from "./harness/continuations.js";
 import type { DelegationQueryStore, HarnessDiagnosticsStore } from "./harness/store-ports.js";
 import type {
+  AvailabilityIncidentCandidatePage,
+  CreateProviderRuntimeAvailabilityIncidentInput,
+  ListAvailabilityIncidentCandidatesOptions,
+} from "./provider-runtime-availability-types.js";
+import type {
   ClaimHarnessToolExecutionInput,
   FailApprovedHarnessToolExecutionInput,
   FinishHarnessToolExecutionInput,
@@ -1725,6 +1730,8 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore 
   listReliabilityIncidents(options?: ListReliabilityIncidentsOptions): ReliabilityIncident[];
   createAvailabilityIncident(input: CreateAvailabilityIncidentInput, now: string): AvailabilityIncident;
   listAvailabilityIncidents(options?: ListAvailabilityIncidentsOptions): AvailabilityIncident[];
+  createProviderRuntimeAvailabilityIncident(input: CreateProviderRuntimeAvailabilityIncidentInput, now: string): AvailabilityIncident;
+  listAvailabilityIncidentCandidates(options: ListAvailabilityIncidentCandidatesOptions): AvailabilityIncidentCandidatePage;
   createChannelTeamPattern(input: CreateChannelTeamPatternInput, now: string): ChannelTeamPattern;
   getChannelTeamPattern(id: string): ChannelTeamPattern | undefined;
   listChannelTeamPatterns(options: ListChannelTeamPatternsOptions): ChannelTeamPattern[];
@@ -2595,6 +2602,14 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore 
 export type RunStoreFacet<K extends keyof RunStore> = Pick<RunStore, K>;
 
 export type RunStorePathsFacet = RunStoreFacet<"paths">;
+
+/** Host-only provenance projection, separate from public historical incident DTOs. */
+export type AvailabilityIncidentStoreFacet = RunStoreFacet<
+  | "createAvailabilityIncident"
+  | "listAvailabilityIncidents"
+  | "createProviderRuntimeAvailabilityIncident"
+  | "listAvailabilityIncidentCandidates"
+>;
 
 export type RemoteAccessStoreFacet = RunStoreFacet<
   | "commitRemoteConversationSend"

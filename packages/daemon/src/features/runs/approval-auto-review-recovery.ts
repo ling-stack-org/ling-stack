@@ -110,6 +110,7 @@ export class ApprovalAutoReviewRecoveryCoordinator {
           runner,
           provider,
           providerPresetId: prepared.run.providerPresetId,
+          secretResolver: this.options.secretResolver,
           run: prepared.run,
           approval: prepared.approval,
           sourceFence: prepared.sourceFence,

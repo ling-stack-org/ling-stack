@@ -4,6 +4,7 @@ import {
   type ChannelWorkflowStep,
   type RunSession,
   type RunStore,
+  type SecretResolver,
   type WorkflowFanInContextReview,
   type WorkflowStepFailurePolicy,
   type WorkflowStepGate,
@@ -44,6 +45,7 @@ import {
 
 export interface OrchestrateWorkflowInput {
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
   readonly cwd: string;
   readonly workflowId: string;
   readonly validateRunRequest: ValidateWorkflowStepRunRequest;
@@ -110,6 +112,7 @@ export interface CancelWorkflowResult {
 
 export interface RetryWorkflowStepInput {
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
   readonly cwd: string;
   readonly workflowStepId: string;
   readonly validateRunRequest: ValidateWorkflowStepRunRequest;
@@ -224,6 +227,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       },
       input.cwd,
       input.validateRunRequest,
+      input.secretResolver,
     );
     if (started.kind === "blocked") {
       blockedResults.push({
@@ -572,6 +576,7 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
     },
     input.cwd,
     input.validateRunRequest,
+    input.secretResolver,
   );
   if (started.kind === "blocked") {
     return {

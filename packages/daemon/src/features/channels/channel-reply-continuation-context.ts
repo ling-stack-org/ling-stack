@@ -1,4 +1,4 @@
-import type { ChannelMessage, RunIntervention, RunSession, RunStore } from "@ling-stack/core";
+import type { ChannelMessage, RunIntervention, RunSession, RunStore, SecretResolver } from "@ling-stack/core";
 import type { ConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import { buildChannelReplyContextPack, renderContextPack } from "./context-packs.js";
 import { ensureChannelReplyThread } from "./channel-reply-execution.js";
@@ -21,6 +21,7 @@ export interface ChannelReplyContinuationContext {
 
 export function buildChannelReplyContinuationContext(input: {
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
   readonly sourceRun: RunSession;
   readonly intervention: RunIntervention;
   readonly sourceMessageId: string;
@@ -67,6 +68,7 @@ export function buildChannelReplyContinuationContext(input: {
   });
   const contextPack = buildChannelReplyContextPack({
     store: input.store,
+    secretResolver: input.secretResolver,
     channel,
     sourceMessage,
     turnEnvelope,

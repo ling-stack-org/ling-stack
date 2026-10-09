@@ -46,6 +46,8 @@ interface ConfigurationFact {
 interface ResolutionFact {
   readonly store: ProviderStoreFacet;
   readonly epoch: AuthorityEpoch;
+  /** Original configuration only; no materialized API key or secret-header values. */
+  readonly preset: ProviderPreset;
   readonly providerId: string;
   readonly identity: ProviderRuntimeScopeIdentity;
   readonly configRevision: number;
@@ -112,7 +114,7 @@ export function bindResolvedProviderObservationScope(input: {
     if (!matchesResolverOutput(fact.preset, input.provider, input.materialized)) return undefined;
     const scope = Object.freeze({}) as ProviderRuntimeObservationScope;
     scopes.set(scope, {
-      store: fact.store, epoch: fact.epoch, providerId: fact.preset.id,
+      store: fact.store, epoch: fact.epoch, preset: fact.preset, providerId: fact.preset.id,
       identity: Object.freeze({
         providerPresetId: fact.preset.id, providerKind: fact.preset.kind,
         providerApi: fact.preset.api, modelId: fact.preset.model, configRevision: fact.configRevision,
@@ -135,6 +137,45 @@ export function providerRuntimeScopeIdentity(
   scope: ProviderRuntimeObservationScope,
 ): ProviderRuntimeScopeIdentity | undefined {
   return scopes.get(scope)?.identity;
+}
+
+/**
+ * Original Host configuration for a live Attempt's static budget. This clone
+ * is data, not reusable scope authority, and never contains materialized values.
+ */
+export function providerPresetForRuntimeObservationScope(
+  scope: ProviderRuntimeObservationScope,
+): ProviderPreset | undefined {
+  const preset = scopes.get(scope)?.preset;
+  return preset ? structuredClone(preset) : undefined;
+}
+
+/** Original authority only: historical facts need not match today's configuration. */
+export function providerRuntimeScopeOwnedByStore(
+  store: ProviderStoreFacet,
+  scope: ProviderRuntimeObservationScope,
+): boolean {
+  const fact = scopes.get(scope);
+  return Boolean(fact && fact.store === store && epochs.get(store) === fact.epoch);
+}
+
+/** Same original private authority, without rereading external values or exposing proofs. */
+export function providerRuntimeObservationScopesEquivalent(
+  left: ProviderRuntimeObservationScope,
+  right: ProviderRuntimeObservationScope,
+): boolean {
+  const leftFact = scopes.get(left);
+  const rightFact = scopes.get(right);
+  return Boolean(leftFact && rightFact && leftFact.store === rightFact.store
+    && leftFact.epoch === rightFact.epoch && epochs.get(leftFact.store) === leftFact.epoch
+    && leftFact.configRevision === rightFact.configRevision
+    && leftFact.identity.providerPresetId === rightFact.identity.providerPresetId
+    && leftFact.identity.providerKind === rightFact.identity.providerKind
+    && leftFact.identity.providerApi === rightFact.identity.providerApi
+    && leftFact.identity.modelId === rightFact.identity.modelId
+    && leftFact.configurationProof === rightFact.configurationProof
+    && leftFact.connectionProof === rightFact.connectionProof
+    && leftFact.credentialProof === rightFact.credentialProof);
 }
 
 /** Mutated/forged/cloned provider objects cannot borrow an original binding. */
@@ -217,7 +258,7 @@ function authorityEpoch(store: ProviderStoreFacet): AuthorityEpoch {
 
 function configurationComparison(fact: ConfigurationFact | ResolutionFact): ProviderRuntimeScopeComparison {
   try {
-    const id = "preset" in fact ? fact.preset.id : fact.providerId;
+    const id = fact.preset.id;
     const current = fact.store.getProviderConfigurationSnapshot(id);
     if (!current) return { state: "changed", reason: "provider_deleted" };
     return configurationMatches(fact, current.provider, current.configRevision)

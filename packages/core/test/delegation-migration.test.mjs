@@ -162,7 +162,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through154/155/156 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through154/155/156/157 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -188,7 +188,12 @@ test("real schema153 upgrades through154/155/156 preserving historical SQL/marke
     DROP TRIGGER provider_check_secret_update;
     DROP TRIGGER provider_check_secret_delete;
     DROP TABLE provider_check_authorities;
-    DELETE FROM schema_migrations WHERE version=156;`);
+    DELETE FROM schema_migrations WHERE version=156;
+    DROP TRIGGER channel_team_incident_provenance_insert;
+    DROP TRIGGER channel_team_incident_provenance_update;
+    DROP TABLE channel_team_incident_provenance;
+    DROP INDEX idx_availability_candidates_time;
+    DELETE FROM schema_migrations WHERE version=157;`);
   assert.equal(old.handle.prepare("SELECT max(version) AS version FROM schema_migrations").get().version, 153);
   const oldSchema = schema(old.handle);
   const oldMarkers = old.handle.prepare("SELECT * FROM schema_migrations ORDER BY version").all();
@@ -207,14 +212,20 @@ test("real schema153 upgrades through154/155/156 preserving historical SQL/marke
   const providerOverlay = new Set(["provider_check_authorities", "provider_check_insert", "provider_check_update",
     "provider_check_delete", "provider_check_secret_insert", "provider_check_secret_update", "provider_check_secret_delete",
     "sqlite_autoindex_provider_check_authorities_1"]);
+  const incidentProvenanceOverlay = new Set(["channel_team_incident_provenance", "channel_team_incident_provenance_insert",
+    "channel_team_incident_provenance_update", "sqlite_autoindex_channel_team_incident_provenance_1", "idx_availability_candidates_time"]);
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
-    && row.name !== "mcp_authority_revisions" && !providerOverlay.has(row.name)), oldSchema.filter(row => row.name !== "mcp_authority_revisions"));
+    && row.name !== "mcp_authority_revisions" && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name)),
+  oldSchema.filter(row => row.name !== "mcp_authority_revisions"));
   const newAuthorityColumns = database.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
   assert.deepEqual(newAuthorityColumns.slice(0, oldAuthorityColumns.length), oldAuthorityColumns);
   assert.deepEqual(newAuthorityColumns.slice(oldAuthorityColumns.length).map(column => column.name),
     ["metadata_request_revision", "metadata_published_revision"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157) ORDER BY version").all(), oldMarkers);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=157").get().name,
+    "add_availability_incident_provenance");
+  assert.equal(database.prepare("SELECT count(*) AS n FROM channel_team_incident_provenance").get().n, 0);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=156").get().name,
     "add_provider_check_publication_authority");
   assert.deepEqual(database.prepare("SELECT * FROM provider_presets WHERE id=?").get(provider.id), oldProvider);

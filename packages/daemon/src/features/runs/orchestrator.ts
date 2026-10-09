@@ -109,6 +109,7 @@ import {
   resolveMcpToolAccessForRun,
 } from "./mcp.js";
 import { hydrateRunnerToolSurface } from "./tool-surfaces.js";
+import { runtimeObservationScopeForProvider } from "../providers/runtime-observation-scope.js";
 import { createQueuedRunForConflict } from "./queue.js";
 import { resolveProviderForRun, resolveProviderRunThinkingLevel } from "./providers.js";
 import type { RunRequest } from "./schemas.js";
@@ -177,6 +178,8 @@ import {
   createProviderInvocationObserver,
   type ProviderInvocationFailureSink,
 } from "../providers/runtime-invocations.js";
+import { recordProviderInvocationFailureObservations } from "../providers/runtime-failure-observations.js";
+import type { ProviderInvocationOrigin } from "../providers/runtime-invocations.js";
 
 interface ExistingRunContinuationExecutionOptions {
   readonly runId: string;
@@ -188,6 +191,7 @@ interface ExistingRunContinuationExecutionOptions {
 export interface ExecuteRunRequestOptions {
   /** Private diagnostic facts only; never selected from public Run request input. */
   readonly onProviderInvocationFailure?: ProviderInvocationFailureSink;
+  readonly providerInvocationOrigin?: ProviderInvocationOrigin;
   readonly onRunReady?: (runId: string) => void;
   readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
   /** Runs after a durable user-input yield, never for ordinary terminal completion. */
@@ -1428,6 +1432,7 @@ async function executeAdmittedRunRequest(
     return undefined;
   }
   const activeProvider = resolvedProvider;
+  const activeProviderObservationScope = runtimeObservationScopeForProvider(store, activeProvider);
   const activeEffectivePolicySnapshot = effectivePolicySnapshot;
   const activeRuntimeSettings = runtimeSettings;
 
@@ -1965,6 +1970,7 @@ async function executeAdmittedRunRequest(
               runner: reviewerRunner,
               provider: activeProvider,
               providerPresetId: runRequest.providerPresetId,
+              secretResolver,
               run,
               approval,
               sourceFence: runnerCallbackFence,
@@ -2010,8 +2016,11 @@ async function executeAdmittedRunRequest(
       ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
         ? createProviderInvocationObserver({
             store, provider: activeProvider, taskId: runnerRequest.task.id,
-            runId: run.id, attemptId: attempt.id, origin: "task",
-            signal: abortController.signal, onFailure: options.onProviderInvocationFailure,
+            runId: run.id, attemptId: attempt.id, origin: options.providerInvocationOrigin ?? "task",
+            signal: abortController.signal, onFailure: (failure) => {
+              recordProviderInvocationFailureObservations({ store, secretResolver, failure });
+              return options.onProviderInvocationFailure?.(failure);
+            },
           })
         : {}),
       runId: run.id,
@@ -2087,6 +2096,9 @@ async function executeAdmittedRunRequest(
         runnerResolution.runner.toolHydration.conformance === "verified"
         ? (request) => hydrateRunnerToolSurface({
             store,
+            secretResolver,
+            actualProvider: activeProvider,
+            observationScope: activeProviderObservationScope,
             runnerRegistry,
             run,
             sourceFence: runnerCallbackFence,

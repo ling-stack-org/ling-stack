@@ -262,10 +262,13 @@ value is printed or modified.
 
 ## Completion boundary
 
-Implementation is in progress. This design records the accepted A guarantee,
-not completion of the runtime cache, incident consumers or E6. The existing
-two address/context baseline REDs remain real until the full producer/consumer
-chain is connected. Fresh packaged macOS acceptance remains blocked by its
-separate formal Office review input; no unsigned/old mixed package bypass is
-introduced. H10 budget, native environment and Office isolated-Keychain decisions
-are not silently settled here.
+The resolution, logical invocation, numeric budget and production
+producer/consumer chain have now been implemented. Their distinct source-bound
+verification and the retained original REDs are recorded in the
+[production cutover checkpoint](provider-runtime-cutover-checkpoint-2026-10-10.md).
+The original endpoint/window baseline counterexamples are covered by the new
+production regressions, not retrospectively relabeled as passing old tests.
+This completes the accepted A runtime cutover, not E6 or the complete Harness.
+Fresh packaged macOS acceptance retains its separate formal Office review
+input; no unsigned/old mixed package bypass is introduced. H10 budget, native
+environment and Office isolated-Keychain decisions are not silently settled.

@@ -3256,7 +3256,7 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
   }
 });
 
-test("channel discussion records provider runtime failures as availability incidents only", async () => {
+test("an untrusted scripted channel adapter cannot publish Provider availability incidents", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-provider-runtime-incident-"));
   const rateLimitError = Object.assign(new Error("Too many requests"), { code: "rate_limited" });
   const runner = new ScriptedRunner([rateLimitError]);
@@ -3294,10 +3294,7 @@ test("channel discussion records provider runtime failures as availability incid
       now: new Date().toISOString(),
       limit: 10,
     });
-    assert.equal(availability.length, 1);
-    assert.equal(availability[0].kind, "quota");
-    assert.equal(availability[0].state, "rate_limited");
-    assert.equal(availability[0].agentId, undefined);
+    assert.deepEqual(availability, [], "adapter error text is not an admitted SDK Provider failure fact");
     assert.deepEqual(store.listReliabilityIncidents({ agentId: teammateId, capabilityScope: "code", limit: 10 }), []);
   } finally {
     await daemon.close();
@@ -4018,10 +4015,9 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
     assert.match(runner.runs[1].task.prompt, /Compacted channel discussion summary for a no-tools retry/);
     assert.match(runner.runs[1].task.prompt, /channel_discussion_summary|Compacted visible message count/i);
     const downgradedBudget = resolveProviderContextBudget(provider, "channel_reply");
-    assert.equal(downgradedBudget.mode, "model_estimated");
-    assert.equal(downgradedBudget.capabilitySource, "runtime_observed");
-    assert.equal(downgradedBudget.capabilityConfidence, "estimated");
-    assert.ok(downgradedBudget.contextWindowTokens < 32768);
+    assert.notEqual(downgradedBudget.capabilitySource, "runtime_observed",
+      "scripted error text permits a bounded reply retry, not Provider window learning");
+    assert.equal(downgradedBudget.contextWindowTokens, 32768);
     const providerList = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
     const persistedProvider = providerList.providers.find((item) => item.id === provider.id);
     assert.ok(persistedProvider);
@@ -4037,9 +4033,7 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
       now: new Date().toISOString(),
       limit: 10,
     });
-    assert.equal(incidents.length, 1);
-    assert.equal(incidents[0].kind, "timeout");
-    assert.equal(incidents[0].state, "slow");
+    assert.deepEqual(incidents, [], "only the trusted SDK admission seam can publish runtime availability");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

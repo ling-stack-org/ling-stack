@@ -41,6 +41,7 @@ export * from "./memory-consolidation-types.js";
 export * from "./governance-notification-types.js";
 export * from "./provider-types.js";
 export * from "./provider-check-publication-types.js";
+export * from "./provider-runtime-availability-types.js";
 export * from "./provider-templates.js";
 export * from "./provider-model-catalog.js";
 export * from "./provider-model-capabilities.js";
