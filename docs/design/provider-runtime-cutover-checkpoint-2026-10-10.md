@@ -19,8 +19,9 @@ not modified or staged. This is a local checkpoint, not a release or E6 acceptan
 
 ## Root cause and implemented boundaries
 
-The former process-global window cache was keyed only by Provider ID. It could
-reuse a previous endpoint/model/credential's window, retain expired minima and
+The former process-global window cache used Provider id/kind/API/model, but
+lacked Store, configuration revision and credential authority. It could
+reuse a previous endpoint/capacity/credential's window, retain expired minima and
 attribute a late error by rereading the new preset. Incident consumers limited
 historical candidates before checking applicability. An error's prose or an
 earlier discussion pack was not an authentic SDK invocation or its budget.
