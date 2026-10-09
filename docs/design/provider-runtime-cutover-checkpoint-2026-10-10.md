@@ -101,7 +101,7 @@ The complete production chain now consumes authentic invocation facts:
 | Scoped domain and tool budget, Node 22 and 24 | 40/40 each, exit 0 |
 | Actual context/observer/HTTP metrics and snapshots, Node 22 and 24 | 13/13 each, exit 0 |
 | Real Pi/loopback production task/reply/route/intent/reviewer, Node 22 | 11/11, exit 0 |
-| Joint source matrix, Node 22 and 24 | Full TAP footers 478/478 each, all nonpass counts zero; separate process-exit receipts were not recovered after compaction |
+| Joint source matrix, Node 22 and 24 | 478/478 each, actual exit 0; zero fail/cancel/skip/todo |
 | Migration fixture correction, Node 22 and 24 | 73/73 each, exit 0; also covered by final Core full |
 | Final Daemon TypeScript build | exit 0 |
 | Workspace typecheck | exit 0; explicit `WORKSPACE_TYPECHECK_EXIT=0` receipt |
@@ -109,8 +109,10 @@ The complete production chain now consumes authentic invocation facts:
 | Independent production review | no remaining P1/P2 in this slice |
 
 Overlapping matrices are not summed into a unique test count. The complete
-Core/Daemon suites independently ended with real process exit 0; the joint
-footer is not presented as an independently recovered process-exit receipt.
+Core/Daemon suites independently ended with real process exit 0. Root recovered
+joint processes 57753 and 33964 through their original terminal handles; both
+returned `exit_code: 0` after their full TAP footers. The independent reviewer
+read the footers but did not poll these Root handles.
 The joint command contained an unmatched lifecycle test pattern; the actual
 `channel-team-lifecycle-store.test.mjs` is covered by the Core 44 and full suite,
 not by that unmatched pattern. Older Runner full results belong to their
