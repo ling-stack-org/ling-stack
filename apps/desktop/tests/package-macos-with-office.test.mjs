@@ -66,6 +66,7 @@ async function fixture(t, options = {}) {
     [keys.existing]: "before", [keys.missing]: undefined,
     [keys.removed]: "remove-before", [keys.omitted]: "untouched-before",
     LING_CUA_DRIVER_PACKAGE_PROVIDER: undefined,
+    LING_DESKTOP_PACKAGE_HUMAN_QA: undefined,
   });
   for (const [key, value] of [["platform", options.platform ?? "darwin"], ["arch", options.arch ?? "arm64"]]) {
     const original = Object.getOwnPropertyDescriptor(process, key);
@@ -193,6 +194,50 @@ async function fixture(t, options = {}) {
 }
 
 test("fixed Office package entry regression (test-only loader, no native/signature/package approval)", async t => {
+  await t.test("QA uses the original publication/signing path with fixed separate identity", async t => {
+    const f = await fixture(t, {
+      derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: "1" },
+      topLevelConfig: { appId: "com.lingstack.desktop", productName: "Ling Stack", directories: { output: "release" } },
+    });
+    process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "1";
+    await f.api.packageMacosWithOffice();
+    assert.equal(f.state.tokens.length, 1);
+    assert.equal(f.state.humanBuildCalls, 1);
+    assert.equal(f.state.buildCalls.length, 1);
+    const { config } = f.state.buildCalls[0];
+    assert.equal(config.appId, "com.lingstack.desktop.human-qa");
+    assert.equal(config.productName, "Ling Stack Human QA");
+    assert.equal(config.directories.output, "release/human-qa");
+    assert.equal(config.mac.identity, "-");
+    assert.equal(config.mac.sign, undefined);
+    assert.equal(config.extraMetadata.lingHumanQaPackage.release, false);
+    assert.equal(f.state.active, undefined);
+  });
+
+  await t.test("invalid QA selector refuses before CLI/native/build", async t => {
+    const f = await fixture(t);
+    process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "0";
+    await assert.rejects(f.api.packageMacosWithOffice(), /human_qa_lane_invalid/u);
+    assert.deepEqual(f.state.audit, []);
+    assert.equal(f.state.tokens.length, 0);
+    assert.equal(f.state.buildCalls.length, 0);
+  });
+
+  await t.test("derived environment cannot change the admitted lane", async t => {
+    const f = await fixture(t, { derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: "1" } });
+    await assert.rejects(f.api.packageMacosWithOffice(), /human_qa_selection_changed/u);
+    assert.equal(f.state.tokens.length, 0);
+    assert.equal(f.state.buildCalls.length, 0);
+  });
+
+  await t.test("config-time lane drift refuses Builder and closes publication", async t => {
+    const f = await fixture(t, { onConfig: () => { process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "1"; } });
+    await assert.rejects(f.api.packageMacosWithOffice(), /human_qa_selection_changed/u);
+    assert.equal(f.state.tokens.length, 1);
+    assert.equal(f.state.buildCalls.length, 0);
+    assert.equal(f.state.active, undefined);
+  });
+
   await t.test("same-process config import and Builder stay awaited inside real environment scope", async t => {
     const configGate = deferred(), builderGate = deferred();
     const f = await fixture(t, { configGate, builderGate });

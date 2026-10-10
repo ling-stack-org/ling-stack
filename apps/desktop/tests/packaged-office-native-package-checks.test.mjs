@@ -96,6 +96,21 @@ async function fixture(t) {
     signatureCalls, extractionCalls, productFilename, artifact };
 }
 
+test("Office hooks load the authored review contract, never generated Daemon dist", async t => {
+  const loader = registerHooks({ resolve(specifier, context, nextResolve) {
+    if (context.parentURL && new URL(context.parentURL).pathname === scriptPath
+      && specifier.includes("/packages/daemon/dist/")) {
+      throw new Error("explicit_test_only_generated_review_contract_refused");
+    }
+    return nextResolve(specifier, context);
+  } });
+  t.after(() => loader.deregister());
+  const f = await fixture(t);
+  assert.equal(typeof f.api.verifyOriginalOfficeCopyInApp, "function");
+  assert.equal(f.signatureCalls.length, 0);
+  assert.equal(f.extractionCalls.length, 0);
+});
+
 test("Office package checks: synthetic active reader/signer/extractor, NOT real packaged validation", async t => {
   await t.test("actual local ASAR rejects stale packaged CLI instead of accepting only Office resources", async t => {
     const f = await fixture(t), source = join(f.root, "asar-source");

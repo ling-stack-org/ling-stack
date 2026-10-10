@@ -31,6 +31,8 @@
  * using Node's native TypeScript stripping (fixed build runtime Node 22.22.1).
  * This does not attest the ordinary developer lane's existing dist or vendor
  * generated files. Source config changes require a new explicit review.
+ * Human QA's two early-entry sources are explicit non-Office-build review inputs:
+ * their inclusion pins the QA isolation code, not the entire generated Main graph.
  *
  * A graph change requires an explicit review of this fixed list. It must not
  * silently discover, regenerate, approve, or refresh digests during a build.
@@ -59,6 +61,7 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
   "apps/desktop/scripts/cua-driver-signing/signing-contract.mjs",
   "apps/desktop/scripts/macos-development-signing.mjs",
   "apps/desktop/scripts/package-macos-with-office.mjs",
+  "apps/desktop/scripts/packaged-human-qa-lane.mjs",
   "apps/desktop/scripts/packaged-office-daemon-source-inputs.mjs",
   "apps/desktop/scripts/packaged-codesign-review-publication.mjs",
   "apps/desktop/scripts/packaged-office-native-asar-checks.mjs",
@@ -76,6 +79,8 @@ export const PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS = Object.freeze([
 ]);
 
 export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
+  "apps/desktop/main/entry.ts",
+  "apps/desktop/main/qa-launch-profile.ts",
   "apps/desktop/scripts/build-human-evaluation-helper.mjs",
   "apps/desktop/scripts/packaged-office-native-review.mjs",
   "LICENSE",
@@ -123,6 +128,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "apps/desktop/scripts/packaged-office-native-review-inputs.mjs",
   "apps/desktop/scripts/packaged-office-signing-inputs.mjs",
   "apps/desktop/shared/cua-driver-artifact-layout.mjs",
+  "apps/desktop/scripts/packaged-human-qa-lane.mjs",
   "apps/desktop/shared/cua-driver-package-authority-contract.mjs",
   "apps/desktop/shared/cua-driver-provider-lock-contract.mjs",
   "native/office-local/scripts/build.mjs",

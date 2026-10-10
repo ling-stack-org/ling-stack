@@ -10,6 +10,7 @@ import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs
 import { assertPackagedOfficeSigningConfig,
   assertPackagedOfficeSigningEnvironment } from "./packaged-office-signing-inputs.mjs";
 import { buildHumanEvaluationHelper } from "./build-human-evaluation-helper.mjs";
+import { readPackagedOfficeHumanQaSelection, selectPackagedOfficeBuildLane } from "./packaged-human-qa-lane.mjs";
 
 const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const builderArguments = Object.freeze(["--mac", "dmg", "zip", "--arm64"]);
@@ -18,6 +19,7 @@ let busy = false, configSequence = 0;
 /** Fixed same-process macOS lane; there is no CLI config/target/publication override. */
 export async function packageMacosWithOffice() {
   if (busy) throw new Error("packaged_office_native_package_busy");
+  const humanQa = readPackagedOfficeHumanQaSelection(process.env);
   busy = true;
   try {
     if (process.platform !== "darwin" || process.arch !== "arm64"
@@ -33,6 +35,9 @@ export async function packageMacosWithOffice() {
     assertPackagedOfficeSigningEnvironment(process.env);
     await runCuaDriverElectronPackageCli(["--platform", "darwin", "--", ...builderArguments], process.env, {
       async runBuilder({ appRoot, args, environment }) {
+        if (readPackagedOfficeHumanQaSelection(environment) !== humanQa) {
+          throw new Error("packaged_human_qa_selection_changed");
+        }
         if (realpathSync(appRoot) !== desktopRoot
           || JSON.stringify(args) !== JSON.stringify(["--config", resolve(desktopRoot,
             "scripts/cua-driver-electron-builder.config.mjs"), ...builderArguments])) {
@@ -49,7 +54,11 @@ export async function packageMacosWithOffice() {
             // one validated Cua environment from leaking into a later build.
             const configUrl = new URL("./cua-driver-electron-builder.config.mjs", import.meta.url);
             configUrl.searchParams.set("officeInvocation", String(++configSequence));
-            const { default: config } = await import(configUrl.href);
+            const { default: originalConfig } = await import(configUrl.href);
+            if (readPackagedOfficeHumanQaSelection(process.env) !== humanQa) {
+              throw new Error("packaged_human_qa_selection_changed");
+            }
+            const config = selectPackagedOfficeBuildLane(originalConfig, process.env);
             if (config.mac.sign !== undefined || config.mac.identity !== "-") {
               throw new Error("packaged_office_native_default_signer_required");
             }
