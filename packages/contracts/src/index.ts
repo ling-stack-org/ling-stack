@@ -13,6 +13,7 @@ export type * from "./runtime.js";
 export * from "./harness.js";
 export type * from "./harness-evaluation-qa.js";
 export type * from "./harness-human-evaluation.js";
+export type * from "./harness-human-evaluation-read.js";
 export * from "./run-compaction-checkpoints.js";
 export * from "./run-event-validation.js";
 export * from "./provider-diagnostics.js";

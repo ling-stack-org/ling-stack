@@ -1452,8 +1452,14 @@ Desktop2046pass/3Windows-onlyskip、types均真正exit0。新Daemon隔离full401
 纠正/撤回append-only，失响应只读核对，返回前owner/epoch重验。Core最终2823/2823，Desktop最终
 2144pass/3Windows-onlyskip，Office source-only236/236，workspace types均actual exit0。
 Daemon双Nodefocused各21/21；首full4036pass/1timeout-cancel，不能算全绿；同媒体文件隔离24/24通过，
-完整串行复验待收终态。真实Swift编译/sessionprobe通过，不等于真实人工OS/GUI确认。
+完整串行复验最终TAP4037/4037、0fail/cancel/skip/todo；session已关闭且未追回独立exit metadata，
+不称actual exit已收，不重复旧矩阵。真实Swift编译/sessionprobe通过，不等于durable人工提交。
 详情与下一入口见[160检查点](harness-human-evaluation-checkpoint-2026-10-10.md)。
-下一只补enrolled-only分页/专用Main列表与报告capability/设置QA表单/immutable report-only producer，
-再做真实模型与macOS12类验收；不重做已验模块，不把160事件当137grade或promotion样本。
+enrolled-only分页、专用Main列表/报告capability、设置QA表单与immutable report-only producer
+已接通。后继合同见[可见QA设计](harness-human-qa-surface-detailed-design.md)。
+Core双Node60/60，Daemon双Node28/28，Desktop双Node85/85；Web双Nodefocused26/26、
+full481/481与noEmit均actual exit0。独审无剩余确认P1/P2；新Office清单由真实source-only后验。
+用户已亲自完成display-only synthetic payload系统认证；未写SQLite，不算durable或GUI整体验收。
+下一仅继续真实packaged可见QA/滚动取消/人工提交，以及受预算真实模型与macOS12类验收；
+不重做已验模块，不把160事件当137grade或promotion样本。
 用户政策无新增未决项；H10根预算仍独立未答，dynamicchildren不开启。总目标保持active。

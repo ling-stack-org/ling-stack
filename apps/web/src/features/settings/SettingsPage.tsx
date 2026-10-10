@@ -26,6 +26,7 @@ import { ArchivedSettingsPanel } from "./ArchivedSettingsPanel.js";
 import { ExecutionPermissionsSettingsPanel } from "./ExecutionPermissionsSettingsPanel.js";
 import { ExternalWorkSettingsPanel } from "./ExternalWorkSettingsPanel.js";
 import { StartupDiagnosticsSettingsPanel } from "./MaintenanceSettingsPanel.js";
+import { HumanQaSettingsPanel } from "./human-qa/HumanQaSettingsPanel.js";
 import { InterfacePreferencesSettingsPanel, PersonalSettingsPanel } from "./PersonalInterfaceSettingsPanel.js";
 import { PersonalizationSettingsPanel } from "./PersonalizationSettingsPanel.js";
 import { SettingsRunDiagnosticsPanel } from "./SettingsRunDiagnosticsPanel.js";
@@ -390,6 +391,7 @@ export function SettingsPage({
         ) : null}
 
         {visibleActiveSection === "startup-diagnostics" && !workspaceToolDetailOpen && !runDiagnosticsOpen ? (
+          <div className="settings-startup-diagnostics">
           <StartupDiagnosticsSettingsPanel
             cwd={cwd}
             effectiveConfig={effectiveConfig}
@@ -400,6 +402,8 @@ export function SettingsPage({
             onRefreshStartup={onRefreshStartup}
             onOpenRunDiagnostics={onOpenRunDiagnostics}
           />
+          <HumanQaSettingsPanel key={cwd} cwd={cwd} />
+          </div>
         ) : null}
     </SettingsShell>
   );

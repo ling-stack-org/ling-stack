@@ -2,10 +2,12 @@ import { createHash, randomUUID } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import type { RunEvaluationHumanConfirmationV1 } from "@ling-stack/contracts";
 import type { DesktopHumanEvaluationRequest, DesktopHumanEvaluationResult,
-  DesktopHumanEvaluationInspectRequest, DesktopHumanEvaluationSnapshot } from "../../shared/human-evaluation-capabilities.js";
+  DesktopHumanEvaluationInspectRequest, DesktopHumanEvaluationSnapshot, DesktopHumanEvaluationListRequest,
+  DesktopHumanEvaluationListResult, DesktopHumanEvaluationReportRef, DesktopHumanEvaluationReportResult } from "../../shared/human-evaluation-capabilities.js";
 import { signHumanEvaluationConfirmation, type HumanEvaluationConnection,
   type HumanEvaluationDaemonClient } from "./daemon-client.js";
 import { sameHumanSession, type HumanEvaluationNativeBridge } from "./native-bridge.js";
+import { readWithHumanEvaluationAuthority } from "./read-operation.js";
 
 export class HumanEvaluationCoordinator {
   private desktopEpoch = randomUUID();
@@ -18,6 +20,8 @@ export class HumanEvaluationCoordinator {
   constructor(private readonly options: {
     readonly desktopInstanceId: string;
     readonly workspaceCwd: string;
+    readonly displayWorkspaceCwd?: string;
+    readonly scopeCurrent?: () => boolean;
     readonly native: HumanEvaluationNativeBridge;
     readonly daemon: HumanEvaluationDaemonClient;
     readonly now?: () => number;
@@ -133,13 +137,14 @@ export class HumanEvaluationCoordinator {
   async inspect(request: DesktopHumanEvaluationInspectRequest, isOwnerCurrent: () => boolean): Promise<DesktopHumanEvaluationSnapshot> {
     if (this.disposed || !isOwnerCurrent()) return failure("unauthorized_sender") as DesktopHumanEvaluationSnapshot;
     if (this.active) return failure("busy") as DesktopHumanEvaluationSnapshot;
+    if (!this.readScopeCurrent()) return { accepted: false, reason: "authority_changed" };
     let release!: () => void;
     const drained = new Promise<void>(resolve => { release = resolve; });
     const controller = new AbortController();
     this.active = { requestId: `inspect:${request.taskId}`, controller, drained };
     const generation = this.generation, signal = controller.signal;
     let connection: HumanEvaluationConnection | undefined;
-    const current = (): boolean => !this.disposed && !signal.aborted && generation === this.generation && isOwnerCurrent();
+    const current = (): boolean => !this.disposed && !signal.aborted && generation === this.generation && isOwnerCurrent() && this.readScopeCurrent();
     const retireConnection = async (): Promise<void> => {
       const retiring = connection;
       connection = undefined;
@@ -158,16 +163,19 @@ export class HumanEvaluationCoordinator {
       const intentId = this.unknownIntents.get(request.taskId);
       const snapshot = await this.options.daemon.snapshot({ authority: a, taskId: request.taskId,
         ...(request.afterRevision !== undefined ? { afterRevision: request.afterRevision } : {}),
+        ...(request.reportRef ? { reportRef: request.reportRef } : {}),
         ...(intentId ? { intentId } : {}) }, signal);
       const after = await this.options.native.readSession(signal);
       if (!current() || !sameHumanSession(before, after)) return { accepted: false, reason: "authority_changed" };
       await retireConnection();
       if (!current()) return { accepted: false, reason: "authority_changed" };
+      const finalSession = await this.options.native.readSession(signal);
+      if (!current() || !sameHumanSession(before, finalSession)) return { accepted: false, reason: "authority_changed" };
       const lastSubmission = !intentId ? "none" : !snapshot.intent ? "unknown"
         : snapshot.intent.state === "consumed" ? "committed" : "pending";
-      const ref = request.reportRef, head = snapshot.head;
-      const reportCurrentness = !ref ? undefined : !head ? "unavailable" : head.state === "active"
-        && head.taskId === ref.taskId && head.eventId === ref.eventId && head.revision === ref.revision ? "current" : "stale";
+      const head = snapshot.head;
+      // Private Host atomic lineage validation, not a head-tuple approximation.
+      const reportCurrentness = request.reportRef ? snapshot.reportCurrentness ?? "unavailable" : undefined;
       return { accepted: true, taskId: request.taskId, ...(head ? { head } : {}),
         ...(snapshot.headEvent ? { headEvent: snapshot.headEvent } : {}), events: snapshot.events,
         ...(snapshot.nextAfterRevision !== undefined ? { nextAfterRevision: snapshot.nextAfterRevision } : {}),
@@ -185,6 +193,50 @@ export class HumanEvaluationCoordinator {
       this.unknownIntents.delete(this.unknownIntents.keys().next().value!);
     }
     this.unknownIntents.set(taskId, intentId);
+  }
+
+  list(request: DesktopHumanEvaluationListRequest, isOwnerCurrent: () => boolean): Promise<DesktopHumanEvaluationListResult> {
+    return this.readQa("list", isOwnerCurrent, (connection, signal) => this.options.daemon.list({
+      authority: connection.authority, ...request }, signal));
+  }
+
+  generateReport(request: DesktopHumanEvaluationReportRef, isOwnerCurrent: () => boolean): Promise<DesktopHumanEvaluationReportResult> {
+    return this.readQa(`report:${request.taskId}`, isOwnerCurrent, (connection, signal) => this.options.daemon.report({
+      authority: connection.authority, ...request }, signal));
+  }
+
+  private async readQa<T extends { readonly canonicalWorkspaceCwd: string }>(
+    requestId: string, isOwnerCurrent: () => boolean,
+    read: (connection: HumanEvaluationConnection, signal: AbortSignal) => Promise<T>,
+  ): Promise<({ readonly accepted: true; readonly workspaceCwd: string } & T) | Extract<DesktopHumanEvaluationResult, { accepted: false }>> {
+    if (this.disposed || !isOwnerCurrent()) return { accepted: false, reason: "unauthorized_sender" };
+    if (this.active) return { accepted: false, reason: "busy" };
+    if (!this.readScopeCurrent()) return { accepted: false, reason: "authority_changed" };
+    let release!: () => void;
+    const drained = new Promise<void>(resolve => { release = resolve; });
+    const controller = new AbortController(), signal = controller.signal, generation = this.generation;
+    this.active = { requestId, controller, drained };
+    const timer = setTimeout(() => controller.abort(), 30_000);
+    const current = (): boolean => !this.disposed && !signal.aborted && generation === this.generation && isOwnerCurrent() && this.readScopeCurrent();
+    try {
+      const result = await readWithHumanEvaluationAuthority({ ...this.options,
+        desktopEpoch: this.desktopEpoch, lockEpoch: this.lockEpoch, signal, current,
+        read: async connection => {
+          const value = await read(connection, signal);
+          if (value.canonicalWorkspaceCwd !== this.options.workspaceCwd) throw new Error("human_read_authority_changed");
+          return value;
+        } });
+      if (!current()) return { accepted: false, reason: "authority_changed" };
+      return { accepted: true, ...result, workspaceCwd: this.options.displayWorkspaceCwd ?? this.options.workspaceCwd };
+    } catch (error) {
+      return { accepted: false, reason: !current() || (error instanceof Error && error.message === "human_read_authority_changed")
+        ? "authority_changed" : "host_rejected" };
+    } finally { clearTimeout(timer); this.active = undefined; release(); }
+  }
+
+  private readScopeCurrent(): boolean {
+    try { return this.options.scopeCurrent?.() ?? true; }
+    catch { return false; }
   }
 }
 

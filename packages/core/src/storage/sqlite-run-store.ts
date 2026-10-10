@@ -660,6 +660,7 @@ import { applyRunEvaluationTaskMigration } from "./sqlite/run-evaluation-task-mi
 import { SqliteRunEvaluationQaStore } from "./sqlite/run-evaluation-qa-store.js";
 import { applyRunEvaluationQaMigration } from "./sqlite/run-evaluation-qa-migration.js";
 import { SqliteRunEvaluationHumanStore } from "./sqlite/run-evaluation-human-store.js";
+import { SqliteRunEvaluationHumanReadStore } from "./sqlite/run-evaluation-human-read-store.js";
 import { applyRunEvaluationHumanMigration } from "./sqlite/run-evaluation-human-migration.js";
 import { SqliteDelegationStore } from "./sqlite/delegation-store.js";
 import { SqliteHarnessCommitCoordinator } from "./sqlite/harness-commit-coordinator.js";
@@ -779,6 +780,7 @@ export class SqliteRunStore implements RunStore {
   private readonly runEvaluationTasks: SqliteRunEvaluationTaskStore;
   private readonly runEvaluationQa: SqliteRunEvaluationQaStore;
   private readonly runEvaluationHuman: SqliteRunEvaluationHumanStore;
+  private readonly runEvaluationHumanRead: SqliteRunEvaluationHumanReadStore;
   private readonly delegations: SqliteDelegationStore;
   private readonly harnessCommits: SqliteHarnessCommitCoordinator;
   private readonly userProfile: SqliteUserProfileStore;
@@ -970,6 +972,7 @@ export class SqliteRunStore implements RunStore {
     );
     this.runEvaluationQa = new SqliteRunEvaluationQaStore({ database: this.database }, this.runEvaluationTasks, this.paths.cwd, (id) => this.getArtifact(id));
     this.runEvaluationHuman = new SqliteRunEvaluationHumanStore({ database: this.database }, this.runEvaluationTasks, this.runEvaluationQa, this.controlPlane, (id) => this.getArtifact(id));
+    this.runEvaluationHumanRead = new SqliteRunEvaluationHumanReadStore({ database: this.database }, this.runEvaluationTasks, this.runEvaluationQa, this.runEvaluationHuman, this.controlPlane, (id) => this.getArtifact(id));
     this.delegations = new SqliteDelegationStore({ database: this.database });
     this.harnessCommits = new SqliteHarnessCommitCoordinator(
       { database: this.database },
@@ -2638,6 +2641,12 @@ export class SqliteRunStore implements RunStore {
   }
   getRunEvaluationHumanIntent(...args: Parameters<RunStore["getRunEvaluationHumanIntent"]>): ReturnType<RunStore["getRunEvaluationHumanIntent"]> {
     return this.runEvaluationHuman.getRunEvaluationHumanIntent(...args);
+  }
+  listRunEvaluationHumanEnrollments(...args: Parameters<RunStore["listRunEvaluationHumanEnrollments"]>): ReturnType<RunStore["listRunEvaluationHumanEnrollments"]> {
+    return this.runEvaluationHumanRead.listRunEvaluationHumanEnrollments(...args);
+  }
+  readRunEvaluationHumanReportSource(...args: Parameters<RunStore["readRunEvaluationHumanReportSource"]>): ReturnType<RunStore["readRunEvaluationHumanReportSource"]> {
+    return this.runEvaluationHumanRead.readRunEvaluationHumanReportSource(...args);
   }
   getRunEvaluationHumanHead(...args: Parameters<RunStore["getRunEvaluationHumanHead"]>): ReturnType<RunStore["getRunEvaluationHumanHead"]> {
     return this.runEvaluationHuman.getRunEvaluationHumanHead(...args);

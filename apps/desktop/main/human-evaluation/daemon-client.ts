@@ -2,6 +2,7 @@ import { createHmac } from "node:crypto";
 import type { RunEvaluationHumanHostBindingV1, RunEvaluationHumanIntentV1,
   RunEvaluationHumanConfirmationV1, RunEvaluationHumanSubmissionV1,
   RunEvaluationHumanHeadV1, RunEvaluationHumanEventV1 } from "@ling-stack/contracts";
+import { parseHumanEvaluationListResponse, parseHumanEvaluationReportResponse } from "./read-response.js";
 
 export interface HumanEvaluationConnection {
   readonly authority: RunEvaluationHumanHostBindingV1;
@@ -19,10 +20,15 @@ export interface HumanEvaluationDaemonClient {
     readonly event: { readonly id: string }; readonly head: { readonly revision: number; readonly state: "active" | "revoked" } }>;
   revoke(authority: RunEvaluationHumanHostBindingV1): Promise<void>;
   snapshot(input: { readonly authority: RunEvaluationHumanHostBindingV1; readonly taskId: string;
-    readonly afterRevision?: number; readonly intentId?: string }, signal: AbortSignal): Promise<{
+    readonly afterRevision?: number; readonly intentId?: string;
+    readonly reportRef?: { readonly taskId: string; readonly eventId: string; readonly revision: number } }, signal: AbortSignal): Promise<{
     readonly head?: RunEvaluationHumanHeadV1; readonly headEvent?: RunEvaluationHumanEventV1;
     readonly events: readonly RunEvaluationHumanEventV1[]; readonly nextAfterRevision?: number;
-    readonly intent?: RunEvaluationHumanIntentV1 }>;
+    readonly intent?: RunEvaluationHumanIntentV1; readonly reportCurrentness?: "current" | "stale" | "unavailable" }>;
+  list(input: { readonly authority: RunEvaluationHumanHostBindingV1; readonly afterEnrollmentId?: string; readonly limit?: number },
+    signal: AbortSignal): Promise<ReturnType<typeof parseHumanEvaluationListResponse>>;
+  report(input: { readonly authority: RunEvaluationHumanHostBindingV1; readonly taskId: string; readonly eventId: string; readonly revision: number },
+    signal: AbortSignal): Promise<ReturnType<typeof parseHumanEvaluationReportResponse>>;
 }
 
 /** Transport authentication is private Main provenance, not proof of a human. */
@@ -39,7 +45,8 @@ export function createHumanEvaluationDaemonClient(options: {
     // A page contains up to 100 full events (4k-char rationale each), one head
     // event and one intent. JSON escaping can cost six bytes per UTF-16 unit;
     // budget wire bytes, not just ASCII or CJK characters. Mutations stay small.
-    const responseCap = action === "snapshot" ? 4 * 1_048_576 : 65_536;
+    const responseCap = action === "snapshot" ? 4 * 1_048_576 : action === "list" ? 2 * 1_048_576
+      : action === "report" ? 262_144 : 65_536;
     const boundedSignal = AbortSignal.any([signal, AbortSignal.timeout(10_000)]);
     const response = await fetchImpl(new URL(`/harness/evaluations/human/desktop/${action}`, base), {
       method: "POST", redirect: "error", signal: boundedSignal,
@@ -59,7 +66,7 @@ export function createHumanEvaluationDaemonClient(options: {
         chunks.push(next.value);
       }
     } finally { try { await reader.cancel(); } finally { reader.releaseLock(); } }
-    const value: unknown = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+    const value: unknown = JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(Buffer.concat(chunks)));
     if (!response.ok || !isRecord(value) || value.accepted !== true) throw new Error("human_daemon_rejected");
     return value;
   }
@@ -99,6 +106,8 @@ export function createHumanEvaluationDaemonClient(options: {
     async snapshot(input, signal) {
       const value = await post("snapshot", input, signal);
       if (!Array.isArray(value.events) || value.events.length > 100
+        || (input.reportRef !== undefined && !["current", "stale", "unavailable"].includes(String(value.reportCurrentness)))
+        || (input.reportRef === undefined && value.reportCurrentness !== undefined)
         || (value.nextAfterRevision !== undefined && (!Number.isSafeInteger(value.nextAfterRevision) || Number(value.nextAfterRevision) < 1))
         || (value.head !== undefined && (!isRecord(value.head) || value.head.taskId !== input.taskId))
         || (value.headEvent !== undefined && (!isRecord(value.headEvent) || value.headEvent.taskId !== input.taskId))
@@ -108,6 +117,12 @@ export function createHumanEvaluationDaemonClient(options: {
         throw new Error("human_daemon_response_invalid");
       }
       return value as unknown as Awaited<ReturnType<HumanEvaluationDaemonClient["snapshot"]>>;
+    },
+    async list(input, signal) {
+      return parseHumanEvaluationListResponse(await post("list", input, signal), input.limit ?? 25);
+    },
+    async report(input, signal) {
+      return parseHumanEvaluationReportResponse(await post("report", input, signal), input);
     },
   } satisfies HumanEvaluationDaemonClient);
 }

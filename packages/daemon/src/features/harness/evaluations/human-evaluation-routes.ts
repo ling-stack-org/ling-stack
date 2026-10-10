@@ -42,6 +42,8 @@ export async function handleHumanEvaluationDesktopRoute(
     const result = action === "intent" ? service.createIntent(body)
       : action === "commit" ? service.commit(body)
       : action === "snapshot" ? service.snapshot(body)
+      : action === "list" ? service.list(body)
+      : action === "report" ? service.report(body)
       : action === "revoke-authority" ? service.revokeAuthority(body) : undefined;
     return result ? reply(response, result.accepted ? 200 : 409, result)
       : reply(response, 404, { accepted: false, reason: "not_found" });

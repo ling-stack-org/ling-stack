@@ -45,6 +45,10 @@ const capabilities: LingDesktopCapabilities = {
       cancel: (requestId: string) => ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.cancel, requestId),
       inspect: (request: import("../shared/human-evaluation-capabilities.js").DesktopHumanEvaluationInspectRequest) =>
         ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.inspect, request),
+      list: (request: import("../shared/human-evaluation-capabilities.js").DesktopHumanEvaluationListRequest) =>
+        ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.list, request),
+      generateReport: (request: import("../shared/human-evaluation-capabilities.js").DesktopHumanEvaluationReportRef) =>
+        ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.generateReport, request),
     },
   } : {}),
   appearance: {

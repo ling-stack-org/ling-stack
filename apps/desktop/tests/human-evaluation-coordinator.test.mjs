@@ -3,6 +3,10 @@ import { createHash, createHmac } from "node:crypto";
 import test from "node:test";
 import { HumanEvaluationCoordinator } from "../dist/main/human-evaluation/coordinator.js";
 import { signHumanEvaluationConfirmation } from "../dist/main/human-evaluation/daemon-client.js";
+import { createHumanEvaluationWorkspaceScope } from "../dist/main/human-evaluation/workspace-scope.js";
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, symlinkSync, unlinkSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 const nowValue = Date.parse("2026-10-10T10:00:00Z");
 const session = { osSessionId: "a".repeat(64), osUserId: "b".repeat(64), active: true, locked: false };
@@ -37,8 +41,13 @@ function fixture(overrides = {}) {
     async revoke(authority) { calls.push(["revoke", authority]); await overrides.revoke?.(authority); },
     async snapshot(input) { calls.push(["snapshot", input]);
       return overrides.snapshot?.(input) ?? { events: [] }; },
+    async list(input) { calls.push(["list", input]); return overrides.list?.(input) ?? { canonicalWorkspaceCwd: "/qa", items: [] }; },
+    async report(input) { calls.push(["report", input]); return overrides.report?.(input) ?? {
+      canonicalWorkspaceCwd: "/qa", report: { ref: { taskId: input.taskId, eventId: input.eventId, revision: input.revision } },
+      head: { eventId: input.eventId, revision: input.revision, state: "active" }, currentness: "current" }; },
   };
-  const coordinator = new HumanEvaluationCoordinator({ desktopInstanceId: "desktop", workspaceCwd: "/qa", native, daemon, now: () => now });
+  const coordinator = new HumanEvaluationCoordinator({ desktopInstanceId: "desktop", workspaceCwd: overrides.workspaceCwd ?? "/qa",
+    displayWorkspaceCwd: overrides.displayWorkspaceCwd, scopeCurrent: overrides.scopeCurrent, native, daemon, now: () => now });
   return { coordinator, calls, key, setNow(value) { now = value; } };
 }
 
@@ -135,7 +144,7 @@ test("unknown response is reconciled by exact private intent without another nat
 for (const state of ["current", "corrected", "revoked", "missing"]) {
   test(`report binds immutable event/revision and observes ${state} without rewriting it`, async () => {
     const ref = Object.freeze({ taskId: request.taskId, eventId: "event-original", revision: 1 });
-    const f = fixture({ snapshot: () => ({ events: [], ...(state !== "missing" ? {
+    const f = fixture({ snapshot: () => ({ events: [], reportCurrentness: state === "current" ? "current" : state === "missing" ? "unavailable" : "stale", ...(state !== "missing" ? {
       head: { taskId: request.taskId, eventId: state === "current" ? ref.eventId : "event-later",
         revision: state === "current" ? 1 : 2, state: state === "revoked" ? "revoked" : "active" } } : {}) }) });
     const result = await f.coordinator.inspect({ taskId: request.taskId, reportRef: ref }, () => true);
@@ -149,6 +158,14 @@ test("read-only inspect carries cursor and refuses lock/user drift", async () =>
   const f = fixture({ session(n) { return n === 2 ? { ...session, locked: true } : session; } });
   assert.equal((await f.coordinator.inspect({ taskId: request.taskId, afterRevision: 100 }, () => true)).reason, "authority_changed");
   assert.equal(f.calls.find(c => c[0] === "snapshot")[1].afterRevision, 100);
+});
+
+test("matching head alone cannot mark a report current when Host sealed lineage is unavailable", async () => {
+  const ref = { taskId: request.taskId, eventId: "event", revision: 1 };
+  const f = fixture({ snapshot: () => ({ events: [], head: { taskId: request.taskId, ...ref, state: "active" }, reportCurrentness: "unavailable" }) });
+  assert.equal((await f.coordinator.inspect({ taskId: request.taskId, reportRef: ref }, () => true)).reportCurrentness, "unavailable");
+  assert.deepEqual(f.calls.find(c => c[0] === "snapshot")[1].reportRef, ref);
+  assert.equal(f.calls.some(c => c[0] === "report"), false);
 });
 
 test("lock during postcommit cleanup withholds success and preserves exact intent for read-only reconciliation", async () => {
@@ -174,3 +191,82 @@ test("readback invalidated during connection cleanup does not disclose a cached 
   cleanup.resolve();
   assert.deepEqual(await inspected, { accepted: false, reason: "authority_changed" });
 });
+
+for (const action of ["list", "generateReport"]) {
+  const query = action === "list" ? { afterEnrollmentId: "enrollment", limit: 2 }
+    : { taskId: request.taskId, eventId: "event-original", revision: 1 };
+  test(`${action} uses fixed Host scope without native confirmation, mutation or implicit report refresh`, async () => {
+    const f = fixture();
+    const result = await f.coordinator[action](query, () => true);
+    assert.equal(result.accepted, true); assert.equal(result.canonicalWorkspaceCwd, "/qa");
+    assert.deepEqual(f.calls.map(c => c[0]), ["handshake", action === "list" ? "list" : "report", "revoke"]);
+    const input = f.calls[1][1];
+    for (const [key, value] of Object.entries(query)) assert.equal(input[key], value);
+    assert.equal("confirmationKey" in result, false); assert.equal("authority" in result, false);
+  });
+  for (const drift of ["generation", "owner", "lock", "user"]) {
+    test(`${action} fences ${drift} during cleanup before disclosing read-only data`, async () => {
+      const cleanup = deferred(); let ownerCurrent = true, finalChanged = false;
+      const f = fixture({ revoke: () => cleanup.promise,
+        session(n) { return finalChanged && n === 3 ? { ...session,
+          ...(drift === "lock" ? { locked: true } : drift === "user" ? { osUserId: "c".repeat(64) } : {}) } : session; } });
+      const operation = f.coordinator[action](query, () => ownerCurrent);
+      while (!f.calls.some(c => c[0] === "revoke")) await Promise.resolve();
+      if (drift === "generation") f.coordinator.invalidate();
+      if (drift === "owner") ownerCurrent = false;
+      finalChanged = true; cleanup.resolve();
+      assert.deepEqual(await operation, { accepted: false, reason: "authority_changed" });
+    });
+  }
+  test(`${action} rejects a response from a different fixed workspace`, async () => {
+    const f = fixture({ [action === "list" ? "list" : "report"]: () => ({ canonicalWorkspaceCwd: "/other", items: [] }) });
+    assert.deepEqual(await f.coordinator[action](query, () => true), { accepted: false, reason: "authority_changed" });
+    assert.equal(f.calls.at(-1)[0], "revoke");
+  });
+}
+
+test("read-only lane remains busy until real read/cleanup drain; dispose fences the late page", async () => {
+  const pending = deferred();
+  const f = fixture({ list: () => pending.promise });
+  const first = f.coordinator.list({}, () => true);
+  while (!f.calls.some(c => c[0] === "list")) await Promise.resolve();
+  assert.deepEqual(await f.coordinator.generateReport({ taskId: request.taskId, eventId: "event", revision: 1 }, () => true), { accepted: false, reason: "busy" });
+  let disposed = false;
+  const disposal = f.coordinator.dispose().then(() => { disposed = true; });
+  await Promise.resolve(); assert.equal(disposed, false);
+  pending.resolve({ canonicalWorkspaceCwd: "/qa", items: [] });
+  assert.equal((await first).accepted, false); await disposal; assert.equal(disposed, true);
+});
+
+test("configured workspace alias binds one canonical profile and fails closed after retarget or removal", t => {
+  const root = realpathSync(mkdtempSync(join(tmpdir(), "ling-human-scope-")));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const first = join(root, "first"), foreign = join(root, "foreign"), alias = join(root, "configured");
+  mkdirSync(first); mkdirSync(foreign); symlinkSync(first, alias);
+  const scope = createHumanEvaluationWorkspaceScope(alias);
+  assert.equal(scope.workspaceCwd, alias); assert.equal(scope.canonicalWorkspaceCwd, first); assert.equal(scope.current(), true);
+  unlinkSync(alias); symlinkSync(foreign, alias); assert.equal(scope.current(), false);
+  unlinkSync(alias); assert.equal(scope.current(), false);
+  assert.throws(() => createHumanEvaluationWorkspaceScope(alias));
+});
+
+for (const action of ["list", "generateReport", "inspect"]) {
+  test(`${action} validates fixed scope before/after the read and never accepts an arbitrary alias`, async () => {
+    let scopeCurrent = true;
+    const query = action === "list" ? {} : action === "generateReport" ? { taskId: request.taskId, eventId: "event", revision: 1 } : { taskId: request.taskId };
+    const f = fixture({ displayWorkspaceCwd: "/qa-configured-alias", scopeCurrent: () => scopeCurrent });
+    const first = await f.coordinator[action](query, () => true);
+    assert.equal(first.accepted, true);
+    if (action !== "inspect") { assert.equal(first.workspaceCwd, "/qa-configured-alias"); assert.equal(first.canonicalWorkspaceCwd, "/qa"); }
+    scopeCurrent = false;
+    const before = f.calls.length;
+    assert.deepEqual(await f.coordinator[action](query, () => true), { accepted: false, reason: "authority_changed" });
+    assert.equal(f.calls.length, before);
+    const cleanup = deferred(); scopeCurrent = true;
+    const pendingFixture = fixture({ scopeCurrent: () => scopeCurrent, revoke: () => cleanup.promise });
+    const pending = pendingFixture.coordinator[action](query, () => true);
+    while (!pendingFixture.calls.some(c => c[0] === "revoke")) await Promise.resolve();
+    scopeCurrent = false; cleanup.resolve();
+    assert.deepEqual(await pending, { accepted: false, reason: "authority_changed" });
+  });
+}

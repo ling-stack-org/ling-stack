@@ -97,18 +97,43 @@ export function readHumanEvaluationCommit(value: unknown): HumanEvaluationCommit
 export function readHumanEvaluationSnapshot(value: unknown): {
   readonly authority: HumanEvaluationAuthority; readonly taskId: string;
   readonly afterRevision?: number; readonly intentId?: string;
+  readonly reportRef?: { readonly taskId: string; readonly eventId: string; readonly revision: number };
 } {
-  const body = qaModelRecord(value, ["authority", "taskId"], ["afterRevision", "intentId"]);
+  const body = qaModelRecord(value, ["authority", "taskId"], ["afterRevision", "intentId", "reportRef"]);
   if (body.afterRevision !== undefined && (typeof body.afterRevision !== "number"
     || !Number.isSafeInteger(body.afterRevision) || body.afterRevision < 0
     || body.afterRevision >= Number.MAX_SAFE_INTEGER)) return invalid();
+  const ref = body.reportRef === undefined ? undefined : qaModelRecord(body.reportRef, ["taskId", "eventId", "revision"]);
+  if (ref && (ref.taskId !== body.taskId || !Number.isSafeInteger(ref.revision) || Number(ref.revision) < 1)) return invalid();
   return Object.freeze({ authority: readHumanEvaluationAuthority(body.authority), taskId: text(body.taskId),
     ...(body.afterRevision === undefined ? {} : { afterRevision: body.afterRevision as number }),
-    ...(body.intentId === undefined ? {} : { intentId: text(body.intentId) }) });
+    ...(body.intentId === undefined ? {} : { intentId: text(body.intentId) }),
+    ...(ref ? { reportRef: Object.freeze({ taskId: text(ref.taskId), eventId: text(ref.eventId), revision: Number(ref.revision) }) } : {}) });
 }
 
 export function readHumanEvaluationRevocation(value: unknown): HumanEvaluationAuthority {
   return readHumanEvaluationAuthority(qaModelRecord(value, ["authority"]).authority);
+}
+
+/** The Host composition owns workspace/namespace; the caller only supplies a bounded page cursor. */
+export function readHumanEvaluationList(value: unknown): {
+  readonly authority: HumanEvaluationAuthority; readonly afterEnrollmentId?: string; readonly limit?: number;
+} {
+  const body = qaModelRecord(value, ["authority"], ["afterEnrollmentId", "limit"]);
+  if (body.limit !== undefined && (!Number.isSafeInteger(body.limit) || Number(body.limit) < 1 || Number(body.limit) > 50)) return invalid();
+  return Object.freeze({ authority: readHumanEvaluationAuthority(body.authority),
+    ...(body.afterEnrollmentId === undefined ? {} : { afterEnrollmentId: text(body.afterEnrollmentId) }),
+    ...(body.limit === undefined ? {} : { limit: Number(body.limit) }) });
+}
+
+/** Explicit immutable report selection, never a caller-provided grade or adjudicator. */
+export function readHumanEvaluationReport(value: unknown): {
+  readonly authority: HumanEvaluationAuthority; readonly taskId: string; readonly eventId: string; readonly revision: number;
+} {
+  const body = qaModelRecord(value, ["authority", "taskId", "eventId", "revision"]);
+  if (!Number.isSafeInteger(body.revision) || Number(body.revision) < 1) return invalid();
+  return Object.freeze({ authority: readHumanEvaluationAuthority(body.authority), taskId: text(body.taskId),
+    eventId: text(body.eventId), revision: Number(body.revision) });
 }
 
 function readSubmission(value: unknown): RunEvaluationHumanSubmissionV1 {

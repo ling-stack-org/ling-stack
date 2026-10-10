@@ -13,10 +13,9 @@ import { handleHumanEvaluationDesktopRoute } from "../dist/features/harness/eval
 import { humanEvaluationConfirmationBytes, readHumanEvaluationCommit, readHumanEvaluationIntentInput,
   readHumanEvaluationHandshake } from "../dist/features/harness/evaluations/human-evaluation-protocol.js";
 import { fixture, now } from "./fixtures/run-evaluation-qa-model.mjs";
-// Node >=22.18 strips this actual Main source; standalone Daemon CI need not
-// build an Electron app to exercise the exact production client/signing code.
+// Exercise actual Main source and its validators; no full Electron build is needed.
 import { createHumanEvaluationDaemonClient, signHumanEvaluationConfirmation }
-  from "../../../apps/desktop/main/human-evaluation/daemon-client.ts";
+  from "./fixtures/human-evaluation-main-source.mjs";
 
 const root = "/harness/evaluations/human/desktop";
 const decision = { verdict: "pass", score: 0.9, severity: "info", rationale: "Explicit reviewed QA verdict." };

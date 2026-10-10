@@ -1,15 +1,19 @@
 import type {
   RunEvaluationHumanEventV1, RunEvaluationHumanHeadV1, RunEvaluationHumanIntentV1,
+  RunEvaluationHumanQaRowV1, RunEvaluationHumanReportV1, RunEvaluationHumanReportSourceV1,
 } from "@ling-stack/contracts";
 import type { RunEvaluationHumanSettlement, RunStore } from "@ling-stack/core";
 import { trimOversizedEvent, type ControlPlaneEventHub } from "../../control-plane/events.js";
 import { HumanEvaluationDesktopAuthority } from "./human-evaluation-authority.js";
 import { HUMAN_EVALUATION_INTENT_TTL_MS, readHumanEvaluationCommit, readHumanEvaluationIntentInput,
   readHumanEvaluationRevocation, readHumanEvaluationSnapshot,
+  readHumanEvaluationList, readHumanEvaluationReport,
   type HumanEvaluationHandshake } from "./human-evaluation-protocol.js";
+import { produceHumanEvaluationReport } from "./human-evaluation-report.js";
 
 type HumanStore = Pick<RunStore, "getRunEvaluationQaEnrollment" | "getRunEvaluationQaScope"
   | "getRunEvaluationHumanIntent" | "getRunEvaluationHumanHead" | "getRunEvaluationHumanEvent" | "listRunEvaluationHumanEvents"
+  | "listRunEvaluationHumanEnrollments" | "readRunEvaluationHumanReportSource"
   | "createRunEvaluationHumanIntent" | "commitRunEvaluationHumanIntent">;
 export interface HumanEvaluationServiceOptions {
   readonly authority: HumanEvaluationDesktopAuthority;
@@ -27,6 +31,15 @@ export type HumanEvaluationSnapshotResult = Rejected | {
   readonly events: readonly RunEvaluationHumanEventV1[];
   readonly headEvent?: RunEvaluationHumanEventV1; readonly intent?: RunEvaluationHumanIntentV1;
   readonly nextAfterRevision?: number;
+  readonly reportCurrentness?: "current" | "stale" | "unavailable";
+};
+export type HumanEvaluationListResult = Rejected | {
+  readonly accepted: true; readonly canonicalWorkspaceCwd: string;
+  readonly items: readonly RunEvaluationHumanQaRowV1[]; readonly nextAfterEnrollmentId?: string;
+};
+export type HumanEvaluationReportResult = Rejected | {
+  readonly accepted: true; readonly canonicalWorkspaceCwd: string; readonly report: RunEvaluationHumanReportV1;
+  readonly head: RunEvaluationHumanReportSourceV1["head"]; readonly currentness: "current" | "stale";
 };
 
 /**
@@ -124,13 +137,53 @@ export class HumanEvaluationService {
     const events = store.listRunEvaluationHumanEvents({ taskId: input.taskId,
       ...(input.afterRevision === undefined ? {} : { afterRevision: input.afterRevision }), limit: 100 });
     if (!current()) return rejected("human_binding_changed");
+    // Currentness revalidates immutable sealed bytes/audit as well as the head.
+    // It does not call the producer or silently generate a replacement report.
+    const reportSource = input.reportRef ? store.readRunEvaluationHumanReportSource(input.reportRef) : undefined;
+    if (!current()) return rejected("human_binding_changed");
+    const reportCurrentness = reportSource ? reportSource.status === "available" ? reportSource.source.currentness : "unavailable" : undefined;
     return { accepted: true, ...(head ? { head, headEvent } : {}), ...(intent ? { intent } : {}), events,
+      ...(reportCurrentness ? { reportCurrentness } : {}),
       ...(events.length === 100 ? { nextAfterRevision: events[events.length - 1]!.revision } : {}) };
   }
 
   revokeAuthority(value: unknown): { readonly accepted: boolean; readonly reason?: string } {
     return this.options.authority.revoke(readHumanEvaluationRevocation(value))
       ? { accepted: true } : rejected("human_binding_changed");
+  }
+
+  list(value: unknown): HumanEvaluationListResult {
+    const input = readHumanEvaluationList(value);
+    const current = this.options.authority.capture(input.authority);
+    if (!current()) return rejected("human_binding_changed");
+    const store = this.options.getStore();
+    if (!current()) return rejected("human_binding_changed");
+    const scope = store.getRunEvaluationQaScope();
+    if (!current()) return rejected("human_binding_changed");
+    if (scope && scope.canonicalWorkspaceCwd !== this.options.authority.workspaceCwd) return rejected("qa_not_enrolled");
+    const page = store.listRunEvaluationHumanEnrollments({
+      ...(input.afterEnrollmentId === undefined ? {} : { afterEnrollmentId: input.afterEnrollmentId }),
+      ...(input.limit === undefined ? {} : { limit: input.limit }) });
+    if (!current()) return rejected("human_binding_changed");
+    return { accepted: true, canonicalWorkspaceCwd: this.options.authority.workspaceCwd, items: page.items,
+      ...(page.nextAfterEnrollmentId ? { nextAfterEnrollmentId: page.nextAfterEnrollmentId } : {}) };
+  }
+
+  report(value: unknown): HumanEvaluationReportResult {
+    const input = readHumanEvaluationReport(value);
+    const current = this.options.authority.capture(input.authority);
+    if (!current()) return rejected("human_binding_changed");
+    const store = this.options.getStore();
+    if (!current()) return rejected("human_binding_changed");
+    if (store.getRunEvaluationQaScope()?.canonicalWorkspaceCwd !== this.options.authority.workspaceCwd) return rejected("qa_not_enrolled");
+    if (!current()) return rejected("human_binding_changed");
+    const result = store.readRunEvaluationHumanReportSource({ taskId: input.taskId, eventId: input.eventId, revision: input.revision });
+    if (!current()) return rejected("human_binding_changed");
+    if (result.status !== "available") return rejected(result.reason);
+    const report = produceHumanEvaluationReport(result.source);
+    if (!current()) return rejected("human_binding_changed");
+    return { accepted: true, canonicalWorkspaceCwd: this.options.authority.workspaceCwd,
+      report, head: result.source.head, currentness: result.source.currentness };
   }
 
   close(): void { this.options.authority.close(); }

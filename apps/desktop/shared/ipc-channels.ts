@@ -4,6 +4,8 @@ export const DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS = {
   submit: "ling-desktop:human-evaluation:submit",
   cancel: "ling-desktop:human-evaluation:cancel",
   inspect: "ling-desktop:human-evaluation:inspect",
+  list: "ling-desktop:human-evaluation:list",
+  generateReport: "ling-desktop:human-evaluation:generate-report",
 } as const;
 
 export const DESKTOP_THEME_PACKAGE_IPC_CHANNELS = {

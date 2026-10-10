@@ -54,19 +54,29 @@ OS 变化和已进入服务端事务的提交没有跨进程物理原子性。Ma
 - 真实 Swift helper最终编译及 session probe通过：`h09-human-native-final-build-20261010.json`。
 - Daemon首 full4036pass/1cancel/0fail，actual exit1：旧媒体 `submission-precommit` 命中8000ms
   timeout。原日志 `h09-human-daemon-isolated-full-20261010.tap`保留，不算全绿；不改断言或超时。
-  同文件隔离串行24/24、exit0；完整串行复验进行中，终态须另外读回后更新此记录。
+  同文件隔离串行24/24、exit0；完整逐进程隔离串行复验的最终 TAP footer 已读回：
+  4037/4037，fail/cancel/skip/todo均0。日志为
+  `h09-human-daemon-isolated-serial-full-20261010.tap`。原session28088已关闭，未追回独立
+  exit metadata，因此不声称该次 actual exit 已收；不得再次poll或重复跑旧矩阵。
 - 46份 source/test SHA manifest：`h09-human-final-source-20261010.sha256`，逐项check OK。
 - 一次 preload tsc误生成的10个旁路 `.js` 已移动到专用临时归档，不 stage，不当源码；
   后续 preload tsc只用 `--noEmit`，实际 CJS由esbuild生成。
 
-真实 native 长内容 UI尝试因 Computer Use/auth 未可用，owned timeout实际结束 child；未取得
-可验证滚动/取消截图、真人身份认证或 durable 人工样本。失败日志保留，不计 OS/UI通过。
-真实 grader completion仍0。可见 QA 表单、独立报告 producer、正式Office approval/隔离Keychain、
-Mobile native，以及 owned macOS12类验收仍未完成。不能标整个 H09 或总目标完成。
+首次真实 native 长内容 UI尝试因 Computer Use/auth 未可用，owned timeout实际结束 child；
+该失败日志保留。后续 display-only fixture 返回 confirmed、child实际close；用户明确确认
+“看到了，亲自完成认证”。这仅证明用户为 synthetic payload 完成了系统认证，不产生SQLite
+样本，不等于 durable 人工提交、滚动/取消截图或 packaged GUI验收。其取消专用fixture因
+预期cancelled而返回confirmed，actual exit1不是认证失败；原日志
+`h09-human-native-ui-cua-20261010.log`保留。
+真实 grader completion仍0。可见QA与报告producer的新内部接线见
+[后继实施合同](harness-human-qa-surface-detailed-design.md)，不再列为未实现。
+真实packaged QA、正式Office approval/隔离Keychain、Mobile native及owned macOS12类验收
+仍未完成。不能标整个H09或总目标完成。
 
-## 下一切片：可见 QA 与 report-only 接线
+## 已实施后继：可见 QA 与 report-only 接线（验收分层）
 
-不重做160、159、Provider/Pi/Expo、R03、时长或旧 Codex研究。复用现有模块：
+以下内部链路已经实施并单独验证，真实packaged验收仍待完成；不重做160、159、
+Provider/Pi/Expo、R03、时长或旧Codex研究。复用现有模块：
 
 1. Core窄的 enrolled-task只读分页：按 canonical namespace/enrollment JOIN 后再 LIMIT，
    包含 completed/unknown，不借只返回queued的worker selector，不枚举普通会话。

@@ -25,6 +25,7 @@
 @import "./styles/settings-skill-library.css";
 @import "./styles/settings-archived-items.css";
 @import "./styles/settings-startup-diagnostics.css";
+@import "./styles/settings-human-qa.css";
 @import "./styles/settings-permissions.css";
 @import "./styles/approvals.css";
 @import "./styles/approvals/dialog-queue.css";

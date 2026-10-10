@@ -34,24 +34,28 @@ async function fixture(platform) {
   return { capabilities, calls, reject(error) { rejection = error; } };
 }
 
-test("actual bundled preload exposes only macOS human submit/cancel/inspect with no identity or credentials", async () => {
+test("actual bundled preload exposes only scoped macOS human capabilities with no identity or credentials", async () => {
   const f = await fixture("darwin");
   const capability = f.capabilities.humanEvaluation;
-  assert.deepEqual(Object.keys(capability).sort(), ["cancel", "inspect", "submit"]);
+  assert.deepEqual(Object.keys(capability).sort(), ["cancel", "generateReport", "inspect", "list", "submit"]);
   const request = { taskId: "qa", requestId: "once", submission: { kind: "revoke", revokesEventId: "old", rationale: "withdraw" } };
   const inspect = { taskId: "qa", afterRevision: 100, reportRef: { taskId: "qa", eventId: "old", revision: 1 } };
   assert.equal((await capability.submit(request)).reason, "native_unavailable");
   await capability.cancel("once");
   await capability.inspect(inspect);
+  const list = { limit: 25 }, report = { taskId: "qa", eventId: "old", revision: 1 };
+  await capability.list(list); await capability.generateReport(report);
   assert.deepEqual(f.calls, [
     { channel: channels.submit, args: [request] },
     { channel: channels.cancel, args: ["once"] },
     { channel: channels.inspect, args: [inspect] },
+    { channel: channels.list, args: [list] },
+    { channel: channels.generateReport, args: [report] },
   ]);
   const error = new Error("response lost");
   f.reject(error);
   await assert.rejects(capability.submit(request), value => value === error);
-  assert.equal(f.calls.length, 4, "a lost IPC result never retries the human submission");
+  assert.equal(f.calls.length, 6, "a lost IPC result never retries the human submission");
 });
 
 test("actual bundled preload does not expose macOS human authority on other platforms", async () => {

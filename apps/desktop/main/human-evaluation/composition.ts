@@ -1,9 +1,9 @@
 import type { BrowserWindow, PowerMonitor } from "electron";
-import { realpathSync } from "node:fs";
 import { HumanEvaluationCoordinator } from "./coordinator.js";
 import { createHumanEvaluationDaemonClient } from "./daemon-client.js";
 import { registerHumanEvaluationIpc } from "./ipc.js";
 import { createHumanEvaluationNativeBridge, resolveHumanEvaluationHelper } from "./native-bridge.js";
+import { createHumanEvaluationWorkspaceScope } from "./workspace-scope.js";
 
 /** Independent Main composition: neither CU gates nor an active Run authorize human feedback. */
 export function createHumanEvaluationDesktopComposition(options: {
@@ -16,8 +16,9 @@ export function createHumanEvaluationDesktopComposition(options: {
   if (options.packaged && process.platform === "darwin") {
     // Missing or non-executable packaged helper leaves the capability unavailable, never token-only.
     try {
+      const scope = createHumanEvaluationWorkspaceScope(options.workspaceCwd);
       coordinator = new HumanEvaluationCoordinator({ desktopInstanceId: options.desktopInstanceId,
-        workspaceCwd: realpathSync(options.workspaceCwd),
+        workspaceCwd: scope.canonicalWorkspaceCwd, displayWorkspaceCwd: scope.workspaceCwd, scopeCurrent: scope.current,
         native: createHumanEvaluationNativeBridge({ helperPath: resolveHumanEvaluationHelper(options.resourcesRoot) }),
         daemon: createHumanEvaluationDaemonClient({ daemonBaseUrl: options.daemonBaseUrl, bridgeToken: options.bridgeToken }) });
     } catch { /* Fail closed; IPC returns native_unavailable. */ }

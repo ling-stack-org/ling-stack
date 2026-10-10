@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { registerHumanEvaluationIpc, parseHumanEvaluationRequest, parseHumanEvaluationInspectRequest } from "../dist/main/human-evaluation/ipc.js";
+import { registerHumanEvaluationIpc, parseHumanEvaluationRequest, parseHumanEvaluationInspectRequest,
+  parseHumanEvaluationListRequest, parseHumanEvaluationReportRef } from "../dist/main/human-evaluation/ipc.js";
 import { DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS as channels } from "../dist/shared/ipc-channels.js";
 
 const request = { taskId: "task-qa", requestId: "request-qa", submission: { kind: "adjudicate", decision: { verdict: "pass", rationale: "reviewed" } } };
@@ -13,7 +14,10 @@ function fixture(overrides = {}) {
   const unregister = registerHumanEvaluationIpc({ knownAppUrl, getMainWindow: () => window,
     ipcMainImpl: { handle: (c, h) => handlers.set(c, h), removeHandler: c => handlers.delete(c) },
     coordinator: { submit(r, check) { calls.push(r); return overrides.submit?.(r, check) ?? Promise.resolve({ accepted: check() }); },
-      inspect(r, check) { calls.push(r); return overrides.inspect?.(r, check) ?? Promise.resolve({ accepted: check() }); }, cancel(id) { calls.push(id); return { accepted: true }; } },
+      inspect(r, check) { calls.push(r); return overrides.inspect?.(r, check) ?? Promise.resolve({ accepted: check() }); },
+      list(r, check) { calls.push(r); return overrides.list?.(r, check) ?? Promise.resolve({ accepted: check() }); },
+      generateReport(r, check) { calls.push(r); return overrides.generateReport?.(r, check) ?? Promise.resolve({ accepted: check() }); },
+      cancel(id) { calls.push(id); return { accepted: true }; } },
   });
   return { handlers, calls, owner, mainFrame, window, event, unregister };
 }
@@ -63,14 +67,38 @@ test("own-data parser rejects auth claims, hidden accessors and unsupported deci
   assert.equal(parseHumanEvaluationRequest({ ...request, submission: { kind: "revoke", revokesEventId: "event", rationale: "withdraw" } }).submission.kind, "revoke");
 });
 
-for (const action of ["submit", "inspect"]) {
+for (const action of ["submit", "inspect", "list", "generateReport"]) {
   test(`IPC ${action} rechecks exact owner after the coordinator settles`, async () => {
     let release;
     const pending = new Promise(resolve => { release = resolve; });
     const f = fixture({ [action]: () => pending });
-    const result = f.handlers.get(channels[action])(f.event, action === "submit" ? request : { taskId: request.taskId });
+    const result = f.handlers.get(channels[action])(f.event, action === "submit" ? request : action === "list" ? {}
+      : action === "generateReport" ? { taskId: request.taskId, eventId: "event", revision: 1 } : { taskId: request.taskId });
     f.owner.getURL = () => "https://not-the-owner.example";
     release({ accepted: true, eventId: "must-not-return", events: [{ privateQa: "must-not-return" }] });
     assert.deepEqual(await result, { accepted: false, reason: "unauthorized_sender" });
   });
 }
+
+test("private QA list/report parse only bounded own cursors and exact immutable refs", async () => {
+  const f = fixture();
+  assert.deepEqual(parseHumanEvaluationListRequest({}), {});
+  assert.deepEqual(parseHumanEvaluationListRequest({ afterEnrollmentId: "enrollment", limit: 50 }), { afterEnrollmentId: "enrollment", limit: 50 });
+  let reads = 0;
+  for (const invalid of [{ workspaceCwd: "/other" }, { namespaceId: "other" }, { authenticated: true }, { limit: 0 }, { limit: 51 },
+    { limit: 1.5 }, { afterEnrollmentId: "a".repeat(161) }, Object.defineProperty({}, "limit", { get() { reads++; return 1; } })]) {
+    assert.equal(parseHumanEvaluationListRequest(invalid), undefined);
+  }
+  const ref = { taskId: "task", eventId: "event", revision: 1 };
+  for (const invalid of [{ ...ref, authority: "human" }, { ...ref, grade: "pass" }, { ...ref, revision: 0 }, { ...ref, revision: Number.MAX_SAFE_INTEGER + 1 }]) {
+    assert.equal(parseHumanEvaluationReportRef(invalid), undefined);
+  }
+  assert.equal(reads, 0);
+  assert.equal((await f.handlers.get(channels.list)(f.event, {})).accepted, true);
+  assert.equal((await f.handlers.get(channels.generateReport)(f.event, ref)).accepted, true);
+  const stranger = { ...f.event, sender: { ...f.owner } };
+  for (const [action, query] of [["list", {}], ["generateReport", ref]]) {
+    assert.equal((await f.handlers.get(channels[action])(stranger, query)).accepted, false);
+    assert.equal((await f.handlers.get(channels[action])(f.event, query, {})).reason, "invalid_request");
+  }
+});

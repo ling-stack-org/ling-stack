@@ -68,14 +68,18 @@ const newAuthoredRuntimeLeaves = [
   "packages/core/src/storage/sqlite/run-evaluation-human-migration.ts",
   "packages/core/src/storage/sqlite/run-evaluation-human-store.ts",
   "packages/core/src/storage/sqlite/run-evaluation-human-validation.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-read-store.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-read-validation.ts",
   "packages/daemon/src/features/harness/evaluations/human-evaluation-authority.ts",
   "packages/daemon/src/features/harness/evaluations/human-evaluation-protocol.ts",
   "packages/daemon/src/features/harness/evaluations/human-evaluation-routes.ts",
   "packages/daemon/src/features/harness/evaluations/human-evaluation-service.ts",
+  "packages/daemon/src/features/harness/evaluations/human-evaluation-report.ts",
 ];
 // This contract is exported with `export type *`; esbuild correctly erases it.
 // It remains an explicit reviewed source and gets every fail-closed check below.
-const newAuthoredTypeOnlyInputs = ["packages/contracts/src/harness-evaluation-qa.ts", "packages/contracts/src/harness-human-evaluation.ts"];
+const newAuthoredTypeOnlyInputs = ["packages/contracts/src/harness-evaluation-qa.ts", "packages/contracts/src/harness-human-evaluation.ts",
+  "packages/contracts/src/harness-human-evaluation-read.ts", "packages/core/src/harness/human-evaluation-read.ts"];
 const reviewedNativeInputs = ["apps/desktop/scripts/build-human-evaluation-helper.mjs", "apps/desktop/scripts/native/human-evaluation-darwin.swift"];
 const newAuthoredRequiredInputs = [...newAuthoredRuntimeLeaves, ...newAuthoredTypeOnlyInputs, ...reviewedNativeInputs];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";

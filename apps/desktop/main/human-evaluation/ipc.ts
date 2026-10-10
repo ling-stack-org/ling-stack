@@ -1,6 +1,7 @@
 import { createRequire } from "node:module";
 import type { BrowserWindow, IpcMain, IpcMainInvokeEvent } from "electron";
-import type { DesktopHumanEvaluationRequest, DesktopHumanEvaluationInspectRequest } from "../../shared/human-evaluation-capabilities.js";
+import type { DesktopHumanEvaluationRequest, DesktopHumanEvaluationInspectRequest,
+  DesktopHumanEvaluationListRequest, DesktopHumanEvaluationReportRef } from "../../shared/human-evaluation-capabilities.js";
 import { DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS } from "../../shared/ipc-channels.js";
 import type { HumanEvaluationCoordinator } from "./coordinator.js";
 
@@ -47,8 +48,36 @@ export function registerHumanEvaluationIpc(options: {
       return authorized(event) ? result : { accepted: false, reason: "unauthorized_sender" };
     });
     registered.push(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.inspect);
+    for (const action of ["list", "generateReport"] as const) {
+      ipc.handle(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS[action], async (event, ...args: unknown[]) => {
+        if (!authorized(event)) return { accepted: false, reason: "unauthorized_sender" };
+        let request: DesktopHumanEvaluationListRequest | DesktopHumanEvaluationReportRef | undefined;
+        try { request = args.length === 1 ? action === "list" ? parseHumanEvaluationListRequest(args[0])
+          : parseHumanEvaluationReportRef(args[0]) : undefined; } catch { /* Exact structured DTO only. */ }
+        if (!request) return { accepted: false, reason: "invalid_request" };
+        if (!options.coordinator) return { accepted: false, reason: "native_unavailable" };
+        const result = action === "list" ? await options.coordinator.list(request as DesktopHumanEvaluationListRequest, () => authorized(event))
+          : await options.coordinator.generateReport(request as DesktopHumanEvaluationReportRef, () => authorized(event));
+        return authorized(event) ? result : { accepted: false, reason: "unauthorized_sender" };
+      });
+      registered.push(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS[action]);
+    }
   } catch (error) { for (const channel of registered) ipc.removeHandler(channel); throw error; }
   return () => { for (const channel of registered) ipc.removeHandler(channel); };
+}
+
+export function parseHumanEvaluationListRequest(value: unknown): DesktopHumanEvaluationListRequest | undefined {
+  if (!own(value, [], ["afterEnrollmentId", "limit"])
+    || (Object.hasOwn(value, "afterEnrollmentId") && !id(value.afterEnrollmentId))
+    || (Object.hasOwn(value, "limit") && (!Number.isSafeInteger(value.limit) || Number(value.limit) < 1 || Number(value.limit) > 50))) return undefined;
+  return Object.freeze({ ...(value.afterEnrollmentId !== undefined ? { afterEnrollmentId: value.afterEnrollmentId as string } : {}),
+    ...(value.limit !== undefined ? { limit: Number(value.limit) } : {}) });
+}
+
+export function parseHumanEvaluationReportRef(value: unknown): DesktopHumanEvaluationReportRef | undefined {
+  if (!own(value, ["taskId", "eventId", "revision"]) || !id(value.taskId) || !id(value.eventId)
+    || !Number.isSafeInteger(value.revision) || Number(value.revision) < 1) return undefined;
+  return Object.freeze({ taskId: value.taskId, eventId: value.eventId, revision: Number(value.revision) });
 }
 
 export function parseHumanEvaluationInspectRequest(value: unknown): DesktopHumanEvaluationInspectRequest | undefined {
