@@ -1,0 +1,17 @@
+{
+  "result": "PASS",
+  "repositoryPrivate": true,
+  "remoteMainSha": "7ca0769547400d7272711844038de2cd040fd609",
+  "originalReleaseId": 408029950,
+  "originalReleaseDraft": true,
+  "newReleaseId": 408665306,
+  "newReleaseDraft": true,
+  "newReleaseUrl": "https://github.com/ling-stack-org/ling-stack/releases/tag/untagged-036e97ea11df8fabbd13",
+  "runtimeSourceTarget": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f",
+  "assetsVerified": 14,
+  "runtimeAndOriginalEvidenceAssets": 8,
+  "bootstrapAndSourceReviewAssets": 6,
+  "publicBinaryDistribution": "NO_GO",
+  "unresolvedInstallerReviewQuestions": 3,
+  "verifiedUtc": "2026-10-10T06:32:38.3173186Z"
+}

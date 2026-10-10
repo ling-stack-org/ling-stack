@@ -4,6 +4,11 @@ Windows x64 开发安装包已完成构建，安装后的真实程序通过模�
 
 ## 下载与固定源码
 
+分发材料补齐记录（2026-10-10）：本页保留原始测试包的身份和验收证据，原 Release
+已转为 Draft。新增许可说明与 SBOM 的安装包见
+[Windows 分发材料记录](../windows-distribution-20261010/README.md)。以下旧包链接仅用于内部证据追溯，
+不应作为后续公开下载入口；本页实测结果不代表新安装包已重新完成完整验收。
+
 - [开发预发布页面](https://github.com/ling-stack-org/ling-stack/releases/tag/windows-dev-0.1.2-alpha.1-20261009-f0a632b)
 - [Windows x64 安装包](https://github.com/ling-stack-org/ling-stack/releases/download/windows-dev-0.1.2-alpha.1-20261009-f0a632b/Ling-Stack-0.1.2-alpha.1-windows-x64-f0a632b-setup.exe)
 - [匹配的固定源码](https://github.com/ling-stack-org/ling-stack/releases/download/windows-dev-0.1.2-alpha.1-20261009-f0a632b/ling-stack-source-f0a632b.zip)
