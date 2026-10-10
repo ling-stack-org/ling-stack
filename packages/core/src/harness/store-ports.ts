@@ -13,6 +13,7 @@ import type {
   RunEvaluationMutationResult,
   StartRunEvaluationInput,
 } from "./evaluations.js";
+export type { RunEvaluationTaskStore } from "./evaluation-tasks.js";
 import type {
   DelegationMessageV1,
   DelegationStepV1,

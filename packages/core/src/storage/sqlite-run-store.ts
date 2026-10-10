@@ -655,6 +655,8 @@ import { SqliteRunnerContinuationStore } from "./sqlite/runner-continuation-stor
 import { SqliteHarnessToolExecutionStore } from "./sqlite/harness-tool-execution-store.js";
 import { SqliteHarnessDiagnosticsStore } from "./sqlite/harness-diagnostics-store.js";
 import { SqliteRunEvaluationStore } from "./sqlite/run-evaluation-store.js";
+import { SqliteRunEvaluationTaskStore } from "./sqlite/run-evaluation-task-store.js";
+import { applyRunEvaluationTaskMigration } from "./sqlite/run-evaluation-task-migration.js";
 import { SqliteDelegationStore } from "./sqlite/delegation-store.js";
 import { SqliteHarnessCommitCoordinator } from "./sqlite/harness-commit-coordinator.js";
 import { applyRunnerContinuationMigration } from "./sqlite/runner-continuation-migration.js";
@@ -770,6 +772,7 @@ export class SqliteRunStore implements RunStore {
   private readonly harnessToolExecutions: SqliteHarnessToolExecutionStore;
   private readonly harnessDiagnostics: SqliteHarnessDiagnosticsStore;
   private readonly runEvaluations: SqliteRunEvaluationStore;
+  private readonly runEvaluationTasks: SqliteRunEvaluationTaskStore;
   private readonly delegations: SqliteDelegationStore;
   private readonly harnessCommits: SqliteHarnessCommitCoordinator;
   private readonly userProfile: SqliteUserProfileStore;
@@ -946,6 +949,14 @@ export class SqliteRunStore implements RunStore {
       { database: this.database },
       {
         getRun: (id) => this.getRun(id),
+        getArtifact: (id) => this.getArtifact(id),
+      },
+    );
+    this.runEvaluationTasks = new SqliteRunEvaluationTaskStore(
+      { database: this.database },
+      {
+        getRun: (id) => this.getRun(id),
+        getRunEvaluation: (id) => this.getRunEvaluation(id),
         getArtifact: (id) => this.getArtifact(id),
       },
     );
@@ -1549,6 +1560,11 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
           applyAvailabilityIncidentProvenanceMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyRunEvaluationTaskMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
@@ -2595,6 +2611,58 @@ export class SqliteRunStore implements RunStore {
 
   getRunEvaluation(id: string): import("@ling-stack/contracts").RunEvaluationV1 | undefined {
     return this.runEvaluations.getRunEvaluation(id);
+  }
+
+  getRunEvaluationTask(...args: Parameters<RunStore["getRunEvaluationTask"]>): ReturnType<RunStore["getRunEvaluationTask"]> {
+    return this.runEvaluationTasks.getRunEvaluationTask(...args);
+  }
+
+  getRunEvaluationTaskAttempt(...args: Parameters<RunStore["getRunEvaluationTaskAttempt"]>): ReturnType<RunStore["getRunEvaluationTaskAttempt"]> {
+    return this.runEvaluationTasks.getRunEvaluationTaskAttempt(...args);
+  }
+
+  getRunEvaluationTaskResult(...args: Parameters<RunStore["getRunEvaluationTaskResult"]>): ReturnType<RunStore["getRunEvaluationTaskResult"]> {
+    return this.runEvaluationTasks.getRunEvaluationTaskResult(...args);
+  }
+
+  enqueueRunEvaluationTask(...args: Parameters<RunStore["enqueueRunEvaluationTask"]>): ReturnType<RunStore["enqueueRunEvaluationTask"]> {
+    return this.runEvaluationTasks.enqueueRunEvaluationTask(...args);
+  }
+
+  listClaimableRunEvaluationTasks(...args: Parameters<RunStore["listClaimableRunEvaluationTasks"]>): ReturnType<RunStore["listClaimableRunEvaluationTasks"]> {
+    return this.runEvaluationTasks.listClaimableRunEvaluationTasks(...args);
+  }
+
+  claimRunEvaluationTask(...args: Parameters<RunStore["claimRunEvaluationTask"]>): ReturnType<RunStore["claimRunEvaluationTask"]> {
+    return this.runEvaluationTasks.claimRunEvaluationTask(...args);
+  }
+
+  renewRunEvaluationTaskLease(...args: Parameters<RunStore["renewRunEvaluationTaskLease"]>): ReturnType<RunStore["renewRunEvaluationTaskLease"]> {
+    return this.runEvaluationTasks.renewRunEvaluationTaskLease(...args);
+  }
+
+  admitRunEvaluationTaskDispatch(...args: Parameters<RunStore["admitRunEvaluationTaskDispatch"]>): ReturnType<RunStore["admitRunEvaluationTaskDispatch"]> {
+    return this.runEvaluationTasks.admitRunEvaluationTaskDispatch(...args);
+  }
+
+  completeRunEvaluationTask(...args: Parameters<RunStore["completeRunEvaluationTask"]>): ReturnType<RunStore["completeRunEvaluationTask"]> {
+    return this.runEvaluationTasks.completeRunEvaluationTask(...args);
+  }
+
+  finishRunEvaluationTaskBeforeDispatch(...args: Parameters<RunStore["finishRunEvaluationTaskBeforeDispatch"]>): ReturnType<RunStore["finishRunEvaluationTaskBeforeDispatch"]> {
+    return this.runEvaluationTasks.finishRunEvaluationTaskBeforeDispatch(...args);
+  }
+
+  markRunEvaluationTaskDispatchUnknown(...args: Parameters<RunStore["markRunEvaluationTaskDispatchUnknown"]>): ReturnType<RunStore["markRunEvaluationTaskDispatchUnknown"]> {
+    return this.runEvaluationTasks.markRunEvaluationTaskDispatchUnknown(...args);
+  }
+
+  reconcileExpiredRunEvaluationTaskAttempt(...args: Parameters<RunStore["reconcileExpiredRunEvaluationTaskAttempt"]>): ReturnType<RunStore["reconcileExpiredRunEvaluationTaskAttempt"]> {
+    return this.runEvaluationTasks.reconcileExpiredRunEvaluationTaskAttempt(...args);
+  }
+
+  reconcileExpiredRunEvaluationTaskAttemptsPage(...args: Parameters<RunStore["reconcileExpiredRunEvaluationTaskAttemptsPage"]>): ReturnType<RunStore["reconcileExpiredRunEvaluationTaskAttemptsPage"]> {
+    return this.runEvaluationTasks.reconcileExpiredRunEvaluationTaskAttemptsPage(...args);
   }
 
   getRunEvaluationGrade(id: string): import("@ling-stack/contracts").RunEvaluationGradeV1 | undefined {

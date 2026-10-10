@@ -1249,7 +1249,107 @@ This plan is being implemented on the existing `codex/reasoning-summary-autorevi
 
 The original transcript/approval gates and the new Harness G01-G23 gates are one final acceptance set. Each Harness phase runs narrow deterministic tests first. After all enforcing phases land, run the repository checks, isolated-per-file Daemon suite, packaged macOS smoke, daemon restart, SSE reconnect, approval resume, continuation replay, tool crash-window reconciliation, evaluation recovery, and required-child fan-in in the same packaged application build.
 
-## GSTACK REVIEW REPORT
+## H09 Task Recovery Engineering Addendum — 2026-10-10
+
+Fixed target: this plan's T9/H09 task/claim/recovery foundation, not branch diff.
+Baseline `fcc47e26`; original approvals remain in force. Detailed contract:
+[独立任务与恢复](harness-evaluation-task-recovery-detailed-design.md).
+
+### Scope Challenge / Decision ledger
+
+Scope accepted as-is: estimate18 source/test files, two focused classes, three
+sidecar tables; no new service, UI, scheduler framework or dependencies.
+Arrangement retained under user's actual continuous-chain/new-table authorization:
+“允许按现有设计连续完成内部链路…不再逐次确认文件数量”, “可以新增表”.
+Combining external effects into deterministic rule recovery loses the fixed contract.
+R1 approved: necessary task identity, Attempt/fence, admission, atomic result, unknown
+recovery, tests/design. R2 fixed: old rule/grades/math/Run/normal quota unchanged.
+R3–R6 pending: trusted human identity; actual model/data; budgets/Provider quota;
+explicit corpus/terminal enqueue. No auto-choice. H10 budget is separate from D1 A.
+Approval readiness: PASS for R1/R2 only; R3–R6 not enabled.
+
+### Architecture review — 4 mapped findings
+
+1. [P1 confidence10/10] `scheduler.ts:39`: `listClaimableRunEvaluations` claims whole
+   evaluations; repeat tasks need own identity, not resetting completion/grader version.
+2. [P1 confidence10/10] `run-evaluation-store.ts:100`: expired `('claimed','grading')`
+   are claimable. Preserve deterministic rule behavior, separate unknown effects.
+3. [P1 confidence10/10] `scheduler.ts:31`: callback gets mutation Store, no signal or
+   admission receipt. New narrow worker cannot borrow terminal Run/normal quota.
+4. [P1 confidence9/10] old grade unique lacks repeat/Attempt. New result/Attempt/task
+   settle atomically; claimed invocation/authenticated fields grant no promotion authority.
+
+### Code Quality review — 2 mapped findings
+
+1. [P2 confidence9/10] canonical JSON is not a public-input total budget. Require bounded
+   own-data/plain inputs; distinguish canonical/config-artifact SHA; no preparse claim.
+2. [P2 confidence10/10] old public Store methods own `BEGIN IMMEDIATE`; no nested reuse.
+   BEGIN failure cannot rollback caller transaction. Reuse patterns, not incompatible
+   methods. No speculative shared extraction; total code grows for separate semantics.
+
+### Test review — 6 planned gap groups
+
+Existing runner is Node `node:test` in Core/Daemon package scripts; no CLAUDE/TODOS
+files found. Existing tests cover old rules/137, not new sidecars. No retirements.
+
+```text
+enqueue [GAP -> SQLite]: owner/digest/config invalid -> reject; replay same; ordinal new
+claim   [GAP -> two connections]: revision/token/expiry/ABA reject; replay same Attempt
+admit   [GAP -> integration]: drift/closed -> zero executor; first true; replay false
+settle  [GAP -> faults]: result+Attempt+task commit/rollback; conflict/late reject
+recover [GAP -> reopen]: pre-admission queued; admitted unresolved unknown, no resend
+worker/legacy [GAP]: absent zero claim; abort unknown; hang not idle; old facts unchanged
+```
+
+All six are proposed tests, not executed evidence. Crash cuts: before admission,
+admission/send-before, send/response-before, response/commit-before. Each enforces
+effect/fence/atomicity beyond smoke. No UI/prompt/model change or new quality eval.
+History153/136 fixtures remove only exact158 overlay and retain strict SQL/rows/markers.
+
+### Performance review — 2 mapped findings
+
+1. [P2 confidence9/10] use bounded indexed queue/recovery and cursor progress, no
+   whole-history loading or fixed overfetch. 2. [P2 confidence9/10] shutdown closes
+   admission synchronously, aborts owned adapters and awaits actual settlement;
+   no timeout-as-idle. Hanging adapter is explicitly non-drained.
+
+### NOT in scope / What already exists / Failure modes
+
+No real model/human producer, all-Run enrollment, quota policy, enforcement, GUI release
+or fabricated Office approval. Do not redo H08, report math/projector, Provider D1,
+Pi/Expo migration, R03 or time formatting. Reuse sealed lineage/own transaction/CAS
+patterns; not old whole-evaluation recovery or normal Runtime execution authority.
+Each crash cut, ABA, drift, late result, split commit and shutdown race has required
+error handling/tests above: zero unhandled silent critical gaps in the plan.
+
+### Implementation Tasks / parallelization
+
+- [ ] **H09-F1 (P1 human~8h / CC~90min)** Core/Contracts sidecars and fenced
+  admission/atomic result; Architecture1/2/4, Quality1/2; verify SQLite/migration Node22/24.
+- [ ] **H09-F2 (P1 human~3h / CC~30min)** Daemon isolated worker; Architecture3,
+  Performance2; verify absent/zero-send/unknown/drain. Build after frozen Core.
+- [ ] **H09-F3 (P1 human~3h / CC~30min)** strict legacy/fault/reopen regressions;
+  Test6 groups; no normal Run/Attempt/grade/quota mutation.
+- [ ] **H09-F4 (P2 human~1h / CC~10min)** root Office fixed authored-source leaves
+  and source-only regression; distribution boundary, no approvedrow fabrication.
+
+LaneA Core/Contracts, LaneB disjoint Daemon (frozen interface first); root inventory
+after A/B, then joint types/focused/full/independent review/local save. Shared tree at
+user direction, no overlapping edits or concurrent dist builds; original writer WIP
+excluded. Efforts are estimates, not elapsed/completion proof.
+
+### Completion summary / Outside voice
+
+Architecture4 + Quality2 + Test6 + Performance2 =14 mapped issues; scope accepted as-is.
+NOT in scope/existing/failure/parallel written; zero new TODOs, zero silent critical gaps.
+Four production-enable decisions pending, no foundation decision pending; Lake score N/A.
+External Claude attempted once access=none, exit1 authentication unavailable; no retry or
+credential change. No declared Plan/TaskOutput/TaskStop means native outside fallback
+unavailable. Three same-harness source auditors are not external/cross-model completion.
+Aside absent and host WebSearch absent; current authored code used, no invented Codex
+generic-grader parity. Full/GUI/actual-producer verification remains uncompleted.
+
+## Historical Engineering Report — retained prior record
 
 ### Review Runs
 
@@ -1298,3 +1398,41 @@ None. Low-confidence implementation details were kept as implementation-time mea
 **APPROVED FOR PHASED IMPLEMENTATION.** Implement H01-H13 as ordered, atomic commits on the current clean implementation branch, per the user's explicit decision. Keep all flags off or shadow until each enforcing gate passes, and do not touch the separate dirty UI2 checkout.
 
 NO UNRESOLVED DECISIONS
+
+## Historical GSTACK REVIEW REPORT — H09 foundation review snapshot
+
+| Review | Trigger | Why | Runs | Status | Findings |
+| --- | --- | --- | --- | --- | --- |
+| CEO Review | none this slice | Scope unchanged | 0 | NOT RUN | Prior approved phased scope retained |
+| Outside Review | Claude Code access=none | Independent plan challenge | 1 | UNAVAILABLE | Authentication, exit1; no retry or credential change |
+| Eng Review | plan-eng-review H09 | Architecture/tests | 1 | ISSUES OPEN | 14 mapped findings, zero silent critical gaps; four enablement decisions pending |
+| Design Review | none | No UI change | 0 | NOT APPLICABLE | No renderer/UI change |
+| DX Review | none | Internal foundation | 0 | NOT RUN | No user onboarding or CLI change |
+
+**OUTSIDE COVERAGE:** claude-code, plan-review, unavailable; same-harness audits are not external completion.
+**VERDICT:** foundation implementation remains authorized by R1/R2; Eng ISSUES OPEN, eng review required before overall H09 activation/release.
+**UNRESOLVED DECISIONS:**
+- R3: authenticated human identity/scope/correction; human producer disabled.
+- R4: real model/Provider/prompt/sampling/rubric/allowed data; actual model producer disabled.
+- R5: batch/day and separate Provider quota; local concurrency is not quota.
+- R6: explicit corpus/terminal enqueue source; no all-Run enrollment.
+
+## Current implementation readback — 2026-10-10
+
+H09-F1–F4 foundation 已实现。冻结21份源码/测试的 SHA 已逐项校验；Contracts/Core/Daemon
+build、Core2692/2692、隔离Daemon3943/3943、Desktop1998pass/3Windows-onlyskip、workspace
+typecheck 均实际exit0。上述是内部和source-only验收，不是真实模型、正式native approval或GUI。
+原review记录保留；没有重新运行或宣称外部Claude审查成功。
+
+用户已确定：QA案例与脱敏产物only；Host验证的本地用户显式提交、纠正/撤回留审计；
+Provider/model/预算委托实施者决定。初始政策batch3、滚动24h12个真实transport attempt、
+单固定隔离QAworkspace稳定namespace、retry0、local owned inflight1、unknown quarantine。
+8k完整输入估算另加32768 wire bytes硬界；output1k须验证最终wire/Provider语义；价未知不冒金额硬界。
+详细政策和人工OS确认要求见[h09详细设计](harness-evaluation-task-recovery-detailed-design.md)。
+
+**NEXT:** explicitQA enrollment + 原子独立quota/transport provenance + 单stream grader +
+payload-bound OS人工确认/append-only纠正撤回。旧unverified声明不提升，human不进入自动queue，
+不采集日常conversation/workspace/channel，不借普通Run quota。
+**VERDICT:** foundation内部验收通过；整体H09、真实producer和macOS12类验收仍未完成。
+**UNRESOLVED DECISIONS:** 本切片无未答用户政策；有效QA Provider/model能力和真实价源仍需实施核验。
+H10根预算为另一未答选择，不能套用本预算或D1A，dynamic children仍不启用。

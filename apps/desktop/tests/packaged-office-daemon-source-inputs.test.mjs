@@ -45,6 +45,13 @@ const newAuthoredRuntimeLeaves = [
   "packages/daemon/src/features/runs/provider-persistence.ts",
   "packages/daemon/src/features/runs/tool-context-budget.ts",
   "packages/runner-pi/src/provider-invocation.ts",
+  "packages/core/src/harness/evaluation-tasks.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-task-validation.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-task-mappers.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-task-migration.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-task-store.ts",
+  "packages/daemon/src/features/harness/evaluations/task-worker-input.ts",
+  "packages/daemon/src/features/harness/evaluations/task-worker.ts",
 ];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";
@@ -54,7 +61,7 @@ function newFile(path, bytes) {
   writeFileSync(path, bytes, { mode: 0o600 });
 }
 
-test("Office packaging review requires every new Pi, delegation, diagnostics and Provider authored runtime leaf", () => {
+test("Office packaging review requires every new Pi, delegation, diagnostics, Provider and evaluation task authored runtime leaf", () => {
   for (const name of newAuthoredRuntimeLeaves) {
     assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
       `Runtime leaf must be an explicit required review input: ${name}`);

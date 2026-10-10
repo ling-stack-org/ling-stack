@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
+import { RUN_EVALUATION_TASK_SCHEMA_OBJECTS } from "../dist/storage/sqlite/run-evaluation-task-migration.js";
 import { createSqliteRunStore, resolveRuntimePaths } from "../dist/index.js";
 import {
   applyDelegationMigration,
@@ -162,7 +163,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through154/155/156/157 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through154/155/156/157/158 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -176,6 +177,12 @@ test("real schema153 upgrades through154/155/156/157 preserving historical SQL/m
   first.close();
   const path = resolveRuntimePaths(f.cwd).databasePath;
   const old = f.open(path);
+  // Remove only the new row-free sidecar before reconstructing schema153.
+  for (const name of RUN_EVALUATION_TASK_SCHEMA_OBJECTS.filter(name => !name.startsWith("sqlite_autoindex_"))) {
+    const object = old.handle.prepare("SELECT type FROM sqlite_master WHERE name=?").get(name);
+    if (object?.type === "trigger" || object?.type === "index") old.handle.exec(`DROP ${object.type.toUpperCase()} ${name}`);
+  }
+  old.handle.exec("DROP TABLE run_evaluation_task_results; DROP TABLE run_evaluation_task_attempts; DROP TABLE run_evaluation_tasks; DELETE FROM schema_migrations WHERE version=158");
   removeDelegationOverlay(old.handle);
   // Reconstruct the actual historical schema, not latest-minus-delegation.
   old.handle.exec(`ALTER TABLE mcp_authority_revisions DROP COLUMN metadata_published_revision;
@@ -214,15 +221,18 @@ test("real schema153 upgrades through154/155/156/157 preserving historical SQL/m
     "sqlite_autoindex_provider_check_authorities_1"]);
   const incidentProvenanceOverlay = new Set(["channel_team_incident_provenance", "channel_team_incident_provenance_insert",
     "channel_team_incident_provenance_update", "sqlite_autoindex_channel_team_incident_provenance_1", "idx_availability_candidates_time"]);
+  const evaluationTaskOverlay = new Set(RUN_EVALUATION_TASK_SCHEMA_OBJECTS);
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
-    && row.name !== "mcp_authority_revisions" && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name)),
+    && row.name !== "mcp_authority_revisions" && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name) && !evaluationTaskOverlay.has(row.name)),
   oldSchema.filter(row => row.name !== "mcp_authority_revisions"));
   const newAuthorityColumns = database.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
   assert.deepEqual(newAuthorityColumns.slice(0, oldAuthorityColumns.length), oldAuthorityColumns);
   assert.deepEqual(newAuthorityColumns.slice(oldAuthorityColumns.length).map(column => column.name),
     ["metadata_request_revision", "metadata_published_revision"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158) ORDER BY version").all(), oldMarkers);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=158").get().name, "create_run_evaluation_tasks_v1");
+  for (const table of ["run_evaluation_tasks", "run_evaluation_task_attempts", "run_evaluation_task_results"]) assert.equal(database.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 0);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=157").get().name,
     "add_availability_incident_provenance");
   assert.equal(database.prepare("SELECT count(*) AS n FROM channel_team_incident_provenance").get().n, 0);
