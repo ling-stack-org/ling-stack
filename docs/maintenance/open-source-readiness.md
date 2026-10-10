@@ -2,7 +2,7 @@
 
 Status: active publication checklist
 Owner: repository maintainers
-Last verified: 2026-10-08
+Last verified: 2026-10-10
 Document type: repository governance
 Code and workflow anchors: `README.md`, `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`,
 `.github/workflows/ci.yml`, `.gitleaksignore`, `scripts/check-public-repo-safety.mjs`
@@ -36,11 +36,12 @@ Passing an earlier boundary does not authorize the next one.
 | Current-tree safety scan | Ready locally | `corepack pnpm check:public` after personal-path cleanup |
 | Main branch protection | Verification deferred | Online settings were not confirmed in this preparation pass. |
 | Actions policy | File configuration present | The generic workflow has scoped permissions and pinned actions. Online organization/repository policy was not reverified. |
-| Git-history secret scan | Ready locally | Gitleaks v8.30.1 scanned the source baseline reachable from `HEAD`; 32 historical fixture fingerprints are retained. See scope and exceptions below. |
+| Git-history secret scan | Verified for current main and additional remote head | Complete 1,112-commit graph; 881 scanned diff commits match Git; unchanged policy and 32 fixture fingerprints. See scope below. |
 | Public UI screenshots | Ready locally | New homepage capture from a fresh workspace before model configuration; historical screenshots with maintainer paths were removed in earlier cleanup. |
 | Changelog and release policy | Ready locally | `CHANGELOG.md` and `docs/release/README.md`; current product version is `0.1.2-alpha.1`. |
 | Source startup | Verified locally | Frozen install, CLI/daemon/Web dependency build, fresh daemon health, homepage, and Model Workbench navigation; no live model task. |
-| Desktop development | Source build passed; packages pending | Mac arm64 source build passed. Mac packaging lacks the required Office review record; Windows packaging is assigned to a Windows host. See [development packages](../release/development-packages.md). |
+| Desktop development | Windows development package and runtime checks recorded; full binary acceptance pending | Mac packaging lacks the required Office review record. Windows development scope and limits are in the [test report](../release/evidence/windows-dev-20261009/README.md). |
+| Windows binary notices and SBOM | Runtime material prepared; affected plug-ins replaced in candidate; complete acceptance pending | The original 453-package inventory and its questions remain recorded. The [notices-r2 candidate](../release/evidence/windows-distribution-20261010/INSTALLER_REPLACEMENT.md) excludes all three affected plug-ins, embeds retained bootstrap licenses/source and passes final extraction checks; its full acceptance and publication approval remain pending. Releases stay Draft. |
 | Asset provenance | Recorded | [Asset inventory](asset-provenance.md); maintainer confirms teammate avatars and social preview are project-made or AI-generated. |
 
 ## Online Settings And Deferred Work
@@ -102,7 +103,7 @@ A disposable fixture check confirms a credential-shaped catalog value and a non-
 64-character hexadecimal key deliberately placed on such a generated hash line; catalog
 inputs must remain generated data and changes still require review.
 
-The initial history check used `--log-opts=HEAD`, covering the full history reachable from
+The historical baseline check used `--log-opts=HEAD`, covering the full history reachable from
 baseline `958fe499100cc4874e938eee45f6f92a9caa23d0`, rather than unrelated local work-in-progress branches. Gitleaks reported
 874 commits with scanned diffs (135.59 MB); `git rev-list HEAD --count` reports 1,103 reachable
 commits including merges and empty commits. No leaks were reported with the narrowed
@@ -110,6 +111,16 @@ localization exception. Preparation was subsequently rebased onto the dependency
 refresh in `49554b07652c4311fade8ec8dee858dd364b85fe`, with a frozen reinstall and dependency
 security regression checks. The final candidate commit and any additional refs exposed at
 publication must be scanned again before visibility changes.
+
+The Windows preparation on 2026-10-10 removed the shallow-clone limit and recovered
+all missing objects with exact Git identity checks. The current main baseline
+`7ca0769547400d7272711844038de2cd040fd609` has 1,111 reachable commits; adding the
+only other remote head `29ef4e0e6cc56a6c30dca84000cb1f1116e457a1` gives 1,112.
+Gitleaks reported 881 diff commits, equal to an independent Git diff-scope count,
+with no remaining findings under the unchanged configuration and fixture exceptions.
+The [check receipt](../release/evidence/windows-distribution-20261010/source-preparation-checks.json)
+records the scope. The final documentation PR commit is scanned before submission;
+newly exposed refs and a clean publication candidate still require release-time review.
 
 ## Final Local Commands
 

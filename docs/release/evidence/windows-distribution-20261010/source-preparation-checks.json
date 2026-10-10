@@ -1,0 +1,75 @@
+{
+  "result": "PASS",
+  "sourceMainSha": "7ca0769547400d7272711844038de2cd040fd609",
+  "additionalRemoteRef": {
+    "name": "refs/heads/automation/provider-model-catalog",
+    "sha": "29ef4e0e6cc56a6c30dca84000cb1f1116e457a1",
+    "extraReachableCommits": 1
+  },
+  "mainReachableCommits": 1111,
+  "totalReachableCommits": 1112,
+  "missingHistoryObjects": 0,
+  "historyScan": {
+    "tool": "Gitleaks 8.30.1",
+    "redactionPercent": 100,
+    "findings": 0,
+    "scope": "Union of current main and the only additional remote head; existing tags are ancestors of main",
+    "reportedCommitsWithDiffs": 881,
+    "expectedCommitsWithDiffs": 881,
+    "exactHistoricalFixtureFingerprints": 32,
+    "configurationUnchanged": true
+  },
+  "documentationFiles": 301,
+  "currentTreeFiles": 4351,
+  "dependencyVersions": 1221,
+  "licenseFamilies": 23,
+  "licensePolicyWindowsLaunch": "Unchanged policy with Corepack launched through its Node entrypoint",
+  "checks": [
+    {
+      "name": "baseline-check",
+      "result": "PASS"
+    },
+    {
+      "name": "history-depth-check",
+      "result": "PASS"
+    },
+    {
+      "name": "history-object-availability",
+      "result": "PASS"
+    },
+    {
+      "name": "main-history-count",
+      "result": "PASS"
+    },
+    {
+      "name": "all-history-count",
+      "result": "PASS"
+    },
+    {
+      "name": "history-diff-scope",
+      "result": "PASS"
+    },
+    {
+      "name": "source-history-gitleaks",
+      "result": "PASS"
+    },
+    {
+      "name": "documentation-links",
+      "result": "PASS"
+    },
+    {
+      "name": "current-tree-safety",
+      "result": "PASS"
+    },
+    {
+      "name": "source-license-policy",
+      "result": "PASS"
+    },
+    {
+      "name": "diff-whitespace",
+      "result": "PASS"
+    }
+  ],
+  "workingTreeChanges": "Distribution documentation and sanitized evidence only; preparation PR head and any future refs must be rechecked before visibility change",
+  "verifiedUtc": "2026-10-10T06:14:51.242Z"
+}
