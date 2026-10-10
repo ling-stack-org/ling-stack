@@ -1,8 +1,15 @@
 # Windows distribution materials — 2026-10-10
 
-Status: runtime materials prepared; installer bootstrap review remains open; GitHub binary Releases remain Draft
+Status: runtime materials prepared; original installer questions retained; replacement candidate verified technically; binary Releases remain Draft
 Runtime source: `f0a632b1bd5bd09b12778cbd7da3d26c354b832f`
 Packaging revision: `notices-r1`
+
+Current follow-up candidate: `notices-r2` replaces WinShell, SpiderBanner and nsis7z
+with NSIS built-in functionality and MIT Windows COM macros. The actual final
+installer and uninstaller exclude all three plug-ins, retaining the same 762
+runtime files and embedding 605 checked distribution-material files. See the
+[replacement record](INSTALLER_REPLACEMENT.md). Full new installation/application
+acceptance and publication approval remain pending.
 
 The original Windows development Release was returned to Draft before any repository
 visibility change. The repository remains Private. Its existing standalone installer

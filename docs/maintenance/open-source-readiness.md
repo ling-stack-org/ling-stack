@@ -41,7 +41,7 @@ Passing an earlier boundary does not authorize the next one.
 | Changelog and release policy | Ready locally | `CHANGELOG.md` and `docs/release/README.md`; current product version is `0.1.2-alpha.1`. |
 | Source startup | Verified locally | Frozen install, CLI/daemon/Web dependency build, fresh daemon health, homepage, and Model Workbench navigation; no live model task. |
 | Desktop development | Windows development package and runtime checks recorded; full binary acceptance pending | Mac packaging lacks the required Office review record. Windows development scope and limits are in the [test report](../release/evidence/windows-dev-20261009/README.md). |
-| Windows binary notices and SBOM | Runtime material prepared; installer review open; Releases kept Draft | Runtime notices plus a 453-package full installer/upstream inventory and paired StdUtils source are in the [distribution preparation record](../release/evidence/windows-distribution-20261010/README.md). Three bootstrap license/source questions prevent public binary approval. |
+| Windows binary notices and SBOM | Runtime material prepared; affected plug-ins replaced in candidate; complete acceptance pending | The original 453-package inventory and its questions remain recorded. The [notices-r2 candidate](../release/evidence/windows-distribution-20261010/INSTALLER_REPLACEMENT.md) excludes all three affected plug-ins, embeds retained bootstrap licenses/source and passes final extraction checks; its full acceptance and publication approval remain pending. Releases stay Draft. |
 | Asset provenance | Recorded | [Asset inventory](asset-provenance.md); maintainer confirms teammate avatars and social preview are project-made or AI-generated. |
 
 ## Online Settings And Deferred Work

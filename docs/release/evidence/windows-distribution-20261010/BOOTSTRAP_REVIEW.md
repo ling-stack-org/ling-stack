@@ -2,6 +2,12 @@
 
 Status: inventory and available material collected; public Windows binary distribution remains NO-GO.
 
+Follow-up: these questions continue to apply to the original `notices-r1` EXE.
+The separately built `notices-r2` candidate excludes all three affected plug-ins.
+See the [component replacement record](INSTALLER_REPLACEMENT.md). This does not
+retroactively grant licenses to the old binaries or approve the new candidate's
+complete product/installation acceptance.
+
 The 443-component runtime inventory is separate from the installer wrapper. The complete external inventory now lists 453 installer/runtime/upstream packages, including the parent EXE. Forced NSIS extraction identified six actual plug-ins; the uninstaller uses a subset of four. Every extracted DLL matches the exact cached toolchain. StdUtils, SpiderBanner and WinShell also match original supplier archive DLLs.
 
 NSIS vendor COPYING, Electron Builder template MIT text, StdUtils 1.14 LGPL full text and clarification, matching corresponding-source archive, subsidiary source notices, and supplier records are retained here. The corresponding source archive is 206,896 bytes.

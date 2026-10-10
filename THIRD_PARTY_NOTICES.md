@@ -75,3 +75,10 @@ StdUtils LGPL source are recorded in the
 [bootstrap review](docs/release/evidence/windows-distribution-20261010/BOOTSTRAP_REVIEW.md).
 The standalone notices-r1 EXE remains an internal Draft candidate; runtime notice
 coverage must not be presented as complete installer distribution approval.
+
+The subsequent [notices-r2 replacement candidate](docs/release/evidence/windows-distribution-20261010/INSTALLER_REPLACEMENT.md)
+excludes those three affected plug-ins. It embeds the retained bootstrap licenses,
+paired StdUtils corresponding source, and modified/new installer source. Technical
+component verification passes; complete candidate acceptance and distribution
+approval are still separate. The original notices-r1 questions remain historical
+evidence and are not retroactively cleared.
