@@ -51,8 +51,23 @@ const newAuthoredRuntimeLeaves = [
   "packages/core/src/storage/sqlite/run-evaluation-task-migration.ts",
   "packages/core/src/storage/sqlite/run-evaluation-task-store.ts",
   "packages/daemon/src/features/harness/evaluations/task-worker-input.ts",
+  "packages/daemon/src/features/harness/evaluations/task-worker-prepared.ts",
   "packages/daemon/src/features/harness/evaluations/task-worker.ts",
+  "packages/core/src/harness/evaluation-qa.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-qa-validation.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-qa-mappers.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-qa-migration.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-qa-store.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-json.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-preparation.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-owned-batch.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-transport.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-coordinator.ts",
 ];
+// This contract is exported with `export type *`; esbuild correctly erases it.
+// It remains an explicit reviewed source and gets every fail-closed check below.
+const newAuthoredTypeOnlyInputs = ["packages/contracts/src/harness-evaluation-qa.ts"];
+const newAuthoredRequiredInputs = [...newAuthoredRuntimeLeaves, ...newAuthoredTypeOnlyInputs];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -61,8 +76,8 @@ function newFile(path, bytes) {
   writeFileSync(path, bytes, { mode: 0o600 });
 }
 
-test("Office packaging review requires every new Pi, delegation, diagnostics, Provider and evaluation task authored runtime leaf", () => {
-  for (const name of newAuthoredRuntimeLeaves) {
+test("Office packaging review requires every new Pi, delegation, diagnostics, Provider and evaluation task/QA authored source", () => {
+  for (const name of newAuthoredRequiredInputs) {
     assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
       `Runtime leaf must be an explicit required review input: ${name}`);
   }
@@ -142,7 +157,7 @@ test("Office fixed fresh daemon rejects missing review digests, changed authored
   const f = await approvedSyntheticFixture(t);
   const originalReview = readFileSync(f.reviewPath);
   assert.equal(f.reviewApi.readReviewedPackagedOfficeSource().sourceReviewSha256, hash(originalReview));
-  for (const name of newAuthoredRuntimeLeaves) {
+  for (const name of newAuthoredRequiredInputs) {
     await t.test(name, async t => {
       const sourcePath = join(f.root, name), authoredBefore = readFileSync(sourcePath);
       const distPath = join(f.root, name.replace("/src/", "/dist/").replace(/\.ts$/u, ".js"));
@@ -182,7 +197,7 @@ test("Office fixed fresh daemon rejects missing review digests, changed authored
       assert.deepEqual(readFileSync(distPath), compiledBefore);
     });
   }
-  t.diagnostic(JSON.stringify({ fixtureOnly: true, artifactExecuted: false, newAuthoredRuntimeLeaves,
+  t.diagnostic(JSON.stringify({ fixtureOnly: true, artifactExecuted: false, newAuthoredRuntimeLeaves, newAuthoredTypeOnlyInputs,
     nativeCompilerCalls: f.counts.nativeCompilerCalls, signCalls: f.counts.signCalls,
     nativeVerifyCalls: f.counts.nativeVerifyCalls, helperNormalizeCalls: f.counts.helperNormalizeCalls,
     realEsbuildCalls: f.builds.length }));
@@ -226,11 +241,17 @@ function assertOriginalSourceOnlyBuild(f, bundle, index) {
     assert.equal(observed.metafile.inputs[inputName].bytes, bytes.length);
     return [name, hash(bytes)];
   }));
+  const reviewedAuthoredTypeOnlySha256 = Object.fromEntries(newAuthoredTypeOnlyInputs.map(name => {
+    const path = join(f.root, name), bytes = readFileSync(path);
+    assert.equal(hash(bytes), review.packagingSha256[name]);
+    assert.equal(paths.includes(path), false, `type-only contract must not become an executable runtime input: ${name}`);
+    return [name, hash(bytes)];
+  }));
   assert.deepEqual(observed.outputFiles, [{ path: bundle.pins.path, sha256: bundle.pins.sha256, sizeBytes: bundle.pins.sizeBytes }],
     "original emitted API pins must match the untouched true esbuild output, not a synthesized result");
   return { entryPoint: "packages/daemon/src/cli.ts", runtimeInputs: paths.length, authoredWorkspaceRuntimeInputs: workspaceInputs.length,
     nineWorkspaceDistRuntimeInputs: anyWorkspaceDist.length, reviewedBridgeSha256: hash(authored),
-    reviewedAuthoredRuntimeSha256,
+    reviewedAuthoredRuntimeSha256, reviewedAuthoredTypeOnlySha256,
     originalEsbuildOutputSha256: observed.outputFiles[0].sha256 };
 }
 

@@ -58,6 +58,7 @@ import type {
 } from "./harness/continuations.js";
 import type { DelegationQueryStore, HarnessDiagnosticsStore } from "./harness/store-ports.js";
 import type { RunEvaluationTaskStore } from "./harness/evaluation-tasks.js";
+import type { RunEvaluationQaStore } from "./harness/evaluation-qa.js";
 import type {
   AvailabilityIncidentCandidatePage,
   CreateProviderRuntimeAvailabilityIncidentInput,
@@ -1522,7 +1523,7 @@ export interface ControlPlaneReplayWindowResult {
   readonly events: readonly ControlPlaneEvent[];
 }
 
-export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore {
+export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore {
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
     readonly status?: import("./approval-postcommit-types.js").ApprovalPostCommitEffectStatus;

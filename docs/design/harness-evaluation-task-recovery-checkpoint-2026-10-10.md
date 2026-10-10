@@ -106,4 +106,5 @@ Provider D1 A 已完成，只回答凭据观察隔离，不回答这些政策，
 
 根 checkout 未改；独立 writer WIP 不改、不 stage。其 diff SHA256 保持
 `312530d527ff7d209c8c281de4bc17e27261bfb7d15358a9006a281dc59e43db`。
-本检查点尚无新的 commit/push/PR/merge，后续以真实 Git readback 更新。
+foundation 已正常本地保存为 `7e6fb06f`，24paths、3285insertions/6deletions，提交后 index 空且仅
+独立 writer WIP。没有 push/PR/merge。后续 producer 的设计/源码是新的未验切片，不覆盖本文收据。

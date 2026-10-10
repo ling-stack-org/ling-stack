@@ -7,21 +7,26 @@ import {
   copyImmutableTaskData, prepareRunEvaluationTaskRequest,
   type RunEvaluationTaskExecutionInput,
 } from "./task-worker-input.js";
+import { processPreparedRunEvaluationTaskClaim, type RunEvaluationTaskDeferredReason,
+  type RunEvaluationTaskHostAdapter } from "./task-worker-prepared.js";
 
 export type { RunEvaluationTaskExecutionInput } from "./task-worker-input.js";
+export type { RunEvaluationTaskHostAdapter } from "./task-worker-prepared.js";
 export type RunEvaluationTaskWorkerStore = RunEvaluationTaskStore & Pick<RunEvaluationStore, "getRunEvaluation">;
 export type RunEvaluationTaskExecutor = (input: RunEvaluationTaskExecutionInput) =>
   RunEvaluationTaskResultInput | Promise<RunEvaluationTaskResultInput>;
 export type RunEvaluationTaskProcessDisposition =
-  "unconfigured" | "idle" | "stopped" | "completed" | "failed" | "cancelled" | "unknown" | "claim_lost";
+  "unconfigured" | "idle" | "stopped" | "completed" | "failed" | "cancelled" | "unknown" | "claim_lost" | "deferred";
 export interface RunEvaluationTaskProcessResult {
   readonly disposition: RunEvaluationTaskProcessDisposition;
   readonly taskId?: string;
+  readonly reason?: RunEvaluationTaskDeferredReason;
 }
 export interface ProcessNextRunEvaluationTaskOptions {
   readonly store: RunEvaluationTaskWorkerStore;
   readonly workerId: string;
   readonly executor?: RunEvaluationTaskExecutor;
+  readonly hostAdapter?: RunEvaluationTaskHostAdapter;
   /** Explicit Host scope pin, not a Provider quota, credential proof or executor assertion. */
   readonly executionScopeDigest?: string;
   readonly leaseMs?: number;
@@ -35,10 +40,11 @@ export async function processNextRunEvaluationTask(
   options: ProcessNextRunEvaluationTaskOptions,
 ): Promise<RunEvaluationTaskProcessResult> {
   const executor = options.executor;
-  if (!executor) return { disposition: "unconfigured" };
+  const hostAdapter = options.hostAdapter;
+  if (!executor && !hostAdapter) return { disposition: "unconfigured" };
   if (options.signal?.aborted) return { disposition: "stopped" };
   const executionScopeDigest = options.executionScopeDigest;
-  if (typeof executionScopeDigest !== "string" || !/^[a-f0-9]{64}$/u.test(executionScopeDigest)) {
+  if (!hostAdapter && (typeof executionScopeDigest !== "string" || !/^[a-f0-9]{64}$/u.test(executionScopeDigest))) {
     throw new Error("evaluation_task_worker_scope_invalid");
   }
   const leaseMs = positiveDuration(options.leaseMs, 60_000);
@@ -49,7 +55,12 @@ export async function processNextRunEvaluationTask(
   // One bounded recovery page per wake; admission history is classified before a new queue scan.
   options.store.reconcileExpiredRunEvaluationTaskAttemptsPage({ now, limit: 100 });
   if (options.signal?.aborted) return { disposition: "stopped" };
-  const candidate = options.store.listClaimableRunEvaluationTasks({ now, limit: 1 })[0];
+  hostAdapter?.reconcile(now);
+  if (options.signal?.aborted) return { disposition: "stopped" };
+  const selected = hostAdapter?.selectCandidate
+    ? hostAdapter.selectCandidate(now)
+    : options.store.listClaimableRunEvaluationTasks({ now, limit: 1 })[0];
+  const candidate = selected && (!hostAdapter || hostAdapter.acceptsTask(copyImmutableTaskData(selected))) ? selected : undefined;
   if (!candidate) return { disposition: "idle" };
   if (options.signal?.aborted) return { disposition: "stopped" };
   const claimed = options.store.claimRunEvaluationTask({
@@ -58,6 +69,10 @@ export async function processNextRunEvaluationTask(
     claimExpiresAt: new Date(Date.parse(now) + leaseMs).toISOString(), now,
   });
   if (!claimed.ok) return { disposition: "claim_lost", taskId: candidate.id };
+  if (hostAdapter) return processPreparedRunEvaluationTaskClaim({ options, adapter: hostAdapter, claim: claimed.value,
+    clock, executionTimeoutMs });
+  // The unconfigured gate above leaves this branch with its original executor and scope.
+  if (!executor || !executionScopeDigest) throw new Error("evaluation_task_worker_scope_invalid");
   let current = claimed.value;
   const disposition = (value: RunEvaluationTaskProcessDisposition): RunEvaluationTaskProcessResult =>
     ({ disposition: value, taskId: candidate.id });
@@ -153,6 +168,7 @@ interface WorkerEntry { readonly store: RunEvaluationTaskWorkerStore; timer?: Re
 export interface RunEvaluationTaskWorkerRegistryOptions {
   readonly enabled?: boolean;
   readonly executor?: RunEvaluationTaskExecutor;
+  readonly hostAdapter?: RunEvaluationTaskHostAdapter;
   readonly executionScopeDigest?: string;
   readonly concurrency?: number;
   readonly scanIntervalMs?: number;
@@ -209,7 +225,7 @@ export class RunEvaluationTaskWorkerRegistry {
     while (this.inFlight.size > 0) await Promise.allSettled([...this.inFlight.keys()]);
   }
 
-  private configured(): boolean { return this.options.enabled === true && this.options.executor !== undefined; }
+  private configured(): boolean { return this.options.enabled === true && (this.options.executor !== undefined || this.options.hostAdapter !== undefined); }
 
   private pump(): void {
     while (!this.stopped && this.active < this.concurrency && this.pending.size > 0) {
@@ -223,6 +239,7 @@ export class RunEvaluationTaskWorkerRegistry {
       // Register lifetime and controller before even clock/Store code can re-enter shutdown.
       task = Promise.resolve().then(() => processNextRunEvaluationTask({
         store: entry.store, workerId: this.workerId, executor: this.options.executor,
+        hostAdapter: this.options.hostAdapter,
         executionScopeDigest: this.options.executionScopeDigest,
         leaseMs: this.options.leaseMs, executionTimeoutMs: this.options.executionTimeoutMs,
         clock: this.options.clock, signal: controller.signal,

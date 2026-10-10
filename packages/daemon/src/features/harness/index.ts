@@ -22,3 +22,11 @@ export * from "./tool-execution/broker.js";
 export * from "./evaluations/rule-grader.js";
 export * from "./evaluations/scheduler.js";
 export * from "./evaluations/task-worker.js";
+export { createRunEvaluationQaModelConfiguration, runEvaluationQaModelConfigurationFacts,
+  runEvaluationQaModelConfigurationSnapshot } from "./evaluations/qa-model-preparation.js";
+export type { RunEvaluationQaModelConfiguration, RunEvaluationQaModelConfigurationInput,
+  RunEvaluationQaModelConfigurationFacts } from "./evaluations/qa-model-preparation.js";
+export { createRunEvaluationQaModelHostAdapter } from "./evaluations/qa-model-coordinator.js";
+export { createRunEvaluationQaOwnedModelBatch, runEvaluationQaOwnedModelBatchFacts,
+  createRunEvaluationQaProviderCurrentness } from "./evaluations/qa-model-owned-batch.js";
+export type { RunEvaluationQaOwnedModelBatch } from "./evaluations/qa-model-owned-batch.js";

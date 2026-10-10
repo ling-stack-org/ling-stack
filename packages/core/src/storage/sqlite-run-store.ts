@@ -657,6 +657,8 @@ import { SqliteHarnessDiagnosticsStore } from "./sqlite/harness-diagnostics-stor
 import { SqliteRunEvaluationStore } from "./sqlite/run-evaluation-store.js";
 import { SqliteRunEvaluationTaskStore } from "./sqlite/run-evaluation-task-store.js";
 import { applyRunEvaluationTaskMigration } from "./sqlite/run-evaluation-task-migration.js";
+import { SqliteRunEvaluationQaStore } from "./sqlite/run-evaluation-qa-store.js";
+import { applyRunEvaluationQaMigration } from "./sqlite/run-evaluation-qa-migration.js";
 import { SqliteDelegationStore } from "./sqlite/delegation-store.js";
 import { SqliteHarnessCommitCoordinator } from "./sqlite/harness-commit-coordinator.js";
 import { applyRunnerContinuationMigration } from "./sqlite/runner-continuation-migration.js";
@@ -773,6 +775,7 @@ export class SqliteRunStore implements RunStore {
   private readonly harnessDiagnostics: SqliteHarnessDiagnosticsStore;
   private readonly runEvaluations: SqliteRunEvaluationStore;
   private readonly runEvaluationTasks: SqliteRunEvaluationTaskStore;
+  private readonly runEvaluationQa: SqliteRunEvaluationQaStore;
   private readonly delegations: SqliteDelegationStore;
   private readonly harnessCommits: SqliteHarnessCommitCoordinator;
   private readonly userProfile: SqliteUserProfileStore;
@@ -958,8 +961,11 @@ export class SqliteRunStore implements RunStore {
         getRun: (id) => this.getRun(id),
         getRunEvaluation: (id) => this.getRunEvaluation(id),
         getArtifact: (id) => this.getArtifact(id),
+        isQaTask: (id) => Boolean(this.runEvaluationQa.getRunEvaluationQaEnrollment(id)),
+        onDispatchUnknownWithinTransaction: (attemptId, now) => this.runEvaluationQa.quarantineWithinTransaction(attemptId, now),
       },
     );
+    this.runEvaluationQa = new SqliteRunEvaluationQaStore({ database: this.database }, this.runEvaluationTasks, this.paths.cwd, (id) => this.getArtifact(id));
     this.delegations = new SqliteDelegationStore({ database: this.database });
     this.harnessCommits = new SqliteHarnessCommitCoordinator(
       { database: this.database },
@@ -1565,6 +1571,11 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
           applyRunEvaluationTaskMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyRunEvaluationQaMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
@@ -2613,6 +2624,42 @@ export class SqliteRunStore implements RunStore {
     return this.runEvaluations.getRunEvaluation(id);
   }
 
+  getRunEvaluationQaScope(...args: Parameters<RunStore["getRunEvaluationQaScope"]>): ReturnType<RunStore["getRunEvaluationQaScope"]> {
+    return this.runEvaluationQa.getRunEvaluationQaScope(...args);
+  }
+  getRunEvaluationQaBatch(...args: Parameters<RunStore["getRunEvaluationQaBatch"]>): ReturnType<RunStore["getRunEvaluationQaBatch"]> {
+    return this.runEvaluationQa.getRunEvaluationQaBatch(...args);
+  }
+  getRunEvaluationQaEnrollment(...args: Parameters<RunStore["getRunEvaluationQaEnrollment"]>): ReturnType<RunStore["getRunEvaluationQaEnrollment"]> {
+    return this.runEvaluationQa.getRunEvaluationQaEnrollment(...args);
+  }
+  getRunEvaluationQaRequest(...args: Parameters<RunStore["getRunEvaluationQaRequest"]>): ReturnType<RunStore["getRunEvaluationQaRequest"]> {
+    return this.runEvaluationQa.getRunEvaluationQaRequest(...args);
+  }
+  listClaimableRunEvaluationQaTasks(...args: Parameters<RunStore["listClaimableRunEvaluationQaTasks"]>): ReturnType<RunStore["listClaimableRunEvaluationQaTasks"]> {
+    return this.runEvaluationQa.listClaimableRunEvaluationQaTasks(...args);
+  }
+  createRunEvaluationQaBatch(...args: Parameters<RunStore["createRunEvaluationQaBatch"]>): ReturnType<RunStore["createRunEvaluationQaBatch"]> {
+    return this.runEvaluationQa.createRunEvaluationQaBatch(...args);
+  }
+  enrollRunEvaluationQaTask(...args: Parameters<RunStore["enrollRunEvaluationQaTask"]>): ReturnType<RunStore["enrollRunEvaluationQaTask"]> {
+    return this.runEvaluationQa.enrollRunEvaluationQaTask(...args);
+  }
+  admitRunEvaluationQaRequest(...args: Parameters<RunStore["admitRunEvaluationQaRequest"]>): ReturnType<RunStore["admitRunEvaluationQaRequest"]> {
+    return this.runEvaluationQa.admitRunEvaluationQaRequest(...args);
+  }
+  completeRunEvaluationQaRequest(...args: Parameters<RunStore["completeRunEvaluationQaRequest"]>): ReturnType<RunStore["completeRunEvaluationQaRequest"]> {
+    return this.runEvaluationQa.completeRunEvaluationQaRequest(...args);
+  }
+  markRunEvaluationQaRequestUnknown(...args: Parameters<RunStore["markRunEvaluationQaRequestUnknown"]>): ReturnType<RunStore["markRunEvaluationQaRequestUnknown"]> {
+    return this.runEvaluationQa.markRunEvaluationQaRequestUnknown(...args);
+  }
+  reconcileRunEvaluationQaScope(...args: Parameters<RunStore["reconcileRunEvaluationQaScope"]>): ReturnType<RunStore["reconcileRunEvaluationQaScope"]> {
+    return this.runEvaluationQa.reconcileRunEvaluationQaScope(...args);
+  }
+  releaseRunEvaluationQaLane(...args: Parameters<RunStore["releaseRunEvaluationQaLane"]>): ReturnType<RunStore["releaseRunEvaluationQaLane"]> {
+    return this.runEvaluationQa.releaseRunEvaluationQaLane(...args);
+  }
   getRunEvaluationTask(...args: Parameters<RunStore["getRunEvaluationTask"]>): ReturnType<RunStore["getRunEvaluationTask"]> {
     return this.runEvaluationTasks.getRunEvaluationTask(...args);
   }

@@ -11,6 +11,7 @@ export * from "./user-input-validation.js";
 export type * from "./artifacts.js";
 export type * from "./runtime.js";
 export * from "./harness.js";
+export type * from "./harness-evaluation-qa.js";
 export * from "./run-compaction-checkpoints.js";
 export * from "./run-event-validation.js";
 export * from "./provider-diagnostics.js";

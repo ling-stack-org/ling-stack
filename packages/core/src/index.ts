@@ -4,6 +4,7 @@ export * from "./harness/continuations.js";
 export * from "./harness/tool-executions.js";
 export * from "./harness/evaluations.js";
 export * from "./harness/evaluation-tasks.js";
+export * from "./harness/evaluation-qa.js";
 export * from "./harness/evaluation-json.js";
 export * from "./harness/evaluation-rule-grader.js";
 export * from "./harness/delegations.js";

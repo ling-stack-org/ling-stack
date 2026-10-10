@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { RUN_EVALUATION_TASK_SCHEMA_OBJECTS } from "../dist/storage/sqlite/run-evaluation-task-migration.js";
+import { removeQaOverlayForLegacyFixture } from "./support/evaluation-qa-migration-fixture.mjs";
 import { createSqliteRunStore, resolveRuntimePaths } from "../dist/index.js";
 import {
   applyRunEvaluationMigration,
@@ -20,6 +21,7 @@ test("schema 136 upgrades to evaluation schema 137 while preserving later migrat
   store.close();
   const path = resolveRuntimePaths(cwd).databasePath;
   let database = new DatabaseSync(path);
+  removeQaOverlayForLegacyFixture(database);
   for (const name of RUN_EVALUATION_TASK_SCHEMA_OBJECTS.filter(name => !name.startsWith("sqlite_autoindex_"))) {
     const object = database.prepare("SELECT type FROM sqlite_master WHERE name=?").get(name);
     if (object?.type === "trigger" || object?.type === "index") database.exec(`DROP ${object.type.toUpperCase()} ${name}`);

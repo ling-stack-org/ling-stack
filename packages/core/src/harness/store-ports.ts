@@ -14,6 +14,7 @@ import type {
   StartRunEvaluationInput,
 } from "./evaluations.js";
 export type { RunEvaluationTaskStore } from "./evaluation-tasks.js";
+export type { RunEvaluationQaStore } from "./evaluation-qa.js";
 import type {
   DelegationMessageV1,
   DelegationStepV1,

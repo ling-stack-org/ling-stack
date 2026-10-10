@@ -1436,3 +1436,14 @@ payload-bound OS人工确认/append-only纠正撤回。旧unverified声明不提
 **VERDICT:** foundation内部验收通过；整体H09、真实producer和macOS12类验收仍未完成。
 **UNRESOLVED DECISIONS:** 本切片无未答用户政策；有效QA Provider/model能力和真实价源仍需实施核验。
 H10根预算为另一未答选择，不能套用本预算或D1A，dynamic children仍不启用。
+
+后续完整合同：[H09专用QA producer](harness-evaluation-qa-producer-detailed-design.md)。159侧边表与
+非流式单请求薄adapter已内部接通、未生产注册；已授权API目录返回36models，
+技术候选gpt-5.6-luna仍需受额度约束的wire能力/实际usage核验，没有可信价源。
+固定Office清单已补12个authored inputs（11 runtime＋1 type-only），完整source-only188/188，
+三次真实esbuild4009runtime/1173authored/workspace dist0；native/codesign仍synthetic，不冒GUI。
+当前159内部验证：Core双Node67/67、full2759、Daemon双Node109/109、Root联合双Node176/176、
+Desktop2046pass/3Windows-onlyskip、types均真正exit0。新Daemon隔离full4016/4016已真正exit0。
+详情见[QA producer检查点](harness-evaluation-qa-producer-checkpoint-2026-10-10.md)。
+下一为完整160人工Main→OS→Daemon原子audit/纠正撤回，再进行真实Provider与macOS12类验收。
+本读回不覆盖历史review，不宣称159已生产启用或总体H09完成。

@@ -43,8 +43,10 @@ interface Ports {
   readonly getRun: (id: string) => RunSession | undefined;
   readonly getRunEvaluation: (id: string) => RunEvaluationV1 | undefined;
   readonly getArtifact: (id: string) => RunArtifact | undefined;
+  readonly isQaTask?: (id: string) => boolean;
+  readonly onDispatchUnknownWithinTransaction?: (attemptId: string, now: string) => void;
 }
-class EvidenceError extends Error {
+export class EvidenceError extends Error {
   constructor(readonly code: RunEvaluationTaskMutationCode) {
     super(code);
   }
@@ -70,7 +72,11 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
   }
   enqueueRunEvaluationTask(input: EnqueueRunEvaluationTaskInput): RunEvaluationTaskMutationResult<RunEvaluationTaskV1> {
     validateTaskInput(input, "enqueue");
-    return this.mutate(() => {
+    return this.mutate(() => this.enqueueWithinTransaction(input));
+  }
+  /** Internal coordinator seam, never exposed through RunStore. Caller owns transaction. */
+  enqueueWithinTransaction(input: EnqueueRunEvaluationTaskInput): RunEvaluationTaskMutationResult<RunEvaluationTaskV1> {
+    validateTaskInput(input, "enqueue");
       const evaluation = this.evaluation(input.evaluationId, input.evaluationKey);
       const frozen = this.frozen(input.frozenGraderArtifact, input.frozenGraderDigest, evaluation);
       const identity = {
@@ -89,7 +95,6 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
       const id = createRunEvaluationTaskId();
       this.context.database.prepare("INSERT INTO run_evaluation_tasks(id,schema_version,evaluation_id,evaluation_key,grader_type,frozen_json,frozen_artifact_id,frozen_artifact_sha,frozen_digest,repeat_ordinal,idempotency_key,state,revision,created_at,updated_at) VALUES(?,1,?,?,'model',?,?,?,?,?,?,'queued',0,?,?)").run(id, evaluation.id, evaluation.idempotencyKey, JSON.stringify(frozen), input.frozenGraderArtifact.artifactId, input.frozenGraderArtifact.contentSha256, input.frozenGraderDigest, input.repeatOrdinal, key, input.now, input.now);
       return ok(this.getRunEvaluationTask(id)!);
-    });
   }
   listClaimableRunEvaluationTasks(input: ListClaimableRunEvaluationTasksInput) {
     validateTaskInput(input, "list");
@@ -132,7 +137,11 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
   }
   admitRunEvaluationTaskDispatch(input: AdmitRunEvaluationTaskDispatchInput): RunEvaluationTaskMutationResult<RunEvaluationTaskAdmission> {
     validateTaskInput(input, "admit");
-    return this.mutate<RunEvaluationTaskAdmission>(() => {
+    return this.mutate(() => this.ports.isQaTask?.(input.taskId) ? fail("invalid_transition") : this.admitWithinTransaction(input));
+  }
+  /** Internal QA coordinator seam: quota reservation and task admission share one transaction. */
+  admitWithinTransaction(input: AdmitRunEvaluationTaskDispatchInput): RunEvaluationTaskMutationResult<RunEvaluationTaskAdmission> {
+    validateTaskInput(input, "admit");
       const pair = this.fence(input, true);
       if (!pair.ok) return pair;
       this.validateTask(pair.value.task);
@@ -146,11 +155,14 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
         ...this.pair(input.taskId, input.attemptId),
         mayDispatch: true
       });
-    });
   }
   completeRunEvaluationTask(input: CompleteRunEvaluationTaskInput): RunEvaluationTaskMutationResult<RunEvaluationTaskSettlement> {
     validateTaskInput(input, "complete");
-    return this.mutate(() => {
+    return this.mutate(() => this.ports.isQaTask?.(input.taskId) ? fail("invalid_transition") : this.completeWithinTransaction(input));
+  }
+  /** Internal QA coordinator seam: result, usage receipt and task settlement share one transaction. */
+  completeWithinTransaction(input: CompleteRunEvaluationTaskInput): RunEvaluationTaskMutationResult<RunEvaluationTaskSettlement> {
+    validateTaskInput(input, "complete");
       const pair = this.fence(input, true, true);
       if (!pair.ok) return pair;
       const {
@@ -190,7 +202,6 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
         ...this.pair(task.id, attempt.id),
         result: this.getRunEvaluationTaskResult(task.id)!
       });
-    });
   }
   finishRunEvaluationTaskBeforeDispatch(input: FinishRunEvaluationTaskBeforeDispatchInput): RunEvaluationTaskMutationResult<RunEvaluationTaskClaim> {
     validateTaskInput(input, "finish");
@@ -204,13 +215,22 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
   }
   markRunEvaluationTaskDispatchUnknown(input: RunEvaluationTaskFence): RunEvaluationTaskMutationResult<RunEvaluationTaskClaim> {
     validateTaskInput(input, "unknown");
-    return this.mutate(() => {
+    return this.mutate(() => this.markUnknownWithinTransaction(input));
+  }
+  /** Internal recovery seam. QA hook quarantines its ledger in the same transaction. */
+  markUnknownWithinTransaction(input: RunEvaluationTaskFence): RunEvaluationTaskMutationResult<RunEvaluationTaskClaim> {
+    validateTaskInput(input, "unknown");
       const pair = this.fence(input);
       if (!pair.ok) return pair;
       if (pair.value.attempt.state !== "dispatch_admitted") return fail("invalid_transition");
       this.unknown(pair.value, input);
       return ok(this.pair(input.taskId, input.attemptId));
-    });
+  }
+  /** A different Host boot conservatively retires an admitted task, even before lease expiry. */
+  reconcileQaOrphanWithinTransaction(taskId: string, attemptId: string, now: string): void {
+    const task = this.getRunEvaluationTask(taskId), attempt = this.getRunEvaluationTaskAttempt(attemptId);
+    if (!task || !attempt || task.activeAttemptId !== attempt.id || attempt.taskId !== task.id || task.state !== "active" || attempt.state !== "dispatch_admitted") return;
+    this.unknown({ task, attempt }, { taskId, attemptId, now, expectedTaskRevision: task.revision, expectedAttemptRevision: attempt.revision, claimOwner: attempt.claimOwner, claimToken: attempt.claimToken }, attempt.claimExpiresAt <= now);
   }
   reconcileExpiredRunEvaluationTaskAttempt(input: ReconcileExpiredRunEvaluationTaskAttemptInput): RunEvaluationTaskMutationResult<RunEvaluationTaskClaim> {
     validateTaskInput(input, "recoverExact");
@@ -316,6 +336,7 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
   }
   private unknown(pair: RunEvaluationTaskClaim, input: RunEvaluationTaskFence, expired = false): void {
     this.updatePair(pair, input, "state='unknown_outcome',failure_code='evaluation.dispatch_outcome_unknown',completed_at=?,updated_at=?", [input.now, input.now], "state='unknown_outcome',failure_code='evaluation.dispatch_outcome_unknown',completed_at=?,updated_at=?", [input.now, input.now], expired);
+    this.ports.onDispatchUnknownWithinTransaction?.(pair.attempt.id, input.now);
   }
   private changed(count: number | bigint): void {
     if (count !== 1 && count !== 1n) throw new RunEvaluationInputError("evaluation.task_invalid");
@@ -336,6 +357,10 @@ export class SqliteRunEvaluationTaskStore implements RunEvaluationTaskStore {
     const frozen = this.frozen(task.frozenGraderArtifact, task.frozenGraderDigest, evaluation);
     if (digestRunEvaluationValue(frozen) !== digestRunEvaluationValue(task.frozenGrader)) throw new EvidenceError("identity_conflict");
     return evaluation;
+  }
+  /** Revalidates physical byte pins and the completed evaluation inside the coordinator transaction. */
+  validateTaskWithinTransaction(task: RunEvaluationTaskV1): RunEvaluationV1 {
+    return this.validateTask(task);
   }
   private evaluation(id: string, key: string): RunEvaluationV1 {
     const evaluation = this.ports.getRunEvaluation(id);
