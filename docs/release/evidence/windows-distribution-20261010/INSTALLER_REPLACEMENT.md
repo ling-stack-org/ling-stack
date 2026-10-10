@@ -58,7 +58,7 @@ Machine-readable evidence is in [final extraction verification](final-installer-
 [official source recovery](nsis7z-official-recovery.json).
 
 The candidate and eight matching material/evidence attachments are delivered in the
-[notices-r2 Draft Release](https://github.com/ling-stack-org/ling-stack/releases/tag/untagged-d980f7714970ce17d0de). All assets are checked against their local sizes and SHA-256 digests before this documentation update is submitted.
+[notices-r2 Draft Release](https://github.com/ling-stack-org/ling-stack/releases/tag/untagged-c14fdafb1b4b106e70bd). All assets are checked against their local sizes and SHA-256 digests before this documentation update is submitted.
 
 ## Reproduction and acceptance boundary
 
@@ -73,6 +73,6 @@ x64 staging directory to the built-in compressor. Original safety hooks remain e
 Full new installation, upgrade, uninstall, restart, system reboot, UI, model task,
 Office, Computer Use, Windows 10 and clean-machine acceptance were not performed.
 Before public binary distribution, complete those applicable release gates and review
-the retained license/restoration records. The repository remains Private and all
-Windows Releases remain Draft; this follow-up does not merge the documentation PR
-or publish the repository/installer.
+the retained license/restoration records. Documentation and sanitized evidence were
+merged into `main` through [PR #524](https://github.com/ling-stack-org/ling-stack/pull/524).
+The repository remains Private and all Windows Releases remain Draft.
