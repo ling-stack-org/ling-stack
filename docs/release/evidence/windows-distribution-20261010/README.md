@@ -11,6 +11,9 @@ runtime files and embedding 605 checked distribution-material files. See the
 [replacement record](INSTALLER_REPLACEMENT.md). Full new installation/application
 acceptance and publication approval remain pending.
 
+The [English release notes](RELEASE_NOTES.md) record the current packaging revision,
+distribution materials, verification scope, and draft download location.
+
 The original Windows development Release was returned to Draft before any repository
 visibility change. The repository remains Private. Its existing standalone installer
 is retained as internal evidence, not the current public distribution candidate.
