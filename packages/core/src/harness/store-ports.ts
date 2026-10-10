@@ -15,6 +15,7 @@ import type {
 } from "./evaluations.js";
 export type { RunEvaluationTaskStore } from "./evaluation-tasks.js";
 export type { RunEvaluationQaStore } from "./evaluation-qa.js";
+export type { RunEvaluationHumanStore } from "./human-evaluation.js";
 import type {
   DelegationMessageV1,
   DelegationStepV1,

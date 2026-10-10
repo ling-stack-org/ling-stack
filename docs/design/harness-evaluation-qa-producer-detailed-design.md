@@ -164,7 +164,7 @@ Daemon160独立 human intents/adjudication events sidecar：一次性 intent消�
 transport token 只证明请求来自 Main，不证明人；本地显式反馈与真实 OS-confirmed provenance
 分开。未完成整条认证/持久审计链前，不将反馈提升为已认证人工样本。
 
-### 160 下一切片的现有接线映射（只读核对，尚未实现）
+### 160 实施前的现有接线映射（历史只读核对）
 
 - `apps/desktop/main/locked-computer-control/native-helper-bridge.ts`已有`readSession/verifyIdentity`；
   只能复用底层协议，现有absolute-path检查不是packaged来源证明，取消后还须等真实child close。
@@ -182,7 +182,25 @@ transport token 只证明请求来自 Main，不证明人；本地显式反馈�
   create读回QA enrollment/pins/rubric/head，commit原子消费+headCAS+事件+审计。
   同事务审计复用`appendControlPlaneEventWithinTransaction`，SSE只在commit后publish。
 
-该映射没有新用户政策待选。上述端口/模块是下一切片待实现，不计入159已通过测试或源码manifest。
+该映射没有新用户政策待选。上述是160实施前的定位，不计入159已通过测试或源码manifest。
+
+### 160 当前实现读回与返回权限
+
+Main/native/private Daemon/Core intent→atomic audit完整内部链已实现；
+实际范围、真实RED与最终收据见[160检查点](harness-human-evaluation-checkpoint-2026-10-10.md)。
+仅已登记QA和Host审阅的脱敏pins；不采集日常会话或开放通用Agent/MCP/Mobile入口。
+
+成功回复须在连接清理完成后再次检查Main generation/session/owner，并在IPC返回前复验exact
+owner。锁屏或navigation不保证已进入服务端的事务回滚；已经COMMIT的事实保留，失效回复
+不发成功/快照，提交处记submission_unknown并保留exact intent用于只读核对，绝不自动重发。
+snapshot每页至多100event与实际最新headEvent，wire限4MiB（包含合法JSON最坏转义），
+mutation保持65,536bytes。未知提交私有缓存至多32个；不向Renderer暴露intent authority/key。
+报告ref固定task/event/revision，纠正撤回只改变currentness，不悄悄改写旧报告。
+
+当前可见QA表单和独立human报告producer仍未接线；inspect current/stale不等于报告生成完成。
+下一实施顺序为enrolled-only只读分页→专用Main列表/报告capability→设置QA panel/controller→
+immutable report-only producer→真实macOS/人工OS/受预算模型验证。不把160event伪造为137grade，
+不绕过source pins或提前加入promotion统计。
 
 ## 验证矩阵与实施顺序
 

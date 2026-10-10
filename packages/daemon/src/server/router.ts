@@ -361,12 +361,14 @@ import { RunControlService } from "../run-control.js";
 import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { handleStartupStatus } from "../startup/routes.js";
+import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
 
 export async function routeRequest(
   request: IncomingMessage,
   response: ServerResponse,
   context: DaemonContext,
 ): Promise<void> {
+  if (await handleHumanEvaluationDesktopRoute(request, response, context)) return;
   if (await context.remoteAccess.handleManagementRequest(request, response)) {
     return;
   }

@@ -63,11 +63,21 @@ const newAuthoredRuntimeLeaves = [
   "packages/daemon/src/features/harness/evaluations/qa-model-owned-batch.ts",
   "packages/daemon/src/features/harness/evaluations/qa-model-transport.ts",
   "packages/daemon/src/features/harness/evaluations/qa-model-coordinator.ts",
+  "packages/core/src/harness/human-evaluation.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-mappers.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-migration.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-store.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-validation.ts",
+  "packages/daemon/src/features/harness/evaluations/human-evaluation-authority.ts",
+  "packages/daemon/src/features/harness/evaluations/human-evaluation-protocol.ts",
+  "packages/daemon/src/features/harness/evaluations/human-evaluation-routes.ts",
+  "packages/daemon/src/features/harness/evaluations/human-evaluation-service.ts",
 ];
 // This contract is exported with `export type *`; esbuild correctly erases it.
 // It remains an explicit reviewed source and gets every fail-closed check below.
-const newAuthoredTypeOnlyInputs = ["packages/contracts/src/harness-evaluation-qa.ts"];
-const newAuthoredRequiredInputs = [...newAuthoredRuntimeLeaves, ...newAuthoredTypeOnlyInputs];
+const newAuthoredTypeOnlyInputs = ["packages/contracts/src/harness-evaluation-qa.ts", "packages/contracts/src/harness-human-evaluation.ts"];
+const reviewedNativeInputs = ["apps/desktop/scripts/build-human-evaluation-helper.mjs", "apps/desktop/scripts/native/human-evaluation-darwin.swift"];
+const newAuthoredRequiredInputs = [...newAuthoredRuntimeLeaves, ...newAuthoredTypeOnlyInputs, ...reviewedNativeInputs];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -160,9 +170,11 @@ test("Office fixed fresh daemon rejects missing review digests, changed authored
   for (const name of newAuthoredRequiredInputs) {
     await t.test(name, async t => {
       const sourcePath = join(f.root, name), authoredBefore = readFileSync(sourcePath);
-      const distPath = join(f.root, name.replace("/src/", "/dist/").replace(/\.ts$/u, ".js"));
-      const compiledBefore = readFileSync(distPath);
-      assert.ok(compiledBefore.length > 0, "the stale generated leaf must exist throughout the rejection checks");
+      // Native/compiler-script inputs are reviewed source, not a daemon dist leaf.
+      const distPath = reviewedNativeInputs.includes(name) ? undefined
+        : join(f.root, name.replace("/src/", "/dist/").replace(/\.ts$/u, ".js"));
+      const compiledBefore = distPath ? readFileSync(distPath) : undefined;
+      if (compiledBefore) assert.ok(compiledBefore.length > 0, "the stale generated leaf must exist throughout the rejection checks");
       await t.test("missing required review digest", async () => {
         const review = JSON.parse(originalReview.toString("utf8"));
         delete review.packagingSha256[name];
@@ -194,7 +206,7 @@ test("Office fixed fresh daemon rejects missing review digests, changed authored
           assertNoBuild(f);
         } finally { writeFileSync(sourcePath, authoredBefore, { mode: 0o600 }); }
       });
-      assert.deepEqual(readFileSync(distPath), compiledBefore);
+      if (distPath) assert.deepEqual(readFileSync(distPath), compiledBefore);
     });
   }
   t.diagnostic(JSON.stringify({ fixtureOnly: true, artifactExecuted: false, newAuthoredRuntimeLeaves, newAuthoredTypeOnlyInputs,

@@ -9,6 +9,7 @@ import { runCuaDriverElectronPackageCli } from "./cua-driver-electron-package.mj
 import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs";
 import { assertPackagedOfficeSigningConfig,
   assertPackagedOfficeSigningEnvironment } from "./packaged-office-signing-inputs.mjs";
+import { buildHumanEvaluationHelper } from "./build-human-evaluation-helper.mjs";
 
 const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const builderArguments = Object.freeze(["--mac", "dmg", "zip", "--arm64"]);
@@ -43,6 +44,7 @@ export async function packageMacosWithOffice() {
           assertPackagedOfficeSigningEnvironment(process.env);
           const token = await buildFreshPackagedDaemonForMacOffice();
           return withOriginalPackagedOfficeNativePublication(token, async () => {
+            buildHumanEvaluationHelper();
             // The URL is fixed original code. A fresh module instance prevents
             // one validated Cua environment from leaking into a later build.
             const configUrl = new URL("./cua-driver-electron-builder.config.mjs", import.meta.url);

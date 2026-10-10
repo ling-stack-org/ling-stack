@@ -19,6 +19,7 @@ import type {
 import {
   DESKTOP_IPC_CHANNELS,
   DESKTOP_THEME_PACKAGE_IPC_CHANNELS,
+  DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS,
 } from "../shared/ipc-channels.js";
 import { parseDesktopThemePackageFirstPaintArgument } from "../shared/theme-package-first-paint.js";
 import { desktopPlatform } from "../main/platform.js";
@@ -36,6 +37,16 @@ const platform = desktopPlatform();
 const capabilities: LingDesktopCapabilities = {
   platform,
   daemonBaseUrl,
+  ...(platform === "macos" ? {
+    humanEvaluation: {
+      // Main is the authoritative exact-payload parser; no auth flags are added here.
+      submit: (request: import("../shared/human-evaluation-capabilities.js").DesktopHumanEvaluationRequest) =>
+        ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.submit, request),
+      cancel: (requestId: string) => ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.cancel, requestId),
+      inspect: (request: import("../shared/human-evaluation-capabilities.js").DesktopHumanEvaluationInspectRequest) =>
+        ipcRenderer.invoke(DESKTOP_HUMAN_EVALUATION_IPC_CHANNELS.inspect, request),
+    },
+  } : {}),
   appearance: {
     reportTheme: (theme) => {
       ipcRenderer.send(DESKTOP_IPC_CHANNELS.desktopThemeReport, theme);

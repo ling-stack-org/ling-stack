@@ -1447,3 +1447,13 @@ Desktop2046pass/3Windows-onlyskip、types均真正exit0。新Daemon隔离full401
 详情见[QA producer检查点](harness-evaluation-qa-producer-checkpoint-2026-10-10.md)。
 下一为完整160人工Main→OS→Daemon原子audit/纠正撤回，再进行真实Provider与macOS12类验收。
 本读回不覆盖历史review，不宣称159已生产启用或总体H09完成。
+
+160完整内部人工链已接通：专用Main→逐payload native→私有Daemon→Core原子intent/head/event/audit，
+纠正/撤回append-only，失响应只读核对，返回前owner/epoch重验。Core最终2823/2823，Desktop最终
+2144pass/3Windows-onlyskip，Office source-only236/236，workspace types均actual exit0。
+Daemon双Nodefocused各21/21；首full4036pass/1timeout-cancel，不能算全绿；同媒体文件隔离24/24通过，
+完整串行复验待收终态。真实Swift编译/sessionprobe通过，不等于真实人工OS/GUI确认。
+详情与下一入口见[160检查点](harness-human-evaluation-checkpoint-2026-10-10.md)。
+下一只补enrolled-only分页/专用Main列表与报告capability/设置QA表单/immutable report-only producer，
+再做真实模型与macOS12类验收；不重做已验模块，不把160事件当137grade或promotion样本。
+用户政策无新增未决项；H10根预算仍独立未答，dynamicchildren不开启。总目标保持active。

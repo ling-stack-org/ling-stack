@@ -38,6 +38,7 @@
     "test:cua-driver-package-staging": "node --test tests/cua-driver-package-staging.test.mjs",
     "test:signing-feasibility": "node --test tests/cua-driver-signing-feasibility.test.mjs",
     "build:locked-control-helper:mac": "node scripts/build-locked-control-native-helper.mjs --platform=darwin",
+    "build:human-evaluation-helper:mac": "node scripts/build-human-evaluation-helper.mjs",
     "build:locked-control-probe:mac": "node scripts/build-locked-control-darwin-probe.mjs",
     "probe:locked-control:mac": "node scripts/run-locked-control-darwin-probe.mjs",
     "build:locked-control-helper:win": "powershell -ExecutionPolicy Bypass -File scripts/build-locked-control-native-helper.ps1",
@@ -151,6 +152,11 @@
       "icon": "build/icon.icns",
       "artifactName": "Ling-Stack-${version}-macos-${arch}.${ext}",
       "extraResources": [
+        {
+          "from": "dist/human-evaluation",
+          "to": "human-evaluation",
+          "filter": ["ling-human-evaluation-helper"]
+        },
         {
           "from": "dist/office-local",
           "to": "office-local",

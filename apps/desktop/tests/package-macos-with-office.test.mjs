@@ -170,6 +170,8 @@ async function fixture(t, options = {}) {
       shim("export const buildFreshPackagedDaemonForMacOffice = () => state.daemon();")],
     [new URL("../scripts/build-packaged-office-native.mjs", import.meta.url).href,
       shim("export const withOriginalPackagedOfficeNativePublication = (...args) => state.publication(...args);")],
+    [new URL("../scripts/build-human-evaluation-helper.mjs", import.meta.url).href,
+      shim("export const buildHumanEvaluationHelper = () => { state.assertScope(true); state.humanBuildCalls = (state.humanBuildCalls ?? 0) + 1; state.fail('human-helper'); return { testOnly: true }; };")],
     [new URL("../scripts/cua-driver-electron-package.mjs", import.meta.url).href,
       shim("export const runCuaDriverElectronPackageCli = (...args) => state.cli(...args);")],
     [new URL("../scripts/cua-driver-signing/signing-contract.mjs", import.meta.url).href,
@@ -206,6 +208,7 @@ test("fixed Office package entry regression (test-only loader, no native/signatu
       assert.equal(f.state.tokens.length, 1);
     } finally { configGate.settle(); builderGate.settle(); await pending; }
     assert.equal(settled, true); assert.equal(f.state.active, undefined); assertRestored();
+    assert.equal(f.state.humanBuildCalls, 1, "fixed human helper build belongs inside the approved publication scope");
     assert.deepEqual(f.state.audit, ["profile", "cli-enter", "daemon", "publication-enter", "config-enter",
       "config-completed", "targets", "build-enter", "build-completed", "publication-finally", "cli-completed", "cli-finally"]);
   });
@@ -234,7 +237,7 @@ test("fixed Office package entry regression (test-only loader, no native/signatu
     assert.equal(f.state.tokens.length, 1); assert.equal(f.state.buildCalls.length, 1); assertRestored();
   });
 
-  for (const stage of ["profile", "cli", "daemon", "publication-enter", "config", "builder", "publication-close"]) {
+  for (const stage of ["profile", "cli", "daemon", "publication-enter", "human-helper", "config", "builder", "publication-close"]) {
     await t.test(`failure at ${stage} propagates, restores env and releases entry guard`, async t => {
       const f = await fixture(t, { failAt: stage });
       await assert.rejects(f.api.packageMacosWithOffice(), error => error === f.state.failure);

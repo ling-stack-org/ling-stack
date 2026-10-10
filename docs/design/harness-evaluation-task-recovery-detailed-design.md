@@ -167,3 +167,11 @@ intent 消费、head revision CAS、事件与持久 audit 同一事务；SSE只c
 QA enrollment 必须明确 suite/case/artifact scope 且原子准入，不默认 all-Run、不读取日常私有
 workspace/channel 内容；完成事件与显式 enrollment 需共同满足才创建独立任务。
 模型与人工 producer 还未启用，四项旧 pending 以本后续决定为政策输入继续实现，不重复问已答项。
+
+### 160 内部接线后的当前边界
+
+人工Main/native/privateDaemon/原子Core审计已经实现，读回与失响应恢复也已接通。
+详见[160实施检查点](harness-human-evaluation-checkpoint-2026-10-10.md)；它不等于可见QA表单、
+真实OS认证或整个H09完成。只对明确enrollment和脱敏pins开放，H10根预算仍独立未答。
+已COMMIT事实不因Main锁屏/owner失效回滚；失效回复不给成功或快照，只读exact intent核对，
+不借HTTP abort宣称服务端未提交、不自动再次请求认证或提交。

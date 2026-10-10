@@ -659,6 +659,8 @@ import { SqliteRunEvaluationTaskStore } from "./sqlite/run-evaluation-task-store
 import { applyRunEvaluationTaskMigration } from "./sqlite/run-evaluation-task-migration.js";
 import { SqliteRunEvaluationQaStore } from "./sqlite/run-evaluation-qa-store.js";
 import { applyRunEvaluationQaMigration } from "./sqlite/run-evaluation-qa-migration.js";
+import { SqliteRunEvaluationHumanStore } from "./sqlite/run-evaluation-human-store.js";
+import { applyRunEvaluationHumanMigration } from "./sqlite/run-evaluation-human-migration.js";
 import { SqliteDelegationStore } from "./sqlite/delegation-store.js";
 import { SqliteHarnessCommitCoordinator } from "./sqlite/harness-commit-coordinator.js";
 import { applyRunnerContinuationMigration } from "./sqlite/runner-continuation-migration.js";
@@ -776,6 +778,7 @@ export class SqliteRunStore implements RunStore {
   private readonly runEvaluations: SqliteRunEvaluationStore;
   private readonly runEvaluationTasks: SqliteRunEvaluationTaskStore;
   private readonly runEvaluationQa: SqliteRunEvaluationQaStore;
+  private readonly runEvaluationHuman: SqliteRunEvaluationHumanStore;
   private readonly delegations: SqliteDelegationStore;
   private readonly harnessCommits: SqliteHarnessCommitCoordinator;
   private readonly userProfile: SqliteUserProfileStore;
@@ -966,6 +969,7 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.runEvaluationQa = new SqliteRunEvaluationQaStore({ database: this.database }, this.runEvaluationTasks, this.paths.cwd, (id) => this.getArtifact(id));
+    this.runEvaluationHuman = new SqliteRunEvaluationHumanStore({ database: this.database }, this.runEvaluationTasks, this.runEvaluationQa, this.controlPlane, (id) => this.getArtifact(id));
     this.delegations = new SqliteDelegationStore({ database: this.database });
     this.harnessCommits = new SqliteHarnessCommitCoordinator(
       { database: this.database },
@@ -1576,6 +1580,11 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
           applyRunEvaluationQaMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyRunEvaluationHumanMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
@@ -2626,6 +2635,24 @@ export class SqliteRunStore implements RunStore {
 
   getRunEvaluationQaScope(...args: Parameters<RunStore["getRunEvaluationQaScope"]>): ReturnType<RunStore["getRunEvaluationQaScope"]> {
     return this.runEvaluationQa.getRunEvaluationQaScope(...args);
+  }
+  getRunEvaluationHumanIntent(...args: Parameters<RunStore["getRunEvaluationHumanIntent"]>): ReturnType<RunStore["getRunEvaluationHumanIntent"]> {
+    return this.runEvaluationHuman.getRunEvaluationHumanIntent(...args);
+  }
+  getRunEvaluationHumanHead(...args: Parameters<RunStore["getRunEvaluationHumanHead"]>): ReturnType<RunStore["getRunEvaluationHumanHead"]> {
+    return this.runEvaluationHuman.getRunEvaluationHumanHead(...args);
+  }
+  getRunEvaluationHumanEvent(...args: Parameters<RunStore["getRunEvaluationHumanEvent"]>): ReturnType<RunStore["getRunEvaluationHumanEvent"]> {
+    return this.runEvaluationHuman.getRunEvaluationHumanEvent(...args);
+  }
+  listRunEvaluationHumanEvents(...args: Parameters<RunStore["listRunEvaluationHumanEvents"]>): ReturnType<RunStore["listRunEvaluationHumanEvents"]> {
+    return this.runEvaluationHuman.listRunEvaluationHumanEvents(...args);
+  }
+  createRunEvaluationHumanIntent(...args: Parameters<RunStore["createRunEvaluationHumanIntent"]>): ReturnType<RunStore["createRunEvaluationHumanIntent"]> {
+    return this.runEvaluationHuman.createRunEvaluationHumanIntent(...args);
+  }
+  commitRunEvaluationHumanIntent(...args: Parameters<RunStore["commitRunEvaluationHumanIntent"]>): ReturnType<RunStore["commitRunEvaluationHumanIntent"]> {
+    return this.runEvaluationHuman.commitRunEvaluationHumanIntent(...args);
   }
   getRunEvaluationQaBatch(...args: Parameters<RunStore["getRunEvaluationQaBatch"]>): ReturnType<RunStore["getRunEvaluationQaBatch"]> {
     return this.runEvaluationQa.getRunEvaluationQaBatch(...args);
