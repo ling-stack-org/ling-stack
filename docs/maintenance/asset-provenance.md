@@ -2,7 +2,7 @@
 
 Status: source publication inventory; project artwork origin confirmed by maintainer
 Owner: repository maintainers
-Last verified: 2026-10-08
+Last verified: 2026-10-10
 Document type: repository governance
 
 This inventory covers tracked images, icons, and font files. The MIT source license and
@@ -28,7 +28,14 @@ not by this tracked-file count.
 | Social preview | 1 | `docs/design/assets/ling-stack-social-preview.png`; the same maintainer confirmation covers this image. Detailed creation metadata is not recorded. Retained as the repository social preview candidate. |
 | Desktop preview test baselines | 34 | Visual acceptance fixtures under `apps/desktop/tests/screenshots/computer-use-preview/darwin-arm64/`; preserve these as test evidence. They are not end-user feature acceptance or a product demo. |
 | Web design evidence | 7 | Theme/profile screenshots under `docs/design/ui2.0升级/evidence/`; historical visual evidence, not a current product demo. |
-| Public homepage screenshot | 1 | [Fresh workspace capture](../assets/ling-workspace-home.jpg), captured on 2026-10-08 before configuring a model. No real task, personal workspace path, or API key is shown. |
+| Public homepage screenshot | 1 | [Fresh workspace capture](../assets/ling-workspace-home.jpg), recaptured on 2026-10-10 from the local Web UI with the English interface and Ling Light theme, before configuring a model. No real task, personal workspace path, or API key is shown. |
+
+The current homepage image is an unedited browser capture at 1280 x 800, taken from
+source commit `2caf8637c119fbbee6c5c1fdf47f53f7ad60d561` using an isolated fresh
+workspace. Product language was changed through Settings > Interface preferences >
+Product language. It replaces the earlier Chinese capture, not the brand assets or
+Chrome Web Store candidates. Browser warnings and errors were checked after capture;
+none were reported. This screenshot is not packaged-client or full feature acceptance.
 
 ## Origin Records
 

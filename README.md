@@ -23,10 +23,10 @@
 > Desktop development is available separately; stable signed installers and a supported
 > production release are not available yet.
 
-![Ling Stack homepage in a fresh workspace](docs/assets/ling-workspace-home.jpg)
+![Ling Stack English homepage in a fresh workspace](docs/assets/ling-workspace-home.jpg)
 
-Fresh local workspace before configuring a model. Model requests require your own
-provider configuration and API key.
+English interface in a fresh local workspace before configuring a model. Model requests
+require your own provider configuration and API key.
 
 ## Who Is It For?
 
