@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { ComfyUiClient } from "../dist/features/media/workflows/comfyui-client.js";
 import { analyzeComfyWorkflowGraph, materializeComfyWorkflowGraph } from "../dist/features/media/workflows/comfyui-graph.js";
@@ -79,6 +80,18 @@ test("ComfyUI client blocks private addresses unless the connection is explicitl
   });
   await assert.rejects(() => client.inspect(), /可信自托管连接/);
   assert.equal(requested, false);
+});
+
+test("A11 Comfy public_only uses the actual guarded native sender, not fake fetch facts", () => {
+  const childEnv = { ...process.env, LING_A11_SOCKET_CASE: "comfy-native" };
+  delete childEnv.NODE_TEST_CONTEXT;
+  const result = spawnSync(process.execPath, ["--test", "--test-name-pattern=^A11 fixture child$",
+    new URL("./media-native-transport.test.mjs", import.meta.url).pathname], {
+    env: childEnv, encoding: "utf8", timeout: 20_000,
+  });
+  assert.equal(result.error, undefined, result.error?.message);
+  assert.match(result.stdout, /A11 child entered: comfy-native/, "child must execute its socket assertions");
+  assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
 });
 
 test("ComfyUI client blocks redirects and workflow mapping payloads are structurally validated", async () => {

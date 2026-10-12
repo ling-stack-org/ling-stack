@@ -1,6 +1,7 @@
 import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -1978,6 +1979,20 @@ test("public link body extractor strips HTML and blocks unsafe redirects", async
   assert.equal(privateFetchCalled, false);
 });
 
+test("A11 preview and body fresh native connections consume audited DNS addresses", () => {
+  for (const caseName of ["preview-native", "body-native"]) {
+    const childEnv = { ...process.env, LING_A11_SOCKET_CASE: caseName };
+    delete childEnv.NODE_TEST_CONTEXT;
+    const result = spawnSync(process.execPath, ["--test", "--test-name-pattern=^A11 fixture child$",
+      new URL("./media-native-transport.test.mjs", import.meta.url).pathname], {
+      env: childEnv, encoding: "utf8", timeout: 20_000,
+    });
+    assert.equal(result.error, undefined, `${caseName}: ${result.error?.message}`);
+    assert.match(result.stdout, new RegExp(`A11 child entered: ${caseName}`), "child must execute its socket assertions");
+    assert.equal(result.status, 0, `${caseName}\n${result.stdout}\n${result.stderr}`);
+  }
+});
+
 test("inline materialization writes public link body cache for explicit link request", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-link-body-inline-cache-"));
   const store = createSqliteRunStore(cwd);
@@ -2046,7 +2061,7 @@ test("cached public link body lets Ling answer without materialization clarify",
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);

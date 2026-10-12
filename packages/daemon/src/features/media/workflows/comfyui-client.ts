@@ -1,11 +1,10 @@
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
 import type {
   MediaWorkflowConnection,
   MediaWorkflowOutputRule,
   MediaWorkflowProtocolVariant,
 } from "@ling-stack/core";
 import { isRecord } from "../../../shared/validation.js";
+import { preparePinnedPublicHttpRequest, PublicHttpError } from "../../../shared/public-http-transport.js";
 import {
   decodeComfyUiJobObservation,
   decodeComfyUiLegacyObservation,
@@ -48,14 +47,14 @@ export class ComfyUiClient {
   private readonly connection: MediaWorkflowConnection;
   private readonly apiKey?: string;
   private readonly fetchImpl: typeof globalThis.fetch;
-  private readonly resolveHostAddresses: (hostname: string) => Promise<readonly string[]>;
+  private readonly resolveHostAddresses?: (hostname: string) => Promise<readonly string[]>;
   private readonly baseUrl: URL;
 
   constructor(options: ComfyUiClientOptions) {
     this.connection = options.connection;
     this.apiKey = options.apiKey;
     this.fetchImpl = options.fetchImpl ?? globalThis.fetch;
-    this.resolveHostAddresses = options.resolveHostAddresses ?? resolveHostAddresses;
+    this.resolveHostAddresses = options.resolveHostAddresses;
     this.baseUrl = normalizeBaseUrl(options.connection.baseUrl);
   }
 
@@ -211,7 +210,6 @@ export class ComfyUiClient {
   }
 
   private async request(path: string, init: RequestInit, requireOk = true): Promise<Response> {
-    await assertConnectionNetworkPolicy(this.baseUrl, this.connection.networkPolicy, this.resolveHostAddresses);
     const url = new URL(path, this.baseUrl);
     if (url.origin !== this.baseUrl.origin) {
       throw new Error("ComfyUI 请求不能离开已配置的连接地址。");
@@ -221,7 +219,22 @@ export class ComfyUiClient {
       if (!this.apiKey) throw new Error("ComfyUI 连接缺少 API Key。");
       headers.set("authorization", `Bearer ${this.apiKey}`);
     }
-    const response = await this.fetchImpl(url, { ...init, headers, redirect: "manual" });
+    let response: Response;
+    if (this.connection.networkPolicy === "trusted_private_network") {
+      response = await this.fetchImpl(url, { ...init, headers, redirect: "manual" });
+    } else {
+      try {
+        const prepared = await preparePinnedPublicHttpRequest(url, { ...init, headers, redirect: "manual" }, {
+          timeoutMs: 30_000, resolveHostAddresses: this.resolveHostAddresses,
+        });
+        response = await prepared.fetch(this.fetchImpl);
+      } catch (error) {
+        if (error instanceof PublicHttpError && error.code === "local_or_private_host") {
+          throw new PublicHttpError(error.code, "该地址位于本机或局域网，请显式启用可信自托管连接。", { cause: error });
+        }
+        throw error;
+      }
+    }
     if (response.status >= 300 && response.status < 400) {
       await cancelResponseBody(response);
       throw new Error("ComfyUI 返回了重定向，已为安全起见阻断。");
@@ -268,35 +281,6 @@ function normalizeBaseUrl(value: string): URL {
   if (url.username || url.password || url.search || url.hash) throw new Error("ComfyUI 地址不能包含账号、密码、查询参数或锚点。");
   if (!url.pathname.endsWith("/")) url.pathname = `${url.pathname}/`;
   return url;
-}
-
-async function assertConnectionNetworkPolicy(
-  url: URL,
-  policy: MediaWorkflowConnection["networkPolicy"],
-  resolver: (hostname: string) => Promise<readonly string[]>,
-): Promise<void> {
-  if (policy === "trusted_private_network") return;
-  const addresses = isIP(url.hostname) ? [url.hostname] : await resolver(url.hostname);
-  if (addresses.length === 0) throw new Error("ComfyUI 地址无法解析。");
-  if (addresses.some(isPrivateAddress)) throw new Error("该地址位于本机或局域网，请显式启用可信自托管连接。");
-}
-
-async function resolveHostAddresses(hostname: string): Promise<readonly string[]> {
-  return (await lookup(hostname, { all: true, verbatim: true })).map((item) => item.address);
-}
-
-function isPrivateAddress(value: string): boolean {
-  const normalized = value.toLowerCase();
-  if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") return true;
-  if (normalized.startsWith("fc") || normalized.startsWith("fd") || normalized.startsWith("fe8") || normalized.startsWith("fe9") || normalized.startsWith("fea") || normalized.startsWith("feb")) return true;
-  const parts = normalized.split(".").map(Number);
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part))) return false;
-  return parts[0] === 10 ||
-    parts[0] === 127 ||
-    parts[0] === 0 ||
-    (parts[0] === 169 && parts[1] === 254) ||
-    (parts[0] === 172 && parts[1] >= 16 && parts[1] <= 31) ||
-    (parts[0] === 192 && parts[1] === 168);
 }
 
 function toPollResult(observation: ComfyUiStatusObservation): ComfyUiPollResult {

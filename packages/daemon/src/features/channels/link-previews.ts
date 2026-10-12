@@ -1,11 +1,10 @@
-import { lookup } from "node:dns/promises";
-import { isIP } from "node:net";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { ChannelLinkPreview, ChannelStoreFacet } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
+import { preparePinnedPublicHttpRequest, PublicHttpError } from "../../shared/public-http-transport.js";
 import { validateChannelMessageOwner } from "./protocol.js";
 import { parseChannelLinkPreviewRequest, type ChannelLinkPreviewRequest } from "./schemas.js";
 
@@ -167,18 +166,12 @@ export async function fetchLinkPreviewMetadata(url: string): Promise<{
 async function fetchPreviewHtml(initialUrl: string): Promise<{ readonly url: string; readonly html: string }> {
   let currentUrl = normalizePreviewUrl(initialUrl);
   for (let redirectCount = 0; redirectCount <= CHANNEL_LINK_PREVIEW_MAX_REDIRECTS; redirectCount += 1) {
-    await assertPreviewUrlAllowed(currentUrl);
-    const controller = new AbortController();
-    const timeout = setTimeout(() => controller.abort(), CHANNEL_LINK_PREVIEW_TIMEOUT_MS);
+    const prepared = await preparePinnedPublicHttpRequest(currentUrl, {
+      redirect: "manual",
+      headers: { Accept: "text/html,application/xhtml+xml", "User-Agent": "LingStackLinkPreview/0.1" },
+    }, { timeoutMs: CHANNEL_LINK_PREVIEW_TIMEOUT_MS });
     try {
-      const response = await fetch(currentUrl, {
-        redirect: "manual",
-        signal: controller.signal,
-        headers: {
-          Accept: "text/html,application/xhtml+xml",
-          "User-Agent": "LingStackLinkPreview/0.1",
-        },
-      });
+      const response = await prepared.fetch(globalThis.fetch);
       if (response.status >= 300 && response.status < 400) {
         const location = response.headers.get("location");
         if (!location) {
@@ -213,7 +206,7 @@ async function fetchPreviewHtml(initialUrl: string): Promise<{ readonly url: str
       }
       return { url: currentUrl, html: Buffer.concat(chunks).toString("utf8") };
     } finally {
-      clearTimeout(timeout);
+      await prepared.dispose();
     }
   }
   throw new Error("Preview exceeded redirect limit");
@@ -278,50 +271,6 @@ export function normalizePreviewUrl(rawUrl: string): string {
   return parsed.toString();
 }
 
-async function assertPreviewUrlAllowed(url: string): Promise<void> {
-  const parsed = new URL(url);
-  if (parsed.hostname === "localhost" || parsed.hostname.endsWith(".localhost")) {
-    throw new PreviewBlockedError("Link preview blocks localhost hosts");
-  }
-  const addresses = await lookup(parsed.hostname, { all: true, verbatim: true });
-  if (addresses.length === 0) {
-    throw new Error(`Unable to resolve host: ${parsed.hostname}`);
-  }
-  for (const address of addresses) {
-    if (isBlockedPreviewAddress(address.address)) {
-      throw new PreviewBlockedError(`Link preview blocks private or local address: ${address.address}`);
-    }
-  }
-}
-
-function isBlockedPreviewAddress(address: string): boolean {
-  const family = isIP(address);
-  if (family === 4) {
-    const parts = address.split(".").map(Number);
-    const [a, b] = parts;
-    return (
-      a === 0 ||
-      a === 10 ||
-      a === 127 ||
-      (a === 169 && b === 254) ||
-      (a === 172 && b >= 16 && b <= 31) ||
-      (a === 192 && b === 168)
-    );
-  }
-  if (family === 6) {
-    const lower = address.toLowerCase();
-    return lower === "::1" || lower.startsWith("fc") || lower.startsWith("fd") || lower.startsWith("fe80:");
-  }
-  return true;
-}
-
 function isBlockedPreviewError(error: unknown): boolean {
-  return error instanceof PreviewBlockedError;
-}
-
-class PreviewBlockedError extends Error {
-  constructor(message: string) {
-    super(message);
-    this.name = "PreviewBlockedError";
-  }
+  return error instanceof PublicHttpError && error.code === "local_or_private_host";
 }
