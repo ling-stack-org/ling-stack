@@ -208,7 +208,7 @@ jobs:
         run: node scripts/ci/run-packages.mjs --task=build:ci --packages="$SELECTED_PACKAGES" --closure=true
 
       - name: Upload reusable build outputs
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-dist
           if-no-files-found: error
@@ -369,7 +369,7 @@ jobs:
 
       - name: Preserve bootstrap observation without granting profile support
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-macos-bootstrap-shard-${{ matrix.shard }}
           if-no-files-found: warn
@@ -498,7 +498,7 @@ jobs:
 
       - name: Preserve native build diagnostics without certifying the packaged issuer
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-restricted-command-native-evidence
           if-no-files-found: warn
@@ -513,7 +513,7 @@ jobs:
 
       - name: Preserve bootstrap observation without granting profile support
         if: always()
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9
         with:
           name: ci-macos-bootstrap-native
           if-no-files-found: warn
