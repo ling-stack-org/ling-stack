@@ -17,6 +17,9 @@ import { createDetachedRunExecutionSink, executeRunRequest } from "../runs/orche
 import { maybeStartNextRunInterventionContinuation } from "../runs/interventions.js";
 import { runAutomation } from "./run.js";
 
+// Node turns a larger delay into a 1ms timer, rather than waiting longer.
+const MAX_TIMER_DELAY_MS = 2_147_483_647;
+
 export type AutomationSchedulerStatus = "running" | "stopped" | "error";
 
 export interface AutomationSchedulerItem {
@@ -103,6 +106,10 @@ export class AutomationSchedulerRegistry {
       this.startupState?.setPhase(cwd, "automation_scheduler", "ready");
       return { scheduler: entry.state, duplicate: false };
     } catch (error) {
+      const entry = this.entriesByCwd.get(cwd);
+      if (entry) {
+        this.failEntry(entry, error);
+      }
       this.startupState?.setPhase(cwd, "automation_scheduler", "degraded");
       this.startupState?.addDiagnostic(cwd, {
         level: "warning",
@@ -134,20 +141,33 @@ export class AutomationSchedulerRegistry {
       items: [],
       lastErrorMessage: undefined,
     };
-    const store = this.storeRegistry.getStore(cwd);
-    const automations = store.listAutomationDefinitions({ status: "enabled", scheduledOnly: true, limit: 500 });
-    for (const automation of automations) {
-      if (existing.runningAutomationIds.has(automation.id)) {
-        this.upsertItem(existing, {
-          automationId: automation.id,
-          title: automation.title,
-        });
-      } else {
-        this.scheduleAutomation(existing, automation, new Date());
+    try {
+      const store = this.storeRegistry.getStore(cwd);
+      const automations = store.listAutomationDefinitions({ status: "enabled", scheduledOnly: true, limit: 500 });
+      for (const automation of automations) {
+        if (existing.runningAutomationIds.has(automation.id)) {
+          this.upsertItem(existing, {
+            automationId: automation.id,
+            title: automation.title,
+          });
+        } else {
+          this.scheduleAutomation(existing, automation, new Date());
+        }
       }
+      this.refreshStateSummary(existing);
+      return existing.state;
+    } catch (error) {
+      this.failEntry(existing, error);
+      this.startupState?.setPhase(cwd, "automation_scheduler", "degraded");
+      this.startupState?.addDiagnostic(cwd, {
+        level: "warning",
+        code: "automation_scheduler_refresh_failed",
+        phase: "automation_scheduler",
+        message: error instanceof Error ? error.message : String(error),
+        nextAction: "Inspect automation definitions and scheduler logs, then refresh the scheduler.",
+      });
+      throw error;
     }
-    this.refreshStateSummary(existing);
-    return existing.state;
   }
 
   stop(cwd: string): AutomationSchedulerState | undefined {
@@ -181,43 +201,58 @@ export class AutomationSchedulerRegistry {
   }
 
   private scheduleAutomation(entry: AutomationSchedulerEntry, automation: AutomationDefinition, from: Date): void {
-    if (entry.state.status !== "running" || automation.trigger.type !== "schedule") {
+    if (!this.isCurrentEntry(entry, entry.generation) || automation.status !== "enabled" || automation.trigger.type !== "schedule") {
       return;
     }
     const generation = entry.generation;
     const nextRunAt = computeNextAutomationRunAt(automation, from);
-    const delayMs = Math.max(new Date(nextRunAt).getTime() - Date.now(), 1000);
+    // Persist the real final due time, never the end of an intermediate segment.
+    this.storeRegistry.getStore(entry.state.cwd).updateAutomationDefinition(automation.id, { nextRunAt }, new Date().toISOString());
+    this.armAutomationTimer(entry, automation, nextRunAt, generation);
+  }
+
+  private armAutomationTimer(
+    entry: AutomationSchedulerEntry,
+    automation: AutomationDefinition,
+    scheduledFor: string,
+    generation: number,
+  ): void {
+    if (!this.isCurrentEntry(entry, generation)) {
+      return;
+    }
+    const delayMs = Math.min(Math.max(Date.parse(scheduledFor) - Date.now(), 1), MAX_TIMER_DELAY_MS);
     const existingTimer = entry.timers.get(automation.id);
     if (existingTimer) {
       clearTimeout(existingTimer);
     }
     const timer = setTimeout(() => {
-      if (entry.timers.get(automation.id) === timer) {
-        entry.timers.delete(automation.id);
+      if (!this.isCurrentEntry(entry, generation) || entry.timers.get(automation.id) !== timer) {
+        return;
       }
-      const task = this.fireAutomation(entry, automation.id, nextRunAt, generation);
+      entry.timers.delete(automation.id);
+      clearTimeout(timer);
+      const task = this.fireAutomation(entry, automation.id, scheduledFor, automationScheduleIdentity(automation), generation);
       this.inFlightTasks.add(task);
-      void task.finally(() => this.inFlightTasks.delete(task));
+      void task.then(() => this.inFlightTasks.delete(task), () => this.inFlightTasks.delete(task));
     }, delayMs);
     timer.unref?.();
     entry.timers.set(automation.id, timer);
     this.upsertItem(entry, {
       automationId: automation.id,
       title: automation.title,
-      nextRunAt,
+      nextRunAt: scheduledFor,
     });
-    this.storeRegistry.getStore(entry.state.cwd).updateAutomationDefinition(automation.id, { nextRunAt }, new Date().toISOString());
   }
 
   private async fireAutomation(
     entry: AutomationSchedulerEntry,
     automationId: string,
     scheduledFor: string,
+    scheduleIdentity: string,
     generation: number,
   ): Promise<void> {
     if (
-      entry.state.status !== "running"
-      || entry.generation !== generation
+      !this.isCurrentEntry(entry, generation)
       || entry.runningAutomationIds.has(automationId)
     ) {
       return;
@@ -229,6 +264,25 @@ export class AutomationSchedulerRegistry {
       const automation = store.getAutomationDefinition(automationId);
       if (!automation || automation.status !== "enabled" || automation.trigger.type !== "schedule") {
         this.removeTimer(entry, automationId);
+        return;
+      }
+      // Definitions can change without an HTTP refresh (another Store writer,
+      // restart or recovery). A captured timer is not execution authority.
+      if (automationScheduleIdentity(automation) !== scheduleIdentity) {
+        this.scheduleAutomation(entry, automation, new Date());
+        return;
+      }
+      if (automation.nextRunAt !== scheduledFor) {
+        if (automation.nextRunAt && Number.isFinite(Date.parse(automation.nextRunAt))) {
+          this.armAutomationTimer(entry, automation, automation.nextRunAt, generation);
+        } else {
+          // A cleared/invalid durable due is revoked; only refresh may re-admit.
+          this.removeTimer(entry, automationId);
+        }
+        return;
+      }
+      if (Date.now() < Date.parse(scheduledFor)) {
+        this.armAutomationTimer(entry, automation, scheduledFor, generation);
         return;
       }
       const result = await runAutomation({
@@ -262,7 +316,7 @@ export class AutomationSchedulerRegistry {
             },
           ),
       });
-      if (entry.state.status !== "running" || entry.generation !== generation) {
+      if (!this.isCurrentEntry(entry, generation)) {
         return;
       }
       entry.state = {
@@ -278,9 +332,14 @@ export class AutomationSchedulerRegistry {
         lastAutomationRunId: result.automationRun.id,
         lastErrorMessage: undefined,
       });
-      this.scheduleAutomation(entry, automation, new Date());
+      const current = store.getAutomationDefinition(automationId);
+      if (current?.status === "enabled" && current.trigger.type === "schedule") {
+        this.scheduleAutomation(entry, current, new Date());
+      } else {
+        this.removeTimer(entry, automationId);
+      }
     } catch (error) {
-      if (entry.state.status !== "running" || entry.generation !== generation) {
+      if (!this.isCurrentEntry(entry, generation)) {
         return;
       }
       const message = error instanceof Error ? error.message : String(error);
@@ -301,7 +360,7 @@ export class AutomationSchedulerRegistry {
       store.updateAutomationDefinition(automationId, { status: "error", lastErrorMessage: message }, new Date().toISOString());
     } finally {
       entry.runningAutomationIds.delete(automationId);
-      if (entry.generation === generation) {
+      if (this.isCurrentEntry(entry, generation)) {
         this.refreshStateSummary(entry);
       } else {
         this.rescheduleAutomationAfterRefresh(entry, automationId);
@@ -311,17 +370,57 @@ export class AutomationSchedulerRegistry {
 
   private rescheduleAutomationAfterRefresh(entry: AutomationSchedulerEntry, automationId: string): void {
     if (
-      entry.state.status !== "running"
+      !this.isCurrentEntry(entry, entry.generation)
       || entry.timers.has(automationId)
       || entry.runningAutomationIds.has(automationId)
     ) {
       return;
     }
-    const automation = this.storeRegistry.getStore(entry.state.cwd).getAutomationDefinition(automationId);
-    if (!automation || automation.status !== "enabled" || automation.trigger.type !== "schedule") {
-      return;
+    const generation = entry.generation;
+    try {
+      const automation = this.storeRegistry.getStore(entry.state.cwd).getAutomationDefinition(automationId);
+      if (!automation || automation.status !== "enabled" || automation.trigger.type !== "schedule") {
+        return;
+      }
+      this.scheduleAutomation(entry, automation, new Date());
+    } catch (error) {
+      // This is scheduling recovery, not a failed execution. The completed Run
+      // and AutomationRun must retain their already persisted terminal facts.
+      if (!this.failEntry(entry, error, generation)) {
+        return;
+      }
+      this.startupState?.setPhase(entry.state.cwd, "automation_scheduler", "degraded");
+      this.startupState?.addDiagnostic(entry.state.cwd, {
+        level: "warning",
+        code: "automation_scheduler_rearm_failed",
+        phase: "automation_scheduler",
+        message: error instanceof Error ? error.message : String(error),
+        nextAction: "Inspect automation definitions and scheduler logs, then restart the scheduler.",
+      });
     }
-    this.scheduleAutomation(entry, automation, new Date());
+  }
+
+  private isCurrentEntry(entry: AutomationSchedulerEntry, generation: number): boolean {
+    return entry.state.status === "running"
+      && entry.generation === generation
+      && this.entriesByCwd.get(entry.state.cwd) === entry;
+  }
+
+  private failEntry(entry: AutomationSchedulerEntry, error: unknown, generation = entry.generation): boolean {
+    if (!this.isCurrentEntry(entry, generation)) {
+      return false;
+    }
+    entry.generation += 1;
+    this.clearTimers(entry);
+    entry.state = {
+      ...entry.state,
+      status: "error",
+      automationCount: 0,
+      nextRunAt: undefined,
+      items: [],
+      lastErrorMessage: error instanceof Error ? error.message : String(error),
+    };
+    return true;
   }
 
   private async maybeContinueRunInterventions(terminalRun: RunSession): Promise<void> {
@@ -391,6 +490,10 @@ export class AutomationSchedulerRegistry {
       nextRunAt,
     };
   }
+}
+
+function automationScheduleIdentity(automation: AutomationDefinition): string {
+  return JSON.stringify([automation.trigger, automation.rrule]);
 }
 
 export function computeNextRunAt(schedule: AutomationSchedule, timezone: string, from: Date = new Date()): string {

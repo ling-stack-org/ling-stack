@@ -10,6 +10,7 @@
 | B003 | External-work 准入与取消使用原子状态 CAS 和精确 lease；Host 投影失败保留真实发送/执行事实，返回 503，不伪造执行失败或授予重发权限 | Core 完整 45/45；Host 完整 25/25；build、直接类型检查及限定 diff check 通过 | 原独立审阅者复核其发现的 Host 收尾缺口，无剩余已确认严重问题 |
 | A08 | Draft 确认在同连接事务内建立 thread、definition 和 source pointer；反向 update/discard 不能覆写已确认终态；重复 discard 不改变原终态时间 | Core 完整 10/10；新 HTTP 与原 API 完整 12/12；build、直接类型检查及限定 diff check 通过 | 原独立审阅者复核真实双连接 RED→GREEN，反向 writer 候选关闭 |
 | A22 | Parser 接受 exact primitive `approve/deny/manual`；Coordinator、Host、Core 各有独立权限守卫；畸形判词保持人工审批，不隐式写 deny | 新回归 55/55；五文件完整邻近 164/164；合法批准的真实命令仅执行一次，重复恢复不重放；build、直接类型检查及限定 diff check 通过 | 未参与实现的独立审阅者核对十个最终源码 SHA、控制流和日志，无已确认 finding |
+| A09 长定时器/失败收口 | Node 单段 timer 有界；唤醒重读真实 due；首次、refresh 和异步收尾持久故障进入可恢复 error；旧 entry/generation 不能撤销后继 | 产品矩阵 21/21，随后独立旧 entry 隔离 1/1，原 API 5/5；build、类型检查及限定 diff check 通过。不是拼成一次 22/22 | 原未实施者复核同一异步收尾 finding 的真实 RED→GREEN，限定源码字节范围关闭 |
 
 上述回归均零跳过，实际执行者取得 exit 0。独立审阅者读取执行日志与源码，未重复执行测试；不能把继承的执行结果写成审阅者本人运行。
 
@@ -17,7 +18,7 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 
 ## 正在处理，不能据此认定完成
 
-- A09：长定时器 overflow、首次/refresh 的 SQLite next-due 写入故障已有初轮回归；独审发现的运行中 refresh 后异步收尾写入故障已真实复现。必须完成终态失败收口、可恢复 start 和后继 entry/generation 不被旧收尾撤销的验证及原审阅者复核。RRULE INTERVAL/anchor 是仍未关闭的独立失败面。
+- A09 的 RRULE INTERVAL/anchor 是仍未关闭的独立失败面。上表不证明 error-entry restart 时旧 Run 仍 in-flight 的所有重叠执行边界；后继隔离正例等旧 Run 完成后才交付新 due，不冒充重叠执行验收。
 - A11：预览、正文物化和 ComfyUI `public_only` 必须将已审核 DNS 地址固定到实际 socket 连接；保持原 URL 的 Host/SNI/证书身份。准备离线真实 socket/TLS 回归，不以 fake fetch 或关闭 TLS 验证替代。
 - A21/A33 及全量独审登记的其他根因：仍按各自回归入口继续，不能因上表三个局部闭环就全部清零。
 
@@ -36,6 +37,7 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 - `b003-core-red-green.md`、`b003-host-red-green.md`、`b003-independent-review.md`。
 - `a08-confirmation-red-green.md`、`a08-independent-review.md`。
 - `a22-exact-verdict-red-green.md`、`a22-final-source-sha256.txt`、`a22-independent-review.md`。
-- A09/A11 的后继记录以各自实际执行回执更新，不能继承旧整文件 SHA 为新版本批准。
+- `a09-long-timer-red-green.md`、`a09-independent-review.md`；最终 scheduler SHA 为 `16974df4346f96afd896ec139a67dc55b497ba2db64eff6a46ffd949e6bb0a7d`，测试 SHA 为 `bd98f7758fee78934f4db96f4a5448d0bf3ee8ff7aa74137ef90163485f411d1`。
+- A11 的后继记录以其实际执行回执更新，不能继承旧整文件 SHA 为新版本批准。
 
 不修改根 checkout、日常数据库或另一 writer 的 `harness-delegation-storage-checkpoint-2026-10-09.md` WIP。仅对明确归属、完成局部闭环的修复作备份；未完成或他人 WIP 不批量 stage，不 reset、clean、stash、force-push 或删除分支。
