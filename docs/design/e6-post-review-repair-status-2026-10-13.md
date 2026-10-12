@@ -35,7 +35,18 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 3. 后继 fresh packaged macOS、真实客户端案例、问答/恢复/沙盒/Harness 联合矩阵仍未全部完成。上述局部回归不是新包 GUI 验收。
 4. E6 PR 保持草稿；备份不是验收通过。主 CI 停用且无 checks 的 PR 不能当成通过；有冲突、已确认缺口或未达到原验收门槛的 PR 不合并，不使用 admin bypass。
 5. Dependabot #527/#528 仍保留 API/版本/许可适配或实际安装/build 缺证；#529–531 已由外部提交合入 main，head/merge checks 均无记录，不冒称 hosted 安装、缓存、artifact round-trip 通过或本轮由 Root 合并。
-6. origin/main 已 fetch 到 `6ddd5e6b75e314cc0fbeee370991c70c7383a0ff`，尚未整合；三处文本冲突与真实依赖图按只读映射受控处理。main #535 的 35 roots / 1,211 packaging inputs 审核记录不能覆盖已提交 E6 merge candidate 的 38/1,282，更不能覆盖尚未重新枚举的后继 WIP。不会自动刷新 approved；同事范围审阅不替代本分支具体用户批准。
+6. origin/main `6ddd5e6b75e314cc0fbeee370991c70c7383a0ff` 的整合候选已按三冲突映射受控解开并验证依赖图，不代表 E6 已合入远端 main。main #535 的 35 roots / 1,211 packaging inputs 审核记录不能覆盖已提交 E6 merge candidate 的 38/1,282，更不能覆盖尚未重新枚举的后继 WIP。不会自动刷新 approved；同事范围审阅不替代本分支具体用户批准。
+
+## main 整合候选的新验证与剩余门
+
+- 保 Pi 两包 exact 1.1.0、SDK57/RN0.86.3、Daemon/Runner Undici7.30.0、cache4.3，并入 main 的 image-size2.0.4/Forge/Braces/sprintf 两版本补丁及两侧测试并集。Metro0.84.5 没有 image-size 消费边：畸形图片 fixture 已校准到真实 Daemon→PPTX→image-size，RN/Expo 两条 Metro 资产正例独立保留，不移植 Metro0.87 patch。
+- 离线 lock-only 和首 frozen install exit0，但实际安全首轮为14/16：braces 安装路径有 patch_hash，文件无防护。pnpm10 的 installDeps 先按 workspace-state 返回 Already up to date，原 force 命令仍未重import。仅将 exact 生成 cache `.pnpm-workspace-state.json` recoverable 移入 ignored 证据目录后，同一 frozen/force/side-effects-cache=false 真重import 1,293 个包、exit0；未删除用户数据、不改 manifests/lock/onlyBuiltDependencies 或 pnpm 安装源码。
+- 最终安全42/42（Mobile/tooling16、Daemon2、downloader/formatting24），全部 fail/skip0；许可证、Mobile typecheck、Runner/Daemon fresh build:ci exit0。Pi1.1/SDK压缩邻近31/31、fail/skip0，是此次依赖整合后重新执行，不重做旧迁移设计。
+- public 首轮6条告警均为固定 synthetic 测试 token 未明确带 test 标签；仅将三测试文件的合成字面明确命名为 test fixture，不改 scanner/allowlist、不编码或隐藏真实密钥。最终源码检查 exit0，当前4,576文件；两Memory完整文件7/7和A11实际Comfy native parent1/1均 exit0/skip0。这不是全历史 secret scan；历史 synthetic TLS key 限制保持。
+- Expo install --check exit1，具体仅 expo57.0.27→~57.0.28、expo-dev-client57.0.19→~57.0.20 的新SDK57补丁要求；下一独立兼容步骤补齐，不升级SDK58，不把本次typecheck当配套检查全通过或真机验收。
+- 三冲突及消费锚点的独立静态复核报告 `main-merge-scoped-review-20261013.md` SHA `e74f4266c85543925155647e91d4d550f77a8d2c7b5c3ca35c8d1b1d07834924`，STATIC_SCOPED_PASS_WITH_UNVERIFIED_RUNTIME/approved=false；独审没有亲自执行上述运行验证。原始日志位于 `output/e6-20260928/main-merge-*-20261013.log`，首失败保留。
+- 审批恢复实际SQLite reopen/HTTP/SSE四个具名邻近4/4、exit0/skip0；Markdown链接334文件检查通过。以上 Root 的 tee 日志仅保存原始 stdout，进程 exit0 来自实际 exec/write_stdin 回执，不伪装日志本身含 command/exit 或独审亲自执行；后继合成fixture限定复核据此分开注明来源。
+- 三测试命名增量独审 `synthetic-fixture-name-review-20261013.md` SHA `6ffc26c23ab95857ad033e13298c2d41ff7e401e6c1be8a22e72e91b25328198`，PASS_SCOPED_WITH_LIMITS/approved=false。三个新测试 SHA 与日志已冻结；旧 B004/B005/A11 的产品结论不变，但原整文件测试 SHA 不冒包含本增量。
 
 ## 证据定位与保全
 

@@ -71,8 +71,8 @@ test("memory markdown export preserves review metadata and redacts secret-like v
 });
 
 test("B005 skipped secret-adjacent titles are redacted and counted without exporting bodies", () => {
-  const syntheticTitle = "Skipped deploy sk-b005-synthetic-title-secret";
-  const syntheticAuthTitle = "Skipped authorization Bearer b005-synthetic-title-token";
+  const syntheticTitle = "Skipped deploy sk-b005-test-synthetic-title-secret";
+  const syntheticAuthTitle = "Skipped authorization Bearer b005-test-synthetic-title-token";
   const memories = [
     markdownExportMemoryFixture({ id: "memory_b005_public", title: "Ordinary exported workflow" }),
     markdownExportMemoryFixture({ id: "memory_b005_skipped_key", title: syntheticTitle, body: "Skipped key body.", sensitivity: "secret-adjacent" }),
@@ -104,7 +104,7 @@ test("B005 skipped secret-adjacent titles are redacted and counted without expor
 });
 
 test("B005 explicit secret-adjacent inclusion retains IDs and redacts exported titles normally", () => {
-  const syntheticSecret = "sk-b005-synthetic-included-title";
+  const syntheticSecret = "sk-b005-test-synthetic-included-title";
   const memories = [
     markdownExportMemoryFixture({ id: "memory_b005_included_plain", title: "Ordinary included workflow" }),
     markdownExportMemoryFixture({ id: "memory_b005_included_secret", title: `Included ${syntheticSecret}`, sensitivity: "secret-adjacent" }),
@@ -126,7 +126,7 @@ test("B005 explicit secret-adjacent inclusion retains IDs and redacts exported t
 });
 
 test("B005 ordinary skipped titles alone do not claim redaction", () => {
-  const skippedBody = "Ignored skipped body sk-b005-synthetic-skipped-body-secret";
+  const skippedBody = "Ignored skipped body sk-b005-test-synthetic-skipped-body-secret";
   const memory = markdownExportMemoryFixture({ id: "memory_b005_ordinary", title: "Ordinary\r\nskipped workflow", body: skippedBody, sensitivity: "secret-adjacent" });
   const result = buildMemoryMarkdownExport({ memories: [memory], options: {
     workspaceId: DEFAULT_WORKSPACE_ID, generatedAt: "2026-10-13T00:00:00.000Z",

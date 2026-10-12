@@ -2,7 +2,7 @@
 
 Status: active publication checklist
 Owner: repository maintainers
-Last verified: 2026-08-27
+Last verified: 2026-10-10
 Document type: repository governance
 Code and workflow anchors: `README.md`, `LICENSE`, `SECURITY.md`, `CONTRIBUTING.md`,
 `.github/workflows/ci.yml`, `.gitleaksignore`, `scripts/check-public-repo-safety.mjs`
@@ -25,27 +25,35 @@ Passing an earlier boundary does not authorize the next one.
 | Open-source license | Ready | MIT `LICENSE` and package metadata |
 | Contribution policy | Ready locally | `CONTRIBUTING.md` |
 | Code of Conduct | Ready locally | Contributor Covenant 2.1 adaptation |
-| Security reporting | Partially ready | `SECURITY.md` is ready; GitHub private reporting and Advanced Security controls must be enabled after the repository is public (the current private plan/API does not expose them) |
+| Security reporting | Local policy ready; online entry deferred | `SECURITY.md` is present. Verification of the online private-reporting entry is outside the current preparation scope. |
 | Support boundary | Ready locally | `SUPPORT.md` |
 | Issue and PR intake | Ready locally | Issue Forms and pull request template |
 | Ownership | Ready locally | `.github/CODEOWNERS` |
 | Dependency updates | Ready locally | Dependabot configuration |
-| Generic CI | Ready locally | Locally verified typecheck, unit, Web build, docs, i18n, UI, and Git-history secret checks |
+| Generic CI | Paused for Actions quota | Workflow configuration remains in the repository. Current preparation uses documented local checks; no online CI result is claimed. |
 | Documentation links | Ready locally | `corepack pnpm check:docs` |
 | Dependency licenses | Ready locally | `corepack pnpm check:licenses`; binary notices remain a separate gate |
 | Current-tree safety scan | Ready locally | `corepack pnpm check:public` after personal-path cleanup |
-| Main branch protection | Configured online | PR-only `main`, required CI, one approval, conversation resolution, linear history, and no force-push/delete |
-| Actions policy | Configured online | Default read-only token permissions and full-length SHA pinning are enabled; allowed actions remain temporarily broad for the existing generic CI |
-| Git-history secret scan | Ready locally | Gitleaks v8.30.1 scanned 765 commits and 67.2 MB; 21 reviewed false positives are fingerprint-scoped in `.gitleaksignore` |
-| Public UI screenshots | Ready locally | Current homepage capture from a fresh local workspace is checked in; historical screenshots with maintainer paths were removed |
-| Changelog and release policy | Ready locally | `CHANGELOG.md` and `docs/release/README.md` |
+| Main branch protection | Verification deferred | Online settings were not confirmed in this preparation pass. |
+| Actions policy | File configuration present | The generic workflow has scoped permissions and pinned actions. Online organization/repository policy was not reverified. |
+| Git-history secret scan | Verified for current main and additional remote head | Complete 1,112-commit graph; 881 scanned diff commits match Git; unchanged policy and 32 fixture fingerprints. See scope below. |
+| Public UI screenshots | Ready locally | New homepage capture from a fresh workspace before model configuration; historical screenshots with maintainer paths were removed in earlier cleanup. |
+| Changelog and release policy | Ready locally | `CHANGELOG.md` and `docs/release/README.md`; current product version is `0.1.2-alpha.1`. |
+| Source startup | Verified locally | Frozen install, CLI/daemon/Web dependency build, fresh daemon health, homepage, and Model Workbench navigation; no live model task. |
+| Desktop development | Windows development package and runtime checks recorded; full binary acceptance pending | Mac packaging lacks the required Office review record. Windows development scope and limits are in the [test report](../release/evidence/windows-dev-20261009/README.md). |
+| Windows binary notices and SBOM | Runtime material prepared; affected plug-ins replaced in candidate; complete acceptance pending | The original 453-package inventory and its questions remain recorded. The [notices-r2 candidate](../release/evidence/windows-distribution-20261010/INSTALLER_REPLACEMENT.md) excludes all three affected plug-ins, embeds retained bootstrap licenses/source and passes final extraction checks; its full acceptance and publication approval remain pending. Releases stay Draft. |
+| Asset provenance | Recorded | [Asset inventory](asset-provenance.md); maintainer confirms teammate avatars and social preview are project-made or AI-generated. |
 
-## GitHub Settings Required Before Visibility Change
+## Online Settings And Deferred Work
 
-- Enable private vulnerability reporting after the repository visibility change (GitHub does
-  not expose this control for the current private repository plan).
-- Enable secret scanning and push protection for contributors after the visibility change
-  (the current private repository API returns `404` for both controls).
+CI execution is paused because of Actions quota. Branch-protection and private vulnerability
+reporting verification are explicitly deferred by the maintainer for this preparation batch.
+Their deferred status is not an online success claim. Revisit them during release setup.
+
+The following remain an online configuration checklist; they were not applied by this pass:
+
+- Verify private vulnerability reporting when the repository plan and visibility support it.
+- Verify secret scanning and push protection when supported by the public repository.
 - Enable dependency graph, Dependabot alerts, and security updates.
 - Create a `main` ruleset requiring pull requests, review, conversation resolution, and
   the generic CI check.
@@ -71,8 +79,8 @@ protected runner boundary; do not reintroduce self-hosted runner labels here.
 
 ## Legal And Distribution Review
 
-- Confirm the project name, logo, screenshots, sample content, and bundled assets may be
-  published under the intended terms.
+- Keep the [asset provenance inventory](asset-provenance.md) with the source. Maintainer
+  confirmation for the default avatars and social preview was recorded on 2026-10-08.
 - Decide whether a trademark policy is required; the MIT License does not grant trademark
   rights.
 - Confirm contributor sign-off policy. No CLA or DCO is currently required.
@@ -82,10 +90,37 @@ protected runner boundary; do not reintroduce self-hosted runner labels here.
 
 ## Secret-Scan Exceptions
 
-The Gitleaks ignore file contains only exact historical fingerprints reviewed as test or
+The Gitleaks ignore file contains 32 exact historical fingerprints reviewed as test or
 documentation fixtures. New entries require manual inspection of the originating commit
 and must explain the fixture category. Do not add path-wide, rule-wide, or entropy-wide
 exclusions to make a scan pass.
+
+The localization exception in `.gitleaks.toml` is restricted to `generic-api-key` findings
+on generated locale JSON source-hash lines: the catalog path and complete 64-character
+hexadecimal hash line must both match. Other rules and non-hash lines are still scanned.
+A disposable fixture check confirms a credential-shaped catalog value and a non-catalog
+64-character API-key value are detected. This typed exception cannot distinguish a real
+64-character hexadecimal key deliberately placed on such a generated hash line; catalog
+inputs must remain generated data and changes still require review.
+
+The historical baseline check used `--log-opts=HEAD`, covering the full history reachable from
+baseline `958fe499100cc4874e938eee45f6f92a9caa23d0`, rather than unrelated local work-in-progress branches. Gitleaks reported
+874 commits with scanned diffs (135.59 MB); `git rev-list HEAD --count` reports 1,103 reachable
+commits including merges and empty commits. No leaks were reported with the narrowed
+localization exception. Preparation was subsequently rebased onto the dependency security
+refresh in `49554b07652c4311fade8ec8dee858dd364b85fe`, with a frozen reinstall and dependency
+security regression checks. The final candidate commit and any additional refs exposed at
+publication must be scanned again before visibility changes.
+
+The Windows preparation on 2026-10-10 removed the shallow-clone limit and recovered
+all missing objects with exact Git identity checks. The current main baseline
+`7ca0769547400d7272711844038de2cd040fd609` has 1,111 reachable commits; adding the
+only other remote head `29ef4e0e6cc56a6c30dca84000cb1f1116e457a1` gives 1,112.
+Gitleaks reported 881 diff commits, equal to an independent Git diff-scope count,
+with no remaining findings under the unchanged configuration and fixture exceptions.
+The [check receipt](../release/evidence/windows-distribution-20261010/source-preparation-checks.json)
+records the scope. The final documentation PR commit is scanned before submission;
+newly exposed refs and a clean publication candidate still require release-time review.
 
 ## Final Local Commands
 
@@ -94,7 +129,7 @@ corepack pnpm install --frozen-lockfile
 corepack pnpm check:docs
 corepack pnpm check:licenses
 corepack pnpm check:public
-gitleaks git --redact --gitleaks-ignore-path .gitleaksignore .
+gitleaks git --redact=100 --config .gitleaks.toml --gitleaks-ignore-path .gitleaksignore --log-opts=HEAD .
 corepack pnpm --filter @ling-stack/web lint
 corepack pnpm --filter @ling-stack/web check:i18n
 corepack pnpm --filter './packages/**' --filter @ling-stack/web --filter @ling-stack/desktop typecheck
@@ -108,12 +143,15 @@ at a user's existing Ling data directory.
 
 ## Public Source Go/No-Go
 
-Source publication is **No-Go** until all of the following are true:
+The local documentation and source-startup preparation can be reviewed now. Actual source
+publication remains a separate maintainer action, with the following final requirements:
 
 - no native release workflow or self-hosted runner label remains in this repository;
-- required GitHub security and branch settings are enabled;
+- deferred online settings and CI status are recorded accurately, with any release-time
+  exceptions explicitly owned by the maintainer;
 - current UI screenshots and repository metadata are reviewed;
-- the complete change is committed and CI plus a final Gitleaks scan pass from a clean checkout.
+- the complete change is committed and reviewed, required local checks pass, and a final
+  Gitleaks scan passes from a clean checkout; use CI when Actions capacity is restored.
 
 Desktop binary distribution remains No-Go after source publication until every Desktop
 release, signing, platform, accessibility, clean-machine, SBOM, and notice gate closes.

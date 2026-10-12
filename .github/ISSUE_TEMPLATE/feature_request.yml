@@ -1,11 +1,13 @@
-name: Product or feature proposal
-description: Propose a user outcome or architecture change
+name: Feature request
+description: Suggest a new capability or an improvement to an existing workflow
 title: "[Proposal]: "
+labels: [enhancement]
 body:
   - type: markdown
     attributes:
       value: |
-        Ling Stack favors clear user problems and durable boundaries over adding isolated controls. Large changes should identify their product, authority, storage, and compatibility impact.
+        English and Chinese reports are welcome. Describe the user problem and desired result; an implementation design is not required.
+        Do not include API keys, tokens, private paths, workspace data, or sensitive model content. Report vulnerabilities through the private [Security](https://github.com/ling-stack-org/ling-stack/security/advisories/new) flow.
   - type: textarea
     id: problem
     attributes:
@@ -25,8 +27,6 @@ body:
     attributes:
       label: Current and proposed workflow
       description: Show the important steps before and after the change.
-    validations:
-      required: true
   - type: dropdown
     id: area
     attributes:
@@ -59,7 +59,9 @@ body:
     attributes:
       label: Submission checks
       options:
-        - label: I searched existing issues, pull requests, and the implementation-status index.
+        - label: I searched existing issues and pull requests.
           required: true
         - label: I described a user outcome rather than only a preferred UI or technology.
+          required: true
+        - label: I removed credentials and private data; this is not a vulnerability report.
           required: true

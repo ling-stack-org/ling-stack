@@ -1,8 +1,8 @@
 blank_issues_enabled: false
 contact_links:
-  - name: Security vulnerability
-    url: https://github.com/tianxiaochannel-oss88/ling-stack/security/advisories/new
-    about: Report vulnerabilities privately. Do not open a public issue.
   - name: Documentation
-    url: https://github.com/tianxiaochannel-oss88/ling-stack/tree/main/docs
+    url: https://github.com/ling-stack-org/ling-stack/tree/main/docs
     about: Review product, architecture, API, release, and implementation-status documentation.
+  - name: Support and troubleshooting
+    url: https://github.com/ling-stack-org/ling-stack/blob/main/SUPPORT.md
+    about: Read setup and troubleshooting guidance before opening an issue. English and Chinese reports are welcome.

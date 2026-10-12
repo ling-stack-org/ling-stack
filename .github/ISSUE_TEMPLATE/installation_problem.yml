@@ -1,0 +1,70 @@
+name: Installation, startup, or update problem
+description: Report an installer, launch, upgrade, or uninstall failure
+title: "[Install]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English and Chinese reports are welcome. Development packages may be unsigned or not notarized; report the exact system warning without disabling security protections.
+        Remove API keys, tokens, private paths, workspace data, and sensitive model content from evidence. Report security vulnerabilities privately via [Security](https://github.com/ling-stack-org/ling-stack/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: App version and package source
+      description: Include the version, installer filename, and official download link or source commit. Do not provide private or credential-bearing URLs.
+      placeholder: 0.1.2-alpha.1, installer filename, GitHub Release URL
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      options:
+        - macOS Apple Silicon (arm64)
+        - Windows x64
+        - Other or source-based setup
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: OS version
+      placeholder: macOS 15.7 or Windows 11 24H2
+    validations:
+      required: true
+  - type: dropdown
+    id: stage
+    attributes:
+      label: Failure stage
+      options:
+        - Download or opening the installer
+        - Installation
+        - First launch
+        - Later startup or restart
+        - Update or upgrade
+        - Uninstall
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps and observed result
+      description: Describe the steps, expected result, and exact error or system warning. If upgrading, include the previous app version.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted screenshots or logs
+      description: Attach only relevant evidence after removing credentials, private paths, and personal data. Node version is only useful for source-based setup.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and read the release notes.
+          required: true
+        - label: I removed credentials and private data; this is not a vulnerability report.
+          required: true

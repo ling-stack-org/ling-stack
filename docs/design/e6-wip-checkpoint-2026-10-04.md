@@ -163,7 +163,7 @@
 用户再次要求推送到现有远端 Draft PR 保存一次；继续使用 `codex/e6-safe-continuation` 和 PR #507，不合并 main、不改版本、不重写历史。
 
 - 上一远端保存点：`76600b95676552b98614955f022b3bc02f2265dc`。
-- 本次追加已本地提交的 `1d19a401a41288aeac76e0e6ce7da9e168839205`：Office 成员清理、固定预算读取、FD close ownership 和目录残留策略。该提交的定向 **24/24**、独立 Tracker **1/1**、Daemon **2780/2780** 证据见 `office-local-writer-verification-2026-10-04.md`；下方旧 writer RED 状态仅作为历史记录，不再作为当前修复状态。
+- 本次追加已本地提交的 `1d19a401a41288aeac76e0e6ce7da9e168839205`：Office 成员清理、固定预算读取、FD close ownership 和目录残留策略。该提交的定向 **24/24**、独立 Tracker **1/1**、Daemon **2780/2780** 证据见 [Office writer verification handoff](../maintenance/development-handoffs.md#office-writer-verification-2026-10-04)；下方旧 writer RED 状态仅作为历史记录，不再作为当前修复状态。
 - 另保存当前 `host-office-local-types.ts` 的**未完成合同升级**：增加 Host `resourceLifetimeId`，将 native syscall 结果与 Host transaction outcome 分轴，并定义实际 `bytesWritten`。Core records/parser、测试夹具、Daemon Tracker/writer consumer 尚未适配；不能称合同已接通、可构建或验收通过，旧 2780/2780 不覆盖这份新合同。
 - 本次新增保存范围仅上述源码/测试/文档；未纳入新的真实凭据、数据库、安装包、截图或忽略的本地运行产物。没有删除 WIP，不改真实数据库或历史，不跳过 pre-push 凭据检查。
 - PR 保持 WIP/Draft；本次仅防丢备份，不构成安全完成证明、production route 上线或整个 E6 完成。公开 U gate 继续关闭，未知效果不标为 safe。

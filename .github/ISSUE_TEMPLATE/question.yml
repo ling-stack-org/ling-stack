@@ -1,11 +1,13 @@
-name: Setup or usage question
-description: Ask for help using the current source-first alpha
+name: Usage question
+description: Ask how to use Ling Stack or configure an existing capability
 title: "[Question]: "
+labels: [question]
 body:
   - type: markdown
     attributes:
       value: |
-        Read README.md and SUPPORT.md first. Never paste API keys, tokens, private paths, workspace data, or sensitive model content into a public issue.
+        English and Chinese questions are welcome. Read the [Quick Start](https://github.com/ling-stack-org/ling-stack#quick-start-from-source) and [Support](https://github.com/ling-stack-org/ling-stack/blob/main/SUPPORT.md) first.
+        Use the installation or integration forms for failures in those areas. Never paste API keys, tokens, private paths, workspace data, or sensitive model content. Report vulnerabilities privately through [Security](https://github.com/ling-stack-org/ling-stack/security/advisories/new).
   - type: textarea
     id: goal
     attributes:
@@ -23,7 +25,7 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Include commit, OS, architecture, Node version, and Web or Desktop mode.
+      description: Include app version or commit, OS, architecture, and Desktop or Web mode. Node version is only needed when running from source or CLI.
     validations:
       required: true
   - type: checkboxes
@@ -34,4 +36,6 @@ body:
         - label: I read the Quick Start and Support documents.
           required: true
         - label: I removed credentials, private paths, and private workspace data.
+          required: true
+        - label: This is not a security vulnerability requiring private disclosure.
           required: true

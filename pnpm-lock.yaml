@@ -18,17 +18,30 @@ overrides:
   tar@>=7.0.0 <=7.5.20: 7.5.22
   undici@>=7.0.0 <7.29.1: 7.30.0
   uuid@7.0.3: 11.1.1
+  image-size@1.2.1: 2.0.4
   officeparser>pdfjs-dist: 6.2.108
   undici@>=8.0.0 <8.10.2: 8.11.2
   katex@>=0.11.0 <0.18.2: 0.19.0
 
 patchedDependencies:
+  braces@3.0.3:
+    hash: ad74a34b0200bbe14ba95e31e8f296205ce32a374eca2cef25cc8940aa0c76c1
+    path: patches/braces@3.0.3.patch
   http-cache-semantics@4.3.0:
     hash: 03e58cecb06676afed23b54884e117f11f59d59690746f98e498e365102f6da0
     path: patches/http-cache-semantics@4.3.0.patch
-  image-size@1.2.1:
-    hash: 43bb822cac079e46add6c6bbaed80033abe5280c5b09c066254f8354478e6377
-    path: patches/image-size@1.2.1.patch
+  image-size@2.0.4:
+    hash: 4045ad5d2de4ed47956f4f703fa65e6328c367e3e1acff969728cbb50b29187b
+    path: patches/image-size@2.0.4.patch
+  node-forge@1.4.0:
+    hash: 50d8e3f38443736858c2c81dc2b569c18083e687f81acc5f9c17a568a7e4f6f6
+    path: patches/node-forge@1.4.0.patch
+  sprintf-js@1.0.3:
+    hash: bd6495e712b47ec612cde7288449c45ab0c719717b423e6a94b693e297bbb452
+    path: patches/sprintf-js@1.0.3.patch
+  sprintf-js@1.1.3:
+    hash: 82b04dd9d1d8254e00580a51ea22a3710721fd7fa0350e51ef33829396255efb
+    path: patches/sprintf-js@1.1.3.patch
 
 importers:
 
@@ -4131,9 +4144,9 @@ packages:
     resolution: {integrity: sha512-YYNsSlXBjMk92SKnkwvB5LOVSa6OznlFUGcsvrFgNJbJCd0M1XKeFVRc8ZByeCqz32FivYNHJVooLmdqrmvp/Q==}
     engines: {node: '>= 4'}
 
-  image-size@1.2.1:
-    resolution: {integrity: sha512-rH+46sQJ2dlwfjfhCyNx5thzrv+dtmBIhPHk0zgRUukHzZ/kRueTJXoYYsclBaKcSMBWuGbOFXtioLpzTb5euw==}
-    engines: {node: '>=16.x'}
+  image-size@2.0.4:
+    resolution: {integrity: sha512-QRUkFFsRV/6fuESxb9Vkq+a0LkSrgKXuc2NEqfikiXxxN/G3tjWt5EVUlMaImRBZRZK/jRBEbYvpPYZL8t08Zw==}
+    engines: {node: '>=18'}
     hasBin: true
 
   immediate@3.0.6:
@@ -5207,9 +5220,6 @@ packages:
   qs@6.16.0:
     resolution: {integrity: sha512-h6fhOIaRrID2CbEY2fqs+7t+UXZo+MLAnU5gRIq85uFtdiUPCdsApMlHhXogKVM4HM2DVbIjGNTTYH2OcmP1vA==}
     engines: {node: '>=0.6'}
-
-  queue@6.0.2:
-    resolution: {integrity: sha512-iHZWu+q3IdFZFX36ro/lKBkSvfkztY5Y7HMiPlOUjhupPcG2JMfst2KKEpu5XndviX/3UhFbRngUPNKtgvtZiA==}
 
   quick-lru@5.1.1:
     resolution: {integrity: sha512-WuyALRjWPDGtt/wzJiadO5AXY+8hZ80hVpe6MyivgraREW751X3SbhRvG3eLKOYN+8VEvqLcf3wdnt44Z4S4SA==}
@@ -7235,7 +7245,7 @@ snapshots:
       glob: 13.0.6
       lan-network: 0.2.1
       multitars: 1.0.2
-      node-forge: 1.4.0
+      node-forge: 1.4.0(patch_hash=50d8e3f38443736858c2c81dc2b569c18083e687f81acc5f9c17a568a7e4f6f6)
       npm-package-arg: 11.0.3
       ora: 3.4.0
       picomatch: 4.0.7
@@ -7271,7 +7281,7 @@ snapshots:
 
   '@expo/code-signing-certificates@0.0.6':
     dependencies:
-      node-forge: 1.4.0
+      node-forge: 1.4.0(patch_hash=50d8e3f38443736858c2c81dc2b569c18083e687f81acc5f9c17a568a7e4f6f6)
 
   '@expo/config-plugins@57.0.10(typescript@6.0.3)':
     dependencies:
@@ -8946,7 +8956,7 @@ snapshots:
 
   argparse@1.0.10:
     dependencies:
-      sprintf-js: 1.0.3
+      sprintf-js: 1.0.3(patch_hash=bd6495e712b47ec612cde7288449c45ab0c719717b423e6a94b693e297bbb452)
 
   argparse@2.0.1: {}
 
@@ -9136,7 +9146,7 @@ snapshots:
     dependencies:
       balanced-match: 4.0.4
 
-  braces@3.0.3:
+  braces@3.0.3(patch_hash=ad74a34b0200bbe14ba95e31e8f296205ce32a374eca2cef25cc8940aa0c76c1):
     dependencies:
       fill-range: 7.1.1
 
@@ -10503,9 +10513,7 @@ snapshots:
 
   ignore@7.0.8: {}
 
-  image-size@1.2.1(patch_hash=43bb822cac079e46add6c6bbaed80033abe5280c5b09c066254f8354478e6377):
-    dependencies:
-      queue: 6.0.2
+  image-size@2.0.4(patch_hash=4045ad5d2de4ed47956f4f703fa65e6328c367e3e1acff969728cbb50b29187b): {}
 
   immediate@3.0.6: {}
 
@@ -11371,7 +11379,7 @@ snapshots:
 
   micromatch@4.0.8:
     dependencies:
-      braces: 3.0.3
+      braces: 3.0.3(patch_hash=ad74a34b0200bbe14ba95e31e8f296205ce32a374eca2cef25cc8940aa0c76c1)
       picomatch: 2.3.2
 
   mime-db@1.52.0: {}
@@ -11468,7 +11476,7 @@ snapshots:
       fetch-blob: 3.2.0
       formdata-polyfill: 4.0.10
 
-  node-forge@1.4.0: {}
+  node-forge@1.4.0(patch_hash=50d8e3f38443736858c2c81dc2b569c18083e687f81acc5f9c17a568a7e4f6f6): {}
 
   node-gyp@12.4.0:
     dependencies:
@@ -11718,7 +11726,7 @@ snapshots:
     dependencies:
       '@types/node': 22.20.1
       https: 1.0.0
-      image-size: 1.2.1(patch_hash=43bb822cac079e46add6c6bbaed80033abe5280c5b09c066254f8354478e6377)
+      image-size: 2.0.4(patch_hash=4045ad5d2de4ed47956f4f703fa65e6328c367e3e1acff969728cbb50b29187b)
       jszip: 3.10.2
 
   pretty-format@29.7.0:
@@ -11799,10 +11807,6 @@ snapshots:
     dependencies:
       es-define-property: 1.0.1
       side-channel: 1.1.1
-
-  queue@6.0.2:
-    dependencies:
-      inherits: 2.0.4
 
   quick-lru@5.1.1: {}
 
@@ -12074,7 +12078,7 @@ snapshots:
       globalthis: 1.0.4
       json-stringify-safe: 5.0.1
       semver-compare: 1.0.0
-      sprintf-js: 1.1.3
+      sprintf-js: 1.1.3(patch_hash=82b04dd9d1d8254e00580a51ea22a3710721fd7fa0350e51ef33829396255efb)
     optional: true
 
   robust-predicates@3.0.3: {}
@@ -12297,9 +12301,9 @@ snapshots:
 
   space-separated-tokens@2.0.2: {}
 
-  sprintf-js@1.0.3: {}
+  sprintf-js@1.0.3(patch_hash=bd6495e712b47ec612cde7288449c45ab0c719717b423e6a94b693e297bbb452): {}
 
-  sprintf-js@1.1.3:
+  sprintf-js@1.1.3(patch_hash=82b04dd9d1d8254e00580a51ea22a3710721fd7fa0350e51ef33829396255efb):
     optional: true
 
   stackframe@1.3.4: {}

@@ -488,15 +488,15 @@ test("A11 fixture child", { skip: !process.env.LING_A11_SOCKET_CASE }, async t =
       name: "owned offline fixture", adapterKind: "comfyui", baseUrl: url, authMode: "bearer",
       networkPolicy: "public_only", protocolVariant: "prompt_legacy", status: "ready",
       createdAt: "2026-10-13T00:00:00.000Z", updatedAt: "2026-10-13T00:00:00.000Z" },
-      apiKey: "a11-offline-fixture-not-a-user-secret", fetchImpl, resolveHostAddresses: fixture.resolve });
+      apiKey: "a11-offline-test-fixture-not-a-user-secret", fetchImpl, resolveHostAddresses: fixture.resolve });
     const result = await client.submit({}, "prompt_legacy");
     assert.equal(result.operationId, "a11-task");
     assert.equal(fixture.requests.length, 1, "only one actual submit");
-    assert.equal(fixture.requests[0].auth, "Bearer a11-offline-fixture-not-a-user-secret");
+    assert.equal(fixture.requests[0].auth, "Bearer a11-offline-test-fixture-not-a-user-secret");
     assert.equal(fixture.requests[0].host, `comfy.a11.test:${fixture.port}`);
     const exchange = native.readExchange(originalResponse);
     assert.equal(exchange.request.routeDigest, sha(new URL("/api/prompt", url).toString()));
-    assert.ok(!JSON.stringify(exchange).includes("a11-offline-fixture-not-a-user-secret"));
+    assert.ok(!JSON.stringify(exchange).includes("a11-offline-test-fixture-not-a-user-secret"));
     fixture.assertPinned();
   });
   await registry.waitForIdle();

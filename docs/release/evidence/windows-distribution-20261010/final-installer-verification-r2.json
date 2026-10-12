@@ -1,0 +1,43 @@
+{
+  "result": "PASS",
+  "runtimeSourceSha": "f0a632b1bd5bd09b12778cbd7da3d26c354b832f",
+  "packagingRevision": "notices-r2",
+  "installerFilename": "Ling-Stack-0.1.2-alpha.1-windows-x64-f0a632b-notices-r2-setup.exe",
+  "installerSizeBytes": 331951347,
+  "installerSha256": "a39327e161d031c59e29aa246121a84d02dc8df3c51dabccedde6f3342e1e922",
+  "originalRuntimeFilesVerified": 762,
+  "embeddedMaterialFilesVerified": 605,
+  "embeddedChecksumManifestsVerified": 2,
+  "installerPlugins": [
+    "StdUtils.dll",
+    "System.dll",
+    "nsExec.dll"
+  ],
+  "uninstallerPlugins": [
+    "StdUtils.dll",
+    "System.dll",
+    "nsExec.dll"
+  ],
+  "excludedPlugins": [
+    "WinShell",
+    "SpiderBanner",
+    "nsis7z"
+  ],
+  "originalThreePluginQuestionsApplicable": false,
+  "retainedPluginExactToolchainMatches": true,
+  "installerSpdxPackages": 451,
+  "shellFixture": {
+    "result": "PASS",
+    "test": "Real NSIS System COM operations on isolated fixture shortcut",
+    "shortcutAppIdVerified": true,
+    "registersPreserved": true,
+    "missingShortcutHandled": true,
+    "isolatedDestinationCleanupExecuted": true,
+    "existingApplicationTouched": false,
+    "verifiedUtc": "2026-10-10T09:53:26.5520273Z"
+  },
+  "resultScope": "Technical component/material verification; release approval and complete installation/application acceptance are separate",
+  "newFullFunctionalAcceptance": "NOT_RUN",
+  "publicDistributionApproved": false,
+  "verifiedUtc": "2026-10-10T10:04:52.581Z"
+}

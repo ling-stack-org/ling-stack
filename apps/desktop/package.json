@@ -101,6 +101,10 @@
     ],
     "extraResources": [
       {
+        "from": "dist/distribution",
+        "to": "distribution"
+      },
+      {
         "from": "../web/dist",
         "to": "web"
       },

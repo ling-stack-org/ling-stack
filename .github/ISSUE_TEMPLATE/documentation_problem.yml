@@ -1,0 +1,54 @@
+name: Documentation or translation problem
+description: Report outdated instructions, broken links, or incorrect translations
+title: "[Docs]: "
+labels: [documentation]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English and Chinese reports are welcome. For a broken layout or clipped text, use the Bug or UI problem form instead.
+        Do not include API keys, tokens, private paths, workspace data, or sensitive model content. Report vulnerabilities privately via [Security](https://github.com/ling-stack-org/ling-stack/security/advisories/new).
+  - type: input
+    id: location
+    attributes:
+      label: Document URL or app page
+      description: Give the public document link or identify the app page and control containing the text. Do not include private or credential-bearing URLs.
+    validations:
+      required: true
+  - type: dropdown
+    id: category
+    attributes:
+      label: Problem type
+      options:
+        - Incorrect or outdated instructions
+        - Broken link or missing information
+        - Incorrect translation or untranslated text
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: language
+    attributes:
+      label: Language and version (if relevant)
+      placeholder: English, current main; or zh-CN, app 0.1.2-alpha.1
+  - type: textarea
+    id: problem
+    attributes:
+      label: Incorrect content and expected correction
+      description: Quote only the relevant public text and explain what is wrong or missing.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Suggested wording or redacted screenshot
+      description: A suggested translation is welcome but not required. Remove private data from screenshots.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues.
+          required: true
+        - label: I removed credentials and private data; this is not a vulnerability report.
+          required: true

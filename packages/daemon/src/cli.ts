@@ -12,7 +12,9 @@ if (!Number.isFinite(port)) {
   process.exit(1);
 }
 
-const restrictedCommands = readPackagedRestrictedCommandConfig();
+const restrictedCommands = process.platform === "darwin"
+  ? readPackagedRestrictedCommandConfig()
+  : undefined;
 const officeLocalNativeArtifact = readPackagedOfficeLocalNativeArtifact();
 const daemon = await startDaemon({
   host,

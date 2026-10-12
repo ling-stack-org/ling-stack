@@ -2184,7 +2184,7 @@ Host 本机查询等未完成项保持原状态，不以本轮局部通过上调
   仅为 simulation，不冒充真实模型或 packaged GUI。截图位于 `output/playwright/privacy-20260906/`。
 - [x] 前一版隐私 QA 包已安装；当时源码打包指纹、ASAR、Daemon bundle、Web tree 四项校验通过；旧包可恢复备份。
   该包不包含本节 Host enrichment/隐藏检查增量；已实测两处源码哈希与旧 manifest 不同。
-- [ ] 新 QA 包启动与真实模型案例：安全审核拒绝通过 FIFO 注入凭据并连接 nobody.host；等待用户明确确认。
+- [ ] 新 QA 包启动与真实模型案例：安全审核拒绝通过 FIFO 注入凭据并连接 relay.example.com；等待用户明确确认。
   已停止等待中的凭据传递进程。未改真实历史，新客户端目前未启动。
 - [ ] Daemon 全量仍有 7 项失败（1425/1432）：频道命令/打开目标的能力绑定、participant execute 与 callback publication。
   记录在 `output/privacy-daemon-full-tests-20260906.log`，不得以报告专项通过代替这些闸门。

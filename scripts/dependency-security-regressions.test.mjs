@@ -12,6 +12,12 @@ const electronGetRequire = createRequire(appBuilderRequire.resolve("@electron/ge
 const gotRequire = createRequire(electronGetRequire.resolve("got"));
 const cacheRequire = createRequire(gotRequire.resolve("cacheable-request"));
 const CachePolicy = cacheRequire("http-cache-semantics");
+const mammothRequire = createRequire(desktopRequire.resolve("mammoth"));
+const argparsePath = mammothRequire.resolve("argparse");
+const argparseRequire = createRequire(argparsePath);
+const globalAgentRequire = createRequire(electronGetRequire.resolve("global-agent"));
+const roarrPath = globalAgentRequire.resolve("roarr");
+const roarrRequire = createRequire(roarrPath);
 
 const request = { url: "https://cache.example.test/account", method: "GET", headers: {} };
 
@@ -126,4 +132,45 @@ test("legitimate own Vary fields and reserved names preserve cache hits and stat
     assert.equal(policy.evaluateRequest(original).response?.status, 203);
     assert.equal(policy.status(), 203);
   }
+});
+
+for (const [label, dependencyRequire] of [["Mammoth CLI", argparseRequire], ["Desktop logger", roarrRequire]]) {
+  const { sprintf, vsprintf } = dependencyRequire("sprintf-js");
+  test(`${label} bounds float precision without throwing (GHSA-hp3w-g68c-fv3c)`, () => {
+    for (const type of ["f", "e", "g"]) {
+      for (const precision of ["101", "10000", "9".repeat(400)]) {
+        const actual = sprintf(`%.${precision}${type}`, 1.25);
+        assert.equal(actual, sprintf(`%.100${type}`, 1.25));
+        assert.ok(actual.length < 110);
+        assert.equal(vsprintf(`%.${precision}${type}`, [1.25]), actual);
+      }
+    }
+    assert.equal(sprintf("%.0g", 1.25), sprintf("%.1g", 1.25));
+  });
+
+  test(`${label} preserves valid numeric and string formatting`, () => {
+    assert.equal(sprintf("%s %04d %.2f %.2e", "model", 7, 1.25, 1.25), "model 0007 1.25 1.25e+0");
+    assert.equal(sprintf("%.0f", 1.25), "1");
+    assert.equal(sprintf("%.0e", 1.25), "1e+0");
+    assert.equal(sprintf("%.3s", "abcdef"), "abc");
+    assert.equal(vsprintf("%s %d", ["count", 3]), "count 3");
+  });
+}
+
+test("Roarr logging survives oversized precision and preserves literal untrusted text", () => {
+  roarrRequire("roarr");
+  const createLogger = roarrRequire("./factories/createLogger.js").default;
+  const messages = [];
+  const logger = createLogger((message) => messages.push(message), {});
+  assert.doesNotThrow(() => logger("%.101f", 1.25));
+  logger("untrusted: %.100000f");
+  assert.equal(messages.length, 2);
+  assert.equal(messages[1].message, "untrusted: %.100000f");
+});
+
+test("Mammoth CLI argparse still renders normal command help", () => {
+  const { ArgumentParser } = mammothRequire("argparse");
+  const parser = new ArgumentParser({ prog: "mammoth-test", addHelp: true });
+  parser.addArgument("--output", { help: "output file" });
+  assert.match(parser.formatHelp(), /--output OUTPUT/);
 });

@@ -121,7 +121,7 @@ test("B004 B005 GET and file export share safe skipped titles and exact candidat
       scopeType: "workspace", ownerId: "workspace_default", title: "Ordinary B004 workflow", body,
       reviewState: "active", retrievalProviderId: "synthetic-vector", retrievalHandle: "synthetic-handle",
     })).memory;
-    const syntheticSecret = "sk-b005-synthetic-api-title-secret";
+    const syntheticSecret = "sk-b005-test-synthetic-api-title-secret";
     const skipped = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
       scopeType: "workspace", ownerId: "workspace_default", title: `Skipped deploy ${syntheticSecret}`,
       body: "Skipped body remains private.", sensitivity: "secret-adjacent",
