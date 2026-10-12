@@ -16,6 +16,8 @@
 
 B003/A08/A22/A09 上述回归均零跳过；A11 的两个 child 入口 skip 如上明确保留。各自实际执行者取得 exit 0。独立审阅者读取执行日志与源码，未重复执行测试；不能把继承的执行结果写成审阅者本人运行。
 
+A11 后继 TLS fixture 已移除固定 synthetic key/cert，改为 Node crypto 运行时随机 P-256、短期自签 CA/SAN certificate；随机 key 仅在 native TLS 测试 API 内存 export，不落盘/记录、不关闭验证。初次真实 socket setup 因 Node 不接受 KeyObject 失败，日志保留；修正 API 边界后三组最终为 7/6/0/1、26/25/0/1、4/4/0/0（tests/pass/fail/skip），均 exit 0，四个直接 TLS child 各 1/1、无 skip。Root 对两文件完整新增 diff/helper/native 接线及实际日志作限定复核，未发现新确认 P1/P2。此后继不是全历史 secret scan 通过；已提交 synthetic fixture 仍存在历史，不改写、不绕 hook，正常 push 与远端 head 另行核验。
+
 A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixture 血缘不足。修正 fixture 后，旧产品的 9 条真实链为合法 manual/deny 2 条通过、畸形判词 7 条失败。首轮 GREEN 的 approve 正例曾因 fixture 缺频道归属被生产准入正确拒绝；仅修正 fixture producer 后，最终 55/55 通过。失败记录保留，不声称首次即全绿。
 
 ## 正在处理，不能据此认定完成
@@ -44,5 +46,6 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 - `a09-long-timer-red-green.md`、`a09-independent-review.md`；最终 scheduler SHA 为 `16974df4346f96afd896ec139a67dc55b497ba2db64eff6a46ffd949e6bb0a7d`，测试 SHA 为 `bd98f7758fee78934f4db96f4a5448d0bf3ee8ff7aa74137ef90163485f411d1`。
 - `a11-http-pin-red-green.md`、`a11-independent-review.md`；报告 SHA 分别为 `a60e671df32eaca0a079f9ee874bf434232ed0d6eae155f1e5508c2892112f64`、`7136f8098be9a3060521fa61f0a3cf8ef89b4a67574895bd03f8624693c01d9e`。后继整合改变任一 owned 字节就重新绑定证据，不继承旧整文件 SHA 为新版本批准。
 - `a33-readonly-lineage-red-green.md`、`a33-frozen-sha256.txt`、`a33-independent-review.md`；实现与独审报告 SHA 分别为 `6219199f70763a24980f494cb50e8cbe039bb3c9a4909fd5f004109daa86036f`、`9569e2175ef6d6218770ffd0d8a6d17712929df1fb601a28cc6bfc49aad6d9a1`。主最终日志是 `a33-green-closed.log`，不得用旧名含 green 的中间失败日志代替。
+- `a11-ephemeral-tls-checkpoint.md`、`a11-ephemeral-tls-independent-review.md`；实现与限定复核报告 SHA 分别为 `15e714da5b55b0db0ab871e1eaa1d6bd6b03ebfc83c66e57c346453663a472e1`、`6b86376cf692448e9dd248a02d78da2e8157183ecd6b850e1f9af2e1d9ede460`。旧 A11 报告/freeze 不覆盖后继两个测试文件。
 
 不修改根 checkout、日常数据库或另一 writer 的 `harness-delegation-storage-checkpoint-2026-10-09.md` WIP。仅对明确归属、完成局部闭环的修复作备份；未完成或他人 WIP 不批量 stage，不 reset、clean、stash、force-push 或删除分支。

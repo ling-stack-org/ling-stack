@@ -10,41 +10,13 @@ import { spawnSync } from "node:child_process";
 import { once } from "node:events";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
+import { createA11EphemeralTlsFixture } from "./support/a11-ephemeral-tls-fixture.mjs";
 
 const sha = value => createHash("sha256").update(value).digest("hex");
 const isRedirectError = error => /redirect/i.test(`${error?.message ?? ""} ${error?.cause?.message ?? ""}`);
 const A11_PUBLIC_ADDRESS = "203.0.113.10";
 const A11_PUBLIC_FALLBACK_ADDRESS = "198.51.100.9";
 const A11_PRIVATE_ADDRESS = "127.0.0.2";
-// Dedicated offline CA/server key. Only this fixture trusts it; hostname and SNI
-// verification remain enabled, including the wrong-host negative case.
-const A11_TLS_KEY = `-----BEGIN PRIVATE KEY-----
-MIIBeQIBADCCAQMGByqGSM49AgEwgfcCAQEwLAYHKoZIzj0BAQIhAP////8AAAAB
-AAAAAAAAAAAAAAAA////////////////MFsEIP////8AAAABAAAAAAAAAAAAAAAA
-///////////////8BCBaxjXYqjqT57PrvVV2mIa8ZR0GsMxTsPY7zjw+J9JgSwMV
-AMSdNgiG5wSTamZ44ROdJreBn36QBEEEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg
-9KE5RdiYwpZP40Li/hp/m47n60p8D54WK84zV2sxXs7LtkBoN79R9QIhAP////8A
-AAAA//////////+85vqtpxeehPO5ysL8YyVRAgEBBG0wawIBAQQgB8LxxCgGmQGK
-Sijxbge84wY/5houYaHWTjNlcTEkBAShRANCAATKmQfF+1v3+ZEkhT1KbGrJuNli
-BcvJAHThTW9/StBB4QmW/jj5qVaki1Qw23hpDvzicO1LRidbKh3dg6BXIN7Z
------END PRIVATE KEY-----`;
-const A11_TLS_CERT = `-----BEGIN CERTIFICATE-----
-MIICWDCCAf2gAwIBAgIJAK/q8MpkHvU2MAoGCCqGSM49BAMCMCExHzAdBgNVBAMM
-FkExMSBvZmZsaW5lIGZpeHR1cmUgQ0EwHhcNMjYxMDEyMTcwNzI2WhcNMzYxMDA5
-MTcwNzI2WjAhMR8wHQYDVQQDDBZBMTEgb2ZmbGluZSBmaXh0dXJlIENBMIIBSzCC
-AQMGByqGSM49AgEwgfcCAQEwLAYHKoZIzj0BAQIhAP////8AAAABAAAAAAAAAAAA
-AAAA////////////////MFsEIP////8AAAABAAAAAAAAAAAAAAAA////////////
-///8BCBaxjXYqjqT57PrvVV2mIa8ZR0GsMxTsPY7zjw+J9JgSwMVAMSdNgiG5wST
-amZ44ROdJreBn36QBEEEaxfR8uEsQkf4vOblY6RA8ncDfYEt6zOg9KE5RdiYwpZP
-40Li/hp/m47n60p8D54WK84zV2sxXs7LtkBoN79R9QIhAP////8AAAAA////////
-//+85vqtpxeehPO5ysL8YyVRAgEBA0IABMqZB8X7W/f5kSSFPUpsasm42WIFy8kA
-dOFNb39K0EHhCZb+OPmpVqSLVDDbeGkO/OJw7UtGJ1sqHd2DoFcg3tmjKjAoMBUG
-A1UdEQQOMAyCCiouYTExLnRlc3QwDwYDVR0TAQH/BAUwAwEB/zAKBggqhkjOPQQD
-AgNJADBGAiEAtCb9EAng4FVYeyGNvQcNFfCCG/x3SkcXwg9qrcYgQxwCIQCWNThy
-jmoiCcophGzU2z8GOapB8qUU8lc8XyInD9Cl8g==
------END CERTIFICATE-----`;
-
-/** Child isolation prevents the real-socket fixture hooks leaking to other tests. */
 export function runA11SocketCase(caseName) {
   const childEnv = { ...process.env, LING_A11_SOCKET_CASE: caseName };
   delete childEnv.NODE_TEST_CONTEXT;
@@ -63,6 +35,7 @@ export function runA11SocketCase(caseName) {
  */
 async function a11SocketHarness(t, { secure = false, handler, answers, allowTrustedLoopback = false, forceFirstRefused = false } = {}) {
   const requests = [], attempts = [], dnsCalls = [], serverNames = [];
+  const tlsMaterial = secure ? createA11EphemeralTlsFixture() : undefined;
   const owned = [];
   for (const kind of ["public", "private"]) {
     const accept = (request, response) => {
@@ -70,7 +43,9 @@ async function a11SocketHarness(t, { secure = false, handler, answers, allowTrus
       if (handler) handler(request, response, kind);
       else { response.setHeader("content-type", "text/html"); response.end("<title>A11 pinned</title><main>actual public body</main>"); }
     };
-    const instance = secure ? createTlsServer({ key: A11_TLS_KEY, cert: A11_TLS_CERT }, accept) : createServer(accept);
+    // Node's TLS context needs PEM bytes, not KeyObject. Materialize this newly
+    // generated key only in memory at that API boundary; never log or persist it.
+    const instance = secure ? createTlsServer({ key: tlsMaterial.key.export({ type: "pkcs8", format: "pem" }), cert: tlsMaterial.cert }, accept) : createServer(accept);
     if (secure) instance.on("secureConnection", socket => serverNames.push(socket.servername));
     instance.listen(0, "127.0.0.1");
     await once(instance, "listening");
@@ -113,7 +88,8 @@ async function a11SocketHarness(t, { secure = false, handler, answers, allowTrus
   tls.connect = function (...args) {
     assert.equal(typeof args[0], "object", "fixture expects the verified native connector options");
     assert.notEqual(args[0].rejectUnauthorized, false, "TLS verification must stay enabled");
-    return originalTlsConnect.call(this, { ...args[0], ca: A11_TLS_CERT }, ...args.slice(1));
+    assert.ok(tlsMaterial, "offline HTTP fixture cannot open a TLS connection");
+    return originalTlsConnect.call(this, { ...args[0], ca: tlsMaterial.cert }, ...args.slice(1));
   };
   syncBuiltinESMExports();
   t.after(async () => {
@@ -124,6 +100,7 @@ async function a11SocketHarness(t, { secure = false, handler, answers, allowTrus
   });
   return {
     port, requests, attempts, dnsCalls, serverNames, resolve,
+    ca: tlsMaterial?.cert,
     url: (host, route = "/docs") => `${secure ? "https" : "http"}://${host}:${port}${route}`,
     assertPinned() {
       assert.ok(attempts.length > 0, "must observe a real native TCP connection");
@@ -360,6 +337,33 @@ test("the actual Daemon SDK import does not break materialized native POST heade
   assert.equal(client.readExchange(noBody).request.headers["content-length"], "0");
 });
 
+test("A11 ephemeral TLS fixture generates short-lived matching keys and fails closed", () => {
+  const now = new Date();
+  const first = createA11EphemeralTlsFixture({ now });
+  const second = createA11EphemeralTlsFixture({ now });
+  for (const fixture of [first, second]) {
+    assert.equal(fixture.key.type, "private");
+    assert.equal(fixture.certificate.ca, true);
+    assert.equal(fixture.certificate.verify(fixture.certificate.publicKey), true);
+    assert.equal(fixture.certificate.checkPrivateKey(fixture.key), true);
+    assert.equal(fixture.certificate.checkHost("preview.a11.test"), "*.a11.test");
+    assert.equal(fixture.certificate.checkHost("wrong.other.test"), undefined);
+    const notBefore = Date.parse(fixture.certificate.validFrom);
+    const notAfter = Date.parse(fixture.certificate.validTo);
+    assert.ok(notBefore <= now.getTime() && notBefore >= now.getTime() - 61_000);
+    assert.ok(notAfter > now.getTime() && notAfter <= now.getTime() + 600_000);
+    assert.ok(notAfter - notBefore <= 660_000);
+  }
+  assert.notEqual(first.certificate.fingerprint256, second.certificate.fingerprint256);
+  assert.equal(first.certificate.checkPrivateKey(second.key), false);
+  for (const options of [{ now: new Date(Number.NaN) }, { validityMs: 999 }, { validityMs: 600_001 }]) {
+    assert.throws(() => createA11EphemeralTlsFixture(options), /a11_ephemeral_tls_fixture_invalid_lifetime/);
+  }
+  assert.throws(() => createA11EphemeralTlsFixture({ now: new Date("2051-01-01T00:00:00.000Z") }),
+    error => error.message === "a11_ephemeral_tls_fixture_generation_failed" &&
+      error.cause?.message === "a11_ephemeral_tls_fixture_unsupported_clock");
+});
+
 test("A11 native sender pins the Comfy public_only Host binding through guarded transport", () => {
   runA11SocketCase("comfy-native");
 });
@@ -406,7 +410,7 @@ test("A11 fixture child", { skip: !process.env.LING_A11_SOCKET_CASE }, async t =
     const received = await new Promise((resolve, reject) => {
       const request = (secure ? httpsRequest : httpRequest)(url, {
         signal: AbortSignal.timeout(2_000), autoSelectFamily: false,
-        ...(secure ? { ca: A11_TLS_CERT } : {}),
+        ...(secure ? { ca: fixture.ca } : {}),
         lookup: (_hostname, options, callback) => options?.all
           ? callback(null, [{ address: A11_PUBLIC_ADDRESS, family: 4 }])
           : callback(null, A11_PUBLIC_ADDRESS, 4),
