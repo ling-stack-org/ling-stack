@@ -4,7 +4,7 @@ import {
   closeSync, constants, fstatSync, lstatSync, openSync, opendirSync, readSync, realpathSync,
 } from "node:fs";
 import { basename, extname, isAbsolute, join, resolve } from "node:path";
-import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/dist/runtime/sandbox/packaged-office-native-published-review.js";
+import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/src/runtime/sandbox/packaged-office-native-published-review.ts";
 import { readActiveOriginalPackagedOfficeNativePublication } from "./build-packaged-office-native.mjs";
 import { extractCuaDriverFinalArtifact } from "./cua-driver-signing/final-artifact-extractor.mjs";
 import { verifyOriginalOfficeDaemonInApp } from "./packaged-office-native-asar-checks.mjs";
