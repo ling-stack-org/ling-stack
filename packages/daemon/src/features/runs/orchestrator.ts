@@ -973,6 +973,7 @@ async function executeAdmittedRunRequest(
       runId,
       workUnit,
       attempt,
+      existingContinuationId: existingContinuation ? continuationExecution?.continuation.id : undefined,
       now: createdAt,
     });
     acquireRunRuntimeSemaphores({

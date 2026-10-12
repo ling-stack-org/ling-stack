@@ -14,6 +14,7 @@
 | A11 实际连接/事实边界 | 一次审核 DNS 全答案并固定到实际 socket；不可变审核集合内的连接回退保 Host/SNI/TLS；redirect 每跳重审；绑定不可克隆/复用；清理先于 completed，COMMIT 后不重发 | 三组分别 6 tests/5 pass/1 skip、25/24/1 skip、4/4/0 skip，均 0 fail/exit 0；HTTP/TLS fallback 直接 child 各 1/1、0 skip。两个 suite skip 是防递归 child 占位入口，不能称零跳过；最新 build、直接 tsc/diff check 通过 | 未参与 A11 实现的审阅者核对十个最终源码 SHA、真实 child 接线和控制流，PASS_SCOPED_WITH_LIMITS，无新确认 P1/P2；上层真实 API/packaged/GUI 不在此结论中 |
 | A33 readonly Attempt 血缘 | Core 在原 captured-owner 准入下对新 `tool_start/update/end` 缺失 Attempt 作精确 stamp，显式错配在 durable insert/JSONL 前拒绝；原 SQL fence 和既有审批历史不变 | 主最终 9/9、邻近 9/9、Core 全文件 8/8，均 exit 0、0 skip；26 次执行、19 个独立用例。真实 SDK read 只证明 start/end；Core update、单 read、主动重投旧 callback 不冒充 SDK update、跨 Attempt batch 或自然迟到 | 未参与实现者核对三文件、八份原始日志和真实 producer/consumer，PASS_SCOPED_WITH_LIMITS，无新确认 P1/P2；approved=false，不批准完整 E6 |
 | B004/B005 Memory Markdown | fence-aware 结构解析仅剥一个 framing EOL，保 Body 字节、末尾 LF/CR、CRLF 和候选权威；skipped title 复用共享脱敏并正确计 aggregate；GET 与文件输出同源 | 最终 fresh build 后完整导入 16/16（7 parents+9 children）、导出 4/4、API 3/3；相邻 Core 24/24、Daemon 14/14，均 exit 0、fail/skip 0；Core/Daemon build、直接类型及限定检查通过 | 未参与实现者核对五 owned、24 份原始日志 SHA 和 API/SQLite 消费者链，PASS_SCOPED_WITH_LIMITS，无新确认 P1/P2；新 CRLF API 用例仅 dryRun，不冒实际持久化运行、GUI/packaged 或完整 E6 批准；approved=false |
+| A21 前置 Task 去重准入 | 仅真实同 Run 的 durable continuation 可以复用原 Task claim；同步快照重读实际 Task/Run/unit/source/target/claim，保留旧去重事实、资源和 semaphore 限制 | 最终准入20/20、相邻恢复2/2，零fail/skip；三条Task快照竞态增量RED3/3失败后GREEN；Daemon-only编译与限定diff-check通过 | 未参与实现者核四冻结文件、Host-only请求边界、Core fence及真实日志，PASS_SCOPED_WITH_LIMITS；不覆盖完整A21或新包GUI，approved=false |
 
 B003/A08/A22/A09 上述回归均零跳过；A11 的两个 child 入口 skip 如上明确保留。各自实际执行者取得 exit 0。独立审阅者读取执行日志与源码，未重复执行测试；不能把继承的执行结果写成审阅者本人运行。
 
@@ -26,7 +27,8 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 - A09 的 RRULE INTERVAL/anchor 是仍未关闭的独立失败面。上表不证明 error-entry restart 时旧 Run 仍 in-flight 的所有重叠执行边界；后继隔离正例等旧 Run 完成后才交付新 due，不冒充重叠执行验收。
 - A11 的上层 Comfy connection-check/analyze/import/submit/poll/collect 真实 API 失败回归仍未完成；静态链确认安全传播失败，但现有公开 envelope 仍用 generic code，不能称网络错误细分已全链统一。IPv6 实际 socket、Electron packaged/GUI 未验收。原 sanity/旧 sender RED/ambient 逐字日志未保存，不用最终 GREEN 补造原 RED。
 - A11 两次早期未隔离 fixture 进入 store 初始化栈；defaultWorkspaceCwd 确认是实施树，实际 opened DB 文件及 before/after 未证。不能扩称用户日常 DB 被改或未改，不为补证重开/重置数据库。后继全部产品 Node 入口使用 fresh home 与默认 workspace 双隔离。
-- A21 及全量独审登记的其他根因仍继续；A33、B004/B005 的局部回归及独审边界见上表，不能把局部闭环全部清零。A21 两私有 Core 接口名和原子承载已接纳，只有 worker/接口准备，尚未运行真实 RED 或实现普通 view 的安全恢复。
+- A21及全量独审登记的其他根因仍继续；前置Task去重修复见上表，不等于普通view安全恢复完成。后继真实SDK→Host命令journal/tool_end→第二SQLite读回→唯一child SIGKILL主例已取得缺失普通恢复权威的产品RED：实际ordinary checkpoint/head两表不存在，恢复创建replacement Attempt、dispatch和模型请求各1，SDK context toolResult为0，Run错误成功收尾。预期错误断言前已核源事件不变、tool_start/end各1、marker仍1行、零write blockers；**未观察到重复effect**。Transport是loopback替身，不冒真实Provider/GUI。
+- A21两私有Core接口、原子sealed artifact/checkpoint/唯一head CAS与activation新建/idempotent replay双入口witness已进入实施；Runner普通view严格安装/首context投影及Daemon自动producer/recovery仍需接通验证。当前schema缺失baseline在新端口落地后要替换成真实commit-port失败负例，不用旧fixture冒完整GREEN。主失败及独审记录在ignored output，后继源码必须重绑冻结。
 
 ## 不变的验收与合并门槛
 
