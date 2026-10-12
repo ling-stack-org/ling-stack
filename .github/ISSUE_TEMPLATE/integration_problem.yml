@@ -1,0 +1,57 @@
+name: Model, CLI, or MCP integration problem
+description: Report a provider connection or external tool integration failure
+title: "[Integration]: "
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        English and Chinese reports are welcome. Use this form for model providers, external agent CLIs, MCP, skills, and plugins.
+        Never share API keys, tokens, authentication files, private endpoints, raw requests with authorization headers, or sensitive prompts and responses. Report security vulnerabilities privately via [Security](https://github.com/ling-stack-org/ling-stack/security/advisories/new).
+  - type: input
+    id: version
+    attributes:
+      label: Ling version or commit
+      placeholder: 0.1.2-alpha.1 or a commit SHA
+    validations:
+      required: true
+  - type: dropdown
+    id: integration
+    attributes:
+      label: Integration type
+      options:
+        - Model provider or OpenAI-compatible service
+        - External agent CLI or execution engine
+        - MCP server or tool
+        - Skill or plugin
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Integration and environment
+      description: Include the provider, CLI, MCP server, or plugin name and version, OS, and Desktop or Web mode. Include the model ID or transport type when relevant, but no credentials or private endpoints. Node version is only needed for source or CLI use.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps, expected result, and actual error
+      description: Give a minimal reproduction and the failing stage, such as connection, model selection, approval, or tool execution. Do not paste credential-bearing commands.
+    validations:
+      required: true
+  - type: textarea
+    id: evidence
+    attributes:
+      label: Redacted evidence and attempted fixes
+      description: Attach relevant screenshots or sanitized error output. Remove private prompts, paths, endpoints, authorization headers, and secrets.
+  - type: checkboxes
+    id: checks
+    attributes:
+      label: Submission checks
+      options:
+        - label: I searched existing issues and checked the documented integration support.
+          required: true
+        - label: I removed credentials and private data; this is not a vulnerability report.
+          required: true
