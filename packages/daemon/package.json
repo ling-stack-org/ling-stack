@@ -25,7 +25,7 @@
     "@ling-stack/providers": "workspace:*",
     "@ling-stack/remote-protocol": "workspace:*",
     "@ling-stack/runner-pi": "workspace:*",
-    "@modelcontextprotocol/sdk": "^1.30.0",
+    "@modelcontextprotocol/sdk": "1.32.1",
     "@xmldom/xmldom": "0.9.12",
     "diff": "8.0.4",
     "docx": "9.8.1",

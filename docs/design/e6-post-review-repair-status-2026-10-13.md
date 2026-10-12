@@ -48,6 +48,31 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 - 审批恢复实际SQLite reopen/HTTP/SSE四个具名邻近4/4、exit0/skip0；Markdown链接334文件检查通过。以上 Root 的 tee 日志仅保存原始 stdout，进程 exit0 来自实际 exec/write_stdin 回执，不伪装日志本身含 command/exit 或独审亲自执行；后继合成fixture限定复核据此分开注明来源。
 - 三测试命名增量独审 `synthetic-fixture-name-review-20261013.md` SHA `6ffc26c23ab95857ad033e13298c2d41ff7e401e6c1be8a22e72e91b25328198`，PASS_SCOPED_WITH_LIMITS/approved=false。三个新测试 SHA 与日志已冻结；旧 B004/B005/A11 的产品结论不变，但原整文件测试 SHA 不冒包含本增量。
 
+## Dependabot 兼容子集与菜单回归后继
+
+本组不接收 #527/#528 整组升级。只处理 Daemon MCP SDK exact1.32.1、六项 Radix exact patch、Expo~57.0.28 与 Dev Client~57.0.20；保 Pi1.1.0、RN0.86.3、Mobile React19.2.3、Daemon/Runner直接Undici7.30及安全补丁。Expo配套check现已通过；前节首次exit1保留为历史，不重复迁移SDK58或Pi。
+
+四文件闭包独审发现 focus-scope1.2/slot1.4 真正传递minor，另有合法范围内的Expo json-file/env解析回落；没有把全部lock差异描述为升级。实际验证为MCP完整协议44/44、HTTP/SSE三层facade3/3、Pi/MCP/压缩三个完整文件34/34，全部fail/skip0；模型transport为测试替身，不使用真实Provider。Mobile类型与Expo配套、Runner/Daemon/ui/Web构建通过；不代表Mobile真机或新macOS包通过。
+
+原浏览器运行先因缺匹配Chromium失败，未进入产品页面。将精确headless1243装入本QA ignored目录后，六选例实际4pass/2fail：sidebar空态fixture误含Engineering，菜单Escape未关闭。只在sidebar该空态case设channels=[]、增加初始可见与无Engineering断言，保全局factory和所有原断言；后继完整两例通过。
+
+菜单根因是默认IconButton Tooltip保留窗口与双Radix dismissal模块栈竞争Escape。Tooltip/Dialog/Popover上游exact1.1.19，Menu/Toast exact1.1.20；原真实trace和Vite双模块支持诊断，未实跑旧HEAD依赖baseline，不宣称已证明为本升级新引入。仅禁用closed Tooltip动画的临时反证使原例1/1通过，随后撤除，不提交CSS探针、不给wrapper强制close。
+
+最终根修是根pnpm精准override `@radix-ui/react-dismissable-layer@1.1.19`→`1.1.20`。这是**主动覆盖上游exact patch pin**，不是合法range dedupe。两版API/层栈核心相同，含primitive2.1.10→2.1.11闭包。新增单例回归从每个真实consumer锚点核CJS/ESM realpath，旧安装1fail→后继1pass；不是用root hoisting冒充实际消费。
+
+后继fresh frozen/offline/force/side-effects-cache=false实际重import1301包、exit0。最新证据：
+
+- 单例回归及原primitives完整34/34，零fail/skip；后继安全42/42，零fail/skip。
+- 七完整spec 21/21、零fail/skip/exit0，其中20个mock浏览器真实DOM案例、1个viewport纯逻辑案例；无CSS探针/重试，含原菜单、Dialog忙碌禁止关闭/外点/Escape/焦点、Popover、Toast、Tabs、Switch、toggle-group、sidebar及三种会话反馈。不是真实Daemon/model或packagedGUI验收。
+- fresh ui/Web build及Web typecheck exit0，原chunk/dynamic-import警告仍保留。许可证1211版本/23families通过，不替代binary notice审批。
+- 五类consumer在当前实际Vite模块图同import `dist-C2VXoZer.js`，browserHash25122564；没有声称Desktop packaged图已核。
+
+四测试隔离变更仅涉及fresh绝对cwd/first-run identity同源、strictPort和显式禁止复用、Switch焦点+Space及sidebar局部fixture。独立限定静态审阅无已确认越界；其旧NOT_GREEN判词与原4pass/2fail保持历史，后继21pass另绑日志，不回写旧报告。
+
+原始日志在 `output/e6-20260928/dependabot-patch-*-20261013.log` 与 `dependabot-dismissal-*-20261013.log`。后继DOM日志自身包含启动隔离参数与DOM_EXIT；早期tee未保存完整命令/exit的日志由Root真实工具回执索引注明，不伪装独审者本人执行。
+
+当前完整E6、nested Menu/父Dialog交叠回归、后继具体Office批准、新macOS客户端联合验收和适用CI仍未全部满足。原#527/#528还含范围外major/API/许可/Native或安装门，不能因兼容子集通过而合并整组。#533继续draft备份；未通过不合并、不启用CI、不管理员bypass。
+
 ## 证据定位与保全
 
 本地完整执行记录位于实施树的 `output/e6-20260928/office-full-content-review-20261010/`：
