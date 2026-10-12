@@ -1,32 +1,35 @@
-name: Bug report
-description: Report a reproducible Ling Stack problem
+name: Bug or UI problem
+description: Report incorrect behavior, broken layout, or a reproducible error
 title: "[Bug]: "
+labels: [bug]
 body:
   - type: markdown
     attributes:
       value: |
-        Thanks for helping improve Ling Stack. Remove credentials, private paths, workspace data, and model content before submitting. Security vulnerabilities belong in the private process described in SECURITY.md.
+        English and Chinese reports are welcome. For installation failures or model/CLI/MCP connection problems, use the dedicated forms instead.
+        Remove API keys, tokens, private paths, workspace data, and sensitive model content. Report security vulnerabilities privately via [Security](https://github.com/ling-stack-org/ling-stack/security/advisories/new).
   - type: input
     id: commit
     attributes:
       label: Affected version or commit
       description: Use a release version when available; otherwise provide the commit SHA.
-      placeholder: ea8c40e3 or v0.x.y
+      placeholder: 0.1.2-alpha.1 or a commit SHA
     validations:
       required: true
   - type: dropdown
     id: surface
     attributes:
-      label: Surface
+      label: Affected module
       options:
-        - Web UI
-        - Desktop app
+        - Conversations and channels
+        - AI teammates and memory
+        - Settings and model workbench
+        - Approvals and permissions
+        - Skills, plugins, and tools
+        - Media production
+        - Desktop shell and Computer Use
         - CLI
         - Daemon or API
-        - Model or media provider
-        - Skills or plugins
-        - MCP or tools
-        - Documentation
         - Other
     validations:
       required: true
@@ -34,8 +37,8 @@ body:
     id: environment
     attributes:
       label: Environment
-      description: Include OS, architecture, Node version, browser or Desktop mode, and relevant provider type. Do not include keys.
-      placeholder: macOS 15 arm64, Node 22.22.1, Web UI from source
+      description: Include OS version, architecture, and Desktop or Web mode. For Web, include the browser. Node version is only needed when running from source or CLI.
+      placeholder: macOS 15 arm64, Desktop app from a GitHub Release
     validations:
       required: true
   - type: textarea
@@ -46,15 +49,10 @@ body:
     validations:
       required: true
   - type: textarea
-    id: expected
+    id: behavior
     attributes:
-      label: Expected behavior
-    validations:
-      required: true
-  - type: textarea
-    id: actual
-    attributes:
-      label: Actual behavior
+      label: Expected and actual behavior
+      description: Describe what should happen and what happens instead.
     validations:
       required: true
   - type: textarea
@@ -62,7 +60,11 @@ body:
     attributes:
       label: Redacted evidence
       description: Add screenshots, console output, or logs after removing secrets, private paths, and personal data.
-      render: text
+  - type: textarea
+    id: layout
+    attributes:
+      label: UI details (if relevant)
+      description: Include theme, language, window size or display scaling, and whether the sidebar is expanded. Screenshots can be attached above.
   - type: textarea
     id: impact
     attributes:
