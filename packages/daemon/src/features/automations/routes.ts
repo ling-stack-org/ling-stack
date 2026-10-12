@@ -220,32 +220,36 @@ export async function handleAutomationDraftItem(
         return;
       }
       await readOptionalJsonBody(request, config.maxBodyBytes);
-      if (draft.status === "confirmed" && draft.confirmedAutomationId) {
-        const automation = store.getAutomationDefinition(draft.confirmedAutomationId);
-        if (!automation) {
-          writeJson(response, 409, {
-            error: "confirmed_automation_missing",
-            message: `Confirmed automation not found: ${draft.confirmedAutomationId}`,
-          });
-          return;
+      const confirmed = store.confirmAutomationDraft(draft, new Date().toISOString());
+      if (confirmed.outcome === "not_found") {
+        writeJson(response, 404, { error: "automation_draft_not_found", message: "Automation draft no longer exists." });
+      } else if (confirmed.outcome === "created" || confirmed.outcome === "already_confirmed") {
+        let schedulerRefreshPending = false;
+        try {
+          const needsRegistration = confirmed.automation.status === "enabled" && confirmed.automation.trigger.type === "schedule";
+          // A registered item may be executing, with no nextRunAt yet. Do not reset its timer on retries.
+          const registered = confirmed.outcome === "already_confirmed" && needsRegistration
+            && schedulerRegistry.list(cwd).some((state) => state.status === "running"
+              && state.items.some((item) => item.automationId === confirmed.automation.id));
+          if (confirmed.outcome === "created" || (needsRegistration && !registered)) schedulerRegistry.refresh(cwd);
+        } catch {
+          // This is after the durable commit, not a failed confirmation or a reason to create again.
+          schedulerRefreshPending = true;
         }
-        writeJson(response, 200, { cwd, draft, automation, thread: store.getLingThread(automation.threadId) });
-        return;
+        writeJson(response, confirmed.outcome === "created" ? 201 : 200,
+          { cwd, draft: confirmed.draft, automation: confirmed.automation, thread: confirmed.thread,
+            ...(schedulerRefreshPending ? { schedulerRefreshPending: true,
+              schedulerMessage: "Automation confirmation is saved. Scheduler registration is pending; retry confirmation to recover." } : {}) });
+      } else {
+        const errors = {
+          changed: ["automation_draft_changed", "Automation draft changed before confirmation. Review it and confirm again."],
+          not_ready: ["automation_draft_not_ready", "Automation draft is not ready for confirmation."],
+          source_identity_conflict: ["automation_draft_source_conflict", "Automation draft confirmation source is already occupied."],
+          confirmed_state_invalid: ["confirmed_automation_missing", "Confirmed automation or its source thread is unavailable or inconsistent."],
+        } as const;
+        const [error, message] = errors[confirmed.outcome];
+        writeJson(response, 409, { error, message, draft: confirmed.draft });
       }
-      const validated = validateAutomationDraft(draft);
-      if (validated.status !== "ready_for_confirmation") {
-        writeJson(response, 409, {
-          error: "automation_draft_not_ready",
-          message: `Automation draft is not ready for confirmation: ${validated.status}`,
-          draft: validated,
-        });
-        return;
-      }
-      const createInput = automationDraftToCreateRequest(validated);
-      const created = createAutomationDefinitionFromResolvedInput({ store, input: createInput, now: new Date().toISOString() });
-      const confirmed = store.confirmAutomationDraft(validated.id, created.automation.id, new Date().toISOString());
-      schedulerRegistry.refresh(cwd);
-      writeJson(response, 201, { cwd, draft: confirmed ?? validated, automation: created.automation, thread: created.thread });
       return;
     }
   } catch (error) {

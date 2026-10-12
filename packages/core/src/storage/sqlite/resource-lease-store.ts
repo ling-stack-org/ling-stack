@@ -111,6 +111,18 @@ export class SqliteResourceLeaseStore {
     return Number(result.changes);
   }
 
+  /** Release only the captured lease, never a successor sharing its logical owner. */
+  releaseResourceLease(id: string, ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number {
+    if (ownerType !== "workflow_step" && ownerType !== "system") {
+      throw new Error("Exact resource lease release requires workflow_step or system ownership");
+    }
+    const result = this.context.database.prepare(`
+      UPDATE resource_leases SET status = 'released', released_at = ?, release_reason = COALESCE(release_reason, 'released')
+      WHERE id = ? AND owner_type = ? AND owner_id = ? AND status = 'active' AND attempt_id IS NULL
+    `).run(releasedAt, id, ownerType, ownerId);
+    return Number(result.changes);
+  }
+
   renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
     const result = this.context.database
       .prepare(`

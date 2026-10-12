@@ -381,6 +381,7 @@ import {
   type WorkUnitStatus,
 } from "../runtime-supervisor-types.js";
 import {
+  type CommitExternalWorkActionTransitionInput,
   type CreateExternalWorkActionInput,
   type CreateExternalWorkCiTriageInput,
   type CreateExternalWorkWorkflowInput,
@@ -500,6 +501,7 @@ import {
 } from "../plugin-manager-types.js";
 import {
   type AutomationDraft,
+  type AutomationDraftConfirmationResult,
   type AutomationDefinition,
   type AutomationRun,
   type CreateAutomationDefinitionInput,
@@ -864,7 +866,11 @@ export class SqliteRunStore implements RunStore {
     this.conversationAcceptedInput = new SqliteConversationAcceptedInputStore({ database: this.database }, this.conversationTurnIngest);
     this.teammateDirectInput = new SqliteTeammateDirectInputStore({ database: this.database }, this.conversationTurnIngest);
     this.conversationPreparedInput = new SqliteConversationPreparedInputStore({ database: this.database }, this.conversationAcceptedInput);
-    this.automations = new SqliteAutomationStore({ database: this.database });
+    this.automations = new SqliteAutomationStore({ database: this.database }, {
+      createLingThread: (input, now) => this.createLingThread(input, now),
+      getLingThread: (id) => this.getLingThread(id),
+      getChannel: (id) => this.getChannel(id),
+    });
     this.providers = new SqliteProviderStore({ database: this.database });
     this.mcps = new SqliteMcpStore(
       { database: this.database },
@@ -1359,6 +1365,7 @@ export class SqliteRunStore implements RunStore {
       {
         assertChannelExists: (channelId) => this.assertChannelExists(channelId),
         getExternalWorkRecord: (id) => this.getExternalWorkRecord(id),
+        denyPendingApproval: (id, reason, now) => this.denyApprovalRequest(id, { reason, resolvedBy: "local-user" }, now),
       },
     );
     this.externalWorkCiTriage = new SqliteExternalWorkCiTriageStore(
@@ -3036,6 +3043,10 @@ export class SqliteRunStore implements RunStore {
     return this.resourceLeases.releaseResourceLeasesForOwner(ownerType, ownerId, releasedAt);
   }
 
+  releaseResourceLease(id: string, ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number {
+    return this.resourceLeases.releaseResourceLease(id, ownerType, ownerId, releasedAt);
+  }
+
   expireResourceLeases(now: string): number {
     return this.resourceLeases.expireResourceLeases(now);
   }
@@ -4528,6 +4539,10 @@ export class SqliteRunStore implements RunStore {
     return this.externalWorkActions.updateExternalWorkAction(id, input, now);
   }
 
+  commitExternalWorkActionTransition(input: CommitExternalWorkActionTransitionInput, now: string, createEvidence?: (action: ExternalWorkAction) => readonly string[]): ExternalWorkAction | undefined {
+    return this.externalWorkActions.commitExternalWorkActionTransition(input, now, createEvidence);
+  }
+
   createExternalWorkCiTriage(input: CreateExternalWorkCiTriageInput, now: string): ExternalWorkCiTriageRecord {
     return this.externalWorkCiTriage.createExternalWorkCiTriage(input, now);
   }
@@ -4861,8 +4876,8 @@ export class SqliteRunStore implements RunStore {
     return this.automations.discardAutomationDraft(draftId, now);
   }
 
-  confirmAutomationDraft(draftId: string, automationId: string, now: string): AutomationDraft | undefined {
-    return this.automations.confirmAutomationDraft(draftId, automationId, now);
+  confirmAutomationDraft(expectedDraft: AutomationDraft, now: string): AutomationDraftConfirmationResult {
+    return this.automations.confirmAutomationDraft(expectedDraft, now);
   }
 
   createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun {

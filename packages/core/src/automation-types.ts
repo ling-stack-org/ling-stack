@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import type { RunTool } from "./approval-policy.js";
 import type { SessionPermissionMode } from "./session-permissions.js";
 import type { SkillApprovalProfile } from "./skill-types.js";
+import type { LingThread } from "./run-types.js";
 
 export type AutomationStatus = "enabled" | "disabled" | "paused" | "archived" | "error";
 export type AutomationKind = "daily_brief" | "weekly_review" | "project_monitor" | "custom_prompt";
@@ -175,6 +176,12 @@ export interface AutomationDraft {
   readonly confirmedAutomationId?: string;
   readonly discardedAt?: string;
 }
+
+/** A confirmation owns its thread, definition and immutable draft association together. */
+export type AutomationDraftConfirmationResult =
+  | { readonly outcome: "created" | "already_confirmed"; readonly draft: AutomationDraft; readonly automation: AutomationDefinition; readonly thread: LingThread }
+  | { readonly outcome: "not_ready" | "changed" | "source_identity_conflict" | "confirmed_state_invalid"; readonly draft: AutomationDraft }
+  | { readonly outcome: "not_found" };
 
 export interface CreateAutomationDraftInput {
   readonly id?: string;

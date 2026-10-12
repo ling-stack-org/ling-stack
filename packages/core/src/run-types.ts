@@ -415,6 +415,7 @@ import type {
   WorkUnitStatus,
 } from "./runtime-supervisor-types.js";
 import type {
+  CommitExternalWorkActionTransitionInput,
   CreateExternalWorkActionInput,
   CreateExternalWorkCiTriageInput,
   CreateExternalWorkWorkflowInput,
@@ -574,6 +575,7 @@ import type {
 } from "./plugin-manager-types.js";
 import type {
   AutomationDraft,
+  AutomationDraftConfirmationResult,
   AutomationDefinition,
   AutomationRun,
   CreateAutomationDefinitionInput,
@@ -1977,6 +1979,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
   releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
+  releaseResourceLease(id: string, ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
   expireResourceLeases(now: string): number;
   listResourceLeases(options?: ListResourceLeasesOptions): ResourceLease[];
   getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined;
@@ -2454,6 +2457,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   listExternalWorkActions(options?: ListExternalWorkActionsOptions): ExternalWorkAction[];
   countExternalWorkActions(options?: Omit<ListExternalWorkActionsOptions, "limit">): number;
   updateExternalWorkAction(id: string, input: UpdateExternalWorkActionInput, now: string): ExternalWorkAction | undefined;
+  commitExternalWorkActionTransition(input: CommitExternalWorkActionTransitionInput, now: string, createEvidence?: (action: ExternalWorkAction) => readonly string[]): ExternalWorkAction | undefined;
   createExternalWorkCiTriage(input: CreateExternalWorkCiTriageInput, now: string): ExternalWorkCiTriageRecord;
   getExternalWorkCiTriage(id: string): ExternalWorkCiTriageRecord | undefined;
   getExternalWorkCiTriageByFailureKey(sourceKind: ExternalWorkCiTriageRecord["sourceKind"], failureKey: string): ExternalWorkCiTriageRecord | undefined;
@@ -2527,7 +2531,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   listAutomationDrafts(options?: ListAutomationDraftsOptions): AutomationDraft[];
   updateAutomationDraft(draftId: string, input: UpdateAutomationDraftInput, now: string): AutomationDraft | undefined;
   discardAutomationDraft(draftId: string, now: string): AutomationDraft | undefined;
-  confirmAutomationDraft(draftId: string, automationId: string, now: string): AutomationDraft | undefined;
+  confirmAutomationDraft(expectedDraft: AutomationDraft, now: string): AutomationDraftConfirmationResult;
   createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun;
   getAutomationRun(automationRunId: string): AutomationRun | undefined;
   findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined;
@@ -2730,6 +2734,7 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "renewResourceLeasesForAttempt"
   | "releaseResourceLeasesForAttempt"
   | "releaseResourceLeasesForOwner"
+  | "releaseResourceLease"
   | "expireResourceLeases"
   | "listResourceLeases"
   | "getBlockingResourceLease"
@@ -3002,6 +3007,7 @@ export type ExternalWorkStoreFacet = RunStoreFacet<
   | "listExternalWorkActions"
   | "countExternalWorkActions"
   | "updateExternalWorkAction"
+  | "commitExternalWorkActionTransition"
   | "createExternalWorkCiTriage"
   | "getExternalWorkCiTriage"
   | "getExternalWorkCiTriageByFailureKey"

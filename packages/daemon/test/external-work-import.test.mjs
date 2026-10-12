@@ -2,7 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
+import { createSqliteRunStore, executeExternalWorkAction } from "../../core/dist/index.js";
 import { createDaemonServer } from "../dist/index.js";
 import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
@@ -721,6 +723,317 @@ test("external work actions propose, list, show, approve-sync, execute, and canc
   }
 });
 
+test("B003 Host cancelled GET revalidation settles action and Runtime as cancelled without POST", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-b003-cancel-"));
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const calls = [];
+  const normalFetch = createGitHubActionFetchMock(calls);
+  let store;
+  const daemon = await startDaemonForTest(new FailingRunner(), async (url, init) => {
+    if (init?.method === "GET") {
+      entered.resolve();
+      await release.promise;
+    }
+    return await normalFetch(url, init);
+  }, {
+    storeFactory: (workspaceCwd) => {
+      store = createSqliteRunStore(workspaceCwd);
+      return store;
+    },
+  });
+  let execution;
+  try {
+    const proposed = await createApprovedExternalActionForTest(daemon.url, cwd);
+    const actionUrl = `${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}`;
+    execution = postJson(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+    await waitForExternalActionBarrier(entered.promise);
+    const concurrent = await postJsonExpectError(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+    assert.equal(concurrent.status, 400);
+    const stillActive = await getJson(`${daemon.url}/work-units?cwd=${encodeURIComponent(cwd)}&ownerId=${encodeURIComponent(proposed.action.id)}`);
+    assert.equal(stillActive.workUnits.length, 1);
+    assert.equal(stillActive.workUnits[0].status, "running");
+    const cancelled = await postJson(`${actionUrl}/cancel?cwd=${encodeURIComponent(cwd)}`, { reason: "Cancel before dispatch." });
+    assert.equal(cancelled.action.status, "cancelled");
+    release.resolve();
+    const settled = await execution;
+    assert.equal(settled.action.status, "cancelled");
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 0);
+    const detail = await getJson(`${actionUrl}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.action.action.status, "cancelled");
+    assert.equal(detail.action.artifacts.at(-1).title, "External action cancellation");
+    const runtime = await getJson(`${daemon.url}/work-units?cwd=${encodeURIComponent(cwd)}&ownerId=${encodeURIComponent(proposed.action.id)}`);
+    assert.equal(runtime.workUnits.length, 1);
+    const unit = runtime.workUnits[0];
+    assert.equal(unit.status, "cancelled");
+    assert.equal(store.getWorkUnitAttempt(unit.activeAttemptId).status, "cancelled");
+    const events = store.listRuntimeEvents(unit.id);
+    assert.equal(events.filter((event) => event.type === "work_unit_cancelled").length, 1);
+    assert.equal(events.some((event) => event.type === "work_unit_succeeded" || event.type === "work_unit_failed"), false);
+  } finally {
+    release.resolve();
+    await execution?.catch(() => undefined);
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("B003 Host refuses cancellation after dispatch and preserves one successful execution", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-b003-dispatch-"));
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const calls = [];
+  const normalFetch = createGitHubActionFetchMock(calls);
+  const daemon = await startDaemonForTest(new FailingRunner(), async (url, init) => {
+    const response = await normalFetch(url, init);
+    if (init?.method === "POST") {
+      entered.resolve();
+      await release.promise;
+    }
+    return response;
+  });
+  let execution;
+  try {
+    const proposed = await createApprovedExternalActionForTest(daemon.url, cwd);
+    const actionUrl = `${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}`;
+    execution = postJson(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+    await waitForExternalActionBarrier(entered.promise);
+    const cancellation = await postJsonExpectError(`${actionUrl}/cancel?cwd=${encodeURIComponent(cwd)}`, { reason: "Too late to withdraw." });
+    assert.equal(cancellation.status, 400);
+    assert.match(cancellation.body.message, /cannot be cancelled.*executing/);
+    const concurrent = await postJsonExpectError(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+    assert.equal(concurrent.status, 400);
+    const duringDispatch = await getJson(`${daemon.url}/work-units?cwd=${encodeURIComponent(cwd)}&ownerId=${encodeURIComponent(proposed.action.id)}`);
+    assert.equal(duringDispatch.workUnits.filter((unit) => unit.status === "running").length, 1);
+    assert.equal(duringDispatch.workUnits.filter((unit) => unit.status === "failed").length, 1);
+    release.resolve();
+    const settled = await execution;
+    assert.equal(settled.action.status, "succeeded");
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+    const runtime = await getJson(`${daemon.url}/work-units?cwd=${encodeURIComponent(cwd)}&ownerId=${encodeURIComponent(proposed.action.id)}`);
+    assert.equal(runtime.workUnits.length, 2);
+    assert.equal(runtime.workUnits.filter((unit) => unit.status === "succeeded").length, 1);
+    assert.equal(runtime.workUnits.filter((unit) => unit.status === "failed").length, 1);
+  } finally {
+    release.resolve();
+    await execution?.catch(() => undefined);
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("B003 Host records a post-send unknown as failed and never resends the action", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-b003-unknown-"));
+  const calls = [];
+  const normalFetch = createGitHubActionFetchMock(calls);
+  const daemon = await startDaemonForTest(new FailingRunner(), async (url, init) => {
+    const response = await normalFetch(url, init);
+    if (init?.method === "POST") throw new Error("Isolated response lost after send.");
+    return response;
+  });
+  try {
+    const proposed = await createApprovedExternalActionForTest(daemon.url, cwd);
+    const actionUrl = `${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}`;
+    const settled = await postJson(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+    assert.equal(settled.action.status, "failed");
+    assert.equal(settled.action.lastErrorCode, "external_action_effect_unconfirmed");
+    const retried = await postJsonExpectError(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+    assert.equal(retried.status, 400);
+    assert.match(retried.body.message, /cannot execute.*failed/);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+    const runtime = await getJson(`${daemon.url}/work-units?cwd=${encodeURIComponent(cwd)}&ownerId=${encodeURIComponent(proposed.action.id)}`);
+    assert.ok(runtime.workUnits.length > 0);
+    assert.equal(runtime.workUnits.some((unit) => unit.status === "succeeded" || unit.status === "cancelled"), false);
+    assert.ok(runtime.workUnits.some((unit) => unit.errorCode === "external_action_effect_unconfirmed"));
+    const detail = await getJson(`${actionUrl}?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(detail.action.action.status, "failed");
+    assert.equal(detail.action.action.lastErrorCode, "external_action_effect_unconfirmed");
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("B003 Host rejects a stale invocation observing a successful successor without attributing its evidence", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-b003-successor-"));
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const oldCalls = [];
+  const successorCalls = [];
+  const normalFetch = createGitHubActionFetchMock(oldCalls);
+  let store;
+  const daemon = await startDaemonForTest(new FailingRunner(), async (url, init) => {
+    if (init?.method === "GET") {
+      entered.resolve();
+      await release.promise;
+    }
+    return await normalFetch(url, init);
+  }, {
+    storeFactory: (workspaceCwd) => {
+      store = createSqliteRunStore(workspaceCwd);
+      return store;
+    },
+  });
+  let execution;
+  try {
+    const proposed = await createApprovedExternalActionForTest(daemon.url, cwd);
+    const actionUrl = `${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}`;
+    execution = postJsonExpectError(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+    await waitForExternalActionBarrier(entered.promise);
+    const lease = store.listResourceLeases({ status: "active" }).find((candidate) => candidate.resourceType === "external_subject");
+    assert.ok(lease);
+    store.releaseResourceLease(lease.id, lease.ownerType, lease.ownerId, new Date().toISOString());
+    const successor = await executeExternalWorkAction({
+      store, actionId: proposed.action.id, fetch: createGitHubActionFetchMock(successorCalls),
+    });
+    assert.equal(successor.action.status, "succeeded");
+    assert.equal(successor.executionSettled, true);
+    release.resolve();
+    const stale = await execution;
+    assert.equal(stale.status, 409);
+    assert.equal(stale.body.error, "external_action_authority_lost");
+    assert.equal(stale.body.action.status, "succeeded");
+    assert.equal(stale.body.dispatchState, "not_sent");
+    assert.equal(oldCalls.filter((call) => call.init.method === "POST").length, 0);
+    assert.equal(successorCalls.filter((call) => call.init.method === "POST").length, 1);
+    const runtime = await getJson(`${daemon.url}/work-units?cwd=${encodeURIComponent(cwd)}&ownerId=${encodeURIComponent(proposed.action.id)}`);
+    assert.equal(runtime.workUnits.length, 1);
+    assert.equal(runtime.workUnits[0].status, "failed");
+    assert.equal(runtime.workUnits[0].errorCode, "external_action_authority_lost");
+    assert.equal(store.listRuntimeEvents(runtime.workUnits[0].id).some((event) => event.type === "artifact_created" || event.type === "work_unit_succeeded"), false);
+    assert.equal(store.getExternalWorkAction(proposed.action.id).status, "succeeded");
+  } finally {
+    release.resolve();
+    await execution?.catch(() => undefined);
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+for (const projectionUnavailable of [false, true]) {
+  test(`B003 Host preserves post-send uncertainty when evidence${projectionUnavailable ? " and Runtime projection" : ""} persistence fails`, async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-b003-persistence-"));
+    const calls = [];
+    let store;
+    let database;
+    const daemon = await startDaemonForTest(new FailingRunner(), createGitHubActionFetchMock(calls), {
+      storeFactory: (workspaceCwd) => {
+        store = createSqliteRunStore(workspaceCwd);
+        return store;
+      },
+    });
+    try {
+      const proposed = await createApprovedExternalActionForTest(daemon.url, cwd);
+      database = new DatabaseSync(store.paths.databasePath);
+      database.exec(`CREATE TRIGGER b003_reject_execution_evidence BEFORE INSERT ON artifacts
+        WHEN NEW.title IN ('External action execution result', 'External action execution failure')
+        BEGIN SELECT RAISE(ABORT, 'isolated-private-persistence-detail'); END`);
+      if (projectionUnavailable) {
+        database.exec(`CREATE TRIGGER b003_reject_runtime_failure BEFORE INSERT ON runtime_events
+          WHEN NEW.type = 'work_unit_failed'
+          BEGIN SELECT RAISE(ABORT, 'isolated-private-runtime-detail'); END`);
+      }
+      const actionUrl = `${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}`;
+      const failed = await postJsonExpectError(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+      assert.equal(failed.status, 503);
+      assert.equal(failed.body.error, "external_action_effect_unconfirmed");
+      assert.equal(failed.body.dispatchState, "effect_unconfirmed");
+      assert.equal(failed.body.runtimeProjectionUnavailable === true, projectionUnavailable);
+      assert.doesNotMatch(JSON.stringify(failed.body), /isolated-private/);
+      assert.equal(store.getExternalWorkAction(proposed.action.id).status, "executing");
+      const runtime = await getJson(`${daemon.url}/work-units?cwd=${encodeURIComponent(cwd)}&ownerId=${encodeURIComponent(proposed.action.id)}`);
+      assert.equal(runtime.workUnits.length, 1);
+      assert.equal(runtime.workUnits[0].status, projectionUnavailable ? "running" : "failed");
+      assert.equal(runtime.workUnits.some((unit) => unit.status === "succeeded" || unit.status === "cancelled"), false);
+      const retried = await postJsonExpectError(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+      assert.equal(retried.status, 400);
+      assert.equal(retried.body.runtimeProjectionUnavailable === true, projectionUnavailable);
+      assert.doesNotMatch(JSON.stringify(retried.body), /isolated-private/);
+      assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+    } finally {
+      database?.close();
+      await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+}
+
+for (const scenario of [
+  { eventType: "artifact_created", status: "succeeded", dispatchState: "effect_confirmed", postCount: 1 },
+  { eventType: "work_unit_succeeded", status: "succeeded", dispatchState: "effect_confirmed", postCount: 1 },
+  { eventType: "artifact_created", status: "cancelled", dispatchState: "not_sent", postCount: 0 },
+  { eventType: "artifact_created", status: "failed", dispatchState: "effect_unconfirmed", postCount: 1 },
+]) {
+  test(`B003 Host preserves ${scenario.dispatchState} after ${scenario.status} when ${scenario.eventType} projection fails`, async () => {
+    const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-b003-projection-"));
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const calls = [];
+    const normalFetch = createGitHubActionFetchMock(calls);
+    let store;
+    let database;
+    let execution;
+    const daemon = await startDaemonForTest(new FailingRunner(), async (url, init) => {
+      if (scenario.status === "cancelled" && init?.method === "GET") {
+        entered.resolve();
+        await release.promise;
+      }
+      const response = await normalFetch(url, init);
+      if (scenario.status === "failed" && init?.method === "POST") {
+        throw new Error("Isolated response lost after send.");
+      }
+      return response;
+    }, {
+      storeFactory: (workspaceCwd) => {
+        store = createSqliteRunStore(workspaceCwd);
+        return store;
+      },
+    });
+    try {
+      const proposed = await createApprovedExternalActionForTest(daemon.url, cwd);
+      database = new DatabaseSync(store.paths.databasePath);
+      database.exec(`CREATE TRIGGER b003_reject_result_projection BEFORE INSERT ON runtime_events
+        WHEN NEW.type = '${scenario.eventType}'
+        BEGIN SELECT RAISE(ABORT, 'isolated-private-result-projection-detail'); END`);
+      const actionUrl = `${daemon.url}/external-work/actions/${encodeURIComponent(proposed.action.id)}`;
+      execution = postJsonExpectError(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+      if (scenario.status === "cancelled") {
+        await waitForExternalActionBarrier(entered.promise);
+        const cancelled = await postJson(`${actionUrl}/cancel?cwd=${encodeURIComponent(cwd)}`, { reason: "Cancel before dispatch." });
+        assert.equal(cancelled.action.status, "cancelled");
+        release.resolve();
+      }
+      const failedProjection = await execution;
+      assert.equal(store.getExternalWorkAction(proposed.action.id).status, scenario.status);
+      assert.equal(calls.filter((call) => call.init.method === "POST").length, scenario.postCount);
+      assert.equal(failedProjection.status, 503);
+      assert.equal(failedProjection.body.error, scenario.dispatchState === "effect_unconfirmed"
+        ? "external_action_effect_unconfirmed" : "external_action_runtime_projection_failed");
+      assert.equal(failedProjection.body.dispatchState, scenario.dispatchState);
+      assert.equal(failedProjection.body.executionSettled, true);
+      assert.equal(failedProjection.body.action.status, scenario.status);
+      assert.equal(failedProjection.body.runtimeProjectionUnavailable, true);
+      assert.doesNotMatch(JSON.stringify(failedProjection.body), /isolated-private/);
+      const runtime = await getJson(`${daemon.url}/work-units?cwd=${encodeURIComponent(cwd)}&ownerId=${encodeURIComponent(proposed.action.id)}`);
+      assert.equal(runtime.workUnits.length, 1);
+      const unit = runtime.workUnits[0];
+      assert.equal(unit.status, "running");
+      assert.equal(store.getWorkUnitAttempt(unit.activeAttemptId).status, "started");
+      assert.equal(store.listRuntimeEvents(unit.id).some((event) => ["work_unit_failed", "work_unit_succeeded", "work_unit_cancelled"].includes(event.type)), false);
+      const retried = await postJsonExpectError(`${actionUrl}/execute?cwd=${encodeURIComponent(cwd)}`, { workflowPath: "WORKFLOW.md" });
+      assert.equal(retried.status, 400);
+      assert.equal(calls.filter((call) => call.init.method === "POST").length, scenario.postCount);
+      assert.equal(store.getExternalWorkAction(proposed.action.id).status, scenario.status);
+    } finally {
+      release.resolve();
+      await execution?.catch(() => undefined);
+      database?.close();
+      await daemon.close();
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
+}
+
 test("external work action execute marks stale target without GitHub mutation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-external-work-action-stale-"));
   const runner = new FailingRunner();
@@ -997,6 +1310,37 @@ async function startDaemonForTest(runner, externalWorkFetch, dependencies = {}) 
     url: `http://127.0.0.1:${address.port}`,
     close: () => daemon.stop(),
   };
+}
+
+async function createApprovedExternalActionForTest(baseUrl, cwd) {
+  await writeFile(resolve(cwd, "WORKFLOW.md"), workflowMarkdown(), "utf8");
+  const channel = await postJson(`${baseUrl}/channels?cwd=${encodeURIComponent(cwd)}`, {
+    name: "B003 GitHub", boundPath: cwd, allowedTools: ["read"],
+  });
+  await postJson(`${baseUrl}/external-work/github/import?cwd=${encodeURIComponent(cwd)}`, {
+    channelId: channel.channel.id, eventType: "pull_request.opened", payload: githubPullRequestPayload(),
+  });
+  const imported = await getJson(`${baseUrl}/external-work?cwd=${encodeURIComponent(cwd)}&channelId=${encodeURIComponent(channel.channel.id)}`);
+  const proposed = await postJson(`${baseUrl}/external-work/actions/propose?cwd=${encodeURIComponent(cwd)}`, {
+    externalWorkId: imported.externalWork[0].externalWork.id,
+    actionKind: "github_comment", payload: { type: "github_comment", body: "B003 isolated action." },
+  });
+  await postJson(`${baseUrl}/approvals/${encodeURIComponent(proposed.approval.id)}/approve?cwd=${encodeURIComponent(cwd)}`, {
+    reason: "Approve isolated B003 test.",
+  });
+  return proposed;
+}
+
+async function waitForExternalActionBarrier(promise) {
+  let timer;
+  try {
+    await Promise.race([
+      promise,
+      new Promise((_, reject) => { timer = setTimeout(() => reject(new Error("External action did not reach its request barrier.")), 10_000); }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function getJson(url) {

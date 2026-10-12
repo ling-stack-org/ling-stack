@@ -1,11 +1,14 @@
+import { createHash } from "node:crypto";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import { validateAutomationDraft } from "../../automation-drafts.js";
+import { automationDraftToCreateRequest, validateAutomationDraft } from "../../automation-drafts.js";
+import type { RunStore } from "../../run-types.js";
 import {
   createAutomationDraftId,
   createAutomationId,
   createAutomationRunId,
   type AutomationDefinition,
   type AutomationDraft,
+  type AutomationDraftConfirmationResult,
   type AutomationRun,
   type CreateAutomationDefinitionInput,
   type CreateAutomationDraftInput,
@@ -20,6 +23,7 @@ import {
 import {
   nullableUpdate,
   omitUndefined,
+  rollbackOwnedSqliteTransaction,
   stringifyJson,
 } from "./helpers.js";
 import {
@@ -37,7 +41,7 @@ import type { SqliteStoreContext } from "./store-context.js";
 export class SqliteAutomationStore {
   private readonly context: SqliteStoreContext;
 
-  constructor(context: SqliteStoreContext) {
+  constructor(context: SqliteStoreContext, private readonly ports: Pick<RunStore, "createLingThread" | "getLingThread" | "getChannel">) {
     this.context = context;
   }
 
@@ -381,7 +385,7 @@ export class SqliteAutomationStore {
 
   discardAutomationDraft(draftId: string, now: string): AutomationDraft | undefined {
     const existing = this.getAutomationDraft(draftId);
-    if (!existing || existing.status === "confirmed") {
+    if (!existing || existing.status === "confirmed" || existing.status === "discarded") {
       return existing;
     }
     const next: AutomationDraft = {
@@ -394,19 +398,67 @@ export class SqliteAutomationStore {
     return this.getAutomationDraft(draftId);
   }
 
-  confirmAutomationDraft(draftId: string, automationId: string, now: string): AutomationDraft | undefined {
-    const existing = this.getAutomationDraft(draftId);
-    if (!existing || existing.status === "discarded") {
-      return existing;
+  /** No await is permitted inside this transaction: the draft is the unique source. */
+  confirmAutomationDraft(expectedDraft: AutomationDraft, now: string): AutomationDraftConfirmationResult {
+    this.context.database.exec("BEGIN IMMEDIATE");
+    try {
+      const result = this.confirmAutomationDraftInTransaction(expectedDraft, now);
+      this.context.database.exec("COMMIT");
+      return result;
+    } catch (error) {
+      rollbackOwnedSqliteTransaction(this.context.database);
+      throw error;
     }
-    const next: AutomationDraft = {
-      ...existing,
-      status: "confirmed",
-      confirmedAutomationId: automationId,
-      updatedAt: now,
-    };
-    this.writeAutomationDraft(next);
-    return this.getAutomationDraft(draftId);
+  }
+
+  private confirmAutomationDraftInTransaction(expectedDraft: AutomationDraft, now: string): AutomationDraftConfirmationResult {
+    const existing = this.getAutomationDraft(expectedDraft.id);
+    if (!existing) return { outcome: "not_found" };
+    const sourceKey = createHash("sha256").update(existing.id).digest("hex");
+    const automationId = `automation_from_draft_${sourceKey}`;
+    const threadId = `thread_from_automation_draft_${sourceKey}`;
+    if (existing.status === "confirmed") {
+      const automation = existing.confirmedAutomationId ? this.getAutomationDefinition(existing.confirmedAutomationId) : undefined;
+      const thread = automation ? this.ports.getLingThread(automation.threadId) : undefined;
+      const channelId = existing.channelId ?? existing.target?.channelId;
+      if (!automation || !thread || automation.id !== automationId || thread.id !== threadId
+        || automation.threadId !== threadId || thread.kind !== "automation"
+        || automation.workspaceId !== existing.workspaceId || thread.workspaceId !== existing.workspaceId
+        || automation.channelId !== channelId || thread.channelId !== channelId) {
+        return { outcome: "confirmed_state_invalid", draft: existing };
+      }
+      return { outcome: "already_confirmed", draft: existing, automation, thread };
+    }
+    if (existing.status !== "ready_for_confirmation" || existing.discardedAt || existing.confirmedAutomationId
+      || existing.workspaceId !== DEFAULT_WORKSPACE_ID) {
+      return { outcome: "not_ready", draft: existing };
+    }
+    // Millisecond timestamps alone are not a version: two edits may share one timestamp.
+    if (canonicalDraftSnapshot(existing) !== canonicalDraftSnapshot(expectedDraft)) {
+      return { outcome: "changed", draft: existing };
+    }
+    const validated = validateAutomationDraft(existing);
+    if (validated.status !== "ready_for_confirmation") return { outcome: "not_ready", draft: validated };
+    const input = automationDraftToCreateRequest(validated);
+    const channelId = input.channelId ?? input.target.channelId;
+    if (channelId && !this.ports.getChannel(channelId)) return { outcome: "not_ready", draft: existing };
+    // A matching predictable ID is not proof of provenance. Never adopt a pre-existing row.
+    if (this.getAutomationDefinition(automationId) || this.ports.getLingThread(threadId)) {
+      return { outcome: "source_identity_conflict", draft: existing };
+    }
+    const thread = this.ports.createLingThread({ id: threadId, kind: "automation", channelId,
+      title: input.title, objective: input.promptTemplate.promptMarkdown, status: "open" }, now);
+    const automation = this.createAutomationDefinition({ ...input, id: automationId, threadId }, now);
+    const updated = this.context.database.prepare(`
+      UPDATE automation_drafts SET status = 'confirmed', confirmed_automation_id = ?, updated_at = ?
+      WHERE id = ? AND status = 'ready_for_confirmation' AND confirmed_automation_id IS NULL AND discarded_at IS NULL
+    `).run(automation.id, now, existing.id);
+    if (updated.changes !== 1) throw new Error("Automation draft confirmation lost its source claim");
+    const draft = this.getAutomationDraft(existing.id);
+    if (!draft || draft.status !== "confirmed" || draft.confirmedAutomationId !== automation.id) {
+      throw new Error("Automation draft confirmation did not persist its source claim");
+    }
+    return { outcome: "created", draft, automation, thread };
   }
 
   createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun {
@@ -583,6 +635,9 @@ export class SqliteAutomationStore {
             discarded_at = ?,
             updated_at = ?
         WHERE id = ?
+          AND status NOT IN ('confirmed', 'discarded')
+          AND confirmed_automation_id IS NULL
+          AND discarded_at IS NULL
       `)
       .run(
         draft.channelId ?? null,
@@ -610,5 +665,15 @@ function automationDraftPayload(draft: AutomationDraft): Record<string, unknown>
     promptTemplate: draft.promptTemplate,
     executionPolicy: draft.executionPolicy,
     outputPolicy: draft.outputPolicy,
+  });
+}
+
+function canonicalDraftSnapshot(draft: AutomationDraft): string {
+  return JSON.stringify(draft, function (_key, value: unknown): unknown {
+    if (value && typeof value === "object" && !Array.isArray(value)) {
+      const record = value as Record<string, unknown>;
+      return Object.fromEntries(Object.keys(record).sort().map((key) => [key, record[key]]));
+    }
+    return value;
   });
 }

@@ -1038,6 +1038,9 @@ export async function routeRequest(
             errorMessage: input.errorMessage,
           });
         },
+        transitionRuntimeWorkUnitCancelled: (input) => {
+          transitionWorkUnitCancelled(input.store, input.workUnitId, input.attemptId, input.reason);
+        },
         executeExternalWorkAction: async (input) => executeExternalWorkAction(input),
       },
     );

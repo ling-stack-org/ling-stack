@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { relative, resolve as resolvePath } from "node:path";
 import type { ApprovalRequest } from "./approval-types.js";
@@ -12,6 +12,7 @@ import type {
   ExternalWorkActionProposeRequest,
   ExternalWorkActionTarget,
   ExternalWorkActionView,
+  CommitExternalWorkActionTransitionInput,
   ExternalWorkItem,
   ExternalWorkRecord,
 } from "./external-work-types.js";
@@ -108,6 +109,33 @@ export interface ExternalWorkActionExecutionResult {
   readonly action: ExternalWorkAction;
   readonly approval?: ApprovalRequest;
   readonly artifacts: readonly RunArtifact[];
+  /** Describes this invocation, never a different invocation's persisted result. */
+  readonly dispatchState: "not_sent" | "effect_confirmed" | "effect_unconfirmed";
+  readonly executionSettled: boolean;
+}
+
+/** Even a total persistence outage must retain whether this invocation may have sent a mutation. */
+export class ExternalWorkActionExecutionError extends Error {
+  readonly code: "external_action_effect_unconfirmed" | "external_action_persistence_failed" | "external_action_cleanup_failed";
+  readonly dispatchState: ExternalWorkActionExecutionResult["dispatchState"];
+
+  constructor(
+    dispatchState: ExternalWorkActionExecutionResult["dispatchState"],
+    code: ExternalWorkActionExecutionError["code"] = dispatchState === "not_sent" ? "external_action_persistence_failed" : "external_action_effect_unconfirmed",
+  ) {
+    super(code === "external_action_cleanup_failed"
+      ? dispatchState === "effect_confirmed"
+        ? "External action effect and final state were confirmed, but its captured lease could not be released; do not repeat the action."
+        : dispatchState === "not_sent"
+          ? "This invocation did not send a mutation, but its captured lease could not be released. The current persisted action remains authoritative; cleanup failure does not grant permission to retry."
+          : "The remote effect remains unconfirmed and the captured lease could not be released; do not replay the action."
+      : dispatchState === "not_sent"
+      ? "External action state could not be persisted before dispatch; this invocation did not send a mutation."
+      : "External action was dispatched but its final state could not be persisted; the remote effect is unconfirmed and must not be replayed.");
+    this.name = "ExternalWorkActionExecutionError";
+    this.code = code;
+    this.dispatchState = dispatchState;
+  }
 }
 
 const EXTERNAL_ACTION_LEASE_TTL_MS = 5 * 60 * 1000;
@@ -249,7 +277,9 @@ export async function executeExternalWorkAction(input: {
   readonly apiBaseUrl?: string;
   readonly now?: string;
 }): Promise<ExternalWorkActionExecutionResult> {
-  const now = input.now ?? new Date().toISOString();
+  // An explicit timestamp freezes the clock for deterministic callers; production rechecks at each commit.
+  const timestamp = (): string => input.now ?? new Date().toISOString();
+  const now = timestamp();
   let action = input.store.getExternalWorkAction(input.actionId);
   if (!action) {
     throw new Error(`External work action not found: ${input.actionId}`);
@@ -263,7 +293,7 @@ export async function executeExternalWorkAction(input: {
   }
   assertExecutableAction(action, approval);
 
-  const leaseOwnerId = `external_work_action:${action.id}`;
+  const leaseOwnerId = `external_work_action:${action.id}:${randomUUID()}`;
   const subjectLease = input.store.acquireResourceLease({
     workspaceId: DEFAULT_WORKSPACE_ID,
     resourceType: "external_subject",
@@ -278,104 +308,97 @@ export async function executeExternalWorkAction(input: {
     throw new Error(blocker ? `External subject is locked by ${blocker.ownerType}:${blocker.ownerId}` : `External subject is locked: ${externalWork.item.id}`);
   }
 
+  const attempt = action.executionAttemptCount + 1;
+  const subjectLeaseGuard = { id: subjectLease.id, ownerId: subjectLease.ownerId, resourceKey: subjectLease.resourceKey };
+  let ownedState = action;
+  let dispatched = false;
+  let completedResult: ExternalWorkActionExecutionResult | undefined;
+  let persistenceError: ExternalWorkActionExecutionError | undefined;
+  const resultFor = (latest: ExternalWorkAction, dispatchState: ExternalWorkActionExecutionResult["dispatchState"], executionSettled: boolean): ExternalWorkActionExecutionResult => {
+    completedResult = externalActionExecutionResult(input.store, latest, dispatchState, executionSettled);
+    return completedResult;
+  };
+  const guard = (): Omit<CommitExternalWorkActionTransitionInput, "update"> => ({
+    actionId: action.id,
+    expectedStatus: ownedState.status,
+    expectedExecutionAttemptCount: ownedState.executionAttemptCount,
+    expectedApprovalId: ownedState.approvalId ?? null,
+    approvalStatus: "approved",
+    subjectLease: subjectLeaseGuard,
+  });
+  const currentResult = (): ExternalWorkActionExecutionResult => {
+    const latest = input.store.getExternalWorkAction(action.id);
+    if (!latest) throw new Error(`External work action no longer exists: ${action.id}`);
+    return resultFor(latest, dispatched ? "effect_unconfirmed" : "not_sent", !dispatched && latest.status === "cancelled");
+  };
   try {
-    const attempt = action.executionAttemptCount + 1;
     const adapter = createGitHubExternalActionAdapter({ fetch: input.fetch, apiBaseUrl: input.apiBaseUrl });
     const current = action.target.subjectKind === "github_pull_request"
       ? await adapter.getPullRequest({ repository: action.target.repository, number: action.target.number, token: input.githubToken })
       : await adapter.getIssue({ repository: action.target.repository, number: action.target.number, token: input.githubToken });
-    if (!current) {
-      const staleReason = "GitHub subject no longer exists or no longer matches the target kind.";
-      const artifact = createActionStaleArtifact(input.store, action, undefined, staleReason, now, attempt);
-      const stale = input.store.updateExternalWorkAction(action.id, {
-        status: "stale_target",
-        artifactIds: [...action.artifactIds, artifact.id],
-        executionAttemptCount: attempt,
-        lastAttemptAt: now,
-        lastErrorCode: "stale_target",
-        lastErrorMessage: staleReason,
-      }, now);
-      if (!stale) {
-        throw new Error(`Failed to update stale external work action: ${action.id}`);
-      }
-      return { action: stale, ...(approval ? { approval } : {}), artifacts: artifactsForAction(input.store, stale) };
-    }
-    const staleReason = staleTargetReason(action, current);
+    const staleReason = current
+      ? staleTargetReason(action, current)
+      : "GitHub subject no longer exists or no longer matches the target kind.";
     if (staleReason) {
-      const artifact = createActionStaleArtifact(input.store, action, current, staleReason, now, attempt);
-      const stale = input.store.updateExternalWorkAction(action.id, {
-        status: "stale_target",
-        artifactIds: [...action.artifactIds, artifact.id],
-        executionAttemptCount: attempt,
-        lastAttemptAt: now,
-        lastErrorCode: "stale_target",
-        lastErrorMessage: staleReason,
-      }, now);
-      if (!stale) {
-        throw new Error(`Failed to update stale external work action: ${action.id}`);
-      }
-      return { action: stale, ...(approval ? { approval } : {}), artifacts: artifactsForAction(input.store, stale) };
+      const commitAt = timestamp();
+      const stale = input.store.commitExternalWorkActionTransition({
+        ...guard(),
+        update: { status: "stale_target", executionAttemptCount: attempt, lastAttemptAt: commitAt, lastErrorCode: "stale_target", lastErrorMessage: staleReason },
+      }, commitAt, (latest) => [createActionStaleArtifact(input.store, latest, current, staleReason, commitAt, attempt).id]);
+      return stale ? resultFor(stale, "not_sent", true) : currentResult();
     }
 
-    if (action.payload.type === "github_label" && labelsAlreadyPresent(current, action.payload.labels)) {
-      const artifact = createActionNoopArtifact(input.store, action, current, now, attempt);
-      const succeeded = input.store.updateExternalWorkAction(action.id, {
-        status: "succeeded",
-        artifactIds: [...action.artifactIds, artifact.id],
-        executionAttemptCount: attempt,
-        lastAttemptAt: now,
-        lastErrorCode: null,
-        lastErrorMessage: null,
-        executedAt: now,
-      }, now);
-      if (!succeeded) {
-        throw new Error(`Failed to update external work action: ${action.id}`);
-      }
-      return { action: succeeded, ...(approval ? { approval } : {}), artifacts: artifactsForAction(input.store, succeeded) };
+    if (current && action.payload.type === "github_label" && labelsAlreadyPresent(current, action.payload.labels)) {
+      const commitAt = timestamp();
+      const succeeded = input.store.commitExternalWorkActionTransition({
+        ...guard(),
+        update: { status: "succeeded", executionAttemptCount: attempt, lastAttemptAt: commitAt, lastErrorCode: null, lastErrorMessage: null, executedAt: commitAt },
+      }, commitAt, (latest) => [createActionNoopArtifact(input.store, latest, current, commitAt, attempt).id]);
+      return succeeded ? resultFor(succeeded, "not_sent", true) : currentResult();
     }
 
-    const executing = input.store.updateExternalWorkAction(action.id, {
-      status: "executing",
-      executionAttemptCount: attempt,
-      lastAttemptAt: now,
-      nextAttemptAt: null,
-      lastErrorCode: null,
-      lastErrorMessage: null,
-    }, now);
-    if (!executing) {
-      throw new Error(`Failed to mark external work action as executing: ${action.id}`);
-    }
-    const result = await executeGitHubActionPayload(adapter, action, input.githubToken);
-    const artifact = createActionExecutionArtifact(input.store, action, result, input.githubToken, now, attempt);
-    const succeeded = input.store.updateExternalWorkAction(action.id, {
-      status: "succeeded",
-      artifactIds: [...executing.artifactIds, artifact.id],
-      lastErrorCode: null,
-      lastErrorMessage: null,
-      executedAt: now,
-    }, now);
-    if (!succeeded) {
-      throw new Error(`Failed to mark external work action as succeeded: ${action.id}`);
-    }
-    return { action: succeeded, ...(approval ? { approval } : {}), artifacts: artifactsForAction(input.store, succeeded) };
+    const dispatchAt = timestamp();
+    const executing = input.store.commitExternalWorkActionTransition({
+      ...guard(),
+      update: { status: "executing", executionAttemptCount: attempt, lastAttemptAt: dispatchAt, nextAttemptAt: null, lastErrorCode: null, lastErrorMessage: null },
+    }, dispatchAt);
+    if (!executing) return currentResult();
+    ownedState = executing;
+    // From this CAS onward cancellation cannot promise that a remote effect was prevented.
+    dispatched = true;
+    const result = await executeGitHubActionPayload(adapter, executing, input.githubToken);
+    const completedAt = timestamp();
+    const succeeded = input.store.commitExternalWorkActionTransition({
+      ...guard(), update: { status: "succeeded", lastErrorCode: null, lastErrorMessage: null, executedAt: completedAt },
+    }, completedAt, (latest) => [createActionExecutionArtifact(input.store, latest, result, input.githubToken, completedAt, attempt).id]);
+    return succeeded ? resultFor(succeeded, "effect_confirmed", true) : currentResult();
   } catch (error) {
-    const latest = input.store.getExternalWorkAction(action.id) ?? action;
-    const failedAttempt = Math.max(latest.executionAttemptCount, action.executionAttemptCount + 1);
-    const artifact = createActionFailureArtifact(input.store, latest, error, input.githubToken, now, failedAttempt);
-    const failed = input.store.updateExternalWorkAction(action.id, {
-      status: "failed",
-      artifactIds: [...latest.artifactIds, artifact.id],
-      executionAttemptCount: failedAttempt,
-      lastAttemptAt: latest.lastAttemptAt ?? now,
-      lastErrorCode: error instanceof GitHubExternalActionError ? error.code : "external_action_failed",
-      lastErrorMessage: error instanceof Error ? error.message : String(error),
-    }, now);
-    if (!failed) {
-      throw new Error(`Failed to mark external work action as failed: ${action.id}`);
+    const failedAt = timestamp();
+    const dispatchState = dispatched ? "effect_unconfirmed" : "not_sent";
+    try {
+      const failed = input.store.commitExternalWorkActionTransition({
+        ...guard(),
+        update: {
+          status: "failed", executionAttemptCount: attempt, lastAttemptAt: ownedState.lastAttemptAt ?? failedAt,
+          lastErrorCode: dispatched ? "external_action_effect_unconfirmed" : error instanceof GitHubExternalActionError ? error.code : "external_action_failed",
+          lastErrorMessage: String(redactSecrets(error instanceof Error ? error.message : String(error), [input.githubToken])),
+        },
+      }, failedAt, (latest) => [createActionFailureArtifact(input.store, latest, error, input.githubToken, failedAt, attempt, dispatchState).id]);
+      return failed ? resultFor(failed, dispatchState, true) : currentResult();
+    } catch {
+      // Do not expose a raw persistence exception or infer zero remote effects from a failed write.
+      persistenceError = new ExternalWorkActionExecutionError(dispatchState);
+      throw persistenceError;
     }
-    return { action: failed, ...(approval ? { approval } : {}), artifacts: artifactsForAction(input.store, failed) };
   } finally {
-    input.store.releaseResourceLeasesForOwner("system", subjectLease.ownerId, new Date().toISOString());
+    try {
+      input.store.releaseResourceLease(subjectLease.id, "system", subjectLease.ownerId, timestamp());
+    } catch {
+      // Cleanup failures must not erase the known send boundary with an unrelated SQLite error.
+      if (!persistenceError) {
+        throw new ExternalWorkActionExecutionError(completedResult?.dispatchState ?? (dispatched ? "effect_unconfirmed" : "not_sent"), "external_action_cleanup_failed");
+      }
+    }
   }
 }
 
@@ -392,24 +415,20 @@ export function cancelExternalWorkAction(input: {
   if (!["proposed", "waiting_for_approval", "approved"].includes(action.status)) {
     throw new Error(`External work action cannot be cancelled from status: ${action.status}`);
   }
-  let approval = action.approvalId ? input.store.getApprovalRequest(action.approvalId) : undefined;
-  if (approval?.status === "pending") {
-    approval = input.store.denyApprovalRequest(approval.id, {
-      reason: input.request?.reason ?? "External work action cancelled.",
-      resolvedBy: "local-user",
-    }, input.now) ?? approval;
-  }
-  const artifact = createActionCancelArtifact(input.store, action, input.request?.reason, input.now);
-  const cancelled = input.store.updateExternalWorkAction(action.id, {
-    status: "cancelled",
-    artifactIds: [...action.artifactIds, artifact.id],
-  }, input.now);
+  const cancelled = input.store.commitExternalWorkActionTransition({
+    actionId: action.id,
+    expectedStatus: action.status,
+    expectedExecutionAttemptCount: action.executionAttemptCount,
+    expectedApprovalId: action.approvalId ?? null,
+    update: { status: "cancelled" },
+    cancelPendingApproval: { reason: input.request?.reason ?? "External work action cancelled." },
+  }, input.now, (latest) => [createActionCancelArtifact(input.store, latest, input.request?.reason, input.now).id]);
   if (!cancelled) {
-    throw new Error(`Failed to cancel external work action: ${action.id}`);
+    throw new Error(`External work action changed before cancellation: ${action.id}`);
   }
   return {
     action: cancelled,
-    approval,
+    approval: cancelled.approvalId ? input.store.getApprovalRequest(cancelled.approvalId) : undefined,
     artifacts: artifactsForAction(input.store, cancelled),
   };
 }
@@ -430,17 +449,14 @@ export function syncExternalWorkActionForApproval(store: ExternalWorkActionStore
     return undefined;
   }
   const action = store.getExternalWorkAction(approval.externalWorkActionId);
-  if (!action || action.status === "cancelled" || action.status === "succeeded" || action.status === "failed" || action.status === "stale_target") {
+  if (!action || action.approvalId !== approval.id || !["proposed", "waiting_for_approval", "approved"].includes(action.status)) {
     return action;
   }
-  if (approval.status === "approved") {
-    return store.updateExternalWorkAction(action.id, { status: "approved" }, now);
-  }
-  if (approval.status === "denied") {
-    return store.updateExternalWorkAction(action.id, { status: "denied" }, now);
-  }
-  if (approval.status === "expired") {
-    return store.updateExternalWorkAction(action.id, { status: "expired" }, now);
+  if (approval.status === "approved" || approval.status === "denied" || approval.status === "expired") {
+    return store.commitExternalWorkActionTransition({
+      actionId: action.id, expectedStatus: action.status, expectedExecutionAttemptCount: action.executionAttemptCount,
+      expectedApprovalId: approval.id, approvalStatus: approval.status, update: { status: approval.status },
+    }, now) ?? store.getExternalWorkAction(action.id);
   }
   return action;
 }
@@ -467,7 +483,7 @@ function requireExecutableApproval(store: ExternalWorkActionStore, action: Exter
   if (!approval) {
     throw new Error(`External work action approval not found: ${action.approvalId}`);
   }
-  if (approval.externalWorkActionId !== action.id) {
+  if (approval.externalWorkActionId !== action.id || approval.channelId !== action.channelId) {
     throw new Error(`Approval request does not belong to external work action: ${action.id}`);
   }
   if (approval.status === "pending" && approval.expiresAt && approval.expiresAt <= now) {
@@ -729,11 +745,13 @@ function createActionFailureArtifact(
   token: string | undefined,
   createdAt: string,
   attempt: number,
+  dispatchState: ExternalWorkActionExecutionResult["dispatchState"],
 ): RunArtifact {
   return createActionJsonArtifact(store, action, `execution-failed-${attempt}.json`, "External action execution failure", redactSecrets({
     actionId: action.id,
     attempt,
     failedAt: createdAt,
+    dispatchState,
     error: error instanceof GitHubExternalActionError
       ? {
         code: error.code,
@@ -776,6 +794,16 @@ function artifactsForAction(store: ExternalWorkActionStore, action: ExternalWork
   return action.artifactIds
     .map((artifactId) => store.getArtifact(artifactId))
     .filter((artifact): artifact is RunArtifact => artifact !== undefined);
+}
+
+function externalActionExecutionResult(
+  store: ExternalWorkActionStore,
+  action: ExternalWorkAction,
+  dispatchState: ExternalWorkActionExecutionResult["dispatchState"],
+  executionSettled: boolean,
+): ExternalWorkActionExecutionResult {
+  const approval = action.approvalId ? store.getApprovalRequest(action.approvalId) : undefined;
+  return { action, ...(approval ? { approval } : {}), artifacts: artifactsForAction(store, action), dispatchState, executionSettled };
 }
 
 function externalWorkActionTitle(action: ExternalWorkAction): string {
