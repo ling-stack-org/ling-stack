@@ -12,6 +12,7 @@
 | A22 | Parser 接受 exact primitive `approve/deny/manual`；Coordinator、Host、Core 各有独立权限守卫；畸形判词保持人工审批，不隐式写 deny | 新回归 55/55；五文件完整邻近 164/164；合法批准的真实命令仅执行一次，重复恢复不重放；build、直接类型检查及限定 diff check 通过 | 未参与实现的独立审阅者核对十个最终源码 SHA、控制流和日志，无已确认 finding |
 | A09 长定时器/失败收口 | Node 单段 timer 有界；唤醒重读真实 due；首次、refresh 和异步收尾持久故障进入可恢复 error；旧 entry/generation 不能撤销后继 | 产品矩阵 21/21，随后独立旧 entry 隔离 1/1，原 API 5/5；build、类型检查及限定 diff check 通过。不是拼成一次 22/22 | 原未实施者复核同一异步收尾 finding 的真实 RED→GREEN，限定源码字节范围关闭 |
 | A11 实际连接/事实边界 | 一次审核 DNS 全答案并固定到实际 socket；不可变审核集合内的连接回退保 Host/SNI/TLS；redirect 每跳重审；绑定不可克隆/复用；清理先于 completed，COMMIT 后不重发 | 三组分别 6 tests/5 pass/1 skip、25/24/1 skip、4/4/0 skip，均 0 fail/exit 0；HTTP/TLS fallback 直接 child 各 1/1、0 skip。两个 suite skip 是防递归 child 占位入口，不能称零跳过；最新 build、直接 tsc/diff check 通过 | 未参与 A11 实现的审阅者核对十个最终源码 SHA、真实 child 接线和控制流，PASS_SCOPED_WITH_LIMITS，无新确认 P1/P2；上层真实 API/packaged/GUI 不在此结论中 |
+| A33 readonly Attempt 血缘 | Core 在原 captured-owner 准入下对新 `tool_start/update/end` 缺失 Attempt 作精确 stamp，显式错配在 durable insert/JSONL 前拒绝；原 SQL fence 和既有审批历史不变 | 主最终 9/9、邻近 9/9、Core 全文件 8/8，均 exit 0、0 skip；26 次执行、19 个独立用例。真实 SDK read 只证明 start/end；Core update、单 read、主动重投旧 callback 不冒充 SDK update、跨 Attempt batch 或自然迟到 | 未参与实现者核对三文件、八份原始日志和真实 producer/consumer，PASS_SCOPED_WITH_LIMITS，无新确认 P1/P2；approved=false，不批准完整 E6 |
 
 B003/A08/A22/A09 上述回归均零跳过；A11 的两个 child 入口 skip 如上明确保留。各自实际执行者取得 exit 0。独立审阅者读取执行日志与源码，未重复执行测试；不能把继承的执行结果写成审阅者本人运行。
 
@@ -22,7 +23,7 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 - A09 的 RRULE INTERVAL/anchor 是仍未关闭的独立失败面。上表不证明 error-entry restart 时旧 Run 仍 in-flight 的所有重叠执行边界；后继隔离正例等旧 Run 完成后才交付新 due，不冒充重叠执行验收。
 - A11 的上层 Comfy connection-check/analyze/import/submit/poll/collect 真实 API 失败回归仍未完成；静态链确认安全传播失败，但现有公开 envelope 仍用 generic code，不能称网络错误细分已全链统一。IPv6 实际 socket、Electron packaged/GUI 未验收。原 sanity/旧 sender RED/ambient 逐字日志未保存，不用最终 GREEN 补造原 RED。
 - A11 两次早期未隔离 fixture 进入 store 初始化栈；defaultWorkspaceCwd 确认是实施树，实际 opened DB 文件及 before/after 未证。不能扩称用户日常 DB 被改或未改，不为补证重开/重置数据库。后继全部产品 Node 入口使用 fresh home 与默认 workspace 双隔离。
-- A21/A33、B004/B005 及全量独审登记的其他根因仍继续；A33 已取得真实 SDK/Store 血缘 RED 后进行最小修复，B004/B005 仅准备测试，不能把局部闭环全部清零。
+- A21、B004/B005 及全量独审登记的其他根因仍继续；A33 的已完成局部回归和独审边界见上表，B004/B005 仅准备测试，不能把局部闭环全部清零。
 
 ## 不变的验收与合并门槛
 
@@ -42,5 +43,6 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 - `a22-exact-verdict-red-green.md`、`a22-final-source-sha256.txt`、`a22-independent-review.md`。
 - `a09-long-timer-red-green.md`、`a09-independent-review.md`；最终 scheduler SHA 为 `16974df4346f96afd896ec139a67dc55b497ba2db64eff6a46ffd949e6bb0a7d`，测试 SHA 为 `bd98f7758fee78934f4db96f4a5448d0bf3ee8ff7aa74137ef90163485f411d1`。
 - `a11-http-pin-red-green.md`、`a11-independent-review.md`；报告 SHA 分别为 `a60e671df32eaca0a079f9ee874bf434232ed0d6eae155f1e5508c2892112f64`、`7136f8098be9a3060521fa61f0a3cf8ef89b4a67574895bd03f8624693c01d9e`。后继整合改变任一 owned 字节就重新绑定证据，不继承旧整文件 SHA 为新版本批准。
+- `a33-readonly-lineage-red-green.md`、`a33-frozen-sha256.txt`、`a33-independent-review.md`；实现与独审报告 SHA 分别为 `6219199f70763a24980f494cb50e8cbe039bb3c9a4909fd5f004109daa86036f`、`9569e2175ef6d6218770ffd0d8a6d17712929df1fb601a28cc6bfc49aad6d9a1`。主最终日志是 `a33-green-closed.log`，不得用旧名含 green 的中间失败日志代替。
 
 不修改根 checkout、日常数据库或另一 writer 的 `harness-delegation-storage-checkpoint-2026-10-09.md` WIP。仅对明确归属、完成局部闭环的修复作备份；未完成或他人 WIP 不批量 stage，不 reset、clean、stash、force-push 或删除分支。

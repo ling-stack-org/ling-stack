@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
@@ -19,7 +20,8 @@ import { ApprovalResumeCoordinator } from "../dist/features/runs/approval-resume
 import { ApprovalAutoReviewRecoveryCoordinator } from "../dist/features/runs/approval-auto-review-recovery.js";
 import { reviewPendingApprovalAutomatically } from "../dist/features/runs/approval-auto-review-host.js";
 import { prepareApprovedToolContinuation } from "../dist/features/runs/approval-continuation-tool.js";
-import { createDetachedRunExecutionSink, executeExistingRunContinuation } from "../dist/features/runs/orchestrator.js";
+import { listAllExecutionActionsForRun } from "../dist/features/runs/execution-actions.js";
+import { createDetachedRunExecutionSink, executeExistingRunContinuation, executeRunRequest } from "../dist/features/runs/orchestrator.js";
 import { capturePreparedRunnerInput } from "../dist/features/runs/prepared-runner-input.js";
 import { resolveProviderForRun } from "../dist/features/runs/providers.js";
 import { appendApprovalDecisionEvent } from "../dist/features/runs/approvals.js";
@@ -29,6 +31,7 @@ import { createRunnerRegistry } from "../dist/runtime/runners.js";
 import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 import { RuntimeSupervisor } from "../dist/runtime/supervisor.js";
 import { PiRunnerAdapter } from "../../runner-pi/dist/index.js";
+import { projectConversationActivity, projectConversationTimelineItems, projectDisplayBatches } from "../../conversation-ui-core/dist/index.js";
 import { createTypedWorkflowBasis, gateOwner, typedOperation } from "./support/workflow-operation-gate-fixture.mjs";
 import { startLoopbackPiProvider } from "./support/loopback-pi-provider-fixture.mjs";
 
@@ -61,6 +64,7 @@ for (const [phase, exec] of [
         });
       }
     }
+    const historicalApprovedToolEvents = matchingToolEvents(fixture);
     fixture.storeRegistry.closeAll();
     fixture.storeRegistry = new RunStoreRegistry(createSqliteRunStore);
     fixture.store = fixture.storeRegistry.getStore(fixture.cwd);
@@ -117,6 +121,11 @@ for (const [phase, exec] of [
     const attempts = fixture.store.listWorkUnitAttempts(fixture.workUnit.id);
     assert.equal(attempts.at(-1).status, "succeeded");
     assert.equal(attempts.length, alreadyApproved ? 2 : 3);
+    for (const event of matchingToolEvents(fixture)) assert.equal(event.data.attemptId,
+      phase === "after-tool-end" ? `attempt_pi_http_${phase}` : attempts.at(-1).id,
+      "approved bash replay retains its historical owner; only newly executed tools belong to the target Attempt");
+    for (const historical of historicalApprovedToolEvents) assert.deepEqual(
+      fixture.store.listEvents(fixture.run.id, { limit: 1_000 }).find(event => event.id === historical.id), historical);
     const continuation = fixture.store.findRunnerContinuationByIdempotencyKey(`${runnerContinuationIdempotencyKey({
       runId: fixture.run.id, sourceAttemptId: alreadyApproved ? fixture.priorAttempt.id : `attempt_pi_http_${phase}`,
       origin: "approval_resume", generation: 0,
@@ -134,6 +143,188 @@ for (const [phase, exec] of [
     assert.equal(await readFile(resolve(fixture.cwd, "real-resume-count.txt"), "utf8"), "x");
   });
 }
+
+test("fresh readonly Pi approval recovery assigns the new SDK call to the replacement Attempt", { timeout: 15_000 }, async (t) => {
+  let readPath;
+  const provider = await startLoopbackPiProvider((_body, count) => count === 1
+    ? { tool: "read", input: { path: readPath } }
+    : { text: "Fresh readonly recovery complete." });
+  t.after(() => provider.close());
+  const fixture = await createResumeFixture("fresh-readonly", "printf x >> readonly-resume-count.txt",
+    false, true, true, "approve", { providerBaseUrl: provider.baseUrl, realSdk: true,
+      tools: ["bash", "read"], conversationAnchor: true });
+  t.after(() => fixture.close());
+  readPath = resolve(fixture.cwd, "fresh-readonly.txt");
+  await writeFile(readPath, "Real readonly evidence after approval.", "utf8");
+  const originalApproval = fixture.store.getApprovalRequest(fixture.approval.id);
+  const originalBasis = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id).resumeBasis;
+  const frozen = fixture.store.getRun(fixture.run.id).requestSnapshot.runnerExecutionInput;
+  assert.deepEqual(frozen.input.tools, ["bash", "read"], "read must be legal before the first prepare/capture");
+  assert.deepEqual(frozen.preparedInput.tools.map(tool => tool.name).sort(), ["bash", "read"]);
+  assert.deepEqual(fixture.store.getRun(fixture.run.id).requestSnapshot.tools, ["bash", "read"]);
+  fixture.storeRegistry.closeAll();
+  fixture.storeRegistry = new RunStoreRegistry(createSqliteRunStore);
+  fixture.store = fixture.storeRegistry.getStore(fixture.cwd);
+  fixture.approval = fixture.store.getApprovalRequest(fixture.approval.id);
+  fixture.checkpoint = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id);
+  const activeRuns = new ActiveRunRegistry();
+  const coordinator = createCoordinator(activeRuns, fixture);
+  coordinator.registerStore(fixture.store);
+  await activeRuns.waitForIdle();
+  await waitForCondition(() => ["succeeded", "failed", "cancelled"].includes(fixture.store.getRun(fixture.run.id)?.status),
+    "fresh readonly recovery did not settle");
+  assert.deepEqual(fixture.dispatchErrors, []);
+  assert.equal(fixture.store.getRun(fixture.run.id)?.status, "succeeded");
+  assert.equal(provider.requests.length, 2, "one new read and one conclusion, with no original tool replay");
+  assert.equal(await readFile(resolve(fixture.cwd, "readonly-resume-count.txt"), "utf8"), "x");
+  const attempts = fixture.store.listWorkUnitAttempts(fixture.workUnit.id);
+  assert.equal(attempts.length, 2);
+  const replacement = attempts.at(-1);
+  assert.notEqual(replacement.id, fixture.priorAttempt.id);
+  assert.equal(fixture.runnerCalls[0].runnerAttemptId, replacement.id);
+  const events = fixture.store.listEvents(fixture.run.id, { limit: 1_000 });
+  const readEvents = events.filter(event => ["tool_start", "tool_update", "tool_end"].includes(event.type)
+    && event.data.toolName === "read");
+  assert.deepEqual(readEvents.map(event => event.type), ["tool_start", "tool_end"],
+    "the actual built-in read produces start/end; this is not update coverage");
+  const readCallId = readEvents[0].data.toolCallId;
+  assert.notEqual(readCallId, fixture.approval.toolCallId, "the provider creates a wholly new SDK call");
+  assert.equal(readEvents[0].data.args.path, readPath);
+  assert.equal(readEvents[1].data.isError, false);
+  assert.match(JSON.stringify(readEvents[1].data.result), /Real readonly evidence after approval\./u);
+  for (const event of readEvents) assert.equal(event.data.attemptId, replacement.id,
+    `${event.type} must use the captured B fence, not the old Run or approval Attempt`);
+  const log = (await readFile(fixture.store.getRun(fixture.run.id).eventLogPath, "utf8")).trim().split("\n").map(line => JSON.parse(line));
+  assert.deepEqual(log.filter(event => ["tool_start", "tool_update", "tool_end"].includes(event.type)
+    && event.data.toolCallId === readCallId), readEvents);
+  const [request, afterRead] = provider.requests;
+  assert.equal(request.messages[2].tool_calls[0].id, fixture.approval.toolCallId);
+  assert.equal(request.messages[3].tool_call_id, fixture.approval.toolCallId);
+  assert.equal(afterRead.messages.at(-1).tool_call_id, readCallId);
+  assert.match(JSON.stringify(afterRead.messages.at(-1)), /Real readonly evidence after approval\./u);
+  assert.deepEqual(fixture.store.getApprovalRequest(fixture.approval.id), originalApproval,
+    "the source approval is historical A evidence, not a new readonly owner");
+  assert.deepEqual(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id).resumeBasis, originalBasis);
+  const actions = listAllExecutionActionsForRun(fixture.store, fixture.run.id);
+  const readAction = actions.find(action => action.toolCallId === readCallId);
+  assert.ok(readAction, "use the real canonical action service, not a fabricated DTO");
+  assert.equal(readAction.attemptId, replacement.id);
+  assert.equal(readAction.status, "succeeded");
+  assert.equal(readAction.sourceEventSequence, readEvents[0].seq);
+  assert.ok(readAction.sourceRefs.some(ref => ref.kind === "attempt" && ref.id === replacement.id));
+  const owningTurn = fixture.store.getLingTurnForRun(fixture.run.id);
+  assert.ok(readAction.sourceRefs.some(ref => ref.kind === "conversation_item"
+    && fixture.store.getConversationItem(ref.id)?.turnId === owningTurn.id),
+  "shared consumption must use the owning durable input item, never a manufactured source reference");
+  for (const event of readEvents) assert.ok(readAction.sourceRefs.some(ref => ref.kind === "run_event" && ref.id === event.id));
+  const turnRun = fixture.store.listLingTurnRuns(owningTurn.id).find(link => link.runId === fixture.run.id);
+  assert.ok(turnRun);
+  const row = readonlyActionRow(readAction, turnRun);
+  const activity = projectConversationActivity([row]);
+  assert.equal(activity[0].kind, "operation");
+  assert.equal(activity[0].row.operationExecution.attemptId, replacement.id);
+  const timeline = projectConversationTimelineItems(activity);
+  assert.equal(timeline[0].kind, "exploration");
+  assert.equal(timeline[0].attemptId, replacement.id);
+  const display = projectDisplayBatches(timeline);
+  assert.equal(display.items[0].attemptId, replacement.id);
+  assert.equal(display.items[0].actionId, readAction.id);
+  assert.ok(!display.items.some(item => item.kind === "explorationBatch"),
+    "one real read proves lineage preservation, not a three-action cross-Attempt batching scenario");
+  coordinator.registerStore(fixture.store);
+  await activeRuns.waitForIdle();
+  assert.equal(provider.requests.length, 2);
+  assert.equal(await readFile(resolve(fixture.cwd, "readonly-resume-count.txt"), "utf8"), "x");
+});
+
+test("fresh readonly approval takeover rejects a captured A SDK event re-delivered through its old Host callback", { timeout: 15_000 }, async t => {
+  const f = await createLiveReadonlySourceFixture(t);
+  await waitForCondition(() => f.observed.sourceOptions && f.observed.sourceReadEnd
+    && f.sourceStore.listApprovalRequests({ runId: f.observed.sourceOptions.runId, status: "pending" }).length === 1,
+  "the actual source SDK must read its file and reach a durable approval wait").catch(error => {
+    const runId = f.observed.sourceOptions?.runId;
+    assert.fail(JSON.stringify({ message: error.message, dispatchErrors: f.dispatchErrors,
+      sourceFailure: f.sourceFailure?.message, requests: f.provider.requests.length,
+      run: runId ? f.sourceStore.getRun(runId) : undefined,
+      events: runId ? f.sourceStore.listEvents(runId, { limit: 1_000 }) : undefined }));
+  });
+  const sourceOptions = f.observed.sourceOptions;
+  const sourceRun = f.sourceStore.getRun(sourceOptions.runId);
+  const priorAttempt = f.sourceStore.getWorkUnitAttempt(sourceOptions.runnerAttemptId);
+  const [pending] = f.sourceStore.listApprovalRequests({ runId: sourceRun.id, status: "pending" });
+  const sourceEvents = f.sourceStore.listEvents(sourceRun.id, { limit: 1_000 });
+  assert.equal(sourceRun.status, "waiting_for_approval");
+  assert.equal(f.observed.sourceReadEnd.isError, false);
+  assert.match(JSON.stringify(f.observed.sourceReadEnd.result), /Actual source SDK read\./u);
+  assert.equal(sourceOptions.signal.aborted, false);
+  // Reopen through an independent real SQLite connection while the original
+  // producer remains alive. There is deliberately no cancel/suspend signal:
+  // that early return would not exercise the captured A fence in the SQL write.
+  f.storeRegistry = new RunStoreRegistry(createSqliteRunStore);
+  f.store = f.storeRegistry.getStore(f.cwd);
+  f.run = f.store.getRun(sourceRun.id);
+  f.workUnit = f.store.getWorkUnit(sourceRun.workUnitId);
+  f.priorAttempt = f.store.getWorkUnitAttempt(priorAttempt.id);
+  f.approval = f.store.getApprovalRequest(pending.id);
+  f.checkpoint = f.store.getApprovalCheckpointForApproval(pending.id);
+  f.replacementRuns = new ActiveRunRegistry();
+  const coordinator = createCoordinator(f.replacementRuns, f);
+  const originalAppend = f.sourceStore.appendExecutionEvent.bind(f.sourceStore);
+  const admissions = [];
+  f.sourceStore.appendExecutionEvent = (runId, fence, type, data) => {
+    try {
+      const value = originalAppend(runId, fence, type, data);
+      admissions.push({ fence, type, value });
+      return value;
+    } catch (error) {
+      admissions.push({ fence, type, code: error.code });
+      throw error;
+    }
+  };
+  // This must remain one synchronous window: claim B, snapshot, then release
+  // the captured real A callback before either SDK can advance asynchronously.
+  f.approval = f.store.approveApprovalRequest(pending.id, { reason: "test-only takeover" }, new Date().toISOString());
+  assert.equal(f.approval.status, "approved");
+  const started = coordinator.resumeAfterApproval({ store: f.store, approval: f.approval });
+  assert.equal(started.status, "started", JSON.stringify(started));
+  const replacement = f.store.getWorkUnitAttempt(f.store.getWorkUnit(f.workUnit.id).activeAttemptId);
+  assert.notEqual(replacement.id, priorAttempt.id);
+  assert.equal(f.store.isCurrentRunExecutionOwner(sourceRun.id, toRuntimeAttemptFence(replacement)), true);
+  const before = { events: f.store.listEvents(sourceRun.id, { limit: 1_000 }),
+    log: readFileSync(sourceRun.eventLogPath, "utf8"), stream: [...f.observed.sourceStream],
+    actions: listAllExecutionActionsForRun(f.store, sourceRun.id) };
+  f.observed.redeliverSourceReadEnd();
+  assert.equal(sourceOptions.signal.aborted, false, "stale rejection must not be a cancellation short-circuit");
+  assert.equal(admissions.length, 1, "the original Host callback reaches the actual guarded append");
+  assert.deepEqual(admissions[0].fence, toRuntimeAttemptFence(priorAttempt));
+  assert.equal(admissions[0].type, "tool_end");
+  assert.equal(admissions[0].code, "stale_run_execution");
+  assert.deepEqual(f.store.listEvents(sourceRun.id, { limit: 1_000 }), before.events);
+  assert.equal(readFileSync(sourceRun.eventLogPath, "utf8"), before.log);
+  assert.deepEqual(f.observed.sourceStream, before.stream, "the shared SSE writeEvent path receives no stale fact");
+  assert.deepEqual(listAllExecutionActionsForRun(f.store, sourceRun.id), before.actions);
+  f.sourceStore.appendExecutionEvent = originalAppend;
+  // Stop A only after proving the callback reached and lost its original SQL
+  // fence. Otherwise its still-live SDK may make another unrelated request.
+  f.sourceRuns.requestStop(sourceRun.id, { kind: "runtime_suspend", cause: "daemon_restart",
+    runtimeInstanceId: priorAttempt.runtimeInstanceId });
+  await waitForCondition(() => ["succeeded", "failed", "cancelled"].includes(f.store.getRun(sourceRun.id)?.status),
+    "replacement SDK did not settle after rejecting the old callback");
+  assert.equal(f.store.getRun(sourceRun.id).status, "succeeded", JSON.stringify(f.dispatchErrors));
+  await f.sourceCompletion;
+  assert.equal(await readFile(resolve(f.cwd, "source-resume-marker.txt"), "utf8"), "x",
+    "only B may execute the approved Host command");
+  assert.equal(f.provider.requests.length, 4, "A read/approval request and B read/conclusion only");
+  const finalEvents = f.store.listEvents(sourceRun.id, { limit: 1_000 });
+  for (const historical of sourceEvents) {
+    assert.deepEqual(finalEvents.find(event => event.id === historical.id), historical,
+      "claim/recovery must not restamp the source producer's durable A facts");
+  }
+  const reads = finalEvents.filter(event => event.type === "tool_end" && event.data.toolName === "read");
+  assert.equal(reads.length, 2, "re-delivering the captured A event adds no duplicate historical read result");
+  assert.equal(reads[0].data.attemptId, priorAttempt.id);
+  assert.equal(reads[1].data.attemptId, replacement.id);
+});
 
 test("approval continuation with a missing durable tool_end refuses SDK dispatch and replay", { timeout: 15_000 }, async (t) => {
   const provider = await startLoopbackPiProvider(() => ({ text: "Must not be requested." }));
@@ -950,6 +1141,15 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     payload: { body: taskSnapshot.prompt, format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
     idempotencyKey: `approval-resume:${suffix}`,
   }, now) : undefined;
+  if (sdkOptions.conversationAnchor && thread && accepted) {
+    // A real input anchor is required by the shared transcript contract. Keep
+    // the A22 task/teammate Turn producer intact; add no synthetic tool history.
+    store.appendConversationItem({ threadId: thread.id, turnId: accepted.turnId,
+      ...(taskChannel ? { channelId: taskChannel.id } : {}), kind: "user_message", actorType: "system",
+      visibility: taskChannel ? "channel" : "thread_participants",
+      payload: { body: taskSnapshot.prompt, format: "plain_text", mentions: [], attachmentIds: [], linkPreviewIds: [], fileRefs: [] },
+      idempotencyKey: `readonly-input:${suffix}` }, now);
+  }
   const preset = harness ? store.createProviderPreset({
     kind: "openai-compatible",
     displayName: "Approval resume fixture",
@@ -987,6 +1187,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
       unifiedExec: runtimeSupervisor.getRuntimeToolFeatures().unifiedExec === true,
       shellSnapshot: runtimeSupervisor.getRuntimeToolFeatures().shellSnapshot === true,
     },
+    sdkOptions.tools,
   ) : undefined;
   const effectivePolicySnapshot = thread ? applyConversationModeToEffectiveRunPolicySnapshot(resolveSessionRunPolicy({
     workspacePolicy: store.getApprovalPolicy(),
@@ -1007,6 +1208,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     taskSnapshot,
     providerSnapshot: provider ?? { provider: "test-provider", model: "test-model" },
     requestSnapshot: { cwd, ...(basis ? { workflowOperationExecution: basis.snapshot, delegatedRequirement: basis.requirement } : {}),
+      ...(sdkOptions.tools ? { tools: [...sdkOptions.tools] } : {}),
       ...(harness ? { harnessFeatureSnapshot: { schemaVersion: 1, continuations: "enforce", toolBroker: "off",
         evaluations: "off", evaluationModelGate: "shadow", delegations: "off", delegationMaxDepth: 3 },
         authorizationMode: "smart", workspaceAccessMode: "workspace_write",
@@ -1147,8 +1349,82 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
   };
 }
 
-async function createStoredRunnerExecution(cwd, task, provider, runtimeToolFeatures) {
-  const options = { cwd, task, provider, tools: ["bash"], runtimeToolFeatures };
+function readonlyActionRow(action, turnRun) {
+  return { id: `row-${action.id}`, title: action.title, toolEvidence: action.toolEvidence,
+    operationExecution: { actionId: action.id, runId: action.runId, attemptId: action.attemptId,
+      participantId: action.participantId, workflowStepId: action.workflowStepId,
+      approvalId: action.approvalId, turnRunRole: turnRun.role, actionType: action.actionType,
+      status: action.status, sourceRefs: action.sourceRefs, updatedAt: action.updatedAt } };
+}
+
+async function createLiveReadonlySourceFixture(t) {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-live-readonly-source-"));
+  const sourceStores = new RunStoreRegistry(createSqliteRunStore);
+  const sourceStore = sourceStores.getStore(cwd);
+  const runtimeSupervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd,
+    harness: { continuations: { mode: "enforce" } } }));
+  const sourceRuns = new ActiveRunRegistry();
+  const now = new Date().toISOString();
+  const readPath = resolve(cwd, "source-sdk-read.txt");
+  await writeFile(readPath, "Actual source SDK read.", "utf8");
+  const provider = await startLoopbackPiProvider((_body, count) => count === 1 || count === 3
+    ? { tool: "read", input: { path: readPath } }
+    : count === 2 ? { tool: "bash", input: { command: "printf x >> source-resume-marker.txt", cwd } }
+      : { text: "Actual takeover complete." });
+  const secretResolver = createCompositeSecretResolver({ env: { LING_TEST_APPROVAL_KEY: "loopback-only-not-a-credential" } });
+  const channel = sourceStore.createChannel({ name: "Readonly source", boundPath: cwd, allowedTools: ["bash", "read"] }, now);
+  const task = sourceStore.createTask({ channelId: channel.id, title: "Readonly source", prompt: "Read, then request the marker command." }, now);
+  const preset = sourceStore.createProviderPreset({ kind: "openai-compatible", displayName: "Readonly source loopback",
+    providerId: "readonly-source-fixture", model: "fixture", api: "openai-completions", baseUrl: provider.baseUrl,
+    apiKeyRef: "env:LING_TEST_APPROVAL_KEY", authHeader: false, reasoning: false, capabilities: ["chat", "tool_call"], enabled: true }, now);
+  sourceStore.recordProviderCheckResult(preset.id, { ok: true, code: "ready", message: "Owned deterministic loopback", checkedAt: now });
+  const observed = { sourceStream: [] };
+  class LiveReadonlyRunner extends PiRunnerAdapter {
+    async runTask(options) {
+      if (!options.approvedToolContinuation) {
+        assert.ok(!observed.sourceOptions, "the source is a single actual SDK lifecycle");
+        observed.sourceOptions = options;
+        const hostOnEvent = options.onEvent;
+        return super.runTask({ ...options, onEvent(event) {
+          hostOnEvent(event);
+          if (event.type === "tool_end" && event.toolName === "read") {
+            observed.sourceReadEnd = event;
+            // Save the actual event and actual Host closure, not a fabricated
+            // tool_end or a direct Store/adapter replacement.
+            observed.redeliverSourceReadEnd = () => hostOnEvent(event);
+          }
+        } });
+      }
+      return super.runTask(options);
+    }
+  }
+  const runnerRegistry = createRunnerRegistry([{ id: "pi", displayName: "Real readonly SDK source", status: "enabled",
+    adapter: new LiveReadonlyRunner(), resumeCapabilities: { nativeResume: false, hostApprovalContinuation: ["bash"] } }]);
+  const f = { cwd, provider, sourceStore, sourceStores, sourceRuns, runtimeSupervisor, runnerRegistry, secretResolver,
+    observed, dispatchErrors: [], storeRegistry: undefined };
+  t.after(async () => {
+    sourceRuns.suspendAll("daemon_restart");
+    f.replacementRuns?.suspendAll("daemon_restart");
+    await f.sourceCompletion?.catch(() => undefined);
+    await f.replacementRuns?.waitForIdle();
+    runtimeSupervisor.releaseAll();
+    f.storeRegistry?.closeAll();
+    sourceStores.closeAll();
+    await provider.close();
+    await rm(cwd, { recursive: true, force: true });
+  });
+  f.sourceCompletion = executeRunRequest({ cwd, task: { id: task.id, channelId: channel.id, title: task.title, prompt: task.prompt },
+    providerPresetId: preset.id, teammateId: "ling_agent", tools: ["bash", "read"], thinkingLevel: "off",
+    authorizationMode: "always", workspaceAccessMode: "workspace_write" },
+  { ...createDetachedRunExecutionSink(), kind: "sse", writeEvent: (_type, event) => observed.sourceStream.push(event),
+    writeError: (_status, body) => f.dispatchErrors.push(body) }, runnerRegistry, sourceStores, sourceRuns,
+  runtimeSupervisor, secretResolver, {});
+  f.sourceCompletion.catch(error => { f.sourceFailure = error; });
+  return f;
+}
+
+async function createStoredRunnerExecution(cwd, task, provider, runtimeToolFeatures, tools = ["bash"]) {
+  const options = { cwd, task, provider, tools, runtimeToolFeatures };
   const preparedInput = await new PiRunnerAdapter().prepareTaskInput(options);
   return capturePreparedRunnerInput({ runnerId: "pi", options, preparedInput });
 }
