@@ -115,6 +115,11 @@ export function buildMemoryMarkdownExport(input: BuildMemoryMarkdownExportInput)
     ].join("\n"));
   }
 
+  const skippedTitles = skippedSecretAdjacent.map((memory) => {
+    const title = redactSecrets(memory.title) as string;
+    redactionApplied = redactionApplied || title !== memory.title;
+    return { id: memory.id, title };
+  });
   const frontMatter = {
     schemaVersion: 1,
     product: "ling-stack",
@@ -148,7 +153,7 @@ export function buildMemoryMarkdownExport(input: BuildMemoryMarkdownExportInput)
       ? [
           "## Skipped Secret-Adjacent Memories",
           "",
-          ...skippedSecretAdjacent.map((memory) => `- \`${memory.id}\` ${escapeInline(memory.title)}`),
+          ...skippedTitles.map((memory) => `- \`${memory.id}\` ${escapeInline(memory.title)}`),
           "",
         ].join("\n")
       : "",
