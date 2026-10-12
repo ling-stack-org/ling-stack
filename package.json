@@ -20,7 +20,7 @@
     "i18n:compile": "corepack pnpm --filter @ling-stack/localization catalog:compile",
     "check:licenses": "node scripts/check-license-policy.mjs",
     "check:public": "node scripts/check-public-repo-safety.mjs",
-    "check:dependency-security": "corepack pnpm --filter @ling-stack/mobile exec node --test test/dependency-security-patches.test.mjs && corepack pnpm --filter @ling-stack/daemon exec node --test test/dependency-security.test.mjs && node --test scripts/dependency-security-regressions.test.mjs",
+    "check:dependency-security": "corepack pnpm --filter @ling-stack/mobile exec node --test test/dependency-security-patches.test.mjs test/dependency-security-tooling.test.mjs && corepack pnpm --filter @ling-stack/daemon exec node --test test/dependency-security.test.mjs && node --test scripts/dependency-security-regressions.test.mjs",
     "typecheck": "corepack pnpm --workspace-concurrency=1 -r typecheck",
     "ling": "node packages/cli/dist/index.js",
     "local:restart": "node packages/cli/dist/index.js restart",
@@ -64,13 +64,19 @@
       "tar@>=7.0.0 <=7.5.20": "7.5.22",
       "undici@>=7.0.0 <7.29.1": "7.30.0",
       "uuid@7.0.3": "11.1.1",
+      "image-size@1.2.1": "2.0.4",
       "officeparser>pdfjs-dist": "6.2.108",
       "undici@>=8.0.0 <8.10.2": "8.11.2",
       "katex@>=0.11.0 <0.18.2": "0.19.0"
     },
     "patchedDependencies": {
-      "image-size@1.2.1": "patches/image-size@1.2.1.patch",
-      "http-cache-semantics@4.2.0": "patches/http-cache-semantics@4.2.0.patch"
+      "http-cache-semantics@4.2.0": "patches/http-cache-semantics@4.2.0.patch",
+      "node-forge@1.4.0": "patches/node-forge@1.4.0.patch",
+      "braces@3.0.3": "patches/braces@3.0.3.patch",
+      "sprintf-js@1.0.3": "patches/sprintf-js@1.0.3.patch",
+      "sprintf-js@1.1.3": "patches/sprintf-js@1.1.3.patch",
+      "metro@0.87.0": "patches/metro@0.87.0.patch",
+      "image-size@2.0.4": "patches/image-size@2.0.4.patch"
     }
   }
 }

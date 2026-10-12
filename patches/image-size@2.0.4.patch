@@ -1,0 +1,56 @@
+diff --git a/dist/cjs/types/icns.js b/dist/cjs/types/icns.js
+index a24c817a91b732e5c38366f72209c8ab322aed84..76cd66b58777847ce71d7a5d736c16383e8cfba1 100644
+--- a/dist/cjs/types/icns.js
++++ b/dist/cjs/types/icns.js
+@@ -57,13 +57,20 @@ exports.ICNS = {
+     calculate(input) {
+         const inputLength = input.length;
+         const fileLength = (0, utils_1.readUInt32BE)(input, FILE_LENGTH_OFFSET);
++        const maxLength = Math.min(fileLength, inputLength);
++        if (maxLength < SIZE_HEADER) {
++            throw new TypeError('Invalid ICNS file length');
++        }
+         let imageOffset = SIZE_HEADER;
+         const images = [];
+-        while (imageOffset < fileLength && imageOffset < inputLength) {
++        while (imageOffset < maxLength) {
++            if (imageOffset + SIZE_HEADER > maxLength) {
++                throw new TypeError('Invalid ICNS image entry header');
++            }
+             const imageHeader = readImageHeader(input, imageOffset);
+             const entryLength = imageHeader[1];
+-            if (entryLength < 8) {
+-                throw new TypeError('Invalid ICNS');
++            if (entryLength < SIZE_HEADER || imageOffset + entryLength > maxLength) {
++                throw new TypeError('Invalid ICNS image entry length');
+             }
+             const imageSize = getImageSize(imageHeader[0]);
+             images.push(imageSize);
+diff --git a/dist/esm/types/icns.js b/dist/esm/types/icns.js
+index 70b5f3f7863fb476b5db5f088649a352b6ac679b..c65753fa024a6cffdc299c214598d4b339af9285 100644
+--- a/dist/esm/types/icns.js
++++ b/dist/esm/types/icns.js
+@@ -54,13 +54,20 @@ export const ICNS = {
+     calculate(input) {
+         const inputLength = input.length;
+         const fileLength = readUInt32BE(input, FILE_LENGTH_OFFSET);
++        const maxLength = Math.min(fileLength, inputLength);
++        if (maxLength < SIZE_HEADER) {
++            throw new TypeError('Invalid ICNS file length');
++        }
+         let imageOffset = SIZE_HEADER;
+         const images = [];
+-        while (imageOffset < fileLength && imageOffset < inputLength) {
++        while (imageOffset < maxLength) {
++            if (imageOffset + SIZE_HEADER > maxLength) {
++                throw new TypeError('Invalid ICNS image entry header');
++            }
+             const imageHeader = readImageHeader(input, imageOffset);
+             const entryLength = imageHeader[1];
+-            if (entryLength < 8) {
+-                throw new TypeError('Invalid ICNS');
++            if (entryLength < SIZE_HEADER || imageOffset + entryLength > maxLength) {
++                throw new TypeError('Invalid ICNS image entry length');
+             }
+             const imageSize = getImageSize(imageHeader[0]);
+             images.push(imageSize);

@@ -1,0 +1,64 @@
+diff --git a/src/Assets.js b/src/Assets.js
+index dd44ad52a4294cc4ec541704ce528589bdc18dea..d2541852d95d57ce0e300cd5a50f18d5f398719e 100644
+--- a/src/Assets.js
++++ b/src/Assets.js
+@@ -14,7 +14,8 @@ var AssetPaths = _interopRequireWildcard(
+ );
+ var _crypto = _interopRequireDefault(require("crypto"));
+ var _fs = _interopRequireDefault(require("fs"));
+-var _imageSize = _interopRequireDefault(require("image-size"));
++var _imageSize = require("image-size");
++var _imageSizeFromFile = require("image-size/fromFile");
+ var _path = _interopRequireDefault(require("path"));
+ function _interopRequireDefault(e) {
+   return e && e.__esModule ? e : { default: e };
+@@ -69,7 +70,7 @@ function getAssetSize(type, content, filePath) {
+   if (content.length === 0) {
+     throw new Error(`Image asset \`${filePath}\` cannot be an empty file.`);
+   }
+-  const { width, height } = (0, _imageSize.default)(content);
++  const { width, height } = (0, _imageSize.imageSize)(content);
+   return {
+     width,
+     height,
+@@ -174,7 +175,11 @@ async function getAssetData(
+   const isImageInput = assetInfo.files[0].includes(".zip/")
+     ? _fs.default.readFileSync(assetInfo.files[0])
+     : assetInfo.files[0];
+-  const dimensions = isImage ? (0, _imageSize.default)(isImageInput) : null;
++  const dimensions = !isImage
++    ? null
++    : typeof isImageInput === "string"
++      ? await (0, _imageSizeFromFile.imageSizeFromFile)(isImageInput)
++      : (0, _imageSize.imageSize)(isImageInput);
+   const scale = assetInfo.scales[0];
+   const assetData = {
+     __packager_asset: true,
+diff --git a/src/Assets.js.flow b/src/Assets.js.flow
+index 2760bb786ebf5799bb4faf4cad754c60ffda73e8..31eafc7cf0ba0e90e2a5bfc18d348e5ff4738c9f 100644
+--- a/src/Assets.js.flow
++++ b/src/Assets.js.flow
+@@ -16,7 +16,9 @@ import * as AssetPaths from './node-haste/lib/AssetPaths';
+ import crypto from 'crypto';
+ import fs from 'fs';
+ // $FlowFixMe[untyped-import] image-size
+-import getImageSize from 'image-size';
++import {imageSize as getImageSize} from 'image-size';
++// $FlowFixMe[untyped-import] image-size/fromFile
++import {imageSizeFromFile} from 'image-size/fromFile';
+ import path from 'path';
+ 
+ export type AssetInfo = {
+@@ -224,7 +226,11 @@ export async function getAssetData(
+   const isImageInput = assetInfo.files[0].includes('.zip/')
+     ? fs.readFileSync(assetInfo.files[0])
+     : assetInfo.files[0];
+-  const dimensions = isImage ? getImageSize(isImageInput) : null;
++  const dimensions = !isImage
++    ? null
++    : typeof isImageInput === 'string'
++      ? await imageSizeFromFile(isImageInput)
++      : getImageSize(isImageInput);
+   const scale = assetInfo.scales[0];
+ 
+   const assetData = {

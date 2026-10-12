@@ -1,18 +1,24 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { createRequire } from "node:module";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 const localRequire = createRequire(import.meta.url);
 const expoRequire = createRequire(localRequire.resolve("expo/package.json"));
-const imageSizeRequire = createRequire(expoRequire.resolve("image-size/package.json"));
-const imageSizeManifest = imageSizeRequire("./package.json");
-const heifModulePath = imageSizeRequire.resolve("./dist/types/heif.js");
-const icnsModulePath = imageSizeRequire.resolve("./dist/types/icns.js");
-const jxlModulePath = imageSizeRequire.resolve("./dist/types/jxl.js");
-const utilsModulePath = imageSizeRequire.resolve("./dist/types/utils.js");
+const nativeRequire = createRequire(expoRequire.resolve("react-native/package.json"));
+const nativeCliRequire = createRequire(nativeRequire.resolve("@react-native/community-cli-plugin/package.json"));
+const metroRequire = createRequire(nativeCliRequire.resolve("metro/package.json"));
+const imageSizeRequire = createRequire(metroRequire.resolve("image-size"));
+const imageSizeManifest = imageSizeRequire("../../package.json");
+const heifModulePath = imageSizeRequire.resolve("image-size/types/heif");
+const icnsModulePath = imageSizeRequire.resolve("image-size/types/icns");
+const jxlModulePath = imageSizeRequire.resolve("image-size/types/jxl");
+const utilsModulePath = imageSizeRequire.resolve("image-size/types/utils");
 
-assert.equal(imageSizeManifest.version, "1.2.1");
+assert.equal(imageSizeManifest.version, "2.0.4");
 
 async function runBoundedProof(source, label) {
   const child = spawn(process.execPath, ["-e", source], {
@@ -80,7 +86,7 @@ test("patched image-size rejects a zero-length JXL target box", async () => {
       const { JXL } = require(${JSON.stringify(jxlModulePath)});
       const input = Buffer.alloc(8);
       input.write("jxlp", 4);
-      assert.throws(() => JXL.calculate(input), /No codestream found/);
+      assert.throws(() => JXL.calculate(input), /Invalid JXL/);
     `,
     "JXL zero-length target box proof",
   );
@@ -93,7 +99,7 @@ test("patched image-size rejects a zero-length HEIF target box", async () => {
       const { HEIF } = require(${JSON.stringify(heifModulePath)});
       const input = Buffer.alloc(8);
       input.write("meta", 4);
-      assert.throws(() => HEIF.calculate(input), /Invalid HEIF, no size found/);
+      assert.throws(() => HEIF.calculate(input), /Invalid HEIF/);
     `,
     "HEIF zero-length target box proof",
   );
@@ -150,7 +156,7 @@ test("patched image-size preserves valid ICNS traversal", async () => {
       singleEntry.writeUInt32BE(16, 4);
       singleEntry.write("ic07", 8);
       singleEntry.writeUInt32BE(8, 12);
-      assert.deepEqual(ICNS.calculate(singleEntry), { width: 128, height: 128, type: "ic07" });
+      assert.deepEqual(ICNS.calculate(singleEntry), { width: 128, height: 128 });
 
       const multipleEntries = Buffer.alloc(24);
       multipleEntries.write("icns", 0);
@@ -202,5 +208,51 @@ test("patched image-size preserves valid box lookup and traversal", async () => 
       assert.deepEqual(findBox(traversedBoxes, "meta", 0), { name: "meta", offset: 8, size: 8 });
     `,
     "valid box traversal proof",
+  );
+});
+
+test("both Metro asset paths preserve buffer and file dimensions with image-size v2", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "ling-metro-assets-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const filename = join(directory, "logo.png");
+  const png = Buffer.from("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jR6cAAAAASUVORK5CYII=", "base64");
+  await writeFile(filename, png);
+  for (const dependencyRequire of [metroRequire, createRequire(expoRequire.resolve("metro/package.json"))]) {
+    const assets = dependencyRequire("./src/Assets.js");
+    assert.deepEqual(assets.getAssetSize("png", png, filename), { width: 1, height: 1 });
+    const data = await assets.getAssetData(filename, "logo.png", [], null, "/assets");
+    assert.equal(data.width, 1);
+    assert.equal(data.height, 1);
+    assert.equal(data.hash.length, 32);
+    assert.equal(data.type, "png");
+    assert.deepEqual(data.files, [filename]);
+    assert.throws(() => assets.getAssetSize("png", Buffer.alloc(0), filename), /empty file/);
+  }
+});
+
+test("image-size ESM exports also reject malformed ICNS, JXL and HEIF", async () => {
+  await runBoundedProof(
+    `
+      (async () => {
+        const assert = require("node:assert/strict");
+        const icns = await import(${JSON.stringify(icnsModulePath.replace("/cjs/", "/esm/"))});
+        const jxl = await import(${JSON.stringify(jxlModulePath.replace("/cjs/", "/esm/"))});
+        const heif = await import(${JSON.stringify(heifModulePath.replace("/cjs/", "/esm/"))});
+        for (const length of [0, 20]) {
+          const input = Buffer.alloc(16);
+          input.write("icns", 0);
+          input.writeUInt32BE(16, 4);
+          input.write("ic07", 8);
+          input.writeUInt32BE(length, 12);
+          assert.throws(() => icns.ICNS.calculate(input), /Invalid ICNS image entry length/);
+        }
+        const box = Buffer.alloc(8);
+        box.write("jxlp", 4);
+        assert.throws(() => jxl.JXL.calculate(box), /Invalid JXL/);
+        box.write("meta", 4);
+        assert.throws(() => heif.HEIF.calculate(box), /Invalid HEIF/);
+      })().catch(error => { console.error(error); process.exitCode = 1; });
+    `,
+    "ESM malformed image proof",
   );
 });
