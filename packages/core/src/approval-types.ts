@@ -31,6 +31,13 @@ export type ApprovalStatus = "pending" | "approved" | "denied" | "expired" | "ca
 export const approvalDecisionKinds = ["approve_once", "approve_command_rule", "deny"] as const;
 export type ApprovalDecisionKind = (typeof approvalDecisionKinds)[number];
 
+export type SystemReviewerApprovalDecision = "approve" | "deny";
+
+/** Runtime authority must be an exact primitive verdict, never a coercible value. */
+export function isSystemReviewerApprovalDecision(value: unknown): value is SystemReviewerApprovalDecision {
+  return value === "approve" || value === "deny";
+}
+
 export interface ApprovalCommandRuleProposal {
   readonly prefix: readonly string[];
   readonly display: string;
@@ -297,7 +304,7 @@ export interface ResolveApprovalBySystemReviewerInput {
   readonly sourceFence: RuntimeAttemptFenceV1;
   /** Recovery is allowed only for the exact startup-suspended approval wait. */
   readonly sourceAuthority?: "active_execution" | "recoverable_suspension";
-  readonly decision: "approve" | "deny";
+  readonly decision: SystemReviewerApprovalDecision;
   readonly reason: string;
 }
 
@@ -306,6 +313,7 @@ export type ResolveApprovalBySystemReviewerResult =
   | {
       readonly ok: false;
       readonly code:
+        | "approval_invalid_decision"
         | "approval_not_found"
         | "approval_not_pending"
         | "approval_identity_changed"

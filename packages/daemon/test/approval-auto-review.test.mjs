@@ -21,6 +21,30 @@ test("automatic approval reviewer accepts only the exact verdict JSON contract",
   assert.equal(parseApprovalAutoReviewVerdict('{"schemaVersion":1,"decision":"manual","reason":""}').ok, false);
 });
 
+for (const decision of ["approve", "deny", "manual"]) {
+  test(`A22 approval parser preserves the exact ${decision} string`, () => {
+    assert.deepEqual(parseApprovalAutoReviewVerdict(JSON.stringify({ schemaVersion: 1, decision, reason: "Scoped decision." })), {
+      ok: true,
+      verdict: { schemaVersion: 1, decision, reason: "Scoped decision." },
+    });
+  });
+}
+
+for (const [label, decision] of [
+  ["approve array", ["approve"]], ["deny array", ["deny"]], ["manual array", ["manual"]],
+  ["nested approve array", [["approve"]]], ["nested deny array", [["deny"]]],
+  ["nested manual array", [["manual"]]], ["object", { decision: "approve" }],
+  ["non-callable toString object", { toString: "deny" }],
+  ["null", null], ["boolean", true], ["number", 1], ["padded string", " approve "],
+]) {
+  test(`A22 approval parser rejects non-exact decision: ${label}`, () => {
+    assert.deepEqual(parseApprovalAutoReviewVerdict(JSON.stringify({ schemaVersion: 1, decision, reason: "Scoped decision." })), {
+      ok: false,
+      code: "invalid_value",
+    });
+  });
+}
+
 test("system-reviewed approval rechecks policy, active Attempt, and exact side effect before execution", () => {
   const payload = { type: "bash", cwd: "/workspace", command: "npm test", riskFlags: [] };
   const approval = {

@@ -1,3 +1,4 @@
+import { isSystemReviewerApprovalDecision } from "@ling-stack/core";
 import {
   parseApprovalAutoReviewVerdict,
   type ApprovalAutoReviewVerdict,
@@ -187,6 +188,9 @@ async function runReview(job: ReviewJob, maxTransientRetries: number): Promise<A
       const verdict = parsed.verdict;
       if (verdict.decision === "manual") {
         return manual("reviewer_manual", verdict.reason, attempts);
+      }
+      if (!isSystemReviewerApprovalDecision(verdict.decision)) {
+        return manual("invalid_output", "Automatic reviewer returned an invalid verdict; manual approval is required.", attempts);
       }
       return { status: "resolved", verdict: { ...verdict, decision: verdict.decision }, attempts };
     } catch (error) {

@@ -16,6 +16,8 @@ import {
 } from "../../core/dist/index.js";
 import { resolveConfig } from "../dist/config.js";
 import { ApprovalResumeCoordinator } from "../dist/features/runs/approval-resume-coordinator.js";
+import { ApprovalAutoReviewRecoveryCoordinator } from "../dist/features/runs/approval-auto-review-recovery.js";
+import { reviewPendingApprovalAutomatically } from "../dist/features/runs/approval-auto-review-host.js";
 import { prepareApprovedToolContinuation } from "../dist/features/runs/approval-continuation-tool.js";
 import { createDetachedRunExecutionSink, executeExistingRunContinuation } from "../dist/features/runs/orchestrator.js";
 import { capturePreparedRunnerInput } from "../dist/features/runs/prepared-runner-input.js";
@@ -618,6 +620,185 @@ for (const stage of ["before-entry", "terminal-cas"]) test(`approval completion 
   } finally { await fixture.close(); }
 });
 
+for (const [label, decision] of [["approve-array", ["approve"]], ["manual-array", ["manual"]], ["nested-deny-array", [["deny"]]]]) {
+  test(`A22 real SQLite automatic review ${label} stays pending through suspension and reopen without redispatch`, async (t) => {
+    const fixture = await createResumeFixture(`exact-active-${label}`, "printf x >> must-not-run.txt", false, true, true, "pending", { currentRuntime: true, reviewLineage: true });
+    t.after(() => fixture.close());
+    const reviewCalls = installSyntheticReviewRunner(fixture, decision);
+    const sourceFence = toRuntimeAttemptFence(fixture.priorAttempt);
+    const outcome = await reviewPendingApprovalAutomatically({
+      store: fixture.store, runtimeSupervisor: fixture.runtimeSupervisor,
+      runner: fixture.runnerRegistry.get("pi").adapter,
+      provider: resolveProviderForRun(fixture.store, { providerPresetId: fixture.run.providerPresetId }, fixture.secretResolver),
+      providerPresetId: fixture.run.providerPresetId,
+      secretResolver: fixture.secretResolver,
+      run: fixture.run, approval: fixture.approval, sourceFence,
+      effectivePolicySnapshot: fixture.run.requestSnapshot.effectivePolicySnapshot,
+    });
+    assert.equal(outcome.status, "manual");
+    assert.equal(outcome.code, "invalid_output");
+    assert.equal(reviewCalls.length, 1);
+    assertPendingReviewSource(fixture);
+    assert.equal(fixture.store.getWorkUnit(outcome.workUnitId)?.status, "failed", "only the invalid reviewer Unit is failed");
+
+    suspendReviewSourceAndReopen(fixture);
+    const activeRuns = new ActiveRunRegistry();
+    const resumeCoordinator = createCoordinator(activeRuns, fixture);
+    const recovery = createReviewRecovery(fixture, resumeCoordinator);
+    const first = await recovery.recoverStore(fixture.store);
+    const second = await recovery.recoverStore(fixture.store);
+    await activeRuns.waitForIdle();
+    assert.equal(first.manual, 1);
+    assert.equal(second.manual, 1);
+    assertPendingReviewSource(fixture);
+    assert.equal(reviewCalls.length, 1, "settled invalid output must not redispatch a reviewer after reopen");
+    assert.equal(fixture.runnerCalls.length, 0, "pending approval must not enter the continuation Runner");
+    assert.equal(fixture.store.listWorkUnitAttempts(fixture.workUnit.id).length, 1);
+    assert.equal(matchingToolEvents(fixture).length, 0);
+    await assert.rejects(readFile(resolve(fixture.cwd, "must-not-run.txt")), /ENOENT/u);
+  });
+}
+
+for (const [label, decision] of [["approve-array", ["approve"]], ["deny-array", ["deny"]], ["manual-array", ["manual"]], ["nested-approve-array", [["approve"]]], ["manual-string", "manual"]]) {
+  test(`A22 real reopened SQLite automatic recovery ${label} remains manual and does not terminalize the source Run`, async (t) => {
+    const fixture = await createResumeFixture(`exact-recovery-${label}`, "printf x >> must-not-run.txt", false, true, true, "pending", { reviewLineage: true });
+    t.after(() => fixture.close());
+    const reviewCalls = installSyntheticReviewRunner(fixture, decision);
+    suspendReviewSourceAndReopen(fixture);
+    const activeRuns = new ActiveRunRegistry();
+    const resumeCoordinator = createCoordinator(activeRuns, fixture);
+    const recovery = createReviewRecovery(fixture, resumeCoordinator);
+    const first = await recovery.recoverStore(fixture.store);
+    await activeRuns.waitForIdle();
+    assert.equal(first.reviewed, 1);
+    assert.equal(first.manual, 1);
+    assert.equal(first.denied, 0);
+    assert.equal(first.approved, 0);
+    assertPendingReviewSource(fixture);
+    assert.equal(reviewCalls.length, 1);
+    const second = await recovery.recoverStore(fixture.store);
+    resumeCoordinator.registerStore(fixture.store);
+    await activeRuns.waitForIdle();
+    assert.equal(second.manual, 1);
+    assertPendingReviewSource(fixture);
+    assert.equal(reviewCalls.length, 1, "manual/invalid output is durable and not a reason to rerun a model");
+    assert.equal(fixture.runnerCalls.length, 0);
+    assert.equal(fixture.store.listWorkUnitAttempts(fixture.workUnit.id).length, 1);
+    assert.equal(matchingToolEvents(fixture).length, 0);
+    await assert.rejects(readFile(resolve(fixture.cwd, "must-not-run.txt")), /ENOENT/u);
+  });
+}
+
+test("A22 real reopened SQLite exact deny still terminalizes the waiting source once without executing tools", async (t) => {
+  const fixture = await createResumeFixture("exact-recovery-deny", "printf x >> must-not-run.txt", false, true, true, "pending", { reviewLineage: true });
+  t.after(() => fixture.close());
+  const reviewCalls = installSyntheticReviewRunner(fixture, "deny");
+  suspendReviewSourceAndReopen(fixture);
+  const activeRuns = new ActiveRunRegistry();
+  const resumeCoordinator = createCoordinator(activeRuns, fixture);
+  const recovery = createReviewRecovery(fixture, resumeCoordinator);
+  const result = await recovery.recoverStore(fixture.store);
+  await activeRuns.waitForIdle();
+  assert.equal(result.denied, 1);
+  assert.equal(result.manual, 0);
+  assert.equal(fixture.store.getApprovalRequest(fixture.approval.id)?.status, "denied");
+  assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.status, "denied");
+  assert.equal(fixture.store.getRun(fixture.run.id)?.status, "failed");
+  assert.equal(fixture.store.getWorkUnit(fixture.workUnit.id)?.status, "failed");
+  assert.equal(fixture.store.getTask(fixture.run.taskId)?.status, "failed");
+  assert.equal(fixture.store.listEvents(fixture.run.id, { limit: 1_000 }).filter(event => event.type === "approval_denied").length, 1);
+  await recovery.recoverStore(fixture.store);
+  resumeCoordinator.registerStore(fixture.store);
+  await activeRuns.waitForIdle();
+  assert.equal(fixture.store.listEvents(fixture.run.id, { limit: 1_000 }).filter(event => event.type === "approval_denied").length, 1);
+  assert.equal(reviewCalls.length, 1);
+  assert.equal(fixture.runnerCalls.length, 0);
+  assert.equal(matchingToolEvents(fixture).length, 0);
+  await assert.rejects(readFile(resolve(fixture.cwd, "must-not-run.txt")), /ENOENT/u);
+});
+
+test("A22 real reopened SQLite exact approve resumes the stored scoped command once", async (t) => {
+  const fixture = await createResumeFixture("exact-recovery-approve", "printf x >> approved-once.txt", false, true, true, "pending", { reviewLineage: true });
+  t.after(() => fixture.close());
+  const reviewCalls = installSyntheticReviewRunner(fixture, "approve");
+  suspendReviewSourceAndReopen(fixture);
+  const activeRuns = new ActiveRunRegistry();
+  const resumeCoordinator = createCoordinator(activeRuns, fixture);
+  const recovery = createReviewRecovery(fixture, resumeCoordinator);
+  const result = await recovery.recoverStore(fixture.store);
+  await activeRuns.waitForIdle();
+  assert.equal(result.approved, 1);
+  assert.equal(result.manual, 0);
+  assert.equal(fixture.store.getApprovalRequest(fixture.approval.id)?.status, "approved");
+  assert.equal(fixture.store.getApprovalRequest(fixture.approval.id)?.resolvedBy, "system-reviewer");
+  assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.status, "resumed", JSON.stringify(fixture.dispatchErrors));
+  assert.equal(fixture.store.getRun(fixture.run.id)?.status, "succeeded");
+  assert.equal(fixture.runnerCalls[0]?.approvedToolContinuation?.result.isError, false,
+    JSON.stringify(fixture.runnerCalls[0]?.approvedToolContinuation?.result));
+  assert.equal(await readFile(resolve(fixture.cwd, "approved-once.txt"), "utf8"), "x");
+  assert.equal(fixture.runnerCalls.length, 1);
+  assert.equal(matchingToolEvents(fixture).filter(event => event.type === "tool_start").length, 1);
+  assert.equal(matchingToolEvents(fixture).filter(event => event.type === "tool_end").length, 1);
+  await recovery.recoverStore(fixture.store);
+  resumeCoordinator.registerStore(fixture.store);
+  await activeRuns.waitForIdle();
+  assert.equal(reviewCalls.length, 1);
+  assert.equal(fixture.runnerCalls.length, 1);
+  assert.equal(await readFile(resolve(fixture.cwd, "approved-once.txt"), "utf8"), "x");
+});
+
+function installSyntheticReviewRunner(fixture, decision) {
+  const calls = [];
+  const original = fixture.runnerRegistry.get("pi");
+  fixture.runnerRegistry = createRunnerRegistry([{ ...original, adapter: { async runTask(options) {
+    if (!options.task.id.startsWith("approval-review:")) return original.adapter.runTask(options);
+    calls.push(options);
+    assert.deepEqual(options.tools, []);
+    assert.deepEqual(options.mcpTools, []);
+    assert.deepEqual(options.hostCapabilityTools, []);
+    options.onEvent?.({ type: "message_end", role: "assistant", text: JSON.stringify({
+      schemaVersion: 1, decision, reason: "Synthetic closed-set verdict, no external model.",
+    }) });
+    return { taskId: options.task.id, events: [], messages: [] };
+  } } }]);
+  return calls;
+}
+
+function suspendReviewSourceAndReopen(fixture) {
+  const now = "2026-08-16T02:01:00.000Z";
+  fixture.store.updateWorkUnitAttemptStatus({
+    ...toRuntimeAttemptFence(fixture.priorAttempt), status: "lost", now, endedAt: now,
+    errorCode: "runtime_suspend", errorMessage: "runtime-startup-recoverable-approval",
+  });
+  fixture.runtimeSupervisor.releaseAll();
+  fixture.storeRegistry.closeAll();
+  fixture.storeRegistry = new RunStoreRegistry(createSqliteRunStore);
+  fixture.store = fixture.storeRegistry.getStore(fixture.cwd);
+  fixture.runtimeSupervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: fixture.cwd, harness: { continuations: { mode: "enforce" } } }));
+  fixture.run = fixture.store.getRun(fixture.run.id);
+  fixture.approval = fixture.store.getApprovalRequest(fixture.approval.id);
+  fixture.checkpoint = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id);
+  assert.equal(fixture.store.isRecoverableApprovalReviewOwner(fixture.approval.id, toRuntimeAttemptFence(fixture.priorAttempt)), true);
+}
+
+function createReviewRecovery(fixture, approvalResumeCoordinator) {
+  return new ApprovalAutoReviewRecoveryCoordinator({
+    runtimeSupervisor: fixture.runtimeSupervisor,
+    runnerRegistry: fixture.runnerRegistry,
+    secretResolver: fixture.secretResolver,
+    approvalResumeCoordinator,
+  });
+}
+
+function assertPendingReviewSource(fixture) {
+  assert.equal(fixture.store.getApprovalRequest(fixture.approval.id)?.status, "pending");
+  assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.status, "pending");
+  assert.equal(fixture.store.getRun(fixture.run.id)?.status, "waiting_for_approval");
+  assert.equal(fixture.store.getWorkUnit(fixture.workUnit.id)?.status, "waiting_for_approval");
+  assert.equal(fixture.store.getTask(fixture.run.taskId)?.status, "running");
+  assert.equal(fixture.store.listEvents(fixture.run.id, { limit: 1_000 }).some(event => event.type === "approval_denied" || event.type === "run_failed"), false);
+}
+
 function createCoordinator(activeRuns, fixture) {
   const runnerRegistry = fixture?.runnerRegistry ?? resumeRunnerRegistry();
   const runtimeSupervisor = fixture?.runtimeSupervisor ?? {
@@ -753,14 +934,15 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     prompt: "Resume safely",
     ...(taskChannel ? { channelId: taskChannel.id } : {}),
   };
-  const thread = harness && sdkOptions.realSdk ? ensureLingThreadForRun(store, { cwd, task: taskSnapshot }, now) : harness ? store.createLingThread({
+  const threadRequest = { cwd, task: taskSnapshot, ...(sdkOptions.reviewLineage ? { teammateId: "ling_agent" } : {}) };
+  const thread = harness && (sdkOptions.realSdk || sdkOptions.reviewLineage) ? ensureLingThreadForRun(store, threadRequest, now) : harness ? store.createLingThread({
     kind: "conversation",
     teammateId: "ling_agent",
     title: "Approval resume recovery",
     objective: "Continue after one durable approved tool result",
   }, now) : undefined;
-  const accepted = thread && sdkOptions.realSdk
-    ? { turnId: ensureLingTurnForRun(store, thread, { cwd, task: taskSnapshot }, now).id }
+  const accepted = thread && (sdkOptions.realSdk || sdkOptions.reviewLineage)
+    ? { turnId: ensureLingTurnForRun(store, thread, threadRequest, now).id }
     : thread ? store.appendConversationUserTurn({
     threadId: thread.id,
     title: taskSnapshot.title,
@@ -796,6 +978,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     defaultWorkspaceCwd: cwd,
     harness: { continuations: { mode: "enforce" } },
   })) : undefined;
+  const currentRuntime = sdkOptions.currentRuntime ? runtimeSupervisor?.getRuntime(cwd, store) : undefined;
   const runnerExecutionInput = provider ? await createStoredRunnerExecution(
     cwd,
     taskSnapshot,
@@ -854,7 +1037,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     id: `attempt_resume_recovery_${suffix}_1`,
     workUnitId: workUnit.id,
     attemptNumber: 1,
-    runtimeInstanceId: "runtime_before_restart",
+    runtimeInstanceId: currentRuntime?.runtimeInstanceId ?? "runtime_before_restart",
     runnerId: "pi",
     effectiveRunnerId: "pi",
     providerPresetId: preset?.id,
@@ -876,7 +1059,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
   const approvalInput = {
     runId: run.id,
     taskId: run.taskId,
-    ...(sdkOptions.realSdk && taskChannel ? { channelId: taskChannel.id } : {}),
+    ...((sdkOptions.realSdk || sdkOptions.reviewLineage) && taskChannel ? { channelId: taskChannel.id } : {}),
     toolCallId: `tool_resume_recovery_${suffix}`,
     actionType: "bash",
     risk: "medium",
@@ -884,7 +1067,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     description: command,
     payload,
   };
-  const approval = sdkOptions.realSdk
+  const approval = sdkOptions.realSdk || sdkOptions.reviewLineage
     ? store.createExecutionApprovalRequest(approvalInput, priorFence, now)
     : store.createApprovalRequest(approvalInput, now);
   const initialCheckpoint = store.getApprovalCheckpointForApproval(approval.id);
@@ -957,7 +1140,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     approval: resolved,
     checkpoint,
     async close() {
-      runtimeSupervisor?.releaseAll();
+      this.runtimeSupervisor?.releaseAll();
       this.storeRegistry.closeAll();
       await rm(cwd, { recursive: true, force: true });
     },
