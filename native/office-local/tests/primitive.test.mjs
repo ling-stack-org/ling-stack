@@ -188,7 +188,10 @@ test("actual confined same UID actor can replace workspace parent but cannot mut
     await import(join(repository, "packages/daemon/dist/runtime/sandbox/macos-seatbelt-profile.js"));
   const { macosSandboxCommandFingerprint, prepareMacosSandboxCommand, readMacosSandboxBackendIdentity } =
     await import(join(repository, "packages/daemon/dist/runtime/sandbox/macos-native-command.js"));
-  const executable = process.execPath;
+  // The confined actor needs standalone Node; Electron hosts use a separate test-only actor binary.
+  const executable = process.env.OFFICE_LOCAL_TEST_ACTOR_NODE ?? process.execPath;
+  assert.equal(resolve(executable), executable);
+  assert.ok(lstatSync(executable).isFile());
   const actor = String.raw`
     const fs = require("node:fs"), p = require("node:path"), facts = JSON.parse(process.argv[1]);
     const attempts = [];
@@ -241,6 +244,7 @@ test("actual confined same UID actor can replace workspace parent but cannot mut
     evidence({ case: "real-controlled-actor-kernel-test", backend, policyDigest: compiled.policyDigest,
       policyHash: prepared.policyHash, profileSha256: createHash("sha256").update(profile).digest("hex"), actor: actorResult,
       originalParent: original, foreignParent: foreign, inheritedOfficeCapabilities: "none_passed",
+      hostExecutable: process.execPath, actorExecutable: executable,
       authorityScope: "test actor only; not full Host bootstrap/Core/packaged receipt", stderr });
   } finally {
     // This direct launcher owns no disposable namespace/FDs and has no dispose
