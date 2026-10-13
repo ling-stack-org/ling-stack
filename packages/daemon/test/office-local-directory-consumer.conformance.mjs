@@ -61,7 +61,7 @@ for (const format of ["xlsx", "docx", "pptx"]) {
     const originalBytes = readFileSync(created.details.path), edit = edits[format](input.path);
     const edited = await c.call(edit.name, edit.input);
     assert.deepEqual(readFileSync(edited.details.recoveryPath), originalBytes);
-    const text = (await OfficeParser.parseOffice(readFileSync(edited.details.path), { fileType: format, extractAttachments: false, ocr: false })).toText();
+    const text = (await (await OfficeParser.parseOffice(readFileSync(edited.details.path), { fileType: format, extractAttachments: false, ocr: false })).to("text")).value;
     assert.match(text, format === "xlsx" ? /43/u : /Updated/u);
     assert.equal(count(f, "host_office_local_directory_v2_executions"), 1); assert.equal(count(f, "host_office_local_executions"), 1);
     assert.equal(v1Settlement.mock.callCount(), 1); assert.equal(rows(f).length, 4);
@@ -79,7 +79,7 @@ test("original MCP V2 selection and request digest retain pre-observer owned pat
   const result = await c.call(f.rawName, input), execution = latestV2(f);
   assert.equal(result.details.path, join(f.cwd, owned.path)); assert.equal(existsSync(join(f.cwd, "observer.docx")), false);
   assert.equal(execution.requestDigest, digestHarnessToolValue({ toolName: f.rawName, input: owned }));
-  const text = (await OfficeParser.parseOffice(readFileSync(result.details.path), { fileType: "docx", extractAttachments: false, ocr: false })).toText();
+  const text = (await (await OfficeParser.parseOffice(readFileSync(result.details.path), { fileType: "docx", extractAttachments: false, ocr: false })).to("text")).value;
   assert.match(text, /Genuine original Host writer/u); assert.doesNotMatch(text, /Observer replaced input/u);
 });
 

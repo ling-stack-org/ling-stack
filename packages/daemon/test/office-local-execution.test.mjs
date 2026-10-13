@@ -84,7 +84,7 @@ for (const format of Object.keys(creates)) {
     assert.equal(created.settlement.parent.settledAt, created.settlement.producer.settledAt);
     const before = readFileSync(created.path), edited = await f.invoke(edits[format].toolName, edits[format].input);
     assert.deepEqual(readFileSync(edited.recoveryPath), before);
-    const text = (await OfficeParser.parseOffice(readFileSync(edited.path), { fileType: format, extractAttachments: false, ocr: false })).toText();
+    const text = (await (await OfficeParser.parseOffice(readFileSync(edited.path), { fileType: format, extractAttachments: false, ocr: false })).to("text")).value;
     assert.match(text, new RegExp(format === "xlsx" ? "43" : "Updated"));
     assert.equal(edited.settlement.parent.evidenceRef.id, edited.executionId);
     assert.equal(edited.settlement.producer.evidenceRef.id, edited.executionId);
@@ -104,7 +104,7 @@ test("Office coordinator owns nested input and reserves both roles before the se
   assert.equal(f.rows().length, 2); input.path = "different.docx"; input.blocks[0].text = "External mutation"; release();
   const result = await pending;
   assert.equal(result.path, join(f.cwd, "result.docx")); assert.equal(existsSync(join(f.cwd, "different.docx")), false);
-  const text = (await OfficeParser.parseOffice(readFileSync(result.path), { fileType: "docx", extractAttachments: false, ocr: false })).toText();
+  const text = (await (await OfficeParser.parseOffice(readFileSync(result.path), { fileType: "docx", extractAttachments: false, ocr: false })).to("text")).value;
   assert.match(text, /Original Office text/u); assert.doesNotMatch(text, /External mutation/u);
 });
 

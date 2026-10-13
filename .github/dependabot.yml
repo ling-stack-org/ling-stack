@@ -12,6 +12,20 @@ updates:
     groups:
       production-dependencies:
         dependency-type: production
+        update-types:
+          - minor
+          - patch
+        # Protocol and native SDK families need separate migration acceptance.
+        exclude-patterns:
+          - "@earendil-works/*"
+          - "expo"
+          - "expo-*"
+          - "react"
+          - "react-dom"
+          - "react-native"
+          - "react-native-*"
+          - "@react-native-*/*"
+          - "@react-navigation/*"
       development-dependencies:
         dependency-type: development
   - package-ecosystem: github-actions

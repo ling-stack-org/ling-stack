@@ -36,7 +36,7 @@ const sources = Object.fromEntries(await Promise.all(Object.entries(createTool).
 const snapshot = format => ({ format, bytes: sources[format] });
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
 const rootMember = { xlsx: "xl/workbook.xml", docx: "word/document.xml", pptx: "ppt/presentation.xml" };
-const text = async (bytes, format) => (await OfficeParser.parseOffice(bytes, { fileType: format, extractAttachments: false, ocr: false })).toText();
+const text = async (bytes, format) => (await (await OfficeParser.parseOffice(bytes, { fileType: format, extractAttachments: false, ocr: false })).to("text")).value;
 
 for (const format of Object.keys(createTool)) {
   test(`create ${format} uses real public SDK bytes and existing result fields`, async () => {

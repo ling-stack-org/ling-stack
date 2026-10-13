@@ -95,8 +95,13 @@ test("1440x960 Ling Light keeps Channel message roots and Reply on the package b
   await expectMessageRootAttributes(messageRoots);
 
   const aiMessage = messageRoots.filter({ hasText: "Plain chat package reply" });
+  const aiResponse = feed.locator('[data-conversation-focus-block="true"]')
+    .filter({ hasText: "Plain chat package reply" });
+  await expect(aiResponse).toHaveCount(1);
+  const responseFooter = aiResponse.locator("[data-conversation-response-footer]");
+  await expect(responseFooter).toHaveCount(1);
   await aiMessage.hover();
-  const reply = aiMessage.getByRole("button", { name: "Reply in topic" });
+  const reply = responseFooter.getByRole("button", { name: "Reply in topic" });
   await expect(reply).toBeVisible();
   await expect(reply).not.toHaveAttribute("data-tooltip", /.+/u);
   await expectUniqueTooltipOnHoverAndFocus(page, reply, "Reply in topic");
