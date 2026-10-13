@@ -487,8 +487,8 @@ importers:
         specifier: workspace:*
         version: link:../plugin-sdk
       undici:
-        specifier: 7.30.0
-        version: 7.30.0
+        specifier: 8.11.2
+        version: 8.11.2
 
   packages/ui-react:
     dependencies:
@@ -12895,7 +12895,8 @@ snapshots:
 
   undici@6.29.0: {}
 
-  undici@7.30.0: {}
+  undici@7.30.0:
+    optional: true
 
   undici@8.11.2: {}
 
