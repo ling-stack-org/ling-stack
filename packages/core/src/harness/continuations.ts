@@ -92,6 +92,8 @@ export interface PreparedContinuation {
 
 export interface CommitExistingRunContinuationInput {
   readonly preparation: PrepareContinuationInput;
+  /** Host-only ordinary progress witness. Core revalidates it in activation's transaction. */
+  readonly recoveryProgressCheckpointGuard?: import("../run-progress-checkpoint-types.js").RunProgressCheckpointWitness;
   readonly expectedRunStatus: Extract<RunSession["status"], "failed" | "queued" | "running">;
   readonly expectedWorkUnitStatus: "failed" | "stale";
   readonly expectedTaskStatus?: Extract<Task["status"], "failed" | "claimed" | "running">;
@@ -114,7 +116,8 @@ export type CommitExistingRunContinuationResult =
       readonly code:
         | "continuation.activation_lineage_stale"
         | "continuation.activation_state_stale"
-        | "continuation.activation_transition_failed";
+        | "continuation.activation_transition_failed"
+        | import("../run-progress-checkpoint-types.js").RunProgressCheckpointBlockerCode;
     };
 
 export interface CommitExistingRunContinuationPreparationFailureInput {
@@ -232,11 +235,23 @@ export interface FinishRunnerContinuationInput {
   readonly now: string;
 }
 
+/** Discovery position in the ascending due-time, creation-time, id ordering. */
+export interface RunnerContinuationDiscoveryCursor {
+  /** nextAttemptAt, or createdAt when the continuation is not deferred. */
+  readonly dueAt: string;
+  readonly createdAt: string;
+  readonly id: string;
+}
+
 export interface ListClaimableRunnerContinuationsInput {
   readonly now: string;
   readonly limit?: number;
   /** Only rows explicitly deferred by the daemon after a queueable conflict. */
   readonly scheduledOnly?: boolean;
+  /** Exclusive discovery position; does not claim or authorize execution. */
+  readonly after?: RunnerContinuationDiscoveryCursor;
+  /** Frozen sweep cutoff. Rows created later are discovered by a subsequent sweep. */
+  readonly createdAtOrBefore?: string;
 }
 
 export type RunnerContinuationStoreErrorCode =

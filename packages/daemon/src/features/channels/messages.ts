@@ -529,7 +529,9 @@ function prepareConversationSummaryAssessment(
   providerPresetId: string | undefined,
 ): ConversationSummaryAssessment {
   const providerPreset = providerPresetId ? input.store.getProviderPreset(providerPresetId) : undefined;
-  const budget = resolveProviderContextBudget(providerPreset, "channel_reply");
+  const budget = resolveProviderContextBudget(providerPreset, "channel_reply", {
+    store: input.store, secretResolver: input.routeDependencies.secretResolver,
+  });
   return assessConversationContextSummary({
     store: input.store,
     sourceItemId: input.sourceMessage.id,

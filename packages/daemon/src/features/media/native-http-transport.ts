@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { takePinnedPublicHttpRequest } from "../../shared/public-http-transport.js";
 
 const nativeFetch = globalThis.fetch.bind(globalThis);
 const MAX_RESPONSE_BYTES = 512 * 1024 * 1024;
@@ -63,62 +64,68 @@ export function createHostMediaNativeTransport(options: TransportOptions): HostM
   const responses = new WeakMap<Response, HostMediaHttpExchange>();
   const bodies = new WeakMap<HostMediaHttpExchange, Uint8Array>();
   const fetch: typeof globalThis.fetch = async (input, init) => {
-    // Request copies URL, headers and body state synchronously. The caller's
-    // FormData or Headers is no longer authoritative after this point.
-    const original = new Request(input, { ...init, redirect: "error" });
-    // Fragments are not transmitted by HTTP fetch. Bind the effective wire URL
-    // rather than rejecting a valid artifact URL as a different namespace.
-    const wireUrl = new URL(original.url);
-    wireUrl.hash = "";
-    const body = original.body ? new Uint8Array(await original.arrayBuffer()) : undefined;
-    const headers = new Headers(original.headers);
-    if (!headers.has("accept")) headers.set("accept", "*/*");
-    // Native fetch computes the framing length from these fixed bytes. Do not
-    // pass an explicit length through Node's legacy dispatcher bridge: installed
-    // Undici may reject its numeric representation. The effective wire fact
-    // below includes the native-generated length and tests compare upstream.
-    headers.delete("content-length");
-    const actual = new Request(wireUrl, {
-      method: original.method, headers, body, signal: original.signal, redirect: "error",
-      credentials: original.credentials, cache: original.cache, integrity: original.integrity,
-      keepalive: original.keepalive, referrer: original.referrer, referrerPolicy: original.referrerPolicy,
-    });
-    const request = wireRequest(actual, body);
-    let pending: Promise<Response> | undefined;
-    let launchOpen = true;
+    const pinned = takePinnedPublicHttpRequest(input, init);
     try {
-      const result = launch(request.method === "GET" || request.method === "HEAD" ? "observation" : "forward", request, () => {
-        // Assignment is synchronous. If the enclosing SQLite COMMIT fails,
-        // retain and observe this original Promise; never dispatch again.
-        if (!launchOpen || pending) throw new Error("media_native_transport_send_outside_exact_launch");
-        pending = nativeFetch(actual);
+      // Request copies URL, headers and body state synchronously. The caller's
+      // FormData or Headers is no longer authoritative after this point.
+      const original = new Request(input, { ...init, redirect: "error" });
+      // Fragments are not transmitted by HTTP fetch. Bind the effective wire URL
+      // rather than rejecting a valid artifact URL as a different namespace.
+      const wireUrl = new URL(original.url);
+      wireUrl.hash = "";
+      const body = original.body ? new Uint8Array(await original.arrayBuffer()) : undefined;
+      const headers = new Headers(original.headers);
+      if (!headers.has("accept")) headers.set("accept", "*/*");
+      // Native fetch computes the framing length from these fixed bytes. Do not
+      // pass an explicit length through Node's legacy dispatcher bridge: installed
+      // Undici may reject its numeric representation. The effective wire fact
+      // below includes the native-generated length and tests compare upstream.
+      headers.delete("content-length");
+      const actual = new Request(wireUrl, {
+        method: original.method, headers, body, signal: original.signal, redirect: "error",
+        credentials: original.credentials, cache: original.cache, integrity: original.integrity,
+        keepalive: original.keepalive, referrer: original.referrer, referrerPolicy: original.referrerPolicy,
       });
-      assertNoThenable(result);
-    } catch (error) {
-      launchOpen = false;
-      if (pending) await observeFailedLaunch(pending);
-      throw error;
-    } finally { launchOpen = false; }
-    if (!pending) throw new Error("media_native_transport_send_not_entered");
-    const originalResponse = await pending;
-    if (originalResponse.redirected || originalResponse.url !== actual.url) {
-      await boundedCancel(originalResponse.body);
-      throw new Error("media_native_transport_redirect_namespace_unconfirmed");
-    }
-    const bytes = await readCompleteBody(originalResponse, maxResponseBytes);
-    const exchange = Object.freeze({ request, httpStatus: originalResponse.status,
-      contentType: originalResponse.headers.get("content-type"),
-      bodySha256: sha(bytes), bodySizeBytes: bytes.byteLength, completedAt: new Date().toISOString() }) as HostMediaHttpExchange;
-    bodies.set(exchange, bytes);
-    if (onCompleted) assertNoThenable(onCompleted(exchange));
-    const response = new Response(originalResponse.body === null ? null : bytes, {
-      status: originalResponse.status, statusText: originalResponse.statusText, headers: originalResponse.headers,
-    });
-    // Consumers sometimes inspect URL/redirect flags. Preserve the exact native
-    // values without granting structural clones or new Response() any authority.
-    Object.defineProperties(response, { url: { value: originalResponse.url }, redirected: { value: false } });
-    responses.set(response, exchange);
-    return response;
+      const request = wireRequest(actual, body);
+      let pending: Promise<Response> | undefined;
+      let launchOpen = true;
+      try {
+        const result = launch(request.method === "GET" || request.method === "HEAD" ? "observation" : "forward", request, () => {
+          // Assignment is synchronous. If the enclosing SQLite COMMIT fails,
+          // retain and observe this original Promise; never dispatch again.
+          if (!launchOpen || pending) throw new Error("media_native_transport_send_outside_exact_launch");
+          pending = pinned ? pinned.sendNative(actual, nativeFetch) : nativeFetch(actual);
+        });
+        assertNoThenable(result);
+      } catch (error) {
+        launchOpen = false;
+        if (pending) await observeFailedLaunch(pending);
+        throw error;
+      } finally { launchOpen = false; }
+      if (!pending) throw new Error("media_native_transport_send_not_entered");
+      const originalResponse = await pending;
+      if (originalResponse.redirected || originalResponse.url !== actual.url) {
+        await boundedCancel(originalResponse.body);
+        throw new Error("media_native_transport_redirect_namespace_unconfirmed");
+      }
+      const bytes = await readCompleteBody(originalResponse, maxResponseBytes);
+      // Cleanup is part of local transport completion, never a remote success.
+      // A cleanup failure cannot issue a completed exchange.
+      await pinned?.dispose();
+      const exchange = Object.freeze({ request, httpStatus: originalResponse.status,
+        contentType: originalResponse.headers.get("content-type"),
+        bodySha256: sha(bytes), bodySizeBytes: bytes.byteLength, completedAt: new Date().toISOString() }) as HostMediaHttpExchange;
+      bodies.set(exchange, bytes);
+      if (onCompleted) assertNoThenable(onCompleted(exchange));
+      const response = new Response(originalResponse.body === null ? null : bytes, {
+        status: originalResponse.status, statusText: originalResponse.statusText, headers: originalResponse.headers,
+      });
+      // Consumers sometimes inspect URL/redirect flags. Preserve the exact native
+      // values without granting structural clones or new Response() any authority.
+      Object.defineProperties(response, { url: { value: originalResponse.url }, redirected: { value: false } });
+      responses.set(response, exchange);
+      return response;
+    } finally { await pinned?.dispose(); }
   };
   const transport: HostMediaNativeTransport = Object.freeze({ fetch,
     assertExchange: (exchange: HostMediaHttpExchange): void => {

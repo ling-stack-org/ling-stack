@@ -79,6 +79,11 @@ import type {
   UpdateChannelTeamPatternInput,
   UpdateChannelTeamEvidenceItemInput,
 } from "../channel-team-types.js";
+import type {
+  AvailabilityIncidentCandidatePage,
+  CreateProviderRuntimeAvailabilityIncidentInput,
+  ListAvailabilityIncidentCandidatesOptions,
+} from "../provider-runtime-availability-types.js";
 import {
   type ApprovalPolicy,
   type ApprovalPolicyUpdateInput,
@@ -376,6 +381,7 @@ import {
   type WorkUnitStatus,
 } from "../runtime-supervisor-types.js";
 import {
+  type CommitExternalWorkActionTransitionInput,
   type CreateExternalWorkActionInput,
   type CreateExternalWorkCiTriageInput,
   type CreateExternalWorkWorkflowInput,
@@ -467,6 +473,12 @@ import {
   type UpdateMcpServerInput,
 } from "../mcp-types.js";
 import type {
+  CommitMcpMetadataResult,
+  CommitMcpMetadataResultInput,
+  McpMetadataRequestKind,
+  McpMetadataRequestTicket,
+} from "../mcp-metadata-types.js";
+import type {
   CommitCuaDriverActivationInput,
   CommitCuaDriverActivationResult,
   CuaDriverActivationState,
@@ -489,6 +501,7 @@ import {
 } from "../plugin-manager-types.js";
 import {
   type AutomationDraft,
+  type AutomationDraftConfirmationResult,
   type AutomationDefinition,
   type AutomationRun,
   type CreateAutomationDefinitionInput,
@@ -581,7 +594,13 @@ import {
 } from "./sqlite/helpers.js";
 import { SqliteAutomationStore } from "./sqlite/automation-store.js";
 import { SqliteProviderStore } from "./sqlite/provider-store.js";
+import { SqliteProviderCheckPublicationStore } from "./sqlite/provider-check-publication-store.js";
+import { applyProviderCheckMigration } from "./sqlite/provider-check-migration.js";
+import { applyAvailabilityIncidentProvenanceMigration } from "./sqlite/availability-incident-provenance-migration.js";
+import type { ProviderCheckPublicationStore, ProviderCheckRequestTicket, ProviderCheckSource } from "../provider-check-publication-types.js";
 import { SqliteMcpStore } from "./sqlite/mcp-store.js";
+import { SqliteMcpMetadataPublicationStore } from "./sqlite/mcp-metadata-publication-store.js";
+import { applyMcpMetadataMigration } from "./sqlite/mcp-metadata-migration.js";
 import { SqliteManagedPluginStore } from "./sqlite/managed-plugin-store.js";
 import { SqliteCuaDriverActivationStore } from "./sqlite/cua-driver-activation-store.js";
 import { SqliteChromeBrowserCredentialStore } from "./sqlite/chrome-browser-credential-store.js";
@@ -636,12 +655,22 @@ import { SqliteRuntimeRecoveryCoordinator } from "./sqlite/runtime-recovery-coor
 import { SqliteRuntimeWorkUnitStore } from "./sqlite/runtime-work-unit-store.js";
 import { SqliteRunnerContinuationStore } from "./sqlite/runner-continuation-store.js";
 import { SqliteHarnessToolExecutionStore } from "./sqlite/harness-tool-execution-store.js";
+import { SqliteHarnessDiagnosticsStore } from "./sqlite/harness-diagnostics-store.js";
 import { SqliteRunEvaluationStore } from "./sqlite/run-evaluation-store.js";
+import { SqliteRunEvaluationTaskStore } from "./sqlite/run-evaluation-task-store.js";
+import { applyRunEvaluationTaskMigration } from "./sqlite/run-evaluation-task-migration.js";
+import { SqliteRunEvaluationQaStore } from "./sqlite/run-evaluation-qa-store.js";
+import { applyRunEvaluationQaMigration } from "./sqlite/run-evaluation-qa-migration.js";
+import { SqliteRunEvaluationHumanStore } from "./sqlite/run-evaluation-human-store.js";
+import { SqliteRunEvaluationHumanReadStore } from "./sqlite/run-evaluation-human-read-store.js";
+import { applyRunEvaluationHumanMigration } from "./sqlite/run-evaluation-human-migration.js";
+import { SqliteDelegationStore } from "./sqlite/delegation-store.js";
 import { SqliteHarnessCommitCoordinator } from "./sqlite/harness-commit-coordinator.js";
 import { applyRunnerContinuationMigration } from "./sqlite/runner-continuation-migration.js";
 import { applyRunCompactionCheckpointMigration } from "./sqlite/run-compaction-checkpoint-migration.js";
 import { applyHarnessToolExecutionMigration } from "./sqlite/harness-tool-execution-migration.js";
 import { applyRunEvaluationMigration } from "./sqlite/run-evaluation-migration.js";
+import { applyDelegationMigration } from "./sqlite/delegation-migration.js";
 import { SqliteUserProfileStore } from "./sqlite/user-profile-store.js";
 import { SqliteWorkspaceSettingsStore } from "./sqlite/workspace-settings-store.js";
 import { SqliteSkillRegistryStore } from "./sqlite/skill-registry-store.js";
@@ -690,6 +719,8 @@ import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-st
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
 import { SqliteRunCompactionCheckpointStore } from "./sqlite/run-compaction-checkpoint-store.js";
+import { SqliteRunProgressCheckpointStore } from "./sqlite/run-progress-checkpoint-store.js";
+import { applyRunProgressCheckpointMigration } from "./sqlite/run-progress-checkpoint-migration.js";
 import { captureOriginalOfficeHostBridgeReader, type OriginalOfficeHostBridgeReader } from "../original-office-host-bridge.js";
 
 export interface SqliteRunStoreOptions {
@@ -709,7 +740,9 @@ export class SqliteRunStore implements RunStore {
   private readonly legacyContinuityFixtureMode: boolean;
   private readonly automations: SqliteAutomationStore;
   private readonly providers: SqliteProviderStore;
+  private readonly providerChecks: SqliteProviderCheckPublicationStore;
   private readonly mcps: SqliteMcpStore;
+  private readonly mcpMetadata: SqliteMcpMetadataPublicationStore;
   private readonly managedPlugins: SqliteManagedPluginStore;
   private readonly cuaDriverActivation: SqliteCuaDriverActivationStore;
   private readonly chromeBrowserCredentials: SqliteChromeBrowserCredentialStore;
@@ -746,7 +779,13 @@ export class SqliteRunStore implements RunStore {
   private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore;
   private readonly runnerContinuations: SqliteRunnerContinuationStore;
   private readonly harnessToolExecutions: SqliteHarnessToolExecutionStore;
+  private readonly harnessDiagnostics: SqliteHarnessDiagnosticsStore;
   private readonly runEvaluations: SqliteRunEvaluationStore;
+  private readonly runEvaluationTasks: SqliteRunEvaluationTaskStore;
+  private readonly runEvaluationQa: SqliteRunEvaluationQaStore;
+  private readonly runEvaluationHuman: SqliteRunEvaluationHumanStore;
+  private readonly runEvaluationHumanRead: SqliteRunEvaluationHumanReadStore;
+  private readonly delegations: SqliteDelegationStore;
   private readonly harnessCommits: SqliteHarnessCommitCoordinator;
   private readonly userProfile: SqliteUserProfileStore;
   private readonly workspaceSettings: SqliteWorkspaceSettingsStore;
@@ -807,6 +846,7 @@ export class SqliteRunStore implements RunStore {
   private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
   private readonly workspaceSnapshots: SqliteWorkspaceSnapshotStore;
   private readonly runCompactionCheckpoints: SqliteRunCompactionCheckpointStore;
+  private readonly runProgressCheckpoints: SqliteRunProgressCheckpointStore;
 
   constructor(options: SqliteRunStoreOptions) {
     const originalOfficeHostBridge = options.originalOfficeHostBridge === undefined ? undefined
@@ -829,7 +869,11 @@ export class SqliteRunStore implements RunStore {
     this.conversationAcceptedInput = new SqliteConversationAcceptedInputStore({ database: this.database }, this.conversationTurnIngest);
     this.teammateDirectInput = new SqliteTeammateDirectInputStore({ database: this.database }, this.conversationTurnIngest);
     this.conversationPreparedInput = new SqliteConversationPreparedInputStore({ database: this.database }, this.conversationAcceptedInput);
-    this.automations = new SqliteAutomationStore({ database: this.database });
+    this.automations = new SqliteAutomationStore({ database: this.database }, {
+      createLingThread: (input, now) => this.createLingThread(input, now),
+      getLingThread: (id) => this.getLingThread(id),
+      getChannel: (id) => this.getChannel(id),
+    });
     this.providers = new SqliteProviderStore({ database: this.database });
     this.mcps = new SqliteMcpStore(
       { database: this.database },
@@ -874,6 +918,8 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.controlPlane = new SqliteControlPlaneStore({ database: this.database });
+    this.providerChecks = new SqliteProviderCheckPublicationStore(this.database, this.providers, this.controlPlane);
+    this.mcpMetadata = new SqliteMcpMetadataPublicationStore(this.database, this.mcps, this.controlPlane);
     this.userInput = new SqliteUserInputStore({ database: this.database }, this.conversationItems, this.controlPlane, this);
     this.userInputTranscript = new SqliteUserInputTranscriptStore({ database: this.database }, this,
       (threadId, deliveryId) => this.userInputContinuation.readReceiptWithinTransaction(threadId, deliveryId));
@@ -915,6 +961,7 @@ export class SqliteRunStore implements RunStore {
         getRunnerContinuation: (id) => this.getRunnerContinuation(id),
       },
     );
+    this.harnessDiagnostics = new SqliteHarnessDiagnosticsStore({ database: this.database });
     this.runEvaluations = new SqliteRunEvaluationStore(
       { database: this.database },
       {
@@ -922,6 +969,21 @@ export class SqliteRunStore implements RunStore {
         getArtifact: (id) => this.getArtifact(id),
       },
     );
+    this.runEvaluationTasks = new SqliteRunEvaluationTaskStore(
+      { database: this.database },
+      {
+        getRun: (id) => this.getRun(id),
+        getRunEvaluation: (id) => this.getRunEvaluation(id),
+        getArtifact: (id) => this.getArtifact(id),
+        isQaTask: (id) => Boolean(this.runEvaluationQa.getRunEvaluationQaEnrollment(id)),
+        onDispatchUnknownWithinTransaction: (attemptId, now) => this.runEvaluationQa.quarantineWithinTransaction(attemptId, now),
+      },
+    );
+    this.runEvaluationQa = new SqliteRunEvaluationQaStore({ database: this.database }, this.runEvaluationTasks, this.paths.cwd, (id) => this.getArtifact(id));
+    this.runEvaluationHuman = new SqliteRunEvaluationHumanStore({ database: this.database }, this.runEvaluationTasks, this.runEvaluationQa, this.controlPlane, (id) => this.getArtifact(id));
+    this.runEvaluationHumanRead = new SqliteRunEvaluationHumanReadStore({ database: this.database }, this.runEvaluationTasks, this.runEvaluationQa, this.runEvaluationHuman, this.controlPlane, (id) => this.getArtifact(id));
+    this.delegations = new SqliteDelegationStore({ database: this.database });
+    this.runProgressCheckpoints = new SqliteRunProgressCheckpointStore({ database: this.database }, this, this.artifacts);
     this.harnessCommits = new SqliteHarnessCommitCoordinator(
       { database: this.database },
       this.runnerContinuations,
@@ -939,6 +1001,7 @@ export class SqliteRunStore implements RunStore {
         releaseRuntimeSemaphoreSlotsForAttempt: (fence, releasedAt, releaseReason) =>
           this.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason),
       },
+      this.runProgressCheckpoints,
     );
     this.lingThreads = new SqliteLingThreadStore(
       { database: this.database },
@@ -1307,6 +1370,7 @@ export class SqliteRunStore implements RunStore {
       {
         assertChannelExists: (channelId) => this.assertChannelExists(channelId),
         getExternalWorkRecord: (id) => this.getExternalWorkRecord(id),
+        denyPendingApproval: (id, reason, now) => this.denyApprovalRequest(id, { reason, resolvedBy: "local-user" }, now),
       },
     );
     this.externalWorkCiTriage = new SqliteExternalWorkCiTriageStore(
@@ -1469,6 +1533,11 @@ export class SqliteRunStore implements RunStore {
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
+          applyRunProgressCheckpointMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
           applyHarnessToolExecutionMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
@@ -1502,6 +1571,44 @@ export class SqliteRunStore implements RunStore {
               recordMigration: (version, name) => this.recordMigration(version, name),
             });
           }
+          // Delegation owns the next free version (154), not the historical 138
+          // reservation already used by channel-proposal CAS. No child is backfilled.
+          applyDelegationMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyMcpMetadataMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            hasColumn: (tableName, columnName) => this.hasColumn(tableName, columnName),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyProviderCheckMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyAvailabilityIncidentProvenanceMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyRunEvaluationTaskMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyRunEvaluationQaMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyRunEvaluationHumanMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
         }
       });
     } catch (error) {
@@ -2125,6 +2232,14 @@ export class SqliteRunStore implements RunStore {
     return this.workspaceProvenance.getLatestWorkspaceProvenanceWatermark(workspaceId);
   }
 
+  commitRunProgressCheckpoint(input: Parameters<RunStore["commitRunProgressCheckpoint"]>[0]) {
+    return this.runProgressCheckpoints.commitRunProgressCheckpoint(input);
+  }
+
+  readRunProgressCheckpointForRecovery(input: Parameters<RunStore["readRunProgressCheckpointForRecovery"]>[0]) {
+    return this.runProgressCheckpoints.readRunProgressCheckpointForRecovery(input);
+  }
+
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint {
     return this.workspaceProvenance.createCompactionCheckpoint(input);
   }
@@ -2443,6 +2558,24 @@ export class SqliteRunStore implements RunStore {
     return this.harnessToolExecutions.getHarnessToolExecution(id);
   }
 
+  queryHarnessDiagnostics(
+    ...args: Parameters<RunStore["queryHarnessDiagnostics"]>
+  ): ReturnType<RunStore["queryHarnessDiagnostics"]> {
+    return this.harnessDiagnostics.queryHarnessDiagnostics(...args);
+  }
+
+  queryWorkUnitHarnessDiagnosticScope(
+    ...args: Parameters<RunStore["queryWorkUnitHarnessDiagnosticScope"]>
+  ): ReturnType<RunStore["queryWorkUnitHarnessDiagnosticScope"]> {
+    return this.harnessDiagnostics.queryWorkUnitHarnessDiagnosticScope(...args);
+  }
+
+  getHarnessDiagnosticAttempt(
+    ...args: Parameters<RunStore["getHarnessDiagnosticAttempt"]>
+  ): ReturnType<RunStore["getHarnessDiagnosticAttempt"]> {
+    return this.harnessDiagnostics.getHarnessDiagnosticAttempt(...args);
+  }
+
   findHarnessToolExecution(
     attemptId: string,
     toolCallId: string,
@@ -2498,8 +2631,150 @@ export class SqliteRunStore implements RunStore {
     return this.harnessToolExecutions.reconcileAbandonedHarnessToolExecutions(input);
   }
 
+  reconcileAbandonedHarnessToolExecutionsPage(
+    input: import("../harness/tool-executions.js").ReconcileAbandonedHarnessToolExecutionsPageInput,
+  ): import("../harness/tool-executions.js").HarnessToolExecutionRecoveryPage {
+    return this.harnessToolExecutions.reconcileAbandonedHarnessToolExecutionsPage(input);
+  }
+
+  getDelegationStep(...args: Parameters<RunStore["getDelegationStep"]>): ReturnType<RunStore["getDelegationStep"]> {
+    return this.delegations.getDelegationStep(...args);
+  }
+
+  listDelegationChildren(...args: Parameters<RunStore["listDelegationChildren"]>): ReturnType<RunStore["listDelegationChildren"]> {
+    return this.delegations.listDelegationChildren(...args);
+  }
+
+  listDelegationMessages(...args: Parameters<RunStore["listDelegationMessages"]>): ReturnType<RunStore["listDelegationMessages"]> {
+    return this.delegations.listDelegationMessages(...args);
+  }
+
+  queryDelegationChildren(...args: Parameters<RunStore["queryDelegationChildren"]>): ReturnType<RunStore["queryDelegationChildren"]> {
+    return this.delegations.queryDelegationChildren(...args);
+  }
+
+  queryDelegationMessages(...args: Parameters<RunStore["queryDelegationMessages"]>): ReturnType<RunStore["queryDelegationMessages"]> {
+    return this.delegations.queryDelegationMessages(...args);
+  }
+
   getRunEvaluation(id: string): import("@ling-stack/contracts").RunEvaluationV1 | undefined {
     return this.runEvaluations.getRunEvaluation(id);
+  }
+
+  getRunEvaluationQaScope(...args: Parameters<RunStore["getRunEvaluationQaScope"]>): ReturnType<RunStore["getRunEvaluationQaScope"]> {
+    return this.runEvaluationQa.getRunEvaluationQaScope(...args);
+  }
+  getRunEvaluationHumanIntent(...args: Parameters<RunStore["getRunEvaluationHumanIntent"]>): ReturnType<RunStore["getRunEvaluationHumanIntent"]> {
+    return this.runEvaluationHuman.getRunEvaluationHumanIntent(...args);
+  }
+  listRunEvaluationHumanEnrollments(...args: Parameters<RunStore["listRunEvaluationHumanEnrollments"]>): ReturnType<RunStore["listRunEvaluationHumanEnrollments"]> {
+    return this.runEvaluationHumanRead.listRunEvaluationHumanEnrollments(...args);
+  }
+  readRunEvaluationHumanReportSource(...args: Parameters<RunStore["readRunEvaluationHumanReportSource"]>): ReturnType<RunStore["readRunEvaluationHumanReportSource"]> {
+    return this.runEvaluationHumanRead.readRunEvaluationHumanReportSource(...args);
+  }
+  getRunEvaluationHumanHead(...args: Parameters<RunStore["getRunEvaluationHumanHead"]>): ReturnType<RunStore["getRunEvaluationHumanHead"]> {
+    return this.runEvaluationHuman.getRunEvaluationHumanHead(...args);
+  }
+  getRunEvaluationHumanEvent(...args: Parameters<RunStore["getRunEvaluationHumanEvent"]>): ReturnType<RunStore["getRunEvaluationHumanEvent"]> {
+    return this.runEvaluationHuman.getRunEvaluationHumanEvent(...args);
+  }
+  listRunEvaluationHumanEvents(...args: Parameters<RunStore["listRunEvaluationHumanEvents"]>): ReturnType<RunStore["listRunEvaluationHumanEvents"]> {
+    return this.runEvaluationHuman.listRunEvaluationHumanEvents(...args);
+  }
+  createRunEvaluationHumanIntent(...args: Parameters<RunStore["createRunEvaluationHumanIntent"]>): ReturnType<RunStore["createRunEvaluationHumanIntent"]> {
+    return this.runEvaluationHuman.createRunEvaluationHumanIntent(...args);
+  }
+  commitRunEvaluationHumanIntent(...args: Parameters<RunStore["commitRunEvaluationHumanIntent"]>): ReturnType<RunStore["commitRunEvaluationHumanIntent"]> {
+    return this.runEvaluationHuman.commitRunEvaluationHumanIntent(...args);
+  }
+  getRunEvaluationQaBatch(...args: Parameters<RunStore["getRunEvaluationQaBatch"]>): ReturnType<RunStore["getRunEvaluationQaBatch"]> {
+    return this.runEvaluationQa.getRunEvaluationQaBatch(...args);
+  }
+  getRunEvaluationQaEnrollment(...args: Parameters<RunStore["getRunEvaluationQaEnrollment"]>): ReturnType<RunStore["getRunEvaluationQaEnrollment"]> {
+    return this.runEvaluationQa.getRunEvaluationQaEnrollment(...args);
+  }
+  getRunEvaluationQaRequest(...args: Parameters<RunStore["getRunEvaluationQaRequest"]>): ReturnType<RunStore["getRunEvaluationQaRequest"]> {
+    return this.runEvaluationQa.getRunEvaluationQaRequest(...args);
+  }
+  listClaimableRunEvaluationQaTasks(...args: Parameters<RunStore["listClaimableRunEvaluationQaTasks"]>): ReturnType<RunStore["listClaimableRunEvaluationQaTasks"]> {
+    return this.runEvaluationQa.listClaimableRunEvaluationQaTasks(...args);
+  }
+  createRunEvaluationQaBatch(...args: Parameters<RunStore["createRunEvaluationQaBatch"]>): ReturnType<RunStore["createRunEvaluationQaBatch"]> {
+    return this.runEvaluationQa.createRunEvaluationQaBatch(...args);
+  }
+  enrollRunEvaluationQaTask(...args: Parameters<RunStore["enrollRunEvaluationQaTask"]>): ReturnType<RunStore["enrollRunEvaluationQaTask"]> {
+    return this.runEvaluationQa.enrollRunEvaluationQaTask(...args);
+  }
+  admitRunEvaluationQaRequest(...args: Parameters<RunStore["admitRunEvaluationQaRequest"]>): ReturnType<RunStore["admitRunEvaluationQaRequest"]> {
+    return this.runEvaluationQa.admitRunEvaluationQaRequest(...args);
+  }
+  completeRunEvaluationQaRequest(...args: Parameters<RunStore["completeRunEvaluationQaRequest"]>): ReturnType<RunStore["completeRunEvaluationQaRequest"]> {
+    return this.runEvaluationQa.completeRunEvaluationQaRequest(...args);
+  }
+  markRunEvaluationQaRequestUnknown(...args: Parameters<RunStore["markRunEvaluationQaRequestUnknown"]>): ReturnType<RunStore["markRunEvaluationQaRequestUnknown"]> {
+    return this.runEvaluationQa.markRunEvaluationQaRequestUnknown(...args);
+  }
+  reconcileRunEvaluationQaScope(...args: Parameters<RunStore["reconcileRunEvaluationQaScope"]>): ReturnType<RunStore["reconcileRunEvaluationQaScope"]> {
+    return this.runEvaluationQa.reconcileRunEvaluationQaScope(...args);
+  }
+  releaseRunEvaluationQaLane(...args: Parameters<RunStore["releaseRunEvaluationQaLane"]>): ReturnType<RunStore["releaseRunEvaluationQaLane"]> {
+    return this.runEvaluationQa.releaseRunEvaluationQaLane(...args);
+  }
+  getRunEvaluationTask(...args: Parameters<RunStore["getRunEvaluationTask"]>): ReturnType<RunStore["getRunEvaluationTask"]> {
+    return this.runEvaluationTasks.getRunEvaluationTask(...args);
+  }
+
+  getRunEvaluationTaskAttempt(...args: Parameters<RunStore["getRunEvaluationTaskAttempt"]>): ReturnType<RunStore["getRunEvaluationTaskAttempt"]> {
+    return this.runEvaluationTasks.getRunEvaluationTaskAttempt(...args);
+  }
+
+  getRunEvaluationTaskResult(...args: Parameters<RunStore["getRunEvaluationTaskResult"]>): ReturnType<RunStore["getRunEvaluationTaskResult"]> {
+    return this.runEvaluationTasks.getRunEvaluationTaskResult(...args);
+  }
+
+  enqueueRunEvaluationTask(...args: Parameters<RunStore["enqueueRunEvaluationTask"]>): ReturnType<RunStore["enqueueRunEvaluationTask"]> {
+    return this.runEvaluationTasks.enqueueRunEvaluationTask(...args);
+  }
+
+  listClaimableRunEvaluationTasks(...args: Parameters<RunStore["listClaimableRunEvaluationTasks"]>): ReturnType<RunStore["listClaimableRunEvaluationTasks"]> {
+    return this.runEvaluationTasks.listClaimableRunEvaluationTasks(...args);
+  }
+
+  claimRunEvaluationTask(...args: Parameters<RunStore["claimRunEvaluationTask"]>): ReturnType<RunStore["claimRunEvaluationTask"]> {
+    return this.runEvaluationTasks.claimRunEvaluationTask(...args);
+  }
+
+  renewRunEvaluationTaskLease(...args: Parameters<RunStore["renewRunEvaluationTaskLease"]>): ReturnType<RunStore["renewRunEvaluationTaskLease"]> {
+    return this.runEvaluationTasks.renewRunEvaluationTaskLease(...args);
+  }
+
+  admitRunEvaluationTaskDispatch(...args: Parameters<RunStore["admitRunEvaluationTaskDispatch"]>): ReturnType<RunStore["admitRunEvaluationTaskDispatch"]> {
+    return this.runEvaluationTasks.admitRunEvaluationTaskDispatch(...args);
+  }
+
+  completeRunEvaluationTask(...args: Parameters<RunStore["completeRunEvaluationTask"]>): ReturnType<RunStore["completeRunEvaluationTask"]> {
+    return this.runEvaluationTasks.completeRunEvaluationTask(...args);
+  }
+
+  finishRunEvaluationTaskBeforeDispatch(...args: Parameters<RunStore["finishRunEvaluationTaskBeforeDispatch"]>): ReturnType<RunStore["finishRunEvaluationTaskBeforeDispatch"]> {
+    return this.runEvaluationTasks.finishRunEvaluationTaskBeforeDispatch(...args);
+  }
+
+  markRunEvaluationTaskDispatchUnknown(...args: Parameters<RunStore["markRunEvaluationTaskDispatchUnknown"]>): ReturnType<RunStore["markRunEvaluationTaskDispatchUnknown"]> {
+    return this.runEvaluationTasks.markRunEvaluationTaskDispatchUnknown(...args);
+  }
+
+  reconcileExpiredRunEvaluationTaskAttempt(...args: Parameters<RunStore["reconcileExpiredRunEvaluationTaskAttempt"]>): ReturnType<RunStore["reconcileExpiredRunEvaluationTaskAttempt"]> {
+    return this.runEvaluationTasks.reconcileExpiredRunEvaluationTaskAttempt(...args);
+  }
+
+  reconcileExpiredRunEvaluationTaskAttemptsPage(...args: Parameters<RunStore["reconcileExpiredRunEvaluationTaskAttemptsPage"]>): ReturnType<RunStore["reconcileExpiredRunEvaluationTaskAttemptsPage"]> {
+    return this.runEvaluationTasks.reconcileExpiredRunEvaluationTaskAttemptsPage(...args);
+  }
+
+  getRunEvaluationGrade(id: string): import("@ling-stack/contracts").RunEvaluationGradeV1 | undefined {
+    return this.runEvaluations.getRunEvaluationGrade(id);
   }
 
   findRunEvaluationByIdempotencyKey(
@@ -2786,6 +3061,10 @@ export class SqliteRunStore implements RunStore {
     return this.resourceLeases.releaseResourceLeasesForOwner(ownerType, ownerId, releasedAt);
   }
 
+  releaseResourceLease(id: string, ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number {
+    return this.resourceLeases.releaseResourceLease(id, ownerType, ownerId, releasedAt);
+  }
+
   expireResourceLeases(now: string): number {
     return this.resourceLeases.expireResourceLeases(now);
   }
@@ -2892,6 +3171,14 @@ export class SqliteRunStore implements RunStore {
 
   listAvailabilityIncidents(options: ListAvailabilityIncidentsOptions = {}): AvailabilityIncident[] {
     return this.channelTeamLifecycle.listAvailabilityIncidents(options);
+  }
+
+  createProviderRuntimeAvailabilityIncident(input: CreateProviderRuntimeAvailabilityIncidentInput, now: string): AvailabilityIncident {
+    return this.channelTeamLifecycle.createProviderRuntimeAvailabilityIncident(input, now);
+  }
+
+  listAvailabilityIncidentCandidates(options: ListAvailabilityIncidentCandidatesOptions): AvailabilityIncidentCandidatePage {
+    return this.channelTeamLifecycle.listAvailabilityIncidentCandidates(options);
   }
 
   createChannelTeamPattern(input: CreateChannelTeamPatternInput, now: string): ChannelTeamPattern {
@@ -4270,6 +4557,10 @@ export class SqliteRunStore implements RunStore {
     return this.externalWorkActions.updateExternalWorkAction(id, input, now);
   }
 
+  commitExternalWorkActionTransition(input: CommitExternalWorkActionTransitionInput, now: string, createEvidence?: (action: ExternalWorkAction) => readonly string[]): ExternalWorkAction | undefined {
+    return this.externalWorkActions.commitExternalWorkActionTransition(input, now, createEvidence);
+  }
+
   createExternalWorkCiTriage(input: CreateExternalWorkCiTriageInput, now: string): ExternalWorkCiTriageRecord {
     return this.externalWorkCiTriage.createExternalWorkCiTriage(input, now);
   }
@@ -4385,6 +4676,22 @@ export class SqliteRunStore implements RunStore {
     return this.providers.recordProviderCheckResult(id, result);
   }
 
+  getProviderCheckAuthority(id: string): ReturnType<ProviderCheckPublicationStore["getProviderCheckAuthority"]> {
+    return this.providerChecks.getProviderCheckAuthority(id);
+  }
+
+  getProviderConfigurationSnapshot(id: string): ReturnType<ProviderCheckPublicationStore["getProviderConfigurationSnapshot"]> {
+    return this.providerChecks.getProviderConfigurationSnapshot(id);
+  }
+
+  beginProviderCheckRequest(id: string, source: ProviderCheckSource, pendingCheck?: ProviderCheckResult): ReturnType<ProviderCheckPublicationStore["beginProviderCheckRequest"]> {
+    return this.providerChecks.beginProviderCheckRequest(id, source, pendingCheck);
+  }
+
+  commitProviderCheckResult(ticket: ProviderCheckRequestTicket, result: ProviderCheckResult, cwd: string): ReturnType<ProviderCheckPublicationStore["commitProviderCheckResult"]> {
+    return this.providerChecks.commitProviderCheckResult(ticket, result, cwd);
+  }
+
   deleteProviderPreset(id: string): boolean {
     return this.providers.deleteProviderPreset(id);
   }
@@ -4415,6 +4722,14 @@ export class SqliteRunStore implements RunStore {
 
   getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined {
     return this.mcps.getMcpAuthorityRevision(serverId);
+  }
+
+  beginMcpMetadataRequest(serverId: string, kind: McpMetadataRequestKind): McpMetadataRequestTicket | undefined {
+    return this.mcpMetadata.beginMcpMetadataRequest(serverId, kind);
+  }
+
+  commitMcpMetadataResult(input: CommitMcpMetadataResultInput): CommitMcpMetadataResult {
+    return this.mcpMetadata.commitMcpMetadataResult(input);
   }
 
   listMcpServers(options: ListMcpServersOptions = {}): McpServer[] {
@@ -4579,8 +4894,8 @@ export class SqliteRunStore implements RunStore {
     return this.automations.discardAutomationDraft(draftId, now);
   }
 
-  confirmAutomationDraft(draftId: string, automationId: string, now: string): AutomationDraft | undefined {
-    return this.automations.confirmAutomationDraft(draftId, automationId, now);
+  confirmAutomationDraft(expectedDraft: AutomationDraft, now: string): AutomationDraftConfirmationResult {
+    return this.automations.confirmAutomationDraft(expectedDraft, now);
   }
 
   createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun {

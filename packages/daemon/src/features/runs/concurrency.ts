@@ -33,6 +33,8 @@ export function prepareRunConcurrency(input: {
   readonly runId: string;
   readonly workUnit: WorkUnit;
   readonly attempt: WorkUnitAttempt;
+  /** Host-only identity of an already activated same-Run continuation, never a request flag. */
+  readonly existingContinuationId?: string;
   readonly now: string;
 }): PreparedRunConcurrency {
   input.store.expireResourceLeases(input.now);
@@ -56,9 +58,12 @@ export function prepareRunConcurrency(input: {
     if (duplicate) {
       const runId = duplicate.reason?.startsWith("run:") ? duplicate.reason.slice("run:".length) : undefined;
       if (runId) {
-        throw new DuplicateRunRequestError(runId);
+        if (!canReuseTaskClaimForContinuation(input, task, runId)) {
+          throw new DuplicateRunRequestError(runId);
+        }
+      } else {
+        throw new HttpError(409, "duplicate_run_request", "Duplicate run request");
       }
-      throw new HttpError(409, "duplicate_run_request", "Duplicate run request");
     }
   }
 
@@ -95,6 +100,48 @@ export function prepareRunConcurrency(input: {
     taskExists: Boolean(task),
     leases,
   };
+}
+
+/**
+ * A task claim belongs to the logical Run, not a fresh fenced Attempt. Reuse it
+ * only after reading the actual durable continuation and its current target in
+ * one snapshot. Resource/semaphore admission still uses the captured target
+ * fence, so a takeover after this read cannot acquire the successor's leases.
+ */
+function canReuseTaskClaimForContinuation(
+  input: Parameters<typeof prepareRunConcurrency>[0],
+  task: Task,
+  claimedRunId: string,
+): boolean {
+  const continuationId = input.existingContinuationId;
+  if (!continuationId || claimedRunId !== input.runId) return false;
+  return input.store.readSnapshot(() => {
+    const currentTask = input.store.getTask(task.id);
+    const continuation = input.store.getRunnerContinuation(continuationId);
+    const run = input.store.getRun(input.runId);
+    const unit = input.store.getWorkUnit(input.workUnit.id);
+    const target = input.store.getWorkUnitAttempt(input.attempt.id);
+    const source = continuation ? input.store.getWorkUnitAttempt(continuation.sourceAttemptId) : undefined;
+    if (!currentTask || !continuation || !run || !unit || !target || !source) return false;
+    return (currentTask.status === "claimed" || currentTask.status === "running")
+      && (!currentTask.currentRunId || currentTask.currentRunId === run.id)
+      && (continuation.state === "prepared" || (continuation.state === "claimed"
+        && Boolean(continuation.claimExpiresAt && continuation.claimExpiresAt > input.now)))
+      && continuation.runId === run.id
+      && continuation.workUnitId === unit.id
+      && continuation.targetAttemptId === target.id
+      && continuation.contextViewId === run.contextViewId
+      && source.workUnitId === unit.id && source.id !== target.id
+      && run.taskId === currentTask.id && run.workUnitId === unit.id
+      && (run.status === "queued" || run.status === "running") && !run.endedAt
+      && unit.linkedRunId === run.id && unit.activeAttemptId === target.id
+      && unit.workspaceId === input.workUnit.workspaceId
+      && (unit.status === "queued" || unit.status === "claimed") && !unit.endedAt
+      && target.workUnitId === unit.id && input.attempt.workUnitId === unit.id
+      && target.status === "created" && !target.endedAt && !target.abortRequestedAt
+      && target.runtimeInstanceId === input.attempt.runtimeInstanceId
+      && target.fencingToken === input.attempt.fencingToken;
+  });
 }
 
 export function claimPreparedRunTask(input: {

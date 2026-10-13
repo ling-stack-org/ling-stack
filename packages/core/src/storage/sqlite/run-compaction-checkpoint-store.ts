@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import { createHash } from "node:crypto";
 import type { SQLOutputValue } from "node:sqlite";
 import {
   RUN_COMPACTION_CHECKPOINT_BLOCKER_CODES,
@@ -10,6 +11,10 @@ import {
 } from "@ling-stack/contracts";
 import { parseJson, readNullableString, readNumber, readString, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import type { RunSession, RunStore } from "../../run-types.js";
+import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
+import { captureRunProgressCheckpointLineage } from "../../run-progress-checkpoint-lineage.js";
+import { assertNoUnsettledHostFacts, readRunProgressEvents, validateRunProgressRecoveryBookkeeping } from "./run-progress-checkpoint-effects.js";
 
 const timestampPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{3})?Z$/u;
 
@@ -265,6 +270,11 @@ function assertReferences(context: SqliteStoreContext, input: CreateRunCompactio
     || readString(workUnit, "status") !== "running" || readNullableString(workUnit, "active_attempt_id") !== input.attemptId) {
     throw new Error(`Compaction checkpoint source Attempt is not the active execution owner: ${input.attemptId}`);
   }
+  assertDurableReferences(context, input);
+}
+
+/** Shared sealed identity checks; historical recovery must not require the original live lease. */
+function assertDurableReferences(context: SqliteStoreContext, input: CreateRunCompactionCheckpointInput): void {
   const sourceEvent = context.database.prepare("SELECT seq FROM run_events WHERE run_id = ? AND seq = ?")
     .get(input.runId, input.sourceEventSeq);
   if (!sourceEvent) throw new Error(`Compaction checkpoint source event not found: ${input.runId}/${input.sourceEventSeq}`);
@@ -307,6 +317,98 @@ function assertReferences(context: SqliteStoreContext, input: CreateRunCompactio
     throw new Error(`Compaction checkpoint summary artifact lineage or digest mismatch: ${input.summaryArtifactId}`);
   }
 }
+
+/**
+ * Narrow domain routing only: naked start events cannot displace ordinary progress authority.
+ * Full compacted model restoration remains the existing Daemon/Runner contract.
+ */
+export function hasCommittedRunCompactionReceipt(context: SqliteStoreContext, ports: RunStore,
+  run: RunSession, sourceFence: RuntimeAttemptFenceV1, binding: {
+    readonly contextSnapshotArtifactId: string; readonly runnerId: string; readonly runnerCapabilityRevision: string;
+  }, recoveryTargetFence?: RuntimeAttemptFenceV1): boolean {
+  try {
+    const checkpoint = new SqliteRunCompactionCheckpointStore(context).getLatestForRun(run.id);
+    const attempt = ports.getWorkUnitAttempt(sourceFence.attemptId);
+    if (!checkpoint || checkpoint.state !== "committed" || !checkpoint.committedAt || !attempt
+      || attempt.workUnitId !== sourceFence.workUnitId || attempt.id !== sourceFence.attemptId
+      || attempt.runtimeInstanceId !== sourceFence.runtimeInstanceId || attempt.fencingToken !== sourceFence.fencingToken
+      || attempt.workUnitId !== run.workUnitId || checkpoint.attemptId !== attempt.id
+      || checkpoint.contextViewId !== run.contextViewId || checkpoint.providerName !== run.providerName
+      || checkpoint.providerModel !== run.providerModel || checkpoint.unresolvedToolCallIds.length
+      || checkpoint.unresolvedApprovalIds.length || checkpoint.unresolvedQuestionIds.length) return false;
+    assertDurableReferences(context, { ...checkpoint, createdAt: checkpoint.createdAt });
+    const start = context.database.prepare(`SELECT seq,data_json FROM run_events WHERE run_id=?
+      AND type='context_compaction_start' ORDER BY seq DESC LIMIT 1`).get(run.id);
+    const data: unknown = start && JSON.parse(String(start.data_json));
+    if (!start || Number(start.seq) > checkpoint.sourceEventSeq || !record(data)
+      || data.checkpointArtifactId !== checkpoint.contextSnapshotArtifactId) return false;
+    const snapshot = context.database.prepare("SELECT * FROM artifacts WHERE id=?").get(checkpoint.contextSnapshotArtifactId);
+    const summary = context.database.prepare("SELECT * FROM artifacts WHERE id=?").get(checkpoint.summaryArtifactId);
+    const snapshotPayload: unknown = snapshot?.sealed_payload_json && JSON.parse(String(snapshot.sealed_payload_json));
+    const summaryPayload: unknown = summary?.sealed_payload_json && JSON.parse(String(summary.sealed_payload_json));
+    const hash = (value: unknown): string => createHash("sha256").update(JSON.stringify(value), "utf8").digest("hex");
+    if (!snapshot || snapshot.type !== "json" || !record(snapshotPayload) || snapshot.content_sha256 !== hash(snapshotPayload)
+      || snapshotPayload.schemaVersion !== 1 || snapshotPayload.boundary !== "pi-compaction-context"
+      || snapshotPayload.runId !== run.id || snapshotPayload.attemptId !== data.attemptId
+      || snapshotPayload.contextViewId !== run.contextViewId || snapshotPayload.model !== run.providerModel
+      || !Array.isArray(snapshotPayload.messages) || !summary || summary.type !== "json"
+      || summary.content_type !== "application/vnd.ling.run-compaction-summary+json"
+      || !record(summaryPayload) || summary.content_sha256 !== hash(summaryPayload)
+      || summaryPayload.schemaVersion !== 1 || !["run-compaction-summary", "run-compaction-progress"].includes(String(summaryPayload.boundary))
+      || summaryPayload.runId !== run.id || summaryPayload.attemptId !== checkpoint.attemptId
+      || summaryPayload.sourceEventSeq !== checkpoint.sourceEventSeq || typeof summaryPayload.summary !== "string"
+      || !summaryPayload.summary.trim() || !Array.isArray(summaryPayload.modelView)) return false;
+    const lineage = captureRunProgressCheckpointLineage(ports, run).lineage;
+    if (checkpoint.policySnapshotFingerprint !== lineage.policySnapshotFingerprint
+      || checkpoint.workspaceProvenanceWatermark !== lineage.workspaceProvenanceWatermark) return false;
+    // Activation consumes a sealed replay package, not the raw SDK snapshot.
+    // Its captured refs must include this exact checkpoint's two content inputs.
+    const replayArtifact = context.database.prepare("SELECT * FROM artifacts WHERE id=?").get(binding.contextSnapshotArtifactId);
+    const replay: unknown = replayArtifact?.sealed_payload_json && JSON.parse(String(replayArtifact.sealed_payload_json));
+    if (!replayArtifact || replayArtifact.run_id !== run.id || replayArtifact.type !== "json"
+      || replayArtifact.content_type !== "application/vnd.ling.runner-continuation-replay+json"
+      || !record(replay) || replayArtifact.content_sha256 !== hash(replay)) return false;
+    const { fingerprint, ...replayBody } = replay;
+    const replayFence = record(replay.sourceFence) ? replay.sourceFence : undefined;
+    if (replay.schemaVersion !== 1 || replay.boundary !== "runner-continuation-replay" || fingerprint !== hash(replayBody)
+      || replay.runId !== run.id || replay.sourceRunId !== run.id || replay.workUnitId !== sourceFence.workUnitId
+      || replay.sourceWorkUnitId !== sourceFence.workUnitId || replay.origin !== "daemon_recovery"
+      || replay.contextViewId !== run.contextViewId || replay.runnerId !== binding.runnerId
+      || replay.runnerCapabilityRevision !== binding.runnerCapabilityRevision
+      || !replayFence || replayFence.workUnitId !== sourceFence.workUnitId || replayFence.attemptId !== sourceFence.attemptId
+      || replayFence.runtimeInstanceId !== sourceFence.runtimeInstanceId || replayFence.fencingToken !== sourceFence.fencingToken
+      || replay.policySnapshotFingerprint !== lineage.policySnapshotFingerprint
+      || replay.preparedExecutionFingerprint !== lineage.preparedExecutionFingerprint
+      || replay.acceptedInstructionsFingerprint !== lineage.acceptedInstructionsFingerprint
+      || hash(replay.execution) !== lineage.preparedExecutionFingerprint || !Array.isArray(replay.artifactRefs)
+      || !replay.artifactRefs.includes(checkpoint.contextSnapshotArtifactId) || !replay.artifactRefs.includes(checkpoint.summaryArtifactId)) return false;
+    const events = readRunProgressEvents(ports, run.id);
+    const recoveryBookkeeping: typeof events = [];
+    let installed = checkpoint.sourceEventSeq > Number(start.seq);
+    for (const event of events.filter(event => event.seq > checkpoint.sourceEventSeq)) {
+      if (!installed && event.type === "context_compaction_end" && event.data.attemptId === checkpoint.attemptId
+        && event.data.outcome === "sdk_installed") { installed = true; continue; }
+      if (!installed && ["assistant_text_delta", "assistant_thinking_delta", "assistant_reasoning_summary",
+        "message_end", "turn_start", "turn_end"].includes(event.type)) continue;
+      if (event.type === "turn_end") continue;
+      if (event.type === "artifact_created" && record(event.data.artifact)
+        && event.data.artifact.id === checkpoint.contextSnapshotArtifactId) continue;
+      if (installed && recoveryTargetFence && ["run_start", "turn_start"].includes(event.type)) {
+        recoveryBookkeeping.push(event); continue;
+      }
+      return false;
+    }
+    if (recoveryTargetFence) validateRunProgressRecoveryBookkeeping(run, recoveryBookkeeping, recoveryTargetFence.attemptId);
+    if (!installed || !events.some(event => event.type === "context_compaction_end" && event.seq > Number(start.seq)
+      && event.data.attemptId === data.attemptId && event.data.outcome === "sdk_installed")
+      || ports.listHarnessToolExecutions(run.id).some(execution => !["succeeded", "denied", "failed", "cancelled", "superseded"].includes(execution.state))
+      || ports.listHostCommandWriteBlockers(run.cwd).some(item => item.runId === run.id)
+      || ports.listApprovalRequests({ runId: run.id, status: "pending", limit: 1 }).length) return false;
+    assertNoUnsettledHostFacts(context.database, ports, run.id, sourceFence.workUnitId);
+    return true;
+  } catch { return false; }
+}
+function record(value: unknown): value is Record<string, unknown> { return !!value && typeof value === "object" && !Array.isArray(value); }
 
 function assertSameCheckpointIdentity(current: RunCompactionCheckpointV1, input: CreateRunCompactionCheckpointInput): void {
   if (current.contextSnapshotArtifactId !== input.contextSnapshotArtifactId

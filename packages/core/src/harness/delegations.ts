@@ -1,6 +1,43 @@
 import type { DelegationBudgetV1, DelegationStepState, DelegationStepV1 } from "@ling-stack/contracts";
 import { assertNonNegativeSafeInteger, transitionHarnessEntity, type HarnessTransitionResult } from "./common.js";
 
+export const DELEGATION_LEGACY_READ_LIMIT = 1000;
+export const DELEGATION_QUERY_DEFAULT_LIMIT = 200;
+export const DELEGATION_QUERY_MAX_LIMIT = 1000;
+
+/** Exclusive BINARY ordering position for live discovery, never execution authority. */
+export interface DelegationQueryCursorV1 {
+  readonly schemaVersion: 1;
+  readonly kind: "children" | "messages";
+  readonly scopeId: string;
+  readonly createdAt: string;
+  readonly id: string;
+}
+
+export interface DelegationQueryPageInput {
+  readonly limit?: number;
+  readonly after?: DelegationQueryCursorV1;
+}
+
+/** Row-bounded live discovery; neither a byte bound nor a stable subtree snapshot. */
+export interface DelegationQueryPage<T> {
+  readonly items: readonly T[];
+  readonly hasMore: boolean;
+  readonly nextCursor?: DelegationQueryCursorV1;
+}
+
+export type DelegationReadErrorCode = "read_limit_exceeded" | "invalid_read_input" | "invalid_persisted_row";
+
+/** Read failures are not persisted DelegationFailureCode values or step transitions. */
+export class DelegationReadError extends Error {
+  readonly kind = "read_error";
+
+  constructor(readonly code: DelegationReadErrorCode, message: string) {
+    super(message);
+    this.name = "DelegationReadError";
+  }
+}
+
 const transitions: Readonly<Record<DelegationStepState, ReadonlySet<DelegationStepState>>> = {
   planned: new Set(["spawning", "cancelled", "failed"]),
   spawning: new Set(["running", "failed", "cancelled", "lost"]),

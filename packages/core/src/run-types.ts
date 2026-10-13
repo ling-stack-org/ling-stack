@@ -56,14 +56,26 @@ import type {
   RunnerContinuationMutationResult,
   StartRunnerContinuationInput,
 } from "./harness/continuations.js";
+import type { DelegationQueryStore, HarnessDiagnosticsStore } from "./harness/store-ports.js";
+import type { RunEvaluationTaskStore } from "./harness/evaluation-tasks.js";
+import type { RunEvaluationQaStore } from "./harness/evaluation-qa.js";
+import type { RunEvaluationHumanStore } from "./harness/human-evaluation.js";
+import type { RunEvaluationHumanReadStore } from "./harness/human-evaluation-read.js";
+import type {
+  AvailabilityIncidentCandidatePage,
+  CreateProviderRuntimeAvailabilityIncidentInput,
+  ListAvailabilityIncidentCandidatesOptions,
+} from "./provider-runtime-availability-types.js";
 import type {
   ClaimHarnessToolExecutionInput,
   FailApprovedHarnessToolExecutionInput,
   FinishHarnessToolExecutionInput,
   HarnessToolExecutionMutationResult,
+  HarnessToolExecutionRecoveryPage,
   PrepareHarnessToolExecutionInput,
   PreparedHarnessToolExecution,
   ReconcileAbandonedHarnessToolExecutionsInput,
+  ReconcileAbandonedHarnessToolExecutionsPageInput,
   ResolveHarnessToolApprovalInput,
   StartHarnessToolExecutionInput,
 } from "./harness/tool-executions.js";
@@ -128,6 +140,7 @@ import type {
   ProviderPresetInput,
   ProviderPresetUpdateInput,
 } from "./provider-types.js";
+import type { ProviderCheckPublicationStore } from "./provider-check-publication-types.js";
 import type { LingStackRuntimePaths } from "./runtime-paths.js";
 import type {
   OfficialSkillSourceSubscription,
@@ -402,6 +415,7 @@ import type {
   WorkUnitStatus,
 } from "./runtime-supervisor-types.js";
 import type {
+  CommitExternalWorkActionTransitionInput,
   CreateExternalWorkActionInput,
   CreateExternalWorkCiTriageInput,
   CreateExternalWorkWorkflowInput,
@@ -493,6 +507,12 @@ import type {
   UpdateMcpServerInput,
 } from "./mcp-types.js";
 import type {
+  CommitMcpMetadataResult,
+  CommitMcpMetadataResultInput,
+  McpMetadataRequestKind,
+  McpMetadataRequestTicket,
+} from "./mcp-metadata-types.js";
+import type {
   CommitCuaDriverActivationInput,
   CommitCuaDriverActivationResult,
   CuaDriverActivationState,
@@ -555,6 +575,7 @@ import type {
 } from "./plugin-manager-types.js";
 import type {
   AutomationDraft,
+  AutomationDraftConfirmationResult,
   AutomationDefinition,
   AutomationRun,
   CreateAutomationDefinitionInput,
@@ -1506,7 +1527,7 @@ export interface ControlPlaneReplayWindowResult {
   readonly events: readonly ControlPlaneEvent[];
 }
 
-export interface RunStore {
+export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
     readonly status?: import("./approval-postcommit-types.js").ApprovalPostCommitEffectStatus;
@@ -1715,6 +1736,8 @@ export interface RunStore {
   listReliabilityIncidents(options?: ListReliabilityIncidentsOptions): ReliabilityIncident[];
   createAvailabilityIncident(input: CreateAvailabilityIncidentInput, now: string): AvailabilityIncident;
   listAvailabilityIncidents(options?: ListAvailabilityIncidentsOptions): AvailabilityIncident[];
+  createProviderRuntimeAvailabilityIncident(input: CreateProviderRuntimeAvailabilityIncidentInput, now: string): AvailabilityIncident;
+  listAvailabilityIncidentCandidates(options: ListAvailabilityIncidentCandidatesOptions): AvailabilityIncidentCandidatePage;
   createChannelTeamPattern(input: CreateChannelTeamPatternInput, now: string): ChannelTeamPattern;
   getChannelTeamPattern(id: string): ChannelTeamPattern | undefined;
   listChannelTeamPatterns(options: ListChannelTeamPatternsOptions): ChannelTeamPattern[];
@@ -1742,6 +1765,8 @@ export interface RunStore {
   getWorkspaceMutationRecord(id: string): WorkspaceMutationRecord | undefined;
   listWorkspaceMutationRecords(options?: ListWorkspaceMutationRecordsOptions): WorkspaceMutationRecord[];
   getLatestWorkspaceProvenanceWatermark(workspaceId?: string): string;
+  commitRunProgressCheckpoint(input: import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointInput): import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointResult;
+  readRunProgressCheckpointForRecovery(input: import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryInput): import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryResult;
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint;
   getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined;
   listCompactionCheckpoints(options?: ListCompactionCheckpointsOptions): CompactionCheckpoint[];
@@ -1860,7 +1885,11 @@ export interface RunStore {
   reconcileAbandonedHarnessToolExecutions(
     input: ReconcileAbandonedHarnessToolExecutionsInput,
   ): readonly HarnessToolExecutionV1[];
+  reconcileAbandonedHarnessToolExecutionsPage(
+    input: ReconcileAbandonedHarnessToolExecutionsPageInput,
+  ): HarnessToolExecutionRecoveryPage;
   getRunEvaluation(id: string): RunEvaluationV1 | undefined;
+  getRunEvaluationGrade(id: string): RunEvaluationGradeV1 | undefined;
   findRunEvaluationByIdempotencyKey(idempotencyKey: string): RunEvaluationV1 | undefined;
   listRunEvaluations(input?: ListRunEvaluationsInput): readonly RunEvaluationV1[];
   listClaimableRunEvaluations(input: ListClaimableRunEvaluationsInput): readonly RunEvaluationV1[];
@@ -1952,6 +1981,7 @@ export interface RunStore {
   renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
   releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
+  releaseResourceLease(id: string, ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
   expireResourceLeases(now: string): number;
   listResourceLeases(options?: ListResourceLeasesOptions): ResourceLease[];
   getBlockingResourceLease(resourceType: ResourceLease["resourceType"], resourceKey: string): ResourceLease | undefined;
@@ -2334,6 +2364,10 @@ export interface RunStore {
   listProviderPresets(options?: ListProviderPresetsOptions): ProviderPreset[];
   updateProviderPreset(id: string, input: ProviderPresetUpdateInput, now: string): ProviderPreset | undefined;
   recordProviderCheckResult(id: string, result: ProviderCheckResult): ProviderPreset | undefined;
+  getProviderConfigurationSnapshot: ProviderCheckPublicationStore["getProviderConfigurationSnapshot"];
+  getProviderCheckAuthority: ProviderCheckPublicationStore["getProviderCheckAuthority"];
+  beginProviderCheckRequest: ProviderCheckPublicationStore["beginProviderCheckRequest"];
+  commitProviderCheckResult: ProviderCheckPublicationStore["commitProviderCheckResult"];
   deleteProviderPreset(id: string): boolean;
   setProviderSecret(providerId: string, secretValue: string, now: string): void;
   getProviderSecret(providerId: string): string | undefined;
@@ -2425,6 +2459,7 @@ export interface RunStore {
   listExternalWorkActions(options?: ListExternalWorkActionsOptions): ExternalWorkAction[];
   countExternalWorkActions(options?: Omit<ListExternalWorkActionsOptions, "limit">): number;
   updateExternalWorkAction(id: string, input: UpdateExternalWorkActionInput, now: string): ExternalWorkAction | undefined;
+  commitExternalWorkActionTransition(input: CommitExternalWorkActionTransitionInput, now: string, createEvidence?: (action: ExternalWorkAction) => readonly string[]): ExternalWorkAction | undefined;
   createExternalWorkCiTriage(input: CreateExternalWorkCiTriageInput, now: string): ExternalWorkCiTriageRecord;
   getExternalWorkCiTriage(id: string): ExternalWorkCiTriageRecord | undefined;
   getExternalWorkCiTriageByFailureKey(sourceKind: ExternalWorkCiTriageRecord["sourceKind"], failureKey: string): ExternalWorkCiTriageRecord | undefined;
@@ -2452,6 +2487,8 @@ export interface RunStore {
   createMcpServer(input: CreateMcpServerInput, now: string): McpServer;
   getMcpServer(id: string): McpServer | undefined;
   getMcpAuthorityRevision(serverId: string): McpAuthorityRevision | undefined;
+  beginMcpMetadataRequest(serverId: string, kind: McpMetadataRequestKind): McpMetadataRequestTicket | undefined;
+  commitMcpMetadataResult(input: CommitMcpMetadataResultInput): CommitMcpMetadataResult;
   listMcpServers(options?: ListMcpServersOptions): McpServer[];
   updateMcpServer(id: string, input: UpdateMcpServerInput, now: string): McpServer | undefined;
   updateMcpServerStatus(id: string, status: McpServerStatus, now: string): McpServer | undefined;
@@ -2496,7 +2533,7 @@ export interface RunStore {
   listAutomationDrafts(options?: ListAutomationDraftsOptions): AutomationDraft[];
   updateAutomationDraft(draftId: string, input: UpdateAutomationDraftInput, now: string): AutomationDraft | undefined;
   discardAutomationDraft(draftId: string, now: string): AutomationDraft | undefined;
-  confirmAutomationDraft(draftId: string, automationId: string, now: string): AutomationDraft | undefined;
+  confirmAutomationDraft(expectedDraft: AutomationDraft, now: string): AutomationDraftConfirmationResult;
   createAutomationRun(input: CreateAutomationRunInput, now: string): AutomationRun;
   getAutomationRun(automationRunId: string): AutomationRun | undefined;
   findAutomationRunByIdempotencyKey(idempotencyKey: string): AutomationRun | undefined;
@@ -2575,6 +2612,14 @@ export interface RunStore {
 export type RunStoreFacet<K extends keyof RunStore> = Pick<RunStore, K>;
 
 export type RunStorePathsFacet = RunStoreFacet<"paths">;
+
+/** Host-only provenance projection, separate from public historical incident DTOs. */
+export type AvailabilityIncidentStoreFacet = RunStoreFacet<
+  | "createAvailabilityIncident"
+  | "listAvailabilityIncidents"
+  | "createProviderRuntimeAvailabilityIncident"
+  | "listAvailabilityIncidentCandidates"
+>;
 
 export type RemoteAccessStoreFacet = RunStoreFacet<
   | "commitRemoteConversationSend"
@@ -2691,6 +2736,7 @@ export type RuntimeSupervisorStoreFacet = RunStoreFacet<
   | "renewResourceLeasesForAttempt"
   | "releaseResourceLeasesForAttempt"
   | "releaseResourceLeasesForOwner"
+  | "releaseResourceLease"
   | "expireResourceLeases"
   | "listResourceLeases"
   | "getBlockingResourceLease"
@@ -2889,6 +2935,7 @@ export type ChannelStoreFacet = RunStoreFacet<
 export type ProviderStoreFacet = RunStoreFacet<
   | "createProviderPreset"
   | "getProviderPreset"
+  | "getProviderConfigurationSnapshot"
   | "listProviderPresets"
   | "updateProviderPreset"
   | "recordProviderCheckResult"
@@ -2962,6 +3009,7 @@ export type ExternalWorkStoreFacet = RunStoreFacet<
   | "listExternalWorkActions"
   | "countExternalWorkActions"
   | "updateExternalWorkAction"
+  | "commitExternalWorkActionTransition"
   | "createExternalWorkCiTriage"
   | "getExternalWorkCiTriage"
   | "getExternalWorkCiTriageByFailureKey"
@@ -2986,6 +3034,8 @@ export type WorkItemStoreFacet = RunStoreFacet<
   | "completeWorkItem"
   | "failWorkItem"
 >;
+
+export type McpMetadataStoreFacet = RunStoreFacet<"beginMcpMetadataRequest" | "commitMcpMetadataResult">;
 
 export type McpStoreFacet = RunStoreFacet<
   | "createMcpServer"

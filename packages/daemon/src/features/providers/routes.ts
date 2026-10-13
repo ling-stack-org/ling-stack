@@ -23,6 +23,7 @@ import { readJsonBody, readOptionalJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { listProviderModels } from "./models.js";
 import { checkProviderPreset } from "./preflight.js";
+import { publishProviderCheckResult } from "./check-publication.js";
 import type { ProviderImportPreflightService } from "./import-preflight.js";
 import {
   formatProviderDeleteBlockedMessage,
@@ -527,23 +528,19 @@ export async function handleProviderItem(
   }
 
   if (request.method === "POST" && route.action === "check") {
-    const checkResult = await checkProviderPreset(store, preset, secretResolver);
-    store.recordProviderCheckResult(route.providerId, checkResult);
-    appendControlPlaneEvent(store, controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd,
-      domain: "providers",
-      entityType: "provider",
-      entityId: route.providerId,
-      action: "provider.preflight_checked",
-      data: {
-        providerId: route.providerId,
-        ok: checkResult.ok,
-        code: checkResult.code ?? (checkResult.ok ? "ok" : "failed"),
-        checkedAt: checkResult.checkedAt,
-      },
-    });
-    writeJson(response, 200, checkResult);
+    const admission = store.beginProviderCheckRequest(route.providerId, "manual");
+    if (!admission) {
+      writeJson(response, 404, { error: "provider_not_found", message: "Provider preset no longer exists." });
+      return;
+    }
+    const checkResult = await checkProviderPreset(store, admission.provider, secretResolver);
+    const publication = publishProviderCheckResult(store, controlPlaneEvents, admission.ticket, checkResult, cwd);
+    if (publication.status !== "published") {
+      writeJson(response, 409, { error: "provider_check_result_superseded",
+        message: "Provider check result was superseded. Check the current provider again.", reason: publication.status });
+      return;
+    }
+    writeJson(response, 200, publication.provider.lastCheck);
     return;
   }
 

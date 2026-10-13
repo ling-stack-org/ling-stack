@@ -10,6 +10,7 @@ import type {
   SecretResolver,
 } from "@ling-stack/core";
 import { resolveEffectiveTeammateProviderPresetId } from "@ling-stack/core";
+import { PiRunnerAdapter } from "@ling-stack/runner-pi";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
@@ -32,10 +33,8 @@ import {
 } from "./ling-agent-turn-envelope.js";
 import { resolveChannelConversationSurface } from "./conversation-surface.js";
 import { findChannelAssistantReplyForSource } from "./conversation-item-messages.js";
-import {
-  recordProviderContextLengthObservation,
-  recordProviderRuntimeAvailabilityIncident,
-} from "./provider-runtime-observations.js";
+import { createProviderInvocationObserver } from "../providers/runtime-invocations.js";
+import { recordProviderInvocationFailureObservations } from "../providers/runtime-failure-observations.js";
 
 const ROUTE_CONFIDENCE_THRESHOLD = 0.55;
 
@@ -432,6 +431,7 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
   }
   let contextPack = buildChannelAutoRouteContextPack({
     store: input.store,
+    secretResolver: input.secretResolver,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
     turnEnvelope: input.turnEnvelope,
@@ -466,6 +466,14 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
         channelId: input.channel.id,
       },
       provider,
+      ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
+        ? createProviderInvocationObserver({
+            store: input.store, provider, taskId: input.sourceMessage.id, origin: "route",
+            onFailure: failure => { recordProviderInvocationFailureObservations({
+              store: input.store, secretResolver: input.secretResolver, failure,
+            }); },
+          })
+        : {}),
       tools: [],
       thinkingLevel: "low",
       systemPrompt: "You are Ling's channel message router. Return strict JSON only.",
@@ -484,20 +492,6 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
       throw error;
     }
     const observedAt = new Date().toISOString();
-    const providerPreset = contextPack.providerPresetId ? input.store.getProviderPreset(contextPack.providerPresetId) : undefined;
-    recordProviderContextLengthObservation({
-      providerPreset,
-      contextPack,
-      now: observedAt,
-    });
-    recordProviderRuntimeAvailabilityIncident({
-      store: input.store,
-      providerPreset,
-      providerPresetId: contextPack.providerPresetId,
-      code: "context_length_error",
-      error,
-      now: observedAt,
-    });
     const compaction = await compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
@@ -507,6 +501,7 @@ async function requestModelRoute(input: ChannelMessageRouteInput, candidates: re
     });
     contextPack = buildChannelAutoRouteContextPack({
       store: input.store,
+      secretResolver: input.secretResolver,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
       turnEnvelope: input.turnEnvelope,
@@ -688,6 +683,7 @@ function buildReplyRouteContextPackMetadata(
   const teammate = resolveAiTeammateReference(input.store, draft.teammateId);
   const contextPack = buildChannelReplyContextPack({
     store: input.store,
+    secretResolver: input.secretResolver,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
     turnEnvelope: input.turnEnvelope,

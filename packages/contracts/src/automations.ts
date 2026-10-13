@@ -358,6 +358,9 @@ export interface ConfirmAutomationDraftResponse {
   readonly draft: AutomationDraft;
   readonly automation: AutomationDefinition;
   readonly thread?: LingThread;
+  /** Confirmation is committed; scheduler registration must be retried separately. */
+  readonly schedulerRefreshPending?: boolean;
+  readonly schedulerMessage?: string;
 }
 
 export interface AutomationMutationResponse {

@@ -62,13 +62,14 @@ export class SqliteRunEventStore {
     if (!isRunEventData(type, redactedData)) {
       throw new Error(`Invalid run event payload for ${type}`);
     }
+    const attributedData = attributeExecutionToolAttempt(type, redactedData, admission);
     const envelope = {
       id: createEventId(),
       runId,
       seq: this.nextEventSeq(runId),
       ts: new Date().toISOString(),
       type,
-      data: redactedData,
+      data: attributedData,
     } as unknown as Extract<RunEventEnvelope, { readonly type: K }>;
 
     // A yielded execution is immutable. Keep the admission check in the write statement,
@@ -164,4 +165,22 @@ function normalizeLegacyEventPayload<K extends RunEventType>(type: K, data: unkn
     return { ...record, isError: record.isError ?? false } as RunEventDataByType[K];
   }
   return data as RunEventDataByType[K];
+}
+
+/** Attribute new execution facts at Host admission, never by replaying old history. */
+function attributeExecutionToolAttempt<K extends RunEventType>(
+  type: K,
+  data: RunEventDataByType[K],
+  admission: EventAdmission,
+): RunEventDataByType[K] {
+  if (admission.kind !== "execution" || (type !== "tool_start" && type !== "tool_update" && type !== "tool_end")) {
+    return data;
+  }
+  const toolData = data as RunEventDataByType["tool_start" | "tool_update" | "tool_end"];
+  if (toolData.attemptId !== undefined && toolData.attemptId !== admission.sourceFence.attemptId) {
+    throw Object.assign(new Error("Execution tool Attempt does not match its captured Host fence."), {
+      code: "run_event_attempt_mismatch",
+    });
+  }
+  return { ...data, attemptId: admission.sourceFence.attemptId } as RunEventDataByType[K];
 }

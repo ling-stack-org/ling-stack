@@ -222,7 +222,8 @@ test("Windows bundled gate requires an injected Job Object lifecycle before touc
   await coordinator.shutdown();
 });
 
-test("disable waits for an in-flight recovery enable and removes the recovered generation", async () => {
+test("disable waits for an in-flight recovery enable and removes the recovered generation", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const coordinator = createCoordinator();
   const recoveryStarted = deferred();
   const releaseRecovery = deferred();
@@ -250,6 +251,8 @@ test("disable waits for an in-flight recovery enable and removes the recovered g
   };
 
   coordinator.scheduleRecovery("fixture_recovery", 1);
+  await waitForRecoveryBackoff(coordinator);
+  t.mock.timers.tick(100);
   await recoveryStarted.promise;
   const disabling = coordinator.disable("fixture_disable");
   await Promise.resolve();
@@ -357,7 +360,8 @@ test("an exhausted recovery budget tears down the active generation before retry
   assert.equal(coordinator.recoveryAttempt, 0);
 });
 
-test("enable during recovery backoff joins the recovery-owned generation", async () => {
+test("enable during recovery backoff joins the recovery-owned generation", async t => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const coordinator = createCoordinator();
   let enableCount = 0;
   let revokeCount = 0;
@@ -384,8 +388,11 @@ test("enable during recovery backoff joins the recovery-owned generation", async
 
   coordinator.scheduleRecovery("fixture_recovery", 1);
   const recovery = coordinator.recoveryPromise;
-  await waitFor(() => coordinator.snapshot.lifecycle === "disabled");
-  const enabled = await coordinator.enable();
+  await waitForRecoveryBackoff(coordinator);
+  const enabling = coordinator.enable();
+  assert.equal(enableCount, 0);
+  t.mock.timers.tick(100);
+  const enabled = await enabling;
   await recovery;
 
   assert.equal(enableCount, 1);
@@ -1038,6 +1045,20 @@ function deferred() {
     resolve = resolvePromise;
   });
   return { promise, resolve };
+}
+
+async function waitForRecoveryBackoff(coordinator) {
+  // The fake host has no live process handle. Wait only for beginDisable's
+  // microtasks: recovery increments its attempt immediately before installing
+  // the unref backoff timer synchronously, which the test must advance itself.
+  for (let turn = 0; turn < 100; turn += 1) {
+    if (coordinator.recoveryAttempt === 1) {
+      assert.equal(coordinator.snapshot.lifecycle, "disabled");
+      return;
+    }
+    await Promise.resolve();
+  }
+  throw new Error("fixture_recovery_backoff_not_started");
 }
 
 async function waitFor(predicate) {

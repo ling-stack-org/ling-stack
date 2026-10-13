@@ -1,5 +1,5 @@
 import {
-  DEFAULT_WORKSPACE_ID,
+  type ProviderCheckPublicationStore,
   type ProviderCheckResult,
   type ProviderPreset,
   type ProviderStoreFacet,
@@ -8,16 +8,17 @@ import {
 } from "@ling-stack/core";
 import type { StartupStateRegistry } from "../../startup/state.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
-import { appendControlPlaneEvent } from "../control-plane/events.js";
+import { publishProviderCheckResult } from "./check-publication.js";
 import { checkProviderPreset } from "./preflight.js";
 import { providerSecretStatus } from "./secrets.js";
 
 const STARTUP_CHECK_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 
-export type ProviderStartupRefreshStore = ProviderStoreFacet & RunExecutionStoreFacet;
+export type ProviderStartupRefreshStore = ProviderStoreFacet & RunExecutionStoreFacet & ProviderCheckPublicationStore;
 
 export class ProviderStartupRefreshService {
   private readonly refreshesByCwd = new Map<string, Promise<readonly ProviderCheckResult[]>>();
+  private readonly refreshGenerationsByCwd = new Map<string, number>();
 
   constructor(
     private readonly dependencies: {
@@ -30,25 +31,28 @@ export class ProviderStartupRefreshService {
   start(cwd: string, store: ProviderStartupRefreshStore, options: { readonly force?: boolean } = {}): Promise<readonly ProviderCheckResult[]> {
     const existing = this.refreshesByCwd.get(cwd);
     if (existing && !options.force) {
-      this.markWarming(cwd);
-      void existing.then((results) => this.markFinished(cwd, results));
       return existing;
     }
+    const generation = (this.refreshGenerationsByCwd.get(cwd) ?? 0) + 1;
+    if (!Number.isSafeInteger(generation)) throw new Error("Provider startup refresh generation exhausted.");
+    this.refreshGenerationsByCwd.set(cwd, generation);
+    const isCurrent = (): boolean => this.refreshGenerationsByCwd.get(cwd) === generation;
     this.markWarming(cwd);
     const refresh = refreshProvidersOnStartup({
       cwd,
       store,
       secretResolver: this.dependencies.secretResolver,
       controlPlaneEvents: this.dependencies.controlPlaneEvents,
+      isCurrent,
     })
       .then((results) => {
-        this.markFinished(cwd, results);
+        if (isCurrent()) this.markFinished(cwd, store);
         return results;
       })
-      .catch((error) => {
+      .catch(() => {
         // Startup refresh is best-effort. Individual provider failures are recorded as
         // check results; unexpected service errors must not block daemon startup.
-        this.markUnexpectedError(cwd, error);
+        if (isCurrent()) this.markUnexpectedError(cwd);
         return [];
       });
     this.refreshesByCwd.set(cwd, refresh);
@@ -74,8 +78,15 @@ export class ProviderStartupRefreshService {
     this.dependencies.startupState?.setPhase(cwd, "provider_warmup", "warming");
   }
 
-  private markFinished(cwd: string, results: readonly ProviderCheckResult[]): void {
-    const failures = results.filter((result) => !result.ok);
+  private markFinished(cwd: string, store: ProviderStartupRefreshStore): void {
+    // Publication receipts are historical facts. Readiness observes the current
+    // configuration instead: a newer check may have replaced those receipts.
+    // Missing/in-flight checks are unknown, not known terminal failures; this
+    // warmup phase is not a claim that every provider has been verified healthy.
+    const failures = store.listProviderPresets({ enabled: true }).filter((provider) =>
+      provider.api !== "media-job" && provider.capabilities.includes("chat") &&
+      provider.lastCheck?.ok === false && provider.lastCheck.code !== "checking",
+    );
     if (failures.length === 0) {
       this.dependencies.startupState?.setPhase(cwd, "provider_warmup", "ready");
       return;
@@ -90,13 +101,13 @@ export class ProviderStartupRefreshService {
     });
   }
 
-  private markUnexpectedError(cwd: string, error: unknown): void {
+  private markUnexpectedError(cwd: string): void {
     this.dependencies.startupState?.setPhase(cwd, "provider_warmup", "degraded");
     this.dependencies.startupState?.addDiagnostic(cwd, {
       level: "warning",
       code: "provider_startup_refresh_failed",
       phase: "provider_warmup",
-      message: error instanceof Error ? error.message : String(error),
+      message: "Provider startup refresh failed unexpectedly. Run Check again from Model Workbench.",
       nextAction: "Open Model Workbench and run Check manually.",
     });
   }
@@ -107,43 +118,24 @@ export async function refreshProvidersOnStartup(input: {
   readonly store: ProviderStartupRefreshStore;
   readonly secretResolver: SecretResolver;
   readonly controlPlaneEvents: ControlPlaneEventHub;
+  /** A superseded workspace refresh must not admit its remaining candidates. */
+  readonly isCurrent?: () => boolean;
 }): Promise<readonly ProviderCheckResult[]> {
   const candidates = input.store
     .listProviderPresets()
     .filter((provider) => shouldRefreshProviderOnStartup(input.store, provider, input.secretResolver));
   const results: ProviderCheckResult[] = [];
   for (const provider of candidates) {
-    const result = withStartupRefreshMessage(await checkProviderPreset(input.store, provider, input.secretResolver));
-    const currentProvider = input.store.getProviderPreset(provider.id);
-    if (!currentProvider || !startupRefreshCandidateIsCurrent(provider, currentProvider)) {
-      if (currentProvider?.lastCheck) {
-        results.push(currentProvider.lastCheck);
-      }
-      continue;
-    }
-    input.store.recordProviderCheckResult(provider.id, result);
-    appendControlPlaneEvent(input.store, input.controlPlaneEvents, {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      cwd: input.cwd,
-      domain: "providers",
-      entityType: "provider",
-      entityId: provider.id,
-      action: "provider.preflight_checked",
-      data: {
-        providerId: provider.id,
-        ok: result.ok,
-        code: result.code ?? (result.ok ? "ok" : "failed"),
-        checkedAt: result.checkedAt,
-        source: "startup",
-      },
-    });
-    results.push(result);
+    if (input.isCurrent && !input.isCurrent()) break;
+    const current = input.store.getProviderPreset(provider.id);
+    if (!current || !shouldRefreshProviderOnStartup(input.store, current, input.secretResolver)) continue;
+    const admission = input.store.beginProviderCheckRequest(provider.id, "startup");
+    if (!admission) continue;
+    const result = withStartupRefreshMessage(await checkProviderPreset(input.store, admission.provider, input.secretResolver));
+    const publication = publishProviderCheckResult(input.store, input.controlPlaneEvents, admission.ticket, result, input.cwd);
+    if (publication.status === "published" && publication.provider.lastCheck) results.push(publication.provider.lastCheck);
   }
   return results;
-}
-
-function startupRefreshCandidateIsCurrent(candidate: ProviderPreset, current: ProviderPreset): boolean {
-  return JSON.stringify(candidate.lastCheck ?? null) === JSON.stringify(current.lastCheck ?? null);
 }
 
 function withStartupRefreshMessage(result: ProviderCheckResult): ProviderCheckResult {

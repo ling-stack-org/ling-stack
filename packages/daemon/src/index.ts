@@ -93,6 +93,8 @@ import { initializeDaemonWithCleanup } from "./startup/initialization.js";
 import { warmDefaultWorkspaceStartup } from "./startup/warmup.js";
 import { ComputerUseProjectionRegistry } from "./features/computer-use/registry.js";
 import { CuaDriverDesktopBridgeAuthority } from "./features/computer-use/desktop-bridge-authority.js";
+import { HumanEvaluationDesktopAuthority } from "./features/harness/evaluations/human-evaluation-authority.js";
+import { HumanEvaluationService } from "./features/harness/evaluations/human-evaluation-service.js";
 import { createLockedControlAuditPublisher } from "./features/computer-use/locked-control-audit.js";
 import { LockedComputerControlRegistry } from "./features/computer-use/locked-control-registry.js";
 import {
@@ -294,11 +296,11 @@ export function createDaemonServer(
     dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
     onStoreInitialized: (cwd, store) => {
-      approvalRecoveryStores.add(store);
       // A process may have crossed the shell side-effect boundary before the
       // daemon disappeared. Expired executing claims are never retried; they
       // become explicit unknown outcomes before any recovery dispatch runs.
       reconcileHarnessToolExecutionsAtStartup({ cwd, store, now: new Date().toISOString(), limit: 500 });
+      approvalRecoveryStores.add(store);
       configureNormalNarrationPublication(store, (event) => controlPlaneEvents.publish(event));
       void recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
         // Do not leak database/provider details, but do not hide a failed recovery sweep.
@@ -597,6 +599,13 @@ export function createDaemonServer(
     dispatcher: remoteReplyDispatcher,
   });
   const workspaceFileCapabilities = new WorkspaceFileCapabilityRegistry();
+  // Terminal-QA human authority is independent of CU gate, live Run or lease.
+  // Construction neither enrolls an ordinary task nor authenticates any sample.
+  const humanEvaluations = new HumanEvaluationService({
+    authority: new HumanEvaluationDesktopAuthority({ workspaceCwd: resolvedConfig.defaultWorkspaceCwd }),
+    getStore: () => storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd),
+    events: controlPlaneEvents,
+  });
   const context: DaemonContext = {
     config: resolvedConfig,
     runnerRegistry,
@@ -642,6 +651,7 @@ export function createDaemonServer(
     officeDocumentsPlugin,
     workspaceFileCapabilities,
     hostCapabilityBridge,
+    humanEvaluations,
   };
   const server = createServer((request, response) => {
     if (activeRuns.isShuttingDown()) {
@@ -817,6 +827,7 @@ export function createDaemonServer(
       }, () => daemon.stop());
     },
     stop: async () => {
+      humanEvaluations.close();
       storeRegistry.mediaLocalExecutions.beginShutdown();
       if (approvalRecoveryTimer) clearInterval(approvalRecoveryTimer);
       approvalRecoveryTimer = undefined;

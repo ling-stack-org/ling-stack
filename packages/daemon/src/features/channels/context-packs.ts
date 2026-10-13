@@ -10,6 +10,7 @@ import {
   type ProviderModelCapabilitySource,
   type ProviderPreset,
   type RunStore,
+  type SecretResolver,
   type WorkspaceStoreFacet,
 } from "@ling-stack/core";
 import type {
@@ -51,7 +52,8 @@ import type {
   ChannelContextView,
   ChannelContextViewKind,
 } from "./context-processing/types.js";
-import { providerRuntimeObservationForPreset } from "./provider-runtime-observations.js";
+import { providerRuntimeContextObservationForPreset } from "../providers/runtime-failure-observations.js";
+import type { ProviderRuntimeObservationScope } from "../providers/runtime-observation-scope.js";
 import { createWorkflowAgentContextStamp } from "./agent-context-consistency.js";
 
 export type ContextPackKind =
@@ -130,6 +132,8 @@ export interface ContextPack {
 }
 
 interface BuildContextPackInput {
+  readonly store?: RunStore;
+  readonly secretResolver?: SecretResolver;
   readonly kind: ContextPackKind;
   readonly providerPreset?: ProviderPreset;
   readonly sections: readonly ContextSection[];
@@ -141,6 +145,7 @@ interface BuildContextPackInput {
 
 interface ChannelReplyContextPackInput {
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly turnEnvelope?: LingAgentTurnEnvelope;
@@ -155,6 +160,7 @@ interface ChannelReplyContextPackInput {
 
 interface ChannelIntentSelectorContextPackInput {
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
   readonly channel: Channel;
   readonly sourceMessage: ChannelMessage;
   readonly turnEnvelope?: LingAgentTurnEnvelope;
@@ -192,9 +198,21 @@ const SELECTOR_OUTPUT_TOKENS = 512;
 const RUNTIME_OVERHEAD_TOKENS = 512;
 const MIN_INPUT_BUDGET_TOKENS = 1_024;
 
-export function resolveProviderContextCapabilities(providerPreset?: ProviderPreset): ProviderContextCapabilities {
+interface ProviderContextObservationHost {
+  readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
+  readonly now?: string;
+  readonly expectedScope?: ProviderRuntimeObservationScope;
+}
+
+export function resolveProviderContextCapabilities(
+  providerPreset?: ProviderPreset,
+  host?: ProviderContextObservationHost,
+): ProviderContextCapabilities {
   const snapshot = resolveProviderModelCapabilitySnapshot(providerPreset, {
-    runtimeObservation: providerRuntimeObservationForPreset(providerPreset),
+    runtimeObservation: host ? providerRuntimeContextObservationForPreset({
+      ...host, providerPresetId: providerPreset?.id,
+    }) : undefined,
   });
   return {
     contextWindowTokens: snapshot.chatEligible ? snapshot.contextWindowTokens : undefined,
@@ -209,8 +227,9 @@ export function resolveProviderContextCapabilities(providerPreset?: ProviderPres
 export function resolveProviderContextBudget(
   providerPreset: ProviderPreset | undefined,
   kind: ContextPackKind = "channel_reply",
+  host?: ProviderContextObservationHost,
 ): ContextBudget {
-  const capabilities = resolveProviderContextCapabilities(providerPreset);
+  const capabilities = resolveProviderContextCapabilities(providerPreset, host);
   const mode = contextBudgetModeForCapabilities(capabilities);
   const contextWindowTokens =
     capabilities.contextWindowTokens ??
@@ -233,7 +252,8 @@ export function resolveProviderContextBudget(
 }
 
 export function buildContextPack(input: BuildContextPackInput): ContextPack {
-  const budget = resolveProviderContextBudget(input.providerPreset, input.kind);
+  const budget = resolveProviderContextBudget(input.providerPreset, input.kind,
+    input.store ? { store: input.store, secretResolver: input.secretResolver } : undefined);
   const sections = input.sections.map((section) => ({
     ...section,
     compactionSurvival: section.compactionSurvival ?? defaultCompactionSurvivalForRole(section.role),
@@ -292,6 +312,8 @@ export function estimateTextTokens(text: string): number {
 }
 
 interface CompatContextView {
+  readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
   readonly kind: ContextPackKind;
   readonly providerPreset?: ProviderPreset;
   readonly view: ChannelContextView;
@@ -300,6 +322,8 @@ interface CompatContextView {
 }
 
 function buildCompatContextView(input: {
+  readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
   readonly viewKind: ChannelContextViewKind;
   readonly kind: ContextPackKind;
   readonly channel: Channel;
@@ -311,8 +335,10 @@ function buildCompatContextView(input: {
   readonly compactionIds?: readonly string[];
   readonly contextProjection?: ConversationContextProjectionMetadata;
 }): CompatContextView {
-  const budget = resolveProviderContextBudget(input.providerPreset, input.kind);
+  const budget = resolveProviderContextBudget(input.providerPreset, input.kind, input);
   return {
+    store: input.store,
+    secretResolver: input.secretResolver,
     kind: input.kind,
     providerPreset: input.providerPreset,
     legacySourceRefs: input.sourceRefs,
@@ -338,6 +364,8 @@ function buildCompatContextView(input: {
 
 function buildContextPackFromContextView(input: CompatContextView): ContextPack {
   return buildContextPack({
+    store: input.store,
+    secretResolver: input.secretResolver,
     kind: input.kind,
     providerPreset: input.providerPreset,
     sections: promptSectionsFromContextView(input.view).map(channelContextSectionToContextSection),
@@ -459,6 +487,8 @@ export function buildChannelReplyContextPack(input: ChannelReplyContextPackInput
     ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
   ];
   const view = buildCompatContextView({
+    store: input.store,
+    secretResolver: input.secretResolver,
     viewKind: "ling_agent_channel_view",
     kind,
     channel: input.channel,
@@ -552,6 +582,8 @@ export function buildChannelIntentSelectorContextPack(input: ChannelIntentSelect
     ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
   ];
   const view = buildCompatContextView({
+    store: input.store,
+    secretResolver: input.secretResolver,
     viewKind: "selector_view",
     kind: "intent_selector",
     channel: input.channel,
@@ -620,6 +652,8 @@ export function buildChannelAutoRouteContextPack(input: ChannelAutoRouteContextP
     ...(input.compactedChannelSummary ? [{ type: "context_summary" as const, id: input.compactedChannelSummary.id, label: "Compacted channel discussion" }] : []),
   ];
   const view = buildCompatContextView({
+    store: input.store,
+    secretResolver: input.secretResolver,
     viewKind: "selector_view",
     kind: "auto_route_selector",
     channel: input.channel,
@@ -670,7 +704,7 @@ function turnEnvelopeSourceRefs(envelope: LingAgentTurnEnvelope): readonly Conte
 export function buildWorkflowStepContextPack(input: WorkflowStepContextPackInput): ContextPack {
   const protocolSection = buildChannelProtocolContextSection(input);
   const providerPreset = input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined;
-  const budget = resolveProviderContextBudget(providerPreset, "workflow_step");
+  const budget = resolveProviderContextBudget(providerPreset, "workflow_step", input);
   const view = buildWorkflowStepContextView({
     ...input,
     protocolSection: contextSectionToChannelContextSection(protocolSection),
@@ -682,6 +716,8 @@ export function buildWorkflowStepContextPack(input: WorkflowStepContextPackInput
     },
   });
   const pack = buildContextPackFromContextView({
+    store: input.store,
+    secretResolver: input.secretResolver,
     kind: "workflow_step",
     providerPreset,
     view,

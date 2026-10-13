@@ -14,10 +14,12 @@ import {
   type ChannelParticipationMode,
   type ChannelTeamTurnSignal,
   type RunStore,
+  type SecretResolver,
   type TeamRuntimePlan,
 } from "@ling-stack/core";
 import { listEffectiveChannelAiTeammateEntries } from "./channel-teammate-availability.js";
 import type { LingAgentTurnEnvelope } from "./ling-agent-turn-envelope.js";
+import { listCurrentlyApplicableAvailabilityIncidents } from "../providers/runtime-failure-observations.js";
 
 export interface ChannelObserverBusResult {
   readonly attentionPlan?: AttentionPlan;
@@ -30,6 +32,7 @@ export interface ChannelObserverBusResult {
 export function runChannelObserverBusForTurn(input: {
   readonly enabled: boolean;
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
   readonly channel: Channel;
   readonly sourceMessageId: string;
   readonly turnEnvelope: LingAgentTurnEnvelope;
@@ -52,6 +55,7 @@ export function runChannelObserverBusForTurn(input: {
       capabilityManifest,
       input.channel.defaultProviderPresetId,
       input.now,
+      input.secretResolver,
     );
     return {
       entry,
@@ -136,6 +140,7 @@ function deriveLifecycleForCandidate(
   capabilityManifest: AgentCapabilityManifest,
   channelDefaultProviderPresetId: string | undefined,
   now: string,
+  secretResolver?: SecretResolver,
 ): { readonly availabilityState: AgentAvailabilityState; readonly qualityState: ReturnType<typeof deriveAgentLifecycleState>["qualityState"] } {
   const capabilityScope = capabilityManifest.capabilityScopes[0] ?? "general";
   const providerPresetId = resolveEffectiveTeammateProviderPresetId({
@@ -145,13 +150,16 @@ function deriveLifecycleForCandidate(
     channelDefaultProviderPresetId,
   });
   const availabilityIncidents = uniqueAvailabilityIncidents([
-    ...store.listAvailabilityIncidents({
+    ...listCurrentlyApplicableAvailabilityIncidents({
+      store, secretResolver,
       agentId: teammate.id,
+      applicableProviderPresetId: providerPresetId ?? null,
       now,
       limit: 50,
     }),
     ...(providerPresetId
-      ? store.listAvailabilityIncidents({
+      ? listCurrentlyApplicableAvailabilityIncidents({
+          store, secretResolver,
           providerPresetId,
           now,
           limit: 50,

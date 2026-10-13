@@ -4,6 +4,7 @@ import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import type { QueueableRunConflictCode } from "./concurrency.js";
 import type { RunRequest } from "./schemas.js";
 import { markLingThreadRunActive } from "./threads.js";
+import { providerForRunPersistence } from "./provider-persistence.js";
 
 export function createQueuedRunForConflict(input: {
   readonly store: RunStore;
@@ -25,6 +26,7 @@ export function createQueuedRunForConflict(input: {
   /** Continuation runs are persisted before concurrency admission. Reuse that row. */
   readonly existingRun?: RunSession;
 }): RunSession {
+  const persistenceProvider = providerForRunPersistence(input.provider);
   const run = input.existingRun ?? input.store.createRun({
     id: input.runId,
     cwd: input.runRequest.cwd,
@@ -37,11 +39,11 @@ export function createQueuedRunForConflict(input: {
     providerName: input.provider.provider,
     providerModel: input.provider.model,
     taskSnapshot: input.runRequest.task,
-    providerSnapshot: { providerPresetId: input.runRequest.providerPresetId, ...input.provider },
+    providerSnapshot: { providerPresetId: input.runRequest.providerPresetId, ...persistenceProvider },
     requestSnapshot: {
       ...input.runRequest,
       workspaceCwd: input.workspaceCwd,
-      provider: input.provider,
+      provider: persistenceProvider,
       threadId: input.thread?.id,
       turnId: input.turn?.id,
       runnerResolution: {

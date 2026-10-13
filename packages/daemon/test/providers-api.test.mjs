@@ -4,8 +4,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import { test } from "node:test";
-import { createSqliteRunStore } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, createCompositeSecretResolver, createSqliteRunStore, resolveStoragePaths } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
+import { ControlPlaneEventHub } from "../dist/features/control-plane/events.js";
 
 test("DELETE /providers/:id blocks channel references and preserves local secret", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-providers-api-delete-blocked-"));
@@ -506,6 +507,344 @@ test("provider import background result does not overwrite a newer edit", async 
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+test("provider manual check authority rejects a result after a connection edit", { timeout: 15_000 }, async (t) => {
+  const fixture = await createGatedProviderCheckFixture(t);
+  try {
+    const pending = fixture.check();
+    await fixture.waitForRequest(0);
+    const edited = await fixture.mutate("PATCH", { model: "replacement-model" });
+    assert.equal(edited.status, 200);
+    assert.equal(edited.body.provider.lastCheck, undefined);
+    const editedState = fixture.publicationState();
+    assert.equal(editedState.provider.model, "replacement-model");
+    assert.equal(editedState.provider.lastCheck, undefined);
+
+    fixture.release(0, "success");
+    const stale = await pending;
+    assert.deepEqual(fixture.publicationState(), editedState,
+      "an old connection check must not update the edited preset or publish its result");
+    assertProviderCheckSuperseded(stale, "config_changed");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("provider manual check authority rejects a result after provider deletion", { timeout: 15_000 }, async (t) => {
+  const fixture = await createGatedProviderCheckFixture(t);
+  try {
+    const pending = fixture.check();
+    await fixture.waitForRequest(0);
+    const deleted = await fixture.mutate("DELETE");
+    assert.equal(deleted.status, 200);
+
+    fixture.release(0, "success");
+    const stale = await pending;
+    assert.deepEqual(fixture.publicationState(), {
+      provider: undefined,
+      events: [],
+      broadcasts: [],
+    }, "a removed provider must not publish a ghost successful check");
+    assertProviderCheckSuperseded(stale, "deleted");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("provider manual check authority preserves the latest admitted result, not the last finisher", { timeout: 15_000 }, async (t) => {
+  const fixture = await createGatedProviderCheckFixture(t);
+  try {
+    const older = fixture.check();
+    await fixture.waitForRequest(0);
+    const newer = fixture.check();
+    await fixture.waitForRequest(1);
+    fixture.release(1, "empty");
+    const current = await newer;
+    assert.equal(current.status, 200);
+    assert.equal(current.body.ok, false);
+    assert.equal(current.body.code, "empty_response");
+    const published = fixture.publicationState();
+    assert.deepEqual(published.provider.lastCheck, current.body);
+    assert.equal(published.events.length, 1);
+    assert.equal(published.broadcasts.length, 1);
+
+    fixture.release(0, "success");
+    const stale = await older;
+    assert.deepEqual(fixture.publicationState(), published,
+      "an older successful result must not overwrite or broadcast after the newer failed result");
+    assertProviderCheckSuperseded(stale, "superseded");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("provider manual check authority returns the committed receipt when live notification throws", { timeout: 15_000 }, async (t) => {
+  const warnings = [];
+  const originalWarn = console.warn;
+  console.warn = (...values) => { warnings.push(values); };
+  let fixture;
+  try {
+    fixture = await createGatedProviderCheckFixture(t, { throwNotification: true });
+    const pending = fixture.check();
+    await fixture.waitForRequest(0);
+    fixture.release(0, "success");
+    const current = await pending;
+    assert.equal(current.status, 200);
+    assert.equal(current.body.ok, true);
+    const committed = fixture.storageState();
+    assert.deepEqual(committed.provider.lastCheck, current.body);
+    assert.equal(committed.events.length, 1);
+    assert.equal(committed.broadcasts.length, 1);
+    assert.equal(committed.authority.publishedRevision, committed.authority.requestRevision);
+    assert.equal(committed.replay.latestSeq, committed.events[0].seq);
+    assert.deepEqual(warnings, [["Provider check committed; live notification failed. Durable replay remains available."]]);
+    assert.doesNotMatch(JSON.stringify(warnings), /fixture-notification-private-detail/u);
+  } finally {
+    try {
+      if (fixture) await fixture.close();
+    } finally {
+      console.warn = originalWarn;
+    }
+  }
+});
+
+test("provider manual check authority returns its committed snapshot, not a postcommit edit", { timeout: 15_000 }, async (t) => {
+  let committedReceipt;
+  const fixture = await createGatedProviderCheckFixture(t, {
+    onCommitted({ store, publication }) {
+      committedReceipt = publication.provider.lastCheck;
+      store.updateProviderPreset(publication.provider.id, { model: "postcommit-replacement" }, new Date().toISOString());
+    },
+  });
+  try {
+    const pending = fixture.check();
+    await fixture.waitForRequest(0);
+    fixture.release(0, "success");
+    const current = await pending;
+    assert.equal(current.status, 200);
+    assert.deepEqual(current.body, committedReceipt);
+    const state = fixture.publicationState();
+    assert.equal(state.provider.model, "postcommit-replacement");
+    assert.equal(state.provider.lastCheck, undefined);
+    assert.equal(state.events.length, 1);
+    assert.equal(state.broadcasts.length, 1);
+    assert.equal(state.events[0].data.checkedAt, committedReceipt.checkedAt);
+  } finally {
+    await fixture.close();
+  }
+});
+
+for (const [label, triggerName, trigger] of [
+  ["check row update", "fail_http_provider_check_row", `
+    CREATE TRIGGER fail_http_provider_check_row BEFORE UPDATE OF last_check_json ON provider_presets
+    BEGIN SELECT RAISE(ABORT, 'provider HTTP check row fault'); END;
+  `],
+  ["event insert", "fail_http_provider_check_event", `
+    CREATE TRIGGER fail_http_provider_check_event BEFORE INSERT ON control_plane_events
+    WHEN NEW.action = 'provider.preflight_checked'
+    BEGIN SELECT RAISE(ABORT, 'provider HTTP check event fault'); END;
+  `],
+  ["replay-state update", "fail_http_provider_check_replay", `
+    CREATE TRIGGER fail_http_provider_check_replay BEFORE UPDATE ON control_plane_replay_state
+    BEGIN SELECT RAISE(ABORT, 'provider HTTP check replay fault'); END;
+  `],
+]) {
+  test(`provider manual check authority ${label} fault does not publish, consume or partially commit`, { timeout: 15_000 }, async (t) => {
+    const fixture = await createGatedProviderCheckFixture(t);
+    try {
+      const pending = fixture.check();
+      await fixture.waitForRequest(0);
+      fixture.exec(trigger);
+      const admitted = fixture.storageState();
+      fixture.release(0, "success");
+      const failed = await pending;
+      assert.equal(failed.status, 500);
+      assert.equal(failed.body.error, "internal_error");
+      assert.deepEqual(fixture.storageState(), admitted,
+        "a failed transaction must preserve result, authority, durable events, replay state and notifications");
+
+      fixture.exec(`DROP TRIGGER ${triggerName};`);
+      const retried = fixture.check();
+      await fixture.waitForRequest(1);
+      fixture.release(1, "success");
+      const recovered = await retried;
+      assert.equal(recovered.status, 200);
+      const final = fixture.storageState();
+      assert.deepEqual(final.provider.lastCheck, recovered.body);
+      assert.equal(final.events.length, 1);
+      assert.equal(final.broadcasts.length, 1);
+      assert.equal(final.authority.publishedRevision, final.authority.requestRevision);
+      assert.equal(final.replay.latestSeq, final.events[0].seq);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
+function assertProviderCheckSuperseded(response, reason) {
+  assert.equal(response.status, 409);
+  assert.equal(response.body.error, "provider_check_result_superseded");
+  assert.equal(response.body.reason, reason);
+  assert.deepEqual(Object.keys(response.body).sort(), ["error", "message", "reason"]);
+  for (const field of ["ok", "code", "checkedAt", "provider", "result"]) {
+    assert.equal(Object.hasOwn(response.body, field), false, `stale response must not include ${field}`);
+  }
+}
+
+async function createGatedProviderCheckFixture(t, options = {}) {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-provider-manual-authority-"));
+  const keychain = createFakeKeychainStore();
+  const ref = "keychain:LING_STACK_TEST_PROVIDER_AUTHORITY";
+  keychain.setSecret(ref, "fixture-provider-authority-secret");
+  const gates = Array.from({ length: 2 }, () => {
+    let arrive;
+    const requestArrived = new Promise((resolveArrived) => { arrive = resolveArrived; });
+    let release;
+    const responseReleased = new Promise((resolveReleased) => { release = resolveReleased; });
+    return { arrive, requestArrived, release, responseReleased };
+  });
+  let nextRequestIndex = 0;
+  const modelServer = createServer(async (request, response) => {
+    const index = nextRequestIndex++;
+    const gate = gates[index];
+    if (!gate) {
+      response.writeHead(500, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({ error: "unexpected extra provider check" }));
+      return;
+    }
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    gate.arrive({ url: request.url, headers: request.headers, body: JSON.parse(body) });
+    const result = await gate.responseReleased;
+    response.writeHead(200, { "Content-Type": "application/json" });
+    response.end(JSON.stringify({ choices: [{ message: {
+      role: "assistant", content: result === "empty" ? "" : `authority-result-${index}`,
+    } }] }));
+  });
+  await new Promise((resolveListen) => modelServer.listen(0, "127.0.0.1", resolveListen));
+  const modelAddress = modelServer.address();
+  assert.ok(modelAddress && typeof modelAddress === "object");
+  const broadcasts = [];
+  const originalPublish = ControlPlaneEventHub.prototype.publish;
+  ControlPlaneEventHub.prototype.publish = function (event) {
+    if (event.cwd === cwd && event.action === "provider.preflight_checked") {
+      broadcasts.push(event);
+      if (options.throwNotification) throw new Error("fixture-notification-private-detail");
+    }
+    return originalPublish.call(this, event);
+  };
+  let store;
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd: cwd }, {
+    externalSecretStore: keychain,
+    secretResolver: createCompositeSecretResolver({ env: {}, keychainResolver: keychain }),
+    storeFactory: (requestedCwd) => {
+      assert.equal(requestedCwd, cwd, "authority fixture must not open another workspace");
+      if (!store) {
+        store = createSqliteRunStore(requestedCwd, resolveStoragePaths(requestedCwd, {
+          userRootDir: resolve(cwd, "fixture-home"),
+          workspaceStateLocation: "user-data-dir",
+          env: {},
+        }).workspace);
+        if (options.onCommitted) {
+          const commit = store.commitProviderCheckResult.bind(store);
+          let hookConsumed = false;
+          store.commitProviderCheckResult = (...args) => {
+            const publication = commit(...args);
+            if (publication.status === "published" && !hookConsumed) {
+              hookConsumed = true;
+              options.onCommitted({ store, publication });
+            }
+            return publication;
+          };
+        }
+      }
+      return store;
+    },
+  });
+  const requests = [];
+  async function send(url, method, body) {
+    const pending = requestJson(url, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: t.signal,
+    });
+    requests.push(pending);
+    void pending.catch(() => {});
+    return pending;
+  }
+  async function close() {
+    for (const gate of gates) gate.release("success");
+    await Promise.allSettled(requests);
+    await daemon.stop();
+    ControlPlaneEventHub.prototype.publish = originalPublish;
+    await new Promise((resolveClose, rejectClose) => {
+      modelServer.close((error) => error ? rejectClose(error) : resolveClose());
+      modelServer.closeAllConnections();
+    });
+    await rm(cwd, { recursive: true, force: true });
+  }
+  try {
+    await daemon.start();
+    const address = daemon.server.address();
+    assert.ok(address && typeof address === "object");
+    const url = `http://127.0.0.1:${address.port}`;
+    const created = await send(`${url}/providers?cwd=${encodeURIComponent(cwd)}`, "POST", {
+      kind: "openai-compatible",
+      displayName: "Provider authority fixture",
+      providerId: "provider-authority-fixture",
+      model: "authority-model",
+      api: "openai-completions",
+      baseUrl: `http://127.0.0.1:${modelAddress.port}`,
+      apiKeyRef: ref,
+      capabilities: ["chat"],
+      input: ["text"],
+      enabled: true,
+    });
+    assert.equal(created.status, 201);
+    const providerId = created.body.provider.id;
+    const baselineSeq = store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID);
+    const providerUrl = `${url}/providers/${encodeURIComponent(providerId)}`;
+    const publicationState = () => ({
+      provider: store.getProviderPreset(providerId),
+      events: store.listControlPlaneEvents({ workspaceId: DEFAULT_WORKSPACE_ID, afterSeq: baselineSeq, domains: ["providers"], entityId: providerId })
+        .filter((event) => event.action === "provider.preflight_checked"),
+      broadcasts: broadcasts.filter((event) => event.entityId === providerId),
+    });
+    return {
+      check: () => send(`${providerUrl}/check?cwd=${encodeURIComponent(cwd)}`, "POST"),
+      mutate: (method, body) => send(`${providerUrl}?cwd=${encodeURIComponent(cwd)}`, method, body),
+      release: (index, result) => gates[index].release(result),
+      waitForRequest: (index) => waitForProviderRequest(gates[index].requestArrived, t.signal),
+      publicationState,
+      storageState: () => ({
+        ...publicationState(),
+        authority: store.getProviderCheckAuthority(providerId),
+        replay: store.getControlPlaneReplayState(DEFAULT_WORKSPACE_ID),
+      }),
+      exec: (sql) => store.database.exec(sql),
+      close,
+    };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
+function waitForProviderRequest(requestArrived, signal) {
+  return new Promise((resolveArrived, rejectArrived) => {
+    const onAbort = () => rejectArrived(signal.reason ?? new Error("provider check fixture aborted before request arrived"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    requestArrived.then((request) => {
+      signal.removeEventListener("abort", onAbort);
+      resolveArrived(request);
+    }, (error) => {
+      signal.removeEventListener("abort", onAbort);
+      rejectArrived(error);
+    });
+    if (signal.aborted) onAbort();
+  });
+}
 
 async function startDaemonForTest(stores, dependencies = {}) {
   const daemon = createDaemonServer({

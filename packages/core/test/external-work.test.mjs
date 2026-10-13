@@ -11,6 +11,7 @@ import {
   createGitHubExternalWorkAdapter,
   createLinearExternalWorkAdapter,
   executeExternalWorkAction,
+  ExternalWorkActionExecutionError,
   normalizeGitHubExternalWorkItem,
   normalizeLinearExternalWorkItem,
   parseExternalWorkflowMarkdown,
@@ -537,6 +538,481 @@ test("GitHub external action execution requires approval, revalidates, mutates o
     store.close();
     await rm(cwd, { recursive: true, force: true });
   }
+});
+
+test("B003 cancel wins while GitHub GET is withheld and late execution cannot send or overwrite cancellation", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-b003-cancel-"));
+  const now = "2026-05-30T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  const calls = [];
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  let execution;
+  try {
+    const imported = createImportedPullRequestWork(store, cwd, now);
+    const proposed = proposeExternalWorkAction({
+      store,
+      request: { externalWorkId: imported.externalWork.id, actionKind: "github_comment", payload: { type: "github_comment", body: "Cancellation race." } },
+      now,
+    });
+    const approved = store.approveApprovalRequest(proposed.approval.id, { resolvedBy: "local-user" }, now);
+    syncExternalWorkActionForApproval(store, approved, now);
+    const delegate = createGitHubActionFetch(calls);
+    execution = executeExternalWorkAction({
+      store, actionId: proposed.action.id, now,
+      fetch: async (url, init) => {
+        if (init?.method === "GET") {
+          entered.resolve();
+          await release.promise;
+        }
+        return delegate(url, init);
+      },
+    });
+    await entered.promise;
+    const cancelled = cancelExternalWorkAction({ store, actionId: proposed.action.id, now });
+    assert.equal(cancelled.action.status, "cancelled");
+    assert.equal(store.getExternalWorkAction(proposed.action.id).status, "cancelled");
+    release.resolve();
+    const result = await execution;
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 0);
+    assert.equal(result.action.status, "cancelled");
+    assert.equal(result.dispatchState, "not_sent");
+    assert.equal(result.executionSettled, true);
+    assert.equal(store.getExternalWorkAction(proposed.action.id).status, "cancelled");
+    assert.deepEqual(result.action.artifactIds, cancelled.action.artifactIds);
+  } finally {
+    release.resolve();
+    await execution?.catch(() => {});
+    store.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+for (const outcome of ["stale", "missing", "no-op", "throw"]) {
+  test(`B003 cancelled action rejects late GET ${outcome} without new evidence`, async () => {
+    const fixture = await createB003Fixture(outcome === "no-op" ? { type: "github_label", labels: ["ci"] } : undefined);
+    const { store, now, proposed } = fixture;
+    const calls = [];
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const delegate = createGitHubActionFetch(calls, outcome === "stale" ? {
+      pullRequest: { ...githubPullRequestPayload().pull_request, head: { sha: "changed-head" } },
+    } : {});
+    let execution;
+    try {
+      execution = executeExternalWorkAction({
+        store, actionId: proposed.action.id, now,
+        fetch: async (url, init) => {
+          if (init?.method === "GET") {
+            entered.resolve();
+            await release.promise;
+            if (outcome === "throw") throw new Error("Offline GET failure");
+            if (outcome === "missing") { calls.push({ url, init }); return jsonResponse({}, { ok: false, status: 404 }); }
+          }
+          return delegate(url, init);
+        },
+      });
+      await entered.promise;
+      const cancelled = cancelExternalWorkAction({ store, actionId: proposed.action.id, now });
+      const artifactCount = store.listExternalWorkArtifacts(fixture.imported.externalWork.id).length;
+      release.resolve();
+      const result = await execution;
+      assert.equal(result.action.status, "cancelled");
+      assert.equal(result.dispatchState, "not_sent");
+      assert.equal(result.executionSettled, true);
+      assert.deepEqual(result.action.artifactIds, cancelled.action.artifactIds);
+      assert.equal(store.listExternalWorkArtifacts(fixture.imported.externalWork.id).length, artifactCount);
+      assert.equal(calls.filter((call) => call.init.method === "POST").length, 0);
+    } finally {
+      release.resolve();
+      await execution?.catch(() => {});
+      await fixture.close();
+    }
+  });
+}
+
+test("B003 dispatch wins cancellation; approval sync and second execution cannot reopen executing action", async () => {
+  const fixture = await createB003Fixture();
+  const { store, now, proposed, approved } = fixture;
+  const calls = [];
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const delegate = createGitHubActionFetch(calls);
+  let execution;
+  try {
+    execution = executeExternalWorkAction({
+      store, actionId: proposed.action.id, now,
+      fetch: async (url, init) => {
+        const result = await delegate(url, init);
+        if (init?.method === "POST") { entered.resolve(); await release.promise; }
+        return result;
+      },
+    });
+    await entered.promise;
+    const executing = store.getExternalWorkAction(proposed.action.id);
+    assert.equal(executing.status, "executing");
+    assert.throws(() => cancelExternalWorkAction({ store, actionId: proposed.action.id, now }), /cannot be cancelled from status: executing/);
+    const before = store.listExternalWorkArtifacts(fixture.imported.externalWork.id).length;
+    assert.equal(syncExternalWorkActionForApproval(store, approved, now).status, "executing");
+    await assert.rejects(() => executeExternalWorkAction({ store, actionId: proposed.action.id, now, fetch: delegate }), /cannot execute from status: executing/);
+    assert.equal(store.listExternalWorkArtifacts(fixture.imported.externalWork.id).length, before);
+    assert.equal(store.listResourceLeases({ status: "active", resourceType: "external_subject" }).length, 1);
+    release.resolve();
+    const result = await execution;
+    assert.equal(result.action.status, "succeeded");
+    assert.equal(result.dispatchState, "effect_confirmed");
+    assert.equal(result.executionSettled, true);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+  } finally { release.resolve(); await execution?.catch(() => {}); await fixture.close(); }
+});
+
+test("B003 simultaneous execution during GET is blocked without releasing the first exact lease", async () => {
+  const fixture = await createB003Fixture();
+  const { store, now, proposed } = fixture;
+  const calls = [];
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const delegate = createGitHubActionFetch(calls);
+  let execution;
+  try {
+    execution = executeExternalWorkAction({
+      store, actionId: proposed.action.id, now,
+      fetch: async (url, init) => { if (init?.method === "GET") { entered.resolve(); await release.promise; } return delegate(url, init); },
+    });
+    await entered.promise;
+    const lease = store.listResourceLeases({ status: "active", resourceType: "external_subject" })[0];
+    await assert.rejects(() => executeExternalWorkAction({ store, actionId: proposed.action.id, now, fetch: delegate }), /External subject is locked/);
+    assert.equal(store.getBlockingResourceLease(lease.resourceType, lease.resourceKey).id, lease.id);
+    release.resolve();
+    assert.equal((await execution).action.status, "succeeded");
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+  } finally { release.resolve(); await execution?.catch(() => {}); await fixture.close(); }
+});
+
+for (const change of ["released", "expired"]) {
+  test(`B003 ${change} lease during GET cannot authorize dispatch or release a same-owner successor`, async () => {
+    const fixture = await createB003Fixture();
+    const { store, now, proposed } = fixture;
+    const calls = [];
+    const entered = Promise.withResolvers();
+    const release = Promise.withResolvers();
+    const delegate = createGitHubActionFetch(calls);
+    let execution;
+    try {
+      execution = executeExternalWorkAction({
+        store, actionId: proposed.action.id, now,
+        fetch: async (url, init) => { if (init?.method === "GET") { entered.resolve(); await release.promise; } return delegate(url, init); },
+      });
+      await entered.promise;
+      const lease = store.listResourceLeases({ status: "active", resourceType: "external_subject" })[0];
+      if (change === "released") store.releaseResourceLease(lease.id, lease.ownerType, lease.ownerId, now);
+      else store.expireResourceLeases("2026-05-30T00:06:00.000Z");
+      const successor = store.acquireResourceLease({ ...lease, acquiredAt: now, expiresAt: "2026-05-30T00:30:00.000Z" });
+      assert.ok(successor);
+      release.resolve();
+      const result = await execution;
+      assert.equal(result.dispatchState, "not_sent");
+      assert.equal(result.executionSettled, false);
+      assert.equal(result.action.status, "approved");
+      assert.equal(result.action.executionAttemptCount, 0);
+      assert.equal(calls.filter((call) => call.init.method === "POST").length, 0);
+      assert.equal(store.getBlockingResourceLease(lease.resourceType, lease.resourceKey).id, successor.id);
+      assert.deepEqual(result.action.artifactIds, proposed.action.artifactIds);
+    } finally { release.resolve(); await execution?.catch(() => {}); await fixture.close(); }
+  });
+}
+
+test("B003 production clock rechecks lease expiry at dispatch, not only before the HTTP await", async (t) => {
+  const fixture = await createB003Fixture();
+  const { store, now, proposed } = fixture;
+  t.mock.timers.enable({ apis: ["Date"], now: Date.parse(now) });
+  const calls = [];
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const delegate = createGitHubActionFetch(calls);
+  let execution;
+  try {
+    execution = executeExternalWorkAction({
+      store, actionId: proposed.action.id,
+      fetch: async (url, init) => { if (init?.method === "GET") { entered.resolve(); await release.promise; } return delegate(url, init); },
+    });
+    await entered.promise;
+    t.mock.timers.tick(5 * 60 * 1000 + 1);
+    release.resolve();
+    const result = await execution;
+    assert.equal(result.action.status, "approved");
+    assert.equal(result.dispatchState, "not_sent");
+    assert.equal(result.executionSettled, false);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 0);
+  } finally { release.resolve(); await execution?.catch(() => {}); t.mock.timers.reset(); await fixture.close(); }
+});
+
+test("B003 POST transport failure is effect-unconfirmed, redacted and cannot be automatically replayed", async () => {
+  const fixture = await createB003Fixture();
+  const { store, now, proposed } = fixture;
+  const calls = [];
+  const delegate = createGitHubActionFetch(calls);
+  try {
+    const result = await executeExternalWorkAction({
+      store, actionId: proposed.action.id, now, githubToken: "b003-private-token",
+      fetch: async (url, init) => { const response = await delegate(url, init); if (init?.method === "POST") throw new Error("Lost remote response b003-private-token"); return response; },
+    });
+    assert.equal(result.action.status, "failed");
+    assert.equal(result.action.lastErrorCode, "external_action_effect_unconfirmed");
+    assert.equal(result.dispatchState, "effect_unconfirmed");
+    assert.equal(result.executionSettled, true);
+    assert.doesNotMatch(JSON.stringify(result), /b003-private-token/);
+    const failure = result.artifacts.find((artifact) => artifact.title === "External action execution failure");
+    const evidence = await readFile(resolve(store.paths.artifactsDir, failure.path), "utf8");
+    assert.match(evidence, /effect_unconfirmed/);
+    assert.doesNotMatch(evidence, /b003-private-token/);
+    await assert.rejects(() => executeExternalWorkAction({ store, actionId: proposed.action.id, now, fetch: delegate }), /cannot execute from status: failed/);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+  } finally { await fixture.close(); }
+});
+
+test("B003 lost lease after POST retains unconfirmed executing state without stale evidence or successor release", async () => {
+  const fixture = await createB003Fixture();
+  const { store, now, proposed } = fixture;
+  const calls = [];
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const delegate = createGitHubActionFetch(calls);
+  let execution;
+  try {
+    execution = executeExternalWorkAction({
+      store, actionId: proposed.action.id, now,
+      fetch: async (url, init) => { const result = await delegate(url, init); if (init?.method === "POST") { entered.resolve(); await release.promise; } return result; },
+    });
+    await entered.promise;
+    const lease = store.listResourceLeases({ status: "active", resourceType: "external_subject" })[0];
+    store.releaseResourceLease(lease.id, lease.ownerType, lease.ownerId, now);
+    const successor = store.acquireResourceLease({ ...lease, acquiredAt: now, expiresAt: "2026-05-30T00:30:00.000Z" });
+    assert.ok(successor);
+    release.resolve();
+    const result = await execution;
+    assert.equal(result.action.status, "executing");
+    assert.equal(result.dispatchState, "effect_unconfirmed");
+    assert.equal(result.executionSettled, false);
+    assert.deepEqual(result.action.artifactIds, proposed.action.artifactIds);
+    assert.equal(store.getBlockingResourceLease(lease.resourceType, lease.resourceKey).id, successor.id);
+    await assert.rejects(() => executeExternalWorkAction({ store, actionId: proposed.action.id, now, fetch: delegate }), /cannot execute from status: executing/);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+  } finally { release.resolve(); await execution?.catch(() => {}); await fixture.close(); }
+});
+
+test("B003 separate SQLite connection cancellation wins an in-flight GET", async () => {
+  const fixture = await createB003Fixture();
+  const { store, cwd, now, proposed } = fixture;
+  const second = createSqliteRunStore(cwd);
+  const calls = [];
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const delegate = createGitHubActionFetch(calls);
+  let execution;
+  try {
+    execution = executeExternalWorkAction({
+      store, actionId: proposed.action.id, now,
+      fetch: async (url, init) => { if (init?.method === "GET") { entered.resolve(); await release.promise; } return delegate(url, init); },
+    });
+    await entered.promise;
+    assert.equal(cancelExternalWorkAction({ store: second, actionId: proposed.action.id, now }).action.status, "cancelled");
+    release.resolve();
+    const result = await execution;
+    assert.equal(result.action.status, "cancelled");
+    assert.equal(result.executionSettled, true);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 0);
+    assert.equal(second.getExternalWorkAction(proposed.action.id).status, "cancelled");
+  } finally { release.resolve(); await execution?.catch(() => {}); second.close(); await fixture.close(); }
+});
+
+test("B003 cancellation CAS rejects a stale read after separate-connection dispatch commits", async () => {
+  const fixture = await createB003Fixture();
+  const { store, cwd, now, proposed, imported } = fixture;
+  const second = createSqliteRunStore(cwd);
+  let intercepted = false;
+  try {
+    const lease = second.acquireResourceLease({ workspaceId: proposed.action.workspaceId, ownerType: "system", ownerId: "b003-independent-executor", resourceType: "external_subject", resourceKey: imported.externalWork.item.id, acquiredAt: now, expiresAt: "2026-05-30T00:05:00.000Z" });
+    assert.ok(lease);
+    const staleReadStore = new Proxy(store, {
+      get(target, key) {
+        if (key === "getExternalWorkAction") return (id) => {
+          const snapshot = target.getExternalWorkAction(id);
+          if (!intercepted) {
+            intercepted = true;
+            const executing = second.commitExternalWorkActionTransition({
+              actionId: id, expectedStatus: snapshot.status, expectedExecutionAttemptCount: snapshot.executionAttemptCount,
+              expectedApprovalId: snapshot.approvalId, approvalStatus: "approved",
+              subjectLease: { id: lease.id, ownerId: lease.ownerId, resourceKey: lease.resourceKey },
+              update: { status: "executing", executionAttemptCount: 1 },
+            }, now);
+            assert.equal(executing.status, "executing");
+          }
+          return snapshot;
+        };
+        const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+      },
+    });
+    const count = store.listExternalWorkArtifacts(imported.externalWork.id).length;
+    assert.throws(() => cancelExternalWorkAction({ store: staleReadStore, actionId: proposed.action.id, now }), /changed before cancellation/);
+    assert.equal(second.getExternalWorkAction(proposed.action.id).status, "executing");
+    assert.equal(store.getApprovalRequest(proposed.approval.id).status, "approved");
+    assert.equal(store.listExternalWorkArtifacts(imported.externalWork.id).length, count);
+  } finally { second.close(); await fixture.close(); }
+});
+
+test("B003 foreign approval identity during GET rejects dispatch and stale approval sync", async () => {
+  const fixture = await createB003Fixture();
+  const { store, now, proposed, imported, approved } = fixture;
+  const calls = [];
+  const entered = Promise.withResolvers();
+  const release = Promise.withResolvers();
+  const delegate = createGitHubActionFetch(calls);
+  let execution;
+  try {
+    execution = executeExternalWorkAction({
+      store, actionId: proposed.action.id, now,
+      fetch: async (url, init) => { if (init?.method === "GET") { entered.resolve(); await release.promise; } return delegate(url, init); },
+    });
+    await entered.promise;
+    const other = proposeExternalWorkAction({ store, request: { externalWorkId: imported.externalWork.id, actionKind: "github_label", payload: { type: "github_label", labels: ["other-action"] } }, now });
+    const otherApproved = store.approveApprovalRequest(other.approval.id, { resolvedBy: "local-user" }, now);
+    syncExternalWorkActionForApproval(store, otherApproved, now);
+    store.updateExternalWorkAction(proposed.action.id, { approvalId: other.approval.id }, now);
+    assert.equal(syncExternalWorkActionForApproval(store, approved, now).approvalId, other.approval.id);
+    release.resolve();
+    const result = await execution;
+    assert.equal(result.action.status, "approved");
+    assert.equal(result.dispatchState, "not_sent");
+    assert.equal(result.executionSettled, false);
+    assert.deepEqual(result.action.artifactIds, proposed.action.artifactIds);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 0);
+    await assert.rejects(() => executeExternalWorkAction({ store, actionId: proposed.action.id, now, fetch: delegate }), /does not belong/);
+  } finally { release.resolve(); await execution?.catch(() => {}); await fixture.close(); }
+});
+
+test("B003 cancellation evidence failure atomically rolls back pending approval denial and action", async () => {
+  const fixture = await createB003Fixture(undefined, false);
+  const { store, now, proposed, imported } = fixture;
+  try {
+    const artifactCount = store.listExternalWorkArtifacts(imported.externalWork.id).length;
+    const failingStore = new Proxy(store, { get(target, key) {
+      if (key === "createArtifact") return () => { throw new Error("Isolated cancellation evidence persistence failure"); };
+      const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+    } });
+    assert.throws(() => cancelExternalWorkAction({ store: failingStore, actionId: proposed.action.id, now }), /evidence persistence failure/);
+    assert.equal(store.getExternalWorkAction(proposed.action.id).status, "waiting_for_approval");
+    assert.equal(store.getApprovalRequest(proposed.approval.id).status, "pending");
+    assert.equal(store.listExternalWorkArtifacts(imported.externalWork.id).length, artifactCount);
+    const cancelled = cancelExternalWorkAction({ store, actionId: proposed.action.id, now });
+    assert.equal(cancelled.action.status, "cancelled");
+    assert.equal(cancelled.approval.status, "denied");
+  } finally { await fixture.close(); }
+});
+
+test("B003 post-send success evidence persistence failure is not reported as zero effect", async () => {
+  const fixture = await createB003Fixture();
+  const { store, now, proposed } = fixture;
+  const calls = [];
+  let failedOnce = false;
+  try {
+    const failingStore = new Proxy(store, { get(target, key) {
+      if (key === "createArtifact") return (input) => {
+        if (!failedOnce && input.title === "External action execution result") { failedOnce = true; throw new Error("Isolated result persistence failure"); }
+        return target.createArtifact(input);
+      };
+      const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+    } });
+    const result = await executeExternalWorkAction({ store: failingStore, actionId: proposed.action.id, now, fetch: createGitHubActionFetch(calls) });
+    assert.equal(result.action.status, "failed");
+    assert.equal(result.action.lastErrorCode, "external_action_effect_unconfirmed");
+    assert.equal(result.dispatchState, "effect_unconfirmed");
+    assert.equal(result.executionSettled, true);
+    assert.equal(result.artifacts.filter((artifact) => artifact.title === "External action execution result").length, 0);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+  } finally { await fixture.close(); }
+});
+
+test("B003 approved label no-op settles without claiming a POST was sent", async () => {
+  const fixture = await createB003Fixture({ type: "github_label", labels: ["ci"] });
+  const calls = [];
+  try {
+    const result = await executeExternalWorkAction({ store: fixture.store, actionId: fixture.proposed.action.id, now: fixture.now, fetch: createGitHubActionFetch(calls) });
+    assert.equal(result.action.status, "succeeded");
+    assert.equal(result.dispatchState, "not_sent");
+    assert.equal(result.executionSettled, true);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 0);
+    assert.ok(result.artifacts.some((artifact) => artifact.title === "External action already satisfied"));
+  } finally { await fixture.close(); }
+});
+
+test("B003 total post-send evidence persistence outage throws typed unconfirmed error without leaking raw secrets", async () => {
+  const fixture = await createB003Fixture();
+  const { store, now, proposed } = fixture;
+  const calls = [];
+  try {
+    const failingStore = new Proxy(store, { get(target, key) {
+      if (key === "createArtifact") return () => { throw new Error("Raw persistence detail b003-private-token"); };
+      const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+    } });
+    await assert.rejects(() => executeExternalWorkAction({ store: failingStore, actionId: proposed.action.id, now, githubToken: "b003-private-token", fetch: createGitHubActionFetch(calls) }), (error) => {
+      assert.ok(error instanceof ExternalWorkActionExecutionError);
+      assert.equal(error.code, "external_action_effect_unconfirmed");
+      assert.equal(error.dispatchState, "effect_unconfirmed");
+      assert.doesNotMatch(String(error), /b003-private-token|Raw persistence detail/);
+      return true;
+    });
+    assert.equal(store.getExternalWorkAction(proposed.action.id).status, "executing");
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+    await assert.rejects(() => executeExternalWorkAction({ store, actionId: proposed.action.id, now, fetch: createGitHubActionFetch(calls) }), /cannot execute from status: executing/);
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+  } finally { await fixture.close(); }
+});
+
+for (const noop of [false, true]) {
+  test(`B003 exact lease cleanup failure preserves ${noop ? "no-op without send" : "confirmed mutation"} outcome`, async () => {
+    const fixture = await createB003Fixture(noop ? { type: "github_label", labels: ["ci"] } : undefined);
+    const { store, now, proposed } = fixture;
+    const calls = [];
+    try {
+      const failingStore = new Proxy(store, { get(target, key) {
+        if (key === "releaseResourceLease") return () => { throw new Error("Raw cleanup detail b003-private-token"); };
+        const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+      } });
+      await assert.rejects(() => executeExternalWorkAction({ store: failingStore, actionId: proposed.action.id, now, fetch: createGitHubActionFetch(calls) }), (error) => {
+        assert.ok(error instanceof ExternalWorkActionExecutionError);
+        assert.equal(error.code, "external_action_cleanup_failed");
+        assert.equal(error.dispatchState, noop ? "not_sent" : "effect_confirmed");
+        assert.doesNotMatch(String(error), /b003-private-token|Raw cleanup detail|final state could not be persisted/);
+        return true;
+      });
+      assert.equal(store.getExternalWorkAction(proposed.action.id).status, "succeeded");
+      assert.equal(calls.filter((call) => call.init.method === "POST").length, noop ? 0 : 1);
+      await assert.rejects(() => executeExternalWorkAction({ store, actionId: proposed.action.id, now, fetch: createGitHubActionFetch(calls) }), /cannot execute from status: succeeded/);
+      assert.equal(calls.filter((call) => call.init.method === "POST").length, noop ? 0 : 1);
+    } finally { await fixture.close(); }
+  });
+}
+
+test("B003 total post-send persistence and cleanup outage cannot replace the original unconfirmed send boundary", async () => {
+  const fixture = await createB003Fixture();
+  const { store, now, proposed } = fixture;
+  const calls = [];
+  try {
+    const failingStore = new Proxy(store, { get(target, key) {
+      if (key === "createArtifact" || key === "releaseResourceLease") return () => { throw new Error("Raw outage detail b003-private-token"); };
+      const value = Reflect.get(target, key); return typeof value === "function" ? value.bind(target) : value;
+    } });
+    await assert.rejects(() => executeExternalWorkAction({ store: failingStore, actionId: proposed.action.id, now, fetch: createGitHubActionFetch(calls) }), (error) => {
+      assert.ok(error instanceof ExternalWorkActionExecutionError);
+      assert.equal(error.code, "external_action_effect_unconfirmed");
+      assert.equal(error.dispatchState, "effect_unconfirmed");
+      assert.doesNotMatch(String(error), /Raw outage detail|b003-private-token/);
+      return true;
+    });
+    assert.equal(store.getExternalWorkAction(proposed.action.id).status, "executing");
+    assert.equal(calls.filter((call) => call.init.method === "POST").length, 1);
+  } finally { await fixture.close(); }
 });
 
 test("GitHub external action execution marks stale target before mutation when PR head changes", async () => {
@@ -1089,6 +1565,19 @@ function githubRepository() {
       login: "openclaw",
     },
   };
+}
+
+async function createB003Fixture(payload = { type: "github_comment", body: "B003 isolated action." }, approve = true) {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-b003-matrix-"));
+  const now = "2026-05-30T00:00:00.000Z";
+  const store = createSqliteRunStore(cwd);
+  try {
+    const imported = createImportedPullRequestWork(store, cwd, now);
+    const proposed = proposeExternalWorkAction({ store, request: { externalWorkId: imported.externalWork.id, actionKind: payload.type, payload }, now });
+    const approved = approve ? store.approveApprovalRequest(proposed.approval.id, { resolvedBy: "local-user" }, now) : undefined;
+    if (approved) syncExternalWorkActionForApproval(store, approved, now);
+    return { cwd, store, now, imported, proposed, approved, close: async () => { store.close(); await rm(cwd, { recursive: true, force: true }); } };
+  } catch (error) { store.close(); await rm(cwd, { recursive: true, force: true }); throw error; }
 }
 
 function createImportedPullRequestWork(store, cwd, now) {

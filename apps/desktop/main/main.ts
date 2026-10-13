@@ -66,6 +66,7 @@ import type { DesktopStartupFailurePrompt } from "./startup-failure-recovery.js"
 import { loadOrCreateDesktopBridgeToken } from "./bridge-token.js";
 import { registerDesktopIpc } from "./ipc.js";
 import { registerDesktopThemePackageIpc } from "./theme-packages/theme-package-ipc.js";
+import { createHumanEvaluationDesktopComposition } from "./human-evaluation/composition.js";
 import { DesktopMobileAccessClient } from "./mobile-access/client.js";
 import { OfficeDriverRuntime, resolveOfficeDriverExecutablePath } from "./office-driver/runtime.js";
 import { HostCapabilityRuntime } from "./host-capabilities/runtime.js";
@@ -159,6 +160,7 @@ let smokeProjectionSource: "daemon" | "fake" = "fake";
 let desktopBridgeToken: string | undefined;
 let unregisterIpc: (() => void) | undefined;
 let unregisterThemePackageIpc: (() => void) | undefined;
+let humanEvaluation: ReturnType<typeof createHumanEvaluationDesktopComposition> | undefined;
 let unregisterLockedControlPreview: (() => void) | undefined;
 let desktopRuntime: DesktopRuntime | undefined;
 let desktopDaemonAutomaticRecoveryArmed = false;
@@ -600,6 +602,10 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
   }
   const initializedThemePackages = await desktopThemePackageRepository.initialize();
   if (!initializedThemePackages.ok) throw new Error("desktop_theme_packages_initialize_failed");
+  humanEvaluation ??= createHumanEvaluationDesktopComposition({ daemonBaseUrl, bridgeToken,
+    desktopInstanceId: desktopRuntime.desktopInstanceId, workspaceCwd: defaultWorkspaceCwd,
+    resourcesRoot: resources.resourcesRoot, knownAppUrl: pathToFileURL(resources.webIndexPath).href,
+    packaged: app.isPackaged, getMainWindow: () => mainWindow ?? loadingMainWindow, powerMonitor });
   if (!unregisterThemePackageIpc) {
     unregisterThemePackageIpc = registerDesktopThemePackageIpc({
       repository: desktopThemePackageRepository,
@@ -645,6 +651,7 @@ async function openMainWindowOnce(attempt: DesktopStartupOpenAttempt): Promise<b
           return;
         }
         loadingMainWindow = window;
+        humanEvaluation?.bindOwner(window);
         window.once("closed", () => {
           if (loadingMainWindow === window) {
             loadingMainWindow = undefined;
@@ -1990,6 +1997,10 @@ async function shutdown(): Promise<void> {
   const activeUnregisterThemePackageIpc = unregisterThemePackageIpc;
   unregisterThemePackageIpc = undefined;
   await attemptCleanup(() => activeUnregisterThemePackageIpc?.());
+
+  const activeHumanEvaluation = humanEvaluation;
+  humanEvaluation = undefined;
+  await attemptCleanup(() => activeHumanEvaluation?.dispose());
 
   const activeUnregisterIpc = unregisterIpc;
   unregisterIpc = undefined;

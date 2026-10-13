@@ -9,6 +9,14 @@ const entryUrl = new URL("../scripts/package-macos-with-office.mjs", import.meta
 const configUrl = new URL("../scripts/cua-driver-electron-builder.config.mjs", import.meta.url);
 const builderArguments = Object.freeze(["--mac", "dmg", "zip", "--arm64"]);
 const expectedBuilderArgs = ["--config", fileURLToPath(configUrl), ...builderArguments];
+// Independent contract cases, not imported from the production admission helper.
+const signingEnvironmentKeys = Object.freeze([
+  "CSC_LINK", "CSC_KEY_PASSWORD", "CSC_INSTALLER_LINK", "CSC_INSTALLER_KEY_PASSWORD",
+  "CSC_KEYCHAIN", "CSC_NAME", "CSC_FOR_PULL_REQUEST", "CSC_IDENTITY_AUTO_DISCOVERY",
+  "APPLE_ID", "APPLE_APP_SPECIFIC_PASSWORD", "APPLE_TEAM_ID", "APPLE_API_KEY",
+  "APPLE_API_KEY_ID", "APPLE_API_ISSUER", "APPLE_KEYCHAIN", "APPLE_KEYCHAIN_PROFILE",
+]);
+const secretSentinel = "explicit-test-only-signing-secret-must-not-appear-in-errors";
 const keys = Object.freeze({
   existing: "LING_OFFICE_FIXED_ENTRY_TEST_EXISTING",
   missing: "LING_OFFICE_FIXED_ENTRY_TEST_MISSING",
@@ -54,9 +62,11 @@ function assertRestored() {
  */
 async function fixture(t, options = {}) {
   seedEnvironment(t, {
+    ...Object.fromEntries(signingEnvironmentKeys.map(key => [key, undefined])),
     [keys.existing]: "before", [keys.missing]: undefined,
     [keys.removed]: "remove-before", [keys.omitted]: "untouched-before",
     LING_CUA_DRIVER_PACKAGE_PROVIDER: undefined,
+    LING_DESKTOP_PACKAGE_HUMAN_QA: undefined,
   });
   for (const [key, value] of [["platform", options.platform ?? "darwin"], ["arch", options.arch ?? "arm64"]]) {
     const original = Object.getOwnPropertyDescriptor(process, key);
@@ -70,6 +80,7 @@ async function fixture(t, options = {}) {
     environment: Object.freeze({
       [keys.existing]: "during", [keys.missing]: "temporary", [keys.removed]: undefined,
       LING_CUA_DRIVER_PACKAGE_PROVIDER: "0",
+      ...options.derivedEnvironment,
     }),
     failure: new Error("explicit_test_only_fixed_entry_failure"),
     fail(stage) { if (options.failAt === stage) throw this.failure; },
@@ -93,6 +104,7 @@ async function fixture(t, options = {}) {
       assert.deepEqual(values, ["--platform", "darwin", "--", ...builderArguments]);
       assert.deepEqual(Object.keys(dependencies), ["runBuilder"]);
       this.fail("cli");
+      await options.onCli?.();
       try {
         const result = await dependencies.runBuilder({
           appRoot: options.appRoot ?? desktopRoot,
@@ -122,7 +134,9 @@ async function fixture(t, options = {}) {
       this.configUrls.push(originalUrl); this.configEntered.settle();
       await (options.configGate?.promise ?? Promise.resolve());
       this.assertScope(true); this.fail("config"); this.audit.push("config-completed");
-      return { mac: options.macConfig ?? { identity: "-" }, testOnly: { pid: process.pid, token: this.active } };
+      await options.onConfig?.();
+      return { ...options.topLevelConfig, mac: options.macConfig ?? { identity: "-" },
+        testOnly: { pid: process.pid, token: this.active } };
     },
     targets(names, arch) {
       this.assertScope(true);
@@ -157,6 +171,8 @@ async function fixture(t, options = {}) {
       shim("export const buildFreshPackagedDaemonForMacOffice = () => state.daemon();")],
     [new URL("../scripts/build-packaged-office-native.mjs", import.meta.url).href,
       shim("export const withOriginalPackagedOfficeNativePublication = (...args) => state.publication(...args);")],
+    [new URL("../scripts/build-human-evaluation-helper.mjs", import.meta.url).href,
+      shim("export const buildHumanEvaluationHelper = () => { state.assertScope(true); state.humanBuildCalls = (state.humanBuildCalls ?? 0) + 1; state.fail('human-helper'); return { testOnly: true }; };")],
     [new URL("../scripts/cua-driver-electron-package.mjs", import.meta.url).href,
       shim("export const runCuaDriverElectronPackageCli = (...args) => state.cli(...args);")],
     [new URL("../scripts/cua-driver-signing/signing-contract.mjs", import.meta.url).href,
@@ -178,6 +194,50 @@ async function fixture(t, options = {}) {
 }
 
 test("fixed Office package entry regression (test-only loader, no native/signature/package approval)", async t => {
+  await t.test("QA uses the original publication/signing path with fixed separate identity", async t => {
+    const f = await fixture(t, {
+      derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: "1" },
+      topLevelConfig: { appId: "com.lingstack.desktop", productName: "Ling Stack", directories: { output: "release" } },
+    });
+    process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "1";
+    await f.api.packageMacosWithOffice();
+    assert.equal(f.state.tokens.length, 1);
+    assert.equal(f.state.humanBuildCalls, 1);
+    assert.equal(f.state.buildCalls.length, 1);
+    const { config } = f.state.buildCalls[0];
+    assert.equal(config.appId, "com.lingstack.desktop.human-qa");
+    assert.equal(config.productName, "Ling Stack Human QA");
+    assert.equal(config.directories.output, "release/human-qa");
+    assert.equal(config.mac.identity, "-");
+    assert.equal(config.mac.sign, undefined);
+    assert.equal(config.extraMetadata.lingHumanQaPackage.release, false);
+    assert.equal(f.state.active, undefined);
+  });
+
+  await t.test("invalid QA selector refuses before CLI/native/build", async t => {
+    const f = await fixture(t);
+    process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "0";
+    await assert.rejects(f.api.packageMacosWithOffice(), /human_qa_lane_invalid/u);
+    assert.deepEqual(f.state.audit, []);
+    assert.equal(f.state.tokens.length, 0);
+    assert.equal(f.state.buildCalls.length, 0);
+  });
+
+  await t.test("derived environment cannot change the admitted lane", async t => {
+    const f = await fixture(t, { derivedEnvironment: { LING_DESKTOP_PACKAGE_HUMAN_QA: "1" } });
+    await assert.rejects(f.api.packageMacosWithOffice(), /human_qa_selection_changed/u);
+    assert.equal(f.state.tokens.length, 0);
+    assert.equal(f.state.buildCalls.length, 0);
+  });
+
+  await t.test("config-time lane drift refuses Builder and closes publication", async t => {
+    const f = await fixture(t, { onConfig: () => { process.env.LING_DESKTOP_PACKAGE_HUMAN_QA = "1"; } });
+    await assert.rejects(f.api.packageMacosWithOffice(), /human_qa_selection_changed/u);
+    assert.equal(f.state.tokens.length, 1);
+    assert.equal(f.state.buildCalls.length, 0);
+    assert.equal(f.state.active, undefined);
+  });
+
   await t.test("same-process config import and Builder stay awaited inside real environment scope", async t => {
     const configGate = deferred(), builderGate = deferred();
     const f = await fixture(t, { configGate, builderGate });
@@ -193,6 +253,7 @@ test("fixed Office package entry regression (test-only loader, no native/signatu
       assert.equal(f.state.tokens.length, 1);
     } finally { configGate.settle(); builderGate.settle(); await pending; }
     assert.equal(settled, true); assert.equal(f.state.active, undefined); assertRestored();
+    assert.equal(f.state.humanBuildCalls, 1, "fixed human helper build belongs inside the approved publication scope");
     assert.deepEqual(f.state.audit, ["profile", "cli-enter", "daemon", "publication-enter", "config-enter",
       "config-completed", "targets", "build-enter", "build-completed", "publication-finally", "cli-completed", "cli-finally"]);
   });
@@ -221,7 +282,7 @@ test("fixed Office package entry regression (test-only loader, no native/signatu
     assert.equal(f.state.tokens.length, 1); assert.equal(f.state.buildCalls.length, 1); assertRestored();
   });
 
-  for (const stage of ["profile", "cli", "daemon", "publication-enter", "config", "builder", "publication-close"]) {
+  for (const stage of ["profile", "cli", "daemon", "publication-enter", "human-helper", "config", "builder", "publication-close"]) {
     await t.test(`failure at ${stage} propagates, restores env and releases entry guard`, async t => {
       const f = await fixture(t, { failAt: stage });
       await assert.rejects(f.api.packageMacosWithOffice(), error => error === f.state.failure);
@@ -251,6 +312,55 @@ test("fixed Office package entry regression (test-only loader, no native/signatu
     await f.api.packageMacosWithOffice(); assertRestored();
   });
 
+  for (const key of signingEnvironmentKeys) {
+    for (const value of [secretSentinel, ""]) {
+      await t.test(`ambient ${key} ${value === "" ? "empty presence" : "input"} rejects before Cua/native/Builder`, async t => {
+        const f = await fixture(t);
+        process.env[key] = value;
+        await assert.rejects(f.api.packageMacosWithOffice(), error => {
+          assert.match(error.message, /signing_inputs_unsupported/u);
+          assert.ok(error.message.includes(key));
+          assert.equal(error.message.includes(secretSentinel), false);
+          return true;
+        });
+        assert.equal(process.env[key], value);
+        assert.equal(f.state.audit.includes("cli-enter"), false);
+        assert.equal(f.state.tokens.length, 0); assert.equal(f.state.buildCalls.length, 0);
+        delete process.env[key];
+        await f.api.packageMacosWithOffice(); await f.api.packageMacosWithOffice();
+        assert.equal(f.state.buildCalls.length, 2); assertRestored();
+      });
+    }
+    await t.test(`derived ${key} input rejects before native/Builder without sanitizing`, async t => {
+      const f = await fixture(t, { derivedEnvironment: { [key]: secretSentinel } });
+      await assert.rejects(f.api.packageMacosWithOffice(), error => {
+        assert.match(error.message, /signing_inputs_unsupported/u);
+        assert.ok(error.message.includes(key));
+        assert.equal(error.message.includes(secretSentinel), false);
+        return true;
+      });
+      assert.equal(f.state.environment[key], secretSentinel);
+      assert.equal(Object.hasOwn(process.env, key), false);
+      assert.equal(f.state.tokens.length, 0); assert.equal(f.state.buildCalls.length, 0);
+      const cleanEnvironment = { ...f.state.environment };
+      delete cleanEnvironment[key]; f.state.environment = Object.freeze(cleanEnvironment);
+      await f.api.packageMacosWithOffice(); await f.api.packageMacosWithOffice();
+      assert.equal(f.state.buildCalls.length, 2); assertRestored();
+    });
+  }
+
+  for (const [stage, expectedNativeSelections] of [["onCli", 0], ["onConfig", 1]]) {
+    await t.test(`signing input introduced at ${stage} is rechecked before its next side effect`, async t => {
+      const f = await fixture(t, { [stage]: () => { process.env.CSC_KEYCHAIN = secretSentinel; } });
+      await assert.rejects(f.api.packageMacosWithOffice(), /signing_inputs_unsupported/u);
+      assert.equal(process.env.CSC_KEYCHAIN, secretSentinel);
+      assert.equal(f.state.tokens.length, expectedNativeSelections);
+      assert.equal(f.state.buildCalls.length, 0); assert.equal(f.state.active, undefined);
+      delete process.env.CSC_KEYCHAIN; f.options[stage] = undefined;
+      await f.api.packageMacosWithOffice(); await f.api.packageMacosWithOffice(); assertRestored();
+    });
+  }
+
   for (const [name, options] of [
     ["foreign app root", { appRoot: realpathSync(fileURLToPath(new URL("../../../", import.meta.url))) }],
     ["caller config", { builderArgs: ["--config", "/explicit-test-only/caller.mjs", ...builderArguments] }],
@@ -274,6 +384,44 @@ test("fixed Office package entry regression (test-only loader, no native/signatu
     f.options.macConfig = undefined;
     await f.api.packageMacosWithOffice(); assertRestored();
   });
+
+  for (const [scope, fields] of [
+    ["config", ["cscLink", "cscKeyPassword"]],
+    ["mac", ["cscLink", "cscKeyPassword", "cscInstallerLink", "cscInstallerKeyPassword"]],
+  ]) for (const field of fields) {
+    for (const value of [secretSentinel, ""]) {
+      await t.test(`${scope}.${field} ${value === "" ? "empty presence" : "input"} cannot bypass fixed unsigned signing`, async t => {
+        const options = scope === "mac"
+          ? { macConfig: { identity: "-", [field]: value } }
+          : { topLevelConfig: { [field]: value } };
+        const f = await fixture(t, options);
+        await assert.rejects(f.api.packageMacosWithOffice(), error => {
+          assert.match(error.message, /signing_inputs_unsupported/u);
+          assert.ok(error.message.includes(`${scope}.${field}`));
+          assert.equal(error.message.includes(secretSentinel), false);
+          return true;
+        });
+        assert.equal(f.state.buildCalls.length, 0); assert.equal(f.state.active, undefined); assertRestored();
+        f.options.macConfig = undefined; f.options.topLevelConfig = undefined;
+        await f.api.packageMacosWithOffice(); await f.api.packageMacosWithOffice(); assertRestored();
+      });
+    }
+  }
+
+  for (const notarize of [true, { teamId: secretSentinel }]) {
+    await t.test("explicit notarization cannot opt the fixed unsigned lane into another signing contract", async t => {
+      const f = await fixture(t, { macConfig: { identity: "-", notarize } });
+      await assert.rejects(f.api.packageMacosWithOffice(), error => {
+        assert.match(error.message, /signing_inputs_unsupported/u);
+        assert.ok(error.message.includes("mac.notarize"));
+        assert.equal(error.message.includes(secretSentinel), false);
+        return true;
+      });
+      assert.equal(f.state.buildCalls.length, 0); assertRestored();
+      f.options.macConfig = { identity: "-", notarize: false };
+      await f.api.packageMacosWithOffice(); await f.api.packageMacosWithOffice(); assertRestored();
+    });
+  }
 
   await t.test("CLI config override arguments reject before any package operation", async t => {
     const f = await fixture(t, { manualImport: true });

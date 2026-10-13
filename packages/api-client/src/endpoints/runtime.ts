@@ -1,4 +1,5 @@
 import type {
+  HarnessDiagnosticQueryV1,
   RunnerListResponse,
   RunnerReadinessResponse,
   RuntimeExtensionListResponse,
@@ -8,6 +9,7 @@ import type {
   RuntimeSettingsResponse,
   WorkUnitDetailResponse,
   WorkUnitEventsResponse,
+  WorkUnitHarnessDiagnosticsResponse,
   WorkUnitKind,
   WorkUnitListResponse,
   WorkUnitMutationResponse,
@@ -83,6 +85,14 @@ export const runtimeEndpoints = {
 
   async getWorkUnit(this: LingDaemonEndpointContext, cwd: string, workUnitId: string): Promise<WorkUnitDetailResponse> {
       return this._get(`/work-units/${encodeURIComponent(workUnitId)}`, { cwd });
+    },
+
+  async getWorkUnitHarnessDiagnostics(this: LingDaemonEndpointContext, cwd: string, workUnitId: string, query: HarnessDiagnosticQueryV1 = {}): Promise<WorkUnitHarnessDiagnosticsResponse> {
+      return this._get(`/work-units/${encodeURIComponent(workUnitId)}/harness`, {
+        cwd,
+        limit: query.limit,
+        cursor: query.cursor ? JSON.stringify(query.cursor) : undefined,
+      });
     },
 
   async getWorkUnitEvents(this: LingDaemonEndpointContext, cwd: string, workUnitId: string, afterSeq?: number): Promise<WorkUnitEventsResponse> {

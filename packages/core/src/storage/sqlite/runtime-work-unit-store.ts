@@ -33,6 +33,7 @@ import { redactSecrets } from "../../redaction.js";
 import type { CreateOrReuseConversationMediaJobInput } from "../../media-generation-routing-types.js";
 import { redactConversationMediaWorkUnitRequest } from "./conversation-media-execution-admission.js";
 import { readNumber, readString, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
+import { assertRecoveryDiscoveryId, assertRecoveryDiscoveryTimestamp } from "./recovery-discovery-validation.js";
 import {
   mapRuntimeEvent,
   mapWorkUnit,
@@ -213,6 +214,20 @@ export class SqliteRuntimeWorkUnitStore {
     if (options.linkedMediaJobId) {
       clauses.push("linked_media_job_id = ?");
       params.push(options.linkedMediaJobId);
+    }
+    if (options.createdAtOrBefore !== undefined) {
+      assertRecoveryDiscoveryTimestamp(options.createdAtOrBefore, "creation cutoff");
+      clauses.push("created_at <= ?");
+      params.push(options.createdAtOrBefore);
+    }
+    if (options.after !== undefined) {
+      if (!options.after || typeof options.after !== "object") {
+        throw new Error("Invalid recovery discovery WorkUnit cursor.");
+      }
+      assertRecoveryDiscoveryTimestamp(options.after.createdAt, "cursor creation time");
+      assertRecoveryDiscoveryId(options.after.id);
+      clauses.push("(created_at, id) < (?, ?)");
+      params.push(options.after.createdAt, options.after.id);
     }
     params.push(limit);
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";

@@ -11,7 +11,11 @@ const expoRequire = createRequire(localRequire.resolve("expo/package.json"));
 const nativeRequire = createRequire(expoRequire.resolve("react-native/package.json"));
 const nativeCliRequire = createRequire(nativeRequire.resolve("@react-native/community-cli-plugin/package.json"));
 const metroRequire = createRequire(nativeCliRequire.resolve("metro/package.json"));
-const imageSizeRequire = createRequire(metroRequire.resolve("image-size"));
+// SDK57's Metro uses its own image parser. Resolve the patched dependency from
+// its real PPTX consumer instead of accepting Metro's hoisted fallback.
+const daemonRequire = createRequire(new URL("../../../packages/daemon/package.json", import.meta.url));
+const pptxRequire = createRequire(daemonRequire.resolve("pptxgenjs"));
+const imageSizeRequire = createRequire(pptxRequire.resolve("image-size"));
 const imageSizeManifest = imageSizeRequire("../../package.json");
 const heifModulePath = imageSizeRequire.resolve("image-size/types/heif");
 const icnsModulePath = imageSizeRequire.resolve("image-size/types/icns");
@@ -211,7 +215,7 @@ test("patched image-size preserves valid box lookup and traversal", async () => 
   );
 });
 
-test("both Metro asset paths preserve buffer and file dimensions with image-size v2", async (t) => {
+test("RN and Expo Metro asset paths independently preserve buffer and file dimensions", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "ling-metro-assets-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   const filename = join(directory, "logo.png");

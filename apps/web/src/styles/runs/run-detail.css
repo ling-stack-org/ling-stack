@@ -47,6 +47,42 @@
   background: var(--border);
 }
 
+.runs-harness-diagnostics {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
+.runs-harness-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--ling-space-3);
+}
+
+.runs-harness-heading h3 {
+  margin: 0;
+}
+
+.runs-harness-record-list {
+  max-height: min(28rem, 55vh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 2px;
+}
+
+.runs-harness-record-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.runs-harness-record-summary > code {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+
 .runs-summary-grid > *,
 .runs-summary-status {
   min-width: 0;

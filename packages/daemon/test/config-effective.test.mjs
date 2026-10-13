@@ -132,29 +132,38 @@ test("effective config reports user defaults and workspace execution sources", a
   }
 });
 
-test("desktop runtime env enables unified exec without overriding an explicit daemon setting", async () => {
+test("desktop runtime env enables unified exec without overriding an explicit daemon setting", async (t) => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-effective-config-runtime-"));
   const previousUnifiedExec = process.env.LING_STACK_RUNTIME_UNIFIED_EXEC;
+  let enabled;
+  let explicitlyDisabled;
+  t.after(async () => {
+    try {
+      await Promise.all([enabled?.stop(), explicitlyDisabled?.stop()]);
+    } finally {
+      if (previousUnifiedExec === undefined) {
+        delete process.env.LING_STACK_RUNTIME_UNIFIED_EXEC;
+      } else {
+        process.env.LING_STACK_RUNTIME_UNIFIED_EXEC = previousUnifiedExec;
+      }
+      await rm(cwd, { recursive: true, force: true });
+    }
+  });
   process.env.LING_STACK_RUNTIME_UNIFIED_EXEC = "1";
-  const enabled = createDaemonServer({
+  enabled = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
+    defaultWorkspaceCwd: resolve(cwd, "enabled"),
     runtimeTools: {},
   });
-  const explicitlyDisabled = createDaemonServer({
+  explicitlyDisabled = createDaemonServer({
     host: "127.0.0.1",
     port: 0,
+    defaultWorkspaceCwd: resolve(cwd, "disabled"),
     runtimeTools: { unifiedExec: false },
   });
-  try {
-    assert.equal(enabled.config.runtimeTools.unifiedExec, true);
-    assert.equal(explicitlyDisabled.config.runtimeTools.unifiedExec, false);
-  } finally {
-    if (previousUnifiedExec === undefined) {
-      delete process.env.LING_STACK_RUNTIME_UNIFIED_EXEC;
-    } else {
-      process.env.LING_STACK_RUNTIME_UNIFIED_EXEC = previousUnifiedExec;
-    }
-  }
+  assert.equal(enabled.config.runtimeTools.unifiedExec, true);
+  assert.equal(explicitlyDisabled.config.runtimeTools.unifiedExec, false);
 });
 
 test("effective config reports user settings diagnostics without applying invalid values", async () => {

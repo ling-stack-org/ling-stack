@@ -218,6 +218,35 @@ test("automatic review Host keeps approval pending on manual verdict or stale CA
   assert.equal(staleFixture.workUnits.get("review-unit").status, "failed");
 });
 
+test("A22 automatic review Host preserves the exact deny decision", async () => {
+  const fixture = createFixture({ verdict: "deny" });
+  const result = await review(fixture);
+  assert.equal(result.status, "resolved");
+  assert.equal(result.approval.status, "denied");
+  assert.equal(fixture.getCasInput().decision, "deny");
+});
+
+for (const [label, decision] of [
+  ["approve array", ["approve"]], ["deny array", ["deny"]], ["manual array", ["manual"]],
+  ["nested array", [["approve"]]], ["manual string", "manual"], ["unknown string", "allow"],
+  ["object", { decision: "deny" }], ["null", null],
+]) {
+  test(`A22 automatic review Host distrusts injected resolved ${label} before Store CAS`, async () => {
+    const fixture = createFixture();
+    const result = await review(fixture, { coordinator: { review: async () => ({
+      status: "resolved",
+      verdict: { schemaVersion: 1, decision, reason: "Injected resolved verdict." },
+      attempts: 1,
+    }) } });
+    assert.equal(result.status, "manual");
+    assert.equal(result.code, "invalid_output");
+    assert.equal(fixture.getCasInput(), undefined, "Host must not pass an invalid closed-set decision to mutation authority");
+    assert.equal(fixture.getRunnerCalls(), 0, "trusted test injection does not invoke an actual model");
+    assert.equal(fixture.runtimeEvents.some(event => event.data?.phase === "resolved"), false);
+    assert.equal(fixture.workUnits.get("review-unit").status, "failed");
+  });
+}
+
 test("automatic review Host passes captured local lifetime through prompt manual fallback to actual Runner cleanup", async () => {
   const fixture = createFixture();
   const group = new AttemptLocalWriterGroup({ ...fence, runId: run.id });

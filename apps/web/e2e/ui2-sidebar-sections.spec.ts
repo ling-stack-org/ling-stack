@@ -62,6 +62,7 @@ test("Sidebar disclosure supports keyboard, rapid reversal, stale state, and red
   await prepareSurface(page, "dark", 1280, 800);
   await page.emulateMedia({ reducedMotion: "reduce" });
   const state = createBaseState({ approvalStatus: "expired" });
+  state.channels = [];
   state.aiTeammates = [createMockTeammate({ id: "teammate_stale", displayName: "Designer" })];
   await mockDaemon(page, state, { healthResponses: [false, false, false, false] });
   await page.goto("/");
@@ -71,6 +72,9 @@ test("Sidebar disclosure supports keyboard, rapid reversal, stale state, and red
   await expect(navigation.getByRole("status", { name: "Channels: Stale" })).toBeVisible();
   await expect(navigation.getByRole("status", { name: "AI Teammates: Stale" })).toBeVisible();
   await expect(channelsToggle).toHaveAttribute("aria-expanded", "true");
+
+  await expect(navigation.getByRole("button", { name: "No channel yet" })).toBeVisible();
+  await expect(navigation.getByRole("button", { name: "Engineering", exact: true })).toHaveCount(0);
 
   const content = navigation.locator('[data-sidebar-section="channels"] [data-ling-collapsible-content]');
   await expect(content).toHaveCSS("animation-duration", "0s");

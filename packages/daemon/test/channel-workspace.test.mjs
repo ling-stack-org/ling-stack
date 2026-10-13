@@ -1,6 +1,7 @@
 import { appendChannelItemFixture, getChannelItemViewFixture, listChannelItemViewsFixture, updateChannelItemFixture } from "../../core/test/channel-conversation-fixture.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { spawnSync } from "node:child_process";
 import { readFileSync, realpathSync } from "node:fs";
 import { access, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -1978,6 +1979,20 @@ test("public link body extractor strips HTML and blocks unsafe redirects", async
   assert.equal(privateFetchCalled, false);
 });
 
+test("A11 preview and body fresh native connections consume audited DNS addresses", () => {
+  for (const caseName of ["preview-native", "body-native"]) {
+    const childEnv = { ...process.env, LING_A11_SOCKET_CASE: caseName };
+    delete childEnv.NODE_TEST_CONTEXT;
+    const result = spawnSync(process.execPath, ["--test", "--test-name-pattern=^A11 fixture child$",
+      new URL("./media-native-transport.test.mjs", import.meta.url).pathname], {
+      env: childEnv, encoding: "utf8", timeout: 20_000,
+    });
+    assert.equal(result.error, undefined, `${caseName}: ${result.error?.message}`);
+    assert.match(result.stdout, new RegExp(`A11 child entered: ${caseName}`), "child must execute its socket assertions");
+    assert.equal(result.status, 0, `${caseName}\n${result.stdout}\n${result.stderr}`);
+  }
+});
+
 test("inline materialization writes public link body cache for explicit link request", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-link-body-inline-cache-"));
   const store = createSqliteRunStore(cwd);
@@ -2046,7 +2061,7 @@ test("cached public link body lets Ling answer without materialization clarify",
       stores.set(storeCwd, store);
       return store;
     },
-  });
+  }, { defaultWorkspaceCwd: cwd });
   try {
     const provider = (await createStaticChatProvider(daemon.url, cwd)).provider;
     await postJson(`${daemon.url}/providers/${encodeURIComponent(provider.id)}/check?cwd=${encodeURIComponent(cwd)}`);
@@ -3256,7 +3271,7 @@ test("channel discussion uses the mentioned teammate provider preset", async () 
   }
 });
 
-test("channel discussion records provider runtime failures as availability incidents only", async () => {
+test("an untrusted scripted channel adapter cannot publish Provider availability incidents", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-provider-runtime-incident-"));
   const rateLimitError = Object.assign(new Error("Too many requests"), { code: "rate_limited" });
   const runner = new ScriptedRunner([rateLimitError]);
@@ -3294,10 +3309,7 @@ test("channel discussion records provider runtime failures as availability incid
       now: new Date().toISOString(),
       limit: 10,
     });
-    assert.equal(availability.length, 1);
-    assert.equal(availability[0].kind, "quota");
-    assert.equal(availability[0].state, "rate_limited");
-    assert.equal(availability[0].agentId, undefined);
+    assert.deepEqual(availability, [], "adapter error text is not an admitted SDK Provider failure fact");
     assert.deepEqual(store.listReliabilityIncidents({ agentId: teammateId, capabilityScope: "code", limit: 10 }), []);
   } finally {
     await daemon.close();
@@ -4018,10 +4030,9 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
     assert.match(runner.runs[1].task.prompt, /Compacted channel discussion summary for a no-tools retry/);
     assert.match(runner.runs[1].task.prompt, /channel_discussion_summary|Compacted visible message count/i);
     const downgradedBudget = resolveProviderContextBudget(provider, "channel_reply");
-    assert.equal(downgradedBudget.mode, "model_estimated");
-    assert.equal(downgradedBudget.capabilitySource, "runtime_observed");
-    assert.equal(downgradedBudget.capabilityConfidence, "estimated");
-    assert.ok(downgradedBudget.contextWindowTokens < 32768);
+    assert.notEqual(downgradedBudget.capabilitySource, "runtime_observed",
+      "scripted error text permits a bounded reply retry, not Provider window learning");
+    assert.equal(downgradedBudget.contextWindowTokens, 32768);
     const providerList = await getJson(`${daemon.url}/providers?cwd=${encodeURIComponent(cwd)}`);
     const persistedProvider = providerList.providers.find((item) => item.id === provider.id);
     assert.ok(persistedProvider);
@@ -4037,9 +4048,7 @@ test("channel no-tools AI reply retries once with compacted channel summary afte
       now: new Date().toISOString(),
       limit: 10,
     });
-    assert.equal(incidents.length, 1);
-    assert.equal(incidents[0].kind, "timeout");
-    assert.equal(incidents[0].state, "slow");
+    assert.deepEqual(incidents, [], "only the trusted SDK admission seam can publish runtime availability");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

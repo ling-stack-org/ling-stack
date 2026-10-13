@@ -1,12 +1,14 @@
-import type { Context, Message, Model } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, type Context, type JsonObject, type JsonValue, type Message, type Model } from "@earendil-works/pi-ai";
 import type { AgentSession } from "@earendil-works/pi-coding-agent";
 import type {
   PiRunnerApprovedToolContinuation,
   PiRunnerProviderConfig,
 } from "./types.js";
-import { readPreparedPiInput, type PiRunnerPreparedInput } from "./prepared-input.js";
+import { assertPreparedPiModelContext, readPreparedPiInput, type PiRunnerPreparedInput } from "./prepared-input.js";
 import { boundModelToolResults } from "./model-context-budget.js";
 import { isRecord } from "./utils.js";
+import { appendPiSessionAuthority } from "./session-continuation.js";
+import { piConversation, piTranscript } from "./session-transcript.js";
 
 const EMPTY_USAGE = Object.freeze({
   input: 0,
@@ -26,12 +28,13 @@ export function readApprovedToolContinuation(value: unknown): PiRunnerApprovedTo
     || !nonEmpty(value.sideEffectFingerprint)
     || !nonEmpty(value.toolCallId)
     || !nonEmpty(value.toolName)
-    || !isRecord(value.args)
+    || !isRecord(value.args) || !isJsonEvidence(value.args)
     || value.assistantText !== undefined && typeof value.assistantText !== "string"
     || !isRecord(value.result)
     || !Array.isArray(value.result.content)
     || value.result.content.some((block) => !validContentBlock(block))
     || value.result.isError !== undefined && typeof value.result.isError !== "boolean"
+    || value.result.details !== undefined && !isJsonEvidence(value.result.details)
     || Object.keys(value).some((key) => ![
       "schemaVersion", "kind", "approvalId", "sideEffectFingerprint", "toolCallId", "toolName",
       "args", "result", "assistantText",
@@ -51,7 +54,11 @@ export function installApprovedToolContinuation(
   if (!session.isIdle || session.messages.length !== 0) {
     throw new Error("Approved tool continuation requires an idle empty Pi session");
   }
-  session.state.messages = createApprovedToolContinuationMessages(prepared, provider, continuation);
+  appendPiSessionAuthority(session);
+  for (const message of createApprovedToolContinuationMessages(prepared, provider, continuation)) {
+    session.sessionManager.appendMessage(message);
+  }
+  session.refreshContext();
 }
 
 /** Verify the first resumed provider request against the durable reconstructed transcript. */
@@ -62,13 +69,15 @@ export function assertApprovedToolContinuationModelContext(
   model: Model<any>,
   context: Context,
 ): void {
+  assertPreparedPiModelContext(prepared, model, context, { allowRestoredMessages: true });
   const expected = boundModelToolResults(
     createApprovedToolContinuationMessages(prepared, provider, continuation),
   ).messages as Message[];
-  if (context.systemPrompt !== readPreparedPiInput(prepared).systemPrompt
+  const transcript = piTranscript(context);
+  if (getCurrentSystemPrompt(transcript.messages) !== readPreparedPiInput(prepared).systemPrompt
     || model.id !== prepared.model.id
     || model.provider !== prepared.model.provider
-    || JSON.stringify(context.messages) !== JSON.stringify(expected)) {
+    || JSON.stringify(piConversation(transcript.messages)) !== JSON.stringify(expected)) {
     throw new Error("Pi approved tool continuation changed before the first model request");
   }
 }
@@ -89,7 +98,7 @@ function createApprovedToolContinuationMessages(
       type: "toolCall" as const,
       id: continuation.toolCallId,
       name: continuation.toolName,
-      arguments: structuredClone(continuation.args) as Record<string, unknown>,
+      arguments: structuredClone(continuation.args) as JsonObject,
     },
   ];
   return [
@@ -109,7 +118,7 @@ function createApprovedToolContinuationMessages(
       toolCallId: continuation.toolCallId,
       toolName: continuation.toolName,
       content: [...structuredClone(continuation.result.content)],
-      details: structuredClone(continuation.result.details),
+      details: structuredClone(continuation.result.details) as JsonValue | undefined,
       isError: continuation.result.isError === true,
       timestamp,
     },
@@ -124,6 +133,22 @@ function validContentBlock(value: unknown): boolean {
 
 function nonEmpty(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
+}
+
+/** Reject lossy JSON conversion and accessors at the new SDK's evidence boundary. */
+function isJsonEvidence(value: unknown, ancestors = new Set<object>()): value is JsonValue {
+  if (value === null || typeof value === "string" || typeof value === "boolean") return true;
+  if (typeof value === "number") return Number.isFinite(value);
+  if (typeof value !== "object" || ancestors.has(value)) return false;
+  if (!Array.isArray(value) && Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return false;
+  ancestors.add(value);
+  const descriptors = Object.getOwnPropertyDescriptors(value);
+  if (Reflect.ownKeys(value).length !== Object.keys(descriptors).length
+    || Array.isArray(value) && Object.keys(descriptors).length !== value.length + 1) return false;
+  const valid = Object.keys(descriptors).every((key) => Array.isArray(value) && key === "length"
+    || descriptors[key]!.enumerable && "value" in descriptors[key]! && isJsonEvidence(descriptors[key]!.value, ancestors));
+  ancestors.delete(value);
+  return valid;
 }
 
 function deepFreeze<T>(value: T): T {

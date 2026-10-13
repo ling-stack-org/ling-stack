@@ -17,6 +17,81 @@ const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.me
 const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localization", "plugin-sdk", "providers", "remote-protocol", "runner-pi"];
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
+const newAuthoredRuntimeLeaves = [
+  "packages/core/src/automation-recurrence.ts",
+  "packages/daemon/src/features/automations/recurrence.ts",
+  "packages/core/src/run-progress-checkpoint-types.ts",
+  "packages/core/src/run-progress-checkpoint-lineage.ts",
+  "packages/core/src/storage/sqlite/run-progress-checkpoint-effects.ts",
+  "packages/core/src/storage/sqlite/run-progress-checkpoint-migration.ts",
+  "packages/core/src/storage/sqlite/run-progress-checkpoint-store.ts",
+  "packages/daemon/src/features/harness/continuations/run-ordinary-progress.ts",
+  "packages/daemon/src/shared/public-http-transport.ts",
+  "packages/runner-pi/src/ordinary-progress-recovery.ts",
+  "packages/runner-pi/src/provider-request-auth.ts",
+  "packages/runner-pi/src/session-continuation.ts",
+  "packages/runner-pi/src/session-transcript.ts",
+  "packages/core/src/storage/sqlite/delegation-migration.ts",
+  "packages/core/src/storage/sqlite/delegation-mappers.ts",
+  "packages/core/src/storage/sqlite/delegation-store.ts",
+  "packages/core/src/storage/sqlite/harness-diagnostics-mappers.ts",
+  "packages/core/src/storage/sqlite/harness-diagnostics-store.ts",
+  "packages/core/src/storage/sqlite/harness-diagnostics-validation.ts",
+  "packages/daemon/src/runtime/harness-diagnostics.ts",
+  "packages/core/src/storage/sqlite/mcp-metadata-migration.ts",
+  "packages/core/src/storage/sqlite/mcp-metadata-publication-store.ts",
+  "packages/daemon/src/features/mcp/metadata-publication.ts",
+  "packages/core/src/storage/sqlite/provider-check-migration.ts",
+  "packages/core/src/storage/sqlite/provider-check-publication-store.ts",
+  "packages/daemon/src/features/providers/check-publication.ts",
+  "packages/daemon/src/features/providers/model-discovery-authority.ts",
+  "packages/core/src/provider-runtime-availability-types.ts",
+  "packages/core/src/storage/sqlite/availability-incident-provenance-migration.ts",
+  "packages/core/src/storage/sqlite/availability-incident-provenance-store.ts",
+  "packages/core/src/storage/sqlite/availability-incident-source.ts",
+  "packages/daemon/src/features/providers/runtime-failure-observations.ts",
+  "packages/daemon/src/features/providers/runtime-invocations.ts",
+  "packages/daemon/src/features/providers/runtime-observation-scope.ts",
+  "packages/daemon/src/features/runs/provider-persistence.ts",
+  "packages/daemon/src/features/runs/tool-context-budget.ts",
+  "packages/runner-pi/src/provider-invocation.ts",
+  "packages/core/src/harness/evaluation-tasks.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-task-validation.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-task-mappers.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-task-migration.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-task-store.ts",
+  "packages/daemon/src/features/harness/evaluations/task-worker-input.ts",
+  "packages/daemon/src/features/harness/evaluations/task-worker-prepared.ts",
+  "packages/daemon/src/features/harness/evaluations/task-worker.ts",
+  "packages/core/src/harness/evaluation-qa.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-qa-validation.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-qa-mappers.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-qa-migration.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-qa-store.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-json.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-preparation.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-owned-batch.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-transport.ts",
+  "packages/daemon/src/features/harness/evaluations/qa-model-coordinator.ts",
+  "packages/core/src/harness/human-evaluation.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-mappers.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-migration.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-store.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-validation.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-read-store.ts",
+  "packages/core/src/storage/sqlite/run-evaluation-human-read-validation.ts",
+  "packages/daemon/src/features/harness/evaluations/human-evaluation-authority.ts",
+  "packages/daemon/src/features/harness/evaluations/human-evaluation-protocol.ts",
+  "packages/daemon/src/features/harness/evaluations/human-evaluation-routes.ts",
+  "packages/daemon/src/features/harness/evaluations/human-evaluation-service.ts",
+  "packages/daemon/src/features/harness/evaluations/human-evaluation-report.ts",
+];
+// This contract is exported with `export type *`; esbuild correctly erases it.
+// It remains an explicit reviewed source and gets every fail-closed check below.
+const newAuthoredTypeOnlyInputs = ["packages/contracts/src/harness-evaluation-qa.ts", "packages/contracts/src/harness-human-evaluation.ts",
+  "packages/contracts/src/harness-human-evaluation-read.ts", "packages/core/src/harness/human-evaluation-read.ts"];
+const reviewedNativeInputs = ["apps/desktop/scripts/build-human-evaluation-helper.mjs", "apps/desktop/scripts/native/human-evaluation-darwin.swift"];
+const newAuthoredRequiredInputs = [...newAuthoredRuntimeLeaves, ...newAuthoredTypeOnlyInputs, ...reviewedNativeInputs];
 const staleSentinel = "__LING_EXPLICIT_STALE_DIST_RED__";
 const authoredSentinel = "__LING_EXPLICIT_REVIEWED_AUTHORED_SOURCE_GREEN__";
 const hash = bytes => createHash("sha256").update(bytes).digest("hex");
@@ -24,6 +99,13 @@ function newFile(path, bytes) {
   mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
   writeFileSync(path, bytes, { mode: 0o600 });
 }
+
+test("Office packaging review requires every new Pi, progress, transport, delegation, diagnostics, Provider and evaluation task/QA authored source", () => {
+  for (const name of newAuthoredRequiredInputs) {
+    assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
+      `Runtime leaf must be an explicit required review input: ${name}`);
+  }
+});
 
 test("Office fixed fresh daemon must not consume a stale compiled bridge with unchanged reviewed TS (real esbuild, synthetic native only)", {
   skip: process.platform !== "darwin" || process.arch !== "arm64",
@@ -93,6 +175,66 @@ test("Office fixed fresh daemon consumes an explicitly reviewed authored bridge 
     explicitFixtureReviewSha256: hash(readFileSync(f.reviewPath)), realEsbuildSourceAudit: sourceAudit }));
 });
 
+test("Office fixed fresh daemon rejects missing review digests, changed authored bytes and missing new runtime sources before any build (synthetic native only)", {
+  skip: process.platform !== "darwin" || process.arch !== "arm64",
+}, async t => {
+  const f = await approvedSyntheticFixture(t);
+  const originalReview = readFileSync(f.reviewPath);
+  assert.equal(f.reviewApi.readReviewedPackagedOfficeSource().sourceReviewSha256, hash(originalReview));
+  for (const name of newAuthoredRequiredInputs) {
+    await t.test(name, async t => {
+      const sourcePath = join(f.root, name), authoredBefore = readFileSync(sourcePath);
+      // Native/compiler-script inputs are reviewed source, not a daemon dist leaf.
+      const distPath = reviewedNativeInputs.includes(name) ? undefined
+        : join(f.root, name.replace("/src/", "/dist/").replace(/\.ts$/u, ".js"));
+      const compiledBefore = distPath ? readFileSync(distPath) : undefined;
+      if (compiledBefore) assert.ok(compiledBefore.length > 0, "the stale generated leaf must exist throughout the rejection checks");
+      await t.test("missing required review digest", async () => {
+        const review = JSON.parse(originalReview.toString("utf8"));
+        delete review.packagingSha256[name];
+        const incompleteReview = Buffer.from(JSON.stringify(review));
+        writeFileSync(f.reviewPath, incompleteReview);
+        try {
+          await assert.rejects(f.bundle(), /packaged_office_native_source_review_invalid/u);
+          assert.deepEqual(readFileSync(f.reviewPath), incompleteReview);
+          assert.deepEqual(readFileSync(sourcePath), authoredBefore);
+          assertNoBuild(f);
+        } finally { writeFileSync(f.reviewPath, originalReview); }
+      });
+      await t.test("authored mutation with unchanged review", async () => {
+        const changed = Buffer.concat([Buffer.from("// EXPLICIT TEST-ONLY UNREVIEWED RUNTIME LEAF\n"), authoredBefore]);
+        writeFileSync(sourcePath, changed);
+        try {
+          await assert.rejects(f.bundle(), /packaged_office_native_source_review_invalid/u);
+          assert.deepEqual(readFileSync(f.reviewPath), originalReview);
+          assert.deepEqual(readFileSync(sourcePath), changed);
+          assertNoBuild(f);
+        } finally { writeFileSync(sourcePath, authoredBefore); }
+      });
+      await t.test("missing authored source cannot fall back to existing dist", async () => {
+        rmSync(sourcePath); // This exact path is inside the disposable mkdtemp fixture.
+        try {
+          await assert.rejects(f.bundle(), error => error.code === "ENOENT" && error.path === sourcePath);
+          assert.equal(existsSync(sourcePath), false);
+          assert.deepEqual(readFileSync(f.reviewPath), originalReview);
+          assertNoBuild(f);
+        } finally { writeFileSync(sourcePath, authoredBefore, { mode: 0o600 }); }
+      });
+      if (distPath) assert.deepEqual(readFileSync(distPath), compiledBefore);
+    });
+  }
+  t.diagnostic(JSON.stringify({ fixtureOnly: true, artifactExecuted: false, newAuthoredRuntimeLeaves, newAuthoredTypeOnlyInputs,
+    nativeCompilerCalls: f.counts.nativeCompilerCalls, signCalls: f.counts.signCalls,
+    nativeVerifyCalls: f.counts.nativeVerifyCalls, helperNormalizeCalls: f.counts.helperNormalizeCalls,
+    realEsbuildCalls: f.builds.length }));
+});
+
+/** A rejected review must not reach native compilation, codesign or actual esbuild. */
+function assertNoBuild(f) {
+  assert.deepEqual(f.counts, { nativeCompilerCalls: 0, signCalls: 0, nativeVerifyCalls: 0, helperNormalizeCalls: 0 });
+  assert.equal(f.builds.length, 0);
+}
+
 /** Independent checks of captured real esbuild metadata and original API output pins. */
 function assertOriginalSourceOnlyBuild(f, bundle, index) {
   const observed = f.builds[index];
@@ -117,10 +259,25 @@ function assertOriginalSourceOnlyBuild(f, bundle, index) {
   const bridgeInputName = Object.keys(observed.metafile.inputs).find(name => resolve(f.root, "apps/desktop", name) === bridgePath);
   assert.equal(observed.metafile.inputs[bridgeInputName].bytes, authored.length);
   assert.equal(workspaceInputs.every(path => Object.hasOwn(review.packagingSha256, path.slice(f.root.length + 1).split(sep).join("/"))), true);
+  const reviewedAuthoredRuntimeSha256 = Object.fromEntries(newAuthoredRuntimeLeaves.map(name => {
+    const path = join(f.root, name), bytes = readFileSync(path);
+    assert.equal(paths.includes(path), true, `actual esbuild metafile must contain the reviewed runtime leaf: ${name}`);
+    assert.equal(hash(bytes), review.packagingSha256[name]);
+    const inputName = Object.keys(observed.metafile.inputs).find(input => resolve(f.root, "apps/desktop", input) === path);
+    assert.equal(observed.metafile.inputs[inputName].bytes, bytes.length);
+    return [name, hash(bytes)];
+  }));
+  const reviewedAuthoredTypeOnlySha256 = Object.fromEntries(newAuthoredTypeOnlyInputs.map(name => {
+    const path = join(f.root, name), bytes = readFileSync(path);
+    assert.equal(hash(bytes), review.packagingSha256[name]);
+    assert.equal(paths.includes(path), false, `type-only contract must not become an executable runtime input: ${name}`);
+    return [name, hash(bytes)];
+  }));
   assert.deepEqual(observed.outputFiles, [{ path: bundle.pins.path, sha256: bundle.pins.sha256, sizeBytes: bundle.pins.sizeBytes }],
     "original emitted API pins must match the untouched true esbuild output, not a synthesized result");
   return { entryPoint: "packages/daemon/src/cli.ts", runtimeInputs: paths.length, authoredWorkspaceRuntimeInputs: workspaceInputs.length,
     nineWorkspaceDistRuntimeInputs: anyWorkspaceDist.length, reviewedBridgeSha256: hash(authored),
+    reviewedAuthoredRuntimeSha256, reviewedAuthoredTypeOnlySha256,
     originalEsbuildOutputSha256: observed.outputFiles[0].sha256 };
 }
 

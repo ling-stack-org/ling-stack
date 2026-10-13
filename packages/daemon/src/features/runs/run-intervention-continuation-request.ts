@@ -9,6 +9,7 @@ import {
   type RunSession,
   type RunStatus,
   type RunStore,
+  type SecretResolver,
   type RunTool,
   type SessionPermissionMode,
   type SkillApprovalProfile,
@@ -28,6 +29,7 @@ export function buildRunInterventionContinuationRequest(
   sourceRun: RunSession,
   intervention: RunIntervention,
   messageLink: { readonly sourceMessageId?: string; readonly linkedMessageId?: string } = {},
+  secretResolver?: SecretResolver,
 ): RunRequest {
   const snapshot = isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {};
   const taskSnapshot = isRecord(sourceRun.taskSnapshot) ? sourceRun.taskSnapshot : {};
@@ -50,6 +52,7 @@ export function buildRunInterventionContinuationRequest(
   const channelContinuation = messageLink.sourceMessageId && sourceRun.channelId
     ? buildChannelReplyContinuationContext({
         store,
+        secretResolver,
         sourceRun,
         intervention,
         sourceMessageId: messageLink.sourceMessageId,

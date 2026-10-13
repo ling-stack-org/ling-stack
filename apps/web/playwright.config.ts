@@ -19,9 +19,9 @@ export default defineConfig({
     trace: "on-first-retry",
   },
   webServer: {
-    command: `corepack pnpm exec vite --host 127.0.0.1 --port ${testPort}`,
+    command: `corepack pnpm exec vite --host 127.0.0.1 --port ${testPort} --strictPort`,
     url: testBaseUrl,
-    reuseExistingServer: true,
+    reuseExistingServer: process.env.LING_PLAYWRIGHT_REUSE_SERVER !== "0",
     timeout: 30_000,
   },
   projects: [

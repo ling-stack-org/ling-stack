@@ -111,7 +111,7 @@ export function RunDetailPanel({
           <RunEvidenceSection approvals={approvals} artifacts={artifacts} assistantText={assistantText} cwd={cwd} events={events} memoryById={memoryById} run={run} usedMemoryEvents={usedMemoryEvents} />
           <RunGuidancePanel canRedirect={runCanBeStopped(run)} cwd={cwd} onRefreshRun={onRefresh} run={run} />
           <RunThreadContinuationSection cwd={cwd} isRunning={isRunning} onRefresh={onRefresh} run={run} turnContext={turnContext} />
-          <RunTechnicalDetails events={events} leases={runLeases} run={run} transitions={transitions} workUnitDetail={workUnitDetail} />
+          <RunTechnicalDetails events={events} leases={runLeases} run={run} transitions={transitions} workUnitDetail={workUnitDetail} workspaceCwd={workspaceCwd} />
         </div>
       )}
     </section>

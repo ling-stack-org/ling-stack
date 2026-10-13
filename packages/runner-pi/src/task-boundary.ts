@@ -1,12 +1,17 @@
 import type { AgentSession, ModelRuntime } from "@earendil-works/pi-coding-agent";
-import type { PiRunnerRunOptions, PiRunnerUserInputYieldDirective } from "./types.js";
+import type { PiRunnerProviderInvocationContextBudget, PiRunnerRunOptions, PiRunnerUserInputYieldDirective } from "./types.js";
 import { readUserInputYieldDirective } from "./task-yield.js";
 import { readUserInputRequestReceipt, readUserInputWaitMode } from "./user-input-request.js";
 import { throwIfAborted } from "./utils.js";
-import { assertPiModelContextCapacity, assertPreparedPiModelContext } from "./prepared-input.js";
+import { assertPiModelContextCapacity, assertPreparedPiModelContext, estimatePiModelContextBudget, type PiRunnerPreparedInput } from "./prepared-input.js";
 import { assertApprovedToolContinuationModelContext } from "./approved-tool-continuation.js";
 import { applyReasoningSummaryModeToPayload } from "./reasoning-summary.js";
 import { assertAcceptedTaskAnchor, hasCompactionSummary } from "./compaction-task-anchor.js";
+import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
+import { piTranscript } from "./session-transcript.js";
+import { assertCompactionRecoveryModelContext } from "./compaction-recovery.js";
+import { assertOrdinaryProgressRecoveryModelContext } from "./ordinary-progress-recovery.js";
+import { bindPiProviderInvocationResolution, createPiProviderInvocation } from "./provider-invocation.js";
 
 /** Internal latch only. The public yielded outcome requires an idle SDK first. */
 class PendingUserInputYield extends Error {
@@ -47,6 +52,8 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
   readonly systemPrompt: string;
   readonly messages: readonly unknown[];
   readonly acceptedTaskPrompt: string;
+  readonly sessionId: string;
+  readonly preparedInput: PiRunnerPreparedInput;
 } | undefined) {
   const stop = new AbortController();
   const signal = options.signal ? AbortSignal.any([options.signal, stop.signal]) : stop.signal;
@@ -128,6 +135,7 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
     /** Guard this run's runtime, including built-in and custom providers. */
     bindModelRuntime(runtime: ModelRuntime): void {
       const streamSimple = runtime.streamSimple.bind(runtime);
+      const associateInvocation = bindPiProviderInvocationResolution(runtime, options);
       let firstRequest = true;
       runtime.streamSimple = (model, context, streamOptions) => {
         assertOpen();
@@ -143,9 +151,11 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
               );
             } else {
               assertPreparedPiModelContext(options.preparedInput!, model, context, {
-                allowRestoredMessages: Boolean(options.compactionRecovery),
+                allowRestoredMessages: Boolean(options.compactionRecovery || options.ordinaryProgressRecovery),
               });
             }
+            if (options.compactionRecovery) assertCompactionRecoveryModelContext(options.compactionRecovery, context);
+            if (options.ordinaryProgressRecovery) assertOrdinaryProgressRecoveryModelContext(options.ordinaryProgressRecovery, context);
           }
           catch (error) {
             failure ??= error instanceof Error ? error : new Error("Invalid Pi prepared input");
@@ -157,10 +167,19 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
         let modelContext: typeof context;
         try {
           const taskContext = readTaskContext?.();
-          if (taskContext && (context.systemPrompt ?? "") === taskContext.systemPrompt && hasCompactionSummary(taskContext.messages)) {
+          if (taskContext && taskContext.sessionId !== undefined && streamOptions?.sessionId === taskContext.sessionId) {
+            assertPreparedPiModelContext(taskContext.preparedInput, model, context, { allowRestoredMessages: true });
+            if (firstRequest && options.compactionRecovery) assertCompactionRecoveryModelContext(options.compactionRecovery, context);
+            if (firstRequest && options.ordinaryProgressRecovery) assertOrdinaryProgressRecoveryModelContext(options.ordinaryProgressRecovery, context);
+          }
+          if (taskContext && getCurrentSystemPrompt(piTranscript(context).messages) === taskContext.systemPrompt && hasCompactionSummary(taskContext.messages)) {
             assertAcceptedTaskAnchor(context.messages, taskContext.acceptedTaskPrompt);
           }
           modelContext = assertPiModelContextCapacity(model, context);
+          if (firstRequest && options.ordinaryProgressRecovery) {
+            // No lossy extra capacity projection may silently change the committed ordinary view.
+            assertOrdinaryProgressRecoveryModelContext(options.ordinaryProgressRecovery, modelContext);
+          }
         } catch (error) {
           failure ??= error instanceof Error ? error : new Error("Pi model context capacity check failed");
           stop.abort(failure);
@@ -170,10 +189,21 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
         // not be able to mutate that copy after prepared-input validation.
         const dispatchedContext = JSON.stringify(modelContext);
         firstRequest = false;
-        return streamSimple(model, modelContext, {
-          ...streamOptions,
-          signal: streamOptions?.signal ? AbortSignal.any([signal, streamOptions.signal]) : signal,
-          onPayload: async (payload, requestModel) => {
+        let contextBudget: PiRunnerProviderInvocationContextBudget | undefined;
+        if (options.onProviderInvocationAdmitted || options.onProviderInvocationSettled) {
+          try { contextBudget = estimatePiModelContextBudget(model, modelContext); }
+          catch { /* Diagnostic evidence is optional; do not introduce another model-call gate. */ }
+        }
+        const invocation = createPiProviderInvocation(options, () =>
+          options.signal?.aborted || streamOptions?.signal?.aborted ? "cancelled"
+            : failure || yieldRequest || stop.signal.aborted ? "local_rejected" : undefined, contextBudget);
+        const observeLocalCallbackFailure = <Args extends unknown[]>(callback: (...args: Args) => void | Promise<void>) =>
+          async (...args: Args): Promise<void> => {
+            try { await callback(...args); }
+            catch (error) { invocation.rejectLocally(); throw error; }
+          };
+        const onPayload: NonNullable<NonNullable<typeof streamOptions>["onPayload"]> = async (payload, requestModel) => {
+          try {
             assertOpen();
             const next = await streamOptions?.onPayload?.(payload, requestModel);
             // The awaited SDK hook may have swallowed the Host failure. Never
@@ -187,9 +217,26 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
             }
             const candidate = next ?? payload;
             const summaryPayload = applyReasoningSummaryModeToPayload(candidate, requestModel.api, options.reasoningSummary);
+            // This wrapper also covers SDK summary streams without an Agent
+            // extension hook. It observes logical admission, not network I/O.
+            invocation.admit(requestModel);
             return summaryPayload ?? next;
-          },
+          } catch (error) {
+            invocation.rejectLocally();
+            throw error;
+          }
+        };
+        associateInvocation(onPayload, invocation);
+        const requestStream = streamSimple(model, modelContext, {
+          ...streamOptions,
+          ...(streamOptions?.onResponse ? { onResponse: observeLocalCallbackFailure(streamOptions.onResponse) } : {}),
+          ...(streamOptions?.onProviderStreamEvent
+            ? { onProviderStreamEvent: observeLocalCallbackFailure(streamOptions.onProviderStreamEvent) } : {}),
+          signal: streamOptions?.signal ? AbortSignal.any([signal, streamOptions.signal]) : signal,
+          onPayload,
         });
+        invocation.observe(requestStream);
+        return requestStream;
       };
     },
   };

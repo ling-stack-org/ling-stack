@@ -227,6 +227,109 @@ export interface RunEvaluationGradeV1 {
   readonly createdAt: string;
 }
 
+/** Frozen model-grader shape; canonical configuration and artifact-byte digests differ. */
+export interface RunEvaluationFrozenGraderV1 {
+  readonly graderId: string;
+  readonly graderVersion: string;
+  readonly promptDigest: string;
+  readonly modelId: string;
+  readonly modelVersion: string;
+  readonly samplingDigest: string;
+  readonly rubricDigest: string;
+}
+
+export interface RunEvaluationArtifactPinV1 {
+  readonly artifactId: string;
+  readonly contentSha256: string;
+}
+
+export const RUN_EVALUATION_TASK_STATES = [
+  "queued", "active", "completed", "failed", "cancelled", "unknown_outcome",
+] as const;
+export type RunEvaluationTaskState = (typeof RUN_EVALUATION_TASK_STATES)[number];
+export const RUN_EVALUATION_TASK_ATTEMPT_STATES = [
+  "claimed", "dispatch_admitted", "completed", "failed", "cancelled",
+  "abandoned_before_dispatch", "unknown_outcome",
+] as const;
+export type RunEvaluationTaskAttemptState = (typeof RUN_EVALUATION_TASK_ATTEMPT_STATES)[number];
+export const RUN_EVALUATION_TASK_FAILURE_CODES = [
+  "evaluation.task_invalid",
+  "evaluation.frozen_config_changed",
+  "evaluation.lease_expired_before_dispatch",
+  "evaluation.dispatch_outcome_unknown",
+  "evaluation.result_invalid",
+  "evaluation.cancelled_before_dispatch",
+] as const;
+export type RunEvaluationTaskFailureCode = (typeof RUN_EVALUATION_TASK_FAILURE_CODES)[number];
+
+/** Separate model repeat; does not change the original evaluation or terminal Run. */
+export interface RunEvaluationTaskV1 {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly evaluationId: string;
+  readonly evaluationKey: string;
+  readonly graderType: "model";
+  readonly frozenGrader: RunEvaluationFrozenGraderV1;
+  readonly frozenGraderArtifact: RunEvaluationArtifactPinV1;
+  readonly frozenGraderDigest: string;
+  readonly repeatOrdinal: number;
+  readonly idempotencyKey: string;
+  readonly state: RunEvaluationTaskState;
+  readonly activeAttemptId?: string;
+  readonly nextAttemptAt?: string;
+  readonly revision: number;
+  readonly failureCode?: RunEvaluationTaskFailureCode;
+  readonly createdAt: string;
+  readonly updatedAt: string;
+  readonly completedAt?: string;
+}
+
+export interface RunEvaluationTaskAttemptV1 {
+  readonly schemaVersion: 1;
+  readonly id: string;
+  readonly taskId: string;
+  readonly attemptNumber: number;
+  readonly state: RunEvaluationTaskAttemptState;
+  readonly claimOwner: string;
+  readonly claimToken: string;
+  readonly claimExpiresAt: string;
+  readonly revision: number;
+  /** Minted on first durable admission; admission is not proof of a network request. */
+  readonly invocationId?: string;
+  readonly requestDigest?: string;
+  readonly executionScopeDigest?: string;
+  readonly dispatchAdmittedAt?: string;
+  readonly failureCode?: RunEvaluationTaskFailureCode;
+  readonly claimedAt: string;
+  readonly updatedAt: string;
+  readonly completedAt?: string;
+}
+
+/** Integrity-checked declarations, never an authenticated independent invocation. */
+export interface RunEvaluationTaskResultV1 {
+  readonly schemaVersion: 1;
+  readonly authority: "unverified";
+  readonly id: string;
+  readonly taskId: string;
+  readonly attemptId: string;
+  readonly invocationId: string;
+  readonly evaluationKey: string;
+  readonly frozenGraderDigest: string;
+  readonly requestDigest: string;
+  readonly executionScopeDigest: string;
+  readonly verdict: RunEvaluationVerdict;
+  readonly score?: number;
+  readonly severity?: RunEvaluationSeverity;
+  readonly rawOutputArtifact: RunEvaluationArtifactPinV1;
+  readonly rationaleArtifact?: RunEvaluationArtifactPinV1;
+  readonly costInputTokens?: number;
+  readonly costOutputTokens?: number;
+  readonly costAmountMicros?: number;
+  readonly latencyMs?: number;
+  readonly resultDigest: string;
+  readonly createdAt: string;
+}
+
 export interface DelegationBudgetV1 {
   readonly tokenBudget?: number;
   readonly costBudgetMicros?: number;

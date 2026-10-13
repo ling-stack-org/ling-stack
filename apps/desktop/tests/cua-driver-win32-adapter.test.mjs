@@ -244,15 +244,18 @@ test("bounded Win32 commands retain and terminate the exact spawned child on ove
   assert.equal(spawnInvocation.options.env.PATH, undefined);
 });
 
-test("bounded Win32 commands terminate the retained child on deadline", async () => {
+test("bounded Win32 commands terminate the retained child on deadline", async (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const child = fakeChild();
   const runner = createBoundedWin32CommandRunner({ spawnCommand() { return child; } });
-  const result = await runner.run({
+  const pending = runner.run({
     executablePath: "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
     args: ["-NoProfile"],
     environment: { SystemRoot: "C:\\Windows" },
     timeoutMs: 1,
   });
+  t.mock.timers.tick(1);
+  const result = await pending;
   assert.equal(result.timedOut, true);
   assert.deepEqual(child.killSignals, ["SIGTERM"]);
 });

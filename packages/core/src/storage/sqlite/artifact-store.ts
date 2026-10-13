@@ -26,6 +26,20 @@ export class SqliteArtifactStore {
   }
 
   createArtifact(input: CreateRunArtifactInput): RunArtifact {
+    const created = this.insertArtifact(input);
+    this.ports.rebuildLingThreadMetadataForRun(created.runId, created.createdAt);
+    return created;
+  }
+
+  /** Caller owns the transaction. Authority writes must not run a derived metadata refresh. */
+  createArtifactWithinTransaction(input: CreateRunArtifactInput): RunArtifact {
+    if (!this.context.database.isTransaction || this.context.database.prepare("PRAGMA query_only").get()?.query_only === 1) {
+      throw new Error("Artifact transaction-owned insert requires the caller's write transaction.");
+    }
+    return this.insertArtifact(input);
+  }
+
+  private insertArtifact(input: CreateRunArtifactInput): RunArtifact {
     const runId = normalizeOptionalOwnerId(input.runId);
     const mediaJobId = normalizeOptionalOwnerId(input.mediaJobId);
     const externalWorkId = normalizeOptionalOwnerId(input.externalWorkId);
@@ -99,7 +113,6 @@ export class SqliteArtifactStore {
     if (!created) {
       throw new Error(`Failed to create artifact: ${artifact.id}`);
     }
-    this.ports.rebuildLingThreadMetadataForRun(created.runId, created.createdAt);
     return created;
   }
 

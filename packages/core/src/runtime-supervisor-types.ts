@@ -192,6 +192,12 @@ export interface CreateWorkUnitInput {
   readonly now: string;
 }
 
+/** Discovery position in the descending creation-time, id ordering. */
+export interface WorkUnitDiscoveryCursor {
+  readonly createdAt: string;
+  readonly id: string;
+}
+
 export interface ListWorkUnitsOptions {
   readonly status?: WorkUnitStatus;
   readonly kind?: WorkUnitKind;
@@ -204,6 +210,10 @@ export interface ListWorkUnitsOptions {
   readonly linkedMessageId?: string;
   readonly linkedMediaJobId?: string;
   readonly limit?: number;
+  /** Exclusive discovery position; does not authorize recovery or execution. */
+  readonly after?: WorkUnitDiscoveryCursor;
+  /** Frozen sweep cutoff. Rows created later are discovered by a subsequent sweep. */
+  readonly createdAtOrBefore?: string;
 }
 
 export interface WorkUnitAttempt {

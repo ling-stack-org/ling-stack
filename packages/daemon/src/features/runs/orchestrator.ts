@@ -20,6 +20,7 @@ import {
   type RunEventType,
   type RunArtifact,
   type RunSession,
+  type RunProgressCheckpointWitness,
   type CommitUserInputYieldResult,
   type RunStatus,
   type RunStore,
@@ -109,6 +110,7 @@ import {
   resolveMcpToolAccessForRun,
 } from "./mcp.js";
 import { hydrateRunnerToolSurface } from "./tool-surfaces.js";
+import { runtimeObservationScopeForProvider } from "../providers/runtime-observation-scope.js";
 import { createQueuedRunForConflict } from "./queue.js";
 import { resolveProviderForRun, resolveProviderRunThinkingLevel } from "./providers.js";
 import type { RunRequest } from "./schemas.js";
@@ -169,9 +171,17 @@ import { prepareApprovedToolContinuation } from "./approval-continuation-tool.js
 import { assessRunCompactionRecovery } from "../harness/continuations/run-compaction-recovery.js";
 import { commitInstalledRunCompaction } from "../harness/continuations/run-compaction-commit.js";
 import { commitRunCompactionProgress } from "../harness/continuations/run-compaction-progress.js";
+import { assessRunOrdinaryProgressRecovery, OrdinaryRunProgressController } from "../harness/continuations/run-ordinary-progress.js";
 import { projectPublicRunEventEnvelope } from "./public-artifacts.js";
 import { AttemptHostOperationTracker } from "../../runtime/attempt-host-operation-tracker.js";
 import { UserInputPauseCoordinator } from "./user-input-pause-coordinator.js";
+import { providerForRunPersistence } from "./provider-persistence.js";
+import {
+  createProviderInvocationObserver,
+  type ProviderInvocationFailureSink,
+} from "../providers/runtime-invocations.js";
+import { recordProviderInvocationFailureObservations } from "../providers/runtime-failure-observations.js";
+import type { ProviderInvocationOrigin } from "../providers/runtime-invocations.js";
 
 interface ExistingRunContinuationExecutionOptions {
   readonly runId: string;
@@ -181,6 +191,9 @@ interface ExistingRunContinuationExecutionOptions {
 }
 
 export interface ExecuteRunRequestOptions {
+  /** Private diagnostic facts only; never selected from public Run request input. */
+  readonly onProviderInvocationFailure?: ProviderInvocationFailureSink;
+  readonly providerInvocationOrigin?: ProviderInvocationOrigin;
   readonly onRunReady?: (runId: string) => void;
   readonly afterRunTerminal?: (run: RunSession) => void | Promise<void>;
   /** Runs after a durable user-input yield, never for ordinary terminal completion. */
@@ -396,6 +409,8 @@ async function executeAdmittedRunRequest(
   let continuationContext: RunnerContinuationContextIdentity | undefined;
   let sourceAttempt: WorkUnitAttempt | undefined;
   let compactionRecoveryModelView: readonly unknown[] | undefined;
+  let ordinaryProgressRecoveryModelView: readonly unknown[] | undefined;
+  let ordinaryProgressRecoveryWitness: RunProgressCheckpointWitness | undefined;
   const existingContinuation = options.existingRunContinuation;
   try {
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
@@ -685,6 +700,7 @@ async function executeAdmittedRunRequest(
     effectivePolicySnapshot = applyConversationModeToEffectiveRunPolicySnapshot(sessionPolicy.snapshot,
       store.getLingThread(thread.id)?.conversationMode.mode ?? thread.conversationMode.mode);
     if (existingContinuation) {
+      let needsOrdinaryRecovery = false;
       if (existingContinuation.origin === "daemon_recovery" && run && sourceAttempt) {
         const compaction = assessRunCompactionRecovery({ store, run, sourceAttempt, policySnapshot: effectivePolicySnapshot });
         if (compaction.kind !== "not_compacted") {
@@ -697,12 +713,35 @@ async function executeAdmittedRunRequest(
               "The selected Runner cannot reconstruct the committed Pi compaction view.");
           }
           compactionRecoveryModelView = compaction.modelView;
+        } else {
+          needsOrdinaryRecovery = true;
         }
       }
       const frozenPolicy = readStoredEffectivePolicySnapshot(run?.requestSnapshot);
       if (!frozenPolicy || !isDeepStrictEqual(effectivePolicySnapshot, frozenPolicy)) {
         throw new HttpError(409, "continuation_policy_changed",
           "The stored Run policy no longer matches current workspace and conversation policy.");
+      }
+      // Preserve the existing policy-drift contract before the new ordinary
+      // checkpoint reader, still before any replacement Attempt or provider I/O.
+      if (needsOrdinaryRecovery && run && sourceAttempt) {
+        const prepared = existingContinuation.preparedExecution;
+        const progress = assessRunOrdinaryProgressRecovery({ store, run,
+          sourceFence: toRuntimeAttemptFence(sourceAttempt), policySnapshot: effectivePolicySnapshot,
+          ...(prepared ? { continuationBinding: { continuationId: prepared.continuation.id,
+            targetFence: toRuntimeAttemptFence(prepared.attempt) } } : {}) });
+        if (progress.kind === "blocked") {
+          throw new HttpError(409, progress.code,
+            `Daemon recovery is blocked at the ordinary Run progress boundary (${progress.code}).`);
+        }
+        if (progress.kind === "verified") {
+          if (!(runnerResolution.runner.adapter instanceof PiRunnerAdapter)) {
+            throw new HttpError(409, "checkpoint.reconstruction_unavailable",
+              "The selected Runner cannot reconstruct the committed ordinary Pi view.");
+          }
+          ordinaryProgressRecoveryModelView = progress.modelView;
+          ordinaryProgressRecoveryWitness = progress.witness;
+        }
       }
     } else {
       workUnit = store.createWorkUnit({
@@ -762,7 +801,7 @@ async function executeAdmittedRunRequest(
       throw new Error("Run persistence dependencies were not initialized.");
     }
     const persistenceStore = store;
-    const persistenceProvider = resolvedProvider;
+    const persistenceProvider = providerForRunPersistence(resolvedProvider);
     const persistencePolicySnapshot = effectivePolicySnapshot;
     const persistenceThread = thread;
     const persistenceTurn = turn;
@@ -893,6 +932,8 @@ async function executeAdmittedRunRequest(
         });
         const activation = store.commitExistingRunContinuation({
           preparation: plan.preparation,
+          ...(ordinaryProgressRecoveryWitness
+            ? { recoveryProgressCheckpointGuard: ordinaryProgressRecoveryWitness } : {}),
           expectedRunStatus: existingContinuation.origin === "runner_retry"
             ? "failed"
             : run.status === "queued" ? "queued" : "running",
@@ -962,6 +1003,7 @@ async function executeAdmittedRunRequest(
       runId,
       workUnit,
       attempt,
+      existingContinuationId: existingContinuation ? continuationExecution?.continuation.id : undefined,
       now: createdAt,
     });
     acquireRunRuntimeSemaphores({
@@ -1421,6 +1463,7 @@ async function executeAdmittedRunRequest(
     return undefined;
   }
   const activeProvider = resolvedProvider;
+  const activeProviderObservationScope = runtimeObservationScopeForProvider(store, activeProvider);
   const activeEffectivePolicySnapshot = effectivePolicySnapshot;
   const activeRuntimeSettings = runtimeSettings;
 
@@ -1520,6 +1563,7 @@ async function executeAdmittedRunRequest(
   let uncommittedCompactionCode: RunCompactionCheckpointBlockerCode | undefined;
   const hostCompactionEnabled = durableRunRequest.harnessFeatureSnapshot?.continuations === "enforce"
     && Boolean(run.contextViewId) && runnerResolution.runner.adapter instanceof PiRunnerAdapter;
+  let ordinaryProgressController: OrdinaryRunProgressController | undefined;
   const beforeTaskContinuationBoundary = async (
     boundary: "before_agent_start" | "before_provider_request" | "tool_call",
     modelView?: readonly unknown[],
@@ -1534,6 +1578,11 @@ async function executeAdmittedRunRequest(
     // question. Its pre-await check cannot authorize the next provider/effect.
     const requiredAfterWait = pauseCoordinator?.beforeBoundary();
     if (requiredAfterWait) return requiredAfterWait;
+    if (boundary === "before_agent_start") {
+      const progress = ordinaryProgressController?.verifyRecoveryBoundary();
+      if (progress?.kind === "blocked") throw new HttpError(409, progress.code,
+        `The ordinary Run recovery witness is no longer current (${progress.code}).`);
+    }
     if (boundary === "before_provider_request" && uncommittedCompactionCode) {
       throw new HttpError(409, uncommittedCompactionCode,
         `A Host Run compaction checkpoint is required before the next model request (${uncommittedCompactionCode}).`);
@@ -1551,6 +1600,13 @@ async function executeAdmittedRunRequest(
         throw new HttpError(409, progress.code,
           `A safe Run progress checkpoint is required before the next model request (${progress.code}).`);
       }
+    } else if (boundary === "before_provider_request" && ordinaryProgressController) {
+      const progress = ordinaryProgressController.beforeProviderBoundary({
+        modelView: redactCompactionModelView(modelView, resolvedSecretValues),
+        activeToolCallIds: [...new Set([...activeToolCallCounts.keys(), ...unpairedToolCallIds])],
+      });
+      if (progress.kind === "blocked") throw new HttpError(409, progress.code,
+        `A safe ordinary Run progress checkpoint is required before the next model request (${progress.code}).`);
     }
   };
   const requestRuntimeAbort = (
@@ -1707,6 +1763,16 @@ async function executeAdmittedRunRequest(
     return true;
   };
   const runnerCallbackFence = Object.freeze(toRuntimeAttemptFence(attempt));
+  // Other continuation origins keep their existing explicit retry/approval
+  // semantics. Their facts cannot be silently promoted as daemon recovery.
+  if (hostCompactionEnabled && (!existingContinuation || existingContinuation.origin === "daemon_recovery")) {
+    ordinaryProgressController = new OrdinaryRunProgressController({ store, run,
+      sourceFence: runnerCallbackFence, policySnapshot: effectivePolicySnapshot,
+      ...(ordinaryProgressRecoveryWitness && continuationExecution ? { recovery: {
+        witness: ordinaryProgressRecoveryWitness,
+        continuationBinding: { continuationId: continuationExecution.continuation.id, targetFence: runnerCallbackFence },
+      } } : {}) });
+  }
   // The turn's persisted source item is the only valid question anchor. If a
   // legacy/internal run has no canonical item, do not expose request_user_input
   // rather than guessing from the latest message or task id.
@@ -1750,6 +1816,7 @@ async function executeAdmittedRunRequest(
 
     try {
       const attributedData = type === "assistant_reasoning_summary"
+        || type === "run_start" || type === "turn_start"
         || type === "provider_retry"
         || type === "context_compaction_start"
         || type === "context_compaction_end"
@@ -1958,6 +2025,7 @@ async function executeAdmittedRunRequest(
               runner: reviewerRunner,
               provider: activeProvider,
               providerPresetId: runRequest.providerPresetId,
+              secretResolver,
               run,
               approval,
               sourceFence: runnerCallbackFence,
@@ -2000,11 +2068,24 @@ async function executeAdmittedRunRequest(
       : undefined;
     const boundRunnerRequest: PiRunnerRunOptions = {
       ...runnerRequest,
+      ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
+        ? createProviderInvocationObserver({
+            store, provider: activeProvider, taskId: runnerRequest.task.id,
+            runId: run.id, attemptId: attempt.id, origin: options.providerInvocationOrigin ?? "task",
+            signal: abortController.signal, onFailure: (failure) => {
+              recordProviderInvocationFailureObservations({ store, secretResolver, failure });
+              return options.onProviderInvocationFailure?.(failure);
+            },
+          })
+        : {}),
       runId: run.id,
       runnerAttemptId: attempt.id,
       hostCompactionEnabled,
       ...(compactionRecoveryModelView
         ? { compactionRecovery: { schemaVersion: 1 as const, modelView: compactionRecoveryModelView } }
+        : {}),
+      ...(ordinaryProgressRecoveryModelView
+        ? { ordinaryProgressRecovery: { schemaVersion: 1 as const, modelView: ordinaryProgressRecoveryModelView } }
         : {}),
       sandbox: sandboxBinding,
       onToolBefore: (request) => {
@@ -2073,6 +2154,9 @@ async function executeAdmittedRunRequest(
         runnerResolution.runner.toolHydration.conformance === "verified"
         ? (request) => hydrateRunnerToolSurface({
             store,
+            secretResolver,
+            actualProvider: activeProvider,
+            observationScope: activeProviderObservationScope,
             runnerRegistry,
             run,
             sourceFence: runnerCallbackFence,

@@ -75,6 +75,26 @@ test("automatic review coordinator sends manual and invalid output to a human wi
   assert.equal(invalidCalls, 1);
 });
 
+for (const [label, decision] of [
+  ["approve array", ["approve"]], ["deny array", ["deny"]], ["manual array", ["manual"]],
+  ["nested approve array", [["approve"]]], ["nested manual array", [["manual"]]],
+  ["object", { decision: "deny" }], ["null", null],
+  ["non-callable toString object", { toString: "deny" }],
+]) {
+  test(`A22 automatic review coordinator keeps malformed ${label} manual without retry`, async () => {
+    const coordinator = createApprovalAutoReviewCoordinator({ maxConcurrent: 1, maxTransientRetries: 2, deadlineMs: 1_000 });
+    let calls = 0;
+    const result = await coordinator.review({ execute: async () => {
+      calls += 1;
+      return JSON.stringify({ schemaVersion: 1, decision, reason: "Scoped decision." });
+    } });
+    assert.equal(result.status, "manual");
+    assert.equal(result.code, "invalid_output");
+    assert.equal(result.attempts, 1);
+    assert.equal(calls, 1, "invalid model output must not consume a transport retry");
+  });
+}
+
 test("automatic review coordinator retries only a transient transport failure", async () => {
   const coordinator = createApprovalAutoReviewCoordinator({
     maxConcurrent: 1,

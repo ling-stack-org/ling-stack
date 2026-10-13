@@ -27,6 +27,7 @@ import { ChannelOperationBlockerPublicationError, publishChannelOperationBlocker
   type ChannelOperationBlockedResult } from "./channel-operation-blocker.js";
 import { channelOperationVisibleSources } from "./channel-operation-sources.js";
 import { formatServerCatalogMessage } from "@ling-stack/localization";
+import { PiRunnerAdapter } from "@ling-stack/runner-pi";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunnerRegistry } from "../../runtime/runners.js";
 import { extractAssistantText } from "../../shared/assistant-text.js";
@@ -50,10 +51,8 @@ import {
   turnEnvelopeHasUserInput,
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
-import {
-  recordProviderContextLengthObservation,
-  recordProviderRuntimeAvailabilityIncident,
-} from "./provider-runtime-observations.js";
+import { createProviderInvocationObserver } from "../providers/runtime-invocations.js";
+import { recordProviderInvocationFailureObservations } from "../providers/runtime-failure-observations.js";
 import { resolveChannelResponseLanguage } from "./response-language.js";
 import { resolveChannelConversationSurface } from "./conversation-surface.js";
 import { preserveMarkdownLayout } from "./markdown-text.js";
@@ -505,6 +504,7 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
   }
   let contextPack = buildChannelIntentSelectorContextPack({
     store: input.store,
+    secretResolver: input.secretResolver,
     channel: input.channel,
     sourceMessage: input.sourceMessage,
     turnEnvelope: input.turnEnvelope,
@@ -537,6 +537,14 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
         channelId: input.channel.id,
       },
       provider,
+      ...(runnerResolution.runner.adapter instanceof PiRunnerAdapter
+        ? createProviderInvocationObserver({
+            store: input.store, provider, taskId: input.sourceMessage.id, origin: "intent",
+            onFailure: failure => { recordProviderInvocationFailureObservations({
+              store: input.store, secretResolver: input.secretResolver, failure,
+            }); },
+          })
+        : {}),
       tools: [],
       thinkingLevel: "low",
       systemPrompt: "You are Ling's channel intent selector. Return strict JSON only.",
@@ -555,20 +563,6 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
       throw error;
     }
     const observedAt = new Date().toISOString();
-    const providerPreset = contextPack.providerPresetId ? input.store.getProviderPreset(contextPack.providerPresetId) : undefined;
-    recordProviderContextLengthObservation({
-      providerPreset,
-      contextPack,
-      now: observedAt,
-    });
-    recordProviderRuntimeAvailabilityIncident({
-      store: input.store,
-      providerPreset,
-      providerPresetId: contextPack.providerPresetId,
-      code: "context_length_error",
-      error,
-      now: observedAt,
-    });
     const compaction = await compactChannelDiscussionForNoToolsRetry({
       store: input.store,
       channel: input.channel,
@@ -578,6 +572,7 @@ async function requestModelIntent(input: ChannelIntentSelectorInput): Promise<Ch
     });
     contextPack = buildChannelIntentSelectorContextPack({
       store: input.store,
+      secretResolver: input.secretResolver,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
       turnEnvelope: input.turnEnvelope,

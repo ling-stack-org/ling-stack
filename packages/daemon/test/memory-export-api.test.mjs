@@ -7,7 +7,7 @@ import { createDaemonServer } from "../dist/index.js";
 
 test("memory export API previews markdown and writes projection under the resolved export root", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-export-api-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(cwd);
   try {
     const memory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
       scopeType: "workspace",
@@ -63,7 +63,7 @@ test("memory export API previews markdown and writes projection under the resolv
 test("memory import API previews and creates candidate-only memories", async () => {
   const sourceCwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-import-source-"));
   const targetCwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-import-target-"));
-  const daemon = await startDaemonForTest();
+  const daemon = await startDaemonForTest(sourceCwd);
   try {
     const original = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(sourceCwd)}`, {
       scopeType: "workspace",
@@ -112,8 +112,73 @@ test("memory import API previews and creates candidate-only memories", async () 
   }
 });
 
-async function startDaemonForTest() {
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 });
+test("B004 B005 GET and file export share safe skipped titles and exact candidate body", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-memory-b004-b005-api-"));
+  const daemon = await startDaemonForTest(cwd);
+  try {
+    const body = "Safe first line.\r\n## Literal body heading\r\n### Metadata\r\nSafe final line.\r\n";
+    const memory = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "workspace", ownerId: "workspace_default", title: "Ordinary B004 workflow", body,
+      reviewState: "active", retrievalProviderId: "synthetic-vector", retrievalHandle: "synthetic-handle",
+    })).memory;
+    const syntheticSecret = "sk-b005-test-synthetic-api-title-secret";
+    const skipped = (await postJson(`${daemon.url}/memory?cwd=${encodeURIComponent(cwd)}`, {
+      scopeType: "workspace", ownerId: "workspace_default", title: `Skipped deploy ${syntheticSecret}`,
+      body: "Skipped body remains private.", sensitivity: "secret-adjacent",
+    })).memory;
+    const generatedAt = "2026-10-13T00:00:00.000Z";
+    const query = `cwd=${encodeURIComponent(cwd)}&generatedAt=${encodeURIComponent(generatedAt)}`;
+    const preview = await getJson(`${daemon.url}/memory/export?${query}`);
+    assert.equal(preview.export.memoryCount, 1);
+    assert.equal(preview.export.skippedSecretAdjacentCount, 1);
+    assert.deepEqual(preview.export.skippedSecretAdjacentIds, [skipped.id]);
+    assert.equal(preview.export.redactionApplied, true, "only the skipped title needs redaction");
+    assert.equal(preview.export.items[0].redactionApplied, false);
+    assert.ok(preview.export.markdown.includes(`- \`${skipped.id}\` Skipped deploy [REDACTED]`));
+    assert.ok(!JSON.stringify(preview).includes(syntheticSecret));
+    assert.ok(!preview.export.markdown.includes(skipped.body));
+
+    const metadataOnly = await getJson(`${daemon.url}/memory/export?${query}&includeMarkdown=false`);
+    assert.equal("markdown" in metadataOnly.export, false);
+    assert.equal(metadataOnly.export.redactionApplied, true);
+    assert.deepEqual(metadataOnly.export.skippedSecretAdjacentIds, [skipped.id]);
+    const written = await postJson(`${daemon.url}/memory/export?cwd=${encodeURIComponent(cwd)}`, {
+      generatedAt, fileName: "b004-b005-safe-export.md",
+    });
+    assert.equal("markdown" in written.export, false);
+    assert.equal(written.export.redactionApplied, true);
+    assert.deepEqual(written.export.skippedSecretAdjacentIds, [skipped.id]);
+    const content = await readFile(written.filePath, "utf8");
+    assert.equal(content, preview.export.markdown, "GET and POST file must use the same shared projection");
+    assert.ok(!content.includes(syntheticSecret));
+
+    const dryRun = await postJson(`${daemon.url}/memory/import?cwd=${encodeURIComponent(cwd)}`, {
+      markdown: content, sourceLabel: "b004-b005-safe-export.md", dryRun: true,
+    });
+    assert.equal(dryRun.importedCount, 0);
+    assert.equal(dryRun.plan.candidateCount, 1);
+    assert.equal(dryRun.plan.skippedCount, 0);
+    assert.equal(dryRun.plan.candidates[0].originalId, memory.id);
+    assert.equal(dryRun.plan.candidates[0].createInput.body, body);
+    assert.equal(dryRun.plan.candidates[0].createInput.reviewState, "candidate");
+    assert.equal(dryRun.plan.candidates[0].createInput.retrievalProviderId, undefined);
+    assert.equal(dryRun.plan.candidates[0].createInput.retrievalHandle, undefined);
+
+    const included = await getJson(`${daemon.url}/memory/export?${query}&includeSecretAdjacent=true`);
+    assert.equal(included.export.memoryCount, 2);
+    assert.equal(included.export.skippedSecretAdjacentCount, 0);
+    assert.deepEqual(included.export.skippedSecretAdjacentIds, []);
+    assert.ok(!JSON.stringify(included).includes(syntheticSecret));
+    assert.ok(included.export.items.some(item => item.id === skipped.id && item.title === "Skipped deploy [REDACTED]"));
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+async function startDaemonForTest(defaultWorkspaceCwd) {
+  assert.ok(defaultWorkspaceCwd, "every fixture daemon must start in an explicit owned workspace");
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0, defaultWorkspaceCwd });
   await daemon.start();
   const address = daemon.server.address();
   assert.ok(address && typeof address === "object");

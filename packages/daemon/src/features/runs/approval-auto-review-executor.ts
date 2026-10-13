@@ -1,4 +1,8 @@
 import type { PiRunnerEvent, PiRunnerProviderConfig } from "@ling-stack/runner-pi";
+import { PiRunnerAdapter } from "@ling-stack/runner-pi";
+import type { RunStore, SecretResolver } from "@ling-stack/core";
+import { createProviderInvocationObserver } from "../providers/runtime-invocations.js";
+import { recordProviderInvocationFailureObservations } from "../providers/runtime-failure-observations.js";
 import type { RunnerAdapter } from "../../context.js";
 import type { AttemptLocalWriterGroup } from "../../runtime/attempt-local-writers.js";
 import { isRecord } from "../../shared/validation.js";
@@ -23,6 +27,13 @@ export interface ExecuteApprovalAutoReviewModelInput {
   readonly evidenceFingerprint: string;
   readonly serializedEvidence: string;
   readonly signal?: AbortSignal;
+  /** This review owns an independent Attempt; the outer task observer is never reused. */
+  readonly providerObservation?: {
+    readonly store: RunStore;
+    readonly secretResolver: SecretResolver;
+    readonly runId: string;
+    readonly attemptId: string;
+  };
   /** Trusted Host-local lifetime accounting, never a Core safe/stop receipt. */
   readonly localWriters?: AttemptLocalWriterGroup;
 }
@@ -55,9 +66,21 @@ export async function executeApprovalAutoReviewModel(
 async function runApprovalAutoReviewModel(input: ExecuteApprovalAutoReviewModelInput): Promise<string> {
   const assistantOutputs: string[] = [];
   let observedToolActivity = false;
+  const taskId = `approval-review:${input.approvalId}:${input.evidenceFingerprint.slice(0, 16)}`;
+  const observation = input.providerObservation;
   const result = await input.runner.runTask({
     cwd: input.cwd,
     provider: input.provider,
+    ...(observation ? { runId: observation.runId, runnerAttemptId: observation.attemptId } : {}),
+    ...(observation && input.runner instanceof PiRunnerAdapter
+      ? createProviderInvocationObserver({
+          store: observation.store, provider: input.provider, taskId,
+          runId: observation.runId, attemptId: observation.attemptId, origin: "reviewer", signal: input.signal,
+          onFailure: failure => { recordProviderInvocationFailureObservations({
+            store: observation.store, secretResolver: observation.secretResolver, failure,
+          }); },
+        })
+      : {}),
     tools: [],
     mcpTools: [],
     hostCapabilityTools: [],
@@ -70,7 +93,7 @@ async function runApprovalAutoReviewModel(input: ExecuteApprovalAutoReviewModelI
     appendSystemPrompt: [],
     signal: input.signal,
     task: {
-      id: `approval-review:${input.approvalId}:${input.evidenceFingerprint.slice(0, 16)}`,
+      id: taskId,
       title: "Automatic approval review",
       prompt: [
         "Review this single immutable evidence snapshot.",

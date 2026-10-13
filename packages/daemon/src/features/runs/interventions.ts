@@ -405,7 +405,7 @@ export async function maybeStartNextRunInterventionContinuation(input: {
       const continuationRequest = buildRunInterventionContinuationRequest(input.store, sourceRun, starting, {
         sourceMessageId: channelProjection?.sourceMessageId,
         linkedMessageId: channelProjection?.replyMessageId,
-      });
+      }, input.secretResolver);
       continuationRunId = await executeRunRequest(
         continuationRequest,
         channelProjection?.sink ?? createDetachedRunExecutionSink(),

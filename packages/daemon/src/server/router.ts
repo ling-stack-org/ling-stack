@@ -361,12 +361,14 @@ import { RunControlService } from "../run-control.js";
 import { allowLocalWorkspaceRequest } from "../shared/local-workspace-access.js";
 import { setCorsHeaders, writeJson } from "../shared/response.js";
 import { handleStartupStatus } from "../startup/routes.js";
+import { handleHumanEvaluationDesktopRoute } from "../features/harness/evaluations/human-evaluation-routes.js";
 
 export async function routeRequest(
   request: IncomingMessage,
   response: ServerResponse,
   context: DaemonContext,
 ): Promise<void> {
+  if (await handleHumanEvaluationDesktopRoute(request, response, context)) return;
   if (await context.remoteAccess.handleManagementRequest(request, response)) {
     return;
   }
@@ -1036,6 +1038,9 @@ export async function routeRequest(
             errorMessage: input.errorMessage,
           });
         },
+        transitionRuntimeWorkUnitCancelled: (input) => {
+          transitionWorkUnitCancelled(input.store, input.workUnitId, input.attemptId, input.reason);
+        },
         executeExternalWorkAction: async (input) => executeExternalWorkAction(input),
       },
     );
@@ -1440,7 +1445,7 @@ export async function routeRequest(
     return;
   }
   if (runRoute?.kind === "tool-load-requests") {
-    await handleToolLoadRequestsCollection(request, response, config, url, storeRegistry, runnerRegistry, runRoute.runId);
+    await handleToolLoadRequestsCollection(request, response, config, url, storeRegistry, runnerRegistry, runRoute.runId, secretResolver);
     return;
   }
   if (request.method === "GET" && runRoute?.kind === "run") {
@@ -1729,6 +1734,7 @@ export async function routeRequest(
               if (terminalRun.status === "succeeded") {
                 await orchestrateChannelWorkflow({
                   store,
+                  secretResolver,
                   cwd,
                   workflowId: workflow.id,
                   validateRunRequest: (candidateRunRequest) => {
@@ -1767,6 +1773,7 @@ export async function routeRequest(
     const startOrchestratedRun = createStartOrchestratedRun(input.store, input.cwd);
     const orchestration = await orchestrateChannelWorkflow({
       store: input.store,
+      secretResolver,
       cwd: input.cwd,
       workflowId: confirmed.workflow.id,
       validateRunRequest: (candidateRunRequest) => {
@@ -1958,6 +1965,7 @@ export async function routeRequest(
           const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
           const result = await orchestrateChannelWorkflow({
             store,
+            secretResolver,
             cwd,
             workflowId: workflowRoute.workflowId,
             validateRunRequest: (candidateRunRequest) => {
@@ -2046,6 +2054,7 @@ export async function routeRequest(
         const startOrchestratedRun = createStartOrchestratedRun(store, cwd);
         const result = await retryChannelWorkflowStep({
           store,
+          secretResolver,
           cwd,
           workflowStepId: workflowRoute.workflowStepId,
           validateRunRequest: (candidateRunRequest) => {
@@ -2108,6 +2117,7 @@ export async function routeRequest(
               computerUsePreviews,
             },
           ),
+        secretResolver,
       );
       return;
     }
@@ -2269,7 +2279,7 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "team-metrics") {
-      await handleChannelTeamMetricsProjection(request, response, config, storeRegistry, channelRoute.channelId);
+      await handleChannelTeamMetricsProjection(request, response, config, storeRegistry, channelRoute.channelId, secretResolver);
       return;
     }
     if (channelRoute.action === "team-authority-ledger") {
@@ -2281,7 +2291,7 @@ export async function routeRequest(
       return;
     }
     if (channelRoute.action === "team-snapshots") {
-      await handleChannelTeamSnapshots(request, response, config, storeRegistry, channelRoute.channelId);
+      await handleChannelTeamSnapshots(request, response, config, storeRegistry, channelRoute.channelId, secretResolver);
       return;
     }
     if (channelRoute.action === "team-evaluations") {

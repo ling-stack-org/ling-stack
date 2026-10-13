@@ -13,7 +13,13 @@ import {
   materializeProviderSecrets,
 } from "../providers/secret-materializer.js";
 import { removeUndefined } from "../../shared/validation.js";
+import { assertInlineProviderCredentialsAvailable } from "./provider-persistence.js";
 import type { RunRequest } from "./schemas.js";
+import {
+  bindResolvedProviderObservationScope,
+  captureProviderConfigurationTicket,
+  providerPresetForConfigurationTicket,
+} from "../providers/runtime-observation-scope.js";
 
 type ProviderRunSelection = Pick<
   RunRequest,
@@ -31,7 +37,10 @@ export function resolveProviderForRun<T extends ProviderRunSelection>(
   }
 
   if (runRequest.providerPresetId) {
-    const preset = store.getProviderPreset(runRequest.providerPresetId);
+    const ticket = captureProviderConfigurationTicket(store, runRequest.providerPresetId);
+    const preset = ticket
+      ? providerPresetForConfigurationTicket(ticket)
+      : store.getProviderPreset(runRequest.providerPresetId);
     if (!preset) {
       throw new HttpError(404, "provider_not_found", `Provider preset not found: ${runRequest.providerPresetId}`);
     }
@@ -46,7 +55,7 @@ export function resolveProviderForRun<T extends ProviderRunSelection>(
     }
     assertProviderRunPreflight(store, preset, runRequest.skipProviderPreflight === true, secretResolver);
     const materialized = materializeProviderSecretsForRun(store, preset, secretResolver);
-    return removeUndefined({
+    const provider = removeUndefined({
       provider: preset.providerId,
       model: preset.model,
       displayName: preset.displayName,
@@ -67,12 +76,15 @@ export function resolveProviderForRun<T extends ProviderRunSelection>(
       maxTokens: preset.maxTokens,
       compat: preset.compat,
     }) as PiRunnerProviderConfig;
+    if (ticket) bindResolvedProviderObservationScope({ store, ticket, provider, materialized, materializedPreset: preset });
+    return provider;
   }
 
   if (!runRequest.provider) {
     throw new HttpError(400, "bad_request", "Either providerPresetId or provider is required");
   }
 
+  assertInlineProviderCredentialsAvailable(runRequest.provider);
   return removeUndefined({
     ...runRequest.provider,
     providerTransport: resolveEffectiveProviderTransport(

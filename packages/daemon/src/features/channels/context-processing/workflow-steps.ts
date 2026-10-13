@@ -3,6 +3,7 @@ import type {
   ChannelWorkflow,
   ChannelWorkflowStep,
   RunStore,
+  SecretResolver,
   SkillApprovalProfile,
 } from "@ling-stack/core";
 import { resolveChannelExecutionCwd } from "@ling-stack/core";
@@ -16,6 +17,7 @@ type WorkflowStepContextPackStore = RunStore;
 
 export interface WorkflowStepContextPackInput {
   readonly store: WorkflowStepContextPackStore;
+  readonly secretResolver?: SecretResolver;
   readonly channel: Channel;
   readonly workflow: ChannelWorkflow;
   readonly step: ChannelWorkflowStep;

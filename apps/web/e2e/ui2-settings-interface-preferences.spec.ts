@@ -67,7 +67,10 @@ test("Web preferences preserve system and fixed themes, languages, keyboard flow
   await expectNoHorizontalOverflow(panel);
   await captureEvidence(page, "1440x960-ling-light-system.png");
 
-  await followSystem.uncheck();
+  await followSystem.focus();
+  await page.keyboard.press("Space");
+  await expect(followSystem).toBeFocused();
+  await expect(followSystem).not.toBeChecked();
   await expectSwitchCentersAligned(followSystem);
   await expect(lightTheme).toHaveAttribute("aria-checked", "true");
   await expect(page.locator("html")).toHaveAttribute("data-theme-selection", "fixed");
@@ -82,7 +85,10 @@ test("Web preferences preserve system and fixed themes, languages, keyboard flow
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
   await expect.poll(() => state.workspaceSettings.theme).toBe("dark");
 
-  await followSystem.check();
+  await followSystem.focus();
+  await page.keyboard.press("Space");
+  await expect(followSystem).toBeFocused();
+  await expect(followSystem).toBeChecked();
   await expect(page.locator("html")).toHaveAttribute("data-theme-selection", "system");
   await page.emulateMedia({ colorScheme: "light", reducedMotion: "reduce" });
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-light");

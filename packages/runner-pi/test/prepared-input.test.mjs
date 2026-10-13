@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { PiRunnerAdapter } from "../dist/adapter.js";
 import { assertPiModelContextCapacity } from "../dist/prepared-input.js";
 import { hostCapabilityToolsFixture as hostCapabilityToolsV1 } from "./support/host-capability-fixture.mjs";
@@ -20,7 +21,9 @@ async function fixture(t, overrides = {}) {
     registerCustomProviderIfNeeded(runtime, provider) {
       super.registerCustomProviderIfNeeded(runtime, provider);
       runtime.registerProvider(provider.provider, { api: "openai-completions", streamSimple: (model, context, options) => {
-        contexts.push(structuredClone({ ...context, tools: context.tools?.map(({ name, description, parameters, constrainedSampling }) =>
+        contexts.push(structuredClone({ systemPrompt: getCurrentSystemPrompt(context.messages),
+          messages: context.messages.filter(message => message.role !== "system"),
+          tools: getCurrentTools(context.messages).map(({ name, description, parameters, constrainedSampling }) =>
           ({ name, description, parameters, ...(constrainedSampling !== undefined ? { constrainedSampling } : {}) })) }));
         controls.beforePayload?.(model, context);
         return stream(model, context, { ...options, fetch: async (_url, request) => {
@@ -52,7 +55,7 @@ test("preparation uses real SDK prompt and schemas without a Run, network, callb
   const prepared = await f.runner.prepareTaskInput(f.options);
   assert.equal(prepared.schemaVersion, 1);
   assert.equal(prepared.boundary, "pi-model-context");
-  assert.match(prepared.systemPrompt, /Current working directory:/);
+  assert.ok(prepared.systemPrompt.includes(`<cwd>\n${f.cwd}\n</cwd>`));
   assert.ok(prepared.systemPrompt.includes("FIRST MEMORY\n\nFIRST SKILL"));
   assert.equal(prepared.userPrompt, "Task: Prepared\n\nCurrent input.");
   assert.equal(prepared.tools.some((tool) => tool.name === "image_generate"), true, "media schema is prepared before a Run exists");
@@ -190,10 +193,10 @@ for (const changed of ["system", "messages", "model", "tools"]) {
     const f = await fixture(t);
     const preparedInput = await f.runner.prepareTaskInput(f.options);
     f.controls.beforePayload = (model, context) => {
-      if (changed === "system") context.systemPrompt += "\nLATE_DRIFT";
-      if (changed === "messages") context.messages[0].content = "LATE_DRIFT";
+      if (changed === "system") context.messages[0].content += "\nLATE_DRIFT";
+      if (changed === "messages") context.messages.find(message => message.role === "user").content = "LATE_DRIFT";
       if (changed === "model") model.contextWindow += 1;
-      if (changed === "tools") context.tools[0].description += " LATE_DRIFT";
+      if (changed === "tools") getCurrentTools(context.messages)[0].description += " LATE_DRIFT";
     };
     let receipts = 0;
     await assert.rejects(f.runner.runTask({ ...f.options, runId: "fixture-run", runnerAttemptId: "fixture-attempt", preparedInput,
@@ -267,8 +270,9 @@ test("post-tool model context gate counts cumulative projected results", () => {
   assert.doesNotThrow(() => assertPiModelContextCapacity(model, context));
   context.messages.push({ role: "toolResult", content: [{ type: "text", text: "z".repeat(8_000) }] });
   const projected = assertPiModelContextCapacity(model, context);
-  assert.ok(projected.messages[1].content[0].text.length < 8_000);
-  assert.match(projected.messages[1].content[0].text, /truncated/);
+  const results = projected.messages.filter(message => message.role === "toolResult");
+  assert.ok(results[0].content[0].text.length < 8_000);
+  assert.match(results[0].content[0].text, /truncated/);
   assert.equal(context.messages[1].content[0].text.length, 8_000, "Host/SDK evidence remains complete");
 });
 
@@ -279,8 +283,9 @@ test("provider capacity gate uses remaining model space instead of a fixed tool-
     { role: "toolResult", content: [{ type: "text", text: "x".repeat(10_000) }] },
   ] };
   const projected = assertPiModelContextCapacity(model, context);
-  assert.match(projected.messages[1].content[0].text, /truncated/);
-  assert.ok(projected.messages[1].content[0].text.length < 10_000);
+  const result = projected.messages.find(message => message.role === "toolResult");
+  assert.match(result.content[0].text, /truncated/);
+  assert.ok(result.content[0].text.length < 10_000);
   assert.equal(context.messages[1].content[0].text.length, 10_000);
   assert.doesNotThrow(() => assertPiModelContextCapacity(model, projected));
 });

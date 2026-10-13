@@ -22,10 +22,6 @@ import {
   type LingAgentTurnEnvelope,
 } from "./ling-agent-turn-envelope.js";
 import { runChannelObserverBusForTurn } from "./observer-bus.js";
-import {
-  recordProviderContextLengthObservation,
-  recordProviderRuntimeAvailabilityIncident,
-} from "./provider-runtime-observations.js";
 import { resolveChannelResponseLanguage, responseLanguageInstruction } from "./response-language.js";
 import { buildChannelWebContext, prependChannelWebContext, type ChannelWebContext } from "./web-tools.js";
 import {
@@ -46,8 +42,13 @@ import {
   updatePendingAssistantMessage,
 } from "./conversation-item-messages.js";
 import { runHasConversationGeneratedMedia } from "../media/conversation-projection.js";
+import type { ProviderInvocationFailure, ProviderInvocationFailureSink } from "../providers/runtime-invocations.js";
 
-export type StartChannelReplyRun = (runRequest: RunRequest, sink: RunExecutionSink) => Promise<string | undefined>;
+export type StartChannelReplyRun = (
+  runRequest: RunRequest,
+  sink: RunExecutionSink,
+  onProviderInvocationFailure?: ProviderInvocationFailureSink,
+) => Promise<string | undefined>;
 
 export async function createAiChannelReply(input: {
   readonly startRun: StartChannelReplyRun;
@@ -209,6 +210,7 @@ async function completeAiChannelReply(input: {
       runChannelObserverBusForTurn({
         enabled: input.teamObserverBusEnabled === true,
         store: input.store,
+        secretResolver: input.secretResolver,
         channel: input.channel,
         sourceMessageId: input.sourceMessage.id,
         turnEnvelope,
@@ -241,6 +243,7 @@ async function completeAiChannelReply(input: {
     const responseLanguage = responseLanguageResolution.language;
     let discussionContextPack = buildChannelReplyContextPack({
       store: input.store,
+      secretResolver: input.secretResolver,
       channel: input.channel,
       sourceMessage: input.sourceMessage,
       turnEnvelope,
@@ -304,20 +307,6 @@ async function completeAiChannelReply(input: {
     const firstRunFailure = channelReplyRunFailure(execution.run, execution.projection.error());
     if (firstRunFailure && isContextLengthError(firstRunFailure)) {
       const observedAt = new Date().toISOString();
-      const providerPreset = discussionContextPack.providerPresetId ? input.store.getProviderPreset(discussionContextPack.providerPresetId) : undefined;
-      recordProviderContextLengthObservation({
-        providerPreset,
-        contextPack: discussionContextPack,
-        now: observedAt,
-      });
-      recordProviderRuntimeAvailabilityIncident({
-        store: input.store,
-        providerPreset,
-        providerPresetId: discussionContextPack.providerPresetId,
-        code: "context_length_error",
-        error: firstRunFailure,
-        now: observedAt,
-      });
       const compaction = await compactChannelDiscussionForNoToolsRetry({
         store: input.store,
         channel: input.channel,
@@ -327,6 +316,7 @@ async function completeAiChannelReply(input: {
       });
       discussionContextPack = buildChannelReplyContextPack({
         store: input.store,
+        secretResolver: input.secretResolver,
         channel: input.channel,
         sourceMessage: input.sourceMessage,
         turnEnvelope,
@@ -424,13 +414,6 @@ async function completeAiChannelReply(input: {
     return reply;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    recordProviderRuntimeAvailabilityIncident({
-      store: input.store,
-      providerPreset: input.providerPresetId ? input.store.getProviderPreset(input.providerPresetId) : undefined,
-      providerPresetId: input.providerPresetId,
-      error,
-      now: new Date().toISOString(),
-    });
     const blocked = finishChannelMessage(input.store, input.pending.id, {
       body: `AI teammate is blocked: ${message}`,
       status: "blocked",
@@ -498,7 +481,9 @@ async function startProjectedChannelReplyRun(input: {
 }): Promise<{
   readonly run: RunSession;
   readonly projection: ReturnType<typeof createChannelReplyRunProjection>;
+  readonly providerFailures: readonly ProviderInvocationFailure[];
 }> {
+  const providerFailures: ProviderInvocationFailure[] = [];
   const projection = createChannelReplyRunProjection({
     store: input.input.store,
     pendingMessageId: input.input.pending.id,
@@ -548,7 +533,7 @@ async function startProjectedChannelReplyRun(input: {
     compactedRetry: input.compactedRetry,
     recoveryAttempt: input.recoveryAttempt ?? input.input.replyRecoveryAttempt,
     contextProjection: input.contextProjection,
-  }), projection.sink);
+  }), projection.sink, (failure) => { providerFailures.push(failure); });
   const runId = startedRunId ?? projection.runId();
   if (!runId) {
     throw new Error(projection.error() ?? "Channel reply run failed to start.");
@@ -557,7 +542,7 @@ async function startProjectedChannelReplyRun(input: {
   if (!run) {
     throw new Error(`Channel reply run was not persisted: ${runId}`);
   }
-  return { run, projection };
+  return { run, projection, providerFailures };
 }
 
 function requireContextProjection(pack: ContextPack): NonNullable<ContextPack["contextProjection"]> {

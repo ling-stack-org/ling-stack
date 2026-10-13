@@ -244,6 +244,7 @@ export interface ComputerUsePreviewPreferences {
 }
 
 export interface LingDesktopCapabilities {
+  readonly humanEvaluation?: import("./human-evaluation-capabilities.js").DesktopHumanEvaluationCapabilities;
   readonly platform: DesktopPlatform;
   readonly daemonBaseUrl: string;
   readonly appearance: {

@@ -1,6 +1,7 @@
 import {
   createApprovalCommandRuleId,
   createApprovalRequestId,
+  isSystemReviewerApprovalDecision,
   type ApprovalCommandRule,
   type ApprovalRequest,
   type ApprovalStatus,
@@ -248,6 +249,9 @@ export class SqliteApprovalRequestStore {
     input: ResolveApprovalBySystemReviewerInput,
     now: string,
   ): ResolveApprovalBySystemReviewerResult {
+    if (!isSystemReviewerApprovalDecision(input.decision)) {
+      return { ok: false, code: "approval_invalid_decision" };
+    }
     const existing = this.getApprovalRequest(input.approvalId);
     if (!existing) return { ok: false, code: "approval_not_found" };
     if (existing.status !== "pending") return { ok: false, code: "approval_not_pending" };

@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import type { DatabaseSync, SQLOutputValue } from "node:sqlite";
 import { isHostCommandPreparedV1, isHostCommandSettledV1 } from "@ling-stack/contracts";
 import { digestHarnessToolValue } from "../../harness/tool-executions.js";
@@ -125,7 +126,7 @@ export function hostOperationDomainIdentity(database: DatabaseSync, operation: H
   if (evidence.kind !== "harness_tool_execution" || operation.kind !== "file_mutation") {
     return hostOperationFailure("host_operation_evidence_invalid");
   }
-  const row = readFileExecution(database, operation, evidence.id);
+  const row = readFileExecution(database, operation.source, operation.toolCallId, evidence.id, operation.admittedAt);
   if (binding && row.execution_started_at !== null) return hostOperationFailure("host_operation_evidence_already_started");
   const policy = sealedArtifact(database, String(row.policy_snapshot_artifact_id), operation.source.runId);
   if (policy.payload.schemaVersion !== 1 || policy.payload.runId !== operation.source.runId
@@ -207,13 +208,14 @@ function verifyHostOperationSafeInner(database: DatabaseSync, operation: StoredH
     domainDigest, childDigests });
 }
 
-function readFileExecution(database: DatabaseSync, operation: HostOperationRecord, id: string): Record<string, SQLOutputValue> {
+function readFileExecution(database: DatabaseSync, source: HostOperationSource, toolCallId: string, id: string,
+  admittedAt?: string): Record<string, SQLOutputValue> {
   const row = database.prepare(`SELECT execution.*,attempt.runtime_instance_id,attempt.fencing_token
     FROM harness_tool_executions execution JOIN work_unit_attempts attempt ON attempt.id=execution.attempt_id
     WHERE execution.id=?`).get(id);
   if (!row || row.schema_version !== 1 || !sameHostOperationSource({ runId: String(row.run_id), workUnitId: String(row.work_unit_id),
-    attemptId: String(row.attempt_id), runtimeInstanceId: String(row.runtime_instance_id), fencingToken: String(row.fencing_token) }, operation.source)
-    || row.tool_call_id !== operation.toolCallId || !["write","apply_patch"].includes(String(row.executor_kind))
+    attemptId: String(row.attempt_id), runtimeInstanceId: String(row.runtime_instance_id), fencingToken: String(row.fencing_token) }, source)
+    || row.tool_call_id !== toolCallId || !["write","apply_patch"].includes(String(row.executor_kind))
     // Native whole-file edit uses `write`; an explicit patch edit uses
     // `apply_patch`. Preserve the model-facing edit identity in both cases.
     || !((row.tool_name === "write" && row.executor_kind === "write")
@@ -222,22 +224,50 @@ function readFileExecution(database: DatabaseSync, operation: HostOperationRecor
       || (row.tool_name === "edit" && row.executor_kind === "write")
       || (row.tool_name === "edit" && row.executor_kind === "apply_patch"))
     || !digest(row.request_digest) || !digest(row.side_effect_fingerprint)
-    || hostOperationTimestamp(row.created_at) < hostOperationTimestamp(operation.admittedAt)) return hostOperationFailure("host_operation_evidence_invalid");
+    || admittedAt !== undefined && hostOperationTimestamp(row.created_at) < hostOperationTimestamp(admittedAt)) return hostOperationFailure("host_operation_evidence_invalid");
   return row;
 }
 function verifyFileTerminal(database: DatabaseSync, operation: HostOperationRecord, noStart: boolean): string {
-  const row = readFileExecution(database, operation, operation.evidenceRef!.id);
+  const row = readFileExecution(database, operation.source, operation.toolCallId, operation.evidenceRef!.id, operation.admittedAt);
+  const finishedAt = hostOperationTimestamp(row.execution_finished_at);
+  if (finishedAt > hostOperationTimestamp(operation.settledAt)
+    || !noStart && (!operation.launchedAt || hostOperationTimestamp(row.execution_started_at) > hostOperationTimestamp(operation.launchedAt)
+      || finishedAt < hostOperationTimestamp(operation.launchedAt))) return hostOperationFailure("host_operation_evidence_invalid");
+  return verifyFileTerminalRow(database, row, operation.source.runId, noStart);
+}
+
+/** Reverify the existing dedicated file receipt; this does not mint a Host operation or launch capability. */
+export function verifyHarnessFileExecutionReceipt(database: DatabaseSync, input: {
+  readonly source: HostOperationSource; readonly toolCallId: string; readonly toolName: string;
+  readonly executionId: string; readonly requestDigest: string; readonly policySnapshot: unknown;
+}): string {
+  assertHostOperationLineage(database, input.source);
+  const row = readFileExecution(database, input.source, input.toolCallId, input.executionId);
+  if (row.state !== "succeeded" || row.tool_name !== input.toolName || row.request_digest !== input.requestDigest) {
+    return hostOperationFailure("host_operation_evidence_invalid");
+  }
+  const policy = sealedArtifact(database, String(row.policy_snapshot_artifact_id), input.source.runId);
+  if (policy.payload.schemaVersion !== 1 || policy.payload.runId !== input.source.runId
+    || policy.payload.attemptId !== input.source.attemptId || policy.payload.toolCallId !== input.toolCallId
+    || policy.payload.executorKind !== row.executor_kind || policy.payload.requestDigest !== row.request_digest
+    || policy.payload.sideEffectFingerprint !== row.side_effect_fingerprint
+    || !isDeepStrictEqual(policy.payload.effectivePolicySnapshot, input.policySnapshot)
+    || hostOperationTimestamp(policy.createdAt) > hostOperationTimestamp(row.created_at)) return hostOperationFailure("host_operation_evidence_invalid");
+  return verifyFileTerminalRow(database, row, input.source.runId, false);
+}
+
+/** Shared terminal/artifact checks for tracked Host effects and ordinary dedicated file executions. */
+function verifyFileTerminalRow(database: DatabaseSync, row: Record<string, SQLOutputValue>, runId: string, noStart: boolean): string {
   const finishedAt = hostOperationTimestamp(row.execution_finished_at);
   if (!["succeeded","failed","cancelled","denied","superseded"].includes(String(row.state))
-    || finishedAt > hostOperationTimestamp(operation.settledAt) || finishedAt < hostOperationTimestamp(row.created_at)
+    || finishedAt < hostOperationTimestamp(row.created_at)
     || hostOperationTimestamp(row.updated_at) < finishedAt) return hostOperationFailure("host_operation_evidence_invalid");
   if (noStart) {
     if (row.execution_started_at !== null || row.state === "succeeded") return hostOperationFailure("host_operation_evidence_invalid");
     return digestHarnessToolValue({ id: row.id, state: row.state, finishedAt: row.execution_finished_at, noStart: true });
   }
   const startedAt = hostOperationTimestamp(row.execution_started_at);
-  if (!operation.launchedAt || startedAt < hostOperationTimestamp(row.created_at)
-    || startedAt > hostOperationTimestamp(operation.launchedAt) || finishedAt < hostOperationTimestamp(operation.launchedAt)
+  if (startedAt < hostOperationTimestamp(row.created_at) || finishedAt < startedAt
     || !digest(row.result_digest)) return hostOperationFailure("host_operation_evidence_invalid");
   const summary = parseRecord(row.result_summary_json);
   if (!summary || digestHarnessToolValue(summary) !== row.result_digest || !["applied","not_applied","rolled_back"].includes(String(summary.outcome))
@@ -253,7 +283,7 @@ function verifyFileTerminal(database: DatabaseSync, operation: HostOperationReco
   let hasResult = false;
   for (const linked of links) {
     if (linked.sealed_payload_json === null) continue; // Unsealed approval previews are not result proof.
-    const artifact = sealedArtifact(database, String(linked.id), operation.source.runId);
+    const artifact = sealedArtifact(database, String(linked.id), runId);
     resultDigests.push({ id: String(linked.id), hash: artifact.hash });
     if (!/(?:\/result\.json|\/patch-result\.json)$/.test(String(linked.path))) continue;
     const outcome = artifact.payload.outcome ?? (artifact.payload.status === "applied" ? "applied" : undefined);
@@ -282,9 +312,9 @@ function verifyCommandNoStart(database: DatabaseSync, operation: HostOperationRe
   return digestHarnessToolValue({ runId: rows[0]!.run_id, ts: rows[0]!.ts, settled: data });
 }
 function sealedArtifact(database: DatabaseSync, id: string, runId: string): { payload: Record<string, unknown>; hash: string; createdAt: string } {
-  const row = database.prepare("SELECT run_id,sealed_payload_json,content_sha256,created_at FROM artifacts WHERE id=?").get(id);
+  const row = database.prepare("SELECT run_id,type,sealed_payload_json,content_sha256,created_at FROM artifacts WHERE id=?").get(id);
   const payload = parseRecord(row?.sealed_payload_json);
-  if (!row || row.run_id !== runId || !payload || !digest(row.content_sha256)
+  if (!row || row.run_id !== runId || row.type !== "json" || !payload || !digest(row.content_sha256)
     || createHash("sha256").update(JSON.stringify(payload), "utf8").digest("hex") !== row.content_sha256) {
     return hostOperationFailure("host_operation_evidence_invalid");
   }

@@ -53,6 +53,7 @@ import type { WorkspaceFileCapabilityRegistry } from "./features/previews/worksp
 import type { HostCapabilityBridgeController } from "./features/runs/host-capability-bridge-controller.js";
 import type { HostMcpOperation } from "./features/mcp/host-operation.js";
 import type { HostOfficeLocalMcpOperation } from "./features/mcp/office-local-mcp-operation.js";
+import type { HumanEvaluationService } from "./features/harness/evaluations/human-evaluation-service.js";
 
 export interface RunnerAdapter {
   /** Optional capability; absence must reject prepared execution, never fabricate evidence. */
@@ -240,4 +241,6 @@ export interface DaemonContext {
   /** Process-local transcript source grants; daemon restart invalidates all grants. */
   readonly workspaceFileCapabilities: WorkspaceFileCapabilityRegistry;
   readonly hostCapabilityBridge: HostCapabilityBridgeController;
+  /** Independent private Main ingress; never an Agent/MCP or Mobile capability. */
+  readonly humanEvaluations: HumanEvaluationService;
 }

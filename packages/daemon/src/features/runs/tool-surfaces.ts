@@ -8,6 +8,7 @@ import {
   type LingToolNamespaceCatalog,
   type RunSession,
   type RunStore,
+  type SecretResolver,
 } from "@ling-stack/core";
 import type {
   CreateToolLoadRequest,
@@ -30,7 +31,10 @@ import type { RunnerRegistry } from "../../runtime/runners.js";
 import { readJsonBody } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { isRecord, readOptionalString, readString } from "../../shared/validation.js";
-import { estimateTextTokens, resolveProviderContextBudget } from "../channels/context-packs.js";
+import { estimateTextTokens } from "../channels/context-packs.js";
+import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
+import type { ProviderRuntimeObservationScope } from "../providers/runtime-observation-scope.js";
+import { resolveRunToolContextBudget } from "./tool-context-budget.js";
 
 import { assertCurrentRunCallbackOwner, captureToolLoadRequestFence, isCurrentRunCallbackOwner } from "./run-callback-ownership.js";
 
@@ -89,6 +93,7 @@ export async function handleToolLoadRequestsCollection(
   storeRegistry: RunStoreRegistry,
   runnerRegistry: RunnerRegistry,
   runId: string,
+  secretResolver?: SecretResolver,
 ): Promise<void> {
   if (request.method !== "POST") {
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for tool load requests` });
@@ -115,6 +120,7 @@ export async function handleToolLoadRequestsCollection(
     const input = parseCreateToolLoadRequest(await readJsonBody(request, config.maxBodyBytes));
     const result = materializeToolSurface({
       store,
+      secretResolver,
       runnerRegistry,
       run,
       sourceFence: captureToolLoadRequestFence(store, run),
@@ -147,6 +153,9 @@ export async function handleToolLoadRequestsCollection(
 
 export function hydrateRunnerToolSurface(input: {
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
+  readonly actualProvider?: PiRunnerProviderConfig;
+  readonly observationScope?: ProviderRuntimeObservationScope;
   readonly runnerRegistry: RunnerRegistry;
   readonly run: RunSession;
   readonly sourceFence: RuntimeAttemptFenceV1;
@@ -164,6 +173,9 @@ export function hydrateRunnerToolSurface(input: {
   try {
     const result = materializeToolSurface({
       store: input.store,
+      secretResolver: input.secretResolver,
+      actualProvider: input.actualProvider,
+      observationScope: input.observationScope,
       runnerRegistry: input.runnerRegistry,
       run: input.run,
       sourceFence: input.sourceFence,
@@ -243,6 +255,9 @@ function buildToolCatalog(store: RunStore, runnerRegistry: RunnerRegistry, gener
 
 function materializeToolSurface(input: {
   readonly store: RunStore;
+  readonly secretResolver?: SecretResolver;
+  readonly actualProvider?: PiRunnerProviderConfig;
+  readonly observationScope?: ProviderRuntimeObservationScope;
   readonly runnerRegistry: RunnerRegistry;
   readonly run: RunSession;
   readonly sourceFence: RuntimeAttemptFenceV1;
@@ -256,7 +271,7 @@ function materializeToolSurface(input: {
   assertCurrentRunCallbackOwner(input.store, input.run, input.sourceFence);
   const catalog = buildToolCatalog(input.store, input.runnerRegistry, input.now);
   const selection = resolveToolLoadScope(catalog, input.request.scope);
-  const budget = buildMaterializationBudget(input.store, input.run, selection.namespace, selection.tools);
+  const budget = buildMaterializationBudget(input, selection.namespace, selection.tools);
   const idempotencyDigest = input.request.idempotencyKey ? hashIdempotencyKey(input.request.idempotencyKey) : undefined;
   const existingMaterialization = idempotencyDigest
     ? findExistingMaterialization(input.store, input.sourceFence, input.run.id, idempotencyDigest, budget)
@@ -433,13 +448,18 @@ function buildMaterializationSummary(
 }
 
 function buildMaterializationBudget(
-  store: RunStore,
-  run: RunSession,
+  input: {
+    readonly store: RunStore;
+    readonly run: RunSession;
+    readonly secretResolver?: SecretResolver;
+    readonly actualProvider?: PiRunnerProviderConfig;
+    readonly observationScope?: ProviderRuntimeObservationScope;
+    readonly now: string;
+  },
   namespace: LingToolNamespace,
   tools: readonly LingToolDescriptor[],
 ): ToolMaterializationBudget {
-  const providerPreset = run.providerPresetId ? store.getProviderPreset(run.providerPresetId) : undefined;
-  const contextBudget = resolveProviderContextBudget(providerPreset, run.workflowStepId ? "workflow_step" : "channel_reply");
+  const contextBudget = resolveRunToolContextBudget(input);
   const estimatedTokens = estimateMaterializedToolTokens(namespace, tools);
   const overBudgetByTokens = Math.max(0, estimatedTokens - contextBudget.inputBudgetTokens);
   const overBudgetByCount = tools.length > MAX_MATERIALIZED_TOOL_COUNT;

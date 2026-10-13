@@ -13,6 +13,10 @@ import type {
   RunEvaluationMutationResult,
   StartRunEvaluationInput,
 } from "./evaluations.js";
+export type { RunEvaluationTaskStore } from "./evaluation-tasks.js";
+export type { RunEvaluationQaStore } from "./evaluation-qa.js";
+export type { RunEvaluationHumanStore } from "./human-evaluation.js";
+export type { RunEvaluationHumanReadStore } from "./human-evaluation-read.js";
 import type {
   DelegationMessageV1,
   DelegationStepV1,
@@ -26,9 +30,11 @@ import type {
   FailApprovedHarnessToolExecutionInput,
   FinishHarnessToolExecutionInput,
   HarnessToolExecutionMutationResult,
+  HarnessToolExecutionRecoveryPage,
   PrepareHarnessToolExecutionInput,
   PreparedHarnessToolExecution,
   ReconcileAbandonedHarnessToolExecutionsInput,
+  ReconcileAbandonedHarnessToolExecutionsPageInput,
   ResolveHarnessToolApprovalInput,
   StartHarnessToolExecutionInput,
 } from "./tool-executions.js";
@@ -45,6 +51,19 @@ import type {
   RunnerContinuationMutationResult,
   StartRunnerContinuationInput,
 } from "./continuations.js";
+import type { DelegationQueryPage, DelegationQueryPageInput } from "./delegations.js";
+import type {
+  HarnessDiagnosticAttemptV1,
+  HarnessDiagnosticPageV1,
+  HarnessDiagnosticQueryV1,
+  HarnessDiagnosticScopeV1,
+} from "@ling-stack/contracts";
+
+export interface HarnessDiagnosticsStore {
+  queryWorkUnitHarnessDiagnosticScope(workUnitId: string): HarnessDiagnosticScopeV1 | undefined;
+  getHarnessDiagnosticAttempt(workUnitId: string, attemptId: string): HarnessDiagnosticAttemptV1;
+  queryHarnessDiagnostics(runId: string, workUnitId: string, input?: HarnessDiagnosticQueryV1): HarnessDiagnosticPageV1;
+}
 
 export interface RunnerContinuationStore {
   getRunnerContinuation(id: string): RunnerContinuationV1 | undefined;
@@ -74,10 +93,14 @@ export interface HarnessToolExecutionStore {
   reconcileAbandonedHarnessToolExecutions(
     input: ReconcileAbandonedHarnessToolExecutionsInput,
   ): readonly HarnessToolExecutionV1[];
+  reconcileAbandonedHarnessToolExecutionsPage(
+    input: ReconcileAbandonedHarnessToolExecutionsPageInput,
+  ): HarnessToolExecutionRecoveryPage;
 }
 
 export interface RunEvaluationStore {
   getRunEvaluation(id: string): RunEvaluationV1 | undefined;
+  getRunEvaluationGrade(id: string): RunEvaluationGradeV1 | undefined;
   findRunEvaluationByIdempotencyKey(idempotencyKey: string): RunEvaluationV1 | undefined;
   listRunEvaluations(input?: ListRunEvaluationsInput): readonly RunEvaluationV1[];
   listClaimableRunEvaluations(input: ListClaimableRunEvaluationsInput): readonly RunEvaluationV1[];
@@ -93,6 +116,13 @@ export interface RunEvaluationStore {
 
 export interface DelegationStore {
   getDelegationStep(id: string): DelegationStepV1 | undefined;
+  /** Complete direct children or read_limit_exceeded; never a silently truncated array. */
   listDelegationChildren(parentDelegationStepId: string): readonly DelegationStepV1[];
+  /** Complete message metadata or read_limit_exceeded; artifact bodies are not read. */
   listDelegationMessages(delegationStepId: string): readonly DelegationMessageV1[];
+}
+
+export interface DelegationQueryStore extends DelegationStore {
+  queryDelegationChildren(parentDelegationStepId: string, input?: DelegationQueryPageInput): DelegationQueryPage<DelegationStepV1>;
+  queryDelegationMessages(delegationStepId: string, input?: DelegationQueryPageInput): DelegationQueryPage<DelegationMessageV1>;
 }

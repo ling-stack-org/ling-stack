@@ -11,9 +11,9 @@ Reviewed baseline: `fd39ec302cbae759e4d4a866172a804e1bc5abfd`, 2026-10-12.
 | `node-forge@1.4.0` | [GHSA-86w9-cpqp-85rv](https://github.com/advisories/GHSA-86w9-cpqp-85rv): reject unconsumed nested DigestAlgorithm elements | Expo code-signing certificates | Released upstream fix plus malformed-signature and valid-certificate regressions |
 | `braces@3.0.3` | [GHSA-vfj7-8cjw-p6xm](https://github.com/advisories/GHSA-vfj7-8cjw-p6xm): cap brace/parenthesis nesting and validate direct AST inputs | Metro file matching via micromatch | Upstream depth protection covering parse, compile, expand and stringify |
 | `sprintf-js@1.0.3`, `sprintf-js@1.1.3` | [GHSA-hp3w-g68c-fv3c](https://github.com/advisories/GHSA-hp3w-g68c-fv3c): bound floating-point precision | Mammoth CLI via argparse; Desktop downloader logger via Roarr | Upstream protection plus formatter, CLI help and logger regressions |
-| `http-cache-semantics@4.2.0` | [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp): never revive zero-freshness entries via max-stale | Desktop Electron downloader via got/cacheable-request | Released fix passing all private, cookie, no-cache, no-store and public-cache tests |
-| `metro@0.87.0` | Adapt image-size v2 named exports and asynchronous file API | React Native asset metadata and in-memory asset sizing | Upstream v2-compatible implementation passing both asset paths |
-| `image-size@2.0.4` | Retain strict ICNS header/entry bounds from the old local patch in both CJS and ESM | Metro assets; PPTX dependency tree | Upstream equivalent boundary validation passing image regressions |
+| `http-cache-semantics@4.3.0` | [GHSA-ch52-4w7c-c8xp](https://github.com/advisories/GHSA-ch52-4w7c-c8xp): never revive zero-freshness entries via max-stale; retain upstream Vary fixes | Desktop Electron downloader via got/cacheable-request | Released fix passing all private, cookie, no-cache, no-store, Vary and public-cache tests |
+| `metro@0.87.0` (historical patch, not enabled in SDK57's graph) | Adapt image-size v2 named exports and asynchronous file API | Only a future actual Metro 0.87 consumer; current RN/Expo Metro 0.84.5 uses an internal parser | Re-enable only for an actual matching consumer and verify both asset paths |
+| `image-size@2.0.4` | Retain strict ICNS header/entry bounds from the old local patch in both CJS and ESM | PPTX dependency tree | Upstream equivalent boundary validation passing image regressions |
 
 ## Patch Behavior And Provenance
 
@@ -34,13 +34,17 @@ Reviewed baseline: `fd39ec302cbae759e4d4a866172a804e1bc5abfd`, 2026-10-12.
 - `http-cache-semantics`: preserve the existing conservative zero-freshness
   guard. The published `4.3.0` was independently tested on 2026-10-12 and still
   reused private, cookie, no-store and no-cache responses with `max-stale`.
-  Updating only the version would lose this protection.
+  Updating only the version would lose this protection. The current branch
+  carries that guard on `4.3.0`, without rolling back its upstream Vary fixes.
 - `image-size`: the override replaces every locked `1.2.1` instance with `2.0.4`,
   which includes fixes for
   [GHSA-w3rx-r6r6-pgpr](https://github.com/advisories/GHSA-w3rx-r6r6-pgpr) and
   [GHSA-5p2g-fcmc-qvqq](https://github.com/advisories/GHSA-5p2g-fcmc-qvqq).
-  Metro's buffer calls use `imageSize`; filesystem calls await
-  `imageSizeFromFile`. The obsolete `1.2.1` patch is removed only after the
+  The historical Metro 0.87 patch uses `imageSize` for buffers and awaits
+  `imageSizeFromFile` for files. SDK57's actual Metro 0.84.5 does not consume
+  image-size, so its two asset paths are tested independently; malformed-image
+  proofs resolve image-size through the actual PPTX consumer. The obsolete
+  `1.2.1` patch is removed only after the
   parser, asset and PPT generation checks pass.
 
 ## Verification And Alert Boundaries

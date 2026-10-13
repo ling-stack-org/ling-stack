@@ -46,6 +46,37 @@ export interface PiRunnerTask {
   readonly channelId?: string;
 }
 
+/** Numeric estimate of the projected SDK context; never a payload or wire token count. */
+export interface PiRunnerProviderInvocationContextBudget {
+  readonly schemaVersion: 1;
+  readonly basis: "pi_projected_context_estimate";
+  readonly estimatedInputTokens: number;
+  readonly contextWindowTokens: number;
+  /** Conservative selected-model maxTokens reservation, not the request's wire maximum. */
+  readonly reservedOutputTokens: number;
+  readonly reservedRuntimeOverheadTokens: number;
+  readonly inputBudgetTokens: number;
+}
+
+/** Host-private logical SDK request admission; not proof of HTTP/WebSocket dispatch. */
+export interface PiRunnerProviderInvocationAdmittedReceipt {
+  readonly invocationId: string;
+  readonly taskId: string;
+  readonly runId?: string;
+  readonly attemptId?: string;
+  readonly admittedAt: string;
+  /** Missing or invalid numeric evidence is unknown, never a fabricated default budget. */
+  readonly contextBudget?: PiRunnerProviderInvocationContextBudget;
+}
+
+/** One admitted stream's terminal outcome, never an aggregate Run/UI failure. */
+export interface PiRunnerProviderInvocationSettledReceipt extends PiRunnerProviderInvocationAdmittedReceipt {
+  readonly settledAt: string;
+  readonly outcome: "succeeded" | "provider_error" | "cancelled" | "local_rejected";
+  /** Bounded diagnostic enum/status/code only; never raw Provider text or credentials. */
+  readonly errorDiagnostic?: PiProviderErrorDiagnostic;
+}
+
 export interface PiRunnerApprovalRequest {
   readonly toolCallId: string;
   readonly toolName: PiRunnerApprovalToolName;
@@ -322,6 +353,12 @@ export interface PiRunnerCompactionRecovery {
   readonly modelView: readonly unknown[];
 }
 
+/** Private Host/Core-verified ordinary checkpoint; never an authority from public RunRequest/model output. */
+export interface PiRunnerOrdinaryProgressRecovery {
+  readonly schemaVersion: 1;
+  readonly modelView: readonly unknown[];
+}
+
 export interface PiRunnerRunOptions {
   /** Initial schema capabilities; not execution handlers or authorization grants. */
   readonly initialToolSurface?: {
@@ -340,6 +377,8 @@ export interface PiRunnerRunOptions {
    * never replays the original task prompt for this path.
    */
   readonly compactionRecovery?: PiRunnerCompactionRecovery;
+  /** Restore only Host-verified ordinary progress using the original prepared execution. */
+  readonly ordinaryProgressRecovery?: PiRunnerOrdinaryProgressRecovery;
   /** Host has durable compaction evidence, provider admission fence, and restart recovery for this Run. */
   readonly hostCompactionEnabled?: boolean;
   /**
@@ -373,6 +412,15 @@ export interface PiRunnerRunOptions {
   readonly sandbox?: PiRunnerSandboxBinding;
   readonly signal?: AbortSignal;
   readonly onEvent?: (event: PiRunnerEvent) => void;
+  /**
+   * Host-only synchronous observation after actual SDK auth/header resolution
+   * matches the Host tuple and all model payload/authority gates have passed.
+   * Not a RunEvent, permission grant, network-dispatch proof or preparation receipt.
+   * Throwing or async observers become unknown without changing model execution.
+   */
+  readonly onProviderInvocationAdmitted?: (receipt: PiRunnerProviderInvocationAdmittedReceipt) => void;
+  /** Observe the same logical stream's outcome without consuming model events. */
+  readonly onProviderInvocationSettled?: (receipt: PiRunnerProviderInvocationSettledReceipt) => void;
   /** Host authority check for every tool, including tools outside the approval catalog. */
   readonly onToolBefore?: (request: {
     readonly toolCallId: string;

@@ -1,4 +1,5 @@
 import { mkdir, readFile } from "node:fs/promises";
+import { isAbsolute } from "node:path";
 import { expect, type Locator, type Page, type Request, type Route } from "@playwright/test";
 import {
   buildEffectiveTeammateSkills,
@@ -12,7 +13,11 @@ import type { MemoryObject } from "@ling-stack/core";
 import type { ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
 import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
-export const cwd = "/tmp/ling-stack-workspace";
+const configuredWorkspaceCwd = process.env.LING_PLAYWRIGHT_WORKSPACE_CWD;
+if (configuredWorkspaceCwd !== undefined && !isAbsolute(configuredWorkspaceCwd)) {
+  throw new Error("LING_PLAYWRIGHT_WORKSPACE_CWD must be an absolute path");
+}
+export const cwd = configuredWorkspaceCwd ?? "/tmp/ling-stack-workspace";
 export const defaultRuntimePolicy = {
   maxConcurrentRuns: 1,
   schedulingMode: "smart",
@@ -7817,17 +7822,17 @@ export async function mockDaemon(
   } = {},
 ): Promise<void> {
   await mkdir(cwd, { recursive: true });
-  await page.addInitScript((firstRunPreference) => {
+  await page.addInitScript(({ firstRunPreference, workspaceIdentity }) => {
     Object.defineProperty(window, "WebSocket", { value: undefined, configurable: true });
     if (firstRunPreference === "completed") {
       localStorage.setItem("ling-first-run:v1", JSON.stringify({
         version: 1,
         status: "completed",
-        workspaceIdentity: "/tmp/ling-stack-workspace",
+        workspaceIdentity,
         updatedAt: "2026-07-30T00:00:00.000Z",
       }));
     }
-  }, options.firstRunPreference ?? "completed");
+  }, { firstRunPreference: options.firstRunPreference ?? "completed", workspaceIdentity: cwd });
   await page.route("http://127.0.0.1:17891/**", async (route) => {
     await handleDaemonRoute(route, state, options);
   });

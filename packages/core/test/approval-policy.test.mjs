@@ -2752,6 +2752,45 @@ test("system reviewer may recover only an exact startup-suspended pending approv
   }
 });
 
+for (const [label, decision] of [
+  ["approve-array", ["approve"]], ["deny-array", ["deny"]], ["manual-array", ["manual"]],
+  ["nested-array", [["approve"]]], ["manual-string", "manual"], ["unknown-string", "allow"],
+  ["boxed-string", new String("approve")], ["coercible-object", { toString: () => "deny" }],
+  ["plain-object", { decision: "approve" }], ["null", null], ["undefined", undefined],
+  ["boolean", true], ["number", 1],
+]) {
+  test(`A22 system reviewer Store rejects ${label} without mutating durable approval or checkpoint`, async () => {
+    const fixture = await createApprovalResumeClaimFixture(`invalid-review-${label}`, { approve: false });
+    try {
+      const { store, approval, sideEffect, priorFence, run, workUnit, priorAttempt, checkpoint } = fixture;
+      const beforeApproval = store.getApprovalRequest(approval.id);
+      const beforeCheckpoint = store.getApprovalCheckpoint(checkpoint.id);
+      const beforeRun = store.getRun(run.id);
+      const beforeUnit = store.getWorkUnit(workUnit.id);
+      const beforeAttempt = store.getWorkUnitAttempt(priorAttempt.id);
+      assert.deepEqual(store.resolveApprovalBySystemReviewer({
+        approvalId: approval.id,
+        approvalCreatedAt: approval.createdAt,
+        runId: run.id,
+        toolCallId: approval.toolCallId,
+        sideEffectFingerprint: approvalSideEffectFingerprintV1({ actionType: approval.actionType, toolCallId: approval.toolCallId, sideEffect }),
+        workspacePolicyUpdatedAt: store.getApprovalPolicy().updatedAt,
+        sourceFence: priorFence,
+        decision,
+        reason: "Malformed value is not a deny verdict.",
+      }, "2026-08-16T01:00:30.000Z"), { ok: false, code: "approval_invalid_decision" });
+      assert.deepEqual(store.getApprovalRequest(approval.id), beforeApproval);
+      assert.deepEqual(store.getApprovalCheckpoint(checkpoint.id), beforeCheckpoint);
+      assert.deepEqual(store.getRun(run.id), beforeRun);
+      assert.deepEqual(store.getWorkUnit(workUnit.id), beforeUnit);
+      assert.deepEqual(store.getWorkUnitAttempt(priorAttempt.id), beforeAttempt);
+      assert.equal(store.listEvents(run.id, { limit: 1_000 }).some(event => event.type === "approval_denied"), false);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
 test("recovered system reviewer denial atomically closes the waiting run, work unit, and task", async () => {
   const fixture = await createApprovalResumeClaimFixture("system-reviewer-recovered-denial", { approve: false });
   try {

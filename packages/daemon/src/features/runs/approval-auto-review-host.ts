@@ -1,10 +1,12 @@
 import {
   approvalSideEffectFingerprintV1,
+  isSystemReviewerApprovalDecision,
   toRuntimeAttemptFence,
   type ApprovalRequest,
   type EffectiveRunPolicySnapshot,
   type RunSession,
   type RunStore,
+  type SecretResolver,
   type RuntimeAttemptFenceV1,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
@@ -48,6 +50,7 @@ export interface ReviewPendingApprovalAutomaticallyInput {
   readonly runner: RunnerAdapter;
   readonly provider: PiRunnerProviderConfig;
   readonly providerPresetId?: string;
+  readonly secretResolver?: SecretResolver;
   readonly run: RunSession;
   readonly approval: ApprovalRequest;
   readonly sourceFence: RuntimeAttemptFenceV1;
@@ -109,7 +112,7 @@ export async function reviewPendingApprovalAutomatically(
   }
   const reviewUnit = reviewUnitStart.reviewUnit;
   const coordinator = input.coordinator ?? approvalAutoReviewCoordinator;
-  const outcome = await coordinator.review({
+  const reviewerOutcome = await coordinator.review({
     signal: input.signal,
     execute: (signal) => executeApprovalAutoReviewModel({
       runner: input.runner,
@@ -119,9 +122,24 @@ export async function reviewPendingApprovalAutomatically(
       evidenceFingerprint: evidence.fingerprint,
       serializedEvidence: evidence.serialized,
       signal,
+      ...(input.secretResolver ? { providerObservation: {
+        store: input.store, secretResolver: input.secretResolver,
+        runId: input.run.id, attemptId: reviewUnit.attempt.id,
+      } } : {}),
       localWriters: input.localWriters,
     }),
   });
+  // Even trusted coordinator implementations must not turn malformed data into
+  // mutation authority. The Store independently enforces the same closed set.
+  const outcome: ApprovalAutoReviewOutcome = reviewerOutcome.status === "resolved"
+    && !isSystemReviewerApprovalDecision(reviewerOutcome.verdict.decision)
+    ? {
+        status: "manual",
+        code: "invalid_output",
+        reason: "Automatic reviewer returned an invalid verdict; manual approval is required.",
+        attempts: reviewerOutcome.attempts,
+      }
+    : reviewerOutcome;
 
   if (outcome.status === "resolved") {
     const resolved = input.store.resolveApprovalBySystemReviewer({

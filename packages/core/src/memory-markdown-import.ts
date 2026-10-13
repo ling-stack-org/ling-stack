@@ -91,7 +91,7 @@ export function parseMemoryMarkdownImport(markdown: string, options: MemoryMarkd
       index,
       title: section.title,
       metadata,
-      body: trimSingleFinalNewline(bodyBlock.content),
+      body: bodyBlock.content,
       source,
       targetWorkspaceId: options.workspaceId ?? DEFAULT_WORKSPACE_ID,
     });
@@ -180,19 +180,17 @@ function buildImportCandidate(input: {
 }
 
 function parseFrontMatter(markdown: string): { readonly data?: Record<string, unknown>; readonly body: string } {
-  if (!markdown.startsWith("---\n")) {
+  const opening = /^---(?:\r\n|\n)/.exec(markdown);
+  if (!opening) {
     return { body: markdown };
   }
-  const endIndex = markdown.indexOf("\n---", 4);
-  if (endIndex === -1) {
-    return { body: markdown };
+  const start = opening[0].length;
+  for (const line of markdownLines(markdown, start)) {
+    if (line.text === "---") {
+      return { data: parseJsonRecord(markdown.slice(start, line.start).trim()), body: markdown.slice(line.next) };
+    }
   }
-  const jsonText = markdown.slice(4, endIndex).trim();
-  const bodyStart = markdown.slice(endIndex + 4).startsWith("\n") ? endIndex + 5 : endIndex + 4;
-  return {
-    data: parseJsonRecord(jsonText),
-    body: markdown.slice(bodyStart),
-  };
+  return { body: markdown };
 }
 
 function buildImportSource(
@@ -211,35 +209,78 @@ function buildImportSource(
 }
 
 function extractMemorySections(markdown: string): Array<{ readonly title: string; readonly content: string }> {
-  const headingPattern = /^## (.+)$/gm;
-  const matches = [...markdown.matchAll(headingPattern)];
+  const headings: Array<{ readonly title: string; readonly start: number }> = [];
+  let fence: MarkdownFence | undefined;
+  for (const line of markdownLines(markdown)) {
+    if (fence) {
+      if (isFenceClosing(line.text, fence)) fence = undefined;
+      continue;
+    }
+    const opening = readFenceOpening(line.text);
+    if (opening) { fence = opening; continue; }
+    const heading = /^## (.+)$/.exec(line.text);
+    if (heading) headings.push({ title: heading[1]!.trim(), start: line.start });
+  }
   const sections: Array<{ readonly title: string; readonly content: string }> = [];
-  for (const [index, match] of matches.entries()) {
-    const title = (match[1] ?? "").trim();
-    const start = match.index ?? 0;
-    const end = matches[index + 1]?.index ?? markdown.length;
-    const content = markdown.slice(start, end);
+  for (const [index, heading] of headings.entries()) {
+    const content = markdown.slice(heading.start, headings[index + 1]?.start ?? markdown.length);
     if (content.includes("### Metadata") || content.includes("### Body")) {
-      sections.push({ title, content });
+      sections.push({ title: heading.title, content });
     }
   }
   return sections;
 }
 
 function extractFencedBlockAfter(content: string, label: string): { readonly language: string; readonly content: string } | undefined {
-  const labelIndex = content.indexOf(label);
-  if (labelIndex === -1) {
-    return undefined;
+  let fence: MarkdownFence | undefined;
+  let afterLabel = false;
+  let block: { readonly start: number; readonly newline: string; readonly language: string } | undefined;
+  for (const line of markdownLines(content)) {
+    if (fence) {
+      if (!isFenceClosing(line.text, fence)) continue;
+      if (block) {
+        const framed = content.slice(block.start, line.start);
+        if (!block.newline || !framed.endsWith(block.newline)) return undefined;
+        // Strip only this block's framing EOL, never an original body newline
+        // (or a body-final CR immediately before an LF-framed closing fence).
+        return { language: block.language, content: framed.slice(0, -block.newline.length) };
+      }
+      fence = undefined;
+      continue;
+    }
+    if (line.text === label) { afterLabel = true; continue; }
+    const opening = readFenceOpening(line.text);
+    if (opening) {
+      // Tilde fences protect section boundaries, but are not accepted as the
+      // outer Metadata/Body syntax of this import contract.
+      if (afterLabel && opening.marker !== "`") return undefined;
+      fence = opening;
+      if (afterLabel) block = { start: line.next, newline: line.newline, language: opening.language };
+    } else if (afterLabel && line.text.startsWith("### ")) return undefined;
   }
-  const afterLabel = content.slice(labelIndex + label.length);
-  const match = /(?:^|\n)(`{3,})([^\n`]*)\n([\s\S]*?)\n\1(?=\n|$)/.exec(afterLabel);
-  if (!match) {
-    return undefined;
+  return undefined;
+}
+
+interface MarkdownLine { readonly text: string; readonly start: number; readonly next: number; readonly newline: string; }
+interface MarkdownFence { readonly marker: "`" | "~"; readonly length: number; readonly language: string; }
+
+/** Keep source offsets and all body bytes; strip CR/LF only for structural lines. */
+function* markdownLines(value: string, from = 0): Iterable<MarkdownLine> {
+  for (let start = from; start < value.length;) {
+    const lf = value.indexOf("\n", start);
+    const next = lf === -1 ? value.length : lf + 1;
+    const newline = lf === -1 ? "" : value[lf - 1] === "\r" ? "\r\n" : "\n";
+    const end = next - newline.length;
+    yield { text: value.slice(start, end), start, next, newline };
+    start = next;
   }
-  return {
-    language: (match[2] ?? "").trim(),
-    content: match[3] ?? "",
-  };
+}
+function readFenceOpening(line: string): MarkdownFence | undefined {
+  const match = /^(`{3,}|~{3,})([^`\r\n]*)$/.exec(line);
+  return match ? { marker: match[1]![0] as "`" | "~", length: match[1]!.length, language: match[2]!.trim() } : undefined;
+}
+function isFenceClosing(line: string, fence: MarkdownFence): boolean {
+  return line === fence.marker.repeat(fence.length);
 }
 
 function parseJsonRecord(value: string): Record<string, unknown> | undefined {
@@ -335,13 +376,6 @@ function importSourceRefId(sourceId: string, itemId: string): string {
 function sanitizeSourceId(value: string): string {
   const sanitized = value.trim().replace(/[^A-Za-z0-9._:-]+/g, "_").replace(/^_+|_+$/g, "");
   return sanitized || "memory-markdown-import";
-}
-
-function trimSingleFinalNewline(value: string): string {
-  if (value.endsWith("\r\n")) {
-    return value.slice(0, -2);
-  }
-  return value.endsWith("\n") ? value.slice(0, -1) : value;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

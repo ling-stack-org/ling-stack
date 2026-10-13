@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { setImmediate as nextTick } from "node:timers/promises";
 import test from "node:test";
+import { getCurrentSystemPrompt, getCurrentTools } from "@earendil-works/pi-ai";
 import { compactionFixture, response } from "./support/pi-compaction-fixture.mjs";
 import { createPiTaskBoundary, createPiSessionStopper } from "../dist/task-boundary.js";
 import { translatePiEvent } from "../dist/events.js";
@@ -13,33 +14,62 @@ const providerError = (message, status = 400) => new Response(JSON.stringify({ e
   type: status === 503 ? "server_error" : "invalid_request_error" } }),
   { status, headers: { "content-type": "application/json" } });
 
-test("SDK defers threshold compaction when the newest tool result leaves no safe cut point", testOptions, async t => {
+function assertToolPairs(messages) {
+  const callIds = new Set(messages.flatMap(message => message.role === "assistant"
+    ? message.content.filter(block => block.type === "toolCall").map(block => block.id) : []));
+  const results = messages.filter(message => message.role === "toolResult");
+  const resultIds = new Set(results.map(result => result.toolCallId));
+  for (const result of results) {
+    assert.ok(callIds.has(result.toolCallId), "kept tool results must retain their calls");
+  }
+  for (const id of callIds) assert.ok(resultIds.has(id), "settled tool calls must retain their results");
+}
+
+test("SDK 1.1 keeps the preceding tool pair when a trailing result exceeds the recent-token budget", testOptions, async t => {
   const f = await compactionFixture(t, { task: ({ index }) => response({
-    ...(index < 3 ? { toolCallId: "effect-" + index } : {}), inputTokens: index < 4 ? 1_850 : 100,
+    ...(index < 3 ? { toolCallId: "effect-" + index } : {}), inputTokens: index < 3 ? 1_850 : 100,
   }) });
   await f.session.prompt(prompt);
   await f.session.waitForIdle();
   assert.deepEqual(await f.effects(), ["effect-0", "effect-1", "effect-2"]);
-  assert.equal(ends(f).length, 1);
-  assert.equal(ends(f)[0].reason, "threshold");
-  assert.equal(ends(f)[0].willRetry, false);
-  assert.ok(ends(f)[0].result);
+  assert.equal(ends(f).length, 3);
+  const starts = f.events.flatMap((event, index) => event.type === "compaction_start" ? [index] : []);
+  assert.equal(starts.length, 3);
+  for (const [index, start] of starts.entries()) {
+    const end = ends(f)[index];
+    assert.equal(end.reason, "threshold");
+    assert.equal(end.willRetry, false);
+    assert.ok(end.result);
+    const kept = f.sessionManager.getEntry(end.result.firstKeptEntryId);
+    assert.equal(kept.type, "message");
+    assert.equal(kept.message.role, "assistant", "never cut at the oversized tool result itself");
+    assert.deepEqual(kept.message.content, [{ type: "toolCall", id: `effect-${index}`,
+      name: "fixture_effect", arguments: {} }]);
+    const before = f.events.slice(0, start);
+    assert.equal(before.filter(event => event.type === "tool_execution_end").length, index + 1);
+    assert.equal(before.filter(event => event.type === "turn_end").length, index + 1,
+      "each compaction starts only after its current tool turn has settled");
+  }
   const lastToolEnd = f.events.findLastIndex(event => event.type === "tool_execution_end");
-  const start = f.events.findIndex(event => event.type === "compaction_start");
-  assert.ok(start > lastToolEnd);
-  assert.equal(f.events.slice(0, start).filter(event => event.type === "turn_end").length, 4);
-  assert.equal(f.requests.filter(request => request.phase === "task").length, 4);
-  assert.equal(compactions(f).length, 1);
+  assert.ok(starts[0] < lastToolEnd, "a safe preceding tool call enables compaction during the loop");
+  const taskRequests = f.requests.filter(request => request.phase === "task");
+  assert.equal(taskRequests.length, 4);
+  assert.equal(compactions(f).length, 3);
+  for (const [index, request] of taskRequests.entries()) {
+    assertToolPairs(request.messages);
+    assertToolPairs(request.canonicalMessages);
+    if (index > 0) {
+      assert.ok(request.eventIndex > starts[index - 1]);
+      assert.deepEqual(request.messages.filter(message => message.role === "toolResult").map(message => message.toolCallId),
+        [`effect-${index - 1}`], "the next request retains the complete newest pair, not older effects");
+    }
+  }
   await f.session.prompt("Continue without repeating effects.");
   await f.session.waitForIdle();
   assert.deepEqual(await f.effects(), ["effect-0", "effect-1", "effect-2"]);
   const followup = f.requests.filter(request => request.phase === "task").at(-1);
-  const callIds = new Set(followup.messages.flatMap(message => message.role === "assistant"
-    ? message.content.filter(block => block.type === "toolCall").map(block => block.id) : []));
-  for (const result of followup.messages.filter(message => message.role === "toolResult")) {
-    assert.ok(callIds.has(result.toolCallId), "kept tool results must retain their calls");
-  }
-  assert.equal(compactions(f).length, 1, "stale usage must not trigger compaction again on followup");
+  assertToolPairs(followup.messages);
+  assert.equal(compactions(f).length, 3, "stale usage must not trigger compaction again on followup");
 });
 
 test("SDK can compact between tool turns when a safe cut point exists", testOptions, async t => {
@@ -52,6 +82,8 @@ test("SDK can compact between tool turns when a safe cut point exists", testOpti
     event: event => {
       if (event.type === "compaction_end" && event.result) {
         installedViews.push({ summary: event.result.summary,
+          checkpoint: structuredClone(compactions(f).at(-1)),
+          projection: structuredClone(f.sessionManager.buildSessionProjection().messages),
           messages: structuredClone(f.session.state.messages) });
       }
     },
@@ -68,16 +100,23 @@ test("SDK can compact between tool turns when a safe cut point exists", testOpti
   "a task model request must follow a mid-run summary request");
   assert.ok(installedViews.length > 0);
   for (const installed of installedViews) {
-    assert.equal(installed.messages[0].role, "compactionSummary");
-    assert.equal(installed.messages[0].summary, installed.summary,
+    assert.deepEqual(installed.messages, installed.projection,
+      "compaction_end observes the already-installed canonical journal projection");
+    assert.equal(installed.messages[0].role, "system");
+    assert.deepEqual(installed.messages[0], installed.checkpoint.systemMessage,
+      "Pi 1.1 persists the leading system authority inside the compaction checkpoint");
+    assert.equal(installed.messages[1].role, "compactionSummary");
+    assert.equal(installed.messages[1].summary, installed.summary,
       "compaction_end observes the exact model view already installed by the SDK");
+    assert.equal(installed.messages.filter(message => message.role === "compactionSummary").length, 1);
+    assert.equal(getCurrentSystemPrompt(installed.messages), f.requests[0].systemPrompt);
+    assert.deepEqual(getCurrentTools(installed.messages), f.requests[0].tools);
   }
   for (const request of f.requests.filter(item => item.phase === "task")) {
-    const callIds = new Set(request.messages.flatMap(message => message.role === "assistant"
-      ? message.content.filter(block => block.type === "toolCall").map(block => block.id) : []));
-    for (const result of request.messages.filter(message => message.role === "toolResult")) {
-      assert.ok(callIds.has(result.toolCallId), "a compacted model view must keep tool call/result pairs");
-    }
+    assertToolPairs(request.messages);
+    assertToolPairs(request.canonicalMessages);
+    assert.equal(request.systemPrompt, f.requests[0].systemPrompt);
+    assert.deepEqual(request.tools, f.requests[0].tools);
   }
 });
 
@@ -118,14 +157,17 @@ test("SDK may send another task request after a failed mid-run summary", testOpt
 test("a completed compacted SDK view cannot be blindly continued after restart", testOptions, async t => {
   const source = await compactionFixture(t, {
     task: ({ index }) => response(index === 0
-      ? { toolCallId: "effect-before-checkpoint", inputTokens: 1_850 }
+      ? { toolCallId: "effect-before-checkpoint", inputTokens: 1_200 }
       : { text: "Completed before compaction. " + "history ".repeat(400), inputTokens: 1_850 }),
   });
   await source.session.prompt(prompt);
   await source.session.waitForIdle();
   assert.equal(compactions(source).length, 1);
   const compactedView = structuredClone(source.session.state.messages);
-  assert.ok(compactedView.some(message => message.role === "compactionSummary"));
+  assert.deepEqual(compactedView, source.sessionManager.buildSessionProjection().messages);
+  assert.equal(compactedView[0].role, "system");
+  assert.equal(compactedView[1].role, "compactionSummary");
+  assert.equal(compactedView[1].summary, compactions(source)[0].summary);
   const restored = await compactionFixture(t, { compaction: { enabled: false },
     task: () => response({ text: "Continued from committed summary." }) });
   restored.session.state.messages = compactedView;
@@ -192,7 +234,7 @@ test("a compaction model cannot execute a tool from its summary response", testO
   assert.ok(ends(f)[0].errorMessage);
 });
 
-test("SDK abort alone does not cancel an active automatic summary request", testOptions, async t => {
+test("SDK 1.1 abort cancels an automatic summary and waits for its uncooperative transport", testOptions, async t => {
   let entered, release, summarySignal;
   const f = await compactionFixture(t, {
     task: () => response({ inputTokens: 1_850, text: "Completed task. " + "text ".repeat(400) }),
@@ -204,15 +246,21 @@ test("SDK abort alone does not cancel an active automatic summary request", test
   let stopped = false;
   const stopping = f.session.abort().then(() => { stopped = true; });
   await nextTick();
-  assert.equal(summarySignal.aborted, false);
-  assert.equal(stopped, false);
-  f.session.abortCompaction();
   assert.equal(summarySignal.aborted, true);
+  assert.equal(stopped, false, "session.abort must wait until the ignored cancellation actually settles");
+  assert.equal(f.events.filter(event => event.type === "agent_settled").length, 0);
   release.resolve();
   await Promise.all([running, stopping]);
   assert.equal(compactions(f).length, 0);
+  assert.equal(stopped, true);
+  assert.equal(f.requests.filter(request => request.phase === "task").length, 1,
+    "cancellation must not admit another task model request");
+  assert.equal(f.requests.filter(request => request.phase === "summary").length, 1);
   assert.equal(f.session.isIdle, true);
   assert.equal(ends(f)[0].result, undefined);
+  assert.equal(ends(f)[0].aborted, true);
+  assert.equal(ends(f)[0].willRetry, false);
+  assert.deepEqual(f.events.filter(event => event.type === "agent_settled"), [{ type: "agent_settled", aborted: true }]);
 });
 
 test("manual compact aborts an active tool and never automatically resumes the interrupted turn", testOptions, async t => {
@@ -242,6 +290,55 @@ test("manual compact aborts an active tool and never automatically resumes the i
   assert.equal(compactions(f).length, 1);
 });
 
+test("SDK 1.1 retry durably omits a failed response from canonical context without deleting journal evidence", testOptions, async t => {
+  let originalFailure;
+  const f = await compactionFixture(t, {
+    compaction: { enabled: false },
+    retry: { enabled: true, maxRetries: 1, baseDelayMs: 1, provider: { maxRetries: 0 } },
+    task: ({ index }) => index === 0 ? response({ toolCallId: "effect-before-transient-failure" })
+      : index === 1 ? providerError("PRIVATE_CANONICAL_FAILURE", 503) : response(),
+    event: event => {
+      if (event.type === "auto_retry_start") {
+        originalFailure = structuredClone(f.sessionManager.getEntries().findLast(entry => entry.type === "message"
+          && entry.message.role === "assistant" && entry.message.stopReason === "error"));
+      }
+    },
+  });
+  await f.session.prompt(prompt);
+  await f.session.waitForIdle();
+  assert.ok(originalFailure, "the failed assistant response is already durable before retry starts");
+  assert.match(originalFailure.message.errorMessage, /PRIVATE_CANONICAL_FAILURE/);
+  assert.deepEqual(f.sessionManager.getEntry(originalFailure.id), originalFailure,
+    "retry must not mutate or delete the original failed journal entry");
+  const omissions = f.sessionManager.getEntries().filter(entry => entry.type === "context_edit"
+    && entry.targetId === originalFailure.id);
+  assert.equal(omissions.length, 1);
+  assert.equal(omissions[0].replacement, null, "the journal carries a durable omission, not an ephemeral state filter");
+  const projectedFailure = f.sessionManager.buildSessionProjection().entries.find(entry => entry.sourceEntry.id === originalFailure.id);
+  assert.deepEqual(projectedFailure.sourceEntry, originalFailure);
+  assert.deepEqual(projectedFailure.messages, [], "provenance remains visible but contributes no model context");
+  const requests = f.requests.filter(request => request.phase === "task");
+  assert.equal(requests.length, 3);
+  assert.deepEqual(requests[2].canonicalMessages, requests[1].canonicalMessages,
+    "retry preserves the pre-failure canonical user, tool call and completed result");
+  assert.deepEqual(requests[2].messages, requests[1].messages);
+  assertToolPairs(requests[2].canonicalMessages);
+  assert.equal(JSON.stringify(requests[2].messages).includes("PRIVATE_CANONICAL_FAILURE"), false);
+  assert.deepEqual(await f.effects(), ["effect-before-transient-failure"]);
+  assert.equal(f.events.filter(event => event.type === "auto_retry_start").length, 1);
+  assert.equal(f.events.find(event => event.type === "auto_retry_end").success, true);
+  assert.equal(compactions(f).length, 0);
+  f.session.refreshContext();
+  assert.equal(f.session.state.messages.some(message => message.role === "assistant" && message.stopReason === "error"), false);
+  await f.session.prompt("Follow up without repeating effects or restoring the failed response.");
+  await f.session.waitForIdle();
+  const followup = f.requests.filter(request => request.phase === "task").at(-1);
+  assert.equal(JSON.stringify(followup.canonicalMessages).includes("PRIVATE_CANONICAL_FAILURE"), false,
+    "a later canonical refresh must not resurrect the omitted failed attempt");
+  assert.deepEqual(f.sessionManager.getEntry(originalFailure.id), originalFailure);
+  assert.deepEqual(await f.effects(), ["effect-before-transient-failure"]);
+});
+
 test("overflow compact-and-retry keeps completed effects and removes the failed response only from retry context", testOptions, async t => {
   const f = await compactionFixture(t, { task: ({ index }) => index === 0
     ? response({ toolCallId: "effect-before-overflow", inputTokens: 1_200 })
@@ -256,8 +353,17 @@ test("overflow compact-and-retry keeps completed effects and removes the failed 
   assert.equal(compactions(f).length, 1);
   const retry = f.requests.filter(request => request.phase === "task").at(-1);
   assert.equal(retry.messages.some(message => message.role === "assistant" && message.stopReason === "error"), false);
-  assert.ok(f.sessionManager.getEntries().some(entry => entry.type === "message"
-    && entry.message.role === "assistant" && entry.message.stopReason === "error"), "SDK history retains the failed response");
+  const failure = f.sessionManager.getEntries().find(entry => entry.type === "message"
+    && entry.message.role === "assistant" && entry.message.stopReason === "error");
+  assert.ok(failure, "SDK history retains the failed response");
+  assert.ok(f.sessionManager.getEntries().some(entry => entry.type === "context_edit"
+    && entry.targetId === failure.id && entry.replacement === null),
+  "overflow recovery persists canonical omission before compaction and retry");
+  assert.equal(retry.canonicalMessages.some(message => message.role === "assistant" && message.stopReason === "error"), false);
+  const evidence = structuredClone(failure);
+  f.session.refreshContext();
+  assert.deepEqual(f.sessionManager.getEntry(failure.id), evidence);
+  assert.equal(f.session.state.messages.some(message => message.role === "assistant" && message.stopReason === "error"), false);
   assert.equal(f.session.state.messages.at(-1).stopReason, "stop");
 });
 

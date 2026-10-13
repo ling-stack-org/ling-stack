@@ -31,7 +31,7 @@ export function parseApprovalAutoReviewVerdict(text: string): ApprovalAutoReview
   }
   if (
     value.schemaVersion !== 1
-    || !["approve", "deny", "manual"].includes(String(value.decision))
+    || (value.decision !== "approve" && value.decision !== "deny" && value.decision !== "manual")
     || typeof value.reason !== "string"
   ) {
     return { ok: false, code: "invalid_value" };
@@ -44,7 +44,7 @@ export function parseApprovalAutoReviewVerdict(text: string): ApprovalAutoReview
     ok: true,
     verdict: {
       schemaVersion: 1,
-      decision: value.decision as ApprovalAutoReviewVerdict["decision"],
+      decision: value.decision,
       reason,
     },
   };

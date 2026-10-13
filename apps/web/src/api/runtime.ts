@@ -1,4 +1,5 @@
 import type {
+  HarnessDiagnosticQueryV1,
   ListResourceLeasesRequest,
   ResourceLeaseListResponse,
   RunnerListResponse,
@@ -11,6 +12,7 @@ import type {
   StateTransitionListResponse,
   WorkUnitDetailResponse,
   WorkUnitEventsResponse,
+  WorkUnitHarnessDiagnosticsResponse,
   WorkUnitKind,
   WorkUnitListResponse,
   WorkUnitMutationResponse,
@@ -78,6 +80,10 @@ export async function listWorkUnits(
 
 export async function getWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitDetailResponse> {
   return daemonClient.getWorkUnit(cwd, workUnitId);
+}
+
+export async function getWorkUnitHarnessDiagnostics(cwd: string, workUnitId: string, query: HarnessDiagnosticQueryV1 = {}): Promise<WorkUnitHarnessDiagnosticsResponse> {
+  return daemonClient.getWorkUnitHarnessDiagnostics(cwd, workUnitId, query);
 }
 
 export async function getWorkUnitEvents(cwd: string, workUnitId: string, afterSeq?: number): Promise<WorkUnitEventsResponse> {

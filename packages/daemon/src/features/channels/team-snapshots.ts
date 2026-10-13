@@ -8,12 +8,14 @@ import type {
   ChannelTeamEvaluationCase,
   ChannelTeamSnapshotState,
   RunStore,
+  SecretResolver,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readJsonBody, readOptionalIntegerQuery } from "../../shared/request.js";
 import { writeJson } from "../../shared/response.js";
 import { listChannelMessageViews } from "./conversation-item-messages.js";
+import { listCurrentlyApplicableAvailabilityIncidents } from "../providers/runtime-failure-observations.js";
 
 export async function handleChannelTeamSnapshots(
   request: IncomingMessage,
@@ -21,6 +23,7 @@ export async function handleChannelTeamSnapshots(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
+  secretResolver?: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -67,7 +70,7 @@ export async function handleChannelTeamSnapshots(
           channelId,
           reason: readSnapshotReason(body),
           createdBy: readSnapshotCreatedBy(body),
-          state: buildCurrentSnapshotState(store, channelId, now),
+          state: buildCurrentSnapshotState(store, channelId, now, secretResolver),
         },
         now,
       );
@@ -151,11 +154,11 @@ export async function handleChannelTeamEvaluations(
   }
 }
 
-function buildCurrentSnapshotState(store: RunStore, channelId: string, now: string): ChannelTeamSnapshotState {
+function buildCurrentSnapshotState(store: RunStore, channelId: string, now: string, secretResolver?: SecretResolver): ChannelTeamSnapshotState {
   const messages = listChannelMessageViews({ store, channelId, limit: 200 });
   const evidence = store.listChannelTeamEvidenceItems({ channelId, now, limit: 500 });
   const reliabilityIncidents = store.listReliabilityIncidents({ now, limit: 200 });
-  const availabilityIncidents = store.listAvailabilityIncidents({ now, limit: 200 });
+  const availabilityIncidents = listCurrentlyApplicableAvailabilityIncidents({ store, secretResolver, now, limit: 200 });
   const patterns = store.listChannelTeamPatterns({ channelId, now, includeExpired: true, limit: 200 });
   const activeProvisionalRules = store.listActiveChannelTeamProvisionalRules({ channelId, now, limit: 200 });
   const protocol = store.getChannelCollaborationProtocolOverride(channelId);

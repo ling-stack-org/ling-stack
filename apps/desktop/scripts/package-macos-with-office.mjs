@@ -7,6 +7,10 @@ import { withOriginalPackagedOfficeNativePublication } from "./build-packaged-of
 import { withCuaDriverBuilderEnvironment } from "./cua-driver-builder-environment.mjs";
 import { runCuaDriverElectronPackageCli } from "./cua-driver-electron-package.mjs";
 import { resolveSigningProfile } from "./cua-driver-signing/signing-contract.mjs";
+import { assertPackagedOfficeSigningConfig,
+  assertPackagedOfficeSigningEnvironment } from "./packaged-office-signing-inputs.mjs";
+import { buildHumanEvaluationHelper } from "./build-human-evaluation-helper.mjs";
+import { readPackagedOfficeHumanQaSelection, selectPackagedOfficeBuildLane } from "./packaged-human-qa-lane.mjs";
 
 const desktopRoot = realpathSync(fileURLToPath(new URL("../", import.meta.url)));
 const builderArguments = Object.freeze(["--mac", "dmg", "zip", "--arm64"]);
@@ -15,6 +19,7 @@ let busy = false, configSequence = 0;
 /** Fixed same-process macOS lane; there is no CLI config/target/publication override. */
 export async function packageMacosWithOffice() {
   if (busy) throw new Error("packaged_office_native_package_busy");
+  const humanQa = readPackagedOfficeHumanQaSelection(process.env);
   busy = true;
   try {
     if (process.platform !== "darwin" || process.arch !== "arm64"
@@ -27,24 +32,38 @@ export async function packageMacosWithOffice() {
     if (process.env.LING_CUA_DRIVER_PACKAGE_PROVIDER === "1") {
       throw new Error("packaged_office_native_provider_signing_lane_unsupported");
     }
+    assertPackagedOfficeSigningEnvironment(process.env);
     await runCuaDriverElectronPackageCli(["--platform", "darwin", "--", ...builderArguments], process.env, {
       async runBuilder({ appRoot, args, environment }) {
+        if (readPackagedOfficeHumanQaSelection(environment) !== humanQa) {
+          throw new Error("packaged_human_qa_selection_changed");
+        }
         if (realpathSync(appRoot) !== desktopRoot
           || JSON.stringify(args) !== JSON.stringify(["--config", resolve(desktopRoot,
             "scripts/cua-driver-electron-builder.config.mjs"), ...builderArguments])) {
           throw new Error("packaged_office_native_builder_invocation_invalid");
         }
+        assertPackagedOfficeSigningEnvironment(process.env);
+        assertPackagedOfficeSigningEnvironment(environment);
         return withCuaDriverBuilderEnvironment(environment, async () => {
+          assertPackagedOfficeSigningEnvironment(process.env);
           const token = await buildFreshPackagedDaemonForMacOffice();
           return withOriginalPackagedOfficeNativePublication(token, async () => {
+            buildHumanEvaluationHelper();
             // The URL is fixed original code. A fresh module instance prevents
             // one validated Cua environment from leaking into a later build.
             const configUrl = new URL("./cua-driver-electron-builder.config.mjs", import.meta.url);
             configUrl.searchParams.set("officeInvocation", String(++configSequence));
-            const { default: config } = await import(configUrl.href);
+            const { default: originalConfig } = await import(configUrl.href);
+            if (readPackagedOfficeHumanQaSelection(process.env) !== humanQa) {
+              throw new Error("packaged_human_qa_selection_changed");
+            }
+            const config = selectPackagedOfficeBuildLane(originalConfig, process.env);
             if (config.mac.sign !== undefined || config.mac.identity !== "-") {
               throw new Error("packaged_office_native_default_signer_required");
             }
+            assertPackagedOfficeSigningConfig(config);
+            assertPackagedOfficeSigningEnvironment(process.env);
             await build({ projectDir: desktopRoot, publish: "never",
               targets: Platform.MAC.createTarget(["dmg", "zip"], Arch.arm64), config });
             return 0;

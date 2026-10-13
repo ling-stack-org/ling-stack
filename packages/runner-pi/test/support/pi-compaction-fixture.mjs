@@ -1,7 +1,7 @@
 import { appendFile, mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
+import { getCurrentSystemPrompt, getCurrentTools, InMemoryCredentialStore, InMemoryModelsStore } from "@earendil-works/pi-ai";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import { createAgentSession, createExtensionRuntime, ModelRuntime, SessionManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 
@@ -45,7 +45,10 @@ export async function compactionFixture(t, options = {}) {
       fetch: async () => {
         const phase = compacting ? "summary" : "task";
         const request = { phase, index: requests.filter(item => item.phase === phase).length,
-          messages: structuredClone(context.messages), signal: streamOptions?.signal };
+          messages: structuredClone(context.messages),
+          canonicalMessages: structuredClone(sessionManager.buildSessionProjection().messages),
+          systemPrompt: getCurrentSystemPrompt(context.messages), tools: structuredClone(getCurrentTools(context.messages)),
+          eventIndex: events.length, signal: streamOptions?.signal };
         requests.push(request);
         return phase === "summary"
           ? (options.summary?.(request) ?? response({ text: "## Goal\nPreserve the fixture goal.\n## Progress\nEffects are already recorded; do not repeat them." }))
@@ -65,6 +68,7 @@ export async function compactionFixture(t, options = {}) {
   };
   const sessionManager = SessionManager.inMemory(cwd);
   const settingsManager = SettingsManager.inMemory({
+    cacheWarming: "off",
     compaction: { enabled: true, reserveTokens: 256, keepRecentTokens: 64, ...options.compaction },
     retry: { enabled: false, maxRetries: 0, baseDelayMs: 1, provider: { maxRetries: 0 }, ...options.retry },
   });

@@ -20,6 +20,7 @@ import type {
 import { readOnlyRunTools } from "@ling-stack/core";
 import { isRecord, readNullableString, readOptionalBoolean, readOptionalNumber, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
+import { isSupportedAutomationRRule } from "./recurrence.js";
 
 export interface CreateAutomationRequest {
   readonly kind: AutomationKind;
@@ -70,17 +71,19 @@ export interface AutomationRunCancelRequest {
   readonly reason?: string;
 }
 
+type AutomationDraftPartialRequest = Partial<Omit<CreateAutomationRequest, "rrule">> & { readonly rrule?: string | null };
+
 export interface CreateAutomationDraftRequest {
   readonly source: AutomationDraftSource;
   readonly templateId?: BuiltinAutomationTemplateId;
   readonly prompt?: string;
-  readonly partialAutomation?: Partial<CreateAutomationRequest>;
+  readonly partialAutomation?: AutomationDraftPartialRequest;
   readonly proposedByRunId?: string;
   readonly proposedByThreadId?: string;
 }
 
 export interface UpdateAutomationDraftRequest {
-  readonly partialAutomation?: Partial<CreateAutomationRequest>;
+  readonly partialAutomation?: AutomationDraftPartialRequest;
   readonly proposedByRunId?: string | null;
   readonly proposedByThreadId?: string | null;
 }
@@ -136,7 +139,7 @@ export function parseCreateAutomationRequest(value: unknown): CreateAutomationRe
     description: readOptionalString(value, "description"),
     target,
     trigger: parseOptionalAutomationTrigger(value.trigger),
-    rrule: readOptionalString(value, "rrule"),
+    rrule: validateAutomationRRule(readOptionalString(value, "rrule")),
     cwds: readOptionalStringArray(value, "cwds"),
     targetThreadId,
     executionEnvironment: parseOptionalAutomationExecutionEnvironment(value.executionEnvironment),
@@ -184,7 +187,7 @@ export function parseUpdateAutomationRequest(value: unknown): UpdateAutomationRe
     automationMode: parseOptionalAutomationMode(value.automationMode),
     status: parseOptionalAutomationStatus(value.status),
     trigger: parseOptionalAutomationTrigger(value.trigger),
-    rrule: readNullableString(value, "rrule"),
+    rrule: validateAutomationRRule(readNullableString(value, "rrule")),
     cwds: readOptionalStringArray(value, "cwds"),
     targetThreadId: readNullableString(value, "targetThreadId"),
     executionEnvironment: parseNullableAutomationExecutionEnvironment(value.executionEnvironment),
@@ -294,7 +297,7 @@ function parseOptionalBuiltinAutomationTemplateId(value: unknown): BuiltinAutoma
   return value as BuiltinAutomationTemplateId;
 }
 
-function parseDraftPartialAutomationRequest(value: unknown): Partial<CreateAutomationRequest> | undefined {
+function parseDraftPartialAutomationRequest(value: unknown): AutomationDraftPartialRequest | undefined {
   if (value === undefined) {
     return undefined;
   }
@@ -310,7 +313,7 @@ function parseDraftPartialAutomationRequest(value: unknown): Partial<CreateAutom
     description: readOptionalString(value, "description"),
     target: parseOptionalAutomationTarget(value.target),
     trigger: parseOptionalAutomationTrigger(value.trigger),
-    rrule: readOptionalString(value, "rrule"),
+    rrule: validateAutomationRRule(readNullableString(value, "rrule")),
     cwds: readOptionalStringArray(value, "cwds"),
     targetThreadId: readOptionalString(value, "targetThreadId"),
     executionEnvironment: parseOptionalAutomationExecutionEnvironment(value.executionEnvironment),
@@ -321,6 +324,14 @@ function parseDraftPartialAutomationRequest(value: unknown): Partial<CreateAutom
     outputPolicy: parseOptionalAutomationOutputPolicy(value.outputPolicy),
     status: parseOptionalAutomationStatus(value.status),
   };
+}
+
+/** Validate authored rules before any definition or draft is persisted. */
+function validateAutomationRRule<T extends string | null | undefined>(rule: T): T {
+  if (rule && !isSupportedAutomationRRule(rule)) {
+    throw new Error("rrule contains unsupported fields or invalid recurrence values");
+  }
+  return rule;
 }
 
 function parseAutomationStatus(value: string): AutomationStatus {

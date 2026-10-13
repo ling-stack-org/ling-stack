@@ -9,7 +9,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { OFFICE_LOCAL_NATIVE_REVIEW_SOURCE_INPUTS } from "../../../packages/daemon/dist/runtime/sandbox/packaged-office-native-published-review.js";
-import { PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "../scripts/packaged-office-native-review-inputs.mjs";
+import { PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS,
+  PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS } from "../scripts/packaged-office-native-review-inputs.mjs";
 
 const repositoryRoot = realpathSync(fileURLToPath(new URL("../../../", import.meta.url)));
 const scriptRoot = join(repositoryRoot, "apps/desktop/scripts");
@@ -52,7 +53,11 @@ const addedDependencyGroups = Object.freeze({
     "packages/daemon/src/runtime/sandbox/macos-sandbox-backend.ts",
     "packages/daemon/src/runtime/sandbox/macos-seatbelt-profile.ts",
   ],
+  recovery: [
+    "packages/core/src/storage/sqlite/recovery-discovery-validation.ts",
+  ],
   packaging: [
+    "apps/desktop/scripts/packaged-office-signing-inputs.mjs",
     "apps/desktop/scripts/cua-driver-package-staging-contract.mjs",
     "apps/desktop/scripts/cua-driver-package-staging-files.mjs",
     "apps/desktop/scripts/cua-driver-package-staging-source.mjs",
@@ -76,6 +81,17 @@ const addedDependencyGroups = Object.freeze({
     "packages/localization/src/index.ts", "packages/runner-pi/src/index.ts", "packages/providers/src/index.ts",
     "packages/browser-host/src/index.ts", "packages/remote-protocol/src/index.ts", "packages/plugin-sdk/src/index.ts",
   ],
+});
+
+test("Office signing admission remains an explicit authored root and packaging source input", () => {
+  const path = "apps/desktop/scripts/packaged-office-signing-inputs.mjs";
+  assert.ok(PACKAGED_OFFICE_NATIVE_AUTHORED_REVIEW_ROOTS.includes(path));
+  assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(path));
+});
+
+test("Office recovery discovery validation remains an explicit packaging source input", () => {
+  assert.ok(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(
+    "packages/core/src/storage/sqlite/recovery-discovery-validation.ts"));
 });
 
 /** Disposable, explicitly synthetic compiler/signature fixture. It never approves product sources. */

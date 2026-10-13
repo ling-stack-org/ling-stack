@@ -1,5 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { buildChannelEvidenceSummaryProjection, buildChannelTeamMetricsProjection } from "@ling-stack/core";
+import type { SecretResolver } from "@ling-stack/core";
+import { listCurrentlyApplicableAvailabilityIncidents } from "../providers/runtime-failure-observations.js";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery } from "../../shared/request.js";
@@ -13,6 +15,7 @@ export async function handleChannelTeamMetricsProjection(
   config: ResolvedDaemonConfig,
   storeRegistry: RunStoreRegistry,
   channelId: string,
+  secretResolver?: SecretResolver,
 ): Promise<void> {
   const url = new URL(request.url ?? "/", `http://${request.headers.host ?? `${config.host}:${config.port}`}`);
   const cwd = url.searchParams.get("cwd");
@@ -67,7 +70,7 @@ export async function handleChannelTeamMetricsProjection(
         teamEvidence,
       }),
       reliabilityIncidents: store.listReliabilityIncidents({ now, limit }),
-      availabilityIncidents: store.listAvailabilityIncidents({ now, limit }),
+      availabilityIncidents: listCurrentlyApplicableAvailabilityIncidents({ store, secretResolver, now, limit }),
       patterns: store.listChannelTeamPatterns({
         channelId,
         now,

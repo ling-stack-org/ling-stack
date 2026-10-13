@@ -152,6 +152,22 @@ export interface ReconcileAbandonedHarnessToolExecutionsInput {
   readonly classify?: (execution: HarnessToolExecutionV1) => ReconciledHarnessToolExecutionOutcome | undefined;
 }
 
+/** Discovery position, independent of which rows win the reconciliation CAS. */
+export interface HarnessToolExecutionRecoveryCursor {
+  readonly claimExpiresAt: string;
+  readonly id: string;
+}
+
+export interface ReconcileAbandonedHarnessToolExecutionsPageInput extends ReconcileAbandonedHarnessToolExecutionsInput {
+  readonly cursor?: HarnessToolExecutionRecoveryCursor;
+}
+
+export interface HarnessToolExecutionRecoveryPage {
+  readonly scanned: number;
+  readonly updated: readonly HarnessToolExecutionV1[];
+  readonly nextCursor?: HarnessToolExecutionRecoveryCursor;
+}
+
 export interface ReconciledHarnessToolExecutionOutcome {
   readonly nextState: Extract<HarnessToolExecutionState, "succeeded" | "failed" | "unknown_outcome">;
   readonly resultDigest: string;

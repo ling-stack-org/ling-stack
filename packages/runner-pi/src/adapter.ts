@@ -3,7 +3,8 @@ import { translatePiEvents } from "./events.js";
 import { createInitializedPiSession } from "./session-factory.js";
 import { assertPreparedPiSession, capturePreparedPiInput, type PiRunnerPreparedInput } from "./prepared-input.js";
 import { installApprovedToolContinuation, readApprovedToolContinuation } from "./approved-tool-continuation.js";
-import { installCompactionRecoveryView } from "./compaction-recovery.js";
+import { createCompactionRecoveryCheckpointProjector, installCompactionRecoveryView } from "./compaction-recovery.js";
+import { installOrdinaryProgressRecoveryView, readOrdinaryProgressRecoveryView } from "./ordinary-progress-recovery.js";
 import { projectCompactionTaskView } from "./compaction-task-anchor.js";
 import { createPiPreparedInputReceiver } from "./prepared-input-receiver.js";
 import { fetchProvider } from "./provider-http.js";
@@ -13,6 +14,9 @@ import { PiRunnerYielded } from "./task-yield.js";
 import type { PiProviderErrorDiagnostic } from "./provider-error-diagnostic.js";
 import type { PiRunnerEvent, PiRunnerProviderConfig, PiRunnerResult, PiRunnerRunOptions } from "./types.js";
 import { formatTaskPrompt, throwIfAborted } from "./utils.js";
+import { continuePiSession, isPiHostResumeControl } from "./session-continuation.js";
+import { frozenPiConversation } from "./session-transcript.js";
+import { resolvePiProviderRequestAuth } from "./provider-request-auth.js";
 
 export class PiRunnerAdapter {
   /** Assemble exact SDK input without executing, emitting Run events, or persisting a session. */
@@ -34,6 +38,17 @@ export class PiRunnerAdapter {
   /** Resolves only on completion; required input rejects with PiRunnerYielded after SDK idle. */
   async runTask(options: PiRunnerRunOptions): Promise<PiRunnerResult> {
     assertUserInputExecutionHandler(options);
+    if (options.ordinaryProgressRecovery !== undefined) {
+      if (options.compactionRecovery || options.approvedToolContinuation) {
+        throw new Error("Pi ordinary progress recovery cannot be combined with compaction or approved tool continuation");
+      }
+      if (!options.preparedInput || !options.runId || !options.runnerAttemptId || !options.onEvent || !options.onTaskContinuationBoundary) {
+        throw new Error("Pi ordinary progress recovery requires prepared input, Run/Attempt identity, durable events, and a Host admission fence");
+      }
+      // Capture before SDK/backend awaits: a caller cannot rewrite the recovery baseline during setup.
+      options = { ...options, ordinaryProgressRecovery: { schemaVersion: 1,
+        modelView: readOrdinaryProgressRecoveryView(options.ordinaryProgressRecovery) } };
+    }
     if (options.hostCompactionEnabled && (!options.runId || !options.runnerAttemptId
       || !options.onEvent || !options.onTaskContinuationBoundary)) {
       throw new Error("Host compaction requires Run/Attempt identity, durable events, and a provider admission fence");
@@ -43,16 +58,24 @@ export class PiRunnerAdapter {
     if (inputReceiver) options = { ...options, preparedInput: inputReceiver.preparedInput };
     let session: Awaited<ReturnType<typeof createInitializedPiSession>> | undefined;
     const acceptedTaskPrompt = options.preparedInput?.userPrompt ?? formatTaskPrompt(options.task);
-    const captureTaskModelView = (): readonly unknown[] | undefined => session
-      ? captureCompactionContext(projectCompactionTaskView(session.state.messages, acceptedTaskPrompt)) : undefined;
+    let frozenAuthority: PiRunnerPreparedInput | undefined;
+    let recoveryCheckpointProjector: ((messages: readonly unknown[]) => readonly unknown[]) | undefined;
+    const captureTaskModelView = (): readonly unknown[] | undefined => {
+      if (!session || !frozenAuthority) return undefined;
+      const conversation = frozenPiConversation(session.state.messages, frozenAuthority);
+      return captureCompactionContext(projectCompactionTaskView(
+        recoveryCheckpointProjector ? recoveryCheckpointProjector(conversation) : conversation, acceptedTaskPrompt));
+    };
     const hostBoundary = options.onTaskContinuationBoundary;
-    const boundary = createPiTaskBoundary(options.hostCompactionEnabled && hostBoundary
+    const boundary = createPiTaskBoundary((options.hostCompactionEnabled || options.ordinaryProgressRecovery) && hostBoundary
       ? { ...options, onTaskContinuationBoundary: (point) => hostBoundary(point,
           point === "before_provider_request" && session
             ? captureTaskModelView() : undefined) }
-      : options, () => session ? { systemPrompt: session.systemPrompt, messages: session.state.messages, acceptedTaskPrompt } : undefined);
+      : options, () => session && frozenAuthority ? { systemPrompt: frozenAuthority.systemPrompt, messages: session.state.messages,
+          acceptedTaskPrompt, sessionId: session.sessionId, preparedInput: frozenAuthority } : undefined);
     options = boundary.options;
     const events: PiRunnerEvent[] = [];
+    let sdkSettlement: { readonly aborted: boolean } | undefined;
     const emit = (event: PiRunnerEvent): void => {
       events.push(event);
       options.onEvent?.(event);
@@ -73,7 +96,9 @@ export class PiRunnerAdapter {
     // Verify the frozen system/model/tool assembly while the session is still
     // empty, then install only the Host-sealed SDK view for restart recovery.
     assertPreparedPiSession(session, options);
+    frozenAuthority = capturePreparedPiInput(session, options);
     let compactionRecoveryMode: "complete" | "continue" | undefined;
+    let ordinaryProgressRecoveryMode: "complete" | "continue" | undefined;
     const onAbort = (): void => {
       // Wait outside the tool/extension callback; awaiting here can deadlock
       // the very SDK work whose completion makes the session idle.
@@ -84,6 +109,9 @@ export class PiRunnerAdapter {
     }
 
     const unsubscribe = session.subscribe((event) => {
+      if (event.type === "agent_settled") sdkSettlement = { aborted: event.aborted };
+      if ((event.type === "message_start" || event.type === "message_end" || event.type === "message_update")
+        && isPiHostResumeControl(event.message)) return;
       for (const translated of translatePiEvents(event)) {
         if (translated.type === "context_compaction_start") {
           const contextSnapshot = captureTaskModelView();
@@ -124,14 +152,24 @@ export class PiRunnerAdapter {
       }
       if (options.compactionRecovery) {
         compactionRecoveryMode = installCompactionRecoveryView(session, options.compactionRecovery, acceptedTaskPrompt);
+        recoveryCheckpointProjector = createCompactionRecoveryCheckpointProjector(session, options.compactionRecovery);
       }
-      if (compactionRecoveryMode === "complete") {
+      if (options.ordinaryProgressRecovery) {
+        ordinaryProgressRecoveryMode = installOrdinaryProgressRecoveryView(session, options.ordinaryProgressRecovery, acceptedTaskPrompt);
+      }
+      const recoveryMode = ordinaryProgressRecoveryMode ?? compactionRecoveryMode;
+      if (recoveryMode === "complete") {
+        if (ordinaryProgressRecoveryMode) {
+          // Recheck original Host authority after backend/setup awaits even without a provider request.
+          await options.onTaskContinuationBoundary?.("before_agent_start");
+          boundary.assertOpen();
+        }
         // Pi's compacted view may end with a complete assistant turn. Calling
         // continue() here is invalid and would risk replaying a side effect.
-      } else if (compactionRecoveryMode === "continue") {
+      } else if (recoveryMode === "continue") {
         await options.onTaskContinuationBoundary?.("before_agent_start");
         boundary.assertOpen();
-        await session.agent.continue();
+        await continuePiSession(session);
       } else if (options.approvedToolContinuation) {
         if (!options.preparedInput) {
           throw new Error("Approved tool continuation requires prepared input evidence.");
@@ -140,12 +178,15 @@ export class PiRunnerAdapter {
         await options.onTaskContinuationBoundary?.("before_agent_start");
         boundary.assertOpen();
         installApprovedToolContinuation(session, options.preparedInput, options.provider, continuation);
-        await session.agent.continue();
+        await continuePiSession(session);
       } else {
         await session.prompt(formatTaskPrompt(options.task), { source: "rpc" });
         await session.waitForIdle();
       }
       boundary.assertOpen();
+      if (recoveryMode !== "complete" && (!sdkSettlement || sdkSettlement.aborted)) {
+        throw new Error("Pi session did not reach a non-aborted SDK settlement");
+      }
       const terminalFailure = findTerminalFailure(events);
       if (terminalFailure) {
         throw terminalFailure;
@@ -200,10 +241,11 @@ export class PiRunnerAdapter {
       return;
     }
 
+    const requestAuth = resolvePiProviderRequestAuth(provider);
     const registration = {
       name: provider.displayName ?? provider.provider,
       baseUrl: provider.baseUrl,
-      apiKey: provider.apiKey,
+      apiKey: requestAuth.registrationApiKey,
       api: provider.api ?? "openai-completions",
       headers: provider.headers,
       authHeader: provider.authHeader,
@@ -238,6 +280,7 @@ export class PiRunnerAdapter {
       api: provider.api ?? "openai-completions",
       streamSimple: (model, context, streamOptions) => streamSimple(model, context, {
         ...streamOptions,
+        headers: requestAuth.requestHeaders(streamOptions?.headers),
         fetch: streamOptions?.fetch ?? fetchProvider,
       }),
     });

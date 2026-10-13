@@ -306,7 +306,10 @@ export class SqliteMcpStore {
     if (!this.getMcpServer(serverId)) {
       throw new Error(`MCP server not found: ${serverId}`);
     }
-    const existingTools = new Map(this.listMcpTools({ serverId }).map((tool) => [tool.rawName, tool]));
+    // Replacement owns the complete catalog, not the capped public listing page.
+    const existingFirstSeen = new Map(this.context.database.prepare(
+      "SELECT raw_name, first_seen_at FROM mcp_tools WHERE server_id = ?",
+    ).all(serverId).map(row => [readString(row, "raw_name"), readString(row, "first_seen_at")]));
     this.context.database.prepare("DELETE FROM mcp_tools WHERE server_id = ?").run(serverId);
     const insert = this.context.database.prepare(`
       INSERT INTO mcp_tools (
@@ -326,7 +329,6 @@ export class SqliteMcpStore {
       ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     for (const tool of dedupeMcpToolInputs(tools)) {
-      const existing = existingTools.get(tool.rawName);
       insert.run(
         serverId,
         tool.rawName,
@@ -338,7 +340,7 @@ export class SqliteMcpStore {
         tool.sideEffectLevel,
         tool.defaultApproval,
         tool.enabled === false ? 0 : 1,
-        existing?.firstSeenAt ?? now,
+        existingFirstSeen.get(tool.rawName) ?? now,
         now,
         now,
       );

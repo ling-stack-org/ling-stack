@@ -714,14 +714,23 @@ Optional children may be cancelled when the parent step completes. Their termina
 
 ## Storage and Migration Plan
 
-The current implementation branch migration head is version `134`. Versions `130-133` were already claimed by local feature work and must not be reused. This branch reserves the next free contiguous versions `135-138`; recheck the head immediately before each migration commit and renumber before merge if upstream claims them first.
+The original foundation reserved `135-138` when the branch head was `134`.
+Continuation/tool/evaluation migrations `135-137` have landed; `138` was later
+claimed by channel-proposal CAS and must not be reused for delegation. The
+current inspected migration head on 2026-10-09 is `153`; delegation uses the
+next free version `154`, with the distinct name `create_delegation_tree_v1`.
+The historical development marker `139/create_delegation_tree` is preserved,
+not claimed by V1; incompatible old table definitions still refuse startup.
+Recheck the head before each migration commit and
+renumber before merge if upstream claims that version first. Do not rewrite
+already-applied migration markers or invent historical delegation rows.
 
 | Proposed version | Migration | Tables / changes | Backfill |
 | --- | --- | --- | --- |
 | 135 | `create_runner_continuations` | `runner_continuations`, indexes by run/state/due time/idempotency | No synthetic historical continuation rows; existing runs remain readable through current lineage |
 | 136 | `create_harness_tool_executions` | `harness_tool_executions`, indexes by attempt/tool call/state/due time | New tool calls only; existing execution actions remain unchanged |
 | 137 | `create_run_evaluations` | `run_evaluations`, `run_evaluation_grades`, version indexes and unique grader-result key | No historical scores are invented |
-| 138 | `create_delegation_tree` | `delegation_steps`, `delegation_messages`, lineage, child-run, state, and due-time indexes | Existing static workflows remain graph-only with no synthetic children |
+| 154 | `create_delegation_tree_v1` | `delegation_steps`, `delegation_messages`, lineage, child-run, state, and created-time indexes | Existing static workflows remain graph-only with no synthetic children |
 
 Migration rules:
 
@@ -982,7 +991,7 @@ Each PR must be reviewable and releasable behind flags. Do not combine all four 
 | H07 | P1 | Sandbox profiles and external-runner tool conformance suite | H06 | native runner tools disabled by default | Non-conformant adapter fails closed |
 | H08 | P1 | Migration 137, evaluation store, low-priority claim scheduler, rule grader | H01 | evaluation `shadow` | G14, G16, G17 pass; normal run slots unaffected |
 | H09 | P1 | Model/human grades, cost/latency artifacts, promotion report | H08 | model gate `shadow` | G15, G18 pass; no merge block from model grader |
-| H10 | P2 | Migration 138, delegation store, subset and budget policies | H01, H02 | delegation `shadow` | G19-G20 pass |
+| H10 | P2 | Migration 154, delegation store, subset and budget policies | H01, H02 | delegation `shadow` | G19-G20 pass |
 | H11 | P2 | Spawn/message/wait/interrupt/resume coordinator and recovery | H10 | delegation `shadow` | G22-G23 pass with fake runners |
 | H12 | P2 | Workflow completion gate integration and controlled enablement | H11 | delegation `enforce` for selected workflows | G21 passes; accepted workflow graph is unchanged |
 | H13 | P2 | Rebuildable projections, operator diagnostics, artifact retention, performance budgets | H04, H07, H09, H12 | staged per domain | Recovery dashboard and p95 budgets verified |
@@ -1144,10 +1153,30 @@ Synthesized from this review's findings. Each task derives from a specific revie
   - Surfaced by: Test T2 and gaps G15/G18.
   - Files: daemon graders, evaluation APIs/projections, fixtures.
   - Verify: model gate remains shadow and threshold math passes fixed datasets.
-- [ ] **T10 (P2, human: ~1.5 days / CC: ~60 min)** — Delegation storage and policy — Add migration 138, tree lineage, subset checks, depth/cycle checks, and root budget reservation.
+  - 2026-10-08 partial checkpoint: the isolated report-only analyzer passes 42/42 synthetic
+    cases and Root's 67/67 Daemon + 11/11 Core neighbor matrices. It has no production
+    caller, no authenticated human/independent repeat evidence and no enforcement authority.
+    The next readonly storage/artifact slice is now saved as `d425b101`: exact grade lookup,
+    pinned corpus/owner/digest checks and honest untrusted-claim diagnostics. Real SQLite
+    projector 25/25, Core getter/store/migration 23/23 and Daemon report/projector/scheduler
+    74/74 pass, with no production caller or authenticated source. A 100-case fabricated
+    human/200-call corpus remains not assessed. Real grader/admission/recovery is still
+    incomplete. See [the calibration checkpoint](harness-shadow-promotion-report-checkpoint-2026-10-08.md)
+    and [the stored-claims boundary](harness-shadow-storage-projection-checkpoint-2026-10-08.md).
+- [ ] **T10 (P2, human: ~1.5 days / CC: ~60 min)** — Delegation storage and policy — Add migration 154, tree lineage, subset checks, depth/cycle checks, and root budget reservation.
   - Surfaced by: Architecture D5 and gaps G19-G20.
   - Files: core delegation domain/store and runtime budget ports.
   - Verify: capability escalation and over-reservation roll back child creation.
+  - Migration prerequisite saved at `3945ce8b`: Node 22 Core full 2,462/2,462,
+    frozen Daemon full 3,672/3,672 and Desktop full 1,878 pass with three
+    Windows-only skips. These do not certify Store authority, G19/G20 or
+    packaged execution. See [the persistence checkpoint](harness-delegation-storage-checkpoint-2026-10-09.md).
+  - Metadata-only Store/query prerequisite is implemented: Node 22 focused
+    48/48, Node 24 reader 11/11, Core full 2,473/2,473, Desktop full 1,886
+    pass/three Windows-only skips, Daemon full 3,672/3,672 and workspace
+    typecheck pass. Source checkpoint `55172c7e` is local/unpublished.
+    No writer authority, reservation or child producer
+    is enabled; do not close T10 from these read-only results.
 - [ ] **T11 (P2, human: ~2 days / CC: ~75 min)** — Delegation operations — Implement durable spawn/message/wait/interrupt/resume and restart recovery.
   - Surfaced by: Architecture D5 and gaps G22-G23.
   - Files: daemon harness delegation coordinator/recovery and runner tool surface.
@@ -1160,6 +1189,13 @@ Synthesized from this review's findings. Each task derives from a specific revie
   - Surfaced by: Performance P1-P3 and production failure review.
   - Files: daemon control-plane projections/diagnostics, artifact retention, harness workers.
   - Verify: restart reconciliation and the stated p95/event-size budgets on a representative local database.
+  - 2026-10-09 locally verified slice: metadata-only continuation/tool diagnostics
+    are connected to the existing Run debug disclosure. Cold-workspace
+    observation does not initialize/recover/dispatch; scope and Attempt reads
+    do not parse unrelated private JSON. Final Core/Daemon/API/Web counts are
+    2525/3688/87/455, with bounded real-browser fixture checks and a 44-test
+    authored-source gate. See [the diagnostics checkpoint](harness-diagnostics-checkpoint-2026-10-09.md).
+    This does not close T13 or replace packaged E6 acceptance.
 
 ## Delivery Checklist
 
@@ -1213,7 +1249,107 @@ This plan is being implemented on the existing `codex/reasoning-summary-autorevi
 
 The original transcript/approval gates and the new Harness G01-G23 gates are one final acceptance set. Each Harness phase runs narrow deterministic tests first. After all enforcing phases land, run the repository checks, isolated-per-file Daemon suite, packaged macOS smoke, daemon restart, SSE reconnect, approval resume, continuation replay, tool crash-window reconciliation, evaluation recovery, and required-child fan-in in the same packaged application build.
 
-## GSTACK REVIEW REPORT
+## H09 Task Recovery Engineering Addendum — 2026-10-10
+
+Fixed target: this plan's T9/H09 task/claim/recovery foundation, not branch diff.
+Baseline `fcc47e26`; original approvals remain in force. Detailed contract:
+[独立任务与恢复](harness-evaluation-task-recovery-detailed-design.md).
+
+### Scope Challenge / Decision ledger
+
+Scope accepted as-is: estimate18 source/test files, two focused classes, three
+sidecar tables; no new service, UI, scheduler framework or dependencies.
+Arrangement retained under user's actual continuous-chain/new-table authorization:
+“允许按现有设计连续完成内部链路…不再逐次确认文件数量”, “可以新增表”.
+Combining external effects into deterministic rule recovery loses the fixed contract.
+R1 approved: necessary task identity, Attempt/fence, admission, atomic result, unknown
+recovery, tests/design. R2 fixed: old rule/grades/math/Run/normal quota unchanged.
+R3–R6 pending: trusted human identity; actual model/data; budgets/Provider quota;
+explicit corpus/terminal enqueue. No auto-choice. H10 budget is separate from D1 A.
+Approval readiness: PASS for R1/R2 only; R3–R6 not enabled.
+
+### Architecture review — 4 mapped findings
+
+1. [P1 confidence10/10] `scheduler.ts:39`: `listClaimableRunEvaluations` claims whole
+   evaluations; repeat tasks need own identity, not resetting completion/grader version.
+2. [P1 confidence10/10] `run-evaluation-store.ts:100`: expired `('claimed','grading')`
+   are claimable. Preserve deterministic rule behavior, separate unknown effects.
+3. [P1 confidence10/10] `scheduler.ts:31`: callback gets mutation Store, no signal or
+   admission receipt. New narrow worker cannot borrow terminal Run/normal quota.
+4. [P1 confidence9/10] old grade unique lacks repeat/Attempt. New result/Attempt/task
+   settle atomically; claimed invocation/authenticated fields grant no promotion authority.
+
+### Code Quality review — 2 mapped findings
+
+1. [P2 confidence9/10] canonical JSON is not a public-input total budget. Require bounded
+   own-data/plain inputs; distinguish canonical/config-artifact SHA; no preparse claim.
+2. [P2 confidence10/10] old public Store methods own `BEGIN IMMEDIATE`; no nested reuse.
+   BEGIN failure cannot rollback caller transaction. Reuse patterns, not incompatible
+   methods. No speculative shared extraction; total code grows for separate semantics.
+
+### Test review — 6 planned gap groups
+
+Existing runner is Node `node:test` in Core/Daemon package scripts; no CLAUDE/TODOS
+files found. Existing tests cover old rules/137, not new sidecars. No retirements.
+
+```text
+enqueue [GAP -> SQLite]: owner/digest/config invalid -> reject; replay same; ordinal new
+claim   [GAP -> two connections]: revision/token/expiry/ABA reject; replay same Attempt
+admit   [GAP -> integration]: drift/closed -> zero executor; first true; replay false
+settle  [GAP -> faults]: result+Attempt+task commit/rollback; conflict/late reject
+recover [GAP -> reopen]: pre-admission queued; admitted unresolved unknown, no resend
+worker/legacy [GAP]: absent zero claim; abort unknown; hang not idle; old facts unchanged
+```
+
+All six are proposed tests, not executed evidence. Crash cuts: before admission,
+admission/send-before, send/response-before, response/commit-before. Each enforces
+effect/fence/atomicity beyond smoke. No UI/prompt/model change or new quality eval.
+History153/136 fixtures remove only exact158 overlay and retain strict SQL/rows/markers.
+
+### Performance review — 2 mapped findings
+
+1. [P2 confidence9/10] use bounded indexed queue/recovery and cursor progress, no
+   whole-history loading or fixed overfetch. 2. [P2 confidence9/10] shutdown closes
+   admission synchronously, aborts owned adapters and awaits actual settlement;
+   no timeout-as-idle. Hanging adapter is explicitly non-drained.
+
+### NOT in scope / What already exists / Failure modes
+
+No real model/human producer, all-Run enrollment, quota policy, enforcement, GUI release
+or fabricated Office approval. Do not redo H08, report math/projector, Provider D1,
+Pi/Expo migration, R03 or time formatting. Reuse sealed lineage/own transaction/CAS
+patterns; not old whole-evaluation recovery or normal Runtime execution authority.
+Each crash cut, ABA, drift, late result, split commit and shutdown race has required
+error handling/tests above: zero unhandled silent critical gaps in the plan.
+
+### Implementation Tasks / parallelization
+
+- [ ] **H09-F1 (P1 human~8h / CC~90min)** Core/Contracts sidecars and fenced
+  admission/atomic result; Architecture1/2/4, Quality1/2; verify SQLite/migration Node22/24.
+- [ ] **H09-F2 (P1 human~3h / CC~30min)** Daemon isolated worker; Architecture3,
+  Performance2; verify absent/zero-send/unknown/drain. Build after frozen Core.
+- [ ] **H09-F3 (P1 human~3h / CC~30min)** strict legacy/fault/reopen regressions;
+  Test6 groups; no normal Run/Attempt/grade/quota mutation.
+- [ ] **H09-F4 (P2 human~1h / CC~10min)** root Office fixed authored-source leaves
+  and source-only regression; distribution boundary, no approvedrow fabrication.
+
+LaneA Core/Contracts, LaneB disjoint Daemon (frozen interface first); root inventory
+after A/B, then joint types/focused/full/independent review/local save. Shared tree at
+user direction, no overlapping edits or concurrent dist builds; original writer WIP
+excluded. Efforts are estimates, not elapsed/completion proof.
+
+### Completion summary / Outside voice
+
+Architecture4 + Quality2 + Test6 + Performance2 =14 mapped issues; scope accepted as-is.
+NOT in scope/existing/failure/parallel written; zero new TODOs, zero silent critical gaps.
+Four production-enable decisions pending, no foundation decision pending; Lake score N/A.
+External Claude attempted once access=none, exit1 authentication unavailable; no retry or
+credential change. No declared Plan/TaskOutput/TaskStop means native outside fallback
+unavailable. Three same-harness source auditors are not external/cross-model completion.
+Aside absent and host WebSearch absent; current authored code used, no invented Codex
+generic-grader parity. Full/GUI/actual-producer verification remains uncompleted.
+
+## Historical Engineering Report — retained prior record
 
 ### Review Runs
 
@@ -1262,3 +1398,68 @@ None. Low-confidence implementation details were kept as implementation-time mea
 **APPROVED FOR PHASED IMPLEMENTATION.** Implement H01-H13 as ordered, atomic commits on the current clean implementation branch, per the user's explicit decision. Keep all flags off or shadow until each enforcing gate passes, and do not touch the separate dirty UI2 checkout.
 
 NO UNRESOLVED DECISIONS
+
+## Historical GSTACK REVIEW REPORT — H09 foundation review snapshot
+
+| Review | Trigger | Why | Runs | Status | Findings |
+| --- | --- | --- | --- | --- | --- |
+| CEO Review | none this slice | Scope unchanged | 0 | NOT RUN | Prior approved phased scope retained |
+| Outside Review | Claude Code access=none | Independent plan challenge | 1 | UNAVAILABLE | Authentication, exit1; no retry or credential change |
+| Eng Review | plan-eng-review H09 | Architecture/tests | 1 | ISSUES OPEN | 14 mapped findings, zero silent critical gaps; four enablement decisions pending |
+| Design Review | none | No UI change | 0 | NOT APPLICABLE | No renderer/UI change |
+| DX Review | none | Internal foundation | 0 | NOT RUN | No user onboarding or CLI change |
+
+**OUTSIDE COVERAGE:** claude-code, plan-review, unavailable; same-harness audits are not external completion.
+**VERDICT:** foundation implementation remains authorized by R1/R2; Eng ISSUES OPEN, eng review required before overall H09 activation/release.
+**UNRESOLVED DECISIONS:**
+- R3: authenticated human identity/scope/correction; human producer disabled.
+- R4: real model/Provider/prompt/sampling/rubric/allowed data; actual model producer disabled.
+- R5: batch/day and separate Provider quota; local concurrency is not quota.
+- R6: explicit corpus/terminal enqueue source; no all-Run enrollment.
+
+## Current implementation readback — 2026-10-10
+
+H09-F1–F4 foundation 已实现。冻结21份源码/测试的 SHA 已逐项校验；Contracts/Core/Daemon
+build、Core2692/2692、隔离Daemon3943/3943、Desktop1998pass/3Windows-onlyskip、workspace
+typecheck 均实际exit0。上述是内部和source-only验收，不是真实模型、正式native approval或GUI。
+原review记录保留；没有重新运行或宣称外部Claude审查成功。
+
+用户已确定：QA案例与脱敏产物only；Host验证的本地用户显式提交、纠正/撤回留审计；
+Provider/model/预算委托实施者决定。初始政策batch3、滚动24h12个真实transport attempt、
+单固定隔离QAworkspace稳定namespace、retry0、local owned inflight1、unknown quarantine。
+8k完整输入估算另加32768 wire bytes硬界；output1k须验证最终wire/Provider语义；价未知不冒金额硬界。
+详细政策和人工OS确认要求见[h09详细设计](harness-evaluation-task-recovery-detailed-design.md)。
+
+**NEXT:** explicitQA enrollment + 原子独立quota/transport provenance + 单stream grader +
+payload-bound OS人工确认/append-only纠正撤回。旧unverified声明不提升，human不进入自动queue，
+不采集日常conversation/workspace/channel，不借普通Run quota。
+**VERDICT:** foundation内部验收通过；整体H09、真实producer和macOS12类验收仍未完成。
+**UNRESOLVED DECISIONS:** 本切片无未答用户政策；有效QA Provider/model能力和真实价源仍需实施核验。
+H10根预算为另一未答选择，不能套用本预算或D1A，dynamic children仍不启用。
+
+后续完整合同：[H09专用QA producer](harness-evaluation-qa-producer-detailed-design.md)。159侧边表与
+非流式单请求薄adapter已内部接通、未生产注册；已授权API目录返回36models，
+技术候选gpt-5.6-luna仍需受额度约束的wire能力/实际usage核验，没有可信价源。
+固定Office清单已补12个authored inputs（11 runtime＋1 type-only），完整source-only188/188，
+三次真实esbuild4009runtime/1173authored/workspace dist0；native/codesign仍synthetic，不冒GUI。
+当前159内部验证：Core双Node67/67、full2759、Daemon双Node109/109、Root联合双Node176/176、
+Desktop2046pass/3Windows-onlyskip、types均真正exit0。新Daemon隔离full4016/4016已真正exit0。
+详情见[QA producer检查点](harness-evaluation-qa-producer-checkpoint-2026-10-10.md)。
+下一为完整160人工Main→OS→Daemon原子audit/纠正撤回，再进行真实Provider与macOS12类验收。
+本读回不覆盖历史review，不宣称159已生产启用或总体H09完成。
+
+160完整内部人工链已接通：专用Main→逐payload native→私有Daemon→Core原子intent/head/event/audit，
+纠正/撤回append-only，失响应只读核对，返回前owner/epoch重验。Core最终2823/2823，Desktop最终
+2144pass/3Windows-onlyskip，Office source-only236/236，workspace types均actual exit0。
+Daemon双Nodefocused各21/21；首full4036pass/1timeout-cancel，不能算全绿；同媒体文件隔离24/24通过，
+完整串行复验最终TAP4037/4037、0fail/cancel/skip/todo；session已关闭且未追回独立exit metadata，
+不称actual exit已收，不重复旧矩阵。真实Swift编译/sessionprobe通过，不等于durable人工提交。
+详情与下一入口见[160检查点](harness-human-evaluation-checkpoint-2026-10-10.md)。
+enrolled-only分页、专用Main列表/报告capability、设置QA表单与immutable report-only producer
+已接通。后继合同见[可见QA设计](harness-human-qa-surface-detailed-design.md)。
+Core双Node60/60，Daemon双Node28/28，Desktop双Node85/85；Web双Nodefocused26/26、
+full481/481与noEmit均actual exit0。独审无剩余确认P1/P2；新Office清单由真实source-only后验。
+用户已亲自完成display-only synthetic payload系统认证；未写SQLite，不算durable或GUI整体验收。
+下一仅继续真实packaged可见QA/滚动取消/人工提交，以及受预算真实模型与macOS12类验收；
+不重做已验模块，不把160事件当137grade或promotion样本。
+用户政策无新增未决项；H10根预算仍独立未答，dynamicchildren不开启。总目标保持active。

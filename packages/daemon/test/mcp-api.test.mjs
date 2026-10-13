@@ -3,7 +3,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
 import test from "node:test";
-import { createCompositeSecretResolver } from "@ling-stack/core";
+import { DEFAULT_WORKSPACE_ID, createCompositeSecretResolver, createSqliteRunStore, resolveStoragePaths } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
 import {
   createCapturedStoreFactory,
@@ -329,6 +329,338 @@ test("runs snapshot only explicitly authorized teammate MCP tools", async () => 
   }
 });
 
+for (const [olderAction, newerAction] of [
+  ["check", "check"],
+  ["sync-tools", "sync-tools"],
+  ["check", "sync-tools"],
+  ["sync-tools", "check"],
+]) {
+  test(`manual MCP metadata ${olderAction}/${newerAction} preserves the latest started result`, { timeout: 15_000 }, async (t) => {
+    const fixture = await createMetadataRaceFixture(t, [olderAction, newerAction]);
+    try {
+      const olderRequest = fixture.request(olderAction);
+      await waitForMetadataEntry(fixture.gates[0], t.signal);
+      const newerRequest = fixture.request(newerAction);
+      await waitForMetadataEntry(fixture.gates[1], t.signal);
+
+      fixture.gates[1].release();
+      const newerResponse = await newerRequest;
+      assert.equal(newerResponse.status, 200);
+      assert.equal(newerResponse.json.statusSnapshot.message, "metadata-result-1");
+      const winningState = fixture.publicationState();
+      assert.equal(winningState.statusSnapshot.message, "metadata-result-1");
+      assert.deepEqual(winningState.tools.map((tool) => tool.rawName), newerAction === "sync-tools" ? ["metadata_tool_1"] : []);
+
+      fixture.gates[0].release();
+      assertMetadataSuperseded(await olderRequest);
+      assert.deepEqual(fixture.publicationState(), winningState, "the losing result must not write a snapshot, catalog, or event");
+      assert.deepEqual(winningState.events.map((event) => event.action), [newerAction === "check" ? "mcp.status_checked" : "mcp.tools_synced"]);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
+test("manual MCP metadata older completion is rejected while the latest started check is still pending", { timeout: 15_000 }, async (t) => {
+  const fixture = await createMetadataRaceFixture(t, ["sync-tools", "check"]);
+  try {
+    const olderRequest = fixture.request("sync-tools");
+    await waitForMetadataEntry(fixture.gates[0], t.signal);
+    const newerRequest = fixture.request("check");
+    await waitForMetadataEntry(fixture.gates[1], t.signal);
+    const beforeCompletion = fixture.publicationState();
+
+    fixture.gates[0].release();
+    assertMetadataSuperseded(await olderRequest);
+    assert.deepEqual(fixture.publicationState(), beforeCompletion, "latest-started is not first-completer wins");
+
+    fixture.gates[1].release();
+    assert.equal((await newerRequest).status, 200);
+    assert.equal(fixture.publicationState().statusSnapshot.message, "metadata-result-1");
+  } finally {
+    await fixture.close();
+  }
+});
+
+test("manual MCP metadata latest failed check cannot be overwritten by an older success", { timeout: 15_000 }, async (t) => {
+  const fixture = await createMetadataRaceFixture(t, ["check", "check"]);
+  fixture.gates[1].status = "failed";
+  try {
+    const olderRequest = fixture.request("check");
+    await waitForMetadataEntry(fixture.gates[0], t.signal);
+    const newerRequest = fixture.request("check");
+    await waitForMetadataEntry(fixture.gates[1], t.signal);
+
+    fixture.gates[1].release();
+    const newerResponse = await newerRequest;
+    assert.equal(newerResponse.status, 400);
+    assert.equal(newerResponse.json.error, "mcp_check_failed");
+    assert.equal(newerResponse.json.statusSnapshot.status, "failed");
+    const winningState = fixture.publicationState();
+    fixture.gates[0].release();
+    assertMetadataSuperseded(await olderRequest);
+    assert.deepEqual(fixture.publicationState(), winningState);
+  } finally {
+    await fixture.close();
+  }
+});
+
+for (const action of ["check", "sync-tools"]) {
+  test(`manual MCP metadata ${action} rejects a result captured before transport configuration changed`, { timeout: 15_000 }, async (t) => {
+    const fixture = await createMetadataRaceFixture(t, [action]);
+    try {
+      const pending = fixture.request(action);
+      const entry = await waitForMetadataEntry(fixture.gates[0], t.signal);
+      const updated = await fixture.mutate("PATCH", {
+        transport: { ...entry.server.transport, url: "https://new-metadata-config.example.test/mcp" },
+      });
+      assert.equal(updated.status, 200);
+      const afterMutation = fixture.publicationState();
+      fixture.gates[0].release();
+
+      assertMetadataSuperseded(await pending);
+      assert.deepEqual(fixture.publicationState(), afterMutation);
+      assert.equal(fixture.store.getMcpServer(fixture.serverId).transport.url, "https://new-metadata-config.example.test/mcp");
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test(`manual MCP metadata ${action} rejects same-timestamp deletion and recreation of the same server ID`, { timeout: 15_000 }, async (t) => {
+    const fixture = await createMetadataRaceFixture(t, [action]);
+    try {
+      const pending = fixture.request(action);
+      const entry = await waitForMetadataEntry(fixture.gates[0], t.signal);
+      const beforeRevision = fixture.store.getMcpAuthorityRevision(fixture.serverId);
+      assert.equal(fixture.store.deleteMcpServer(fixture.serverId), true);
+      fixture.store.createMcpServer({
+        ...fixture.serverInput,
+        displayName: "Replacement metadata server",
+      }, entry.server.updatedAt);
+      assert.equal(fixture.store.getMcpServer(fixture.serverId).updatedAt, entry.server.updatedAt);
+      assert.ok(fixture.store.getMcpAuthorityRevision(fixture.serverId).serverRevision > beforeRevision.serverRevision);
+      const afterMutation = fixture.publicationState();
+      fixture.gates[0].release();
+
+      assertMetadataSuperseded(await pending);
+      assert.deepEqual(fixture.publicationState(), afterMutation);
+      assert.equal(fixture.store.getMcpServer(fixture.serverId).displayName, "Replacement metadata server");
+    } finally {
+      await fixture.close();
+    }
+  });
+
+  test(`manual MCP metadata ${action} preserves the current disabled-server contract`, { timeout: 15_000 }, async (t) => {
+    const fixture = await createMetadataRaceFixture(t, [action], { enabled: false });
+    try {
+      const pending = fixture.request(action);
+      const entry = await waitForMetadataEntry(fixture.gates[0], t.signal);
+      assert.equal(entry.server.enabled, false);
+      fixture.gates[0].release();
+      const response = await pending;
+
+      assert.equal(response.status, action === "check" ? 200 : 400);
+      if (action === "sync-tools") assert.equal(response.json.error, "mcp_tool_sync_failed");
+      assert.equal(response.json.statusSnapshot.status, "disabled");
+      assert.equal(response.json.server.enabled, false);
+      assert.deepEqual(fixture.publicationState().tools, []);
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
+for (const action of ["check", "sync-tools"]) {
+  test(`manual MCP metadata committed response ${action} remains one snapshot after a newer publication`, { timeout: 15_000 }, async (t) => {
+    const fixture = await createMetadataRaceFixture(t, [action], {
+      onMetadataCommitted({ store, publication, commit, cwd }) {
+        const request = store.beginMcpMetadataRequest(publication.server.id, "check");
+        assert.ok(request);
+        const newerPublication = commit({
+          request,
+          statusSnapshot: {
+            ...publication.statusSnapshot,
+            status: "failed",
+            message: "intervening-metadata-publication",
+          },
+          cwd,
+          now: new Date().toISOString(),
+        });
+        assert.equal(newerPublication.published, true);
+      },
+    });
+    try {
+      const pending = fixture.request(action);
+      await waitForMetadataEntry(fixture.gates[0], t.signal);
+      fixture.gates[0].release();
+      const response = await pending;
+
+      assert.equal(response.status, 200);
+      assert.equal(response.json.statusSnapshot.message, "metadata-result-0");
+      assert.deepEqual(response.json.server.statusSnapshot, response.json.statusSnapshot, "response fields must project the same committed publication");
+      assert.equal(response.json.server.status.kind, "ready");
+      assert.equal(fixture.publicationState().statusSnapshot.message, "intervening-metadata-publication");
+      assert.equal(fixture.publicationState().statusSnapshot.status, "failed", "the newer durable result remains authoritative");
+    } finally {
+      await fixture.close();
+    }
+  });
+}
+
+/** Explicit broker-entry and release gates control completion order without timers. */
+async function createMetadataRaceFixture(t, actions, options = {}) {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-metadata-race-"));
+  const gates = actions.map((action, index) => {
+    let resolveEntry;
+    let release;
+    return {
+      action,
+      index,
+      status: "ready",
+      entered: new Promise((resolveEntryPromise) => { resolveEntry = resolveEntryPromise; }),
+      released: new Promise((resolveReleasePromise) => { release = resolveReleasePromise; }),
+      enter: (entry) => resolveEntry(entry),
+      release: () => release(),
+    };
+  });
+  let nextGate = 0;
+  async function perform(action, server, brokerOptions) {
+    const gate = gates[nextGate++];
+    assert.ok(gate, "unexpected broker metadata request");
+    assert.equal(gate.action, action);
+    const now = brokerOptions.now();
+    gate.enter({ server });
+    await gate.released;
+    const status = server.enabled ? gate.status : "disabled";
+    const statusSnapshot = {
+      serverId: server.id,
+      status,
+      authStatus: { kind: "not_required", refs: [], missingRefs: [] },
+      missingSecretRefs: [],
+      message: `metadata-result-${gate.index}`,
+      checkedAt: now,
+      expiresAt: "2099-01-01T00:00:00.000Z",
+      ...(action === "sync-tools" ? { toolCount: status === "ready" ? 1 : 0 } : {}),
+    };
+    return {
+      statusSnapshot,
+      ...(action === "sync-tools" ? { tools: status === "ready" ? [{
+        rawName: `metadata_tool_${gate.index}`,
+        displayName: `Metadata tool ${gate.index}`,
+        inputSchema: { type: "object" },
+        callableNamespace: server.id,
+        callableName: `metadata_tool_${gate.index}`,
+        sideEffectLevel: "read",
+        defaultApproval: "allow",
+        enabled: true,
+      }] : [] } : {}),
+    };
+  }
+  const capture = { store: undefined };
+  const storeFactory = (requestedCwd) => {
+    assert.equal(requestedCwd, cwd, "metadata fixture must not open another workspace");
+    const paths = resolveStoragePaths(requestedCwd, {
+      userRootDir: resolve(cwd, "fixture-home"),
+      workspaceStateLocation: "user-data-dir",
+      env: {},
+    }).workspace;
+    const store = createSqliteRunStore(requestedCwd, paths);
+    if (options.onMetadataCommitted) {
+      const commit = store.commitMcpMetadataResult.bind(store);
+      let hookConsumed = false;
+      store.commitMcpMetadataResult = (input) => {
+        const publication = commit(input);
+        if (publication.published && !hookConsumed) {
+          hookConsumed = true;
+          options.onMetadataCommitted({ store, publication, commit, cwd });
+        }
+        return publication;
+      };
+    }
+    capture.store = store;
+    return store;
+  };
+  const daemon = await startDaemonForTest({
+    checkServer: (server, brokerOptions) => perform("check", server, brokerOptions),
+    listTools: (server, brokerOptions) => perform("sync-tools", server, brokerOptions),
+    async callTool() { throw new Error("metadata tests must not dispatch tools"); },
+  }, undefined, { storeFactory, defaultWorkspaceCwd: cwd, secretResolver: createCompositeSecretResolver({ env: {} }) });
+  const requests = [];
+  const serverInput = {
+    id: "mcp_metadata_race",
+    displayName: "Metadata race server",
+    transport: { type: "streamable-http", url: "https://old-metadata-config.example.test/mcp", headers: {}, secretHeaderRefs: {} },
+    enabled: options.enabled !== false,
+  };
+  const serverUrl = `${daemon.url}/mcp/servers/${serverInput.id}?cwd=${encodeURIComponent(cwd)}`;
+  async function send(url, method, body) {
+    const pending = fetch(url, {
+      method,
+      headers: body === undefined ? undefined : { "Content-Type": "application/json" },
+      body: body === undefined ? undefined : JSON.stringify(body),
+      signal: t.signal,
+    }).then(async (response) => ({ status: response.status, json: await response.json() }));
+    // Cleanup owns all requests, even when an assertion rejects before awaiting one.
+    requests.push(pending);
+    void pending.catch(() => {});
+    return pending;
+  }
+  async function close() {
+    for (const gate of gates) gate.release();
+    await Promise.allSettled(requests);
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+  try {
+    const created = await send(`${daemon.url}/mcp/servers?cwd=${encodeURIComponent(cwd)}`, "POST", serverInput);
+    assert.equal(created.status, 201);
+    assert.ok(capture.store);
+    const baselineSeq = capture.store.getLatestControlPlaneEventSeq(DEFAULT_WORKSPACE_ID);
+    return {
+      gates,
+      store: capture.store,
+      serverId: serverInput.id,
+      serverInput,
+      request: (action) => send(`${daemon.url}/mcp/servers/${serverInput.id}/${action}?cwd=${encodeURIComponent(cwd)}`, "POST", {}),
+      mutate: (method, body) => send(serverUrl, method, body),
+      publicationState: () => ({
+        statusSnapshot: capture.store.getMcpStatusSnapshot(serverInput.id),
+        tools: capture.store.listMcpTools({ serverId: serverInput.id }),
+        events: capture.store.listControlPlaneEvents({ workspaceId: DEFAULT_WORKSPACE_ID, afterSeq: baselineSeq, domains: ["mcp"], entityId: serverInput.id }),
+      }),
+      close,
+    };
+  } catch (error) {
+    await close();
+    throw error;
+  }
+}
+
+function waitForMetadataEntry(gate, signal) {
+  return new Promise((resolveEntry, rejectEntry) => {
+    const onAbort = () => rejectEntry(signal.reason ?? new Error("metadata test aborted before broker entry"));
+    signal.addEventListener("abort", onAbort, { once: true });
+    gate.entered.then((entry) => {
+      signal.removeEventListener("abort", onAbort);
+      resolveEntry(entry);
+    }, (error) => {
+      signal.removeEventListener("abort", onAbort);
+      rejectEntry(error);
+    });
+    if (signal.aborted) onAbort();
+  });
+}
+
+function assertMetadataSuperseded(response) {
+  assert.equal(response.status, 409);
+  assert.equal(response.json.error, "mcp_metadata_result_superseded");
+  for (const field of ["server", "statusSnapshot", "tools"]) {
+    assert.equal(Object.hasOwn(response.json, field), false, `stale response must not include ${field}`);
+  }
+  assert.equal(JSON.stringify(response.json).includes("metadata-result-0"), false);
+  assert.equal(JSON.stringify(response.json).includes("old-metadata-config.example.test"), false);
+}
+
 class FakeMcpBroker {
   constructor() {
     this.checks = [];
@@ -487,7 +819,9 @@ async function startDaemonForTest(mcpBroker, runner, options = {}) {
       MCP_RUN_AUTHORIZATION: "Bearer run-secret-token",
     },
   });
-  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0 }, {
+  const daemon = createDaemonServer({ host: "127.0.0.1", port: 0,
+    ...(options.defaultWorkspaceCwd ? { defaultWorkspaceCwd: options.defaultWorkspaceCwd } : {}),
+  }, {
     secretResolver,
     ...(mcpBroker ? { mcpBroker } : {}),
     ...(runner ? { runner } : {}),
