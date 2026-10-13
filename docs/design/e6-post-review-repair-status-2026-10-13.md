@@ -3,6 +3,19 @@
 日期：2026-10-13。实施分支：`codex/e6-safe-continuation`。
 本记录区分局部修复、独立复核、远端备份、完整验收及合并，不替代正式审核批准。
 
+## 最新状态覆盖：2026-10-14 checkpoint 保存与 A11 增量测试
+
+本段覆盖下方较早的 PR 保存阻断与 A11 未验状态，不改写其历史执行记录。授权 checkpoint 已正常推送到 #533 的 `1a2046c86c659fd40b62fc762bfa7a6583540589`；原 `815e307c` 和 `8e185a8c` 有本地备份 refs，新提交 tree 精确等于原 `815e307c`，未 force-push 或改 main 历史。PR 读回仍 OPEN/draft、未合并。最新远端 main 为 `4a6480196b0656e733b11376f088494f168ad47f`，本 checkpoint 只整合到 `dfb61aca`，不能称已追平 main。
+
+A11 的四个新增 test/support 文件已完成限定验证与未参与实现者的最终增量独审：
+
+- 真实 Daemon REST、隔离 SQLite、owned native socket 最终矩阵 16/16，fail/cancel/skip 0，actual exit 0。覆盖 check/analyze/import 的预执行拒绝、submit/poll/collect 失败与成功；核对 Job/WorkUnit/Attempt 三层终态、真实 semaphore 获取和释放、submitted handle/recovery 与调度解绑、配置/source/input 保留，以及第二下载失败时第一 artifact 的真实 row/file/bytes 保留。
+- 实际默认 30 秒 deadline 为 parent 4/4（一个容器与 DNS/headers/body 三场景）；IPv6 HTTP/TLS 与 mapped-private 拒绝为 4/4。两组 actual exit 0、零 fail/cancel/skip，未缩短生产 timer，未重跑既有已验事项。
+- 四个完整相邻文件为 84 tests / 83 pass / 0 fail/cancel / 1 skip，actual exit 0；唯一 skip 是既有 child 父占位，不能称 84/84 或零 skip。不累计历史重跑或 child 数量。
+- 独审报告 `output/e6-20260928/a11-public-http-final-incremental-review-20261014.md`，SHA `be5363f8d550bcd894635dde1721ccbf7384cc5a20aa3fdfb3de0460390734a1`，`PASS_SCOPED_WITH_LIMITS`、`approved=false`；四新增文件与八组 source/dist SHA 匹配，范围内无新确认 P1/P2。独审者只读源码/日志，未本人重跑测试或 build。
+
+这组新增仅测试和状态文档，产品源码/依赖未改。100ms 观察不证明 restart、长期恢复或跨轮 exactly-once；测试视频 bytes 不冒可播放模型生成媒体。公开 API 仍使用既有 generic error envelope，未新增网络细分错误码；exact packaged Electron/source 对应、真实 GUI、具体 Office 审核记录批准、最新 main 整合与适用 CI 仍有各自门槛。总目标继续 active。
+
 ## 最新状态覆盖：A21 已保存，A09 后继验证与独审已收口
 
 本段优先于下方早期候选记录。A21 的普通进度 checkpoint/head、Core activation、Runner context 安装和 Daemon producer/recovery 已完成具名局部验证及独审，并保存到本地和远端 `26a3cbd53a13c794c3ad50ead923ec2b523445ab`；不再按旧段重新实施。最终独审与实际执行回执分别是 `output/e6-20260928/office-full-content-review-20261010/a21-daemon-ordinary-progress-final-independent-review-20261013.md`、`a21-root-daemon-final-receipt-20261013.md`，不代表完整 Office/E6/GUI 批准。
@@ -35,7 +48,7 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 ## 正在处理，不能据此认定完成
 
 - A09 RRULE/anchor 的本轮源码、完整实测与后继独审已完成，保存状态另列；上表旧长定时器证据不证明 error-entry restart 时旧 Run 仍 in-flight 的所有重叠执行边界，不能扩大为完整 packaged 验收。设计和失败保留见 `automation-recurrence-admission-2026-10-13.md`。
-- A11 的上层 Comfy connection-check/analyze/import/submit/poll/collect 真实 API 失败回归仍未完成；静态链确认安全传播失败，但现有公开 envelope 仍用 generic code，不能称网络错误细分已全链统一。IPv6 实际 socket、Electron packaged/GUI 未验收。原 sanity/旧 sender RED/ambient 逐字日志未保存，不用最终 GREEN 补造原 RED。
+- A11 的上层 Comfy connection-check/analyze/import/submit/poll/collect 真实 API 失败回归与 IPv6 实际 socket 已按顶部 2026-10-14 限定记录完成；现有公开 envelope 仍用 generic code，不能称网络错误细分已全链统一。Electron packaged/GUI、restart/长期恢复等仍未验收。原 sanity/旧 sender RED/ambient 逐字日志未保存，不用最终 GREEN 补造原 RED。
 - A11 两次早期未隔离 fixture 进入 store 初始化栈；defaultWorkspaceCwd 确认是实施树，实际 opened DB 文件及 before/after 未证。不能扩称用户日常 DB 被改或未改，不为补证重开/重置数据库。后继全部产品 Node 入口使用 fresh home 与默认 workspace 双隔离。
 - A21 普通进度恢复已由 `26a3cbd5` 保存并完成具名局部独审：Core checkpoint/head/CAS 与 activation、Runner 普通 view context、Daemon producer/recovery 已接通验证。原 schema 缺失 RED 和 fixture 故障仍保存在 output，最终以具体 commit-port 失败/真实 worker crash/收尾矩阵及最终独审为准，不重复旧实施。Transport 是 loopback 替身，不冒真实 Provider/GUI；全量独审其他具名剩余项继续。
 
