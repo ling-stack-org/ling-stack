@@ -81,6 +81,7 @@ import {
 import { ChromeBrowserSessionController } from "./features/browser-extension/session-controller.js";
 import { attachChromeBrowserWebSocketServer } from "./features/browser-extension/websocket-server.js";
 import { createChromeBrowserNativeBroker } from "./features/browser-extension/native-broker.js";
+import { shutdownAfterNativeBroker } from "./features/browser-extension/native-broker-shutdown.js";
 import { ChromeBrowserPluginService, normalizeChromeBrowserStoreUrl } from "./features/plugins/chrome-browser.js";
 import { createChromeBrowserGenerationBroker } from "./features/plugins/chrome-browser-generation-broker.js";
 import { OfficeDriverController } from "./features/office-documents/driver-controller.js";
@@ -843,39 +844,40 @@ export function createDaemonServer(
       cuaDriverActivationCoordinator.beginShutdown();
       const providerImportShutdown = providerImportPreflight.shutdown();
       await remoteAccess.stop();
-      await chromeBrowserNativeBroker?.close();
-      await new Promise<void>((resolve, reject) => {
-        controlPlaneEvents.closeAll();
-        computerUsePreviews.closeAll();
-        hostCapabilityBridge.close();
-        cuaDriverDesktopBridgeAuthority.clear();
-        lockedComputerControl?.close();
-        chromeBrowserSessions.close();
-        officeDriverController.close();
-        chromeBrowserWebSocketServer.close();
-        rpcWebSocketServer.close();
-        if (!server.listening) {
-          resolve();
-          return;
-        }
-        server.close((error) => {
-          if (error) {
-            reject(error);
+      await shutdownAfterNativeBroker(async () => { await chromeBrowserNativeBroker?.close(); }, async () => {
+        await new Promise<void>((resolve, reject) => {
+          controlPlaneEvents.closeAll();
+          computerUsePreviews.closeAll();
+          hostCapabilityBridge.close();
+          cuaDriverDesktopBridgeAuthority.clear();
+          lockedComputerControl?.close();
+          chromeBrowserSessions.close();
+          officeDriverController.close();
+          chromeBrowserWebSocketServer.close();
+          rpcWebSocketServer.close();
+          if (!server.listening) {
+            resolve();
             return;
           }
-          resolve();
+          server.close((error) => {
+            if (error) {
+              reject(error);
+              return;
+            }
+            resolve();
+          });
+          server.closeAllConnections();
         });
-        server.closeAllConnections();
+        await channelTurnDispatchWorker.close();
+        await automationSchedulers.waitForIdle();
+        await runEvaluationScheduler.waitForIdle();
+        await providerImportShutdown;
+        await cuaDriverActivationCoordinator.shutdown();
+        await activeRuns.waitForIdle();
+        await storeRegistry.mediaLocalExecutions.waitForIdle();
+        runtimeSupervisor.releaseAll();
+        storeRegistry.closeAll();
       });
-      await channelTurnDispatchWorker.close();
-      await automationSchedulers.waitForIdle();
-      await runEvaluationScheduler.waitForIdle();
-      await providerImportShutdown;
-      await cuaDriverActivationCoordinator.shutdown();
-      await activeRuns.waitForIdle();
-      await storeRegistry.mediaLocalExecutions.waitForIdle();
-      runtimeSupervisor.releaseAll();
-      storeRegistry.closeAll();
     },
   };
   return daemon;
