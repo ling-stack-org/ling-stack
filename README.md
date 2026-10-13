@@ -3,7 +3,12 @@
   <h1>Ling Stack</h1>
   <p><strong>Bring AI teammates into one local project workspace.</strong></p>
   <p>Choose their models. Keep conversations, tool approvals, and results together.</p>
-  <p>English · <a href="README.zh-CN.md">简体中文</a></p>
+  <p>
+    English · <a href="README.zh-CN.md">简体中文</a> ·
+    <a href="README.ja-JP.md">日本語</a> · <a href="README.ko-KR.md">한국어</a> ·
+    <a href="README.de-DE.md">Deutsch</a> · <a href="README.fr-FR.md">Français</a> ·
+    <a href="README.es-ES.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a>
+  </p>
   <p>
     <img alt="Source alpha" src="https://img.shields.io/badge/Status-source_alpha-5964a0.svg" />
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
@@ -51,8 +56,10 @@ DeepSeek-compatible endpoints, MiniMax, GLM, and OpenAI-compatible relays throug
 shared Model Workbench.
 
 Workspace state, conversation history, and run evidence are stored locally. Requests
-and their context go to the model or tool providers you choose. The interface supports
-Chinese and English.
+and their context go to the model or tool providers you choose. The interface offers
+55 language and region options; interface language and AI response language can be
+configured separately. README translations cover the eight languages linked above,
+not every interface locale. Other documentation may still be in English or Chinese.
 
 ## Three Ways To Use It
 
@@ -179,7 +186,7 @@ If this workflow is useful to you, star the repository to follow its progress. T
 what you tried, where the first task got stuck, and whether the result helped through
 the [Issue forms](https://github.com/ling-stack-org/ling-stack/issues/new/choose).
 
-- [简体中文](README.zh-CN.md): Chinese introduction and source setup.
+- [README translation guidelines](CONTRIBUTING.md#readme-translations): help keep the language versions aligned.
 - [First project review](docs/community/first-project-review.md): a small collaboration trial.
 - [Community launch kit](docs/community/launch-kit.md): introduction drafts and first-user feedback plan.
 

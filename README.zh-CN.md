@@ -2,7 +2,12 @@
   <img src="apps/web/public/icons/ling-mark.svg" alt="Ling Stack" width="88" height="88" />
   <h1>Ling Stack</h1>
   <p><strong>把不同模型的 AI 队友放进同一个本地项目，集中查看协作、工具审批和结果。</strong></p>
-  <p>简体中文 · <a href="README.md">English</a></p>
+  <p>
+    <a href="README.md">English</a> · 简体中文 ·
+    <a href="README.ja-JP.md">日本語</a> · <a href="README.ko-KR.md">한국어</a> ·
+    <a href="README.de-DE.md">Deutsch</a> · <a href="README.fr-FR.md">Français</a> ·
+    <a href="README.es-ES.md">Español</a> · <a href="README.pt-BR.md">Português (Brasil)</a>
+  </p>
 </div>
 
 > [!NOTE]
@@ -11,7 +16,8 @@
 
 Ling Stack 面向需要使用多个 AI 模型、并希望把项目上下文与协作过程放在一起的开发者。
 工作区状态、聊天历史和运行证据保存在本地；模型请求及上下文会发送给你选择的模型或工具服务。
-**本地存储不代表离线推理。** 界面支持中文和英文。
+**本地存储不代表离线推理。** 界面提供 55 个语言与地区选项，界面语言和 AI 回复语言可分别配置。
+README 目前提供顶部所列的 8 种语言，不与客户端语言选项逐一对应；其他文档仍可能使用英文或中文。
 
 ## 先试一个项目评审任务
 
@@ -106,9 +112,25 @@ corepack pnpm ling doctor
 
 [实现状态](docs/design/implementation-status.md)记录已实现内容与待验收事项。源码构建成功不等于安装包已就绪。
 
+### Desktop 开发
+
+macOS 需要包含 Swift 与 `codesign` 的 Xcode Command Line Tools；Windows 的 Office 驱动需要 .NET 8 SDK。
+Electron 还需要对应平台的二进制文件，详见 [Desktop 故障排查](docs/troubleshooting.md#desktop-development)。
+
+```bash
+corepack pnpm --filter @ling-stack/desktop dev
+```
+
+分发前请按[开发包指南](docs/release/development-packages.md)和 [Desktop 发布验收](docs/release/desktop.md)完成平台检查。
+公开源码和发布签名安装包是两个独立步骤。
+
+### 数据与权限
+
 默认数据位于所选工作区的 `.ling-stack/`：`ling-stack.sqlite` 保存配置与持久状态，`sessions/`、`artifacts/`、`logs/` 保存运行记录、产物和日志。
 在 Model Workbench 输入的 API key 保存在本地工作区存储中；环境变量及受支持的钥匙串引用也可使用。
 请勿把密钥、数据库、私有日志或产物提交到 Git。存储配置见[配置与数据](docs/getting-started.md#configuration-and-data)。
+文件访问、shell 命令、外部修改与付费生成受工作区权限约束，允许前请核对审批请求。
+迁移存储请使用 [CLI 存储流程](docs/design/workspace-state-storage.md)。
 
 ## 反馈、贡献与 Star
 
@@ -117,6 +139,7 @@ corepack pnpm ling doctor
 请通过 [GitHub Issue 表单](https://github.com/ling-stack-org/ling-stack/issues/new/choose)提交可复现的问题，先阅读[支持说明](SUPPORT.md)；维护采用尽力而为的方式。安全问题请走[安全报告入口](SECURITY.md)。
 
 - [贡献指南](CONTRIBUTING.md)：开发环境、检查与 PR 要求。
+- [README 翻译维护](CONTRIBUTING.md#readme-translations)：欢迎校对译文，并同步命令、功能范围与安全说明。
 - [架构](docs/architecture.md)与[设计索引](docs/design/README.md)：模块边界、契约与验收状态。
 - [供应商适配](docs/provider-adapters.md)与[Pi 集成](docs/pi-coding-agent-integration.md)：模型和运行时接入。
 - [更新日志](CHANGELOG.md)、[发布政策](docs/release/README.md)与[第三方声明](THIRD_PARTY_NOTICES.md)。
