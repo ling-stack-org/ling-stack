@@ -1,0 +1,186 @@
+{
+  "result": "PASS",
+  "runtimeSourceSha": "dfb61aca41dfb1ab9e91df028debb2c5f732c433",
+  "packagingRevision": "notices-r2",
+  "installerFilename": "Ling-Stack-0.1.2-alpha.1-windows-x64-dfb61ac-notices-r2-setup.exe",
+  "installerSizeBytes": 337255855,
+  "installerSha256": "d485da78ffbdc74cca58f0308938584be832b446543e0c6a73dc047adac3f18f",
+  "originalRuntimeFilesVerified": 762,
+  "embeddedMaterialFilesVerified": 614,
+  "embeddedChecksumManifestsVerified": 2,
+  "installerPlugins": [
+    "StdUtils.dll",
+    "System.dll",
+    "nsExec.dll"
+  ],
+  "uninstallerPlugins": [
+    "StdUtils.dll",
+    "System.dll",
+    "nsExec.dll"
+  ],
+  "excludedPlugins": [
+    "WinShell",
+    "SpiderBanner",
+    "nsis7z"
+  ],
+  "originalThreePluginQuestionsApplicable": false,
+  "retainedPluginExactToolchainMatches": true,
+  "installerSpdxPackages": 452,
+  "shellFixture": {
+    "result": "PASS",
+    "test": "Real NSIS System COM operations on isolated fixture shortcut",
+    "shortcutAppIdVerified": true,
+    "registersPreserved": true,
+    "missingShortcutHandled": true,
+    "isolatedDestinationCleanupExecuted": true,
+    "existingApplicationTouched": false,
+    "verifiedUtc": "2026-10-10T09:53:26.5520273Z",
+    "evidenceOrigin": "Previously executed isolated shell fixture; identical macro source reused, not rerun for this package",
+    "shellSourceSha256": "869fce8f300a4d3a752ea5dafec591cb15d9fc6bd996224b97f26e0bf751adf3"
+  },
+  "resultScope": "Technical component/material verification; release approval and complete installation/application acceptance are separate",
+  "newFullFunctionalAcceptance": "NOT_RUN",
+  "publicDistributionApproved": false,
+  "verifiedUtc": "2026-10-13T07:20:28.938Z",
+  "sourceBuildReperformed": true,
+  "frozenDependencyInstallation": "PASS",
+  "workspaceBuild": "PASS",
+  "standardWindowsPackage": "PASS",
+  "finalInstallerAssembly": "PASS",
+  "finalInstallerExtraction": "PASS",
+  "architectures": [
+    {
+      "file": "Ling Stack.exe",
+      "architecture": "x64",
+      "sha256": "9ccbf903ea548777c3753c188218b04e9a9808194a94713fe01c5abd2b6532a1"
+    },
+    {
+      "file": "resources/browser-host/ling-browser-host.exe",
+      "architecture": "x64",
+      "sha256": "47328b67429ef852a5f25d146229347a6d29047b37fb40e3571bf5c31efeb6b8"
+    },
+    {
+      "file": "resources/office-driver/win32-x64/ling-office-driver.exe",
+      "architecture": "x64",
+      "sha256": "27074a8287b4aa1f32acfcdb1c49bdbd6c83ea0a6d57c40224916c792f0f9bf3"
+    }
+  ],
+  "materialValidation": {
+    "result": "PASS",
+    "schema": "SPDX-2.3",
+    "licenseFileCount": 577,
+    "unresolvedNoticeGaps": 0,
+    "byteVerifiedBundleOutputs": 674,
+    "privacyScan": "PASS",
+    "verifiedUtc": "2026-10-13T07:16:13.010Z"
+  },
+  "supplierMaterialIdentity": {
+    "result": "PASS",
+    "evidence": [
+      {
+        "package": "@napi-rs/canvas",
+        "version": "1.0.10",
+        "manifestSha256": "c466285520d5e8ded2d9c8cdff1cf8437964f28022283b5fdead42431d8ffe3b",
+        "sameVersionAsSupplierEvidence": true
+      },
+      {
+        "package": "@napi-rs/canvas-win32-x64-msvc",
+        "version": "1.0.10",
+        "manifestSha256": "9f9bdc1c60158b5693aaa76481c807ad0a6664fe08255ceca3ec6f4e8ee3c296",
+        "sameVersionAsSupplierEvidence": true
+      },
+      {
+        "package": "react-icons",
+        "version": "5.7.0",
+        "manifestSha256": "e49df970a50145ba760d34d38acce7e936beb8b010f946be27552bef4fd3b488",
+        "sameVersionAsSupplierEvidence": true
+      },
+      {
+        "package": "electron-builder",
+        "version": "26.15.3",
+        "manifestSha256": "181429cbec2bbf9286b8e421034dde4386ddefc5fe938b6e15711d63126fd51f",
+        "sameVersionAsSupplierEvidence": true
+      },
+      {
+        "package": "@napi-rs/canvas-win32-x64-msvc",
+        "exactNativeBinarySha256": "c067e5d5df2abd36789c4d371efc60ce0a29d204575f316345b57dcd2f4b74e7",
+        "priorExactBinaryMatch": true
+      }
+    ],
+    "verifiedUtc": "2026-10-13T07:15:24.192Z"
+  },
+  "dependencySecurity": {
+    "stockCommand": "FAIL: one Mobile test uses a Windows absolute path as an ESM specifier",
+    "adaptedHarness": "PASS",
+    "passed": 33,
+    "failed": 0,
+    "adaptation": {
+      "scope": "Test harness only; tracked source, installed packages and safety assertions unchanged",
+      "reason": "Windows absolute imports require file URLs; normalize separators when selecting actual ESM modules",
+      "changes": [
+        {
+          "file": "apps/mobile/test/dependency-security-patches.test.mjs",
+          "originalSha256": "c36f3ba367238a45b550eaf93d92fc0d4d557c6e8779f14b3bf9c247af708471",
+          "adaptedSha256": "22758c28973c811eb94c30811445e862780c74983268cc72d9129f026b83fdc0"
+        },
+        {
+          "file": "apps/mobile/test/dependency-security-tooling.test.mjs",
+          "originalSha256": "1ce998a379d5a928458679e8fa5d419d869c0628fa46074175873b86b102c4a2",
+          "adaptedSha256": "836c9c7922b6772ba95c706e14c64da03c1c61b784494fae45d9efe79974019b"
+        }
+      ],
+      "sourceSha": "dfb61aca41dfb1ab9e91df028debb2c5f732c433"
+    }
+  },
+  "signingTier": "unsigned_dev",
+  "distributionChannel": "development",
+  "cuaProviderBundled": false,
+  "scope": "Packaging and distribution material verification; full application or installation acceptance was not requested or performed",
+  "previousShellTestEvidenceReused": true,
+  "officeParserCompatibility": {
+    "result": "PASS",
+    "passed": 5,
+    "failed": 0,
+    "scope": "OfficeParser 8 real DOCX/XLSX/PPTX extraction, cancellation and conversion-failure regressions; not native Office interoperability acceptance"
+  },
+  "sourceProvenance": {
+    "sourceSha": "dfb61aca41dfb1ab9e91df028debb2c5f732c433",
+    "sourceTree": "8ad862d460421593a6942732a5fa516a631c37c4",
+    "acquisition": "clean detached local worktree at verified remote main",
+    "repository": "https://github.com/ling-stack-org/ling-stack",
+    "pnpmLockSha256": "2b411405825673eee46fd1e099def6944744e830cb5cd6b3fbf28db30b49c799",
+    "browserHostCargoLockSha256": "89686ea28cd78f33126d463ccd293145e4e9d5f9fb92561ef28b493ff679cc8e",
+    "sourceArchiveSha256": "89cbebdce37cefb432cac0bfcb6e5dad51fbc34c9cf5522c478ce975e67a4aff",
+    "verifiedUtc": "2026-10-13T06:40:58.5792574Z"
+  },
+  "electronDownload": {
+    "result": "PASS",
+    "version": "44.7.0",
+    "filename": "electron-v44.7.0-win32-x64.zip",
+    "sha256": "eee30dc8fa1f5ea95490e59f44e46ea68dd24c6e93d22facf70fe5c2d4c2665c",
+    "npmChecksumsMatch": true,
+    "officialReleaseChecksumsMatch": true,
+    "downloadTransport": "existing local proxy",
+    "sourceUrl": "https://github.com/electron/electron/releases/download/v44.7.0/electron-v44.7.0-win32-x64.zip"
+  },
+  "packagingRetry": {
+    "initialAttempt": "Electron runtime download request timed out after the workspace build completed",
+    "resolution": "Official runtime downloaded through existing local proxy, independently matched to npm and Release checksums, then standard package:win rerun successfully",
+    "finalStandardPackage": "PASS"
+  },
+  "bundleMaterialSummary": {
+    "sourceSha": "dfb61aca41dfb1ab9e91df028debb2c5f732c433",
+    "appArchiveSha256": "fa24e54c79c9f93b1227a9e4645a92e762b750d1803ec12eed88832634727ee4",
+    "componentCount": 444,
+    "npmRuntimeAndBundleComponents": 321,
+    "sourceLockComponentCount": 1222,
+    "nativeCanvasSourceCrates": 93,
+    "licenseFileCount": 577,
+    "unresolvedNoticeGaps": 0
+  },
+  "authenticode": {
+    "installerSha256": "d485da78ffbdc74cca58f0308938584be832b446543e0c6a73dc047adac3f18f",
+    "status": "NotSigned",
+    "signingTier": "unsigned_dev"
+  }
+}

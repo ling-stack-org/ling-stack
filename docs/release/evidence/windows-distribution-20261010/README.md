@@ -129,3 +129,7 @@ acceptance. Keep those limits explicit when approving a future binary release.
 
 Source publication remains subject to the [open-source checklist](../../../maintenance/open-source-readiness.md).
 The binary distribution requirements are recorded in [Third-Party Notices](../../../../THIRD_PARTY_NOTICES.md#binary-distribution-boundary).
+
+## Fresh Windows build — 2026-10-13
+
+The [2026-10-13 packaging evidence](../windows-dev-20261013/README.md) records a fresh build from `dfb61ac` with updated dependencies, matching source/SBOM materials, verified Draft assets and English release notes. It retains the notices-r2 installer recipe and describes packaging-only acceptance.

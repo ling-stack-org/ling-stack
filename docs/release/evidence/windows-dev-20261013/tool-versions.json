@@ -1,0 +1,34 @@
+{
+  "sourceSha": "dfb61aca41dfb1ab9e91df028debb2c5f732c433",
+  "node": "v22.22.1",
+  "pnpm": "10.0.0",
+  "git": "git version 2.55.0.windows.3",
+  "rustc": [
+    "rustc 1.97.1 (8bab26f4f 2026-07-14)",
+    "binary: rustc",
+    "commit-hash: 8bab26f4f68e0e26f0bb7960be334d5b520ea452",
+    "commit-date: 2026-07-14",
+    "host: x86_64-pc-windows-msvc",
+    "release: 1.97.1",
+    "LLVM version: 22.1.6"
+  ],
+  "cargo": "cargo 1.97.1 (c980f4866 2026-06-30)",
+  "dotnetSdks": [
+    "8.0.424"
+  ],
+  "compilerVersion": "19.44.35228.0",
+  "windowsSdk": "10.0.26100.0\\",
+  "os": {
+    "name": "Windows 11 Pro for Workstations",
+    "version": "10.0.26200",
+    "architecture": "x64"
+  },
+  "signingTier": "unsigned_dev",
+  "distributionChannel": "development",
+  "cuaProviderBundled": false,
+  "electron": "44.7.0",
+  "electron-builder": "26.15.3",
+  "@electron/asar": "4.3.1",
+  "esbuild": "0.28.2",
+  "vite": "8.3.4"
+}

@@ -1,0 +1,10 @@
+{
+  "sourceSha": "dfb61aca41dfb1ab9e91df028debb2c5f732c433",
+  "sourceTree": "8ad862d460421593a6942732a5fa516a631c37c4",
+  "acquisition": "clean detached local worktree at verified remote main",
+  "repository": "https://github.com/ling-stack-org/ling-stack",
+  "pnpmLockSha256": "2b411405825673eee46fd1e099def6944744e830cb5cd6b3fbf28db30b49c799",
+  "browserHostCargoLockSha256": "89686ea28cd78f33126d463ccd293145e4e9d5f9fb92561ef28b493ff679cc8e",
+  "sourceArchiveSha256": "89cbebdce37cefb432cac0bfcb6e5dad51fbc34c9cf5522c478ce975e67a4aff",
+  "verifiedUtc": "2026-10-13T06:40:58.5792574Z"
+}

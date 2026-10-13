@@ -1,0 +1,68 @@
+{
+  "sourceSha": "dfb61aca41dfb1ab9e91df028debb2c5f732c433",
+  "inventory": {
+    "sourceSha": "dfb61aca41dfb1ab9e91df028debb2c5f732c433",
+    "appArchiveSha256": "fa24e54c79c9f93b1227a9e4645a92e762b750d1803ec12eed88832634727ee4",
+    "componentCount": 444,
+    "npmRuntimeAndBundleComponents": 321,
+    "sourceLockComponentCount": 1222,
+    "nativeCanvasSourceCrates": 93,
+    "licenseFileCount": 577,
+    "unresolvedNoticeGaps": 0
+  },
+  "validation": {
+    "result": "PASS",
+    "schema": "SPDX-2.3",
+    "licenseFileCount": 577,
+    "unresolvedNoticeGaps": 0,
+    "byteVerifiedBundleOutputs": 674,
+    "privacyScan": "PASS",
+    "verifiedUtc": "2026-10-13T07:16:13.010Z"
+  },
+  "finalInstallerSpdxEntries": 452,
+  "supplierIdentity": {
+    "result": "PASS",
+    "evidence": [
+      {
+        "package": "@napi-rs/canvas",
+        "version": "1.0.10",
+        "manifestSha256": "c466285520d5e8ded2d9c8cdff1cf8437964f28022283b5fdead42431d8ffe3b",
+        "sameVersionAsSupplierEvidence": true
+      },
+      {
+        "package": "@napi-rs/canvas-win32-x64-msvc",
+        "version": "1.0.10",
+        "manifestSha256": "9f9bdc1c60158b5693aaa76481c807ad0a6664fe08255ceca3ec6f4e8ee3c296",
+        "sameVersionAsSupplierEvidence": true
+      },
+      {
+        "package": "react-icons",
+        "version": "5.7.0",
+        "manifestSha256": "e49df970a50145ba760d34d38acce7e936beb8b010f946be27552bef4fd3b488",
+        "sameVersionAsSupplierEvidence": true
+      },
+      {
+        "package": "electron-builder",
+        "version": "26.15.3",
+        "manifestSha256": "181429cbec2bbf9286b8e421034dde4386ddefc5fe938b6e15711d63126fd51f",
+        "sameVersionAsSupplierEvidence": true
+      },
+      {
+        "package": "@napi-rs/canvas-win32-x64-msvc",
+        "exactNativeBinarySha256": "c067e5d5df2abd36789c4d371efc60ce0a29d204575f316345b57dcd2f4b74e7",
+        "priorExactBinaryMatch": true
+      }
+    ],
+    "verifiedUtc": "2026-10-13T07:15:24.192Z"
+  },
+  "retainedInstallerPlugins": [
+    "StdUtils.dll",
+    "System.dll",
+    "nsExec.dll"
+  ],
+  "excludedInstallerPlugins": [
+    "WinShell",
+    "SpiderBanner",
+    "nsis7z"
+  ]
+}
