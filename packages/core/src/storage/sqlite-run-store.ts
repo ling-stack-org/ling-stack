@@ -719,6 +719,8 @@ import { SqliteWorkspaceProvenanceStore } from "./sqlite/workspace-provenance-st
 import { SqlitePostCompactionUndoStore } from "./sqlite/post-compaction-undo-store.js";
 import { SqliteWorkspaceSnapshotStore } from "./sqlite/workspace-snapshot-store.js";
 import { SqliteRunCompactionCheckpointStore } from "./sqlite/run-compaction-checkpoint-store.js";
+import { SqliteRunProgressCheckpointStore } from "./sqlite/run-progress-checkpoint-store.js";
+import { applyRunProgressCheckpointMigration } from "./sqlite/run-progress-checkpoint-migration.js";
 import { captureOriginalOfficeHostBridgeReader, type OriginalOfficeHostBridgeReader } from "../original-office-host-bridge.js";
 
 export interface SqliteRunStoreOptions {
@@ -844,6 +846,7 @@ export class SqliteRunStore implements RunStore {
   private readonly postCompactionUndo: SqlitePostCompactionUndoStore;
   private readonly workspaceSnapshots: SqliteWorkspaceSnapshotStore;
   private readonly runCompactionCheckpoints: SqliteRunCompactionCheckpointStore;
+  private readonly runProgressCheckpoints: SqliteRunProgressCheckpointStore;
 
   constructor(options: SqliteRunStoreOptions) {
     const originalOfficeHostBridge = options.originalOfficeHostBridge === undefined ? undefined
@@ -980,6 +983,7 @@ export class SqliteRunStore implements RunStore {
     this.runEvaluationHuman = new SqliteRunEvaluationHumanStore({ database: this.database }, this.runEvaluationTasks, this.runEvaluationQa, this.controlPlane, (id) => this.getArtifact(id));
     this.runEvaluationHumanRead = new SqliteRunEvaluationHumanReadStore({ database: this.database }, this.runEvaluationTasks, this.runEvaluationQa, this.runEvaluationHuman, this.controlPlane, (id) => this.getArtifact(id));
     this.delegations = new SqliteDelegationStore({ database: this.database });
+    this.runProgressCheckpoints = new SqliteRunProgressCheckpointStore({ database: this.database }, this, this.artifacts);
     this.harnessCommits = new SqliteHarnessCommitCoordinator(
       { database: this.database },
       this.runnerContinuations,
@@ -997,6 +1001,7 @@ export class SqliteRunStore implements RunStore {
         releaseRuntimeSemaphoreSlotsForAttempt: (fence, releasedAt, releaseReason) =>
           this.releaseRuntimeSemaphoreSlotsForAttempt(fence, releasedAt, releaseReason),
       },
+      this.runProgressCheckpoints,
     );
     this.lingThreads = new SqliteLingThreadStore(
       { database: this.database },
@@ -1524,6 +1529,11 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
           applyRunCompactionCheckpointMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyRunProgressCheckpointMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
@@ -2220,6 +2230,14 @@ export class SqliteRunStore implements RunStore {
 
   getLatestWorkspaceProvenanceWatermark(workspaceId?: string): string {
     return this.workspaceProvenance.getLatestWorkspaceProvenanceWatermark(workspaceId);
+  }
+
+  commitRunProgressCheckpoint(input: Parameters<RunStore["commitRunProgressCheckpoint"]>[0]) {
+    return this.runProgressCheckpoints.commitRunProgressCheckpoint(input);
+  }
+
+  readRunProgressCheckpointForRecovery(input: Parameters<RunStore["readRunProgressCheckpointForRecovery"]>[0]) {
+    return this.runProgressCheckpoints.readRunProgressCheckpointForRecovery(input);
   }
 
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint {

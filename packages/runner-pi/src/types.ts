@@ -353,6 +353,12 @@ export interface PiRunnerCompactionRecovery {
   readonly modelView: readonly unknown[];
 }
 
+/** Private Host/Core-verified ordinary checkpoint; never an authority from public RunRequest/model output. */
+export interface PiRunnerOrdinaryProgressRecovery {
+  readonly schemaVersion: 1;
+  readonly modelView: readonly unknown[];
+}
+
 export interface PiRunnerRunOptions {
   /** Initial schema capabilities; not execution handlers or authorization grants. */
   readonly initialToolSurface?: {
@@ -371,6 +377,8 @@ export interface PiRunnerRunOptions {
    * never replays the original task prompt for this path.
    */
   readonly compactionRecovery?: PiRunnerCompactionRecovery;
+  /** Restore only Host-verified ordinary progress using the original prepared execution. */
+  readonly ordinaryProgressRecovery?: PiRunnerOrdinaryProgressRecovery;
   /** Host has durable compaction evidence, provider admission fence, and restart recovery for this Run. */
   readonly hostCompactionEnabled?: boolean;
   /**

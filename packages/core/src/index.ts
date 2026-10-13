@@ -17,6 +17,8 @@ export * from "./approval-types.js";
 export * from "./approval-postcommit-types.js";
 export * from "./approval-checkpoints.js";
 export * from "./session-permissions.js";
+export * from "./run-progress-checkpoint-types.js";
+export * from "./run-progress-checkpoint-lineage.js";
 export * from "./media-types.js";
 export * from "./host-media-receipt-types.js";
 export * from "./host-office-local-types.js";

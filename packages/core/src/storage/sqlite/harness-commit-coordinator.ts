@@ -22,6 +22,8 @@ import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteRunnerContinuationStore } from "./runner-continuation-store.js";
 import type { SqliteRuntimeWorkUnitStore } from "./runtime-work-unit-store.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { RunProgressCheckpointError } from "../../run-progress-checkpoint-types.js";
+import type { SqliteRunProgressCheckpointStore } from "./run-progress-checkpoint-store.js";
 
 type Ports = Pick<
   RunStore,
@@ -43,6 +45,7 @@ export class SqliteHarnessCommitCoordinator {
     private readonly continuations: SqliteRunnerContinuationStore,
     private readonly runtimeWorkUnits: SqliteRuntimeWorkUnitStore,
     private readonly ports: Ports,
+    private readonly progressCheckpoints: SqliteRunProgressCheckpointStore,
   ) {}
 
   prepareContinuationAndAttempt(input: PrepareContinuationInput): PreparedContinuation {
@@ -76,6 +79,7 @@ export class SqliteHarnessCommitCoordinator {
         if (!run || !workUnit || workUnit.activeAttemptId !== replay.attempt.id) {
           throw new ExistingRunContinuationActivationAbort("continuation.activation_lineage_stale");
         }
+        this.progressCheckpoints.validateActivationWithinTransaction(input, replay.continuation.id, toRuntimeAttemptFence(replay.attempt));
         this.context.database.exec("COMMIT;");
         return { ok: true, run, workUnit, attempt: replay.attempt, continuation: replay.continuation, replayed: true };
       }
@@ -96,6 +100,7 @@ export class SqliteHarnessCommitCoordinator {
         || (input.expectedTaskStatus !== undefined && task?.status !== input.expectedTaskStatus)) {
         throw new ExistingRunContinuationActivationAbort("continuation.activation_state_stale");
       }
+      this.progressCheckpoints.validateActivationWithinTransaction(input);
 
       if (input.preparation.origin === "runner_retry") {
         if (run.status !== "failed" || workUnit.status !== "failed" || task?.status !== "failed") {
@@ -175,7 +180,7 @@ export class SqliteHarnessCommitCoordinator {
       };
     } catch (error) {
       rollbackOwnedSqliteTransaction(this.context.database);
-      if (error instanceof ExistingRunContinuationActivationAbort) {
+      if (error instanceof ExistingRunContinuationActivationAbort || error instanceof RunProgressCheckpointError) {
         return { ok: false, code: error.code };
       }
       throw error;

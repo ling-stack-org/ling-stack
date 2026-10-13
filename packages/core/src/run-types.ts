@@ -1765,6 +1765,8 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   getWorkspaceMutationRecord(id: string): WorkspaceMutationRecord | undefined;
   listWorkspaceMutationRecords(options?: ListWorkspaceMutationRecordsOptions): WorkspaceMutationRecord[];
   getLatestWorkspaceProvenanceWatermark(workspaceId?: string): string;
+  commitRunProgressCheckpoint(input: import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointInput): import("./run-progress-checkpoint-types.js").CommitRunProgressCheckpointResult;
+  readRunProgressCheckpointForRecovery(input: import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryInput): import("./run-progress-checkpoint-types.js").ReadRunProgressCheckpointForRecoveryResult;
   createCompactionCheckpoint(input: CreateCompactionCheckpointInput): CompactionCheckpoint;
   getCompactionCheckpoint(id: string): CompactionCheckpoint | undefined;
   listCompactionCheckpoints(options?: ListCompactionCheckpointsOptions): CompactionCheckpoint[];

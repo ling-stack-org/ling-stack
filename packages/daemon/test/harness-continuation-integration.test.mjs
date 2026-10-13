@@ -1,10 +1,15 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { fork } from "node:child_process";
+import { randomUUID } from "node:crypto";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import {
   applyConversationModeToEffectiveRunPolicySnapshot,
+  captureRunProgressCheckpointLineage,
   createSqliteRunStore,
   resolveSessionRunPolicy,
   runnerContinuationIdempotencyKey,
@@ -17,6 +22,7 @@ import { resolveConfig } from "../dist/config.js";
 import { DaemonRunnerRecoveryCoordinator } from "../dist/features/harness/continuations/daemon-recovery-coordinator.js";
 import { assessRunCompactionRecovery } from "../dist/features/harness/continuations/run-compaction-recovery.js";
 import { commitRunCompactionProgress } from "../dist/features/harness/continuations/run-compaction-progress.js";
+import { OrdinaryRunProgressController } from "../dist/features/harness/continuations/run-ordinary-progress.js";
 import { runnerPolicySnapshotFingerprint } from "../dist/features/harness/continuations/replay-package.js";
 import {
   createDetachedRunExecutionSink,
@@ -34,6 +40,8 @@ import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
 import { createRunnerRegistry } from "../dist/runtime/runners.js";
 import { RunStoreRegistry } from "../dist/runtime/store-registry.js";
 import { RuntimeSupervisor } from "../dist/runtime/supervisor.js";
+import { assertA21ExactRecoveredToolProgress, createA21LoopbackTransport, createA21RealPiRunner, readA21SettledCommand }
+  from "./support/noncompacted-recovery-crash-worker.mjs";
 
 const cases = [
   ["manual_resume", "manual_resume"],
@@ -883,6 +891,230 @@ test("daemon restart blocks a compacted Run without a committed Host checkpoint"
   assert.equal(coordinator.recoverStore(fixture.store).dispatched, 0);
 });
 
+test("A21 real non-compacted worker crash blocks recovery without committed Host model-view authority", async (t) => {
+  const fixture = await createA21CrashedDaemonRecoveryFixture(t, "head_insert");
+  const sourceFacts = fixture.store.listEvents(fixture.source.runId);
+  t.diagnostic(JSON.stringify({ sourceRunId: fixture.source.runId, sourceAttemptId: fixture.source.attemptId,
+    preparedSeq: fixture.source.settlement.prepared.seq, settledSeq: fixture.source.settlement.settled.seq,
+    toolEndSeq: fixture.source.settlement.end.seq, sourceEventSeq: fixture.source.settlement.sourceEventSeq,
+    sourceModelRequests: fixture.source.requests.length, sourceToolEnds: sourceFacts.filter((event) => event.type === "tool_end").length,
+    markerLines: (await readFile(fixture.source.markerPath, "utf8")).trim().split("\n").length }));
+  const transport = await createA21LoopbackTransport(() => ({ content: "A fresh prompt must not reach this provider." }));
+  t.after(() => transport.close());
+  const runner = createA21RealPiRunner(transport);
+  const errors = [];
+  const coordinator = new DaemonRunnerRecoveryCoordinator({ runtimeSupervisor: fixture.supervisor,
+    activeRuns: fixture.activeRuns, executeExistingRunContinuation: (input) => executeExistingRunContinuation(
+      input, { ...createDetachedRunExecutionSink(), writeError: (_status, body) => errors.push(body) },
+      createRunnerRegistry([{ id: "pi", displayName: "A21 real SDK recovery", status: "enabled", adapter: runner }]),
+      fixture.stores, fixture.activeRuns, fixture.supervisor, { resolve: () => ({ configured: false }) }, {},
+    ) });
+  t.after(() => coordinator.beginShutdown());
+  coordinator.registerStore(fixture.store);
+  coordinator.start();
+  await waitForCondition(() => errors.length > 0 || ["succeeded", "failed"].includes(fixture.store.getRun(fixture.source.runId)?.status),
+    "non-compacted crash recovery did not reach a structured decision", 10_000);
+  const recoveryRun = fixture.store.getRun(fixture.source.runId);
+  const events = fixture.store.listEvents(fixture.source.runId);
+  const attempts = fixture.store.listWorkUnitAttempts(fixture.source.workUnitId);
+  const markerContents = await readFile(fixture.source.markerPath, "utf8");
+  // Read effect and lineage facts even when the expected structured error is
+  // absent. A fresh provider request is not evidence of a repeated command.
+  assert.deepEqual(events.filter((event) => event.seq <= fixture.source.settlement.sourceEventSeq), sourceFacts);
+  assert.equal(events.filter((event) => event.type === "tool_start").length, 1);
+  assert.equal(events.filter((event) => event.type === "tool_end").length, 1);
+  assert.equal(events.some((event) => event.type.startsWith("context_compaction_")), false);
+  assert.equal(markerContents, "a21-effect\n");
+  assert.equal(fixture.store.listHostCommandWriteBlockers(fixture.cwd).length, 0);
+  t.diagnostic(JSON.stringify({ recoveryStatus: recoveryRun?.status, recoveryErrors: errors,
+    replacementAttempts: attempts.filter((attempt) => attempt.id !== fixture.source.attemptId).map((attempt) =>
+      ({ id: attempt.id, status: attempt.status })), replacementDispatches: runner.dispatches,
+    replacementModelRequests: transport.requests.length,
+    recoveredToolResults: runner.contexts.flat().filter((message) => message.role === "toolResult").length,
+    markerLinesAfterRecovery: markerContents.trim().split("\n").length,
+    sourceAuthorityTables: fixture.sourceAuthorityTables }));
+  assert.equal(errors[0]?.error, "checkpoint.missing", JSON.stringify({ errors, requestCount: transport.requests.length,
+    dispatches: runner.dispatches, run: { id: recoveryRun?.id, status: recoveryRun?.status, errorMessage: recoveryRun?.errorMessage } }));
+  assert.equal(transport.requests.length, 0, "missing committed authority must block before any model request");
+  assert.equal(runner.contexts.length, 0);
+  assert.equal(attempts.length, 1, "missing authority must be rejected before creating a replacement Attempt");
+  assert.equal(events.filter((event) => event.type === "run_error").at(-1)?.data.code, "checkpoint.missing");
+  assert.equal(coordinator.recoverStore(fixture.store).dispatched, 0);
+  assert.deepEqual(fixture.store.listWorkUnitAttempts(fixture.source.workUnitId), attempts);
+  assert.equal(transport.requests.length, 0);
+  assert.equal(await readFile(fixture.source.markerPath, "utf8"), markerContents);
+});
+
+test("A21 real non-compacted worker crash restores the exact committed SDK and wire tool view once", async (t) => {
+  const fixture = await createA21CrashedDaemonRecoveryFixture(t);
+  const sourceFacts = fixture.store.listEvents(fixture.source.runId);
+  const transport = await createA21LoopbackTransport(() => ({ content: "The original command completed once before restart." }));
+  t.after(() => transport.close());
+  const runner = createA21RealPiRunner(transport);
+  const errors = [];
+  const coordinator = new DaemonRunnerRecoveryCoordinator({ runtimeSupervisor: fixture.supervisor,
+    activeRuns: fixture.activeRuns, executeExistingRunContinuation: (input) => executeExistingRunContinuation(
+      input, { ...createDetachedRunExecutionSink(), writeError: (_status, body) => errors.push(body) },
+      createRunnerRegistry([{ id: "pi", displayName: "A21 real SDK recovery", status: "enabled", adapter: runner }]),
+      fixture.stores, fixture.activeRuns, fixture.supervisor, { resolve: () => ({ configured: false }) }, {},
+    ) });
+  t.after(() => coordinator.beginShutdown());
+  coordinator.registerStore(fixture.store);
+  coordinator.start();
+  await waitForCondition(() => errors.length > 0 || ["succeeded", "failed"].includes(fixture.store.getRun(fixture.source.runId)?.status),
+    "non-compacted checkpoint recovery did not finish", 10_000);
+  const recoveredRun = fixture.store.getRun(fixture.source.runId);
+  t.diagnostic(JSON.stringify({ recoveryStatus: recoveredRun.status, error: recoveredRun.errorMessage, errors,
+    contextRoles: runner.contexts.map(context => context.map(message => message.role)),
+    recoveryEvents: fixture.store.listEvents(fixture.source.runId)
+      .filter(event => event.seq > fixture.source.settlement.sourceEventSeq) }));
+  assert.deepEqual(errors, []);
+  assert.equal(fixture.store.getRun(fixture.source.runId)?.status, "succeeded");
+  assert.equal(runner.dispatches.length, 1);
+  assert.equal(runner.contexts.length, 1);
+  assert.equal(transport.requests.length, 1);
+  assertA21ExactRecoveredToolProgress(fixture.source, runner.contexts[0], transport.requests[0].body);
+  const events = fixture.store.listEvents(fixture.source.runId);
+  assert.deepEqual(events.filter(event => event.seq <= fixture.source.settlement.sourceEventSeq), sourceFacts);
+  assert.equal(events.filter(event => event.type === "tool_start").length, 1);
+  assert.equal(events.filter(event => event.type === "tool_end").length, 1);
+  assert.equal(events.some(event => event.type.startsWith("context_compaction_")), false);
+  assert.equal(await readFile(fixture.source.markerPath, "utf8"), "a21-effect\n");
+  const attempts = fixture.store.listWorkUnitAttempts(fixture.source.workUnitId);
+  assert.equal(attempts.length, 2);
+  assert.equal(attempts.filter(attempt => attempt.status === "succeeded").length, 1);
+  assert.equal(coordinator.recoverStore(fixture.store).dispatched, 0);
+  assert.deepEqual(fixture.store.listWorkUnitAttempts(fixture.source.workUnitId), attempts);
+  assert.equal(transport.requests.length, 1);
+  assert.equal(await readFile(fixture.source.markerPath, "utf8"), "a21-effect\n");
+  t.diagnostic(JSON.stringify({ sourceAttempt: fixture.source.attemptId, recoveryAttempt: runner.dispatches[0].attemptId,
+    authorityTables: fixture.sourceAuthorityTables, sourceHighWater: fixture.source.settlement.sourceEventSeq,
+    sourceRequestCount: fixture.source.requests.length, recoveryRequestCount: transport.requests.length,
+    recoveredToolResults: runner.contexts[0].filter(message => message.role === "toolResult").length, markerLines: 1 }));
+});
+
+for (const toolBroker of ["off", "enforce"]) {
+  test(`A21 real SDK write/edit remain live-capable with toolBroker ${toolBroker}`, async (t) => {
+    const cwd = await mkdtemp(join(tmpdir(), `ling-a21-live-files-${toolBroker}-`));
+    const stores = new RunStoreRegistry(createSqliteRunStore);
+    const store = stores.getStore(cwd);
+    const supervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd,
+      harness: { continuations: { mode: "enforce" }, toolBroker: { mode: toolBroker } } }));
+    const activeRuns = new ActiveRunRegistry();
+    t.after(async () => { supervisor.releaseAll(); stores.closeAll(); await rm(cwd, { recursive: true, force: true }); });
+    const filePath = join(cwd, "ordinary-progress.txt");
+    const calls = [
+      { id: `a21-write-${toolBroker}`, name: "write", arguments: { path: filePath, content: "alpha\n" } },
+      { id: `a21-edit-${toolBroker}`, name: "edit", arguments: { path: filePath,
+        edits: [{ oldText: "alpha", newText: "beta" }] } },
+    ];
+    const transport = await createA21LoopbackTransport((count) => count <= calls.length
+      ? { tool_calls: [{ index: 0, id: calls[count - 1].id, type: "function",
+        function: { name: calls[count - 1].name, arguments: JSON.stringify(calls[count - 1].arguments) } }] }
+      : { content: "The owned file was written and edited." });
+    t.after(() => transport.close());
+    const runner = createA21RealPiRunner(transport);
+    const now = new Date().toISOString();
+    const preset = store.createProviderPreset({ kind: "openai-compatible", displayName: "A21 file fixture",
+      providerId: `a21-live-${toolBroker}`, model: "fixture", api: "openai-completions", baseUrl: "https://fixture.invalid/v1",
+      authHeader: false, reasoning: false, capabilities: ["chat", "tool_call"], enabled: true }, now);
+    store.recordProviderCheckResult(preset.id, { ok: true, code: "ready", message: "Synthetic ready", checkedAt: now });
+    const channel = store.createChannel({ name: "A21 file fixture", boundPath: cwd }, now);
+    const task = store.createTask({ channelId: channel.id, title: "Write and edit",
+      prompt: "Write alpha then edit to beta in the authorized owned file." }, now);
+    const thread = store.createLingThread({ kind: "task", channelId: channel.id, taskId: task.id, title: task.title, objective: task.prompt }, now);
+    const errors = [];
+    const runId = await executeRunRequest({ cwd, workspaceCwd: cwd, threadId: thread.id,
+      providerPresetId: preset.id, task: { id: task.id, channelId: channel.id, title: task.title, prompt: task.prompt },
+      tools: ["write", "edit"], authorizationMode: "always", workspaceAccessMode: "full_access",
+      permissionConfirmation: { mode: "full_access", confirmed: true, confirmedAt: now,
+        reason: "Authorized fixture-owned write/edit tools in an isolated temporary workspace." },
+      idempotencyKey: `a21-live-files-${toolBroker}`, createdByActor: "local-user" },
+    { ...createDetachedRunExecutionSink(), writeError: (_status, body) => errors.push(body) },
+    createRunnerRegistry([{ id: "pi", displayName: "A21 real SDK file fixture", status: "enabled", adapter: runner }]),
+    stores, activeRuns, supervisor, { resolve: () => ({ configured: false }) }, {});
+    assert.deepEqual(errors, []);
+    assert.ok(runId);
+    t.diagnostic(JSON.stringify({ toolBroker, status: store.getRun(runId).status, error: store.getRun(runId).errorMessage,
+      contextRoles: runner.contexts.map(context => context.map(message => message.role)),
+      toolResults: store.listEvents(runId).filter(event => event.type === "tool_end")
+        .map(event => ({ id: event.data.toolCallId, name: event.data.toolName, isError: event.data.isError })),
+      executions: store.listHarnessToolExecutions(runId).map(execution =>
+        ({ id: execution.toolCallId, name: execution.toolName, state: execution.state })) }));
+    assert.equal(store.getRun(runId).status, "succeeded", store.getRun(runId).errorMessage);
+    assert.equal(await readFile(filePath, "utf8"), "beta\n");
+    assert.equal(transport.requests.length, 3);
+    const events = store.listEvents(runId);
+    assert.deepEqual(events.filter(event => event.type === "tool_end").map(event =>
+      ({ id: event.data.toolCallId, name: event.data.toolName, isError: event.data.isError })),
+    calls.map(call => ({ id: call.id, name: call.name, isError: false })));
+    assert.equal(events.some(event => event.type.startsWith("context_compaction_")), false);
+    const database = new DatabaseSync(store.paths.databasePath, { readOnly: true });
+    try {
+      assert.equal(Number(database.prepare("SELECT COUNT(*) AS n FROM run_progress_checkpoints WHERE run_id=?").get(runId).n),
+        toolBroker === "off" ? 0 : 2);
+      const head = database.prepare("SELECT revision FROM run_progress_checkpoint_heads WHERE run_id=?").get(runId);
+      assert.equal(head?.revision, toolBroker === "off" ? undefined : 2);
+    } finally { database.close(); }
+  });
+}
+
+for (const code of ["checkpoint.effect_unjournaled", "checkpoint.effect_unknown", "checkpoint.commit_failed", "checkpoint.head_conflict"]) {
+  test(`A21 ordinary producer distinguishes Core ${code} without granting recovery authority`, async (t) => {
+    const cwd = await mkdtemp(join(tmpdir(), "ling-a21-producer-decision-"));
+    const seeded = await seedRecoverableHarnessRun(cwd, code.replaceAll(".", "-"));
+    const store = createSqliteRunStore(cwd);
+    t.after(async () => { store.close(); await rm(cwd, { recursive: true, force: true }); });
+    const run = store.getRun(seeded.runId);
+    const sourceFence = toRuntimeAttemptFence(store.getWorkUnitAttempt(seeded.attemptId));
+    store.appendExecutionEvent(run.id, sourceFence, "tool_start", { toolCallId: "decision-read", toolName: "read", args: { path: "owned.txt" } });
+    store.appendExecutionEvent(run.id, sourceFence, "tool_end", { toolCallId: "decision-read", toolName: "read", isError: false,
+      result: { content: [{ type: "text", text: "producer control-flow fixture" }] } });
+    let commits = 0;
+    const decisionStore = new Proxy(store, { get(target, key) {
+      if (key === "commitRunProgressCheckpoint") return () => { commits += 1; return { kind: "blocked", code }; };
+      const value = target[key];
+      return typeof value === "function" ? value.bind(target) : value;
+    } });
+    const controller = new OrdinaryRunProgressController({ store: decisionStore, run, sourceFence,
+      policySnapshot: readStoredEffectivePolicySnapshot(run.requestSnapshot) });
+    const expected = { kind: code === "checkpoint.effect_unjournaled" ? "unsupported" : "blocked", code };
+    assert.deepEqual(controller.beforeProviderBoundary({ modelView: [], activeToolCallIds: [] }), expected);
+    assert.equal(commits, 1);
+    // Unsupported is not latched as safe: the next boundary must still ask Core
+    // to revalidate all effects, rather than swallowing later unknown outcomes.
+    assert.deepEqual(controller.beforeProviderBoundary({ modelView: [], activeToolCallIds: [] }), expected);
+    assert.equal(commits, 2);
+    assert.deepEqual(controller.beforeProviderBoundary({ modelView: [], activeToolCallIds: ["unsettled-call"] }),
+      { kind: "blocked", code: "checkpoint.effect_unknown" });
+    assert.equal(commits, 2);
+  });
+}
+
+test("A21 real-SDK fixture preserves falsy Host boundary rejections without issuing a request", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-a21-falsy-host-fixture-"));
+  const seeded = await seedRecoverableHarnessRun(cwd, "falsy-host-fixture");
+  const store = createSqliteRunStore(cwd);
+  t.after(async () => { store.close(); await rm(cwd, { recursive: true, force: true }); });
+  const execution = readStoredRunnerExecution(store.getRun(seeded.runId));
+  const transport = await createA21LoopbackTransport(() => ({ content: "No rejected callback may reach this provider." }));
+  t.after(() => transport.close());
+  for (const rejection of [undefined, null, false, 0, ""]) {
+    const captured = [];
+    const events = [];
+    const runner = createA21RealPiRunner(transport, { afterHostBoundary: async input => {
+      captured.push({ failed: input.hostFailed, rejection: input.hostError });
+    } });
+    await assert.rejects(runner.runTask({ ...execution.input, preparedInput: execution.preparedInput,
+      runId: seeded.runId, runnerAttemptId: seeded.attemptId, onEvent: event => events.push(event),
+      onTaskContinuationBoundary: async () => { throw rejection; } }));
+    assert.ok(captured.some(input => input.failed && Object.is(input.rejection, rejection)));
+    assert.equal(events.some(event => event.type === "run_end"), false);
+    assert.equal(runner.contexts.length, 0);
+    assert.equal(transport.requests.length, 0);
+  }
+});
+
 test("daemon restart restores a completed compacted Run without replaying the prompt", async (t) => {
   const fixture = await createDaemonRecoveryCoordinatorFixture(t, "compaction-committed", "committed");
   const runnerCalls = [];
@@ -1643,6 +1875,114 @@ async function createDaemonRecoveryCoordinatorFixture(t, suffix, withCompaction 
     await rm(cwd, { recursive: true, force: true });
   });
   return { cwd, seeded, stores, supervisor, activeRuns, store };
+}
+
+/** Crash only a nonce/PID/path-verified owned worker after durable Host settlement. */
+async function createA21CrashedDaemonRecoveryFixture(t, checkpointFault) {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-a21-noncompacted-workspace-"));
+  const ambient = await mkdtemp(join(tmpdir(), "ling-a21-noncompacted-ambient-"));
+  const lingHome = join(ambient, "home");
+  await mkdir(lingHome);
+  const scriptPath = fileURLToPath(new URL("./support/noncompacted-recovery-crash-worker.mjs", import.meta.url));
+  const nonce = randomUUID();
+  const markerPath = join(cwd, "a21-effect-marker.txt");
+  const child = fork(scriptPath, [JSON.stringify({ cwd, markerPath, nonce, toolCallId: `a21-bash-${nonce}`, checkpointFault })],
+    { cwd, execArgv: [], stdio: ["ignore", "pipe", "pipe", "ipc"], env: {
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+      LING_STACK_HOME: lingHome,
+      LING_STACK_DEFAULT_WORKSPACE_CWD: cwd,
+    } });
+  const messages = [];
+  const output = [];
+  let childError;
+  let childExit;
+  child.on("message", (message) => messages.push(message));
+  child.on("error", (error) => { childError = error; });
+  child.on("exit", (code, signal) => { childExit = { code, signal }; });
+  child.stdout.on("data", (chunk) => output.push(chunk.toString()));
+  child.stderr.on("data", (chunk) => output.push(chunk.toString()));
+  let stores;
+  let supervisor;
+  t.after(async () => {
+    // This is always the child object this fixture forked, never a queried App PID.
+    if (child.pid && child.exitCode === null && child.signalCode === null) {
+      child.kill("SIGKILL");
+      await waitForCondition(() => childExit !== undefined, "owned worker cleanup did not observe exit", 5_000);
+    }
+    supervisor?.releaseAll();
+    stores?.closeAll();
+    await rm(cwd, { recursive: true, force: true });
+    await rm(ambient, { recursive: true, force: true });
+  });
+  try {
+    await waitForCondition(() => messages.some((message) => message?.kind === "a21_settled_before_provider_request"
+      || message?.kind === "a21_fixture_error") || childError || childExit,
+    "the real owned SDK worker did not reach its settled crash boundary", 15_000);
+  } catch (error) {
+    assert.fail(JSON.stringify({ cause: error instanceof Error ? error.message : String(error),
+      messages, output: output.join("").slice(-8_000), childError: childError?.message, childExit }));
+  }
+  const source = messages.find((message) => message?.kind === "a21_settled_before_provider_request");
+  assert.ok(source, JSON.stringify({ messages, output, childError: childError?.message, childExit }));
+  const started = messages.find((message) => message?.kind === "a21_worker_started");
+  for (const owned of [started, source]) {
+    assert.equal(owned?.nonce, nonce);
+    assert.equal(owned?.pid, child.pid);
+    assert.equal(owned?.cwd, cwd);
+    assert.equal(owned?.scriptPath, scriptPath);
+  }
+  assert.equal(source.markerPath, markerPath);
+  assert.equal(source.hostFailed, Boolean(checkpointFault), JSON.stringify({ hostError: source.hostError }));
+  if (checkpointFault) assert.equal(source.hostError?.code, "checkpoint.commit_failed",
+    `the real Host callback must observe the injected Core commit failure: ${JSON.stringify(source.hostError)}`);
+  else assert.equal(source.hostError, undefined, "the source Host callback must have succeeded before the pure crash");
+  const observed = createSqliteRunStore(cwd);
+  let sourceAuthorityTables;
+  try {
+    assert.equal(observed.getRun(source.runId)?.status, "running");
+    assert.deepEqual(readA21SettledCommand(observed, source.runId, source.toolCallId), source.settlement,
+      "a second SQLite connection must read the actual completed dedicated journal and tool_end before crash");
+    assert.equal(observed.listHostCommandWriteBlockers(cwd).length, 0);
+    assert.equal(observed.getLatestRunCompactionStart(source.runId), undefined);
+    assert.equal(observed.getLatestRunCompactionCheckpoint(source.runId), undefined);
+    const authorityDatabase = new DatabaseSync(observed.paths.databasePath, { readOnly: true });
+    try {
+      sourceAuthorityTables = authorityDatabase.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name IN ('run_progress_checkpoints', 'run_progress_checkpoint_heads') ORDER BY name")
+        .all().map((row) => row.name);
+      assert.deepEqual(sourceAuthorityTables, ["run_progress_checkpoint_heads", "run_progress_checkpoints"]);
+      const count = (table) => Number(authorityDatabase.prepare(`SELECT COUNT(*) AS n FROM ${table} WHERE run_id=?`)
+        .get(source.runId).n);
+      assert.equal(count("run_progress_checkpoints"), checkpointFault ? 0 : 1);
+      assert.equal(count("run_progress_checkpoint_heads"), checkpointFault ? 0 : 1);
+      assert.equal(observed.listArtifacts(source.runId).filter(artifact =>
+        artifact.contentType === "application/vnd.ling.run-progress-model-view+json").length, checkpointFault ? 0 : 1,
+      "a final-head failure must atomically roll back the sealed artifact as well");
+    } finally { authorityDatabase.close(); }
+    const run = observed.getRun(source.runId);
+    const assessment = observed.readRunProgressCheckpointForRecovery({ runId: run.id,
+      sourceFence: toRuntimeAttemptFence(observed.getWorkUnitAttempt(source.attemptId)),
+      expectedLineage: captureRunProgressCheckpointLineage(observed, run).lineage });
+    if (checkpointFault) assert.deepEqual(assessment, { kind: "blocked", code: "checkpoint.missing" });
+    else {
+      assert.equal(assessment.kind, "verified", JSON.stringify(assessment));
+      assert.deepEqual(assessment.modelView, source.modelView);
+      assert.equal(assessment.checkpoint.sourceEventSeq, source.settlement.sourceEventSeq);
+      assert.equal(assessment.witness.headRevision, 1);
+    }
+  } finally { observed.close(); }
+  assert.equal(await readFile(markerPath, "utf8"), "a21-effect\n");
+  assert.equal(child.connected, true);
+  assert.equal(childExit, undefined);
+  assert.equal(child.kill("SIGKILL"), true, "only the verified dedicated worker may be crashed");
+  await waitForCondition(() => childExit !== undefined, "the owned worker crash was not observed", 5_000);
+  assert.equal(childExit.signal, "SIGKILL");
+  stores = new RunStoreRegistry(createSqliteRunStore);
+  supervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: cwd,
+    harness: { continuations: { mode: "enforce" } } }));
+  const activeRuns = new ActiveRunRegistry();
+  const store = stores.getStore(cwd);
+  supervisor.getRuntime(cwd, store);
+  return { cwd, ambient, source, sourceAuthorityTables, stores, supervisor, activeRuns, store };
 }
 
 async function createActiveCompactionProgressFixture(t, suffix) {

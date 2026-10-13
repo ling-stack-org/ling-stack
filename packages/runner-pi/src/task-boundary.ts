@@ -10,6 +10,7 @@ import { assertAcceptedTaskAnchor, hasCompactionSummary } from "./compaction-tas
 import { getCurrentSystemPrompt } from "@earendil-works/pi-ai";
 import { piTranscript } from "./session-transcript.js";
 import { assertCompactionRecoveryModelContext } from "./compaction-recovery.js";
+import { assertOrdinaryProgressRecoveryModelContext } from "./ordinary-progress-recovery.js";
 import { bindPiProviderInvocationResolution, createPiProviderInvocation } from "./provider-invocation.js";
 
 /** Internal latch only. The public yielded outcome requires an idle SDK first. */
@@ -150,10 +151,11 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
               );
             } else {
               assertPreparedPiModelContext(options.preparedInput!, model, context, {
-                allowRestoredMessages: Boolean(options.compactionRecovery),
+                allowRestoredMessages: Boolean(options.compactionRecovery || options.ordinaryProgressRecovery),
               });
             }
             if (options.compactionRecovery) assertCompactionRecoveryModelContext(options.compactionRecovery, context);
+            if (options.ordinaryProgressRecovery) assertOrdinaryProgressRecoveryModelContext(options.ordinaryProgressRecovery, context);
           }
           catch (error) {
             failure ??= error instanceof Error ? error : new Error("Invalid Pi prepared input");
@@ -168,11 +170,16 @@ export function createPiTaskBoundary(options: PiRunnerRunOptions, readTaskContex
           if (taskContext && taskContext.sessionId !== undefined && streamOptions?.sessionId === taskContext.sessionId) {
             assertPreparedPiModelContext(taskContext.preparedInput, model, context, { allowRestoredMessages: true });
             if (firstRequest && options.compactionRecovery) assertCompactionRecoveryModelContext(options.compactionRecovery, context);
+            if (firstRequest && options.ordinaryProgressRecovery) assertOrdinaryProgressRecoveryModelContext(options.ordinaryProgressRecovery, context);
           }
           if (taskContext && getCurrentSystemPrompt(piTranscript(context).messages) === taskContext.systemPrompt && hasCompactionSummary(taskContext.messages)) {
             assertAcceptedTaskAnchor(context.messages, taskContext.acceptedTaskPrompt);
           }
           modelContext = assertPiModelContextCapacity(model, context);
+          if (firstRequest && options.ordinaryProgressRecovery) {
+            // No lossy extra capacity projection may silently change the committed ordinary view.
+            assertOrdinaryProgressRecoveryModelContext(options.ordinaryProgressRecovery, modelContext);
+          }
         } catch (error) {
           failure ??= error instanceof Error ? error : new Error("Pi model context capacity check failed");
           stop.abort(failure);
