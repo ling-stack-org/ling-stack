@@ -46,9 +46,12 @@ Office 原生打包还需要经过独立审核的本机编译器、macOS SDK、N
 `darwin + arm64 + unsigned_dev`，使用默认 ad-hoc signer，并拒绝同时打入 Cua Driver provider。
 它要求 `native/office-local/reviewed-packaged-source-v1.json`；上述历史基线没有这个文件，
 因此当时干净 checkout 的标准打包会遇到 `packaged_office_native_source_review_missing`。
-2026-10-12 开发候选补齐了有限范围的独立审查，见
+2026-10-12 开发候选补齐了有限范围的独立审查；2026-10-13 经独立原生与打包审查后，
+针对 PR #528 精确重绑定了 Office、sandbox/codesign 两份记录及锁文件指纹，见
 [审查记录](../../native/office-local/reviewed-packaged-source-v1-review.md)。该记录绑定本次实际
-Darwin 25.6.0、Electron 44.5.1 和本机工具链，不是任意机器或后续源码的通用批准。
+Darwin 25.6.0、Electron 44.7.0 和本机工具链，不是任意机器或后续源码的通用批准。
+19 项 sandbox 源码和 15 项 Office 源码未变；原始 Host 运行时指纹必须同时匹配，
+ad-hoc 签名不会豁免这一要求。本次没有纳入 E6 或 PR #527。
 
 这个记录绑定审核过的编译器、SDK、headers、Office 源码和打包源码摘要。
 **不能用成功构建、测试结果或自动生成的摘要替代独立审核，也不能为了让打包通过而生成或批准该记录。**
