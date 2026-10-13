@@ -14,9 +14,9 @@
     "test": "corepack pnpm --filter @ling-stack/plugin-sdk build && tsc -p tsconfig.json && node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@earendil-works/pi-ai": "^1.1.0",
-    "@earendil-works/pi-coding-agent": "^1.1.0",
+    "@earendil-works/pi-ai": "^0.84.0",
+    "@earendil-works/pi-coding-agent": "^0.84.0",
     "@ling-stack/plugin-sdk": "workspace:*",
-    "undici": "8.11.2"
+    "undici": "7.30.0"
   }
 }

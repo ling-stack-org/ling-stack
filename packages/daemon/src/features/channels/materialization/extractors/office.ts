@@ -95,7 +95,7 @@ async function materializeOfficeAttachment(input: LingMaterializationRequest): P
         maxTableCells: 250_000,
       },
     });
-    const extractedText = normalizeExtractedText(result.toText());
+    const extractedText = normalizeExtractedText((await result.to("text")).value);
     const warningMessages = (result.warnings ?? []).slice(0, 3).map((warning) => String(warning).slice(0, 512));
     if (!extractedText) {
       return {
