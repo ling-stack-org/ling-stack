@@ -47,11 +47,13 @@ test("Builder CLI starts without a PATH shim or shell in a directory with spaces
 });
 
 test("Electron Builder config keeps external-only provider authority unchanged by default", async () => {
+  const desktopPackage = JSON.parse(await readFile(join(desktopRoot, "package.json"), "utf8"));
   const config = await inspectConfig({
     LING_CUA_DRIVER_PACKAGE_PROVIDER: "0",
   });
-  assert.equal(config.extraResources.length, 9);
+  assert.deepEqual(config.extraResources, desktopPackage.build.extraResources);
   assert.equal(config.extraResources.some((resource) => resource.to === "providers/cua-driver"), false);
+  assert.equal(config.extraResources.some((resource) => resource.from === "dist/distribution" && resource.to === "distribution"), true);
   assert.equal(config.extraResources.some((resource) => resource.to === "browser-extension/ling-for-chrome.zip"), true);
   assert.equal(config.extraResources.some((resource) => resource.to === "office-driver"), true);
   assert.equal(config.extraResources.some((resource) => resource.to === "browser-host"), true);
@@ -65,6 +67,7 @@ test("Electron Builder config keeps external-only provider authority unchanged b
 });
 
 test("Electron Builder config appends one private provider root and governed signing callbacks", async () => {
+  const desktopPackage = JSON.parse(await readFile(join(desktopRoot, "package.json"), "utf8"));
   const packageRoot = resolve(tmpdir(), "ling-cua-config-provider-root");
   const config = await inspectConfig({
     LING_CUA_DRIVER_PACKAGE_PROVIDER: "1",
@@ -73,10 +76,10 @@ test("Electron Builder config appends one private provider root and governed sig
     LING_CUA_SIGNING_TIER: "test_signed_internal",
     LING_CUA_DISTRIBUTION_CHANNEL: "internal",
   });
-  assert.deepEqual(config.extraResources.at(-1), {
-    from: packageRoot,
-    to: "providers/cua-driver",
-  });
+  assert.deepEqual(config.extraResources, [
+    ...desktopPackage.build.extraResources,
+    { from: packageRoot, to: "providers/cua-driver" },
+  ]);
   assert.equal(config.macSign, "./scripts/cua-driver-signing/electron-builder-mac-sign.mjs");
   assert.equal(config.macHardenedRuntime, true);
   assert.equal(config.winSign, "./scripts/cua-driver-signing/electron-builder-win-sign.mjs");

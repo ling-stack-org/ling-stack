@@ -1,8 +1,9 @@
 <div align="center">
   <img src="apps/web/public/icons/ling-mark.svg" alt="Ling Stack" width="88" height="88" />
   <h1>Ling Stack</h1>
-  <p><strong>A local workspace for working with AI teammates.</strong></p>
-  <p>Bring conversations, models, tools, approvals, and results together.</p>
+  <p><strong>Bring AI teammates into one local project workspace.</strong></p>
+  <p>Choose their models. Keep conversations, tool approvals, and results together.</p>
+  <p>English · <a href="README.zh-CN.md">简体中文</a></p>
   <p>
     <img alt="Source alpha" src="https://img.shields.io/badge/Status-source_alpha-5964a0.svg" />
     <a href="LICENSE"><img alt="License: MIT" src="https://img.shields.io/badge/License-MIT-08765d.svg" /></a>
@@ -10,6 +11,7 @@
     <img alt="pnpm 10" src="https://img.shields.io/badge/pnpm-10-f69220.svg" />
   </p>
   <p>
+    <a href="docs/community/first-project-review.md">Try a project review</a> ·
     <a href="docs/getting-started.md">Getting started</a> ·
     <a href="docs/troubleshooting.md">Troubleshooting</a> ·
     <a href="docs/architecture.md">Architecture</a> ·
@@ -23,10 +25,23 @@
 > Desktop development is available separately; stable signed installers and a supported
 > production release are not available yet.
 
+## Start With One Shared Task
+
+When work involves several models, the task, their responses, tool requests, and results
+can end up in separate windows. Ling Stack brings that work into a project channel:
+give teammates model and tool bindings, review their activity, and keep the outcome
+with the conversation.
+
+Try a bounded [project document review](docs/community/first-project-review.md) with
+two teammates and a [public sample brief](examples/project-review/README.md). Begin
+with discussion; add tools and permissions when a later task needs them. Your own
+provider configuration and API key are required, and provider charges apply.
+
 ![Ling Stack English homepage in a fresh workspace](docs/assets/ling-workspace-home.jpg)
 
-English interface in a fresh local workspace before configuring a model. Model requests
-require your own provider configuration and API key.
+English interface in a fresh local workspace before configuring a model. This capture
+shows the workspace layout, not a completed task. Follow the review guide above to
+try your own first collaboration.
 
 ## Who Is It For?
 
@@ -159,6 +174,14 @@ generation. Review approval requests before accepting them. For storage migratio
 the [CLI storage flows](docs/design/workspace-state-storage.md).
 
 ## Explore Or Contribute
+
+If this workflow is useful to you, star the repository to follow its progress. Tell us
+what you tried, where the first task got stuck, and whether the result helped through
+the [Issue forms](https://github.com/ling-stack-org/ling-stack/issues/new/choose).
+
+- [简体中文](README.zh-CN.md): Chinese introduction and source setup.
+- [First project review](docs/community/first-project-review.md): a small collaboration trial.
+- [Community launch kit](docs/community/launch-kit.md): introduction drafts and first-user feedback plan.
 
 The Web app (`apps/web`), Desktop shell (`apps/desktop`), and CLI (`packages/cli`) share
 the daemon (`packages/daemon`). Core domain logic, contracts, provider adapters, and

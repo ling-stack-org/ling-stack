@@ -61,8 +61,8 @@ const invalidViews = [
   ["error final stop reason", messages => { messages.push({ role: "assistant", content: [{ type: "text", text: "error" }], timestamp: 3, stopReason: "error" }); }],
   ["non-exact final stop reason", messages => { messages.push({ role: "assistant", content: [{ type: "text", text: "malformed" }], timestamp: 3, stopReason: "STOP" }); }],
   ["credential field", messages => { messages[1].content[0].arguments.apiKey = "fixture-secret-value"; }],
-  ["explicit bearer credential", messages => { messages.at(-1).content[0].text = "Bearer fixture-secret-credential-value"; }],
-  ["explicit key credential", messages => { messages.at(-1).content[0].text = "sk-fixturesecretcredential123456"; }],
+  ["explicit bearer credential", messages => { messages.at(-1).content[0].text = "Bearer test-fixture-secret-credential-value"; }],
+  ["explicit key credential", messages => { messages.at(-1).content[0].text = "sk-test-fixture-not-a-real-key"; }],
   ["over-budget view", messages => { messages.at(-1).content[0].text = "x".repeat(512 * 1024); }],
 ];
 for (const [label, mutate] of invalidViews) {

@@ -84,7 +84,7 @@ for (const format of Object.keys(creates)) {
     assertBinaryPair(f, true);
     const original = readFileSync(created.path), result = await call(f.request(edits[format].name, edits[format].input));
     assert.deepEqual(readFileSync(result.details.recoveryPath), original);
-    const text = (await OfficeParser.parseOffice(readFileSync(result.details.path), { fileType: format, extractAttachments: false, ocr: false })).toText();
+    const text = (await (await OfficeParser.parseOffice(readFileSync(result.details.path), { fileType: format, extractAttachments: false, ocr: false })).to("text")).value;
     assert.match(text, new RegExp(format === "xlsx" ? "43" : "Updated"));
     const rows = f.rows(); assert.equal(rows.length, 4); assert.ok(rows.every(row => row.phase === "safe"));
     assert.ok(rows.every(row => ["office_local_binary_completed", "office_local_chain_completed"].includes(row.settlementKind)));
@@ -136,7 +136,7 @@ test("onStart input mutation cannot change the original captured path or nested 
   const f = await fixture(t), input = structuredClone(inputs.docx);
   const result = await f.handler(f.broker, { onStart() { input.path = "different.docx"; input.blocks[0].text = "Observer mutation"; } })(f.request(creates.docx, input));
   assert.equal(result.details.path, join(f.cwd, "result.docx")); assert.equal(existsSync(join(f.cwd, "different.docx")), false);
-  const text = (await OfficeParser.parseOffice(readFileSync(result.details.path), { fileType: "docx", extractAttachments: false, ocr: false })).toText();
+  const text = (await (await OfficeParser.parseOffice(readFileSync(result.details.path), { fileType: "docx", extractAttachments: false, ocr: false })).to("text")).value;
   assert.match(text, /Original Office/u); assert.doesNotMatch(text, /Observer mutation/u); assertBinaryPair(f, true);
 });
 

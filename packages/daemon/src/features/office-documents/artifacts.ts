@@ -136,7 +136,8 @@ async function inspectResolvedOfficePath(path: string, signal?: AbortSignal): Pr
   if (!fileStat.isFile() || fileStat.size > MAX_OFFICE_FILE_BYTES) throw new Error("office_document_too_large");
   const ast = await OfficeParser.parseOffice(path, officeParserConfig(signal));
   signal?.throwIfAborted();
-  const extractedText = ast.toText();
+  const extractedText = (await ast.to("text")).value;
+  signal?.throwIfAborted();
   const text = extractedText.slice(0, MAX_EXTRACTED_TEXT);
   return {
     format: extensionKind(path),
