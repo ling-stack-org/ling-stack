@@ -145,6 +145,28 @@ not replace macOS, Windows, signing, accessibility, or clean-machine evidence.
 - Use [SECURITY.md](SECURITY.md) for vulnerability reports. Do not disclose sensitive
   findings in public issues or pull requests.
 
+## README Translations
+
+The English [README](README.md) is the content baseline. Translations live at the
+repository root as `README.<locale>.md`, using the client's BCP 47 locale tags, such
+as `README.ja-JP.md` and `README.pt-BR.md`. README coverage is separate from the
+client's interface language coverage; not every supported locale has a README.
+
+- Translate the overview, source setup, support limits, data and permission guidance,
+  and contribution information. Do not publish an English placeholder as a translation.
+- Preserve shell commands, package names, model identifiers, URLs, and relative asset
+  paths. Keep Alpha status, provider charges, and security boundaries accurate.
+- When changing shared instructions or product scope, update the corresponding passages
+  in existing translations. Natural wording may differ, but factual guidance must agree.
+- Keep the same language navigation in every README. Use each language's own name and
+  a relative link; add a link only when the translated file exists.
+- Reuse the real workspace screenshot and identify its interface language. A translated
+  README does not imply that linked guides or screenshots are translated.
+- Native-speaker corrections are welcome. AI-assisted translations still require
+  review; do not claim native-speaker approval or complete language QA without evidence.
+
+Run the documentation-only validation commands above after changing translations.
+
 ## AI-Assisted Contributions
 
 AI-assisted contributions are welcome. The human contributor remains responsible for
