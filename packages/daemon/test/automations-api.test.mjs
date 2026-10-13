@@ -2,8 +2,9 @@ import assert from "node:assert/strict";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { resolve } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { test } from "node:test";
-import { createSqliteRunStore } from "@ling-stack/core";
+import { createSqliteRunStore, resolveRuntimePaths } from "@ling-stack/core";
 import { createDaemonServer } from "../dist/index.js";
 import { computeNextRunAt, computeNextRunAtFromRRule } from "../dist/features/automations/scheduler.js";
 import { prepareChannelCreateBody } from "./conversation-model-test-fixture.mjs";
@@ -378,6 +379,217 @@ test("automation scheduler records readable errors when a scheduled automation c
     assert.match(detail.automation.lastErrorMessage, /provider preset/i);
     assert.equal(runner.runs.length, 0);
   } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("A09 HTTP create and draft inputs reject unsupported RRULE without persisting definitions", async (t) => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-a09-rrule-api-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const collection = `${daemon.url}/automations?cwd=${encodeURIComponent(cwd)}`;
+    const input = { kind: "daily_brief", title: "A09 recurrence", channelId: channel.id,
+      status: "paused", trigger: { type: "schedule", timezone: "UTC",
+        schedule: { cadence: "daily", timeOfDay: "09:00" }, missedRunPolicy: "skip" } };
+    for (const rrule of ["FREQ=DAILY;COUNT=2", "FREQ=DAILY;INTERVAL=2x",
+      "FREQ=WEEKLY;BYDAY=1MO", "FREQ=MINUTELY;BYHOUR=9", "FREQ=DAILY;FREQ=WEEKLY"]) {
+      await t.test(`reject create ${rrule}`, async () => {
+        const before = await getJson(collection);
+        const rejected = await requestJson(collection, { method: "POST", body: { ...input, rrule } });
+        assert.equal(rejected.status, 400);
+        assert.match(rejected.body.message, /rrule/i);
+        assert.deepEqual((await getJson(collection)).automations, before.automations);
+      });
+    }
+    await t.test("reject invalid draft create before insertion", async () => {
+      const drafts = `${daemon.url}/automation-drafts?cwd=${encodeURIComponent(cwd)}`;
+      const before = await getJson(drafts);
+      const rejected = await requestJson(drafts, { method: "POST", body: {
+        source: "manual", partialAutomation: { ...input, rrule: "FREQ=DAILY;UNTIL=20261231T090000Z" },
+      } });
+      assert.equal(rejected.status, 400);
+      assert.match(rejected.body.message, /rrule/i);
+      assert.deepEqual((await getJson(drafts)).drafts, before.drafts);
+    });
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("A09 HTTP RRULE update rejects unsupported rules and preserves omitted versus cleared values", async (t) => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-a09-rrule-update-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const rrule = "FREQ=DAILY;INTERVAL=2;BYHOUR=9;BYMINUTE=0;BYSECOND=0";
+    const created = await postJson(`${daemon.url}/automations?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "daily_brief", title: "A09 valid rule", channelId: channel.id, status: "paused", rrule,
+      trigger: { type: "schedule", timezone: "UTC", schedule: { cadence: "daily", timeOfDay: "09:00" }, missedRunPolicy: "skip" },
+    });
+    const item = `${daemon.url}/automations/${encodeURIComponent(created.automation.id)}?cwd=${encodeURIComponent(cwd)}`;
+    await t.test("invalid update does not mutate durable rule", async () => {
+      const before = await getJson(item);
+      const rejected = await requestJson(item, { method: "PATCH", body: { rrule: "FREQ=DAILY;COUNT=2" } });
+      assert.equal(rejected.status, 400);
+      assert.match(rejected.body.message, /rrule/i);
+      assert.deepEqual((await getJson(item)).automation, before.automation);
+    });
+    // Restore the valid rule even on the old RED implementation, so the
+    // omitted/cleared assertions are independent from the rejected-update case.
+    await patchJson(item, { rrule });
+    assert.equal((await patchJson(item, { title: "Renamed without resetting phase" })).automation.rrule, rrule);
+    assert.equal((await patchJson(item, { rrule: null })).automation.rrule,
+      "FREQ=DAILY;BYHOUR=9;BYMINUTE=0;BYSECOND=0");
+    const drafts = `${daemon.url}/automation-drafts?cwd=${encodeURIComponent(cwd)}`;
+    const draft = await postJson(drafts, { source: "manual", partialAutomation: {
+      kind: "daily_brief", title: "A09 editable draft", channelId: channel.id, rrule,
+    } });
+    await t.test("invalid draft update does not mutate durable draft", async () => {
+      const draftItem = `${daemon.url}/automation-drafts/${encodeURIComponent(draft.draft.id)}?cwd=${encodeURIComponent(cwd)}`;
+      const before = await getJson(draftItem);
+      const rejected = await requestJson(draftItem, { method: "PATCH", body: { partialAutomation: { rrule: "FREQ=MINUTELY;WKST=MO" } } });
+      assert.equal(rejected.status, 400);
+      assert.match(rejected.body.message, /rrule/i);
+      assert.deepEqual((await getJson(draftItem)).draft, before.draft);
+    });
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("A09 HTTP trigger-only updates do not freeze derived RRULE during real scheduler refresh", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-a09-rrule-refresh-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  let database;
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const schedule = (timeOfDay) => ({ type: "schedule", timezone: "UTC",
+      schedule: { cadence: "daily", timeOfDay }, missedRunPolicy: "skip" });
+    const firstHour = (new Date().getUTCHours() + 2) % 24;
+    const secondHour = (firstHour + 1) % 24;
+    const firstTime = `${String(firstHour).padStart(2, "0")}:15`;
+    const secondTime = `${String(secondHour).padStart(2, "0")}:45`;
+    const created = await postJson(`${daemon.url}/automations?cwd=${encodeURIComponent(cwd)}`, {
+      kind: "daily_brief", title: "A09 derived live schedule", channelId: channel.id, trigger: schedule(firstTime),
+    });
+    const item = `${daemon.url}/automations/${encodeURIComponent(created.automation.id)}?cwd=${encodeURIComponent(cwd)}`;
+    database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
+    const stored = () => database.prepare("SELECT rrule, created_at, next_run_at FROM automation_definitions WHERE id = ?").get(created.automation.id);
+    const expectedSlot = (hour, minute) => {
+      const now = new Date();
+      const due = new Date(now);
+      due.setUTCHours(hour, minute, 0, 0);
+      if (due <= now) due.setUTCDate(due.getUTCDate() + 1);
+      return due.toISOString();
+    };
+    assert.equal(stored().rrule, null);
+    await postJson(`${daemon.url}/automations/scheduler/start?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(stored().rrule, null, "scheduler nextRunAt must not author an explicit rule");
+    assert.equal(stored().next_run_at, expectedSlot(firstHour, 15));
+    await patchJson(item, { title: "A09 title edit preserves raw rule provenance" });
+    assert.equal(stored().rrule, null);
+    const changed = await patchJson(item, { trigger: schedule(secondTime) });
+    assert.equal(changed.automation.rrule, `FREQ=DAILY;BYHOUR=${secondHour};BYMINUTE=45;BYSECOND=0`);
+    assert.equal(stored().rrule, null);
+    assert.equal(stored().next_run_at, expectedSlot(secondHour, 45));
+    assert.equal(stored().created_at, created.automation.createdAt);
+    const listed = await getJson(`${daemon.url}/automations/scheduler?cwd=${encodeURIComponent(cwd)}`);
+    assert.equal(listed.schedulers[0].items.find((entry) => entry.automationId === created.automation.id).nextRunAt, stored().next_run_at);
+    assert.equal((await getJson(item)).automation.rrule, changed.automation.rrule);
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    database?.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("A09 HTTP rejects uncomputable schedules before creating or mutating SQLite facts", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-a09-executable-api-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  let database;
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const collection = `${daemon.url}/automations?cwd=${encodeURIComponent(cwd)}`;
+    const trigger = { type: "schedule", timezone: "UTC", schedule: { cadence: "daily", timeOfDay: "09:00" }, missedRunPolicy: "skip" };
+    database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
+    const counts = () => ({ definitions: database.prepare("SELECT COUNT(*) AS n FROM automation_definitions").get().n,
+      threads: database.prepare("SELECT COUNT(*) AS n FROM ling_threads WHERE kind = 'automation'").get().n });
+    const before = counts();
+    const rejected = await requestJson(collection, { method: "POST", body: {
+      kind: "daily_brief", title: "A09 no representable next slot", channelId: channel.id, status: "paused", trigger,
+      rrule: "FREQ=MINUTELY;INTERVAL=9007199254740991",
+    } });
+    assert.equal(rejected.status, 400);
+    assert.match(rejected.body.message, /recurrence|rrule/i);
+    assert.deepEqual(counts(), before, "rejection must precede both thread and definition inserts");
+    const created = await postJson(collection, { kind: "daily_brief", title: "A09 editable valid slot", channelId: channel.id,
+      status: "paused", trigger, rrule: "FREQ=DAILY;INTERVAL=7" });
+    const item = `${collection.replace("?", `/${encodeURIComponent(created.automation.id)}?`)}`;
+    const snapshot = await getJson(item);
+    const wrongDay = ["SU", "MO", "TU", "WE", "TH", "FR", "SA"][(new Date(created.automation.createdAt).getUTCDay() + 1) % 7];
+    const badUpdate = await requestJson(item, { method: "PATCH", body: { title: "Must not persist", rrule: `FREQ=DAILY;INTERVAL=7;BYDAY=${wrongDay}` } });
+    assert.equal(badUpdate.status, 400);
+    assert.deepEqual(await getJson(item), snapshot);
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    database?.close();
+    await daemon.close();
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("A09 HTTP draft RRULE survives confirmation and failed admission is rollback-safe", async () => {
+  const cwd = await mkdtemp(resolve(tmpdir(), "ling-a09-draft-rule-api-"));
+  const runner = new RecordingRunner();
+  const daemon = await startDaemonForTest(runner);
+  let database;
+  try {
+    const channel = (await createChannel(daemon.url, cwd)).channel;
+    const drafts = `${daemon.url}/automation-drafts?cwd=${encodeURIComponent(cwd)}`;
+    const partial = { kind: "daily_brief", title: "A09 draft rule", channelId: channel.id,
+      trigger: { type: "schedule", timezone: "UTC", schedule: { cadence: "daily", timeOfDay: "09:00" }, missedRunPolicy: "skip" },
+      promptTemplate: { templateVersion: 1, promptMarkdown: "QA schedule only", contextSelectors: [] } };
+    const rule = "FREQ=MINUTELY;INTERVAL=2";
+    const created = await postJson(drafts, { source: "manual", partialAutomation: { ...partial, rrule: rule } });
+    assert.equal(created.draft.rrule, rule);
+    const item = `${daemon.url}/automation-drafts/${encodeURIComponent(created.draft.id)}?cwd=${encodeURIComponent(cwd)}`;
+    assert.equal((await getJson(item)).draft.rrule, rule);
+    assert.equal((await patchJson(item, { partialAutomation: { title: "A09 edited draft" } })).draft.rrule, rule);
+    const confirmed = await postJson(item.replace("?", "/confirm?"), {});
+    assert.equal(confirmed.automation.rrule, rule);
+    const repeated = await postJson(item.replace("?", "/confirm?"), {});
+    assert.equal(repeated.automation.id, confirmed.automation.id);
+    const bad = await postJson(drafts, { source: "manual", partialAutomation: {
+      ...partial, title: "A09 uncomputable draft", rrule: "FREQ=MINUTELY;INTERVAL=9007199254740991",
+    } });
+    database = new DatabaseSync(resolveRuntimePaths(cwd).databasePath);
+    const counts = () => ({ definitions: database.prepare("SELECT COUNT(*) AS n FROM automation_definitions").get().n,
+      threads: database.prepare("SELECT COUNT(*) AS n FROM ling_threads WHERE kind = 'automation'").get().n });
+    const before = counts();
+    const badItem = `${daemon.url}/automation-drafts/${encodeURIComponent(bad.draft.id)}?cwd=${encodeURIComponent(cwd)}`;
+    const snapshot = await getJson(badItem);
+    const rejected = await requestJson(badItem.replace("?", "/confirm?"), { method: "POST", body: {} });
+    assert.equal(rejected.status, 400);
+    assert.match(rejected.body.message, /recurrence|rrule/i);
+    assert.deepEqual(counts(), before);
+    assert.deepEqual(await getJson(badItem), snapshot);
+    assert.equal((await patchJson(badItem, { partialAutomation: { rrule: null } })).draft.rrule, undefined);
+    const repaired = await postJson(badItem.replace("?", "/confirm?"), {});
+    assert.ok(repaired.automation.id);
+    assert.equal(runner.runs.length, 0);
+  } finally {
+    database?.close();
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
   }

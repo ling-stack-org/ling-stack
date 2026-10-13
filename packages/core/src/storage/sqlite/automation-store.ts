@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { automationDraftToCreateRequest, validateAutomationDraft } from "../../automation-drafts.js";
+import { assertAutomationRecurrence } from "../../automation-recurrence.js";
 import type { RunStore } from "../../run-types.js";
 import {
   createAutomationDraftId,
@@ -23,6 +24,7 @@ import {
 import {
   nullableUpdate,
   omitUndefined,
+  readNullableString,
   rollbackOwnedSqliteTransaction,
   stringifyJson,
 } from "./helpers.js";
@@ -71,6 +73,7 @@ export class SqliteAutomationStore {
       updatedAt: now,
       nextRunAt: input.nextRunAt,
     };
+    assertAutomationRecurrence(definition, new Date(now));
     this.context.database
       .prepare(`
         INSERT INTO automation_definitions (
@@ -177,10 +180,11 @@ export class SqliteAutomationStore {
     input: UpdateAutomationDefinitionInput,
     now: string,
   ): AutomationDefinition | undefined {
-    const existing = this.getAutomationDefinition(automationId);
-    if (!existing) {
+    const existingRow = this.context.database.prepare(automationDefinitionSelectSql("WHERE id = ?")).get(automationId);
+    if (!existingRow) {
       return undefined;
     }
+    const existing = mapAutomationDefinition(existingRow);
     const next: AutomationDefinition = {
       ...existing,
       channelId: nullableUpdate(input.channelId, existing.channelId),
@@ -191,7 +195,8 @@ export class SqliteAutomationStore {
       kind: input.kind ?? existing.kind,
       status: input.status ?? existing.status,
       trigger: input.trigger ?? existing.trigger,
-      rrule: nullableUpdate(input.rrule, existing.rrule),
+      // The mapped RRULE may be derived from trigger; only the raw column owns explicit intent.
+      rrule: nullableUpdate(input.rrule, readNullableString(existingRow, "rrule")),
       cwds: input.cwds ?? existing.cwds,
       targetThreadId: nullableUpdate(input.targetThreadId, existing.targetThreadId),
       executionEnvironment: nullableUpdate(input.executionEnvironment, existing.executionEnvironment),
@@ -206,6 +211,11 @@ export class SqliteAutomationStore {
       nextRunAt: nullableUpdate(input.nextRunAt, existing.nextRunAt),
       lastErrorMessage: nullableUpdate(input.lastErrorMessage, existing.lastErrorMessage),
     };
+    // Authored schedule changes and enabling require admission. Operational
+    // due/error writes must still be able to quarantine a historical bad rule.
+    if (input.trigger !== undefined || input.rrule !== undefined || input.status === "enabled") {
+      assertAutomationRecurrence(next, new Date(now));
+    }
     this.context.database
       .prepare(`
         UPDATE automation_definitions
@@ -276,6 +286,7 @@ export class SqliteAutomationStore {
       description: input.description,
       kind: input.kind,
       trigger: input.trigger,
+      rrule: input.rrule,
       target: input.target,
       promptTemplate: input.promptTemplate,
       executionPolicy: input.executionPolicy,
@@ -371,6 +382,7 @@ export class SqliteAutomationStore {
       description: nullableUpdate(input.description, existing.description),
       kind: nullableUpdate(input.kind, existing.kind),
       trigger: nullableUpdate(input.trigger, existing.trigger),
+      rrule: nullableUpdate(input.rrule, existing.rrule),
       target: nullableUpdate(input.target, existing.target),
       promptTemplate: nullableUpdate(input.promptTemplate, existing.promptTemplate),
       executionPolicy: nullableUpdate(input.executionPolicy, existing.executionPolicy),
@@ -446,6 +458,9 @@ export class SqliteAutomationStore {
     if (this.getAutomationDefinition(automationId) || this.ports.getLingThread(threadId)) {
       return { outcome: "source_identity_conflict", draft: existing };
     }
+    // The definition is created at confirmation, not at draft creation. Keep
+    // this check after fresh-snapshot/terminal admission and before any write.
+    assertAutomationRecurrence({ trigger: input.trigger, rrule: input.rrule, createdAt: now }, new Date(now));
     const thread = this.ports.createLingThread({ id: threadId, kind: "automation", channelId,
       title: input.title, objective: input.promptTemplate.promptMarkdown, status: "open" }, now);
     const automation = this.createAutomationDefinition({ ...input, id: automationId, threadId }, now);
@@ -661,6 +676,7 @@ function automationDraftPayload(draft: AutomationDraft): Record<string, unknown>
     description: draft.description,
     kind: draft.kind,
     trigger: draft.trigger,
+    rrule: draft.rrule,
     target: draft.target,
     promptTemplate: draft.promptTemplate,
     executionPolicy: draft.executionPolicy,

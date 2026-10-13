@@ -1,4 +1,5 @@
 export * from "./runtime-paths.js";
+export * from "./automation-recurrence.js";
 export * from "./harness/common.js";
 export * from "./harness/continuations.js";
 export * from "./harness/tool-executions.js";

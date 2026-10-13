@@ -98,6 +98,7 @@ export function automationDraftToCreateRequest(draft: AutomationDraft): Automati
     kind: validated.kind,
     status: "enabled",
     trigger: validated.trigger,
+    rrule: validated.rrule,
     target: validated.target,
     promptTemplate: validated.promptTemplate,
     executionPolicy: validated.executionPolicy ?? defaultDraftExecutionPolicy(),

@@ -18,6 +18,16 @@ const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localiza
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
 const newAuthoredRuntimeLeaves = [
+  "packages/core/src/automation-recurrence.ts",
+  "packages/daemon/src/features/automations/recurrence.ts",
+  "packages/core/src/run-progress-checkpoint-types.ts",
+  "packages/core/src/run-progress-checkpoint-lineage.ts",
+  "packages/core/src/storage/sqlite/run-progress-checkpoint-effects.ts",
+  "packages/core/src/storage/sqlite/run-progress-checkpoint-migration.ts",
+  "packages/core/src/storage/sqlite/run-progress-checkpoint-store.ts",
+  "packages/daemon/src/features/harness/continuations/run-ordinary-progress.ts",
+  "packages/daemon/src/shared/public-http-transport.ts",
+  "packages/runner-pi/src/ordinary-progress-recovery.ts",
   "packages/runner-pi/src/provider-request-auth.ts",
   "packages/runner-pi/src/session-continuation.ts",
   "packages/runner-pi/src/session-transcript.ts",
@@ -90,7 +100,7 @@ function newFile(path, bytes) {
   writeFileSync(path, bytes, { mode: 0o600 });
 }
 
-test("Office packaging review requires every new Pi, delegation, diagnostics, Provider and evaluation task/QA authored source", () => {
+test("Office packaging review requires every new Pi, progress, transport, delegation, diagnostics, Provider and evaluation task/QA authored source", () => {
   for (const name of newAuthoredRequiredInputs) {
     assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
       `Runtime leaf must be an explicit required review input: ${name}`);

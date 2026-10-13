@@ -3,6 +3,16 @@
 日期：2026-10-13。实施分支：`codex/e6-safe-continuation`。
 本记录区分局部修复、独立复核、远端备份、完整验收及合并，不替代正式审核批准。
 
+## 最新状态覆盖：A21 已保存，A09 后继验证与独审已收口
+
+本段优先于下方早期候选记录。A21 的普通进度 checkpoint/head、Core activation、Runner context 安装和 Daemon producer/recovery 已完成具名局部验证及独审，并保存到本地和远端 `26a3cbd53a13c794c3ad50ead923ec2b523445ab`；不再按旧段重新实施。最终独审与实际执行回执分别是 `output/e6-20260928/office-full-content-review-20261010/a21-daemon-ordinary-progress-final-independent-review-20261013.md`、`a21-root-daemon-final-receipt-20261013.md`，不代表完整 Office/E6/GUI 批准。
+
+当前 A09 后继使用单一 Core recurrence domain：Daemon API/调度与 SQLite author admission 共用纯计算；Draft 的 RRULE 进入现有 `draft_json` 及 canonical CAS，不新增表。确认事务先验证已确认事实、fresh snapshot/source，再按实际确认时间校验可运行性，写 thread 前拒绝不可运行规则。历史坏定义仅 typed recurrence calculation error 单项隔离；due 清理或重新注册的数据库错误仍走 workspace failEntry，不改已完成 Run/AutomationRun 事实。密集 DST gap 和第二 fold 均真实 RED→GREEN，最终八个完整文件 184/184、打包源码回归 296/296、两层类型检查通过，fail/skip 0；16 个冻结源码/测试哈希已逐项核验。最终增量独审与限定保存状态见接续入口，不称完整 E6 完成。
+
+PR 的最近实时处置以 `output/e6-20260928/pr-merge-live-disposition-20261013-0635.md` 为准：main 为 `dfb61aca41dfb1ab9e91df028debb2c5f732c433`；#527 已关闭未合并，#528–531 和 #537 已外部合并；#533 仍 draft 且锁文件冲突，#538–542 缺当前 head 测试/审查通过证据，全部 HOLD。主 CI 仍停用；本轮没有 merge、发布、启用 CI 或管理员绕过。
+
+Office required authored inventory 已补入本次两个 recurrence 模块和此前 A21 的八个漏列运行源码。完整 real-esbuild/缺失输入/changed bytes 回归取得 296/296、fail/skip 0；Native 编译和 codesign 仅 synthetic fixture，不是新包执行或真实 GUI。最终未实施者增量独审 `a09-final-independent-review-20261013.md` SHA `13379c8cf5c2a0e400a647fc8087529b6d2641a24f5d2be72499b734c2078a95`，`PASS_SCOPED_WITH_LIMITS`、`approved=false`；16/16 精确冻结输入一致，范围内无剩余已确认 finding。限定 commit/远端保存另见接续入口；不能继承旧 approved。
+
 ## 已完成的局部闭环
 
 | 根因 | 修复边界 | 实际回归 | 独立复核 |
@@ -24,11 +34,10 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 
 ## 正在处理，不能据此认定完成
 
-- A09 的 RRULE INTERVAL/anchor 是仍未关闭的独立失败面。上表不证明 error-entry restart 时旧 Run 仍 in-flight 的所有重叠执行边界；后继隔离正例等旧 Run 完成后才交付新 due，不冒充重叠执行验收。
+- A09 RRULE/anchor 的本轮源码、完整实测与后继独审已完成，保存状态另列；上表旧长定时器证据不证明 error-entry restart 时旧 Run 仍 in-flight 的所有重叠执行边界，不能扩大为完整 packaged 验收。设计和失败保留见 `automation-recurrence-admission-2026-10-13.md`。
 - A11 的上层 Comfy connection-check/analyze/import/submit/poll/collect 真实 API 失败回归仍未完成；静态链确认安全传播失败，但现有公开 envelope 仍用 generic code，不能称网络错误细分已全链统一。IPv6 实际 socket、Electron packaged/GUI 未验收。原 sanity/旧 sender RED/ambient 逐字日志未保存，不用最终 GREEN 补造原 RED。
 - A11 两次早期未隔离 fixture 进入 store 初始化栈；defaultWorkspaceCwd 确认是实施树，实际 opened DB 文件及 before/after 未证。不能扩称用户日常 DB 被改或未改，不为补证重开/重置数据库。后继全部产品 Node 入口使用 fresh home 与默认 workspace 双隔离。
-- A21及全量独审登记的其他根因仍继续；前置Task去重修复见上表，不等于普通view安全恢复完成。后继真实SDK→Host命令journal/tool_end→第二SQLite读回→唯一child SIGKILL主例已取得缺失普通恢复权威的产品RED：实际ordinary checkpoint/head两表不存在，恢复创建replacement Attempt、dispatch和模型请求各1，SDK context toolResult为0，Run错误成功收尾。预期错误断言前已核源事件不变、tool_start/end各1、marker仍1行、零write blockers；**未观察到重复effect**。Transport是loopback替身，不冒真实Provider/GUI。
-- A21两私有Core接口、原子sealed artifact/checkpoint/唯一head CAS与activation新建/idempotent replay双入口witness已进入实施；Runner普通view严格安装/首context投影及Daemon自动producer/recovery仍需接通验证。当前schema缺失baseline在新端口落地后要替换成真实commit-port失败负例，不用旧fixture冒完整GREEN。主失败及独审记录在ignored output，后继源码必须重绑冻结。
+- A21 普通进度恢复已由 `26a3cbd5` 保存并完成具名局部独审：Core checkpoint/head/CAS 与 activation、Runner 普通 view context、Daemon producer/recovery 已接通验证。原 schema 缺失 RED 和 fixture 故障仍保存在 output，最终以具体 commit-port 失败/真实 worker crash/收尾矩阵及最终独审为准，不重复旧实施。Transport 是 loopback 替身，不冒真实 Provider/GUI；全量独审其他具名剩余项继续。
 
 ## 不变的验收与合并门槛
 
@@ -36,8 +45,8 @@ A22 首次 54 例的 43 个失败中，34 个是产品行为 RED，9 个是 fixt
 2. Office 的具体审核记录仍须用户批准；本记录不生成 `approved` 或 `contentReviewComplete`，不授权正式发布。
 3. 后继 fresh packaged macOS、真实客户端案例、问答/恢复/沙盒/Harness 联合矩阵仍未全部完成。上述局部回归不是新包 GUI 验收。
 4. E6 PR 保持草稿；备份不是验收通过。主 CI 停用且无 checks 的 PR 不能当成通过；有冲突、已确认缺口或未达到原验收门槛的 PR 不合并，不使用 admin bypass。
-5. Dependabot #527/#528 仍保留 API/版本/许可适配或实际安装/build 缺证；#529–531 已由外部提交合入 main，head/merge checks 均无记录，不冒称 hosted 安装、缓存、artifact round-trip 通过或本轮由 Root 合并。
-6. origin/main `6ddd5e6b75e314cc0fbeee370991c70c7383a0ff` 的整合候选已按三冲突映射受控解开并验证依赖图，不代表 E6 已合入远端 main。main #535 的 35 roots / 1,211 packaging inputs 审核记录不能覆盖已提交 E6 merge candidate 的 38/1,282，更不能覆盖尚未重新枚举的后继 WIP。不会自动刷新 approved；同事范围审阅不替代本分支具体用户批准。
+5. 最近已核 #527 关闭未合并，#528–531 与 #537 外部合并；#538–542 缺当前 head 实测/审查通过证据，全部 HOLD。完整状态以顶部实时处置记录为准，不把外部 merge 当本轮操作或测试 GREEN。
+6. 已完成的首次 main `6ddd5e6b75e314cc0fbeee370991c70c7383a0ff` 整合不代表 E6 已合入 main；后继 `dfb61aca` 尚待锁文件受控整合。旧 main/E6 的审核输入计数都不能覆盖本次新增 recurrence 与 A21 补列输入；不会自动刷新 approved，同事范围审阅不替代本分支具体用户批准。
 
 ## main 整合候选的新验证与剩余门
 

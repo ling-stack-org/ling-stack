@@ -28,6 +28,7 @@ import { writeJson } from "../../shared/response.js";
 import { ensureRunCancelled } from "../runs/cancellation.js";
 import type { AutomationSchedulerRegistry } from "./scheduler.js";
 import { buildAutomationContext } from "./context.js";
+import { assertAutomationRecurrence } from "./recurrence.js";
 import { runAutomation, type StartAutomationRunExecution } from "./run.js";
 import {
   parseAutomationRunCancelRequest,
@@ -570,6 +571,7 @@ function createAutomationDraftInputFromRequest(input: {
       description: partial.description ?? template.description,
       kind: partial.kind ?? template.kind,
       trigger: partial.trigger ?? template.defaultTrigger,
+      rrule: partial.rrule ?? undefined,
       target: resolveTarget(input.cwd, channelId, partial.target),
       promptTemplate: partial.promptTemplate ?? template.defaultPromptTemplate,
       executionPolicy: partial.executionPolicy ?? template.defaultExecutionPolicy,
@@ -591,6 +593,7 @@ function createAutomationDraftInputFromRequest(input: {
       description: partial.description ?? "Chat-assisted automation draft. Review before confirming.",
       kind: partial.kind ?? "custom_prompt",
       trigger: partial.trigger ?? inferChatDraftTrigger(prompt),
+      rrule: partial.rrule ?? undefined,
       target: resolveTarget(input.cwd, channelId, partial.target),
       promptTemplate: partial.promptTemplate ?? createChatDraftPromptTemplate(prompt),
       executionPolicy: partial.executionPolicy ?? defaultDraftExecutionPolicy(),
@@ -607,6 +610,7 @@ function createAutomationDraftInputFromRequest(input: {
     description: partial.description,
     kind: partial.kind ?? "custom_prompt",
     trigger: partial.trigger ?? { type: "manual" },
+    rrule: partial.rrule ?? undefined,
     target: partial.target || channelId ? resolveTarget(input.cwd, channelId, partial.target) : undefined,
     promptTemplate: partial.promptTemplate,
     executionPolicy: partial.executionPolicy ?? defaultDraftExecutionPolicy(),
@@ -626,6 +630,7 @@ function automationDraftUpdateInputFromRequest(
     description: partial.description,
     kind: partial.kind,
     trigger: partial.trigger,
+    rrule: partial.rrule,
     target: partial.target,
     promptTemplate: partial.promptTemplate,
     executionPolicy: partial.executionPolicy,
@@ -694,6 +699,9 @@ function createAutomationDefinitionFromResolvedInput(input: {
   if (channelId && !input.store.getChannel(channelId)) {
     throw new HttpError(404, "channel_not_found", `Channel not found: ${channelId}`);
   }
+  // Validate before creating the source thread. Core repeats admission for
+  // direct callers and performs draft confirmation under its transaction.
+  assertAutomationRecurrence({ ...input.input, createdAt: input.now }, new Date(input.now));
   const thread = input.store.createLingThread(
     {
       kind: "automation",
@@ -744,6 +752,7 @@ function previewAutomationDefinitionFromDraft(draft: AutomationDraft, cwd: strin
     kind: createInput.kind,
     status: "enabled",
     trigger: createInput.trigger,
+    rrule: createInput.rrule,
     cwds: [],
     target: createInput.target ?? resolveTarget(cwd, createInput.channelId, undefined),
     promptTemplate: createInput.promptTemplate,

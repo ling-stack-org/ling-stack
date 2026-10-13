@@ -163,6 +163,7 @@ export interface AutomationDraft {
   readonly description?: string;
   readonly kind?: AutomationKind;
   readonly trigger?: AutomationTrigger;
+  readonly rrule?: string;
   readonly target?: AutomationTarget;
   readonly promptTemplate?: AutomationPromptTemplate;
   readonly executionPolicy?: AutomationExecutionPolicy;
@@ -193,6 +194,7 @@ export interface CreateAutomationDraftInput {
   readonly description?: string;
   readonly kind?: AutomationKind;
   readonly trigger?: AutomationTrigger;
+  readonly rrule?: string;
   readonly target?: AutomationTarget;
   readonly promptTemplate?: AutomationPromptTemplate;
   readonly executionPolicy?: AutomationExecutionPolicy;
@@ -207,6 +209,7 @@ export interface UpdateAutomationDraftInput {
   readonly description?: string | null;
   readonly kind?: AutomationKind | null;
   readonly trigger?: AutomationTrigger | null;
+  readonly rrule?: string | null;
   readonly target?: AutomationTarget | null;
   readonly promptTemplate?: AutomationPromptTemplate | null;
   readonly executionPolicy?: AutomationExecutionPolicy | null;
