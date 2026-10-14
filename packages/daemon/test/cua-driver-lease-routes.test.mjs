@@ -9,6 +9,242 @@ import { CuaDriverDesktopBridgeAuthority } from "../dist/features/computer-use/d
 const DESKTOP_TOKEN = "desktop-lease-route-token-0123456789";
 const BRIDGE_TOKEN_HEADER = "X-Ling-Desktop-Bridge-Token";
 
+for (const retirement of ["revoke", "read-time expiry", "deadline"]) {
+  for (const sequence of [1, 99]) {
+    test(`A34 authority rejects generation 1 sequence ${sequence} after generation 2 ${retirement}`, () => {
+      const fixture = a34AuthorityFixture();
+      try {
+        const old = availability(fixture.handshake, { providerState: "included" });
+        assert.equal(fixture.authority.publishAvailability(old).accepted, true);
+        const current = lease(fixture.handshake, {
+          generation: 2,
+          expiresAt: "2026-10-14T00:01:00.000Z",
+        });
+        assert.equal(fixture.authority.publish(current).accepted, true);
+        fixture.retire(current, retirement);
+        assert.equal(fixture.authority.leaseRegistry.getCurrent(), undefined);
+
+        // Sequence 1 is byte-identical to the accepted old report. Idempotency
+        // must not override a newer generation that has already retired.
+        const rejected = fixture.authority.publishAvailability({ ...old, sequence });
+        assert.equal(rejected.accepted, false);
+        assert.equal(rejected.reason, "stale_generation");
+        assert.equal(fixture.authority.getCurrentAvailability(), undefined);
+      } finally {
+        fixture.authority.clear();
+      }
+    });
+  }
+
+  test(`A34 authority getter hides generation 1 after generation 2 ${retirement} without a late PUT`, () => {
+    const fixture = a34AuthorityFixture();
+    try {
+      assert.equal(fixture.authority.publishAvailability(availability(fixture.handshake, {
+        providerState: "included",
+      })).accepted, true);
+      const current = lease(fixture.handshake, {
+        generation: 2,
+        expiresAt: "2026-10-14T00:01:00.000Z",
+      });
+      assert.equal(fixture.authority.publish(current).accepted, true);
+      fixture.retire(current, retirement);
+      assert.equal(fixture.authority.getCurrentAvailability(), undefined);
+    } finally {
+      fixture.authority.clear();
+    }
+  });
+}
+
+test("A34 authority advances generation before its synchronous replacement observer", () => {
+  const observed = [];
+  const fixture = a34AuthorityFixture({
+    onLeaseReplaced: (_previous, next) => {
+      if (next) observed.push(fixture.authority.getCurrentAvailability());
+    },
+  });
+  try {
+    assert.equal(fixture.authority.publishAvailability(availability(fixture.handshake, {
+      providerState: "included",
+    })).accepted, true);
+    assert.equal(fixture.authority.publish(lease(fixture.handshake, {
+      expiresAt: "2026-10-14T00:01:00.000Z",
+    })).accepted, true);
+    assert.equal(fixture.authority.publish(lease(fixture.handshake, {
+      generation: 2,
+      expiresAt: "2026-10-14T00:01:00.000Z",
+    })).accepted, true);
+    // Registry observers run before publish() returns; inspect outside the
+    // callback because the registry deliberately isolates observer exceptions.
+    assert.deepEqual(observed, [undefined]);
+  } finally {
+    fixture.authority.clear();
+  }
+});
+
+test("A34 authority retains the generation fence when a retirement observer throws", () => {
+  let observerCalls = 0;
+  const fixture = a34AuthorityFixture({
+    onLeaseReplaced() {
+      observerCalls += 1;
+      throw new Error("a34_observer_failure");
+    },
+  });
+  try {
+    const old = availability(fixture.handshake, { providerState: "included" });
+    assert.equal(fixture.authority.publishAvailability(old).accepted, true);
+    for (const generation of [1, 2]) {
+      assert.equal(fixture.authority.publish(lease(fixture.handshake, {
+        generation, expiresAt: "2026-10-14T00:01:00.000Z",
+      })).accepted, true);
+    }
+    assert.equal(fixture.authority.revoke(revokeFor(lease(fixture.handshake, {
+      generation: 2, expiresAt: "2026-10-14T00:01:00.000Z",
+    }))), true);
+    assert.equal(observerCalls, 2);
+    assert.equal(fixture.authority.publishAvailability({ ...old, sequence: 99 }).reason, "stale_generation");
+    assert.equal(fixture.authority.getCurrentAvailability(), undefined);
+  } finally {
+    fixture.authority.clear();
+  }
+});
+
+for (const boundary of ["rotation", "clear"]) {
+  test(`A34 authority ${boundary} resets the fence without seeding the new handshake from an old callback`, () => {
+    const observed = [];
+    const fixture = a34AuthorityFixture({
+      onLeaseReplaced: (previous) => {
+        observed.push({
+          isCurrent: fixture.authority.isCurrentHandshake(previous),
+          availability: fixture.authority.getCurrentAvailability(),
+        });
+      },
+    });
+    try {
+      assert.equal(fixture.authority.publish(lease(fixture.handshake, {
+        generation: 7, expiresAt: "2026-10-14T00:01:00.000Z",
+      })).accepted, true);
+      if (boundary === "clear") fixture.authority.clear();
+      const nextHandshake = fixture.authority.issueAuthenticatedHandshake();
+      assert.deepEqual(observed, [{ isCurrent: false, availability: undefined }]);
+      const next = availability({
+        ...nextHandshake, defaultWorkspaceCwd: fixture.authority.workspaceCwd,
+      }, { providerState: "included" });
+      assert.equal(fixture.authority.publishAvailability(next).accepted, true);
+      assert.equal(fixture.authority.getCurrentAvailability(), next);
+      assert.equal(fixture.authority.publishAvailability(availability(fixture.handshake)).reason, "stale_generation");
+    } finally {
+      fixture.authority.clear();
+    }
+  });
+}
+
+for (const hasPrevious of [false, true]) {
+  test(`A34 authority deadline installation failure does not admit candidate generation 99 with previous=${hasPrevious}`, () => {
+    let schedules = 0;
+    const observed = [];
+    const fixture = a34AuthorityFixture({
+      scheduleDeadline() {
+        schedules += 1;
+        if (!hasPrevious || schedules === 2) throw new Error("a34_deadline_installation_failure");
+        return { cancel() {} };
+      },
+      onLeaseReplaced() { observed.push(fixture.authority.getCurrentAvailability()); },
+    });
+    try {
+      const old = availability(fixture.handshake, { providerState: "included" });
+      assert.equal(fixture.authority.publishAvailability(old).accepted, true);
+      if (hasPrevious) {
+        assert.equal(fixture.authority.publish(lease(fixture.handshake, {
+          generation: 2, expiresAt: "2026-10-14T00:01:00.000Z",
+        })).accepted, true);
+      }
+      const rejected = fixture.authority.publish(lease(fixture.handshake, {
+        generation: 99, expiresAt: "2026-10-14T00:01:00.000Z",
+      }));
+      assert.equal(rejected.accepted, false);
+      assert.equal(rejected.reason, "deadline_unavailable");
+      assert.equal(fixture.authority.leaseRegistry.getCurrent(), undefined);
+      assert.deepEqual(observed, hasPrevious ? [undefined] : []);
+      if (hasPrevious) {
+        assert.equal(fixture.authority.publishAvailability(old).reason, "stale_generation");
+      } else {
+        assert.equal(fixture.authority.publishAvailability({ ...old }).accepted, true);
+        assert.equal(fixture.authority.getCurrentAvailability(), old);
+      }
+      const legitimate = availability(fixture.handshake, {
+        generation: 2, sequence: 8, providerState: "corrupt",
+      });
+      assert.equal(fixture.authority.publishAvailability(legitimate).accepted, true,
+        "the failed generation-99 candidate must not poison lower legitimate observations");
+      assert.equal(fixture.authority.getCurrentAvailability(), legitimate);
+    } finally {
+      fixture.authority.clear();
+    }
+  });
+}
+
+for (const [reason, candidate] of [
+  ["invalid", { lockDigest: "not-a-digest", expiresAt: "2026-10-14T00:01:00.000Z" }],
+  ["expired", { expiresAt: "2026-10-14T00:00:00.000Z" }],
+  ["ttl_exceeded", { expiresAt: "2026-10-14T00:02:00.001Z" }],
+]) {
+  test(`A34 authority ${reason} candidate generation 99 does not advance observation high water`, () => {
+    const fixture = a34AuthorityFixture();
+    try {
+      const old = availability(fixture.handshake, { providerState: "included" });
+      assert.equal(fixture.authority.publishAvailability(old).accepted, true);
+      const rejected = fixture.authority.publish(lease(fixture.handshake, {
+        ...candidate, generation: 99,
+      }));
+      assert.equal(rejected.accepted, false);
+      assert.equal(rejected.reason, reason);
+      assert.equal(fixture.authority.leaseRegistry.getCurrent(), undefined);
+      assert.equal(fixture.authority.publishAvailability({ ...old }).accepted, true);
+      const legitimate = { ...old, generation: 2, sequence: 2 };
+      assert.equal(fixture.authority.publishAvailability(legitimate).accepted, true);
+      assert.equal(fixture.authority.getCurrentAvailability(), legitimate);
+    } finally {
+      fixture.authority.clear();
+    }
+  });
+}
+
+test("A34 authority preserves same-generation sequence semantics and resets at a new handshake", () => {
+  const fixture = a34AuthorityFixture();
+  try {
+    const current = availability(fixture.handshake, {
+      generation: 4,
+      sequence: 3,
+      providerState: "included",
+    });
+    assert.equal(fixture.authority.publishAvailability(current).accepted, true);
+    assert.equal(fixture.authority.publishAvailability({ ...current }).accepted, true);
+    assert.equal(fixture.authority.publishAvailability({ ...current, sequence: 2 }).reason, "stale_sequence");
+    assert.equal(fixture.authority.publishAvailability({
+      ...current, providerState: "corrupt",
+    }).reason, "stale_sequence");
+    const advanced = { ...current, sequence: 4, providerState: "corrupt" };
+    assert.equal(fixture.authority.publishAvailability(advanced).accepted, true);
+    assert.equal(fixture.authority.getCurrentAvailability(), advanced);
+    assert.equal(fixture.authority.publish(lease(fixture.handshake, {
+      generation: 5,
+      expiresAt: "2026-10-14T00:01:00.000Z",
+    })).accepted, true);
+
+    const nextHandshake = fixture.authority.issueAuthenticatedHandshake();
+    const next = availability({
+      ...nextHandshake,
+      defaultWorkspaceCwd: fixture.authority.workspaceCwd,
+    }, { providerState: "included" });
+    assert.equal(fixture.authority.getCurrentAvailability(), undefined);
+    assert.equal(fixture.authority.publishAvailability(next).accepted, true);
+    assert.equal(fixture.authority.getCurrentAvailability(), next);
+    assert.equal(fixture.authority.publishAvailability(advanced).reason, "stale_generation");
+  } finally {
+    fixture.authority.clear();
+  }
+});
+
 test("issuing a new handshake synchronously clears the previous registry lease", () => {
   const connectionIds = ["connection-1", "connection-2"];
   let authorityRotations = 0;
@@ -480,6 +716,50 @@ test("lease routes require local Desktop bridge authentication and a completed h
     await rm(cwd, { recursive: true, force: true });
   }
 });
+
+function a34AuthorityFixture(options = {}) {
+  let now = "2026-10-14T00:00:00.000Z";
+  let scheduled;
+  let connection = 0;
+  const authority = new CuaDriverDesktopBridgeAuthority({
+    workspaceCwd: "/tmp/ling-a34-authority-fixture",
+    daemonAuthorityEpoch: "a34-authority",
+    createConnectionId: () => `a34-connection-${++connection}`,
+    now: () => now,
+    scheduleDeadline(callback) {
+      const entry = { callback, cancelled: false };
+      scheduled = entry;
+      return {
+        cancel() {
+          entry.cancelled = true;
+          if (scheduled === entry) scheduled = undefined;
+        },
+      };
+    },
+    ...options,
+  });
+  return {
+    authority,
+    handshake: {
+      ...authority.issueAuthenticatedHandshake(),
+      defaultWorkspaceCwd: authority.workspaceCwd,
+    },
+    retire(current, kind) {
+      if (kind === "revoke") {
+        assert.equal(authority.revoke(revokeFor(current)), true);
+      } else if (kind === "read-time expiry") {
+        now = current.expiresAt;
+        assert.equal(authority.leaseRegistry.getCurrent(), undefined);
+      } else {
+        const entry = scheduled;
+        assert.ok(entry && !entry.cancelled, "fixture deadline must be armed");
+        now = current.expiresAt;
+        scheduled = undefined;
+        entry.callback();
+      }
+    },
+  };
+}
 
 function createDaemon(cwd) {
   return createDaemonServer(

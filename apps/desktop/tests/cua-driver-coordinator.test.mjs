@@ -11,6 +11,96 @@ import {
 } from "../dist/main/cua-driver/provider-seal.js";
 import { CuaDriverInputFenceError } from "../dist/main/cua-driver/input-fence-client.js";
 import { DEFAULT_CUA_DRIVER_FEATURE_FLAGS } from "@ling-stack/contracts";
+import { CuaDriverAvailabilityPublisher } from "../dist/main/cua-driver/availability-publisher.js";
+import { createA34CoordinatorArtifactFixture } from "./support/a34-coordinator-artifact-fixture.mjs";
+
+test("A34 real lazy coordinator restart drops queued prior-generation availability", {
+  skip: process.platform !== "darwin",
+}, async (t) => {
+  const fixture = await createA34CoordinatorArtifactFixture(t);
+  const gate = deferred();
+  const reports = [];
+  const snapshots = [];
+  const publishedLeases = [];
+  const revokedLeases = [];
+  let spawnCount = 0;
+  const authority = {
+    desktopInstanceId: "desktop-a34-producer-fixture",
+    desktopInstanceEpoch: 1,
+    bridgeConnectionId: "bridge-a34-producer-fixture",
+    daemonAuthorityEpoch: "authority-a34-producer-fixture",
+    workspaceCwd: fixture.workspaceCwd,
+    platform: "darwin",
+    limitations: [],
+  };
+  const availabilityPublisher = new CuaDriverAvailabilityPublisher({
+    authority,
+    client: {
+      async publish(report) {
+        reports.push(report);
+        if (reports.length === 1) await gate.promise;
+      },
+    },
+  });
+  const coordinator = new CuaDriverDesktopCoordinator({
+    platform: "darwin",
+    architecture: "arm64",
+    resourcesPath: fixture.resourcesPath,
+    userDataPath: fixture.userDataPath,
+    workspaceCwd: fixture.workspaceCwd,
+    daemonBaseUrl: "http://127.0.0.1:17891",
+    desktopInstanceId: authority.desktopInstanceId,
+    bridgeContext: { ...authority, bridgeToken: "a34-fixture-only-bridge" },
+    featureFlags: {
+      bundledEmbedded: { darwin: true, win32: false },
+      packagedProvider: { darwin: true, win32: false },
+    },
+    // No MCP initialize request is made. The real host remains lazy; a spawn
+    // attempt is a fixture failure, never execution of the synthetic payload.
+    processLifecycle: {
+      lifetimeBoundary: "test-fixture",
+      spawn() { spawnCount += 1; throw new Error("a34_synthetic_payload_must_not_spawn"); },
+      async terminate() {},
+    },
+    leaseClient: {
+      async publish(value) { publishedLeases.push(value); },
+      async revoke(value) { revokedLeases.push(value); },
+    },
+    telemetry: { emit() {} },
+    availabilityPublisher,
+    onStateChanged(snapshot) { snapshots.push(snapshot); },
+  });
+  try {
+    const first = await coordinator.enable();
+    assert.equal(first.generation, 1);
+    assert.equal(first.lifecycle, "active");
+    assert.equal(first.providerState, "desktop_unavailable");
+    await waitFor(() => reports.length === 1);
+    assert.equal(reports[0].generation, 0);
+
+    // Do not override enableInternal, generation, snapshots or queue logic.
+    // restart completes lease G2 while the independent availability queue is
+    // still blocked in the initial generation-0 client call.
+    const restarted = await coordinator.restart("a34_permission_refresh_fixture");
+    assert.equal(restarted.generation, 2);
+    assert.equal(restarted.lifecycle, "active");
+    assert.deepEqual(publishedLeases.map((value) => value.generation), [1, 2]);
+    assert.deepEqual(revokedLeases.map((value) => value.generation), [1]);
+    assert.ok(snapshots.some((snapshot) => snapshot.lifecycle === "stopping" && snapshot.generation === 1));
+    assert.ok(snapshots.some((snapshot) => snapshot.lifecycle === "validating" && snapshot.generation === 1));
+    assert.equal(reports.length, 1);
+
+    gate.resolve();
+    await availabilityPublisher.close();
+    assert.deepEqual(reports.map((value) => value.generation), [0, 2]);
+    assert.ok(reports.every((value) => value.providerState !== "ready"));
+    assert.ok(publishedLeases.every((value) => value.bridgeConnectionId === authority.bridgeConnectionId));
+    assert.equal(spawnCount, 0);
+  } finally {
+    gate.resolve();
+    await coordinator.shutdown();
+  }
+});
 
 test("coordinator keeps bundled gate closed and never falls through to PATH/external provider", async () => {
   let spawnCount = 0;
