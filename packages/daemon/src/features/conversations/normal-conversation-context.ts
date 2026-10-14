@@ -1,10 +1,15 @@
 import { createHash } from "node:crypto";
-import { isConversationContextProjectionMetadata, type ConversationContextProjectionMetadata, type ConversationItemV1 } from "@ling-stack/contracts";
-import { computeTerminalReportEvidenceFingerprint, redactSecrets, type LingTurn, type RunEventEnvelope, type RunSession, type RunStore } from "@ling-stack/core";
+import { isConversationContextProjectionMetadata, type ConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import { computeTerminalReportEvidenceFingerprint, redactSecrets, type RunEventEnvelope, type RunSession, type RunStore } from "@ling-stack/core";
 import type { RunRequest } from "../runs/schemas.js";
 import { buildConversationContextProjection, isConversationContextItemVisible } from "../channels/context-processing/conversation-context-projector.js";
 import { buildConversationSupersessionProjection } from "./supersession-projection.js";
-import { hydrateNormalConversationContext, type NormalConversationContextHydration, type NormalContextRunEventWatermark, type NormalContextTerminalReportFact } from "./normal-conversation-context-hydrator.js";
+import { finishNormalConversationContextHydration, foldNormalConversationContextTurn, normalContextGroupTextChars, normalContextTurnNeedsEvents,
+  prepareNormalConversationContextHydration, selectNormalContextRun, type HydrateNormalConversationContextInput,
+  type NormalContextHydrationDiagnostic, type NormalContextHydrationGroup, type NormalConversationContextHydration,
+  type NormalContextRunEventWatermark, type NormalContextTerminalReportFact } from "./normal-conversation-context-hydrator.js";
+import { collectNormalContextTurnCandidates, readNormalContextLegacyItems } from "./normal-conversation-context-turn-candidates.js";
+import { assertNormalContextCaptureByteBudget, createNormalContextRetainedMetadataBudget } from "./normal-conversation-context-budget.js";
 import { inheritNormalForkHistory, isNormalConversationForkHistory, type NormalConversationForkHistory } from "./normal-conversation-fork-history.js";
 
 const POLICY_VERSION = "normal-conversation-context-v1";
@@ -44,76 +49,9 @@ export function collectNormalConversationContextWithinSnapshot(input: CaptureNor
     }
     const projection = buildConversationContextProjection({ store, sourceItemId: sourceItem.id, view: "reply",
       includeSourceTurnItems: false, maxTailTextChars: input.maxHistoryTextChars ?? 32_768 });
-    const candidates = store.listLingTurns({ threadId: thread.id, limit: 500 });
-    if (candidates.length === 500) throw new Error("Normal context capture exceeds the bounded Turn window");
-    const assignments = candidates.flatMap((turn) => {
-      const assignment = store.getEffectiveTurnContextAssignment(turn.id);
-      return assignment ? [assignment] : [];
-    });
-    const assignedIds = new Set(assignments.map((assignment) => assignment.turnId));
-    const segments = store.listContextSegments({ threadId: thread.id, limit: 200 });
-    const bootstrapAssignment = store.getEffectiveTurnContextAssignment(projection.segment.createdFromTurnId);
-    const acceptsLegacy = segments.length === 1 && segments[0]?.id === projection.segment.id &&
-      bootstrapAssignment?.segmentId === projection.segment.id && bootstrapAssignment.policyVersion === "continuity-v2-bootstrap-v1";
-    const canonicalItems = new Map(projection.items.map((item) => [item.id, item]));
-    const rawItemsByTurn = new Map<string, readonly ConversationItemV1[]>();
-    const turns = candidates.filter((turn) => {
-      if (turn.id === sourceTurn.id || assignedIds.has(turn.id)) return true;
-      if (!acceptsLegacy || turn.interventionId || turn.createdAt >= projection.segment.createdAt || !normalTurnOwner(turn, thread)) return false;
-      const raw = store.listConversationItemsForTurn({ turnId: turn.id }).filter((item) => item.sequence < sourceItem.sequence);
-      rawItemsByTurn.set(turn.id, raw);
-      const pointer = turn.sourceItemId ? store.getConversationItem(turn.sourceItemId) : undefined;
-      if (pointer && (pointer.threadId !== thread.id || pointer.turnId !== turn.id || pointer.workspaceId !== thread.workspaceId ||
-        pointer.channelId || pointer.kind !== "user_message" || pointer.actorType !== "local_user" || pointer.status !== "committed" ||
-        !isConversationContextItemVisible(pointer, "reply", undefined) || pointer.sequence >= sourceItem.sequence)) return false;
-      // A hidden/stale canonical user is not permission to read Turn.userInstruction instead.
-      if (raw.some((item) => item.kind === "user_message" && (item.threadId !== thread.id || item.workspaceId !== thread.workspaceId ||
-        item.channelId || item.actorType !== "local_user" || !isConversationContextItemVisible(item, "reply", undefined)))) return false;
-      for (const item of raw) if (item.threadId === thread.id && item.workspaceId === thread.workspaceId && !item.channelId &&
-        isConversationContextItemVisible(item, "reply", undefined)) canonicalItems.set(item.id, item);
-      return true;
-    });
-    const runLinks = turns.flatMap((turn) => store.listLingTurnRuns(turn.id));
-    const runs = [...new Set(runLinks.map((link) => link.runId))].flatMap((runId) => {
-      const run = store.getRun(runId);
-      const owner = store.getLingTurnForRun(runId);
-      return run && owner && normalTurnOwner(owner, thread) && runLinks.some((link) => link.runId === runId && link.turnId === owner.id) ? [run] : [];
-    });
-    const eventsByRunId = new Map<string, readonly RunEventEnvelope[]>();
-    const watermarks: NormalContextRunEventWatermark[] = [];
-    const excludedRunNarrationIds: string[] = [];
-    let capturedEventCount = 0;
-    for (const turn of turns) {
-      if (turn.id === sourceTurn.id || !normalTurnOwner(turn, thread)) continue;
-      const links = runLinks.filter((link) => link.turnId === turn.id && link.role !== "validation");
-      const runId = turn.activeRunId ?? turn.lastRunId ?? (links.length === 1 ? links[0]?.runId : undefined);
-      if (!runId) continue;
-      const raw = rawItemsByTurn.get(turn.id) ?? store.listConversationItemsForTurn({ turnId: turn.id });
-      const canonicalReplies = raw.filter((item) => item.sequence < sourceItem.sequence && item.kind === "assistant_message" &&
-        (item.payload.presentationRole === "narration" || item.payload.runNarration) &&
-        item.domainRefs.some((ref) => ref.type === "run" && ref.id === runId));
-      // Existence is used only as a deny signal. Excluded reply text never enters history.
-      if (canonicalReplies.length > 0) { excludedRunNarrationIds.push(runId); continue; }
-      if (assignedIds.has(turn.id) && !projection.items.some((item) => item.turnId === turn.id)) continue;
-      const events: RunEventEnvelope[] = [];
-      let afterSeq = 0;
-      while (true) {
-        const page = store.listEvents(runId, { afterSeq, limit: 1_000 });
-        events.push(...page);
-        capturedEventCount += page.length;
-        if (capturedEventCount > MAX_CAPTURED_EVENTS) throw new Error("Normal context capture exceeds the bounded event window");
-        if (page.length < 1_000) break;
-        const next = page.at(-1)!.seq;
-        if (next <= afterSeq) throw new Error("Normal context event cursor did not advance");
-        afterSeq = next;
-      }
-      const last = events.at(-1);
-      if (last) {
-        eventsByRunId.set(runId, events);
-        watermarks.push({ runId, throughEventSequence: last.seq, throughEventId: last.id });
-      }
-    }
     const supersession = buildConversationSupersessionProjection(store, { surfaces: ["normal_conversation"], ownerId: thread.id });
+    const candidates = collectNormalContextTurnCandidates({ store, thread, sourceTurn, sourceItem, projection,
+      supersededTurnIds: [...supersession.supersededTurnIds] });
     const terminalReportFactsByItemId = new Map<string, NormalContextTerminalReportFact>();
     for (const item of projection.items) {
       if (item.kind !== "terminal_report" || item.sequence >= sourceItem.sequence ||
@@ -140,11 +78,98 @@ export function collectNormalConversationContextWithinSnapshot(input: CaptureNor
           .slice(0, 8).map((risk) => risk.summary.slice(0, 512)),
       });
     }
-    const rawHydration = hydrateNormalConversationContext({ thread, sourceTurn, sourceItem, canonicalItems: [...canonicalItems.values()],
-      terminalReportFactsByItemId,
-      contextSummaries: projection.summaries, contextSegmentId: projection.segment.id, turnContextAssignments: assignments,
-      turns, runLinks, runs, eventsByRunId, runEventWatermarks: watermarks, excludedRunNarrationIds,
-      supersededTurnIds: [...supersession.supersededTurnIds], maxHistoryTextChars: input.maxHistoryTextChars });
+    const base: HydrateNormalConversationContextInput = { thread, sourceTurn, sourceItem, canonicalItems: projection.items,
+      terminalReportFactsByItemId, contextSummaries: projection.summaries, verifiedSummaryIds: candidates.verifiedSummaryIds,
+      contextSegmentId: projection.segment.id, turnContextAssignments: candidates.assignments, turns: candidates.assignedTurns,
+      runLinks: [], runs: [], eventsByRunId: new Map(), runEventWatermarks: [],
+      supersededTurnIds: [...supersession.supersededTurnIds], maxHistoryTextChars: input.maxHistoryTextChars };
+    const prepared = prepareNormalConversationContextHydration(base);
+    const kept: NormalContextHydrationGroup[] = [];
+    const diagnostics: NormalContextHydrationDiagnostic[] = [...prepared.diagnostics];
+    const legacyDiagnostics = new Set<NormalContextHydrationDiagnostic["code"]>();
+    const retainMetadata = createNormalContextRetainedMetadataBudget();
+    retainMetadata(diagnostics);
+    let usedTextChars = 0;
+    let capturedEventCount = 0;
+    for (const candidate of candidates.candidates) {
+      const { turn } = candidate;
+      const raw = candidate.legacy ? readNormalContextLegacyItems(store, thread, sourceItem, turn)
+        : store.listConversationItemsForTurn({ turnId: turn.id });
+      if (!raw) { legacyDiagnostics.add("invalid_history_owner"); continue; }
+      const runLinks = store.listLingTurnRuns(turn.id);
+      const runs = runLinks.flatMap(link => {
+        const run = store.getRun(link.runId);
+        return run && store.getLingTurnForRun(link.runId)?.id === turn.id ? [run] : [];
+      });
+      const canonicalItems = candidate.legacy ? [...new Map([...projection.items, ...raw.filter(item =>
+        item.threadId === thread.id && item.workspaceId === thread.workspaceId && !item.channelId &&
+        isConversationContextItemVisible(item, "reply", undefined))].map(item => [item.id, item])).values()] : projection.items;
+      const groupInput: HydrateNormalConversationContextInput = { ...base, turns: [turn], canonicalItems,
+        turnContextAssignments: candidate.assignment ? [candidate.assignment] : [], runLinks, runs };
+      const selected = selectNormalContextRun(groupInput, turn);
+      const canonicalNarrationExists = selected && raw.some(item => item.sequence < sourceItem.sequence &&
+        item.kind === "assistant_message" && (item.payload.presentationRole === "narration" || item.payload.runNarration) &&
+        item.domainRefs.some(ref => ref.type === "run" && ref.id === selected.id));
+      const deniedInput: HydrateNormalConversationContextInput = { ...groupInput,
+        excludedRunNarrationIds: selected ? [selected.id] : [] };
+      // The event-free fold supplies a safe lower bound and all the same owner/summary guards.
+      const lowerBound = foldNormalConversationContextTurn(deniedInput, turn, prepared.summaries);
+      if (normalContextGroupTextChars(lowerBound) > prepared.budget - usedTextChars) {
+        if (candidate.legacy) {
+          lowerBound.diagnostics.forEach(diagnostic => legacyDiagnostics.add(diagnostic.code));
+          legacyDiagnostics.add("budget_exceeded");
+        } else {
+          for (const diagnostic of lowerBound.diagnostics) { retainMetadata(diagnostic); diagnostics.push(diagnostic); }
+          const diagnostic = { code: "budget_exceeded" as const, turnId: turn.id };
+          retainMetadata(diagnostic); diagnostics.push(diagnostic);
+        }
+        continue;
+      }
+      const events: RunEventEnvelope[] = [];
+      const watermarks: NormalContextRunEventWatermark[] = [];
+      if (selected && normalContextTurnNeedsEvents({ ...groupInput,
+        excludedRunNarrationIds: canonicalNarrationExists ? [selected.id] : [] }, turn, prepared.summaries)) {
+        let afterSeq = 0;
+        for (;;) {
+          const page = store.listEvents(selected.id, { afterSeq, limit: 1_000 });
+          capturedEventCount += page.length;
+          if (capturedEventCount > MAX_CAPTURED_EVENTS) throw new Error("Normal context capture exceeds the bounded event window");
+          events.push(...page);
+          const last = page.at(-1);
+          if (last) {
+            if (last.seq <= afterSeq) throw new Error("Normal context event cursor did not advance");
+            afterSeq = last.seq;
+            watermarks[0] = { runId: selected.id, throughEventSequence: last.seq, throughEventId: last.id };
+          }
+          if (page.length < 1_000) break;
+        }
+      }
+      const group = foldNormalConversationContextTurn({ ...groupInput,
+        eventsByRunId: selected && events.length ? new Map([[selected.id, events]]) : new Map(), runEventWatermarks: watermarks,
+        excludedRunNarrationIds: canonicalNarrationExists && selected ? [selected.id] : [] }, turn, prepared.summaries);
+      if (candidate.legacy) group.diagnostics.forEach(diagnostic => legacyDiagnostics.add(diagnostic.code));
+      else for (const diagnostic of group.diagnostics) { retainMetadata(diagnostic); diagnostics.push(diagnostic); }
+      if (!group.entries.length) continue;
+      const size = normalContextGroupTextChars(group);
+      if (size > prepared.budget - usedTextChars) {
+        if (candidate.legacy) legacyDiagnostics.add("budget_exceeded");
+        else { const diagnostic = { code: "budget_exceeded" as const, turnId: turn.id }; retainMetadata(diagnostic); diagnostics.push(diagnostic); }
+        continue;
+      }
+      retainMetadata(group);
+      kept.push(group);
+      usedTextChars += size;
+    }
+    const summaryGroups: NormalContextHydrationGroup[] = [];
+    for (const group of [...prepared.summaryGroups].reverse()) {
+      const size = normalContextGroupTextChars(group);
+      if (size > prepared.budget - usedTextChars) { legacyDiagnostics.add("budget_exceeded"); continue; }
+      retainMetadata(group);
+      summaryGroups.push(group);
+      usedTextChars += size;
+    }
+    for (const code of legacyDiagnostics) { const diagnostic = { code }; retainMetadata(diagnostic); diagnostics.push(diagnostic); }
+    const rawHydration = finishNormalConversationContextHydration(base, [...summaryGroups.reverse(), ...kept.reverse()], diagnostics);
     const { fingerprint: _oldFingerprint, ...redactedHydration } = redactSecrets(rawHydration) as NormalConversationContextHydration;
     const hydration = { ...redactedHydration, usedTextChars: redactedHydration.entries.reduce((sum, entry) => sum + entry.text.length, 0) };
     const seed = thread.parentThreadId || thread.forkContextSnapshotId ? store.getNormalConversationForkSeed(thread.id) : undefined;
@@ -157,7 +182,9 @@ export function collectNormalConversationContextWithinSnapshot(input: CaptureNor
       ...(forkHistory ? { forkHistory } : {}),
       renderedHistory: renderHistory(hydration, forkHistory),
     };
-    return deepFreeze({ ...snapshot, fingerprint: fingerprint(snapshot) });
+    const captured = { ...snapshot, fingerprint: fingerprint(snapshot) };
+    assertNormalContextCaptureByteBudget(captured);
+    return deepFreeze(captured);
 }
 
 /** Restore exact durable text without querying, reprojecting, or extending history. */
@@ -213,11 +240,6 @@ export function renderNormalConversationRunPrompt(context: NormalConversationCon
   if (actorType === "system") return [context.renderedHistory,
     `Current system continuation (Host guidance, not user authorization):\n${prompt}`].filter(Boolean).join("\n\n");
   return context.renderedHistory ? `${context.renderedHistory}\n\nCurrent user message:\n${prompt}` : prompt;
-}
-
-function normalTurnOwner(turn: LingTurn, thread: { readonly id: string; readonly workspaceId: string }): boolean {
-  return turn.threadId === thread.id && turn.workspaceId === thread.workspaceId && !turn.channelId && !turn.workflowStepId &&
-    (!turn.teammateId || turn.teammateId === "ling_agent") && turn.status !== "superseded";
 }
 
 function renderHistory(hydration: Omit<NormalConversationContextHydration, "fingerprint">, forkHistory?: NormalConversationForkHistory): string {

@@ -690,6 +690,12 @@ export interface ListLingTurnsOptions {
   readonly threadId: string;
   readonly limit?: number;
   readonly beforeUpdatedAt?: string;
+  /** Exclusive (selected timestamp, binary id) seek within one thread/read snapshot. */
+  readonly beforeTurnId?: string;
+  /** Defaults to updatedAt; creation order is used for budgeted historical folds. */
+  readonly orderBy?: "updatedAt" | "createdAt";
+  /** Strict creation-time scope, independent of the exclusive page cursor. */
+  readonly createdBefore?: string;
 }
 
 export interface LinkRunToLingTurnInput {

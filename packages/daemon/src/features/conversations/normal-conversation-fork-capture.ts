@@ -3,6 +3,7 @@ import { HttpError } from "../../errors.js";
 import { collectNormalConversationContextWithinSnapshot } from "./normal-conversation-context.js";
 import type { NormalContextEntry, NormalContextRunEventWatermark } from "./normal-conversation-context-hydrator.js";
 import { groupNormalForkHistory, selectNormalForkHistory, usedForkWatermarks, validateNormalForkContextPayload, type NormalForkContextPayload } from "./normal-conversation-fork-history.js";
+import { assertNormalContextCaptureByteBudget } from "./normal-conversation-context-budget.js";
 
 const MAX_FORK_TEXT = 32_768;
 
@@ -85,5 +86,7 @@ export function captureNormalConversationForkContext(store: RunStore, source: No
       ...history.hydration.diagnostics.filter(diagnostic => diagnostic.code === "budget_exceeded")
         .map(diagnostic => JSON.stringify([source.thread.id, diagnostic.turnId ? "turn" : "projection_budget", diagnostic.turnId ?? history.projection.projectionVersion]))])],
     runEventWatermarks: usedForkWatermarks(groups, [...(history.forkHistory?.runEventWatermarks ?? []), ...history.hydration.runEventWatermarks, ...marks]) };
-  return { projection: history.projection, payload: validateNormalForkContextPayload(payload) };
+  const captured = { projection: history.projection, payload: validateNormalForkContextPayload(payload) };
+  assertNormalContextCaptureByteBudget(captured);
+  return captured;
 }
