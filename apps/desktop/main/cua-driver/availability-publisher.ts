@@ -98,9 +98,10 @@ export class HttpCuaDriverAvailabilityClient implements CuaDriverAvailabilityCli
   }
 }
 
-/** Serialize observational state so the daemon can fence stale same-generation reports. */
+/** Serialize observational state without dispatching queued prior generations. */
 export class CuaDriverAvailabilityPublisher {
   private sequence = 0;
+  private generationHighWater = 0;
   private operationTail: Promise<void> = Promise.resolve();
   private closed = false;
 
@@ -111,7 +112,16 @@ export class CuaDriverAvailabilityPublisher {
   }) {}
 
   publish(snapshot: CuaDriverCoordinatorSnapshot): Promise<void> {
-    if (this.closed || snapshot.providerState === "ready") {
+    if (this.closed) {
+      return Promise.resolve();
+    }
+    if (snapshot.providerState === "ready") {
+      // Ready is never an availability report, but its legal generation still
+      // fences observations waiting in the independent publication queue.
+      if (!Number.isSafeInteger(snapshot.generation) || snapshot.generation < 0) {
+        return Promise.reject(new CuaDriverAvailabilityPublisherError("availability_contract_invalid"));
+      }
+      this.generationHighWater = Math.max(this.generationHighWater, snapshot.generation);
       return Promise.resolve();
     }
     if (this.sequence >= Number.MAX_SAFE_INTEGER) {
@@ -127,8 +137,15 @@ export class CuaDriverAvailabilityPublisher {
     } catch (error) {
       return Promise.reject(error);
     }
+    // Only a fully validated report can advance the fence. Failed candidates
+    // must not suppress subsequent legitimate lower-generation observations.
+    if (report.generation < this.generationHighWater) return Promise.resolve();
+    this.generationHighWater = Math.max(this.generationHighWater, report.generation);
     this.sequence = report.sequence;
     const pending = this.operationTail.catch(() => undefined).then(async () => {
+      // A later snapshot may advance the fence while this report is queued.
+      // Requests already inside client.publish cannot be recalled here.
+      if (report.generation < this.generationHighWater) return;
       try {
         await this.options.client.publish(report);
       } catch (error) {

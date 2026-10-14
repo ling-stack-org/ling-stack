@@ -19,6 +19,139 @@ const supportedPlatform = process.platform === "darwin" || process.platform === 
 const desktopToken = "desktop-composition-token-0123456789";
 const bridgeHeader = "X-Ling-Desktop-Bridge-Token";
 
+for (const retirement of ["revoke", "deadline"]) {
+  test(`A34 HTTP rejects delayed generation 1 after generation 2 ${retirement} without regressing SQLite`, {
+    skip: !supportedPlatform,
+  }, async () => {
+    const deadlines = manualDeadlineScheduler();
+    const fixture = await daemonFixture({ leaseScheduleDeadline: deadlines.schedule });
+    const gate = deferred();
+    let delayedPut;
+    let dispatched = false;
+    try {
+      const { authority, old, current } = await a34ActivateWithOldAvailability(fixture, 2);
+      // Delay the request before it reaches the real HTTP handler, not merely
+      // its response after Host has already admitted it.
+      delayedPut = gate.promise.then(() => {
+        dispatched = true;
+        return putAvailability(fixture.daemon, { ...old, sequence: 99 });
+      });
+      if (retirement === "revoke") {
+        const retired = await deleteLease(fixture.daemon, current);
+        assert.equal(retired.status, 200);
+        assert.equal((await retired.json()).revoked, true);
+      } else {
+        deadlines.fire();
+      }
+      await waitFor(() => fixture.store.getMcpServer("mcp_cua_driver")?.enabled === false);
+      a34AssertClosedProjection(fixture.store);
+      const baseline = a34ProjectionSnapshot(fixture.store);
+      assert.equal(dispatched, false);
+      gate.resolve();
+      const rejected = await delayedPut;
+      assert.equal(rejected.status, 409);
+      assert.equal((await rejected.json()).reason, "stale_generation");
+      assert.deepEqual(a34ProjectionSnapshot(fixture.store), baseline);
+      a34AssertNoOldAvailability(fixture.store);
+
+      const newReport = desktopAvailability(authority, fixture.cwd, {
+        generation: 2, sequence: 100, providerState: "corrupt", reason: "a34_current_artifact_invalid",
+      });
+      assert.equal((await putAvailability(fixture.daemon, newReport)).status, 200);
+      assert.equal(fixture.store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.desktopGeneration, 2);
+      assert.equal(fixture.store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.providerState, "corrupt");
+      a34AssertClosedProjection(fixture.store);
+
+      // A new authenticated handshake starts a new generation domain. Lower
+      // numbers become legal there; old-H reports remain inadmissible.
+      const nextAuthority = await handshake(fixture.daemon);
+      const resetReport = desktopAvailability(nextAuthority, fixture.cwd, {
+        generation: 1, sequence: 1, providerState: "included", reason: "a34_next_handshake_included",
+      });
+      assert.equal((await putAvailability(fixture.daemon, resetReport)).status, 200);
+      assert.equal((await putAvailability(fixture.daemon, { ...newReport, sequence: 101 })).status, 409);
+      const nextLease = lease(nextAuthority, fixture.cwd, { generation: 2 });
+      assert.equal((await putLease(fixture.daemon, nextLease)).status, 200);
+      await waitFor(() => fixture.store.getMcpServer("mcp_cua_driver")?.enabled === true);
+      assert.equal(fixture.store.getManagedPlugin("trusted-local:cua-driver").enabled, true);
+      assert.equal(fixture.store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 1);
+    } finally {
+      gate.resolve();
+      if (delayedPut) await delayedPut.catch(() => undefined);
+      await fixture.close();
+    }
+  });
+}
+
+for (const recovery of ["explicit revoke retry", "background retirement retry", "replacement projection failure"]) {
+  test(`A34 HTTP generation fence survives ${recovery} and rejects the old report after storage recovery`, {
+    skip: !supportedPlatform,
+  }, async () => {
+    let failProjection = false;
+    let failedCommits = 0;
+    const fixture = await daemonFixture({
+      storeDecorator: (store) => new Proxy(store, {
+        get(target, property) {
+          if (property === "commitCuaDriverActivation" && failProjection) {
+            return () => {
+              failedCommits += 1;
+              return {
+                committed: false,
+                state: target.getCuaDriverActivationState("trusted-local:cua-driver"),
+              };
+            };
+          }
+          const value = Reflect.get(target, property, target);
+          return typeof value === "function" ? value.bind(target) : value;
+        },
+      }),
+    });
+    try {
+      const replacing = recovery === "replacement projection failure";
+      const { authority, old, current } = await a34ActivateWithOldAvailability(fixture, replacing ? 1 : 2);
+      failProjection = true;
+      const retired = replacing
+        ? lease(authority, fixture.cwd, { generation: 2 })
+        : current;
+      const failed = replacing
+        ? await putLease(fixture.daemon, retired)
+        : await deleteLease(fixture.daemon, retired);
+      assert.equal(failed.status, 503);
+      assert.equal((await failed.json()).error, "cua_driver_activation_projection_unavailable");
+      assert.ok(failedCommits >= 2, "exercise the first projection and its post-clear retry");
+      // CAS failure may temporarily leave old persisted flags. The live lease
+      // is already fenced; this test does not claim durable closure before the
+      // failed store recovers, or physical cancellation of an in-flight action.
+      assert.equal(fixture.store.getMcpServer("mcp_cua_driver").enabled, true);
+
+      failProjection = false;
+      if (recovery !== "background retirement retry") {
+        const recovered = await deleteLease(fixture.daemon, retired);
+        assert.equal(recovered.status, 200);
+        assert.equal((await recovered.json()).revoked, true);
+      }
+      await waitFor(() => fixture.store.getMcpServer("mcp_cua_driver")?.enabled === false);
+      a34AssertClosedProjection(fixture.store);
+      const baseline = a34ProjectionSnapshot(fixture.store);
+      const stale = await putAvailability(fixture.daemon, { ...old, sequence: 99 });
+      assert.equal(stale.status, 409);
+      assert.equal((await stale.json()).reason, "stale_generation");
+      assert.deepEqual(a34ProjectionSnapshot(fixture.store), baseline);
+      a34AssertNoOldAvailability(fixture.store);
+
+      const currentReport = desktopAvailability(authority, fixture.cwd, {
+        generation: 2, sequence: 100, providerState: "corrupt", reason: "a34_current_artifact_invalid",
+      });
+      assert.equal((await putAvailability(fixture.daemon, currentReport)).status, 200);
+      assert.equal(fixture.store.getManagedPluginHealthSnapshot("trusted-local:cua-driver").details.desktopGeneration, 2);
+      a34AssertClosedProjection(fixture.store);
+    } finally {
+      failProjection = false;
+      await fixture.close();
+    }
+  });
+}
+
 test("bundled daemon resets persisted effective state before listening", {
   skip: !supportedPlatform,
 }, async () => {
@@ -1126,6 +1259,53 @@ for (const operation of ["enable", "check"]) {
   });
 }
 
+async function a34ActivateWithOldAvailability(fixture, generation) {
+  await fixture.daemon.start();
+  const authority = await handshake(fixture.daemon);
+  const requested = await pluginAction(fixture.daemon, fixture.cwd, "trusted-local:cua-driver", "enable");
+  assert.equal(requested.status, 202);
+  assert.equal((await requested.json()).error, "cua_desktop_lease_unavailable");
+  const old = desktopAvailability(authority, fixture.cwd, {
+    generation: 1, sequence: 1, providerState: "included", reason: "a34_old_included",
+  });
+  assert.equal((await putAvailability(fixture.daemon, old)).status, 200);
+  const current = lease(authority, fixture.cwd, { generation });
+  assert.equal((await putLease(fixture.daemon, current)).status, 200);
+  // Real HTTP, real SQLite and final activation CAS, with only the MCP client
+  // seam stubbed. This is not evidence of a real provider or packaged GUI.
+  await waitFor(() => fixture.store.getMcpServer("mcp_cua_driver")?.enabled === true);
+  assert.equal(fixture.store.getManagedPlugin("trusted-local:cua-driver").enabled, true);
+  assert.equal(fixture.store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 1);
+  return { authority, old, current };
+}
+
+function a34ProjectionSnapshot(store) {
+  return {
+    activation: store.getCuaDriverActivationState("trusted-local:cua-driver"),
+    pluginEnabled: store.getManagedPlugin("trusted-local:cua-driver").enabled,
+    serverEnabled: store.getMcpServer("mcp_cua_driver").enabled,
+    contributions: store.listManagedPluginContributions("trusted-local:cua-driver"),
+    tools: store.listMcpTools({ serverId: "mcp_cua_driver" }),
+    health: store.getManagedPluginHealthSnapshot("trusted-local:cua-driver"),
+    status: store.getMcpStatusSnapshot("mcp_cua_driver"),
+  };
+}
+
+function a34AssertClosedProjection(store) {
+  assert.equal(store.getManagedPlugin("trusted-local:cua-driver").enabled, false);
+  assert.equal(store.getMcpServer("mcp_cua_driver").enabled, false);
+  assert.ok(store.listManagedPluginContributions("trusted-local:cua-driver").every((value) => !value.enabled));
+  assert.equal(store.listMcpTools({ serverId: "mcp_cua_driver" }).length, 0);
+}
+
+function a34AssertNoOldAvailability(store) {
+  const health = store.getManagedPluginHealthSnapshot("trusted-local:cua-driver");
+  assert.equal(health.details.providerState, "desktop_unavailable");
+  assert.equal(health.details.desktopGeneration, undefined);
+  assert.equal(health.details.desktopSequence, undefined);
+  assert.notEqual(health.details.reason, "a34_old_included");
+}
+
 async function daemonFixture(input = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-cua-daemon-composition-"));
   const store = createSqliteRunStore(cwd);
@@ -1141,7 +1321,7 @@ async function daemonFixture(input = {}) {
     {
       desktopBridgeToken: desktopToken,
       computerUseRouteToken: desktopToken,
-      storeFactory: () => store,
+      storeFactory: () => input.storeDecorator ? input.storeDecorator(store) : store,
       cuaDriverLeaseClientFactory: fakeLeaseFactory(stats, input.leaseClientOptions),
       cuaDriverLeaseScheduleDeadline: input.leaseScheduleDeadline,
     },

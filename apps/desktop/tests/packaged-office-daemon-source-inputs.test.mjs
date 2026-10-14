@@ -18,6 +18,9 @@ const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localiza
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
 const newAuthoredRuntimeLeaves = [
+  "packages/daemon/src/features/channels/file-request-content.ts",
+  "packages/browser-host/src/descriptor-coordination.ts",
+  "packages/daemon/src/features/browser-extension/native-broker-shutdown.ts",
   "packages/core/src/automation-recurrence.ts",
   "packages/daemon/src/features/automations/recurrence.ts",
   "packages/core/src/run-progress-checkpoint-types.ts",
@@ -100,7 +103,7 @@ function newFile(path, bytes) {
   writeFileSync(path, bytes, { mode: 0o600 });
 }
 
-test("Office packaging review requires every new Pi, progress, transport, delegation, diagnostics, Provider and evaluation task/QA authored source", () => {
+test("Office packaging review requires every new browser lifecycle, Pi, progress, transport, delegation, diagnostics, Provider and evaluation task/QA authored source", () => {
   for (const name of newAuthoredRequiredInputs) {
     assert.equal(PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS.includes(name), true,
       `Runtime leaf must be an explicit required review input: ${name}`);

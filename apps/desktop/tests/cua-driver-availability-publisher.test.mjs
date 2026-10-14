@@ -8,6 +8,135 @@ import {
   createAvailabilityReport,
 } from "../dist/main/cua-driver/availability-publisher.js";
 
+test("A34 publisher observes ready generation without publishing ready or a later old generation", async () => {
+  const reports = [];
+  const publisher = new CuaDriverAvailabilityPublisher({
+    authority: darwinAuthority(),
+    client: { async publish(report) { reports.push(report); } },
+  });
+  try {
+    await publisher.publish({ lifecycle: "active", providerState: "ready", generation: 2 });
+    await publisher.publish({ lifecycle: "included", providerState: "included", generation: 1 });
+    assert.equal(reports.length, 0, "ready is an observation, not a non-ready report");
+    await publisher.publish({ lifecycle: "failed", providerState: "corrupt", generation: 2 });
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].generation, 2);
+    assert.equal(reports[0].providerState, "corrupt");
+  } finally {
+    await publisher.close();
+  }
+});
+
+for (const newerState of ["ready", "desktop_unavailable"]) {
+  test(`A34 publisher drops queued generation 1 after observing generation 2 ${newerState}`, async () => {
+    const gate = deferred();
+    const reports = [];
+    const pending = [];
+    const publisher = new CuaDriverAvailabilityPublisher({
+      authority: darwinAuthority(),
+      client: {
+        async publish(report) {
+          reports.push(report);
+          if (reports.length === 1) await gate.promise;
+        },
+      },
+    });
+    try {
+      pending.push(publisher.publish({
+        lifecycle: "included", providerState: "included", generation: 1,
+      }));
+      await waitFor(() => reports.length === 1);
+      pending.push(publisher.publish({
+        lifecycle: "failed", providerState: "permission_required", generation: 1,
+      }));
+      pending.push(publisher.publish({
+        lifecycle: "active", providerState: newerState, generation: 2,
+      }));
+      gate.resolve();
+      await Promise.all(pending);
+      assert.deepEqual(reports.map((report) => report.generation),
+        newerState === "ready" ? [1] : [1, 2]);
+      // The first report already crossed the client boundary before generation
+      // 2 existed. This test does not promise cancellation of an in-flight PUT.
+      assert.equal(reports[0].providerState, "included");
+    } finally {
+      gate.resolve();
+      await Promise.allSettled(pending);
+      await publisher.close();
+    }
+  });
+}
+
+for (const generation of [1.5, -1, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1]) {
+  test(`A34 publisher invalid ready generation ${String(generation)} cannot poison observation high water`, async () => {
+    const reports = [];
+    const publisher = new CuaDriverAvailabilityPublisher({
+      authority: darwinAuthority(),
+      client: { async publish(report) { reports.push(report); } },
+    });
+    try {
+      // The safety contract does not require a particular error presentation
+      // for invalid ready observations, only that they cannot advance a fence.
+      await Promise.allSettled([Promise.resolve().then(() => publisher.publish({
+        lifecycle: "active", providerState: "ready", generation,
+      }))]);
+      await publisher.publish({ lifecycle: "included", providerState: "included", generation: 2 });
+      assert.equal(reports.length, 1);
+      assert.equal(reports[0].generation, 2);
+      await publisher.publish({ lifecycle: "included", providerState: "included", generation: 1 });
+      assert.equal(reports.length, 1,
+        "an invalid observation must not disable the subsequent legitimate generation fence");
+    } finally {
+      await publisher.close();
+    }
+  });
+}
+
+test("A34 publisher rejected non-ready snapshot cannot poison observation high water", async () => {
+  const reports = [];
+  const publisher = new CuaDriverAvailabilityPublisher({
+    authority: darwinAuthority(),
+    client: { async publish(report) { reports.push(report); } },
+  });
+  try {
+    await assert.rejects(publisher.publish({
+      lifecycle: "failed", providerState: "unknown", generation: 99,
+    }), /availability_state_invalid/);
+    await publisher.publish({ lifecycle: "included", providerState: "included", generation: 1 });
+    assert.equal(reports.length, 1);
+    assert.equal(reports[0].generation, 1);
+  } finally {
+    await publisher.close();
+  }
+});
+
+test("A34 publisher preserves same-generation sequence and recovery after a transport failure", async () => {
+  const reports = [];
+  const publisher = new CuaDriverAvailabilityPublisher({
+    authority: darwinAuthority(),
+    client: {
+      async publish(report) {
+        reports.push(report);
+        if (reports.length === 1) throw new Error("a34_transport_failure");
+      },
+    },
+  });
+  try {
+    await assert.rejects(publisher.publish({
+      lifecycle: "included", providerState: "included", generation: 2,
+    }), /a34_transport_failure/);
+    await publisher.publish({
+      lifecycle: "failed", providerState: "corrupt", generation: 2,
+    });
+    assert.deepEqual(reports.map(({ generation, sequence }) => ({ generation, sequence })), [
+      { generation: 2, sequence: 1 },
+      { generation: 2, sequence: 2 },
+    ]);
+  } finally {
+    await publisher.close();
+  }
+});
+
 test("availability report forbids ready and removes content-bearing reasons", () => {
   const authority = darwinAuthority();
   const report = createAvailabilityReport(authority, {

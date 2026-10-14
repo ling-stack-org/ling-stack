@@ -56,6 +56,7 @@ import { recordProviderInvocationFailureObservations } from "../providers/runtim
 import { resolveChannelResponseLanguage } from "./response-language.js";
 import { resolveChannelConversationSurface } from "./conversation-surface.js";
 import { preserveMarkdownLayout } from "./markdown-text.js";
+import { extractMarkdownCodeBlocks, parseRequestedFileContent, type FileRequestContentIssue } from "./file-request-content.js";
 import { extractFileTargetCandidate, resolveExecutableFileTarget } from "./target-resolver.js";
 import {
   appendChannelAssistantMessage,
@@ -181,6 +182,8 @@ interface SingleStepExecutableClarify {
 
 interface FileContentResolution {
   readonly content?: string;
+  readonly contentIssue?: FileRequestContentIssue;
+  readonly instructionText?: string;
   readonly objective?: string;
   readonly source: "current_message" | "attachment" | "recent_code_block" | "current_objective" | "recent_objective" | "none";
   readonly sourceMessageId?: string;
@@ -1268,9 +1271,43 @@ function detectSingleStepExecutableClarify(input: ChannelIntentSelectorInput): S
       technicalReason: targetResolution.reason,
     };
   }
-  if (targetResolution.status === "resolved" && fileAction === "file_create") {
+  if (targetResolution.status === "resolved") {
     const content = resolveFileContentForRequest(input, text, targetResolution.target);
-    if (!hasConcreteFileWorkInput(content) && requiresConcreteFileContent(text, targetResolution.source)) {
+    if (content.contentIssue) {
+      const responseLanguage = resolveChannelResponseLanguage({
+        store: input.store,
+        channel: input.channel,
+        sourceText: input.sourceMessage.body,
+      }).language;
+      return {
+        reasonCode: "missing_acceptance",
+        missingFields: ["content"],
+        userMessage: responseLanguage.startsWith("zh")
+          ? `请重新给出 ${targetResolution.target} 的完整文件内容：本次内容为空，或代码围栏与后续文本的边界不明确。尚未创建或修改文件，也不会改用历史内容。`
+          : `Provide the complete file content for ${targetResolution.target}: this payload is empty or its code-fence/trailing-text boundary is unclear. No file work has started, and previous content will not be substituted.`,
+        technicalReason: `Explicit current-message file content is unresolved: ${content.contentIssue}.`,
+      };
+    }
+    if (explicitRequestedParticipantIds(input).length > 1
+      && requestsFileContentVerification(fileRequestInstructionText(content, text))
+      && content.content
+      && !materializeFileRequestCommandIntent(content, text)
+      && !materializeFileContentVerificationCommand(targetResolution.target, content.content)) {
+      const responseLanguage = resolveChannelResponseLanguage({
+        store: input.store,
+        channel: input.channel,
+        sourceText: input.sourceMessage.body,
+      }).language;
+      return {
+        reasonCode: "missing_acceptance",
+        missingFields: ["acceptance_criteria"],
+        userMessage: responseLanguage.startsWith("zh")
+          ? `文件 ${targetResolution.target} 的逐字内容超过了精确验证命令的长度上限，尚未开始创建或修改。请缩小本次内容，或明确一个有界的验证命令。`
+          : `The exact content check for ${targetResolution.target} exceeds the command length limit. No file work has started. Reduce the payload or specify a bounded verification command.`,
+        technicalReason: `Exact verification of the original file content exceeds the 512-character command limit for ${targetResolution.target}.`,
+      };
+    }
+    if (fileAction === "file_create" && !hasConcreteFileWorkInput(content) && requiresConcreteFileContent(text, targetResolution.source)) {
       const responseLanguage = resolveChannelResponseLanguage({
         store: input.store,
         channel: input.channel,
@@ -1305,6 +1342,7 @@ function detectFileExecutableIntent(input: ChannelIntentSelectorInput, text: str
     return undefined;
   }
   const content = resolveFileContentForRequest(input, text, targetResolution.target);
+  if (content.contentIssue) return undefined;
   if (fileAction === "file_create" && !hasConcreteFileWorkInput(content) && requiresConcreteFileContent(text, targetResolution.source)) {
     return undefined;
   }
@@ -1406,7 +1444,7 @@ function buildFileExecutableIntent(
   resolvedContent?: FileContentResolution,
 ): SingleStepExecutableIntent {
   const contentResolution = resolvedContent ?? resolveFileContentForRequest(input, text, target);
-  const commandIntent = explicitlyRequestsCommandExecution(text) ? materializeCommandIntent(text) : undefined;
+  const commandIntent = materializeFileRequestCommandIntent(contentResolution, text);
   const requiredTools: readonly RunTool[] = commandIntent
     ? [fileAction === "file_edit" ? "edit" : "write", "bash"]
     : [fileAction === "file_edit" ? "edit" : "write"];
@@ -1459,11 +1497,22 @@ function commandAcceptanceLabel(intent: MaterializedCommandIntent): string {
     : `command using executable ${intent.policy.executable}`;
 }
 
+/** Literal payload bytes never supply command or verification authority. */
+function fileRequestInstructionText(content: FileContentResolution, fallbackText: string): string {
+  return normalizeWhitespace(content.instructionText ?? fallbackText);
+}
+
+function materializeFileRequestCommandIntent(content: FileContentResolution, fallbackText: string): MaterializedCommandIntent | undefined {
+  const instructionText = fileRequestInstructionText(content, fallbackText);
+  return explicitlyRequestsCommandExecution(instructionText) ? materializeCommandIntent(instructionText) : undefined;
+}
+
 function resolveFileContentForRequest(input: ChannelIntentSelectorInput, text: string, target: string): FileContentResolution {
-  const currentMessageContent = extractRequestedFileContent(text);
-  if (currentMessageContent) {
-    return { source: "current_message", content: currentMessageContent };
+  const currentMessageContent = parseRequestedFileContent(input.sourceMessage.body);
+  if (currentMessageContent.status === "literal") {
+    return { source: "current_message", content: currentMessageContent.content, instructionText: currentMessageContent.instructionText };
   }
+  if (currentMessageContent.status === "unresolved") return { source: "current_message", contentIssue: currentMessageContent.issue };
   const attachmentContent = extractMaterializedAttachmentContentForFileRequest(input, text);
   if (attachmentContent) {
     return { source: "attachment", content: attachmentContent };
@@ -1552,7 +1601,7 @@ function extractRecentThreadCodeBlockContent(input: ChannelIntentSelectorInput, 
     return {
       source: "recent_code_block",
       sourceMessageId: message.id,
-      content: selected.content.trim(),
+      content: selected.content,
     };
   }
   return undefined;
@@ -1586,22 +1635,6 @@ function extractRecentFileObjective(input: ChannelIntentSelectorInput): FileCont
     };
   }
   return undefined;
-}
-
-function extractMarkdownCodeBlocks(text: string): readonly { readonly language: string; readonly content: string }[] {
-  const blocks: Array<{ readonly language: string; readonly content: string }> = [];
-  const pattern = /```([a-z0-9_-]*)[^\n]*\n([\s\S]*?)```/giu;
-  for (const match of text.matchAll(pattern)) {
-    const content = match[2]?.trim();
-    if (!content) {
-      continue;
-    }
-    blocks.push({
-      language: (match[1] ?? "").trim().toLowerCase(),
-      content,
-    });
-  }
-  return blocks;
 }
 
 function codeBlockMatchesTarget(block: { readonly language: string; readonly content: string }, target: string): boolean {
@@ -1753,26 +1786,6 @@ function uniqueStrings(values: readonly string[]): readonly string[] {
     }
   }
   return unique;
-}
-
-function extractRequestedFileContent(text: string): string | undefined {
-  const match = /(?:内容是|内容为|写入|写成|改成|如下|content\s*(?:is|:)|with\s+content)\s*[:：]?\s*([\s\S]+)$/iu.exec(text);
-  const content = match?.[1]
-    ?.replace(/(?:，|,|；|;)\s*(?:然后|接着|再|and\s+then|then)\s*(?:由\s+[^，。；;!?！？]{0,40}?\s*)?(?:运行|执行|跑|读取|读一下|查看|验证|测试|检查|run|execute|read|inspect|verify|test|check)[\s\S]*$/iu, "")
-    // A multi-participant request may name the verifying participant directly
-    // (`；QA 执行命令…`) without a transitional word such as `然后`. That
-    // clause is workflow instructions, not literal file content. Keep the
-    // parser conservative: only trim a delimited suffix when a participant
-    // token is immediately followed by an execution/verification verb, so
-    // semicolons inside ordinary file content remain untouched.
-    ?.replace(/(?:，|,|；|;)\s*(?:由\s*)?(?:@?[\p{L}\p{N}_-]+)\s*(?:运行|执行|跑|读取|读一下|查看|验证|测试|检查|run|execute|read|inspect|verify|test|check)[\s\S]*$/iu, "")
-    // Participant instructions often include a short handoff clause before
-    // the verb (`QA 必须在 Engineer 完成后验证…`). Treat that bounded clause
-    // as workflow metadata too, while keeping the delimiter requirement so
-    // semicolons that belong to literal file content are preserved.
-    ?.replace(/(?:，|,|；|;)\s*(?:由\s*)?(?:@?[\p{L}\p{N}_-]+)\s*(?:(?:必须|需要|应当|应该|要|需).{0,40}?|must\s+|should\s+)?(?:在[^，。；;!?！？]{0,60}?(?:完成|写入|之后|后)\s*)?(?:运行|执行|跑|读取|读一下|查看|验证|测试|检查|run|execute|read|inspect|verify|test|check)[\s\S]*$/iu, "")
-    .trim();
-  return content && content.length > 0 ? content : undefined;
 }
 
 function extractMaterializedAttachmentContentForFileRequest(input: ChannelIntentSelectorInput, text: string): string | undefined {
@@ -2003,7 +2016,8 @@ function deriveMultiParticipantExecutionPlan(
   const operations = [...execution.operations];
   const fileOperation = operations.find((operation) => operation.kind === "file_create" || operation.kind === "file_edit");
   const text = normalizeWhitespace(input.sourceMessage.body);
-  const requestsVerification = /(读取|读一下|阅读|验证|检查|测试|验收|查看|read|verify|check|test|validate|inspect)/iu.test(text);
+  const content = fileOperation ? resolveFileContentForRequest(input, text, fileOperation.targetRef.label ?? "") : undefined;
+  const requestsVerification = requestsFileContentVerification(content ? fileRequestInstructionText(content, text) : text);
 
   // Prefer a host-materialized exact content check when the request contains
   // literal file content. Exit-code evidence from that exact command proves the
@@ -2012,7 +2026,7 @@ function deriveMultiParticipantExecutionPlan(
   if (fileOperation
     && requestsVerification
     && !operations.some((operation) => operation.kind === "run_command" || operation.kind === "open_local_target")) {
-    const expectedContent = resolveFileContentForRequest(input, text, fileOperation.targetRef.label ?? "").content;
+    const expectedContent = content?.content;
     const exactVerificationCommand = expectedContent
       ? materializeFileContentVerificationCommand(fileOperation.targetRef.label ?? "", expectedContent)
       : undefined;
@@ -2047,6 +2061,10 @@ function deriveMultiParticipantExecutionPlan(
   }
 
   return operations.length > 0 ? { operations } : undefined;
+}
+
+function requestsFileContentVerification(text: string): boolean {
+  return /(读取|读一下|阅读|验证|检查|测试|验收|查看|read|verify|check|test|validate|inspect)/iu.test(text);
 }
 
 function materializeFileContentVerificationCommand(target: string, expectedContent: string): string | undefined {
