@@ -11571,7 +11571,7 @@ test("channel link preview blocks localhost targets instead of fetching them", a
       url: "http://localhost:12345/private",
     });
     assert.equal(preview.linkPreview.status, "blocked");
-    assert.match(preview.linkPreview.errorMessage, /localhost/);
+    assert.equal(preview.linkPreview.errorMessage, "Public HTTP blocks local or private network targets.");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });

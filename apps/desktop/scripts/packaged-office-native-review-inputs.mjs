@@ -655,6 +655,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/channels/channel-context-inspect.ts",
   "packages/daemon/src/features/channels/channel-conversation-api.ts",
   "packages/daemon/src/features/channels/channel-intent-selector.ts",
+  "packages/daemon/src/features/channels/file-request-content.ts",
   "packages/daemon/src/features/channels/channel-mention-materializer.ts",
   "packages/daemon/src/features/channels/channel-message-router.ts",
   "packages/daemon/src/features/channels/channel-operation-bindings.ts",

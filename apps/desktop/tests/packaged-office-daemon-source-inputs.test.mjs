@@ -18,6 +18,7 @@ const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localiza
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
 const newAuthoredRuntimeLeaves = [
+  "packages/daemon/src/features/channels/file-request-content.ts",
   "packages/browser-host/src/descriptor-coordination.ts",
   "packages/daemon/src/features/browser-extension/native-broker-shutdown.ts",
   "packages/core/src/automation-recurrence.ts",
