@@ -500,3 +500,213 @@ function insertSegmentSummary(cwd, input) {
     database.close();
   }
 }
+
+const b007At = (tick) => new Date(Date.UTC(2026, 9, 15) + tick * 1_000).toISOString();
+
+/** Public producers own every summary/assignment; raw SQL only observes or injects a failure. */
+async function b007Fixture(t) {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-b007-summary-rebuild-"));
+  const preserve = process.env.LING_B007_KEEP_FIXTURES === "1";
+  if (preserve) t.diagnostic(`B-007 Core retained fixture root: ${cwd}`);
+  const store = createSqliteRunStore(cwd);
+  const database = new DatabaseSync(store.paths.databasePath);
+  t.after(async () => {
+    try { database.close(); }
+    finally {
+      try { store.close(); }
+      finally { if (!preserve) await rm(cwd, { recursive: true, force: true }); }
+    }
+  });
+  const channel = store.createChannel({ name: "B-007 rebuild", boundPath: cwd }, b007At(0));
+  const { thread } = store.resolveOrCreateConversationThread({ surfaceKind: "channel_root", channelId: channel.id,
+    title: "B-007 rebuild", objective: "Rebuild corrected facts without reviving invalidated summaries" }, b007At(0));
+  const turns = ["retained first fact", "moved second fact", "retained third fact", "retained tail fact"]
+    .map((body, index) => appendUserTurn(store, channel.id, thread.id, body, b007At(index + 1)));
+  assert.ok(turns.every((turn) => turn.contextSegmentId === turns[0].contextSegmentId));
+  return { cwd, store, database, channel, thread, turns, segmentId: turns[0].contextSegmentId, nextTick: 10 };
+}
+
+function b007Input(f, turns, expectedActiveSummaryId = null, extra = {}) {
+  return { ...summaryCommitInput(f.store, f.thread.id, f.segmentId, turns, expectedActiveSummaryId), ...extra };
+}
+
+function b007Commit(f, turns, expectedActiveSummaryId = null, extra = {}) {
+  const result = f.store.commitConversationContextSummary(b007Input(f, turns, expectedActiveSummaryId, extra), b007At(f.nextTick++));
+  assert.equal(result.status, "committed", JSON.stringify(result));
+  return result.summary;
+}
+
+function b007Move(f, turn, target) {
+  const previous = f.store.getEffectiveTurnContextAssignment(turn.turnId);
+  assert.ok(previous);
+  const result = f.store.applyTurnContextAssignment({ turnId: turn.turnId, expectedPreviousRevision: previous.revision,
+    target, status: "committed", decisionSource: "user", evidenceRefs: [{ type: "conversation_item", id: turn.item.id }],
+    policyVersion: "continuity-v2-user-correction-v1" }, b007At(f.nextTick++));
+  assert.equal(result.assignment.revision, previous.revision + 1);
+  return result;
+}
+
+function b007History(f) {
+  return f.store.listConversationContextSummaries({ threadId: f.thread.id,
+    statuses: ["active", "superseded", "invalidated"], limit: 200 }).slice().sort((left, right) => left.version - right.version);
+}
+
+function b007Snapshot(f) {
+  return Object.fromEntries(f.database.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name").all()
+    .map(({ name }) => [name, f.database.prepare(`SELECT * FROM "${name.replaceAll('"', '""')}"`).all()
+      .sort((left, right) => JSON.stringify(left).localeCompare(JSON.stringify(right)))]));
+}
+
+function b007InsertFault(f) {
+  const threadId = f.thread.id.replaceAll("'", "''");
+  f.database.exec(`CREATE TRIGGER b007_summary_insert_fault BEFORE INSERT ON conversation_context_summaries
+    WHEN NEW.thread_id='${threadId}' BEGIN SELECT RAISE(ABORT, 'B007_SUMMARY_INSERT_FAULT'); END`);
+}
+
+test("B-007 public correction rebuilds an invalidated v1 with fresh fences as v2", async (t) => {
+  const f = await b007Fixture(t);
+  const initial = b007Commit(f, f.turns.slice(0, 2));
+  assert.equal(initial.version, 1);
+  const moved = b007Move(f, f.turns[1], { kind: "new", state: "active", label: "Corrected second topic" });
+  assert.deepEqual(moved.invalidatedSummaryIds, [initial.id]);
+  const invalidated = f.store.getConversationContextSummary(initial.id);
+  assert.equal(invalidated.status, "invalidated");
+  assert.deepEqual(f.store.listConversationContextSummaries({ threadId: f.thread.id, segmentId: f.segmentId }), []);
+  const fresh = b007Input(f, [f.turns[0]]);
+  assert.equal(fresh.expectedActiveSummaryId, null);
+  assert.equal(fresh.sourceFence[0].assignmentId, f.store.getEffectiveTurnContextAssignment(f.turns[0].turnId).id);
+  const result = f.store.commitConversationContextSummary(fresh, b007At(f.nextTick++));
+  assert.equal(result.status, "committed", JSON.stringify(result));
+  assert.equal(result.summary.version, 2);
+  assert.equal(result.summary.supersedesSummaryId, undefined);
+  assert.deepEqual(result.summary.sourceRefs, [{ type: "conversation_item", id: f.turns[0].item.id }]);
+  assert.deepEqual(f.store.getConversationContextSummary(initial.id), invalidated);
+  assert.deepEqual(b007History(f).map(({ version, status }) => [version, status]), [[1, "invalidated"], [2, "active"]]);
+  assert.equal(f.store.getConversationItem(f.turns[1].item.id).payload.body, "moved second fact");
+});
+
+test("B-007 moving a covered turn back invalidates v2 and rebuilds its original segment as v3", async (t) => {
+  const f = await b007Fixture(t);
+  const first = b007Commit(f, f.turns.slice(0, 2));
+  b007Move(f, f.turns[1], { kind: "new", state: "active" });
+  const second = b007Commit(f, [f.turns[0]]);
+  assert.equal(second.version, 2);
+  const movedBack = b007Move(f, f.turns[1], { kind: "existing", segmentId: f.segmentId });
+  assert.deepEqual(movedBack.invalidatedSummaryIds, [second.id]);
+  const third = b007Commit(f, f.turns.slice(0, 2));
+  assert.equal(third.version, 3);
+  assert.equal(third.supersedesSummaryId, undefined);
+  assert.equal(f.store.getEffectiveTurnContextAssignment(f.turns[1].turnId).segmentId, f.segmentId);
+  assert.deepEqual(b007History(f).map(({ version, status }) => [version, status]),
+    [[1, "invalidated"], [2, "invalidated"], [3, "active"]]);
+  assert.equal(f.store.getConversationContextSummary(first.id).status, "invalidated");
+});
+
+test("B-007 rebuilding after a higher public history chooses max version across superseded and invalidated rows", async (t) => {
+  const f = await b007Fixture(t);
+  const first = b007Commit(f, f.turns.slice(0, 1));
+  const second = b007Commit(f, f.turns.slice(0, 2), first.id);
+  const third = b007Commit(f, f.turns.slice(0, 3), second.id);
+  assert.deepEqual(b007History(f).map(({ version, status }) => [version, status]),
+    [[1, "superseded"], [2, "superseded"], [3, "active"]]);
+  assert.deepEqual(b007Move(f, f.turns[1], { kind: "new", state: "active" }).invalidatedSummaryIds, [third.id]);
+  const fourth = b007Commit(f, [f.turns[0], f.turns[2]]);
+  assert.equal(fourth.version, 4);
+  assert.equal(fourth.coveredFromSequence, f.turns[0].item.sequence);
+  assert.equal(fourth.coveredThroughSequence, f.turns[2].item.sequence);
+  assert.deepEqual(b007History(f).map(({ version, status }) => [version, status]),
+    [[1, "superseded"], [2, "superseded"], [3, "invalidated"], [4, "active"]]);
+});
+
+for (const scope of ["thread_core", "work"]) {
+  test(`B-007 ${scope} and segment summaries share the durable non-null unique version partition`, async (t) => {
+    const f = await b007Fixture(t);
+    const segment = b007Commit(f, f.turns.slice(0, 2));
+    const otherScope = b007Commit(f, f.turns.slice(0, 2), null, { scope });
+    assert.equal(otherScope.version, 2);
+    assert.equal(otherScope.segmentId, segment.segmentId);
+    assert.equal(otherScope.supersedesSummaryId, undefined);
+    const replacement = b007Commit(f, f.turns.slice(0, 3), segment.id);
+    assert.equal(replacement.version, 3, "the lower active segment version cannot hide a higher other-scope version");
+    assert.equal(replacement.supersedesSummaryId, segment.id);
+    assert.equal(f.store.getConversationContextSummary(otherScope.id).status, "active");
+    assert.deepEqual(b007History(f).map(({ version, status }) => [version, status]),
+      [[1, "superseded"], [2, "active"], [3, "active"]]);
+  });
+}
+
+test("B-007 null segment history remains monotonic across thread_core and work scopes", async (t) => {
+  const f = await b007Fixture(t);
+  const first = b007Commit(f, f.turns.slice(0, 2), null, { scope: "thread_core", segmentId: undefined });
+  const second = b007Commit(f, f.turns.slice(0, 2), null, { scope: "work", segmentId: undefined });
+  const third = b007Commit(f, f.turns.slice(0, 3), first.id, { scope: "thread_core", segmentId: undefined });
+  assert.equal(first.segmentId, undefined);
+  assert.equal(second.segmentId, undefined);
+  assert.deepEqual([first.version, second.version, third.version], [1, 2, 3]);
+  assert.equal(third.supersedesSummaryId, first.id);
+  assert.equal(f.store.getConversationContextSummary(second.id).status, "active");
+});
+
+test("B-007 two Store generation results cannot both install after invalidation", async (t) => {
+  const f = await b007Fixture(t);
+  const initial = b007Commit(f, f.turns.slice(0, 2));
+  b007Move(f, f.turns[1], { kind: "new", state: "active" });
+  const other = createSqliteRunStore(f.cwd);
+  try {
+    const firstPlan = b007Input(f, [f.turns[0]]);
+    const latePlan = summaryCommitInput(other, f.thread.id, f.segmentId, [f.turns[0]]);
+    assert.equal(firstPlan.expectedActiveSummaryId, null);
+    assert.equal(latePlan.expectedActiveSummaryId, null);
+    const winner = f.store.commitConversationContextSummary(firstPlan, b007At(f.nextTick++));
+    assert.equal(winner.status, "committed");
+    assert.equal(winner.summary.version, 2);
+    const beforeLate = b007Snapshot(f);
+    assert.deepEqual(other.commitConversationContextSummary(latePlan, b007At(f.nextTick++)),
+      { status: "discarded_stale", reason: "active_summary_changed" });
+    assert.deepEqual(b007Snapshot(f), beforeLate);
+    assert.equal(other.getConversationContextSummary(initial.id).status, "invalidated");
+    assert.deepEqual(b007History(f).map(({ version }) => version), [1, 2]);
+  } finally { other.close(); }
+});
+
+test("B-007 fresh rebuild keeps assignment fencing when a second Store corrects its source during generation", async (t) => {
+  const f = await b007Fixture(t);
+  b007Commit(f, f.turns.slice(0, 2));
+  b007Move(f, f.turns[1], { kind: "new", state: "active" });
+  const pending = b007Input(f, [f.turns[0]]);
+  const other = createSqliteRunStore(f.cwd);
+  try {
+    const assignment = other.getEffectiveTurnContextAssignment(f.turns[0].turnId);
+    other.applyTurnContextAssignment({ turnId: f.turns[0].turnId, expectedPreviousRevision: assignment.revision,
+      target: { kind: "existing", segmentId: f.segmentId }, status: "committed", decisionSource: "user",
+      evidenceRefs: [{ type: "turn", id: f.turns[0].turnId }], policyVersion: "continuity-v2-user-correction-v1" }, b007At(f.nextTick++));
+    const beforeLate = b007Snapshot(f);
+    assert.deepEqual(f.store.commitConversationContextSummary(pending, b007At(f.nextTick++)),
+      { status: "discarded_stale", reason: "assignments_changed" });
+    assert.deepEqual(b007Snapshot(f), beforeLate);
+    assert.deepEqual(b007History(f).map(({ version, status }) => [version, status]), [[1, "invalidated"]]);
+  } finally { other.close(); }
+});
+
+for (const mode of ["invalidated rebuild", "active replacement"]) {
+  test(`B-007 ${mode} INSERT fault rolls back the full transaction and permits one clean retry`, async (t) => {
+    const f = await b007Fixture(t);
+    const initial = b007Commit(f, f.turns.slice(0, 2));
+    if (mode === "invalidated rebuild") b007Move(f, f.turns[1], { kind: "new", state: "active" });
+    const input = mode === "invalidated rebuild" ? b007Input(f, [f.turns[0]]) : b007Input(f, f.turns.slice(0, 3), initial.id);
+    const before = b007Snapshot(f);
+    b007InsertFault(f);
+    try {
+      assert.throws(() => f.store.commitConversationContextSummary(input, b007At(f.nextTick++)), /B007_SUMMARY_INSERT_FAULT/u);
+      assert.deepEqual(b007Snapshot(f), before, "the separate connection cannot observe a partial replacement or new row");
+      assert.equal(f.store.getConversationContextSummary(initial.id).status,
+        mode === "invalidated rebuild" ? "invalidated" : "active");
+    } finally { f.database.exec("DROP TRIGGER b007_summary_insert_fault"); }
+    const retried = f.store.commitConversationContextSummary(input, b007At(f.nextTick++));
+    assert.equal(retried.status, "committed");
+    assert.equal(retried.summary.version, 2);
+    assert.equal(b007History(f).length, 2);
+    assert.equal(f.store.getConversationContextSummary(initial.id).status,
+      mode === "invalidated rebuild" ? "invalidated" : "superseded");
+  });
+}

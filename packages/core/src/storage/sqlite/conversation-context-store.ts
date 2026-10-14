@@ -279,13 +279,20 @@ export class SqliteConversationContextStore {
           throw new Error(`Replacement context summary must reference its predecessor: ${active.id}`);
         }
       }
+      // The durable version partition spans every scope and status, including
+      // invalidated history. Allocate under the existing write transaction.
+      const versionRow = this.context.database.prepare(`
+        SELECT COALESCE(MAX(version), 0) + 1 AS version
+        FROM conversation_context_summaries
+        WHERE workspace_id = ? AND thread_id = ? AND segment_id IS ?
+      `).get(DEFAULT_WORKSPACE_ID, input.threadId, input.segmentId ?? null) as Record<string, SQLOutputValue>;
       const summary: ConversationContextSummary = {
         id: `context_summary_${randomUUID()}`,
         threadId: input.threadId,
         ...(input.segmentId ? { segmentId: input.segmentId } : {}),
         scope: input.scope,
         status: "active",
-        version: (active?.version ?? 0) + 1,
+        version: readNumber(versionRow, "version"),
         coveredFromSequence: input.coveredFromSequence,
         coveredThroughSequence: input.coveredThroughSequence,
         ...(input.objective?.trim() ? { objective: input.objective.trim() } : {}),
