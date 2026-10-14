@@ -329,7 +329,6 @@ function createStartOrchestratedRun(
         options.mcpBroker,
         {
           onRunReady: (runId) => {
-            store.updateChannelWorkflowStep(workflowStep.id, { taskId, runId }, new Date().toISOString());
             resolveOnce(runId);
           },
           afterRunTerminal: async (terminalRun) => {

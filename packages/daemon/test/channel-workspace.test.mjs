@@ -9488,7 +9488,7 @@ test("manual workflow step start rejects a result after source context changes",
 
 test("queued workflow runs keep private role memory out of durable snapshots", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-queued-workflow-memory-isolation-"));
-  const runner = new DelayedRunner();
+  const runner = new AbortableDelayedRunner();
   const stores = new Map();
   const daemon = await startDaemonForTest(runner, {
     storeFactory: (storeCwd) => {
@@ -9511,6 +9511,8 @@ test("queued workflow runs keep private role memory out of durable snapshots", a
       providerPresetId: provider.id,
     });
     await waitForCondition(() => runner.runs.length === 1, "blocking channel reply start");
+    const blockingRun = store.listRuns({ limit: 20 }).find((run) => run.status === "running");
+    assert.ok(blockingRun);
 
     const privateMemory = store.createMemoryObject({
       workspaceId: channel.workspaceId,
@@ -9572,9 +9574,10 @@ test("queued workflow runs keep private role memory out of durable snapshots", a
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ mode: "create_and_run_task" }),
+      signal: AbortSignal.timeout(10_000),
     });
-    assert.equal(response.ok, true);
-    await response.text();
+    const queuedResponse = await response.text();
+    assert.equal(response.ok, true, queuedResponse);
 
     const queuedRun = store.listRuns({ status: "queued", limit: 20 })
       .find((run) => run.workflowStepId === step.id);
@@ -9597,7 +9600,7 @@ test("queued workflow runs keep private role memory out of durable snapshots", a
     );
 
     runner.resolve("The blocking channel reply is complete.");
-    await waitForCondition(() => runner.completed, "blocking channel reply completion");
+    await waitForCondition(() => store.getRun(blockingRun.id).status === "succeeded", "blocking channel reply completion");
   } finally {
     await daemon.close();
     await rm(cwd, { recursive: true, force: true });
@@ -9884,7 +9887,7 @@ test("autoplan-lite workflow compiles durable steps and orchestrates them throug
 
     await waitForCondition(() => runner.runs.length === 4, "autoplan-lite planning runner sequence");
     const implementationTick = await approveWorkflowStepGate(daemon.url, cwd, compiled.workflow.id, "implementation");
-    assert.equal(implementationTick.status, "started");
+    assert.equal(implementationTick.status, "started", JSON.stringify(implementationTick));
     assert.equal(implementationTick.workflowStep.metadata.templateStepId, "implementation");
 
     await waitForCondition(() => runner.runs.length === 6, "autoplan-lite implementation and review sequence");
@@ -10233,7 +10236,7 @@ test("workflow implementation failure follows policy and fails the workflow", as
     await postJson(`${daemon.url}/workflows/${encodeURIComponent(compiled.workflow.id)}/orchestrate?cwd=${encodeURIComponent(cwd)}`, {});
     await waitForCondition(() => runner.runs.length === 4, "planning and review steps before implementation failure");
     const implementationTick = await approveWorkflowStepGate(daemon.url, cwd, compiled.workflow.id, "implementation");
-    assert.equal(implementationTick.status, "started");
+    assert.equal(implementationTick.status, "started", JSON.stringify(implementationTick));
     const failedStep = await waitForWorkflowTemplateStepStatus(daemon.url, cwd, compiled.workflow.id, "implementation", "failed");
     assert.equal(failedStep.metadata.policy.onRunFailed, "fail_workflow");
     assert.match(failedStep.blocker, /Implementation failed/);

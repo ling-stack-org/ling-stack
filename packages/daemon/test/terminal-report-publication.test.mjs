@@ -19,6 +19,7 @@ import {
 } from "../dist/features/channels/terminal-report-publisher.js";
 import { evaluateWorkflowCompletion } from "../dist/features/channels/workflow-completion-gate.js";
 import { materializeWorkflowDelegatedStepRequirements } from "../dist/features/channels/workflow-step-requirement.js";
+import { preflightWorkflowParticipantProvider } from "../dist/features/channels/workflow-participant-provider.js";
 import { reconcileWorkflowFromCanonicalState } from "../dist/features/channels/workflow-reconciliation.js";
 import { createTerminalWorkflowFixture } from "./terminal-report-coordinator-fixture.mjs";
 
@@ -359,6 +360,19 @@ async function createManifestPublicationFixture(suffix, outcome, options = {}) {
   const sourceItem = store.getConversationItem(sourceMessage.id);
   const sourceTurn = store.getLingTurn(sourceItem.turnId);
   store.transitionLingTurnStatus({ turnId: sourceTurn.id, expectedStatus: "open", event: "start", actor: "system", now: "2026-08-12T20:00:01.000Z" });
+  // Freeze the real participant binding before begin captures the authority basis.
+  // Preflight only validates the fixture request; it never starts a provider call.
+  store.updateWorkspaceSettings({ defaultProviderPresetId: "provider_workspace" }, now);
+  const teammate = store.getAiTeammate("teammate_builtin_architect");
+  assert.ok(teammate);
+  const provider = preflightWorkflowParticipantProvider({ store, channel, teammate, cwd, requiredTools: [],
+    validateRunRequest(request) {
+      assert.equal(request.providerPresetId, "provider_workspace");
+      assert.equal(request.teammateId, teammate.id);
+      assert.deepEqual(request.tools, []);
+    } });
+  assert.equal(provider.kind, "ready", JSON.stringify(provider));
+  const providerBinding = provider.binding;
   const participantManifest = createRequiredParticipantManifestV1([{
     participantId: "teammate_builtin_architect",
     role: "architect",
@@ -384,7 +398,8 @@ async function createManifestPublicationFixture(suffix, outcome, options = {}) {
     id: `graph_publication_${suffix}`,
     name: "Atomic publication",
     entryNodeId: "synthesis",
-    nodes: [{ id: "synthesis", kind: "step", name: "Synthesis", prompt: "Synthesize", teammateId: "teammate_builtin_architect" }],
+    nodes: [{ id: "synthesis", kind: "step", name: "Synthesis", prompt: "Synthesize", teammateId: "teammate_builtin_architect",
+      providerPresetId: providerBinding.providerPresetId, providerBinding }],
     edges: [],
     termination: { success: "all_required_succeeded", onFailedRequiredNode: "block_for_user", onApprovalDenied: "block_for_user" },
   };
@@ -412,11 +427,25 @@ async function createManifestPublicationFixture(suffix, outcome, options = {}) {
     prompt: "Synthesize",
     toParticipantId: "teammate_builtin_architect",
     toParticipantLabel: "Architect",
-    status: "running",
-    metadata: { graphId: graph.id, graphNodeId: "synthesis" },
+    status: "queued",
+    metadata: { graphId: graph.id, graphNodeId: "synthesis", providerPresetId: providerBinding.providerPresetId, providerBinding,
+      // Policy is semantic start authority and must not be mutated after ready.
+      ...(outcome === "failed" || outcome === "cancelled" ? { policy: {
+        onRunFailed: "fail_workflow", onRunCancelled: outcome === "cancelled" ? "cancel_workflow" : "block_for_user",
+        onApprovalDenied: "block_for_user", retryable: false,
+      } } : {}) },
   }, "2026-08-12T20:00:03.000Z");
   [step] = materializeWorkflowDelegatedStepRequirements({ store, workflow, manifest: participantManifest, now: "2026-08-12T20:00:03.500Z" });
-  const task = store.createTask({ channelId: channel.id, title: "Synthesis", prompt: "Synthesize", assigneeTeammateId: "teammate_builtin_architect" }, "2026-08-12T20:00:04.000Z");
+  const startAt = "2026-08-12T20:00:04.000Z";
+  const lease = store.acquireResourceLease({ workspaceId: channel.workspaceId, resourceType: "workflow_step", resourceKey: step.id,
+    ownerType: "workflow_step", ownerId: step.id, acquiredAt: startAt, expiresAt: "2026-08-12T21:00:04.000Z" });
+  assert.ok(lease);
+  const started = store.beginChannelWorkflowStepStart({ workflowStepId: step.id,
+    expected: { status: step.status, taskId: step.taskId, runId: step.runId, updatedAt: step.updatedAt }, leaseId: lease.id,
+    task: { channelId: channel.id, title: "Synthesis", prompt: "Synthesize", assigneeTeammateId: teammate.id }, now: startAt });
+  assert.equal(started.status, "begun", JSON.stringify(started));
+  const task = started.task;
+  assert.equal(store.transitionTaskStatus({ taskId: task.id, expectedStatus: "todo", event: "claim", actor: "system", now: startAt }).ok, true);
   const run = store.createRun({
     id: `run_publication_${suffix}`,
     cwd,
@@ -424,17 +453,33 @@ async function createManifestPublicationFixture(suffix, outcome, options = {}) {
     channelId: channel.id,
     teammateId: "teammate_builtin_architect",
     workflowStepId: step.id,
+    providerPresetId: providerBinding.providerPresetId,
     providerName: "test-provider",
     providerModel: "test-model",
     taskSnapshot: { id: task.id, title: task.title },
     providerSnapshot: { provider: "test-provider", model: "test-model" },
-    requestSnapshot: { cwd },
-    createdAt: "2026-08-12T20:00:04.000Z",
+    requestSnapshot: { cwd, providerBinding, delegatedRequirement: step.metadata.delegatedRequirement },
+    createdAt: startAt,
   });
-  store.markRunStarted(run.id, "2026-08-12T20:00:04.000Z");
+  const unit = store.createWorkUnit({ id: `work_unit_publication_${suffix}`, workspaceId: channel.workspaceId, kind: "task_run",
+    ownerType: "run", ownerId: run.id, channelId: channel.id, taskId: task.id, teammateId: teammate.id,
+    runnerId: "pi", effectiveRunnerId: "pi", idempotencyKey: `terminal-publication-unit:${suffix}`,
+    createdByActor: "system", request: { workflowStepId: step.id }, linkedRunId: run.id, now: startAt });
+  const attempt = store.createWorkUnitAttempt({ id: `attempt_publication_${suffix}`, workUnitId: unit.id, attemptNumber: 1,
+    runtimeInstanceId: `terminal-publication-runtime:${suffix}`, runnerId: "pi", effectiveRunnerId: "pi", now: startAt });
+  assert.equal(store.transitionWorkUnitStatus({ workUnitId: unit.id, expectedStatus: "queued", event: "claim", actor: "system",
+    activeAttemptId: attempt.id, now: startAt }).ok, true);
+  assert.equal(store.transitionWorkUnitStatus({ workUnitId: unit.id, expectedStatus: "claimed", event: "runner_started", actor: "runner", now: startAt }).ok, true);
+  store.linkRunToWorkUnit(run.id, unit.id, startAt);
+  assert.equal(store.getTask(task.id).currentRunId, undefined, "only ready may publish the Task Run link");
+  assert.deepEqual(store.commitChannelWorkflowStepRunReady({ workflowStepId: step.id, owner: started.owner, runId: run.id,
+    now: "2026-08-12T20:00:05.000Z" }), { status: "linked" });
+  assert.equal(store.getTask(task.id).currentRunId, run.id);
+  assert.equal(store.getChannelWorkflowStep(step.id).metadata.startOwner.phase, "linked");
+  store.markRunStarted(run.id, startAt);
   store.appendEvent(run.id, "run_created", {
-    attemptId: `attempt_publication_${suffix}`,
-    workUnitId: `work_unit_publication_${suffix}`,
+    attemptId: attempt.id,
+    workUnitId: unit.id,
   });
   store.appendEvent(run.id, "assistant_text_delta", { text: "Synthesis complete." });
   if (options.recoveredReadFailure) {
@@ -449,21 +494,12 @@ async function createManifestPublicationFixture(suffix, outcome, options = {}) {
           : "# Actual README content" }] } });
     }
   }
-  store.updateChannelWorkflowStep(step.id, { taskId: task.id, runId: run.id }, "2026-08-12T20:00:05.000Z");
   if (outcome === "succeeded") {
     store.markRunSucceeded(run.id, "2026-08-12T20:00:06.000Z");
   } else if (outcome === "cancelled") {
-    store.updateChannelWorkflowStep(step.id, {
-      metadata: { ...store.getChannelWorkflowStep(step.id).metadata, policy: { onRunFailed: "fail_workflow", onRunCancelled: "cancel_workflow", onApprovalDenied: "block_for_user", retryable: false } },
-    }, "2026-08-12T20:00:05.500Z");
     store.markRunCancelled(run.id, "2026-08-12T20:00:06.000Z");
   } else {
     store.markRunFailed(run.id, "2026-08-12T20:00:06.000Z", `${outcome} fixture`);
-    if (outcome === "failed") {
-      store.updateChannelWorkflowStep(step.id, {
-        metadata: { ...store.getChannelWorkflowStep(step.id).metadata, policy: { onRunFailed: "fail_workflow", onRunCancelled: "block_for_user", onApprovalDenied: "block_for_user", retryable: false } },
-      }, "2026-08-12T20:00:05.500Z");
-    }
   }
   reconcileWorkflowFromCanonicalState({ store, workflowId: workflow.id, cause: "run_terminal", now: "2026-08-12T20:00:07.000Z" });
   workflow = store.getChannelWorkflow(workflow.id);

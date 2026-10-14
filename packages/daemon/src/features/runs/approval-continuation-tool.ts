@@ -7,6 +7,7 @@ import {
   type RunStore,
   type WorkUnit,
   type WorkUnitAttempt,
+  type WorkflowStepStartOwnerV1,
 } from "@ling-stack/core";
 import type {
   PiRunnerApprovedToolContinuation,
@@ -22,6 +23,7 @@ import {
   harnessToolBrokerModeForRun,
 } from "../harness/tool-execution/broker.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
+import { assertWorkflowRunAdmission } from "./workflow-step-start-admission.js";
 
 /**
  * Execute an approved Host command at most once, or reuse its durable result
@@ -38,7 +40,9 @@ export async function prepareApprovedToolContinuation(input: {
   readonly signal: AbortSignal;
   readonly extraSecrets?: readonly (string | undefined)[];
   readonly shellSnapshotEnabled?: boolean;
+  readonly workflowStartOwner?: WorkflowStepStartOwnerV1;
 }): Promise<PiRunnerApprovedToolContinuation> {
+  assertWorkflowRunAdmission(input.store, input.run, input.workflowStartOwner, input.signal);
   const approval = input.store.getApprovalRequest(input.approvalId);
   const checkpoint = input.store.getApprovalCheckpointForApproval(input.approvalId);
   const basis = checkpoint?.resumeBasis;
@@ -113,6 +117,7 @@ export async function prepareApprovedToolContinuation(input: {
       resumedFromApprovalId: approval.id,
       attemptId: input.attempt.id,
     } as RunEventDataByType["tool_start"]);
+    assertWorkflowRunAdmission(input.store, input.run, input.workflowStartOwner, input.signal);
     result = await executeHarnessedBashTool({
       mode: harnessToolBrokerModeForRun(input.run),
       restrictedCommandRuntime,
@@ -143,6 +148,7 @@ export async function prepareApprovedToolContinuation(input: {
     result = completed.result;
   }
 
+  assertWorkflowRunAdmission(input.store, input.run, input.workflowStartOwner, input.signal);
   return {
     schemaVersion: 1,
     kind: "approved_tool_result",

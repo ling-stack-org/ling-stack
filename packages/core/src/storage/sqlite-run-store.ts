@@ -704,6 +704,7 @@ import { SqliteConversationContextSummaryStore } from "./sqlite/conversation-con
 import { SqliteChannelProtocolStore } from "./sqlite/channel-protocol-store.js";
 import { SqliteChannelPlaybookStore } from "./sqlite/channel-playbook-store.js";
 import { SqliteChannelWorkflowStore } from "./sqlite/channel-workflow-store.js";
+import { SqliteChannelWorkflowStartStore } from "./sqlite/channel-workflow-start-store.js";
 import { SqliteChannelTeamEvidenceStore } from "./sqlite/channel-team-evidence-store.js";
 import { SqliteChannelTeamLifecycleStore } from "./sqlite/channel-team-lifecycle-store.js";
 import { SqliteChannelTeamPatternStore } from "./sqlite/channel-team-pattern-store.js";
@@ -831,6 +832,7 @@ export class SqliteRunStore implements RunStore {
   private readonly channelProtocols: SqliteChannelProtocolStore;
   private readonly channelPlaybooks: SqliteChannelPlaybookStore;
   private readonly channelWorkflows: SqliteChannelWorkflowStore;
+  private readonly channelWorkflowStarts: SqliteChannelWorkflowStartStore;
   private readonly channelTeamEvidence: SqliteChannelTeamEvidenceStore;
   private readonly channelTeamLifecycle: SqliteChannelTeamLifecycleStore;
   private readonly channelTeamPatterns: SqliteChannelTeamPatternStore;
@@ -1105,6 +1107,8 @@ export class SqliteRunStore implements RunStore {
       },
     );
     this.runtimeRecovery = new SqliteRuntimeRecoveryCoordinator({
+      workflowStepStartReadStore: this,
+      settleChannelWorkflowStepStartFailure: (input) => this.settleChannelWorkflowStepStartFailure(input),
       expireResourceLeases: (now) => this.expireResourceLeases(now),
       listRecoverableRunIds: () => this.runSessions.listRecoverableRunIds(),
       hasTerminalRunEvent: (runId) => this.runEvents.hasTerminalEvent(runId),
@@ -1310,6 +1314,8 @@ export class SqliteRunStore implements RunStore {
         recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
         releaseResourceLeasesForWorkflowStep: (workflowStepId, releasedAt) =>
           this.releaseResourceLeasesForOwner("workflow_step", workflowStepId, releasedAt),
+        releaseResourceLease: (id, ownerType, ownerId, now) => this.releaseResourceLease(id, ownerType, ownerId, now),
+        workflowStepStartReadStore: this,
         getChannelIntentDecision: (id) => this.getChannelIntentDecision(id),
         getRun: (id) => this.getRun(id),
         listEvents: (runId, options) => this.listEvents(runId, options),
@@ -1319,6 +1325,7 @@ export class SqliteRunStore implements RunStore {
         listArtifacts: (runId) => this.listArtifacts(runId),
       },
     );
+    this.channelWorkflowStarts = new SqliteChannelWorkflowStartStore({ database: this.database }, this);
     this.terminalReportPublication = new SqliteTerminalReportPublicationStore(
       { database: this.database },
       {
@@ -4467,6 +4474,22 @@ export class SqliteRunStore implements RunStore {
 
   commitChannelWorkflowStepFinalization(input: Parameters<RunStore["commitChannelWorkflowStepFinalization"]>[0]) {
     return this.channelWorkflows.commitChannelWorkflowStepFinalization(input);
+  }
+
+  beginChannelWorkflowStepStart(input: Parameters<RunStore["beginChannelWorkflowStepStart"]>[0]) {
+    return this.channelWorkflowStarts.beginChannelWorkflowStepStart(input);
+  }
+  commitChannelWorkflowStepRunReady(input: Parameters<RunStore["commitChannelWorkflowStepRunReady"]>[0]) {
+    return this.channelWorkflowStarts.commitChannelWorkflowStepRunReady(input);
+  }
+  settleChannelWorkflowStepStartFailure(input: Parameters<RunStore["settleChannelWorkflowStepStartFailure"]>[0]) {
+    return this.channelWorkflowStarts.settleChannelWorkflowStepStartFailure(input);
+  }
+  commitChannelWorkflowStepPostApproval(input: Parameters<RunStore["commitChannelWorkflowStepPostApproval"]>[0]) {
+    return this.channelWorkflowStarts.commitChannelWorkflowStepPostApproval(input);
+  }
+  commitChannelWorkflowStepPostApprovalResolved(input: Parameters<RunStore["commitChannelWorkflowStepPostApprovalResolved"]>[0]) {
+    return this.channelWorkflowStarts.commitChannelWorkflowStepPostApprovalResolved(input);
   }
 
   createChannelWorkflowStep(input: CreateChannelWorkflowStepInput, now: string): ChannelWorkflowStep {

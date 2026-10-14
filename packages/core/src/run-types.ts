@@ -690,6 +690,12 @@ export interface ListLingTurnsOptions {
   readonly threadId: string;
   readonly limit?: number;
   readonly beforeUpdatedAt?: string;
+  /** Exclusive (selected timestamp, binary id) seek within one thread/read snapshot. */
+  readonly beforeTurnId?: string;
+  /** Defaults to updatedAt; creation order is used for budgeted historical folds. */
+  readonly orderBy?: "updatedAt" | "createdAt";
+  /** Strict creation-time scope, independent of the exclusive page cursor. */
+  readonly createdBefore?: string;
 }
 
 export interface LinkRunToLingTurnInput {
@@ -2316,6 +2322,8 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   }): TransitionResult<ChannelWorkflow["status"]>;
   commitChannelWorkflowStepFinalization(input: {
     readonly workflowStepId: string;
+    readonly expectedTaskId?: string;
+    readonly expectedStartOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
     readonly expectedStatus: "running" | "waiting_for_approval";
     readonly expectedUpdatedAt: string;
     readonly expectedRun:
@@ -2342,12 +2350,18 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
     readonly idempotencyKey: string;
     readonly now: string;
   }): TransitionResult<ChannelWorkflowStep["status"]>;
+  beginChannelWorkflowStepStart(input: import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartInput): import("./workflow-step-start-owner.js").BeginChannelWorkflowStepStartResult;
+  commitChannelWorkflowStepRunReady(input: import("./workflow-step-start-owner.js").WorkflowStepStartCommitInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
+  settleChannelWorkflowStepStartFailure(input: import("./workflow-step-start-owner.js").WorkflowStepStartFailureInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
+  commitChannelWorkflowStepPostApproval(input: import("./workflow-step-start-owner.js").WorkflowStepPostApprovalInput): import("./workflow-step-start-owner.js").WorkflowStepPostApprovalResult;
+  commitChannelWorkflowStepPostApprovalResolved(input: import("./workflow-step-start-owner.js").WorkflowStepPostApprovalResolvedInput): import("./workflow-step-start-owner.js").WorkflowStepStartCommitResult;
   createChannelWorkflowStep(input: CreateChannelWorkflowStepInput, now: string): ChannelWorkflowStep;
   getChannelWorkflowStep(id: string): ChannelWorkflowStep | undefined;
   listChannelWorkflowSteps(options: ListChannelWorkflowStepsOptions): ChannelWorkflowStep[];
   updateChannelWorkflowStep(id: string, input: UpdateChannelWorkflowStepInput, now: string): ChannelWorkflowStep | undefined;
   transitionChannelWorkflowStepStatus(input: {
     readonly workflowStepId: string;
+    readonly expectedStartOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
     readonly expectedStatus?: ChannelWorkflowStep["status"];
     readonly event: WorkflowStepTransitionEvent;
     readonly actor: StateTransitionActor;

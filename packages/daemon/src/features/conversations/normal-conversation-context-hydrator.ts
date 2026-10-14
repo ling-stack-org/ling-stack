@@ -59,6 +59,8 @@ export interface HydrateNormalConversationContextInput {
    * from the captured tail must already be verified upstream; no lookups occur here.
    */
   readonly contextSummaries?: readonly ConversationContextSummary[];
+  /** Capture-only owner/source validation, separate from body admission. */
+  readonly verifiedSummaryIds?: ReadonlySet<string>;
   /** Effective canonical segment plus captured assignment history, including omissions. */
   readonly contextSegmentId: string;
   readonly turnContextAssignments: readonly TurnContextAssignment[];
@@ -86,6 +88,21 @@ export interface NormalConversationContextHydration {
   readonly fingerprint: string;
 }
 
+/** One atomic budget group. Raw events never escape the fold. */
+export interface NormalContextHydrationGroup {
+  readonly turnId?: string;
+  readonly entries: readonly NormalContextEntry[];
+  readonly runEventWatermarks: readonly NormalContextRunEventWatermark[];
+  readonly diagnostics: readonly NormalContextHydrationDiagnostic[];
+}
+
+export interface NormalContextHydrationPreparation {
+  readonly budget: number;
+  readonly summaries: readonly ConversationContextSummary[];
+  readonly summaryGroups: readonly NormalContextHydrationGroup[];
+  readonly diagnostics: readonly NormalContextHydrationDiagnostic[];
+}
+
 /**
  * Hydrate an immutable normal-context snapshot from canonical facts and exact
  * legacy Turn/Run provenance. Canonical reply identity wins over event replay;
@@ -93,6 +110,38 @@ export interface NormalConversationContextHydration {
  * This pure function cannot persist items, mint anchors, or choose UI owners.
  */
 export function hydrateNormalConversationContext(input: HydrateNormalConversationContextInput): NormalConversationContextHydration {
+  const prepared = prepareNormalConversationContextHydration(input);
+  const diagnostics = [...prepared.diagnostics];
+  const kept: NormalContextHydrationGroup[] = [];
+  let usedTextChars = 0;
+  const turns = [...groupById(input.turns).values()].sort((left, right) =>
+    -compareNormalContextTurns(left[0]!, right[0]!));
+  for (const rows of turns) {
+    if (rows[0]!.id === input.sourceTurn.id) continue;
+    if (rows.length !== 1) { diagnostics.push({ code: "ambiguous_history" }); continue; }
+    const group = foldNormalConversationContextTurn(input, rows[0]!, prepared.summaries);
+    diagnostics.push(...group.diagnostics);
+    if (!group.entries.length) continue;
+    const size = normalContextGroupTextChars(group);
+    if (usedTextChars + size > prepared.budget) {
+      diagnostics.push({ code: "budget_exceeded", turnId: rows[0]!.id });
+      continue;
+    }
+    usedTextChars += size;
+    kept.push(group);
+  }
+  const summaries: NormalContextHydrationGroup[] = [];
+  for (const group of [...prepared.summaryGroups].reverse()) {
+    const size = normalContextGroupTextChars(group);
+    if (usedTextChars + size > prepared.budget) { diagnostics.push({ code: "budget_exceeded" }); continue; }
+    usedTextChars += size;
+    summaries.push(group);
+  }
+  return finishNormalConversationContextHydration(input, [...summaries.reverse(), ...kept.reverse()], diagnostics);
+}
+
+/** Validate the source and summaries once, without admitting summary owners as body. */
+export function prepareNormalConversationContextHydration(input: HydrateNormalConversationContextInput): NormalContextHydrationPreparation {
   const { sourceTurn, sourceItem, thread } = input;
   if (thread.kind !== "conversation" || thread.channelId || thread.workflowStepId || thread.archivedAt || thread.status === "archived" ||
     sourceTurn.status === "superseded" || input.supersededTurnIds?.includes(sourceTurn.id) ||
@@ -107,23 +156,11 @@ export function hydrateNormalConversationContext(input: HydrateNormalConversatio
   const superseded = new Set(input.supersededTurnIds ?? []);
   const turnsById = groupById(input.turns);
   const canonicalById = groupById(input.canonicalItems);
-  const groups: { turnId?: string; entries: NormalContextEntry[] }[] = [];
-  const usedWatermarks = new Map<string, NormalContextRunEventWatermark>();
-  const canonicalCandidates = input.canonicalItems.filter((item) => ownedItem(item, thread) && item.sequence < sourceItem.sequence &&
-    Number.isSafeInteger(item.sequence) && item.sequence > 0 && canonicalById.get(item.id)?.length === 1);
-  const canonical = canonicalCandidates.filter((item) => !canonicalCandidates.some((replacement) =>
-    replacement.supersedesItemId === item.id && replacement.sequence > item.sequence));
+  const { canonical } = normalCanonicalItems(input);
   const summaryOwners: LingTurn[] = [];
-  const historical = [...turnsById.values()].flatMap((rows) => {
+  for (const rows of turnsById.values()) {
     const turn = rows[0]!;
-    if (turn.id === sourceTurn.id) return [];
-    if (rows.length !== 1) { diagnostics.push({ code: "ambiguous_history" }); return []; }
-    if (!ownedTurn(turn, thread) || turn.status === "superseded" || superseded.has(turn.id) ||
-      turn.createdAt > sourceTurn.createdAt || (turn.createdAt === sourceTurn.createdAt &&
-        !canonical.some((item) => item.turnId === turn.id && item.kind === "user_message"))) {
-      diagnostics.push({ code: "invalid_history_owner" });
-      return [];
-    }
+    if (turn.id === sourceTurn.id || rows.length !== 1 || !normalHistoricalOwner(input, turn, canonical)) continue;
     const assignments = input.turnContextAssignments.filter((assignment) => assignment.turnId === turn.id);
     if (assignments.length > 0) {
       const revision = Math.max(...assignments.map((assignment) => assignment.revision));
@@ -131,17 +168,16 @@ export function hydrateNormalConversationContext(input: HydrateNormalConversatio
       // An assigned Turn omitted by the shared projector is not a legacy hole.
       // Never resurrect another segment, an invalid decision, or a budget cut.
       if (latest.length !== 1 || !["committed", "provisional"].includes(latest[0]!.status) ||
-        latest[0]!.segmentId !== input.contextSegmentId) return [];
+        latest[0]!.segmentId !== input.contextSegmentId) continue;
     }
     // A valid summary owner can be absent from the canonical tail precisely
     // because the summary already covers it. That is not permission to hydrate it.
     summaryOwners.push(turn);
-    if (assignments.length > 0 && !canonical.some((item) => item.turnId === turn.id)) return [];
-    return [turn];
-  }).sort((left, right) => left.createdAt.localeCompare(right.createdAt) || left.id.localeCompare(right.id));
+  }
   const summaryOwnerIds = new Set(summaryOwners.map((turn) => turn.id));
   const summaries = (input.contextSummaries ?? []).filter((summary) => {
-    const valid = summary.threadId === thread.id && summary.status === "active" &&
+    const valid = (!input.verifiedSummaryIds || input.verifiedSummaryIds.has(summary.id)) &&
+      summary.threadId === thread.id && summary.status === "active" &&
       (!summary.segmentId || summary.segmentId === input.contextSegmentId) &&
       Number.isSafeInteger(summary.coveredFromSequence) && summary.coveredFromSequence > 0 &&
       Number.isSafeInteger(summary.coveredThroughSequence) && summary.coveredThroughSequence >= summary.coveredFromSequence &&
@@ -158,21 +194,40 @@ export function hydrateNormalConversationContext(input: HydrateNormalConversatio
             item.sequence >= summary.coveredFromSequence && item.sequence <= summary.coveredThroughSequence;
         }
         if (ref.type === "run" && input.runLinks.some((link) => link.runId === ref.id)) {
-          return summaryOwners.some((turn) => selectedRun(input, turn)?.id === ref.id);
+          return summaryOwners.some((turn) => selectNormalContextRun(input, turn)?.id === ref.id);
         }
         return true;
       });
     if (!valid) diagnostics.push({ code: "invalid_summary" });
     return valid && Boolean(summaryText(summary).trim());
   });
+  const groups: NormalContextHydrationGroup[] = [];
   for (const summary of summaries) {
     const text = summaryText(summary);
     if (text) groups.push({ entries: [{ origin: "context_summary", role: "context", summaryId: summary.id, text,
-      sourceRefs: [{ kind: "context_summary", id: summary.id, version: summary.version }] }] });
+      sourceRefs: [{ kind: "context_summary", id: summary.id, version: summary.version }] }], runEventWatermarks: [], diagnostics: [] });
   }
-  for (const turn of historical) {
+  return { budget, summaries, summaryGroups: groups, diagnostics };
+}
+
+/** Shared single-Turn fold for array callers and the bounded streaming collector. */
+export function foldNormalConversationContextTurn(input: HydrateNormalConversationContextInput, turn: LingTurn,
+  summaries: readonly ConversationContextSummary[]): NormalContextHydrationGroup {
+    const { sourceItem } = input;
+    const diagnostics: NormalContextHydrationDiagnostic[] = [];
+    const { canonicalCandidates, canonical } = normalCanonicalItems(input);
+    const empty = (): NormalContextHydrationGroup => ({ turnId: turn.id, entries: [], runEventWatermarks: [], diagnostics });
+    if (turn.id === input.sourceTurn.id) return empty();
+    if (!normalHistoricalOwner(input, turn, canonical)) {
+      diagnostics.push({ code: "invalid_history_owner", turnId: turn.id });
+      return empty();
+    }
+    if (!normalTurnAssignmentAdmits(input, turn)) return empty();
+    if (input.turnContextAssignments.some(assignment => assignment.turnId === turn.id) &&
+      !canonical.some(item => item.turnId === turn.id)) return empty();
     const entries: NormalContextEntry[] = [];
-    const items = canonical.filter((item) => item.turnId === turn.id).sort((left, right) => left.sequence - right.sequence || left.id.localeCompare(right.id));
+    const usedWatermarks: NormalContextRunEventWatermark[] = [];
+    const items = canonical.filter((item) => item.turnId === turn.id).sort((left, right) => left.sequence - right.sequence || compareBinaryText(left.id, right.id));
     const rawUsers = input.canonicalItems.filter((item) => item.turnId === turn.id && item.kind === "user_message" && item.sequence < sourceItem.sequence);
     const users = items.filter((item): item is Extract<ConversationItemV1, { kind: "user_message" }> =>
       item.kind === "user_message" && verifiedUserSource(item, turn, canonicalCandidates));
@@ -185,7 +240,7 @@ export function hydrateNormalConversationContext(input: HydrateNormalConversatio
           sourceRefs: [{ kind: "turn", id: turn.id, updatedAt: turn.updatedAt }] });
       } else if (rawUsers.length > 0) diagnostics.push({ code: "ambiguous_history", turnId: turn.id });
     }
-    const selection = selectedRun(input, turn);
+    const selection = selectNormalContextRun(input, turn);
     if (!selection && (turn.activeRunId || turn.lastRunId || input.runLinks.some((link) => link.turnId === turn.id))) {
       diagnostics.push({ code: "unverified_run_owner", turnId: turn.id });
     }
@@ -194,12 +249,10 @@ export function hydrateNormalConversationContext(input: HydrateNormalConversatio
         item.kind === "assistant_message" && (item.payload.presentationRole === "narration" || !!item.payload.runNarration) &&
         item.domainRefs.filter((ref) => ref.type === "run").length === 1 &&
         item.domainRefs.some((ref) => ref.type === "run" && ref.id === selection.id));
-      const runCovered = summaries.some((summary) => summary.sourceRefs.some((ref) =>
-        ref.type === "run" && ref.id === selection.id && ["succeeded", "failed", "cancelled"].includes(selection.status) && selection.updatedAt <= summary.createdAt));
       if (replies.length > 0) {
         entries.push(...replies.filter((item) => !summaries.some((summary) => summaryCoversItem(summary, item)))
           .map((item) => canonicalEntry(item, "assistant", turn.id)));
-      } else if (!runCovered && !input.excludedRunNarrationIds?.includes(selection.id)) {
+      } else if (normalContextTurnNeedsEvents(input, turn, summaries)) {
         const frozen = frozenRunEvents(input, selection.id);
         if (!frozen) diagnostics.push({ code: "invalid_event_boundary", turnId: turn.id });
         else {
@@ -212,7 +265,7 @@ export function hydrateNormalConversationContext(input: HydrateNormalConversatio
               { kind: "run_event", id: segment.firstEventId, runId: selection.id, sequence: segment.startEventSequence },
               { kind: "run_event", id: segment.lastEventId, runId: selection.id, sequence: segment.endEventSequence }],
           });
-          usedWatermarks.set(selection.id, frozen.watermark);
+          usedWatermarks.push(frozen.watermark);
         }
       }
     }
@@ -231,17 +284,15 @@ export function hydrateNormalConversationContext(input: HydrateNormalConversatio
         text: JSON.stringify({ hostTerminalOutcome: fact.outcomeStatus, unresolvedRisksAtCompletion: fact.unresolvedRisks }),
         sourceRefs: [{ kind: "conversation_item", id: item.id, sequence: item.sequence, revision: item.revision }] });
     }
-    if (entries.length > 0) groups.push({ turnId: turn.id, entries });
-  }
-  const kept: typeof groups = [];
-  let usedTextChars = 0;
-  for (const group of [...groups].reverse()) {
-    const size = group.entries.reduce((total, entry) => total + entry.text.length, 0);
-    if (usedTextChars + size > budget) { diagnostics.push({ code: "budget_exceeded", ...(group.turnId ? { turnId: group.turnId } : {}) }); continue; }
-    usedTextChars += size;
-    kept.push(group);
-  }
-  const entries = kept.reverse().flatMap((group) => group.entries);
+    return { turnId: turn.id, entries, runEventWatermarks: usedWatermarks, diagnostics };
+}
+
+/** Finish only selected groups, in ascending history order; never reselect or read. */
+export function finishNormalConversationContextHydration(input: HydrateNormalConversationContextInput,
+  groups: readonly NormalContextHydrationGroup[], diagnostics: readonly NormalContextHydrationDiagnostic[]): NormalConversationContextHydration {
+  const { thread, sourceTurn, sourceItem } = input;
+  const entries = groups.flatMap((group) => group.entries);
+  const usedWatermarks = new Map(groups.flatMap(group => group.runEventWatermarks).map(mark => [mark.runId, mark]));
   const eventRunIds = new Set(entries.flatMap((entry) => entry.origin === "run_narration" ? [entry.runId] : []));
   const snapshot = {
     schemaVersion: 1 as const,
@@ -249,17 +300,74 @@ export function hydrateNormalConversationContext(input: HydrateNormalConversatio
     entries,
     sourceRefs: uniqueRefs(entries.flatMap((entry) => entry.sourceRefs)),
     runEventWatermarks: [...eventRunIds].map((runId) => ({ ...usedWatermarks.get(runId)! })),
-    diagnostics, usedTextChars,
+    diagnostics: [...diagnostics], usedTextChars: entries.reduce((sum, entry) => sum + entry.text.length, 0),
   };
   return deepFreeze({ ...snapshot, fingerprint: createHash("sha256").update(JSON.stringify(snapshot)).digest("hex") });
 }
 
-function ownedTurn(turn: LingTurn, thread: LingThread): boolean {
+export function normalContextGroupTextChars(group: NormalContextHydrationGroup): number {
+  return group.entries.reduce((sum, entry) => sum + entry.text.length, 0);
+}
+
+/** The collector and fold share exactly the same event replay admission decision. */
+export function normalContextTurnNeedsEvents(input: HydrateNormalConversationContextInput, turn: LingTurn,
+  summaries: readonly ConversationContextSummary[]): boolean {
+  const { canonical } = normalCanonicalItems(input);
+  if (turn.id === input.sourceTurn.id || !normalHistoricalOwner(input, turn, canonical) || !normalTurnAssignmentAdmits(input, turn) ||
+    (input.turnContextAssignments.some(assignment => assignment.turnId === turn.id) && !canonical.some(item => item.turnId === turn.id))) return false;
+  const run = selectNormalContextRun(input, turn);
+  if (!run || input.excludedRunNarrationIds?.includes(run.id)) return false;
+  const hasReply = canonical.some(item => item.turnId === turn.id && item.kind === "assistant_message" &&
+    (item.payload.presentationRole === "narration" || !!item.payload.runNarration) &&
+    item.domainRefs.filter(ref => ref.type === "run").length === 1 && item.domainRefs.some(ref => ref.type === "run" && ref.id === run.id));
+  const covered = summaries.some(summary => summary.sourceRefs.some(ref => ref.type === "run" && ref.id === run.id &&
+    ["succeeded", "failed", "cancelled"].includes(run.status) && run.updatedAt <= summary.createdAt));
+  return !hasReply && !covered;
+}
+
+/** SQLite BINARY orders UTF-8 bytes, not locale collation or UTF-16 code units. */
+export function compareNormalContextTurns(left: LingTurn, right: LingTurn): number {
+  return compareBinaryText(left.createdAt, right.createdAt) || compareBinaryText(left.id, right.id);
+}
+
+function compareBinaryText(left: string, right: string): number {
+  return Buffer.compare(Buffer.from(left, "utf8"), Buffer.from(right, "utf8"));
+}
+
+function normalCanonicalItems(input: HydrateNormalConversationContextInput): {
+  canonicalCandidates: ConversationItemV1[]; canonical: ConversationItemV1[];
+} {
+  const byId = groupById(input.canonicalItems);
+  const canonicalCandidates = input.canonicalItems.filter(item => ownedItem(item, input.thread) && item.sequence < input.sourceItem.sequence &&
+    Number.isSafeInteger(item.sequence) && item.sequence > 0 && byId.get(item.id)?.length === 1);
+  const replacementSequences = new Map<string, number>();
+  for (const item of canonicalCandidates) if (item.supersedesItemId) {
+    replacementSequences.set(item.supersedesItemId, Math.max(replacementSequences.get(item.supersedesItemId) ?? 0, item.sequence));
+  }
+  const canonical = canonicalCandidates.filter(item => (replacementSequences.get(item.id) ?? 0) <= item.sequence);
+  return { canonicalCandidates, canonical };
+}
+
+function normalHistoricalOwner(input: HydrateNormalConversationContextInput, turn: LingTurn, canonical: readonly ConversationItemV1[]): boolean {
+  return ownedTurn(turn, input.thread) && turn.status !== "superseded" && !input.supersededTurnIds?.includes(turn.id) &&
+    (turn.createdAt < input.sourceTurn.createdAt || (turn.createdAt === input.sourceTurn.createdAt &&
+      canonical.some(item => item.turnId === turn.id && item.kind === "user_message")));
+}
+
+function normalTurnAssignmentAdmits(input: HydrateNormalConversationContextInput, turn: LingTurn): boolean {
+  const assignments = input.turnContextAssignments.filter(assignment => assignment.turnId === turn.id);
+  if (!assignments.length) return true;
+  const revision = Math.max(...assignments.map(assignment => assignment.revision));
+  const latest = assignments.filter(assignment => assignment.revision === revision);
+  return latest.length === 1 && ["committed", "provisional"].includes(latest[0]!.status) && latest[0]!.segmentId === input.contextSegmentId;
+}
+
+export function ownedTurn(turn: LingTurn, thread: LingThread): boolean {
   return turn.workspaceId === thread.workspaceId && turn.threadId === thread.id && !turn.channelId && !turn.workflowStepId &&
     (!turn.teammateId || turn.teammateId === (thread.teammateId ?? "ling_agent"));
 }
 
-function ownedItem(item: ConversationItemV1, thread: LingThread): boolean {
+export function ownedItem(item: ConversationItemV1, thread: LingThread): boolean {
   return item.workspaceId === thread.workspaceId && item.threadId === thread.id && !item.channelId &&
     item.status === "committed" && item.visibility === "thread_participants" && !item.visibilityOwnerId &&
     (item.kind !== "user_message" || item.actorType === "local_user" || item.actorType === "system") &&
@@ -301,7 +409,7 @@ function canonicalEntry(item: Extract<ConversationItemV1, { kind: "user_message"
 }
 
 /** Prefer the durable active/last pointer; absent pointers require a unique link. */
-function selectedRun(input: HydrateNormalConversationContextInput, turn: LingTurn): RunSession | undefined {
+export function selectNormalContextRun(input: HydrateNormalConversationContextInput, turn: LingTurn): RunSession | undefined {
   const links = input.runLinks.filter((link) => link.turnId === turn.id && link.role !== "validation");
   const runId = turn.activeRunId ?? turn.lastRunId ?? (links.length === 1 ? links[0]!.runId : undefined);
   if (!runId || links.filter((link) => link.runId === runId).length !== 1 || input.runLinks.filter((link) => link.runId === runId).length !== 1) return undefined;

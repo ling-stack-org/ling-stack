@@ -135,6 +135,33 @@ export class SqliteLingTurnStore {
   listLingTurns(options: ListLingTurnsOptions): LingTurn[] {
     const clauses = ["workspace_id = ?", "thread_id = ?"];
     const params: (string | number)[] = [DEFAULT_WORKSPACE_ID, options.threadId];
+    if (options.orderBy !== undefined && options.orderBy !== "updatedAt" && options.orderBy !== "createdAt") {
+      throw new Error("Invalid Ling Turn cursor order");
+    }
+    const orderColumn = options.orderBy === "createdAt" ? "created_at" : "updated_at";
+    if (options.orderBy === "createdAt" && options.beforeUpdatedAt !== undefined) {
+      throw new Error("Creation-ordered Ling Turns cannot use beforeUpdatedAt");
+    }
+    if (options.createdBefore !== undefined) {
+      if (typeof options.createdBefore !== "string" || !options.createdBefore.trim()) {
+        throw new Error("Invalid Ling Turn creation scope");
+      }
+      clauses.push("created_at < ?");
+      params.push(options.createdBefore);
+    }
+    if (options.beforeTurnId !== undefined) {
+      if (options.beforeUpdatedAt !== undefined) {
+        throw new Error("Ling Turn cursors beforeTurnId and beforeUpdatedAt cannot be combined");
+      }
+      const cursor = typeof options.beforeTurnId === "string" && options.beforeTurnId.length > 0
+        ? this.getLingTurn(options.beforeTurnId) : undefined;
+      if (!cursor || cursor.threadId !== options.threadId || cursor.workspaceId !== DEFAULT_WORKSPACE_ID) {
+        throw new Error("Ling Turn cursor is missing or does not belong to the requested thread");
+      }
+      const timestamp = options.orderBy === "createdAt" ? cursor.createdAt : cursor.updatedAt;
+      clauses.push(`(${orderColumn} < ? OR (${orderColumn} = ? AND id < ?))`);
+      params.push(timestamp, timestamp, cursor.id);
+    }
     if (options.beforeUpdatedAt) {
       clauses.push("updated_at < ?");
       params.push(options.beforeUpdatedAt);
@@ -142,7 +169,7 @@ export class SqliteLingTurnStore {
     const limit = Math.min(Math.max(options.limit ?? 100, 1), 500);
     params.push(limit);
     return this.context.database
-      .prepare(`${lingTurnSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY updated_at DESC, id DESC LIMIT ?`)
+      .prepare(`${lingTurnSelectSql(`WHERE ${clauses.join(" AND ")}`)} ORDER BY ${orderColumn} DESC, id DESC LIMIT ?`)
       .all(...params)
       .map((row) => mapLingTurn(row as Record<string, SQLOutputValue>));
   }

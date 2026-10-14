@@ -1,4 +1,5 @@
 import type { SQLOutputValue } from "node:sqlite";
+import { isWorkflowStepStartOwnerV1 } from "../../workflow-step-start-owner.js";
 import {
   isWorkflowParticipantAuthorityV1,
   isWorkflowParticipantProviderBindingV1,
@@ -212,6 +213,7 @@ function parseOptionalChannelWorkflowStepMetadata(value: string | undefined): Ch
   }
   const record = parsed as Record<string, unknown>;
   return omitUndefined({
+    startOwner: isWorkflowStepStartOwnerV1(record.startOwner) ? record.startOwner : undefined,
     providerBinding: parseOptionalWorkflowParticipantProviderBinding(record.providerBinding),
     workflowTemplateId: readOptionalStringValue(record.workflowTemplateId),
     templateVersion: readOptionalStringValue(record.templateVersion),

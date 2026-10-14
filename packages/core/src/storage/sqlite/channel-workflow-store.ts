@@ -15,7 +15,7 @@ import type {
   DelegatedOutcomeV1,
   WorkflowCompletionGateV1,
 } from "@ling-stack/contracts";
-import type { RunEventEnvelope } from "../../run-types.js";
+import type { RunEventEnvelope, RunStore } from "../../run-types.js";
 import {
   buildWorkflowCompletionExpectedReadSet,
   workflowCompletionGateBasisFingerprintV1,
@@ -77,6 +77,8 @@ import {
   workflowSelectorDecisionSelectSql,
 } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { classifyWorkflowStepStartOwner, workflowStepStartOwnerMatches,
+  type WorkflowStepStartOwnerV1, type WorkflowStepStartReadStore } from "../../workflow-step-start-owner.js";
 
 type FinalizableDelegatedOutcomeV1 = Exclude<DelegatedOutcomeV1, { readonly kind: "workflow_started" }>;
 
@@ -108,6 +110,8 @@ export interface SqliteChannelWorkflowStorePorts {
   ) => StateTransitionEvent | undefined;
   readonly recordStateTransitionEvent: (input: CreateStateTransitionEventInput) => StateTransitionEvent;
   readonly releaseResourceLeasesForWorkflowStep: (workflowStepId: string, releasedAt: string) => number;
+  readonly releaseResourceLease: import("../../run-types.js").RunStore["releaseResourceLease"];
+  readonly workflowStepStartReadStore: WorkflowStepStartReadStore;
   readonly getChannelIntentDecision: (id: string) => import("../../workspace-types.js").ChannelIntentDecision | undefined;
   readonly getRun: (id: string) => import("../../run-types.js").RunSession | undefined;
   readonly listEvents: (runId: string, options?: import("../../run-types.js").ListRunEventsOptions) => import("../../run-types.js").RunEventEnvelope[];
@@ -843,6 +847,8 @@ export class SqliteChannelWorkflowStore {
 
   commitChannelWorkflowStepFinalization(input: {
     readonly workflowStepId: string;
+    readonly expectedTaskId?: string;
+    readonly expectedStartOwner?: WorkflowStepStartOwnerV1;
     readonly expectedStatus: "running" | "waiting_for_approval";
     readonly expectedUpdatedAt: string;
     readonly expectedRun:
@@ -886,7 +892,8 @@ export class SqliteChannelWorkflowStore {
     }
     const expectedRunId = input.expectedRun.kind === "linked_run" ? input.expectedRun.id : undefined;
     const step = this.getChannelWorkflowStep(input.workflowStepId);
-    if (!step || step.status !== input.expectedStatus || step.updatedAt !== input.expectedUpdatedAt || step.runId !== expectedRunId) {
+    if (!step || step.status !== input.expectedStatus || step.updatedAt !== input.expectedUpdatedAt || step.runId !== expectedRunId
+      || step.taskId !== input.expectedTaskId) {
       return { ok: false, code: "stale_transition", currentStatus: step?.status ?? input.expectedStatus };
     }
     const workflow = this.getChannelWorkflow(step.workflowId);
@@ -932,14 +939,36 @@ export class SqliteChannelWorkflowStore {
     if (!transition.ok) return transition;
     this.context.database.exec("BEGIN IMMEDIATE;");
     try {
+      const ownedStep = this.getChannelWorkflowStep(step.id);
+      if (!ownedStep || ownedStep.taskId !== input.expectedTaskId || ownedStep.runId !== expectedRunId
+        || ownedStep.status !== input.expectedStatus || ownedStep.updatedAt !== input.expectedUpdatedAt
+        || input.expectedStartOwner && !workflowStepStartOwnerMatches(ownedStep.metadata?.startOwner, input.expectedStartOwner)) {
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "stale_transition", currentStatus: ownedStep?.status ?? step.status };
+      }
+      if (input.expectedRun.kind === "linked_run") {
+        const ownership = classifyWorkflowStepStartOwner(this.ports.workflowStepStartReadStore, ownedStep, input.now, { requireActiveLease: false });
+        if (!input.expectedStartOwner || ownership.status !== "linked"
+          || !workflowStepStartOwnerMatches(ownership.owner, input.expectedStartOwner)) {
+          this.context.database.exec("ROLLBACK;");
+          return { ok: false, code: "stale_transition", currentStatus: ownedStep.status };
+        }
+      } else if (ownedStep.taskId || ownedStep.metadata?.startOwner) {
+        // Owned preparation failures use the generation-scoped settlement
+        // transaction, never the no-Run semantic-finalization path.
+        this.context.database.exec("ROLLBACK;");
+        return { ok: false, code: "stale_transition", currentStatus: ownedStep.status };
+      }
       let expectedArtifactIds: readonly string[] = [];
       let actualRunEventCount = 0;
       let actualRunLatestSeq = 0;
       if (input.expectedRun.kind === "linked_run") {
         const run = this.context.database.prepare(
-          "SELECT status, updated_at, work_unit_id FROM run_sessions WHERE id = ?",
+          "SELECT status, updated_at, work_unit_id, task_id, workflow_step_id, channel_id, teammate_id FROM run_sessions WHERE id = ?",
         ).get(input.expectedRun.id) as Record<string, SQLOutputValue> | undefined;
-        if (!run || run.status !== input.expectedRun.status || run.updated_at !== input.expectedRun.updatedAt) {
+        if (!run || run.status !== input.expectedRun.status || run.updated_at !== input.expectedRun.updatedAt
+          || run.task_id !== step.taskId || run.workflow_step_id !== step.id
+          || run.channel_id !== step.channelId || run.teammate_id !== step.toParticipantId) {
           this.context.database.exec("ROLLBACK;");
           return { ok: false, code: "stale_transition", currentStatus: step.status };
         }
@@ -1072,10 +1101,8 @@ export class SqliteChannelWorkflowStore {
         idempotencyKey: input.idempotencyKey,
         createdAt: input.now,
       });
+      if (input.expectedStartOwner) this.ports.releaseResourceLease(input.expectedStartOwner.leaseId, "workflow_step", step.id, input.now);
       this.context.database.exec("COMMIT;");
-      if (transition.to === "succeeded" || transition.to === "failed" || transition.to === "cancelled" || transition.to === "skipped") {
-        this.ports.releaseResourceLeasesForWorkflowStep(step.id, input.now);
-      }
       return transition;
     } catch (error) {
       rollbackOwnedSqliteTransaction(this.context.database);
@@ -1376,6 +1403,10 @@ export class SqliteChannelWorkflowStore {
     if (!existing) {
       return undefined;
     }
+    if (input.expectedStartOwner && (!workflowStepStartOwnerMatches(existing.metadata?.startOwner, input.expectedStartOwner)
+      || existing.taskId !== input.expectedStartOwner.taskId
+      || input.taskId !== undefined && input.taskId !== existing.taskId
+      || input.runId !== undefined && input.runId !== existing.runId)) return undefined;
     const updateRecord = input as unknown as Record<string, unknown>;
     if (Object.prototype.hasOwnProperty.call(updateRecord, "toParticipantId")
       || Object.prototype.hasOwnProperty.call(updateRecord, "toParticipantLabel")) {
@@ -1437,7 +1468,7 @@ export class SqliteChannelWorkflowStore {
           : existing.metadata,
       updatedAt: now,
     };
-    this.context.database
+    const update = this.context.database
       .prepare(`
         UPDATE channel_workflow_steps
         SET
@@ -1453,7 +1484,7 @@ export class SqliteChannelWorkflowStore {
           result_summary = ?,
           metadata_json = ?,
           updated_at = ?
-        WHERE id = ?
+        WHERE id = ? AND task_id IS ? AND run_id IS ? AND updated_at = ?
       `)
       .run(
         next.sourceHandoffId ?? null,
@@ -1469,26 +1500,43 @@ export class SqliteChannelWorkflowStore {
         next.metadata ? stringifyJson(next.metadata) : null,
         next.updatedAt,
         id,
+        existing.taskId ?? null,
+        existing.runId ?? null,
+        existing.updatedAt,
       );
+    if (Number(update.changes) !== 1) return undefined;
     return this.getChannelWorkflowStep(id);
   }
 
-  transitionChannelWorkflowStepStatus(input: {
-    readonly workflowStepId: string;
-    readonly expectedStatus?: ChannelWorkflowStepStatus;
-    readonly event: WorkflowStepTransitionEvent;
-    readonly actor: StateTransitionActor;
-    readonly reason?: string;
-    readonly idempotencyKey?: string;
-    readonly now: string;
-    readonly taskId?: string | null;
-    readonly runId?: string | null;
-    readonly blocker?: string | null;
-    readonly resultSummary?: string | null;
-  }): TransitionResult<ChannelWorkflowStepStatus> {
+  transitionChannelWorkflowStepStatus(input: Parameters<RunStore["transitionChannelWorkflowStepStatus"]>[0]): TransitionResult<ChannelWorkflowStepStatus> {
+    // A savepoint composes with existing approval transactions, and keeps
+    // the state, audit and generation-scoped release indivisible to peers.
+    this.context.database.exec("SAVEPOINT workflow_step_transition");
+    try {
+      const result = this.transitionChannelWorkflowStepStatusWithinTransaction(input);
+      this.context.database.exec("RELEASE workflow_step_transition");
+      return result;
+    } catch (error) {
+      this.context.database.exec("ROLLBACK TO workflow_step_transition");
+      this.context.database.exec("RELEASE workflow_step_transition");
+      throw error;
+    }
+  }
+
+  private transitionChannelWorkflowStepStatusWithinTransaction(input: Parameters<RunStore["transitionChannelWorkflowStepStatus"]>[0]): TransitionResult<ChannelWorkflowStepStatus> {
     const step = this.getChannelWorkflowStep(input.workflowStepId);
     if (!step) {
       return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };
+    }
+    if (input.expectedStartOwner && (!workflowStepStartOwnerMatches(step.metadata?.startOwner, input.expectedStartOwner)
+      || step.taskId !== input.expectedStartOwner.taskId
+      || input.taskId !== undefined && input.taskId !== step.taskId
+      || input.runId !== undefined && input.runId !== step.runId)) {
+      return { ok: false, code: "stale_transition", currentStatus: step.status };
+    }
+    if (input.expectedStartOwner) {
+      const ownership = classifyWorkflowStepStartOwner(this.ports.workflowStepStartReadStore, step, input.now, { requireActiveLease: false });
+      if (ownership.status !== "linked") return { ok: false, code: "stale_transition", currentStatus: step.status };
     }
     if (input.idempotencyKey) {
       const existing = this.ports.findStateTransitionByIdempotency("workflow_step", input.workflowStepId, input.idempotencyKey);
@@ -1528,7 +1576,7 @@ export class SqliteChannelWorkflowStore {
           blocker = ?,
           result_summary = ?,
           updated_at = ?
-        WHERE id = ? AND status = ?
+        WHERE id = ? AND status = ? AND task_id IS ? AND run_id IS ? AND updated_at = ?
       `)
       .run(
         result.to,
@@ -1539,6 +1587,9 @@ export class SqliteChannelWorkflowStore {
         input.now,
         input.workflowStepId,
         result.from,
+        step.taskId ?? null,
+        step.runId ?? null,
+        step.updatedAt,
       );
     if (Number(update.changes) === 0) {
       const current = this.getChannelWorkflowStep(input.workflowStepId);
@@ -1557,7 +1608,8 @@ export class SqliteChannelWorkflowStore {
       createdAt: input.now,
     });
     if (result.to === "succeeded" || result.to === "failed" || result.to === "skipped" || result.to === "cancelled") {
-      this.ports.releaseResourceLeasesForWorkflowStep(input.workflowStepId, input.now);
+      if (step.metadata?.startOwner) this.ports.releaseResourceLease(step.metadata.startOwner.leaseId, "workflow_step", step.id, input.now);
+      else if (!step.taskId && !step.runId) this.ports.releaseResourceLeasesForWorkflowStep(input.workflowStepId, input.now);
     }
     return result;
   }
