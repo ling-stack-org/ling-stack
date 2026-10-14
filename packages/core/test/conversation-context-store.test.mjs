@@ -358,6 +358,67 @@ test("context summary assignment races are discarded and snapshots remain source
   assert.deepEqual(store.getConversationContextSnapshot(snapshot.id)?.sourceRefs, snapshot.sourceRefs);
 });
 
+test("new input follows the effective assignment decision in both segment directions, not a segment UUID tie", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-segment-continuation-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const channel = store.createChannel({ name: "Segment continuation", boundPath: cwd }, firstAt);
+  const { thread } = store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root", channelId: channel.id,
+    title: "Segment continuation", objective: "Follow durable context decisions",
+  }, firstAt);
+  const first = appendUserTurn(store, channel.id, thread.id, "original", firstAt);
+  const second = appendUserTurn(store, channel.id, thread.id, "move latest", secondAt);
+  const moved = store.applyTurnContextAssignment({
+    turnId: second.turnId, target: { kind: "new", state: "active" },
+    status: "committed", decisionSource: "user", policyVersion,
+  }, thirdAt);
+  assert.equal(store.getContextSegment(first.contextSegmentId).updatedAt, thirdAt);
+  assert.equal(moved.segment.updatedAt, thirdAt);
+  const next = appendUserTurn(store, channel.id, thread.id, "continue new", "2026-08-10T01:03:00.000Z");
+  assert.equal(next.contextSegmentId, moved.segment.id);
+
+  store.applyTurnContextAssignment({
+    turnId: next.turnId, target: { kind: "existing", segmentId: first.contextSegmentId },
+    status: "committed", decisionSource: "user", policyVersion,
+  }, "2026-08-10T01:04:00.000Z");
+  assert.equal(store.getContextSegment(first.contextSegmentId).updatedAt, "2026-08-10T01:04:00.000Z");
+  assert.equal(store.getContextSegment(moved.segment.id).updatedAt, "2026-08-10T01:04:00.000Z");
+  const back = appendUserTurn(store, channel.id, thread.id, "continue original", "2026-08-10T01:05:00.000Z");
+  assert.equal(back.contextSegmentId, first.contextSegmentId);
+  assert.equal(store.getEffectiveTurnContextAssignment(second.turnId).segmentId, moved.segment.id);
+  assert.equal(store.getEffectiveTurnContextAssignment(next.turnId).segmentId, first.contextSegmentId);
+});
+
+test("a late correction of an older source cannot change the latest source's default segment", async (t) => {
+  const cwd = await mkdtemp(join(tmpdir(), "ling-context-historical-correction-"));
+  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const store = createSqliteRunStore(cwd);
+  t.after(() => store.close());
+  const channel = store.createChannel({ name: "Historical correction", boundPath: cwd }, firstAt);
+  const { thread } = store.resolveOrCreateConversationThread({
+    surfaceKind: "channel_root", channelId: channel.id,
+    title: "Historical correction", objective: "Keep corrections scoped to their source",
+  }, firstAt);
+  const first = appendUserTurn(store, channel.id, thread.id, "historical", firstAt);
+  // Equal timestamps must still follow canonical per-thread source sequence.
+  const latest = appendUserTurn(store, channel.id, thread.id, "latest", firstAt);
+  const moved = store.applyTurnContextAssignment({
+    turnId: latest.turnId, target: { kind: "new", state: "active" },
+    status: "committed", decisionSource: "user", policyVersion,
+  }, secondAt);
+  store.applyTurnContextAssignment({
+    turnId: first.turnId, target: { kind: "existing", segmentId: first.contextSegmentId },
+    status: "committed", decisionSource: "user", policyVersion,
+  }, thirdAt);
+  const next = appendUserTurn(store, channel.id, thread.id, "continue latest", "2026-08-10T01:03:00.000Z");
+  assert.equal(next.contextSegmentId, moved.segment.id);
+  assert.equal(store.getEffectiveTurnContextAssignment(first.turnId).segmentId, first.contextSegmentId);
+  assert.equal(store.getConversationItem(first.item.id).sequence, 1);
+  assert.equal(store.getConversationItem(latest.item.id).sequence, 2);
+});
+
 function appendUserTurn(store, channelId, threadId, body, now) {
   return store.appendConversationUserTurn({
     channelId,

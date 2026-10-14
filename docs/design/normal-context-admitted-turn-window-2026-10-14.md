@@ -38,6 +38,12 @@ assigned候选仅按source及projector已准入Item直取owner；summary source 
 
 ## 验证门
 
+### 默认分段归属不能读取元数据更新时间
+
+干净 A13 分支独立编译后的完整 101 项首次为 100 通过、T05 失败。证实显式移动最新 Turn 后，新段和旧段指针修复会同时更新 `context_segments.updated_at`；旧默认选择因此由随机 UUID 决定，前次通过不是稳定证明。新增双向切换回归保留此真实 RED，不调整原 T05 断言。
+
+新输入默认继承最近 canonical source user Item 所属 Turn 的有效分段：以同 thread 的持久化 Item `sequence DESC` 驱动，只读每 Turn 最新 revision 的 assignment 与 active 段，并校验 source/Turn/assignment/segment 的 workspace/thread。更新旧段指针、summary 维护、UUID 大小或较旧 Turn 的迟到纠正时间都不是切换当前上下文的 authority；最新 source 移回原有段仍正确继承原段，旧 source 后改不得劫持较新的会话。不从未归属的 legacy 原文重建分段；没有有效 canonical active 归属时按既有 bootstrap 事务创建新段，不选择历史空段。SQLite 以 thread/sequence 既有索引逆序扫描、逐 owner 索引查询，禁止先物化全部 assignment 再排序；最坏找不到有效段仍需扫描 source，不宣称常数查询。不新增表，不改已冻结快照，也不把展示 batch 当分段事实。
+
 先执行真实公共producer构成的隔离fixture，分别记录fixture错误、500guard和实际抵达阶段；初次原始失败与owned SQLite保留，不用导入失败冒产品RED。
 覆盖499控制、500/501新输入、同thread连续499→500→501、summary、segment与visibility隔离、同时间戳深页、预算whole-group拒绝、双连接WAL水位、reopen replay、冻结fork，以及snapshot INSERT故障的完整rollback/安全retry。
 首次证据运行显式`LING_A13_KEEP_FIXTURES=1`，输出精确owned root；不使用日常DB/Provider/Keychain或外网。

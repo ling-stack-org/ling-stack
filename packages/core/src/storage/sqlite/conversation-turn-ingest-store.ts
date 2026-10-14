@@ -308,12 +308,29 @@ export class SqliteConversationTurnIngestStore {
 
   private resolveOrCreateSegment(turnId: string, threadId: string, now: string): string {
     const existing = this.context.database.prepare(`
-      SELECT id
-      FROM context_segments
-      WHERE thread_id = ? AND state = 'active'
-      ORDER BY updated_at DESC, id DESC
+      SELECT segments.id
+      FROM conversation_items source
+      CROSS JOIN ling_turns turns ON turns.id = source.turn_id AND turns.source_item_id = source.id
+      CROSS JOIN turn_context_assignments assignments ON assignments.turn_id = turns.id
+      CROSS JOIN context_segments segments ON segments.id = assignments.segment_id
+      WHERE source.workspace_id = ? AND source.thread_id = ?
+        AND source.kind = 'user_message' AND source.status = 'committed'
+        AND turns.workspace_id = source.workspace_id AND turns.thread_id = source.thread_id
+        AND assignments.workspace_id = source.workspace_id
+        AND segments.workspace_id = source.workspace_id AND segments.thread_id = source.thread_id
+        AND segments.state = 'active'
+        AND assignments.status IN ('committed', 'provisional')
+        AND NOT EXISTS (
+          SELECT 1 FROM turn_context_assignments newer
+          WHERE newer.turn_id = assignments.turn_id AND newer.revision > assignments.revision
+        )
+      -- Repairing the former segment also touches its updated_at. Only an
+      -- effective assignment of the latest source supplies its continuation.
+      -- CROSS JOIN keeps the indexed source sequence as the outer scan; a late
+      -- correction of an older Turn cannot move the current conversation.
+      ORDER BY source.sequence DESC
       LIMIT 1
-    `).get(threadId) as Record<string, SQLOutputValue> | undefined;
+    `).get(DEFAULT_WORKSPACE_ID, threadId) as Record<string, SQLOutputValue> | undefined;
     if (existing) {
       const segmentId = readString(existing, "id");
       this.context.database.prepare(`
