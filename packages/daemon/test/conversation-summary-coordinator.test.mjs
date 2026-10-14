@@ -532,3 +532,103 @@ async function mergeDraft(input) {
     openQuestions: input.current.openQuestions,
   };
 }
+
+async function b007CompletedSummaryFixture(t, suffix) {
+  const fixture = await createFixture(t, `b007-${suffix}`);
+  const turns = Array.from({ length: 12 }, (_, index) => addCompletedTurn(fixture, `b007-${suffix}-${index}`,
+    index === 3 ? "Decision moved fact belongs only to the corrected topic" : `Decision retained fact ${index}`));
+  const first = await coordinateConversationContextSummary({ store: fixture.store, sourceItemId: turns.at(-1).item.id,
+    inputBudgetTokens: 16_000, policy: summaryPolicy, generate: mergeDraft, now: nextTimestamp(fixture) });
+  assert.equal(first.status, "completed");
+  assert.equal(first.commit.summary.version, 1);
+  assert.equal(first.commit.summary.coveredThroughSequence, turns[9].item.sequence);
+  assert.ok(first.commit.summary.decisions.includes("Decision moved fact belongs only to the corrected topic"));
+  const assignment = fixture.store.getEffectiveTurnContextAssignment(turns[3].turnId);
+  const moved = fixture.store.applyTurnContextAssignment({ turnId: turns[3].turnId,
+    expectedPreviousRevision: assignment.revision, target: { kind: "new", state: "active", label: "Corrected separate topic" },
+    status: "committed", decisionSource: "user", evidenceRefs: [{ type: "conversation_item", id: turns[3].item.id }],
+    policyVersion: "continuity-v2-user-correction-v1" }, nextTimestamp(fixture));
+  assert.deepEqual(moved.invalidatedSummaryIds, [first.commit.summary.id]);
+  const invalidated = fixture.store.getConversationContextSummary(first.commit.summary.id);
+  assert.equal(invalidated.status, "invalidated");
+  const input = { store: fixture.store, sourceItemId: turns.at(-1).item.id, inputBudgetTokens: 16_000, policy: summaryPolicy };
+  const plan = planConversationContextSummary(input);
+  assert.ok(plan);
+  assert.equal(plan.activeSummary, undefined);
+  assert.equal(plan.sourceItems.length, 9);
+  assert.equal(plan.sourceItems.some((item) => item.id === turns[3].item.id), false);
+  assert.equal(plan.sourceRefs.some((ref) => ref.type === "context_summary" && ref.id === invalidated.id), false);
+  return { ...fixture, turns, first, moved, invalidated, input, plan };
+}
+
+test("B-007 coordinator rebuild completes with a new checkpoint and never revives invalidated topic content", async (t) => {
+  const fixture = await b007CompletedSummaryFixture(t, "completed");
+  const generatorInputs = [];
+  const rebuilt = await coordinateConversationContextSummary({ ...fixture.input, now: nextTimestamp(fixture),
+    generate: async (input) => {
+      generatorInputs.push({ current: input.current, itemIds: input.items.map((item) => item.id), sourceRefs: input.sourceRefs });
+      return mergeDraft(input);
+    },
+  });
+  assert.equal(rebuilt.status, "completed");
+  assert.equal(rebuilt.commit.status, "committed");
+  const summary = rebuilt.commit.summary;
+  assert.equal(summary.version, 2);
+  assert.equal(summary.supersedesSummaryId, undefined);
+  assert.equal(summary.decisions.includes("Decision moved fact belongs only to the corrected topic"), false);
+  assert.equal(summary.sourceRefs.some((ref) => ref.id === fixture.turns[3].item.id || ref.id === fixture.invalidated.id), false);
+  assert.ok(generatorInputs.length > 0);
+  for (const input of generatorInputs) {
+    assert.equal(input.current.decisions.includes("Decision moved fact belongs only to the corrected topic"), false);
+    assert.equal(input.itemIds.includes(fixture.turns[3].item.id), false);
+    assert.equal(input.sourceRefs.some((ref) => ref.id === fixture.invalidated.id), false);
+  }
+  assert.notEqual(rebuilt.checkpoint.id, fixture.first.checkpoint.id);
+  assert.deepEqual(rebuilt.checkpoint.summaryIds, [summary.id]);
+  assert.equal(rebuilt.checkpoint.sourceTurnId, fixture.turns.at(-1).turnId);
+  assert.equal(rebuilt.checkpoint.coveredItemSeqFrom, fixture.turns[0].item.sequence);
+  assert.equal(rebuilt.checkpoint.coveredItemSeqTo, fixture.turns[9].item.sequence);
+  assert.equal(rebuilt.checkpoint.sourceRefs.some((ref) => ref.id === fixture.turns[3].item.id || ref.id === fixture.invalidated.id), false);
+  assert.deepEqual(fixture.store.getConversationContextSummary(fixture.invalidated.id), fixture.invalidated);
+  assert.deepEqual(fixture.store.getCompactionCheckpoint(fixture.first.checkpoint.id), fixture.first.checkpoint);
+  const projection = buildConversationContextProjection({ store: fixture.store, sourceItemId: fixture.turns.at(-1).item.id, view: "reply" });
+  assert.deepEqual(projection.summaries.map((entry) => entry.id), [summary.id]);
+  assert.equal(JSON.stringify(projection.sharedCore).includes("Decision moved fact belongs only to the corrected topic"), false);
+  assert.equal(projection.items.some((item) => item.id === fixture.turns[3].item.id), false);
+  assert.ok(projection.items.some((item) => item.id === fixture.turns[10].item.id));
+  assert.ok(projection.items.some((item) => item.id === fixture.turns[11].item.id));
+  assert.equal(fixture.store.getConversationItem(fixture.turns[3].item.id).payload.body,
+    "Decision moved fact belongs only to the corrected topic");
+});
+
+test("B-007 coordinator discards a rebuild changed by another Store without installing a new summary or checkpoint", async (t) => {
+  const fixture = await b007CompletedSummaryFixture(t, "assignment-race");
+  const other = createSqliteRunStore(fixture.cwd);
+  let corrected = false;
+  try {
+    const beforeCheckpointIds = fixture.store.listCompactionCheckpoints({ threadId: fixture.thread.id }).map(({ id }) => id);
+    const result = await executeConversationSummaryPlan({ store: fixture.store, plan: fixture.plan, now: nextTimestamp(fixture),
+      generate: async (input) => {
+        if (!corrected) {
+          corrected = true;
+          const assignment = other.getEffectiveTurnContextAssignment(fixture.turns[0].turnId);
+          const correction = other.applyTurnContextAssignment({ turnId: fixture.turns[0].turnId,
+            expectedPreviousRevision: assignment.revision, target: { kind: "existing", segmentId: assignment.segmentId },
+            status: "committed", decisionSource: "user", evidenceRefs: [{ type: "turn", id: fixture.turns[0].turnId }],
+            policyVersion: "continuity-v2-user-correction-v1" }, nextTimestamp(fixture));
+          assert.equal(correction.assignment.revision, assignment.revision + 1);
+        }
+        return mergeDraft(input);
+      },
+    });
+    assert.equal(corrected, true);
+    assert.equal(result.status, "source_conflict");
+    assert.deepEqual(result.commit, { status: "discarded_stale", reason: "assignments_changed" });
+    assert.equal(result.checkpoint, undefined);
+    assert.deepEqual(fixture.store.listConversationContextSummaries({ threadId: fixture.thread.id }), []);
+    assert.deepEqual(fixture.store.listConversationContextSummaries({ threadId: fixture.thread.id,
+      statuses: ["active", "superseded", "invalidated"] }).map(({ id }) => id), [fixture.invalidated.id]);
+    assert.deepEqual(fixture.store.listCompactionCheckpoints({ threadId: fixture.thread.id }).map(({ id }) => id), beforeCheckpointIds);
+    assert.deepEqual(fixture.store.getConversationContextSummary(fixture.invalidated.id), fixture.invalidated);
+  } finally { other.close(); }
+});

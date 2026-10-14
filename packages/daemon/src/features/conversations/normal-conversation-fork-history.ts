@@ -110,6 +110,8 @@ function validEntry(value: unknown): value is NormalContextEntry {
   const base = ["origin", "role", "text", "sourceRefs"];
   if (value.origin === "context_summary") return keys(value, [...base, "summaryId"]) && value.role === "context" && nonempty(value.summaryId);
   if (!nonempty(value.turnId)) return false;
+  if (value.origin === "terminal_report") return keys(value, [...base, "turnId", "reportId"]) && value.role === "context" &&
+    nonempty(value.reportId) && value.sourceRefs.length === 1 && value.sourceRefs[0].kind === "conversation_item";
   if (value.origin === "canonical_item") return keys(value, [...base, "turnId"]);
   if (value.origin === "legacy_turn_user") return keys(value, [...base, "turnId"]) && value.role === "user";
   return value.origin === "run_narration" && keys(value, [...base, "turnId", "runId", "completed"]) &&
