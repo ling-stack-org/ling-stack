@@ -53,15 +53,23 @@ test("workflow terminal report preserves full step result text without a legacy 
       prompt: "Create index.html.",
       toParticipantId: "ling_agent",
       toParticipantLabel: "Ling Agent",
-      status: "running",
     }, "2026-06-25T00:02:00.000Z");
-    const task = store.createTask({
-      channelId: channel.id,
-      title: "Create index.html",
-      prompt: "Create index.html.",
-      status: "doing",
-      assigneeTeammateId: "ling_agent",
-    }, "2026-06-25T00:02:30.000Z");
+    const lease = store.acquireResourceLease({
+      workspaceId: channel.workspaceId, resourceType: "workflow_step", resourceKey: step.id,
+      ownerType: "workflow_step", ownerId: step.id, acquiredAt: "2026-06-25T00:02:30.000Z",
+      expiresAt: "2026-06-25T01:02:30.000Z",
+    });
+    assert.ok(lease);
+    const generation = store.beginChannelWorkflowStepStart({
+      workflowStepId: step.id, expected: { status: step.status, updatedAt: step.updatedAt }, leaseId: lease.id,
+      task: { channelId: channel.id, title: step.title, prompt: step.prompt, assigneeTeammateId: step.toParticipantId },
+      now: "2026-06-25T00:02:30.000Z",
+    });
+    assert.equal(generation.status, "begun", JSON.stringify(generation));
+    const task = generation.task;
+    assert.equal(store.transitionTaskStatus({
+      taskId: task.id, expectedStatus: "todo", event: "claim", actor: "system", now: "2026-06-25T00:02:30.000Z",
+    }).ok, true);
     const contextPack = buildWorkflowStepContextPack({
       store,
       channel,
@@ -81,11 +89,27 @@ test("workflow terminal report preserves full step result text without a legacy 
       workflowStepId: step.id,
       providerName: "test-provider",
       providerModel: "test-model",
-      taskSnapshot: { id: task.id, title: "Create index.html" },
+      taskSnapshot: task,
       providerSnapshot: { provider: "test-provider", model: "test-model" },
       requestSnapshot: { cwd, contextPack },
       createdAt: "2026-06-25T00:03:00.000Z",
     });
+    const workUnit = store.createWorkUnit({
+      id: "unit_workflow_terminal_summary", workspaceId: channel.workspaceId, kind: "task_run", ownerType: "task", ownerId: task.id,
+      taskId: task.id, channelId: channel.id, teammateId: step.toParticipantId, runnerId: "pi", effectiveRunnerId: "pi",
+      idempotencyKey: "workflow-terminal-summary", createdByActor: "system", request: {}, now: "2026-06-25T00:03:00.000Z",
+    });
+    store.linkRunToWorkUnit(run.id, workUnit.id, "2026-06-25T00:03:00.000Z");
+    store.createWorkUnitAttempt({
+      id: "attempt_workflow_terminal_summary", workUnitId: workUnit.id, attemptNumber: 1, runtimeInstanceId: "runtime_workflow_terminal_summary",
+      runnerId: "pi", effectiveRunnerId: "pi", now: "2026-06-25T00:03:00.000Z",
+    });
+    assert.equal(store.commitChannelWorkflowStepRunReady({
+      workflowStepId: step.id, owner: generation.owner, runId: run.id, now: "2026-06-25T00:03:00.000Z",
+    }).status, "linked");
+    assert.equal(store.transitionRunStatus({
+      runId: run.id, expectedStatus: "queued", event: "runner_started", actor: "runner", now: "2026-06-25T00:03:00.000Z",
+    }).ok, true);
     const longResult = `${Array.from({ length: 90 }, (_, index) => `结果片段${index}`).join(" ")} END_MARKER_完整结尾`;
     assert.equal(longResult.length > 480, true);
     store.appendEvent(run.id, "assistant_text_delta", { text: longResult });

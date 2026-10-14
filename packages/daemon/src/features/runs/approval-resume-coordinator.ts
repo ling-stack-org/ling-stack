@@ -495,13 +495,23 @@ export class ApprovalResumeCoordinator {
       this.failResume(store, claim.checkpoint, reason);
       return { status: "blocked", runId: claim.run.id, reason };
     }
-    void completion.then((runId) => {
-      if (!runId) this.failResume(store, claim.checkpoint, "approval_resume_harness_dispatch_failed");
+    const settled = completion.then((runId) => {
+      if (runId !== claim.run.id) {
+        this.failResume(store, claim.checkpoint, "approval_resume_harness_dispatch_failed");
+        return;
+      }
+      const currentUnit = store.getWorkUnit(claim.workUnit.id);
+      if (currentUnit?.activeAttemptId !== claim.attempt.id || currentUnit.linkedRunId !== claim.run.id) return;
+      // The dispatcher owns report/goal hooks. The coordinator still owns the
+      // workflow obligation after an approval continuation, for every terminal
+      // outcome; a second approval/question yield remains non-terminal.
+      this.finalizeTerminalWorkflow(store, claim.run.id, new Date().toISOString());
     }, (error) => {
       this.failResume(store, claim.checkpoint, `approval_resume_harness_dispatch_failed:${formatError(error)}`);
     }).finally(() => {
       this.harnessDispatches.delete(claim.run.id);
     });
+    this.options.activeRuns.trackCompletion(settled);
     return { status: "started", runId: claim.run.id, attemptId: claim.attempt.id };
   }
 
@@ -851,8 +861,14 @@ export class ApprovalResumeCoordinator {
   }
 
   private async reconcileTerminalRun(store: RunStore, runId: string, now: string): Promise<void> {
+    const terminalRun = this.finalizeTerminalWorkflow(store, runId, now);
+    if (!terminalRun) return;
+    await this.options.afterRunTerminal?.(terminalRun);
+  }
+
+  private finalizeTerminalWorkflow(store: RunStore, runId: string, now: string): RunSession | undefined {
     const terminalRun = store.getRun(runId);
-    if (!terminalRun || !isTerminalRunStatus(terminalRun.status)) return;
+    if (!terminalRun || !isTerminalRunStatus(terminalRun.status)) return undefined;
     if (terminalRun.workflowStepId) {
       finalizeOrchestratedWorkflowStepRun(
         store,
@@ -862,7 +878,7 @@ export class ApprovalResumeCoordinator {
         now,
       );
     }
-    await this.options.afterRunTerminal?.(terminalRun);
+    return terminalRun;
   }
 
   private publishRecoveredApprovalDecision(store: RunStore, approval: ApprovalRequest): void {

@@ -144,6 +144,104 @@ for (const [phase, exec] of [
   });
 }
 
+test("A12 linked workflow approval recovery rebuilds current ownership after SQLite reopen and executes once", { timeout: 15_000 }, async (t) => {
+  const provider = await startLoopbackPiProvider(() => ({ text: "Linked workflow recovery complete." }));
+  t.after(() => provider.close());
+  const fixture = await createResumeFixture("linked-workflow", "printf x >> linked-workflow-count.txt",
+    false, true, true, "approve", { providerBaseUrl: provider.baseUrl, realSdk: true, workflowStartLinked: true });
+  t.after(() => fixture.close());
+  const { workflowStart } = fixture;
+  const linked = fixture.store.getChannelWorkflowStep(workflowStart.step.id);
+  const frozenExecution = fixture.store.getRun(fixture.run.id).requestSnapshot.runnerExecutionInput;
+  assert.equal(linked.status, "running");
+  assert.equal(linked.taskId, fixture.run.taskId);
+  assert.equal(linked.runId, fixture.run.id);
+  assert.deepEqual(linked.metadata.startOwner, { ...workflowStart.owner, phase: "linked" });
+  assert.equal(fixture.store.getTask(fixture.run.taskId).currentRunId, fixture.run.id);
+  assert.equal(fixture.store.getLingThread(fixture.run.threadId).kind, "workflow_step");
+  assert.equal(fixture.run.requestSnapshot.workflowStartOwner, undefined,
+    "continuation must rebuild from the current linked marker, not an injected request owner");
+  const originalApproval = fixture.store.getApprovalRequest(fixture.approval.id);
+  const originalBasis = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id).resumeBasis;
+  assert.equal(originalBasis.workflowStepId, workflowStart.step.id);
+  assert.equal(fixture.store.listResourceLeases({ resourceType: "workflow_step", resourceKey: workflowStart.step.id })
+    .find(entry => entry.id === workflowStart.lease.id)?.status, "active");
+
+  fixture.runtimeSupervisor.releaseAll();
+  fixture.storeRegistry.closeAll();
+  fixture.storeRegistry = new RunStoreRegistry(createSqliteRunStore);
+  fixture.store = fixture.storeRegistry.getStore(fixture.cwd);
+  fixture.runtimeSupervisor = new RuntimeSupervisor(resolveConfig({ defaultWorkspaceCwd: fixture.cwd,
+    harness: { continuations: { mode: "enforce" } } }));
+  fixture.run = fixture.store.getRun(fixture.run.id);
+  fixture.approval = fixture.store.getApprovalRequest(fixture.approval.id);
+  fixture.checkpoint = fixture.store.getApprovalCheckpoint(fixture.checkpoint.id);
+  assert.deepEqual(fixture.store.getChannelWorkflowStep(workflowStart.step.id).metadata.startOwner, linked.metadata.startOwner);
+  const activeRuns = new ActiveRunRegistry();
+  const coordinator = createCoordinator(activeRuns, fixture);
+  coordinator.registerStore(fixture.store);
+  coordinator.registerStore(fixture.store);
+  await activeRuns.waitForIdle();
+  await waitForCondition(() => ["succeeded", "failed", "cancelled"].includes(fixture.store.getRun(fixture.run.id)?.status),
+    "linked workflow approval recovery did not settle");
+  assert.deepEqual(fixture.dispatchErrors, []);
+  assert.equal(fixture.store.getRun(fixture.run.id).status, "succeeded",
+    fixture.store.getApprovalCheckpoint(fixture.checkpoint.id)?.resumeFailureReason);
+  assert.equal(await readFile(resolve(fixture.cwd, "linked-workflow-count.txt"), "utf8"), "x");
+  assert.equal(fixture.runnerCalls.length, 1);
+  assert.equal(fixture.runnerResults.length, 1);
+  assert.equal(provider.requests.length, 1, "the real SDK continues once without original prompt replay");
+  const [request] = provider.requests;
+  assert.deepEqual(request.messages.map(message => message.role), ["system", "user", "assistant", "tool"]);
+  assert.equal(request.messages[2].tool_calls[0].id, fixture.approval.toolCallId);
+  assert.equal(request.messages[3].tool_call_id, fixture.approval.toolCallId);
+  const approvedResult = fixture.runnerCalls[0].approvedToolContinuation;
+  assert.equal(approvedResult.sideEffectFingerprint, originalBasis.sideEffectFingerprint);
+  assert.equal(approvedResult.approvalId, fixture.approval.id);
+  assert.deepEqual(approvedResult.args, { command: fixture.command, cwd: fixture.cwd });
+  assert.equal(request.messages[3].content, approvedResult.result.content.map(block => block.text).join("\n"));
+  assert.doesNotMatch(JSON.stringify(request), /ling_host_resume/u);
+  assert.match(JSON.stringify(fixture.runnerResults[0].messages), /Linked workflow recovery complete\./u);
+  const attempts = fixture.store.listWorkUnitAttempts(fixture.workUnit.id);
+  assert.equal(attempts.length, 2);
+  assert.notEqual(attempts.at(-1).id, fixture.priorAttempt.id);
+  assert.equal(attempts.at(-1).status, "succeeded");
+  assert.equal(fixture.runnerCalls[0].runnerAttemptId, attempts.at(-1).id);
+  const toolEvents = matchingToolEvents(fixture);
+  assert.deepEqual(toolEvents.map(event => event.type), ["tool_start", "tool_end"]);
+  assert.ok(toolEvents.every(event => event.data.attemptId === attempts.at(-1).id));
+  assert.equal(toolEvents[0].data.args.command, fixture.command);
+  assert.equal(toolEvents[1].data.isError, false);
+  assert.deepEqual(approvedResult.result, toolEvents[1].data.result);
+  const conclusion = fixture.store.getChannelWorkflowStep(workflowStart.step.id);
+  assert.equal(conclusion.status, "succeeded");
+  assert.equal(conclusion.taskId, fixture.run.taskId);
+  assert.equal(conclusion.runId, fixture.run.id);
+  assert.deepEqual(conclusion.metadata.startOwner, linked.metadata.startOwner,
+    "resume must not replace Task, exact lease or semantic authority");
+  assert.equal(fixture.store.getChannelWorkflow(workflowStart.workflow.id).status, "succeeded");
+  assert.equal(fixture.store.getTask(fixture.run.taskId).currentRunId, fixture.run.id);
+  assert.equal(fixture.store.listTasks({ channelId: workflowStart.channel.id }).length, 1);
+  assert.deepEqual(fixture.store.getRun(fixture.run.id).requestSnapshot.runnerExecutionInput, frozenExecution);
+  assert.deepEqual(fixture.store.getApprovalRequest(fixture.approval.id), originalApproval);
+  assert.deepEqual(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id).resumeBasis, originalBasis);
+  assert.equal(fixture.store.getApprovalCheckpoint(fixture.checkpoint.id).status, "resumed");
+  const continuation = fixture.store.findRunnerContinuationByIdempotencyKey(`${runnerContinuationIdempotencyKey({
+    runId: fixture.run.id, sourceAttemptId: fixture.priorAttempt.id, origin: "approval_resume", generation: 0,
+  })}:${fixture.approval.id}`);
+  assert.equal(continuation?.state, "succeeded");
+  assert.equal(continuation?.targetAttemptId, attempts.at(-1).id);
+  assert.equal(fixture.store.listResourceLeases({ resourceType: "workflow_step", resourceKey: workflowStart.step.id })
+    .find(entry => entry.id === workflowStart.lease.id)?.status, "released");
+  assert.equal(fixture.store.listRuntimeSemaphoreSlots({ workUnitId: fixture.workUnit.id, status: "active" }).length, 0);
+  assert.equal(fixture.store.listResourceLeases({ workUnitId: fixture.workUnit.id, status: "active" }).length, 0);
+  coordinator.registerStore(fixture.store);
+  await activeRuns.waitForIdle();
+  assert.equal(provider.requests.length, 1);
+  assert.equal(fixture.runnerCalls.length, 1);
+  assert.equal(await readFile(resolve(fixture.cwd, "linked-workflow-count.txt"), "utf8"), "x");
+});
+
 test("fresh readonly Pi approval recovery assigns the new SDK call to the replacement Attempt", { timeout: 15_000 }, async (t) => {
   let readPath;
   const provider = await startLoopbackPiProvider((_body, count) => count === 1
@@ -1097,7 +1195,31 @@ function matchingToolEvents(fixture) {
   });
 }
 
+/** Public Core begin/claim/ready producers; no typed isolation or owner stub. */
+function beginLinkedWorkflowResumeFixture(store, cwd, now) {
+  const channel = store.createChannel({ name: "A12 linked workflow approval", boundPath: cwd,
+    allowedTools: ["read", "bash", "write"] }, now);
+  const workflow = store.createChannelWorkflow({ channelId: channel.id, title: "Resume linked workflow",
+    objective: "Resume one approved command under its current generation", status: "ready", createdBy: "local-user" }, now);
+  const step = store.createChannelWorkflowStep({ workflowId: workflow.id, title: "Resume recovery", prompt: "Resume safely",
+    toParticipantId: "ling_agent", toParticipantLabel: "Ling" }, now);
+  const lease = store.acquireResourceLease({ workspaceId: channel.workspaceId, resourceType: "workflow_step",
+    resourceKey: step.id, ownerType: "workflow_step", ownerId: step.id, acquiredAt: now,
+    // This file's durable crash boundary is fixed in August; admission uses the
+    // actual recovery clock, so the fixture lease intentionally outlives it.
+    expiresAt: "2100-01-01T00:00:00.000Z" });
+  assert.ok(lease);
+  const result = store.beginChannelWorkflowStepStart({ workflowStepId: step.id,
+    expected: { status: step.status, taskId: step.taskId, runId: step.runId, updatedAt: step.updatedAt }, leaseId: lease.id,
+    task: { channelId: channel.id, title: "Resume recovery", prompt: "Resume safely", assigneeTeammateId: "ling_agent" }, now });
+  assert.equal(result.status, "begun", JSON.stringify(result));
+  assert.equal(store.transitionTaskStatus({ taskId: result.task.id, expectedStatus: "todo", event: "claim", actor: "system", now }).ok, true);
+  return { channel, workflow, step, lease, task: result.task, owner: result.owner };
+}
+
 async function createResumeFixture(suffix, command, typed = false, harness = false, trackedTask = false, resolution = "approve", sdkOptions = {}) {
+  if (sdkOptions.workflowStartLinked) assert.ok(!typed && harness && trackedTask && sdkOptions.realSdk,
+    "the linked workflow positive fixture uses real Pi recovery, not typed isolation bypass");
   const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-approval-resume-recovery-${suffix}-`));
   const storeRegistry = new RunStoreRegistry(createSqliteRunStore);
   const store = storeRegistry.getStore(cwd);
@@ -1106,26 +1228,28 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     ? createCompositeSecretResolver({ env: { LING_TEST_APPROVAL_KEY: "loopback-only-not-a-credential" } })
     : { resolve: () => ({ configured: false }) };
   const basis = typed ? createTypedWorkflowBasis(store, cwd, [typedOperation("run_command", command)], now) : undefined;
+  const workflowStart = sdkOptions.workflowStartLinked ? beginLinkedWorkflowResumeFixture(store, cwd, now) : undefined;
   const taskChannel = trackedTask
-    ? basis?.channel ?? store.createChannel({
+    ? workflowStart?.channel ?? basis?.channel ?? store.createChannel({
         name: `Approval resume ${suffix}`,
         boundPath: cwd,
         allowedTools: ["read", "bash", "write"],
       }, now)
     : undefined;
-  const trackedTaskRow = taskChannel ? store.createTask({
+  const trackedTaskRow = workflowStart?.task ?? (taskChannel ? store.createTask({
     channelId: taskChannel.id,
     title: "Resume recovery",
     prompt: "Resume safely",
     status: "running",
-  }, now) : undefined;
+  }, now) : undefined);
   const taskSnapshot = {
     id: trackedTaskRow?.id ?? `task_resume_recovery_${suffix}`,
     title: "Resume recovery",
     prompt: "Resume safely",
     ...(taskChannel ? { channelId: taskChannel.id } : {}),
   };
-  const threadRequest = { cwd, task: taskSnapshot, ...(sdkOptions.reviewLineage ? { teammateId: "ling_agent" } : {}) };
+  const threadRequest = { cwd, task: taskSnapshot, ...(sdkOptions.reviewLineage ? { teammateId: "ling_agent" } : {}),
+    ...(workflowStart ? { workflowStepId: workflowStart.step.id, teammateId: "ling_agent" } : {}) };
   const thread = harness && (sdkOptions.realSdk || sdkOptions.reviewLineage) ? ensureLingThreadForRun(store, threadRequest, now) : harness ? store.createLingThread({
     kind: "conversation",
     teammateId: "ling_agent",
@@ -1201,6 +1325,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     taskId: taskSnapshot.id,
     ...(basis ? { channelId: basis.channel.id, teammateId: gateOwner, workflowStepId: basis.step.id }
       : taskChannel ? { channelId: taskChannel.id } : {}),
+    ...(workflowStart ? { workflowStepId: workflowStart.step.id } : {}),
     ...(thread ? { threadId: thread.id, turnId: accepted.turnId, turnRunRole: "primary", teammateId: "ling_agent" } : {}),
     ...(preset ? { providerPresetId: preset.id } : {}),
     providerName: provider?.provider ?? "test-provider",
@@ -1208,6 +1333,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     taskSnapshot,
     providerSnapshot: provider ?? { provider: "test-provider", model: "test-model" },
     requestSnapshot: { cwd, ...(basis ? { workflowOperationExecution: basis.snapshot, delegatedRequirement: basis.requirement } : {}),
+      ...(workflowStart ? { workflowStepId: workflowStart.step.id } : {}),
       ...(sdkOptions.tools ? { tools: [...sdkOptions.tools] } : {}),
       ...(harness ? { harnessFeatureSnapshot: { schemaVersion: 1, continuations: "enforce", toolBroker: "off",
         evaluations: "off", evaluationModelGate: "shadow", delegations: "off", delegationMaxDepth: 3 },
@@ -1246,6 +1372,12 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     now,
   });
   store.linkRunToWorkUnit(run.id, workUnit.id, now);
+  if (workflowStart) {
+    assert.equal(store.commitChannelWorkflowStepRunReady({ workflowStepId: workflowStart.step.id,
+      owner: workflowStart.owner, runId: run.id, now }).status, "linked");
+    assert.equal(store.transitionTaskStatus({ taskId: run.taskId, expectedStatus: "claimed", event: "start_run",
+      actor: "runner", currentRunId: run.id, now }).ok, true);
+  }
   const priorFence = {
     workUnitId: workUnit.id,
     attemptId: priorAttempt.id,
@@ -1280,6 +1412,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     workUnitId: workUnit.id,
     priorAttemptId: priorAttempt.id,
     ...(basis ? { workflowStepId: basis.step.id, delegatedRequirementFingerprint: basis.requirement.fingerprint } : {}),
+    ...(workflowStart ? { workflowStepId: workflowStart.step.id } : {}),
     toolCallId: approval.toolCallId,
     actionType: approval.actionType,
     sideEffectFingerprint: approvalSideEffectFingerprintV1({
@@ -1336,6 +1469,7 @@ async function createResumeFixture(suffix, command, typed = false, harness = fal
     dispatchErrors,
     runnerRegistry,
     runtimeSupervisor,
+    ...(workflowStart ? { workflowStart } : {}),
     run: store.getRun(run.id),
     workUnit: store.getWorkUnit(workUnit.id),
     priorAttempt: store.getWorkUnitAttempt(priorAttempt.id),

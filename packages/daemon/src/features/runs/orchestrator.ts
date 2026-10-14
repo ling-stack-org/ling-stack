@@ -55,6 +55,7 @@ import {
 } from "@ling-stack/contracts";
 import { createWorkflowOperationExecutionSnapshot } from "./workflow-operation-snapshot.js";
 import { workflowOperationEffectRejection } from "./workflow-operation-effect-gate.js";
+import { captureWorkflowStartOwner, commitWorkflowStartReady, assertWorkflowRunAdmission } from "./workflow-step-start-admission.js";
 import type { McpBroker } from "../../context.js";
 import { HttpError } from "../../errors.js";
 import { appendConversationResponseStyle } from "../../shared/conversation-response-style.js";
@@ -412,6 +413,7 @@ async function executeAdmittedRunRequest(
   let ordinaryProgressRecoveryModelView: readonly unknown[] | undefined;
   let ordinaryProgressRecoveryWitness: RunProgressCheckpointWitness | undefined;
   const existingContinuation = options.existingRunContinuation;
+  let workflowStartOwner: import("@ling-stack/core").WorkflowStepStartOwnerV1 | undefined;
   try {
     workspaceCwd = runRequest.workspaceCwd ?? runRequest.cwd;
     await ensureWorkspaceStateWritableForRun(workspaceCwd);
@@ -453,6 +455,7 @@ async function executeAdmittedRunRequest(
     const frozenExecution = preparedExecution?.payload ?? existingRunnerExecution;
     assertFullAccessPermissionConfirmed(runRequest);
     validateWorkflowStepOwner(store, runRequest);
+    workflowStartOwner = captureWorkflowStartOwner(store, runRequest, existingContinuation?.runId);
     runtime = runtimeSupervisor.getRuntime(workspaceCwd, store);
     resolvedProvider = resolveProviderForRun(store, runRequest, secretResolver, {
       providerWebSocketFallbackEnabled: runtimeSupervisor.getTransportFeatures().providerWebSocketFallback,
@@ -1197,6 +1200,7 @@ async function executeAdmittedRunRequest(
       });
       appendRunCreatedControlPlaneEvent(store, options.controlPlaneEvents, workspaceCwd, run, createdAt);
     }
+    if (run) commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner);
   } catch (error) {
     if (existingContinuation?.origin === "daemon_recovery"
       && error instanceof HttpError && (error.code === "provider_preflight_failed" || error.code.startsWith("checkpoint."))
@@ -1258,6 +1262,8 @@ async function executeAdmittedRunRequest(
       if (continuationExecution) {
         continuationExecution = deferPreparedRunnerContinuation(store, continuationExecution, queuedAt);
       }
+      try { commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner); }
+      catch (ownerError) { writeRunPreparationFailure(sink, 409, { error: "workflow_start_owner_stale", message: String(ownerError) }); return undefined; }
       sink.writeReady({
         ok: true,
         runId: run.id,
@@ -1293,6 +1299,8 @@ async function executeAdmittedRunRequest(
       if (continuationExecution) {
         continuationExecution = deferPreparedRunnerContinuation(store, continuationExecution, queuedAt);
       }
+      try { commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner, { claimQueuedTask: true }); }
+      catch (ownerError) { writeRunPreparationFailure(sink, 409, { error: "workflow_start_owner_stale", message: String(ownerError) }); return undefined; }
       try {
         options.onRunReady?.(run.id);
       } catch {
@@ -1440,6 +1448,8 @@ async function executeAdmittedRunRequest(
       store.updateLingThread(thread.id, { status: "failed", activeRunId: null }, new Date().toISOString());
     }
     if (error instanceof DuplicateRunRequestError) {
+      try { if (store) commitWorkflowStartReady(store, runRequest, error.runId, workflowStartOwner); }
+      catch (ownerError) { writeRunPreparationFailure(sink, 409, { error: "workflow_start_owner_stale", message: String(ownerError) }); return undefined; }
       try {
         options.onRunReady?.(error.runId);
       } catch {
@@ -2089,6 +2099,8 @@ async function executeAdmittedRunRequest(
         : {}),
       sandbox: sandboxBinding,
       onToolBefore: (request) => {
+        try { assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal); }
+        catch { return { allowed: false, code: "workflow_start_owner_stale", reason: "Workflow execution no longer owns this task and source." }; }
         const rejection = workflowOperationEffectRejection({ store, run, request,
           restrictedCommandRuntime: runtimeSupervisor.getRestrictedCommandRuntime() });
         if (rejection) return { allowed: false, code: rejection.code, reason: rejection.reason };
@@ -2274,6 +2286,7 @@ async function executeAdmittedRunRequest(
       },
       signal: abortController.signal,
     };
+    assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal);
     const approvedToolContinuation: PiRunnerApprovedToolContinuation | undefined =
       existingContinuation?.origin === "approval_resume"
         ? await prepareApprovedToolContinuation({
@@ -2287,6 +2300,7 @@ async function executeAdmittedRunRequest(
             signal: abortController.signal,
             extraSecrets: resolvedSecretValues,
             shellSnapshotEnabled: runnerRequest.runtimeToolFeatures?.shellSnapshot === true,
+            workflowStartOwner,
           })
         : undefined;
     const unscopedContinuationRequest = approvedToolContinuation
@@ -2295,6 +2309,7 @@ async function executeAdmittedRunRequest(
     const continuationRunnerRequest = localWriters
       ? scopeUserInputLocalWriters(unscopedContinuationRequest, localWriters)
       : unscopedContinuationRequest;
+    assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal);
     const reconstruction = continuationExecution
       ? await executeRunnerContinuationReconstruction({
           store,
@@ -2309,6 +2324,7 @@ async function executeAdmittedRunRequest(
     if (reconstruction && !reconstruction.ok) {
       throw new Error(reconstruction.failureCode);
     }
+    assertWorkflowRunAdmission(store, run, workflowStartOwner, abortController.signal);
     const result = reconstruction?.result
       ?? await runnerResolution.runner.adapter.runTask(continuationRunnerRequest);
 

@@ -12,6 +12,7 @@ import {
   type SecretResolver,
   type SkillApprovalProfile,
   type Task,
+  type WorkflowStepStartOwnerV1,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
@@ -69,7 +70,6 @@ import { createWorkflowParticipantAuthorityV1 } from "@ling-stack/contracts";
 import { resolveWorkflowHandoffExecutionContext } from "./workflow-handoffs.js";
 import { evaluateWorkflowCompletionGate } from "./workflow-completion-gate.js";
 import { completeWorkflowIfStepsFinished } from "./workflow-completion.js";
-import { blockDelegatedWorkflowStepBeforeRun } from "./workflow-step-finalizer.js";
 import { projectWorkflowStepNarration } from "./workflow-step-narration.js";
 import { workflowStepExecutionOperationBindings } from "./workflow-operation-evidence.js";
 import {
@@ -89,6 +89,7 @@ export interface WorkflowStepRunRequest {
   readonly runnerId?: string;
   readonly teammateId?: string;
   readonly workflowStepId?: string;
+  readonly workflowStartOwner?: WorkflowStepStartOwnerV1;
   /** Canonical channel message that owns this workflow step's evidence. */
   readonly sourceMessageId?: string;
   readonly delegatedRequirement?: DelegatedStepRequirementV1;
@@ -640,19 +641,9 @@ async function handleChannelWorkflowStepStart(
 
   if (input.mode === "create_task") {
     const finishedAt = new Date().toISOString();
-    const succeeded = store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "running",
-      event: "succeed",
-      actor: "system",
-      reason: `task:${started.task.id}`,
-      now: finishedAt,
-      taskId: started.task.id,
-      resultSummary: "Task created from workflow step.",
-    });
-    if (!succeeded.ok) {
+    if (store.getChannelWorkflowStep(workflowStepId)?.status !== "succeeded") {
       writeJson(response, 409, {
-        error: succeeded.code,
+        error: "workflow_task_creation_stale",
         message: "An execution-backed workflow step cannot complete by creating a task without verified operation evidence.",
       });
       return;
@@ -669,23 +660,9 @@ async function handleChannelWorkflowStepStart(
   const runId = await startRun({ runRequest: started.runRequest, response });
   const completedAt = new Date().toISOString();
   if (!runId) {
-    store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "running",
-      event: "blocked",
-      actor: "system",
-      reason: "Run did not start.",
-      now: completedAt,
-      taskId: started.task.id,
-      blocker: "Run did not start.",
-    });
-    store.transitionChannelWorkflowStatus({
-      workflowId: started.workflowId,
-      event: "step_blocked",
-      actor: "system",
-      reason: "Run did not start.",
-      now: completedAt,
-    });
+    const owner = started.runRequest.workflowStartOwner;
+    if (owner) store.settleChannelWorkflowStepStartFailure({ workflowStepId, owner,
+      leaseId: owner.leaseId, blocker: "Run did not start.", now: completedAt });
     return;
   }
 }
@@ -742,7 +719,7 @@ export function prepareWorkflowStepStart(
   }
 
   const fail = (statusCode: number, code: string, message: string): PreparedWorkflowStepStart => {
-    store.releaseResourceLeasesForOwner("workflow_step", step.id, new Date().toISOString());
+    store.releaseResourceLease(lease.id, "workflow_step", step.id, new Date().toISOString());
     return { kind: "error", statusCode, code, message };
   };
   const block = (
@@ -754,68 +731,14 @@ export function prepareWorkflowStepStart(
     },
   ): PreparedWorkflowStepStart => {
     const blockedAt = new Date().toISOString();
-    if (participantProfileBlocker && workflow.metadata?.requiredParticipantManifest) {
-      const finalized = blockDelegatedWorkflowStepBeforeRun({
-        store,
-        workflowStepId: step.id,
-        code: participantProfileBlocker.code,
-        reason: participantProfileBlocker.reason,
-        missingRequirements: participantProfileBlocker.missingRequirements,
-        now: blockedAt,
-      });
-      if (finalized.status !== "finalized" && finalized.status !== "duplicate") {
-        store.releaseResourceLeasesForOwner("workflow_step", step.id, blockedAt);
-        return {
-          kind: "error",
-          statusCode: 409,
-          code: "workflow_step_preflight_stale",
-          message: `Workflow participant preflight could not settle step ${step.id}: ${finalized.status}.`,
-        };
-      }
-      completeWorkflowIfStepsFinished(store, workflow.id, blockedAt);
-      store.releaseResourceLeasesForOwner("workflow_step", step.id, blockedAt);
-      return { kind: "blocked", workflowId: workflow.id, blocker: message };
-    }
-    store.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "running",
-      event: "blocked",
-      actor: "system",
-      reason: message,
-      now: blockedAt,
-      blocker: message,
-    });
-    store.transitionChannelWorkflowStatus({
-      workflowId: workflow.id,
-      event: "step_blocked",
-      actor: "system",
-      reason: message,
-      now: blockedAt,
-    });
-    store.releaseResourceLeasesForOwner("workflow_step", step.id, blockedAt);
+    const settled = store.settleChannelWorkflowStepStartFailure({ workflowStepId: step.id, expected: step,
+      leaseId: lease.id, blocker: message, delegatedBlock: participantProfileBlocker,
+      fanInContextReviews: fanInContext.reviews, now: blockedAt });
+    if (settled.status === "stale" || settled.status === "invalid") return fail(409, "workflow_step_preflight_stale", message);
     return { kind: "blocked", workflowId: workflow.id, blocker: message };
   };
 
-  const workflowTransition = ensureWorkflowRunning(store, workflow.id, workflow.status, now);
-  if (!workflowTransition.ok) {
-    return fail(409, workflowTransition.code, `Workflow transition failed: ${workflowTransition.code}`);
-  }
-  const latestStep = store.getChannelWorkflowStep(step.id) ?? step;
-  const stepTransition = ensureWorkflowStepRunning(store, step.id, latestStep.status, now);
-  if (!stepTransition.ok) {
-    return fail(409, stepTransition.code, `Workflow step transition failed: ${stepTransition.code}`);
-  }
-
   const fanInContext = reviewWorkflowFanInContext({ store, workflow, step });
-  if (fanInContext.reviews.length > 0) {
-    const persistedStep = store.getChannelWorkflowStep(step.id) ?? step;
-    store.updateChannelWorkflowStep(step.id, {
-      metadata: {
-        ...persistedStep.metadata,
-        fanInContextReviews: fanInContext.reviews,
-      },
-    }, now);
-  }
   if (fanInContext.blocker) {
     return block(fanInContext.blocker);
   }
@@ -1001,23 +924,26 @@ export function prepareWorkflowStepStart(
     }
   }
 
-  const task = store.createTask(
-    {
+  const begun = store.beginChannelWorkflowStepStart({
+    workflowStepId: step.id, expected: step, leaseId: lease.id, now: new Date().toISOString(),
+    createTaskOnly: input.mode === "create_task",
+    fanInContextReviews: fanInContext.reviews,
+    task: {
       channelId: channel.id,
       title: taskTitle,
       prompt: input.taskPrompt ?? step.prompt,
       assigneeTeammateId,
     },
-    new Date().toISOString(),
-  );
-  store.updateChannelWorkflowStep(step.id, { taskId: task.id }, new Date().toISOString());
-
+  });
+  if (begun.status !== "begun") return fail(409, begun.code, "Workflow start ownership changed during preparation.");
+  const task = begun.task;
   return {
     kind: "ready",
     workflowId: workflow.id,
     task,
     runRequest: {
       ...runRequestBase,
+      workflowStartOwner: begun.owner,
       task: {
         id: task.id,
         title: task.title,
@@ -1046,109 +972,6 @@ function workflowStepRunTools(
     return [];
   }
   return [...new Set(stepRequiredTools)];
-}
-
-function ensureWorkflowRunning(
-  store: RunStore,
-  workflowId: string,
-  status: ChannelWorkflowStatus,
-  now: string,
-): ReturnType<RunStore["transitionChannelWorkflowStatus"]> {
-  if (status === "running") {
-    return { ok: true, from: status, to: status };
-  }
-  if (status === "draft") {
-    const prepared = store.transitionChannelWorkflowStatus({
-      workflowId,
-      expectedStatus: "draft",
-      event: "prepare",
-      actor: "system",
-      now,
-    });
-    if (!prepared.ok) {
-      return prepared;
-    }
-    return store.transitionChannelWorkflowStatus({
-      workflowId,
-      expectedStatus: "ready",
-      event: "start",
-      actor: "system",
-      now,
-    });
-  }
-  if (status === "ready" || status === "blocked") {
-    return store.transitionChannelWorkflowStatus({
-      workflowId,
-      expectedStatus: status,
-      event: "start",
-      actor: "system",
-      now,
-    });
-  }
-  return { ok: false, code: "invalid_transition", currentStatus: status };
-}
-
-function ensureWorkflowStepRunning(
-  store: RunStore,
-  workflowStepId: string,
-  status: ChannelWorkflowStepStatus,
-  now: string,
-): ReturnType<RunStore["transitionChannelWorkflowStepStatus"]> {
-  if (status === "running") {
-    return { ok: true, from: status, to: status };
-  }
-  if (status === "queued") {
-    const claimed = store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "queued",
-      event: "claim",
-      actor: "system",
-      now,
-    });
-    if (!claimed.ok) {
-      return claimed;
-    }
-    return store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-  }
-  if (status === "blocked") {
-    const resumed = store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "blocked",
-      event: "resume",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-    if (!resumed.ok) {
-      return resumed;
-    }
-    return store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-  }
-  if (status === "claimed") {
-    return store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      now,
-      blocker: null,
-    });
-  }
-  return { ok: false, code: "invalid_transition", currentStatus: status };
 }
 
 export function reconcileContinuityWorkflowCompletion(store: RunStore, now = new Date().toISOString()): number {

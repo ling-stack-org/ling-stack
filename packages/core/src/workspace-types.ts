@@ -2376,6 +2376,7 @@ export interface ChannelWorkflowStepOutputPacket {
 }
 
 export interface ChannelWorkflowStepMetadata {
+  readonly startOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
   readonly participantAuthority?: WorkflowParticipantAuthorityV1;
   readonly providerBinding?: WorkflowParticipantProviderBindingV1;
   readonly workflowTemplateId?: string;
@@ -2548,6 +2549,7 @@ export interface CreateChannelWorkflowStepInput {
 }
 
 export interface UpdateChannelWorkflowStepInput {
+  readonly expectedStartOwner?: import("./workflow-step-start-owner.js").WorkflowStepStartOwnerV1;
   readonly sourceHandoffId?: string | null;
   readonly contextSummaryId?: string | null;
   readonly taskId?: string | null;

@@ -77,6 +77,7 @@ export interface RunRequest extends Omit<
   readonly provider?: PiRunnerProviderConfig;
   readonly teammateId?: string;
   readonly workflowStepId?: string;
+  readonly workflowStartOwner?: import("@ling-stack/core").WorkflowStepStartOwnerV1;
   /** Internal-only immutable delegated completion requirement. External request parsing does not accept it. */
   readonly delegatedRequirement?: DelegatedStepRequirementV1;
   /** Internal-only Host execution bindings for workflow-owned operations. */

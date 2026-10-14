@@ -894,6 +894,38 @@ test("sqlite channel collaboration protocol persists brief, decisions, handoffs,
   }
 });
 
+/** Build a real owned start, including the Task/Run/Attempt links used by recovery. */
+function linkWorkflowStepFixture(store, { cwd, channel, step, lease, now, runId }) {
+  const begun = store.beginChannelWorkflowStepStart({
+    workflowStepId: step.id,
+    expected: { status: step.status, taskId: step.taskId, runId: step.runId, updatedAt: step.updatedAt },
+    leaseId: lease.id,
+    task: { channelId: channel.id, title: step.title, prompt: step.prompt, assigneeTeammateId: step.toParticipantId },
+    now,
+  });
+  assert.equal(begun.status, "begun", JSON.stringify(begun));
+  const task = begun.task;
+  assert.equal(store.transitionTaskStatus({ taskId: task.id, expectedStatus: "todo", event: "claim", actor: "system", now }).ok, true);
+  const run = store.createRun({
+    id: runId, cwd, taskId: task.id, channelId: channel.id, teammateId: step.toParticipantId,
+    workflowStepId: step.id, providerName: "test-provider", providerModel: "test-model",
+    taskSnapshot: task, providerSnapshot: {}, requestSnapshot: { cwd }, createdAt: now,
+  });
+  const workUnit = store.createWorkUnit({
+    id: `${runId}-unit`, workspaceId: channel.workspaceId, kind: "task_run", ownerType: "task", ownerId: task.id,
+    taskId: task.id, channelId: channel.id, teammateId: step.toParticipantId,
+    runnerId: "pi", effectiveRunnerId: "pi", idempotencyKey: `${runId}-unit`, createdByActor: "system", request: {}, now,
+  });
+  store.linkRunToWorkUnit(run.id, workUnit.id, now);
+  store.createWorkUnitAttempt({
+    id: `${runId}-attempt`, workUnitId: workUnit.id, attemptNumber: 1, runtimeInstanceId: `${runId}-runtime`,
+    runnerId: "pi", effectiveRunnerId: "pi", now,
+  });
+  assert.equal(store.commitChannelWorkflowStepRunReady({ workflowStepId: step.id, owner: begun.owner, runId: run.id, now }).status, "linked");
+  assert.equal(store.transitionRunStatus({ runId: run.id, expectedStatus: "queued", event: "runner_started", actor: "runner", startedAt: now, now }).ok, true);
+  return { task, run: store.getRun(run.id), owner: begun.owner };
+}
+
 test("sqlite handoff workflows persist steps, transitions, and workflow-step leases", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-channel-workflows-"));
   const now = "2026-05-28T03:00:00.000Z";
@@ -907,7 +939,7 @@ test("sqlite handoff workflows persist steps, transitions, and workflow-step lea
         sourceTaskId: task.id,
         fromParticipantId: "tian",
         fromParticipantLabel: "Tian",
-        toParticipantId: "engineer",
+        toParticipantId: "teammate_builtin_engineer",
         toParticipantLabel: "Engineer",
         reason: "Need implementation",
         requiredInput: "v1.2 plan",
@@ -944,7 +976,7 @@ test("sqlite handoff workflows persist steps, transitions, and workflow-step lea
         contextSummaryId: summary.id,
         title: "Implement",
         prompt: "Create the patch.",
-        toParticipantId: "engineer",
+        toParticipantId: "teammate_builtin_engineer",
         toParticipantLabel: "Engineer",
         metadata: {
           councilSlotKey: "engineer",
@@ -1004,28 +1036,22 @@ test("sqlite handoff workflows persist steps, transitions, and workflow-step lea
       expiresAt: "2026-05-28T04:02:31.000Z",
     }), undefined);
 
-    assert.deepEqual(store.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "queued",
-      event: "claim",
-      actor: "system",
-      now: "2026-05-28T03:03:00.000Z",
-    }), { ok: true, from: "queued", to: "claimed" });
-    assert.deepEqual(store.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "claimed",
-      event: "start",
-      actor: "system",
-      now: "2026-05-28T03:04:00.000Z",
-      taskId: task.id,
-    }), { ok: true, from: "claimed", to: "running" });
+    const generation = linkWorkflowStepFixture(store, {
+      cwd, channel, step, lease: firstLease, now: "2026-05-28T03:03:00.000Z", runId: "run_workflow_persistence",
+    });
+    assert.equal(store.getChannelWorkflowStep(step.id).status, "running");
+    assert.deepEqual(store.transitionRunStatus({
+      runId: generation.run.id, expectedStatus: "running", event: "runner_succeeded", actor: "runner", now: "2026-05-28T03:04:00.000Z",
+    }), { ok: true, from: "running", to: "succeeded" });
     assert.deepEqual(store.transitionChannelWorkflowStepStatus({
       workflowStepId: step.id,
       expectedStatus: "running",
       event: "succeed",
       actor: "system",
       now: "2026-05-28T03:05:00.000Z",
-      taskId: task.id,
+      taskId: generation.task.id,
+      runId: generation.run.id,
+      expectedStartOwner: generation.owner,
       resultSummary: "Task created.",
     }), { ok: true, from: "running", to: "succeeded" });
     assert.equal(store.listResourceLeases({ status: "active", resourceType: "workflow_step" }).length, 0);
@@ -2474,49 +2500,17 @@ test("recoverStaleChannelWorkflows reconciles running steps from linked terminal
         workflowId: workflow.id,
         title: "Implementation",
         prompt: "Implement the thing.",
-        toParticipantId: "engineer",
+        toParticipantId: "teammate_builtin_engineer",
         toParticipantLabel: "Engineer",
-        status: "running",
       },
       now,
     );
-    const task = store.createTask(
-      {
-        channelId: channel.id,
-        title: "Workflow recovery",
-        prompt: "Recover this workflow.",
-      },
-      now,
-    );
-    const run = store.createRun({
-      id: "run_workflow_recovery_stale",
-      cwd,
-      taskId: task.id,
-      channelId: channel.id,
-      providerName: "test-provider",
-      providerModel: "test-model",
-      taskSnapshot: {
-        id: task.id,
-        title: "Workflow recovery",
-        prompt: "Recover this workflow.",
-        channelId: channel.id,
-      },
-      providerSnapshot: { provider: "test-provider", model: "test-model" },
-      requestSnapshot: { cwd },
-      createdAt: now,
+    const lease = store.acquireResourceLease({
+      workspaceId: channel.workspaceId, resourceType: "workflow_step", resourceKey: step.id,
+      ownerType: "workflow_step", ownerId: step.id, acquiredAt: now, expiresAt: "2026-06-05T01:00:00.000Z",
     });
-    store.transitionRunStatus({
-      runId: run.id,
-      expectedStatus: "queued",
-      event: "runner_started",
-      actor: "runner",
-      now,
-      startedAt: now,
-    });
-    store.updateChannelWorkflowStep(step.id, {
-      taskId: task.id,
-      runId: run.id,
-    }, now);
+    assert.ok(lease);
+    const { run } = linkWorkflowStepFixture(store, { cwd, channel, step, lease, now, runId: "run_workflow_recovery_stale" });
 
     assert.equal(store.recoverStaleRuns(recoveredAt), 1);
     assert.ok(store.recoverStaleChannelWorkflows(recoveredAt) >= 2);

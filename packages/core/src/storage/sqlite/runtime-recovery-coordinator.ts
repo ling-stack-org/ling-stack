@@ -1,4 +1,6 @@
 import type { LingApprovalCheckpoint } from "../../approval-checkpoints.js";
+import { classifyWorkflowStepStartOwner, type WorkflowStepStartReadStore,
+  type WorkflowStepStartFailureInput, type WorkflowStepStartCommitResult } from "../../workflow-step-start-owner.js";
 import type { ApprovalRequest, ListApprovalRequestsOptions } from "../../approval-types.js";
 import {
   type LingThread,
@@ -24,6 +26,8 @@ import {
 const STALE_RUN_ERROR = "Daemon stopped before the run reached a terminal state.";
 
 export interface SqliteRuntimeRecoveryCoordinatorPorts {
+  readonly workflowStepStartReadStore: WorkflowStepStartReadStore;
+  readonly settleChannelWorkflowStepStartFailure: (input: WorkflowStepStartFailureInput) => WorkflowStepStartCommitResult;
   readonly expireResourceLeases: (now: string) => number;
   readonly listRecoverableRunIds: () => string[];
   readonly hasTerminalRunEvent: (runId: string) => boolean;
@@ -153,6 +157,20 @@ export class SqliteRuntimeRecoveryCoordinator {
     for (const workflow of workflows) {
       const steps = this.ports.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
       for (const step of steps) {
+        if (step.status === "running" || step.status === "waiting_for_approval" && Boolean(step.taskId || step.runId || step.metadata?.startOwner)) {
+          const ownership = classifyWorkflowStepStartOwner(this.ports.workflowStepStartReadStore, step, now, { requireActiveLease: false });
+          if (ownership.status !== "linked") {
+            const owner = step.metadata?.startOwner;
+            const result = this.ports.settleChannelWorkflowStepStartFailure({ workflowStepId: step.id, expected: step,
+              ...(owner ? { owner, leaseId: owner.leaseId } : {}),
+              mode: ownership.status === "preparing" ? "startup_recovery" : "invalid_owner",
+              blocker: ownership.status === "preparing"
+                ? "Daemon restarted before workflow step run started; retry required."
+                : "Workflow start owner is missing or inconsistent after daemon restart; retry required.", now });
+            if (result.status === "linked") recovered += 1;
+            continue;
+          }
+        }
         if (workflow.metadata?.requiredParticipantManifest && step.status === "running" && step.runId) {
           const run = this.ports.getRun(step.runId);
           if (!run) {

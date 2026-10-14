@@ -1724,7 +1724,6 @@ export async function routeRequest(
           {
             onRunReady: (runId) => {
               const now = new Date().toISOString();
-              store.updateChannelWorkflowStep(workflowStep.id, { taskId, runId }, now);
               attachWorkflowStepContextArtifact(store, workflowStep.id, runId, runRequest);
               resolveOnce(runId);
             },
@@ -2095,11 +2094,6 @@ export async function routeRequest(
             {
               onRunReady: (runId) => {
                 const store = storeRegistry.getStore(runRequest.workspaceCwd);
-                store.updateChannelWorkflowStep(
-                  workflowRoute.workflowStepId,
-                  { taskId: runRequest.task.id, runId },
-                  new Date().toISOString(),
-                );
                 attachWorkflowStepContextArtifact(store, workflowRoute.workflowStepId, runId, runRequest);
               },
               afterRunTerminal: async (terminalRun) => {

@@ -14,6 +14,7 @@ import { HttpError } from "../../errors.js";
 import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-guard.js";
 import { isRecord } from "../../shared/validation.js";
 import type { ValidateWorkflowStepRunRequest, WorkflowStepRunRequest } from "./workflows.js";
+import { classifyWorkflowStepStartOwner, workflowStepStartOwnerMatches, type WorkflowStepStartOwnerV1 } from "@ling-stack/core";
 import {
   completeWorkflowIfStepsFinished,
   maybeCreateWorkflowTerminalCoordinatorReply,
@@ -94,6 +95,7 @@ export type WorkflowOrchestrationResult =
 export type WorkflowApprovalDecisionSyncResult =
   | { readonly status: "not_workflow_approval" }
   | { readonly status: "missing_owner"; readonly workflowStepId: string }
+  | { readonly status: "stale_owner"; readonly workflowStepId: string }
   | { readonly status: "synced"; readonly workflow: ChannelWorkflow; readonly workflowStep: ChannelWorkflowStep; readonly result?: WorkflowOrchestrationResult };
 
 export interface CancelWorkflowInput {
@@ -149,7 +151,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
   const currentWorkflow = input.store.getChannelWorkflow(workflow.id) ?? workflow;
   const steps = input.store.listChannelWorkflowSteps({ workflowId: workflow.id, complete: true });
   const activeStepCount = countActiveWorkflowSteps(steps);
-  const approvedGatedSteps = steps.filter((step) => step.status === "running" && step.metadata?.preStepApprovalId && !step.runId && !step.taskId);
+  const approvedGatedSteps = steps.filter((step) => isApprovedPreStartStep(input.store, step));
   const eligibleSteps = [
     ...approvedGatedSteps,
     ...steps.filter((step) => step.status === "queued" && isWorkflowStepEligible(step, steps)),
@@ -200,7 +202,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       eligibleSteps,
       now: new Date().toISOString(),
     }).workflowStep;
-    const isApprovedGatedStep = latestCandidate.status === "running" && latestCandidate.metadata?.preStepApprovalId && !latestCandidate.runId && !latestCandidate.taskId;
+    const isApprovedGatedStep = isApprovedPreStartStep(input.store, latestCandidate);
     if (!isApprovedGatedStep) {
       const gateResult = maybeRequestPreStepApproval(input.store, input.store.getChannelWorkflow(workflow.id) ?? currentWorkflow, latestCandidate);
       if (gateResult) {
@@ -253,7 +255,7 @@ export async function orchestrateChannelWorkflow(input: OrchestrateWorkflowInput
       runRequest,
     });
     if (!runId) {
-      blockedResults.push(blockWorkflowStepRunStartFailure(input.store, started.workflowId, latestCandidate.id, started.task.id));
+      blockedResults.push(blockWorkflowStepRunStartFailure(input.store, started.workflowId, latestCandidate.id, started.task.id, started.runRequest.workflowStartOwner));
       continue;
     }
     startedSteps.push({
@@ -315,7 +317,19 @@ export function syncWorkflowApprovalDecision(
     approval.payload.workflowStepId === step.id
   );
   if (matchesPostGate) {
+    const currentApproval = store.getApprovalRequest(approval.id);
+    const ownership = classifyWorkflowStepStartOwner(store, step, now, { requireActiveLease: false });
+    if (!currentApproval || step.metadata?.postStepApprovalId !== approval.id
+      || ownership.status !== "linked" || !step.runId
+      || currentApproval.workflowStepId !== step.id || currentApproval.channelId !== step.channelId
+      || currentApproval.payload.type !== "workflow_step" || currentApproval.payload.gateStage !== "post"
+      || currentApproval.payload.workflowId !== workflow.id || currentApproval.payload.workflowStepId !== step.id
+      || currentApproval.payload.runId !== step.runId) {
+      return { status: "stale_owner", workflowStepId: step.id };
+    }
+    approval = currentApproval;
     const result = reconcilePostStepApprovalDecision(store, workflow, step, approval, now);
+    if (result?.status === "stale_owner") return { status: "stale_owner", workflowStepId: step.id };
     syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id) ?? workflow, now);
     return {
       status: "synced",
@@ -606,7 +620,7 @@ export async function retryChannelWorkflowStep(input: RetryWorkflowStepInput): P
     runRequest,
   });
   if (!runId) {
-    return blockWorkflowStepRunStartFailure(input.store, started.workflowId, step.id, started.task.id);
+    return blockWorkflowStepRunStartFailure(input.store, started.workflowId, step.id, started.task.id, started.runRequest.workflowStartOwner);
   }
   return {
     status: "started",
@@ -648,6 +662,12 @@ export function finalizeOrchestratedWorkflowStepRun(
   if (!workflow) {
     return step;
   }
+  const ownership = classifyWorkflowStepStartOwner(store, step, now, { requireActiveLease: false });
+  if (ownership.status !== "linked" || step.taskId !== taskId || step.runId !== run.id
+    || run.taskId !== taskId || run.workflowStepId !== step.id) return step;
+  const currentRun = store.getRun(run.id);
+  if (!currentRun || !["succeeded", "failed", "cancelled"].includes(currentRun.status)) return step;
+  run = currentRun;
   if (workflow.metadata?.requiredParticipantManifest) {
     const canonicalRun = step.runId ? store.getRun(step.runId) : undefined;
     if (!canonicalRun || (canonicalRun.status !== "succeeded" && canonicalRun.status !== "failed" && canonicalRun.status !== "cancelled")) {
@@ -659,17 +679,23 @@ export function finalizeOrchestratedWorkflowStepRun(
         return store.getChannelWorkflowStep(workflowStepId);
       }
       const latestStep = store.getChannelWorkflowStep(workflowStepId) ?? step;
+      if (!workflowStepStartOwnerMatches(latestStep.metadata?.startOwner, ownership.owner)
+        || latestStep.taskId !== taskId || latestStep.runId !== canonicalRun.id) return latestStep;
       if (maybeRequestPostStepApproval(store, workflow, latestStep, taskId, canonicalRun, now)) {
         return store.getChannelWorkflowStep(workflowStepId);
       }
     }
-    finalizeDelegatedWorkflowStepFromCanonicalState({
+    const finalized = finalizeDelegatedWorkflowStepFromCanonicalState({
       store,
       workflowStepId,
       cause: "run_terminal",
       now,
+      expectedStartOwner: ownership.owner,
     });
+    if (finalized.status !== "finalized" && finalized.status !== "duplicate") return store.getChannelWorkflowStep(workflowStepId);
     const latestStep = store.getChannelWorkflowStep(workflowStepId);
+    if (!latestStep || !workflowStepStartOwnerMatches(latestStep.metadata?.startOwner, ownership.owner)
+      || latestStep.taskId !== taskId || latestStep.runId !== canonicalRun.id) return latestStep;
     try {
       if (latestStep && !latestStep.metadata?.outputArtifactId) {
         attachWorkflowStepOutputArtifact(store, workflowStepId, canonicalRun, now);
@@ -682,7 +708,7 @@ export function finalizeOrchestratedWorkflowStepRun(
     }
     reconcileWorkflowFromCanonicalState({ store, workflowId: workflow.id, cause: "run_terminal", now });
     maybeCreateWorkflowTerminalCoordinatorReply(store, workflow.id, { linkedRunId: canonicalRun.id, now });
-    store.releaseResourceLeasesForOwner("workflow_step", workflowStepId, now);
+    store.releaseResourceLease(ownership.owner.leaseId, "workflow_step", workflowStepId, now);
     return store.getChannelWorkflowStep(workflowStepId);
   }
   if (run.status === "succeeded") {
@@ -693,13 +719,15 @@ export function finalizeOrchestratedWorkflowStepRun(
         .filter((result) => result.status !== "succeeded")
         .map((result) => `${result.operationId}:${result.reasonCode ?? result.status}`)
         .join(", ");
-      store.updateChannelWorkflowStep(step.id, {
+      const updated = store.updateChannelWorkflowStep(step.id, {
+        expectedStartOwner: ownership.owner,
         metadata: { ...step.metadata, executionVerification },
       }, now);
+      if (!updated) return store.getChannelWorkflowStep(workflowStepId);
       applyWorkflowStepFailurePolicy({
         store,
         workflow,
-        step: store.getChannelWorkflowStep(step.id) ?? step,
+        step: updated,
         policy: executionVerification.status === "failed" ? resolveWorkflowStepPolicy(step).onRunFailed : "block_for_user",
         actor: "system",
         reason: reason || "Required operation evidence was not verified.",
@@ -715,12 +743,15 @@ export function finalizeOrchestratedWorkflowStepRun(
     } else {
       if (executionVerification) {
         const latestMetadata = store.getChannelWorkflowStep(step.id)?.metadata ?? step.metadata;
-        store.updateChannelWorkflowStep(step.id, {
+        const updated = store.updateChannelWorkflowStep(step.id, {
+          expectedStartOwner: ownership.owner,
           metadata: { ...latestMetadata, executionVerification },
         }, now);
+        if (!updated) return store.getChannelWorkflowStep(workflowStepId);
       }
-      store.transitionChannelWorkflowStepStatus({
+      const completed = store.transitionChannelWorkflowStepStatus({
         workflowStepId,
+        expectedStartOwner: ownership.owner,
         expectedStatus: "running",
         event: "succeed",
         actor: "runner",
@@ -730,6 +761,7 @@ export function finalizeOrchestratedWorkflowStepRun(
         runId: run.id,
         resultSummary,
       });
+      if (!completed.ok) return store.getChannelWorkflowStep(workflowStepId);
       completeWorkflowIfStepsFinished(store, step.workflowId, now);
     }
   } else if (run.status === "cancelled") {
@@ -759,6 +791,10 @@ export function finalizeOrchestratedWorkflowStepRun(
       blocker: run.errorMessage ?? "Run failed.",
     });
   }
+  const settledStep = store.getChannelWorkflowStep(workflowStepId);
+  if (!settledStep || !workflowStepStartOwnerMatches(settledStep.metadata?.startOwner, ownership.owner)
+    || settledStep.taskId !== taskId || settledStep.runId !== run.id
+    || settledStep.status === "running" || settledStep.status === "waiting_for_approval") return settledStep;
   try {
     attachWorkflowStepOutputArtifact(store, workflowStepId, run, now);
     const latestStep = store.getChannelWorkflowStep(workflowStepId);
@@ -775,7 +811,7 @@ export function finalizeOrchestratedWorkflowStepRun(
     // Output packets and fan-in summaries are audit evidence; terminal workflow state remains authoritative if artifact IO fails.
   }
   maybeCreateWorkflowTerminalCoordinatorReply(store, step.workflowId, { linkedRunId: run.id, now });
-  store.releaseResourceLeasesForOwner("workflow_step", workflowStepId, now);
+  store.releaseResourceLease(ownership.owner.leaseId, "workflow_step", workflowStepId, now);
   return store.getChannelWorkflowStep(workflowStepId);
 }
 
@@ -865,6 +901,7 @@ function blockWorkflowStepForContextReason(
       cause: "run_terminal",
       now,
       contextBlocker: { code, reason, review },
+      expectedStartOwner: step.metadata?.startOwner,
     });
     if (finalized.status !== "finalized" && finalized.status !== "duplicate") {
       throw new HttpError(409, "delegated_context_finalization_failed", `Workflow result context finalization failed: ${finalized.status}`);
@@ -874,6 +911,7 @@ function blockWorkflowStepForContextReason(
   }
   const stepTransition = store.transitionChannelWorkflowStepStatus({
     workflowStepId: step.id,
+    expectedStartOwner: step.metadata?.startOwner,
     expectedStatus: "running",
     event: "blocked",
     actor: "system",
@@ -888,6 +926,7 @@ function blockWorkflowStepForContextReason(
   }
   const blockedStep = store.getChannelWorkflowStep(step.id) ?? step;
   store.updateChannelWorkflowStep(step.id, {
+    expectedStartOwner: step.metadata?.startOwner,
     metadata: { ...blockedStep.metadata, resultContextReview: review },
   }, now);
   const workflowTransition = store.transitionChannelWorkflowStatus({
@@ -958,6 +997,7 @@ function attachWorkflowStepOutputArtifact(
   store.updateChannelWorkflowStep(
     workflowStepId,
     {
+      expectedStartOwner: step.metadata?.startOwner,
       metadata: {
         ...latestStep.metadata,
         outputArtifactId: artifact.id,
@@ -993,11 +1033,14 @@ function maybeRequestPostStepApproval(
     applyWorkflowStepApprovalPolicy(store, workflow, step, existingApproval, now);
     return true;
   }
-  const approval = existingApproval ?? store.createApprovalRequest(
-    {
-      workflowStepId: step.id,
-      channelId: step.channelId,
-      actionType: "workflow_step",
+  if (!step.metadata?.startOwner || step.taskId !== taskId || step.runId !== run.id) {
+    throw new HttpError(409, "workflow_post_approval_owner_stale", "Workflow start changed before post-step approval.");
+  }
+  const requested = store.commitChannelWorkflowStepPostApproval({
+    workflowStepId: step.id,
+    owner: step.metadata.startOwner,
+    runId: run.id,
+    approval: {
       risk: gate.approvalProfile.risk ?? (gate.approvalProfile.mode === "strict" ? "high" : "medium"),
       title: gate.title,
       description: gate.reason,
@@ -1018,50 +1061,21 @@ function maybeRequestPostStepApproval(
       expiresAt: new Date(Date.now() + 30 * 60 * 1000).toISOString(),
     },
     now,
-  );
-  const latestStep = store.getChannelWorkflowStep(step.id) ?? step;
-  store.updateChannelWorkflowStep(
-    step.id,
-    {
-      metadata: {
-        ...latestStep.metadata,
-        activeGateStage: "post",
-        postStepApprovalId: approval.id,
-      },
-    },
-    now,
-  );
-  const waitingStep = store.transitionChannelWorkflowStepStatus({
-    workflowStepId: step.id,
-    expectedStatus: "running",
-    event: "approval_requested",
-    actor: "system",
-    reason: `approval:${approval.id}`,
-    now,
-    taskId,
-    runId: run.id,
-    blocker: `Waiting for post-step approval: ${approval.title}`,
-    resultSummary: "Run succeeded; waiting for post-step approval.",
   });
-  if (!waitingStep.ok) {
-    throw new HttpError(409, waitingStep.code, `Workflow step post approval transition failed: ${waitingStep.code}`);
-  }
-  const latestWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
-  if (latestWorkflow.status === "running") {
-    const waitingWorkflow = store.transitionChannelWorkflowStatus({
-      workflowId: workflow.id,
-      expectedStatus: "running",
-      event: "approval_requested",
-      actor: "system",
-      reason: `approval:${approval.id}`,
-      now,
-    });
-    if (!waitingWorkflow.ok) {
-      throw new HttpError(409, waitingWorkflow.code, `Workflow post approval transition failed: ${waitingWorkflow.code}`);
-    }
+  if ("code" in requested) {
+    throw new HttpError(409, requested.code, `Workflow post approval failed: ${requested.code}`);
   }
   syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id) ?? workflow, now);
   return true;
+}
+
+/** A pre-start permission decision is not an execution generation or a missing execution owner. */
+function isApprovedPreStartStep(store: RunStore, step: ChannelWorkflowStep): boolean {
+  if (step.status !== "running" || step.taskId || step.runId || step.metadata?.startOwner || !step.metadata?.preStepApprovalId) return false;
+  const approval = store.getApprovalRequest(step.metadata.preStepApprovalId);
+  return approval?.status === "approved" && approval.channelId === step.channelId && approval.workflowStepId === step.id
+    && approval.payload.type === "workflow_step" && approval.payload.gateStage === "pre"
+    && approval.payload.workflowId === step.workflowId && approval.payload.workflowStepId === step.id;
 }
 
 function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): WorkflowOrchestrationResult | { readonly status: "open" } {
@@ -1071,6 +1085,19 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${workflowId}`);
   }
   for (const step of steps) {
+    if (isApprovedPreStartStep(store, step)) continue;
+    if (step.status === "running") {
+      const now = new Date().toISOString();
+      const ownership = classifyWorkflowStepStartOwner(store, step, now);
+      if (ownership.status === "preparing") continue;
+      if (ownership.status === "invalid") {
+        const owner = step.metadata?.startOwner;
+        store.settleChannelWorkflowStepStartFailure({ workflowStepId: step.id, expected: step,
+          ...(owner ? { owner, leaseId: owner.leaseId } : {}), mode: "invalid_owner",
+          blocker: `Workflow start ownership is invalid (${ownership.code}); retry required.`, now });
+        continue;
+      }
+    }
     if (step.status === "waiting_for_approval" && step.metadata?.postStepApprovalId && step.metadata.activeGateStage === "post") {
       const approval = store.getApprovalRequest(step.metadata.postStepApprovalId);
       if (!approval || approval.status === "pending") {
@@ -1080,6 +1107,7 @@ function reconcileWorkflowStepRuns(store: RunStore, workflowId: string): Workflo
         continue;
       }
       const approvalResult = reconcilePostStepApprovalDecision(store, workflow, step, approval);
+      if (approvalResult?.status === "stale_owner") return { status: "open" };
       if (approvalResult) {
         return approvalResult;
       }
@@ -1303,143 +1331,29 @@ function reconcilePostStepApprovalDecision(
   step: ChannelWorkflowStep,
   approval: ApprovalRequest,
   decisionAt = new Date().toISOString(),
-): Extract<WorkflowOrchestrationResult, { status: "waiting_for_approval" | "blocked" | "failed" }> | undefined {
+): Extract<WorkflowOrchestrationResult, { status: "waiting_for_approval" | "blocked" | "failed" }> | { readonly status: "stale_owner" } | undefined {
   if (approval.status === "pending") {
     return { status: "waiting_for_approval", workflow, workflowStep: step, approval };
   }
   const now = decisionAt;
   if (approval.status === "approved") {
-    const workflowApproval = workflow.status === "waiting_for_approval"
-      ? store.transitionChannelWorkflowStatus({
-          workflowId: workflow.id,
-          expectedStatus: "waiting_for_approval",
-          event: "approval_approved",
-          actor: "local-user",
-          reason: `approval:${approval.id}`,
-          now,
-        })
-      : { ok: true as const, from: workflow.status, to: workflow.status };
-    if (!workflowApproval.ok) {
-      throw new HttpError(409, workflowApproval.code, `Workflow post approval transition failed: ${workflowApproval.code}`);
-    }
+    const owner = step.metadata?.startOwner;
+    if (!owner || !step.runId) return { status: "stale_owner" };
+    const resumed = store.commitChannelWorkflowStepPostApprovalResolved({ workflowStepId: step.id,
+      owner, runId: step.runId, approvalId: approval.id, actor: "local-user", now });
+    if (resumed.status !== "linked" && resumed.status !== "duplicate") return { status: "stale_owner" };
+    // Project the accepted approval before finalization can make the Workflow
+    // terminal; terminal publication owns the later Turn completion.
     syncWorkflowSourceTurnProgress(store, store.getChannelWorkflow(workflow.id) ?? workflow, now);
-    const stepApproval = step.status === "waiting_for_approval"
-      ? store.transitionChannelWorkflowStepStatus({
-          workflowStepId: step.id,
-          expectedStatus: "waiting_for_approval",
-          event: "approval_approved",
-          actor: "local-user",
-          reason: `approval:${approval.id}`,
-          now,
-          blocker: null,
-        })
-      : { ok: true as const, from: step.status, to: step.status };
-    if (!stepApproval.ok) {
-      throw new HttpError(409, stepApproval.code, `Workflow step post approval transition failed: ${stepApproval.code}`);
+    const run = store.getRun(step.runId);
+    if (!run) return undefined;
+    const finalizedStep = finalizeOrchestratedWorkflowStepRun(store, step.id, owner.taskId, run, now);
+    const latestWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
+    if (finalizedStep?.status === "blocked" || finalizedStep?.status === "failed") {
+      return latestWorkflow.status === "failed"
+        ? { status: "failed", workflow: latestWorkflow, workflowStep: finalizedStep, blocker: finalizedStep.blocker ?? "Delegated evidence failed." }
+        : { status: "blocked", workflow: latestWorkflow, workflowStep: finalizedStep, blocker: finalizedStep.blocker ?? "Required evidence is incomplete." };
     }
-    const latestStep = store.getChannelWorkflowStep(step.id) ?? step;
-    const runningStep = latestStep;
-    if (workflow.metadata?.requiredParticipantManifest) {
-      finalizeDelegatedWorkflowStepFromCanonicalState({
-        store,
-        workflowStepId: runningStep.id,
-        cause: "approval_decision",
-        now,
-      });
-      reconcileWorkflowFromCanonicalState({
-        store,
-        workflowId: workflow.id,
-        cause: "approval_decision",
-        now,
-      });
-      maybeCreateWorkflowTerminalCoordinatorReply(store, workflow.id, { linkedRunId: runningStep.runId, now });
-      const latestWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
-      const finalizedStep = store.getChannelWorkflowStep(step.id) ?? runningStep;
-      if (finalizedStep.status === "blocked" || finalizedStep.status === "failed") {
-        return latestWorkflow.status === "failed"
-          ? { status: "failed", workflow: latestWorkflow, workflowStep: finalizedStep, blocker: finalizedStep.blocker ?? "Delegated evidence failed." }
-          : { status: "blocked", workflow: latestWorkflow, workflowStep: finalizedStep, blocker: finalizedStep.blocker ?? "Delegated evidence is incomplete." };
-      }
-      return undefined;
-    }
-    const { activeGateStage, ...metadata } = latestStep.metadata ?? {};
-    if (activeGateStage === "post") {
-      store.updateChannelWorkflowStep(step.id, { metadata }, now);
-    }
-    if (runningStep.status === "running") {
-      const run = runningStep.runId ? store.getRun(runningStep.runId) : undefined;
-      const executionVerification = verifyWorkflowStepExecutionOperations({ store, step: runningStep, now });
-      if (executionVerification && executionVerification.status !== "verified") {
-        const reason = executionVerificationFailureReason(executionVerification);
-        store.updateChannelWorkflowStep(runningStep.id, {
-          metadata: { ...runningStep.metadata, executionVerification },
-        }, now);
-        applyWorkflowStepFailurePolicy({
-          store,
-          workflow: store.getChannelWorkflow(workflow.id) ?? workflow,
-          step: store.getChannelWorkflowStep(runningStep.id) ?? runningStep,
-          policy: executionVerification.status === "failed" ? resolveWorkflowStepPolicy(runningStep).onRunFailed : "block_for_user",
-          actor: "system",
-          reason,
-          now,
-          taskId: runningStep.taskId,
-          runId: runningStep.runId,
-          blocker: reason,
-        });
-        const blockedWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
-        const blockedStep = store.getChannelWorkflowStep(step.id) ?? runningStep;
-        return blockedWorkflow.status === "failed"
-          ? { status: "failed", workflow: blockedWorkflow, workflowStep: blockedStep, blocker: blockedStep.blocker ?? reason }
-          : { status: "blocked", workflow: blockedWorkflow, workflowStep: blockedStep, blocker: blockedStep.blocker ?? reason };
-      }
-      if (executionVerification) {
-        store.updateChannelWorkflowStep(runningStep.id, {
-          metadata: { ...runningStep.metadata, executionVerification },
-        }, now);
-      }
-      if (run && blockWorkflowStepForRejectedAgentContext(
-        store,
-        store.getChannelWorkflow(workflow.id) ?? workflow,
-        runningStep,
-        run,
-        workflowStepRunResultSummary(store, run),
-        now,
-      )) {
-        try {
-          attachWorkflowStepOutputArtifact(store, runningStep.id, run, now);
-        } catch {
-          // The rejected run is still linked durably even when its audit artifact cannot be written.
-        }
-        const blockedWorkflow = store.getChannelWorkflow(workflow.id) ?? workflow;
-        const blockedStep = store.getChannelWorkflowStep(step.id) ?? runningStep;
-        return { status: "blocked", workflow: blockedWorkflow, workflowStep: blockedStep, blocker: blockedStep.blocker ?? "Workflow result context changed." };
-      }
-      const succeed = store.transitionChannelWorkflowStepStatus({
-        workflowStepId: runningStep.id,
-        expectedStatus: "running",
-        event: "succeed",
-        actor: "local-user",
-        reason: `approval:${approval.id}`,
-        now,
-        taskId: runningStep.taskId,
-        runId: runningStep.runId,
-        blocker: null,
-        resultSummary: "Run succeeded and post-step approval was granted.",
-      });
-      if (!succeed.ok) {
-        throw new HttpError(409, succeed.code, `Workflow step post approval close failed: ${succeed.code}`);
-      }
-    }
-    const succeededStep = store.getChannelWorkflowStep(step.id) ?? runningStep;
-    const run = succeededStep.runId ? store.getRun(succeededStep.runId) : undefined;
-    if (run) {
-      try {
-        attachWorkflowStepOutputArtifact(store, succeededStep.id, run, now);
-      } catch {
-        // Output packets are audit evidence; terminal workflow state remains authoritative.
-      }
-    }
-    completeWorkflowIfStepsFinished(store, step.workflowId, now);
     return undefined;
   }
   const reason = approval.decisionReason ?? `Workflow post-step approval ${approval.status}.`;
@@ -1449,15 +1363,6 @@ function reconcilePostStepApprovalDecision(
   return latestWorkflow.status === "failed"
     ? { status: "failed", workflow: latestWorkflow, workflowStep: latestStep, blocker: reason }
     : { status: "blocked", workflow: latestWorkflow, workflowStep: latestStep, blocker: latestStep.blocker ?? reason };
-}
-
-function executionVerificationFailureReason(
-  verification: NonNullable<ReturnType<typeof verifyWorkflowStepExecutionOperations>>,
-): string {
-  return verification.operationResults
-    .filter((result) => result.status !== "succeeded")
-    .map((result) => `${result.operationId}:${result.reasonCode ?? result.status}`)
-    .join(", ") || "Required operation evidence was not verified.";
 }
 
 function applyWorkflowStepApprovalPolicy(
@@ -1495,6 +1400,7 @@ function applyWorkflowStepFailurePolicy(input: {
   const step = input.store.getChannelWorkflowStep(input.step.id) ?? input.step;
   const workflow = input.store.getChannelWorkflow(input.workflow.id) ?? input.workflow;
   const transitionFields = {
+    expectedStartOwner: input.step.metadata?.startOwner,
     taskId: input.taskId ?? step.taskId,
     runId: input.runId ?? step.runId,
   };
@@ -1787,34 +1693,13 @@ function blockWorkflowStepRunStartFailure(
   workflowId: string,
   workflowStepId: string,
   taskId: string,
+  owner?: WorkflowStepStartOwnerV1,
 ): Extract<WorkflowOrchestrationResult, { status: "blocked" }> {
   const now = new Date().toISOString();
   const blocker = "Run did not start.";
   const step = store.getChannelWorkflowStep(workflowStepId);
-  if (step?.status === "running") {
-    store.transitionChannelWorkflowStepStatus({
-      workflowStepId,
-      expectedStatus: "running",
-      event: "blocked",
-      actor: "system",
-      reason: blocker,
-      now,
-      taskId,
-      blocker,
-    });
-  }
+  if (owner) store.settleChannelWorkflowStepStartFailure({ workflowStepId, owner, leaseId: owner.leaseId, blocker, now });
   const workflow = store.getChannelWorkflow(workflowId);
-  if (workflow?.status === "running") {
-    store.transitionChannelWorkflowStatus({
-      workflowId,
-      expectedStatus: "running",
-      event: "step_blocked",
-      actor: "system",
-      reason: blocker,
-      now,
-    });
-  }
-  store.releaseResourceLeasesForOwner("workflow_step", workflowStepId, now);
   const latestWorkflow = store.getChannelWorkflow(workflowId) ?? workflow;
   if (!latestWorkflow) {
     throw new HttpError(404, "workflow_not_found", `Channel workflow not found: ${workflowId}`);

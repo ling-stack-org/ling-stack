@@ -1,4 +1,6 @@
 import {
+  classifyWorkflowStepStartOwner,
+  workflowStepStartOwnerMatches,
   type ChannelWorkflow,
   type ChannelWorkflowStep,
   type RunEventEnvelope,
@@ -6,6 +8,7 @@ import {
   type RunStore,
   type WorkflowStepFailurePolicy,
   type WorkflowStepPolicy,
+  type WorkflowStepStartOwnerV1,
 } from "@ling-stack/core";
 import {
   delegatedStepFinalizationBasisFingerprintV1,
@@ -82,6 +85,11 @@ export function blockDelegatedWorkflowStepBeforeRun(input: {
   if (step.status !== "running" && step.status !== "waiting_for_approval") {
     return { status: "waiting", step, reason: `step_${step.status}` };
   }
+  const ownership = classifyWorkflowStepStartOwner(input.store, step, now, { requireActiveLease: false });
+  if (ownership.status === "preparing") return { status: "waiting", step, reason: "start_preparing" };
+  if (ownership.status === "invalid" && step.metadata?.startOwner) {
+    return { status: "stale", step };
+  }
   if (step.runId) {
     return { status: "stale", step };
   }
@@ -107,10 +115,14 @@ export function finalizeDelegatedWorkflowStepFromCanonicalState(input: {
   readonly cause: WorkflowReconcileCause;
   readonly now?: string;
   readonly contextBlocker?: DelegatedStepContextBlocker;
+  readonly expectedStartOwner?: WorkflowStepStartOwnerV1;
 }): DelegatedStepFinalizationResult {
   const now = input.now ?? new Date().toISOString();
   const step = input.store.getChannelWorkflowStep(input.workflowStepId);
   if (!step) return { status: "not_found" };
+  if (input.expectedStartOwner && !workflowStepStartOwnerMatches(step.metadata?.startOwner, input.expectedStartOwner)) {
+    return { status: "stale", step };
+  }
   const workflow = input.store.getChannelWorkflow(step.workflowId);
   if (!workflow?.metadata?.requiredParticipantManifest) return { status: "not_delegated", step };
   if (isTerminalStep(step) && step.metadata?.delegatedOutcomeBasisFingerprint) {
@@ -118,6 +130,16 @@ export function finalizeDelegatedWorkflowStepFromCanonicalState(input: {
   }
   if (step.status !== "running" && step.status !== "waiting_for_approval") {
     return { status: "waiting", step, reason: `step_${step.status}` };
+  }
+  const ownership = classifyWorkflowStepStartOwner(input.store, step, now, { requireActiveLease: false });
+  if (ownership.status === "preparing") return { status: "waiting", step, reason: "start_preparing" };
+  if (ownership.status === "invalid" && Boolean(step.taskId || step.runId || step.metadata?.startOwner)) {
+    const owner = step.metadata?.startOwner;
+    const result = input.store.settleChannelWorkflowStepStartFailure({ workflowStepId: step.id, expected: step,
+      ...(owner ? { owner, leaseId: owner.leaseId } : {}), mode: "invalid_owner",
+      blocker: `Workflow start ownership is invalid (${ownership.code}); retry required.`, now });
+    const latest = input.store.getChannelWorkflowStep(step.id) ?? step;
+    return { status: result.status === "linked" ? "finalized" : "stale", step: latest };
   }
   const requirement = step.metadata?.delegatedRequirement;
   if (!isDelegatedStepRequirementV1(requirement)
@@ -179,34 +201,14 @@ export function finalizeDelegatedWorkflowStepFromCanonicalState(input: {
     return { status: "waiting", step, reason: "post_step_approval_missing" };
   }
   if (step.status === "waiting_for_approval" && approval?.status === "approved") {
-    const workflowApproval = workflow.status === "waiting_for_approval"
-      ? input.store.transitionChannelWorkflowStatus({
-          workflowId: workflow.id,
-          expectedStatus: "waiting_for_approval",
-          event: "approval_approved",
-          actor: input.cause === "approval_decision" ? "local-user" : "system",
-          reason: `${input.cause}:${approval.id}`,
-          idempotencyKey: `delegated-post-approval:workflow:${approval.id}`,
-          now,
-        })
-      : { ok: true as const, from: workflow.status, to: workflow.status };
-    if (!workflowApproval.ok) return { status: "stale", step };
-    const stepApproval = input.store.transitionChannelWorkflowStepStatus({
-      workflowStepId: step.id,
-      expectedStatus: "waiting_for_approval",
-      event: "approval_approved",
-      actor: input.cause === "approval_decision" ? "local-user" : "system",
-      reason: `${input.cause}:${approval.id}`,
-      idempotencyKey: `delegated-post-approval:step:${approval.id}`,
-      now,
-      blocker: null,
-    });
-    if (!stepApproval.ok) return { status: "stale", step: input.store.getChannelWorkflowStep(step.id) ?? step };
-    const resumed = input.store.getChannelWorkflowStep(step.id);
-    if (!resumed) return { status: "not_found" };
-    const { activeGateStage: _activeGateStage, ...metadata } = resumed.metadata ?? {};
-    input.store.updateChannelWorkflowStep(step.id, { metadata }, now);
-    return finalizeDelegatedWorkflowStepFromCanonicalState(input);
+    if (ownership.status !== "linked") return { status: "stale", step };
+    const resumed = input.store.commitChannelWorkflowStepPostApprovalResolved({ workflowStepId: step.id,
+      owner: ownership.owner, runId: run.id, approvalId: approval.id,
+      actor: input.cause === "approval_decision" ? "local-user" : "system", now });
+    if (resumed.status !== "linked" && resumed.status !== "duplicate") {
+      return { status: "stale", step: input.store.getChannelWorkflowStep(step.id) ?? step };
+    }
+    return finalizeDelegatedWorkflowStepFromCanonicalState({ ...input, expectedStartOwner: ownership.owner });
   }
   if (approval && approval.status !== "approved") {
     const reason = approval.decisionReason ?? `Workflow post-step approval ${approval.status}.`;
@@ -371,6 +373,8 @@ function commitCandidate(
   });
   const transition = store.commitChannelWorkflowStepFinalization({
     workflowStepId: step.id,
+    expectedTaskId: step.taskId,
+    expectedStartOwner: step.metadata?.startOwner,
     expectedStatus: step.status === "waiting_for_approval" ? "waiting_for_approval" : "running",
     expectedUpdatedAt: step.updatedAt,
     expectedRun: run ? {
