@@ -650,6 +650,8 @@ import { SqliteRunSessionStore } from "./sqlite/run-session-store.js";
 import { SqliteLingThreadMetadataCoordinator } from "./sqlite/ling-thread-metadata-coordinator.js";
 import { SqliteLingThreadSearchStore } from "./sqlite/ling-thread-search-store.js";
 import { SqliteLingThreadStore } from "./sqlite/ling-thread-store.js";
+import { SqliteProposedPlanActionStore } from "./sqlite/proposed-plan-action-store.js";
+import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "../proposed-plan-mutation.js";
 import { SqliteLingThreadCleanupStore } from "./sqlite/ling-thread-cleanup-store.js";
 import { SqliteLingTurnStore } from "./sqlite/ling-turn-store.js";
 import { SqliteTerminalReportStore } from "./sqlite/terminal-report-store.js";
@@ -773,6 +775,7 @@ export class SqliteRunStore implements RunStore {
   private readonly lingThreadMetadata: SqliteLingThreadMetadataCoordinator;
   private readonly lingThreadSearch: SqliteLingThreadSearchStore;
   private readonly lingThreads: SqliteLingThreadStore;
+  private readonly proposedPlanActions: SqliteProposedPlanActionStore;
   private readonly lingThreadCleanup: SqliteLingThreadCleanupStore;
   private readonly lingTurns: SqliteLingTurnStore;
   private readonly terminalReports: SqliteTerminalReportStore;
@@ -1018,6 +1021,7 @@ export class SqliteRunStore implements RunStore {
         getUserInputWait: (threadId, requestId) => this.getUserInputWait(threadId, requestId),
       },
     );
+    this.proposedPlanActions = new SqliteProposedPlanActionStore({ database: this.database }, this);
     this.conversationThreadTopology = new SqliteConversationThreadTopologyStore(
       { database: this.database },
       {
@@ -1860,6 +1864,10 @@ export class SqliteRunStore implements RunStore {
 
   updateProposedPlanArtifact(planId: string, input: UpdateProposedPlanArtifactInput, now: string): ProposedPlanArtifact | undefined {
     return this.lingThreads.updateProposedPlanArtifact(planId, input, now);
+  }
+
+  applyProposedPlanArtifactAction(planId: string, input: ApplyProposedPlanArtifactActionInput, now: string): ProposedPlanArtifactActionResult {
+    return this.proposedPlanActions.applyProposedPlanArtifactAction(planId, input, now);
   }
 
   rebuildLingThreadMetadata(threadId: string, now: string): LingThread | undefined {

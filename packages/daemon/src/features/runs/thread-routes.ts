@@ -4,6 +4,7 @@ import {
   conversationModeKinds,
   lingThreadKinds,
   permissionPresets,
+  ProposedPlanMutationError,
   redactSecrets,
   sessionPermissionModes,
   type ConversationModeKind,
@@ -36,7 +37,7 @@ import {
   type UpdateProposedPlanArtifactInput,
 } from "@ling-stack/core";
 import type { PiRunnerProviderConfig } from "@ling-stack/runner-pi";
-import { createWorkflowParticipantAuthorityV1, isConversationContextProjectionMetadata } from "@ling-stack/contracts";
+import { isConversationContextProjectionMetadata } from "@ling-stack/contracts";
 import { HttpError } from "../../errors.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { readOptionalIntegerQuery, readOptionalJsonBody } from "../../shared/request.js";
@@ -454,9 +455,8 @@ async function handleLingThreadProposedPlans(
         return;
       }
       const body = await readOptionalJsonBody(request, maxBodyBytes);
-      const actionInput = parseProposedPlanActionBody(body);
-      const plan = upsertProposedPlanForAction(store, threadId, planId, actionInput.plan, new Date().toISOString());
-      const result = applyProposedPlanAction(store, thread, plan, action, actionInput, new Date().toISOString());
+      const actionInput = parseProposedPlanActionBody(body, threadId);
+      const result = store.applyProposedPlanArtifactAction(planId, { ...actionInput, threadId, action }, new Date().toISOString());
       writeJson(response, 200, {
         cwd,
         threadId,
@@ -507,22 +507,24 @@ async function handleLingThreadProposedPlans(
         writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
         return;
       }
-      assertProposedPlanDirectMutationAllowed(existing);
       const plan = store.upsertProposedPlanArtifact({ ...parsePutProposedPlanArtifactBody(body, threadId), id: planId }, new Date().toISOString());
       writeJson(response, existing ? 200 : 201, { cwd, threadId, plan: hydrateProposedPlanSourceState(store, plan) });
       return;
     }
     if (request.method === "PATCH") {
+      const body = await readOptionalJsonBody(request, maxBodyBytes);
       const existing = store.getProposedPlanArtifact(planId);
       if (!existing || existing.threadId !== threadId) {
         writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
         return;
       }
-      const body = await readOptionalJsonBody(request, maxBodyBytes);
       const patch = parsePatchProposedPlanArtifactBody(body);
-      assertProposedPlanDirectMutationAllowed(existing, patch);
-      const plan = store.updateProposedPlanArtifact(planId, patch, new Date().toISOString());
-      writeJson(response, 200, { cwd, threadId, plan: hydrateProposedPlanSourceState(store, plan ?? existing) });
+      const plan = store.updateProposedPlanArtifact(planId, { ...patch, expectedThreadId: threadId }, new Date().toISOString());
+      if (!plan) {
+        writeJson(response, 404, { error: "proposed_plan_not_found", message: `Proposed plan not found: ${planId}` });
+        return;
+      }
+      writeJson(response, 200, { cwd, threadId, plan: hydrateProposedPlanSourceState(store, plan) });
       return;
     }
     writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for proposed plan items` });
@@ -621,8 +623,9 @@ async function handleLingThreadResumePreview(
 }
 
 function writeLingThreadRouteError(response: ServerResponse, error: unknown): void {
-  writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
-    error: error instanceof HttpError ? error.code : "bad_request",
+  const known = error instanceof HttpError || error instanceof ProposedPlanMutationError;
+  writeJson(response, known ? error.statusCode : 400, {
+    error: known ? error.code : "bad_request",
     message: error instanceof Error ? error.message : String(error),
   });
 }
@@ -2167,6 +2170,7 @@ const goalUsageSources = [
 
 interface ProposedPlanActionInput {
   readonly plan?: CreateProposedPlanArtifactInput;
+  readonly expectedRevision?: number;
   readonly createdBy?: string;
   readonly toParticipantId?: string;
   readonly toParticipantLabel?: string;
@@ -2198,6 +2202,7 @@ function parsePutProposedPlanArtifactBody(value: unknown, threadId: string): Cre
   }
   return {
     id: readOptionalString(value, "id")?.trim(),
+    expectedRevision: readProposedPlanExpectedRevision(value),
     threadId,
     channelId: readNullableStringField(value, "channelId") ?? undefined,
     goalId: readNullableStringField(value, "goalId") ?? undefined,
@@ -2231,6 +2236,7 @@ function parsePatchProposedPlanArtifactBody(value: unknown): UpdateProposedPlanA
     throw new HttpError(400, "proposed_plan_body_required", "Proposed plan bodyMarkdown cannot be empty.");
   }
   return {
+    expectedRevision: readProposedPlanExpectedRevision(value),
     channelId: readNullableStringField(value, "channelId"),
     goalId: readNullableStringField(value, "goalId"),
     sourceAgentId: readNullableStringField(value, "sourceAgentId"),
@@ -2257,16 +2263,19 @@ function parsePatchProposedPlanArtifactBody(value: unknown): UpdateProposedPlanA
   };
 }
 
-function parseProposedPlanActionBody(value: unknown): ProposedPlanActionInput {
+function parseProposedPlanActionBody(value: unknown, threadId: string): ProposedPlanActionInput {
   if (value === undefined || value === null) {
     return {};
   }
   if (!isRecord(value)) {
     throw new HttpError(400, "bad_request", "Proposed plan action request must be a JSON object.");
   }
-  const plan = isRecord(value.plan) ? parsePutProposedPlanArtifactBody(value.plan, readThreadIdForActionPlan(value.plan)) : undefined;
+  const plan = isRecord(value.plan)
+    ? parsePutProposedPlanArtifactBody(value.plan, readOptionalString(value.plan, "threadId")?.trim() || threadId)
+    : undefined;
   return {
     plan,
+    expectedRevision: readProposedPlanExpectedRevision(value),
     createdBy: readOptionalString(value, "createdBy")?.trim() || undefined,
     toParticipantId: readOptionalString(value, "toParticipantId")?.trim() || undefined,
     toParticipantLabel: readOptionalString(value, "toParticipantLabel")?.trim() || undefined,
@@ -2274,11 +2283,6 @@ function parseProposedPlanActionBody(value: unknown): ProposedPlanActionInput {
     workflowSteps: readOptionalWorkflowSteps(value, "workflowSteps"),
     workflowStepPreviews: readOptionalWorkflowStepPreviews(value, "workflowStepPreviews"),
   };
-}
-
-function readThreadIdForActionPlan(value: Record<string, unknown>): string {
-  const threadId = readOptionalString(value, "threadId")?.trim();
-  return threadId || "__route_thread__";
 }
 
 function readOptionalProposedPlanStatus(record: Record<string, unknown>): ProposedPlanArtifactStatus | undefined {
@@ -2292,190 +2296,13 @@ function readOptionalProposedPlanStatus(record: Record<string, unknown>): Propos
   return status as ProposedPlanArtifactStatus;
 }
 
-function upsertProposedPlanForAction(
-  store: RunStore,
-  threadId: string,
-  planId: string,
-  input: CreateProposedPlanArtifactInput | undefined,
-  now: string,
-): ProposedPlanArtifact {
-  const existing = store.getProposedPlanArtifact(planId);
-  if (existing && existing.threadId !== threadId) {
-    throw new HttpError(404, "proposed_plan_not_found", `Proposed plan not found: ${planId}`);
+function readProposedPlanExpectedRevision(record: Record<string, unknown>): number | undefined {
+  const value = record.expectedRevision;
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isSafeInteger(value) || value < 1) {
+    throw new HttpError(400, "bad_proposed_plan_revision", "expectedRevision must be a positive safe integer.");
   }
-  if (input) {
-    return store.upsertProposedPlanArtifact({ ...input, id: planId, threadId }, now);
-  }
-  if (!existing) {
-    throw new HttpError(404, "proposed_plan_not_found", `Proposed plan not found: ${planId}`);
-  }
-  return existing;
-}
-
-function assertProposedPlanDirectMutationAllowed(
-  existing: ProposedPlanArtifact | undefined,
-  input?: UpdateProposedPlanArtifactInput,
-): void {
-  if (!existing || existing.status !== "accepted") {
-    return;
-  }
-  const mutatesAcceptedContent = input === undefined ||
-    input.title !== undefined ||
-    input.bodyMarkdown !== undefined ||
-    (input.status !== undefined && input.status !== "accepted");
-  if (mutatesAcceptedContent) {
-    throw new HttpError(
-      409,
-      "accepted_plan_immutable",
-      "Accepted proposed plans are immutable. Create a refined plan version instead of overwriting the accepted record.",
-    );
-  }
-}
-
-function applyProposedPlanAction(
-  store: RunStore,
-  thread: LingThread,
-  plan: ProposedPlanArtifact,
-  action: "accept" | "refine" | "save" | "convert-workflow" | "archive",
-  input: ProposedPlanActionInput,
-  now: string,
-): {
-  readonly plan: ProposedPlanArtifact;
-  readonly taskId?: string;
-  readonly workflowId?: string;
-  readonly workflowStepId?: string;
-  readonly runId?: string;
-} {
-  if (action === "save") {
-    return { plan: requireUpdatedProposedPlan(store, plan.id, { savedAt: now }, now) };
-  }
-  if (action === "archive") {
-    return { plan: requireUpdatedProposedPlan(store, plan.id, { status: "archived", archivedAt: now }, now) };
-  }
-  if (action === "refine") {
-    return { plan: requireUpdatedProposedPlan(store, plan.id, { status: "draft" }, now) };
-  }
-  if (action === "accept") {
-    if (!thread.channelId) {
-      throw new HttpError(409, "proposed_plan_channel_required", "Accepting a proposed plan requires a channel thread.");
-    }
-    if (plan.acceptedTaskId) {
-      return { plan, taskId: plan.acceptedTaskId, runId: plan.acceptedRunId };
-    }
-    const task = store.createTask(
-      {
-        channelId: thread.channelId,
-        title: `Implement accepted plan: ${plan.title}`,
-        prompt: [
-          `Implement accepted plan: ${plan.title}`,
-          "",
-          plan.bodyMarkdown,
-          "",
-          `Source proposed plan: ${plan.id}`,
-          plan.sourceMessageId ? `Source message: ${plan.sourceMessageId}` : "",
-        ].filter(Boolean).join("\n"),
-        requestedSkillId: "plan-acceptance",
-      },
-      now,
-    );
-    return {
-      plan: requireUpdatedProposedPlan(store, plan.id, {
-        status: "accepted",
-        acceptedAt: now,
-        acceptedTaskId: task.id,
-      }, now),
-      taskId: task.id,
-    };
-  }
-  if (!thread.channelId) {
-    throw new HttpError(409, "proposed_plan_channel_required", "Converting a proposed plan requires a channel thread.");
-  }
-  if (plan.acceptedWorkflowId) {
-    return {
-      plan,
-      workflowId: plan.acceptedWorkflowId,
-      workflowStepId: plan.acceptedWorkflowStepId,
-      runId: plan.acceptedRunId,
-    };
-  }
-  const createdBy = input.createdBy || "local-user";
-  const workflowTitle = input.workflowTitle || plan.title;
-  const workflowSteps = input.workflowSteps && input.workflowSteps.length > 0
-    ? input.workflowSteps
-    : input.workflowStepPreviews && input.workflowStepPreviews.length > 0
-      ? input.workflowStepPreviews.map((preview) => preview.title)
-      : [plan.bodyMarkdown];
-  const workflowStepPreviews = workflowSteps.map((step, index) => ({
-    title: step,
-    ownerId: input.workflowStepPreviews?.[index]?.ownerId || input.toParticipantId,
-    ownerLabel: input.workflowStepPreviews?.[index]?.ownerLabel || input.toParticipantLabel,
-    ownerConfidence: input.workflowStepPreviews?.[index]?.ownerConfidence,
-    ownerReason: input.workflowStepPreviews?.[index]?.ownerReason,
-    sourceSignals: input.workflowStepPreviews?.[index]?.sourceSignals,
-  }));
-  const workflow = store.createChannelWorkflow(
-    {
-      channelId: thread.channelId,
-      title: workflowTitle,
-      objective: workflowSteps.join("\n"),
-      status: "draft",
-      createdBy,
-      metadata: {
-        sourceMessageId: plan.sourceMessageId,
-      },
-    },
-    now,
-  );
-  const workflowStepRecords = workflowStepPreviews.map((stepPreview) => store.createChannelWorkflowStep(
-    {
-      workflowId: workflow.id,
-      title: workflowSteps.length > 1 ? stepPreview.title : `Implement ${workflowTitle}`,
-      prompt: [
-        stepPreview.title,
-        "",
-        `Source proposed plan: ${plan.id}`,
-        plan.sourceMessageId ? `Source message: ${plan.sourceMessageId}` : "",
-      ].filter(Boolean).join("\n"),
-      toParticipantId: stepPreview.ownerId || "local-user",
-      toParticipantLabel: stepPreview.ownerLabel || "Unassigned",
-      participantAuthority: createWorkflowParticipantAuthorityV1({
-        kind: "workflow_definition",
-        origin: "proposed_plan",
-        participantId: stepPreview.ownerId || "local-user",
-        sourceId: plan.id,
-      }),
-      status: "queued",
-      metadata: {
-        sourceMessageId: plan.sourceMessageId,
-      },
-    },
-    now,
-  ));
-  const firstWorkflowStep = workflowStepRecords[0];
-  return {
-    plan: requireUpdatedProposedPlan(store, plan.id, {
-      status: "accepted",
-      acceptedAt: plan.acceptedAt ?? now,
-      convertedAt: now,
-      acceptedWorkflowId: workflow.id,
-      acceptedWorkflowStepId: firstWorkflowStep?.id,
-    }, now),
-    workflowId: workflow.id,
-    workflowStepId: firstWorkflowStep?.id,
-  };
-}
-
-function requireUpdatedProposedPlan(
-  store: RunStore,
-  planId: string,
-  input: UpdateProposedPlanArtifactInput,
-  now: string,
-): ProposedPlanArtifact {
-  const plan = store.updateProposedPlanArtifact(planId, input, now);
-  if (!plan) {
-    throw new HttpError(404, "proposed_plan_not_found", `Proposed plan not found: ${planId}`);
-  }
-  return plan;
+  return value;
 }
 
 function readOptionalGoalNumber(

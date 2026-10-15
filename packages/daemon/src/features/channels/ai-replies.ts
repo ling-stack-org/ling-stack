@@ -439,6 +439,8 @@ function recordProposedPlanArtifactFromReply(store: RunStore, reply: ChannelMess
     return;
   }
   const title = (match[1] ?? match[2] ?? readFirstMarkdownHeading(bodyMarkdown) ?? "Proposed plan").trim();
+  // A replay is source insertion, not an editor of a durable proposal or its history.
+  if (store.getProposedPlanArtifact(`proposed_plan_${reply.id}`)) return;
   store.upsertProposedPlanArtifact(
     {
       id: `proposed_plan_${reply.id}`,

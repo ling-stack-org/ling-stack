@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ApplyProposedPlanArtifactActionInput, ProposedPlanArtifactActionResult } from "./proposed-plan-mutation.js";
 import type {
   ConversationItemV1,
   CompactionCheckpoint,
@@ -901,6 +902,7 @@ export interface UpdateLingThreadGoalInput {
 
 export interface ProposedPlanArtifact {
   readonly id: string;
+  readonly revision: number;
   readonly workspaceId: string;
   readonly threadId: string;
   readonly channelId?: string;
@@ -933,6 +935,7 @@ export interface ProposedPlanArtifact {
 
 export interface CreateProposedPlanArtifactInput {
   readonly id?: string;
+  readonly expectedRevision?: number;
   readonly threadId: string;
   readonly channelId?: string;
   readonly goalId?: string;
@@ -960,6 +963,9 @@ export interface CreateProposedPlanArtifactInput {
 }
 
 export interface UpdateProposedPlanArtifactInput {
+  readonly expectedRevision?: number;
+  /** Host-owned scope expectation; this is not a request to move the plan. */
+  readonly expectedThreadId?: string;
   readonly channelId?: string | null;
   readonly goalId?: string | null;
   readonly sourceAgentId?: string | null;
@@ -1689,6 +1695,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   listProposedPlanArtifacts(options: ListProposedPlanArtifactsOptions): ProposedPlanArtifact[];
   upsertProposedPlanArtifact(input: CreateProposedPlanArtifactInput, now: string): ProposedPlanArtifact;
   updateProposedPlanArtifact(planId: string, input: UpdateProposedPlanArtifactInput, now: string): ProposedPlanArtifact | undefined;
+  applyProposedPlanArtifactAction(planId: string, input: ApplyProposedPlanArtifactActionInput, now: string): ProposedPlanArtifactActionResult;
   rebuildLingThreadMetadata(threadId: string, now: string): LingThread | undefined;
   rebuildLingThreadMetadataForRun(runId: string, now: string): LingThread | undefined;
   createLingTurn(input: CreateLingTurnInput, now: string): LingTurn;

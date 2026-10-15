@@ -263,6 +263,7 @@ import { ChannelActivityWorkspace } from "./ChannelActivityWorkspace.js";
 import { ChannelFeedLatestControl, ChannelFeedStatus } from "./ChannelFeedChrome.js";
 import { useChannelRightDockController } from "./useChannelRightDockController.js";
 import { useConversationSummaryLayout } from "./conversation-summary-layout.js";
+import { proposedPlanActionPayload } from "./proposed-plan-action-payload.js";
 import { useChannelBottomPanelResizeController } from "./useChannelBottomPanelResizeController.js";
 import { useChannelMessageFeed } from "./ChannelMessageFeed.js";
 import {
@@ -2985,13 +2986,7 @@ export function WorkspaceClientView({
     setProposedPlanActionBusyId(plan.id);
     try {
       const threadId = plan.threadId || await ensureChannelGoalThreadId();
-      if (action === "accept" && channelPlanModeActive) {
-        await setChannelPlanMode(false);
-      }
-      if (action === "refine" && !channelPlanModeActive) {
-        await setChannelPlanMode(true);
-      }
-      const actionRequest = { plan: proposedPlanActionPayload(plan), ...actionInput };
+      const actionRequest = { ...actionInput, plan: proposedPlanActionPayload(plan), expectedRevision: plan.revision };
       if (action === "save") {
         const result = await saveProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
         rememberProposedPlanArtifact(result.plan);
@@ -3014,19 +3009,24 @@ export function WorkspaceClientView({
         showComposerFeedback("success", t("Workflow draft created"));
         return;
       }
-      const body = action === "accept"
-        ? `${t("Implement accepted plan: {title}", { title: plan.title })}\n\n${plan.bodyMarkdown}`
-        : `${t("Refine this plan before implementation: {title}", { title: plan.title })}\n\n${plan.bodyMarkdown}`;
+      let canonicalPlan: ProposedPlanArtifact;
       if (action === "accept") {
         const result = await acceptProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
+        canonicalPlan = result.plan;
         rememberProposedPlanArtifact(result.plan);
         onRefreshTasks();
         refreshProposedPlanHistory();
+        if (channelPlanModeActive) await setChannelPlanMode(false);
       } else {
         const result = await refineProposedPlanArtifact(cwd, threadId, plan.id, actionRequest);
+        canonicalPlan = result.plan;
         rememberProposedPlanArtifact(result.plan);
         refreshProposedPlanHistory();
+        if (!channelPlanModeActive) await setChannelPlanMode(true);
       }
+      const body = action === "accept"
+        ? `${t("Implement accepted plan: {title}", { title: canonicalPlan.title })}\n\n${canonicalPlan.bodyMarkdown}`
+        : `${t("Refine this plan before implementation: {title}", { title: canonicalPlan.title })}\n\n${canonicalPlan.bodyMarkdown}`;
       await onSendMessage({
         threadId,
         body,
@@ -3042,27 +3042,6 @@ export function WorkspaceClientView({
     } finally {
       setProposedPlanActionBusyId("");
     }
-  }
-
-  function proposedPlanActionPayload(plan: ProposedPlanArtifact) {
-    return {
-      id: plan.id,
-      threadId: plan.threadId,
-      channelId: plan.channelId ?? null,
-      goalId: plan.goalId ?? null,
-      sourceAgentId: plan.sourceAgentId ?? null,
-      ownerAgentId: plan.ownerAgentId ?? null,
-      sourceTurnId: plan.sourceTurnId ?? null,
-      sourceMessageId: plan.sourceMessageId ?? null,
-      sourceRunId: plan.sourceRunId ?? null,
-      parentPlanId: plan.parentPlanId ?? null,
-      supersededByPlanId: plan.supersededByPlanId ?? null,
-      planGroupId: plan.planGroupId ?? null,
-      version: plan.version ?? null,
-      title: plan.title,
-      bodyMarkdown: plan.bodyMarkdown,
-      status: plan.status,
-    };
   }
 
   function openProposedPlanSource(plan: ProposedPlanArtifact): void {

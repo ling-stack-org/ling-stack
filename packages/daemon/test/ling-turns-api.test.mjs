@@ -1092,6 +1092,14 @@ test("daemon API persists proposed plans and links accepted tasks and workflow d
     const channelPlans = await getJson(`${daemon.url}/channels/${encodeURIComponent(channel.channel.id)}/proposed-plans?cwd=${encodeURIComponent(cwd)}&limit=10`);
     assert.deepEqual(new Set(channelPlans.plans.map((plan) => plan.id)), new Set([planId, siblingPlanId]));
 
+    const beforeCrossThreadSave = store.getProposedPlanArtifact(planId);
+    const crossThreadSave = await postJsonAllowError(`${planUrl.replace(/\?.*$/u, "")}/save?cwd=${encodeURIComponent(cwd)}`, {
+      plan: { ...createdPlan.plan, threadId: siblingThread.id },
+    });
+    assert.equal(crossThreadSave.status, 404);
+    assert.equal(crossThreadSave.body.error, "proposed_plan_not_found");
+    assert.deepEqual(store.getProposedPlanArtifact(planId), beforeCrossThreadSave);
+
     const saved = await postJson(`${planUrl.replace(/\?.*$/u, "")}/save?cwd=${encodeURIComponent(cwd)}`, {
       plan: {
         title: "Durable plan lifecycle",
@@ -1105,8 +1113,14 @@ test("daemon API persists proposed plans and links accepted tasks and workflow d
 
     const refined = await postJson(`${planUrl.replace(/\?.*$/u, "")}/refine?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(refined.plan.status, "draft");
+    assert.notEqual(refined.plan.id, planId);
+    assert.equal(refined.plan.parentPlanId, planId);
+    assert.equal(store.getProposedPlanArtifact(planId).status, "superseded");
+    const staleParentAccept = await postJsonAllowError(`${planUrl.replace(/\?.*$/u, "")}/accept?cwd=${encodeURIComponent(cwd)}`, {});
+    assert.equal(staleParentAccept.status, 409);
+    const activePlanUrl = `${daemon.url}/threads/${encodeURIComponent(threadId)}/proposed-plans/${encodeURIComponent(refined.plan.id)}?cwd=${encodeURIComponent(cwd)}`;
 
-    const accepted = await postJson(`${planUrl.replace(/\?.*$/u, "")}/accept?cwd=${encodeURIComponent(cwd)}`, {});
+    const accepted = await postJson(`${activePlanUrl.replace(/\?.*$/u, "")}/accept?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(accepted.plan.status, "accepted");
     assert.equal(accepted.plan.acceptedTaskId, accepted.taskId);
     assert.equal(typeof accepted.plan.acceptedAt, "string");
@@ -1114,19 +1128,19 @@ test("daemon API persists proposed plans and links accepted tasks and workflow d
     assert.ok(task);
     assert.equal(task.channelId, channel.channel.id);
     assert.equal(task.requestedSkillId, "plan-acceptance");
-    assert.match(task.prompt, /Source proposed plan: proposed_plan_api_lifecycle/);
+    assert.ok(task.prompt.includes(`Source proposed plan: ${refined.plan.id}`));
 
-    const repeatedAccept = await postJson(`${planUrl.replace(/\?.*$/u, "")}/accept?cwd=${encodeURIComponent(cwd)}`, {});
+    const repeatedAccept = await postJson(`${activePlanUrl.replace(/\?.*$/u, "")}/accept?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(repeatedAccept.taskId, accepted.taskId);
 
-    const overwriteAccepted = await putJsonAllowError(planUrl, {
+    const overwriteAccepted = await putJsonAllowError(activePlanUrl, {
       title: "Overwrite accepted plan",
       bodyMarkdown: "This should not replace accepted content.",
     });
     assert.equal(overwriteAccepted.status, 409);
     assert.equal(overwriteAccepted.body.error, "accepted_plan_immutable");
 
-    const converted = await postJson(`${planUrl.replace(/\?.*$/u, "")}/convert-workflow?cwd=${encodeURIComponent(cwd)}`, {
+    const converted = await postJson(`${activePlanUrl.replace(/\?.*$/u, "")}/convert-workflow?cwd=${encodeURIComponent(cwd)}`, {
       createdBy: "local-user",
       workflowTitle: "Edited workflow draft",
       workflowSteps: ["Confirm contracts", "Wire Plan Mode controls"],
@@ -1152,14 +1166,14 @@ test("daemon API persists proposed plans and links accepted tasks and workflow d
     assert.equal(step.status, "queued");
     assert.equal(step.toParticipantId, "teammate_plan");
     assert.equal(step.title, "Confirm contracts");
-    assert.match(step.prompt, /Source proposed plan: proposed_plan_api_lifecycle/);
+    assert.ok(step.prompt.includes(`Source proposed plan: ${refined.plan.id}`));
     const secondStep = workflowSteps.find((item) => item.title === "Wire Plan Mode controls");
     assert.ok(secondStep);
     assert.equal(secondStep.toParticipantId, "teammate_web");
     assert.equal(secondStep.toParticipantLabel, "Web");
     assert.match(secondStep.prompt, /Wire Plan Mode controls/);
 
-    const archived = await postJson(`${planUrl.replace(/\?.*$/u, "")}/archive?cwd=${encodeURIComponent(cwd)}`, {});
+    const archived = await postJson(`${activePlanUrl.replace(/\?.*$/u, "")}/archive?cwd=${encodeURIComponent(cwd)}`, {});
     assert.equal(archived.plan.status, "archived");
     assert.equal(typeof archived.plan.archivedAt, "string");
   } finally {
