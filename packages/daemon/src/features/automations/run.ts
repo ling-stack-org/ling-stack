@@ -72,6 +72,12 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
     };
   }
 
+  // Invalid persisted context must not reserve a queued row or idempotency key.
+  // Heartbeats resume their own conversation and never use this builder.
+  const context = automation.automationMode === "heartbeat"
+    ? undefined
+    : buildAutomationContext({ store, automation, now, mode: "run" });
+
   let automationRun = store.createAutomationRun(
     {
       automationId: automation.id,
@@ -98,7 +104,9 @@ export async function runAutomation(input: RunAutomationInput): Promise<RunAutom
     });
   }
 
-  const context = buildAutomationContext({ store, automation, now, mode: "run" });
+  if (!context) {
+    throw new Error("Automation context was not prepared for a non-heartbeat run.");
+  }
   const runRequest = buildAutomationRunRequest({
     store,
     cwd: input.cwd,

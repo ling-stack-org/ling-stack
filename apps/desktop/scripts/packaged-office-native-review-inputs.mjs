@@ -202,6 +202,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/core/src/approval-policy.ts",
   "packages/core/src/approval-postcommit-types.ts",
   "packages/core/src/approval-types.ts",
+  "packages/core/src/automation-context-budget.ts",
   "packages/core/src/automation-drafts.ts",
   "packages/core/src/automation-recurrence.ts",
   "packages/core/src/automation-templates.ts",

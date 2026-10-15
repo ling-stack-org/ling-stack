@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
 import { automationDraftToCreateRequest, validateAutomationDraft } from "../../automation-drafts.js";
+import { readAutomationContextItemBudget } from "../../automation-context-budget.js";
 import { assertAutomationRecurrence } from "../../automation-recurrence.js";
 import type { RunStore } from "../../run-types.js";
 import {
@@ -73,6 +74,7 @@ export class SqliteAutomationStore {
       updatedAt: now,
       nextRunAt: input.nextRunAt,
     };
+    readAutomationContextItemBudget(definition.promptTemplate.maxContextItems);
     assertAutomationRecurrence(definition, new Date(now));
     this.context.database
       .prepare(`
@@ -216,6 +218,9 @@ export class SqliteAutomationStore {
     if (input.trigger !== undefined || input.rrule !== undefined || input.status === "enabled") {
       assertAutomationRecurrence(next, new Date(now));
     }
+    if (input.promptTemplate !== undefined || input.status === "enabled") {
+      readAutomationContextItemBudget(next.promptTemplate.maxContextItems);
+    }
     this.context.database
       .prepare(`
         UPDATE automation_definitions
@@ -276,6 +281,7 @@ export class SqliteAutomationStore {
   }
 
   createAutomationDraft(input: CreateAutomationDraftInput, now: string): AutomationDraft {
+    readAutomationContextItemBudget(input.promptTemplate?.maxContextItems);
     const draft = validateAutomationDraft({
       id: input.id ?? createAutomationDraftId(),
       source: input.source,
@@ -374,6 +380,9 @@ export class SqliteAutomationStore {
     const existing = this.getAutomationDraft(draftId);
     if (!existing || existing.status === "confirmed" || existing.status === "discarded") {
       return existing;
+    }
+    if (input.promptTemplate) {
+      readAutomationContextItemBudget(input.promptTemplate.maxContextItems);
     }
     const next = validateAutomationDraft({
       ...existing,

@@ -103,6 +103,7 @@ export * from "./plugin-manager-types.js";
 export * from "./cua-driver-activation-types.js";
 export * from "./chrome-browser-types.js";
 export * from "./automation-types.js";
+export * from "./automation-context-budget.js";
 export * from "./automation-drafts.js";
 export * from "./automation-templates.js";
 export * from "./preview-types.js";

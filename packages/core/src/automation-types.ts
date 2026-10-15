@@ -76,6 +76,7 @@ export interface AutomationPromptTemplate {
   readonly systemPurpose?: string;
   readonly promptMarkdown: string;
   readonly contextSelectors: readonly AutomationContextSelector[];
+  /** Optional positive safe-integer cap on whole items; omitted retains selector limits. */
   readonly maxContextItems?: number;
 }
 

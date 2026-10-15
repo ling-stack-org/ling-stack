@@ -1,4 +1,5 @@
 import { readOnlyRunTools } from "./approval-policy.js";
+import { readAutomationContextItemBudget } from "./automation-context-budget.js";
 import type {
   AutomationDraft,
   AutomationDraftConfirmInput,
@@ -200,6 +201,15 @@ function validatePromptTemplate(promptTemplate: AutomationPromptTemplate): Autom
     return [{
       code: "invalid_prompt_template",
       message: "Automation prompt requires context selectors.",
+      field: "promptTemplate",
+    }];
+  }
+  try {
+    readAutomationContextItemBudget(promptTemplate.maxContextItems);
+  } catch (error) {
+    return [{
+      code: "invalid_prompt_template",
+      message: error instanceof Error ? error.message : "Automation context item budget is invalid.",
       field: "promptTemplate",
     }];
   }
