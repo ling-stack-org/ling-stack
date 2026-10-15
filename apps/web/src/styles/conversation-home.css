@@ -41,7 +41,7 @@
   text-align: center;
 }
 
-.conversation-home p {
+.conversation-home-center > p {
   max-width: 520px;
   margin: 6px 0 34px;
   color: var(--text-muted);
