@@ -4,6 +4,7 @@ import type {
   MediaJob,
   RunStore,
 } from "@ling-stack/core";
+import { updateActiveMediaJobStatus } from "./scene-cancellation.js";
 
 export const MEDIA_PRODUCTION_APPROVAL_GATE = "media_cost";
 
@@ -20,11 +21,11 @@ export function requestMediaProductionApproval(input: {
     throw new Error("媒体任务没有声明生产台费用审批边界。");
   }
 
-  const waiting = input.store.updateMediaJobStatus(
+  const waiting = updateActiveMediaJobStatus(input.store,
     input.mediaJob.id,
     { status: "waiting_for_approval", errorMessage: null },
     input.now,
-  ) ?? input.mediaJob;
+  );
 
   try {
     const source = approvalSource(input.store, waiting);
@@ -38,7 +39,8 @@ export function requestMediaProductionApproval(input: {
     }, input.now);
     return { mediaJob: waiting, approval };
   } catch (error) {
-    input.store.updateMediaJobStatus(waiting.id, { status: "queued", errorMessage: null }, input.now);
+    input.store.updateMediaJobStatus(waiting.id, { status: "queued", errorMessage: null,
+      expectedStatuses: ["waiting_for_approval"] }, input.now);
     throw error;
   }
 }

@@ -170,6 +170,11 @@ import type {
   CreateMediaWorkflowVersionInput,
   ListMediaWorkflowDefinitionsOptions,
   MediaWorkflowConnection,
+  MediaWorkflowConnectionCheckAdmission,
+  MediaWorkflowConnectionCheckPublication,
+  MediaWorkflowConnectionCheckState,
+  MediaWorkflowConnectionCheckTicket,
+  MediaWorkflowConnectionHealth,
   MediaWorkflowDefinition,
   MediaWorkflowVersion,
   UpdateMediaWorkflowConnectionInput,
@@ -2421,6 +2426,9 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   deleteMediaJobExecutionHandle(mediaJobId: string): boolean;
   createMediaWorkflowConnection(input: CreateMediaWorkflowConnectionInput, now: string): MediaWorkflowConnection;
   getMediaWorkflowConnection(id: string): MediaWorkflowConnection | undefined;
+  getMediaWorkflowConnectionCheckState(id: string): MediaWorkflowConnectionCheckState | undefined;
+  beginMediaWorkflowConnectionCheck(id: string): MediaWorkflowConnectionCheckAdmission | undefined;
+  commitMediaWorkflowConnectionCheck(ticket: MediaWorkflowConnectionCheckTicket, health: MediaWorkflowConnectionHealth, now: string): MediaWorkflowConnectionCheckPublication;
   listMediaWorkflowConnections(): MediaWorkflowConnection[];
   updateMediaWorkflowConnection(id: string, input: UpdateMediaWorkflowConnectionInput, now: string): MediaWorkflowConnection | undefined;
   deleteMediaWorkflowConnection(id: string): boolean;

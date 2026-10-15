@@ -443,6 +443,11 @@ import {
   type CreateMediaWorkflowVersionInput,
   type ListMediaWorkflowDefinitionsOptions,
   type MediaWorkflowConnection,
+  type MediaWorkflowConnectionCheckAdmission,
+  type MediaWorkflowConnectionCheckPublication,
+  type MediaWorkflowConnectionCheckState,
+  type MediaWorkflowConnectionCheckTicket,
+  type MediaWorkflowConnectionHealth,
   type MediaWorkflowDefinition,
   type MediaWorkflowVersion,
   type UpdateMediaWorkflowConnectionInput,
@@ -596,6 +601,7 @@ import { SqliteAutomationStore } from "./sqlite/automation-store.js";
 import { SqliteProviderStore } from "./sqlite/provider-store.js";
 import { SqliteProviderCheckPublicationStore } from "./sqlite/provider-check-publication-store.js";
 import { applyProviderCheckMigration } from "./sqlite/provider-check-migration.js";
+import { applyMediaWorkflowCheckMigration } from "./sqlite/media-workflow-check-migration.js";
 import { applyAvailabilityIncidentProvenanceMigration } from "./sqlite/availability-incident-provenance-migration.js";
 import type { ProviderCheckPublicationStore, ProviderCheckRequestTicket, ProviderCheckSource } from "../provider-check-publication-types.js";
 import { SqliteMcpStore } from "./sqlite/mcp-store.js";
@@ -1612,6 +1618,11 @@ export class SqliteRunStore implements RunStore {
             recordMigration: (version, name) => this.recordMigration(version, name),
           });
           applyRunEvaluationHumanMigration({
+            database: this.database,
+            hasMigration: (version) => this.hasMigration(version),
+            recordMigration: (version, name) => this.recordMigration(version, name),
+          });
+          applyMediaWorkflowCheckMigration({
             database: this.database,
             hasMigration: (version) => this.hasMigration(version),
             recordMigration: (version, name) => this.recordMigration(version, name),
@@ -5188,6 +5199,18 @@ export class SqliteRunStore implements RunStore {
 
   getMediaWorkflowConnection(id: string): MediaWorkflowConnection | undefined {
     return this.mediaWorkflows.getConnection(id);
+  }
+
+  getMediaWorkflowConnectionCheckState(id: string): MediaWorkflowConnectionCheckState | undefined {
+    return this.mediaWorkflows.getConnectionCheckState(id);
+  }
+
+  beginMediaWorkflowConnectionCheck(id: string): MediaWorkflowConnectionCheckAdmission | undefined {
+    return this.mediaWorkflows.beginConnectionCheck(id);
+  }
+
+  commitMediaWorkflowConnectionCheck(ticket: MediaWorkflowConnectionCheckTicket, health: MediaWorkflowConnectionHealth, now: string): MediaWorkflowConnectionCheckPublication {
+    return this.mediaWorkflows.commitConnectionCheck(ticket, health, now);
   }
 
   listMediaWorkflowConnections(): MediaWorkflowConnection[] {

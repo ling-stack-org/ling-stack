@@ -75,6 +75,7 @@ interface Execution {
   retained: boolean;
   active: number;
   stopped?: "shutdown" | "source_obsolete";
+  cancelled: boolean;
   scheduled?: Scheduled;
   tick?: Promise<unknown>;
   childAttempt?: ChildAttempt;
@@ -252,6 +253,38 @@ export class MediaLocalExecutionRegistry {
     this.#tryComplete(entry);
   }
 
+  /** Stop only this job's current generation; entered response/cleanup tails remain owned. */
+  cancelJob(input: MediaLocalExecutionBinding & { readonly execution?: MediaLocalExecutionHandle }): boolean {
+    const entry = this.#current.get(bindingKey(readBinding(input)));
+    if (input.execution && (!entry || this.#execution(input.execution) !== entry)) {
+      throw new MediaLocalExecutionAdmissionError("invalid_handle", "Cancelled Media tail no longer owns this job generation.");
+    }
+    if (!entry || entry.phase === "completed" || entry.phase === "completing") return false;
+    const draining = entry.active > 0;
+    entry.cancelled = true;
+    if (entry.scheduled) { clearTimeout(entry.scheduled.timer); entry.scheduled = undefined; }
+    // A prepared-but-never-dispatched generation has no physical tail to drain.
+    if (entry.phase === "prepared") entry.phase = "active";
+    this.#tryComplete(entry);
+    this.#notify();
+    return draining;
+  }
+
+  /** Business projection is separate from completed native receipt capture. */
+  assertBusinessCompletionAllowed(handle: MediaLocalExecutionHandle): void {
+    this.assertCompletionAllowed(handle);
+    if (this.#execution(handle).cancelled) {
+      throw new MediaLocalExecutionAdmissionError("media_job_cancelled", "Media job was locally cancelled; remote outcome is separate.");
+    }
+  }
+
+  /** Read back the original immutable child fence; a late tail cannot adopt a replacement. */
+  getBoundAttempt(handle: MediaLocalExecutionHandle): RuntimeAttemptFenceV1 | undefined {
+    const attempt = this.#execution(handle).childAttempt;
+    return attempt ? Object.freeze({ workUnitId: attempt.workUnitId, attemptId: attempt.attemptId,
+      runtimeInstanceId: attempt.runtimeInstanceId, fencingToken: attempt.fencingToken }) : undefined;
+  }
+
   /** One immutable child Attempt per opaque generation; parent source is separate. */
   bindAttempt(handle: MediaLocalExecutionHandle, attempt: ChildAttempt): void {
     const entry = this.#execution(handle);
@@ -368,7 +401,7 @@ export class MediaLocalExecutionRegistry {
     const done = completion();
     const handle = Object.freeze({ cwd: binding.cwd, mediaJobId: binding.mediaJobId, generation: randomUUID(), completion: done.promise });
     const entry: Execution = { handle, key: bindingKey(binding), done, reservations: [], phase: "prepared", retained: true, active: 0,
-      source: input?.source, requestDigest: input?.requestDigest, toolCallId: input?.toolCallId,
+      cancelled: false, source: input?.source, requestDigest: input?.requestDigest, toolCallId: input?.toolCallId,
       workUnitId: binding.workUnitId, effectGate: input?.effectGate, launchEffect: input?.launchEffect,
       completionGate: input?.completionGate };
     this.#handles.set(handle, entry);
@@ -397,6 +430,7 @@ export class MediaLocalExecutionRegistry {
   }
   #assertRunnable(entry: Execution): void {
     this.#assertOpen();
+    if (entry.cancelled) throw new MediaLocalExecutionAdmissionError("media_job_cancelled", "Cancelled Media generation cannot be re-entered.");
     if (entry.stopped === "source_obsolete") throw new MediaLocalExecutionAdmissionError("source_obsolete", "Media local execution is stopped: source obsolete.");
     if (entry.stopped || entry.phase === "completed" || entry.phase === "completing") {
       throw new MediaLocalExecutionAdmissionError("completed", "Media local execution is stopped or completed.");

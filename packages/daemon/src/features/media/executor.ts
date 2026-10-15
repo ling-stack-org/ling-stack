@@ -24,6 +24,7 @@ import { resumePendingProviderMediaJobs, runProviderMediaJobExecution } from "./
 import { mediaApprovalRecoveryBlocked } from "./approval-recovery-guard.js";
 import { isCapturedConversationMediaJob } from "./local-execution-binding.js";
 import { resumePendingWorkflowMediaJobs, runWorkflowMediaJobExecution } from "./workflows/workflow-executor.js";
+import { updateActiveMediaJobStatus } from "./scene-cancellation.js";
 
 type MediaRuntimeStartStore =
   RuntimeSupervisorStoreFacet &
@@ -172,7 +173,7 @@ export function dispatchMediaJobExecution(input: RunMediaJobExecutionInput): voi
       const mediaSecret = provider?.apiKeyRef ? resolveProviderSecret(store, provider, input.secretResolver) : undefined;
       const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [mediaSecret?.value]);
       const failedAt = new Date().toISOString();
-      store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message }, failedAt);
+      updateActiveMediaJobStatus(store, job.id, { status: "failed", errorMessage: message }, failedAt);
       synchronizeConversationMediaWorkUnitTerminal(store, job.id, "failed", failedAt);
       try {
         input.hooks.onMediaJobProjectionChanged?.({ cwd: input.cwd, mediaJobId: job.id });
@@ -248,9 +249,12 @@ export function syncMediaJobForApprovalDecision(input: {
     // Approval grants the cost decision, not the previous Attempt's execution
     // authority. Recovery requires its retained source capability/receipt.
     if (isCapturedConversationMediaJob(input.storeRegistry.getStore(input.cwd), job.id)) return job;
+    if (job.status === "cancelled" || job.status === "failed" || job.status === "succeeded") return job;
     const currentJob = job.status === "waiting_for_approval"
-      ? input.store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, input.now) ?? job
+      ? input.store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null,
+        expectedStatuses: ["waiting_for_approval"] }, input.now)
       : job;
+    if (!currentJob) return input.store.getMediaJob(job.id);
     input.hooks.onMediaJobProjectionChanged?.({ cwd: input.cwd, mediaJobId: job.id });
     dispatchMediaJobExecution({
       cwd: input.cwd,
@@ -276,12 +280,13 @@ function failMediaJobForApprovalDecision(store: MediaStoreFacet, job: MediaJob, 
     job.id,
     {
       status: "failed",
+      expectedStatuses: ["waiting_for_approval"],
       errorMessage: approval.status === "denied"
         ? "媒体生成费用确认未通过，任务没有执行。"
         : "媒体生成费用确认已失效，任务没有执行。",
     },
     new Date().toISOString(),
-  ) ?? job;
+  ) ?? store.getMediaJob(job.id) ?? job;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

@@ -18,6 +18,10 @@ const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localiza
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
 const newAuthoredRuntimeLeaves = [
+  "packages/core/src/storage/sqlite/media-workflow-check-migration.ts",
+  "packages/daemon/src/features/media/workflows/workflow-connection-check.ts",
+  "packages/daemon/src/features/external-work/workflow-path-admission.ts",
+  "packages/daemon/src/features/media/scene-cancellation.ts",
   "packages/daemon/src/server/rpc-outbound.ts",
   "packages/daemon/src/shared/sse-stream-writer.ts",
   "packages/core/src/storage/sqlite/ling-turn-cursor-indexes.ts",

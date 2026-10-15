@@ -185,8 +185,14 @@ async function handleConnectionItem(input: RouteContext & { readonly route: Medi
   if (input.route.resource !== "connection") return;
   if (input.route.action === "check") {
     if (input.request.method !== "POST") return methodNotAllowed(input.response, input.request.method, "/media-workflow-connections/:id/check");
-    const checked = await checkMediaWorkflowConnection({ store, connection, secretResolver: input.secretResolver, now: now() });
-    writeJson(input.response, 200, { connection: publicMediaWorkflowConnection(checked, input.secretResolver) });
+    const checked = await checkMediaWorkflowConnection({ store, connectionId: connection.id, secretResolver: input.secretResolver, now: now() });
+    if (checked.status === "stale") {
+      writeJson(input.response, 409, { error: "media_workflow_check_result_stale", reason: checked.reason,
+        message: "Connection check result was superseded. Check the current connection again.",
+        ...(checked.connection ? { connection: publicMediaWorkflowConnection(checked.connection, input.secretResolver) } : {}) });
+      return;
+    }
+    writeJson(input.response, 200, { connection: publicMediaWorkflowConnection(checked.connection, input.secretResolver) });
     return;
   }
   if (input.request.method === "GET") {
