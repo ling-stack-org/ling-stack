@@ -124,7 +124,7 @@ test("one failed post-commit callback cannot skip independent approval projectio
     actionType: "bash",
     externalWorkActionId: "external-action-1",
   };
-  let action = { id: "external-action-1", status: "pending" };
+  let action = { id: "external-action-1", status: "waiting_for_approval", approvalId: approval.id, executionAttemptCount: 0 };
   const events = [];
   const store = {
     getApprovalRequest: () => approval,
@@ -134,8 +134,13 @@ test("one failed post-commit callback cannot skip independent approval projectio
     },
     appendControlPlaneEvent: (input) => ({ ...input, seq: 1 }),
     getExternalWorkAction: () => action,
-    updateExternalWorkAction: (_id, update) => {
-      action = { ...action, ...update };
+    commitExternalWorkActionTransition: (transition) => {
+      assert.equal(transition.actionId, action.id);
+      assert.equal(transition.expectedStatus, action.status);
+      assert.equal(transition.expectedExecutionAttemptCount, action.executionAttemptCount);
+      assert.equal(transition.expectedApprovalId, approval.id);
+      assert.equal(transition.approvalStatus, approval.status);
+      action = { ...action, ...transition.update };
       return action;
     },
   };

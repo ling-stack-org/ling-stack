@@ -1,5 +1,5 @@
 import type { ConversationNarrationSegment, TeammateDirectMessage } from "@ling-stack/contracts";
-import type { RunStore } from "@ling-stack/core";
+import { projectTeammateDirectRuntimeReplyText, type RunStore } from "@ling-stack/core";
 import { ConversationNarrationAccumulator } from "../conversations/narration-segments.js";
 import { createOwnedRunNarrationAccumulator, type NarrationOwnerStore } from "../conversations/narration-owner.js";
 import { isTeammateDirectMessageInScope, resolveTeammateDirectRunOwner, type TeammateDirectRunOwnerStore } from "./direct-run-owner.js";
@@ -62,24 +62,6 @@ export function projectTeammateDirectMessageNarration(
   return { ...message, body: projected.content, narrationSegments: projected.narrationSegments };
 }
 
-const DIRECT_RECEIPT_HEAD = String.raw`(?:(?:好的|好)[，,\s]*)?(?:已)?收到(?:了)?`;
-const DIRECT_RECEIPT_ECHO = String.raw`(?:[：:,，]\s*[^。\r\n！？!?]{0,80})?`;
-const DIRECT_RECEIPT_END = String.raw`[。！？!?]`;
-const directReceiptLinePattern = new RegExp(
-  String.raw`^${DIRECT_RECEIPT_HEAD}${DIRECT_RECEIPT_ECHO}${DIRECT_RECEIPT_END}?[\t ]*(?:\r?\n)+`, "u",
-);
-const directReceiptSentencePattern = new RegExp(
-  String.raw`^${DIRECT_RECEIPT_HEAD}${DIRECT_RECEIPT_ECHO}${DIRECT_RECEIPT_END}[\t ]*(?=\S)`, "u",
-);
-const directReceiptOnlyPattern = new RegExp(String.raw`^${DIRECT_RECEIPT_HEAD}${DIRECT_RECEIPT_ECHO}${DIRECT_RECEIPT_END}?\s*$`, "u");
-const partialDirectReceiptPattern = new RegExp(
-  String.raw`^(?:好|好的|好的[，,\s]*|已|已收|收|收到(?:了)?(?:[：:,，]\s*[^。\r\n！？!?]{0,80})?)$`, "u",
-);
-
 export function projectTeammateDirectReplyText(value: string): string {
-  const source = value.trimStart();
-  const leadingReceipt = directReceiptLinePattern.exec(source) ?? directReceiptSentencePattern.exec(source);
-  if (leadingReceipt) return source.slice(leadingReceipt[0].length).trimStart();
-  if (directReceiptOnlyPattern.test(source) || partialDirectReceiptPattern.test(source)) return "";
-  return value;
+  return projectTeammateDirectRuntimeReplyText(value);
 }

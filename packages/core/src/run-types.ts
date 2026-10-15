@@ -2098,6 +2098,13 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   listTeammateDirectMessagesPage(options: ListTeammateDirectMessagesOptions): TeammateDirectMessageListPage;
   getTeammateDirectMessage(id: string): TeammateDirectMessage | undefined;
   createTeammateDirectMessage(input: CreateTeammateDirectMessageInput, now: string): TeammateDirectMessage;
+  getTeammateDirectMessageRuntimeObservation(
+    scope: import("./teammate-direct-message-runtime-types.js").TeammateDirectMessageRuntimeScope,
+  ): import("./teammate-direct-message-runtime-types.js").TeammateDirectMessageRuntimeObservation | undefined;
+  commitTeammateDirectMessageRuntime(
+    input: import("./teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeInput,
+    now: string,
+  ): import("./teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeResult;
   updateTeammateDirectMessageRuntime(
     id: string,
     input: {
@@ -2813,6 +2820,8 @@ export type TeammateStoreFacet = RunStoreFacet<
   | "listTeammateDirectMessagesPage"
   | "getTeammateDirectMessage"
   | "createTeammateDirectMessage"
+  | "getTeammateDirectMessageRuntimeObservation"
+  | "commitTeammateDirectMessageRuntime"
   | "updateTeammateDirectMessageRuntime"
   | "createTeammateDirectLinkPreview"
   | "getTeammateDirectLinkPreview"

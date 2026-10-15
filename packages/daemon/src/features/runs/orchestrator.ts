@@ -135,6 +135,7 @@ import {
   syncLingThreadForTerminalRun,
 } from "./threads.js";
 import { appendRuntimeProgressForRunEvent, syncWorkUnitForRunEvent } from "./work-units.js";
+import { approvalEventReflectsRunState } from "./approval-event-state.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { prepareNormalConversationExecution, readNormalConversationPreparedExecution,
@@ -169,6 +170,7 @@ import {
 } from "../harness/index.js";
 import { isRecord } from "../../shared/validation.js";
 import { prepareApprovedToolContinuation } from "./approval-continuation-tool.js";
+import { suspendClaimedApprovalResumePreparation } from "./approval-resume-preparation.js";
 import { assessRunCompactionRecovery } from "../harness/continuations/run-compaction-recovery.js";
 import { commitInstalledRunCompaction } from "../harness/continuations/run-compaction-commit.js";
 import { commitRunCompactionProgress } from "../harness/continuations/run-compaction-progress.js";
@@ -441,10 +443,18 @@ async function executeAdmittedRunRequest(
         || (existingContinuation.preparedExecution
           ? !activeAttempt
             || activeAttempt.id !== existingContinuation.preparedExecution.attempt.id
+            || !isDeepStrictEqual(toRuntimeAttemptFence(activeAttempt), toRuntimeAttemptFence(existingContinuation.preparedExecution.attempt))
             || existingContinuation.preparedExecution.continuation.runId !== run.id
             || existingContinuation.preparedExecution.continuation.workUnitId !== workUnit.id
+            || existingContinuation.preparedExecution.continuation.targetAttemptId !== activeAttempt.id
           : workUnit.activeAttemptId !== sourceAttempt.id)) {
         throw new HttpError(409, "continuation_source_incomplete", "Existing Run continuation lineage is incomplete.");
+      }
+      if (existingContinuation.preparedExecution && activeAttempt) {
+        // This target was claimed by the coordinator before asynchronous Runner preflight.
+        // Early failure/shutdown cleanup must retain its real fence, not fall through as unowned.
+        continuationExecution = existingContinuation.preparedExecution;
+        attempt = activeAttempt;
       }
     }
     let preparedExecution = existingContinuation ? undefined : readNormalConversationPreparedExecution(store, runRequest);
@@ -1202,6 +1212,21 @@ async function executeAdmittedRunRequest(
     }
     if (run) commitWorkflowStartReady(store, runRequest, run.id, workflowStartOwner);
   } catch (error) {
+    if (existingContinuation?.origin === "approval_resume" && error instanceof HttpError
+      && error.code === "runtime_shutting_down" && store && run && attempt && continuationExecution) {
+      const suspension = suspendClaimedApprovalResumePreparation({
+        store, run, attempt, execution: continuationExecution,
+        approvalId: existingContinuation.idempotencyDiscriminator, cause: "runtime_shutting_down",
+        controlPlaneEvents: options.controlPlaneEvents, now: new Date().toISOString(),
+      });
+      if (suspension.kind === "blocked") {
+        console.warn("approval_resume_preparation_suspension_blocked: existing execution authority was retained");
+      }
+      // Returning the logical Run prevents the coordinator from quarantining a safe pause
+      // merely because physical preflight returned; a rejected proof remains non-terminal.
+      sink.end();
+      return run.id;
+    }
     if (existingContinuation?.origin === "daemon_recovery"
       && error instanceof HttpError && (error.code === "provider_preflight_failed" || error.code.startsWith("checkpoint."))
       && store && run && workUnit && sourceAttempt && sourceAttempt.status === "lost"
@@ -1268,6 +1293,7 @@ async function executeAdmittedRunRequest(
         ok: true,
         runId: run.id,
         workUnitId: workUnit.id,
+        sourceFence: toRuntimeAttemptFence(attempt),
         queued: true,
         queueReason: error.code,
       });
@@ -1310,6 +1336,7 @@ async function executeAdmittedRunRequest(
         ok: true,
         runId: run.id,
         workUnitId: workUnit.id,
+        sourceFence: toRuntimeAttemptFence(attempt),
         queued: true,
         queueReason: error.code,
       });
@@ -1455,6 +1482,7 @@ async function executeAdmittedRunRequest(
       } catch {
         // The run itself is already known; auxiliary link updates must not corrupt SSE.
       }
+      // A duplicate caller did not capture the original producer's execution capability.
       sink.writeReady({ ok: true, runId: error.runId, duplicate: true });
       sink.end();
       return error.runId;
@@ -1477,7 +1505,7 @@ async function executeAdmittedRunRequest(
   const activeEffectivePolicySnapshot = effectivePolicySnapshot;
   const activeRuntimeSettings = runtimeSettings;
 
-  sink.writeReady({ ok: true, runId: run.id });
+  sink.writeReady({ ok: true, runId: run.id, sourceFence: toRuntimeAttemptFence(attempt) });
   try {
     options.onRunReady?.(run.id);
   } catch {
@@ -1839,7 +1867,7 @@ async function executeAdmittedRunRequest(
         redactSecrets(attributedData, resolvedSecretValues) as RunEventDataByType[K],
       );
       lastRuntimeActivityAt = Date.now();
-      if (type === "approval_requested") {
+      if (type === "approval_requested" && approvalEventReflectsRunState(store, envelope)) {
         // The approval handler starts this pause before persistence. Keep the
         // event-side update idempotent for paths that append the event first.
         beginApprovalHardTimeoutPause();
