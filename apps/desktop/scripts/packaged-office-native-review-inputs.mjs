@@ -1044,6 +1044,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/runs/execution-action-tool-evidence.ts",
   "packages/daemon/src/features/runs/execution-actions.ts",
   "packages/daemon/src/features/runs/execution-loop-detector.ts",
+  "packages/daemon/src/features/runs/execution-loop-semantic-evidence.ts",
   "packages/daemon/src/features/runs/existing-run-request.ts",
   "packages/daemon/src/features/runs/file-mutation-admission.ts",
   "packages/daemon/src/features/runs/harness-tool-execution-projection.ts",

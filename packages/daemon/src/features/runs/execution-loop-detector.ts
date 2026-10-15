@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { RunEventDataByType, RunEventEnvelope } from "@ling-stack/core";
+import { semanticProgressEvent, semanticToolResult, semanticToolUpdate } from "./execution-loop-semantic-evidence.js";
 
 export interface ExecutionLoopDetectorLimits {
   readonly exactRepeatThreshold: number;
@@ -66,7 +67,8 @@ export class ExecutionLoopDetector {
     if (event.type === "tool_start") return this.observeToolStart(event);
     if (event.type === "tool_update") return this.observeToolUpdate(event);
     if (event.type === "tool_end") return this.observeToolEnd(event);
-    if (isProgressEvent(event.type)) this.recordEvidence(fingerprint({ type: event.type, data: event.data }));
+    if (isProgressEvent(event.type)) this.recordEvidence(fingerprint({ type: event.type,
+      data: semanticProgressEvent(event.type, event.data) }));
     return undefined;
   }
 
@@ -79,12 +81,7 @@ export class ExecutionLoopDetector {
       repeatedUpdateCount: 0,
     };
     this.toolCalls.delete(toolCallId);
-    this.toolCalls.set(toolCallId, state);
-    while (this.toolCalls.size > this.limits.maxTrackedToolCalls) {
-      const oldest = this.toolCalls.keys().next().value as string | undefined;
-      if (oldest === undefined) break;
-      this.toolCalls.delete(oldest);
-    }
+    this.trackToolCall(toolCallId, state);
     this.noProgressActionCount += 1;
     if (this.noProgressActionCount >= this.limits.noProgressActionBudget) {
       return this.detect(event, "no_progress_budget", state.actionFingerprint,
@@ -104,13 +101,14 @@ export class ExecutionLoopDetector {
     };
     const updateFingerprint = fingerprint({
       toolNameFingerprint: state.toolNameFingerprint,
-      partialResult: readField(event.data, "partialResult"),
+      partialResult: semanticToolUpdate(state.toolNameFingerprint === fingerprint(toolName) ? toolName : "unknown", toolCallId,
+        readField(event.data, "partialResult")),
     });
     state.repeatedUpdateCount = state.lastUpdateFingerprint === updateFingerprint
       ? state.repeatedUpdateCount + 1
       : 1;
     state.lastUpdateFingerprint = updateFingerprint;
-    this.toolCalls.set(toolCallId, state);
+    this.trackToolCall(toolCallId, state);
     if (state.repeatedUpdateCount >= this.limits.repeatedUpdateThreshold) {
       return this.detect(event, "repeated_update", updateFingerprint,
         state.repeatedUpdateCount, undefined,
@@ -131,7 +129,8 @@ export class ExecutionLoopDetector {
     this.toolCalls.delete(toolCallId);
     const resultFingerprint = fingerprint({
       toolNameFingerprint: state.toolNameFingerprint,
-      result: readField(event.data, "result"),
+      result: semanticToolResult(state.toolNameFingerprint === fingerprint(toolName) ? toolName : "unknown", toolCallId,
+        readField(event.data, "result")),
       isError: readField(event.data, "isError") === true,
     });
     const completedFingerprint = fingerprint({
@@ -168,6 +167,15 @@ export class ExecutionLoopDetector {
       if (oldest) this.evidenceFingerprints.delete(oldest);
     }
     this.noProgressActionCount = 0;
+  }
+
+  private trackToolCall(toolCallId: string, state: ToolCallState): void {
+    this.toolCalls.set(toolCallId, state);
+    while (this.toolCalls.size > this.limits.maxTrackedToolCalls) {
+      const oldest = this.toolCalls.keys().next().value as string | undefined;
+      if (oldest === undefined) break;
+      this.toolCalls.delete(oldest);
+    }
   }
 
   private detect(
