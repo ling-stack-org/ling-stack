@@ -17,6 +17,7 @@ import type {
 } from "@ling-stack/core";
 import type { RunRequest } from "./schemas.js";
 import { publishNormalNarrationAfterRun } from "../conversations/normal-narration-publication.js";
+import { approvalEventReflectsRunState } from "./approval-event-state.js";
 
 export function ensureLingThreadForRun(store: RunStore, runRequest: RunRequest, now: string): LingThread {
   if (runRequest.threadId) {
@@ -153,13 +154,15 @@ export function markLingThreadRunActive(
 
 export function syncLingThreadForRunEvent(
   store: RunStore,
-  run: RunSession,
+  capturedRun: RunSession,
   type: RunEventType,
   envelope: RunEventEnvelope,
 ): void {
-  if (!run.threadId) {
+  const run = store.getRun(capturedRun.id);
+  if (!run?.threadId || envelope.runId !== run.id) {
     return;
   }
+  if (type !== "run_cancelled" && !approvalEventReflectsRunState(store, envelope)) return;
 
   if (type === "approval_requested") {
     store.updateLingThread(

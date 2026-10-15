@@ -1,5 +1,6 @@
 import type { RunEventEnvelope, RunEventType, RunStore } from "@ling-stack/core";
 import { isTerminalWorkUnitStatus, transitionWorkUnitTerminal } from "../../runtime/work-units.js";
+import { approvalEventReflectsRunState } from "./approval-event-state.js";
 
 export function syncWorkUnitForRunEvent(
   store: RunStore,
@@ -14,6 +15,7 @@ export function syncWorkUnitForRunEvent(
   }
   const attempt = store.getWorkUnitAttempt(attemptId);
   if (!attempt || attempt.workUnitId !== workUnitId || current.activeAttemptId !== attempt.id) return;
+  if (!approvalEventReflectsRunState(store, envelope)) return;
   const now = envelope.ts;
   if (type === "approval_requested" && current.status === "running") {
     const transition = store.transitionWorkUnitStatus({

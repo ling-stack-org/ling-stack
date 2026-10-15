@@ -2,6 +2,8 @@ import { createHash, randomUUID } from "node:crypto";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import {
   conversationModeKinds,
+  isAuthorizationMode,
+  isWorkspaceAccessMode,
   lingThreadKinds,
   permissionPresets,
   ProposedPlanMutationError,
@@ -1245,6 +1247,8 @@ function buildForkRunRunRequest(input: {
     approvalProfile: isRecord(requestSnapshot.approvalProfile) ? requestSnapshot.approvalProfile as unknown as SkillApprovalProfile : undefined,
     permissionPreset: readSnapshotPermissionPreset(requestSnapshot, "permissionPreset"),
     permissionMode: readSnapshotSessionPermissionMode(requestSnapshot, "permissionMode"),
+    authorizationMode: readSnapshotAuthorizationMode(requestSnapshot),
+    workspaceAccessMode: readSnapshotWorkspaceAccessMode(requestSnapshot),
     permissionConfirmation: readSnapshotPermissionConfirmation(requestSnapshot, "permissionConfirmation"),
     thinkingLevel: readSnapshotThinkingLevel(requestSnapshot, "thinkingLevel"),
     reasoningSummary: readSnapshotReasoningSummary(requestSnapshot, "reasoningSummary"),
@@ -1535,6 +1539,8 @@ function buildLingThreadResumeContext(input: {
   }
   const sourceRun = anchor.sourceRun;
   const requestSnapshot = isRecord(sourceRun.requestSnapshot) ? sourceRun.requestSnapshot : {};
+  const authorizationMode = readSnapshotAuthorizationMode(requestSnapshot);
+  const workspaceAccessMode = readSnapshotWorkspaceAccessMode(requestSnapshot);
   const taskSnapshot = isRecord(sourceRun.taskSnapshot) ? sourceRun.taskSnapshot : {};
   const instruction = isRecord(body)
     ? readOptionalString(body, "instruction")?.trim() || "Resume this Ling thread from durable evidence."
@@ -1608,6 +1614,8 @@ function buildLingThreadResumeContext(input: {
       approvalProfile: isRecord(requestSnapshot.approvalProfile) ? requestSnapshot.approvalProfile as unknown as SkillApprovalProfile : undefined,
       permissionPreset: readSnapshotPermissionPreset(requestSnapshot, "permissionPreset"),
       permissionMode: readSnapshotSessionPermissionMode(requestSnapshot, "permissionMode"),
+      authorizationMode,
+      workspaceAccessMode,
       permissionConfirmation: readSnapshotPermissionConfirmation(requestSnapshot, "permissionConfirmation"),
       thinkingLevel: readSnapshotThinkingLevel(requestSnapshot, "thinkingLevel"),
       reasoningSummary: readSnapshotReasoningSummary(requestSnapshot, "reasoningSummary"),
@@ -1989,6 +1997,22 @@ function readSnapshotPermissionPreset(record: Record<string, unknown>, key: stri
   return typeof value === "string" && permissionPresets.includes(value as PermissionPreset)
     ? value as PermissionPreset
     : undefined;
+}
+
+/** Reject malformed stored selections before a continuation accepts a new user input. */
+function readSnapshotAuthorizationMode(record: Record<string, unknown>): RunRequest["authorizationMode"] {
+  const value = record.authorizationMode;
+  if (value === undefined) return undefined;
+  if (typeof value === "string" && isAuthorizationMode(value)) return value;
+  throw new HttpError(400, "bad_request", "authorizationMode in the source run snapshot is invalid.");
+}
+
+/** Missing axes retain their existing contract; a present invalid value cannot become a default. */
+function readSnapshotWorkspaceAccessMode(record: Record<string, unknown>): RunRequest["workspaceAccessMode"] {
+  const value = record.workspaceAccessMode;
+  if (value === undefined) return undefined;
+  if (typeof value === "string" && isWorkspaceAccessMode(value)) return value;
+  throw new HttpError(400, "bad_request", "workspaceAccessMode in the source run snapshot is invalid.");
 }
 
 function readSnapshotPermissionConfirmation(record: Record<string, unknown>, key: string): PermissionConfirmation | undefined {

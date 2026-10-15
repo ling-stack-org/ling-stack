@@ -1029,6 +1029,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/features/runs/approval-auto-review-recovery.ts",
   "packages/daemon/src/features/runs/approval-command-rules.ts",
   "packages/daemon/src/features/runs/approval-continuation-tool.ts",
+  "packages/daemon/src/features/runs/approval-event-state.ts",
   "packages/daemon/src/features/runs/approval-postcommit-effects.ts",
   "packages/daemon/src/features/runs/approval-postcommit-recovery.ts",
   "packages/daemon/src/features/runs/approval-preview-failure.ts",

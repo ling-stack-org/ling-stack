@@ -135,6 +135,7 @@ import {
   syncLingThreadForTerminalRun,
 } from "./threads.js";
 import { appendRuntimeProgressForRunEvent, syncWorkUnitForRunEvent } from "./work-units.js";
+import { approvalEventReflectsRunState } from "./approval-event-state.js";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 import { writeJson, writeSse, writeSseHead } from "../../shared/response.js";
 import { prepareNormalConversationExecution, readNormalConversationPreparedExecution,
@@ -1839,7 +1840,7 @@ async function executeAdmittedRunRequest(
         redactSecrets(attributedData, resolvedSecretValues) as RunEventDataByType[K],
       );
       lastRuntimeActivityAt = Date.now();
-      if (type === "approval_requested") {
+      if (type === "approval_requested" && approvalEventReflectsRunState(store, envelope)) {
         // The approval handler starts this pause before persistence. Keep the
         // event-side update idempotent for paths that append the event first.
         beginApprovalHardTimeoutPause();
