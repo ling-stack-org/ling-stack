@@ -247,6 +247,8 @@ export interface UpdateSnapshotRestoreRequestInput {
   readonly expectedState: SnapshotRestoreState;
   readonly state: SnapshotRestoreState;
   readonly fencingEpoch?: number;
+  /** Atomically require this request and its currently owned workspace fence epoch. */
+  readonly expectedFencingEpoch?: number;
   readonly journalEntryCount?: number;
   readonly lastError?: string;
   readonly updatedAt: string;
@@ -304,5 +306,7 @@ export interface UpdateSnapshotRestoreJournalEntryInput {
   readonly id: string;
   readonly expectedState: SnapshotRestoreJournalState;
   readonly state: SnapshotRestoreJournalState;
+  /** Atomically require the parent request and its currently owned workspace fence epoch. */
+  readonly expectedFencingEpoch?: number;
   readonly updatedAt: string;
 }

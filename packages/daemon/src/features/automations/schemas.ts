@@ -17,7 +17,7 @@ import type {
   SkillApprovalProfile,
   BuiltinAutomationTemplateId,
 } from "@ling-stack/core";
-import { readOnlyRunTools } from "@ling-stack/core";
+import { readAutomationContextItemBudget, readOnlyRunTools } from "@ling-stack/core";
 import { isRecord, readNullableString, readOptionalBoolean, readOptionalNumber, readOptionalString, readOptionalStringArray, readString } from "../../shared/validation.js";
 import { parseApprovalProfileObject } from "../../shared/approval-profile.js";
 import { isSupportedAutomationRRule } from "./recurrence.js";
@@ -488,7 +488,7 @@ function parseOptionalAutomationPromptTemplate(value: unknown): AutomationPrompt
   if (!Array.isArray(contextSelectors)) {
     throw new Error("promptTemplate.contextSelectors must be an array");
   }
-  const maxContextItems = readOptionalNumber(value, "maxContextItems");
+  const maxContextItems = readAutomationContextItemBudget(value.maxContextItems);
   return {
     templateVersion: readOptionalNumber(value, "templateVersion") ?? 1,
     systemPurpose: readOptionalString(value, "systemPurpose"),
