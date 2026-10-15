@@ -46,6 +46,8 @@ import { assertMediaJobProvider, createMediaAdapterForProvider } from "./provide
 import { selectInitialMediaSceneResult } from "./scene-result-selection.js";
 import { materializeMediaJobVideoImageInputs } from "./video-image-materializer.js";
 import { createGuardedMediaHttpTransport } from "./guarded-native-transport.js";
+import { assertMediaJobBusinessActive, cancelledMediaJobResult, settleLocallyCancelledMediaJob,
+  updateActiveMediaJobStatus } from "./scene-cancellation.js";
 
 const POLL_INTERVAL_MS = 2_000;
 const MAX_POLL_ATTEMPTS = 10_800;
@@ -90,6 +92,11 @@ async function runProviderMediaJobExecutionOwner(input: {
     registry: input.storeRegistry.mediaLocalExecutions, localExecution: input.localExecution });
   let job = store.getMediaJob(input.mediaJobId);
   if (!job) return notFound(input.mediaJobId);
+  if (job.status === "cancelled" && (input.retryTerminal || store.getMediaSceneRunByMediaJobId(job.id))) {
+    const cancelled = settleLocallyCancelledMediaJob({ store, registry: input.storeRegistry.mediaLocalExecutions,
+      cwd: input.cwd, mediaJobId: job.id, localExecution: input.localExecution })!;
+    return cancelledMediaJobResult(cancelled, input.retryTerminal);
+  }
   if (job.executionSource.kind !== "provider") {
     return { statusCode: 400, body: { error: "invalid_execution_source", message: "该任务不是模型直接生成任务。" } };
   }
@@ -116,10 +123,10 @@ async function runProviderMediaJobExecutionOwner(input: {
   };
   try {
     if (job.status === "waiting_for_approval") {
-      job = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, now()) ?? job;
+      job = updateActiveMediaJobStatus(store, job.id, { status: "queued", errorMessage: null }, now());
     }
     const terminalStatus = job.status === "failed" || job.status === "cancelled" ? job.status : undefined;
-    const retryingTerminal = terminalStatus !== undefined && input.retryTerminal === true && (!handle || isPendingHandle(handle));
+    const retryingTerminal = terminalStatus === "failed" && input.retryTerminal === true && (!handle || isPendingHandle(handle));
     if (terminalStatus && !retryingTerminal) {
       const child = findConversationMediaWorkUnit(store, job.id);
       const shouldAuditPreSubmissionCancellation = terminalStatus === "cancelled" &&
@@ -144,7 +151,9 @@ async function runProviderMediaJobExecutionOwner(input: {
         store.deleteMediaJobExecutionHandle(job.id);
         handle = undefined;
       }
-      job = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, now()) ?? job;
+      const retried = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null, expectedStatuses: ["failed"] }, now());
+      if (!retried) throw new MediaLocalExecutionAdmissionError("media_job_terminal", "Media retry lost its terminal status comparison.");
+      job = retried;
       const child = prepareConversationMediaWorkUnitForExplicitRetry(store, job.id, now());
       if (child && child.status !== "queued") {
         throw new Error(`Conversation media work unit could not be retried: ${child.id} (${child.status}).`);
@@ -201,7 +210,7 @@ async function runProviderMediaJobExecutionOwner(input: {
     }, input.secretResolver);
     const readiness = resolveLiveMediaExecutionReadiness(store, provider, job.operation, input.secretResolver);
     if (!readiness.ok) {
-      const failed = store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: readiness.message }, now()) ?? job;
+      const failed = updateActiveMediaJobStatus(store, job.id, { status: "failed", errorMessage: readiness.message }, now());
       terminalFailure(store, input.hooks, supervised, readiness.code, readiness.message);
       finishExecution(store, job.id, supervised, "failed", "media-job-not-runnable", input);
       notifyProjection(input, job.id);
@@ -225,7 +234,7 @@ async function runProviderMediaJobExecutionOwner(input: {
 
     job = job.status === "running"
       ? job
-      : store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, now()) ?? job;
+      : updateActiveMediaJobStatus(store, job.id, { status: "running", errorMessage: null }, now());
     notifyProjection(input, job.id);
     const requestJob = job;
     const tick = hasRecoverableLifecycle(adapter)
@@ -259,11 +268,11 @@ async function runProviderMediaJobExecutionOwner(input: {
       );
     }
     const artifacts = persistedArtifacts;
-    const succeeded = store.updateMediaJobStatus(job.id, {
+    const succeeded = updateActiveMediaJobStatus(store, job.id, {
       status: "succeeded",
       artifactIds: [...new Set([...job.artifactIds, ...artifacts.map((artifact) => artifact.id)])],
       errorMessage: null,
-    }, completedAt) ?? job;
+    }, completedAt);
     notifyProjection(input, job.id, artifacts.map((artifact) => artifact.id));
     selectInitialMediaSceneResult(store, job.id, completedAt);
     for (const artifact of artifacts) {
@@ -291,6 +300,19 @@ async function runProviderMediaJobExecutionOwner(input: {
     finishExecution(store, job.id, supervised, "succeeded", "media-job-succeeded", input);
     return { statusCode: 200, body: { mediaJob: succeeded, artifacts } };
   } catch (error) {
+    const cancelled = settleLocallyCancelledMediaJob({ store, registry: input.storeRegistry.mediaLocalExecutions,
+      cwd: input.cwd, mediaJobId: job.id, localExecution: input.localExecution });
+    if (cancelled) {
+      // A complete native terminal/EOF is still a fact. This manifest does not
+      // invent remote stop: Core independently requires a real terminal receipt
+      // before whole-operation safety; an ACK-only cancellation stays unknown.
+      if (receipt && persistedArtifacts.length === 0) {
+        try { receipt.recordCollection({ artifacts: [], manifestItems: [] }, false); }
+        catch { /* Unconfirmed receipt finalization remains blocked/unknown. */ }
+      }
+      notifyProjection(input, job.id);
+      return cancelledMediaJobResult(cancelled);
+    }
     if (error instanceof MediaLocalExecutionAdmissionError) {
       if (!receipt?.recordNoStartCollection()) throw error;
       // A proved zero-send closes only this original child. Admission remains
@@ -299,8 +321,8 @@ async function runProviderMediaJobExecutionOwner(input: {
     } else assertCompletion(supervised);
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [secretValue]);
     const errorCode = mediaExecutionErrorCode(error, "media_job_execution_failed");
-    const failed = store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message,
-      artifactIds: [...new Set([...job.artifactIds, ...persistedArtifacts.map(artifact => artifact.id)])] }, now()) ?? job;
+    const failed = updateActiveMediaJobStatus(store, job.id, { status: "failed", errorMessage: message,
+      artifactIds: [...new Set([...job.artifactIds, ...persistedArtifacts.map(artifact => artifact.id)])] }, now());
     notifyProjection(input, job.id, persistedArtifacts.map(artifact => artifact.id));
     if (supervised) {
       terminalFailure(store, input.hooks, supervised, errorCode, message);
@@ -376,8 +398,8 @@ async function runRecoverableTick(
   let current = handle;
   if (isPendingHandle(current)) {
     const submission = await adapter.submit(createRequest());
-    assertCompletionAllowed();
     if (submission.status === "failed") {
+      assertCompletionAllowed();
       return { pending: false, execution: { status: "failed", artifacts: [], errorCode: submission.errorCode, errorMessage: submission.errorMessage } };
     }
     const nextPollAt = new Date(Date.now() + POLL_INTERVAL_MS).toISOString();
@@ -393,6 +415,9 @@ async function runRecoverableTick(
       nextPollAt,
       pollAttempts: 0,
     }, now());
+    // A late genuine ACK remains a fact even after local cancellation; only
+    // business admission below decides whether another poll may be scheduled.
+    assertCompletionAllowed();
     return { pending: true, delayMs: POLL_INTERVAL_MS };
   }
   const delay = millisecondsUntil(current.nextPollAt);
@@ -630,7 +655,8 @@ function guardedProviderHttpClient(input: Parameters<typeof runProviderMediaJobE
 /** Local drain permits shutdown tails, but never stale child/parent authority writes. */
 function assertMediaCompletionAllowed(input: Parameters<typeof runProviderMediaJobExecutionOwner>[0],
   store: ProviderExecutionStore, supervised?: MediaRuntimeHandle): void {
-  input.storeRegistry.mediaLocalExecutions.assertCompletionAllowed(input.localExecution);
+  input.storeRegistry.mediaLocalExecutions.assertBusinessCompletionAllowed(input.localExecution);
+  assertMediaJobBusinessActive(store, input.mediaJobId);
   if (!supervised) return;
   const workUnit = store.getWorkUnit(supervised.workUnit.id);
   const attempt = store.getWorkUnitAttempt(supervised.attempt.id);

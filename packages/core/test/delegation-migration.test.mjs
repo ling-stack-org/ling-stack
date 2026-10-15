@@ -166,7 +166,7 @@ test("delegation migration has the release schema 154 identity", () => {
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through154/155/156/157/158/159/160 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through162 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -180,6 +180,15 @@ test("real schema153 upgrades through154/155/156/157/158/159/160 preserving hist
   first.close();
   const path = resolveRuntimePaths(f.cwd).databasePath;
   const old = f.open(path);
+  // Reconstruct schema153 by removing exactly the later, row-free overlays.
+  // Do not hide them from the baseline while leaving their markers installed.
+  old.handle.exec(`DROP TRIGGER media_workflow_check_insert;
+    DROP TRIGGER media_workflow_check_update;
+    DROP TRIGGER media_workflow_check_delete;
+    DROP TABLE media_workflow_connection_check_authorities;
+    DROP TABLE run_progress_checkpoint_heads;
+    DROP TABLE run_progress_checkpoints;
+    DELETE FROM schema_migrations WHERE version IN (161,162);`);
   // Remove only the new row-free sidecar before reconstructing schema153.
   removeQaOverlayForLegacyFixture(old.handle);
   for (const name of RUN_EVALUATION_TASK_SCHEMA_OBJECTS.filter(name => !name.startsWith("sqlite_autoindex_"))) {
@@ -226,15 +235,22 @@ test("real schema153 upgrades through154/155/156/157/158/159/160 preserving hist
   const incidentProvenanceOverlay = new Set(["channel_team_incident_provenance", "channel_team_incident_provenance_insert",
     "channel_team_incident_provenance_update", "sqlite_autoindex_channel_team_incident_provenance_1", "idx_availability_candidates_time"]);
   const evaluationTaskOverlay = new Set([...RUN_EVALUATION_TASK_SCHEMA_OBJECTS, ...RUN_EVALUATION_QA_SCHEMA_OBJECTS, ...RUN_EVALUATION_HUMAN_SCHEMA_OBJECTS]);
+  const progressAndWorkflowTables = new Set(["run_progress_checkpoints", "run_progress_checkpoint_heads",
+    "media_workflow_connection_check_authorities"]);
+  const workflowCheckTriggers = new Set(["media_workflow_check_insert", "media_workflow_check_update", "media_workflow_check_delete"]);
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
-    && row.name !== "mcp_authority_revisions" && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name) && !evaluationTaskOverlay.has(row.name)),
+    && row.name !== "mcp_authority_revisions" && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name) && !evaluationTaskOverlay.has(row.name)
+    && !progressAndWorkflowTables.has(row.tbl_name) && !workflowCheckTriggers.has(row.name)),
   oldSchema.filter(row => row.name !== "mcp_authority_revisions"));
   const newAuthorityColumns = database.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
   assert.deepEqual(newAuthorityColumns.slice(0, oldAuthorityColumns.length), oldAuthorityColumns);
   assert.deepEqual(newAuthorityColumns.slice(oldAuthorityColumns.length).map(column => column.name),
     ["metadata_request_revision", "metadata_published_revision"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162) ORDER BY version").all(), oldMarkers);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=162").get().name, "add_media_workflow_connection_check_authority");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=161").get().name, "create_run_progress_checkpoint_authority");
+  for (const table of progressAndWorkflowTables) assert.equal(database.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 0);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=160").get().name, "create_run_evaluation_human_v1");
   for (const table of ["run_evaluation_human_intents", "run_evaluation_human_events", "run_evaluation_human_heads"]) assert.equal(database.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 0);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=159").get().name, "create_run_evaluation_qa_v1");

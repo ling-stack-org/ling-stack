@@ -22,6 +22,8 @@ import { mediaApprovalRecoveryBlocked } from "../approval-recovery-guard.js";
 import { selectInitialMediaSceneResult } from "../scene-result-selection.js";
 import { createComfyUiWorkflowAdapter } from "./workflow-adapter.js";
 import { requireConnection, requireDefinition, requireVersion, resolveMediaWorkflowSecret } from "./workflow-service.js";
+import { assertMediaJobBusinessActive, cancelledMediaJobResult, settleLocallyCancelledMediaJob,
+  updateActiveMediaJobStatus } from "../scene-cancellation.js";
 
 const POLL_INTERVAL_MS = 2_000;
 const MAX_POLL_ATTEMPTS = 10_800;
@@ -57,6 +59,11 @@ async function runWorkflowMediaJobExecutionOwner(input: {
     registry: input.storeRegistry.mediaLocalExecutions, localExecution: input.localExecution });
   let job = store.getMediaJob(input.mediaJobId);
   if (!job) return { statusCode: 404, body: { error: "media_job_not_found", message: `生成任务不存在：${input.mediaJobId}` } };
+  if (job.status === "cancelled" && (input.retryTerminal || store.getMediaSceneRunByMediaJobId(job.id))) {
+    const cancelled = settleLocallyCancelledMediaJob({ store, registry: input.storeRegistry.mediaLocalExecutions,
+      cwd: input.cwd, mediaJobId: job.id, localExecution: input.localExecution })!;
+    return cancelledMediaJobResult(cancelled, input.retryTerminal);
+  }
   if (job.executionSource.kind !== "workflow") {
     return { statusCode: 400, body: { error: "invalid_execution_source", message: "该任务不是工作流生成任务。" } };
   }
@@ -83,10 +90,10 @@ async function runWorkflowMediaJobExecutionOwner(input: {
   };
   try {
     if (job.status === "waiting_for_approval") {
-      job = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, new Date().toISOString()) ?? job;
+      job = updateActiveMediaJobStatus(store, job.id, { status: "queued", errorMessage: null }, new Date().toISOString());
     }
     const terminalStatus = job.status === "failed" || job.status === "cancelled" ? job.status : undefined;
-    const retryingTerminal = terminalStatus !== undefined && input.retryTerminal === true && (!handle || isPendingHandle(handle));
+    const retryingTerminal = terminalStatus === "failed" && input.retryTerminal === true && (!handle || isPendingHandle(handle));
     if (terminalStatus && !retryingTerminal) {
       const child = findConversationMediaWorkUnit(store, job.id);
       const shouldAuditPreSubmissionCancellation = terminalStatus === "cancelled" &&
@@ -111,7 +118,10 @@ async function runWorkflowMediaJobExecutionOwner(input: {
         store.deleteMediaJobExecutionHandle(job.id);
         handle = undefined;
       }
-      job = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null }, new Date().toISOString()) ?? job;
+      const retried = store.updateMediaJobStatus(job.id, { status: "queued", errorMessage: null,
+        expectedStatuses: ["failed"] }, new Date().toISOString());
+      if (!retried) throw new MediaLocalExecutionAdmissionError("media_job_terminal", "Media retry lost its terminal status comparison.");
+      job = retried;
       const child = prepareConversationMediaWorkUnitForExplicitRetry(store, job.id, new Date().toISOString());
       if (child && child.status !== "queued") {
         throw new Error(`Conversation media work unit could not be retried: ${child.id} (${child.status}).`);
@@ -185,13 +195,13 @@ async function runWorkflowMediaJobExecutionOwner(input: {
     recordHeartbeat(store, supervised);
     const running = job.status === "running"
       ? job
-      : store.updateMediaJobStatus(job.id, { status: "running", errorMessage: null }, new Date().toISOString()) ?? job;
+      : updateActiveMediaJobStatus(store, job.id, { status: "running", errorMessage: null }, new Date().toISOString());
     notifyProjection(input, job.id);
     if (isPendingHandle(handle)) {
         const values = isRecord(job.input.workflowInputValues) ? job.input.workflowInputValues : {};
         const submission = await adapter.submit({ jobId: job.id, prompt: job.prompt, inputValues: values, requestedAt: new Date().toISOString() });
-        assertCompletion(supervised);
         if (submission.status === "failed") {
+          assertCompletion(supervised);
           throw mediaExecutionError(submission.errorCode ?? "media_workflow_failed", submission.errorMessage);
         }
         const nextPollAt = new Date(Date.now() + POLL_INTERVAL_MS).toISOString();
@@ -209,6 +219,9 @@ async function runWorkflowMediaJobExecutionOwner(input: {
           workUnitId: supervised.workUnit.id,
           attemptId: supervised.attempt.id,
         }, new Date().toISOString());
+        // Preserve a genuine late submission ACK, but do not schedule or
+        // project business success once the local cancellation has won.
+        assertCompletion(supervised);
         scheduleWorkflowPoll(input, POLL_INTERVAL_MS);
         return { statusCode: 202, body: { mediaJob: running, pending: true } };
     }
@@ -266,11 +279,11 @@ async function runWorkflowMediaJobExecutionOwner(input: {
       throw mediaExecutionError("media_result_unavailable", "工作流没有返回当前任务需要的图片或视频结果。");
     }
     const artifacts = persistedArtifacts;
-    const succeeded = store.updateMediaJobStatus(job.id, {
+    const succeeded = updateActiveMediaJobStatus(store, job.id, {
       status: "succeeded",
       artifactIds: [...new Set([...job.artifactIds, ...artifacts.map((artifact) => artifact.id)])],
       errorMessage: null,
-    }, completedAt) ?? job;
+    }, completedAt);
     notifyProjection(input, job.id, artifacts.map((artifact) => artifact.id));
     selectInitialMediaSceneResult(store, job.id, completedAt);
     for (const artifact of artifacts) {
@@ -298,14 +311,24 @@ async function runWorkflowMediaJobExecutionOwner(input: {
     finishExecution(store, job.id, supervised, "succeeded", "media-workflow-succeeded", input);
     return { statusCode: 200, body: { mediaJob: succeeded, artifacts } };
   } catch (error) {
+    const cancelled = settleLocallyCancelledMediaJob({ store, registry: input.storeRegistry.mediaLocalExecutions,
+      cwd: input.cwd, mediaJobId: job.id, localExecution: input.localExecution });
+    if (cancelled) {
+      if (receipt && persistedArtifacts.length === 0) {
+        try { receipt.recordCollection({ artifacts: [], manifestItems: [] }, false); }
+        catch { /* Core still requires genuine remote evidence; no fake no-start. */ }
+      }
+      notifyProjection(input, job.id);
+      return cancelledMediaJobResult(cancelled);
+    }
     if (error instanceof MediaLocalExecutionAdmissionError) {
       if (!receipt?.recordNoStartCollection()) throw error;
       assertMediaCompletionAllowed(input, store, supervised);
     } else assertCompletion(supervised);
     const message = redactTextWithSecrets(error instanceof Error ? error.message : String(error), [secretValue]);
     const errorCode = mediaExecutionErrorCode(error, "media_workflow_failed");
-    const failed = store.updateMediaJobStatus(job.id, { status: "failed", errorMessage: message,
-      artifactIds: [...new Set([...job.artifactIds, ...persistedArtifacts.map(artifact => artifact.id)])] }, new Date().toISOString()) ?? job;
+    const failed = updateActiveMediaJobStatus(store, job.id, { status: "failed", errorMessage: message,
+      artifactIds: [...new Set([...job.artifactIds, ...persistedArtifacts.map(artifact => artifact.id)])] }, new Date().toISOString());
     notifyProjection(input, job.id, persistedArtifacts.map(artifact => artifact.id));
     if (supervised) terminalFailure(store, input.hooks, supervised, errorCode, message);
     if (supervised) finishExecution(store, job.id, supervised, "failed", "media-workflow-failed", input);
@@ -538,7 +561,8 @@ function guardedWorkflowFetch(input: Parameters<typeof runWorkflowMediaJobExecut
 
 function assertMediaCompletionAllowed(input: Parameters<typeof runWorkflowMediaJobExecutionOwner>[0],
   store: RunStore, supervised?: MediaRuntimeHandle): void {
-  input.storeRegistry.mediaLocalExecutions.assertCompletionAllowed(input.localExecution);
+  input.storeRegistry.mediaLocalExecutions.assertBusinessCompletionAllowed(input.localExecution);
+  assertMediaJobBusinessActive(store, input.mediaJobId);
   if (!supervised) return;
   const workUnit = store.getWorkUnit(supervised.workUnit.id);
   const attempt = store.getWorkUnitAttempt(supervised.attempt.id);

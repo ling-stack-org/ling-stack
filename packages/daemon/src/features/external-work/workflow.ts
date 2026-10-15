@@ -1,4 +1,4 @@
-import { mkdirSync, readFileSync, realpathSync, statSync, writeFileSync } from "node:fs";
+import { readFileSync, realpathSync, writeFileSync } from "node:fs";
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { isAbsolute, resolve as resolvePath } from "node:path";
 import {
@@ -31,6 +31,7 @@ import {
   parseExternalWorkflowStatus,
   readExternalWorkflowStatusFile,
 } from "./status.js";
+import { admitExternalWorkflowPath, readAdmittedExternalWorkflowFile, writeAdmittedExternalWorkflowFile } from "./workflow-path-admission.js";
 
 export async function handleExternalWorkWorkflowConfigure(
   request: IncomingMessage,
@@ -60,18 +61,18 @@ export async function handleExternalWorkWorkflowConfigure(
       return;
     }
 
-    const targetPath = resolveExternalWorkflowWritablePath(channel, cwd, input.workflowPath);
-    const existingFile = readExternalWorkflowStatusFile(channel, cwd, input.workflowPath);
+    const admission = admitExternalWorkflowPath(channel.boundPath ?? cwd, input.workflowPath);
+    const existingFile = readAdmittedExternalWorkflowFile(admission);
     const existingParsed = parseExternalWorkflowStatus(existingFile.markdown);
     const workflowCreated = !existingFile.exists;
     let workflowUpdated = false;
+    let workflowFile = existingFile;
 
     if (!existingFile.exists || !existingParsed.workflowDefinition) {
-      writeFileSync(targetPath, buildMinimalExternalWorkflowMarkdown(input), "utf8");
+      workflowFile = writeAdmittedExternalWorkflowFile(admission, existingFile, buildMinimalExternalWorkflowMarkdown(input));
       workflowUpdated = true;
     }
 
-    const workflowFile = readExternalWorkflowStatusFile(channel, cwd, input.workflowPath);
     const parsed = parseExternalWorkflowStatus(workflowFile.markdown);
     if (!parsed.workflowDefinition) {
       throw new Error(parsed.error ?? "Generated WORKFLOW.md is invalid.");
@@ -227,36 +228,7 @@ export function prepareExternalWorkSecretMutation(
 }
 
 export function resolveExternalWorkflowWritablePath(channel: Channel, cwd: string, workflowPathInput: string | undefined): string {
-  const root = channel.boundPath ?? cwd;
-  const rootRealPath = realpathSync(root);
-  const workflowPath = workflowPathInput
-    ? isAbsolute(workflowPathInput)
-      ? workflowPathInput
-      : resolvePath(rootRealPath, workflowPathInput)
-    : resolvePath(rootRealPath, "WORKFLOW.md");
-
-  if (!isPathInsideRoot(rootRealPath, workflowPath)) {
-    throw new Error("workflowPath must resolve inside the channel bound path");
-  }
-  const existing = statFileIfPresent(workflowPath);
-  if (existing) {
-    if (!existing.isFile()) {
-      throw new Error("Workflow path is not a file");
-    }
-    const workflowRealPath = realpathSync(workflowPath);
-    if (!isPathInsideRoot(rootRealPath, workflowRealPath)) {
-      throw new Error("workflowPath must resolve inside the channel bound path");
-    }
-    return workflowRealPath;
-  }
-
-  const parentPath = resolvePath(workflowPath, "..");
-  mkdirSync(parentPath, { recursive: true });
-  const parentRealPath = realpathSync(parentPath);
-  if (!isPathInsideRoot(rootRealPath, parentRealPath)) {
-    throw new Error("workflowPath must resolve inside the channel bound path");
-  }
-  return workflowPath;
+  return admitExternalWorkflowPath(channel.boundPath ?? cwd, workflowPathInput).path;
 }
 
 export function buildMinimalExternalWorkflowMarkdown(input: ExternalWorkWorkflowConfigureRequest): string {
@@ -395,12 +367,4 @@ function defaultExternalWorkSecretName(workflowDefinition: ExternalWorkflowDefin
     .toUpperCase()
     .slice(0, 80) || "DEFAULT";
   return `LING_STACK_${source.kind.toUpperCase()}_${suffix}_TOKEN`;
-}
-
-function statFileIfPresent(path: string): ReturnType<typeof statSync> | undefined {
-  try {
-    return statSync(path);
-  } catch {
-    return undefined;
-  }
 }
