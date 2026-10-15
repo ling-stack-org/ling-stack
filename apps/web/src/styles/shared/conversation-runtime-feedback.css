@@ -82,6 +82,7 @@
 .conversation-status-main {
   display: grid;
   gap: var(--ling-space-2);
+  text-align: start;
 }
 
 .conversation-status-title,

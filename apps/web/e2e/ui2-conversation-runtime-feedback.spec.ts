@@ -3,6 +3,49 @@ import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, createChatProvider, createMockTeammate, isRecord, type MockState } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
 
+for (const theme of ["light", "dark"] as const) {
+  for (const locale of ["en-US", "zh-CN"] as const) {
+    test(`home model warning keeps its text aligned in ${theme} ${locale}`, async ({ page }, testInfo) => {
+      await prepareSurface(page, theme, 1280, 800, locale);
+      const runtimeErrors = collectRuntimeErrors(page);
+      await mockDaemon(page, createBaseState({ approvalStatus: "expired" }));
+      await page.goto("/");
+      await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u })
+        .getByRole("button", { name: locale === "zh-CN" ? "新建对话" : "New conversation", exact: true }).click();
+
+      const home = page.locator(".conversation-home");
+      const warning = home.locator(".normal-conversation-model-status");
+      const title = warning.locator(".conversation-status-title > strong");
+      const description = warning.locator(".conversation-status-main > p");
+      const meta = warning.locator(".conversation-status-meta");
+      const configure = warning.getByRole("button", { name: locale === "zh-CN" ? "配置模型" : "Configure model" });
+      await expect(title).toHaveText(locale === "zh-CN" ? "模型需要配置" : "Model needs setup");
+      await expect(description).toHaveText(locale === "zh-CN" ? "请先配置聊天模型再发送。" : "Please configure a chat model before sending.");
+      await expect(description).toHaveCSS("text-align", "start");
+      await expect(home.getByRole("heading", { level: 1 })).toHaveCSS("text-align", "center");
+      await expect(meta).toBeVisible();
+      await expect(configure).toBeEnabled();
+      const titleBox = await title.boundingBox();
+      const descriptionBox = await description.boundingBox();
+      const metaBox = await meta.boundingBox();
+      const warningBox = await warning.boundingBox();
+      const actionBox = await configure.boundingBox();
+      expect(Math.abs(titleBox!.x - descriptionBox!.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(titleBox!.x - metaBox!.x)).toBeLessThanOrEqual(1);
+      expect(Math.abs(actionBox!.y + actionBox!.height / 2 - warningBox!.y - warningBox!.height / 2)).toBeLessThanOrEqual(1);
+      await expectContained(warning, home);
+      await expectNoDocumentOverflow(page);
+      const screenshot = testInfo.outputPath("model-setup-alignment.png");
+      await page.screenshot({ path: screenshot });
+      await testInfo.attach("model-setup-alignment", { path: screenshot, contentType: "image/png" });
+
+      await configure.click();
+      await expect(page.getByRole("heading", { name: locale === "zh-CN" ? "模型工作台" : "Model Workbench", exact: true })).toBeVisible();
+      expect(runtimeErrors).toEqual([]);
+    });
+  }
+}
+
 test("channel runtime status and guidance use shared controls with a keyboard-safe menu", async ({ page }) => {
   await prepareSurface(page, "light", 1440, 960);
   const runtimeErrors = collectRuntimeErrors(page);
@@ -301,16 +344,17 @@ async function prepareSurface(
   theme: "light" | "dark",
   width: number,
   height: number,
+  locale = "en-US",
 ): Promise<void> {
   await page.setViewportSize({ width, height });
-  await page.addInitScript((themeId) => {
+  await page.addInitScript(({ themeId, locale }) => {
     const selection = { mode: "fixed", themeId: `ling-${themeId}` };
-    localStorage.setItem("ling-stack.locale", "en-US");
+    localStorage.setItem("ling-stack.locale", locale);
     localStorage.setItem("ling-stack.themeSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themeBootstrapSelection", JSON.stringify(selection));
     localStorage.setItem("ling-stack.themePreference", themeId);
     localStorage.setItem("ling-stack.themeBootstrapPreference", themeId);
-  }, theme);
+  }, { themeId: theme, locale });
 }
 
 async function expectMinimumHitArea(locator: Locator, size: number): Promise<void> {
