@@ -17,6 +17,8 @@ export * from "./approval-policy.js";
 export * from "./approval-types.js";
 export * from "./approval-postcommit-types.js";
 export * from "./approval-checkpoints.js";
+export * from "./teammate-direct-message-runtime-types.js";
+export { projectTeammateDirectRuntimeReplyText } from "./teammate-direct-message-runtime-validation.js";
 export * from "./session-permissions.js";
 export * from "./run-progress-checkpoint-types.js";
 export * from "./run-progress-checkpoint-lineage.js";

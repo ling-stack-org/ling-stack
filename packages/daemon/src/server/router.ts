@@ -3,6 +3,7 @@ import { defaultProviderTemplates, executeExternalWorkAction, toRuntimeAttemptFe
 import type { AiTeammate, RunSession, RunStore, TeammateDirectMessage, TeammateDirectThread } from "@ling-stack/core";
 import type { DaemonContext } from "../context.js";
 import { HttpError } from "../errors.js";
+import { reconcileTeammateDirectRun } from "../features/teammates/direct-message-lifecycle.js";
 import { createHarnessFeatureSnapshot } from "../features/harness/index.js";
 import { runApprovalPostCommitEffects } from "../features/runs/approval-postcommit-effects.js";
 import {
@@ -413,6 +414,11 @@ export async function routeRequest(
     const store = storeRegistry.findStoreForRun(sourceRunId, workspaceCwd) ?? storeRegistry.findStoreForRun(terminalRun.id, workspaceCwd);
     if (!store) {
       return;
+    }
+    try {
+      reconcileTeammateDirectRun(store, terminalRun, controlPlaneEvents);
+    } catch {
+      console.warn("teammate_direct_reconciliation_failed: the original reply remains recoverable");
     }
     maybeScheduleRunTerminalReport(store, terminalRun.id, { linkedRunId: terminalRun.id });
     const goalContinuation = maybeQueueGoalContinuation({
@@ -2705,7 +2711,13 @@ export async function routeRequest(
     await handleApprovalItem(request, response, config, storeRegistry, approvalRoute, controlPlaneEvents, ({ cwd, store, approval, now }) => {
       return runApprovalPostCommitEffects({
         resumeRun: () => {
-          const result = context.approvalResumeCoordinator.resumeAfterApproval({ store, approval });
+          if (!approval.runId) return;
+          // A live owning Runner observes the durable denial itself. Suspended owners
+          // have no callback left, so reuse the coordinator's strict atomic finalizer.
+          if (approval.status === "denied" && activeRuns.get(approval.runId)) return;
+          const result = approval.status === "denied"
+            ? context.approvalResumeCoordinator.finalizeSuspendedApprovalDenial({ store, approval })
+            : context.approvalResumeCoordinator.resumeAfterApproval({ store, approval });
           if (result.status === "blocked") throw new Error(result.reason);
           if (result.status === "not_applicable" && approval.runId
             && store.getRun(approval.runId)?.status === "waiting_for_approval") {

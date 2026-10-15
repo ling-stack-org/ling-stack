@@ -1,6 +1,7 @@
 import { existsSync } from "node:fs";
 import { publishNormalRunNarration } from "./sqlite/normal-run-narration-publication.js";
 import { isCurrentRunExecutionOwner } from "./sqlite/run-execution-admission.js";
+import { SqliteTeammateDirectMessageRuntimeStore } from "./sqlite/teammate-direct-message-runtime-store.js";
 import { assertConversationMediaExecutionAdmission, assertReusableConversationMediaExecutionAdmission } from "./sqlite/conversation-media-execution-admission.js";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -3729,6 +3730,19 @@ export class SqliteRunStore implements RunStore {
 
   createTeammateDirectMessage(input: CreateTeammateDirectMessageInput, now: string): TeammateDirectMessage {
     return this.teammateDirect.createTeammateDirectMessage(input, now);
+  }
+
+  getTeammateDirectMessageRuntimeObservation(
+    scope: import("../teammate-direct-message-runtime-types.js").TeammateDirectMessageRuntimeScope,
+  ): import("../teammate-direct-message-runtime-types.js").TeammateDirectMessageRuntimeObservation | undefined {
+    return new SqliteTeammateDirectMessageRuntimeStore({ database: this.database }, this).observe(scope);
+  }
+
+  commitTeammateDirectMessageRuntime(
+    input: import("../teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeInput,
+    now: string,
+  ): import("../teammate-direct-message-runtime-types.js").CommitTeammateDirectMessageRuntimeResult {
+    return new SqliteTeammateDirectMessageRuntimeStore({ database: this.database }, this).commit(input, now);
   }
 
   updateTeammateDirectMessageRuntime(

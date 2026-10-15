@@ -368,6 +368,18 @@ export class SqliteApprovalResumeStore {
         || attempt.workUnitId !== input.workUnitId) {
         throw new ApprovalResumeTransitionAbort("approval_resume_lineage_mismatch");
       }
+      if (input.kind === "resume_pre_dispatch") {
+        // This decision releases the target fence for a future retry. Re-read
+        // durable tool admission under the same writer lock as suspension, so
+        // another connection cannot race a Host effect past a Daemon precheck.
+        const started = this.context.database.prepare(`SELECT 1 FROM run_events
+          WHERE run_id=? AND type='tool_start'
+          AND (json_extract(data_json,'$.attemptId')=?
+            OR json_type(data_json,'$.attemptId') IS NOT 'text'
+            OR length(trim(json_extract(data_json,'$.attemptId')))=0)
+          LIMIT 1`).get(run.id, attempt.id);
+        if (started) throw new ApprovalResumeTransitionAbort("approval_resume_suspension_stale");
+      }
       const updatedCheckpoint = this.ports.updateApprovalCheckpointStatus(checkpoint.id, {
         status: checkpoint.status,
         expectedStatus: checkpoint.status,

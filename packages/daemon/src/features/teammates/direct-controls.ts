@@ -29,6 +29,7 @@ import { createAiTeammateDirectReply, type StartTeammateDirectRun } from "./dire
 import type { ActiveDirectReplyRegistry } from "./direct-reply-active-registry.js";
 import { assertDirectFileRefsWithinWorkspace, ensureDirectWorkspaceReady } from "./direct-workspace.js";
 import { assertNoUnsafeRequiredPause } from "../runs/user-input-cancellation-guard.js";
+import { settleTeammateDirectMessage } from "./direct-message-lifecycle.js";
 
 export interface TeammateDirectRuntimeSnapshot {
   readonly teammateId: string;
@@ -404,15 +405,11 @@ export class DirectReplyControlService {
     if (!current) {
       return undefined;
     }
-    return store.updateTeammateDirectMessageRuntime(
-      current.id,
-      {
-        body: current.body.trim() || fallbackBody,
-        status: "cancelled",
-        errorMessage: fallbackBody,
-      },
-      new Date().toISOString(),
-    );
+    return settleTeammateDirectMessage(store, current, {
+      runId: workUnit.linkedRunId,
+      workUnitId: workUnit.id,
+      cancelledReason: fallbackBody,
+    }).message;
   }
 
   private requireTeammate(store: RunStore, teammateId: string): AiTeammate {

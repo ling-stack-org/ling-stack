@@ -3,41 +3,77 @@ import { EventEmitter } from "node:events";
 import { Readable } from "node:stream";
 import test from "node:test";
 import { createTeammateDirectRunProjection } from "../dist/features/teammates/direct-execution-projection.js";
+import { attachDirectRuntimeProjectionPorts, DIRECT_RUNTIME_FIXTURE_FENCE } from "./helpers/direct-runtime-projection-ports.mjs";
 
 const event = (seq, type, data) => ({
   id: `event-${seq}`, runId: "run-private", seq,
   ts: "2026-09-05T00:00:00Z", type, data,
 });
 
-function createProjection() {
+function createProjection({ deferReady = false } = {}) {
   let message = {
     id: "reply-private", body: "", status: "pending", authorType: "ai-teammate",
     teammateId: "engineer", authorId: "engineer", threadId: "direct-thread", linkedRunId: "run-private",
   };
   const updates = [];
   const deltas = [];
-  const projection = createTeammateDirectRunProjection({
-    pendingMessageId: message.id,
-    scope: { teammateId: "engineer", directThreadId: "direct-thread", canonicalThreadId: "ling-thread", turnId: "private-turn" },
-    store: {
+  const store = attachDirectRuntimeProjectionPorts({
       ...narrationFixture([]).store,
       getTeammateDirectMessage: () => message,
-      updateTeammateDirectMessageRuntime(id, change) {
-        assert.equal(id, message.id);
+    }, { readMessage: () => message, writeMessage(change) {
         message = { ...message, ...change };
         updates.push(message);
         return message;
       },
-    },
+    });
+  const projection = createTeammateDirectRunProjection({
+    pendingMessageId: message.id,
+    scope: { teammateId: "engineer", directThreadId: "direct-thread", canonicalThreadId: "ling-thread", turnId: "private-turn" },
+    store,
     stream: { onDelta: (updated, delta) => deltas.push({ body: updated.body, delta, narrationSegments: updated.narrationSegments }) },
   });
-  projection.sink.writeReady({ runId: "run-private" });
-  return { ...projection, updates, deltas, message: () => message };
+  if (!deferReady) projection.sink.writeReady({ runId: "run-private", sourceFence: DIRECT_RUNTIME_FIXTURE_FENCE });
+  return { ...projection, store, updates, deltas, message: () => message };
 }
 
 function write(projection, events) {
   for (const entry of events) projection.sink.writeEvent("run_event", entry);
 }
+
+test("A28 delayed ready from an old Attempt cannot capture a successor's execution fence", () => {
+  const projection = createProjection({ deferReady: true });
+  const read = projection.store.getTeammateDirectMessageRuntimeObservation;
+  const sourceFence = DIRECT_RUNTIME_FIXTURE_FENCE;
+  const commits = [];
+  projection.store.getTeammateDirectMessageRuntimeObservation = scope => {
+    const current = read(scope);
+    return { ...current, attempt: { ...current.attempt, id: "successor-attempt",
+      runtimeInstanceId: "successor-runtime", fencingToken: "successor-fence" } };
+  };
+  // The Core correctly admits the CURRENT successor. The projection must not
+  // turn that into a capability for a delayed callback from the prior Attempt.
+  projection.store.commitTeammateDirectMessageRuntime = input => {
+    commits.push(input);
+    return { kind: "unchanged", message: projection.message() };
+  };
+  projection.sink.writeReady({ runId: "run-private", sourceFence });
+  assert.deepEqual(commits, [], "old ready must be rejected before attempting to borrow current Host authority");
+  assert.equal(projection.runId(), undefined);
+  assert.equal(projection.fence(), undefined);
+  assert.deepEqual(projection.deltas, []);
+});
+
+test("A28 ready without a complete source fence cannot acquire execution authority", () => {
+  for (const sourceFence of [undefined, {}, { ...DIRECT_RUNTIME_FIXTURE_FENCE, attemptId: "" },
+    { ...DIRECT_RUNTIME_FIXTURE_FENCE, fencingToken: 1 }]) {
+    const projection = createProjection({ deferReady: true });
+    projection.sink.writeReady({ runId: "run-private", sourceFence });
+    assert.equal(projection.runId(), undefined);
+    assert.equal(projection.fence(), undefined);
+    assert.deepEqual(projection.updates, []);
+    assert.deepEqual(projection.deltas, []);
+  }
+});
 
 test("private live reply preserves assistant boundaries around reads and the final report", () => {
   const projection = createProjection();
@@ -218,9 +254,12 @@ test("private HTTP history and every SSE terminal path retain live narration seg
   const { handleTeammateDirectMessageStream, handleTeammateDirectMessagesCollection } = await import("../dist/features/teammates/direct-messages.js");
   const events = [event(1, "assistant_text_delta", { text: "Before." }), event(2, "message_end", { role: "assistant", text: "Before." }),
     event(3, "tool_start", { toolName: "read" }), event(4, "message_end", { role: "assistant", text: "After." })];
-  for (const status of ["ready", "blocked", "failed", "cancelled"]) {
+  // A linked execution has no terminal "blocked" state: configuration blockers
+  // precede Run creation and are tested separately below.
+  for (const status of ["ready", "failed", "cancelled"]) {
     const fixture = narrationFixture(events);
-    const store = {
+    fixture.message.status = "pending";
+    const store = attachDirectRuntimeProjectionPorts({
       ...fixture.store,
       getAiTeammate: () => ({ id: "engineer" }),
       getOrCreateTeammateDirectThread: () => ({ id: "direct-thread", teammateId: "engineer" }),
@@ -230,9 +269,11 @@ test("private HTTP history and every SSE terminal path retain live narration seg
       listConversationTurnSupersessions: () => [],
       listWorkUnits: () => [],
       findLingThreadByOwner: () => undefined,
-      updateTeammateDirectMessageRuntime: (_id, changes) => Object.assign(fixture.message, changes),
       listTeammateDirectMessagesPage: () => ({ messages: [fixture.message], hasMore: false }),
-    };
+    }, { readMessage: () => fixture.message, writeMessage: changes => Object.assign(fixture.message, changes),
+      state: message => message.status === "pending" ? { kind: "active" }
+        : { kind: "terminal", status: message.status === "ready" ? "succeeded" : message.status },
+    });
     const config = { maxBodyBytes: 10000 };
     const registry = { getStore: () => store };
     const response = new CapturedResponse();
@@ -240,10 +281,13 @@ test("private HTTP history and every SSE terminal path retain live narration seg
       stream.onReady(fixture.message);
       const live = createTeammateDirectRunProjection({ store, pendingMessageId: fixture.message.id, stream,
         scope: { teammateId: "engineer", directThreadId: "direct-thread", canonicalThreadId: "ling-thread", turnId: "private-turn" } });
-      live.sink.writeReady({ runId: "run-private" });
+      live.sink.writeReady({ runId: "run-private", sourceFence: DIRECT_RUNTIME_FIXTURE_FENCE });
       write(live, events);
       fixture.message.status = status;
       if (status !== "ready") fixture.message.errorMessage = "Approval denied";
+      // Match the durable terminal facts returned by the Core reader.
+      store.getRun = () => ({ id: "run-private", teammateId: "engineer", threadId: "ling-thread",
+        errorMessage: status === "failed" ? "Approval denied" : undefined });
       if (status === "ready") stream.onDone(fixture.message);
       else stream.onBlocked(fixture.message);
       return fixture.message;
@@ -277,7 +321,7 @@ test("private HTTP media uses only owned Run IDs while preserving unanchored leg
   for (const corrupt of [false, true]) {
     const fixture = narrationFixture([]);
     const mediaReads = [];
-    const store = {
+    const store = attachDirectRuntimeProjectionPorts({
       ...fixture.store,
       ...(corrupt ? { getRun: () => ({ id: "run-private", teammateId: "engineer", threadId: "ling-thread", workflowStepId: "foreign-workflow" }) } : {}),
       getAiTeammate: () => ({ id: "engineer" }),
@@ -291,7 +335,8 @@ test("private HTTP media uses only owned Run IDs while preserving unanchored leg
         if (options.kind === "media_job") mediaReads.push(options.linkedRunId);
         return [];
       },
-    };
+    }, { readMessage: () => fixture.message, writeMessage: () => assert.fail("GET must not write"),
+      state: () => ({ kind: "indeterminate", reason: "legacy_without_runtime_proof" }) });
     const response = new CapturedResponse();
     await handleTeammateDirectMessagesCollection(request("GET"), response, { maxBodyBytes: 10000 }, { getStore: () => store }, "engineer", () => assert.fail("GET must not run"));
     assert.equal(response.status, 200, response.output);
@@ -300,4 +345,38 @@ test("private HTTP media uses only owned Run IDs while preserving unanchored leg
     assert.equal(payload.messages[1].body, "Old concatenated body.");
     assert.deepEqual(mediaReads, corrupt ? [] : ["run-private"]);
   }
+});
+
+test("private HTTP preserves a pre-dispatch blocker without inventing an execution or narration", async () => {
+  const { handleTeammateDirectMessageStream } = await import("../dist/features/teammates/direct-messages.js");
+  const fixture = narrationFixture([]);
+  Object.assign(fixture.message, { linkedRunId: undefined, status: "blocked", body: "Provider is not configured",
+    errorMessage: "Provider is not configured" });
+  const store = {
+    ...fixture.store,
+    getAiTeammate: () => ({ id: "engineer" }),
+    getOrCreateTeammateDirectThread: () => ({ id: "direct-thread", teammateId: "engineer" }),
+    createTeammateDirectMessage: input => ({ id: "user-private", ...input }),
+    getTeammateDirectMessageRuntimeObservation: scope => ({ scope, message: fixture.message,
+      state: { kind: "unlinked" }, fingerprint: "unlinked", lastRunEventSeq: 0 }),
+    commitTeammateDirectMessageRuntime: () => assert.fail("HTTP serialization must not write runtime state"),
+    listWorkUnits: () => [], findLingThreadByOwner: () => undefined,
+  };
+  const response = new CapturedResponse();
+  await handleTeammateDirectMessageStream(request("POST", { body: "Inspect." }), response,
+    { maxBodyBytes: 10000 }, { getStore: () => store }, "engineer", async ({ stream }) => {
+      stream.onReady(fixture.message);
+      stream.onBlocked(fixture.message);
+      return fixture.message;
+    });
+  assert.equal(response.status, 200, response.output);
+  const blocks = response.output.split("\n\n").filter(block => block.startsWith("event: "));
+  const last = blocks.at(-1).split("\n");
+  assert.equal(last[0], "event: blocked");
+  const terminal = JSON.parse(last[1].slice(6)).aiReply;
+  assert.equal(terminal.status, "blocked");
+  assert.equal(terminal.errorMessage, fixture.message.errorMessage);
+  assert.equal(terminal.linkedRunId, undefined);
+  assert.equal(terminal.narrationSegments, undefined);
+  assert.deepEqual(fixture.reads, [], "pre-dispatch blockers cannot borrow linked Run events");
 });

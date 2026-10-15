@@ -5,6 +5,7 @@ import { projectTeammateDirectMessageNarration } from "../dist/features/teammate
 import { createTeammateDirectRunProjection } from "../dist/features/teammates/direct-execution-projection.js";
 import { enrichTeammateDirectMessageWithWebEvidence } from "../dist/features/web/message-web-evidence.js";
 import { buildPrivateChatContextView, collectPrivateMessageSources, collectPrivateLinkedReferenceSources } from "../dist/features/channels/context-processing/private-chat.js";
+import { attachDirectRuntimeProjectionPorts, DIRECT_RUNTIME_FIXTURE_FENCE } from "./helpers/direct-runtime-projection-ports.mjs";
 
 const now = "2026-09-06T00:00:00.000Z";
 const teammate = { id: "engineer", workspaceId: "workspace", displayName: "Engineer", roleKey: "engineer", description: "Build" };
@@ -114,13 +115,14 @@ test("private narration validates native lane, private Thread, owning Turn and R
   assert.equal(projectTeammateDirectMessageNarration(f.store, legacy), legacy);
 });
 
-test("private live sink validates once before linking and ignores events outside its Run", () => {
+test("private live sink revalidates ownership through Core ports and ignores events outside its Run", () => {
   for (const corrupt of [undefined, "workflow", "turn"]) {
     const f = fixture();
     let message = { ...reply, linkedRunId: undefined, status: "pending", body: "" };
     const writes = [];
     f.store.getTeammateDirectMessage = () => message;
-    f.store.updateTeammateDirectMessageRuntime = (_id, update) => { writes.push(update); return message = { ...message, ...update }; };
+    attachDirectRuntimeProjectionPorts(f.store, { readMessage: () => message,
+      writeMessage: update => { writes.push(update); return message = { ...message, ...update }; } });
     if (corrupt === "workflow") f.run.workflowStepId = "foreign-step";
     if (corrupt === "turn") f.turn.id = "different-turn";
     const projection = createTeammateDirectRunProjection({ store: f.store, pendingMessageId: message.id,
@@ -128,15 +130,24 @@ test("private live sink validates once before linking and ignores events outside
     projection.sink.writeEvent("run_event", { id: "before-ready", runId: "run", seq: 1, ts: now, type: "message_end", data: { role: "assistant", text: "Unlinked" } });
     assert.deepEqual(writes, []);
     if (corrupt) {
-      assert.throws(() => projection.sink.writeReady({ runId: "run" }), /scope|owner/i);
+      // Wrong canonical Turn throws; foreign Run observations are a safe no-op.
+      if (corrupt === "turn") assert.throws(() => projection.sink.writeReady({ runId: "run", sourceFence: DIRECT_RUNTIME_FIXTURE_FENCE }), /scope|owner/i);
+      else projection.sink.writeReady({ runId: "run", sourceFence: DIRECT_RUNTIME_FIXTURE_FENCE });
       assert.deepEqual(writes, []);
       continue;
     }
-    projection.sink.writeReady({ runId: "run" });
-    f.store.getRun = () => assert.fail("live tokens must not re-read ownership");
+    projection.sink.writeReady({ runId: "run", sourceFence: DIRECT_RUNTIME_FIXTURE_FENCE });
     projection.sink.writeEvent("run_event", { id: "foreign", runId: "other-run", seq: 2, ts: now, type: "message_end", data: { role: "assistant", text: "Foreign" } });
     projection.sink.writeEvent("run_event", { id: "owned", runId: "run", seq: 3, ts: now, type: "message_end", data: { role: "assistant", text: "Owned" } });
     assert.equal(message.body, "Owned");
+    assert.equal(projection.text(), "Owned");
+    const beforeLateCallback = structuredClone(message);
+    const writeCount = writes.length;
+    f.run.workflowStepId = "foreign-step-after-link";
+    projection.sink.writeEvent("run_event", { id: "late-foreign-owner", runId: "run", seq: 4, ts: now,
+      type: "message_end", data: { role: "assistant", text: "Must not overwrite after ownership changed" } });
+    assert.deepEqual(message, beforeLateCallback);
+    assert.equal(writes.length, writeCount);
     assert.equal(projection.text(), "Owned");
   }
 });

@@ -1138,6 +1138,67 @@ function resumeRunnerRegistry() {
   };
 }
 
+test("A28 Core pre-dispatch suspension rejects durable tool_start atomically", async t => {
+  const fixture = await createResumeFixture("a28-started-effect-suspension", "printf must-not-execute", false, true, true);
+  t.after(() => fixture.close());
+  const claimed = claimResume(fixture, "a28-claimed-effect-attempt");
+  appendResumeToolStart(fixture, claimed.attempt.id);
+  const before = {
+    run: fixture.store.getRun(fixture.run.id), unit: fixture.store.getWorkUnit(fixture.workUnit.id),
+    attempt: fixture.store.getWorkUnitAttempt(claimed.attempt.id),
+    checkpoint: fixture.store.getApprovalCheckpoint(fixture.checkpoint.id),
+    events: matchingToolEvents(fixture),
+  };
+  assert.equal(before.events.length, 1, "the actual durable start must precede the suspension transaction");
+  assert.equal(before.events[0].type, "tool_start");
+  const result = fixture.store.commitApprovalResumeSuspension({
+    kind: "resume_pre_dispatch", checkpointId: before.checkpoint.id,
+    expectedCheckpointStatus: "resume_pending", expectedCheckpointRevision: before.checkpoint.revision,
+    approvalId: fixture.approval.id, runId: before.run.id, expectedRunStatus: "running",
+    workUnitId: before.unit.id, expectedWorkUnitStatus: "running", attemptId: before.attempt.id,
+    cause: "runtime-shutdown", now: "2026-08-16T02:03:00.000Z",
+  });
+  assert.equal(result.ok, false, "an executed-or-unknown effect cannot be relabelled safe pre-dispatch");
+  assert.deepEqual({
+    run: fixture.store.getRun(fixture.run.id), unit: fixture.store.getWorkUnit(fixture.workUnit.id),
+    attempt: fixture.store.getWorkUnitAttempt(claimed.attempt.id),
+    checkpoint: fixture.store.getApprovalCheckpoint(fixture.checkpoint.id),
+    events: matchingToolEvents(fixture),
+  }, before, "rejection must preserve every durable execution fact and checkpoint revision");
+});
+
+for (const [label, attemptId] of [["missing", undefined], ["null", null], ["number", 7],
+  ["array", []], ["object", {}], ["empty", ""], ["whitespace", " "]]) {
+  test(`A28 Core pre-dispatch suspension rejects unattributed durable tool_start: ${label}`, async t => {
+    const fixture = await createResumeFixture(`a28-unattributed-${label}`, "printf must-not-execute", false, true, true);
+    t.after(() => fixture.close());
+    const claimed = claimResume(fixture, `a28-unattributed-attempt-${label}`);
+    appendResumeToolStart(fixture, attemptId);
+    const before = {
+      run: fixture.store.getRun(fixture.run.id), unit: fixture.store.getWorkUnit(fixture.workUnit.id),
+      attempt: fixture.store.getWorkUnitAttempt(claimed.attempt.id),
+      checkpoint: fixture.store.getApprovalCheckpoint(fixture.checkpoint.id),
+    };
+    const events = matchingToolEvents(fixture);
+    assert.equal(events.length, 1, "the unknown-effect start is durably stored before suspension");
+    assert.equal(events[0].type, "tool_start");
+    const result = fixture.store.commitApprovalResumeSuspension({
+      kind: "resume_pre_dispatch", checkpointId: before.checkpoint.id,
+      expectedCheckpointStatus: "resume_pending", expectedCheckpointRevision: before.checkpoint.revision,
+      approvalId: fixture.approval.id, runId: before.run.id, expectedRunStatus: "running",
+      workUnitId: before.unit.id, expectedWorkUnitStatus: "running", attemptId: before.attempt.id,
+      cause: "runtime-shutdown", now: "2026-08-16T02:03:00.000Z",
+    });
+    assert.equal(result.ok, false, "malformed attribution is unknown effect, never safe pre-dispatch");
+    assert.deepEqual({
+      run: fixture.store.getRun(fixture.run.id), unit: fixture.store.getWorkUnit(fixture.workUnit.id),
+      attempt: fixture.store.getWorkUnitAttempt(claimed.attempt.id),
+      checkpoint: fixture.store.getApprovalCheckpoint(fixture.checkpoint.id),
+    }, before);
+    assert.deepEqual(matchingToolEvents(fixture), events);
+  });
+}
+
 function claimResume(fixture, attemptId) {
   const result = fixture.store.commitApprovalResumeClaim({
     checkpointId: fixture.checkpoint.id,

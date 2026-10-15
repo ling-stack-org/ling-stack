@@ -45,6 +45,7 @@ import { createSystemKeychainSecretStore } from "./features/providers/keychain-s
 import { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
+import { reconcileTeammateDirectRun, recoverPendingTeammateDirectMessages } from "./features/teammates/direct-message-lifecycle.js";
 import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
 import { ApprovalAutoReviewRecoveryCoordinator } from "./features/runs/approval-auto-review-recovery.js";
 import { recoverApprovalPostCommitStore } from "./features/runs/approval-postcommit-recovery.js";
@@ -301,6 +302,11 @@ export function createDaemonServer(
       // daemon disappeared. Expired executing claims are never retried; they
       // become explicit unknown outcomes before any recovery dispatch runs.
       reconcileHarnessToolExecutionsAtStartup({ cwd, store, now: new Date().toISOString(), limit: 500 });
+      try {
+        recoverPendingTeammateDirectMessages(store, controlPlaneEvents);
+      } catch {
+        console.warn("teammate_direct_recovery_failed: linked pending replies remain recoverable");
+      }
       approvalRecoveryStores.add(store);
       configureNormalNarrationPublication(store, (event) => controlPlaneEvents.publish(event));
       void recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
@@ -467,6 +473,11 @@ export function createDaemonServer(
     const store = storeRegistry.findStoreForRun(sourceRunId, terminalRun.cwd)
       ?? storeRegistry.findStoreForRun(terminalRun.id, terminalRun.cwd);
     if (!store) return;
+    try {
+      reconcileTeammateDirectRun(store, terminalRun, controlPlaneEvents);
+    } catch {
+      console.warn("teammate_direct_reconciliation_failed: the original reply remains recoverable");
+    }
     maybeScheduleRunTerminalReport(store, terminalRun.id, { linkedRunId: terminalRun.id });
     const goalContinuation = maybeQueueGoalContinuation({ terminalRun, store, activeRuns });
     await maybeStartNextRunInterventionContinuation({
