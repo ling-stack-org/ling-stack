@@ -1813,7 +1813,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   updateSnapshotRestoreJournalEntry(input: UpdateSnapshotRestoreJournalEntryInput): SnapshotRestoreJournalEntry | undefined;
   acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number;
   getWorkspaceSnapshotFence(workspaceId: string): { readonly epoch: number; readonly ownerRequestId?: string };
-  releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): boolean;
+  releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string, expectedEpoch?: number): boolean;
   expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined;
   deleteWorkspaceSnapshotManifest(id: string): boolean;
   deleteWorkspaceSnapshotBlob(sha256: string): boolean;

@@ -2402,8 +2402,8 @@ export class SqliteRunStore implements RunStore {
     return this.workspaceSnapshots.getFence(workspaceId);
   }
 
-  releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): boolean {
-    return this.workspaceSnapshots.releaseFence(workspaceId, ownerRequestId, now);
+  releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string, expectedEpoch?: number): boolean {
+    return this.workspaceSnapshots.releaseFence(workspaceId, ownerRequestId, now, expectedEpoch);
   }
 
   expireWorkspaceSnapshotManifest(id: string, now: string): WorkspaceSnapshotManifest | undefined {
