@@ -26,6 +26,7 @@ import { lingThreadSelectSql } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { UserInputWait } from "../../user-input-wait-types.js";
 import { projectThreadUserInputWait } from "./user-input-wait-projection.js";
+import { assertNewProposedPlan, assertProposedPlanPublicUpdate, ProposedPlanMutationError } from "../../proposed-plan-mutation.js";
 
 export interface SqliteLingThreadStorePorts {
   readonly rebuildLingThreadMetadata: (threadId: string, now: string) => void;
@@ -581,42 +582,16 @@ export class SqliteLingThreadStore {
   upsertProposedPlanArtifact(input: CreateProposedPlanArtifactInput, now: string): ProposedPlanArtifact {
     const id = input.id ?? createProposedPlanArtifactId();
     const existing = this.getProposedPlanArtifact(id);
-    const planContext = this.resolveProposedPlanContext(input.threadId, input.channelId, input.goalId);
     if (existing) {
-      const updated = this.updateProposedPlanArtifact(
-        id,
-        {
-          channelId: input.channelId ?? existing.channelId ?? planContext.channelId,
-          goalId: input.goalId ?? existing.goalId ?? planContext.goalId,
-          sourceAgentId: input.sourceAgentId ?? existing.sourceAgentId,
-          ownerAgentId: input.ownerAgentId ?? existing.ownerAgentId,
-          sourceTurnId: input.sourceTurnId ?? existing.sourceTurnId,
-          sourceMessageId: input.sourceMessageId ?? existing.sourceMessageId,
-          sourceRunId: input.sourceRunId ?? existing.sourceRunId,
-          parentPlanId: input.parentPlanId ?? existing.parentPlanId,
-          supersededByPlanId: input.supersededByPlanId ?? existing.supersededByPlanId,
-          planGroupId: input.planGroupId ?? existing.planGroupId ?? existing.id,
-          version: input.version ?? existing.version ?? 1,
-          title: input.title,
-          bodyMarkdown: input.bodyMarkdown,
-          status: input.status ?? existing.status,
-          savedAt: input.savedAt ?? existing.savedAt,
-          acceptedAt: input.acceptedAt ?? existing.acceptedAt,
-          convertedAt: input.convertedAt ?? existing.convertedAt,
-          archivedAt: input.archivedAt ?? existing.archivedAt,
-          archivedReason: input.archivedReason ?? existing.archivedReason,
-          acceptedTaskId: input.acceptedTaskId ?? existing.acceptedTaskId,
-          acceptedWorkflowId: input.acceptedWorkflowId ?? existing.acceptedWorkflowId,
-          acceptedWorkflowStepId: input.acceptedWorkflowStepId ?? existing.acceptedWorkflowStepId,
-          acceptedRunId: input.acceptedRunId ?? existing.acceptedRunId,
-        },
-        now,
-      );
+      if (existing.threadId !== input.threadId) throw new ProposedPlanMutationError("proposed_plan_not_found", "The proposed plan does not belong to this thread.", 404);
+      const updated = this.updateProposedPlanArtifact(id, { ...input, expectedThreadId: input.threadId }, now);
       if (!updated) {
-        throw new Error(`Failed to update proposed plan artifact: ${id}`);
+        throw new ProposedPlanMutationError("proposed_plan_revision_conflict", `Proposed plan changed while editing: ${id}`);
       }
       return updated;
     }
+    assertNewProposedPlan(input);
+    const planContext = this.resolveProposedPlanContext(input.threadId, input.channelId, input.goalId);
     this.context.database
       .prepare(`
         INSERT INTO ling_thread_proposed_plans (
@@ -692,64 +667,21 @@ export class SqliteLingThreadStore {
     if (!existing) {
       return undefined;
     }
-    this.context.database
-      .prepare(`
-        UPDATE ling_thread_proposed_plans
-        SET channel_id = ?,
-            goal_id = ?,
-            source_agent_id = ?,
-            owner_agent_id = ?,
-            source_turn_id = ?,
-            source_message_id = ?,
-            source_run_id = ?,
-            parent_plan_id = ?,
-            superseded_by_plan_id = ?,
-            plan_group_id = ?,
-            version = ?,
-            title = ?,
-            body_markdown = ?,
-            status = ?,
-            saved_at = ?,
-            accepted_at = ?,
-            converted_at = ?,
-            archived_at = ?,
-            archived_reason = ?,
-            accepted_task_id = ?,
-            accepted_workflow_id = ?,
-            accepted_workflow_step_id = ?,
-            accepted_run_id = ?,
-            updated_at = ?
-        WHERE workspace_id = ?
-          AND id = ?
-      `)
-      .run(
-        nullableUpdate(input.channelId, existing.channelId) ?? null,
-        nullableUpdate(input.goalId, existing.goalId) ?? null,
-        nullableUpdate(input.sourceAgentId, existing.sourceAgentId) ?? null,
-        nullableUpdate(input.ownerAgentId, existing.ownerAgentId) ?? null,
-        nullableUpdate(input.sourceTurnId, existing.sourceTurnId) ?? null,
-        nullableUpdate(input.sourceMessageId, existing.sourceMessageId) ?? null,
-        nullableUpdate(input.sourceRunId, existing.sourceRunId) ?? null,
-        nullableUpdate(input.parentPlanId, existing.parentPlanId) ?? null,
-        nullableUpdate(input.supersededByPlanId, existing.supersededByPlanId) ?? null,
-        nullableUpdate(input.planGroupId, existing.planGroupId) ?? null,
-        nullableUpdate(input.version, existing.version) ?? null,
-        input.title ?? existing.title,
-        input.bodyMarkdown ?? existing.bodyMarkdown,
-        input.status ?? existing.status,
-        nullableUpdate(input.savedAt, existing.savedAt) ?? null,
-        nullableUpdate(input.acceptedAt, existing.acceptedAt) ?? null,
-        nullableUpdate(input.convertedAt, existing.convertedAt) ?? null,
-        nullableUpdate(input.archivedAt, existing.archivedAt) ?? null,
-        nullableUpdate(input.archivedReason, existing.archivedReason) ?? null,
-        nullableUpdate(input.acceptedTaskId, existing.acceptedTaskId) ?? null,
-        nullableUpdate(input.acceptedWorkflowId, existing.acceptedWorkflowId) ?? null,
-        nullableUpdate(input.acceptedWorkflowStepId, existing.acceptedWorkflowStepId) ?? null,
-        nullableUpdate(input.acceptedRunId, existing.acceptedRunId) ?? null,
-        now,
-        DEFAULT_WORKSPACE_ID,
-        planId,
-      );
+    if (input.expectedThreadId !== undefined && input.expectedThreadId !== existing.threadId) {
+      throw new ProposedPlanMutationError("proposed_plan_not_found", "The proposed plan does not belong to this thread.", 404);
+    }
+    assertProposedPlanPublicUpdate(existing, input);
+    const changes = (Object.keys(proposedPlanColumns) as (keyof typeof proposedPlanColumns)[])
+      .filter(field => input[field] !== undefined && (input[field] ?? undefined) !== existing[field]);
+    if (!changes.length) return existing;
+    if (!Number.isSafeInteger(existing.revision) || existing.revision >= Number.MAX_SAFE_INTEGER) {
+      throw new ProposedPlanMutationError("proposed_plan_revision_conflict", "The proposed-plan revision cannot be advanced safely.");
+    }
+    const result = this.context.database.prepare(`UPDATE ling_thread_proposed_plans
+      SET ${changes.map(field => `${proposedPlanColumns[field]} = ?`).join(", ")}, revision = revision + 1, updated_at = ?
+      WHERE workspace_id = ? AND id = ? AND thread_id = ? AND revision = ? AND status = ?`)
+      .run(...changes.map(field => input[field] ?? null), now, DEFAULT_WORKSPACE_ID, planId, existing.threadId, existing.revision, existing.status);
+    if (Number(result.changes) !== 1) throw new ProposedPlanMutationError("proposed_plan_revision_conflict", "The proposed plan changed while editing.");
     return this.getProposedPlanArtifact(planId);
   }
 
@@ -773,6 +705,16 @@ export class SqliteLingThreadStore {
     return row ? mapLingThreadGoal(row as Record<string, SQLOutputValue>) : undefined;
   }
 }
+
+const proposedPlanColumns = {
+  channelId: "channel_id", goalId: "goal_id", sourceAgentId: "source_agent_id", ownerAgentId: "owner_agent_id",
+  sourceTurnId: "source_turn_id", sourceMessageId: "source_message_id", sourceRunId: "source_run_id",
+  parentPlanId: "parent_plan_id", supersededByPlanId: "superseded_by_plan_id", planGroupId: "plan_group_id",
+  version: "version", title: "title", bodyMarkdown: "body_markdown", status: "status", savedAt: "saved_at",
+  acceptedAt: "accepted_at", convertedAt: "converted_at", archivedAt: "archived_at", archivedReason: "archived_reason",
+  acceptedTaskId: "accepted_task_id", acceptedWorkflowId: "accepted_workflow_id",
+  acceptedWorkflowStepId: "accepted_workflow_step_id", acceptedRunId: "accepted_run_id",
+} as const;
 
 function defaultThreadSurfaceKind(kind: LingThreadKind): "direct" | "work" {
   return kind === "conversation" || kind === "teammate_direct" ? "direct" : "work";

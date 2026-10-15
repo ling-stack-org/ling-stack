@@ -78,6 +78,8 @@ export interface UnifiedExecStreamSummary {
   readonly preview: string;
   readonly truncated: boolean;
   readonly artifactId?: string;
+  /** SHA256 of all observed redacted UTF-8 bytes, independent of preview/artifact caps. */
+  readonly contentSha256?: string;
 }
 
 /** Host execution coordinates and immutable input identities, separate from the requested command/cwd. */

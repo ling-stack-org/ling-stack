@@ -73,6 +73,7 @@ export function mapLingThreadGoal(row: Record<string, SQLOutputValue>): LingThre
 export function mapProposedPlanArtifact(row: Record<string, SQLOutputValue>): ProposedPlanArtifact {
   return omitUndefined({
     id: readString(row, "id"),
+    revision: readNumber(row, "revision"),
     workspaceId: readString(row, "workspace_id"),
     threadId: readString(row, "thread_id"),
     channelId: readNullableString(row, "channel_id"),

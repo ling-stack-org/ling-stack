@@ -166,7 +166,8 @@ test("an incomplete final UTF-8 sequence is finalized once with accurate raw byt
 
 test("empty output stays empty and stream summary keeps the existing contract", () => {
   const f = capture([]);
-  assert.deepEqual(toStreamSummary(f.snapshot), { byteCount: 0, lineCount: 0, preview: "", truncated: false });
+  assert.deepEqual(toStreamSummary(f.snapshot), { byteCount: 0, lineCount: 0, preview: "", truncated: false,
+    contentSha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855" });
   assert.equal(f.chunks.length, 0);
 });
 

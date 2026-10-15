@@ -70,6 +70,8 @@ export interface UnifiedExecStreamSummary {
   readonly preview: string;
   readonly truncated: boolean;
   readonly artifactId?: string;
+  /** SHA256 of all observed redacted UTF-8 bytes, independent of preview/artifact caps. */
+  readonly contentSha256?: string;
 }
 
 export interface UnifiedExecResult {

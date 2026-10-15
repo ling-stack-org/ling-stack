@@ -22,6 +22,7 @@ import { applyHostOfficeLocalNoStartMigration } from "./host-office-local-no-sta
 import { applyHostOfficeLocalDirectoryV2Migration } from "./host-office-local-directory-v2-migration.js";
 import { applyHostOfficeLocalDirectoryV2CertificateMigration } from "./host-office-local-directory-v2-certificate-migration.js";
 import { ensureLingTurnCursorIndexes } from "./ling-turn-cursor-indexes.js";
+import { applyProposedPlanRevisionMigration } from "./proposed-plan-revision-migration.js";
 
 export interface SqliteRunStoreMigrationContext {
   readonly database: DatabaseSync;
@@ -5984,6 +5985,12 @@ export function applySqliteRunStoreMigrations(context: SqliteRunStoreMigrationCo
     database,
     hasMigration: context.hasMigration.bind(context),
     hasTable: context.hasTable.bind(context),
+    recordMigration: context.recordMigration.bind(context),
+  });
+  applyProposedPlanRevisionMigration({
+    database,
+    hasMigration: context.hasMigration.bind(context),
+    hasColumn: context.hasColumn.bind(context),
     recordMigration: context.recordMigration.bind(context),
   });
 }

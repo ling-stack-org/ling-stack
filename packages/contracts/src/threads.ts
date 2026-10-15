@@ -172,6 +172,8 @@ export interface ProposedPlanArtifact {
   readonly supersededByPlanId?: string;
   readonly planGroupId?: string;
   readonly version?: number;
+  /** Present and positive on durable rows; absent only on an unpersisted source projection. */
+  readonly revision?: number;
   readonly title: string;
   readonly bodyMarkdown: string;
   readonly status: ProposedPlanArtifactStatus;
@@ -189,6 +191,7 @@ export interface ProposedPlanArtifact {
 }
 
 export interface ProposedPlanArtifactPutRequest {
+  readonly expectedRevision?: number;
   readonly id?: string;
   readonly channelId?: string | null;
   readonly goalId?: string | null;
@@ -207,6 +210,7 @@ export interface ProposedPlanArtifactPutRequest {
 }
 
 export interface ProposedPlanArtifactPatchRequest {
+  readonly expectedRevision?: number;
   readonly channelId?: string | null;
   readonly goalId?: string | null;
   readonly sourceAgentId?: string | null;
@@ -233,6 +237,7 @@ export interface ProposedPlanArtifactPatchRequest {
 }
 
 export interface ProposedPlanActionRequest {
+  readonly expectedRevision?: number;
   readonly plan?: ProposedPlanArtifactPutRequest;
   readonly createdBy?: string;
   readonly toParticipantId?: string;

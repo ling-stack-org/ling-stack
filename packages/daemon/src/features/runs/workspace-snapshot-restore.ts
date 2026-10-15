@@ -6,6 +6,7 @@ import { pipeline } from "node:stream/promises";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import type {
   CreateWorkspaceSnapshotEntryInput,
+  SnapshotRestoreJournalEntry,
   SnapshotRestoreRequest,
   WorkspaceSnapshotEntry,
   WorkspaceSnapshotManifest,
@@ -173,9 +174,25 @@ export async function restoreWorkspaceSnapshot(
     readonly now?: string;
   },
 ): Promise<SnapshotRestoreRequest> {
+  return executeWorkspaceSnapshotRestore(store, cwd, input);
+}
+
+/** A queued failure handler is admitted only while this worker owns the restore lock. */
+async function executeWorkspaceSnapshotRestore(
+  store: RunStore,
+  cwd: string,
+  input: Parameters<typeof restoreWorkspaceSnapshot>[2],
+  onLockedFailure?: (error: unknown) => SnapshotRestoreRequest,
+): Promise<SnapshotRestoreRequest> {
   const root = await realpath(resolve(cwd));
   if (!input.idempotencyKey.trim()) throw new WorkspaceSnapshotRestoreError(400, "idempotency_key_required", "Snapshot restore requires an idempotency key.");
-  return withRestoreLock(root, async () => restoreWorkspaceSnapshotLocked(store, root, input));
+  return withRestoreLock(root, async () => {
+    try { return await restoreWorkspaceSnapshotLocked(store, root, input); }
+    catch (error) {
+      if (onLockedFailure) return onLockedFailure(error);
+      throw error;
+    }
+  }, onLockedFailure !== undefined);
 }
 
 /**
@@ -213,16 +230,23 @@ export async function queueWorkspaceSnapshotRestore(
     request = store.createSnapshotRestoreRequest({ idempotencyKey: input.idempotencyKey, workspaceId: anchor.workspaceId, anchorId: anchor.id, snapshotId: manifest.id, expectedWorkspaceFingerprint: expectedFingerprint, expectedProvenanceWatermark: expectedWatermark, confirmationId: input.confirmationId, createdAt: now, updatedAt: now });
   }
   if (!queuedRestoreJobs.has(request.id)) {
-    const job = Promise.resolve().then(() => restoreWorkspaceSnapshot(store, root, { ...input, expectedWorkspaceFingerprint: expectedFingerprint, expectedProvenanceWatermark: expectedWatermark })).catch((error) => {
+    const queuedRequest = request;
+    const job = Promise.resolve().then(() => executeWorkspaceSnapshotRestore(store, root, { ...input, expectedWorkspaceFingerprint: expectedFingerprint, expectedProvenanceWatermark: expectedWatermark }, (error) => {
       const current = store.getSnapshotRestoreRequest(request!.id);
-      if (current && !["committed", "failed", "conflict", "expired", "recovery_required"].includes(current.state)) {
+      if (current && ["requested", "validating"].includes(current.state)
+        && current.fencingEpoch === queuedRequest.fencingEpoch
+        && !store.getWorkspaceSnapshotFence(current.workspaceId).ownerRequestId
+        && store.listSnapshotRestoreJournalEntries({ restoreRequestId: current.id, limit: 1 }).length === 0) {
         const state = error instanceof WorkspaceSnapshotRestoreError && error.statusCode === 410 ? "expired" : error instanceof WorkspaceSnapshotRestoreError && error.statusCode === 409 ? "conflict" : "failed";
         return store.updateSnapshotRestoreRequest({ id: current.id, expectedState: current.state, state, lastError: error instanceof Error ? error.message : String(error), updatedAt: new Date().toISOString() }) ?? current;
       }
+      return current ?? queuedRequest;
+    })).catch(() => {
       // The HTTP request has already returned the durable request ID. Keep
       // background failures observable through that record, not as an
-      // unhandled promise rejection in the daemon process.
-      return current ?? request!;
+      // unhandled rejection. Failing before lock admission (including busy)
+      // grants no authority to terminalize another worker's durable request.
+      return store.getSnapshotRestoreRequest(queuedRequest.id) ?? queuedRequest;
     }).finally(() => { queuedRestoreJobs.delete(request!.id); });
     queuedRestoreJobs.set(request.id, job);
   }
@@ -243,35 +267,39 @@ export async function reconcileWorkspaceSnapshotRestore(store: RunStore, cwd: st
   const root = await realpath(resolve(cwd));
   const currentFingerprint = await fingerprintWorkspace(root);
   const currentWatermark = store.getLatestWorkspaceProvenanceWatermark(request.workspaceId);
+  const expectedFencingEpoch = reconciliationExpectedEpoch(store, request);
   if (!journal.length) {
     if (currentFingerprint === request.expectedWorkspaceFingerprint && currentWatermark === request.expectedProvenanceWatermark) {
-      store.releaseWorkspaceSnapshotFence(request.workspaceId, request.id, new Date().toISOString());
-      if (request.state === "requested") return request;
-      return store.updateSnapshotRestoreRequest({ id: request.id, expectedState: request.state, state: "requested", updatedAt: new Date().toISOString() }) ?? store.getSnapshotRestoreRequest(request.id)!;
+      const reset = request.state === "requested" ? request : store.updateSnapshotRestoreRequest({ id: request.id, expectedState: request.state, state: "requested", expectedFencingEpoch, updatedAt: new Date().toISOString() });
+      if (reset) store.releaseWorkspaceSnapshotFence(request.workspaceId, request.id, new Date().toISOString(), request.fencingEpoch);
+      return reset ?? store.getSnapshotRestoreRequest(request.id)!;
     }
-    return store.updateSnapshotRestoreRequest({ id: request.id, expectedState: request.state, state: "recovery_required", lastError: "Workspace changed before the restore plan was durably staged; manual review is required.", updatedAt: new Date().toISOString() }) ?? store.getSnapshotRestoreRequest(request.id)!;
+    return store.updateSnapshotRestoreRequest({ id: request.id, expectedState: request.state, state: "recovery_required", expectedFencingEpoch, lastError: "Workspace changed before the restore plan was durably staged; manual review is required.", updatedAt: new Date().toISOString() }) ?? store.getSnapshotRestoreRequest(request.id)!;
   }
   let allAfter = true;
   let allBefore = true;
   for (const entry of journal) {
-    const current = await pathDigest(root, entry.relativePath);
-    if (entry.expectedAfterSha256 !== current) allAfter = false;
-    if (entry.expectedBeforeSha256 !== current) allBefore = false;
+    if (!await journalEntryMatches(root, entry, "after")) allAfter = false;
+    if (!await journalEntryMatches(root, entry, "before")) allBefore = false;
   }
+  reconciliationExpectedEpoch(store, request);
   const now = new Date().toISOString();
   if (allAfter && currentFingerprint === manifest.fingerprint) {
     for (const entry of journal) {
       if (entry.state === "pending") {
-        store.updateSnapshotRestoreJournalEntry({ id: entry.id, expectedState: "pending", state: "applied", updatedAt: now });
+        if (!store.updateSnapshotRestoreJournalEntry({ id: entry.id, expectedState: "pending", state: "applied", expectedFencingEpoch, updatedAt: now })) throw new WorkspaceSnapshotRestoreError(409, "restore_journal_conflict", `Restore journal entry was superseded: ${entry.relativePath}`);
       }
     }
-    return store.updateSnapshotRestoreRequest({ id: request.id, expectedState: request.state, state: "committed", updatedAt: now }) ?? store.getSnapshotRestoreRequest(request.id)!;
+    const committed = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: request.state, state: "committed", expectedFencingEpoch, updatedAt: now });
+    if (committed) store.releaseWorkspaceSnapshotFence(request.workspaceId, request.id, now, request.fencingEpoch);
+    return committed ?? store.getSnapshotRestoreRequest(request.id)!;
   }
   if (allBefore && currentFingerprint === request.expectedWorkspaceFingerprint && currentWatermark === request.expectedProvenanceWatermark) {
-    store.releaseWorkspaceSnapshotFence(request.workspaceId, request.id, now);
-    return store.updateSnapshotRestoreRequest({ id: request.id, expectedState: request.state, state: "requested", updatedAt: now }) ?? store.getSnapshotRestoreRequest(request.id)!;
+    const reset = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: request.state, state: "requested", expectedFencingEpoch, updatedAt: now });
+    if (reset) store.releaseWorkspaceSnapshotFence(request.workspaceId, request.id, now, request.fencingEpoch);
+    return reset ?? store.getSnapshotRestoreRequest(request.id)!;
   }
-  return store.updateSnapshotRestoreRequest({ id: request.id, expectedState: request.state, state: "recovery_required", lastError: "Workspace is in a mixed restore state; manual review is required.", updatedAt: now }) ?? store.getSnapshotRestoreRequest(request.id)!;
+  return store.updateSnapshotRestoreRequest({ id: request.id, expectedState: request.state, state: "recovery_required", expectedFencingEpoch, lastError: "Workspace is in a mixed restore state; manual review is required.", updatedAt: now }) ?? store.getSnapshotRestoreRequest(request.id)!;
 }
 
 export async function garbageCollectWorkspaceSnapshots(
@@ -399,14 +427,16 @@ async function restoreWorkspaceSnapshotLocked(
   if (lifecycleState !== "validating") throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", `Restore request is already in ${lifecycleState}.`);
   const epoch = store.acquireWorkspaceSnapshotFence(workspaceId, request.id, now);
   if (await hasActiveWorkspaceRun(store, root)) {
-    store.releaseWorkspaceSnapshotFence(workspaceId, request.id, new Date().toISOString());
+    store.releaseWorkspaceSnapshotFence(workspaceId, request.id, new Date().toISOString(), epoch);
     throw new WorkspaceSnapshotRestoreError(409, "workspace_busy", "A Run became active while restore fencing was acquired.");
   }
   const fenced = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "validating", state: "fenced", fencingEpoch: epoch, updatedAt: now });
   if (!fenced) {
-    store.releaseWorkspaceSnapshotFence(workspaceId, request.id, new Date().toISOString());
+    store.releaseWorkspaceSnapshotFence(workspaceId, request.id, new Date().toISOString(), epoch);
     throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", "Another restore request owns this idempotency key.");
   }
+  lifecycleState = "fenced";
+  let workspaceEffectsAttempted = false;
   try {
     let journal = store.listSnapshotRestoreJournalEntries({ restoreRequestId: request.id, limit: 100_000 });
     if (journal.length === 0) {
@@ -422,58 +452,80 @@ async function restoreWorkspaceSnapshotLocked(
         if (entry.state !== "applied" && entry.state !== "rolled_back") {
           throw new WorkspaceSnapshotRestoreError(409, "recovery_required", `Restore journal entry ${entry.relativePath} is not retryable.`);
         }
-        if (!store.updateSnapshotRestoreJournalEntry({ id: entry.id, expectedState: entry.state, state: "pending", updatedAt: now })) {
+        if (!store.updateSnapshotRestoreJournalEntry({ id: entry.id, expectedState: entry.state, state: "pending", expectedFencingEpoch: epoch, updatedAt: now })) {
           throw new WorkspaceSnapshotRestoreError(409, "restore_journal_conflict", `Restore journal entry was superseded: ${entry.relativePath}`);
         }
       }
       journal = store.listSnapshotRestoreJournalEntries({ restoreRequestId: request.id, limit: 100_000 });
     }
-    const staged = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "fenced", state: "staged", fencingEpoch: epoch, journalEntryCount: journal.length, updatedAt: now });
+    const staged = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "fenced", state: "staged", fencingEpoch: epoch, expectedFencingEpoch: epoch, journalEntryCount: journal.length, updatedAt: now });
     if (!staged) throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", "Restore request was superseded.");
-    const committing = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "staged", state: "committing", fencingEpoch: epoch, updatedAt: new Date().toISOString() });
+    lifecycleState = "staged";
+    const committing = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "staged", state: "committing", fencingEpoch: epoch, expectedFencingEpoch: epoch, updatedAt: new Date().toISOString() });
     if (!committing) throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", "Restore request was superseded.");
-    const applied: typeof journal = [];
+    lifecycleState = "committing";
+    const attempted: typeof journal = [];
     try {
       for (const entry of journal) {
-        const beforeFence = store.getWorkspaceSnapshotFence(workspaceId);
-        if (beforeFence.ownerRequestId !== request.id || beforeFence.epoch !== epoch) throw new WorkspaceSnapshotRestoreError(409, "stale_restore_fence", "Workspace restore fence was superseded before apply.");
-        const before = await pathDigest(root, entry.relativePath);
-        if (before !== entry.expectedBeforeSha256) throw new WorkspaceSnapshotRestoreError(409, "workspace_changed_during_restore", `Workspace changed before ${entry.relativePath} was applied.`);
+        assertRestoreOwnership(store, request, epoch, lifecycleState);
+        if (!await journalEntryMatches(root, entry, "before")) throw new WorkspaceSnapshotRestoreError(409, "workspace_changed_during_restore", `Workspace changed before ${entry.relativePath} was applied.`);
+        assertRestoreOwnership(store, request, epoch, lifecycleState);
+        // A failing syscall can follow a successful unlink/rename/chmod.
+        // Attempted is not applied, but it must participate in recovery.
+        attempted.push(entry);
+        workspaceEffectsAttempted = true;
         await applyJournalEntry(root, entry, store);
-        applied.push(entry);
-      const after = await pathDigest(root, entry.relativePath);
-        if (after !== entry.expectedAfterSha256) throw new WorkspaceSnapshotRestoreError(500, "restore_verify_failed", `Restore verification failed for ${entry.relativePath}.`);
-        if (!store.updateSnapshotRestoreJournalEntry({ id: entry.id, expectedState: "pending", state: "applied", updatedAt: new Date().toISOString() })) throw new WorkspaceSnapshotRestoreError(409, "restore_journal_conflict", `Restore journal entry was superseded: ${entry.relativePath}`);
-        const fence = store.getWorkspaceSnapshotFence(workspaceId);
-        if (fence.ownerRequestId !== request.id || fence.epoch !== epoch) throw new WorkspaceSnapshotRestoreError(409, "stale_restore_fence", "Workspace restore fence was superseded during apply.");
+        if (!await journalEntryMatches(root, entry, "after")) throw new WorkspaceSnapshotRestoreError(500, "restore_verify_failed", `Restore verification failed for ${entry.relativePath}.`);
+        assertRestoreOwnership(store, request, epoch, lifecycleState);
+        if (!store.updateSnapshotRestoreJournalEntry({ id: entry.id, expectedState: "pending", state: "applied", expectedFencingEpoch: epoch, updatedAt: new Date().toISOString() })) throw new WorkspaceSnapshotRestoreError(409, "restore_journal_conflict", `Restore journal entry was superseded: ${entry.relativePath}`);
+        assertRestoreOwnership(store, request, epoch, lifecycleState);
       }
-      const verifying = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "committing", state: "verifying", fencingEpoch: epoch, updatedAt: new Date().toISOString() });
+      const verifying = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "committing", state: "verifying", fencingEpoch: epoch, expectedFencingEpoch: epoch, updatedAt: new Date().toISOString() });
       if (!verifying) throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", "Restore request was superseded.");
+      lifecycleState = "verifying";
       const finalFingerprint = await fingerprintWorkspace(root);
       if (finalFingerprint !== manifest.fingerprint) throw new WorkspaceSnapshotRestoreError(500, "restore_fingerprint_failed", "Workspace fingerprint does not match the snapshot after restore.");
+      assertRestoreOwnership(store, request, epoch, lifecycleState);
     } catch (error) {
-      const rollbackError = await rollbackAppliedEntries(root, applied, store);
-      const message = rollbackError ? `${error instanceof Error ? error.message : String(error)}; rollback failed: ${rollbackError}` : (error instanceof Error ? error.message : String(error));
-      const currentState = store.getSnapshotRestoreRequest(request.id)?.state ?? "committing";
-      store.updateSnapshotRestoreRequest({ id: request.id, expectedState: currentState, state: rollbackError ? "recovery_required" : "failed", fencingEpoch: epoch, lastError: message, updatedAt: new Date().toISOString() });
+      const rollbackError = await rollbackAttemptedEntries(root, attempted, store, request, epoch, lifecycleState);
+      const beforeError = await verifyJournalBeforeState(root, journal);
+      let recoveryError = rollbackError ?? beforeError;
+      try { assertRestoreOwnership(store, request, epoch, lifecycleState); }
+      catch (ownershipError) { recoveryError ??= ownershipError instanceof Error ? ownershipError.message : String(ownershipError); }
+      const message = recoveryError ? `${error instanceof Error ? error.message : String(error)}; rollback unverified: ${recoveryError}` : (error instanceof Error ? error.message : String(error));
+      const currentRequest = store.getSnapshotRestoreRequest(request.id);
+      if (currentRequest?.state === lifecycleState && currentRequest.fencingEpoch === epoch) {
+        if (!store.updateSnapshotRestoreRequest({ id: request.id, expectedState: lifecycleState, state: recoveryError ? "recovery_required" : "failed", fencingEpoch: epoch, expectedFencingEpoch: epoch, lastError: message, updatedAt: new Date().toISOString() })) {
+          throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", `${message}; restore outcome was superseded.`);
+        }
+      }
       throw error instanceof WorkspaceSnapshotRestoreError ? error : new WorkspaceSnapshotRestoreError(500, "restore_failed", message);
     }
-    return store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "verifying", state: "committed", fencingEpoch: epoch, updatedAt: new Date().toISOString() }) ?? store.getSnapshotRestoreRequest(request.id)!;
+    const committed = store.updateSnapshotRestoreRequest({ id: request.id, expectedState: "verifying", state: "committed", fencingEpoch: epoch, expectedFencingEpoch: epoch, updatedAt: new Date().toISOString() });
+    if (!committed) throw new WorkspaceSnapshotRestoreError(409, "restore_claim_conflict", "Restore commit outcome was superseded.");
+    return committed;
   } catch (error) {
     const currentRequest = store.getSnapshotRestoreRequest(request.id);
-    if (currentRequest && !["committed", "failed", "conflict", "expired", "recovery_required"].includes(currentRequest.state)) {
+    if (currentRequest?.state === lifecycleState && currentRequest.fencingEpoch === epoch
+      && !["committed", "failed", "conflict", "expired", "recovery_required"].includes(currentRequest.state)) {
       store.updateSnapshotRestoreRequest({
         id: request.id,
-        expectedState: currentRequest.state,
-        state: "failed",
+        expectedState: lifecycleState,
+        state: workspaceEffectsAttempted ? "recovery_required" : "failed",
         fencingEpoch: epoch,
+        expectedFencingEpoch: epoch,
         lastError: error instanceof Error ? error.message : String(error),
         updatedAt: new Date().toISOString(),
       });
     }
     throw error;
   } finally {
-    store.releaseWorkspaceSnapshotFence(workspaceId, request.id, new Date().toISOString());
+    const completed = store.getSnapshotRestoreRequest(request.id);
+    const fence = store.getWorkspaceSnapshotFence(workspaceId);
+    if (completed?.fencingEpoch === epoch && ["committed", "failed", "conflict", "expired"].includes(completed.state)
+      && fence.ownerRequestId === request.id && fence.epoch === epoch) {
+      store.releaseWorkspaceSnapshotFence(workspaceId, request.id, new Date().toISOString(), epoch);
+    }
   }
 }
 
@@ -663,47 +715,118 @@ async function applyJournalEntry(root: string, entry: { readonly relativePath: s
   if (entry.targetMode !== undefined) await chmod(absolute, entry.targetMode);
 }
 
-async function rollbackAppliedEntries(root: string, entries: readonly { readonly relativePath: string; readonly rollbackBlobSha256?: string; readonly rollbackSymlinkTarget?: string; readonly rollbackMode?: number; readonly expectedBeforeSha256?: string; readonly expectedAfterSha256?: string; readonly targetKind: "file" | "directory" | "symlink"; readonly targetExists: boolean; readonly id?: string }[], store: RunStore): Promise<string | undefined> {
+async function rollbackAttemptedEntries(
+  root: string,
+  entries: readonly SnapshotRestoreJournalEntry[],
+  store: RunStore,
+  request: SnapshotRestoreRequest,
+  epoch: number,
+  expectedState: SnapshotRestoreRequest["state"],
+): Promise<string | undefined> {
   try {
+    const durable = new Map(store.listSnapshotRestoreJournalEntries({ restoreRequestId: request.id, limit: 100_000 }).map(entry => [entry.id, entry]));
     for (const entry of [...entries].reverse()) {
+      assertRestoreOwnership(store, request, epoch, expectedState);
+      const currentJournal = durable.get(entry.id);
+      if (!currentJournal || !["pending", "applied"].includes(currentJournal.state)) throw new Error(`Cannot rollback ${entry.relativePath}: restore journal was superseded.`);
       const absolute = safePath(root, entry.relativePath);
-      const current = await pathDigest(root, entry.relativePath);
-      if (current !== entry.expectedAfterSha256) throw new Error(`Cannot rollback ${entry.relativePath}: workspace changed after the restore entry was applied.`);
-      if (entry.rollbackSymlinkTarget !== undefined) {
-        await removeEntry(absolute); await mkdir(dirname(absolute), { recursive: true }); await symlink(entry.rollbackSymlinkTarget, absolute);
-      } else if (entry.rollbackBlobSha256) {
-        const blobPath = join(store.paths.snapshotBlobsDir, entry.rollbackBlobSha256);
-        const temporary = `${absolute}.ling-rollback-${randomUUID()}`;
-        await mkdir(dirname(absolute), { recursive: true });
-        try {
-          const info = await lstat(absolute);
-          if (info.isDirectory() || info.isSymbolicLink()) await removeEntry(absolute);
-        } catch (error) {
-          if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+      if (!await journalEntryMatches(root, entry, "before")) {
+        // Keep the existing target-digest external-edit guard. A partial state
+        // (including target bytes with unknown permissions) is not permission
+        // to overwrite a path whose complete target state cannot be proved.
+        if (!await journalEntryMatches(root, entry, "after")) throw new Error(`Cannot rollback ${entry.relativePath}: workspace is partial or changed after the restore entry was applied.`);
+        assertRestoreOwnership(store, request, epoch, expectedState);
+        if (entry.rollbackSymlinkTarget !== undefined) {
+          await removeEntry(absolute); await mkdir(dirname(absolute), { recursive: true }); await symlink(entry.rollbackSymlinkTarget, absolute);
+        } else if (entry.rollbackBlobSha256) {
+          const blobPath = join(store.paths.snapshotBlobsDir, entry.rollbackBlobSha256);
+          if ((await hashFile(blobPath)).sha256 !== entry.rollbackBlobSha256) throw new Error(`Cannot rollback ${entry.relativePath}: preimage blob is corrupt.`);
+          const temporary = `${absolute}.ling-rollback-${randomUUID()}`;
+          await mkdir(dirname(absolute), { recursive: true });
+          try {
+            const info = await lstat(absolute);
+            if (info.isDirectory() || info.isSymbolicLink()) await removeEntry(absolute);
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+          }
+          try {
+            await copyFileStreaming(blobPath, temporary);
+            await rename(temporary, absolute);
+          } catch (error) {
+            await rm(temporary, { force: true });
+            throw error;
+          }
+          if (entry.rollbackMode !== undefined) await chmod(absolute, entry.rollbackMode);
+        } else if (entry.expectedBeforeSha256 === directoryDigest(entry.relativePath)) {
+          await removeEntry(absolute);
+          await mkdir(absolute, { recursive: true });
+          if (entry.rollbackMode !== undefined) await chmod(absolute, entry.rollbackMode);
+        } else if (entry.expectedBeforeSha256 === undefined) {
+          await removeEntry(absolute);
+        } else {
+          throw new Error(`Cannot rollback ${entry.relativePath}: preimage metadata is missing.`);
         }
-        try {
-          await copyFileStreaming(blobPath, temporary);
-          await rename(temporary, absolute);
-        } catch (error) {
-          await rm(temporary, { force: true });
-          throw error;
-        }
-        if (entry.rollbackMode !== undefined) await chmod(absolute, entry.rollbackMode);
-      } else if (entry.expectedBeforeSha256 === directoryDigest(entry.relativePath)) {
-        await removeEntry(absolute);
-        await mkdir(absolute, { recursive: true });
-        if (entry.rollbackMode !== undefined) await chmod(absolute, entry.rollbackMode);
-      } else if (entry.expectedBeforeSha256 === undefined) {
-        await removeEntry(absolute);
       }
-      if ("id" in entry && typeof entry.id === "string") {
-        const updatedAt = new Date().toISOString();
-        store.updateSnapshotRestoreJournalEntry({ id: entry.id, expectedState: "applied", state: "rolled_back", updatedAt })
-          ?? store.updateSnapshotRestoreJournalEntry({ id: entry.id, expectedState: "pending", state: "rolled_back", updatedAt });
-      }
+      if (!await journalEntryMatches(root, entry, "before")) throw new Error(`Cannot verify rollback of ${entry.relativePath}: before state was not restored.`);
+      assertRestoreOwnership(store, request, epoch, expectedState);
+      if (!store.updateSnapshotRestoreJournalEntry({ id: entry.id, expectedState: currentJournal.state, state: "rolled_back", expectedFencingEpoch: epoch, updatedAt: new Date().toISOString() })) throw new Error(`Cannot verify rollback of ${entry.relativePath}: restore journal was superseded.`);
     }
     return undefined;
   } catch (error) { return error instanceof Error ? error.message : String(error); }
+}
+
+/** A content fingerprint deliberately omits permissions; recovery cannot. */
+async function journalEntryMatches(root: string, entry: SnapshotRestoreJournalEntry, side: "before" | "after"): Promise<boolean> {
+  const expectedDigest = side === "before" ? entry.expectedBeforeSha256 : entry.expectedAfterSha256;
+  const absolute = safePath(root, entry.relativePath);
+  try {
+    const info = await lstat(absolute);
+    if (expectedDigest === undefined) return false;
+    const kind = info.isSymbolicLink() ? "symlink" : info.isDirectory() ? "directory" : info.isFile() ? "file" : undefined;
+    const expectedKind = side === "after" ? entry.targetKind : entry.rollbackSymlinkTarget !== undefined ? "symlink"
+      : expectedDigest === directoryDigest(entry.relativePath) ? "directory" : "file";
+    if (kind !== expectedKind || side === "after" && !entry.targetExists) return false;
+    const expectedMode = side === "before" ? entry.rollbackMode : entry.targetMode;
+    if (expectedMode !== undefined && (info.mode & 0o777) !== expectedMode) return false;
+    const digest = kind === "symlink" ? symlinkDigest(await readlink(absolute))
+      : kind === "directory" ? directoryDigest(entry.relativePath) : (await hashFile(absolute)).sha256;
+    const after = await lstat(absolute);
+    return digest === expectedDigest && after.dev === info.dev && after.ino === info.ino && after.mode === info.mode
+      && after.size === info.size && after.mtimeMs === info.mtimeMs && after.ctimeMs === info.ctimeMs;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return expectedDigest === undefined;
+    throw error;
+  }
+}
+
+async function verifyJournalBeforeState(root: string, entries: readonly SnapshotRestoreJournalEntry[]): Promise<string | undefined> {
+  try {
+    for (const entry of entries) {
+      if (!await journalEntryMatches(root, entry, "before")) return `Before state is unverified for ${entry.relativePath}.`;
+    }
+    return undefined;
+  } catch (error) { return error instanceof Error ? error.message : String(error); }
+}
+
+/** Filesystem admission uses observations; durable publication additionally uses atomic Core epoch-CAS. */
+function assertRestoreOwnership(store: RunStore, request: SnapshotRestoreRequest, epoch: number, expectedState: SnapshotRestoreRequest["state"]): void {
+  const current = store.getSnapshotRestoreRequest(request.id);
+  const fence = store.getWorkspaceSnapshotFence(request.workspaceId);
+  if (current?.state !== expectedState || current.fencingEpoch !== epoch
+    || fence.ownerRequestId !== request.id || fence.epoch !== epoch) {
+    throw new WorkspaceSnapshotRestoreError(409, "stale_restore_fence", "Workspace restore ownership or lifecycle was superseded.");
+  }
+}
+
+/** No-owner reconciliation only reports observations; it does not authorize filesystem writes. */
+function reconciliationExpectedEpoch(store: RunStore, request: SnapshotRestoreRequest): number | undefined {
+  const current = store.getSnapshotRestoreRequest(request.id);
+  const fence = store.getWorkspaceSnapshotFence(request.workspaceId);
+  if (current?.state !== request.state || current.fencingEpoch !== request.fencingEpoch
+    || fence.ownerRequestId && (fence.ownerRequestId !== request.id || fence.epoch !== request.fencingEpoch)) {
+    throw new WorkspaceSnapshotRestoreError(409, "stale_restore_fence", "Workspace restore reconciliation ownership or lifecycle was superseded.");
+  }
+  return fence.ownerRequestId ? request.fencingEpoch : undefined;
 }
 
 async function assertSnapshotIntegrity(store: RunStore, root: string, entries: readonly WorkspaceSnapshotEntry[]): Promise<void> {
@@ -782,23 +905,18 @@ async function withWorkspaceSnapshotFence<T>(
     throw new WorkspaceSnapshotRestoreError(409, "workspace_busy", `${operationKind} cannot run while the workspace has an active Run or approval.`);
   }
   const ownerRequestId = `workspace_snapshot_${operationKind}_${randomUUID()}`;
-  let acquired = false;
+  let acquiredEpoch: number | undefined;
   try {
-    store.acquireWorkspaceSnapshotFence(workspaceId, ownerRequestId, new Date().toISOString());
-    acquired = true;
+    acquiredEpoch = store.acquireWorkspaceSnapshotFence(workspaceId, ownerRequestId, new Date().toISOString());
     if (await hasActiveWorkspaceRun(store, root)) {
       throw new WorkspaceSnapshotRestoreError(409, "workspace_busy", `${operationKind} was fenced after a Run became active.`);
     }
     return await operation();
   } finally {
-    if (acquired) store.releaseWorkspaceSnapshotFence(workspaceId, ownerRequestId, new Date().toISOString());
+    if (acquiredEpoch !== undefined) store.releaseWorkspaceSnapshotFence(workspaceId, ownerRequestId, new Date().toISOString(), acquiredEpoch);
   }
 }
 
-async function pathDigest(root: string, relativePath: string): Promise<string | undefined> {
-  const absolute = safePath(root, relativePath);
-  try { const info = await lstat(absolute); if (info.isSymbolicLink()) return symlinkDigest(await readlink(absolute)); if (info.isDirectory()) return directoryDigest(relativePath); if (!info.isFile()) return "unsupported"; return (await hashFile(absolute)).sha256; } catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined; throw error; }
-}
 function directoryDigest(relativePath: string): string { return createHash("sha256").update(`directory:${relativePath}`).digest("hex"); }
 function symlinkDigest(target: string): string { return createHash("sha256").update(`symlink:${target}`).digest("hex"); }
 function entryDigest(entry: { readonly relativePath: string; readonly kind: "file" | "directory" | "symlink"; readonly sha256?: string; readonly symlinkTarget?: string }): string { return entry.kind === "file" ? entry.sha256 ?? "" : entry.kind === "symlink" ? symlinkDigest(entry.symlinkTarget ?? "") : directoryDigest(entry.relativePath); }
@@ -815,4 +933,19 @@ function hashManifest(input: { readonly root: string; readonly fingerprint: stri
 function safePath(root: string, relativePath: string): string { const candidate = resolve(root, relativePath); const relation = relative(root, candidate); if (relation.startsWith("..") || relation.includes(`..${sep}`) || relation.startsWith(sep) || relation === ".") throw new WorkspaceSnapshotRestoreError(400, "invalid_snapshot_path", `Snapshot path escapes workspace: ${relativePath}`); return candidate; }
 async function removeEntry(path: string): Promise<void> { try { const info = await lstat(path); if (info.isDirectory()) await rmdir(path); else await unlink(path); } catch (error) { if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error; } }
 async function exists(path: string): Promise<boolean> { try { await stat(path); return true; } catch { return false; } }
-async function withRestoreLock<T>(root: string, operation: () => Promise<T>): Promise<T> { const prior = activeRestoreLocks.get(root); if (prior) throw new WorkspaceSnapshotRestoreError(409, "workspace_restore_busy", "Another workspace restore is already running."); let release!: () => void; const lock = new Promise<void>((resolveLock) => { release = resolveLock; }); activeRestoreLocks.set(root, lock); try { return await operation(); } finally { release(); activeRestoreLocks.delete(root); } }
+async function withRestoreLock<T>(root: string, operation: () => Promise<T>, waitForPrior = false): Promise<T> {
+  for (let prior = activeRestoreLocks.get(root); prior; prior = activeRestoreLocks.get(root)) {
+    if (!waitForPrior) throw new WorkspaceSnapshotRestoreError(409, "workspace_restore_busy", "Another workspace restore is already running.");
+    // Only accepted queued jobs wait. Recheck after every actual owner settles:
+    // another waiter may have acquired the lock before this one resumes.
+    await prior;
+  }
+  let release!: () => void;
+  const lock = new Promise<void>((resolveLock) => { release = resolveLock; });
+  activeRestoreLocks.set(root, lock);
+  try { return await operation(); }
+  finally {
+    if (activeRestoreLocks.get(root) === lock) activeRestoreLocks.delete(root);
+    release();
+  }
+}

@@ -6,6 +6,7 @@ import {
   builtinAutomationTemplates,
   defaultDraftExecutionPolicy,
   defaultDraftOutputPolicy,
+  readAutomationContextItemBudget,
   validateAutomationDraft,
   type AutomationDraft,
   type AutomationDraftConfirmInput,
@@ -701,6 +702,7 @@ function createAutomationDefinitionFromResolvedInput(input: {
   }
   // Validate before creating the source thread. Core repeats admission for
   // direct callers and performs draft confirmation under its transaction.
+  readAutomationContextItemBudget(input.input.promptTemplate.maxContextItems);
   assertAutomationRecurrence({ ...input.input, createdAt: input.now }, new Date(input.now));
   const thread = input.store.createLingThread(
     {

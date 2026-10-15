@@ -1,4 +1,5 @@
 import { StringDecoder } from "node:string_decoder";
+import { createHash } from "node:crypto";
 import type { RunEventEmitter, UnifiedExecOutputChunk, UnifiedExecStreamSummary } from "@ling-stack/core";
 import { redactTextWithSecrets } from "../../shared/redaction.js";
 
@@ -19,6 +20,7 @@ export function createStreamCapture(
   readonly snapshot: () => StreamCaptureSnapshot;
 } {
   const decoder = new StringDecoder("utf8");
+  const contentHash = createHash("sha256");
   let rawByteCount = 0;
   let sequence = 0;
   let carry = "";
@@ -45,6 +47,7 @@ export function createStreamCapture(
         ...capture,
         byteCount: rawByteCount,
         lineCount: countLines(capture.artifactContent),
+        contentSha256: contentHash.copy().digest("hex"),
       };
     },
   };
@@ -56,6 +59,9 @@ export function createStreamCapture(
     const redacted = redactTextWithSecrets(text, extraSecrets);
     const wasRedacted = redacted !== text;
     capture.redacted = capture.redacted || wasRedacted;
+    // Hash the complete decoded/redacted stream BEFORE either storage cap.
+    // The digest is evidence of observed bytes, not proof of complete process output.
+    contentHash.update(redacted, "utf8");
     appendBounded(capture, redacted);
     for (const chunkText of splitByBytes(redacted, OUTPUT_CHUNK_BYTES)) {
       sequence += 1;
@@ -98,6 +104,7 @@ export function createSyntheticStreamCapture(text: string, extraSecrets: readonl
     ...capture,
     byteCount: Buffer.byteLength(text, "utf8"),
     lineCount: countLines(redacted),
+    contentSha256: createHash("sha256").update(redacted, "utf8").digest("hex"),
   };
 }
 
@@ -149,6 +156,7 @@ export function toStreamSummary(capture: StreamCaptureSnapshot): UnifiedExecStre
     lineCount: capture.lineCount,
     preview: capture.preview,
     truncated: capture.previewTruncated || capture.artifactTruncated,
+    contentSha256: capture.contentSha256,
   };
 }
 
@@ -219,4 +227,5 @@ export interface StreamCaptureSnapshot {
   readonly previewTruncated: boolean;
   readonly artifactTruncated: boolean;
   readonly redacted: boolean;
+  readonly contentSha256: string;
 }
