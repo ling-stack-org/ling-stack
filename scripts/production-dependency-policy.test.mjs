@@ -3,9 +3,9 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import test from "node:test";
 
-const coreRequire = createRequire(new URL("../../packages/core/package.json", import.meta.url));
+const coreRequire = createRequire(new URL("../packages/core/package.json", import.meta.url));
 const { parse } = coreRequire("yaml");
-const configuration = parse(readFileSync(new URL("../../.github/dependabot.yml", import.meta.url), "utf8"));
+const configuration = parse(readFileSync(new URL("../.github/dependabot.yml", import.meta.url), "utf8"));
 const npm = configuration.updates.find(update => update["package-ecosystem"] === "npm");
 
 test("ordinary production updates cannot batch major migrations", () => {
