@@ -89,7 +89,7 @@ export function buildDeterministicTerminalReportContent(snapshot: TerminalReport
       displayName: participant.displayName,
       roleKey: participant.roleKey,
       status: participant.status,
-      contribution: participant.contributionSummaries.filter(Boolean).join("; ") || fallbackParticipantContribution(participant.displayName, snapshot.language),
+      contribution: participant.contributionSummaries.filter(Boolean).join("; ") || fallbackParticipantContribution(participant.displayName, participant.status, snapshot.language),
       sourceRefs: participant.sourceRefs,
     })),
     artifacts: snapshot.artifacts.filter(isConversationVisibleArtifact).map((artifact): TerminalReportArtifact => ({
@@ -203,8 +203,14 @@ function sourceRefsForChangedPath(snapshot: TerminalReportEvidenceSnapshot, path
   ]);
 }
 
-function fallbackParticipantContribution(displayName: string, language: TerminalReportEvidenceSnapshot["language"]): string {
-  return formatSynchronousCatalogMessage(language, "terminal_report.participant.completed", { displayName });
+function fallbackParticipantContribution(
+  displayName: string,
+  status: TerminalReportParticipant["status"],
+  language: TerminalReportEvidenceSnapshot["language"],
+): string {
+  return status === "completed"
+    ? formatSynchronousCatalogMessage(language, "terminal_report.participant.completed", { displayName })
+    : formatSynchronousCatalogMessage(language, `terminal_report.outcome.${status}`);
 }
 
 function inferChangeKind(path: string): TerminalReportChange["kind"] {

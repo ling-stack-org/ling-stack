@@ -145,7 +145,7 @@ export function createGitHubCiTriageAdapter(options: GitHubCiTriageAdapterOption
           if (seenCheckNames.has(name) || !isFailingConclusion(readOptionalString(check, "conclusion"))) {
             continue;
           }
-          failures.push(buildCheckRunFailure({ repository: input.repository, subjectNumber: input.subjectNumber, headSha: input.headSha, check }));
+          failures.push(buildCheckRunFailure({ repository: input.repository, subjectNumber: input.subjectNumber, headSha: input.headSha, check, token: input.token }));
         }
       }
 
@@ -660,11 +660,14 @@ function buildCheckRunFailure(input: {
   readonly subjectNumber: number;
   readonly headSha: string;
   readonly check: Record<string, unknown>;
+  readonly token?: string;
 }): GitHubCiFailureCandidate {
-  const checkId = readRequiredNumber(input.check, "id");
-  const checkName = readOptionalString(input.check, "name") ?? `check ${checkId}`;
-  const conclusion = readOptionalString(input.check, "conclusion") ?? "failure";
-  const output = readOptionalRecord(input.check, "output");
+  // All parsed metadata and raw evidence must share the same safe projection.
+  const check = redactSecrets(input.check, [input.token]) as Record<string, unknown>;
+  const checkId = readRequiredNumber(check, "id");
+  const checkName = readOptionalString(check, "name") ?? `check ${checkId}`;
+  const conclusion = readOptionalString(check, "conclusion") ?? "failure";
+  const output = readOptionalRecord(check, "output");
   const text = [
     readOptionalString(output, "title"),
     readOptionalString(output, "summary"),
@@ -678,7 +681,7 @@ function buildCheckRunFailure(input: {
     headSha: input.headSha,
     checkName,
     conclusion,
-    htmlUrl: readOptionalString(input.check, "html_url") ?? readOptionalString(input.check, "details_url"),
+    htmlUrl: readOptionalString(check, "html_url") ?? readOptionalString(check, "details_url"),
     failureKey: createFailureKey({
       repository: input.repository,
       subjectNumber: input.subjectNumber,
@@ -686,13 +689,13 @@ function buildCheckRunFailure(input: {
       kind: "check_run",
       id: String(checkId),
       conclusion,
-      updatedAt: readOptionalString(input.check, "completed_at") ?? readOptionalString(input.check, "started_at"),
+      updatedAt: readOptionalString(check, "completed_at") ?? readOptionalString(check, "started_at"),
     }),
     firstFailingCommand: parsed.firstFailingCommand,
     reproductionCommand: parsed.reproductionCommand,
     suspectedSourcePath: parsed.suspectedSourcePath,
-    raw: { checkRun: input.check },
-    logExcerpt: text ? redactLogExcerpt(text, undefined) : undefined,
+    raw: { checkRun: check },
+    logExcerpt: text ? redactLogExcerpt(text, input.token) : undefined,
   };
 }
 
