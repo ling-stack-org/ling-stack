@@ -86,7 +86,9 @@ test("a real Store close failure does not replace the synchronous initialization
     throw failure;
   });
 
-  assert.throws(() => fixture.registry.getStore(fixture.cwd), error => error === failure);
+  assert.throws(() => fixture.registry.getStore(fixture.cwd), error => error instanceof AggregateError
+    && error.message === "run_store_initialization_failed_cleanup_incomplete"
+    && error.cause === failure && error.errors[0] === failure && error.errors[1] === cleanupFailure);
   assert.equal(fixture.records[0].closeCalls, 1);
   assert.equal(fixture.records[0].closed, true);
   assert.throws(() => fixture.records[0].store.listRuns({ limit: 1 }));

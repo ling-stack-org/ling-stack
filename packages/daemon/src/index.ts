@@ -297,6 +297,11 @@ export function createDaemonServer(
   const storeRegistry = new RunStoreRegistry(
     dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
+    beforeRecovery: (cwd, store) => {
+      // Both default and injected factories must pass the original Supervisor's
+      // workspace owner before any registry or initialized-store recovery runs.
+      runtimeSupervisor.getRuntime(cwd, store);
+    },
     onStoreInitialized: (cwd, store) => {
       // A process may have crossed the shell side-effect boundary before the
       // daemon disappeared. Expired executing claims are never retried; they
@@ -885,7 +890,9 @@ export function createDaemonServer(
         await providerImportShutdown;
         await cuaDriverActivationCoordinator.shutdown();
         await activeRuns.waitForIdle();
-        await storeRegistry.mediaLocalExecutions.waitForIdle();
+        // A timed-out local tail still owns its Store and runtime lease. Retrying
+        // stop may release them only after the original callbacks truly settle.
+        await storeRegistry.mediaLocalExecutions.waitForIdle(5_000);
         runtimeSupervisor.releaseAll();
         storeRegistry.closeAll();
       });

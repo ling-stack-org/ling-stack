@@ -665,10 +665,14 @@ function readOptionalGateStageValue(value: unknown): "pre" | "post" | undefined 
 }
 
 function parseOptionalWorkflowStepStatusListValue(value: unknown): readonly ChannelWorkflowStepStatus[] | undefined {
-  if (!Array.isArray(value)) {
+  if (value === undefined) {
     return undefined;
   }
-  return value.every(isChannelWorkflowStepStatusValue) ? value as ChannelWorkflowStepStatus[] : undefined;
+  // Dropping an invalid restriction would broaden this gate to every status.
+  if (!Array.isArray(value) || !value.every(isChannelWorkflowStepStatusValue)) {
+    throw new Error("workflow_step_gate_statuses_invalid");
+  }
+  return value as ChannelWorkflowStepStatus[];
 }
 
 function isChannelWorkflowStepStatusValue(value: unknown): value is ChannelWorkflowStepStatus {

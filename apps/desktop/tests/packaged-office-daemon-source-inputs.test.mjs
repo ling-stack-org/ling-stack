@@ -18,6 +18,7 @@ const workspaceNames = ["browser-host", "contracts", "core", "daemon", "localiza
 const reviewedLeaf = "packages/core/src/original-office-host-bridge.ts";
 const compiledLeaf = "packages/core/dist/original-office-host-bridge.js";
 const newAuthoredRuntimeLeaves = [
+  "packages/daemon/src/runtime/workspace-runtime-owner.ts",
   "packages/daemon/src/features/runs/approval-event-state.ts",
   "packages/daemon/src/features/runs/approval-resume-preparation.ts",
   "packages/core/src/storage/sqlite/teammate-direct-approval-continuation-proof.ts",

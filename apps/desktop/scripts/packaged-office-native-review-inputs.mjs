@@ -1209,6 +1209,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/daemon/src/runtime/store-registry.ts",
   "packages/daemon/src/runtime/supervisor.ts",
   "packages/daemon/src/runtime/work-units.ts",
+  "packages/daemon/src/runtime/workspace-runtime-owner.ts",
   "packages/daemon/src/server/router.ts",
   "packages/daemon/src/server/routes.ts",
   "packages/daemon/src/server/rpc-outbound.ts",

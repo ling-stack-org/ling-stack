@@ -1,5 +1,3 @@
-import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import "./sandbox/core-original-process-bridge.js";
 import {
@@ -24,8 +22,6 @@ import type { ProtectedHostActorEntry } from "./sandbox/protected-host-actor-inv
 import { readOriginalProtectedHostActorEntries } from "./sandbox/protected-host-original-entry-manifest.js";
 import type { OfficeLocalReviewedNativeArtifact } from "./sandbox/protected-host-office-native-identity.js";
 import { OfficeLocalNativeRuntime } from "../features/office-documents/office-local-native-runtime.js";
-import { HttpError } from "../errors.js";
-import { isRecord } from "../shared/validation.js";
 import {
   isStuckWorkUnit,
   listActiveWorkUnits,
@@ -37,6 +33,7 @@ import {
   LockedTaskContinuationGate,
   type LockedTaskContinuationSnapshot,
 } from "./locked-task-continuation.js";
+import { WorkspaceRuntimeOwner } from "./workspace-runtime-owner.js";
 
 const RUNTIME_SCHEMA_VERSION = 23;
 const originalOfficeRuntimeBindings = new WeakMap<RuntimeSupervisor, {
@@ -139,8 +136,7 @@ export class RuntimeSupervisor {
   private readonly protectedHostStages = new ProtectedHostStageRegistry();
   private readonly officeNativeRuntimes = new Map<RunStore, OfficeLocalNativeRuntime>();
   private readonly runtimesByCwd = new Map<string, RuntimeInstance>();
-  private readonly lockedCwds = new Set<string>();
-  private readonly runtimeLockPathsByCwd = new Map<string, string>();
+  private readonly runtimeOwnersByCwd = new Map<string, WorkspaceRuntimeOwner>();
   private readonly reconciledCwds = new Set<string>();
   private readonly lockedTaskContinuation = new LockedTaskContinuationGate();
   private lockedTaskContinuationOwnerId: string | undefined;
@@ -241,28 +237,45 @@ export class RuntimeSupervisor {
   }
 
   getRuntime(cwd: string, store: RuntimeSupervisorRuntimeStore): RuntimeInstance {
+    if (!originalOfficeRuntimeBindings.get(this)!.active) throw new Error("runtime_supervisor_released");
     const existing = this.runtimesByCwd.get(cwd);
     if (existing) {
+      const owner = this.runtimeOwnersByCwd.get(cwd);
+      if (!owner) throw new Error("runtime_owner_lease_unknown");
+      owner.assertCurrent(cwd, store.paths.rootDir);
       return existing;
     }
-
-    this.ensureRuntimeLock(cwd, store);
-    this.reconcileStartup(cwd, store);
-    const now = new Date().toISOString();
-    const runtime: RuntimeInstance = {
-      workspaceId: DEFAULT_WORKSPACE_ID,
-      runtimeInstanceId: `runtime_${randomUUID()}`,
-      pid: process.pid,
-      host: this.config.host,
-      port: this.config.port,
-      startedAt: now,
-      version: "0.0.0",
-      schemaVersion: RUNTIME_SCHEMA_VERSION,
-      status: "healthy",
-    };
-    this.runtimesByCwd.set(cwd, runtime);
-    this.writeRuntimeLock(store, runtime);
-    return runtime;
+    if (this.runtimeOwnersByCwd.has(cwd)) throw new Error("runtime_startup_incomplete");
+    const owner = new WorkspaceRuntimeOwner({ rootDir: store.paths.rootDir, cwd,
+      host: this.config.host, port: this.config.port });
+    this.runtimeOwnersByCwd.set(cwd, owner);
+    try {
+      owner.acquire();
+      this.reconcileStartup(cwd, store);
+      const runtime: RuntimeInstance = {
+        workspaceId: DEFAULT_WORKSPACE_ID,
+        runtimeInstanceId: `runtime_${randomUUID()}`,
+        pid: process.pid,
+        host: this.config.host,
+        port: this.config.port,
+        startedAt: new Date().toISOString(),
+        version: "0.0.0",
+        schemaVersion: RUNTIME_SCHEMA_VERSION,
+        status: "healthy",
+      };
+      owner.publish(runtime);
+      this.runtimesByCwd.set(cwd, runtime);
+      return runtime;
+    } catch (error) {
+      this.reconciledCwds.delete(cwd);
+      try { owner.release(); }
+      catch (cleanupError) {
+        throw new AggregateError([error, cleanupError], "runtime_startup_failed_cleanup_incomplete", { cause: error });
+      } finally {
+        if (owner.isReleased) this.runtimeOwnersByCwd.delete(cwd);
+      }
+      throw error;
+    }
   }
 
   getDiagnostics(cwd: string, store: RuntimeSupervisorRuntimeStore): {
@@ -299,21 +312,20 @@ export class RuntimeSupervisor {
     this.clearLockedTaskContinuationLease();
     this.lockedTaskContinuationOwnerId = undefined;
     this.lockedTaskContinuation.update({ continueWhileLocked: true, locked: false });
-    for (const [cwd, runtime] of this.runtimesByCwd.entries()) {
-      const lockPath = this.runtimeLockPathsByCwd.get(cwd) ?? join(cwd, ".ling-stack", "runtime.lock");
-      try {
-        const current = parseRuntimeLock(readFileSync(lockPath, "utf8"));
-        if (current?.runtimeInstanceId === runtime.runtimeInstanceId) {
-          unlinkSync(lockPath);
-        }
-      } catch {
-        // Lock cleanup is best-effort; stale locks are reconciled on the next runtime start.
-      }
+    const ownerCloseErrors: unknown[] = [];
+    for (const [cwd, owner] of this.runtimeOwnersByCwd) {
+      try { owner.release(); } catch (error) { ownerCloseErrors.push(error); }
+      if (owner.isReleased) this.runtimeOwnersByCwd.delete(cwd);
     }
     this.runtimesByCwd.clear();
-    this.lockedCwds.clear();
-    this.runtimeLockPathsByCwd.clear();
     this.reconciledCwds.clear();
+    if (ownerCloseErrors.length) {
+      const failures = [
+        ...(nativeCloseErrors.length ? [new AggregateError(nativeCloseErrors, "office_local_native_identity_close_unknown")] : []),
+        ...ownerCloseErrors,
+      ];
+      throw new AggregateError(failures, "runtime_supervisor_release_incomplete", { cause: failures[0] });
+    }
     if (nativeCloseErrors.length) throw new AggregateError(nativeCloseErrors, "office_local_native_identity_close_unknown");
   }
 
@@ -323,80 +335,10 @@ export class RuntimeSupervisor {
     this.lockedTaskContinuationLeaseTimer = undefined;
   }
 
-  private ensureRuntimeLock(cwd: string, store: RuntimeSupervisorRuntimeStore): void {
-    if (this.lockedCwds.has(cwd)) {
-      return;
-    }
-    const lockPath = join(store.paths.rootDir, "runtime.lock");
-    const lock = {
-      runtimeInstanceId: `runtime_lock_probe_${randomUUID()}`,
-      pid: process.pid,
-      host: this.config.host,
-      port: this.config.port,
-      cwd,
-      startedAt: new Date().toISOString(),
-    };
-    try {
-      writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
-      this.lockedCwds.add(cwd);
-      this.runtimeLockPathsByCwd.set(cwd, lockPath);
-      return;
-    } catch (error) {
-      if (!isFsErrorCode(error, "EEXIST")) {
-        throw error;
-      }
-    }
-
-    const existing = parseRuntimeLock(readFileSync(lockPath, "utf8"));
-    if (existing && isProcessAlive(existing.pid)) {
-      if (existing.pid !== process.pid || existing.port !== this.config.port || existing.host !== this.config.host) {
-        throw new HttpError(
-          409,
-          "runtime_already_running",
-          `Workspace runtime is already owned by pid ${existing.pid} at ${existing.host}:${existing.port}.`,
-        );
-      }
-      this.lockedCwds.add(cwd);
-      this.runtimeLockPathsByCwd.set(cwd, lockPath);
-      return;
-    }
-
-    try {
-      unlinkSync(lockPath);
-    } catch {
-      // If unlink races with another daemon, the following create will surface the correct error.
-    }
-    writeFileSync(lockPath, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
-    this.lockedCwds.add(cwd);
-    this.runtimeLockPathsByCwd.set(cwd, lockPath);
-  }
-
-  private writeRuntimeLock(store: RuntimeSupervisorRuntimeStore, runtime: RuntimeInstance): void {
-    const lockPath = join(store.paths.rootDir, "runtime.lock");
-    this.runtimeLockPathsByCwd.set(store.paths.cwd, lockPath);
-    writeFileSync(
-      lockPath,
-      `${JSON.stringify(
-        {
-          runtimeInstanceId: runtime.runtimeInstanceId,
-          pid: runtime.pid,
-          host: runtime.host,
-          port: runtime.port,
-          cwd: store.paths.cwd,
-          startedAt: runtime.startedAt,
-          schemaVersion: runtime.schemaVersion,
-        },
-        null,
-        2,
-      )}\n`,
-    );
-  }
-
   private reconcileStartup(cwd: string, store: RuntimeSupervisorRuntimeStore): void {
     if (this.reconciledCwds.has(cwd)) {
       return;
     }
-    this.reconciledCwds.add(cwd);
     const now = new Date().toISOString();
     store.expireRuntimeSemaphoreSlots(now);
     const candidates = [
@@ -436,6 +378,7 @@ export class RuntimeSupervisor {
         });
       }
     }
+    this.reconciledCwds.add(cwd);
   }
 
   private notifyWorkUnitTransition(
@@ -593,37 +536,4 @@ function terminalWorkUnitTransitionForRun(run: RunSession):
     };
   }
   return undefined;
-}
-
-function parseRuntimeLock(value: string): { readonly runtimeInstanceId?: string; readonly pid: number; readonly host: string; readonly port: number } | undefined {
-  try {
-    const parsed = JSON.parse(value) as unknown;
-    if (!isRecord(parsed) || typeof parsed.pid !== "number" || typeof parsed.host !== "string" || typeof parsed.port !== "number") {
-      return undefined;
-    }
-    return {
-      runtimeInstanceId: typeof parsed.runtimeInstanceId === "string" ? parsed.runtimeInstanceId : undefined,
-      pid: parsed.pid,
-      host: parsed.host,
-      port: parsed.port,
-    };
-  } catch {
-    return undefined;
-  }
-}
-
-function isFsErrorCode(error: unknown, code: string): boolean {
-  return isRecord(error) && error.code === code;
-}
-
-function isProcessAlive(pid: number): boolean {
-  if (!Number.isInteger(pid) || pid <= 0) {
-    return false;
-  }
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
 }

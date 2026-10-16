@@ -230,10 +230,17 @@ export class SqliteRunSessionStore {
   }
 
   listRecoverableRunIds(): string[] {
+    return this.listActiveRunScopes().map((run) => run.id);
+  }
+
+  listActiveRunScopes(): Pick<RunSession, "id" | "cwd">[] {
     return this.context.database
-      .prepare("SELECT id FROM run_sessions WHERE status IN ('queued', 'running', 'waiting_for_approval')")
+      .prepare("SELECT id, cwd FROM run_sessions WHERE status IN ('queued', 'running', 'waiting_for_approval')")
       .all()
-      .map((row) => readString(row as Record<string, SQLOutputValue>, "id"));
+      .map((row) => ({
+        id: readString(row as Record<string, SQLOutputValue>, "id"),
+        cwd: readString(row as Record<string, SQLOutputValue>, "cwd"),
+      }));
   }
 
   linkRunToWorkUnit(runId: string, workUnitId: string, now: string): RunSession | undefined {

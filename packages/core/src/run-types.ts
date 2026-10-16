@@ -1544,6 +1544,13 @@ export interface ControlPlaneReplayWindowResult {
   readonly events: readonly ControlPlaneEvent[];
 }
 
+export interface ClaimSnapshotRestoreFenceInput {
+  readonly requestId: string;
+  readonly expectedState: "requested" | "validating";
+  readonly expectedRequestFencingEpoch: number;
+  readonly now: string;
+}
+
 export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore, RunEvaluationTaskStore, RunEvaluationQaStore, RunEvaluationHumanStore, RunEvaluationHumanReadStore {
   listApprovalPostCommitEffects(options?: {
     readonly approvalId?: string;
@@ -1773,6 +1780,8 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   listSkillRegressionRuns(options?: ListSkillRegressionRunsOptions): SkillRegressionRun[];
   getRun(runId: string): RunSession | undefined;
   listRuns(options?: ListRunsOptions): RunSession[];
+  /** Complete execution-admission scopes, never a paginated history projection. */
+  listActiveRunScopes(): Pick<RunSession, "id" | "cwd">[];
   listEvents(runId: string, options?: ListRunEventsOptions): RunEventEnvelope[];
   getLatestRunCompactionStart(runId: string): Extract<RunEventEnvelope, { readonly type: "context_compaction_start" }> | undefined;
   countEvents(runId: string): number;
@@ -1818,6 +1827,8 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   createSnapshotRestoreJournalEntries(inputs: readonly CreateSnapshotRestoreJournalEntryInput[]): SnapshotRestoreJournalEntry[];
   listSnapshotRestoreJournalEntries(options: ListSnapshotRestoreJournalOptions): SnapshotRestoreJournalEntry[];
   updateSnapshotRestoreJournalEntry(input: UpdateSnapshotRestoreJournalEntryInput): SnapshotRestoreJournalEntry | undefined;
+  /** Atomically bind a restore request and its workspace lease; no partial claim is published. */
+  claimSnapshotRestoreFence(input: ClaimSnapshotRestoreFenceInput): number | undefined;
   acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number;
   getWorkspaceSnapshotFence(workspaceId: string): { readonly epoch: number; readonly ownerRequestId?: string };
   releaseWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string, expectedEpoch?: number): boolean;

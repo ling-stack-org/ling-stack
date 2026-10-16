@@ -16,6 +16,7 @@ import {
   legacyPermissionFromAuthorizationAndAccess,
   permissionModeForPreset,
   permissionPresetRequiresConfirmation,
+  resolveStoragePaths,
   resolveSessionRunPolicy,
   workspaceAccessModeRequiresConfirmation,
 } from "../dist/index.js";
@@ -2119,6 +2120,88 @@ test("approval resume terminal settlement atomically closes checkpoint, runtime,
   }
 });
 
+test("B006 Task savepoint composes with actual approval terminal commit and later rollback", async t => {
+  for (const fault of [false, true]) {
+    await t.test(fault ? "later control-plane INSERT rolls back the real approval transaction" : "Task RELEASE does not commit the real approval transaction", async t => {
+      const fixture = await createApprovalResumeClaimFixture(`b006-task-ledger-${fault ? "rollback" : "commit"}`, { isolatedStorage: true });
+      let observer, reopened, patch;
+      try {
+        assert.ok(fixture.store.paths.databasePath.startsWith(`${fixture.cwd}/`), "all new B006 approval facts stay inside this owned fixture");
+        const claim = fixture.store.commitApprovalResumeClaim(fixture.claim);
+        assert.equal(claim.ok, true);
+        acquireApprovalResumeRuntimeResources(fixture, claim);
+        observer = createSqliteRunStore(fixture.cwd, fixture.store.paths);
+        const facts = reader => ({
+          task: reader.getTask(fixture.task.id),
+          taskEvents: reader.listStateTransitionEvents({ entityType: "task", entityId: fixture.task.id }),
+          checkpoint: reader.getApprovalCheckpoint(claim.checkpoint.id),
+          run: reader.getRun(claim.run.id),
+          unit: reader.getWorkUnit(claim.workUnit.id),
+          attempt: reader.getWorkUnitAttempt(claim.attempt.id),
+          runtimeEvents: reader.listRuntimeEvents(claim.workUnit.id, { limit: 100 }),
+          controlPlaneEvents: reader.listControlPlaneEvents({ workspaceId: "workspace_default", limit: 100 }),
+          leases: reader.listResourceLeases({ ownerType: "run", ownerId: claim.run.id }),
+          slots: reader.listRuntimeSemaphoreSlots({ ownerId: claim.attempt.id }),
+        });
+        const before = facts(observer), boundaries = [];
+        if (fault) fixture.store.database.exec(`CREATE TRIGGER b006_approval_later_fault AFTER INSERT ON control_plane_events
+          WHEN NEW.idempotency_key LIKE 'approval-resume-terminal:%'
+          BEGIN SELECT RAISE(ABORT, 'B006 approval later INSERT failure'); END`);
+        const originalTransition = fixture.store.transitionTaskStatus;
+        patch = t.mock.method(fixture.store, "transitionTaskStatus", function (input) {
+          const result = originalTransition.call(this, input);
+          if (input.taskId === fixture.task.id) boundaries.push({ result, writer: facts(this), peer: facts(observer) });
+          return result;
+        });
+        const terminalInput = { kind: "verified_lineage", checkpointId: claim.checkpoint.id,
+          expectedCheckpointStatus: "resume_pending", expectedCheckpointRevision: claim.checkpoint.revision,
+          approvalId: fixture.claim.approvalId, runId: claim.run.id, expectedRunStatus: "running",
+          workUnitId: claim.workUnit.id, expectedWorkUnitStatus: "running", attemptId: claim.attempt.id,
+          status: "succeeded", attemptStatus: "succeeded", checkpointStatus: "resumed",
+          now: "2026-08-16T01:04:00.000Z" };
+        let result, error;
+        try { result = fixture.store.commitApprovalResumeTerminal(terminalInput); }
+        catch (caught) { error = caught; }
+        assert.equal(boundaries.length, 1, "the actual approval owner must reach the real nested Task method");
+        const boundary = boundaries[0];
+        assert.equal(boundary.result.ok, true);
+        assert.equal(boundary.writer.task.status, "done");
+        assert.equal(boundary.writer.taskEvents.length, before.taskEvents.length + 1);
+        assert.deepEqual(boundary.peer, before, "Task's local RELEASE must never commit checkpoint/runtime/capacity owned by approval");
+        if (fault) {
+          assert.equal(result, undefined);
+          assert.match(error?.message ?? "", /B006 approval later INSERT failure/u);
+          assert.deepEqual(facts(fixture.store), before);
+          assert.deepEqual(facts(observer), before, "a later failure rolls back the complete real approval transaction");
+          fixture.store.database.exec("DROP TRIGGER b006_approval_later_fault");
+          patch.mock.restore(); patch = undefined;
+          const retried = fixture.store.commitApprovalResumeTerminal(terminalInput);
+          assert.equal(retried.ok, true, "same valid approval terminal claim remains retryable after rollback");
+        } else {
+          assert.equal(error, undefined);
+          assert.equal(result?.ok, true);
+        }
+        const after = facts(observer);
+        assert.equal(after.task.status, "done");
+        assert.equal(after.taskEvents.length, before.taskEvents.length + 1);
+        assert.equal(after.checkpoint.status, "resumed");
+        assert.equal(after.run.status, "succeeded");
+        assert.equal(after.unit.status, "succeeded");
+        assert.equal(after.attempt.status, "succeeded");
+        assert.equal(after.leases.filter(value => value.status === "active").length, 0);
+        assert.equal(after.slots.filter(value => value.status === "active").length, 0);
+        reopened = createSqliteRunStore(fixture.cwd, fixture.store.paths);
+        assert.deepEqual(facts(reopened), after);
+      } finally {
+        patch?.mock.restore();
+        if (reopened?.database.isOpen) reopened.close();
+        if (observer?.database.isOpen) observer.close();
+        await fixture.close();
+      }
+    });
+  }
+});
+
 test("approval resume terminal blocker preserves the detailed checkpoint failure reason", async () => {
   const fixture = await createApprovalResumeClaimFixture("terminal-detailed-blocker");
   try {
@@ -2453,7 +2536,10 @@ function approvalResumeSuspensionFaults() {
 
 async function createApprovalResumeClaimFixture(suffix, options = {}) {
   const cwd = await mkdtemp(resolve(tmpdir(), `ling-stack-core-approval-resume-claim-${suffix}-`));
-  const store = createSqliteRunStore(cwd);
+  const paths = options.isolatedStorage ? resolveStoragePaths(cwd, {
+    homeDir: resolve(cwd, "owned-home"), env: {}, workspaceStateLocation: "repo-local",
+  }).workspace : undefined;
+  const store = createSqliteRunStore(cwd, paths);
   const now = "2026-08-16T01:00:00.000Z";
   const channel = store.createChannel({ name: `Approval resume ${suffix}`, boundPath: cwd }, now);
   const task = store.createTask({

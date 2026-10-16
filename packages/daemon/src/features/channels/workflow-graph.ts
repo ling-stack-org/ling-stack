@@ -1,6 +1,7 @@
 import {
   approvalActionTypes,
   buildEffectiveTeammateSkills,
+  channelWorkflowStepStatuses,
   createBuiltinAiTeammateId,
   getBuiltinSkillPack,
   getEffectiveTeammateSkill,
@@ -636,7 +637,7 @@ function readWorkflowStepGate(value: unknown, location: string): WorkflowStepGat
     approvalProfile: readSkillApprovalProfile(value, "approvalProfile"),
     title: readString(value, "title"),
     reason: readString(value, "reason"),
-    requiredForStatuses: readOptionalStringArray(value, "requiredForStatuses"),
+    requiredForStatuses: readOptionalStringArray(value, "requiredForStatuses", channelWorkflowStepStatuses),
   };
 }
 

@@ -2223,6 +2223,10 @@ export class SqliteRunStore implements RunStore {
     return this.runSessions.listRuns(options);
   }
 
+  listActiveRunScopes(): Pick<RunSession, "id" | "cwd">[] {
+    return this.runSessions.listActiveRunScopes();
+  }
+
   listEvents(runId: string, options: ListRunEventsOptions = {}): RunEventEnvelope[] {
     return this.runEvents.listEvents(runId, options);
   }
@@ -2401,6 +2405,10 @@ export class SqliteRunStore implements RunStore {
 
   updateSnapshotRestoreJournalEntry(input: UpdateSnapshotRestoreJournalEntryInput): SnapshotRestoreJournalEntry | undefined {
     return this.workspaceSnapshots.updateJournalEntry(input);
+  }
+
+  claimSnapshotRestoreFence(input: Parameters<RunStore["claimSnapshotRestoreFence"]>[0]): number | undefined {
+    return this.workspaceSnapshots.claimRestoreFence(input);
   }
 
   acquireWorkspaceSnapshotFence(workspaceId: string, ownerRequestId: string, now: string): number {
@@ -2981,6 +2989,30 @@ export class SqliteRunStore implements RunStore {
     readonly currentRunId?: string | null;
     readonly assigneeTeammateId?: string | null;
   }): TransitionResult<TaskStatus> {
+    // Compose with approval-owned transactions without publishing the Task
+    // status before its audit/idempotency fact, or committing a caller's work.
+    this.database.exec("SAVEPOINT task_status_transition");
+    try {
+      const result = this.transitionTaskStatusWithinTransaction(input);
+      this.database.exec("RELEASE task_status_transition");
+      return result;
+    } catch (error) {
+      try {
+        this.database.exec("ROLLBACK TO task_status_transition");
+      } catch (rollbackError) {
+        // RELEASE could commit unknown partial writes after a failed rollback.
+        throw new AggregateError([error, rollbackError], "Task status transition rollback failed.", { cause: error });
+      }
+      try {
+        this.database.exec("RELEASE task_status_transition");
+      } catch (releaseError) {
+        throw new AggregateError([error, releaseError], "Task status transition savepoint cleanup failed.", { cause: error });
+      }
+      throw error;
+    }
+  }
+
+  private transitionTaskStatusWithinTransaction(input: Parameters<RunStore["transitionTaskStatus"]>[0]): TransitionResult<TaskStatus> {
     const task = this.getTask(input.taskId);
     if (!task) {
       return { ok: false, code: "stale_transition", currentStatus: input.expectedStatus ?? "cancelled" };

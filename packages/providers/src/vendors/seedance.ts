@@ -114,16 +114,26 @@ export async function pollSeedanceVideoTask(
     return { status: "failed", errorCode: "invalid_request", errorMessage: "Seedance execution handle status endpoint does not match the exact task identity and provider namespace." };
   }
   const httpClient = options.httpClient ?? defaultMediaVendorHttpClient;
+  const abortController = new AbortController();
+  let timedOut = false;
+  const timeout = setTimeout(() => {
+    timedOut = true;
+    abortController.abort();
+  }, options.timeoutMs ?? DEFAULT_LIVE_MEDIA_VENDOR_TIMEOUT_MS);
   try {
     const response = await httpClient(statusEndpoint, {
       method: "GET",
       headers: { ...options.headers, authorization: `Bearer ${options.apiKey}` },
+      signal: abortController.signal,
     });
+    abortController.signal.throwIfAborted();
     if (!response.ok) {
       const failure = await normalizeSeedanceStatusHttpFailure(response, mediaVendorRedactionValues(options));
+      abortController.signal.throwIfAborted();
       return { status: "failed", errorCode: failure.errorCode, errorMessage: failure.errorMessage };
     }
     const statusResponse = await response.json();
+    abortController.signal.throwIfAborted();
     const observation = decodeSeedanceTaskStatusResponse(statusResponse, handle.externalOperationId);
     if (observation.status === "succeeded") {
       if (!observation.videoUrl) {
@@ -157,9 +167,12 @@ export async function pollSeedanceVideoTask(
   } catch (error) {
     return {
       status: "failed",
-      errorCode: "network_error",
-      errorMessage: redactSecretText(error instanceof Error ? error.message : String(error), mediaVendorRedactionValues(options)),
+      errorCode: timedOut ? "timeout" : "network_error",
+      errorMessage: redactSecretText(timedOut ? "Seedance video task polling timed out."
+        : error instanceof Error ? error.message : String(error), mediaVendorRedactionValues(options)),
     };
+  } finally {
+    clearTimeout(timeout);
   }
 }
 
