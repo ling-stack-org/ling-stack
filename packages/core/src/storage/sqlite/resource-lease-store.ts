@@ -1,5 +1,6 @@
 import { DEFAULT_WORKSPACE_ID } from "../../workspace-types.js";
-import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
+import type { RuntimeAttemptFenceV1, RuntimeResourceRenewal } from "../../runtime-supervisor-types.js";
+import { assertRuntimeResourceRenewal } from "../../runtime-resource-renewal.js";
 import {
   createResourceLeaseId,
   type CreateResourceLeaseInput,
@@ -123,11 +124,12 @@ export class SqliteResourceLeaseStore {
     return Number(result.changes);
   }
 
-  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
+  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number {
+    assertRuntimeResourceRenewal(renewal);
     const result = this.context.database
       .prepare(`
         UPDATE resource_leases
-        SET last_renewed_at = ?
+        SET last_renewed_at = MAX(COALESCE(last_renewed_at, acquired_at), ?), expires_at = MAX(expires_at, ?)
         WHERE work_unit_id = ?
           AND attempt_id = ?
           AND runtime_instance_id = ?
@@ -142,9 +144,11 @@ export class SqliteResourceLeaseStore {
               AND attempts.runtime_instance_id = resource_leases.runtime_instance_id
               AND attempts.fencing_token = resource_leases.fencing_token
               AND units.active_attempt_id = attempts.id
+              AND units.workspace_id = resource_leases.workspace_id
+              AND attempts.status IN ('created','started','waiting_for_approval','cancelling')
           )
       `)
-      .run(renewedAt, fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
+      .run(renewal.renewedAt, renewal.expiresAt, fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
     return Number(result.changes);
   }
 
@@ -186,6 +190,21 @@ export class SqliteResourceLeaseStore {
         UPDATE resource_leases
         SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
         WHERE status = 'active' AND expires_at <= ?
+          AND (
+            (owner_type IN ('workflow_step','system') AND work_unit_id IS NULL AND attempt_id IS NULL
+              AND runtime_instance_id IS NULL AND fencing_token IS NULL)
+            OR EXISTS (
+              SELECT 1 FROM work_unit_attempts AS attempts
+              JOIN work_units AS units ON units.id = attempts.work_unit_id
+              WHERE attempts.id = resource_leases.attempt_id
+                AND attempts.work_unit_id = resource_leases.work_unit_id
+                AND attempts.runtime_instance_id = resource_leases.runtime_instance_id
+                AND attempts.fencing_token = resource_leases.fencing_token
+                AND units.workspace_id = resource_leases.workspace_id
+                AND attempts.status IN ('succeeded','failed','cancelled','lost','yielded')
+                AND attempts.ended_at IS NOT NULL
+            )
+          )
       `)
       .run(now, now);
     return Number(result.changes);

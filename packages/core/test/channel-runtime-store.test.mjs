@@ -1509,6 +1509,7 @@ test("sqlite runtime events heartbeat lease renewal and semaphore limits are dur
       runtimeInstanceId: "runtime_test",
       fencingToken: attempt.fencingToken,
       ts: "2026-06-04T00:11:00.000Z",
+      resourceExpiresAt: "2026-06-04T06:11:00.000Z",
       source: "runner",
       detail: { apiKey: "secret-value" },
     });
@@ -1570,6 +1571,7 @@ test("runtime heartbeat rolls back the audit row when canonical activity cannot 
       fencingToken: attempt.fencingToken,
       source: "runner",
       ts: "2026-06-04T00:30:01.000Z",
+      resourceExpiresAt: "2026-06-04T06:30:01.000Z",
     }), /runtime heartbeat canonical activity fault/u);
     assert.equal(store.database.prepare(`
       SELECT COUNT(*) AS count FROM runtime_heartbeats WHERE work_unit_id = ?
@@ -1582,7 +1584,7 @@ test("runtime heartbeat rolls back the audit row when canonical activity cannot 
   }
 });
 
-test("runtime semaphore acquisition expires abandoned slots before enforcing the limit", async () => {
+test("runtime semaphore acquisition expires exactly revoked slots before enforcing the limit", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-runtime-semaphore-expiry-"));
   const store = createSqliteRunStore(cwd);
   const now = "2026-06-04T00:40:00.000Z";
@@ -1626,21 +1628,38 @@ test("runtime semaphore acquisition expires abandoned slots before enforcing the
     });
     assert.ok(abandoned);
 
+    // Expiry is not revocation. First terminalize the exact old owner, then
+    // acquire for a distinct live owner without relying on TTL to stop it.
+    const endedAt = "2026-06-04T00:40:01.500Z";
+    assert.ok(store.updateWorkUnitAttemptStatus({ ...fence, status: "succeeded", now: endedAt, endedAt }));
+    const nextUnit = store.createWorkUnit({
+      workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "task",
+      ownerId: "task_runtime_semaphore_expiry_next", idempotencyKey: "wu-semaphore-expiry-next",
+      createdByActor: "system", request: { prompt: "reuse revoked capacity" }, now: endedAt,
+    });
+    const nextAttempt = store.createWorkUnitAttempt({
+      workUnitId: nextUnit.id, attemptNumber: 1, runtimeInstanceId: "runtime_expiry_next",
+      runnerId: "runner_pi_embedded", status: "started", now: endedAt,
+    });
+
     const replacement = store.acquireRuntimeSemaphoreSlot({
-      ...fence,
+      workUnitId: nextUnit.id,
+      attemptId: nextAttempt.id,
+      runtimeInstanceId: nextAttempt.runtimeInstanceId,
+      fencingToken: nextAttempt.fencingToken,
       workspaceId: DEFAULT_WORKSPACE_ID,
       resourceType: "provider",
       resourceKey: "provider_expiring",
       limit: 1,
       ownerType: "work_unit_attempt",
-      ownerId: attempt.id,
+      ownerId: nextAttempt.id,
       acquiredAt: "2026-06-04T00:40:02.000Z",
       expiresAt: "2026-06-04T00:50:02.000Z",
     });
     assert.ok(replacement);
     assert.equal(store.listRuntimeSemaphoreSlots({ status: "expired", workUnitId: workUnit.id })[0]?.id, abandoned.id);
     assert.equal(store.listRuntimeSemaphoreSlots({ status: "expired", workUnitId: workUnit.id })[0]?.releaseReason, "expired");
-    assert.equal(store.listRuntimeSemaphoreSlots({ status: "active", workUnitId: workUnit.id })[0]?.id, replacement.id);
+    assert.equal(store.listRuntimeSemaphoreSlots({ status: "active", workUnitId: nextUnit.id })[0]?.id, replacement.id);
   } finally {
     store.close();
     await rm(cwd, { recursive: true, force: true });
@@ -1718,7 +1737,9 @@ test("runtime fencing rejects callbacks from a replaced Attempt", async () => {
       runtimeInstanceId: first.runtimeInstanceId,
       fencingToken: first.fencingToken,
     };
-    assert.equal(store.renewResourceLeasesForAttempt(staleFence, "2026-06-04T01:00:02.000Z"), 0);
+    assert.equal(store.renewResourceLeasesForAttempt(staleFence, {
+      renewedAt: "2026-06-04T01:00:02.000Z", expiresAt: "2026-06-04T07:00:02.000Z",
+    }), 0);
     assert.equal(store.releaseResourceLeasesForAttempt(staleFence, "2026-06-04T01:00:02.000Z", "stale"), 0);
     assert.equal(store.releaseRuntimeSemaphoreSlotsForAttempt(staleFence, "2026-06-04T01:00:02.000Z", "stale"), 0);
     assert.equal(store.listResourceLeases({ workUnitId: workUnit.id, status: "active" }).some((lease) => lease.id === currentLease.id), true);
@@ -1769,6 +1790,7 @@ test("runtime fencing rejects callbacks from a replaced Attempt", async () => {
       fencingToken: first.fencingToken,
       source: "runner",
       ts: "2026-06-04T01:00:02.000Z",
+      resourceExpiresAt: "2026-06-04T07:00:02.000Z",
     }), /Stale runtime heartbeat fence/);
     assert.equal(store.listRuntimeEvents(workUnit.id).filter((event) => event.attemptId === first.id && event.type === "work_unit_progress").length, 0);
   } finally {
@@ -2034,6 +2056,7 @@ test("runtime attempt fence migration discards unfenced development runtime stat
       runtimeInstanceId: currentAttempt.runtimeInstanceId,
       fencingToken: currentAttempt.fencingToken,
       ts: "2026-06-04T04:00:03.000Z",
+      resourceExpiresAt: "2026-06-04T10:00:03.000Z",
       source: "runner",
     });
     store.close();
@@ -2165,6 +2188,7 @@ test("runtime attempt fence migration discards an orphan development heartbeat",
       runtimeInstanceId: attempt.runtimeInstanceId,
       fencingToken: attempt.fencingToken,
       ts: "2026-06-04T05:00:01.000Z",
+      resourceExpiresAt: "2026-06-04T11:00:01.000Z",
       source: "runner",
     });
     store.close();

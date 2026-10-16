@@ -39,11 +39,17 @@ export type LingTraceStatus =
   | "cancelled"
   | "skipped";
 
+/** Coverage describes the action projection, never a guarantee of physical process termination. */
+export type LingTraceEvidenceCoverage =
+  | { readonly source: "execution_action"; readonly completeness: "complete" }
+  | { readonly source: "raw_event_fallback"; readonly completeness: "partial" };
+
 export interface LingTraceRefs {
   readonly threadId?: string;
   readonly runId?: string;
   readonly workUnitId?: string;
   readonly attemptId?: string;
+  readonly participantId?: string;
   readonly workflowId?: string;
   readonly workflowStepId?: string;
   readonly approvalId?: string;
@@ -79,6 +85,8 @@ export interface LingTraceSpan {
   readonly endedAt?: string;
   readonly status: LingTraceStatus;
   readonly refs: LingTraceRefs;
+  /** Tool/external-action spans always declare their fact source and coverage. */
+  readonly evidenceCoverage?: LingTraceEvidenceCoverage;
   readonly summary?: string;
   readonly redactedAttributes?: Readonly<Record<string, unknown>>;
 }

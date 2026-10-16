@@ -340,7 +340,6 @@ export class RuntimeSupervisor {
       return;
     }
     const now = new Date().toISOString();
-    store.expireRuntimeSemaphoreSlots(now);
     const candidates = [
       ...store.listWorkUnits({ status: "claimed", limit: 500 }),
       ...store.listWorkUnits({ status: "running", limit: 500 }),
@@ -378,6 +377,7 @@ export class RuntimeSupervisor {
         });
       }
     }
+    store.expireRuntimeSemaphoreSlots(now);
     this.reconciledCwds.add(cwd);
   }
 

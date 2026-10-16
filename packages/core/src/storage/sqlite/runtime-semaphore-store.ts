@@ -5,7 +5,9 @@ import {
   type ListRuntimeSemaphoreSlotsOptions,
   type RuntimeAttemptFenceV1,
   type RuntimeSemaphoreSlot,
+  type RuntimeResourceRenewal,
 } from "../../runtime-supervisor-types.js";
+import { assertRuntimeResourceRenewal } from "../../runtime-resource-renewal.js";
 import { readNumber } from "./helpers.js";
 import { mapRuntimeSemaphoreSlot } from "./runtime-work-mappers.js";
 import { runtimeSemaphoreSlotSelectSql } from "./select-sql.js";
@@ -95,11 +97,12 @@ export class SqliteRuntimeSemaphoreStore {
     return slot ? mapRuntimeSemaphoreSlot(slot as Record<string, SQLOutputValue>) : undefined;
   }
 
-  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
+  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number {
+    assertRuntimeResourceRenewal(renewal);
     const result = this.context.database
       .prepare(`
         UPDATE runtime_semaphore_slots
-        SET last_renewed_at = ?
+        SET last_renewed_at = MAX(last_renewed_at, ?), expires_at = MAX(expires_at, ?)
         WHERE work_unit_id = ?
           AND attempt_id = ?
           AND runtime_instance_id = ?
@@ -114,9 +117,11 @@ export class SqliteRuntimeSemaphoreStore {
               AND attempts.runtime_instance_id = runtime_semaphore_slots.runtime_instance_id
               AND attempts.fencing_token = runtime_semaphore_slots.fencing_token
               AND units.active_attempt_id = attempts.id
+              AND units.workspace_id = runtime_semaphore_slots.workspace_id
+              AND attempts.status IN ('created','started','waiting_for_approval','cancelling')
           )
       `)
-      .run(renewedAt, fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
+      .run(renewal.renewedAt, renewal.expiresAt, fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
     return Number(result.changes);
   }
 
@@ -162,6 +167,17 @@ export class SqliteRuntimeSemaphoreStore {
         UPDATE runtime_semaphore_slots
         SET status = 'expired', released_at = ?, release_reason = COALESCE(release_reason, 'expired')
         WHERE status = 'active' AND expires_at <= ?
+          AND EXISTS (
+            SELECT 1 FROM work_unit_attempts AS attempts
+            JOIN work_units AS units ON units.id = attempts.work_unit_id
+            WHERE attempts.id = runtime_semaphore_slots.attempt_id
+              AND attempts.work_unit_id = runtime_semaphore_slots.work_unit_id
+              AND attempts.runtime_instance_id = runtime_semaphore_slots.runtime_instance_id
+              AND attempts.fencing_token = runtime_semaphore_slots.fencing_token
+              AND units.workspace_id = runtime_semaphore_slots.workspace_id
+              AND attempts.status IN ('succeeded','failed','cancelled','lost','yielded')
+              AND attempts.ended_at IS NOT NULL
+          )
       `)
       .run(now, now);
     return Number(result.changes);

@@ -5,6 +5,7 @@ import {
   buildSkillSourceRuntimeFallbackPlan,
   createChannelWorkspaceSnapshot,
   createRunId,
+  createRuntimeResourceRenewal,
   DEFAULT_WORKSPACE_ID,
   applyConversationModeToEffectiveRunPolicySnapshot,
   resolveSessionRunPolicy,
@@ -1566,6 +1567,7 @@ async function executeAdmittedRunRequest(
         runtimeInstanceId: attempt.runtimeInstanceId,
         fencingToken: attempt.fencingToken,
         ts,
+        resourceExpiresAt: createRuntimeResourceRenewal(ts).expiresAt,
         source,
         detail,
       });

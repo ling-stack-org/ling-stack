@@ -19,6 +19,7 @@ import {
   type RuntimeEvent,
   type RuntimeHeartbeat,
   type RuntimeAttemptFenceV1,
+  type RuntimeResourceRenewal,
   type WorkUnit,
   type WorkUnitAttempt,
   type WorkUnitStatus,
@@ -30,6 +31,7 @@ import {
   type WorkUnitTransitionEvent,
 } from "../../state-machines.js";
 import { redactSecrets } from "../../redaction.js";
+import { assertRuntimeResourceRenewal } from "../../runtime-resource-renewal.js";
 import type { CreateOrReuseConversationMediaJobInput } from "../../media-generation-routing-types.js";
 import { redactConversationMediaWorkUnitRequest } from "./conversation-media-execution-admission.js";
 import { readNumber, readString, rollbackOwnedSqliteTransaction, stringifyJson } from "./helpers.js";
@@ -54,8 +56,8 @@ export interface SqliteRuntimeWorkUnitStorePorts {
     idempotencyKey: string,
   ) => StateTransitionEvent | undefined;
   readonly recordStateTransitionEvent: (input: CreateStateTransitionEventInput) => StateTransitionEvent;
-  readonly renewResourceLeasesForAttempt: (fence: RuntimeAttemptFenceV1, renewedAt: string) => number;
-  readonly renewRuntimeSemaphoreSlotsForAttempt: (fence: RuntimeAttemptFenceV1, renewedAt: string) => number;
+  readonly renewResourceLeasesForAttempt: (fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal) => number;
+  readonly renewRuntimeSemaphoreSlotsForAttempt: (fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal) => number;
   readonly releaseResourceLeasesForAttempt: (
     fence: RuntimeAttemptFenceV1,
     releasedAt: string,
@@ -823,6 +825,8 @@ export class SqliteRuntimeWorkUnitStore {
       if (!attempt || !this.matchesCurrentAttemptFence(attempt, input)) {
         throw new Error(`Stale runtime heartbeat fence: ${input.workUnitId}/${input.attemptId}`);
       }
+      const renewal = { renewedAt: input.ts, expiresAt: input.resourceExpiresAt };
+      assertRuntimeResourceRenewal(renewal);
       const heartbeat: RuntimeHeartbeat = {
         id: createRuntimeHeartbeatId(),
         workUnitId: input.workUnitId,
@@ -851,14 +855,14 @@ export class SqliteRuntimeWorkUnitStore {
       const canonicalUpdate = this.context.database
         .prepare(`
           UPDATE work_units
-          SET last_heartbeat_at = ?, updated_at = ?
+          SET last_heartbeat_at = MAX(COALESCE(last_heartbeat_at, ?), ?), updated_at = MAX(updated_at, ?)
           WHERE id = ? AND active_attempt_id = ?
         `)
-        .run(input.ts, input.ts, input.workUnitId, input.attemptId);
+        .run(input.ts, input.ts, input.ts, input.workUnitId, input.attemptId);
       const attemptUpdate = this.context.database
         .prepare(`
           UPDATE work_unit_attempts
-          SET last_heartbeat_at = ?
+          SET last_heartbeat_at = MAX(COALESCE(last_heartbeat_at, ?), ?)
           WHERE id = ?
             AND runtime_instance_id = ?
             AND fencing_token = ?
@@ -869,6 +873,7 @@ export class SqliteRuntimeWorkUnitStore {
         `)
         .run(
           input.ts,
+          input.ts,
           input.attemptId,
           input.runtimeInstanceId,
           input.fencingToken,
@@ -878,8 +883,8 @@ export class SqliteRuntimeWorkUnitStore {
       if (Number(canonicalUpdate.changes) !== 1 || Number(attemptUpdate.changes) !== 1) {
         throw new Error(`Stale runtime heartbeat fence: ${input.workUnitId}/${input.attemptId}`);
       }
-      this.ports.renewResourceLeasesForAttempt(input, input.ts);
-      this.ports.renewRuntimeSemaphoreSlotsForAttempt(input, input.ts);
+      this.ports.renewResourceLeasesForAttempt(input, renewal);
+      this.ports.renewRuntimeSemaphoreSlotsForAttempt(input, renewal);
       this.context.database.exec("COMMIT;");
       return heartbeat;
     } catch (error) {

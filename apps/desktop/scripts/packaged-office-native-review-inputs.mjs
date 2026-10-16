@@ -318,6 +318,7 @@ export const PACKAGED_OFFICE_NATIVE_PACKAGING_SOURCE_INPUTS = Object.freeze([
   "packages/core/src/run-types.ts",
   "packages/core/src/runtime-paths.ts",
   "packages/core/src/runtime-permissions.ts",
+  "packages/core/src/runtime-resource-renewal.ts",
   "packages/core/src/runtime-supervisor-types.ts",
   "packages/core/src/runtime-trace-projection.ts",
   "packages/core/src/runtime-trace-types.ts",

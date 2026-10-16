@@ -71,7 +71,6 @@ export class SqliteRuntimeRecoveryCoordinator {
   constructor(private readonly ports: SqliteRuntimeRecoveryCoordinatorPorts) {}
 
   recoverStaleRuns(now: string): number {
-    this.ports.expireResourceLeases(now);
     const staleRuns = this.ports.listRecoverableRunIds();
     let recovered = 0;
 
@@ -123,6 +122,9 @@ export class SqliteRuntimeRecoveryCoordinator {
       recovered += 1;
     }
 
+    // Expiry never revokes an Attempt; run it after recovery and require positive
+    // terminal ownership evidence in the lease store itself.
+    this.ports.expireResourceLeases(now);
     return recovered;
   }
 

@@ -376,6 +376,7 @@ import {
   type RuntimeEvent,
   type RuntimeHeartbeat,
   type RuntimeAttemptFenceV1,
+  type RuntimeResourceRenewal,
   type RuntimeSemaphoreSlot,
   type WorkUnit,
   type WorkUnitAttempt,
@@ -948,10 +949,10 @@ export class SqliteRunStore implements RunStore {
         findStateTransitionByIdempotency: (entityType, entityId, idempotencyKey) =>
           this.findStateTransitionByIdempotency(entityType, entityId, idempotencyKey),
         recordStateTransitionEvent: (input) => this.recordStateTransitionEvent(input),
-        renewResourceLeasesForAttempt: (fence, renewedAt) =>
-          this.resourceLeases.renewResourceLeasesForAttempt(fence, renewedAt),
-        renewRuntimeSemaphoreSlotsForAttempt: (fence, renewedAt) =>
-          this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(fence, renewedAt),
+        renewResourceLeasesForAttempt: (fence, renewal) =>
+          this.resourceLeases.renewResourceLeasesForAttempt(fence, renewal),
+        renewRuntimeSemaphoreSlotsForAttempt: (fence, renewal) =>
+          this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(fence, renewal),
         releaseResourceLeasesForAttempt: (fence, releasedAt, releaseReason) =>
           this.resourceLeases.releaseResourceLeasesForAttempt(fence, releasedAt, releaseReason),
         releaseRuntimeSemaphoreSlotsForAttempt: (fence, releasedAt, releaseReason) =>
@@ -2914,8 +2915,8 @@ export class SqliteRunStore implements RunStore {
     return this.runtimeSemaphores.acquireRuntimeSemaphoreSlot(input);
   }
 
-  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
-    return this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(fence, renewedAt);
+  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number {
+    return this.runtimeSemaphores.renewRuntimeSemaphoreSlotsForAttempt(fence, renewal);
   }
 
   releaseRuntimeSemaphoreSlotsForAttempt(
@@ -3104,8 +3105,8 @@ export class SqliteRunStore implements RunStore {
     return this.resourceLeases.acquireResourceLease(input);
   }
 
-  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number {
-    return this.resourceLeases.renewResourceLeasesForAttempt(fence, renewedAt);
+  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number {
+    return this.resourceLeases.renewResourceLeasesForAttempt(fence, renewal);
   }
 
   releaseResourceLeasesForAttempt(

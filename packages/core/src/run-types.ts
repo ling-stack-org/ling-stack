@@ -413,6 +413,7 @@ import type {
   RuntimeEvent,
   RuntimeHeartbeat,
   RuntimeAttemptFenceV1,
+  RuntimeResourceRenewal,
   RuntimeSemaphoreSlot,
   TerminalAttemptStatus,
   TerminalRuntimeEventType,
@@ -1964,7 +1965,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   listRuntimeEvents(workUnitId: string, options?: ListRuntimeEventsOptions): RuntimeEvent[];
   recordRuntimeHeartbeat(input: RecordRuntimeHeartbeatInput): RuntimeHeartbeat;
   acquireRuntimeSemaphoreSlot(input: AcquireRuntimeSemaphoreSlotInput): RuntimeSemaphoreSlot | undefined;
-  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
+  renewRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number;
   releaseRuntimeSemaphoreSlotsForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   expireRuntimeSemaphoreSlots(now: string): number;
   listRuntimeSemaphoreSlots(options?: ListRuntimeSemaphoreSlotsOptions): RuntimeSemaphoreSlot[];
@@ -2007,7 +2008,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
     readonly errorMessage?: string | null;
   }): TransitionResult<RunStatus>;
   acquireResourceLease(input: CreateResourceLeaseInput): ResourceLease | undefined;
-  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewedAt: string): number;
+  renewResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, renewal: RuntimeResourceRenewal): number;
   releaseResourceLeasesForAttempt(fence: RuntimeAttemptFenceV1, releasedAt: string, releaseReason: string): number;
   releaseResourceLeasesForOwner(ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
   releaseResourceLease(id: string, ownerType: ResourceLeaseOwnerLevelType, ownerId: string, releasedAt: string): number;
