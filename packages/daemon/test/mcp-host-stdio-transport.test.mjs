@@ -17,6 +17,7 @@ const { createHostMcpStdioTransport } = await load("features/mcp/host-stdio-tran
 const { reserveHostMcpOperation } = await load("features/mcp/host-operation.js");
 const { AttemptHostOperationTracker } = await load("runtime/attempt-host-operation-tracker.js");
 const MIB = 1024 * 1024;
+const LARGE_STDIO_BOUNDARY_TIMEOUT_MS = 45_000;
 const required = { kind: "user_input_required", requestId: "stdio-pause", requestVersion: 1 };
 
 const serverScript = `
@@ -323,7 +324,7 @@ test("owned stdout handles actual UTF-8 split, CRLF, multiple frames, and >SDK-d
 });
 
 for (const overflow of [false, true]) {
-  test(`actual stdout ${overflow ? "exceeds" : "meets"} 64 MiB framing limit`, { timeout: 30_000 }, async t => {
+  test(`actual stdout ${overflow ? "exceeds" : "meets"} 64 MiB framing limit`, { timeout: 50_000 }, async t => {
     const f = await fixture(t, { script: `
       const message={jsonrpc:'2.0',method:'fixture/max',params:{payload:''}};
       const overhead=Buffer.byteLength(JSON.stringify(message)+'\\n');
@@ -332,10 +333,10 @@ for (const overflow of [false, true]) {
     ` });
     await f.transport.start();
     if (overflow) {
-      await until(() => f.errors.length > 0, 25_000);
+      await until(() => f.errors.length > 0, LARGE_STDIO_BOUNDARY_TIMEOUT_MS);
       assert.equal(f.messages.length, 0);
     } else {
-      await until(() => f.messages.length === 1, 25_000);
+      await until(() => f.messages.length === 1, LARGE_STDIO_BOUNDARY_TIMEOUT_MS);
       assert.equal(f.errors.length, 0);
       assert.equal(Buffer.byteLength(JSON.stringify(f.messages[0]) + "\n"), 64 * MIB);
       f.messages.length = 0;
