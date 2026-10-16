@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm } from "node:fs/promises";
 import { statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
@@ -73,6 +73,14 @@ export function assignTestShards(files, shardCount) {
   return buckets.map((bucket) => ({ ...bucket, files: bucket.files.sort() }));
 }
 
+export async function createDaemonShardIsolation(shard, temporaryDirectory = tmpdir()) {
+  const root = await mkdtemp(join(temporaryDirectory, `ling-stack-daemon-shard-${shard}-`));
+  const home = join(root, "home");
+  const workspace = join(root, "workspace");
+  await Promise.all([mkdir(home), mkdir(workspace)]);
+  return { root, home, workspace };
+}
+
 /** @param {string[]} argv */
 function parseArgs(argv) {
   const parsed = {};
@@ -98,17 +106,21 @@ async function runShard() {
   console.log(`Daemon shard ${shard + 1}/${shardCount}: ${bucket.files.length} files, weight ${bucket.weight}.`);
   if (bucket.files.length === 0) return 0;
 
-  const isolatedHome = await mkdtemp(join(tmpdir(), `ling-stack-daemon-shard-${shard}-`));
+  const isolation = await createDaemonShardIsolation(shard);
   try {
     const result = spawnSync(process.execPath, ["--test", "--test-concurrency=1", ...bucket.files], {
       cwd: packageRoot,
-      env: { ...process.env, LING_STACK_HOME: isolatedHome },
+      env: {
+        ...process.env,
+        LING_STACK_HOME: isolation.home,
+        LING_STACK_DEFAULT_WORKSPACE_CWD: isolation.workspace,
+      },
       stdio: "inherit",
     });
     if (result.error) throw result.error;
     return result.status ?? 1;
   } finally {
-    await rm(isolatedHome, { recursive: true, force: true });
+    await rm(isolation.root, { recursive: true, force: true });
   }
 }
 
