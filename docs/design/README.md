@@ -2,7 +2,7 @@
 
 Status: canonical documentation index
 Owner: repository maintainers
-Last verified: 2026-10-08 (navigation and local links)
+Last verified: 2026-10-14 (P2 navigation and local links; other delivery states retain their owners)
 Document type: governance index
 Code and test anchors: each linked contract owns its anchors
 
@@ -30,6 +30,8 @@ Maintenance-only transition notes are kept in [Development Handoffs](../maintena
 ## Conversations And Channels
 
 - [Conversation Surface Contract](conversation-surface-contract.md)
+- [Conversation Experience And Test-Duration Contract](five-point-optimization-contract.md)
+- [Conversation Experience And Test-Duration Implementation Plan](five-point-optimization-implementation-plan.md)
 - [Conversation Surface Taxonomy](conversation-surface-taxonomy.md)
 - [Conversation Composer Unification](conversation-composer-unification.md)
 - [Conversation Model Binding And Creation Validation](conversation-model-binding-and-creation-validation.md)

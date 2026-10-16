@@ -71,6 +71,36 @@ test("packaged daemon resolves the copied Cua Driver manifest from Electron reso
   }
 });
 
+test("development daemon resolves bundled metadata with an unrelated workspace cwd", async () => {
+  const workspace = await mkdtemp(resolve(tmpdir(), "ling-desktop-external-workspace-"));
+  try {
+    const expectedRoot = resolve(desktopRoot, "dist/daemon/bundled/cua-driver");
+    const resolvedRoot = resolveBundledPackageRoot("cua-driver", {
+      resourcesPath: resolve(workspace, "electron-resources"),
+      moduleUrl: pathToFileURL(resolve(desktopRoot, "dist/daemon/cli.mjs")).href,
+      cwd: workspace,
+    });
+    assert.equal(resolvedRoot, expectedRoot);
+    for (const path of [".ling-plugin/plugin.json", "mcp-server.json", "README.md"]) {
+      assert.deepEqual(
+        await readFile(resolve(resolvedRoot, path)),
+        await readFile(resolve(sourceRoot, "cua-driver", path)),
+      );
+    }
+    assert.deepEqual((await readdir(expectedRoot, { recursive: true })).map(path => path.replaceAll("\\", "/")).sort(), [
+      ".ling-plugin", ".ling-plugin/plugin.json", "README.md", "mcp-server.json",
+    ]);
+  } finally {
+    await rm(workspace, { recursive: true, force: true });
+  }
+});
+
+test("Desktop development build stages bundled metadata after emitting the daemon", async () => {
+  const desktopPackage = JSON.parse(await readFile(resolve(desktopRoot, "package.json"), "utf8"));
+  assert.match(desktopPackage.scripts.build,
+    /node scripts\/build-packaged-daemon\.mjs && node scripts\/stage-development-bundled-plugins\.mjs/u);
+});
+
 async function listFiles(root) {
   const entries = await readdir(root, { withFileTypes: true });
   const files = [];

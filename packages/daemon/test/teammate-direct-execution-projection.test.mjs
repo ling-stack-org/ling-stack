@@ -301,7 +301,8 @@ test("private HTTP history and every SSE terminal path retain live narration seg
     assert.equal(terminal.name, status === "ready" ? "done" : status === "failed" ? "error" : "blocked");
     const liveDelta = sse.filter(({ name }) => name === "delta").at(-1).data;
     assert.deepEqual(terminal.data.aiReply.narrationSegments, liveDelta.narrationSegments);
-    assert.deepEqual(sse[0].data.aiReply.narrationSegments, liveDelta.narrationSegments);
+    assert.equal(sse[0].name, "accepted");
+    assert.deepEqual(sse.find(({ name }) => name === "ready").data.aiReply.narrationSegments, liveDelta.narrationSegments);
     assert.ok(sse.some(({ name, data }) => name === "delta" && data.delta === "" && data.narrationSegments[0].completed));
     assert.equal(terminal.data.aiReply.status, status);
     if (status !== "ready") assert.equal(terminal.data.aiReply.errorMessage, "Approval denied");

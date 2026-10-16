@@ -303,17 +303,7 @@
   overflow-wrap: anywhere;
 }
 
-.message-rich-dialog-backdrop {
-  position: fixed;
-  z-index: 1200;
-  inset: 0;
-  display: grid;
-  place-items: center;
-  padding: 24px;
-  background: var(--ling-overlay-scrim);
-}
-
-.message-rich-dialog {
+.message-rich-dialog.ling-ui-dialog-content[data-size] {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);
   width: min(960px, calc(100vw - 48px));
@@ -341,11 +331,7 @@
 }
 
 @media (max-width: 640px) {
-  .message-rich-dialog-backdrop {
-    padding: 12px;
-  }
-
-  .message-rich-dialog {
+  .message-rich-dialog.ling-ui-dialog-content[data-size] {
     width: calc(100vw - 24px);
     height: calc(100vh - 24px);
   }

@@ -1,5 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { timelineBatchGroup } from "./support/timeline-batch-group";
+import { expandTimelineProcesses } from "./support/timeline-process";
 import {
   installActiveChannelWorkCellFixture,
   installChannelWorkCellFixture,
@@ -96,6 +97,7 @@ test("Channel Timeline exposes command evidence without a second details owner",
   await expect(workCell).toBeVisible();
 
   const batch = workCell.locator(".conversation-command-batch");
+  await expandTimelineProcesses(workCell);
   await batch.locator(".conversation-command-batch-header").press("Enter");
   const command = (await timelineBatchGroup(batch)).locator('[data-conversation-timeline-kind="commandExecution"][data-conversation-timeline-id="action:execution_action_typecheck_loaded"]');
   await command.locator(".conversation-timeline-activity-main").click();
@@ -171,6 +173,7 @@ test("Completed WorkCell collapses adjacent read actions into an expandable expl
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
+  await expandTimelineProcesses(workCell);
   await expect(workCell.getByRole("button", { name: "Read 3 items. Expand read records" })).toBeVisible();
 
   const batch = workCell.locator(".conversation-exploration-batch");
@@ -197,6 +200,7 @@ test("Dense exploration activity stays scrollable after ten atomic rows", async 
   const feed = page.getByLabel("Channel message feed");
   const workCell = feed.locator(`[data-conversation-timeline="true"][data-conversation-thread-id="${threadId}"]`);
   await expect(workCell).toBeVisible();
+  await expandTimelineProcesses(workCell);
   await expect(workCell.getByRole("button", { name: "Read 11 items. Expand read records" })).toBeVisible();
 
   const stream = workCell;
@@ -253,6 +257,7 @@ async function prepareSurface(page: Page, input: {
 }
 
 async function expectCommandBatchKeyboardFlow(workCell: Locator): Promise<void> {
+  await expandTimelineProcesses(workCell);
   const batch = workCell.locator(".conversation-command-batch");
   const trigger = batch.locator(".conversation-command-batch-header");
   await expect(batch).toHaveCount(1);

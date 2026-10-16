@@ -4,6 +4,7 @@ import type { useNormalConversationAttachmentController } from "./useNormalConve
 import type { useNormalConversationIdentityController } from "./useNormalConversationIdentityController.js";
 import type { useNormalConversationOperationOwner } from "./useNormalConversationOperationOwner.js";
 import type { ConversationHomeMessage } from "./normal-conversation-types.js";
+import { UnconfirmedConversationSubmissionError } from "../../shared/conversation/conversation-submission-recovery.js";
 import {
   projectNormalConversationGuidanceMessage,
   queueNormalConversationGuidance,
@@ -26,12 +27,13 @@ export async function submitNormalConversationGuidance(input: {
   readonly operationOwner: OperationOwner;
   readonly actionFeedback: ActionFeedback;
   readonly onAccepted: (message: ConversationHomeMessage) => void;
+  readonly onRecovered: (clearDraft: boolean) => void;
   readonly refresh: () => Promise<void>;
 }): Promise<void> {
-  if (!input.activeReply || input.operationOwner.busy) {
+  if (input.operationOwner.busy) {
     return;
   }
-  const threadId = input.threadId || input.activeReply.threadId;
+  const threadId = input.threadId || input.activeReply?.threadId;
   if (!threadId) {
     input.actionFeedback.report("stream", input.notReadyMessage);
     return;
@@ -45,33 +47,46 @@ export async function submitNormalConversationGuidance(input: {
   const operation = input.operationOwner.begin(true);
   input.actionFeedback.clear("validation");
   input.actionFeedback.clear("stream");
+  let submittedAttachments = pendingAttachments;
+  let accepted = false;
   try {
-    const intervention = await queueNormalConversationGuidance({
+    const { intervention, queryOnly } = await queueNormalConversationGuidance({
       cwd: input.workspaceCwd.trim(),
       sourceReply: input.activeReply,
+      threadId,
       draft: { body: input.body, attachments, fileRefs: input.fileRefs },
-      idempotencyKey: `web-conversation:${input.activeReply.runId}:queue_followup:${Date.now()}:${Math.random().toString(36).slice(2)}`,
+      onSubmitting: () => { submittedAttachments = input.attachmentController.protectForSubmission(pendingAttachments); },
+      notReadyMessage: input.notReadyMessage,
     });
+    accepted = true;
     if (!commitGuard(threadId)) {
-      input.attachmentController.abandonSend(pendingAttachments);
+      input.attachmentController.abandonSend(submittedAttachments);
       return;
     }
-    input.attachmentController.markSendBound(pendingAttachments);
-    input.onAccepted(projectNormalConversationGuidanceMessage({
-      intervention,
-      threadId,
-      attachments,
-      fileRefs: input.fileRefs,
-    }));
+    if (queryOnly) {
+      const payload = intervention.messagePayload;
+      const boundIds = new Set(payload?.attachmentIds ?? []);
+      const retained = pendingAttachments.filter(item => !item.attachment || !boundIds.has(item.attachment.id));
+      input.attachmentController.restoreForIdentity(retained, operationIdentity);
+      input.attachmentController.markSendBound(pendingAttachments.filter(item => item.attachment && boundIds.has(item.attachment.id)));
+      const sameFiles = attachments.length === (payload?.attachmentIds.length ?? 0)
+        && attachments.every((item, index) => item.id === payload?.attachmentIds[index]);
+      const sameRefs = input.fileRefs.length === (payload?.fileRefs?.length ?? 0)
+        && input.fileRefs.every((ref, index) => ref.path === payload?.fileRefs?.[index].path);
+      input.onRecovered(input.body.trim() === (payload?.body ?? intervention.instruction).trim() && sameFiles && sameRefs);
+    } else {
+      input.attachmentController.markSendBound(submittedAttachments);
+      input.onAccepted(projectNormalConversationGuidanceMessage({ intervention, threadId, attachments, fileRefs: input.fileRefs }));
+    }
     await input.refresh();
   } catch (error) {
     if (commitGuard()) {
-      input.attachmentController.restoreForIdentity(pendingAttachments, operationIdentity);
+      if (!accepted) input.attachmentController.restoreForIdentity(
+        error instanceof UnconfirmedConversationSubmissionError ? submittedAttachments : pendingAttachments, operationIdentity);
       input.actionFeedback.report("stream", error instanceof Error ? error.message : String(error));
     } else {
-      input.attachmentController.abandonSend(pendingAttachments);
+      input.attachmentController.abandonSend(submittedAttachments);
     }
-    throw error;
   } finally {
     input.operationOwner.finish(operation);
   }

@@ -46,6 +46,7 @@ import {
   workUnitSelectSql,
 } from "./select-sql.js";
 import type { SqliteStoreContext } from "./store-context.js";
+import { ownsCancellationTransaction } from "./cancellation-transaction.js";
 
 export interface SqliteRuntimeWorkUnitStorePorts {
   readonly findStateTransitionByIdempotency: (
@@ -568,7 +569,8 @@ export class SqliteRuntimeWorkUnitStore {
       return false;
     }
 
-    this.context.database.exec("BEGIN IMMEDIATE;");
+    const joinedCancellation = ownsCancellationTransaction(this.context.database);
+    if (!joinedCancellation) this.context.database.exec("BEGIN IMMEDIATE;");
     try {
       const transition = this.transitionWorkUnitStatus({
         ...input,
@@ -579,6 +581,7 @@ export class SqliteRuntimeWorkUnitStore {
         errorMessage: input.errorMessage ?? null,
       });
       if (!transition.ok) {
+        if (joinedCancellation) throw new Error("Cancellation Attempt transition became stale");
         rollbackOwnedSqliteTransaction(this.context.database);
         return false;
       }
@@ -610,10 +613,10 @@ export class SqliteRuntimeWorkUnitStore {
           errorMessage: input.errorMessage,
         },
       });
-      this.context.database.exec("COMMIT;");
+      if (!joinedCancellation) this.context.database.exec("COMMIT;");
       return true;
     } catch (error) {
-      rollbackOwnedSqliteTransaction(this.context.database);
+      if (!joinedCancellation) rollbackOwnedSqliteTransaction(this.context.database);
       throw error;
     }
   }

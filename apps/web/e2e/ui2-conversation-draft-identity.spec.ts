@@ -275,7 +275,7 @@ test("T13-P.9EF.C a late attachment failure stays with its abandoned draft", asy
   await expect(page.getByText(staleFailure, { exact: true })).toHaveCount(0);
 });
 
-test("T13-P.9EF.C thread loading transition removes a late upload row and deletes from its source cwd", async ({ page }) => {
+test("T13-P.9EF.C selecting a loading thread removes the previous draft's late upload and deletes from its source cwd", async ({ page }) => {
   await prepareSurface(page, true);
   const state = createConversationIdentityState();
   installPersistedThread(state);
@@ -305,9 +305,8 @@ test("T13-P.9EF.C thread loading transition removes a late upload row and delete
   await page.goto("/");
   const navigation = sidebar(page);
   await navigation.getByRole("button", { name: "New conversation" }).click();
-  await conversationRow(navigation, persistedThread.title).click();
-  await detailStarted.promise;
   const composer = page.getByLabel("New conversation composer");
+  await expect(composer.locator('input[type="file"]')).toBeEnabled();
   await composer.locator('input[type="file"]').setInputFiles({
     name: "thread-transition.png",
     mimeType: "image/png",
@@ -315,6 +314,11 @@ test("T13-P.9EF.C thread loading transition removes a late upload row and delete
   });
   await uploadStarted.promise;
   await expect(composer.getByLabel("Pending message assets")).toContainText("thread-transition.png");
+
+  await conversationRow(navigation, persistedThread.title).click();
+  await detailStarted.promise;
+  await expect(composer.locator('input[type="file"]')).toBeDisabled();
+  await expect(composer.getByLabel("Pending message assets")).toHaveCount(0);
 
   releaseDetail.resolve();
   await expect(page.getByRole("heading", { name: persistedThread.title, level: 1 })).toBeVisible();

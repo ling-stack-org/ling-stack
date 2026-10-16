@@ -113,6 +113,8 @@ export interface ConversationHomeSendInput {
   readonly onThreadBound: (threadId: string) => void;
   readonly shouldCommit: (threadId?: string) => boolean;
   readonly onMessageAccepted: () => void;
+  readonly onSubmissionUnknown: (recoveryOnly?: boolean) => void;
+  readonly onSubmissionRecovered: (threadId: string, originalBody: string) => void;
   readonly onReplyLinked: (target: ConversationActiveReplyTarget) => void;
 }
 

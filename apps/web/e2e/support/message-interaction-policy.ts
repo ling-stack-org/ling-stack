@@ -1,11 +1,13 @@
 import { expect, type Locator } from "@playwright/test";
+import { timelineResponseFooter } from "./timeline-response-footer";
 
 export async function expectMessageInteractionPolicy(
   row: Locator,
   kind: "assistant" | "state" | "user",
   actionLabel: string,
 ): Promise<void> {
-  const actionBar = row.locator(".message-action-bar").first();
+  const actionOwner = kind === "assistant" ? await timelineResponseFooter(row) : row;
+  const actionBar = actionOwner.locator(".message-action-bar").first();
   const initial = await readMessageSurface(row);
   const transparent = "rgba(0, 0, 0, 0)";
 
@@ -13,7 +15,19 @@ export async function expectMessageInteractionPolicy(
     expect(initial.backgroundColor).toBe(transparent);
     expect(hasVisibleBorder(initial)).toBe(false);
   } else if (kind === "user") {
-    expect(initial.backgroundColor).toBe(transparent);
+    const token = await row.evaluate(element => {
+      const style = getComputedStyle(element);
+      const value = style.getPropertyValue("--conversation-bg-muted").trim() || style.getPropertyValue("--ling-bg-subtle").trim();
+      if (!value) throw new Error("User bubble must resolve its semantic surface token");
+      const probe = document.createElement("span");
+      probe.style.color = value;
+      document.body.append(probe);
+      const resolved = getComputedStyle(probe).color;
+      probe.remove();
+      return resolved;
+    });
+    await expect(row.locator(":scope > .message-content")).toHaveCSS("background-color", token);
+    expect(initial.backgroundColor).not.toBe(transparent);
     expect(hasVisibleBorder(initial)).toBe(false);
   } else {
     expect(initial.backgroundColor).not.toBe(transparent);
@@ -21,7 +35,7 @@ export async function expectMessageInteractionPolicy(
   }
 
   await expect.poll(() => actionBar.evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity))).toBeLessThan(0.01);
-  await row.hover();
+  await actionOwner.hover();
   await expect.poll(() => actionBar.evaluate((element) => Number.parseFloat(getComputedStyle(element).opacity))).toBeGreaterThan(0.99);
   expect(await readMessageSurface(row)).toEqual(initial);
 

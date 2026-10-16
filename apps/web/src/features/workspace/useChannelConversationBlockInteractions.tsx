@@ -225,6 +225,9 @@ export function useChannelConversationBlockInteractions({
       return;
     }
     if (event.key === "Enter" && !event.metaKey && !event.ctrlKey && !event.shiftKey && !event.altKey) {
+      if (isInteractiveEventTarget(event.target)) {
+        return;
+      }
       const feed = scrollRef.current;
       const focusedBlock = focusedConversationBlock();
       const block = focusedBlock ?? messageFeedFocusableBlocks().find((candidate) => candidate.querySelector(conversationExpandableSelector));

@@ -3,6 +3,7 @@ import { timelineBatchGroup } from "./support/timeline-batch-group";
 import { installTeammateWorkCellFixture } from "./support/conversation-work-cell-fixture";
 import { mockDaemon, type MockExecutionAction } from "./support/mock-daemon";
 import { createBaseState, isRecord } from "./support/mock-state";
+import { expandTimelineProcesses } from "./support/timeline-process";
 
 test("private adjacent reads with committed canonical context use the shared exploration batch", async ({ page }) => {
   await page.addInitScript(() => localStorage.setItem("ling-stack.locale", "en-US"));
@@ -22,6 +23,7 @@ test("private adjacent reads with committed canonical context use the shared exp
   await page.goto("/");
   await page.getByRole("button", { name: displayName, exact: true }).click();
   const feed = page.getByLabel("Private message feed", { exact: true });
+  await expandTimelineProcesses(feed);
   const batch = feed.locator('[data-conversation-timeline-kind="explorationBatch"]');
   await expect(batch).toHaveCount(1);
   await expect(feed.locator('[data-conversation-timeline-kind="diagnostic"]')).toHaveCount(0);

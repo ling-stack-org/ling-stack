@@ -13,7 +13,7 @@ import type {
 } from "./channels.js";
 import type { McpToolDefaultApproval } from "./mcp.js";
 import type { RetentionTombstone } from "./retention.js";
-import type { ConversationActiveReplyTarget, WorkUnit } from "./runtime.js";
+import type { ConversationActiveReplyTarget, ExecutionCancellationRequest, WorkUnit } from "./runtime.js";
 import type { ConversationGeneratedMedia } from "./media.js";
 import type { ConversationDetailResponse, ConversationNarrationSegment } from "./conversations.js";
 
@@ -287,6 +287,7 @@ export interface TeammateDirectMessage {
 }
 
 export interface CreateTeammateDirectMessageRequest {
+  readonly idempotencyKey?: string;
   readonly body: string;
   readonly attachmentIds?: readonly string[];
   readonly linkPreviewIds?: readonly string[];
@@ -362,6 +363,7 @@ export interface TeammateDirectReplyIntervention {
   readonly threadId: string;
   readonly sourceMessageId: string;
   readonly sourceWorkUnitId?: string;
+  readonly sourceAttemptId?: string;
   readonly mode: TeammateDirectReplyInterventionMode;
   readonly status: TeammateDirectReplyInterventionStatus;
   readonly instruction: string;
@@ -384,7 +386,7 @@ export interface CreateTeammateDirectReplyInterventionRequest {
   readonly idempotencyKey?: string;
 }
 
-export interface CancelTeammateDirectReplyRequest {
+export interface CancelTeammateDirectReplyRequest extends ExecutionCancellationRequest {
   readonly reason?: string;
 }
 
@@ -414,6 +416,7 @@ export interface TeammateDirectRuntimeResponse {
 
 export interface TeammateDirectInterventionListResponse {
   readonly cwd: string;
+  readonly idempotencyKey?: string;
   readonly teammateId: string;
   readonly thread: TeammateDirectThread;
   readonly interventions: readonly TeammateDirectReplyIntervention[];
@@ -467,6 +470,19 @@ export interface TeammatePrivateAttachmentListResponse {
 
 export interface TeammatePrivateAttachmentMutationResponse {
   readonly attachment: TeammatePrivateAttachment;
+}
+
+export interface TeammateDirectMessageSubmissionReceipt {
+  readonly cwd: string;
+  readonly teammateId: string;
+  readonly idempotencyKey: string;
+  readonly status: "accepted" | "unknown";
+  readonly message?: TeammateDirectMessage;
+  readonly aiReply?: TeammateDirectMessage;
+}
+
+export interface TeammateDirectMessageStreamAcceptedEvent {
+  readonly message: TeammateDirectMessage;
 }
 
 export interface TeammateDirectMessageStreamReadyEvent {

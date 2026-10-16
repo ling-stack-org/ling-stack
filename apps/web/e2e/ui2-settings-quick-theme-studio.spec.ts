@@ -1,12 +1,6 @@
 import { expect, test } from "@playwright/test";
-import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState } from "./support/mock-state";
-
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/features/quick-theme-first-run/",
-  import.meta.url,
-));
 
 const validPng = Buffer.from(
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=",
@@ -40,7 +34,7 @@ test("Quick Theme Studio generates and installs a token-only theme without gener
   await expect(studio.locator("[data-theme-studio-preview-fixture]")).toBeVisible();
   await expect(studio.locator(".ling-ui-theme-studio-preview-artwork")).toHaveCount(0);
   expect(generationRequests).toEqual([]);
-  await page.screenshot({ animations: "disabled", path: `${evidenceDirectory}1440x960-ling-light-quick-theme.png` });
+  await page.screenshot({ animations: "disabled", path: test.info().outputPath("1440x960-ling-light-quick-theme.png") });
 
   await studio.getByRole("button", { name: "Install and use" }).click();
   await expect(page.getByRole("region", { name: "Notifications" })
@@ -114,5 +108,5 @@ test("Quick Theme Studio keeps the canvas readable at 1280x800 in dark mode", as
   await studio.getByRole("button", { name: "Generate preview" }).click();
   await expect(studio.locator("[data-theme-studio-preview-fixture]")).toBeVisible();
   await expect(page.locator("html")).toHaveAttribute("data-ui-theme", "ling-dark");
-  await page.screenshot({ animations: "disabled", path: `${evidenceDirectory}1280x800-ling-dark-quick-theme.png` });
+  await page.screenshot({ animations: "disabled", path: test.info().outputPath("1280x800-ling-dark-quick-theme.png") });
 });

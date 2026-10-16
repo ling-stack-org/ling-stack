@@ -1,17 +1,14 @@
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { expect, test, type Page } from "@playwright/test";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, isRecord } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
+import { mockUnknownSubmissionReceipt } from "./support/unknown-submission-receipt";
 
 const appShellSourcePath = fileURLToPath(new URL("../src/app/AppShell.tsx", import.meta.url));
 const workspaceClientSourcePath = fileURLToPath(new URL(
   "../src/features/workspace/WorkspaceClientView.tsx",
-  import.meta.url,
-));
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/conversations/channel-error-ownership/",
   import.meta.url,
 ));
 const channelOwnerSourcePaths = [
@@ -62,6 +59,7 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
   const state = createBaseState({ approvalStatus: "expired" });
   addResearchChannel(state);
   await mockDaemon(page, state);
+  await mockUnknownSubmissionReceipt(page);
 
   const requestStarted = createDeferred<void>();
   const releaseFailure = createDeferred<void>();
@@ -74,7 +72,8 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
     requestStarted.resolve();
     await releaseFailure.promise;
     await route.fulfill({
-      status: 503,
+      // This case requires proven rejection; 5xx plus an unknown receipt is query-only recovery.
+      status: 400,
       json: { error: "late_engineering_send_failed", message: failureMessage },
     });
   });
@@ -94,7 +93,7 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
   await expect(page.getByRole("heading", { name: "Research", level: 1 })).toBeVisible();
 
   const failedResponse = page.waitForResponse((response) =>
-    response.status() === 503 &&
+    response.status() === 400 &&
     /\/channels\/channel_engineering\/turns\/stream(?:\?.*)?$/u.test(response.url())
   );
   releaseFailure.resolve();
@@ -121,7 +120,7 @@ test("T13-P.9D a late Engineering send failure cannot leak into Research", async
   await expect(page.locator('[data-ling-overlay="toast"]').filter({ hasText: failureMessage })).toHaveCount(0);
   await expectNoDocumentOverflow(page);
   await captureEvidence(page, "1440x960-ling-light-engineering-composer-failure.png");
-  expectBrowserSignals(signals, 503);
+  expectBrowserSignals(signals, 400);
 });
 
 test("T13-P.9D channel rename failure remains inside its owning Dialog", async ({ page }) => {
@@ -234,12 +233,11 @@ async function prepareSurface(
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
   if (process.env.LING_CAPTURE_UI2_EVIDENCE !== "1") return;
-  await mkdir(evidenceDirectory, { recursive: true });
   await page.screenshot({
     animations: "disabled",
     caret: "hide",
     fullPage: false,
-    path: `${evidenceDirectory}${filename}`,
+    path: test.info().outputPath(filename),
   });
 }
 

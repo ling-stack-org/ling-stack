@@ -34,6 +34,7 @@ export interface RunsState {
   readonly isLoading: boolean;
   readonly isRunLoading: boolean;
   readonly cancellingRunId: string;
+  readonly cancellingRunIds: readonly string[];
 }
 
 export interface RunsActions {
@@ -216,7 +217,7 @@ export function useRunsDomain(input: {
     }
   }
 
-  const { cancellingRunId, cancelRunOrWorkUnit } = useRunControl({
+  const { cancellingRunId, cancellingRunIds, cancelRunOrWorkUnit } = useRunControl({
     defaultCwd: input.cwd,
     activeRunId,
     currentRun: run,
@@ -263,6 +264,7 @@ export function useRunsDomain(input: {
       isLoading: runsLoading,
       isRunLoading: runLoading,
       cancellingRunId,
+      cancellingRunIds,
     },
     actions: {
       setLookupRunId,

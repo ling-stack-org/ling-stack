@@ -83,7 +83,17 @@ export function ConversationTimelineFeed({
             "data-conversation-feed-window-owner": "timeline",
             title,
             tabIndex: 0,
-            onKeyDown,
+            onKeyDown: event => {
+              onKeyDown?.(event);
+              if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return;
+              const target = event.target;
+              if (target instanceof Element && target !== event.currentTarget && target.closest(
+                'button, input, textarea, select, a[href], [contenteditable], [role="button"], [role="textbox"], [role="menu"]',
+              )) return;
+              if (["ArrowUp", "ArrowDown", "PageUp", "PageDown", "Home", "End", " "].includes(event.key)) {
+                onUserScrollIntent?.();
+              }
+            },
             onPointerDown,
             onPointerMove,
             onPointerUp,

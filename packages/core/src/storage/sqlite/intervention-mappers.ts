@@ -61,6 +61,7 @@ export function mapTeammateDirectReplyIntervention(row: Record<string, SQLOutput
     threadId: readString(row, "thread_id"),
     sourceMessageId: readString(row, "source_message_id"),
     sourceWorkUnitId: readNullableString(row, "source_work_unit_id"),
+    sourceAttemptId: readNullableString(row, "source_attempt_id"),
     mode: readString(row, "mode") as TeammateDirectReplyInterventionMode,
     status: readString(row, "status") as TeammateDirectReplyInterventionStatus,
     instruction,

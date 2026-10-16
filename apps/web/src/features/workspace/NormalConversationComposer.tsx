@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type DragEvent, type KeyboardEvent, type Ref } from "react";
-import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, ListTree, Plus, Search, SlidersHorizontal, Square } from "lucide-react";
+import { ArrowUp, Brain, Check, ChevronDown, CircleAlert, FileText, ListTree, Plus, RotateCcw, Search, SlidersHorizontal, Square } from "lucide-react";
 import type { ComposerSlashCommandOption } from "@ling-stack/core/composer-slash-intents";
 import { useI18n } from "../../i18n.js";
 import {
@@ -56,6 +56,8 @@ export interface NormalConversationComposerProps {
   readonly selectedThinkingLevel: ProviderThinkingMode;
   readonly selectedReasoningSummary: ReasoningSummaryMode;
   readonly sendBusy: boolean;
+  readonly scopeReady?: boolean;
+  readonly recoveringSubmission?: boolean;
   readonly activeRun: boolean;
   readonly stopping: boolean;
   readonly canSend: boolean;
@@ -72,6 +74,9 @@ export interface NormalConversationComposerProps {
   readonly onDrop: (event: DragEvent<HTMLDivElement>) => void;
   readonly onOpenModelWorkbench?: () => void;
   readonly onRemoveAttachment: (localId: string) => void;
+  readonly onRetryAttachment?: (localId: string) => void | Promise<void>;
+  readonly attachmentCleanupFailures?: readonly import("../../shared/components/composer-pending-assets.js").AttachmentCleanupFailure[];
+  readonly onRetryAttachmentCleanup?: (localId: string) => void | Promise<void>;
   readonly onAuthorizationModeChange: (mode: AuthorizationMode) => void;
   readonly onPermissionPresetChange: (preset: PermissionPreset) => void;
   readonly onModelChange: (option: ConversationHomeModelOption) => void;
@@ -106,6 +111,9 @@ export function NormalConversationComposer({
   onOpenModelWorkbench,
   onPermissionPresetChange,
   onRemoveAttachment,
+  onRetryAttachment,
+  attachmentCleanupFailures = [],
+  onRetryAttachmentCleanup,
   onStop,
   onSubmit,
   onThinkingLevelChange,
@@ -118,6 +126,8 @@ export function NormalConversationComposer({
   selectedThinkingLevel,
   selectedReasoningSummary,
   sendBusy,
+  scopeReady = true,
+  recoveringSubmission = false,
   slashActiveIndex,
   slashOptions,
   slashPicker,
@@ -193,11 +203,12 @@ export function NormalConversationComposer({
     setReasoningSummaryMenuOpen(false);
   }
 
-  const configurationLocked = sendBusy || activeRun;
+  const configurationLocked = sendBusy || activeRun || !scopeReady;
+  const attachmentsLocked = sendBusy || !scopeReady;
   const stopAvailable = activeRun && !canSend && Boolean(onStop);
-  const actionLabel = stopAvailable ? (stopping ? t("Stopping") : t("Stop")) : t("Send");
+  const actionLabel = stopAvailable ? (stopping ? t("Stopping") : t("Stop")) : recoveringSubmission ? t("Retry") : t("Send");
   const actionLoading = stopping || sendBusy;
-  const ActionIcon = stopAvailable ? Square : ArrowUp;
+  const ActionIcon = stopAvailable ? Square : recoveringSubmission ? RotateCcw : ArrowUp;
 
   return (
     <ConversationComposerShell
@@ -232,6 +243,7 @@ export function NormalConversationComposer({
         <div className="conversation-home-composer-body normal-conversation-composer-body">
           <TokenizedComposerInput
             ref={inputRef}
+            readOnly={!scopeReady}
             value={draft}
             parts={inputParts}
             onChange={onDraftChange}
@@ -266,16 +278,17 @@ export function NormalConversationComposer({
       dropHintNode={dragActive ? (
         <div className="composer-drop-hint"><FileText size={16} /><span>{t("Drop files to attach")}</span></div>
       ) : null}
-      previewNode={pendingAttachments.length > 0 ? (
-        <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemoveAttachment} />
+      previewNode={pendingAttachments.length > 0 || attachmentCleanupFailures.length > 0 ? (
+        <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemoveAttachment}
+          onRetryAttachment={onRetryAttachment} cleanupFailures={attachmentCleanupFailures} onRetryCleanup={onRetryAttachmentCleanup} />
       ) : null}
       leftToolsNode={(
         <>
           <label
             className="icon-button composer-tool-button composer-attach-button"
             aria-label={t("Attach files")}
-            title={sendBusy ? t("Please wait for the current message to be sent.") : t("Attach files")}
-            aria-disabled={sendBusy}
+            title={!scopeReady ? t("Loading") : sendBusy ? t("Please wait for the current message to be sent.") : t("Attach files")}
+            aria-disabled={attachmentsLocked}
           >
             <Plus size={17} />
             <input
@@ -283,7 +296,7 @@ export function NormalConversationComposer({
               type="file"
               multiple
               hidden
-              disabled={sendBusy}
+              disabled={attachmentsLocked}
               accept=".png,.jpg,.jpeg,.webp,.gif,.pdf,.docx,.xlsx,.pptx,.txt,.md,.csv,.json,.log"
               onChange={(event) => {
                 if (event.currentTarget.files) {
@@ -469,7 +482,7 @@ export function NormalConversationComposer({
             tooltip={actionLabel}
             loading={actionLoading}
             loadingLabel={actionLabel}
-            disabled={stopAvailable ? stopping : sendBusy || !canSend}
+            disabled={!scopeReady || (stopAvailable ? stopping : sendBusy || !canSend)}
             onClick={() => {
               if (stopAvailable) {
                 void onStop?.();

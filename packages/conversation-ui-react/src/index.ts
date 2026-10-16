@@ -4,7 +4,7 @@ export { ConversationShell, type ConversationShellProps } from "./blocks/Convers
 export { MessageBodyRenderer, type MessageBodyRendererProps, type MessageCodeBlockRenderInput, type MessageDiffBlockRenderInput, type MessageLocalFileRenderInput } from "./blocks/MessageBodyRenderer.js";
 export { MessageBubble, type MessageBubbleProps, type MessageBubbleTone } from "./blocks/MessageBubble.js";
 export { MessageRow, type MessageRowAuthorType, type MessageRowProps, type MessageRowTone } from "./blocks/MessageRow.js";
-export { MathContent, MermaidBlock } from "./blocks/RichContent.js";
+export { MathContent, MermaidBlock, type MermaidBlockLabels } from "./blocks/RichContent.js";
 export { ComposerAuthorizationMenu, type ComposerAuthorizationMenuProps } from "./composer/ComposerAuthorizationMenu.js";
 export { ComposerPermissionMenu, type ComposerPermissionMenuProps } from "./composer/ComposerPermissionMenu.js";
 export { ConversationComposerShell, type ConversationComposerDensity, type ConversationComposerShellProps, type ConversationComposerSurface } from "./composer/ConversationComposerShell.js";

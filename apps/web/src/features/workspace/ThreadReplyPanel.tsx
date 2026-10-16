@@ -1,10 +1,11 @@
-import { CircleAlert, Copy, Loader2, Pencil, Reply, Send, X } from "lucide-react";
+import { ArrowDown, CircleAlert, Copy, Loader2, Pencil, Reply, Send, X } from "lucide-react";
 import { projectTopicReplyTimeline } from "./topic-reply-timeline.js";
 import { useI18n } from "../../i18n.js";
 import { buildSurfaceTimelineSnapshot } from "../../domains/conversations/timeline-snapshot.js";
 import { filterUsedMemoryEventsByResponse, UsedMemorySummary } from "../../shared/components/index.js";
-import { ConversationReplacementRetry, InlineMessageEditor, MessageActionBar, MessageRow, mountConversationTimeline } from "../../shared/conversation/index.js";
-import { Textarea } from "../../shared/ui/index.js";
+import { ConversationReplacementRetry, ConversationTimelineFeed, InlineMessageEditor, MessageActionBar, MessageRow, mountConversationTimeline } from "../../shared/conversation/index.js";
+import { useConversationReadingViewport } from "../../shared/conversation/blocks/use-conversation-reading-viewport.js";
+import { IconButton, Textarea } from "../../shared/ui/index.js";
 import type { ChannelMention, ChannelMessage, ConversationItemV1, ConversationReasoningSummaryRecord, MemoryObject, UsedMemoryEvent, UserInputTranscriptItemV1 } from "../../types.js";
 
 export function ThreadReplyPanel({
@@ -77,6 +78,11 @@ export function ThreadReplyPanel({
     workspaceId: rootMessage.workspaceId, channelId: rootMessage.channelId, threadId,
     rootMessage, replies, conversationItems, userInputs, reasoningSummaries,
   });
+  const reading = useConversationReadingViewport({
+    scopeKey: JSON.stringify([cwd, rootMessage.id, threadId]),
+    revision: timelineItems,
+    contentKey: timelineItems.map(item => item.id).join("|"),
+  });
   const timelineNode = mountConversationTimeline({
     snapshot: buildSurfaceTimelineSnapshot({
       surface: "topic_reply",
@@ -87,6 +93,9 @@ export function ThreadReplyPanel({
     }),
     depth: 0,
     cwd,
+    virtualScrollRef: reading.scrollRef,
+    itemLocatorRef: reading.locatorRef,
+    onDisclosureIntent: reading.pauseAutoFollow,
     onOpenSourceRef: () => onOpenFileReference(),
     renderMessageChrome: (item, body) => {
       const message = messageByTimelineId.get(item.id);
@@ -168,10 +177,26 @@ export function ThreadReplyPanel({
           <X size={14} />
         </button>
       </div>
-      <div className="thread-reply-list" aria-label={t("Replies")}>
-        {timelineItems.length === 1 ? <div className="thread-empty-state">{t("No replies yet")}</div> : null}
-        {timelineNode}
-      </div>
+      <ConversationTimelineFeed
+        surfaceId={`topic:${rootMessage.id}`}
+        scrollRef={reading.scrollRef}
+        frameClassName="message-feed-wrap"
+        feedClassName="thread-reply-list"
+        ariaLabel={t("Replies")}
+        loadingLabel={t("Loading...")}
+        emptyLabel={t("No replies yet")}
+        timelineId={`topic:${threadId ?? rootMessage.id}`}
+        timelineNode={timelineNode}
+        statusNode={timelineItems.length === 1 ? <div className="thread-empty-state">{t("No replies yet")}</div> : undefined}
+        onScroll={reading.onScroll}
+        onUserScrollIntent={reading.pauseAutoFollow}
+        latestButtonNode={reading.latestButtonVisible ? <IconButton
+          className="message-feed-latest-button"
+          icon={ArrowDown}
+          label={t("Jump to latest message")}
+          onClick={() => reading.scrollToLatest("auto")}
+        /> : undefined}
+      />
       <div className="thread-reply-composer">
         <Textarea
           className="thread-reply-input"
@@ -190,7 +215,7 @@ export function ThreadReplyPanel({
         {error ? (
           <div className="composer-status-row failed" role="alert">
             <CircleAlert size={14} />
-            <span>{t("Message failed")}: {error}</span>
+            <span>{error}</span>
           </div>
         ) : null}
         <button className="primary-button compact-button" type="button" onClick={onSend} disabled={!canSend}>

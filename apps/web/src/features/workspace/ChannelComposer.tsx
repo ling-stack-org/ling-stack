@@ -149,6 +149,9 @@ interface ChannelComposerProps {
   readonly onGoalClear: () => void;
   readonly onToggleGoalExpanded: () => void;
   readonly onRemovePendingAttachment: (localId: string) => void;
+  readonly onRetryPendingAttachment?: (localId: string) => void | Promise<void>;
+  readonly attachmentCleanupFailures?: readonly import("../../shared/components/composer-pending-assets.js").AttachmentCleanupFailure[];
+  readonly onRetryAttachmentCleanup?: (localId: string) => void | Promise<void>;
   readonly onResizePointerCancel: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   readonly onResizePointerDown: (event: ReactPointerEvent<HTMLButtonElement>) => void;
   readonly onResizePointerMove: (event: ReactPointerEvent<HTMLButtonElement>) => void;
@@ -200,6 +203,9 @@ export function ChannelComposer({
   onGoalClear,
   onToggleGoalExpanded,
   onRemovePendingAttachment,
+  onRetryPendingAttachment,
+  attachmentCleanupFailures = [],
+  onRetryAttachmentCleanup,
   onResizePointerCancel,
   onResizePointerDown,
   onResizePointerMove,
@@ -399,8 +405,9 @@ export function ChannelComposer({
           <span aria-hidden="true" />
         </button>
       )}
-      previewNode={pendingMessageAssetsVisible ? (
-        <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemovePendingAttachment} />
+      previewNode={pendingMessageAssetsVisible || attachmentCleanupFailures.length > 0 ? (
+        <ComposerPendingAssetStrip attachments={pendingAttachments} onRemoveAttachment={onRemovePendingAttachment}
+          onRetryAttachment={onRetryPendingAttachment} cleanupFailures={attachmentCleanupFailures} onRetryCleanup={onRetryAttachmentCleanup} />
       ) : null}
       inputNode={(
         <TokenizedComposerInput

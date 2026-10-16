@@ -127,6 +127,22 @@ export interface ApprovalListResponse {
   readonly approvals: readonly ApprovalRequest[];
 }
 
+/** Read-only projection of the existing approval and its durable follow-up work. */
+export interface ApprovalDetailResponse {
+  readonly approval: ApprovalRequest;
+  readonly postCommitEffects?: readonly {
+    readonly approvalId: string;
+    readonly effectKind: "decision_event" | "owner" | "control_plane_event";
+    readonly ownerKind?: "run" | "workflow_step" | "media_job" | "external_work_action";
+    readonly ownerId?: string;
+    readonly status: "pending" | "claimed" | "completed" | "blocked" | "effect_unknown";
+    readonly revision: number;
+    readonly attempts: number;
+    readonly lastErrorCode?: string;
+    readonly updatedAt: string;
+  }[];
+}
+
 export interface ApprovalMutationResponse {
   readonly approval: ApprovalRequest;
   readonly mediaJob?: MediaJob;

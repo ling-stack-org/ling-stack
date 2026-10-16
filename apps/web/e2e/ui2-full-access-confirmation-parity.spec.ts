@@ -1,5 +1,5 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { mockDaemon } from "./support/mock-daemon";
+import { cwd, mockDaemon } from "./support/mock-daemon";
 import {
   createBaseState,
   createChatProvider,
@@ -143,6 +143,9 @@ test("normal conversation requires explicit confirmation and preserves the prese
     reason: "user_confirmed_full_access",
   });
 
+  await expectSubmissionAcknowledged(page, [cwd, "normal", "", ""]);
+  await expect(page.getByLabel("Conversation page").getByRole("button", { name: /Selected permission preset/ }))
+    .toContainText("Full access · Confirmed for this conversation");
   await page.reload();
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: /Open recent conversation/ }).first().click();
   const restoredConversation = page.getByLabel("Conversation page");
@@ -279,6 +282,7 @@ test("teammate private chat confirms explicit selection per conversation", async
     reason: "user_confirmed_full_access",
   });
 
+  await expectSubmissionAcknowledged(page, [cwd, "private", teammateId, ""]);
   await page.reload();
   await page.getByRole("complementary", { name: /Sidebar display|侧栏显示/u }).getByRole("button", { name: "Full Access Teammate", exact: true }).click();
   await expect(page.getByText("Loading teammate workspace...")).toHaveCount(0, { timeout: 15_000 });
@@ -370,6 +374,11 @@ test("teammate private chat confirms inherited full access on the first run", as
   await expectNoDocumentOverflow(page);
   expect(runtimeErrors).toEqual([]);
 });
+
+async function expectSubmissionAcknowledged(page: Page, scope: readonly string[]): Promise<void> {
+  const lookupKey = `ling-stack.submission-lookup.v1:${JSON.stringify(scope)}`;
+  await expect.poll(() => page.evaluate(key => localStorage.getItem(key), lookupKey)).toBe(null);
+}
 
 function createFullAccessState(): MockState {
   const state = createBaseState({ approvalStatus: "expired" });

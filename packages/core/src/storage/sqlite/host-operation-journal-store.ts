@@ -7,7 +7,7 @@ import {
   hostOperationTimestamp, readHostOperation, readSourceHostOperations, sameHostOperationSource,
   verifyHostOperationSafe, type StoredHostOperation,
 } from "./host-operation-journal-evidence.js";
-import { isCurrentRunExecutionOwner } from "./run-execution-admission.js";
+import { isCapturedCancelledRunOwner, isCurrentRunExecutionOwner } from "./run-execution-admission.js";
 import { readSqliteSnapshot, readSqliteWithinTransaction } from "./read-snapshot.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { HostMediaExecutionRecord } from "../../host-media-operation-types.js";
@@ -215,7 +215,13 @@ export class SqliteHostOperationJournalStore {
       if (hostOperationTimestamp(settledAt) < hostOperationTimestamp(operation.launchedAt ?? operation.admittedAt)) {
         return hostOperationFailure("host_operation_invalid_timestamp");
       }
-      if (kind !== "unknown_outcome") this.assertOwner(state.source, true);
+      if (kind === "known_no_start" || kind === "file_completed") {
+        assertHostOperationLineage(this.context.database, state.source);
+        if (!isCurrentRunExecutionOwner(this.context, state.source.runId, state.source, true)
+          && !isCapturedCancelledRunOwner(this.context, state.source.runId, state.source)) {
+          return hostOperationFailure("host_operation_stale_owner");
+        }
+      } else if (kind !== "unknown_outcome") this.assertOwner(state.source, true);
       if (kind === "known_no_start" && (state.launchClaimed || operation.phase !== "admitted")) {
         return hostOperationFailure("host_operation_launched_no_start");
       }

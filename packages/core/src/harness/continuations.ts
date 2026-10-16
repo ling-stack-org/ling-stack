@@ -100,6 +100,8 @@ export interface CommitExistingRunContinuationInput {
   readonly actor: "system" | "local-user";
   readonly reason: string;
   readonly now: string;
+  /** Separate exact-checkpoint handoff. It never supplies whole-Attempt stop evidence. */
+  readonly compactionResourceBoundary?: { readonly checkpointId: string; readonly artifactId: string };
 }
 
 export type CommitExistingRunContinuationResult =
@@ -116,6 +118,7 @@ export type CommitExistingRunContinuationResult =
       readonly code:
         | "continuation.activation_lineage_stale"
         | "continuation.activation_state_stale"
+        | "continuation.activation_checkpoint_unverified"
         | "continuation.activation_transition_failed"
         | import("../run-progress-checkpoint-types.js").RunProgressCheckpointBlockerCode;
     };
@@ -141,7 +144,7 @@ export type CommitExistingRunContinuationPreparationFailureResult =
   | {
       readonly ok: true;
       readonly run: RunSession;
-      readonly task: Task;
+      readonly task?: Task;
       readonly workUnit: import("../runtime-supervisor-types.js").WorkUnit;
       readonly attempt: WorkUnitAttempt;
       readonly continuation: RunnerContinuationV1;

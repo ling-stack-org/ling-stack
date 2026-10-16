@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { setImmediate as nextTick } from "node:timers/promises";
 import { test } from "node:test";
 import { stream } from "@earendil-works/pi-ai/api/openai-completions";
 import { PiRunnerAdapter } from "../dist/adapter.js";
+import { isPiToolFreeCompletion } from "../dist/index.js";
 import { createInitializedPiSession } from "../dist/session-factory.js";
 import { response as compactionResponse } from "./support/pi-compaction-fixture.mjs";
 import { formatTaskPrompt } from "../dist/utils.js";
@@ -231,6 +232,46 @@ test("adapter completes a real SDK session with an in-memory provider response",
   assert.equal(f.events.filter((event) => event.type === "run_error").length, 0);
   assert.ok(result.messages.some((message) => message.role === "assistant"));
 });
+
+test("settled built-in reads require the original ended SDK session, not MCP labels or copied observations", { timeout: 10000 }, async t => {
+  const { readPiCompletedBuiltinReads } = await import("../dist/index.js");
+  assert.equal(typeof readPiCompletedBuiltinReads, "function");
+  let receipt;
+  const f = await fixture(t, { runId: "read-run", runnerAttemptId: "read-attempt", tools: ["read"], mcpTools: [],
+    onToolBoundaryObservation: value => { receipt = value; },
+  }, ["read"], { read: { path: "evidence.txt" } });
+  await writeFile(join(f.options.cwd, "evidence.txt"), "Real SDK read evidence.");
+  await f.runner.runTask(f.options);
+  assert.ok(f.events.some(event => event.type === "tool_end" && event.toolName === "read" && !event.isError));
+  assert.deepEqual(readPiCompletedBuiltinReads(receipt, "read-run", "read-attempt"), [{ toolCallId: "call_0", toolName: "read" }]);
+  assert.equal(readPiCompletedBuiltinReads({ ...receipt }, "read-run", "read-attempt"), undefined);
+  assert.equal(readPiCompletedBuiltinReads(receipt, "read-run", "successor"), undefined);
+  const external = await fixture(t, { runId: "mcp-run", runnerAttemptId: "mcp-attempt",
+    onToolBoundaryObservation: value => { receipt = value; }, onMcpToolCall: async () => ({ content: [] }),
+  }, ["read"]);
+  await external.runner.runTask(external.options);
+  assert.deepEqual(readPiCompletedBuiltinReads(receipt, "mcp-run", "mcp-attempt"), []);
+});
+
+for (const tool of [false, true]) {
+  test(`tool-free completion requires the original ended SDK observation: tool=${tool}`, { timeout: 10000 }, async t => {
+    let receipt;
+    const f = await fixture(t, { runId: "original-run", runnerAttemptId: "original-attempt",
+      onToolBoundaryObservation: observation => {
+        receipt = observation;
+        assert.equal(isPiToolFreeCompletion(receipt, "original-run", "original-attempt"), false);
+      }, onMcpToolCall: async () => ({ content: [] }),
+    }, tool ? ["fixture_read"] : []);
+    await f.runner.runTask(f.options);
+    assert.equal(isPiToolFreeCompletion(receipt, "original-run", "original-attempt"), !tool);
+    assert.equal(isPiToolFreeCompletion({ ...receipt }, "original-run", "original-attempt"), false);
+    assert.equal(isPiToolFreeCompletion(receipt, "successor-run", "original-attempt"), false);
+    assert.equal(isPiToolFreeCompletion(receipt, "original-run", "successor-attempt"), false);
+    const { readPiCompletedToolCalls } = await import("../dist/index.js");
+    assert.deepEqual(readPiCompletedToolCalls(receipt, "original-run", "original-attempt"), tool ? ["call_0"] : []);
+    assert.equal(readPiCompletedToolCalls({ ...receipt }, "original-run", "original-attempt"), undefined);
+  });
+}
 
 const questionToolInput = mode => ({ schemaVersion: 1, waitMode: mode, questions: [{
   questionId: "selection", prompt: "Which path?", required: mode === "required", allowFreeText: true,

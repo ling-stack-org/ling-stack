@@ -3,6 +3,7 @@ import { setImmediate as tick } from "node:timers/promises";
 import test from "node:test";
 import { AttemptLocalWriterGroup } from "../dist/runtime/attempt-local-writers.js";
 import { ActiveRunRegistry } from "../dist/runtime/active-runs.js";
+import { scopeUserInputLocalWriters } from "../dist/features/runs/user-input-local-writer-scope.js";
 
 const source = Object.freeze({ runId: "local-run", workUnitId: "local-work", attemptId: "local-attempt",
   runtimeInstanceId: "local-runtime", fencingToken: "local-token-1" });
@@ -14,6 +15,23 @@ function deferred() {
 function register(registry, group, completion) {
   registry.add(source.runId, { ...group.source, completion, abortController: new AbortController(), streamEnvelope() {} });
 }
+
+test("closed execution ignores late Runner events but still rejects new executable callbacks", () => {
+  const group = new AttemptLocalWriterGroup(source);
+  const events = [];
+  const request = scopeUserInputLocalWriters({
+    onEvent: event => { events.push(event); },
+    onToolBefore: () => assert.fail("a closed execution must not admit a tool"),
+  }, group);
+  const event = { type: "provider_retry", phase: "scheduled" };
+  request.onEvent(event);
+  assert.deepEqual(events, [event]);
+  assert.deepEqual(group.getSnapshot().writers, []);
+  group.close();
+  assert.doesNotThrow(() => request.onEvent({ ...event, phase: "settled" }));
+  assert.deepEqual(events, [event], "late diagnostics cannot publish or reopen terminal state");
+  assert.throws(() => request.onToolBefore({ toolCallId: "late", toolName: "read" }), /admission is closed/);
+});
 
 test("outer Host callback owns its final writes beyond the nested tool result", async () => {
   const group = new AttemptLocalWriterGroup(source);

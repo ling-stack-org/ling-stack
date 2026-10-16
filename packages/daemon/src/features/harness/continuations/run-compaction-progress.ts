@@ -37,6 +37,10 @@ export function commitRunCompactionProgress(input: {
     || !store.isCurrentRunExecutionOwner(run.id, sourceFence, true)) {
     return blocked("checkpoint.lineage_mismatch");
   }
+  if (input.activeToolCallIds.length > 0
+    || store.listHostOperationBlockers({ runId: run.id, ...sourceFence }).length > 0) {
+    return blocked("checkpoint.effect_unknown");
+  }
   const events = eventsAfter(store, run.id, previous.sourceEventSeq);
   if (!events) return blocked("checkpoint.effect_unknown");
   if (events.length === 0) return { kind: "not_needed" };

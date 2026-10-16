@@ -1,5 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { timelineBatchGroup } from "./support/timeline-batch-group";
+import { timelineResponseFooter } from "./support/timeline-response-footer";
+import { installEarlyMeasurementScroll } from "./support/early-measurement-scroll";
 import { join } from "node:path";
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import type { ProposedPlanArtifact } from "@ling-stack/contracts";
@@ -667,9 +669,9 @@ test("channel team metrics stay in settings without a conversation expert summar
   await expect(feed.getByText("Architect checked boundaries.")).toHaveCount(0);
   const assistantMessage = feed.locator(".channel-message-row.ai-teammate")
     .filter({ hasText: "主回复保持干净，团队证据不重复展示。" });
-  await expect(assistantMessage.locator(".message-action-bar.channel-message-ai-actions")).toHaveCount(1);
+  await expect((await timelineResponseFooter(assistantMessage)).locator(".message-action-bar.channel-message-ai-actions")).toHaveCount(1);
   await expect(assistantMessage.locator(".channel-team-experts-summary")).toHaveCount(0);
-  await expect(assistantMessage.locator(".channel-message-row-footer-stack")).toHaveCount(1);
+  await expect(assistantMessage.locator(".channel-message-row-footer-stack")).toHaveCount(0);
 
   await page.getByRole("button", { name: "More channel views" }).click();
   await page.getByRole("menuitem", { name: "Settings" }).click();
@@ -3465,7 +3467,7 @@ test("channel message feed shows usable web sources and keeps diagnostics in the
 
   const feed = page.getByLabel("Channel message feed");
   const sourcedReply = feed.locator(".channel-message-row").filter({ hasText: "Web-backed reply with source." });
-  const sourcedActions = sourcedReply.locator(".channel-message-ai-actions");
+  const sourcedActions = (await timelineResponseFooter(sourcedReply)).locator(".channel-message-ai-actions");
   await expect(sourcedActions.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
   await expect(sourcedActions.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
   await expect(sourcedActions.getByRole("button", { name: "Dislike response", exact: true })).toHaveCount(1);
@@ -3887,12 +3889,14 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await expect(teammateReply).toHaveClass(/message-bubble-document/);
   await expect(teammateReply).toHaveClass(/message-bubble-peer/);
   await expect(sentMessage.locator(".message-mention-token")).toContainText("@Engineer");
-  const [feedRect, ownRect, peerRect] = await Promise.all([
+  const [feedRect, ownRect, peerRect, ownAvatar, peerAvatar] = await Promise.all([
     page.locator(".message-feed").boundingBox(),
     sentMessageContent.boundingBox(),
     teammateReplyContent.boundingBox(),
+    sentMessage.locator(":scope > :is(.avatar-initial, .user-profile-avatar, img)").boundingBox(),
+    teammateReply.locator(":scope > :is(.avatar-initial, .user-profile-avatar, img)").boundingBox(),
   ]);
-  if (!feedRect || !ownRect || !peerRect) {
+  if (!feedRect || !ownRect || !peerRect || !ownAvatar || !peerAvatar) {
     throw new Error("Expected own and peer chat bubbles to render in the message feed.");
   }
   const messageLayout = {
@@ -3903,9 +3907,11 @@ test("channel activity supports mentions, messages, files, links, and topic repl
     peerLeft: peerRect.x,
     peerRight: peerRect.x + peerRect.width,
   };
-  expect(messageLayout.peerLeft).toBeGreaterThan(messageLayout.ownLeft);
-  expect(messageLayout.peerLeft - messageLayout.ownLeft).toBeGreaterThanOrEqual(32);
-  expect(messageLayout.peerLeft - messageLayout.ownLeft).toBeLessThanOrEqual(56);
+  expect(messageLayout.ownLeft).toBeGreaterThan(messageLayout.peerLeft);
+  expect(ownAvatar.x).toBeGreaterThanOrEqual(messageLayout.ownRight - 2);
+  expect(peerAvatar.x + peerAvatar.width).toBeLessThanOrEqual(messageLayout.peerLeft + 2);
+  expect(Math.abs(ownAvatar.y - ownRect.y)).toBeLessThanOrEqual(2);
+  expect(Math.abs(peerAvatar.y - peerRect.y)).toBeLessThanOrEqual(2);
   expect(messageLayout.peerLeft).toBeLessThan(messageLayout.feedLeft + 64);
   expect(messageLayout.ownRight).toBeLessThanOrEqual(messageLayout.feedRight + 1);
   expect(messageLayout.peerRight).toBeLessThanOrEqual(messageLayout.feedRight + 1);
@@ -3921,10 +3927,10 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   });
   expect(sentMessageTypography.bodyColor).not.toBe("");
   expect(sentMessageTypography.bodyFontWeight).toBeGreaterThanOrEqual(550);
-  await expect(sentMessageContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
+  await expect(sentMessageContent).not.toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(sentMessageContent).toHaveCSS("border-top-width", "0px");
-  await expect(sentMessageContent).toHaveCSS("padding-top", "0px");
-  await expect(sentMessageContent).toHaveCSS("border-radius", "0px");
+  await expect.poll(() => sentMessageContent.evaluate(element => Number.parseFloat(getComputedStyle(element).paddingTop))).toBeGreaterThan(0);
+  await expect.poll(() => sentMessageContent.evaluate(element => Number.parseFloat(getComputedStyle(element).borderTopLeftRadius))).toBeGreaterThan(0);
   await teammateReply.hover();
   await expect(teammateReplyContent).toHaveCSS("background-color", "rgba(0, 0, 0, 0)");
   await expect(teammateReplyContent).toHaveCSS("border-top-width", "0px");
@@ -3932,7 +3938,7 @@ test("channel activity supports mentions, messages, files, links, and topic repl
   await page.mouse.move(8, 8);
   await expect(sentMessage.locator(".message-meta-action")).toHaveCount(0);
   await expect(sentMessage.getByRole("button", { name: "Reply in topic" })).toHaveCount(0);
-  const topicReplyButton = teammateReply.getByRole("button", { name: "Reply in topic", exact: true });
+  const topicReplyButton = (await timelineResponseFooter(teammateReply)).getByRole("button", { name: "Reply in topic", exact: true });
   const topicReplyTooltip = page.locator('[data-ling-overlay="tooltip"]').filter({ hasText: "Reply in topic" });
   await teammateReply.hover();
   await topicReplyButton.hover();
@@ -4039,7 +4045,7 @@ test("channel composer snapshots restore draft assets and topic replies across c
 
   const teammateReply = page.locator(".message-bubble").filter({ hasText: "Snapshot reply ready." });
   await teammateReply.hover();
-  await teammateReply.getByRole("button", { name: "Reply in topic" }).click();
+  await (await timelineResponseFooter(teammateReply)).getByRole("button", { name: "Reply in topic" }).click();
   const topicPanel = page.getByLabel("Topic replies");
   await expect(topicPanel).toBeVisible();
   await expectSharedConversationRichBody(topicPanel);
@@ -4235,7 +4241,7 @@ test("latest topic reply edits in place without creating a second topic", async 
 
   const rootMessage = page.getByLabel("Channel message feed").locator(".channel-message-row.ai-teammate").filter({ hasText: "Topic root response" });
   await rootMessage.hover();
-  await rootMessage.getByRole("button", { name: "Reply in topic" }).click();
+  await (await timelineResponseFooter(rootMessage)).getByRole("button", { name: "Reply in topic" }).click();
   const topicPanel = page.getByLabel("Topic replies");
   const userReply = topicPanel.locator(".thread-reply-item.thread-reply-own");
   await userReply.hover();
@@ -4522,18 +4528,19 @@ test("channel message body renders safe markdown, highlighted code, folded logs,
   await expect(mermaidSvg).toContainText("Verify");
   await page.emulateMedia({ colorScheme: "light" });
   await mermaidBlock.hover();
-  await mermaidBlock.getByRole("button", { name: "Expand diagram" }).click();
-  const diagramDialog = page.getByRole("dialog", { name: "Diagram" });
+  await mermaidBlock.getByRole("button", { name: "Expand details" }).click();
+  const diagramDialog = page.getByRole("dialog", { name: "Preview" });
   await expect(diagramDialog.locator(".message-mermaid-expanded > svg")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(diagramDialog).toHaveCount(0);
   const invalidMermaidBlock = message.locator(".message-mermaid-block").filter({ hasText: "this is not valid mermaid syntax" });
   await invalidMermaidBlock.scrollIntoViewIfNeeded();
-  await expect(invalidMermaidBlock.getByText("Diagram preview unavailable")).toBeVisible();
-  const copyMessageButton = message.getByRole("button", { name: "Copy message" });
+  await expect(invalidMermaidBlock.getByText("Preview unavailable")).toBeVisible();
+  const messageActions = await timelineResponseFooter(message);
+  const copyMessageButton = messageActions.getByRole("button", { name: "Copy message" });
   await copyMessageButton.focus();
   await page.keyboard.press("Enter");
-  await expect(message.getByRole("button", { name: "Copied" })).toBeVisible();
+  await expect(messageActions.getByRole("button", { name: "Copied" })).toBeVisible();
   await expect.poll(() => page.evaluate(() => (window as unknown as { __lingCopiedText?: string }).__lingCopiedText ?? "")).toContain("Rich rendering probe");
   await expect(feed).not.toContainText("Copy message completed");
 
@@ -5224,7 +5231,7 @@ test("workflow conversion preview infers owners without mutating until save", as
   await expect(page.getByRole("dialog", { name: "Workflow conversion preview" })).toHaveCount(0);
 });
 
-test("plan history groups lineage versions across thread and channel scopes", async ({ page }) => {
+for (const resizeDuringLocate of [false, true]) test(`plan history groups lineage versions across thread and channel scopes${resizeDuringLocate ? " while the located source reflows" : ""}`, async ({ page }, testInfo) => {
   await useEnglishLocale(page);
   const state = createBaseState({ approvalStatus: "expired" });
   state.runs = [];
@@ -5387,6 +5394,19 @@ test("plan history groups lineage versions across thread and channel scopes", as
   await expect(dock).toContainText("Plan v3 accepted");
   const acceptedRow = dock.locator(".right-dock-plan-row").filter({ hasText: "Plan v3 accepted" });
   await expect(page.locator('[data-feed-item-id="message:agent:msg_lineage_v3"]')).toHaveCount(0);
+  if (resizeDuringLocate) {
+    await page.evaluate(() => {
+      const observer = new MutationObserver(() => {
+        const source = document.querySelector('[data-feed-item-id="message:agent:msg_lineage_v3"].conversation-timeline-locate-pulse');
+        const feed = source?.closest<HTMLElement>(".message-feed");
+        if (!feed) return;
+        observer.disconnect();
+        feed.dataset.p2SourceResizeObserved = "true";
+        feed.style.maxWidth = `${feed.clientWidth - 80}px`;
+      });
+      observer.observe(document, { subtree: true, attributes: true, attributeFilter: ["class"] });
+    });
+  }
   await acceptedRow.getByRole("button", { name: "Open source" }).click();
   const locatedSourceMessage = page.locator('[data-feed-item-id="message:agent:msg_lineage_v3"]');
   await expect(locatedSourceMessage).toHaveClass(/conversation-timeline-locate-pulse/);
@@ -5396,6 +5416,14 @@ test("plan history groups lineage versions across thread and channel scopes", as
     name: getComputedStyle(element).animationName,
   }))).toEqual({ duration: "0.6s", name: "conversation-locate-pulse" });
   await expect(locatedSourceMessage).not.toHaveClass(/conversation-timeline-locate-pulse/, { timeout: 2_000 });
+  if (resizeDuringLocate) await expect(page.locator(".message-feed")).toHaveAttribute("data-p2-source-resize-observed", "true");
+  await expect.poll(() => locatedSourceMessage.evaluate(element => {
+    const bounds = element.getBoundingClientRect();
+    const viewport = element.closest(".message-feed")!.getBoundingClientRect();
+    return bounds.top >= viewport.top && bounds.bottom <= viewport.bottom;
+  })).toBe(true);
+  await expect(locatedSourceMessage).toContainText("Accepted lineage source message.");
+  await page.screenshot({ path: testInfo.outputPath("plan-source-located.png") });
 
   const latestRow = dock.locator(".right-dock-plan-row").filter({ hasText: "Plan v4 latest" });
   await latestRow.getByRole("button", { name: "Open plan detail" }).click();
@@ -5677,6 +5705,10 @@ test("channel materialized PDF and DOCX inputs show simple chips and a natural L
   const pendingAssets = page.getByLabel("Pending message assets");
   await expect(pendingAssets).toContainText("risk-brief.pdf");
   await expect(pendingAssets).toContainText("acceptance.docx");
+  // Filename chips precede their uploads; materialize only settled records.
+  await expect.poll(() => state.channelAttachments.filter(isRecord)
+    .map((attachment) => attachment.fileName).sort())
+    .toEqual(["acceptance.docx", "risk-brief.pdf"]);
   for (const attachment of state.channelAttachments) {
     if (isRecord(attachment) && (attachment.fileName === "risk-brief.pdf" || attachment.fileName === "acceptance.docx")) {
       attachment.materializationStatus = "available";
@@ -7981,15 +8013,16 @@ test("completed multi-agent disclosure excludes plan-only rows and preserves can
   const productSpan = timeline.locator('[data-conversation-timeline-sub-agent][data-conversation-participant-id="product"]');
   const productDisclosure = productSpan.locator(".conversation-timeline-sub-agent-head");
   await expect(productDisclosure).toHaveAttribute("aria-expanded", "false");
-  const productGroupId = await productDisclosure.getAttribute("aria-controls");
-  expect(productGroupId).toBeTruthy();
-  const productGroup = timeline.locator(`[id="${productGroupId}"]`);
+  await expect(productDisclosure).not.toHaveAttribute("aria-controls", /.+/u);
   await expect(productSpan.locator(":scope > *")).toHaveCount(1);
-  await expect(productGroup).toHaveCount(0);
+  await expect(timeline.locator('[data-conversation-sub-agent-group]')).toHaveCount(0);
   await expect(timeline.locator('[data-conversation-timeline-depth="1"]')).toHaveCount(0);
   await productDisclosure.focus();
   await productDisclosure.press("Space");
   await expect(productDisclosure).toHaveAttribute("aria-expanded", "true");
+  const productGroupId = await productDisclosure.getAttribute("aria-controls");
+  expect(productGroupId).toBeTruthy();
+  const productGroup = timeline.locator(`[id="${productGroupId}"]`);
   await expect(productGroup).toHaveCount(1);
   await expect(productGroup).toHaveAttribute("role", "group");
   await expect(productGroup).toHaveAttribute("id", productGroupId!);
@@ -8017,12 +8050,12 @@ test("completed multi-agent disclosure excludes plan-only rows and preserves can
   const qaSpan = timeline.locator('[data-conversation-timeline-sub-agent][data-conversation-participant-id="qa"]');
   const qaDisclosure = qaSpan.locator(".conversation-timeline-sub-agent-head");
   await expect(qaDisclosure).toHaveAttribute("aria-expanded", "false");
+  await expect(qaDisclosure).not.toHaveAttribute("aria-controls", /.+/u);
+  await qaDisclosure.click();
+  await expect(qaDisclosure).toHaveAttribute("aria-expanded", "true");
   const qaGroupId = await qaDisclosure.getAttribute("aria-controls");
   expect(qaGroupId).toBeTruthy();
   const qaGroup = timeline.locator(`[id="${qaGroupId}"]`);
-  await expect(qaGroup).toHaveCount(0);
-  await qaDisclosure.click();
-  await expect(qaDisclosure).toHaveAttribute("aria-expanded", "true");
   await expect(qaGroup).toHaveCount(1);
   await expect(qaGroup).toHaveAttribute("role", "group");
   await expect(qaGroup).not.toContainText("验证验收口径覆盖登录页目标");
@@ -8075,7 +8108,7 @@ test("completed multi-agent disclosure excludes plan-only rows and preserves can
   await expect(productGroup).toHaveCount(1);
   await expect(rootVirtualizer).toHaveCount(0);
   if (process.env.LING_TRANSCRIPT_PERF === "1") {
-    await measureTranscriptDisclosure(page, productDisclosure, testInfo);
+    await measureTranscriptDisclosure(page, productDisclosure, testInfo, { fixtureChildCount: 1, expectedRootVirtualizers: 0 });
   }
   await maybeCaptureR32Screenshot(page, "serial-multi-agent-expanded");
 });
@@ -9026,7 +9059,8 @@ test("channel message feed measures long turns without overlapping the next row"
   await expect.poll(() => readOverlappingVirtualFeedRows(page)).toEqual([]);
 });
 
-test("channel message feed preserves the visible anchor while active content grows above it", async ({ page }) => {
+for (const earlyMeasurement of [false, true]) {
+test(`channel message feed preserves the visible anchor while active content grows above it${earlyMeasurement ? " (scroll before measurement commit)" : ""}`, async ({ page }, testInfo) => {
   await page.addInitScript(() => {
     localStorage.setItem("ling-stack.locale", "en-US");
   });
@@ -9086,18 +9120,42 @@ test("channel message feed preserves the visible anchor while active content gro
   if (!isRecord(expandedMessage)) {
     throw new Error("Anchor fixture message missing");
   }
+  if (earlyMeasurement) {
+    await installEarlyMeasurementScroll(feed);
+    await page.screenshot({ path: testInfo.outputPath("reading-before-remeasurement.png") });
+  }
+  const expandedResponse = page.waitForResponse(async (response) =>
+    new URL(response.url()).pathname === "/channels/channel_engineering/items"
+    && response.request().method() === "GET"
+    && (await response.text()).includes("Expanded history line 18.")
+  );
   expandedMessage.body = Array.from({ length: 18 }, (_, index) => `Expanded history line ${index + 1}.`).join("\n\n");
   expandedMessage.updatedAt = "2026-05-25T02:41:00.000Z";
+  expect(await (await expandedResponse).finished()).toBeNull();
+  if (earlyMeasurement) await expect.poll(() => feed.getAttribute("data-test-early-measurement-scrolls")).not.toBe("0");
+  else await expect(feed.getByText("Expanded history line 18.", { exact: true })).toBeAttached();
 
-  await expect.poll(async () => {
-    const anchorAfter = await readFirstVisibleFeedAnchor(page);
-    return Boolean(
-      anchorAfter &&
-      anchorAfter.rowKey === anchorBefore.rowKey &&
-      Math.abs(anchorAfter.offsetTop - anchorBefore.offsetTop) <= 4
-    );
-  }).toBe(true);
+  try {
+    await expect.poll(async () => {
+      const anchorAfter = await readFirstVisibleFeedAnchor(page);
+      return Boolean(
+        anchorAfter &&
+        anchorAfter.rowKey === anchorBefore.rowKey &&
+        Math.abs(anchorAfter.offsetTop - anchorBefore.offsetTop) <= 4
+      );
+    }).toBe(true);
+  } finally {
+    if (earlyMeasurement) {
+      await page.screenshot({ path: testInfo.outputPath("reading-after-remeasurement.png") });
+      await testInfo.attach("reading-anchor", {
+        contentType: "application/json",
+        body: JSON.stringify({ before: anchorBefore, after: await readFirstVisibleFeedAnchor(page) }),
+      });
+    }
+  }
+  await expect(feed.getByText("Expanded history line 18.", { exact: true })).toBeAttached();
 });
+}
 
 test("channel activity paginates long message history and virtualizes visible rows", async ({ page }) => {
   await page.addInitScript(() => {
@@ -9159,7 +9217,17 @@ test("channel composer preserves failed sends and can retry", async ({ page }) =
   });
   const state = createBaseState({ approvalStatus: "expired" });
   state.failNextChannelMessage = true;
+  // A server error is uncertain; retry is allowed only after confirmed rejection.
+  state.failNextChannelMessageStatus = 400;
   await mockDaemon(page, state);
+  await page.route(/\/conversation-submissions(?:\?.*)?$/u, async route => {
+    const url = new URL(route.request().url());
+    await route.fulfill({ json: {
+      cwd: url.searchParams.get("cwd"),
+      idempotencyKey: url.searchParams.get("idempotencyKey"),
+      status: "unknown",
+    } });
+  });
   await page.goto("/");
   await openEngineeringChannel(page);
 
@@ -10185,10 +10253,12 @@ test("a terminal report published after workflow completion appears without relo
   await expect.poll(() => state.terminalReportQueryCount ?? 0).toBeGreaterThan(queriesBeforePublication);
   await expect.poll(() => state.channelMessageQueries?.length ?? 0).toBe(itemQueriesBeforePublication + 1);
   const terminalReport = timeline.locator('[data-conversation-timeline-kind="terminalReport"]');
-  await expect(terminalReport).toContainText("Late terminal result rendered");
+  const finalSummary = timeline.locator(".conversation-timeline-result-summary")
+    .filter({ hasText: "The report arrived after workflow completion." });
   await expect(terminalReport).toHaveCount(1);
+  await expect(finalSummary).toBeVisible();
   await page.waitForTimeout(1_100);
-  await expect(terminalReport).toContainText("Late terminal result rendered");
+  await expect(finalSummary).toHaveCount(1);
   await page.evaluate(() => {
     (globalThis as typeof globalThis & { __emitLateTerminalReportInvalidation: () => void })
       .__emitLateTerminalReportInvalidation();
@@ -10197,10 +10267,10 @@ test("a terminal report published after workflow completion appears without relo
   await page.reload();
   await openEngineeringChannel(page);
   await expect(terminalReport).toHaveCount(1);
-  await expect(terminalReport).toContainText("Late terminal result rendered");
+  await expect(finalSummary).toBeVisible();
 });
 
-test("control-plane reconnect replays from the last applied cursor and refreshes the selected channel once", async ({ page }) => {
+test("control-plane reconnect replays from the last applied cursor and refreshes the selected channel once", async ({ page }, testInfo) => {
   await useEnglishLocale(page);
   await page.addInitScript(() => {
     const subscribers = new Set<EventTarget>();
@@ -10382,6 +10452,14 @@ test("control-plane reconnect replays from the last applied cursor and refreshes
   );
   expect(new URL(finalStreamUrls[2] ?? "http://invalid").searchParams.get("afterSeq")).toBe("13");
 
+  let releasePolicy!: () => void;
+  const policyBarrier = new Promise<void>((resolve) => { releasePolicy = resolve; });
+  let policyHeld = false;
+  await page.route(/\/approval-policy(?:\?.*)?$/, async (route) => {
+    policyHeld = true;
+    await policyBarrier;
+    await route.fallback();
+  });
   const approvalQueriesBeforeBlocker = state.approvalQueryCount ?? 0;
   await page.evaluate(() => {
     const scope = globalThis as typeof globalThis & {
@@ -10392,7 +10470,10 @@ test("control-plane reconnect replays from the last applied cursor and refreshes
     scope.__readyControlPlane(14);
   });
   await expect.poll(() => state.approvalQueryCount ?? 0, { timeout: 5_000 }).toBe(approvalQueriesBeforeBlocker + 1);
+  await expect.poll(() => policyHeld).toBe(true);
+  await page.screenshot({ path: testInfo.outputPath("reconnect-refresh-pending.png") });
 
+  // A request reaching the server is not an applied refresh: the policy is still held.
   await page.evaluate(() => {
     (globalThis as typeof globalThis & { __disconnectControlPlane: () => void }).__disconnectControlPlane();
   });
@@ -10402,7 +10483,52 @@ test("control-plane reconnect replays from the last applied cursor and refreshes
   const blockerStreamUrls = await page.evaluate(() =>
     (globalThis as typeof globalThis & { __controlPlaneStreamUrls: string[] }).__controlPlaneStreamUrls
   );
-  expect(new URL(blockerStreamUrls[3] ?? "http://invalid").searchParams.get("afterSeq")).toBe("14");
+  expect(new URL(blockerStreamUrls[3] ?? "http://invalid").searchParams.get("afterSeq")).toBe("13");
+
+  const abandonedPolicyResponse = page.waitForResponse((response) => new URL(response.url()).pathname === "/approval-policy");
+  releasePolicy();
+  expect(await (await abandonedPolicyResponse).finished()).toBeNull();
+  state.approvals.push({
+    ...state.approvals[0]!,
+    id: "approval_control_plane_cursor_14",
+    status: "pending",
+    title: "Approve shell command",
+    description: "echo control-plane-cursor-14",
+    payload: { type: "bash", cwd, command: "echo control-plane-cursor-14", riskFlags: [] },
+    expiresAt: "2099-01-01T00:01:00.000Z",
+    resolvedAt: undefined,
+    decisionReason: undefined,
+  });
+  const replayResponses = Promise.all(["/approvals", "/approval-policy"].map((path) =>
+    page.waitForResponse((response) => new URL(response.url()).pathname === path)
+  ));
+  await page.evaluate(() => {
+    const scope = globalThis as typeof globalThis & {
+      __emitApprovalOnlyInvalidation: () => void;
+      __readyControlPlane: (upperBoundSeq: number) => void;
+    };
+    scope.__emitApprovalOnlyInvalidation();
+    scope.__readyControlPlane(14);
+  });
+  for (const response of await replayResponses) {
+    expect(response.ok()).toBe(true);
+    expect(await response.finished()).toBeNull();
+    await response.json();
+  }
+  await expect(page.getByRole("region", { name: "Allow this action?" }))
+    .toContainText("echo control-plane-cursor-14");
+  await page.screenshot({ path: testInfo.outputPath("reconnect-refresh-applied.png") });
+
+  await page.evaluate(() => {
+    (globalThis as typeof globalThis & { __disconnectControlPlane: () => void }).__disconnectControlPlane();
+  });
+  await expect.poll(() => page.evaluate(() =>
+    (globalThis as typeof globalThis & { __controlPlaneStreamUrls: string[] }).__controlPlaneStreamUrls.length
+  ), { timeout: 5_000 }).toBe(5);
+  const appliedStreamUrls = await page.evaluate(() =>
+    (globalThis as typeof globalThis & { __controlPlaneStreamUrls: string[] }).__controlPlaneStreamUrls
+  );
+  expect(new URL(appliedStreamUrls[4] ?? "http://invalid").searchParams.get("afterSeq")).toBe("14");
 });
 
 test("control-plane snapshot-required subscribes before refresh and applies an event committed after S", async ({ page }) => {
@@ -10816,7 +10942,7 @@ test("local channel work-cell demo fixture renders a realistic multi-agent opera
   await expect(terminalReport).toBeVisible();
   await expect.poll(() => terminalReport.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(1);
   await expect.poll(() => page.evaluate(() => document.documentElement.scrollWidth - document.documentElement.clientWidth)).toBeLessThanOrEqual(1);
-  await expect(terminalReportItem).toContainText("多 Agent 操作记录已接入频道会话");
+  await expect(terminalReportItem).toContainText("频道现在会保留 Architect、Designer、Engineer 和 QA 的真实操作过程，并在完成后展示结构化总结。");
   await expect(terminalReport).toContainText("Architect");
   await expect(terminalReport).toContainText("Designer");
   await expect(terminalReport).toContainText("Engineer");
@@ -11200,6 +11326,11 @@ test("durable Ling thread runs render as collapsed conversation work cells", asy
   await expect(feed.locator(".conversation-work-cell")).toHaveCount(0);
   await expect(timeline.locator('[data-conversation-timeline-kind="userMessage"]')).toHaveCount(0);
 
+  const process = timeline.locator('[data-conversation-process-header]');
+  await expect(process).toHaveAttribute("aria-expanded", "false");
+  await expect(timeline.locator('[data-conversation-timeline-kind="fileChange"]')).toHaveCount(0);
+  await process.click();
+  await expect(process).toHaveAttribute("aria-expanded", "true");
   const fileChange = timeline.locator('[data-conversation-timeline-kind="fileChange"]')
     .filter({ hasText: "WorkspaceClientView.tsx" });
   await expect(fileChange).toHaveCount(1);
@@ -11372,6 +11503,10 @@ test("durable Ling turns drive conversation work cell title, status, and attempt
   await expect(timeline).not.toContainText("echo old attempt evidence");
   await expect(timeline).not.toContainText("old-attempt.txt");
 
+  const process = timeline.locator('[data-conversation-process-header]');
+  await expect(process).toHaveAttribute("aria-expanded", "false");
+  await process.click();
+  await expect(process).toHaveAttribute("aria-expanded", "true");
   const retryCommand = timeline.locator('[data-conversation-timeline-kind="commandExecution"]')
     .filter({ hasText: "node retry-once.cjs" });
   await expect(retryCommand).toHaveCount(1);

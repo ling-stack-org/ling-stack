@@ -70,6 +70,7 @@ export function TeammatePrivateChatSurface(props: TeammatePrivateChatSurfaceProp
   });
   const messageController = useTeammatePrivateMessageController({
     cwd,
+    threadId: props.threadId,
     messages: visibleMessages,
     onRefreshMessages,
     permissionPreset: composerController.selectedPermissionPreset,

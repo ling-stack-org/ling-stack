@@ -31,6 +31,7 @@ import {
   type FileMutationActionDraft,
   type FileMutationRecoveryBasis,
 } from "./executors/file-mutation.js";
+import { recordNativeFileMutationCompletion } from "./native-file-mutation-completion.js";
 
 const TOOL_EXECUTION_LEASE_GRACE_MS = 2 * 60 * 1000;
 const DEFAULT_TOOL_EXECUTION_TIMEOUT_MS = 10 * 60 * 1000;
@@ -60,6 +61,8 @@ export interface HarnessFileMutationToolContext {
   readonly signal?: AbortSignal;
   readonly requireExistingParentsForAdds?: boolean;
   readonly hostOperation?: HostFileMutationOperation;
+  /** Observe actual native completion for checkpoint handoff; never enables Broker enforcement. */
+  readonly recordCompactionBoundaryEvidence?: boolean;
 }
 
 export interface HarnessToolContext extends HarnessBashToolContext {
@@ -254,6 +257,7 @@ export async function executeHarnessedFileMutationTool(
       resultSummary,
       evidenceArtifactIds,
     });
+    recordNativeFileMutationCompletion(input, applied);
     return applied.handledResult;
   } catch (error) {
     const current = input.store.getHarnessToolExecution(execution.id);
@@ -603,6 +607,7 @@ async function executeFileMutationDirectly(input: HarnessFileMutationToolContext
     effectGuard: input.hostOperation?.effectGuard,
   });
   if (input.approvalId) createFileMutationResultEvidence(input, undefined, applied.resultArtifactContent);
+  recordNativeFileMutationCompletion(input, applied);
   return applied.handledResult;
 }
 

@@ -27,7 +27,7 @@ test("Runs owns load, stream, and mutation errors without the generic shell writ
   expect(runsDomain).toContain('setError({ scope: "stream", message });');
   expect(runsDomain).toContain('reportError: (message) => setError({ scope: "mutation", message })');
   expect(runControl).toContain("options.clearError();");
-  expect(runControl).toContain("options.reportError(");
+  expect(runControl).toMatch(/(?:options|optionsRef\.current)\.reportError\(/u);
 });
 
 test("Approvals separates list DomainError from approval and external-action owners", async () => {

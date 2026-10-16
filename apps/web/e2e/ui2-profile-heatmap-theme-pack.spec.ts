@@ -6,16 +6,12 @@ import {
   type LingThemePackManifest,
   type ThemeSelection,
 } from "@ling-stack/ui-react/theme";
-import { mkdir, readFile } from "node:fs/promises";
+import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { mockDaemon } from "./support/mock-daemon";
 import { createBaseState, cwd, type MockState } from "./support/mock-state";
 
 const profileCssPath = fileURLToPath(new URL("../src/styles/profile.css", import.meta.url));
-const evidenceDirectory = fileURLToPath(new URL(
-  "../../../docs/design/ui2.0升级/evidence/settings/profile/theme-pack-compatibility/",
-  import.meta.url,
-));
 
 test("standalone Profile heatmap has no color-scheme-specific owner", async () => {
   const source = await readFile(profileCssPath, "utf8");
@@ -296,8 +292,7 @@ async function seedImportedTheme(
 }
 
 async function captureEvidence(page: Page, filename: string): Promise<void> {
-  await mkdir(evidenceDirectory, { recursive: true });
-  await page.screenshot({ animations: "disabled", fullPage: true, path: `${evidenceDirectory}${filename}` });
+  await page.screenshot({ animations: "disabled", fullPage: true, path: test.info().outputPath(filename) });
 }
 
 function collectRuntimeErrors(page: Page): string[] {

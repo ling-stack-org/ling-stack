@@ -16,14 +16,15 @@ import {
   type PreparedContinuation,
   type ReprepareContinuationInput,
 } from "../../harness/continuations.js";
-import type { RunStore } from "../../run-types.js";
-import { toRuntimeAttemptFence, type WorkUnitAttempt } from "../../runtime-supervisor-types.js";
+import type { RunSession, RunStore } from "../../run-types.js";
+import { toRuntimeAttemptFence, type WorkUnit, type WorkUnitAttempt } from "../../runtime-supervisor-types.js";
 import { rollbackOwnedSqliteTransaction } from "./helpers.js";
 import type { SqliteRunnerContinuationStore } from "./runner-continuation-store.js";
 import type { SqliteRuntimeWorkUnitStore } from "./runtime-work-unit-store.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import { RunProgressCheckpointError } from "../../run-progress-checkpoint-types.js";
 import type { SqliteRunProgressCheckpointStore } from "./run-progress-checkpoint-store.js";
+import { releaseCompactionSourceResourcesWithinTransaction } from "./host-compaction-resource-boundary.js";
 
 type Ports = Pick<
   RunStore,
@@ -36,6 +37,7 @@ type Ports = Pick<
   | "appendRuntimeEvent"
   | "releaseResourceLeasesForAttempt"
   | "releaseRuntimeSemaphoreSlotsForAttempt"
+  | "listArtifacts" | "getLatestRunCompactionCheckpoint" | "getLatestWorkspaceProvenanceWatermark"
 >;
 
 /** SQLite-only multi-entity commits. It never spans an OS process, runner, or filesystem effect. */
@@ -139,6 +141,15 @@ export class SqliteHarnessCommitCoordinator {
         throw new ExistingRunContinuationActivationAbort("continuation.activation_state_stale");
       }
 
+      if (input.compactionResourceBoundary && (input.preparation.origin !== "daemon_recovery"
+        || !releaseCompactionSourceResourcesWithinTransaction(this.context, this.ports, {
+          ...input.compactionResourceBoundary, source: { runId: run.id, ...input.preparation.sourceFence },
+          successorRuntimeInstanceId: input.preparation.targetAttempt.runtimeInstanceId,
+          now: input.now, idempotencyKey: input.preparation.idempotencyKey,
+        }))) {
+        throw new ExistingRunContinuationActivationAbort("continuation.activation_checkpoint_unverified");
+      }
+
       const workUnitTransition = this.ports.transitionWorkUnitStatus({
         workUnitId: workUnit.id,
         expectedStatus: input.expectedWorkUnitStatus,
@@ -202,7 +213,8 @@ export class SqliteHarnessCommitCoordinator {
       const attempt = this.runtimeWorkUnits.getWorkUnitAttempt(input.targetFence.attemptId);
       const task = run ? this.ports.getTask(run.taskId) : undefined;
       const continuation = this.continuations.getRunnerContinuation(input.continuationId);
-      if (!run || !workUnit || !attempt || !task || !continuation
+      if (!run || !workUnit || !attempt || !continuation
+        || (!task && !hasConversationTaskSnapshot(run, workUnit))
         || run.workUnitId !== workUnit.id
         || workUnit.linkedRunId !== run.id
         || workUnit.activeAttemptId !== attempt.id
@@ -264,7 +276,7 @@ export class SqliteHarnessCommitCoordinator {
         );
       }
       let failedTask = task;
-      if (task.status === "claimed" || task.status === "running") {
+      if (task && (task.status === "claimed" || task.status === "running")) {
         const taskTransition = this.ports.transitionTaskStatus({
           taskId: task.id,
           expectedStatus: task.status,
@@ -281,7 +293,7 @@ export class SqliteHarnessCommitCoordinator {
           );
         }
         failedTask = this.ports.getTask(task.id)!;
-      } else if (task.status !== "failed") {
+      } else if (task && task.status !== "failed") {
         throw new ExistingRunContinuationPreparationFailureAbort(
           "continuation.preparation_failure_state_stale",
         );
@@ -307,7 +319,7 @@ export class SqliteHarnessCommitCoordinator {
       return {
         ok: true,
         run: this.ports.getRun(run.id)!,
-        task: failedTask,
+        ...(failedTask ? { task: failedTask } : {}),
         workUnit: this.runtimeWorkUnits.getWorkUnit(workUnit.id)!,
         attempt: failedAttempt,
         continuation: failedContinuation,
@@ -329,14 +341,15 @@ export class SqliteHarnessCommitCoordinator {
       const workUnit = this.runtimeWorkUnits.getWorkUnit(input.sourceFence.workUnitId);
       const attempt = this.runtimeWorkUnits.getWorkUnitAttempt(input.sourceFence.attemptId);
       const task = run ? this.ports.getTask(run.taskId) : undefined;
-      if (!run || !workUnit || !attempt || !task
+      if (!run || !workUnit || !attempt
+        || (!task && !hasConversationTaskSnapshot(run, workUnit))
         || run.workUnitId !== workUnit.id || workUnit.linkedRunId !== run.id
         || workUnit.activeAttemptId !== attempt.id || attempt.workUnitId !== workUnit.id
         || !sameFence(toRuntimeAttemptFence(attempt), input.sourceFence)) {
         throw new StaleRunRecoveryFailureAbort("recovery_failure_lineage_stale");
       }
       if (run.status !== input.expectedRunStatus || workUnit.status !== "stale" || attempt.status !== "lost"
-        || (task.status !== "claimed" && task.status !== "running")) {
+        || (task && task.status !== "claimed" && task.status !== "running")) {
         throw new StaleRunRecoveryFailureAbort("recovery_failure_state_stale");
       }
       const runTransition = this.ports.transitionRunStatus({
@@ -349,11 +362,11 @@ export class SqliteHarnessCommitCoordinator {
         reason: input.errorCode, now: input.now, endedAt: input.now,
         errorCode: input.errorCode, errorMessage: input.errorMessage,
       });
-      const taskTransition = this.ports.transitionTaskStatus({
+      const taskTransition = task ? this.ports.transitionTaskStatus({
         taskId: task.id, expectedStatus: task.status, event: "run_failed", actor: "system",
         reason: input.errorCode, now: input.now, currentRunId: run.id,
-      });
-      if (!runTransition.ok || !workUnitTransition.ok || !taskTransition.ok) {
+      }) : undefined;
+      if (!runTransition.ok || !workUnitTransition.ok || (taskTransition && !taskTransition.ok)) {
         throw new StaleRunRecoveryFailureAbort("recovery_failure_transition_failed");
       }
       this.ports.appendRuntimeEvent({
@@ -678,6 +691,15 @@ function sameFence(left: ReturnType<typeof toRuntimeAttemptFence>, right: Return
 
 function sameJson(left: unknown, right: unknown): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
+}
+
+function hasConversationTaskSnapshot(run: RunSession, unit: WorkUnit): boolean {
+  const snapshot = run.taskSnapshot;
+  return ((unit.kind === "conversation_run" && unit.ownerType === "conversation_turn")
+    || (unit.kind === "channel_ai_reply" && unit.ownerType === "channel_message")
+    || (unit.kind === "teammate_direct_reply" && unit.ownerType === "teammate_direct_message"))
+    && snapshot !== null && typeof snapshot === "object" && !Array.isArray(snapshot)
+    && "id" in snapshot && snapshot.id === run.taskId && unit.taskId === run.taskId;
 }
 
 class ExistingRunContinuationActivationAbort extends Error {

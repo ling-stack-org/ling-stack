@@ -51,7 +51,7 @@ for (const theme of ["light", "dark"] as const) {
     });
     await page.goto("/");
     await openEngineeringChannel(page);
-    const root = page.getByLabel("Channel message feed").locator(".channel-message-row.ai-teammate")
+    const root = page.getByLabel("Channel message feed").locator("[data-conversation-row-key]")
       .filter({ hasText: "Synthetic topic: question history" });
     await root.hover();
     await root.getByRole("button", { name: "Reply in topic", exact: true }).click();

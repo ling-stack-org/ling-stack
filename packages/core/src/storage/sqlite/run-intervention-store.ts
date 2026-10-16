@@ -1,7 +1,9 @@
 import type { SQLOutputValue } from "node:sqlite";
 import {
   projectConversationItemToChannelMessage,
+  type ConversationAttachment,
   type ConversationItemV1,
+  type LingThread,
 } from "@ling-stack/contracts";
 import type { ChannelMessage } from "../../workspace-types.js";
 import {
@@ -26,6 +28,8 @@ import type { SqliteStoreContext } from "./store-context.js";
 export interface SqliteRunInterventionStorePorts {
   readonly getRun: (runId: string) => RunSession | undefined;
   readonly getConversationItem: (itemId: string) => ConversationItemV1 | undefined;
+  readonly getLingThread: (threadId: string) => LingThread | undefined;
+  readonly getConversationAttachment: (attachmentId: string) => ConversationAttachment | undefined;
   readonly assertAttachmentInChannel: (channelId: string, attachmentId: string) => void;
   readonly assertLinkPreviewInChannel: (channelId: string, linkPreviewId: string) => void;
 }
@@ -49,20 +53,36 @@ export class SqliteRunInterventionStore {
     }
     const messagePayload = input.messagePayload ? normalizeRunInterventionMessagePayload(input.messagePayload) : undefined;
     if (messagePayload && (messagePayload.attachmentIds.length > 0 || messagePayload.linkPreviewIds.length > 0)) {
-      if (!sourceRun.channelId) {
-        throw new Error(`Run intervention payload requires a channel run: ${input.sourceRunId}`);
-      }
       if (messagePayload.attachmentIds.length > 10) {
         throw new Error("A run intervention can reference at most 10 attachments");
       }
       if (messagePayload.linkPreviewIds.length > 10) {
         throw new Error("A run intervention can reference at most 10 link previews");
       }
-      for (const attachmentId of messagePayload.attachmentIds) {
-        this.ports.assertAttachmentInChannel(sourceRun.channelId, attachmentId);
-      }
-      for (const linkPreviewId of messagePayload.linkPreviewIds) {
-        this.ports.assertLinkPreviewInChannel(sourceRun.channelId, linkPreviewId);
+      if (sourceRun.channelId) {
+        for (const attachmentId of messagePayload.attachmentIds) {
+          this.ports.assertAttachmentInChannel(sourceRun.channelId, attachmentId);
+        }
+        for (const linkPreviewId of messagePayload.linkPreviewIds) {
+          this.ports.assertLinkPreviewInChannel(sourceRun.channelId, linkPreviewId);
+        }
+      } else {
+        const thread = sourceRun.threadId ? this.ports.getLingThread(sourceRun.threadId) : undefined;
+        if (!thread || thread.kind !== "conversation" || thread.channelId || messagePayload.linkPreviewIds.length) {
+          throw new Error(`Run intervention payload requires a channel run or a normal conversation without link previews: ${input.sourceRunId}`);
+        }
+        for (const attachmentId of messagePayload.attachmentIds) {
+          const attachment = this.ports.getConversationAttachment(attachmentId);
+          if (!attachment || attachment.workspaceId !== thread.workspaceId) {
+            throw new Error(`Conversation attachment not found: ${attachmentId}`);
+          }
+          if (attachment.threadId && attachment.threadId !== thread.id) {
+            throw new Error(`Conversation attachment belongs to a different thread: ${attachmentId}`);
+          }
+          if (attachment.turnId) {
+            throw new Error(`Conversation attachment was already used: ${attachmentId}`);
+          }
+        }
       }
     }
     const id = input.id ?? createRunInterventionId();
@@ -130,6 +150,10 @@ export class SqliteRunInterventionStore {
       clauses.push("source_run_id = ?");
       params.push(options.sourceRunId);
     }
+    if (options.idempotencyKey !== undefined) {
+      clauses.push("idempotency_key = ?");
+      params.push(options.idempotencyKey);
+    }
     const sourceMessageIds = [...new Set(options.sourceMessageIds?.filter(Boolean) ?? [])];
     if (sourceMessageIds.length > 0) {
       clauses.push(`json_extract(message_payload_json, '$.sourceMessageId') IN (${sourceMessageIds.map(() => "?").join(", ")})`);
@@ -143,10 +167,11 @@ export class SqliteRunInterventionStore {
       clauses.push("mode = ?");
       params.push(options.mode);
     }
+    if (options.hasContinuation) clauses.push("continuation_run_id IS NOT NULL");
     const whereClause = clauses.length > 0 ? `WHERE ${clauses.join(" AND ")}` : "";
     params.push(limit);
     return this.context.database
-      .prepare(`${runInterventionSelectSql(whereClause)} ORDER BY created_at ASC, id ASC LIMIT ?`)
+      .prepare(`${runInterventionSelectSql(whereClause)} ORDER BY ${options.newestFirst ? "started_at DESC, rowid DESC" : "created_at ASC, id ASC"} LIMIT ?`)
       .all(...params)
       .map((row) => mapRunIntervention(row as Record<string, SQLOutputValue>));
   }
@@ -172,6 +197,9 @@ export class SqliteRunInterventionStore {
           LIMIT 1
         )
           AND status IN (${placeholders})
+          AND NOT EXISTS (SELECT 1 FROM run_interventions AS active
+            WHERE active.source_run_id=run_interventions.source_run_id
+              AND (active.status='starting_continuation' OR active.status='started' AND active.completed_at IS NULL))
         RETURNING
           id,
           workspace_id,

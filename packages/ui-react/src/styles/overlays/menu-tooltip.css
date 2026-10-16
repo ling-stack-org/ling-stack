@@ -10,6 +10,10 @@
   font-size: var(--ling-font-xs);
   line-height: var(--ling-line-xs);
   letter-spacing: 0;
+}
+
+.ling-ui-tooltip[data-state="delayed-open"],
+.ling-ui-tooltip[data-state="instant-open"] {
   animation: ling-ui-tooltip-enter var(--ling-motion-fast) var(--ling-ease-enter);
 }
 
@@ -91,7 +95,7 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ling-ui-tooltip,
+  .ling-ui-tooltip[data-state],
   .ling-ui-menu-content {
     animation: none;
   }

@@ -180,18 +180,19 @@ test("late teammate guidance finally cannot clear the selected teammate guidance
   const designerStop = page.getByLabel("Private chat composer").getByRole("button", { name: "Stop reply" });
   await designerStop.click();
   await designerStarted.promise;
-  await expect(designerStop).toHaveAttribute("aria-busy", "true");
+  const designerStopping = page.getByLabel("Private chat composer").getByRole("button", { name: "Stopping", exact: true });
+  await expect(designerStopping).toHaveAttribute("aria-busy", "true");
 
   const engineerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("wu_teammate_engineer/cancel"));
   releaseEngineer.resolve();
   await engineerResponse;
-  await expect(designerStop).toHaveAttribute("aria-busy", "true");
+  await expect(designerStopping).toHaveAttribute("aria-busy", "true");
 
   const designerResponse = page.waitForResponse((response) => response.ok() && response.url().includes("wu_teammate_designer/cancel"));
   releaseDesigner.resolve();
   await designerResponse;
   const designerComposer = page.getByLabel("Private chat composer");
-  await expect(designerStop).toHaveCount(0);
+  await expect(designerStopping).toHaveCount(0);
   const send = designerComposer.getByRole("button", { name: "Send" });
   await expect(send).not.toHaveAttribute("aria-busy", "true");
   await designerComposer.getByRole("textbox").fill("Ready for the next message");

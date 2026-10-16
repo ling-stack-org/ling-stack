@@ -10,7 +10,7 @@ import {
 } from "@ling-stack/core";
 import { gstackDefaultSkillPack } from "@ling-stack/core/builtin-skill-packs";
 import type { MemoryObject } from "@ling-stack/core";
-import type { ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings } from "@ling-stack/contracts";
+import type { ConversationGeneratedMedia, ConversationItemV1, ConversationReasoningSummaryRecord, LingApprovalCheckpoint, LingThreadGoal, LingTraceDetailResponse, LingTraceSpan, LingTraceStatus, ProposedPlanArtifact, RunnerListItem, StartupStatusResponse, UserProfile, WorkflowHandoffIntent, WorkspaceGitStatus, WorkspaceRuntimeSettings, WorkUnitDetailResponse } from "@ling-stack/contracts";
 import { isSupportedLocale, type SupportedLocale } from "@ling-stack/localization";
 
 const configuredWorkspaceCwd = process.env.LING_PLAYWRIGHT_WORKSPACE_CWD;
@@ -166,6 +166,7 @@ export interface MockState {
   channelAiReplyBody?: string;
   keepChannelAiReplyPending?: boolean;
   failNextChannelMessage?: boolean;
+  failNextChannelMessageStatus?: number;
   lastChannelTurnRequest?: Record<string, unknown>;
   lastTeammateDirectMessageRequest?: Record<string, unknown>;
   lastConversationMessageEditRequest?: Record<string, unknown>;
@@ -183,6 +184,8 @@ export interface MockState {
   approvalCheckpoints: LingApprovalCheckpoint[];
   approvalPolicy: MockApprovalPolicy;
   approvalQueryCount?: number;
+  loseNextApprovalDecisionResponse?: boolean;
+  emptyNextApprovalDecisionResponse?: boolean;
   approvalPolicyQueryCount?: number;
   lastApprovalPolicyPatch?: Record<string, unknown>;
   externalWorkActions: MockExternalWorkAction[];
@@ -217,6 +220,7 @@ export interface MockState {
   runtimeSemaphoreSlots: MockRuntimeSemaphoreSlot[];
   runtimeEventsByWorkUnit: Record<string, MockRuntimeEvent[]>;
   workUnitAttemptsByWorkUnit: Record<string, MockWorkUnitAttempt[]>;
+  workUnitStopEvidenceByWorkUnit?: Record<string, WorkUnitDetailResponse["stopEvidence"]>;
   resourceLeases: unknown[];
   stateTransitions: unknown[];
   artifactsByRun: Record<string, MockArtifact[]>;
@@ -915,6 +919,7 @@ export interface MockWorkUnitAttempt {
   workUnitId: string;
   attemptNumber: number;
   runtimeInstanceId: string;
+  fencingToken?: string;
   runnerId?: string;
   providerPresetId?: string;
   status: string;
@@ -3747,10 +3752,16 @@ export function createMockRuntime() {
 }
 
 export function createMockWorkUnitDetail(state: MockState, workUnit: MockWorkUnit) {
+  const attempts = (state.workUnitAttemptsByWorkUnit[workUnit.id] ?? []).map(attempt => ({ ...attempt, fencingToken: attempt.fencingToken ?? "1" }));
   return {
     cwd,
     workUnit,
-    attempts: state.workUnitAttemptsByWorkUnit[workUnit.id] ?? [],
+    attempts,
+    // Controlled default: terminal fixtures also finish their simulated Host. Tests can hold either fact independently.
+    stopEvidence: state.workUnitStopEvidenceByWorkUnit?.[workUnit.id] ?? { schemaVersion: 1, workUnitId: workUnit.id,
+      attempts: attempts.map(attempt => ({ attemptId: attempt.id, runtimeInstanceId: attempt.runtimeInstanceId,
+        fencingToken: attempt.fencingToken, localExecution: ["cancelled", "failed", "succeeded", "yielded", "lost"].includes(attempt.status)
+          ? "drained" : "draining", effects: "settled" })) },
     events: state.runtimeEventsByWorkUnit[workUnit.id] ?? [],
     leases: state.resourceLeases.filter((lease) => isRecord(lease) && lease.workUnitId === workUnit.id),
     semaphoreSlots: state.runtimeSemaphoreSlots.filter((slot) => slot.workUnitId === workUnit.id),
@@ -7822,6 +7833,13 @@ export async function mockDaemon(
   } = {},
 ): Promise<void> {
   await mkdir(cwd, { recursive: true });
+  for (const unit of state.workUnits) {
+    if (!unit.activeAttemptId || state.workUnitAttemptsByWorkUnit[unit.id] !== undefined) continue;
+    state.workUnitAttemptsByWorkUnit[unit.id] = [{ id: unit.activeAttemptId, workUnitId: unit.id,
+      attemptNumber: unit.attemptCount, runtimeInstanceId: "mock-runtime", runnerId: "runner_pi",
+      status: ["cancelled", "failed", "succeeded"].includes(unit.status) ? unit.status : "started",
+      createdAt: unit.createdAt, startedAt: unit.startedAt }];
+  }
   await page.addInitScript(({ firstRunPreference, workspaceIdentity }) => {
     Object.defineProperty(window, "WebSocket", { value: undefined, configurable: true });
     if (firstRunPreference === "completed") {
@@ -10834,6 +10852,8 @@ export async function handleDaemonRoute(
       updatedAt: "2026-06-04T00:32:00.000Z",
     };
     state.workUnits[workUnitIndex] = workUnit;
+    state.workUnitAttemptsByWorkUnit[workUnitId] = (state.workUnitAttemptsByWorkUnit[workUnitId] ?? [])
+      .map(attempt => ({ ...attempt, status: "cancelled", endedAt: workUnit.endedAt }));
     const messageId = workUnit.linkedMessageId;
     const messageIndex = state.teammateDirectMessages.findIndex((message) => isRecord(message) && message.id === messageId);
     const message = messageIndex >= 0 && isRecord(state.teammateDirectMessages[messageIndex])
@@ -11636,7 +11656,7 @@ export async function handleDaemonRoute(
     }
     if (state.failNextChannelMessage) {
       state.failNextChannelMessage = false;
-      await route.fulfill({ status: 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
+      await route.fulfill({ status: state.failNextChannelMessageStatus ?? 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
       return;
     }
     const conversationThread = mockChannelTurnThread(state, channelId, body);
@@ -12123,7 +12143,7 @@ export async function handleDaemonRoute(
     }
     if (state.failNextChannelMessage) {
       state.failNextChannelMessage = false;
-      await route.fulfill({ status: 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
+      await route.fulfill({ status: state.failNextChannelMessageStatus ?? 500, json: { error: "mock_send_failed", message: "Mock message send failed." } });
       return;
     }
     const conversationThread = mockChannelTurnThread(state, channelId, body);
@@ -13253,6 +13273,8 @@ export async function handleDaemonRoute(
       const now = "2026-05-25T00:31:00.000Z";
       const updated = { ...workUnit, status: nextStatus, updatedAt: now, endedAt: action === "retry" ? undefined : now };
       state.workUnits = state.workUnits.map((unit) => unit.id === workUnitId ? updated : unit);
+      if (action === "cancel") state.workUnitAttemptsByWorkUnit[workUnitId] = (state.workUnitAttemptsByWorkUnit[workUnitId] ?? [])
+        .map(attempt => ({ ...attempt, status: "cancelled", endedAt: now }));
       if (action === "cancel" && workUnit.linkedRunId) {
         state.runs = state.runs.map((run) =>
           run.id === workUnit.linkedRunId
@@ -14397,6 +14419,13 @@ export async function handleDaemonRoute(
         "",
       ].join("\n\n"),
     });
+    return;
+  }
+  const approvalDetailMatch = /^\/approvals\/([^/]+)$/.exec(path);
+  if (request.method() === "GET" && approvalDetailMatch) {
+    const approval = state.approvals.find(item => item.id === decodeURIComponent(approvalDetailMatch[1]));
+    await route.fulfill(approval ? { json: { approval } }
+      : { status: 404, json: { error: "approval_not_found", message: "Approval request not found." } });
     return;
   }
   if (request.method() === "GET" && path === "/approvals") {
@@ -15839,6 +15868,16 @@ export async function handleDaemonRoute(
       }
     }
     const mediaJob = approval.mediaJobId ? state.mediaJobs.find((item) => item.id === approval.mediaJobId) : undefined;
+    if (state.loseNextApprovalDecisionResponse) {
+      state.loseNextApprovalDecisionResponse = false;
+      await route.abort("connectionclosed");
+      return;
+    }
+    if (state.emptyNextApprovalDecisionResponse) {
+      state.emptyNextApprovalDecisionResponse = false;
+      await route.fulfill({ json: {} });
+      return;
+    }
     await route.fulfill({ json: { approval, ...(mediaJob ? { mediaJob } : {}) } });
     return;
   }

@@ -11,6 +11,7 @@ import { DEFAULT_WORKSPACE_ID, createSqliteRunStore } from "../../core/dist/inde
 import { createDaemonServer } from "../dist/index.js";
 import { auditIgnoredRunnerCompletion } from "../dist/features/runs/stale-completion.js";
 import { ensureGitRepoForChannelPost } from "./git-test-helpers.mjs";
+import { ToolFreePiRunner } from "./support/tool-free-pi-runner.mjs";
 import { createHostToolResultAdapter } from "../../runner-pi/dist/host-tool-results.js";
 import { convertMessages } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/api/openai-completions.js";
 import { convertResponsesMessages } from "../../runner-pi/node_modules/@earendil-works/pi-ai/dist/api/openai-responses-shared.js";
@@ -4835,12 +4836,12 @@ test("run cancel cancels pending approvals for a waiting run", async () => {
 
 test("queued run guidance starts FIFO continuation after the source run finishes", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-guidance-"));
-  const runner = new BlockingRunner();
+  const runner = new BlockingRunner({ verifyToolFree: true });
   const daemon = await startDaemonForTest(runner);
   let sse;
   let sseDrained = false;
   try {
-    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const provider = await createToolFreeSdkProvider(daemon.url, cwd);
     const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Engineering",
       boundPath: cwd,
@@ -4950,12 +4951,12 @@ test("queued run guidance starts FIFO continuation after the source run finishes
 
 test("interrupt redirect cancels the source run and starts a linked continuation", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-redirect-"));
-  const runner = new BlockingRunner();
+  const runner = new BlockingRunner({ verifyToolFree: true });
   const daemon = await startDaemonForTest(runner);
   let sse;
   let sseDrained = false;
   try {
-    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const provider = await createToolFreeSdkProvider(daemon.url, cwd);
     const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Engineering",
       boundPath: cwd,
@@ -5018,12 +5019,12 @@ test("interrupt redirect cancels the source run and starts a linked continuation
 
 test("queued run guidance promote cancels the active run without duplicating the intervention", async () => {
   const cwd = await mkdtemp(resolve(tmpdir(), "ling-stack-daemon-run-promote-"));
-  const runner = new BlockingRunner();
+  const runner = new BlockingRunner({ verifyToolFree: true });
   const daemon = await startDaemonForTest(runner);
   let sse;
   let sseDrained = false;
   try {
-    const provider = await createStaticChatProvider(daemon.url, cwd);
+    const provider = await createToolFreeSdkProvider(daemon.url, cwd);
     const channel = await postJson(`${daemon.url}/channels?cwd=${encodeURIComponent(cwd)}`, {
       name: "Engineering",
       boundPath: cwd,
@@ -5975,7 +5976,8 @@ class ArtifactExtractionRunner {
 }
 
 class BlockingRunner {
-  constructor() {
+  constructor({ verifyToolFree = false } = {}) {
+    this.sdk = verifyToolFree ? new ToolFreePiRunner() : undefined;
     this.runs = [];
     this._startedCount = 0;
     this._startedResolvers = [];
@@ -5991,7 +5993,15 @@ class BlockingRunner {
       model: options.provider.model,
       taskId: options.task.id,
     });
-    options.onEvent?.({
+    let sdkResult;
+    try {
+      sdkResult = this.sdk ? await this.sdk.runTask(options) : undefined;
+    } catch (error) {
+      this._startError = error;
+      for (const resolveStarted of this._startedResolvers.splice(0)) resolveStarted();
+      throw error;
+    }
+    if (!this.sdk) options.onEvent?.({
       type: "run_start",
       taskId: options.task.id,
       cwd: options.cwd,
@@ -6004,6 +6014,8 @@ class BlockingRunner {
     }
 
     await this._releasePromise;
+
+    if (sdkResult) return sdkResult;
 
     options.onEvent?.({
       type: "run_end",
@@ -6020,6 +6032,7 @@ class BlockingRunner {
   async waitUntilStarted(count = 1) {
     await withTimeout((async () => {
       while (this._startedCount < count) {
+        if (this._startError) throw this._startError;
         await new Promise((resolveStarted) => {
           this._startedResolvers.push(resolveStarted);
         });
@@ -6121,6 +6134,17 @@ function providerRunBody(cwd, taskId, providerPresetId, overrides = {}) {
     thinkingLevel: "off",
     ...overrides,
   };
+}
+
+async function createToolFreeSdkProvider(baseUrl, cwd) {
+  const provider = await createStaticChatProvider(baseUrl, cwd, { api: "openai-completions",
+    baseUrl: "https://fixture.invalid/v1", skipInitialCheck: true });
+  const store = createSqliteRunStore(cwd);
+  try {
+    store.recordProviderCheckResult(provider.provider.id, { ok: true, checkedAt: new Date().toISOString(),
+      message: "Controlled SDK synthetic transport; not external-provider verification." });
+  } finally { store.close(); }
+  return provider;
 }
 
 async function createStaticChatProvider(baseUrl, cwd, overrides = {}) {

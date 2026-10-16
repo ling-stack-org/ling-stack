@@ -16,6 +16,8 @@ import {
   type ResolveApprovalRequestInput,
 } from "@ling-stack/core";
 import type { ResolvedDaemonConfig } from "../../config.js";
+import type { ExecutionCancellationRequest } from "@ling-stack/contracts";
+import { parseExecutionCancellationRequest } from "../../shared/cancellation-request.js";
 import type { ActiveRunRegistry } from "../../runtime/active-runs.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
 import { HttpError } from "../../errors.js";
@@ -30,7 +32,7 @@ import { inferArtifactContentType, MAX_ARTIFACT_RANGE_BYTES, MAX_ARTIFACT_TRANSF
 import { listExecutionActions } from "./execution-actions.js";
 import { parseRunRequest, type RunRequest } from "./schemas.js";
 import { isApprovalCommandRuleProposalCurrent } from "./approval-command-rules.js";
-import { projectPublicRunEventEnvelope, toPublicArtifactMetadata } from "./public-artifacts.js";
+import { isPrivateHostRecoveryArtifact, projectPublicRunEventEnvelope, toPublicArtifactMetadata } from "./public-artifacts.js";
 
 export async function handleRun(
   request: IncomingMessage,
@@ -158,7 +160,7 @@ export function handleListRunArtifacts(
 
   writeJson(response, 200, {
     runId,
-    artifacts: store.listArtifacts(runId).map(toPublicArtifactMetadata),
+    artifacts: store.listArtifacts(runId).filter(artifact => !isPrivateHostRecoveryArtifact(artifact)).map(toPublicArtifactMetadata),
   });
 }
 
@@ -171,7 +173,7 @@ export function handleGetArtifact(
   const cwd = requireArtifactWorkspaceCwd(response, url);
   if (!cwd) return;
   const lookup = storeRegistry.findStoreForArtifact(artifactId, cwd);
-  if (!lookup) {
+  if (!lookup || isPrivateHostRecoveryArtifact(lookup.artifact)) {
     writeJson(response, 404, {
       error: "artifact_not_found",
       message: "Artifact was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
@@ -212,7 +214,7 @@ export function handleGetArtifactContent(
     return;
   }
   const lookup = storeRegistry.findStoreForArtifact(artifactId, cwd);
-  if (!lookup) {
+  if (!lookup || isPrivateHostRecoveryArtifact(lookup.artifact)) {
     writeJson(response, 404, {
       error: "artifact_not_found",
       message: "Artifact was not found in the active daemon stores. Pass ?cwd=/path/to/project after a daemon restart.",
@@ -422,6 +424,20 @@ function workspaceContains(root: string, candidate: string): boolean {
   return normalizedCandidate === normalizedRoot || normalizedCandidate.startsWith(`${normalizedRoot}/`);
 }
 
+export async function handleCancelRunRequest(request: IncomingMessage, response: ServerResponse,
+  config: ResolvedDaemonConfig, url: URL, storeRegistry: RunStoreRegistry, activeRuns: ActiveRunRegistry,
+  runId: string, cancel: typeof import("./cancellation.js").ensureRunCancelled): Promise<void> {
+  try {
+    const input = parseExecutionCancellationRequest(await readOptionalJsonBody(request, config.maxBodyBytes));
+    handleCancelRun(response, url, storeRegistry, activeRuns, runId, cancel, input);
+  } catch (error) {
+    writeJson(response, error instanceof HttpError ? error.statusCode : 400, {
+      error: error instanceof HttpError ? error.code : "bad_request",
+      message: error instanceof Error ? error.message : String(error),
+    });
+  }
+}
+
 export function handleCancelRun(
   response: ServerResponse,
   url: URL,
@@ -429,6 +445,7 @@ export function handleCancelRun(
   activeRuns: ActiveRunRegistry,
   runId: string,
   ensureRunCancelled: typeof import("./cancellation.js").ensureRunCancelled,
+  input: ExecutionCancellationRequest = {},
 ): void {
   const store = storeRegistry.findStoreForRun(runId, url.searchParams.get("cwd") ?? undefined);
   const run = store?.getRun(runId);
@@ -458,6 +475,7 @@ export function handleCancelRun(
   let cancelled: ReturnType<typeof ensureRunCancelled>;
   try {
     cancelled = ensureRunCancelled({
+      ...input,
       store,
       runId,
       taskId: run.taskId,

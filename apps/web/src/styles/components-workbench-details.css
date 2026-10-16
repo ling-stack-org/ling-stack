@@ -84,7 +84,6 @@
 }
 
 .thread-root-message,
-.thread-reply-item,
 .thread-empty-state {
   min-width: 0;
   padding: 8px;
@@ -105,8 +104,7 @@
   font-weight: 720;
 }
 
-.thread-root-message p,
-.thread-reply-item p {
+.thread-root-message p {
   color: var(--text);
   font-size: 12px;
   line-height: 1.48;
@@ -119,22 +117,6 @@
   gap: 8px;
   min-height: 0;
   overflow: auto;
-}
-
-.thread-reply-item {
-  display: grid;
-  gap: 5px;
-}
-
-.thread-reply-own {
-  justify-self: end;
-  width: fit-content;
-  max-width: min(84%, 320px);
-  background: var(--surface-selected);
-}
-
-.thread-reply-own p {
-  color: var(--text-strong);
 }
 
 .thread-empty-state {

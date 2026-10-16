@@ -335,7 +335,10 @@ async function openRecoverySurface(page: Page, threadId: string): Promise<Locato
   await expect(surface).toContainText("Edited 2 files");
   await expect(surface.getByTitle("src/RecoverySurface.tsx")).toBeVisible();
   await expect(surface.getByTitle("src/recovery-surface.css")).toBeVisible();
-  return surface;
+  await expect(surface.getByRole("button", { name: "Undo", exact: true })).toHaveCount(0);
+  const recovery = timeline.locator("[data-conversation-response-files]");
+  await expect(recovery.getByRole("button", { name: "Undo", exact: true })).toHaveCount(1);
+  return recovery;
 }
 
 async function prepareSurface(page: Page, input: {

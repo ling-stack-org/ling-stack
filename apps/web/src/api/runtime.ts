@@ -1,5 +1,6 @@
 import type {
   HarnessDiagnosticQueryV1,
+  ExecutionCancellationRequest,
   ListResourceLeasesRequest,
   ResourceLeaseListResponse,
   RunnerListResponse,
@@ -90,8 +91,8 @@ export async function getWorkUnitEvents(cwd: string, workUnitId: string, afterSe
   return daemonClient.getWorkUnitEvents(cwd, workUnitId, afterSeq);
 }
 
-export async function cancelWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {
-  return daemonClient.cancelWorkUnit(cwd, workUnitId);
+export async function cancelWorkUnit(cwd: string, workUnitId: string, input: ExecutionCancellationRequest = {}): Promise<WorkUnitMutationResponse> {
+  return daemonClient.cancelWorkUnit(cwd, workUnitId, input);
 }
 
 export async function retryWorkUnit(cwd: string, workUnitId: string): Promise<WorkUnitMutationResponse> {

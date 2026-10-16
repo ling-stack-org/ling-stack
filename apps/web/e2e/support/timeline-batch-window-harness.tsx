@@ -3,9 +3,11 @@ import type { ConversationTimelineCommandBatchItem, ConversationTimelineItem, Co
 import { I18nProvider } from "../../src/i18n.js";
 import { mountConversationTimeline } from "../../src/shared/conversation/timeline/mountConversationTimeline.js";
 import type { ConversationTimelineItemLocator } from "../../src/shared/conversation/timeline/ConversationTimeline.js";
+import type { ConversationReadingAnchor } from "../../src/shared/conversation/blocks/conversation-reading-anchor.js";
 
 /** Isolated component probe. No Host, model, durable history or tool execution. */
-export function mountBatchWindowFixture(scope: ConversationTimelineScopeKind, nested: boolean) {
+export function mountBatchWindowFixture(scope: ConversationTimelineScopeKind, nested: boolean,
+  { commandCount = 1_000, batchCommands = true }: { readonly commandCount?: number; readonly batchCommands?: boolean } = {}) {
   const container = document.createElement("div");
   container.id = "batch-window-simulation";
   container.style.cssText = "position:fixed;inset:40px 20px;z-index:10000;background:var(--ling-surface);overflow-y:auto";
@@ -17,7 +19,7 @@ export function mountBatchWindowFixture(scope: ConversationTimelineScopeKind, ne
   const base = { revision: 1, threadSequence: 1, partIndex: 0, runId: "simulation-run",
     attemptId: "simulation-attempt", participantId: "simulation-agent", workflowStepId: null,
     actionId: "simulation-action", sourceRefs: [] };
-  const commands: ConversationTimelineCommandBatchItem["batch"]["commands"] = Array.from({ length: 1_000 }, (_, index) => ({
+  const commands: ConversationTimelineCommandBatchItem["batch"]["commands"] = Array.from({ length: commandCount }, (_, index) => ({
     ...base, id: `command:${index + 1}`, partIndex: index + 1, actionId: `action:${index + 1}`,
     kind: "commandExecution", status: "succeeded", command: `node --version # ${index + 1}`,
     title: "Ran command", risk: "low", outputTail: [{ eventSeq: 2, stream: "stdout", text: "v24.0.0", redacted: false }],
@@ -33,7 +35,7 @@ export function mountBatchWindowFixture(scope: ConversationTimelineScopeKind, ne
         commandCount: commands.length, actionIds, childActionIds: actionIds, childItemIds, commands } };
     const items: readonly ConversationTimelineItem[] = nested
       ? [{ ...base, revision, id: "simulation-agent-span", kind: "subAgentActivity", label: "Engineer",
-        lifecycle: "completed", childItems: [batch] }]
+        lifecycle: "completed", childItems: batchCommands ? [batch] : commands }]
       : [batch];
     const snapshot: TimelineSnapshot = { scope: { kind: scope, threadId: "simulation-thread",
       parentThreadId: null, anchorItemId: null, depth: 0 }, items, activeRun: null,
@@ -44,6 +46,7 @@ export function mountBatchWindowFixture(scope: ConversationTimelineScopeKind, ne
   return {
     ready: () => itemLocatorRef.current !== null,
     reveal: (id: string) => itemLocatorRef.current?.revealFirstMatchingItem([id], (row) => row.focus({ preventScroll: true })),
+    revealReading: (anchor: ConversationReadingAnchor) => itemLocatorRef.current?.revealReadingAnchor(anchor, row => row.focus({ preventScroll: true })),
     revise: () => { revision += 1; render(); },
     dispose: () => { root.unmount(); container.remove(); },
   };

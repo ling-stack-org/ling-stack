@@ -14,6 +14,14 @@ function target(runId, createdAt = "2026-08-05T00:00:00.000Z") {
   };
 }
 
+test("unconfirmed submissions are neither rejected nor accepted and cannot restore a retry automatically", () => {
+  const store = new ConversationSendLifecycleStore("normal:one");
+  const operation = store.begin("normal:one");
+  assert.equal(store.defer(operation), true);
+  assert.equal(store.snapshot().phase, "confirmation_unknown");
+  assert.deepEqual(store.fail(operation), { accepted: false, restoreInput: false });
+});
+
 test("send lifecycle restores input only when failure happens before message acceptance", () => {
   const store = new ConversationSendLifecycleStore("channel:one");
   const beforeAccept = store.begin("channel:one");

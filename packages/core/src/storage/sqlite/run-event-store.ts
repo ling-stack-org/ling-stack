@@ -15,6 +15,7 @@ import { mapRunEvent } from "./run-mappers.js";
 import type { SqliteStoreContext } from "./store-context.js";
 import type { RuntimeAttemptFenceV1 } from "../../runtime-supervisor-types.js";
 import { runExecutionOwnerParameters, runExecutionOwnerSql } from "./run-execution-admission.js";
+import { afterCancellationCommit } from "./cancellation-transaction.js";
 
 type EventAdmission = { readonly kind: "host" | "audit" } | { readonly kind: "execution"; readonly sourceFence: RuntimeAttemptFenceV1 };
 
@@ -87,7 +88,7 @@ export class SqliteRunEventStore {
       Object.assign(error, { code: "stale_run_execution" });
       throw error;
     }
-    appendEventLogLine(run.eventLogPath, envelope);
+    afterCancellationCommit(this.context.database, () => appendEventLogLine(run.eventLogPath, envelope));
     if (type === "tool_start" || type === "tool_update" || type === "tool_end") {
       this.ports.rebuildLingThreadMetadata(run.threadId, envelope.ts);
     }

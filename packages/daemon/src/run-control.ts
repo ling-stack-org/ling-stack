@@ -1,18 +1,6 @@
-import {
-  getRunSummaryPath,
-  writeRunSummary,
-  type RunEventEnvelope,
-  type RunSession,
-  type RunStatus,
-  type RunStore,
-  type RunSummary,
-  type WorkUnit,
-  type WorkUnitStatus,
-  toRuntimeAttemptFence,
-} from "@ling-stack/core";
-import { syncLingThreadForRunEvent, syncLingThreadForTerminalRun } from "./features/runs/threads.js";
-import { assertNoUnsafeRequiredPause } from "./features/runs/user-input-cancellation-guard.js";
+import type { RunEventEnvelope, RunSession, RunStore, WorkUnit } from "@ling-stack/core";
 import { ensureRunCancelled } from "./features/runs/cancellation.js";
+import { cancelStandaloneWorkUnit } from "./runtime/work-units.js";
 
 export interface ActiveRunHandle {
   readonly abortController: AbortController;
@@ -38,55 +26,24 @@ export class RunControlService {
     readonly runId: string;
     readonly reason: string;
     readonly activeRun?: ActiveRunHandle;
+    readonly expectedAttemptId?: string | null;
+    readonly expectedRunId?: string | null;
   }): RunControlCancelRunResult {
     const current = input.store.getRun(input.runId);
-    if (!current) {
-      return { cancelled: false, active: false };
+    if (!current) return { cancelled: false, active: false };
+    if (["succeeded", "failed", "cancelled"].includes(current.status)) {
+      return { cancelled: current.status === "cancelled", active: false, run: current };
     }
-    if (isTerminalRunStatus(current.status)) {
-      return {
-        cancelled: current.status === "cancelled",
-        active: false,
-        run: current,
-      };
-    }
-    if (current.status === "yielded") {
-      // Safe waits have a separate atomic logical cancellation. Do not mutate
-      // the old execution or abort whichever successor is currently active.
-      ensureRunCancelled({ store: input.store, runId: current.id, taskId: current.taskId,
-        reason: input.reason, active: false });
-      return { cancelled: true, active: false, run: input.store.getRun(current.id) };
-    }
-
-    const active = Boolean(input.activeRun);
-    const event = this.transitionRunCancelled({
-      store: input.store,
-      run: current,
-      reason: input.reason,
-      active,
-      streamEnvelope: input.activeRun?.streamEnvelope,
-    });
-    input.activeRun?.abortController.abort();
-
-    return {
-      cancelled: true,
-      active,
-      run: input.store.getRun(input.runId),
-      event,
-    };
+    const result = ensureRunCancelled({ ...input, taskId: current.taskId, startedAt: current.startedAt,
+      active: Boolean(input.activeRun), streamEnvelope: input.activeRun?.streamEnvelope });
+    // Safe yielded work is cancelled logically; its old or successor Host must not be aborted.
+    const active = !result.inputWait && Boolean(input.activeRun);
+    if (active) input.activeRun?.abortController.abort();
+    return { cancelled: true, active, run: input.store.getRun(current.id), event: result.event };
   }
 
-  cancelRunForRedirect(input: {
-    readonly store: RunStore;
-    readonly run: RunSession;
-    readonly activeRun?: ActiveRunHandle;
-  }): RunControlCancelRunResult {
-    return this.cancelRun({
-      store: input.store,
-      runId: input.run.id,
-      reason: "interrupt_redirect",
-      activeRun: input.activeRun,
-    });
+  cancelRunForRedirect(input: { readonly store: RunStore; readonly run: RunSession; readonly activeRun?: ActiveRunHandle }): RunControlCancelRunResult {
+    return this.cancelRun({ store: input.store, runId: input.run.id, reason: "interrupt_redirect", activeRun: input.activeRun });
   }
 
   cancelWorkUnit(input: {
@@ -94,230 +51,21 @@ export class RunControlService {
     readonly workUnit: WorkUnit;
     readonly reason: string;
     readonly activeRun?: ActiveRunHandle;
+    readonly expectedAttemptId?: string | null;
+    readonly expectedRunId?: string | null;
   }): RunControlCancelWorkUnitResult {
     const runId = input.workUnit.linkedRunId;
-    if (runId) {
-      const run = input.store.getRun(runId);
-      if (run) {
-        const cancellation = this.cancelRun({
-          store: input.store,
-          runId,
-          reason: input.reason,
-          activeRun: input.activeRun,
-        });
-        return {
-          workUnit: input.store.getWorkUnit(input.workUnit.id) ?? input.workUnit,
-          run: cancellation.run,
-          event: cancellation.event,
-        };
-      }
+    const expected = {
+      expectedAttemptId: input.expectedAttemptId === undefined ? input.workUnit.activeAttemptId ?? null : input.expectedAttemptId,
+      expectedRunId: input.expectedRunId === undefined ? runId ?? null : input.expectedRunId,
+    };
+    if (runId && input.store.getRun(runId)) {
+      const cancellation = this.cancelRun({ ...input, ...expected, runId });
+      return { workUnit: input.store.getWorkUnit(input.workUnit.id) ?? input.workUnit,
+        run: cancellation.run, event: cancellation.event };
     }
-
-    const workUnit = this.cancelStandaloneWorkUnit(input.store, input.workUnit, input.reason);
+    const workUnit = cancelStandaloneWorkUnit(input.store, input.workUnit, input.reason, expected);
     input.activeRun?.abortController.abort();
     return { workUnit };
   }
-
-  private transitionRunCancelled(input: {
-    readonly store: RunStore;
-    readonly run: RunSession;
-    readonly reason: string;
-    readonly active: boolean;
-    readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
-  }): RunEventEnvelope | undefined {
-    const current = input.store.getRun(input.run.id);
-    if (!current || isTerminalRunStatus(current.status)) {
-      return undefined;
-    }
-
-    assertNoUnsafeRequiredPause(input.store, current);
-
-    const endedAt = new Date().toISOString();
-    this.cancelPendingApprovalsForRun(input.store, input.run.id, endedAt, `Run cancelled: ${input.reason}`, input.streamEnvelope);
-    const event = input.store.appendEvent(input.run.id, "run_cancelled", {
-      reason: input.reason,
-      active: input.active,
-    });
-    input.streamEnvelope?.(event);
-    syncLingThreadForRunEvent(input.store, current, "run_cancelled", event);
-    const summaryPath = writeTerminalSummary(getRunSummaryPath(input.store.paths, input.run.id), {
-      runId: input.run.id,
-      status: "cancelled",
-      taskId: input.run.taskId,
-      eventCount: event.seq,
-      startedAt: input.run.startedAt,
-      endedAt,
-      errorMessage: null,
-    });
-    input.store.transitionRunStatus({
-      runId: input.run.id,
-      expectedStatus: current.status,
-      event: "cancel",
-      actor: "local-user",
-      reason: input.reason,
-      now: endedAt,
-      endedAt,
-      summaryPath,
-      errorMessage: null,
-    });
-    syncLingThreadForTerminalRun(input.store, input.run.id, endedAt);
-    const task = input.store.getTask(input.run.taskId);
-    if (task && task.status !== "done" && task.status !== "cancelled") {
-      input.store.transitionTaskStatus({
-        taskId: input.run.taskId,
-        expectedStatus: task.status,
-        event: "cancel",
-        actor: "local-user",
-        reason: input.reason,
-        now: endedAt,
-        currentRunId: input.run.id,
-      });
-    }
-    if (current.workUnitId) {
-      const workUnit = input.store.getWorkUnit(current.workUnitId);
-      const attemptId = workUnit?.activeAttemptId ?? input.store.listWorkUnitAttempts(current.workUnitId).at(-1)?.id;
-      if (attemptId) {
-        const attempt = input.store.getWorkUnitAttempt(attemptId);
-        if (attempt) {
-          input.store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), endedAt, "cancelled");
-          input.store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), endedAt, "cancelled");
-        }
-        this.transitionWorkUnitCancelled(input.store, current.workUnitId, attemptId, input.reason);
-      }
-      if (workUnit) {
-        this.releaseWorkUnitRuntimeResources(input.store, workUnit, endedAt, "cancelled");
-      }
-    }
-    return event;
-  }
-
-  private cancelPendingApprovalsForRun(
-    store: RunStore,
-    runId: string,
-    now: string,
-    reason: string,
-    streamEnvelope?: (envelope: RunEventEnvelope) => void,
-  ): void {
-    const pendingApprovals = store.listApprovalRequests({ runId, status: "pending", limit: 500 });
-    for (const approval of pendingApprovals) {
-      const cancelled = store.cancelApprovalRequest(approval.id, { reason, resolvedBy: "local-user" }, now);
-      if (!cancelled) {
-        continue;
-      }
-      const event = store.appendEvent(runId, "approval_cancelled", {
-        approvalId: cancelled.id,
-        status: cancelled.status,
-        resolvedBy: cancelled.resolvedBy,
-        decisionReason: cancelled.decisionReason,
-      });
-      streamEnvelope?.(event);
-      const run = store.getRun(runId);
-      if (run) {
-        syncLingThreadForRunEvent(store, run, "approval_cancelled", event);
-      }
-    }
-  }
-
-  private cancelStandaloneWorkUnit(store: RunStore, workUnit: WorkUnit, reason: string): WorkUnit {
-    const attemptId = workUnit.activeAttemptId ?? store.listWorkUnitAttempts(workUnit.id).at(-1)?.id;
-    if (attemptId) {
-      this.transitionWorkUnitCancelled(store, workUnit.id, attemptId, reason);
-    } else if (!isTerminalWorkUnitStatus(workUnit.status) && workUnit.status !== "stale") {
-      const now = new Date().toISOString();
-      const cancelling = store.transitionWorkUnitStatus({
-        workUnitId: workUnit.id,
-        expectedStatus: workUnit.status,
-        event: "cancel",
-        actor: "local-user",
-        reason,
-        now,
-      });
-      if (cancelling.ok) {
-        store.transitionWorkUnitStatus({
-          workUnitId: workUnit.id,
-          expectedStatus: "cancelling",
-          event: "runner_cancelled",
-          actor: "system",
-          reason,
-          now,
-          endedAt: now,
-        });
-      }
-    }
-    return this.releaseWorkUnitRuntimeResources(store, workUnit, new Date().toISOString(), "cancelled");
-  }
-
-  private releaseWorkUnitRuntimeResources(store: RunStore, workUnit: WorkUnit, now: string, releaseReason: string): WorkUnit {
-    for (const attempt of store.listWorkUnitAttempts(workUnit.id)) {
-      store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), now, releaseReason);
-      store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), now, releaseReason);
-    }
-    return store.getWorkUnit(workUnit.id) ?? workUnit;
-  }
-
-  private transitionWorkUnitCancelled(store: RunStore, workUnitId: string, attemptId: string, reason: string): void {
-    const current = store.getWorkUnit(workUnitId);
-    if (!current || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
-      return;
-    }
-    const attempt = store.getWorkUnitAttempt(attemptId);
-    if (!attempt || attempt.workUnitId !== workUnitId || current.activeAttemptId !== attemptId) return;
-    const now = new Date().toISOString();
-    const cancelling =
-      current.status === "cancelling"
-        ? { ok: true as const, from: current.status, to: current.status }
-        : store.transitionWorkUnitStatus({
-            workUnitId,
-            attemptId: attempt.id,
-            activeAttemptId: attempt.id,
-            runtimeInstanceId: attempt.runtimeInstanceId,
-            fencingToken: attempt.fencingToken,
-            expectedStatus: current.status,
-            event: "cancel",
-            actor: "local-user",
-            reason,
-            now,
-          });
-    if (!cancelling.ok) {
-      return;
-    }
-    const latest = store.getWorkUnit(workUnitId);
-    if (!latest || latest.status !== "cancelling") {
-      return;
-    }
-    this.transitionWorkUnitTerminal(store, {
-      ...toRuntimeAttemptFence(attempt),
-      event: "runner_cancelled",
-      attemptStatus: "cancelled",
-      runtimeEventType: "work_unit_cancelled",
-      actor: "runner",
-      now,
-      errorCode: "cancelled",
-      errorMessage: reason,
-    });
-  }
-
-  private transitionWorkUnitTerminal(
-    store: RunStore,
-    input: Parameters<RunStore["transitionWorkUnitAttemptTerminal"]>[0],
-  ): void {
-    store.transitionWorkUnitAttemptTerminal(input);
-  }
-}
-
-function writeTerminalSummary(summaryPath: string, summary: RunSummary): string | undefined {
-  try {
-    writeRunSummary(summaryPath, summary);
-    return summaryPath;
-  } catch {
-    return undefined;
-  }
-}
-
-function isTerminalRunStatus(status: RunStatus): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
-}
-
-function isTerminalWorkUnitStatus(status: WorkUnitStatus): boolean {
-  return status === "succeeded" || status === "failed" || status === "cancelled";
 }

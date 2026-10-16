@@ -3,6 +3,8 @@ import type { ConversationDetailResponse, TeammateDirectMessage } from "@ling-st
 import { installTeammateWorkCellFixture } from "./support/conversation-work-cell-fixture";
 import { buildMockConversationDetail, mockDaemon } from "./support/mock-daemon";
 import { createBaseState, cwd } from "./support/mock-state";
+import { expandTimelineProcesses } from "./support/timeline-process";
+import { timelineResponseFooter } from "./support/timeline-response-footer";
 
 function privateNarrationFixture(suffix = "") {
   const state = createBaseState({ approvalStatus: "expired" });
@@ -122,6 +124,7 @@ async function attachPrivateBrowserEvidence(page: Page, testInfo: TestInfo, fixt
 async function expectPrivateNarration(page: Page): Promise<void> {
   const feed = page.getByLabel("Private message feed", { exact: true });
   await expect(feed.locator('[data-conversation-timeline-kind="agentMessage"]')).toHaveCount(3);
+  await expandTimelineProcesses(feed);
   const rows = feed.locator('[data-conversation-timeline-kind][data-conversation-timeline-depth="0"]');
   await expect.poll(() => rows.evaluateAll((elements) => elements.map((element) => element.getAttribute("data-conversation-timeline-kind") === "agentMessage"
     ? element.textContent?.includes("Before first read.") ? "before-first" : element.textContent?.includes("Before more reads.") ? "before-more" : "verified"
@@ -159,16 +162,18 @@ test("private segmented narration has one message resource and action owner", as
   await expectPrivateNarration(page);
   const feed = page.getByLabel("Private message feed", { exact: true });
   const segments = feed.locator('[data-conversation-timeline-kind="agentMessage"]');
+  const footer = await timelineResponseFooter(segments.last());
   await expect(segments.getByRole("button", { name: "private-result.mjs src/private-result.mjs", exact: true })).toHaveCount(1);
-  await expect(segments.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
-  await expect(segments.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
-  await expect(segments.getByRole("button", { name: "Create task", exact: true })).toHaveCount(1);
+  await expect(segments.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(0);
+  await expect(footer.getByRole("button", { name: "Copy message", exact: true })).toHaveCount(1);
+  await expect(footer.getByRole("button", { name: "Like response", exact: true })).toHaveCount(1);
+  await expect(footer.getByRole("button", { name: "Create task", exact: true })).toHaveCount(1);
   for (const index of [0, 1]) {
     await expect(segments.nth(index).locator(".conversation-reference-strip, .teammate-message-actions")).toHaveCount(0);
   }
   await expect(segments.last().getByRole("button", { name: "private-result.mjs src/private-result.mjs", exact: true })).toBeVisible();
-  const copy = segments.last().getByRole("button", { name: "Copy message", exact: true });
-  await segments.last().hover();
+  const copy = footer.getByRole("button", { name: "Copy message", exact: true });
+  await footer.hover();
   await copy.click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { privateCopiedText: string }).privateCopiedText)).toBe(assistant.body);
 });
@@ -204,6 +209,7 @@ for (const emptyDelta of [false, true]) {
     try {
       await page.goto("/");
       await page.getByRole("button", { name: fixture.teammate.displayName, exact: true }).click();
+      await expandTimelineProcesses(page.getByLabel("Private message feed", { exact: true }));
       await expect(page.locator('[data-conversation-action-id="private-narration-action-91"]')).toBeVisible();
       const composer = page.locator(".teammate-private-composer-owner");
       await composer.getByRole("textbox").fill("Continue the private narration test.");
@@ -260,10 +266,13 @@ test("private owner switch rejects a late GET without resurrecting the previous 
     await page.goto("/");
     await page.getByRole("button", { name: ownerA.teammate.displayName, exact: true }).click();
     const feed = page.getByLabel("Private message feed", { exact: true });
+    await expandTimelineProcesses(feed);
     await expect(feed.locator('[data-conversation-action-id="private-owner-a-narration-action-91"]')).toBeVisible();
     holdA = true;
     await expect.poll(() => heldRequests).toBeGreaterThan(0);
     await page.getByRole("button", { name: ownerB.teammate.displayName, exact: true }).click();
+    await expect(feed).toContainText(ownerB.initialAssistant.body);
+    await expandTimelineProcesses(feed);
     const bCommand = feed.locator('[data-conversation-action-id="private-owner-b-narration-action-91"]');
     await expect(bCommand).toBeVisible();
     await expect(feed).toContainText(ownerB.initialAssistant.body);
@@ -339,6 +348,7 @@ test("private same-owner other Turn and foreign source refs stay out of DOM whil
   await page.getByRole("button", { name: fixture.teammate.displayName, exact: true }).click();
   const feed = page.getByLabel("Private message feed", { exact: true });
   await expect(feed.getByText("Verification complete.", { exact: true })).toBeVisible();
+  await expandTimelineProcesses(feed);
   for (const [id, kind] of [["private-narration-action-41", "exploration"], ["private-narration-action-91", "commandExecution"], ["private-own-mcp", "mcpToolCall"]]) {
     const row = feed.locator(`[data-conversation-action-id="${id}"][data-conversation-timeline-kind="${kind}"]`);
     await expect(row).toBeVisible();
@@ -391,10 +401,11 @@ test("private foreign message owners fail closed without removing valid text or 
   await expect(ownMessage).toHaveCount(1);
   await expect(ownMessage).toContainText(fixture.initialAssistant.body);
   await expect(feed).toContainText(fixture.user.body);
-  await ownMessage.hover();
-  await ownMessage.getByRole("button", { name: "Copy message", exact: true }).click();
+  const footer = await timelineResponseFooter(ownMessage);
+  await footer.hover();
+  await footer.getByRole("button", { name: "Copy message", exact: true }).click();
   await expect.poll(() => page.evaluate(() => (window as unknown as { privateCopiedText: string }).privateCopiedText)).toBe(fixture.initialAssistant.body);
-  await expect(ownMessage.getByRole("button", { name: "Create task", exact: true })).toHaveCount(1);
+  await expect(footer.getByRole("button", { name: "Create task", exact: true })).toHaveCount(1);
   expect(await feed.innerHTML()).not.toMatch(/FOREIGN_|Foreign Agent|foreign-direct-thread|SYSTEM_CONTINUATION_METADATA/u);
   await expect(feed.locator("[data-conversation-action-id], [data-conversation-run-id]")).toHaveCount(0);
   await attachPrivateBrowserEvidence(page, testInfo, fixture, { injectedMessageIds: foreignMessages.map((message) => message.id) });
@@ -435,6 +446,7 @@ test("private mixed legacy history keeps missing-anchor diagnostics beside their
   await page.getByRole("button", { name: fixture.teammate.displayName, exact: true }).click();
   const feed = page.getByLabel("Private message feed", { exact: true });
   await expect(feed.locator('[data-conversation-timeline-kind="diagnostic"]')).toHaveCount(5);
+  await expandTimelineProcesses(feed);
   await expect(feed.locator('[data-conversation-action-id="private-narration-action-91"]')).toBeVisible();
   const positions = await feed.locator('[data-conversation-timeline-kind][data-conversation-timeline-depth="0"]').evaluateAll((rows) => rows.map((row) => ({
     kind: row.getAttribute("data-conversation-timeline-kind"), runId: row.getAttribute("data-conversation-run-id"), text: row.textContent,

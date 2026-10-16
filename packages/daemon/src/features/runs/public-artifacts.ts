@@ -1,5 +1,11 @@
 import type { ExecutionAction, RunArtifact, RunEventEnvelope } from "@ling-stack/core";
 
+/** These Host-only receipts are neither deliverables nor downloadable Run evidence. */
+export function isPrivateHostRecoveryArtifact(artifact: Pick<RunArtifact, "contentType">): boolean {
+  return artifact.contentType === "application/vnd.ling.native-file-mutation-completion+json"
+    || artifact.contentType === "application/vnd.ling.host-compaction-resource-boundary+json";
+}
+
 /** Artifact metadata may cross HTTP; sealed Host recovery payloads may not. */
 export function toPublicArtifactMetadata({ sealedPayload: _sealedPayload, contentSha256: _contentSha256, ...artifact }: RunArtifact): Omit<RunArtifact, "sealedPayload" | "contentSha256"> {
   return artifact;
@@ -41,6 +47,7 @@ function isOwnedEditDiffArtifact(artifact: RunArtifact, actions: readonly Artifa
 /** Conversation DTOs expose deliverables and uniquely edit-owned diffs, never sealed Host payloads. */
 export function projectConversationArtifacts(artifacts: readonly RunArtifact[], actions: readonly ArtifactOwner[] = []): RunArtifact[] {
   return artifacts
+    .filter((artifact) => !isPrivateHostRecoveryArtifact(artifact))
     .filter((artifact) => isWorkspaceDeliverableArtifact(artifact) || isOwnedEditDiffArtifact(artifact, actions))
     .map(toPublicArtifactMetadata);
 }

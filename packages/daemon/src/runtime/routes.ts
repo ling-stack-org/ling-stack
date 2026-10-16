@@ -1,19 +1,18 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type {
   RunnerFallbackPolicy,
-  ResourceLease,
   RunEventEnvelope,
   RunSession,
   RunStore,
   RuntimeExtensionView,
-  RuntimeEvent,
-  RuntimeSemaphoreSlot,
   WorkUnit,
-  WorkUnitAttempt,
   WorkUnitKind,
   WorkUnitStatus,
 } from "@ling-stack/core";
 import { DEFAULT_WORKSPACE_ID } from "@ling-stack/core";
+import type { ExecutionCancellationRequest, RunCancelResponse, WorkUnitDetailResponse } from "@ling-stack/contracts";
+import { readWorkUnitStopEvidence } from "./work-unit-stop-evidence.js";
+import { parseExecutionCancellationRequest } from "../shared/cancellation-request.js";
 import type { LingExtensionMetadata, LingExtensionRegistry } from "@ling-stack/plugin-sdk";
 import type { ResolvedDaemonConfig } from "../config.js";
 import { HttpError } from "../errors.js";
@@ -55,8 +54,10 @@ export type RuntimeRunCanceller = (input: {
   readonly startedAt?: string;
   readonly reason: string;
   readonly active: boolean;
+  readonly expectedAttemptId?: string | null;
+  readonly expectedRunId?: string | null;
   readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
-}) => { readonly event?: RunEventEnvelope };
+}) => { readonly event?: RunEventEnvelope; readonly inputWait?: RunCancelResponse["inputWait"] };
 
 export type RuntimeTaskRunRetrier = (input: {
   readonly cwd: string;
@@ -378,6 +379,15 @@ export async function handleWorkUnitRoute(
   if (!resolved) {
     return;
   }
+  let cancellation: ExecutionCancellationRequest = {};
+  if (request.method === "POST" && route.kind === "cancel") {
+    try {
+      cancellation = parseExecutionCancellationRequest(await readOptionalJsonBody(request, 64 * 1024));
+    } catch (error) {
+      writeJson(response, 400, { error: "bad_request", message: error instanceof Error ? error.message : String(error) });
+      return;
+    }
+  }
   const workUnit = resolved.store.getWorkUnit(route.workUnitId);
   if (!workUnit) {
     writeJson(response, 404, { error: "work_unit_not_found", message: `Work unit not found: ${route.workUnitId}` });
@@ -399,14 +409,16 @@ export async function handleWorkUnitRoute(
       }
     }
   }
-  runtimeSupervisor.getRuntime(resolved.cwd, resolved.store);
+  if (!(request.method === "POST" && route.kind === "cancel")) {
+    runtimeSupervisor.getRuntime(resolved.cwd, resolved.store);
+  }
 
   if (route.kind === "detail") {
     if (request.method !== "GET") {
       writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for work unit detail` });
       return;
     }
-    writeJson(response, 200, buildWorkUnitDetailResponse(resolved.cwd, resolved.store, workUnit));
+    writeJson(response, 200, buildWorkUnitDetailResponse(resolved.cwd, resolved.store, workUnit, activeRuns));
     return;
   }
 
@@ -436,11 +448,13 @@ export async function handleWorkUnitRoute(
     const previousStatus = workUnit.status;
     const runId = workUnit.linkedRunId;
     const activeRun = runId ? activeRuns.get(runId) : undefined;
-    if (runId) {
-      const run = resolved.store.getRun(runId);
-      if (run) {
-        try {
-          cancelRun({
+    let logicalWait = false;
+    try {
+      if (runId) {
+        const run = resolved.store.getRun(runId);
+        if (run) {
+          const result = cancelRun({
+            ...cancellation,
             store: resolved.store,
             runId,
             taskId: run.taskId,
@@ -449,17 +463,18 @@ export async function handleWorkUnitRoute(
             active: Boolean(activeRun),
             streamEnvelope: activeRun?.streamEnvelope,
           });
-        } catch (error) {
-          if (!(error instanceof HttpError)) throw error;
-          writeJson(response, error.statusCode, { error: error.code, message: error.message });
-          return;
+          logicalWait = Boolean(result.inputWait);
+        } else {
+          cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested", cancellation);
         }
+        if (!logicalWait) activeRun?.abortController.abort();
       } else {
-        cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
+        cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested", cancellation);
       }
-      activeRun?.abortController.abort();
-    } else {
-      cancelStandaloneWorkUnit(resolved.store, workUnit, "work_unit_cancel_requested");
+    } catch (error) {
+      if (!(error instanceof HttpError)) throw error;
+      writeJson(response, error.statusCode, { error: error.code, message: error.message });
+      return;
     }
     const latest = resolved.store.getWorkUnit(workUnit.id) ?? workUnit;
     appendWorkUnitTransitionControlPlaneEvent(
@@ -587,19 +602,13 @@ function isHarnessContinuationEnforced(run: RunSession): boolean {
     && run.requestSnapshot.harnessFeatureSnapshot.continuations === "enforce";
 }
 
-function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: WorkUnit): {
-  readonly cwd: string;
-  readonly workUnit: WorkUnit;
-  readonly attempts: readonly WorkUnitAttempt[];
-  readonly events: readonly RuntimeEvent[];
-  readonly leases: readonly ResourceLease[];
-  readonly semaphoreSlots: readonly RuntimeSemaphoreSlot[];
-  readonly run?: RunSession;
-} {
+function buildWorkUnitDetailResponse(cwd: string, store: RunStore, workUnit: WorkUnit, activeRuns: ActiveRunRegistry): WorkUnitDetailResponse {
+  const attempts = store.listWorkUnitAttempts(workUnit.id);
   return removeUndefined({
     cwd,
     workUnit,
-    attempts: store.listWorkUnitAttempts(workUnit.id),
+    attempts,
+    stopEvidence: readWorkUnitStopEvidence(store, workUnit, attempts, activeRuns),
     events: store.listRuntimeEvents(workUnit.id, { limit: 500 }),
     leases: store.listResourceLeases({ workUnitId: workUnit.id, limit: 500 }),
     semaphoreSlots: store.listRuntimeSemaphoreSlots({ workUnitId: workUnit.id, limit: 500 }),

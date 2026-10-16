@@ -152,10 +152,12 @@ test("RUN-HISTORY-001: 100 groups, keyboard, no-result, retained stale and dual-
   await initPage(page, "en-US", "ling-light", { width: 1440, height: 960 });
   const state = createRunsThreadsFixture(100);
   let failThreadList = false;
+  let failedListRequests = 0;
   await installRunsThreadsFixture(page, state);
   await page.route(/\/threads\?/u, async (route) => {
     const url = new URL(route.request().url());
     if (failThreadList && route.request().method() === "GET" && url.searchParams.get("limit") === "100" && url.searchParams.has("archived")) {
+      failedListRequests++;
       await route.fulfill({ status: 503, json: { error: "focused_list_failure", message: "Focused list refresh failed" } });
       return;
     }
@@ -179,9 +181,11 @@ test("RUN-HISTORY-001: 100 groups, keyboard, no-result, retained stale and dual-
   await search.press("Escape");
   await expect(search).toHaveValue("");
   await expect(search).toBeFocused();
+  await expect(rows).toHaveCount(100);
   failThreadList = true;
   await expect(shell.locator(".runs-page-header").getByRole("button", { name: "Refresh" })).toHaveCount(0);
   await triggerFocusRevalidation(page);
+  await expect.poll(() => failedListRequests).toBeGreaterThan(0);
   await expect(shell.getByText("Some information may be out of date. Reconnect to continue.")).toBeVisible();
   await applyThemeWithoutReload(page, "ling-dark");
   await page.setViewportSize({ width: 1280, height: 800 });
@@ -261,9 +265,15 @@ test("RUN-INTERVENTION-001 and recording: scoped failure, promote, focus, valida
   let failNextGuidance = true;
   await installRunsThreadsFixture(page, state);
   await page.route(/\/runs\/run_ui2_failed\/interventions(?:\?|$)/u, async (route) => {
+    const key = new URL(route.request().url()).searchParams.get("idempotencyKey");
+    if (route.request().method() === "GET" && key) {
+      await route.fulfill({ json: { cwd: "/tmp/ling-stack-workspace", idempotencyKey: key,
+        interventions: state.runInterventions.filter(item => item.sourceRunId === "run_ui2_failed" && item.idempotencyKey === key) } });
+      return;
+    }
     if (route.request().method() === "POST" && failNextGuidance) {
       failNextGuidance = false;
-      await route.fulfill({ status: 503, json: { message: "Injected focused guidance failure" } });
+      await route.fulfill({ status: 400, json: { message: "Injected focused guidance failure" } });
       return;
     }
     await route.fallback();
@@ -302,7 +312,7 @@ test("RUN-INTERVENTION-001 and recording: scoped failure, promote, focus, valida
   await expect(validationError).toBeVisible();
   await expect(dialog.getByRole("button", { name: /Create candidate|Append evidence/ })).toBeDisabled();
   await assertNoOverflow(page);
-  await captureLedger(page, "1440x960-ling-light-recording-validation.png", "recording_validation_reduced_motion", "RUN-DETAIL-001", errors, [expectedInjected503]);
+  await captureLedger(page, "1440x960-ling-light-recording-validation.png", "recording_validation_reduced_motion", "RUN-DETAIL-001", errors, ["Failed to load resource: the server responded with a status of 400 (Bad Request)"]);
 });
 
 test("request identity: a late thread response cannot overwrite the latest search", async ({ page }) => {

@@ -12,6 +12,7 @@ import {
   isRecord,
 } from "./support/mock-state";
 import { openEngineeringChannel } from "./support/test-helpers";
+import { mockUnknownSubmissionReceipt } from "./support/unknown-submission-receipt";
 import {
   assertUi2P9efObservation,
   captureUi2P9efScenario,
@@ -50,7 +51,7 @@ const scenarios = {
   }),
   conversationAlphaRestored: scenario({
     stableId: "p9ef-conversation-alpha-failure-restored",
-    label: "Alpha failure is restored only when Alpha is reopened",
+    label: "Alpha's unconfirmed submission is restored only when Alpha is reopened",
     functionIds: ["CONV-NORMAL-COMPOSER-001", "FEEDBACK-ALERT-001"],
     fixture: "conversation-alpha-beta-late-stream",
     trigger: {
@@ -59,8 +60,8 @@ const scenarios = {
     },
     owner: { surface: "normal-conversation", scope: "thread-stream", key: "thread_p9ef_alpha" },
     assertions: {
-      visible: ["Alpha failure restored on its owning thread"],
-      absent: ["Beta-owned failure"],
+      visible: ["Pending confirmation restored on its owning thread"],
+      absent: ["Beta-owned failure", "Definitive failure from an unknown receipt"],
     },
     expectedHttpFailures: [http503("POST", "^/conversations/stream(?:\\?.*)?$", 1)],
     overflowOwners: [{ label: "Conversation page", selector: "[aria-label='Conversation page']" }],
@@ -243,7 +244,7 @@ test("P9EF-EVIDENCE-01 Beta remains clean after Alpha fails late", async ({ page
   await finish(page, scenarios.conversationBetaClean, runtime);
 });
 
-test("P9EF-EVIDENCE-02 Alpha failure restores on Alpha only", async ({ page }) => {
+test("P9EF-EVIDENCE-02 Alpha pending confirmation restores on Alpha only", async ({ page }) => {
   const runtime = await begin(page, scenarios.conversationAlphaRestored);
   const state = createConversationState();
   await mockDaemon(page, state);
@@ -260,7 +261,8 @@ test("P9EF-EVIDENCE-02 Alpha failure restores on Alpha only", async ({ page }) =
   await response;
   await openConversation(page, navigation, alpha);
   const alphaPage = page.getByLabel("Conversation page");
-  await expect(alphaPage.getByRole("alert")).toContainText("Late Alpha stream failure.");
+  await expect(alphaPage.getByRole("alert")).toContainText("Pending confirmation");
+  await expect(alphaPage.getByText("Late Alpha stream failure.", { exact: true })).toHaveCount(0);
   const composer = alphaPage.getByRole("textbox", { name: "Conversation message" });
   await composer.focus();
   await expect(composer).toBeFocused();
@@ -600,6 +602,7 @@ function installConversation(
 }
 
 async function installLateConversationFailure(page: Page, gate: DeferredGate, message: string): Promise<void> {
+  await mockUnknownSubmissionReceipt(page);
   await page.route(/\/conversations\/stream(?:\?.*)?$/u, async (route) => {
     if (route.request().method() !== "POST") {
       await route.fallback();
