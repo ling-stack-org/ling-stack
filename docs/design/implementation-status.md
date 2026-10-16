@@ -2,7 +2,7 @@
 
 Status: current planning index
 Owner: repository maintainers
-Last verified: 2026-10-16 (P2 row only; other work retains its owning plan's verification date)
+Last verified: 2026-10-17 (P2 row only; other work retains its owning plan's verification date)
 Document type: governance index
 
 ## Purpose
@@ -28,7 +28,7 @@ counts, screenshots, hashes and run diaries belong in CI or Release artifacts.
 
 | Work | Current boundary | Closure condition |
 |---|---|---|
-| [P2 Conversation Experience](five-point-optimization-implementation-plan.md) | UX1-UX3 source/local complete with concerns. Full Web 1475 passes, all 11 local gates reconciled; Core/Daemon and 42 inspected originals retained on unchanged inputs. Desktop follow-up: 1795 pass/0 fail/0 cancel/4 conditional skips, preview 28/a11y 3, isolated native send/theme/resize/reopen and 14 inspected originals. Development metadata bug fixed; source/runtime/7 dirty PNGs bound and owned resources stopped. No UX4 | Four conditional Desktop cases, specialist dirty-tree guard and provider/installed-client/native Windows/packaging/shipping gates remain unverified. Native follow-up uses a local protocol fixture and normal chat, not all-surface external execution. Unknown effects stay blocked; original failed/interrupted reports retained. No commit/push/PR |
+| [P2 Conversation Experience](five-point-optimization-implementation-plan.md) | UX1-UX3 source/local complete with concerns. Rebased onto `origin/main@a44c4377`; Core 3339, Daemon 4899 plus one existing skip, Runner 407, Contracts 88, API 91, Web 520, Desktop Node 2426 plus four conditional skips, renderer 28, accessibility 3 and P2 browser 285 pass. No UX4 | Review/CI/merge plus provider, installed-client, native Windows and packaging gates remain open. Native follow-up uses a local protocol fixture and normal chat, not all-surface external execution. Unknown effects stay blocked; original failed/interrupted reports remain retained. |
 | [Channel Execution Completion](channel-execution-completion-implementation-plan.md) | Required-participant fan-in, operation evidence, TerminalReport/source-Turn convergence, clean-break Attempt fencing, restart recovery, migration rollback/reopen, and aggregate source verification are green on the isolated delivery branch | Review the isolated diff, open PR/CI, merge, verify the actual remote `main` merge commit, then clean exact QA resources |
 | [Channel Context Processing](channel-context-processing-layer-implementation-plan.md) | Channel and direct-message context views exist | Condensation, quote eligibility, persistence and redaction ownership are closed |
 | [Chrome Browser Built-in Plugin](chrome-browser-built-in-plugin-implementation-plan.md) | Manual V1 pairing and six approved browser tools exist; Native Messaging `0.1.1` implementation is active | Automatic Host connection, dual-platform package gates, real Chrome acceptance and Store resubmission close |

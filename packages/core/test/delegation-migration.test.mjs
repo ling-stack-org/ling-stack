@@ -160,13 +160,26 @@ function removeDelegationOverlay(database) {
   database.exec("DROP TABLE delegation_messages; DROP TABLE delegation_steps; DELETE FROM schema_migrations WHERE version=154");
 }
 
+/** Removes only the row-free post-153 overlays so this fixture is a genuine schema153 database. */
+function removePost153ConversationOverlays(database) {
+  database.exec(`ALTER TABLE ling_thread_proposed_plans DROP COLUMN revision;
+    DROP INDEX idx_teammate_direct_submission;
+    ALTER TABLE teammate_direct_messages DROP COLUMN submission_fingerprint;
+    ALTER TABLE teammate_direct_messages DROP COLUMN submission_key;
+    DROP TRIGGER host_attempt_completion_immutable_identity;
+    DROP TRIGGER host_attempt_completion_immutable_terminal;
+    DROP TABLE host_attempt_completions;
+    ALTER TABLE teammate_direct_reply_interventions DROP COLUMN source_attempt_id;
+    DELETE FROM schema_migrations WHERE version IN (163,164,165,166,167,168);`);
+}
+
 test("delegation migration has the release schema 154 identity", () => {
   assert.equal(DELEGATION_MIGRATION_VERSION, 154);
   assert.equal(DELEGATION_MIGRATION_NAME, "create_delegation_tree_v1");
   assert.equal(typeof applyDelegationMigration, "function");
 });
 
-test("real schema153 upgrades through162 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
+test("real schema153 upgrades through168 preserving historical SQL/markers/rows and reopens without synthetic children", async (t) => {
   const f = await fileFixture(t, "full-schema");
   const first = f.own(createSqliteRunStore(f.cwd));
   const channel = first.handle.createChannel({ name: "Legacy", boundPath: f.cwd }, now);
@@ -191,6 +204,7 @@ test("real schema153 upgrades through162 preserving historical SQL/markers/rows 
     DELETE FROM schema_migrations WHERE version IN (161,162);`);
   // Remove only the new row-free sidecar before reconstructing schema153.
   removeQaOverlayForLegacyFixture(old.handle);
+  removePost153ConversationOverlays(old.handle);
   for (const name of RUN_EVALUATION_TASK_SCHEMA_OBJECTS.filter(name => !name.startsWith("sqlite_autoindex_"))) {
     const object = old.handle.prepare("SELECT type FROM sqlite_master WHERE name=?").get(name);
     if (object?.type === "trigger" || object?.type === "index") old.handle.exec(`DROP ${object.type.toUpperCase()} ${name}`);
@@ -220,6 +234,9 @@ test("real schema153 upgrades through162 preserving historical SQL/markers/rows 
   const oldRun = old.handle.prepare("SELECT * FROM run_sessions WHERE id='legacy-run'").get();
   const oldArtifact = old.handle.prepare("SELECT * FROM artifacts WHERE id='legacy-artifact'").get();
   const oldAuthorityColumns = old.handle.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
+  const oldProposedPlanColumns = old.handle.prepare("PRAGMA table_info(ling_thread_proposed_plans)").all();
+  const oldDirectMessageColumns = old.handle.prepare("PRAGMA table_info(teammate_direct_messages)").all();
+  const oldDirectInterventionColumns = old.handle.prepare("PRAGMA table_info(teammate_direct_reply_interventions)").all();
   const oldAuthorityRows = old.handle.prepare("SELECT * FROM mcp_authority_revisions ORDER BY server_id").all();
   const oldProvider = old.handle.prepare("SELECT * FROM provider_presets WHERE id=?").get(provider.id);
   old.close();
@@ -238,16 +255,41 @@ test("real schema153 upgrades through162 preserving historical SQL/markers/rows 
   const progressAndWorkflowTables = new Set(["run_progress_checkpoints", "run_progress_checkpoint_heads",
     "media_workflow_connection_check_authorities"]);
   const workflowCheckTriggers = new Set(["media_workflow_check_insert", "media_workflow_check_update", "media_workflow_check_delete"]);
+  const conversationExperienceOverlay = new Set(["idx_teammate_direct_submission", "host_attempt_completions",
+    "sqlite_autoindex_host_attempt_completions_1", "host_attempt_completion_immutable_identity",
+    "host_attempt_completion_immutable_terminal"]);
   assert.deepEqual(schema(database).filter((row) => !row.tbl_name.startsWith("delegation_")
-    && row.name !== "mcp_authority_revisions" && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name) && !evaluationTaskOverlay.has(row.name)
+    && !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions"].includes(row.name)
+    && !providerOverlay.has(row.name) && !incidentProvenanceOverlay.has(row.name) && !evaluationTaskOverlay.has(row.name)
+    && !conversationExperienceOverlay.has(row.name)
     && !progressAndWorkflowTables.has(row.tbl_name) && !workflowCheckTriggers.has(row.name)),
-  oldSchema.filter(row => row.name !== "mcp_authority_revisions"));
+  oldSchema.filter(row => !["mcp_authority_revisions", "ling_thread_proposed_plans", "teammate_direct_messages", "teammate_direct_reply_interventions"].includes(row.name)));
   const newAuthorityColumns = database.prepare("PRAGMA table_info(mcp_authority_revisions)").all();
   assert.deepEqual(newAuthorityColumns.slice(0, oldAuthorityColumns.length), oldAuthorityColumns);
   assert.deepEqual(newAuthorityColumns.slice(oldAuthorityColumns.length).map(column => column.name),
     ["metadata_request_revision", "metadata_published_revision"]);
+  const proposedPlanColumns = database.prepare("PRAGMA table_info(ling_thread_proposed_plans)").all();
+  assert.deepEqual(proposedPlanColumns.slice(0, oldProposedPlanColumns.length), oldProposedPlanColumns);
+  assert.deepEqual(proposedPlanColumns.slice(oldProposedPlanColumns.length).map(column => column.name), ["revision"]);
+  const directMessageColumns = database.prepare("PRAGMA table_info(teammate_direct_messages)").all();
+  assert.deepEqual(directMessageColumns.slice(0, oldDirectMessageColumns.length), oldDirectMessageColumns);
+  assert.deepEqual(directMessageColumns.slice(oldDirectMessageColumns.length).map(column => column.name),
+    ["submission_key", "submission_fingerprint"]);
+  const directInterventionColumns = database.prepare("PRAGMA table_info(teammate_direct_reply_interventions)").all();
+  assert.deepEqual(directInterventionColumns.slice(0, oldDirectInterventionColumns.length), oldDirectInterventionColumns);
+  assert.deepEqual(directInterventionColumns.slice(oldDirectInterventionColumns.length).map(column => column.name), ["source_attempt_id"]);
   assert.deepEqual(database.prepare("SELECT server_id, server_revision, tools_revision FROM mcp_authority_revisions ORDER BY server_id").all(), oldAuthorityRows);
-  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162) ORDER BY version").all(), oldMarkers);
+  assert.deepEqual(database.prepare("SELECT * FROM schema_migrations WHERE version NOT IN (154,155,156,157,158,159,160,161,162,163,164,165,166,167,168) ORDER BY version").all(), oldMarkers);
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=168").get().name, "teammate_direct_intervention_source_attempt");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=167").get().name, "original_host_tracked_effect_coverage");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=166").get().name, "original_host_tool_free_completion");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=165").get().name, "original_host_attempt_local_completion");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=164").get().name, "teammate_direct_initial_submission_identity");
+  assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=163").get().name, "add_proposed_plan_revision");
+  assert.deepEqual(database.prepare("PRAGMA table_info(host_attempt_completions)").all().map(column => column.name),
+    ["attempt_id", "schema_version", "run_id", "work_unit_id", "runtime_instance_id", "fencing_token", "registered_at", "drained_at",
+      "effect_coverage", "tracked_tool_calls_json"]);
+  assert.equal(database.prepare("SELECT count(*) AS n FROM host_attempt_completions").get().n, 0);
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=162").get().name, "add_media_workflow_connection_check_authority");
   assert.equal(database.prepare("SELECT name FROM schema_migrations WHERE version=161").get().name, "create_run_progress_checkpoint_authority");
   for (const table of progressAndWorkflowTables) assert.equal(database.prepare(`SELECT count(*) AS n FROM ${table}`).get().n, 0);

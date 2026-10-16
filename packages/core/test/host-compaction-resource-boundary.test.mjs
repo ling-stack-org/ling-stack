@@ -4,19 +4,49 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { createSqliteRunStore, DEFAULT_WORKSPACE_ID, invertPatchPlan, planApplyPatch, toRuntimeAttemptFence } from "../dist/index.js";
+import {
+  applyConversationModeToEffectiveRunPolicySnapshot,
+  captureRunProgressCheckpointLineage,
+  createSqliteRunStore,
+  DEFAULT_WORKSPACE_ID,
+  invertPatchPlan,
+  planApplyPatch,
+  resolveSessionRunPolicy,
+  toRuntimeAttemptFence,
+} from "../dist/index.js";
 
 const now = "2026-10-16T00:00:00.000Z", later = "2026-10-16T00:01:00.000Z";
 async function fixture(t, { native = false } = {}) {
   const cwd = await mkdtemp(join(tmpdir(), "ling-compaction-handoff-"));
   let store = createSqliteRunStore(cwd);
   t.after(async () => { store.close(); await rm(cwd, { recursive: true, force: true }); });
-  const unit = store.createWorkUnit({ workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "run", ownerId: "run",
-    idempotencyKey: "unit", status: "running", createdByActor: "system", request: {}, now });
+  const authorizationMode = "always";
+  const workspaceAccessMode = "full_access";
+  const channel = store.createChannel({ name: "Compaction handoff", boundPath: cwd }, now);
+  const task = store.createTask({ channelId: channel.id, title: "Recover once", prompt: "Continue from the sealed checkpoint." }, now);
+  const thread = store.createLingThread({ kind: "task", channelId: channel.id, taskId: task.id,
+    title: task.title, objective: task.prompt }, now);
+  const taskSnapshot = { id: task.id, channelId: channel.id, title: task.title, prompt: task.prompt };
+  const provider = { provider: "fixture", model: "fixture", api: "openai-completions", baseUrl: "https://fixture.invalid/v1" };
+  const preparedBody = { schemaVersion: 1, boundary: "pi-model-context", taskId: task.id,
+    systemPrompt: "Fixture system", userPrompt: task.prompt,
+    model: { id: "fixture", provider: "fixture", api: "openai-completions", baseUrl: provider.baseUrl,
+      reasoning: false, input: ["text"], contextWindow: 100_000, maxTokens: 8192 },
+    thinkingLevel: "off", tools: [] };
+  const execution = { schemaVersion: 1, runnerId: "pi", input: { cwd, task: taskSnapshot, provider, tools: [],
+    systemPrompt: "Fixture system" }, toolHydrationEnabled: false,
+    preparedInput: { ...preparedBody, fingerprint: createHash("sha256").update(JSON.stringify(preparedBody)).digest("hex") } };
+  const policy = applyConversationModeToEffectiveRunPolicySnapshot(resolveSessionRunPolicy({
+    workspacePolicy: store.getApprovalPolicy(), authorizationMode, workspaceAccessMode, channelBoundPath: cwd,
+  }).snapshot, thread.conversationMode.mode);
+  const unit = store.createWorkUnit({ workspaceId: DEFAULT_WORKSPACE_ID, kind: "task_run", ownerType: "task", ownerId: task.id,
+    taskId: task.id, channelId: channel.id, idempotencyKey: "unit", status: "running", createdByActor: "system", request: {}, now });
   const attempt = store.createWorkUnitAttempt({ workUnitId: unit.id, attemptNumber: 1,
     runtimeInstanceId: "original-runtime", runnerId: "pi", status: "started", now });
-  const run = store.createRun({ id: "run", cwd, workUnitId: unit.id, taskId: "task", providerName: "fixture", providerModel: "fixture",
-    taskSnapshot: {}, providerSnapshot: {}, requestSnapshot: {}, contextViewId: "context", createdAt: now });
+  const run = store.createRun({ id: "run", cwd, workUnitId: unit.id, taskId: task.id, channelId: channel.id, threadId: thread.id,
+    providerName: "fixture", providerModel: "fixture", taskSnapshot, providerSnapshot: {},
+    requestSnapshot: { authorizationMode, workspaceAccessMode, effectivePolicySnapshot: policy, runnerExecutionInput: execution },
+    contextViewId: "context", contextViewCreatedAt: now, createdAt: now });
   store.linkRunToWorkUnit(run.id, unit.id, now); store.markRunStarted(run.id, now);
   const source = { runId: run.id, ...toRuntimeAttemptFence(attempt) };
   let nativeReceipt;
@@ -43,18 +73,32 @@ async function fixture(t, { native = false } = {}) {
   store.acquireRuntimeSemaphoreSlot({ ...source, workspaceId: DEFAULT_WORKSPACE_ID, resourceType: "runner", resourceKey: "pi", limit: 2,
     ownerType: "work_unit_attempt", ownerId: attempt.id, acquiredAt: now, expiresAt: "2099-01-01T00:00:00.000Z" });
   const context = store.createArtifact({ runId: run.id, type: "json", path: "context.json", contentType: "application/vnd.ling.pi-compaction-context+json",
-    sealedPayload: { boundary: "pi-compaction-context", messages: [] }, createdAt: now });
+    sealedPayload: { schemaVersion: 1, boundary: "pi-compaction-context", runId: run.id, attemptId: attempt.id,
+      contextViewId: run.contextViewId, model: run.providerModel, messages: [] }, createdAt: now });
   const start = store.appendExecutionEvent(run.id, source, "context_compaction_start", { reason: "threshold",
     policyVersion: "pi_sdk_lifecycle_v1", attemptId: attempt.id, checkpointArtifactId: context.id });
   const summary = store.createArtifact({ runId: run.id, type: "json", path: "summary.json", contentType: "application/vnd.ling.run-compaction-summary+json",
-    sealedPayload: { summary: "Keep completed tools." }, createdAt: now });
+    sealedPayload: { schemaVersion: 1, boundary: "run-compaction-summary", runId: run.id, attemptId: attempt.id,
+      sourceEventSeq: start.seq, summary: "Keep completed tools.", modelView: [] }, createdAt: now });
+  const lineage = captureRunProgressCheckpointLineage(store, store.getRun(run.id), policy).lineage;
   const prepared = store.createRunCompactionCheckpoint({ runId: run.id, attemptId: attempt.id, sourceEventSeq: start.seq,
     contextSnapshotArtifactId: context.id, summaryArtifactId: summary.id, summaryContentSha256: summary.contentSha256,
     contextViewId: "context", providerName: "fixture", providerModel: "fixture", policyVersion: "pi_sdk_lifecycle_v1",
-    policySnapshotFingerprint: "policy", workspaceProvenanceWatermark: store.getLatestWorkspaceProvenanceWatermark(), objective: "Continue", createdAt: now });
+    policySnapshotFingerprint: lineage.policySnapshotFingerprint,
+    workspaceProvenanceWatermark: lineage.workspaceProvenanceWatermark, objective: task.prompt, createdAt: now });
   const checkpoint = store.transitionRunCompactionCheckpoint({ id: prepared.id, expectedRevision: 0, state: "committed", now });
   store.appendExecutionEvent(run.id, source, "context_compaction_end", { reason: "threshold", policyVersion: "pi_sdk_lifecycle_v1",
     attemptId: attempt.id, outcome: "sdk_installed", willRetry: false });
+  const replayBody = { schemaVersion: 1, boundary: "runner-continuation-replay", runId: run.id, workUnitId: unit.id,
+    sourceRunId: run.id, sourceWorkUnitId: unit.id, origin: "daemon_recovery", contextViewId: run.contextViewId,
+    sourceFence: source, runnerId: "pi", runnerCapabilityRevision: "pi:v1",
+    policySnapshotFingerprint: lineage.policySnapshotFingerprint,
+    preparedExecutionFingerprint: lineage.preparedExecutionFingerprint,
+    acceptedInstructionsFingerprint: lineage.acceptedInstructionsFingerprint,
+    execution, artifactRefs: [context.id, summary.id] };
+  const replay = store.createArtifact({ runId: run.id, type: "json", path: "replay.json",
+    contentType: "application/vnd.ling.runner-continuation-replay+json",
+    sealedPayload: { ...replayBody, fingerprint: createHash("sha256").update(JSON.stringify(replayBody)).digest("hex") }, createdAt: now });
   const inventory = { schemaVersion: 1, toolCallIds: native ? ["write-1"] : ["read-1"],
     settledBuiltinReads: native ? [] : [{ toolCallId: "read-1", toolName: "read" }] };
   const seal = extra => store.sealHostCompactionResourceBoundary({ source, checkpointId: checkpoint.id, inventory, now, ...extra });
@@ -65,7 +109,7 @@ async function fixture(t, { native = false } = {}) {
   const activationInput = artifactId => ({ preparation: {
     runId: run.id, workUnitId: unit.id, sourceFence: source, expectedTargetAttemptId: attempt.id, origin: "daemon_recovery",
     strategy: "deterministic_replay", runnerId: "pi", runnerCapabilityRevision: "pi:v1", contextViewId: "context",
-    contextSnapshotArtifactId: context.id, idempotencyKey: "recovery", generation: 1,
+    contextSnapshotArtifactId: replay.id, idempotencyKey: "recovery", generation: 1,
     targetAttempt: { runtimeInstanceId: "successor-runtime", runnerId: "pi" }, now: later,
   }, expectedRunStatus: "running", expectedWorkUnitStatus: "stale", actor: "system", reason: "daemon_recovery", now: later,
   compactionResourceBoundary: { artifactId, checkpointId: checkpoint.id } });
@@ -152,7 +196,7 @@ test("the initial checkpoint tolerates only its pre-install summary stream", asy
 
 test("an SDK turn-start marker without provider progress does not invalidate the installed checkpoint", async t => {
   const f = await fixture(t);
-  f.store.appendExecutionEvent(f.run.id, f.source, "turn_start", {});
+  f.store.appendExecutionEvent(f.run.id, f.source, "turn_start", { attemptId: f.attempt.id });
   const artifactId = f.seal();
   assert.equal(typeof artifactId, "string");
   f.lose();

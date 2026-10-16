@@ -84,7 +84,7 @@ test("search pauses tail-follow even before a result scroll", async ({ page }) =
   await expect(page.getByRole("button", { name: "Jump to latest message" })).toBeVisible();
 });
 
-test("keyboard scroll intent is reported without stealing editable or button keys", async ({ page }) => {
+test("keyboard reading and control activation report intent without stealing editable or button keys", async ({ page }) => {
   await page.goto("/e2e/support/p2-reading.html?manual");
   await page.evaluate(async () => {
     const path = "/e2e/support/p2-reading-harness.tsx";
@@ -96,7 +96,7 @@ test("keyboard scroll intent is reported without stealing editable or button key
   expect(await page.evaluate(() => window.p2ScrollIntentHarness.counts())).toEqual({ intentCount: 1, handlerCount: 1 });
   await page.getByRole("textbox", { name: "Editable message" }).press("ArrowUp");
   await page.getByRole("button", { name: "Disclosure" }).press("Space");
-  expect(await page.evaluate(() => window.p2ScrollIntentHarness.counts())).toEqual({ intentCount: 1, handlerCount: 3 });
+  expect(await page.evaluate(() => window.p2ScrollIntentHarness.counts())).toEqual({ intentCount: 2, handlerCount: 3 });
 });
 
 test("switching threads resets follow state instead of inheriting the old reader", async ({ page }) => {

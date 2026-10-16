@@ -2,9 +2,10 @@
 
 Status: current planning contract for P2 conversation experience and P5 test duration
 Owner: conversations, Web/Desktop and CI maintainers
-Last verified: 2026-10-16 (P2 source/local closure plus isolated native Desktop follow-up; installed-client/provider/platform release acceptance remains open)
+Last verified: 2026-10-17 (P2 rebased onto `origin/main@a44c4377`; source/local revalidation complete and PR delivery authorized; installed-client/provider/platform release acceptance remains open)
 Document type: cross-feature product and architecture contract
 Planning baseline: `b529a4b475f41442b29b59ff5bfeeece8879c74e` (`origin/main`)
+Delivery integration baseline: `a44c4377832b74416cbd332e626a322f9f35ab8d` (`origin/main`)
 
 ## Purpose And Authority
 
@@ -24,6 +25,10 @@ verification. Implementation uses `codex/p2-conversation-experience` at Main
 `4a6480196b0656e733b11376f088494f168ad47f`. The original dirty checkout, local
 Main, independent P5 worktree, user data, credentials and model configuration
 remain unchanged. Commit, push, PR, installation and packaging are not authorized.
+
+That sentence records the original 2026-10-13 boundary. On 2026-10-17 the user
+separately authorized rebasing, renewed source/local verification, push and PR.
+Installation, packaging, external-provider and native Windows acceptance remain open.
 
 ## Evidence And Baseline
 
@@ -139,6 +144,16 @@ the actual daemon bundle, three metadata files and signed local Office helper.
 Design-specialist completion is not claimed after its dirty-tree guard; manual
 original-image inspection is separate. No installed-client, external-provider,
 native Windows, packaging or shipping acceptance is implied. No UX4 is added.
+
+Delivery revalidation on 2026-10-17 uses `origin/main@a44c4377` as its exact
+integration baseline. Core passes 3339 cases; Daemon passes 4899 with one existing
+skip; Runner Pi 407, Contracts 88, API client 91 and Web 520 pass. Desktop Node
+passes 2426 with four conditional Windows skips; renderer 28 and accessibility 3
+pass. The final P2 browser union passes all 285 cases after a stale keyboard-intent
+expectation was updated to the approved interaction contract. Root typecheck, lint,
+build, the 55-locale i18n audit, documentation links and whitespace checks pass.
+These results do not add installed-client, external-provider, native Windows,
+packaging or shipping evidence.
 
 Virtualizer measurement compensation is layout movement, not reader navigation,
 even when its native scroll event precedes the new row transforms/total-height
@@ -342,7 +357,7 @@ still wins. This observes existing off/shadow execution, never enables enforceme
 
 For supported tracked effects, the original ended SDK inventory and captured Host
 callback tool-call IDs may establish `pi_tracked_tools_v1` only when Core independently
-revalidates a durable, exact-source executor settlement for every ID. Migration 157
+revalidates a durable, exact-source executor settlement for every ID. Migration 167
 stores the closed inventory as identifiers, never arguments, command text or results.
 Read, release and restart paths revalidate its executor facts; empty inventories,
 missing IDs, unconfirmed Bash descendants and unknown remote outcomes cannot qualify.
@@ -386,7 +401,7 @@ and message identity as soon as execution starts; stopping that execution uses t
 existing fenced stop path. A claimed queue record cannot be removed to admit a
 second concurrent dispatcher.
 Preserve root parentage, FIFO order and one claimed continuation per queue. Filter
-eligible private queue statuses before pagination. Migration 158 captures private
+eligible private queue statuses before pagination. Migration 168 captures private
 guidance's original Attempt; source drift before or during preparation cannot adopt
 a successor. Legacy ambiguous multi-Attempt guidance remains blocked.
 

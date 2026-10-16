@@ -59,7 +59,18 @@ function mayReleaseCancelledAttemptResources(database: DatabaseSync, fence: Runt
   const completion = database.prepare(`SELECT run_id,drained_at,effect_coverage,tracked_tool_calls_json FROM host_attempt_completions
     WHERE work_unit_id=? AND attempt_id=? AND runtime_instance_id=? AND fencing_token=?`)
     .get(fence.workUnitId, fence.attemptId, fence.runtimeInstanceId, fence.fencingToken);
-  if (completion && completion.drained_at === null) return false;
+  const approvedApprovalHandoff = completion && owner.run_status === "waiting_for_approval"
+    && owner.unit_status === "waiting_for_approval"
+    && (owner.attempt_status === "waiting_for_approval"
+      || owner.attempt_status === "lost" && owner.attempt_error_code === "runtime_suspend")
+    && database.prepare(`SELECT 1 FROM approval_checkpoints AS checkpoint JOIN approval_requests AS approval
+      ON approval.id=checkpoint.approval_id AND approval.run_id=checkpoint.run_id
+      WHERE checkpoint.run_id=? AND checkpoint.status='approved' AND approval.status='approved'
+        AND json_extract(checkpoint.resume_basis_json,'$.workUnitId')=?
+        AND (json_extract(checkpoint.resume_basis_json,'$.priorAttemptId')=?
+          OR json_extract(checkpoint.runner_resume_handle_json,'$.attemptId')=?) LIMIT 1`)
+      .get(completion.run_id!, fence.workUnitId, fence.attemptId, fence.attemptId);
+  if (completion && completion.drained_at === null && !approvedApprovalHandoff) return false;
   if (completion) {
     const suspendedApproval = owner.attempt_status === "lost" && owner.attempt_error_code === "runtime_suspend"
       && owner.run_status === "waiting_for_approval" && owner.unit_status === "waiting_for_approval"
@@ -69,7 +80,8 @@ function mayReleaseCancelledAttemptResources(database: DatabaseSync, fence: Runt
           AND (json_extract(checkpoint.resume_basis_json,'$.priorAttemptId')=?
             OR json_extract(checkpoint.runner_resume_handle_json,'$.attemptId')=?) LIMIT 1`)
         .get(completion.run_id!, fence.attemptId, fence.attemptId);
-    if (!suspendedApproval && !["succeeded", "failed", "cancelled"].includes(String(owner.run_status))) return false;
+    if (!approvedApprovalHandoff && !suspendedApproval
+      && !["succeeded", "failed", "cancelled"].includes(String(owner.run_status))) return false;
     // Ordinary completion keeps the existing execution-policy semantics, but a
     // positively recorded unknown/pending Host effect vetoes every release path.
     if (readHostOperationBlockers(database, { runId: String(completion.run_id), ...fence }, releasedAt).length) return false;

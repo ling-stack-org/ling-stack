@@ -2,9 +2,10 @@
 
 Status: P2 UX1-UX3 source/local complete with concerns; release acceptance open; P5 independently owned
 Owner: conversations, Web/Desktop and CI maintainers
-Last verified: 2026-10-16 (full Web 1475 pass, all 11 local gates reconciled; Desktop Node follow-up 1795 pass/4 conditional skips, isolated native checks; release concerns retained)
+Last verified: 2026-10-17 (P2 rebased onto `origin/main@a44c4377`; renewed source/local verification complete and PR delivery authorized; release concerns retained)
 Document type: protected implementation and acceptance plan
 Planning baseline: `b529a4b475f41442b29b59ff5bfeeece8879c74e`
+Delivery integration baseline: `a44c4377832b74416cbd332e626a322f9f35ab8d`
 
 ## Read This Before Continuing
 
@@ -17,6 +18,11 @@ Implementation baseline: `4a6480196b0656e733b11376f088494f168ad47f`, verified ag
 remote Main. Worktree: `codex/p2-conversation-experience`. Preserve other worktrees,
 databases, model configuration and independent P5 work. Installation, commit, push
 and PR are not authorized by this implementation request.
+
+That is the historical 2026-10-13 authorization boundary. On 2026-10-17 the
+user authorized rebasing onto current Main, renewed source/local verification,
+push and PR. Packaging, installation, external-provider and native Windows gates
+remain outside this delivery.
 
 Detailed historical verification stays in local SDD evidence rather than this
 delivery queue. Documentation checks are not functional acceptance.
@@ -521,7 +527,7 @@ focus, unknown receipt reload, eventual original receipt recovery and one POST.
 The preceding affected browser union ended 116 PASS; it predates the subsequent
 private editor changes and is not full UX2 acceptance.
 
-The user approved minimal persistent Host completion facts. Migration 155 stores
+The user approved minimal persistent Host completion facts. Migration 165 stores
 only original Run/WorkUnit/Attempt/runtime/token identity and registration/drain
 timestamps. Core captures the original promise while its source is active and
 revalidates the historical source under the completion write lock. Production
@@ -566,6 +572,25 @@ UX2 remains active. Full supported recovery/Attempt lineage, physical stop and
 resource closure, and full decision/question acceptance must close before UX3.
 
 ### UX3 Batch 3: Process Display, Performance And Accessibility
+
+#### Delivery Revalidation (2026-10-17)
+
+The P2 branch is integrated against `origin/main@a44c4377`. Migration identities
+164 through 168 follow Main's migration 163 and the real schema-153 upgrade test
+proves their ordered installation and reopen behavior. Core 3339, Daemon 4899
+with one existing skip, Runner Pi 407, Contracts 88, API client 91 and Web 520
+pass. Desktop Node passes 2426 with four conditional Windows skips; renderer 28
+and accessibility 3 pass. Root typecheck, lint and build, the 55-locale i18n audit,
+documentation links and whitespace checks pass.
+
+The final P2 browser union passes 285/285. It covers normal, channel, private,
+topic and branch recovery; attachment ownership; approval and stop reconciliation;
+reading stability; process accessibility; light/dark themes; and 1280x800 plus
+1440x960 UX3 surfaces. A first revalidation run passed 284 and exposed one obsolete
+keyboard-intent expectation after interactive activation began pausing auto-follow;
+the focused regression and complete union both pass after aligning that assertion.
+This remains source/local evidence only. Installed clients, external providers,
+native Windows, packaging and shipping remain release gates.
 
 #### Desktop Follow-Up Acceptance (2026-10-16)
 

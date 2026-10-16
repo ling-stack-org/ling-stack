@@ -149,6 +149,10 @@ export class SqliteHarnessCommitCoordinator {
         }))) {
         throw new ExistingRunContinuationActivationAbort("continuation.activation_checkpoint_unverified");
       }
+      if (input.recoveryProgressCheckpointGuard
+        && !this.progressCheckpoints.releaseSourceResourcesWithinTransaction(input)) {
+        throw new ExistingRunContinuationActivationAbort("continuation.activation_checkpoint_unverified");
+      }
 
       const workUnitTransition = this.ports.transitionWorkUnitStatus({
         workUnitId: workUnit.id,

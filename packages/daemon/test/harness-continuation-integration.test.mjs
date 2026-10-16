@@ -967,7 +967,23 @@ test("A21 real non-compacted worker crash restores the exact committed SDK and w
   coordinator.registerStore(fixture.store);
   coordinator.start();
   await waitForCondition(() => errors.length > 0 || ["succeeded", "failed"].includes(fixture.store.getRun(fixture.source.runId)?.status),
-    "non-compacted checkpoint recovery did not finish", 10_000);
+    "non-compacted checkpoint recovery did not finish", 10_000).catch(error => {
+    const run = fixture.store.getRun(fixture.source.runId);
+    const workUnit = fixture.store.getWorkUnit(fixture.source.workUnitId);
+    assert.fail(JSON.stringify({ message: error.message, errors,
+      run: run && { status: run.status, errorCode: run.errorCode, errorMessage: run.errorMessage },
+      workUnit: workUnit && { status: workUnit.status, activeAttemptId: workUnit.activeAttemptId,
+        errorCode: workUnit.errorCode, errorMessage: workUnit.errorMessage },
+      attempts: fixture.store.listWorkUnitAttempts(fixture.source.workUnitId).map(attempt => ({ id: attempt.id,
+        status: attempt.status, errorCode: attempt.errorCode, errorMessage: attempt.errorMessage })),
+      leases: fixture.store.listResourceLeases({ workUnitId: fixture.source.workUnitId, limit: 100 }).map(lease => ({
+        status: lease.status, attemptId: lease.attemptId, releaseReason: lease.releaseReason })),
+      semaphores: fixture.store.listRuntimeSemaphoreSlots({ workUnitId: fixture.source.workUnitId, limit: 100 }).map(slot => ({
+        status: slot.status, attemptId: slot.attemptId, releaseReason: slot.releaseReason })),
+      completion: fixture.store.getHostAttemptCompletion({ runId: fixture.source.runId,
+        ...toRuntimeAttemptFence(fixture.store.getWorkUnitAttempt(fixture.source.attemptId)) }),
+      dispatches: runner.dispatches, requests: transport.requests.length }));
+  });
   const recoveredRun = fixture.store.getRun(fixture.source.runId);
   t.diagnostic(JSON.stringify({ recoveryStatus: recoveredRun.status, error: recoveredRun.errorMessage, errors,
     contextRoles: runner.contexts.map(context => context.map(message => message.role)),
