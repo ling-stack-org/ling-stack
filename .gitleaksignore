@@ -49,3 +49,31 @@ c051c30ef0d747a8046eb98807cc4f9fad3b186a:packages/core/test/teammate-direct-inpu
 8347df471cbf8b2175b216561d3e2a5568296f99:apps/desktop/tests/host-capability-daemon-client.test.mjs:generic-api-key:100
 8347df471cbf8b2175b216561d3e2a5568296f99:apps/desktop/tests/host-local-preview-manager.test.mjs:generic-api-key:119
 8347df471cbf8b2175b216561d3e2a5568296f99:packages/daemon/test/host-capability-bridge-controller.test.mjs:generic-api-key:63
+
+# Exact historical Main fixtures reviewed on 2026-10-17 with Gitleaks v8.30.1.
+# Idempotency labels and an explicit fake Provider key, not authentication keys.
+08437229e2f163e7bace7b97ce7822d2d7c92ecb:packages/daemon/test/workspace-snapshot-queue-busy-request.test.mjs:generic-api-key:114
+7d97eb8e5239d36ec4c93cb7615b7a56c169b99b:packages/daemon/test/automation-context-item-budget.test.mjs:generic-api-key:356
+bfbcac2e1c21adbb9d88e55af2865987b86ec7cd:packages/daemon/test/provider-runtime-consumers.test.mjs:generic-api-key:203
+
+# Dedicated offline TLS fixture key; it is trusted only by the matching test CA.
+de71ccccd55f21e909cb597347bcc6e1f81103e3:packages/daemon/test/media-native-transport.test.mjs:private-key:21
+
+# SHA-256 values in the reviewed packaged source manifest, not API keys.
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:121
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:238
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:250
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:313
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:435
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:546
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:672
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:747
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:855
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:864
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:865
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:873
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1063
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1250
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1251
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1252
+8fbb9e106d1b0e85f07a3d05abaea73b088b5382:native/office-local/reviewed-packaged-source-v1.json:generic-api-key:1253
