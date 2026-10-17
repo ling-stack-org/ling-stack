@@ -44,9 +44,9 @@ provider configuration and API key are required, and provider charges apply.
 
 ![Ling Stack English homepage in a fresh workspace](docs/assets/ling-workspace-home.jpg)
 
-English interface in a fresh local workspace before configuring a model. This capture
-shows the workspace layout, not a completed task. Follow the review guide above to
-try your own first collaboration.
+English interface in a fresh local workspace with a non-secret demonstration model
+selected. No external model request was made. This capture shows the workspace layout,
+not a completed task. Follow the review guide above to try your own first collaboration.
 
 ## Who Is It For?
 

@@ -37,7 +37,7 @@ Passing an earlier boundary does not authorize the next one.
 | Main branch protection | Verification deferred | Online settings were not confirmed in this preparation pass. |
 | Actions policy | File configuration present | The generic workflow has scoped permissions and pinned actions. Online organization/repository policy was not reverified. |
 | Git-history secret scan | Verified for current main and additional remote head | Complete 1,112-commit graph; 881 scanned diff commits match Git; unchanged policy and 32 fixture fingerprints. See scope below. |
-| Public UI screenshots | Ready locally | New homepage capture from a fresh workspace before model configuration; historical screenshots with maintainer paths were removed in earlier cleanup. |
+| Public UI screenshots | Ready locally | New English Ling Light homepage capture from an isolated fresh workspace with a non-secret demonstration model selected and no external model request; historical screenshots with maintainer paths were removed in earlier cleanup. |
 | Changelog and release policy | Ready locally | `CHANGELOG.md` and `docs/release/README.md`; current product version is `0.1.2-alpha.1`. |
 | Source startup | Verified locally | Frozen install, CLI/daemon/Web dependency build, fresh daemon health, homepage, and Model Workbench navigation; no live model task. |
 | Desktop development | Windows development package and runtime checks recorded; full binary acceptance pending | Mac packaging lacks the required Office review record. Windows development scope and limits are in the [test report](../release/evidence/windows-dev-20261009/README.md). |
