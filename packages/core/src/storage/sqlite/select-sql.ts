@@ -729,6 +729,7 @@ export function skillSourceSnapshotSelectSql(whereClause: string): string {
       upstream_name,
       upstream_version,
       upstream_skill_path,
+      bundle_update_mode,
       source_checksum,
       raw_skill_markdown,
       raw_skill_markdown_artifact_id,

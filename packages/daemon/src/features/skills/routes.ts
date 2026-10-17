@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
 import { createHash } from "node:crypto";
-import { copyFile, mkdir, readFile, stat } from "node:fs/promises";
-import { basename, dirname, extname, relative, resolve, sep } from "node:path";
+import { readFile } from "node:fs/promises";
+import { relative, resolve, sep } from "node:path";
 import {
   analyzeSkillDuplicate,
   buildEffectiveTeammateSkills,
@@ -44,12 +44,12 @@ import {
   type SkillPackSource,
   type SkillRegistryEntry,
   type SkillSourceArtifact,
-  type SkillSourceFileRef,
   type SkillSourceScanRoot,
   type SkillSourceSyncPreviewRecord,
   type SkillSourceSyncPreviewReport,
   type SkillSourceSnapshot,
   type SkillSourceWarning,
+  SkillSourcePublicationError,
 } from "@ling-stack/core";
 import type {
   SkillRecordingEligibilityActionHint,
@@ -58,6 +58,7 @@ import type {
 } from "@ling-stack/contracts";
 import type { ResolvedDaemonConfig } from "../../config.js";
 import { HttpError } from "../../errors.js";
+import { updateBundledSourceMode } from "./bundled-source-mode.js";
 import type { ControlPlaneEventHub } from "../control-plane/events.js";
 import { appendControlPlaneEvent } from "../control-plane/events.js";
 import type { RunStoreRegistry } from "../../runtime/store-registry.js";
@@ -94,6 +95,7 @@ import { resolveAiTeammateReference } from "../teammates/identity.js";
 import { handleSkillHardDelete } from "./hard-delete-route.js";
 import { handleManagedOfficialSkillSourceRoute, publicSourceState, refreshManagedOfficialGstackSkillSource, saveManagedOfficialGstackSubscription } from "./managed-official-skill-source-route.js";
 import { handleSkillRevisionRoute } from "./revision-routes.js";
+import { prepareSkillSourcePublication } from "./source-publication.js";
 
 export async function handleSkillRoute(
   request: IncomingMessage,
@@ -774,7 +776,7 @@ export async function handleSkillRoute(
     }
 
     if (route.kind === "skill" && route.action === "source") {
-      if (request.method !== "GET") {
+      if (request.method !== "GET" && request.method !== "PUT") {
         writeJson(response, 405, { error: "method_not_allowed", message: `${request.method} is not supported for /skills/:id/source` });
         return;
       }
@@ -785,6 +787,13 @@ export async function handleSkillRoute(
       const snapshot = store.getSkillSourceSnapshot(route.skillId);
       if (!snapshot) {
         writeJson(response, 404, { error: "skill_source_snapshot_not_found", message: `Skill source snapshot not found: ${route.skillId}` });
+        return;
+      }
+      if (request.method === "PUT") {
+        const body = await readJsonBody(request, config.maxBodyBytes);
+        const updated = updateBundledSourceMode(store, snapshot, body, new Date().toISOString());
+        appendSkillRegistryChangedEvent(store, controlPlaneEvents, cwd, "source_update_mode", route.skillId);
+        writeJson(response, 200, { cwd, snapshot: updated });
         return;
       }
       writeJson(response, 200, { cwd, snapshot });
@@ -1441,196 +1450,40 @@ async function publishGstackSkillSourceSync(input: {
     }
   }
 
-  if (newRecords.length > 0) {
-    const draft = input.store.createSkillImportDraft({
-      source: "gstack",
-      packId: "gstack-source-sync",
-      name: "GStack source sync",
-      version: input.preview.upstreamVersions[0],
-      description: "Source-backed gstack skills published through explicit source sync.",
-      definitions: newRecords.map((record) => {
-        if (!record.definitionPreview) {
-          throw new HttpError(409, "skill_source_sync_missing_definition", `No normalized skill definition preview is available for ${record.skillId}.`);
-        }
-        return {
-          definition: record.definitionPreview,
-          visibility: {
-            workspaceVisible: true,
-            promotableToWorkspace: true,
-          },
-        };
-      }),
-    }, input.now);
-    input.store.publishSkillImportDraft(draft.id, input.now);
-  }
-
-  const snapshots: SkillSourceSnapshot[] = [];
-  const artifacts: SkillSourceArtifact[] = [];
-  for (const record of selectedRecords) {
-    if (!record.snapshotPreview) {
-      throw new HttpError(409, "skill_source_sync_missing_snapshot", `No source snapshot preview is available for ${record.skillId}.`);
-    }
-    if (record.state === "unchanged" && record.existingSnapshotId) {
-      const existing = input.store.getSkillSourceSnapshotById(record.existingSnapshotId);
-      if (existing) {
-        snapshots.push(existing);
+  const newSkills: CreateSkillImportDraftInput | undefined = newRecords.length > 0 ? {
+    source: "gstack",
+    packId: "gstack-source-sync",
+    name: "GStack source sync",
+    version: input.preview.upstreamVersions[0],
+    description: "Source-backed gstack skills published through explicit source sync.",
+    definitions: newRecords.map((record) => {
+      if (!record.definitionPreview) {
+        throw new HttpError(409, "skill_source_sync_missing_definition", `No normalized skill definition preview is available for ${record.skillId}.`);
       }
-      continue;
-    }
-    if (record.existingSnapshotId) {
-      input.store.archiveSkillSourceSnapshot(record.skillId, input.now);
-    }
-    const snapshot = input.store.upsertSkillSourceSnapshot({
-      ...record.snapshotPreview,
-      reviewStatus: "published",
-    }, input.now);
-    snapshots.push(snapshot);
-    if (input.publishArtifacts) {
-      artifacts.push(...await persistSkillSourceArtifactsForRecord(input.store, snapshot, record, input.now));
-      const updatedSnapshot = input.store.getSkillSourceSnapshotById(snapshot.id);
-      if (updatedSnapshot) {
-        snapshots[snapshots.length - 1] = updatedSnapshot;
-      }
-    }
+      return {
+        definition: record.definitionPreview,
+        visibility: {
+          workspaceVisible: true,
+          promotableToWorkspace: true,
+        },
+      };
+    }),
+  } : undefined;
+  const prepared = await prepareSkillSourcePublication(input.store, selectedRecords, input.publishArtifacts);
+  let published;
+  try {
+    published = input.store.publishSkillSourceBatch({ records: prepared.records, newSkills }, input.now);
+  } catch (error) {
+    await prepared.cleanup();
+    if (error instanceof SkillSourcePublicationError) throw new HttpError(409, error.code, error.message);
+    throw error;
   }
+  await prepared.cleanup(new Set(published.snapshots.map(snapshot => snapshot.id)));
 
   const skillsById = new Map(listEffectiveSkillRegistryEntries(input.store).map((skill) => [skill.id, skill]));
   const skills = selectedSkillIds.map((skillId) => skillsById.get(skillId)).filter((skill): skill is SkillRegistryEntry => Boolean(skill));
   appendSkillRegistryChangedEvent(input.store, input.controlPlaneEvents, input.cwd, "source_publish", selectedSkillIds[0] ?? "default");
-  return { skills, snapshots, artifacts };
-}
-
-async function persistSkillSourceArtifactsForRecord(
-  store: SkillRouteStore,
-  snapshot: SkillSourceSnapshot,
-  record: SkillSourceSyncPreviewRecord,
-  now: string,
-): Promise<SkillSourceArtifact[]> {
-  const artifacts: SkillSourceArtifact[] = [];
-  if (!record.sourcePath) {
-    return artifacts;
-  }
-  const skillDirectory = dirname(record.sourcePath);
-  const sourceStats = await stat(record.sourcePath).catch(() => undefined);
-  if (sourceStats?.isFile()) {
-    const skillArtifact = await copySkillSourceArtifact({
-      store,
-      snapshotId: snapshot.id,
-      sourceFilePath: record.sourcePath,
-      sourceRoot: skillDirectory,
-      logicalPath: "SKILL.md",
-      kind: "other",
-      checksum: record.sourceChecksum ?? snapshot.sourceChecksum,
-      sizeBytes: sourceStats.size,
-      reviewStatus: "published",
-      includedInRuntime: false,
-      now,
-    });
-    artifacts.push(skillArtifact);
-    if (record.sourceSizeBytes !== undefined && record.sourceSizeBytes > Buffer.byteLength(snapshot.rawSkillMarkdown, "utf8")) {
-      store.upsertSkillSourceSnapshot({
-        skillId: snapshot.skillId,
-        sourceKind: snapshot.sourceKind,
-        sourcePath: snapshot.sourcePath,
-        upstreamName: snapshot.upstreamName,
-        upstreamVersion: snapshot.upstreamVersion,
-        upstreamSkillPath: snapshot.upstreamSkillPath,
-        sourceChecksum: snapshot.sourceChecksum,
-        rawSkillMarkdown: snapshot.rawSkillMarkdown,
-        rawSkillMarkdownArtifactId: skillArtifact.id,
-        agentMetadata: snapshot.agentMetadata,
-        referencedFiles: snapshot.referencedFiles,
-        warnings: snapshot.warnings,
-        reviewStatus: snapshot.reviewStatus,
-        id: snapshot.id,
-      }, now);
-    }
-  }
-
-  for (const fileRef of record.referencedFiles) {
-    const sourceFilePath = resolve(skillDirectory, fileRef.path);
-    if (!isPathInside(skillDirectory, sourceFilePath)) {
-      continue;
-    }
-    const fileStats = await stat(sourceFilePath).catch(() => undefined);
-    if (!fileStats?.isFile() || !fileRef.checksum || fileRef.sizeBytes === undefined) {
-      continue;
-    }
-    artifacts.push(await copySkillSourceArtifact({
-      store,
-      snapshotId: snapshot.id,
-      sourceFilePath,
-      sourceRoot: skillDirectory,
-      logicalPath: fileRef.path,
-      kind: fileRef.kind,
-      checksum: fileRef.checksum,
-      sizeBytes: fileRef.sizeBytes,
-      reviewStatus: fileRef.kind === "reference" || fileRef.kind === "agent-metadata" ? "published" : "reviewed",
-      includedInRuntime: fileRef.kind === "reference" || fileRef.kind === "agent-metadata",
-      now,
-    }));
-  }
-  return artifacts;
-}
-
-async function copySkillSourceArtifact(input: {
-  readonly store: SkillRouteStore;
-  readonly snapshotId: string;
-  readonly sourceFilePath: string;
-  readonly sourceRoot: string;
-  readonly logicalPath: string;
-  readonly kind: SkillSourceFileRef["kind"];
-  readonly checksum: string;
-  readonly sizeBytes: number;
-  readonly reviewStatus: SkillSourceArtifact["reviewStatus"];
-  readonly includedInRuntime: boolean;
-  readonly now: string;
-}): Promise<SkillSourceArtifact> {
-  const storageRef = skillSourceStorageRef(input.snapshotId, input.logicalPath, input.checksum);
-  const destinationPath = resolve(input.store.paths.artifactsDir, storageRef);
-  if (!isPathInside(input.store.paths.artifactsDir, destinationPath)) {
-    throw new HttpError(500, "skill_source_artifact_path_escape", "Source artifact storage path escaped artifact root.");
-  }
-  if (!isPathInside(input.sourceRoot, input.sourceFilePath)) {
-    throw new HttpError(400, "skill_source_artifact_source_escape", `Source artifact path is outside skill root: ${input.logicalPath}`);
-  }
-  await mkdir(dirname(destinationPath), { recursive: true });
-  await copyFile(input.sourceFilePath, destinationPath);
-  return input.store.upsertSkillSourceArtifact({
-    snapshotId: input.snapshotId,
-    path: input.logicalPath,
-    kind: input.kind,
-    checksum: input.checksum,
-    sizeBytes: input.sizeBytes,
-    storageRef,
-    mediaType: inferSkillSourceArtifactMediaType(input.logicalPath),
-    reviewStatus: input.reviewStatus,
-    includedInRuntime: input.includedInRuntime,
-  }, input.now);
-}
-
-function skillSourceStorageRef(snapshotId: string, logicalPath: string, checksum: string): string {
-  const digest = checksum.replace(/^sha256:/, "").replace(/[^a-fA-F0-9]/g, "").slice(0, 32) || createHash("sha256").update(logicalPath).digest("hex").slice(0, 32);
-  const extension = extname(logicalPath);
-  const base = basename(logicalPath, extension).replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-|-$/g, "") || "source";
-  return ["skill-source", snapshotId, `${digest}-${base}${extension}`].join("/");
-}
-
-function inferSkillSourceArtifactMediaType(path: string): string | undefined {
-  const extension = extname(path).toLowerCase();
-  if (extension === ".md" || extension === ".markdown") {
-    return "text/markdown; charset=utf-8";
-  }
-  if (extension === ".json") {
-    return "application/json; charset=utf-8";
-  }
-  if ([".yaml", ".yml"].includes(extension)) {
-    return "text/yaml; charset=utf-8";
-  }
-  if ([".txt", ".sh", ".ts", ".tsx", ".js", ".jsx", ".py"].includes(extension)) {
-    return "text/plain; charset=utf-8";
-  }
-  return undefined;
+  return { skills, snapshots: published.snapshots, artifacts: published.artifacts };
 }
 
 function parseSkillSourceArtifactContentRoute(pathname: string): { readonly artifactId: string } | undefined {

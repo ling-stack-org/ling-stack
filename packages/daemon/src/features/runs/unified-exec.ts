@@ -1,4 +1,5 @@
 import type { ChildProcessWithoutNullStreams } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdirSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, relative, resolve as resolvePath } from "node:path";
 import {
@@ -35,6 +36,8 @@ import { createStreamCapture, createSyntheticStreamCapture, toStreamSummary, typ
 import type { HostCommandOperation } from "../../runtime/host-operation-effects.js";
 import { createUnifiedExecRawDispatch } from "./unified-exec-raw-source.js";
 import { normalizeBashRequest } from "./unified-exec-request.js";
+import { readStoredRunnerExecution } from "./existing-run-request.js";
+import { packagedSkillEnvironment, preparePackagedSkillState, restorePackagedSkillContext } from "../skills/packaged-runtime.js";
 
 const DEFAULT_COMMAND_TIMEOUT_MS = 10 * 60 * 1000;
 
@@ -162,6 +165,18 @@ async function executeUnifiedExec(input: {
     });
     input.hostOperation?.bindCommandExecution(ticket.executionId);
     try {
+      const selectedId = input.run.selectedSkillId;
+      const sourceContext = restorePackagedSkillContext(readStoredRunnerExecution(input.run)?.skillSourceContext, selectedId);
+      if (sourceContext?.resourceBinding && input.restrictedDispatch === undefined) {
+        const key = createHash("sha256").update(input.run.id).update(sourceContext.resourceBinding.manifestChecksum).digest("hex");
+        let stateRoot = "";
+        const prepare = () => { stateRoot = preparePackagedSkillState(input.store.paths.rootDir, key); };
+        const preparation = input.hostOperation?.registerPreparation("gstack-runtime-state");
+        try { if (preparation) preparation.effectGuard.launch(prepare); else prepare(); }
+        finally { preparation?.finish(); }
+        Object.assign(environment.env, packagedSkillEnvironment(sourceContext, stateRoot, environment.env.PATH));
+        environment = { env: environment.env, summary: { ...environment.summary, keys: Object.keys(environment.env).sort() } };
+      }
       preparationAttempted = input.restrictedDispatch !== undefined;
       prepared = await input.restrictedDispatch?.prepare();
       if (prepared) environment = { env: {}, summary: prepared.environmentSummary };
@@ -205,6 +220,8 @@ async function executeUnifiedExec(input: {
       throwIfAborted(input.signal);
       input.restrictedDispatch?.assertMayLaunch();
       input.rawDispatch?.assertMayLaunch();
+      const context = readStoredRunnerExecution(input.run)?.skillSourceContext;
+      restorePackagedSkillContext(context, input.run.selectedSkillId);
     };
     if (input.hostOperation) input.hostOperation.launch(ticket, launch, preflight);
     else input.store.launchHostCommandExecution(ticket, launch, preflight);

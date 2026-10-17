@@ -1,0 +1,17 @@
+{
+  "schemaVersion": 1,
+  "reviewStatus": "candidate-only",
+  "releaseEligible": false,
+  "target": { "platform": "darwin", "arch": "arm64" },
+  "position": "1654411",
+  "revision": "059c884787b1bc15faa5afe5250f7d3a7e0ef64a",
+  "version": "151.0.7922.0",
+  "revisionsChecksum": "sha256:1c55e8a4c8e2f59825e26578c66b262cd32fa04d58831a023d6f0eda9e2411ba",
+  "versionChecksum": "sha256:b5389b865ec7f7fc2bb46bccaf930777a2fcfab5995065460df96d9979bcfd7e",
+  "sourceLicenseChecksum": "sha256:368cca1106be99d39ecd32a38d8305585d802a475effb66380b91ffc9bcf709b",
+  "archive": {
+    "generation": "1782773095386936",
+    "etag": "e3c733731fbc7cb6d5abdbe8ac0560b7",
+    "sizeBytes": 167624451
+  }
+}

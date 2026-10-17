@@ -51,6 +51,12 @@ importers:
       '@types/node':
         specifier: ^26.1.2
         version: 26.6.5
+      acorn:
+        specifier: 8.19.0
+        version: 8.19.0
+      tar:
+        specifier: 7.5.22
+        version: 7.5.22
       typescript:
         specifier: ^7.0.2
         version: 7.0.2

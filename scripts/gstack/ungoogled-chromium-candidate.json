@@ -1,0 +1,29 @@
+{
+  "schemaVersion": 1,
+  "reviewStatus": "candidate-only",
+  "releaseEligible": false,
+  "target": { "platform": "darwin", "arch": "arm64" },
+  "repository": "ungoogled-software/ungoogled-chromium-macos",
+  "revision": "f7ba75f94442abda7ac3ea81790c217f8636d3ba",
+  "commonRepository": "ungoogled-software/ungoogled-chromium",
+  "commonRevision": "3e46b13825f808f0886e484d44532372655e5fe4",
+  "version": "154.0.8037.97",
+  "tag": "154.0.8037.97-1.1",
+  "buildRunId": 37654894671,
+  "asset": {
+    "id": 620659064,
+    "name": "ungoogled-chromium_154.0.8037.97-1.1_arm64-macos.dmg",
+    "sizeBytes": 147401835,
+    "checksum": "sha256:43804c2115781fbadaa9fa4d19f1c3844cd5a9996efcb16a4bb3070f942e4586"
+  },
+  "references": [
+    { "repository": "ungoogled-software/ungoogled-chromium-macos", "revision": "f7ba75f94442abda7ac3ea81790c217f8636d3ba", "path": "flags.macos.gn", "blob": "354e3fbade20551b533d16e7f9371dcad0bacb6d", "checksum": "sha256:2347ab5d2a4b32e63de2225e41a790171003e06cd253851a7b4f8c66d23915cb", "sizeBytes": 352, "output": "macos-flags.gn.txt" },
+    { "repository": "ungoogled-software/ungoogled-chromium-macos", "revision": "f7ba75f94442abda7ac3ea81790c217f8636d3ba", "path": "build.sh", "blob": "c321aaf2d5092ce5c94121f2171671479ab0ea34", "checksum": "sha256:aad7290b33f2e0be5643a89e5e74c0b658bfbddb87aaa13834b9ad943cbbf408", "sizeBytes": 2615, "output": "macos-build.sh.txt" },
+    { "repository": "ungoogled-software/ungoogled-chromium-macos", "revision": "f7ba75f94442abda7ac3ea81790c217f8636d3ba", "path": "LICENSE", "blob": "62c13fcee2cdcb900586a06bcab7e49926d71004", "checksum": "sha256:2fdd1ed451121c07df0726a8ac8b86b49315d89a22c683edaf98b579e710504b", "sizeBytes": 1503, "output": "macos-source-LICENSE.txt" },
+    { "repository": "ungoogled-software/ungoogled-chromium-macos", "revision": "f7ba75f94442abda7ac3ea81790c217f8636d3ba", "path": ".github/workflows/build.yml", "blob": "da11d2704e6ca67b960561fbd879174649964c15", "checksum": "sha256:c772ba08617f9589eed91a4942120ea77afa40f2665a1fd74b408fb2e1e2cfdb", "sizeBytes": 2108, "output": "macos-build-workflow.yml.txt" },
+    { "repository": "ungoogled-software/ungoogled-chromium-macos", "revision": "f7ba75f94442abda7ac3ea81790c217f8636d3ba", "path": ".github/scripts/github_build.sh", "blob": "6366afc22d6f2165dd7624db3dc10b354b44615a", "checksum": "sha256:ff95986024cf0e72c27b17796241336c87830fc92e1310ba31a1774aa049fd39", "sizeBytes": 1176, "output": "macos-workflow-script.sh.txt" },
+    { "repository": "ungoogled-software/ungoogled-chromium", "revision": "3e46b13825f808f0886e484d44532372655e5fe4", "path": "flags.gn", "blob": "8394b02408c385f060b3e2b873a92e7572e75a03", "checksum": "sha256:a274a5633b3f909a1d6035192b5ff02c28f81a2f8fe60545d56bde34a0dc6c6b", "sizeBytes": 504, "output": "common-flags.gn.txt" },
+    { "repository": "ungoogled-software/ungoogled-chromium", "revision": "3e46b13825f808f0886e484d44532372655e5fe4", "path": "chromium_version.txt", "blob": "ff1f997806b6fa4695bf2e66500ac6e20b265e83", "checksum": "sha256:bd46191d401b0cbfeb32fc0543214e88fe415c749f856ebb896c97f269b64140", "sizeBytes": 14, "output": "common-chromium-version.txt" },
+    { "repository": "ungoogled-software/ungoogled-chromium", "revision": "3e46b13825f808f0886e484d44532372655e5fe4", "path": "LICENSE", "blob": "41a4f15e7aaa7787fc06e8b6e164e56f47062c9a", "checksum": "sha256:78bc4abfc3e5606b5b88c3cb9409a3250a7f64cffe704bef0563e11910a29189", "sizeBytes": 1543, "output": "common-source-LICENSE.txt" }
+  ]
+}

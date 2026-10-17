@@ -458,6 +458,8 @@ import type {
   CreateSkillRegressionRunInput,
   CreateSkillSourceArtifactInput,
   CreateSkillSourceSnapshotInput,
+  PublishSkillSourceBatchInput,
+  PublishedSkillSourceBatch,
   ListSkillCompiledRuntimeViewOptions,
   ListSkillRegressionRunsOptions,
   ListSkillSourceArtifactOptions,
@@ -2621,6 +2623,7 @@ export interface RunStore extends DelegationQueryStore, HarnessDiagnosticsStore,
   getSkillSourceSnapshot(skillId: string, options?: Pick<ListSkillSourceSnapshotOptions, "reviewStatus" | "includeArchived">): SkillSourceSnapshot | undefined;
   getSkillSourceSnapshotById(id: string): SkillSourceSnapshot | undefined;
   upsertSkillSourceSnapshot(input: CreateSkillSourceSnapshotInput, now: string): SkillSourceSnapshot;
+  publishSkillSourceBatch(input: PublishSkillSourceBatchInput, now: string): PublishedSkillSourceBatch;
   archiveSkillSourceSnapshot(skillId: string, now: string): SkillSourceSnapshot | undefined;
   rollbackSkillSourceSnapshot(snapshotId: string, now: string): SkillSourceSnapshot | undefined;
   getOfficialSkillSourceSubscription(): OfficialSkillSourceSubscription | undefined;
@@ -3180,6 +3183,7 @@ export type SkillRegistryStoreFacet = RunStoreFacet<
   | "getSkillSourceSnapshot"
   | "getSkillSourceSnapshotById"
   | "upsertSkillSourceSnapshot"
+  | "publishSkillSourceBatch"
   | "archiveSkillSourceSnapshot"
   | "rollbackSkillSourceSnapshot"
   | "getOfficialSkillSourceSubscription"
