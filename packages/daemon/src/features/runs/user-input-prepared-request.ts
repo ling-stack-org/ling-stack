@@ -14,6 +14,7 @@ import { readUserInputSourceExecution } from "./user-input-source-execution.js";
 export interface UserInputPreparedRequest {
   readonly ref: { readonly id: string; readonly fingerprint: string };
   readonly request: RunRequest;
+  readonly createdAt: string;
 }
 const inheritedKeys = ["tools", "requestedSkillId", "thinkingLevel", "reasoningSummary", "systemPrompt", "appendSystemPrompt", "agentDir",
   "runtimeToolFeatures", "lingConversationTone", "responseLanguage", "skillOptimizationMode"] as const;
@@ -30,7 +31,8 @@ export function prepareUserInputContinuationRequest(store: RunStore, claim: User
   // Even a first-writer replay must prove the worker still owns the claim. No await/transaction gap over I/O.
   const saved = store.saveUserInputContinuationPreparation({ ...claim, stage: "request",
     parentRef: { id: seed.id, fingerprint: seed.fingerprint }, payload: request }, now).snapshot;
-  return freeze({ ref: { id: saved.id, fingerprint: saved.fingerprint }, request: saved.payload as RunRequest });
+  return freeze({ ref: { id: saved.id, fingerprint: saved.fingerprint }, request: saved.payload as RunRequest,
+    createdAt: saved.createdAt });
 }
 
 /** Reopen is validation of the original source, not selection from current conversation history. */
@@ -42,7 +44,8 @@ export function readUserInputContinuationPreparedRequest(store: RunStore, thread
   const expected = store.readSnapshot(() => buildRequest(store, seed));
   if (!isDeepStrictEqual(snapshot.payload, expected)) throw new HttpError(409, "user_input_prepared_request_changed",
     "Prepared continuation input no longer matches its immutable source; it was not regenerated.");
-  return freeze({ ref: { id: snapshot.id, fingerprint: snapshot.fingerprint }, request: snapshot.payload as RunRequest });
+  return freeze({ ref: { id: snapshot.id, fingerprint: snapshot.fingerprint }, request: snapshot.payload as RunRequest,
+    createdAt: snapshot.createdAt });
 }
 
 function buildRequest(store: RunStore, seed: UserInputContinuationSeed): RunRequest {

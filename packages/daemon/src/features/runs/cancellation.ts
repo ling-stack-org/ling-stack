@@ -24,6 +24,7 @@ export function ensureRunCancelled(input: {
   readonly expectedAttemptId?: string | null;
   readonly expectedRunId?: string | null;
   readonly streamEnvelope?: (envelope: RunEventEnvelope) => void;
+  readonly now?: () => string;
 }): { readonly event?: RunEventEnvelope; readonly inputWait?: RunCancelResponse["inputWait"] } {
   const current = input.store.getRun(input.runId);
   if (!current || current.status === "cancelled") {
@@ -32,7 +33,8 @@ export function ensureRunCancelled(input: {
   if (current.status === "yielded") {
     if (!current.threadId) throw new HttpError(409, "run_wait_not_cancellable", "Waiting work has no owning thread.");
     try {
-      const result = input.store.cancelUserInputWait({ threadId: current.threadId, sourceRunId: current.id }, new Date().toISOString());
+      const result = input.store.cancelUserInputWait({ threadId: current.threadId, sourceRunId: current.id },
+        input.now?.() ?? new Date().toISOString());
       return { inputWait: { requestId: result.request.requestId, requestVersion: result.request.requestVersion,
         waitRevision: result.wait.revision, workUnitId: result.request.source.fence.workUnitId,
         turnId: result.request.source.turnId, status: "cancelled" } };
@@ -74,7 +76,7 @@ function cancelCurrentRun(input: Parameters<typeof ensureRunCancelled>[0], curre
   // and publish a terminal summary while the Host still has unknown effects.
   assertNoUnsafeRequiredPause(input.store, current);
 
-  const endedAt = new Date().toISOString();
+  const endedAt = input.now?.() ?? new Date().toISOString();
   for (const approval of input.store.listApprovalRequests({ runId: input.runId, status: "pending", limit: 500 })) {
     const cancelled = input.store.cancelApprovalRequest(
       approval.id,
@@ -89,14 +91,14 @@ function cancelCurrentRun(input: Parameters<typeof ensureRunCancelled>[0], curre
       status: cancelled.status,
       resolvedBy: cancelled.resolvedBy,
       decisionReason: cancelled.decisionReason,
-    });
+    }, endedAt);
     input.streamEnvelope?.(approvalEvent);
     syncLingThreadForRunEvent(input.store, current, "approval_cancelled", approvalEvent);
   }
   const event = input.store.appendEvent(input.runId, "run_cancelled", {
     reason: input.reason,
     active: input.active,
-  });
+  }, endedAt);
   input.streamEnvelope?.(event);
   syncLingThreadForRunEvent(input.store, current, "run_cancelled", event);
   const summaryPath = getRunSummaryPath(input.store.paths, input.runId);
@@ -135,7 +137,7 @@ function cancelCurrentRun(input: Parameters<typeof ensureRunCancelled>[0], curre
         input.store.releaseResourceLeasesForAttempt(toRuntimeAttemptFence(attempt), endedAt, "cancelled");
         input.store.releaseRuntimeSemaphoreSlotsForAttempt(toRuntimeAttemptFence(attempt), endedAt, "cancelled");
       }
-      transitionWorkUnitCancelled(input.store, current.workUnitId, attemptId, input.reason);
+      transitionWorkUnitCancelled(input.store, current.workUnitId, attemptId, input.reason, endedAt);
     }
   }
   return { event };

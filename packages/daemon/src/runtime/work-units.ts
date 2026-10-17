@@ -406,7 +406,8 @@ export function transitionWorkUnitTerminal(
   });
 }
 
-export function transitionWorkUnitCancelled(store: RuntimeWorkUnitStore, workUnitId: string, attemptId: string, reason: string): void {
+export function transitionWorkUnitCancelled(store: RuntimeWorkUnitStore, workUnitId: string, attemptId: string, reason: string,
+  now = new Date().toISOString()): void {
   const current = store.getWorkUnit(workUnitId);
   const attempt = store.getWorkUnitAttempt(attemptId);
   if (!current || !attempt || attempt.workUnitId !== workUnitId || current.activeAttemptId !== attempt.id
@@ -414,7 +415,6 @@ export function transitionWorkUnitCancelled(store: RuntimeWorkUnitStore, workUni
     || isTerminalWorkUnitStatus(current.status) || current.status === "stale") {
     return;
   }
-  const now = new Date().toISOString();
   const cancelling =
     current.status === "cancelling"
       ? { ok: true as const, from: current.status, to: current.status }

@@ -244,6 +244,7 @@ import {
   handleListRuns,
   handleRun,
 } from "../features/runs/routes.js";
+import { handleUserInputAnswerSubmission } from "../features/runs/user-input-answer-routes.js";
 import { handleLingThreadItem, handleLingThreadsCollection } from "../features/runs/thread-routes.js";
 import { handleHostCapabilityBridgeRoute } from "../features/runs/host-capability-bridge-routes.js";
 import { handleToolLoadRequestsCollection, handleToolSurfacesCollection } from "../features/runs/tool-surfaces.js";
@@ -348,6 +349,7 @@ import {
   parseProviderRoute,
   parseRunInterventionRoute,
   parseRunRoute,
+  parseUserInputAnswerSubmissionRoute,
   parseTurnRoute,
   parseSkillRoute,
   parseTaskRoute,
@@ -380,6 +382,7 @@ export async function routeRequest(
     extensionRegistry,
     storeRegistry,
     activeRuns,
+    userInputDeliveryWorker,
     activeDirectReplies,
     channelReplyDispatchCoordinator,
     channelTurnDispatchWorker,
@@ -1184,6 +1187,20 @@ export async function routeRequest(
       return;
     }
     handleTraceItem(response, url, storeRegistry, traceRoute);
+    return;
+  }
+
+  const userInputAnswerRoute = parseUserInputAnswerSubmissionRoute(url.pathname);
+  if (userInputAnswerRoute) {
+    await handleUserInputAnswerSubmission(
+      request,
+      response,
+      url,
+      storeRegistry,
+      config.maxBodyBytes,
+      userInputAnswerRoute,
+      (store) => userInputDeliveryWorker?.wake(store),
+    );
     return;
   }
 

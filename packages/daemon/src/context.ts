@@ -23,6 +23,7 @@ import type { ExternalWorkBackgroundSchedulerRegistry } from "./features/externa
 import type { ProviderStartupRefreshService } from "./features/providers/startup-refresh.js";
 import type { ProviderImportPreflightService } from "./features/providers/import-preflight.js";
 import type { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
+import type { UserInputDeliveryWorker } from "./features/runs/user-input-delivery-worker.js";
 import type { ControlPlaneEventHub } from "./features/control-plane/events.js";
 import type { ComputerUsePreviewProjection } from "@ling-stack/contracts";
 import type {
@@ -209,6 +210,7 @@ export interface DaemonContext {
   readonly storeRegistry: RunStoreRegistry;
   readonly activeRuns: ActiveRunRegistry;
   readonly approvalResumeCoordinator: ApprovalResumeCoordinator;
+  readonly userInputDeliveryWorker?: UserInputDeliveryWorker;
   readonly activeDirectReplies: ActiveDirectReplyRegistry;
   readonly channelReplyDispatchCoordinator: ChannelReplyDispatchCoordinator;
   readonly channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;

@@ -47,6 +47,8 @@ import { ProviderImportPreflightService } from "./features/providers/import-pref
 import { ActiveDirectReplyRegistry } from "./features/teammates/direct-reply-active-registry.js";
 import { reconcileTeammateDirectRun, recoverPendingTeammateDirectMessages } from "./features/teammates/direct-message-lifecycle.js";
 import { ApprovalResumeCoordinator } from "./features/runs/approval-resume-coordinator.js";
+import { UserInputDeliveryWorker } from "./features/runs/user-input-delivery-worker.js";
+import { createUserInputWorkflowTerminalHook } from "./features/runs/user-input-workflow-terminal.js";
 import { ApprovalAutoReviewRecoveryCoordinator } from "./features/runs/approval-auto-review-recovery.js";
 import { recoverApprovalPostCommitStore } from "./features/runs/approval-postcommit-recovery.js";
 import { runApprovalPostCommitEffects } from "./features/runs/approval-postcommit-effects.js";
@@ -57,6 +59,7 @@ import { RunEvaluationSchedulerRegistry } from "./features/harness/evaluations/s
 import {
   createDetachedRunExecutionSink,
   executeExistingRunContinuation,
+  executeUserInputAnswerContinuation,
 } from "./features/runs/orchestrator.js";
 import { resumePendingMediaJobExecutions, syncMediaJobForApprovalDecision } from "./features/media/executor.js";
 import { publishConversationMediaProjectionChange } from "./features/media/conversation-events.js";
@@ -267,6 +270,8 @@ export function createDaemonServer(
   let channelTurnDispatchWorker: ChannelTurnDispatchWorkerRegistry;
   let channelTurnDispatchReady = false;
   let approvalResumeCoordinator: ApprovalResumeCoordinator | undefined;
+  let userInputDeliveryWorker: UserInputDeliveryWorker | undefined;
+  const answerDeliveryStores = new Set<RunStore>();
   const approvalRecoveryStores = new Set<RunStore>();
   let approvalRecoveryTimer: ReturnType<typeof setInterval> | undefined;
   let approvalAutoReviewRecoveryCoordinator: ApprovalAutoReviewRecoveryCoordinator | undefined;
@@ -294,44 +299,61 @@ export function createDaemonServer(
   }, dependencies.officeLocalNativeArtifact
     ? { officeLocalNativeArtifact: dependencies.officeLocalNativeArtifact }
     : undefined);
+  let workspaceCustodyReady = false;
+  const pendingOwnedStores = new Map<RunStore, string>();
+  const initializedOwnedStores = new WeakSet<RunStore>();
+  const initializeOwnedStore = (cwd: string, store: RunStore): void => {
+    if (initializedOwnedStores.has(store)) return;
+    runtimeSupervisor.getRuntime(cwd, store);
+    const recoveryNow = new Date().toISOString();
+    store.recoverStaleRuns(recoveryNow);
+    store.recoverStaleChannelWorkflows(recoveryNow);
+    dependencies.initializeBundledSkills?.(store);
+    // A process may have crossed the shell side-effect boundary before the
+    // daemon disappeared. Expired executing claims are never retried; they
+    // become explicit unknown outcomes before any recovery dispatch runs.
+    reconcileHarnessToolExecutionsAtStartup({ cwd, store, now: new Date().toISOString(), limit: 500 });
+    try {
+      recoverPendingTeammateDirectMessages(store, controlPlaneEvents);
+    } catch {
+      console.warn("teammate_direct_recovery_failed: linked pending replies remain recoverable");
+    }
+    approvalRecoveryStores.add(store);
+    answerDeliveryStores.add(store);
+    userInputDeliveryWorker?.registerStore(store);
+    configureNormalNarrationPublication(store, (event) => controlPlaneEvents.publish(event));
+    void recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
+      // Do not leak database/provider details, but do not hide a failed recovery sweep.
+      console.warn("normal_narration_recovery_failed: pending publications remain recoverable");
+    });
+    configureTerminalReportStore(store, {
+      enabled: resolvedConfig.channels.terminalReports === true,
+      runnerRegistry,
+      secretResolver,
+      onPublished: ({ event }) => controlPlaneEvents.publish(event),
+    });
+    approvalResumeCoordinator?.registerStore(store);
+    approvalAutoReviewRecoveryCoordinator?.registerStore(store);
+    daemonRunnerRecoveryCoordinator?.registerStore(store);
+    runEvaluationScheduler?.registerStore(store);
+    startupOptionalWarmups?.start(cwd, store);
+    reconcileAllContinuityWorkflows(store, { cause: "startup" });
+    if (resolvedConfig.channels.terminalReports === true) {
+      void recoverTerminalReports(store).catch(() => {
+        console.warn("terminal_report_recovery_failed: conflicting sources remain recoverable");
+      });
+    }
+    if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
+    initializedOwnedStores.add(store);
+    pendingOwnedStores.delete(store);
+  };
   const storeRegistry = new RunStoreRegistry(
     dependencies.storeFactory ?? createOriginalOfficeDirectoryStoreFactory(runtimeSupervisor), {
     trustedWorkspaceRoots: [resolvedConfig.defaultWorkspaceCwd],
+    recoverOnOpen: false,
     onStoreInitialized: (cwd, store) => {
-      dependencies.initializeBundledSkills?.(store);
-      // A process may have crossed the shell side-effect boundary before the
-      // daemon disappeared. Expired executing claims are never retried; they
-      // become explicit unknown outcomes before any recovery dispatch runs.
-      reconcileHarnessToolExecutionsAtStartup({ cwd, store, now: new Date().toISOString(), limit: 500 });
-      try {
-        recoverPendingTeammateDirectMessages(store, controlPlaneEvents);
-      } catch {
-        console.warn("teammate_direct_recovery_failed: linked pending replies remain recoverable");
-      }
-      approvalRecoveryStores.add(store);
-      configureNormalNarrationPublication(store, (event) => controlPlaneEvents.publish(event));
-      void recoverNormalNarrationPublications(store, new Date().toISOString()).catch(() => {
-        // Do not leak database/provider details, but do not hide a failed recovery sweep.
-        console.warn("normal_narration_recovery_failed: pending publications remain recoverable");
-      });
-      configureTerminalReportStore(store, {
-        enabled: resolvedConfig.channels.terminalReports === true,
-        runnerRegistry,
-        secretResolver,
-        onPublished: ({ event }) => controlPlaneEvents.publish(event),
-      });
-      approvalResumeCoordinator?.registerStore(store);
-      approvalAutoReviewRecoveryCoordinator?.registerStore(store);
-      daemonRunnerRecoveryCoordinator?.registerStore(store);
-      runEvaluationScheduler?.registerStore(store);
-      startupOptionalWarmups?.start(cwd, store);
-      reconcileAllContinuityWorkflows(store, { cause: "startup" });
-      if (resolvedConfig.channels.terminalReports === true) {
-        void recoverTerminalReports(store).catch(() => {
-          console.warn("terminal_report_recovery_failed: conflicting sources remain recoverable");
-        });
-      }
-      if (channelTurnDispatchReady) channelTurnDispatchWorker?.start(store);
+      pendingOwnedStores.set(store, cwd);
+      if (workspaceCustodyReady) initializeOwnedStore(cwd, store);
     },
   });
   runEvaluationScheduler = new RunEvaluationSchedulerRegistry({
@@ -372,13 +394,11 @@ export function createDaemonServer(
       data: JSON.parse(projection) as Record<string, unknown>,
     });
   });
-  chromeBrowserPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
   const officeDriverController = new OfficeDriverController();
   const officeDocumentsPlugin = new OfficeDocumentsPluginService({
     controller: officeDriverController,
     getStore: (cwd) => storeRegistry.getStore(cwd),
   });
-  officeDocumentsPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
   let cuaDriverActivationCoordinator: CuaDriverDaemonActivationCoordinator | undefined;
   let lockedComputerControl: LockedComputerControlRegistry | undefined;
   const cuaDriverDesktopBridgeAuthority = new CuaDriverDesktopBridgeAuthority({
@@ -497,6 +517,48 @@ export function createDaemonServer(
     });
     daemonRunnerRecoveryCoordinator?.recoverStore(store);
   };
+  const channelTurnDispatchOptions = {
+    config: resolvedConfig,
+    storeRegistry,
+    runnerRegistry,
+    activeRuns,
+    runtimeSupervisor,
+    secretResolver,
+    mcpBroker,
+    controlPlaneEvents,
+    startupState,
+    computerUsePreviews,
+    hostCapabilityBridge,
+    replyDispatchCoordinator: channelReplyDispatchCoordinator,
+    imageVisionSummarizer,
+    webFetch,
+    webResolveHostAddresses,
+    afterRunTerminal: afterChannelRunTerminal,
+  };
+  userInputDeliveryWorker = new UserInputDeliveryWorker({
+    activeRuns,
+    runtimeSupervisor,
+    execute: (input) => executeUserInputAnswerContinuation(
+      input,
+      createDetachedRunExecutionSink(),
+      runnerRegistry,
+      storeRegistry,
+      activeRuns,
+      runtimeSupervisor,
+      secretResolver,
+      mcpBroker,
+      {
+        controlPlaneEvents,
+        startupState,
+        computerUsePreviews,
+        hostCapabilityBridge,
+        onRunReady: input.onRunReady,
+        enableUserInputPause: true,
+        afterRunTerminal: createUserInputWorkflowTerminalHook(channelTurnDispatchOptions),
+      },
+    ),
+  });
+  for (const store of answerDeliveryStores) userInputDeliveryWorker.registerStore(store);
   approvalResumeCoordinator = new ApprovalResumeCoordinator({
     runtimeSupervisor,
     activeRuns,
@@ -564,24 +626,7 @@ export function createDaemonServer(
   });
   channelTurnDispatchWorker = new ChannelTurnDispatchWorkerRegistry(
     runtimeSupervisor,
-    createChannelTurnDispatchExecutor({
-      config: resolvedConfig,
-      storeRegistry,
-      runnerRegistry,
-      activeRuns,
-      runtimeSupervisor,
-      secretResolver,
-      mcpBroker,
-      controlPlaneEvents,
-      startupState,
-      computerUsePreviews,
-      hostCapabilityBridge,
-      replyDispatchCoordinator: channelReplyDispatchCoordinator,
-      imageVisionSummarizer,
-      webFetch,
-      webResolveHostAddresses,
-      afterRunTerminal: afterChannelRunTerminal,
-    }),
+    createChannelTurnDispatchExecutor(channelTurnDispatchOptions),
   );
   const remoteAccessManagementCapability = dependencies.remoteAccessManagementCapability
     ?? process.env.LING_MOBILE_ACCESS_MANAGEMENT_CAPABILITY
@@ -626,6 +671,7 @@ export function createDaemonServer(
     storeRegistry,
     activeRuns,
     approvalResumeCoordinator,
+    userInputDeliveryWorker,
     activeDirectReplies,
     channelReplyDispatchCoordinator,
     channelTurnDispatchWorker,
@@ -730,6 +776,12 @@ export function createDaemonServer(
         });
       });
       await initializeDaemonWithCleanup(async () => {
+        const defaultStore = storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd);
+        runtimeSupervisor.getRuntime(resolvedConfig.defaultWorkspaceCwd, defaultStore);
+        workspaceCustodyReady = true;
+        for (const [store, cwd] of [...pendingOwnedStores]) initializeOwnedStore(cwd, store);
+        chromeBrowserPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
+        officeDocumentsPlugin.sync(resolvedConfig.defaultWorkspaceCwd);
         await chromeBrowserNativeBroker?.start().catch(() => {
           chromeBrowserSessions.observeNativeState({
             cwd: resolvedConfig.defaultWorkspaceCwd,
@@ -749,6 +801,7 @@ export function createDaemonServer(
         runEvaluationScheduler.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         daemonRunnerRecoveryCoordinator.registerStore(storeRegistry.getStore(resolvedConfig.defaultWorkspaceCwd));
         daemonRunnerRecoveryCoordinator.start();
+        userInputDeliveryWorker.start();
         // Ephemeral control-plane servers are used by tests and embedded fixtures.
         // They must never claim the installation-global Remote Gateway listener.
         if (resolvedConfig.port !== 0) {
@@ -845,6 +898,7 @@ export function createDaemonServer(
       if (approvalRecoveryTimer) clearInterval(approvalRecoveryTimer);
       approvalRecoveryTimer = undefined;
       daemonRunnerRecoveryCoordinator.beginShutdown();
+      userInputDeliveryWorker.beginShutdown();
       runEvaluationScheduler.beginShutdown();
       channelTurnDispatchReady = false;
       channelTurnDispatchWorker.beginShutdown();
@@ -881,6 +935,7 @@ export function createDaemonServer(
           server.closeAllConnections();
         });
         await channelTurnDispatchWorker.close();
+        await userInputDeliveryWorker.close();
         await automationSchedulers.waitForIdle();
         await runEvaluationScheduler.waitForIdle();
         await providerImportShutdown;

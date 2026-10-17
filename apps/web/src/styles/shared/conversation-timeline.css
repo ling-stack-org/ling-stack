@@ -30,10 +30,59 @@
 }
 
 .conversation-user-input-options {
+  display: grid;
+  gap: var(--ling-space-2);
   margin: 8px 0 0;
-  padding-inline-start: 20px;
+  padding: 0;
   color: var(--conversation-text-muted);
   white-space: pre-wrap;
+}
+
+.conversation-user-input-options-history {
+  padding-inline-start: 20px;
+}
+
+.conversation-user-input-question-controls {
+  display: grid;
+  width: min(100%, 560px);
+  gap: var(--ling-space-3);
+  margin-top: var(--ling-space-3);
+}
+
+.conversation-user-input-options .ling-ui-radio {
+  display: grid;
+  min-width: 0;
+  grid-template-columns: 18px minmax(0, 1fr);
+  align-items: start;
+  gap: var(--ling-space-2);
+  color: var(--conversation-text-strong);
+}
+
+.conversation-user-input-free-text {
+  display: grid;
+  gap: var(--ling-space-2);
+  color: var(--conversation-text-muted);
+  font-size: var(--ling-font-xs);
+}
+
+.conversation-user-input-free-text textarea {
+  width: 100%;
+  min-height: 76px;
+  resize: vertical;
+  color: var(--conversation-text-strong);
+  font-size: var(--ling-font-sm);
+}
+
+.conversation-user-input-answer-form {
+  display: flex;
+  width: min(100%, 560px);
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--ling-space-3);
+}
+
+.conversation-user-input-answer-form .ling-ui-inline-feedback {
+  flex: 1 1 100%;
 }
 
 .conversation-user-input-status {

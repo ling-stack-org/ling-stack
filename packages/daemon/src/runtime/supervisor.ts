@@ -1,6 +1,7 @@
 import { readFileSync, unlinkSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import "./sandbox/core-original-process-bridge.js";
 import {
   DEFAULT_WORKSPACE_ID,
@@ -349,16 +350,11 @@ export class RuntimeSupervisor {
 
     const existing = parseRuntimeLock(readFileSync(lockPath, "utf8"));
     if (existing && isProcessAlive(existing.pid)) {
-      if (existing.pid !== process.pid || existing.port !== this.config.port || existing.host !== this.config.host) {
-        throw new HttpError(
-          409,
-          "runtime_already_running",
-          `Workspace runtime is already owned by pid ${existing.pid} at ${existing.host}:${existing.port}.`,
-        );
-      }
-      this.lockedCwds.add(cwd);
-      this.runtimeLockPathsByCwd.set(cwd, lockPath);
-      return;
+      throw new HttpError(
+        409,
+        "runtime_already_running",
+        `Workspace runtime is already owned by pid ${existing.pid} at ${existing.host}:${existing.port}.`,
+      );
     }
 
     try {
@@ -407,7 +403,8 @@ export class RuntimeSupervisor {
     ];
     for (const workUnit of candidates) {
       const reason = "runtime-startup-reconcile";
-      const reconciled = preserveRecoverableApprovalWorkUnit(store, workUnit, now) ??
+      const reconciled = reconcileInterruptedUserInputStartup(store, workUnit, now) ??
+        preserveRecoverableApprovalWorkUnit(store, workUnit, now) ??
         reconcileActiveWorkUnitFromLinkedTerminalRun(store, workUnit, now) ??
         markWorkUnitStale(store, workUnit, now, reason);
       this.notifyWorkUnitTransition(store, cwd, workUnit, reconciled, reason, now);
@@ -459,6 +456,44 @@ export class RuntimeSupervisor {
       now,
     });
   }
+}
+
+function reconcileInterruptedUserInputStartup(
+  store: RuntimeSupervisorRuntimeStore,
+  workUnit: WorkUnit,
+  now: string,
+): WorkUnit | undefined {
+  if (workUnit.status !== "claimed" || !workUnit.linkedRunId || !workUnit.activeAttemptId) return undefined;
+  const run = store.getRun(workUnit.linkedRunId);
+  const attempt = store.getWorkUnitAttempt(workUnit.activeAttemptId);
+  if (!run || run.continuationReason !== "user_input_answer" || run.status !== "queued" || run.startedAt || run.endedAt
+    || !run.threadId || !attempt || attempt.status !== "created" || attempt.startedAt || attempt.endedAt
+    || !isDeepStrictEqual(toRuntimeAttemptFence(attempt), {
+      workUnitId: workUnit.id,
+      attemptId: attempt.id,
+      runtimeInstanceId: attempt.runtimeInstanceId,
+      fencingToken: attempt.fencingToken,
+    })) return undefined;
+  const deliveryId = readUserInputDeliveryId(run.requestSnapshot);
+  if (!deliveryId) return undefined;
+  const binding = store.getUserInputContinuationBinding(run.threadId, deliveryId);
+  if (!binding || binding.runId !== run.id || !isDeepStrictEqual(binding.fence, toRuntimeAttemptFence(attempt))) return undefined;
+  const code = "user_input_delivery_startup_interrupted";
+  const message = "Answer execution was interrupted before Runner startup and was settled without replay.";
+  if (!store.failUserInputContinuationStartup({ threadId: run.threadId, deliveryId,
+    bindingRef: { id: binding.id, fingerprint: binding.fingerprint }, sourceFence: binding.fence,
+    errorCode: code, errorMessage: message }, now)) return undefined;
+  store.appendEvent(run.id, "run_error", { code, message, origin: "user_input_continuation_startup" }, now);
+  return store.getWorkUnit(workUnit.id) ?? workUnit;
+}
+
+function readUserInputDeliveryId(requestSnapshot: unknown): string | undefined {
+  if (!isRecord(requestSnapshot)) return undefined;
+  const continuation = requestSnapshot.userInputContinuation;
+  if (!isRecord(continuation) || !isRecord(continuation.seedRef) || typeof continuation.seedRef.id !== "string") return undefined;
+  const prefix = "user_input_continuation_seed:";
+  const deliveryId = continuation.seedRef.id.startsWith(prefix) ? continuation.seedRef.id.slice(prefix.length) : "";
+  return /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(deliveryId) ? deliveryId : undefined;
 }
 
 function preserveRecoverableApprovalWorkUnit(
