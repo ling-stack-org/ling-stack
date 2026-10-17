@@ -3,12 +3,12 @@ import type { ProviderModelCatalogManifest, ProviderModelCatalogRecord } from ".
 
 export const providerModelCatalogManifest = {
   "schemaVersion": 1,
-  "version": "models.dev:30010ab6f9b9",
+  "version": "models.dev:34259aa003ba",
   "source": "models.dev",
   "sourceUrl": "https://models.dev/api.json",
   "license": "MIT",
-  "generatedAt": "2026-09-22T03:15:00.287Z",
-  "updatedAt": "2026-09-21"
+  "generatedAt": "2026-10-17T07:03:03.264Z",
+  "updatedAt": "2026-10-13"
 } as const satisfies ProviderModelCatalogManifest;
 
 export const providerModelCatalogRecords = [
@@ -792,6 +792,28 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "alibaba",
+    "id": "qwen3.5-flash",
+    "displayName": "Qwen3.5 Flash",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "auto"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 65536,
+    "updatedAt": "2026-02-23"
+  },
+  {
+    "providerId": "alibaba",
     "id": "qwen3.5-plus",
     "displayName": "Qwen3.5 Plus",
     "input": [
@@ -922,6 +944,28 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "alibaba",
+    "id": "qwen3.7-flash",
+    "displayName": "Qwen3.7 Flash",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "auto"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 131072,
+    "updatedAt": "2026-07-15"
+  },
+  {
+    "providerId": "alibaba",
     "id": "qwen3.7-max",
     "displayName": "Qwen3.7 Max",
     "input": [
@@ -937,7 +981,7 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 1000000,
-    "maxTokens": 65536,
+    "maxTokens": 131072,
     "updatedAt": "2026-05-21"
   },
   {
@@ -959,7 +1003,7 @@ export const providerModelCatalogRecords = [
       "auto"
     ],
     "contextWindow": 1000000,
-    "maxTokens": 65536,
+    "maxTokens": 131072,
     "updatedAt": "2026-06-04"
   },
   {
@@ -1011,6 +1055,30 @@ export const providerModelCatalogRecords = [
     "contextWindow": 1000000,
     "maxTokens": 131072,
     "updatedAt": "2026-08-03"
+  },
+  {
+    "providerId": "alibaba",
+    "id": "qwen3.8-omni-flash",
+    "displayName": "Qwen3.8 Omni Flash",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "xhigh"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 131072,
+    "updatedAt": "2026-09-17"
   },
   {
     "providerId": "alibaba",
@@ -1111,6 +1179,32 @@ export const providerModelCatalogRecords = [
     "contextWindow": 200000,
     "maxTokens": 64000,
     "updatedAt": "2025-10-15"
+  },
+  {
+    "providerId": "anthropic",
+    "id": "claude-haiku-5-5",
+    "displayName": "Claude Haiku 5.5",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "auto",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-10-07"
   },
   {
     "providerId": "anthropic",
@@ -1256,6 +1350,30 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "anthropic",
+    "id": "claude-opus-5-5",
+    "displayName": "Claude Opus 5.5",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-09-22"
+  },
+  {
+    "providerId": "anthropic",
     "id": "claude-sonnet-4-5",
     "displayName": "Claude Sonnet 4.5 (latest)",
     "input": [
@@ -1268,7 +1386,7 @@ export const providerModelCatalogRecords = [
       "reasoning",
       "vision"
     ],
-    "contextWindow": 1000000,
+    "contextWindow": 200000,
     "maxTokens": 64000,
     "updatedAt": "2025-09-29"
   },
@@ -1286,7 +1404,7 @@ export const providerModelCatalogRecords = [
       "reasoning",
       "vision"
     ],
-    "contextWindow": 1000000,
+    "contextWindow": 200000,
     "maxTokens": 64000,
     "updatedAt": "2025-09-29"
   },
@@ -1341,6 +1459,30 @@ export const providerModelCatalogRecords = [
     "updatedAt": "2026-06-30"
   },
   {
+    "providerId": "anthropic",
+    "id": "claude-sonnet-5-5",
+    "displayName": "Claude Sonnet 5.5",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-09-28"
+  },
+  {
     "providerId": "deepseek",
     "id": "deepseek-flash",
     "displayName": "DeepSeek V4.1 Flash",
@@ -1362,7 +1504,7 @@ export const providerModelCatalogRecords = [
       "xhigh"
     ],
     "contextWindow": 1000000,
-    "maxTokens": 384000,
+    "maxTokens": 393216,
     "updatedAt": "2026-09-10"
   },
   {
@@ -1387,7 +1529,7 @@ export const providerModelCatalogRecords = [
       "xhigh"
     ],
     "contextWindow": 1000000,
-    "maxTokens": 384000,
+    "maxTokens": 393216,
     "updatedAt": "2026-09-10"
   },
   {
@@ -1412,7 +1554,7 @@ export const providerModelCatalogRecords = [
       "xhigh"
     ],
     "contextWindow": 1000000,
-    "maxTokens": 384000,
+    "maxTokens": 393216,
     "updatedAt": "2026-09-10"
   },
   {
@@ -1435,7 +1577,7 @@ export const providerModelCatalogRecords = [
       "xhigh"
     ],
     "contextWindow": 1000000,
-    "maxTokens": 384000,
+    "maxTokens": 393216,
     "updatedAt": "2026-08-22"
   },
   {
@@ -1488,8 +1630,8 @@ export const providerModelCatalogRecords = [
       "reasoning",
       "vision"
     ],
-    "contextWindow": 131072,
-    "maxTokens": 65536,
+    "contextWindow": 128000,
+    "maxTokens": 64000,
     "updatedAt": "2025-10-07"
   },
   {
@@ -1636,7 +1778,7 @@ export const providerModelCatalogRecords = [
       "low",
       "high"
     ],
-    "contextWindow": 131072,
+    "contextWindow": 65536,
     "maxTokens": 32768,
     "updatedAt": "2026-05-28"
   },
@@ -1674,8 +1816,8 @@ export const providerModelCatalogRecords = [
       "minimal",
       "high"
     ],
-    "contextWindow": 65536,
-    "maxTokens": 65536,
+    "contextWindow": 131072,
+    "maxTokens": 32768,
     "updatedAt": "2026-05-28"
   },
   {
@@ -1742,7 +1884,7 @@ export const providerModelCatalogRecords = [
       "high"
     ],
     "contextWindow": 65536,
-    "maxTokens": 65536,
+    "maxTokens": 4096,
     "updatedAt": "2026-06-30"
   },
   {
@@ -1981,6 +2123,29 @@ export const providerModelCatalogRecords = [
     "contextWindow": 1048576,
     "maxTokens": 65536,
     "updatedAt": "2026-09-02"
+  },
+  {
+    "providerId": "google",
+    "id": "gemini-4-argon",
+    "displayName": "Gemini 4 Argon",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 32768,
+    "updatedAt": "2026-10-13"
   },
   {
     "providerId": "google",
@@ -2309,9 +2474,24 @@ export const providerModelCatalogRecords = [
       "off",
       "auto"
     ],
-    "contextWindow": 1048576,
+    "contextWindow": 1000000,
     "maxTokens": 512000,
     "updatedAt": "2026-06-25"
+  },
+  {
+    "providerId": "mistral",
+    "id": "codestral-2508",
+    "displayName": "Codestral 25.08",
+    "input": [
+      "text"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call"
+    ],
+    "contextWindow": 256000,
+    "maxTokens": 8192,
+    "updatedAt": "2025-07-30"
   },
   {
     "providerId": "mistral",
@@ -2420,6 +2600,27 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "mistral",
+    "id": "glm-5-2",
+    "displayName": "GLM-5.2",
+    "input": [
+      "text"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning"
+    ],
+    "thinkingModes": [
+      "off",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 131072,
+    "updatedAt": "2026-06-13"
+  },
+  {
+    "providerId": "mistral",
     "id": "labs-devstral-small-2512",
     "displayName": "Devstral Small 2",
     "input": [
@@ -2437,63 +2638,130 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "mistral",
-    "id": "magistral-medium-latest",
-    "displayName": "Magistral Medium (latest)",
+    "id": "labs-leanstral-1-5-1",
+    "displayName": "Leanstral 1.5",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
       "tool_call",
-      "reasoning"
+      "reasoning",
+      "vision"
     ],
-    "contextWindow": 128000,
+    "thinkingModes": [
+      "off",
+      "high"
+    ],
+    "contextWindow": 262144,
+    "maxTokens": 128000,
+    "updatedAt": "2026-06-30"
+  },
+  {
+    "providerId": "mistral",
+    "id": "magistral-medium-latest",
+    "displayName": "Magistral Medium (latest)",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "high"
+    ],
+    "contextWindow": 262144,
     "maxTokens": 16384,
     "updatedAt": "2025-03-20"
   },
   {
     "providerId": "mistral",
-    "id": "magistral-small",
-    "displayName": "Magistral Small",
+    "id": "ministral-14b-2512",
+    "displayName": "Ministral 3 14B",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
       "tool_call",
-      "reasoning"
+      "vision"
     ],
-    "contextWindow": 128000,
-    "maxTokens": 128000,
-    "updatedAt": "2025-03-17"
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "updatedAt": "2025-12-02"
+  },
+  {
+    "providerId": "mistral",
+    "id": "ministral-3b-2512",
+    "displayName": "Ministral 3 3B",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "vision"
+    ],
+    "contextWindow": 131072,
+    "maxTokens": 262144,
+    "updatedAt": "2025-12-02"
   },
   {
     "providerId": "mistral",
     "id": "ministral-3b-latest",
     "displayName": "Ministral 3B (latest)",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
-    "contextWindow": 128000,
+    "contextWindow": 131072,
     "maxTokens": 128000,
     "updatedAt": "2024-10-04"
+  },
+  {
+    "providerId": "mistral",
+    "id": "ministral-8b-2512",
+    "displayName": "Ministral 3 8B",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "vision"
+    ],
+    "contextWindow": 262144,
+    "maxTokens": 262144,
+    "updatedAt": "2025-12-02"
   },
   {
     "providerId": "mistral",
     "id": "ministral-8b-latest",
     "displayName": "Ministral 8B (latest)",
     "input": [
-      "text"
+      "text",
+      "image"
     ],
     "capabilities": [
       "chat",
-      "tool_call"
+      "tool_call",
+      "vision"
     ],
-    "contextWindow": 128000,
+    "contextWindow": 262144,
     "maxTokens": 128000,
     "updatedAt": "2024-10-04"
   },
@@ -2542,6 +2810,28 @@ export const providerModelCatalogRecords = [
     "contextWindow": 262144,
     "maxTokens": 262144,
     "updatedAt": "2025-12-02"
+  },
+  {
+    "providerId": "mistral",
+    "id": "mistral-large-4",
+    "displayName": "Mistral Large 4",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "high"
+    ],
+    "contextWindow": 1048576,
+    "maxTokens": 262144,
+    "updatedAt": "2026-10-06"
   },
   {
     "providerId": "mistral",
@@ -2688,7 +2978,7 @@ export const providerModelCatalogRecords = [
       "off",
       "high"
     ],
-    "contextWindow": 256000,
+    "contextWindow": 262144,
     "maxTokens": 256000,
     "updatedAt": "2026-03-16"
   },
@@ -2710,7 +3000,7 @@ export const providerModelCatalogRecords = [
       "off",
       "high"
     ],
-    "contextWindow": 256000,
+    "contextWindow": 262144,
     "maxTokens": 256000,
     "updatedAt": "2026-03-16"
   },
@@ -2829,6 +3119,21 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "mistral",
+    "id": "voxtral-small-2507",
+    "displayName": "Voxtral Small",
+    "input": [
+      "text"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call"
+    ],
+    "contextWindow": 32768,
+    "maxTokens": 32000,
+    "updatedAt": "2025-07-15"
+  },
+  {
+    "providerId": "mistral",
     "id": "voxtral-small-latest",
     "displayName": "Voxtral Small (latest)",
     "input": [
@@ -2838,7 +3143,7 @@ export const providerModelCatalogRecords = [
       "chat",
       "tool_call"
     ],
-    "contextWindow": 32000,
+    "contextWindow": 32768,
     "maxTokens": 32000,
     "updatedAt": "2025-07-15"
   },
@@ -2859,7 +3164,7 @@ export const providerModelCatalogRecords = [
       "high",
       "xhigh"
     ],
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "maxTokens": 131072,
     "updatedAt": "2026-06-13"
   },
@@ -2880,7 +3185,7 @@ export const providerModelCatalogRecords = [
       "high",
       "xhigh"
     ],
-    "contextWindow": 1000000,
+    "contextWindow": 1048576,
     "maxTokens": 131072,
     "updatedAt": "2026-08-14"
   },
@@ -2957,14 +3262,12 @@ export const providerModelCatalogRecords = [
       "vision"
     ],
     "thinkingModes": [
-      "off",
-      "auto",
       "low",
       "high",
       "xhigh"
     ],
     "contextWindow": 1048576,
-    "maxTokens": 131072,
+    "maxTokens": 1048576,
     "updatedAt": "2026-07-16"
   },
   {
@@ -3685,6 +3988,130 @@ export const providerModelCatalogRecords = [
     "contextWindow": 1050000,
     "maxTokens": 128000,
     "updatedAt": "2026-09-04"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-6-luna",
+    "displayName": "GPT-6 Luna",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-09-22"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-6-sol",
+    "displayName": "GPT-6 Sol",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-09-22"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-6.1-sol",
+    "displayName": "GPT-6.1 Sol",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-09-29"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-daybreak-blue-latest",
+    "displayName": "Daybreak Blue",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 1050000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-08-07"
+  },
+  {
+    "providerId": "openai",
+    "id": "gpt-daybreak-red-latest",
+    "displayName": "Daybreak Red",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "off",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ],
+    "contextWindow": 400000,
+    "maxTokens": 128000,
+    "updatedAt": "2026-08-07"
   },
   {
     "providerId": "openai",
@@ -5004,6 +5431,29 @@ export const providerModelCatalogRecords = [
   },
   {
     "providerId": "stepfun",
+    "id": "step-5-preview",
+    "displayName": "Step 5 Preview",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "chat",
+      "tool_call",
+      "reasoning",
+      "vision"
+    ],
+    "thinkingModes": [
+      "low",
+      "medium",
+      "high"
+    ],
+    "contextWindow": 1000000,
+    "maxTokens": 65536,
+    "updatedAt": "2026-09-20"
+  },
+  {
+    "providerId": "stepfun",
     "id": "step-tts-2",
     "displayName": "Step TTS 2",
     "input": [
@@ -5653,6 +6103,20 @@ export const providerModelCatalogRecords = [
     ],
     "contextWindow": 1024,
     "updatedAt": "2026-05-30"
+  },
+  {
+    "providerId": "xai",
+    "id": "grok-imagine-video-1.5-lite",
+    "displayName": "Grok Imagine Video 1.5 Lite",
+    "input": [
+      "text",
+      "image"
+    ],
+    "capabilities": [
+      "vision"
+    ],
+    "contextWindow": 1024,
+    "updatedAt": "2026-10-01"
   },
   {
     "providerId": "zai",
